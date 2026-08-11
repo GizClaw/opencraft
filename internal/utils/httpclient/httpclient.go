@@ -66,6 +66,9 @@ type Config struct {
 	MaxIdleConns        int
 	MaxIdleConnsPerHost int
 	IdleConnTimeout     time.Duration
+	// DisableKeepAlives disables connection reuse so every request dials
+	// a fresh connection.
+	DisableKeepAlives bool
 
 	// Retry wraps the base transport; disabled with WithoutRetry.
 	Retry        RetryConfig
@@ -178,6 +181,12 @@ func WithConnectionPool(maxIdleConns, maxIdleConnsPerHost int, idleConnTimeout t
 	}
 }
 
+// WithDisableKeepAlives disables HTTP keep-alive connection reuse so every
+// request dials a fresh connection.
+func WithDisableKeepAlives() Option {
+	return func(config *Config) { config.DisableKeepAlives = true }
+}
+
 // NewRoundTripper builds the hardened base transport per Config and wraps it
 // with the retry transport unless disabled.
 func NewRoundTripper(options ...Option) http.RoundTripper {
@@ -224,6 +233,7 @@ func buildBaseTransport(config Config) http.RoundTripper {
 		http1 := newTransport()
 		http1.ResponseHeaderTimeout = config.ResponseHeaderTimeout
 		http1.TLSClientConfig = config.TLSClientConfig
+		http1.DisableKeepAlives = config.DisableKeepAlives
 		h2, err := http2.ConfigureTransports(http1)
 		if err != nil {
 			panic("httpclient: configure h2: " + err.Error())
@@ -238,6 +248,7 @@ func buildBaseTransport(config Config) http.RoundTripper {
 		transport.ForceAttemptHTTP2 = false
 		transport.ResponseHeaderTimeout = config.ResponseHeaderTimeout
 		transport.TLSClientConfig = config.TLSClientConfig
+		transport.DisableKeepAlives = config.DisableKeepAlives
 		return transport
 	default:
 		panic("httpclient: unknown protocol")

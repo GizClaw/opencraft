@@ -19,7 +19,7 @@ nodes:
     config:
       runtime: js
       source:
-        embed: graphs/node/world.js
+        embed: assets/graphs/node/world.js
   - id: llm
     type: inference
     config:
@@ -27,7 +27,7 @@ nodes:
       tool_pending_key: tool_pending
       stream: true
       system_prompt:
-        embed: prompts/system.md
+        embed: assets/prompts/system.md
   - id: tools
     type: tool
     config:

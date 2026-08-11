@@ -1,4 +1,4 @@
-package app
+package config
 
 import (
 	"os"
@@ -20,7 +20,7 @@ func UserDataDir() (string, error) {
 }
 
 // UserConfigDir returns ~/.opencraft/config, creating it if needed. It
-// holds the user-facing configuration files (currently inference.yaml).
+// holds the user-facing configuration files.
 func UserConfigDir() (string, error) {
 	data, err := UserDataDir()
 	if err != nil {

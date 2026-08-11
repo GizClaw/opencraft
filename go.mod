@@ -3,14 +3,15 @@ module github.com/GizClaw/opencraft
 go 1.26.5
 
 require (
-	github.com/GizClaw/flowcraft/sdk v0.5.4
-	github.com/GizClaw/flowcraft/sdkx v0.5.6
+	github.com/GizClaw/flowcraft/sdk v0.5.5
+	github.com/GizClaw/flowcraft/sdkx v0.5.7
 	github.com/PuerkitoBio/goquery v1.12.0
 	github.com/go-shiori/go-readability v0.0.0-20251205110129-5db1dc9836f0
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/quic-go/quic-go v0.61.0
 	golang.org/x/net v0.57.0
 	modernc.org/sqlite v1.56.0
+	sigs.k8s.io/yaml v1.4.0
 )
 
 require (
@@ -24,6 +25,7 @@ require (
 	github.com/dop251/goja v0.0.0-20260219130522-0ba9a5494a59 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/expr-lang/expr v1.17.8 // indirect
+	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-shiori/dom v0.0.0-20230515143342-73569d674e1c // indirect
@@ -77,5 +79,4 @@ require (
 	modernc.org/libc v1.74.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	sigs.k8s.io/yaml v1.4.0 // indirect
 )

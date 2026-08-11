@@ -8,7 +8,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"runtime"
 
 	sdkconfig "github.com/GizClaw/flowcraft/sdk/config"
 	"github.com/GizClaw/flowcraft/sdk/errdefs"
@@ -17,6 +16,7 @@ import (
 	inferenceconfig "github.com/GizClaw/flowcraft/sdk/inference/config"
 	envresolver "github.com/GizClaw/flowcraft/sdk/inference/config/env"
 	"github.com/GizClaw/flowcraft/sdk/sandbox"
+	sandboxconfig "github.com/GizClaw/flowcraft/sdk/sandbox/config"
 	"github.com/GizClaw/flowcraft/sdk/tool"
 	toolconfig "github.com/GizClaw/flowcraft/sdk/tool/config"
 	"github.com/GizClaw/flowcraft/sdk/workspace"
@@ -37,6 +37,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/memory"
 	"github.com/GizClaw/opencraft/internal/state"
 	"github.com/GizClaw/opencraft/internal/tools/applypatch"
+	"github.com/GizClaw/opencraft/internal/tools/execcommand"
 	"github.com/GizClaw/opencraft/internal/tools/webfetch"
 )
 
@@ -71,12 +72,12 @@ func BuildRuntime(ctx context.Context, doc sdkdeploy.Document, opts ...Option) (
 		}
 	}
 	if o.ConfigBase == "" {
-		o.ConfigBase, _ = UserConfigDir()
+		o.ConfigBase, _ = config.UserConfigDir()
 	}
 	if o.WorkBase == "" {
 		o.WorkBase, _ = os.Getwd()
 	}
-	dataDir, err := UserDataDir()
+	dataDir, err := config.UserDataDir()
 	if err != nil {
 		return nil, err
 	}
@@ -99,7 +100,14 @@ func BuildRuntime(ctx context.Context, doc sdkdeploy.Document, opts ...Option) (
 	}
 	builder.MustRegisterResource(workspaceconfig.NewBuilder(
 		workspaceconfig.Deps{BaseDir: o.WorkBase}))
-	builder.MustRegisterResource(localSandboxFactory{})
+	sandboxBuilder := sandboxconfig.NewBuilder(sandboxconfig.Deps{})
+	if err := seatbelt.Register(sandboxBuilder); err != nil {
+		return nil, err
+	}
+	if err := bwrap.Register(sandboxBuilder); err != nil {
+		return nil, err
+	}
+	builder.MustRegisterResource(sandboxBuilder)
 
 	world := worldstate.New(worldstate.Options{
 		WorkBase:          o.WorkBase,
@@ -112,11 +120,40 @@ func BuildRuntime(ctx context.Context, doc sdkdeploy.Document, opts ...Option) (
 	builder.RegisterCommitter("opencraft.commit", commitHookFactory{})
 
 	toolBuilder := toolconfig.NewBuilder(toolconfig.Deps{})
-	toolRunner := platformRunner(o.WorkBase)
-	toolBuilder.RegisterBuiltin(exectool.MustNew(toolRunner))
-	if pm := sandbox.ProcessManagerOf(toolRunner); pm != nil {
-		toolBuilder.RegisterBuiltin(exectool.MustNewSession(pm))
+	sandboxRunner := func(in sdkconfig.Input) (sandbox.Runner, error) {
+		dep, ok := in.Dep(toolconfig.DepSandbox)
+		if !ok {
+			return nil, errdefs.Validationf(
+				"exec tools: sandbox dep is required")
+		}
+		runner, ok := dep.(sandbox.Runner)
+		if !ok {
+			return nil, errdefs.Validationf(
+				"exec tools: sandbox dep is %T, want sandbox.Runner", dep)
+		}
+		return runner, nil
 	}
+	toolBuilder.RegisterBuiltinFactory(exectool.SessionName,
+		func(_ context.Context, in sdkconfig.Input) (tool.Tool, error) {
+			runner, err := sandboxRunner(in)
+			if err != nil {
+				return nil, err
+			}
+			pm := sandbox.ProcessManagerOf(runner)
+			if pm == nil {
+				return nil, errdefs.NotAvailablef(
+					"exec_session: sandbox backend has no process manager")
+			}
+			return exectool.NewSession(pm)
+		})
+	toolBuilder.RegisterBuiltinFactory(execcommand.Name,
+		func(_ context.Context, in sdkconfig.Input) (tool.Tool, error) {
+			runner, err := sandboxRunner(in)
+			if err != nil {
+				return nil, err
+			}
+			return execcommand.New(runner)
+		})
 	toolBuilder.RegisterBuiltin(applypatch.MustNew(ws))
 	toolBuilder.RegisterBuiltin(webfetch.New())
 	toolBuilder.RegisterFactory("record_calls",
@@ -135,54 +172,26 @@ func BuildRuntime(ctx context.Context, doc sdkdeploy.Document, opts ...Option) (
 	}
 	builder.MustRegisterResource(inferenceconfig.NewDeployFactory(factories, resolvers))
 
+	mgr, err := config.Open(config.Options{WorkDir: o.WorkBase})
+	if err != nil {
+		return nil, err
+	}
+	view, err := mgr.Load(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if mgr.ProjectDir() != "" {
+		for _, name := range []string{"sandbox", "tools"} {
+			entry, ok := doc.Resources[name]
+			if !ok {
+				continue
+			}
+			if raw, ok := view.Raw[name+".yaml"]; ok {
+				entry.Settings = raw
+				doc.Resources[name] = entry
+			}
+		}
+	}
 	runtimeBuilder := runtimecore.NewBuilder(builder)
 	return runtimeBuilder.Build(ctx, doc)
-}
-
-// platformRunner picks the sandbox backend for the current platform and
-// falls back to the local runner when a platform backend is unavailable.
-func platformRunner(workBase string) sandbox.Runner {
-	switch runtime.GOOS {
-	case "darwin":
-		if r, err := seatbelt.New(workBase); err == nil {
-			return r
-		}
-	case "linux":
-		if r, err := bwrap.New(workBase); err == nil {
-			return r
-		}
-	}
-	return sandbox.NewLocalRunner(workBase)
-}
-
-// localSandboxFactory exposes the platform-selected runner as a deploy
-// resource of kind sandbox.Runner. It depends on the workspace resource
-// and builds the runner from the workspace root (root assertion via the
-// optional Root() accessor), so sandbox and workspace always share a
-// root.
-type localSandboxFactory struct{}
-
-var _ sdkconfig.Factory = localSandboxFactory{}
-
-func (f localSandboxFactory) Spec() sdkconfig.Spec {
-	return sdkconfig.Spec{
-		Kind: "sandbox.Runner",
-		Impl: "auto",
-		Deps: []sdkconfig.DepSpec{
-			{Name: "workspace", Type: "workspace.Workspace", Required: true},
-		},
-	}
-}
-
-func (f localSandboxFactory) New(_ context.Context, in sdkconfig.Input) (any, error) {
-	dep, ok := in.Dep("workspace")
-	if !ok {
-		return nil, errdefs.Validationf("sandbox: workspace dependency is required")
-	}
-	rooter, ok := dep.(interface{ Root() string })
-	if !ok || rooter.Root() == "" {
-		return nil, errdefs.Validationf(
-			"sandbox: workspace dependency must expose a root")
-	}
-	return platformRunner(rooter.Root()), nil
 }

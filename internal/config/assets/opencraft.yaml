@@ -21,10 +21,12 @@ resources:
       preserve_recent: 4
       max_summary_bytes: 4096
   sandbox:
-    kind: sandbox.Runner
-    impl: auto
+    kind: sandbox.Registry
+    impl: yaml
     deps:
-      workspace: ws/main
+      workspaces: ws
+    settings:
+      file: ./sandbox.yaml
   ws:
     kind: workspace.Registry
     impl: yaml
@@ -43,6 +45,8 @@ resources:
   tools:
     kind: tool.Assembly
     impl: yaml
+    deps:
+      sandbox: sandbox/main
     settings:
       file: ./tools.yaml
 
@@ -55,7 +59,7 @@ agents:
       kind: graph
       settings:
         graph:
-          embed: graphs/assistant.yaml
+          embed: assets/graphs/assistant.yaml
         build:
           # 不设 max_iterations（长任务不受回合数限制）；
           # timeout 是总时长兜底，防止异常死循环无限消耗。
@@ -63,7 +67,7 @@ agents:
     deps:
       inference: infer
       tools: tools
-      sandbox: sandbox
+      sandbox: sandbox/main
       workspace: ws/main
       script_runtime: js
     prepare:
@@ -85,6 +89,6 @@ runtime:
       default_exposure: deferred
       exposures:
         tool_search: always
-        exec: always
         exec_session: always
+        exec_command: always
         apply_patch: always

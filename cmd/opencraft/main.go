@@ -13,7 +13,6 @@ import (
 	"github.com/GizClaw/flowcraft/sdk/agent"
 	"github.com/GizClaw/flowcraft/sdk/message"
 	sdkdeploy "github.com/GizClaw/flowcraft/sdkx/deploy"
-	runtimecore "github.com/GizClaw/flowcraft/sdkx/runtime"
 	sessions "github.com/GizClaw/flowcraft/sdkx/runtime/session"
 
 	app "github.com/GizClaw/opencraft/internal/app"
@@ -24,7 +23,7 @@ func main() {
 	configPath := flag.String("config", "", "deploy document path (default: embedded, overridable by ~/.opencraft/config/opencraft.yaml)")
 	flag.Parse()
 	_ = app.LoadDotEnv(".env")
-	if dir, err := app.UserDataDir(); err == nil {
+	if dir, err := config.UserDataDir(); err == nil {
 		_ = app.LoadDotEnv(filepath.Join(dir, ".env"))
 	}
 
@@ -38,21 +37,21 @@ func main() {
 		fmt.Fprintf(os.Stderr, "opencraft: parse config: %v\n", err)
 		os.Exit(1)
 	}
-	rt, err := app.BuildRuntime(context.Background(), doc,
+	rtc, err := app.NewRuntimeController(context.Background(), doc,
 		app.WithConfigBase(configBase))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "opencraft: assemble runtime: %v\n", err)
 		os.Exit(1)
 	}
 	defer func() {
-		if err := rt.Close(); err != nil {
+		if err := rtc.Close(); err != nil {
 			fmt.Fprintf(os.Stderr, "opencraft: close runtime: %v\n", err)
 		}
 	}()
 
 	switch flag.Arg(0) {
 	case "run":
-		run(rt, flag.Arg(1))
+		run(rtc, flag.Arg(1))
 	case "":
 		fmt.Println("opencraft runtime ready (config-driven assembly)")
 	default:
@@ -70,7 +69,7 @@ func resolveDocument(explicit string) ([]byte, string, error) {
 		data, err := os.ReadFile(explicit)
 		return data, filepath.Dir(explicit), err
 	}
-	dir, err := app.EnsureUserConfig()
+	dir, err := config.EnsureUserConfig()
 	if err != nil {
 		return nil, "", err
 	}
@@ -78,12 +77,13 @@ func resolveDocument(explicit string) ([]byte, string, error) {
 	return data, dir, err
 }
 
-func run(rt *runtimecore.Runtime, text string) {
+func run(rtc *app.RuntimeController, text string) {
 	if text == "" {
 		fmt.Fprintln(os.Stderr, "opencraft: run requires a message")
 		os.Exit(2)
 	}
 	ctx := context.Background()
+	rt := rtc.Runtime()
 	key := sessions.Key{AgentID: "assistant", ContextID: "cli"}
 	lease, err := rt.Sessions().Open(ctx, key)
 	if err != nil {

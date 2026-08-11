@@ -69,6 +69,25 @@ func TestProtocolsBuildWithoutPanic(t *testing.T) {
 	}
 }
 
+func TestWithDisableKeepAlives(t *testing.T) {
+	for _, opt := range []Option{WithHTTP1(), WithHTTP2()} {
+		rt := NewRoundTripper(opt, WithDisableKeepAlives(), WithoutRetry())
+		transport, ok := rt.(*http.Transport)
+		if !ok {
+			t.Fatalf("round tripper type = %T, want *http.Transport", rt)
+		}
+		if !transport.DisableKeepAlives {
+			t.Errorf("DisableKeepAlives = false, want true")
+		}
+	}
+
+	rt := NewRoundTripper(WithHTTP1(), WithoutRetry())
+	transport := rt.(*http.Transport)
+	if transport.DisableKeepAlives {
+		t.Error("DisableKeepAlives = true by default, want false")
+	}
+}
+
 func TestNewClientTimeoutOption(t *testing.T) {
 	client := NewClient(WithTimeout(123 * 1e9))
 	if client.Timeout != 123*1e9 {

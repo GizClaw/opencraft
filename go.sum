@@ -1,7 +1,7 @@
-github.com/GizClaw/flowcraft/sdk v0.5.4 h1:tIYRFjIV0Vlz3Z9I+e0Zg6Re3rI63WIDOgkUNcyIqi0=
-github.com/GizClaw/flowcraft/sdk v0.5.4/go.mod h1:Nxcbz6SLISgg1mLxcuM0N5+w7ggX8SklJ1i/qgGE+Qs=
-github.com/GizClaw/flowcraft/sdkx v0.5.6 h1:hzllTtewLi/WXojng6nCY9Z4YbVaNwybWFC0Jd3s138=
-github.com/GizClaw/flowcraft/sdkx v0.5.6/go.mod h1:x8TMnAuRAY8Eg3bwXGYhoLI8nQxmW+ud4zOLpHkqAy0=
+github.com/GizClaw/flowcraft/sdk v0.5.5 h1:jLvkM1a0I4jyd/cHhzAW8ctaZ24sMc4NbM2/t1oDGqQ=
+github.com/GizClaw/flowcraft/sdk v0.5.5/go.mod h1:Nxcbz6SLISgg1mLxcuM0N5+w7ggX8SklJ1i/qgGE+Qs=
+github.com/GizClaw/flowcraft/sdkx v0.5.7 h1:i6oXbfQqEWDrFYaJEx/OZmaMzxXKH62LEk3Y3zAqlKI=
+github.com/GizClaw/flowcraft/sdkx v0.5.7/go.mod h1:/0/My2nwFQ3pAISQoo50q49yYPRMpWLfv5gsMflklQs=
 github.com/Masterminds/semver/v3 v3.2.1 h1:RN9w6+7QoMeJVGyfmbcgs28Br8cvmnucEXnY0rYXWg0=
 github.com/Masterminds/semver/v3 v3.2.1/go.mod h1:qvl/7zhW3nngYb5+80sSMF+FG2BjYrf8m9wsX0PNOMQ=
 github.com/PuerkitoBio/goquery v1.12.0 h1:pAcL4g3WRXekcB9AU/y1mbKez2dbY2AajVhtkO8RIBo=
@@ -29,6 +29,8 @@ github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkp
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
 github.com/expr-lang/expr v1.17.8 h1:W1loDTT+0PQf5YteHSTpju2qfUfNoBt4yw9+wOEU9VM=
 github.com/expr-lang/expr v1.17.8/go.mod h1:8/vRC7+7HBzESEqt5kKpYXxrxkr31SaO8r40VO/1IT4=
+github.com/fsnotify/fsnotify v1.10.1 h1:b0/UzAf9yR5rhf3RPm9gf3ehBPpf0oZKIjtpKrx59Ho=
+github.com/fsnotify/fsnotify v1.10.1/go.mod h1:TLheqan6HD6GBK6PrDWyDPBaEV8LspOxvPSjC+bVfgo=
 github.com/go-logr/logr v1.2.2/go.mod h1:jdQByPbusPIv2/zmleS9BjJVeZ6kBagPoEUsqbVz/1A=
 github.com/go-logr/logr v1.4.3 h1:CjnDlHq8ikf6E492q6eKboGOC0T8CDaOvkHCIg8idEI=
 github.com/go-logr/logr v1.4.3/go.mod h1:9T104GzyrTigFIr8wt5mBrctHMim0Nb2HLGrmQ40KvY=
