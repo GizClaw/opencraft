@@ -87,6 +87,7 @@ type View struct {
 	Workspace *workspaceconfig.Document
 	Tools     *toolconfig.Document
 	Sandbox   *sandboxconfig.Document
+	Execution *ExecutionConfig
 
 	// Raw holds the final merged document bytes per file name
 	// ("inference.yaml", "tools.yaml", ...).
@@ -106,7 +107,7 @@ func (m *Manager) Load(ctx context.Context) (*View, error) {
 		Origins: make(map[string]string),
 		Paths:   make(map[string]string),
 	}
-	for _, name := range []string{"inference", "workspace"} {
+	for _, name := range []string{"inference", "workspace", "execution"} {
 		data, err := os.ReadFile(filepath.Join(m.userDir, name+".yaml"))
 		if err != nil {
 			return nil, fmt.Errorf("config %s.yaml: %w", name, err)
@@ -126,6 +127,12 @@ func (m *Manager) Load(ctx context.Context) (*View, error) {
 				return nil, fmt.Errorf("workspace.yaml: %w", err)
 			}
 			v.Workspace = &doc
+		case "execution":
+			cfg, err := ParseExecution(data)
+			if err != nil {
+				return nil, fmt.Errorf("execution.yaml: %w", err)
+			}
+			v.Execution = &cfg
 		}
 	}
 	for _, name := range []string{"tools", "sandbox"} {
@@ -259,7 +266,7 @@ func (m *Manager) Update(
 
 func validDocument(docName string) bool {
 	switch docName {
-	case "inference", "workspace", "tools", "sandbox":
+	case "inference", "workspace", "tools", "sandbox", "execution":
 		return true
 	default:
 		return false

@@ -40,9 +40,14 @@ route:
 `
 }
 
+func executionYAML() string {
+	return "version: v1\nexecution:\n  mode: remote\n  server_url: \"\"\n"
+}
+
 func TestLoadUserDocuments(t *testing.T) {
 	userDir := t.TempDir()
 	writeConfig(t, userDir, "inference.yaml", inferenceYAML())
+	writeConfig(t, userDir, "execution.yaml", executionYAML())
 	writeConfig(t, userDir, "workspace.yaml", "version: v1\nworkspaces:\n  main:\n    driver: local\n    settings:\n      root: .\n")
 	writeConfig(t, userDir, "tools.yaml", "version: v1\nsources:\n  - kind: builtin\n    spec:\n      tools: [exec_command]\n")
 	writeConfig(t, userDir, "sandbox.yaml", "version: v1\nsandboxes:\n  main:\n    backend: seatbelt\n    workspace: main\n    defaults:\n      timeout: 5m\n")
@@ -71,6 +76,7 @@ func TestLoadProjectOverridesSandbox(t *testing.T) {
 	userDir := t.TempDir()
 	workDir := t.TempDir()
 	writeConfig(t, userDir, "inference.yaml", inferenceYAML())
+	writeConfig(t, userDir, "execution.yaml", executionYAML())
 	writeConfig(t, userDir, "workspace.yaml", "version: v1\nworkspaces:\n  main:\n    driver: local\n    settings:\n      root: .\n")
 	writeConfig(t, userDir, "tools.yaml", "version: v1\nsources:\n  - kind: builtin\n    spec:\n      tools: [exec_command]\n")
 	writeConfig(t, userDir, "sandbox.yaml", "version: v1\nsandboxes:\n  main:\n    backend: seatbelt\n    workspace: main\n    defaults:\n      timeout: 5m\n")
@@ -103,6 +109,7 @@ func TestLoadProjectReplacesToolsArray(t *testing.T) {
 	userDir := t.TempDir()
 	workDir := t.TempDir()
 	writeConfig(t, userDir, "inference.yaml", inferenceYAML())
+	writeConfig(t, userDir, "execution.yaml", executionYAML())
 	writeConfig(t, userDir, "workspace.yaml", "version: v1\nworkspaces:\n  main:\n    driver: local\n    settings:\n      root: .\n")
 	writeConfig(t, userDir, "tools.yaml", "version: v1\nsources:\n  - kind: builtin\n    spec:\n      tools: [exec_command]\n")
 	writeConfig(t, userDir, "sandbox.yaml", "version: v1\nsandboxes:\n  main:\n    backend: seatbelt\n    workspace: main\n")
@@ -125,6 +132,7 @@ func TestLoadProjectReplacesToolsArray(t *testing.T) {
 
 func TestValidateFailsOnBadDocument(t *testing.T) {
 	userDir := t.TempDir()
+	writeConfig(t, userDir, "execution.yaml", executionYAML())
 	writeConfig(t, userDir, "tools.yaml", "version: v2\nsources: []\n")
 	writeConfig(t, userDir, "sandbox.yaml", "version: v1\nsandboxes:\n  main:\n    backend: seatbelt\n    workspace: main\n")
 
@@ -141,6 +149,7 @@ func TestUpdateProjectLayerCreatesAndMerges(t *testing.T) {
 	userDir := t.TempDir()
 	workDir := t.TempDir()
 	writeConfig(t, userDir, "inference.yaml", inferenceYAML())
+	writeConfig(t, userDir, "execution.yaml", executionYAML())
 	writeConfig(t, userDir, "workspace.yaml", "version: v1\nworkspaces:\n  main:\n    driver: local\n    settings:\n      root: .\n")
 	writeConfig(t, userDir, "tools.yaml", "version: v1\nsources:\n  - kind: builtin\n    spec:\n      tools: [exec_command]\n")
 	writeConfig(t, userDir, "sandbox.yaml", "version: v1\nsandboxes:\n  main:\n    backend: seatbelt\n    workspace: main\n    defaults:\n      timeout: 5m\n")
@@ -181,6 +190,7 @@ func TestUpdateProjectLayerCreatesAndMerges(t *testing.T) {
 func TestUpdateUserLayer(t *testing.T) {
 	userDir := t.TempDir()
 	writeConfig(t, userDir, "inference.yaml", inferenceYAML())
+	writeConfig(t, userDir, "execution.yaml", executionYAML())
 	writeConfig(t, userDir, "workspace.yaml", "version: v1\nworkspaces:\n  main:\n    driver: local\n    settings:\n      root: .\n")
 	writeConfig(t, userDir, "tools.yaml", "version: v1\nsources:\n  - kind: builtin\n    spec:\n      tools: [exec_command]\n")
 	writeConfig(t, userDir, "sandbox.yaml", "version: v1\nsandboxes:\n  main:\n    backend: seatbelt\n    workspace: main\n")
@@ -213,6 +223,7 @@ func TestUpdateUserLayer(t *testing.T) {
 func TestUpdateRejectsInvalidPatchWithoutWriting(t *testing.T) {
 	userDir := t.TempDir()
 	writeConfig(t, userDir, "inference.yaml", inferenceYAML())
+	writeConfig(t, userDir, "execution.yaml", executionYAML())
 	writeConfig(t, userDir, "workspace.yaml", "version: v1\nworkspaces:\n  main:\n    driver: local\n    settings:\n      root: .\n")
 	writeConfig(t, userDir, "tools.yaml", "version: v1\nsources:\n  - kind: builtin\n    spec:\n      tools: [exec_command]\n")
 	writeConfig(t, userDir, "sandbox.yaml", "version: v1\nsandboxes:\n  main:\n    backend: seatbelt\n    workspace: main\n")

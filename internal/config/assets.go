@@ -9,7 +9,7 @@ import "embed"
 // internal wiring and stay embedded; inference.yaml and workspace.yaml
 // are seeded into ~/.opencraft/config/ for user configuration.
 //
-//go:embed assets/opencraft.yaml assets/inference.yaml assets/workspace.yaml assets/tools.yaml assets/graphs/assistant.yaml assets/graphs/node/world.js assets/prompts/system.md
+//go:embed assets/opencraft.yaml assets/inference.yaml assets/workspace.yaml assets/tools.yaml assets/execution.yaml assets/graphs/assistant.yaml assets/graphs/node/world.js assets/prompts/system.md
 var assets embed.FS
 
 // UserAssets are the embedded files seeded into ~/.opencraft/config/.
@@ -17,6 +17,7 @@ var UserAssets = []string{
 	"inference.yaml",
 	"workspace.yaml",
 	"tools.yaml",
+	"execution.yaml",
 }
 
 // SandboxYAML returns the platform-specific embedded sandbox document

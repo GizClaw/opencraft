@@ -1,9 +1,14 @@
-// Package execserver defines the JSON-RPC protocol between opencraft and
-// the exec-server process. The server wraps flowcraft's ProcessManager,
+// Package execd defines the JSON-RPC protocol between opencraft and
+// the execd process. The server wraps flowcraft's ProcessManager,
 // ProcessSignaler, and ProcessEventSource primitives.
-package execserver
+package execd
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+
+	"github.com/GizClaw/flowcraft/sdk/sandbox"
+)
 
 // Method names.
 const (
@@ -13,12 +18,42 @@ const (
 	MethodProcessRead       = "process/read"
 	MethodProcessWrite      = "process/write"
 	MethodProcessSignal     = "process/signal"
+	MethodProcessResize     = "process/resize"
 	MethodProcessTerminate  = "process/terminate"
 	MethodProcessOutput     = "process/output"
 	MethodProcessExited     = "process/exited"
 	MethodProcessClosed     = "process/closed"
+	MethodProcessLag        = "process/lag"
 	MethodEnvironmentInfo   = "environment/info"
 	MethodEnvironmentStatus = "environment/status"
+)
+
+// RPCRequest is the JSON-RPC 2.0 request envelope.
+type RPCRequest struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      *int64          `json:"id,omitempty"`
+	Method  string          `json:"method"`
+	Params  json.RawMessage `json:"params,omitempty"`
+}
+
+type Response struct {
+	JSONRPC string          `json:"jsonrpc"`
+	ID      *int64          `json:"id"`
+	Result  json.RawMessage `json:"result,omitempty"`
+	Error   *RPCError       `json:"error,omitempty"`
+}
+
+type RPCError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+// Standard JSON-RPC error codes.
+const (
+	ErrParse    = -32700
+	ErrInvalid  = -32600
+	ErrMethod   = -32601
+	ErrInternal = -32603
 )
 
 // Output streams.
@@ -41,13 +76,16 @@ type InitializeResponse struct {
 
 // ExecParams starts a managed process. Policy is applied once at start.
 type ExecParams struct {
-	ProcessID string            `json:"processId"`
-	Argv      []string          `json:"argv"`
-	Cwd       string            `json:"cwd"`
-	Env       map[string]string `json:"env,omitempty"`
-	TTY       bool              `json:"tty"`
-	PipeStdin bool              `json:"pipeStdin,omitempty"`
-	Timeout   time.Duration     `json:"timeout,omitempty"`
+	ProcessID string               `json:"processId"`
+	Argv      []string             `json:"argv"`
+	Cwd       string               `json:"cwd"`
+	Env       map[string]string    `json:"env,omitempty"`
+	TTY       bool                 `json:"tty"`
+	PipeStdin bool                 `json:"pipeStdin,omitempty"`
+	Timeout   time.Duration        `json:"timeout,omitempty"`
+	Rows      int                  `json:"rows,omitempty"`
+	Cols      int                  `json:"cols,omitempty"`
+	Sandbox   *sandbox.ExecOptions `json:"sandbox,omitempty"`
 }
 
 // ExecResponse confirms a started process.
@@ -108,8 +146,12 @@ type SignalParams struct {
 	Signal    string `json:"signal"`
 }
 
-// Signal values.
-const SignalInterrupt = "interrupt"
+// ResizeParams resizes a pty session.
+type ResizeParams struct {
+	ProcessID string `json:"processId"`
+	Rows      int    `json:"rows"`
+	Cols      int    `json:"cols"`
+}
 
 // TerminateParams stops a process (SIGTERM -> grace -> SIGKILL).
 type TerminateParams struct {
@@ -123,8 +165,10 @@ type TerminateResponse struct {
 
 // OutputNotification is the process/output push event.
 type OutputNotification struct {
-	ProcessID string      `json:"processId"`
-	Chunk     OutputChunk `json:"chunk"`
+	ProcessID string `json:"processId"`
+	Seq       int64  `json:"seq"`
+	Stream    string `json:"stream"`
+	Data      []byte `json:"data"` // base64 on the wire
 }
 
 // ExitedNotification is the process/exited push event.
@@ -140,4 +184,31 @@ type ExitedNotification struct {
 type ClosedNotification struct {
 	ProcessID string `json:"processId"`
 	Seq       int64  `json:"seq"`
+}
+
+// LagNotification tells the client to pull with process/read(afterSeq).
+type LagNotification struct {
+	ProcessID string `json:"processId"`
+	Seq       int64  `json:"seq"`
+}
+
+// Exit reason wire values.
+const (
+	ReasonExited     = "exited"
+	ReasonSignaled   = "signaled"
+	ReasonTerminated = "terminated"
+	ReasonUnknown    = "unknown"
+)
+
+// EnvironmentInfoResponse reports static capabilities.
+type EnvironmentInfoResponse struct {
+	Shell        string   `json:"shell"`
+	Cwd          string   `json:"cwd"`
+	TmpDir       string   `json:"tmpdir"`
+	Capabilities []string `json:"capabilities"`
+}
+
+// EnvironmentStatusResponse is the readiness probe.
+type EnvironmentStatusResponse struct {
+	Ready bool `json:"ready"`
 }

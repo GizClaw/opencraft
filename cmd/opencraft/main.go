@@ -7,6 +7,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 
@@ -17,6 +18,7 @@ import (
 
 	app "github.com/GizClaw/opencraft/internal/app"
 	"github.com/GizClaw/opencraft/internal/config"
+	"github.com/GizClaw/opencraft/internal/execd"
 )
 
 func main() {
@@ -36,6 +38,12 @@ func main() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "opencraft: parse config: %v\n", err)
 		os.Exit(1)
+	}
+	// The execd subcommand is self-forked by the main process and
+	// must not build a full runtime (it only serves process sessions).
+	if flag.Arg(0) == "execd" {
+		runExecServer()
+		return
 	}
 	rtc, err := app.NewRuntimeController(context.Background(), doc,
 		app.WithConfigBase(configBase))
@@ -57,6 +65,55 @@ func main() {
 	default:
 		fmt.Fprintf(os.Stderr, "opencraft: unknown command %q (run)\n", flag.Arg(0))
 		os.Exit(2)
+	}
+}
+
+// runExecServer serves the exec JSON-RPC protocol on stdio or a unix
+// socket. It is the child mode for opencraft's self-forked execd.
+func runExecServer() {
+	fs := flag.NewFlagSet("execd", flag.ExitOnError)
+	listen := fs.String("listen", "",
+		"unix socket path to listen on (empty: serve on stdio)")
+	workDir := fs.String("workdir", "", "working directory (default: current)")
+	if err := fs.Parse(flag.Args()[1:]); err != nil {
+		fmt.Fprintf(os.Stderr, "opencraft execd: %v\n", err)
+		os.Exit(2)
+	}
+
+	ctx := context.Background()
+	if _, err := config.EnsureUserConfig(); err != nil {
+		fmt.Fprintf(os.Stderr, "opencraft execd: seed config: %v\n", err)
+		os.Exit(1)
+	}
+	pm, err := app.SandboxProcessManager(ctx, *workDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "opencraft execd: %v\n", err)
+		os.Exit(1)
+	}
+
+	if *listen == "" {
+		if err := execd.New(pm, os.Stdin, os.Stdout).Serve(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "opencraft execd: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+	listener, err := net.Listen("unix", *listen)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "opencraft execd: listen: %v\n", err)
+		os.Exit(1)
+	}
+	defer listener.Close()
+	_ = os.Chmod(*listen, 0o600)
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			return
+		}
+		go func() {
+			defer conn.Close()
+			_ = execd.New(pm, conn, conn).Serve(ctx)
+		}()
 	}
 }
 

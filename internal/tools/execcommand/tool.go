@@ -1,41 +1,40 @@
 // Package execcommand provides the shell-semantics exec_command tool:
-// it runs the model-provided command string through /bin/sh -c inside
-// the sandbox, so pipelines, redirects, and && chains work like a
-// normal shell. Environment defaults are injected by the runner the
-// tool is wired with (see internal/app/sandboxenv.go).
+// it runs the model-provided command string through /bin/sh -c in an
+// execd.Environment (by default the remote execd), so
+// pipelines, redirects, and && chains work like a normal shell.
 package execcommand
 
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/GizClaw/flowcraft/sdk/errdefs"
 	"github.com/GizClaw/flowcraft/sdk/message"
-	"github.com/GizClaw/flowcraft/sdk/sandbox"
 	"github.com/GizClaw/flowcraft/sdk/tool"
+	"github.com/GizClaw/opencraft/internal/execd"
 )
 
 // Name is the canonical exec_command tool name.
 const Name = "exec_command"
 
-// Tool runs a shell command string inside the sandbox via /bin/sh -c.
+// Tool runs a shell command string via /bin/sh -c.
 type Tool struct {
-	runner sandbox.Runner
+	env execd.Environment
 }
 
-// New creates the exec_command tool. runner is required.
-func New(runner sandbox.Runner) (*Tool, error) {
-	if runner == nil {
-		return nil, errdefs.Validationf(
-			"exec_command: sandbox.Runner is required")
+// New creates the exec_command tool. env is required.
+func New(env execd.Environment) (*Tool, error) {
+	if env == nil {
+		return nil, errInvalid("environment is required")
 	}
-	return &Tool{runner: runner}, nil
+	return &Tool{env: env}, nil
 }
 
 // MustNew panics on invalid construction; use in static wiring.
-func MustNew(runner sandbox.Runner) *Tool {
-	t, err := New(runner)
+func MustNew(env execd.Environment) *Tool {
+	t, err := New(env)
 	if err != nil {
 		panic(err)
 	}
@@ -80,18 +79,19 @@ func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
 		return "", errdefs.Validationf("exec_command: parse arguments: %v", err)
 	}
 	if args.Command == "" {
-		return "", errdefs.Validationf("exec_command: command is required")
+		return "", errInvalid("command is required")
 	}
 
-	opts := sandbox.ExecOptions{
+	req := execd.Request{
+		Argv:    []string{"/bin/sh", "-c", args.Command},
 		WorkDir: args.Workdir,
 		Stdin:   []byte(args.Stdin),
 	}
 	if args.TimeoutSeconds != nil && *args.TimeoutSeconds > 0 {
-		opts.Timeout = time.Duration(*args.TimeoutSeconds * float64(time.Second))
+		req.Timeout = time.Duration(*args.TimeoutSeconds * float64(time.Second))
 	}
 
-	result, err := t.runner.Exec(ctx, "/bin/sh", []string{"-c", args.Command}, opts)
+	result, err := t.env.Exec(ctx, req)
 	if err != nil {
 		return "", err
 	}
@@ -108,3 +108,7 @@ func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
 
 // Compile-time assertion.
 var _ tool.Tool = (*Tool)(nil)
+
+func errInvalid(msg string) error {
+	return fmt.Errorf("exec_command: %s", msg)
+}

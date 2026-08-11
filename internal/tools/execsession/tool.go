@@ -1,0 +1,288 @@
+// Package execsession provides the exec_session tool: long-running
+// sessions over an execd.Environment, with start/read/write/
+// signal/resize/terminate/wait actions.
+package execsession
+
+import (
+	"context"
+	"encoding/json"
+	"sync"
+
+	"github.com/GizClaw/flowcraft/sdk/errdefs"
+	"github.com/GizClaw/flowcraft/sdk/message"
+	"github.com/GizClaw/flowcraft/sdk/tool"
+	"github.com/GizClaw/opencraft/internal/execd"
+)
+
+// Name is the canonical exec_session tool name.
+const Name = "exec_session"
+
+// Tool manages named sessions on one environment. It is safe for
+// concurrent use.
+type Tool struct {
+	env execd.Environment
+
+	mu       sync.Mutex
+	sessions map[string]execd.Process
+}
+
+// New creates the exec_session tool. env must declare CapSession.
+func New(env execd.Environment) (*Tool, error) {
+	if env == nil || !execd.Has(env, execd.CapSession) {
+		return nil, errdefs.Validationf(
+			"exec_session: environment must support sessions")
+	}
+	return &Tool{env: env, sessions: make(map[string]execd.Process)}, nil
+}
+
+// Definition implements tool.Tool.
+func (t *Tool) Definition() message.Definition {
+	return message.DefineSchema(
+		Name,
+		"Manage a long-running shell session in the execution "+
+			"environment. Actions: start (launch a session with argv), "+
+			"read (pull output after an after_seq cursor), write (send "+
+			"stdin bytes), signal (interrupt), resize (pty window), "+
+			"terminate (stop the process), wait (block until exit), "+
+			"close (release the session).",
+		message.ToolProperty("action", "string",
+			"start|read|write|signal|resize|terminate|wait|close (required)."),
+		message.ToolProperty("process_id", "string",
+			"Session identifier (required)."),
+		message.ToolArrayProperty("argv",
+			"Command and arguments (action=start).",
+			message.Items("string")),
+		message.ToolProperty("tty", "boolean",
+			"Request a pseudo-terminal (action=start)."),
+		message.ToolProperty("rows", "integer", "Pty rows (action=start/resize)."),
+		message.ToolProperty("cols", "integer", "Pty cols (action=start/resize)."),
+		message.ToolProperty("workdir", "string",
+			"Working directory (action=start)."),
+		message.ToolProperty("after_seq", "integer",
+			"Output cursor (action=read)."),
+		message.ToolProperty("max_bytes", "integer",
+			"Maximum bytes to return (action=read, default 4096)."),
+		message.ToolProperty("data", "string",
+			"Bytes to write to stdin (action=write)."),
+	).Required("action", "process_id").DisallowAdditionalProperties().Build()
+}
+
+// Metadata implements tool.ToolMetadata.
+func (t *Tool) Metadata() tool.ToolMeta {
+	return tool.ToolMeta{MutatesState: true}
+}
+
+type args struct {
+	Action    string   `json:"action"`
+	ProcessID string   `json:"process_id"`
+	Argv      []string `json:"argv"`
+	TTY       bool     `json:"tty"`
+	Rows      int      `json:"rows"`
+	Cols      int      `json:"cols"`
+	Workdir   string   `json:"workdir"`
+	AfterSeq  *int64   `json:"after_seq"`
+	MaxBytes  *int     `json:"max_bytes"`
+	Data      string   `json:"data"`
+}
+
+// Execute implements tool.Tool.
+func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
+	var a args
+	if err := json.Unmarshal([]byte(arguments), &a); err != nil {
+		return "", errdefs.Validationf("exec_session: parse arguments: %v", err)
+	}
+	if a.Action == "" || a.ProcessID == "" {
+		return "", errdefs.Validationf(
+			"exec_session: action and process_id are required")
+	}
+
+	var result any
+	var err error
+	switch a.Action {
+	case "start":
+		result, err = t.start(ctx, a)
+	case "read":
+		result, err = t.read(ctx, a)
+	case "write":
+		result, err = t.write(ctx, a)
+	case "signal":
+		result, err = t.signal(ctx, a)
+	case "resize":
+		result, err = t.resize(ctx, a)
+	case "terminate":
+		result, err = t.terminate(ctx, a)
+	case "wait":
+		result, err = t.wait(ctx, a)
+	case "close":
+		result, err = t.close(ctx, a)
+	default:
+		return "", errdefs.Validationf(
+			"exec_session: unknown action %q", a.Action)
+	}
+	if err != nil {
+		return "", err
+	}
+	payload, err := json.Marshal(result)
+	if err != nil {
+		return "", errdefs.Internalf("exec_session: encode result: %v", err)
+	}
+	return string(payload), nil
+}
+
+func (t *Tool) start(ctx context.Context, a args) (any, error) {
+	t.mu.Lock()
+	if _, exists := t.sessions[a.ProcessID]; exists {
+		t.mu.Unlock()
+		return nil, errdefs.Conflictf(
+			"exec_session: process %q already exists", a.ProcessID)
+	}
+	t.mu.Unlock()
+	proc, err := t.env.Start(ctx, execd.Spec{
+		ID:    a.ProcessID,
+		Argv:  a.Argv,
+		TTY:   a.TTY,
+		Rows:  a.Rows,
+		Cols:  a.Cols,
+		Input: execd.Request{WorkDir: a.Workdir},
+	})
+	if err != nil {
+		return nil, err
+	}
+	t.mu.Lock()
+	t.sessions[a.ProcessID] = proc
+	t.mu.Unlock()
+	return map[string]any{"process_id": a.ProcessID, "started": true}, nil
+}
+
+func (t *Tool) read(ctx context.Context, a args) (any, error) {
+	proc, err := t.get(a.ProcessID)
+	if err != nil {
+		return nil, err
+	}
+	after := int64(0)
+	if a.AfterSeq != nil {
+		after = *a.AfterSeq
+	}
+	maxBytes := 4096
+	if a.MaxBytes != nil {
+		maxBytes = *a.MaxBytes
+	}
+	out, err := proc.Read(ctx, after, maxBytes)
+	if err != nil {
+		return nil, err
+	}
+	chunks := make([]map[string]any, 0, len(out.Chunks))
+	for _, ch := range out.Chunks {
+		chunks = append(chunks, map[string]any{
+			"seq":    ch.Seq,
+			"stream": string(ch.Stream),
+			"data":   string(ch.Data),
+		})
+	}
+	return map[string]any{
+		"process_id": a.ProcessID,
+		"chunks":     chunks,
+		"next_seq":   out.NextSeq,
+		"eof":        out.EOF,
+	}, nil
+}
+
+func (t *Tool) write(ctx context.Context, a args) (any, error) {
+	proc, err := t.get(a.ProcessID)
+	if err != nil {
+		return nil, err
+	}
+	if err := proc.Write(ctx, []byte(a.Data)); err != nil {
+		return nil, err
+	}
+	return map[string]bool{"written": true}, nil
+}
+
+func (t *Tool) signal(ctx context.Context, a args) (any, error) {
+	proc, err := t.get(a.ProcessID)
+	if err != nil {
+		return nil, err
+	}
+	s, ok := proc.(execd.Signaler)
+	if !ok {
+		return nil, errdefs.NotAvailablef(
+			"exec_session: environment does not support signals")
+	}
+	if err := s.Signal(ctx, execd.SignalInterrupt); err != nil {
+		return nil, err
+	}
+	return map[string]bool{"signaled": true}, nil
+}
+
+func (t *Tool) resize(ctx context.Context, a args) (any, error) {
+	proc, err := t.get(a.ProcessID)
+	if err != nil {
+		return nil, err
+	}
+	r, ok := proc.(execd.Resizer)
+	if !ok {
+		return nil, errdefs.NotAvailablef(
+			"exec_session: environment does not support pty resize")
+	}
+	if err := r.Resize(ctx, a.Rows, a.Cols); err != nil {
+		return nil, err
+	}
+	return map[string]bool{"resized": true}, nil
+}
+
+func (t *Tool) terminate(ctx context.Context, a args) (any, error) {
+	proc, err := t.get(a.ProcessID)
+	if err != nil {
+		return nil, err
+	}
+	if err := proc.Terminate(ctx); err != nil {
+		return nil, err
+	}
+	return map[string]bool{"terminated": true}, nil
+}
+
+func (t *Tool) wait(ctx context.Context, a args) (any, error) {
+	proc, err := t.get(a.ProcessID)
+	if err != nil {
+		return nil, err
+	}
+	exit, err := proc.Wait(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"process_id": a.ProcessID,
+		"exit_code":  exit.Code,
+		"reason":     string(exit.Reason),
+	}, nil
+}
+
+func (t *Tool) close(ctx context.Context, a args) (any, error) {
+	t.mu.Lock()
+	proc, ok := t.sessions[a.ProcessID]
+	if ok {
+		delete(t.sessions, a.ProcessID)
+	}
+	t.mu.Unlock()
+	if !ok {
+		return nil, errdefs.NotFoundf(
+			"exec_session: unknown process %q", a.ProcessID)
+	}
+	if err := proc.Close(); err != nil {
+		return nil, err
+	}
+	return map[string]bool{"closed": true}, nil
+}
+
+func (t *Tool) get(id string) (execd.Process, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	proc, ok := t.sessions[id]
+	if !ok {
+		return nil, errdefs.NotFoundf(
+			"exec_session: unknown process %q", id)
+	}
+	return proc, nil
+}
+
+var _ tool.Tool = (*Tool)(nil)

@@ -3,33 +3,39 @@ package execcommand
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/GizClaw/flowcraft/sdk/sandbox"
+	"github.com/GizClaw/opencraft/internal/execd"
 )
 
-type recordingRunner struct {
-	cmd  string
-	args []string
-	opts sandbox.ExecOptions
+type fakeEnv struct {
+	req    execd.Request
+	result execd.Result
 }
 
-func (r *recordingRunner) Exec(
+func (f *fakeEnv) ID() string { return "fake" }
+
+func (f *fakeEnv) Capabilities() []execd.Capability {
+	return []execd.Capability{execd.CapExec}
+}
+
+func (f *fakeEnv) Exec(
 	_ context.Context,
-	cmd string,
-	args []string,
-	opts sandbox.ExecOptions,
-) (*sandbox.ExecResult, error) {
-	r.cmd = cmd
-	r.args = args
-	r.opts = opts
-	return &sandbox.ExecResult{ExitCode: 0, Stdout: "out", Stderr: ""}, nil
+	req execd.Request,
+) (execd.Result, error) {
+	f.req = req
+	return f.result, nil
+}
+
+func (f *fakeEnv) Start(context.Context, execd.Spec) (execd.Process, error) {
+	return nil, nil
 }
 
 func TestExecuteRunsShellCommand(t *testing.T) {
-	runner := &recordingRunner{}
-	tool, err := New(runner)
+	env := &fakeEnv{result: execd.Result{ExitCode: 0, Stdout: "out"}}
+	tool, err := New(env)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,16 +55,15 @@ func TestExecuteRunsShellCommand(t *testing.T) {
 	if res.Stdout != "out" {
 		t.Errorf("stdout = %q", res.Stdout)
 	}
-	if runner.cmd != "/bin/sh" || len(runner.args) != 2 ||
-		runner.args[0] != "-c" ||
-		runner.args[1] != "rg --files internal | rg httpclient" {
-		t.Errorf("argv = %q %v", runner.cmd, runner.args)
+	want := []string{"/bin/sh", "-c", "rg --files internal | rg httpclient"}
+	if !reflect.DeepEqual(env.req.Argv, want) {
+		t.Errorf("argv = %v", env.req.Argv)
 	}
 }
 
 func TestExecuteTimeout(t *testing.T) {
-	runner := &recordingRunner{}
-	tool, err := New(runner)
+	env := &fakeEnv{}
+	tool, err := New(env)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,13 +71,13 @@ func TestExecuteTimeout(t *testing.T) {
 		`{"command":"sleep 1","timeout_seconds":2}`); err != nil {
 		t.Fatal(err)
 	}
-	if runner.opts.Timeout == 0 {
+	if env.req.Timeout == 0 {
 		t.Error("timeout not set")
 	}
 }
 
 func TestExecuteRejectsEmptyCommand(t *testing.T) {
-	tool, err := New(&recordingRunner{})
+	tool, err := New(&fakeEnv{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +87,7 @@ func TestExecuteRejectsEmptyCommand(t *testing.T) {
 }
 
 func TestDefinition(t *testing.T) {
-	tool, err := New(&recordingRunner{})
+	tool, err := New(&fakeEnv{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -112,7 +112,7 @@ func (m *Manager) Watch(ctx context.Context, fn func(Change)) (stop func(), err 
 func documentFor(file string) (string, bool) {
 	name := strings.TrimSuffix(filepath.Base(file), ".yaml")
 	switch name {
-	case "inference", "workspace", "tools", "sandbox":
+	case "inference", "workspace", "tools", "sandbox", "execution":
 		return name, true
 	default:
 		return "", false

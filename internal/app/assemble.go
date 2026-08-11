@@ -29,15 +29,16 @@ import (
 	"github.com/GizClaw/flowcraft/sdkx/sandbox/bwrap"
 	"github.com/GizClaw/flowcraft/sdkx/sandbox/seatbelt"
 	"github.com/GizClaw/flowcraft/sdkx/tool/dynamic"
-	exectool "github.com/GizClaw/flowcraft/sdkx/tool/exec"
 	"github.com/GizClaw/flowcraft/sdkx/tool/mcp"
 
 	"github.com/GizClaw/opencraft/internal/app/worldstate"
 	"github.com/GizClaw/opencraft/internal/config"
+	"github.com/GizClaw/opencraft/internal/execd"
 	"github.com/GizClaw/opencraft/internal/memory"
 	"github.com/GizClaw/opencraft/internal/state"
 	"github.com/GizClaw/opencraft/internal/tools/applypatch"
 	"github.com/GizClaw/opencraft/internal/tools/execcommand"
+	"github.com/GizClaw/opencraft/internal/tools/execsession"
 	"github.com/GizClaw/opencraft/internal/tools/webfetch"
 )
 
@@ -49,6 +50,9 @@ type Options struct {
 	// WorkBase is the sandbox/workspace root. Defaults to the current
 	// working directory (where opencraft was invoked).
 	WorkBase string
+	// env is the execution environment for exec tools. Nil falls back
+	// to a LocalEnvironment over the sandbox resource runner.
+	env execd.Environment
 }
 
 type Option func(*Options)
@@ -61,6 +65,12 @@ func WithConfigBase(dir string) Option {
 // WithWorkBase overrides the sandbox/workspace root.
 func WithWorkBase(dir string) Option {
 	return func(o *Options) { o.WorkBase = dir }
+}
+
+// WithEnvironment injects the execution environment used by exec tools
+// (normally the self-forked remote execd).
+func WithEnvironment(env execd.Environment) Option {
+	return func(o *Options) { o.env = env }
 }
 
 // BuildRuntime assembles an opencraft runtime from a deploy document.
@@ -133,26 +143,31 @@ func BuildRuntime(ctx context.Context, doc sdkdeploy.Document, opts ...Option) (
 		}
 		return runner, nil
 	}
-	toolBuilder.RegisterBuiltinFactory(exectool.SessionName,
-		func(_ context.Context, in sdkconfig.Input) (tool.Tool, error) {
-			runner, err := sandboxRunner(in)
-			if err != nil {
-				return nil, err
-			}
-			pm := sandbox.ProcessManagerOf(runner)
-			if pm == nil {
-				return nil, errdefs.NotAvailablef(
-					"exec_session: sandbox backend has no process manager")
-			}
-			return exectool.NewSession(pm)
-		})
+	toolEnv := func(in sdkconfig.Input) (execd.Environment, error) {
+		if o.env != nil {
+			return o.env, nil
+		}
+		runner, err := sandboxRunner(in)
+		if err != nil {
+			return nil, err
+		}
+		return execd.NewLocalEnvironment(runner), nil
+	}
 	toolBuilder.RegisterBuiltinFactory(execcommand.Name,
 		func(_ context.Context, in sdkconfig.Input) (tool.Tool, error) {
-			runner, err := sandboxRunner(in)
+			env, err := toolEnv(in)
 			if err != nil {
 				return nil, err
 			}
-			return execcommand.New(runner)
+			return execcommand.New(env)
+		})
+	toolBuilder.RegisterBuiltinFactory(execsession.Name,
+		func(_ context.Context, in sdkconfig.Input) (tool.Tool, error) {
+			env, err := toolEnv(in)
+			if err != nil {
+				return nil, err
+			}
+			return execsession.New(env)
 		})
 	toolBuilder.RegisterBuiltin(applypatch.MustNew(ws))
 	toolBuilder.RegisterBuiltin(webfetch.New())
