@@ -1,0 +1,28 @@
+# Whitelist mode: ignore everything, then allow explicitly
+*
+
+# ── Git config ──
+!.gitignore
+
+# ── Root documentation ──
+!README.md
+!LICENSE
+!CHANGELOG.md
+!SECURITY.md
+!CONTRIBUTING.md
+!CODE_OF_CONDUCT.md
+
+# ── Go CI ──
+!.golangci.yml
+
+# ── Go source ──
+!go.mod
+!go.sum
+!cmd/
+!cmd/**
+!internal/
+!internal/**
+!pkg/
+!pkg/**
+!tools/
+!tools/**

@@ -1,0 +1,38 @@
+version: v1
+
+# opencraft 工具配置（用户可编辑，首次启动从 embed 种子到
+# ~/.opencraft/config/tools.yaml，删除后重新生成）。
+#
+# builtin 工具由 opencraft 注册：exec / exec_session / apply_patch。
+# 内置 web_fetch（Go 实现，fetch URL 并提取文本）默认启用；
+# MCP 搜索工具默认不启用；需要时取消注释并配置 server：
+#
+#   sources:
+#     - kind: mcp
+#       spec:
+#         servers:
+#           - name: ddg
+#             transport: stdio
+#             command: npx
+#             args: ["-y", "duckduckgo-mcp-server"]
+#             defer: true
+#             exposure: deferred
+#             tools:
+#               duckduckgo_web_search: deferred
+#
+# 注意：defer: true 时 server 的工具只在首次被 select/调用时才连接，
+# tool_search 只能搜索上面 tools 声明的名字，所以声明列表是必需的；
+# 未声明的工具既搜不到也无法 select。
+#
+# stdio 子进程运行在 opencraft 宿主进程侧（不在 sandbox 内），
+# 只应配置可信的 server。
+
+sources:
+  - kind: builtin
+    spec:
+      tools: [exec, exec_session, apply_patch, web_fetch]
+
+middlewares:
+  - kind: record_calls
+
+scopes: {}

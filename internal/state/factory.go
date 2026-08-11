@@ -1,0 +1,44 @@
+package state
+
+import (
+	"context"
+
+	"github.com/GizClaw/flowcraft/sdk/config"
+	"github.com/GizClaw/flowcraft/sdk/errdefs"
+)
+
+// ResourceKind is the deploy resource kind for opencraft state stores.
+const ResourceKind = "state"
+
+// Factory builds a SQLite state store from deploy settings. DefaultPath
+// is used when the document does not set an explicit path; the
+// application injects it (e.g. ~/.opencraft/opencraft.db).
+type Factory struct {
+	DefaultPath string
+}
+
+var _ config.Factory = Factory{}
+
+// Spec declares the resource shape: kind state, impl sqlite.
+func (Factory) Spec() config.Spec {
+	return config.Spec{Kind: ResourceKind, Impl: "sqlite"}
+}
+
+type settings struct {
+	Path string `json:"path"`
+}
+
+// New opens the SQLite store at the configured path.
+func (f Factory) New(ctx context.Context, in config.Input) (any, error) {
+	s, err := config.DecodeSettings[settings](in.Settings)
+	if err != nil {
+		return nil, err
+	}
+	if s.Path == "" {
+		s.Path = f.DefaultPath
+	}
+	if s.Path == "" {
+		return nil, errdefs.Validationf("state: path is required")
+	}
+	return Open(s.Path)
+}

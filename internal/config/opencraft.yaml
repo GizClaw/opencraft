@@ -1,0 +1,90 @@
+version: v1
+
+# opencraft internal deploy document (not user-editable). Resources and
+# agent wiring live here; only inference.yaml and workspace.yaml are
+# seeded to ~/.opencraft/config/ for user configuration.
+
+resources:
+  events:
+    kind: event.Bus
+    impl: memory
+  db:
+    kind: state
+    impl: sqlite
+  mem:
+    kind: memory
+    impl: summary
+    deps:
+      state: db
+    settings:
+      max_raw_messages: 32
+      preserve_recent: 4
+      max_summary_bytes: 4096
+  sandbox:
+    kind: sandbox.Runner
+    impl: auto
+    deps:
+      workspace: ws/main
+  ws:
+    kind: workspace.Registry
+    impl: yaml
+    settings:
+      file: ./workspace.yaml
+  js:
+    kind: agent.ScriptRuntime
+    impl: js
+    settings:
+      pool_size: 2
+  infer:
+    kind: inference.Assembly
+    impl: yaml
+    settings:
+      file: ./inference.yaml
+  tools:
+    kind: tool.Assembly
+    impl: yaml
+    settings:
+      file: ./tools.yaml
+
+agents:
+  assistant:
+    card:
+      name: opencraft
+      description: opencraft coding agent
+    engine:
+      kind: graph
+      settings:
+        graph:
+          embed: graphs/assistant.yaml
+        build:
+          # 不设 max_iterations（长任务不受回合数限制）；
+          # timeout 是总时长兜底，防止异常死循环无限消耗。
+          timeout: 1h
+    deps:
+      inference: infer
+      tools: tools
+      sandbox: sandbox
+      workspace: ws/main
+      script_runtime: js
+    prepare:
+      - type: opencraft.prepare
+        deps:
+          memory: mem
+    commit:
+      - type: opencraft.commit
+        deps:
+          memory: mem
+
+runtime:
+  event_bus: events
+  sessions:
+    idle_timeout: 10m
+    dynamic_catalog:
+      tools:
+        assistant: tools
+      default_exposure: deferred
+      exposures:
+        tool_search: always
+        exec: always
+        exec_session: always
+        apply_patch: always

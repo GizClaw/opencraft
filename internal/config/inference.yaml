@@ -1,0 +1,19 @@
+version: v1
+
+providers:
+  - id: deepseek
+    driver: deepseek
+    profiles:
+      - secrets:
+          api_key:
+            resolver: env
+            key: DEEPSEEK_API_KEY
+
+route:
+  generate:
+    - tier: primary
+      targets:
+        - model:
+            id:
+              provider: deepseek
+              name: deepseek-v4-flash

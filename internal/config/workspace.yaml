@@ -1,0 +1,7 @@
+version: v1
+
+workspaces:
+  main:
+    driver: local
+    settings:
+      root: .
