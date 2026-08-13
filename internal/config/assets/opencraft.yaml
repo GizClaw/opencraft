@@ -34,7 +34,7 @@ resources:
   # ------------------------------------------------------------------
   ws:
     kind: workspace.Workspace
-    impl: opencraft
+    impl: local
     settings:
       root: ${env:OPEN_CRAFT_WORKDIR}
   box:

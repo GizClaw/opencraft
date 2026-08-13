@@ -2,6 +2,8 @@ package tui
 
 import (
 	"context"
+	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,13 +36,22 @@ type renderFlushMsg struct{}
 // the current modal, and the shared chrome (header/status/input).
 // View-specific logic lives in ChatState / Modal.
 type Model struct {
-	rtc     *app.RuntimeController
-	opts    Options
-	ctx     context.Context
-	program *tea.Program
-	bridge  *Bridge
-	chat    ChatState
-	modal   *Modal
+	rtc         *app.RuntimeController
+	opts        Options
+	ctx         context.Context
+	program     *tea.Program
+	bridge      *Bridge
+	chat        ChatState
+	modal       *Modal
+	model       string
+	usageIn     int64
+	usageOut    int64
+	usageCacheR int64
+	usageCacheW int64
+	usageThink  int64
+	usageTotal  int64
+	usageLat    int64
+	usageSeen   bool
 
 	input   textarea.Model
 	view    viewport.Model
@@ -136,6 +147,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lease = msg.lease
 		m.turn = msg.turn
 		m.status = "working"
+		m.usageIn, m.usageOut, m.usageThink = 0, 0, 0
+		m.usageCacheR, m.usageCacheW = 0, 0
+		m.usageTotal, m.usageLat, m.usageSeen = 0, 0, false
 		m.refresh()
 		return m, tea.Batch(m.waitCmd(), spinner.Tick)
 
@@ -177,6 +191,19 @@ func (m *Model) applyEvent(ev Event) {
 	case ev.Status != nil:
 		m.status = ev.Status.Text
 		m.busy = ev.Status.Busy
+	case ev.Usage != nil:
+		m.usageIn += ev.Usage.InputTokens
+		m.usageOut += ev.Usage.OutputTokens
+		m.usageCacheR += ev.Usage.CacheReadTokens
+		m.usageCacheW += ev.Usage.CacheWriteTokens
+		m.usageThink += ev.Usage.ReasoningTokens
+		m.usageTotal += ev.Usage.TotalTokens
+		m.usageLat += ev.Usage.LatencyMs
+		m.usageSeen = true
+		if ev.Usage.Model != "" {
+			m.model = ev.Usage.Model
+		}
+		m.refresh()
 	}
 }
 
@@ -360,7 +387,10 @@ func (m *Model) renderModal() string {
 }
 
 func (m *Model) header() string {
-	right := "opencraft"
+	right := m.model
+	if right == "" {
+		right = "opencraft"
+	}
 	if m.busy {
 		right = m.spinner.View() + " working"
 	}
@@ -368,11 +398,57 @@ func (m *Model) header() string {
 }
 
 func (m *Model) statusBar() string {
+	// statusStyle has one cell of horizontal padding on each side, so
+	// the content width is two cells narrower than the terminal.
+	width := m.width - 2
+	if width < 0 {
+		width = 0
+	}
 	left := "Enter send · Ctrl+C interrupt/quit"
 	if m.status != "" {
 		left = m.status
 	}
-	return statusStyle.Width(m.width).Render(left)
+	var line string
+	if m.usageSeen {
+		right := fmt.Sprintf("in %s · out %s", humanInt(m.usageIn), humanInt(m.usageOut))
+		if m.usageCacheR > 0 || m.usageCacheW > 0 {
+			right += fmt.Sprintf(" · cache %s/%s",
+				humanInt(m.usageCacheR), humanInt(m.usageCacheW))
+		}
+		right += fmt.Sprintf(" · think %s · %s",
+			humanInt(m.usageThink), humanLatency(m.usageLat))
+		line = lipgloss.JoinHorizontal(lipgloss.Left, left, " ", right)
+		if lipgloss.Width(line) > width {
+			// Usage is the priority; drop the shortcut hint when the
+			// combined line does not fit.
+			line = right
+			if lipgloss.Width(line) > width {
+				line = lipgloss.NewStyle().MaxWidth(width).Render(line)
+			}
+		}
+	} else {
+		line = left
+	}
+	return statusStyle.Width(width).Render(line)
+}
+
+func humanInt(n int64) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1_000)
+	default:
+		return strconv.FormatInt(n, 10)
+	}
+}
+
+func humanLatency(ms int64) string {
+	d := time.Duration(ms) * time.Millisecond
+	if d >= time.Minute {
+		return d.Round(time.Second).String()
+	}
+	return d.Round(100 * time.Millisecond).String()
 }
 
 // View implements tea.Model.

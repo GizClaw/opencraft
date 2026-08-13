@@ -36,8 +36,10 @@ func NewRuntimeController(
 		return nil, err
 	}
 	return &RuntimeController{
-		doc: doc, opts: opts, workDir: workDir,
-		current: rt,
+		doc:        doc,
+		opts:       opts,
+		workDir:    workDir,
+		current:    rt,
 	}, nil
 }
 

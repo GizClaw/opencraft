@@ -28,7 +28,7 @@ import (
 	sessions "github.com/GizClaw/flowcraft/core/runtime/session"
 
 	"github.com/GizClaw/opencraft/internal/config"
-	"github.com/GizClaw/opencraft/internal/hooks"
+	"github.com/GizClaw/opencraft/internal/app/worldstate"
 	opmemory "github.com/GizClaw/opencraft/internal/memory"
 	"github.com/GizClaw/opencraft/internal/state"
 	opentools "github.com/GizClaw/opencraft/internal/tools"
@@ -45,6 +45,9 @@ type Options struct {
 	// userPrompter routes model questions (ask_user) to a user-facing
 	// surface such as the TUI. Nil keeps the runtime's default.
 	userPrompter agent.UserPrompter
+	// usageObserver receives every reported inference usage (including
+	// the model actually invoked). Nil disables observation.
+	usageObserver func(inference.Usage)
 }
 
 type Option func(*Options)
@@ -62,6 +65,12 @@ func WithWorkBase(dir string) Option {
 // WithUserPrompter injects the user-prompt surface used by ask_user.
 func WithUserPrompter(p agent.UserPrompter) Option {
 	return func(o *Options) { o.userPrompter = p }
+}
+
+// WithUsageObserver installs a usage-report observer. The callback runs
+// on the engine's goroutine and must be non-blocking.
+func WithUsageObserver(fn func(inference.Usage)) Option {
+	return func(o *Options) { o.usageObserver = fn }
 }
 
 // BuildRuntime assembles an opencraft runtime from a deploy document.
@@ -109,7 +118,6 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 	if err := workspace.Register(reg); err != nil {
 		return nil, err
 	}
-	reg.MustRegister(workspaceFactory{})
 	reg.MustRegister(sandboxFactory{})
 	if err := tool.Register(reg); err != nil {
 		return nil, err
@@ -145,12 +153,14 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 	reg.MustRegister(state.Factory{
 		DefaultPath: filepath.Join(dataDir, "opencraft.db"),
 	})
-	reg.MustRegister(opmemory.Factory{})
+	if err := opmemory.Register(reg); err != nil {
+		return nil, err
+	}
 	if err := opentools.Register(reg); err != nil {
 		return nil, err
 	}
 
-	if err := hooks.Register(reg); err != nil {
+	if err := worldstate.Register(reg); err != nil {
 		return nil, err
 	}
 
@@ -158,7 +168,7 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 	if err := builder.WithLoader(loader); err != nil {
 		return nil, err
 	}
-	if o.userPrompter != nil {
+	if o.userPrompter != nil || o.usageObserver != nil {
 		if err := builder.WithHostFactory(func(
 			base sessions.HostFactory,
 		) (sessions.HostFactory, error) {
@@ -170,10 +180,24 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 				if err != nil {
 					return nil, err
 				}
-				return agent.HostFuncs{
-					Inner:     host,
-					AskUserFn: o.userPrompter.AskUser,
-				}, nil
+				hf := agent.HostFuncs{Inner: host}
+				if o.userPrompter != nil {
+					hf.AskUserFn = o.userPrompter.AskUser
+				}
+				if o.usageObserver != nil {
+					observer := o.usageObserver
+					hf.ReportUsageFn = func(
+						ctx context.Context,
+						usage inference.Usage,
+					) error {
+						if err := host.ReportUsage(ctx, usage); err != nil {
+							return err
+						}
+						observer(usage)
+						return nil
+					}
+				}
+				return hf, nil
 			}), nil
 		}); err != nil {
 			return nil, err

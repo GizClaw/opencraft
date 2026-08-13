@@ -11,6 +11,7 @@ type Event struct {
 	Prompt  *PromptRequest
 	Approve *ApproveRequest
 	Status  *StatusEvent
+	Usage   *UsageEvent
 }
 
 // StreamEvent carries one runtime stream delta (token / tool call /
@@ -35,6 +36,19 @@ type ApproveRequest struct {
 type StatusEvent struct {
 	Text string
 	Busy bool
+}
+
+// UsageEvent reports one inference usage report plus the model that
+// produced it ("provider/name").
+type UsageEvent struct {
+	Model            string
+	InputTokens      int64
+	OutputTokens     int64
+	TotalTokens      int64
+	CacheReadTokens  int64
+	CacheWriteTokens int64
+	ReasoningTokens  int64
+	LatencyMs        int64
 }
 
 // batchMsg delivers one or more Events in a single tea message so the

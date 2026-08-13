@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
@@ -18,6 +19,15 @@ const ResourceKind = "memory"
 type Factory struct{}
 
 var _ resource.Factory = Factory{}
+
+// Register adds the memory assembly factory and the opencraft.commit
+// hook factory to r.
+func Register(r *resource.Registry) error {
+	return errors.Join(
+		r.Register(Factory{}),
+		r.Register(commitHookFactory{}),
+	)
+}
 
 // Spec declares the resource shape: kind memory, impl summary,
 // one required dependency on a state store.

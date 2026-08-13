@@ -3,10 +3,10 @@ module github.com/GizClaw/opencraft
 go 1.26.5
 
 require (
-	github.com/GizClaw/flowcraft/core v0.1.1
+	github.com/GizClaw/flowcraft/backends/checkpoint v0.1.0
+	github.com/GizClaw/flowcraft/core v0.1.2
 	github.com/GizClaw/flowcraft/driver/deepseek v0.1.0
 	github.com/GizClaw/flowcraft/driver/openai v0.1.0
-	github.com/GizClaw/flowcraft/backends/checkpoint v0.1.0
 	github.com/PuerkitoBio/goquery v1.12.0
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10

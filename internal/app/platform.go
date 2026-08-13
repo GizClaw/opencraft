@@ -10,7 +10,6 @@ import (
 	"github.com/GizClaw/flowcraft/core/sandbox/bwrap"
 	sandboxlocal "github.com/GizClaw/flowcraft/core/sandbox/local"
 	"github.com/GizClaw/flowcraft/core/sandbox/seatbelt"
-	"github.com/GizClaw/flowcraft/core/workspace"
 
 	"github.com/GizClaw/opencraft/internal/execd"
 )
@@ -60,32 +59,4 @@ func (sandboxFactory) New(ctx context.Context, in resource.Input) (any, error) {
 	}
 }
 
-// workspaceFactory implements the workspace.Workspace resource as a
-// local workspace with env-expanded root.
-type workspaceFactory struct{}
-
-var _ resource.Factory = workspaceFactory{}
-
-func (workspaceFactory) Spec() resource.Spec {
-	return resource.Spec{Kind: "workspace.Workspace", Impl: "opencraft"}
-}
-
-type workspaceSettings struct {
-	Root string `json:"root"`
-}
-
-func (workspaceFactory) New(_ context.Context, in resource.Input) (any, error) {
-	s, err := resource.DecodeTyped[workspaceSettings](
-		in.Settings, resource.ExpandEnv())
-	if err != nil {
-		return nil, err
-	}
-	if s.Root == "" {
-		return nil, errdefs.Validationf(
-			"opencraft workspace: settings.root is required")
-	}
-	return workspace.NewLocalWorkspace(s.Root)
-}
-
-var _ workspace.Workspace = (*workspace.LocalWorkspace)(nil)
 var _ sandbox.Runner = (*sandboxlocal.Runner)(nil)

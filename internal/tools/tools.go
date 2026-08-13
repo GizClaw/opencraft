@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/sandbox"
 	"github.com/GizClaw/flowcraft/core/tool"
@@ -20,6 +19,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/tools/execcommand"
 	"github.com/GizClaw/opencraft/internal/tools/execsession"
 	"github.com/GizClaw/opencraft/internal/tools/webfetch"
+	"github.com/GizClaw/opencraft/internal/utils/resourcedep"
 )
 
 // Register adds every opencraft tool.Source factory to r.
@@ -50,7 +50,7 @@ func (execSourceFactory) New(_ context.Context, in resource.Input) (any, error) 
 	if !sourceEnabled(in) {
 		return toolList{}, nil
 	}
-	runner, err := requiredDep[sandbox.Runner](in, "sandbox")
+	runner, err := resourcedep.Required[sandbox.Runner](in, "tool source", "sandbox")
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +80,7 @@ func (applypatchSourceFactory) New(_ context.Context, in resource.Input) (any, e
 	if !sourceEnabled(in) {
 		return toolList{}, nil
 	}
-	ws, err := requiredDep[workspace.Workspace](in, "workspace")
+	ws, err := resourcedep.Required[workspace.Workspace](in, "tool source", "workspace")
 	if err != nil {
 		return nil, err
 	}
@@ -111,21 +111,6 @@ func (l toolList) Tools() []tool.Tool { return l }
 func (toolList) LazyTools() []tool.LazyTool { return nil }
 
 var _ tool.Source = toolList(nil)
-
-func requiredDep[T any](in resource.Input, name string) (T, error) {
-	var zero T
-	dep, ok := in.Dep(name)
-	if !ok {
-		return zero, errdefs.Validationf(
-			"tool source: dep %q is required", name)
-	}
-	value, ok := dep.(T)
-	if !ok {
-		return zero, errdefs.Validationf(
-			"tool source: dep %q is %T, want %T", name, dep, zero)
-	}
-	return value, nil
-}
 
 // sourceEnabled reads the optional enabled switch from a source's
 // settings. Absent means enabled.

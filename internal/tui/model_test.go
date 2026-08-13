@@ -157,6 +157,42 @@ func TestFormatExecResult(t *testing.T) {
 	}
 }
 
+func TestUsageAccumulatesInStatusBar(t *testing.T) {
+	m := newTestModel()
+	m.width = 80
+	m.applyEvent(Event{Usage: &UsageEvent{
+		InputTokens: 1200, OutputTokens: 340,
+		CacheReadTokens: 200, CacheWriteTokens: 40,
+		ReasoningTokens: 50, LatencyMs: 800,
+	}})
+	m.applyEvent(Event{Usage: &UsageEvent{
+		InputTokens: 300, OutputTokens: 10, LatencyMs: 200,
+	}})
+	bar := m.statusBar()
+	if strings.Contains(bar, "\n") {
+		t.Fatalf("status bar wrapped: %q", bar)
+	}
+	for _, want := range []string{
+		"in 1.5k", "out 350", "cache 200/40", "think 50", "1s",
+	} {
+		if !strings.Contains(bar, want) {
+			t.Errorf("status bar = %q, want %q", bar, want)
+		}
+	}
+}
+
+func TestHumanInt(t *testing.T) {
+	cases := map[int64]string{
+		0: "0", 45: "45", 999: "999",
+		1000: "1.0k", 1234: "1.2k", 1_500_000: "1.5M",
+	}
+	for in, want := range cases {
+		if got := humanInt(in); got != want {
+			t.Errorf("humanInt(%d) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestKeyRunesUpdateInput(t *testing.T) {
 	m := newTestModel()
 	updated, _ := m.Update(tea.KeyMsg{

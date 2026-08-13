@@ -64,7 +64,8 @@ func main() {
 	bridge := tui.NewBridge(256)
 	rtc, err := app.NewRuntimeController(ctx, view.Document,
 		app.WithConfigBase(mgr.UserDir()),
-		app.WithUserPrompter(bridge))
+		app.WithUserPrompter(bridge),
+		app.WithUsageObserver(bridge.Usage))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "opencraft: assemble runtime: %v\n", err)
 		os.Exit(1)

@@ -7,6 +7,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/event"
+	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/message"
 )
 
@@ -91,6 +92,31 @@ func (b *Bridge) Approve(
 // Status publishes a status event.
 func (b *Bridge) Status(text string, busy bool) {
 	b.events <- Event{Status: &StatusEvent{Text: text, Busy: busy}}
+}
+
+// Usage publishes an inference usage report (tokens, latency, and the
+// model that produced it).
+func (b *Bridge) Usage(usage inference.Usage) {
+	ev := UsageEvent{
+		InputTokens:  usage.InputTokens,
+		OutputTokens: usage.OutputTokens,
+		TotalTokens:  usage.TotalTokens,
+		LatencyMs:    usage.LatencyMs,
+	}
+	if usage.Output.ReasoningTokens != nil {
+		ev.ReasoningTokens = *usage.Output.ReasoningTokens
+	}
+	if usage.Input.CacheReadTokens != nil {
+		ev.CacheReadTokens = *usage.Input.CacheReadTokens
+	}
+	if usage.Input.CacheWriteTokens != nil {
+		ev.CacheWriteTokens = *usage.Input.CacheWriteTokens
+	}
+	id := usage.Model.ID
+	if id.Provider != "" && id.Name != "" {
+		ev.Model = id.Provider + "/" + id.Name
+	}
+	b.events <- Event{Usage: &ev}
 }
 
 func promptText(prompt agent.UserPrompt) string {
