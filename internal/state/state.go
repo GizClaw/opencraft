@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/GizClaw/flowcraft/sdk/message"
+	"github.com/GizClaw/flowcraft/core/message"
 	_ "modernc.org/sqlite" // registers the "sqlite" driver.
 )
 

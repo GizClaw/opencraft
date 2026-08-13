@@ -1,19 +1,8 @@
-version: v1
-
-providers:
-  - id: deepseek
-    driver: deepseek
-    profiles:
-      - secrets:
-          api_key:
-            resolver: env
-            key: DEEPSEEK_API_KEY
-
-route:
-  generate:
-    - tier: primary
-      targets:
-        - model:
-            id:
-              provider: deepseek
-              name: deepseek-v4-flash
+# opencraft user-editable DeepSeek provider settings
+# (~/.opencraft/config/inference.yaml; deleted files are regenerated).
+# This file is the settings of the provider.deepseek resource;
+# ${env:...} references are expanded at build time.
+id: deepseek
+profiles:
+  - secrets:
+      api_key: ${env:DEEPSEEK_API_KEY}

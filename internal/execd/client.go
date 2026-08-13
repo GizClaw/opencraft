@@ -69,6 +69,11 @@ func (c *Client) Write(ctx context.Context, params WriteParams) (*WriteResponse,
 	return &out, nil
 }
 
+func (c *Client) CloseInput(ctx context.Context, params CloseInputParams) error {
+	var out map[string]bool
+	return c.call(ctx, MethodProcessCloseInput, params, &out)
+}
+
 func (c *Client) Signal(ctx context.Context, params SignalParams) error {
 	var out map[string]bool
 	return c.call(ctx, MethodProcessSignal, params, &out)

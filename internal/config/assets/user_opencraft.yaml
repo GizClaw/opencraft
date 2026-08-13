@@ -1,0 +1,15 @@
+# opencraft user configuration layer (~/.opencraft/config/opencraft.yaml).
+# This is a partial deploy layer merged over the embedded opencraft.yaml
+# with higher priority: resource/agent fields declared here override the
+# built-in defaults.
+#
+# Example: add an OpenAI provider (the built-in default is DeepSeek only)
+# resources:
+#   provider.openai:
+#     kind: inference.Provider
+#     impl: openai
+#     settings:
+#       id: openai
+#       profiles:
+#         - secrets:
+#             api_key: ${env:OPENAI_API_KEY}

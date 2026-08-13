@@ -5,7 +5,7 @@ package memory
 import (
 	"context"
 
-	"github.com/GizClaw/flowcraft/sdk/message"
+	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/opencraft/internal/memory/summary"
 	"github.com/GizClaw/opencraft/internal/state"
 )
@@ -28,7 +28,7 @@ func (a *sqliteTurnStore) AppendMessages(
 			continue
 		}
 		item := state.Item{
-			ID:        conversationID + ":" + turnID + ":" + itoa(i),
+			ID:        conversationID + ":" + turnID + ":" + itoa(int(seq)+i),
 			ThreadID:  conversationID,
 			TurnID:    turnID,
 			Seq:       seq,

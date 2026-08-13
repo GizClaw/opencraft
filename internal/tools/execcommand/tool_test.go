@@ -7,39 +7,87 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/GizClaw/opencraft/internal/execd"
+	"github.com/GizClaw/flowcraft/core/sandbox"
 )
 
-type fakeEnv struct {
-	req    execd.Request
-	result execd.Result
+type fakeRunner struct {
+	started []sandbox.SessionSpec
+	out     sandbox.SessionOutput
+	exit    sandbox.SessionExit
 }
 
-func (f *fakeEnv) ID() string { return "fake" }
-
-func (f *fakeEnv) Capabilities() []execd.Capability {
-	return []execd.Capability{execd.CapExec}
+func (f *fakeRunner) Capabilities() sandbox.Capabilities {
+	return sandbox.Capabilities{}
 }
 
-func (f *fakeEnv) Exec(
+func (f *fakeRunner) Start(
 	_ context.Context,
-	req execd.Request,
-) (execd.Result, error) {
-	f.req = req
-	return f.result, nil
+	spec sandbox.SessionSpec,
+) (sandbox.Session, error) {
+	f.started = append(f.started, spec)
+	return &fakeSession{out: f.out, exit: f.exit}, nil
 }
 
-func (f *fakeEnv) Start(context.Context, execd.Spec) (execd.Process, error) {
+func (f *fakeRunner) List(context.Context) ([]sandbox.SessionInfo, error) {
 	return nil, nil
 }
 
-func TestExecuteRunsShellCommand(t *testing.T) {
-	env := &fakeEnv{result: execd.Result{ExitCode: 0, Stdout: "out"}}
-	tool, err := New(env)
-	if err != nil {
-		t.Fatal(err)
-	}
+func (f *fakeRunner) Terminate(context.Context, string) error { return nil }
 
+type fakeSession struct {
+	out  sandbox.SessionOutput
+	exit sandbox.SessionExit
+}
+
+func (s *fakeSession) ID() string    { return "s" }
+func (s *fakeSession) PID() int      { return 1 }
+func (s *fakeSession) Capabilities() sandbox.SessionCapabilities {
+	return sandbox.SessionCapabilities{}
+}
+func (s *fakeSession) Read(
+	context.Context, int64, int,
+) (sandbox.SessionOutput, error) {
+	return s.out, nil
+}
+func (s *fakeSession) Write(context.Context, []byte) error { return nil }
+func (s *fakeSession) CloseInput() error                   { return nil }
+func (s *fakeSession) Resize(context.Context, int, int) error {
+	return nil
+}
+func (s *fakeSession) Signal(context.Context, sandbox.SessionSignal) error {
+	return nil
+}
+func (s *fakeSession) Terminate(context.Context) error { return nil }
+func (s *fakeSession) Wait(context.Context) (sandbox.SessionExit, error) {
+	return s.exit, nil
+}
+func (s *fakeSession) Watch(context.Context) (sandbox.SessionWatcher, error) {
+	return nil, nil
+}
+func (s *fakeSession) Close() error { return nil }
+
+func newTestTool() (*Tool, *fakeRunner) {
+	runner := &fakeRunner{
+		out: sandbox.SessionOutput{
+			NextSeq: 1,
+			Chunks: []sandbox.OutputChunk{{
+				Seq:    0,
+				Stream: sandbox.SessionStreamStdout,
+				Data:   []byte("out"),
+			}},
+			EOF: true,
+		},
+		exit: sandbox.SessionExit{Code: 0, Reason: sandbox.SessionExited},
+	}
+	tool, err := New(runner)
+	if err != nil {
+		panic(err)
+	}
+	return tool, runner
+}
+
+func TestExecuteRunsShellCommand(t *testing.T) {
+	tool, runner := newTestTool()
 	out, err := tool.Execute(context.Background(),
 		`{"command":"rg --files internal | rg httpclient"}`)
 	if err != nil {
@@ -56,41 +104,31 @@ func TestExecuteRunsShellCommand(t *testing.T) {
 		t.Errorf("stdout = %q", res.Stdout)
 	}
 	want := []string{"/bin/sh", "-c", "rg --files internal | rg httpclient"}
-	if !reflect.DeepEqual(env.req.Argv, want) {
-		t.Errorf("argv = %v", env.req.Argv)
+	if !reflect.DeepEqual(runner.started[0].Argv, want) {
+		t.Errorf("argv = %v", runner.started[0].Argv)
 	}
 }
 
 func TestExecuteTimeout(t *testing.T) {
-	env := &fakeEnv{}
-	tool, err := New(env)
-	if err != nil {
-		t.Fatal(err)
-	}
+	tool, runner := newTestTool()
 	if _, err := tool.Execute(context.Background(),
 		`{"command":"sleep 1","timeout_seconds":2}`); err != nil {
 		t.Fatal(err)
 	}
-	if env.req.Timeout == 0 {
+	if runner.started[0].Opts.Timeout == 0 {
 		t.Error("timeout not set")
 	}
 }
 
 func TestExecuteRejectsEmptyCommand(t *testing.T) {
-	tool, err := New(&fakeEnv{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	tool, _ := newTestTool()
 	if _, err := tool.Execute(context.Background(), `{"command":""}`); err == nil {
 		t.Fatal("empty command unexpectedly accepted")
 	}
 }
 
 func TestDefinition(t *testing.T) {
-	tool, err := New(&fakeEnv{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	tool, _ := newTestTool()
 	def := tool.Definition()
 	if def.Name != Name || !strings.Contains(def.Description, "/bin/sh -c") {
 		t.Fatalf("definition = %+v", def)

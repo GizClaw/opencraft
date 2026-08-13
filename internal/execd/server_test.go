@@ -9,17 +9,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GizClaw/flowcraft/sdk/sandbox"
+	"github.com/GizClaw/flowcraft/core/sandbox/local"
 )
 
 func testPair(t *testing.T) (*Client, context.CancelFunc) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	root := t.TempDir()
-	backend := sandbox.ProcessManagerOf(sandbox.NewLocalRunner(root))
-	if backend == nil {
-		t.Fatal("local runner has no process manager")
-	}
+	backend := local.New(root)
 
 	serverConn, clientConn := net.Pipe()
 	go func() {

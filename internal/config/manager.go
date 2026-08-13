@@ -1,19 +1,16 @@
+// Package config owns opencraft's user-facing configuration: discovery,
+// seeding, layered loading (embedded base -> user -> project), and the
+// app-level execution document. The deploy layering itself is
+// flowcraft core's deploy.LoadLayers.
 package config
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 
-	sdkconfig "github.com/GizClaw/flowcraft/sdk/config"
-	inferenceconfig "github.com/GizClaw/flowcraft/sdk/inference/config"
-	sandboxconfig "github.com/GizClaw/flowcraft/sdk/sandbox/config"
-	toolconfig "github.com/GizClaw/flowcraft/sdk/tool/config"
-	workspaceconfig "github.com/GizClaw/flowcraft/sdk/workspace/config"
-
-	"sigs.k8s.io/yaml"
+	"github.com/GizClaw/flowcraft/core/deploy"
+	"github.com/GizClaw/flowcraft/core/resource"
 )
 
 // Layer identifies a configuration layer.
@@ -30,19 +27,20 @@ type Options struct {
 	// Defaults to the current working directory.
 	WorkDir string
 	// UserDir overrides the global user configuration directory
-	// (defaults to ~/.opencraft/config). Tests and embedded hosts use it
-	// to isolate configuration.
+	// (defaults to ~/.opencraft/config).
 	UserDir string
+	// Explicit overrides the base embedded deploy document with an
+	// on-disk full document (the -config flag).
+	Explicit string
 }
 
-// Manager owns configuration loading: it discovers the user and project
-// layers, merges them with flowcraft's layered loader, and exposes the
-// typed documents to callers (TUI, CLI, app-server, runtime assembly).
+// Manager owns layered configuration loading: the embedded base, the
+// user layer, and the optional project layer.
 type Manager struct {
 	workDir    string
 	userDir    string
 	projectDir string
-	loader     *sdkconfig.Loader
+	explicit   string
 }
 
 // Open creates a Manager for workDir, discovering the project layer.
@@ -64,10 +62,7 @@ func Open(opts Options) (*Manager, error) {
 		workDir:    workDir,
 		userDir:    userDir,
 		projectDir: projectDir,
-		loader: sdkconfig.NewLoader(
-			sdkconfig.WithBaseDir(userDir),
-			sdkconfig.WithEmbed(FS()),
-		),
+		explicit:   opts.Explicit,
 	}, nil
 }
 
@@ -81,194 +76,56 @@ func (m *Manager) UserDir() string { return m.userDir }
 // no project layer exists.
 func (m *Manager) ProjectDir() string { return m.projectDir }
 
-// View is the merged, typed configuration plus provenance.
+// View is the merged deployment plus provenance.
 type View struct {
-	Inference *inferenceconfig.Document
-	Workspace *workspaceconfig.Document
-	Tools     *toolconfig.Document
-	Sandbox   *sandboxconfig.Document
-	Execution *ExecutionConfig
-
-	// Raw holds the final merged document bytes per file name
-	// ("inference.yaml", "tools.yaml", ...).
-	Raw map[string][]byte
-	// Origins maps "file.leaf.path" to the layer that last set it
-	// (user / project); only layered documents (tools, sandbox) carry
-	// origins.
-	Origins map[string]string
-	// Paths maps file name to the effective on-disk path.
-	Paths map[string]string
+	// Document is the deploy document merged across layers.
+	Document deploy.Document
+	// Provenance records which layer provided each resource/agent.
+	Provenance deploy.Provenance
 }
 
-// Load reads, merges, and parses every configuration document.
+// Load merges the layered deploy documents.
 func (m *Manager) Load(ctx context.Context) (*View, error) {
-	v := &View{
-		Raw:     make(map[string][]byte),
-		Origins: make(map[string]string),
-		Paths:   make(map[string]string),
-	}
-	for _, name := range []string{"inference", "workspace", "execution"} {
-		data, err := os.ReadFile(filepath.Join(m.userDir, name+".yaml"))
-		if err != nil {
-			return nil, fmt.Errorf("config %s.yaml: %w", name, err)
-		}
-		v.Raw[name+".yaml"] = data
-		v.Paths[name+".yaml"] = filepath.Join(m.userDir, name+".yaml")
-		switch name {
-		case "inference":
-			doc, err := inferenceconfig.Parse(data)
-			if err != nil {
-				return nil, fmt.Errorf("inference.yaml: %w", err)
-			}
-			v.Inference = &doc
-		case "workspace":
-			doc, err := workspaceconfig.Parse(data)
-			if err != nil {
-				return nil, fmt.Errorf("workspace.yaml: %w", err)
-			}
-			v.Workspace = &doc
-		case "execution":
-			cfg, err := ParseExecution(data)
-			if err != nil {
-				return nil, fmt.Errorf("execution.yaml: %w", err)
-			}
-			v.Execution = &cfg
+	layers := []deploy.Layer{{
+		Priority: 0,
+		Name:     "embedded",
+		Source:   resource.Source{Embed: "assets/opencraft.yaml"},
+		Embed:    FS(),
+	}}
+	if m.explicit != "" {
+		layers[0] = deploy.Layer{
+			Priority: 0,
+			Name:     "explicit",
+			Source:   resource.Source{File: filepath.Base(m.explicit)},
+			BaseDir:  filepath.Dir(m.explicit),
 		}
 	}
-	for _, name := range []string{"tools", "sandbox"} {
-		layers := []sdkconfig.Layer{
-			{Name: string(LayerUser), Source: sdkconfig.FileSource(name + ".yaml")},
-		}
-		path := filepath.Join(m.userDir, name+".yaml")
-		if m.projectDir != "" {
-			projectFile := filepath.Join(m.projectDir, name+".yaml")
-			if data, err := os.ReadFile(projectFile); err == nil {
-				// Project files live outside the loader's base directory
-				// (path confinement), so they merge as literal content.
-				layers = append(layers, sdkconfig.Layer{
-					Name:   string(LayerProject),
-					Source: sdkconfig.LiteralSource(string(data)),
-				})
-				path = projectFile
-			}
-		}
-		layered, err := m.loader.LoadLayers(ctx, layers)
-		if err != nil {
-			return nil, fmt.Errorf("config %s.yaml: %w", name, err)
-		}
-		v.Raw[name+".yaml"] = layered.Data
-		v.Paths[name+".yaml"] = path
-		for key, origin := range layered.Origins {
-			v.Origins[name+".yaml."+key] = origin
-		}
-		switch name {
-		case "tools":
-			doc, err := toolconfig.Parse(layered.Data)
-			if err != nil {
-				return nil, fmt.Errorf("tools.yaml: %w", err)
-			}
-			v.Tools = &doc
-		case "sandbox":
-			doc, err := sandboxconfig.Parse(layered.Data)
-			if err != nil {
-				return nil, fmt.Errorf("sandbox.yaml: %w", err)
-			}
-			v.Sandbox = &doc
-		}
+	layers = append(layers, deploy.Layer{
+		Priority: 10,
+		Name:     string(LayerUser),
+		Source:   resource.Source{File: "opencraft.yaml"},
+		BaseDir:  m.userDir,
+	})
+	if m.projectDir != "" {
+		layers = append(layers, deploy.Layer{
+			Priority: 20,
+			Name:     string(LayerProject),
+			Source:   resource.Source{File: "opencraft.yaml"},
+			BaseDir:  m.projectDir,
+		})
 	}
-	return v, nil
+	doc, provenance, err := deploy.LoadLayers(ctx, layers)
+	if err != nil {
+		return nil, err
+	}
+	return &View{
+		Document:   doc,
+		Provenance: provenance,
+	}, nil
 }
 
-// Validate loads and strictly parses every document, failing on the
-// first error.
+// Validate loads and strictly parses every layer and document.
 func (m *Manager) Validate(ctx context.Context) error {
 	_, err := m.Load(ctx)
 	return err
-}
-
-// Update merges a partial patch into the target layer's document file
-// and writes it back. Patch semantics match LoadLayers: maps merge
-// recursively, scalars and arrays are replaced wholesale, and an
-// explicit null deletes a key. The merged document is strictly parsed
-// before anything is written. When layer is the project layer and no
-// project directory exists yet, it is created under the work directory.
-func (m *Manager) Update(
-	ctx context.Context,
-	docName string,
-	layer Layer,
-	patch any,
-) error {
-	if !validDocument(docName) {
-		return fmt.Errorf("config: unknown document %q", docName)
-	}
-	if layer != LayerUser && layer != LayerProject {
-		return fmt.Errorf("config: unknown layer %q", layer)
-	}
-	patchMap, ok := patch.(map[string]any)
-	if !ok {
-		return fmt.Errorf("config: patch must be a document object")
-	}
-	if _, has := patchMap["version"]; !has {
-		patchMap["version"] = "v1"
-	}
-	dir := m.userDir
-	if layer == LayerProject {
-		dir = m.projectDir
-		if dir == "" {
-			dir = filepath.Join(m.workDir, ".opencraft", "config")
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				return err
-			}
-			m.projectDir = dir
-		}
-	}
-
-	patchData, err := json.Marshal(patchMap)
-	if err != nil {
-		return fmt.Errorf("config: encode patch: %w", err)
-	}
-	layers := []sdkconfig.Layer{
-		{Name: "patch", Source: sdkconfig.LiteralSource(string(patchData))},
-	}
-	target := filepath.Join(dir, docName+".yaml")
-	if existing, err := os.ReadFile(target); err == nil {
-		layers = append([]sdkconfig.Layer{
-			{Name: "existing", Source: sdkconfig.LiteralSource(string(existing))},
-		}, layers...)
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	merged, err := m.loader.LoadLayers(ctx, layers)
-	if err != nil {
-		return fmt.Errorf("config %s: %w", docName, err)
-	}
-	out, err := yaml.JSONToYAML(merged.Data)
-	if err != nil {
-		return fmt.Errorf("config %s: encode yaml: %w", docName, err)
-	}
-	previous, _ := os.ReadFile(target)
-	if err := os.WriteFile(target, out, 0o600); err != nil {
-		return err
-	}
-	// A project layer may be partial (e.g. only defaults), so validation
-	// must run against the merged view (user layer + project layer), not
-	// the file alone. Roll back on failure.
-	if _, err := m.Load(ctx); err != nil {
-		if previous == nil {
-			_ = os.Remove(target)
-		} else {
-			_ = os.WriteFile(target, previous, 0o600)
-		}
-		return fmt.Errorf("config %s: %w", docName, err)
-	}
-	return nil
-}
-
-func validDocument(docName string) bool {
-	switch docName {
-	case "inference", "workspace", "tools", "sandbox", "execution":
-		return true
-	default:
-		return false
-	}
 }

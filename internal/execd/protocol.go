@@ -7,8 +7,26 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/GizClaw/flowcraft/sdk/sandbox"
+	"github.com/GizClaw/flowcraft/core/sandbox"
 )
+
+// Capability names reported by the execd server. The remote runner
+// mirrors these into sandbox.SessionFeatures.
+type Capability string
+
+const (
+	CapExec    Capability = "exec"
+	CapSession Capability = "session"
+	CapPTY     Capability = "pty"
+	CapSignal  Capability = "signal"
+	CapFiles   Capability = "files"
+)
+
+// Signal is a soft signal delivered to a session process.
+type Signal string
+
+// SignalInterrupt is Ctrl-C semantics.
+const SignalInterrupt Signal = "interrupt"
 
 // Method names.
 const (
@@ -17,6 +35,7 @@ const (
 	MethodProcessStart      = "process/start"
 	MethodProcessRead       = "process/read"
 	MethodProcessWrite      = "process/write"
+	MethodProcessCloseInput = "process/close_input"
 	MethodProcessSignal     = "process/signal"
 	MethodProcessResize     = "process/resize"
 	MethodProcessTerminate  = "process/terminate"
@@ -91,6 +110,7 @@ type ExecParams struct {
 // ExecResponse confirms a started process.
 type ExecResponse struct {
 	ProcessID string `json:"processId"`
+	PID       int    `json:"pid,omitempty"`
 }
 
 // ReadParams pulls buffered output from an afterSeq cursor.
@@ -117,6 +137,7 @@ type ReadResponse struct {
 	ExitCode      *int32        `json:"exitCode,omitempty"`
 	Closed        bool          `json:"closed"`
 	Failure       *string       `json:"failure,omitempty"`
+	Reason        string        `json:"reason,omitempty"`
 	SandboxDenied bool          `json:"sandboxDenied"`
 }
 
@@ -125,6 +146,11 @@ type WriteParams struct {
 	ProcessID string `json:"processId"`
 	Chunk     []byte `json:"chunk"` // base64 on the wire
 	WriteID   string `json:"writeId"`
+}
+
+// CloseInputParams closes a process's stdin.
+type CloseInputParams struct {
+	ProcessID string `json:"processId"`
 }
 
 // WriteStatus values.

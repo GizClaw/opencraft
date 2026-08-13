@@ -3,8 +3,8 @@ package state
 import (
 	"context"
 
-	"github.com/GizClaw/flowcraft/sdk/config"
-	"github.com/GizClaw/flowcraft/sdk/errdefs"
+	"github.com/GizClaw/flowcraft/core/errdefs"
+	"github.com/GizClaw/flowcraft/core/resource"
 )
 
 // ResourceKind is the deploy resource kind for opencraft state stores.
@@ -17,11 +17,11 @@ type Factory struct {
 	DefaultPath string
 }
 
-var _ config.Factory = Factory{}
+var _ resource.Factory = Factory{}
 
 // Spec declares the resource shape: kind state, impl sqlite.
-func (Factory) Spec() config.Spec {
-	return config.Spec{Kind: ResourceKind, Impl: "sqlite"}
+func (Factory) Spec() resource.Spec {
+	return resource.Spec{Kind: ResourceKind, Impl: "sqlite"}
 }
 
 type settings struct {
@@ -29,8 +29,8 @@ type settings struct {
 }
 
 // New opens the SQLite store at the configured path.
-func (f Factory) New(ctx context.Context, in config.Input) (any, error) {
-	s, err := config.DecodeSettings[settings](in.Settings)
+func (f Factory) New(ctx context.Context, in resource.Input) (any, error) {
+	s, err := resource.DecodeTyped[settings](in.Settings)
 	if err != nil {
 		return nil, err
 	}

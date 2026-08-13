@@ -44,7 +44,10 @@ func LaunchExe(
 		_ = os.Remove(sock)
 	}
 
-	deadline := time.Now().Add(5 * time.Second)
+	// Allow generous startup time: the child compiles/links and builds
+	// its sandbox backend, which can take a while under concurrent test
+	// builds.
+	deadline := time.Now().Add(15 * time.Second)
 	for {
 		conn, err := net.Dial("unix", sock)
 		if err == nil {

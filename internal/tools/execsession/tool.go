@@ -1,5 +1,5 @@
 // Package execsession provides the exec_session tool: long-running
-// sessions over an execd.Environment, with start/read/write/
+// sessions over a sandbox.Runner, with start/read/write/
 // signal/resize/terminate/wait actions.
 package execsession
 
@@ -8,10 +8,10 @@ import (
 	"encoding/json"
 	"sync"
 
-	"github.com/GizClaw/flowcraft/sdk/errdefs"
-	"github.com/GizClaw/flowcraft/sdk/message"
-	"github.com/GizClaw/flowcraft/sdk/tool"
-	"github.com/GizClaw/opencraft/internal/execd"
+	"github.com/GizClaw/flowcraft/core/errdefs"
+	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/sandbox"
+	"github.com/GizClaw/flowcraft/core/tool"
 )
 
 // Name is the canonical exec_session tool name.
@@ -20,23 +20,32 @@ const Name = "exec_session"
 // Tool manages named sessions on one environment. It is safe for
 // concurrent use.
 type Tool struct {
-	env execd.Environment
+	runner sandbox.Runner
 
 	mu       sync.Mutex
-	sessions map[string]execd.Process
+	sessions map[string]sandbox.Session
 }
 
-// New creates the exec_session tool. env must declare CapSession.
-func New(env execd.Environment) (*Tool, error) {
-	if env == nil || !execd.Has(env, execd.CapSession) {
+// New creates the exec_session tool.
+func New(runner sandbox.Runner) (*Tool, error) {
+	if runner == nil {
 		return nil, errdefs.Validationf(
-			"exec_session: environment must support sessions")
+			"exec_session: runner is required")
 	}
-	return &Tool{env: env, sessions: make(map[string]execd.Process)}, nil
+	return &Tool{runner: runner, sessions: make(map[string]sandbox.Session)}, nil
+}
+
+// MustNew panics on invalid construction; use in static wiring.
+func MustNew(runner sandbox.Runner) *Tool {
+	t, err := New(runner)
+	if err != nil {
+		panic(err)
+	}
+	return t
 }
 
 // Definition implements tool.Tool.
-func (t *Tool) Definition() message.Definition {
+func (t *Tool) Definition() message.ToolDefinition {
 	return message.DefineSchema(
 		Name,
 		"Manage a long-running shell session in the execution "+
@@ -137,13 +146,13 @@ func (t *Tool) start(ctx context.Context, a args) (any, error) {
 			"exec_session: process %q already exists", a.ProcessID)
 	}
 	t.mu.Unlock()
-	proc, err := t.env.Start(ctx, execd.Spec{
+	proc, err := t.runner.Start(ctx, sandbox.SessionSpec{
 		ID:    a.ProcessID,
 		Argv:  a.Argv,
 		TTY:   a.TTY,
 		Rows:  a.Rows,
 		Cols:  a.Cols,
-		Input: execd.Request{WorkDir: a.Workdir},
+		Opts:  sandbox.ExecOptions{WorkDir: a.Workdir},
 	})
 	if err != nil {
 		return nil, err
@@ -175,7 +184,7 @@ func (t *Tool) read(ctx context.Context, a args) (any, error) {
 	for _, ch := range out.Chunks {
 		chunks = append(chunks, map[string]any{
 			"seq":    ch.Seq,
-			"stream": string(ch.Stream),
+			"stream": ch.Stream.String(),
 			"data":   string(ch.Data),
 		})
 	}
@@ -203,12 +212,7 @@ func (t *Tool) signal(ctx context.Context, a args) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	s, ok := proc.(execd.Signaler)
-	if !ok {
-		return nil, errdefs.NotAvailablef(
-			"exec_session: environment does not support signals")
-	}
-	if err := s.Signal(ctx, execd.SignalInterrupt); err != nil {
+	if err := proc.Signal(ctx, sandbox.SessionSignalInterrupt); err != nil {
 		return nil, err
 	}
 	return map[string]bool{"signaled": true}, nil
@@ -219,12 +223,7 @@ func (t *Tool) resize(ctx context.Context, a args) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	r, ok := proc.(execd.Resizer)
-	if !ok {
-		return nil, errdefs.NotAvailablef(
-			"exec_session: environment does not support pty resize")
-	}
-	if err := r.Resize(ctx, a.Rows, a.Cols); err != nil {
+	if err := proc.Resize(ctx, a.Rows, a.Cols); err != nil {
 		return nil, err
 	}
 	return map[string]bool{"resized": true}, nil
@@ -253,7 +252,7 @@ func (t *Tool) wait(ctx context.Context, a args) (any, error) {
 	return map[string]any{
 		"process_id": a.ProcessID,
 		"exit_code":  exit.Code,
-		"reason":     string(exit.Reason),
+		"reason":     exit.Reason.String(),
 	}, nil
 }
 
@@ -274,7 +273,7 @@ func (t *Tool) close(ctx context.Context, a args) (any, error) {
 	return map[string]bool{"closed": true}, nil
 }
 
-func (t *Tool) get(id string) (execd.Process, error) {
+func (t *Tool) get(id string) (sandbox.Session, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	proc, ok := t.sessions[id]

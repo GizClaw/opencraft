@@ -14,14 +14,14 @@ func EnsureUserConfig() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for _, ref := range UserAssets {
-		target := filepath.Join(dir, filepath.FromSlash(ref))
+	for _, asset := range UserAssets {
+		target := filepath.Join(dir, filepath.FromSlash(asset.Name))
 		if _, err := os.Stat(target); err == nil {
 			continue
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return "", err
 		}
-		data, err := FS().ReadFile("assets/" + ref)
+		data, err := FS().ReadFile(asset.Ref)
 		if err != nil {
 			return "", err
 		}
@@ -29,27 +29,19 @@ func EnsureUserConfig() (string, error) {
 			return "", err
 		}
 	}
-	// sandbox.yaml is platform-specific (build-tag selected embed), so it
-	// renders from the platform template with the cache directory
-	// (~/.opencraft/cache) expanded to an absolute path.
-	sandboxTarget := filepath.Join(dir, "sandbox.yaml")
-	if _, err := os.Stat(sandboxTarget); errors.Is(err, os.ErrNotExist) {
-		dataDir, err := UserDataDir()
-		if err != nil {
-			return "", err
-		}
-		cacheDir := filepath.Join(dataDir, "cache")
-		for _, sub := range []string{"go", "tmp"} {
-			if err := os.MkdirAll(filepath.Join(cacheDir, sub), 0o755); err != nil {
-				return "", err
-			}
-		}
-		if err := os.WriteFile(
-			sandboxTarget, SandboxYAML(cacheDir), 0o600); err != nil {
-			return "", err
-		}
-	} else if err != nil {
+	// The sandbox cache directory (~/.opencraft/cache) is created at
+	// assembly time by the app; there is no user-editable sandbox
+	// document anymore — the sandbox backend is selected from the
+	// platform in internal/app.
+	dataDir, err := UserDataDir()
+	if err != nil {
 		return "", err
+	}
+	cacheDir := filepath.Join(dataDir, "cache")
+	for _, sub := range []string{"go", "tmp"} {
+		if err := os.MkdirAll(filepath.Join(cacheDir, sub), 0o755); err != nil {
+			return "", err
+		}
 	}
 	return dir, nil
 }

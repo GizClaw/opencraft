@@ -2,58 +2,57 @@ package app
 
 import (
 	"context"
-	"fmt"
+	"os"
+	"path/filepath"
+	goruntime "runtime"
 
-	"github.com/GizClaw/flowcraft/sdk/sandbox"
-	sandboxconfig "github.com/GizClaw/flowcraft/sdk/sandbox/config"
-	workspaceconfig "github.com/GizClaw/flowcraft/sdk/workspace/config"
-	"github.com/GizClaw/flowcraft/sdkx/sandbox/bwrap"
-	"github.com/GizClaw/flowcraft/sdkx/sandbox/seatbelt"
+	"github.com/GizClaw/flowcraft/core/sandbox"
+	"github.com/GizClaw/flowcraft/core/sandbox/bwrap"
+	sandboxlocal "github.com/GizClaw/flowcraft/core/sandbox/local"
+	"github.com/GizClaw/flowcraft/core/sandbox/seatbelt"
 
 	"github.com/GizClaw/opencraft/internal/config"
 )
 
-// SandboxProcessManager builds the sandbox.Registry from the merged
-// configuration for workDir and returns the ProcessManager of the
-// "main" sandbox. The execd subprocess uses it to construct its
-// backend from the same configuration the main process uses.
-func SandboxProcessManager(
-	ctx context.Context,
+// SandboxRunner builds the platform sandbox runner for the execd child
+// (seatbelt on macOS, bwrap on Linux, local elsewhere) plus the default
+// environment policy that points Go build/tmp caches into
+// ~/.opencraft/cache.
+func SandboxRunner(
+	_ context.Context,
 	workDir string,
-) (sandbox.ProcessManager, error) {
-	mgr, err := config.Open(config.Options{WorkDir: workDir})
+) (sandbox.Runner, sandbox.EnvPolicy, error) {
+	dataDir, err := config.UserDataDir()
 	if err != nil {
-		return nil, err
+		return nil, sandbox.EnvPolicy{}, err
 	}
-	view, err := mgr.Load(ctx)
-	if err != nil {
-		return nil, err
+	cacheDir := filepath.Join(dataDir, "cache")
+	for _, sub := range []string{"go", "tmp"} {
+		if err := os.MkdirAll(filepath.Join(cacheDir, sub), 0o755); err != nil {
+			return nil, sandbox.EnvPolicy{}, err
+		}
 	}
-	workspaces, err := workspaceconfig.NewBuilder(
-		workspaceconfig.Deps{BaseDir: workDir}).Build(ctx, *view.Workspace)
-	if err != nil {
-		return nil, fmt.Errorf("execd workspace: %w", err)
+	policy := sandbox.EnvPolicy{
+		Allow: []string{"PATH", "HOME"},
+		Inject: map[string]string{
+			"GOCACHE": filepath.Join(cacheDir, "go"),
+			"TMPDIR":  filepath.Join(cacheDir, "tmp"),
+		},
 	}
-	sandboxBuilder := sandboxconfig.NewBuilder(
-		sandboxconfig.Deps{Workspaces: workspaces})
-	if err := seatbelt.Register(sandboxBuilder); err != nil {
-		return nil, err
+	switch goruntime.GOOS {
+	case "darwin":
+		runner, err := seatbelt.New(workDir, seatbelt.WithWritablePaths(cacheDir))
+		if err == nil {
+			return runner, policy, nil
+		}
+		return sandboxlocal.New(workDir), sandbox.EnvPolicy{}, nil
+	case "linux":
+		runner, err := bwrap.New(workDir, bwrap.WithWritablePaths(cacheDir))
+		if err == nil {
+			return runner, policy, nil
+		}
+		return sandboxlocal.New(workDir), sandbox.EnvPolicy{}, nil
+	default:
+		return sandboxlocal.New(workDir), sandbox.EnvPolicy{}, nil
 	}
-	if err := bwrap.Register(sandboxBuilder); err != nil {
-		return nil, err
-	}
-	registry, err := sandboxBuilder.Build(ctx, *view.Sandbox)
-	if err != nil {
-		return nil, fmt.Errorf("execd sandbox: %w", err)
-	}
-	runner, ok := registry.Get("main")
-	if !ok {
-		return nil, fmt.Errorf("execd: sandbox %q not found", "main")
-	}
-	pm := sandbox.ProcessManagerOf(runner)
-	if pm == nil {
-		return nil, fmt.Errorf(
-			"execd: sandbox backend has no process manager")
-	}
-	return pm, nil
 }

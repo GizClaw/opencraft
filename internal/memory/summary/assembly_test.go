@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/GizClaw/flowcraft/sdk/memory"
-	"github.com/GizClaw/flowcraft/sdk/message"
+	"github.com/GizClaw/flowcraft/core/memory"
+	"github.com/GizClaw/flowcraft/core/message"
 )
 
 type fakeTurnStore struct {
@@ -101,5 +101,100 @@ func TestAssemblyRejectsDocuments(t *testing.T) {
 	err := a.PutDocument(context.Background(), memory.Document{})
 	if err == nil {
 		t.Fatal("want error for document sink")
+	}
+}
+
+func TestAssemblyContextReturnsRecentRawMessages(t *testing.T) {
+	ctx := context.Background()
+	store := &fakeTurnStore{msgs: map[string][]message.Message{
+		"c1": {
+			message.NewTextMessage(message.RoleUser, "first"),
+			message.NewTextMessage(message.RoleAssistant, "answer one"),
+		},
+	}}
+	a := NewAssembly(store)
+
+	res, err := a.Context(ctx, memory.ContextRequest{
+		Scope:          memory.Scope{RuntimeID: "rt", AgentID: "a"},
+		ConversationID: "c1",
+		Budget:         memory.Budget{MaxItems: 8, MaxChars: 1 << 16},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Items) != 2 {
+		t.Fatalf("items = %d, want 2 raw messages", len(res.Items))
+	}
+	if res.Items[0].Kind != memory.ContextRawMessage ||
+		res.Items[0].Content.Text() != "first" ||
+		res.Items[1].Content.Text() != "answer one" {
+		t.Fatalf("items = %+v, want chronological raw messages", res.Items)
+	}
+	if res.Truncated {
+		t.Fatal("Truncated = true, want false when everything fits")
+	}
+}
+
+func TestAssemblyContextSkipsFoldedRawMessages(t *testing.T) {
+	ctx := context.Background()
+	first := message.NewTextMessage(message.RoleUser, "first")
+	store := &fakeTurnStore{
+		msgs: map[string][]message.Message{
+			"c1": {first, message.NewTextMessage(message.RoleAssistant, "answer one")},
+		},
+		nodes: []SummaryNode{{
+			ID:        "node-1",
+			ThreadID:  "c1",
+			Level:     0,
+			SourceIDs: []string{stableMessageID("c1", 0, first)},
+			Content: message.Content{Parts: []message.Part{
+				message.TextPart{Text: "summary of first"},
+			}},
+		}},
+	}
+	a := NewAssembly(store)
+
+	res, err := a.Context(ctx, memory.ContextRequest{
+		Scope:          memory.Scope{RuntimeID: "rt", AgentID: "a"},
+		ConversationID: "c1",
+		Budget:         memory.Budget{MaxItems: 8, MaxChars: 1 << 16},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Items) != 2 {
+		t.Fatalf("items = %d, want summary + uncovered raw", len(res.Items))
+	}
+	if res.Items[0].Kind != memory.ContextSummary ||
+		res.Items[1].Kind != memory.ContextRawMessage ||
+		res.Items[1].Content.Text() != "answer one" {
+		t.Fatalf("items = %+v, want summary then uncovered raw", res.Items)
+	}
+}
+
+func TestAssemblyContextBudgetKeepsRecentTail(t *testing.T) {
+	ctx := context.Background()
+	store := &fakeTurnStore{msgs: map[string][]message.Message{
+		"c1": {
+			message.NewTextMessage(message.RoleUser, "first"),
+			message.NewTextMessage(message.RoleUser, "second"),
+			message.NewTextMessage(message.RoleUser, "third"),
+		},
+	}}
+	a := NewAssembly(store)
+
+	res, err := a.Context(ctx, memory.ContextRequest{
+		Scope:          memory.Scope{RuntimeID: "rt", AgentID: "a"},
+		ConversationID: "c1",
+		Budget:         memory.Budget{MaxItems: 0, MaxChars: len("third")},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Items) != 1 || res.Items[0].Content.Text() != "third" {
+		t.Fatalf("items = %+v, want only the newest raw message", res.Items)
+	}
+	if !res.Truncated {
+		t.Fatal("Truncated = false, want true when raw messages were dropped")
 	}
 }

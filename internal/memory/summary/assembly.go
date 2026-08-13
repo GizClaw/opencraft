@@ -5,9 +5,9 @@ import (
 	"errors"
 	"time"
 
-	"github.com/GizClaw/flowcraft/sdk/inference"
-	"github.com/GizClaw/flowcraft/sdk/memory"
-	"github.com/GizClaw/flowcraft/sdk/message"
+	"github.com/GizClaw/flowcraft/core/inference"
+	"github.com/GizClaw/flowcraft/core/memory"
+	"github.com/GizClaw/flowcraft/core/message"
 )
 
 // TurnStore is the storage surface the summary assembly needs. Messages use
@@ -27,7 +27,7 @@ type TurnStore interface {
 type Assembly struct {
 	store   TurnStore
 	policy  Policy
-	runtime *inference.Runtime // nil => buffer fold only (P1: LLM compaction)
+	assembly *inference.Assembly // nil => buffer fold only (P1: LLM compaction)
 	model   inference.ModelRef
 	now     func() time.Time
 }
@@ -40,11 +40,11 @@ func WithAssemblyPolicy(p Policy) AssemblyOption {
 	return func(a *Assembly) { a.policy = p }
 }
 
-// WithGenerateRuntime enables the LLM layered compaction stage via the
-// canonical sdk/inference runtime.
-func WithGenerateRuntime(rt *inference.Runtime, model inference.ModelRef) AssemblyOption {
+// WithGenerateAssembly enables the LLM layered compaction stage via the
+// canonical core/inference assembly.
+func WithGenerateAssembly(asm *inference.Assembly, model inference.ModelRef) AssemblyOption {
 	return func(a *Assembly) {
-		a.runtime = rt
+		a.assembly = asm
 		a.model = model
 	}
 }
@@ -112,19 +112,20 @@ func (a *Assembly) Context(ctx context.Context, req memory.ContextRequest) (memo
 	if err != nil {
 		return memory.ContextResult{}, memory.NewError(memory.KindInternal, "context", err)
 	}
-	items := make([]memory.ContextItem, 0, len(nodes))
+	items := make([]memory.ContextItem, 0, len(nodes)+8)
+	covered := make(map[string]struct{}, 32)
 	totalChars := 0
+	truncated := false
 	for i, node := range nodes {
 		text := node.Content.Text()
-		if req.Budget.MaxItems > 0 && len(items) >= req.Budget.MaxItems {
-			break
-		}
-		if req.Budget.MaxChars > 0 && totalChars+len(text) > req.Budget.MaxChars {
+		if !fitsBudget(req.Budget, len(items), totalChars, len(text)) {
+			truncated = true
 			break
 		}
 		sources := make([]memory.SourceRef, 0, len(node.SourceIDs))
 		for _, id := range node.SourceIDs {
 			sources = append(sources, memory.SourceRef{Kind: memory.SourceMessage, ID: id})
+			covered[id] = struct{}{}
 		}
 		items = append(items, memory.ContextItem{
 			ID:          node.ID,
@@ -139,11 +140,71 @@ func (a *Assembly) Context(ctx context.Context, req memory.ContextRequest) (memo
 		})
 		totalChars += len(text)
 	}
+
+	// Recent raw messages carry the conversation between folds. The
+	// newest messages are kept first so a tight budget preserves the
+	// most relevant tail; the appended chunk is reversed afterwards to
+	// keep chronological order.
+	raw, err := a.store.LoadMessages(ctx, req.ConversationID)
+	if err != nil {
+		return memory.ContextResult{}, memory.NewError(memory.KindInternal, "context", err)
+	}
+	type rawCandidate struct {
+		id   string
+		msg  message.Message
+		seq  int
+	}
+	candidates := make([]rawCandidate, 0, len(raw))
+	for i, msg := range raw {
+		if msg.Content.Text() == "" {
+			continue
+		}
+		id := stableMessageID(req.ConversationID, i, msg)
+		if _, ok := covered[id]; ok {
+			continue
+		}
+		candidates = append(candidates, rawCandidate{id: id, msg: msg, seq: i})
+	}
+	rawCount := len(candidates)
+	appended := make([]memory.ContextItem, 0, rawCount)
+	for k := len(candidates) - 1; k >= 0; k-- {
+		c := candidates[k]
+		if !fitsBudget(req.Budget, len(items)+len(appended), totalChars, len(c.msg.Content.Text())) {
+			truncated = true
+			break
+		}
+		appended = append(appended, memory.ContextItem{
+			ID:          c.id,
+			Kind:        memory.ContextRawMessage,
+			SourceClass: memory.ContextSourceRecent,
+			Content:     c.msg.Content.Clone(),
+			Score:       1,
+			Sources:     []memory.SourceRef{{Kind: memory.SourceMessage, ID: c.id}},
+			MessageRole: c.msg.Role,
+			Sequence:    uint64(c.seq),
+		})
+		totalChars += len(c.msg.Content.Text())
+	}
+	for i, j := 0, len(appended)-1; i < j; i, j = i+1, j-1 {
+		appended[i], appended[j] = appended[j], appended[i]
+	}
+	items = append(items, appended...)
+
 	return memory.ContextResult{
 		Items:      items,
 		TokenCount: 0,
-		Truncated:  len(items) < len(nodes),
+		Truncated:  truncated || len(appended) < rawCount,
 	}, nil
+}
+
+func fitsBudget(b memory.Budget, itemCount, chars, textLen int) bool {
+	if b.MaxItems > 0 && itemCount >= b.MaxItems {
+		return false
+	}
+	if b.MaxChars > 0 && chars+textLen > b.MaxChars {
+		return false
+	}
+	return true
 }
 
 // PutDocument implements memory.DocumentSink. The summary assembly does not

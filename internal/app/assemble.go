@@ -1,7 +1,6 @@
 // Package app assembles opencraft's runtime from a deploy document:
-// embedded deploy assets, user-facing config seeding, factory
-// registration (graph engine, state, memory, workspace, tools,
-// inference, event), platform sandbox selection, and lifecycle hooks.
+// embedded deploy assets, user-facing config, factory registration,
+// platform sandbox selection, and lifecycle hooks.
 package app
 
 import (
@@ -9,50 +8,43 @@ import (
 	"os"
 	"path/filepath"
 
-	sdkconfig "github.com/GizClaw/flowcraft/sdk/config"
-	"github.com/GizClaw/flowcraft/sdk/errdefs"
-	eventconfig "github.com/GizClaw/flowcraft/sdk/event/config"
-	graphconfig "github.com/GizClaw/flowcraft/sdk/graph/config"
-	inferenceconfig "github.com/GizClaw/flowcraft/sdk/inference/config"
-	envresolver "github.com/GizClaw/flowcraft/sdk/inference/config/env"
-	"github.com/GizClaw/flowcraft/sdk/sandbox"
-	sandboxconfig "github.com/GizClaw/flowcraft/sdk/sandbox/config"
-	"github.com/GizClaw/flowcraft/sdk/tool"
-	toolconfig "github.com/GizClaw/flowcraft/sdk/tool/config"
-	"github.com/GizClaw/flowcraft/sdk/workspace"
-	workspaceconfig "github.com/GizClaw/flowcraft/sdk/workspace/config"
-	jsrt "github.com/GizClaw/flowcraft/sdkx/agent/script/jsrt"
-	sdkdeploy "github.com/GizClaw/flowcraft/sdkx/deploy"
-	"github.com/GizClaw/flowcraft/sdkx/inference/deepseek"
-	"github.com/GizClaw/flowcraft/sdkx/inference/openai"
-	runtimecore "github.com/GizClaw/flowcraft/sdkx/runtime"
-	"github.com/GizClaw/flowcraft/sdkx/sandbox/bwrap"
-	"github.com/GizClaw/flowcraft/sdkx/sandbox/seatbelt"
-	"github.com/GizClaw/flowcraft/sdkx/tool/dynamic"
-	"github.com/GizClaw/flowcraft/sdkx/tool/mcp"
+	"github.com/GizClaw/flowcraft/backends/checkpoint/sqlite"
+	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/deploy"
+	"github.com/GizClaw/flowcraft/core/event"
+	graphresource "github.com/GizClaw/flowcraft/core/graph/resource"
+	"github.com/GizClaw/flowcraft/core/inference"
+	"github.com/GizClaw/flowcraft/core/resource"
+	runtimecore "github.com/GizClaw/flowcraft/core/runtime"
+	"github.com/GizClaw/flowcraft/core/sandbox/bwrap"
+	sandboxlocal "github.com/GizClaw/flowcraft/core/sandbox/local"
+	"github.com/GizClaw/flowcraft/core/sandbox/seatbelt"
+	"github.com/GizClaw/flowcraft/core/agent/scriptrt"
+	"github.com/GizClaw/flowcraft/core/tool"
+	"github.com/GizClaw/flowcraft/core/tool/middleware"
+	"github.com/GizClaw/flowcraft/core/workspace"
+	"github.com/GizClaw/flowcraft/driver/deepseek"
+	"github.com/GizClaw/flowcraft/driver/openai"
+	sessions "github.com/GizClaw/flowcraft/core/runtime/session"
 
-	"github.com/GizClaw/opencraft/internal/app/worldstate"
 	"github.com/GizClaw/opencraft/internal/config"
-	"github.com/GizClaw/opencraft/internal/execd"
-	"github.com/GizClaw/opencraft/internal/memory"
+	"github.com/GizClaw/opencraft/internal/hooks"
+	opmemory "github.com/GizClaw/opencraft/internal/memory"
 	"github.com/GizClaw/opencraft/internal/state"
-	"github.com/GizClaw/opencraft/internal/tools/applypatch"
-	"github.com/GizClaw/opencraft/internal/tools/execcommand"
-	"github.com/GizClaw/opencraft/internal/tools/execsession"
-	"github.com/GizClaw/opencraft/internal/tools/webfetch"
+	opentools "github.com/GizClaw/opencraft/internal/tools"
 )
 
 // Options controls assembly paths.
 type Options struct {
-	// ConfigBase anchors file references in user override documents.
-	// Defaults to ~/.opencraft/config.
+	// ConfigBase anchors the user configuration directory. Defaults to
+	// ~/.opencraft/config.
 	ConfigBase string
 	// WorkBase is the sandbox/workspace root. Defaults to the current
 	// working directory (where opencraft was invoked).
 	WorkBase string
-	// env is the execution environment for exec tools. Nil falls back
-	// to a LocalEnvironment over the sandbox resource runner.
-	env execd.Environment
+	// userPrompter routes model questions (ask_user) to a user-facing
+	// surface such as the TUI. Nil keeps the runtime's default.
+	userPrompter agent.UserPrompter
 }
 
 type Option func(*Options)
@@ -67,14 +59,13 @@ func WithWorkBase(dir string) Option {
 	return func(o *Options) { o.WorkBase = dir }
 }
 
-// WithEnvironment injects the execution environment used by exec tools
-// (normally the self-forked remote execd).
-func WithEnvironment(env execd.Environment) Option {
-	return func(o *Options) { o.env = env }
+// WithUserPrompter injects the user-prompt surface used by ask_user.
+func WithUserPrompter(p agent.UserPrompter) Option {
+	return func(o *Options) { o.userPrompter = p }
 }
 
 // BuildRuntime assembles an opencraft runtime from a deploy document.
-func BuildRuntime(ctx context.Context, doc sdkdeploy.Document, opts ...Option) (*runtimecore.Runtime, error) {
+func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*runtimecore.Runtime, error) {
 	o := Options{}
 	for _, opt := range opts {
 		if opt != nil {
@@ -91,122 +82,102 @@ func BuildRuntime(ctx context.Context, doc sdkdeploy.Document, opts ...Option) (
 	if err != nil {
 		return nil, err
 	}
-
-	loader := sdkconfig.NewLoader(
-		sdkconfig.WithBaseDir(o.ConfigBase),
-		sdkconfig.WithEmbed(config.FS()),
-	)
-
-	builder := sdkdeploy.NewBuilder(sdkdeploy.WithLoader(loader))
-	builder.MustRegisterEngine(graphconfig.NewFactory(graphconfig.WithLoader(loader)))
-	builder.MustRegisterResource(eventconfig.NewMemoryDeployFactory())
-	builder.MustRegisterResource(jsrt.NewDeployFactory())
-	builder.MustRegisterResource(state.Factory{DefaultPath: filepath.Join(dataDir, "opencraft.db")})
-	builder.MustRegisterResource(memory.Factory{})
-
-	ws, err := workspace.NewLocalWorkspace(o.WorkBase)
-	if err != nil {
-		return nil, err
-	}
-	builder.MustRegisterResource(workspaceconfig.NewBuilder(
-		workspaceconfig.Deps{BaseDir: o.WorkBase}))
-	sandboxBuilder := sandboxconfig.NewBuilder(sandboxconfig.Deps{})
-	if err := seatbelt.Register(sandboxBuilder); err != nil {
-		return nil, err
-	}
-	if err := bwrap.Register(sandboxBuilder); err != nil {
-		return nil, err
-	}
-	builder.MustRegisterResource(sandboxBuilder)
-
-	world := worldstate.New(worldstate.Options{
-		WorkBase:          o.WorkBase,
-		UserDir:           dataDir,
-		Workspace:         ws,
-		CollaborationMode: "default",
-		PermissionProfile: "workspace",
-	})
-	builder.RegisterPreparer("opencraft.prepare", prepareHookFactory{world: world})
-	builder.RegisterCommitter("opencraft.commit", commitHookFactory{})
-
-	toolBuilder := toolconfig.NewBuilder(toolconfig.Deps{})
-	sandboxRunner := func(in sdkconfig.Input) (sandbox.Runner, error) {
-		dep, ok := in.Dep(toolconfig.DepSandbox)
-		if !ok {
-			return nil, errdefs.Validationf(
-				"exec tools: sandbox dep is required")
-		}
-		runner, ok := dep.(sandbox.Runner)
-		if !ok {
-			return nil, errdefs.Validationf(
-				"exec tools: sandbox dep is %T, want sandbox.Runner", dep)
-		}
-		return runner, nil
-	}
-	toolEnv := func(in sdkconfig.Input) (execd.Environment, error) {
-		if o.env != nil {
-			return o.env, nil
-		}
-		runner, err := sandboxRunner(in)
-		if err != nil {
+	cacheDir := filepath.Join(dataDir, "cache")
+	for _, sub := range []string{"go", "tmp"} {
+		if err := os.MkdirAll(filepath.Join(cacheDir, sub), 0o755); err != nil {
 			return nil, err
 		}
-		return execd.NewLocalEnvironment(runner), nil
 	}
-	toolBuilder.RegisterBuiltinFactory(execcommand.Name,
-		func(_ context.Context, in sdkconfig.Input) (tool.Tool, error) {
-			env, err := toolEnv(in)
-			if err != nil {
-				return nil, err
-			}
-			return execcommand.New(env)
-		})
-	toolBuilder.RegisterBuiltinFactory(execsession.Name,
-		func(_ context.Context, in sdkconfig.Input) (tool.Tool, error) {
-			env, err := toolEnv(in)
-			if err != nil {
-				return nil, err
-			}
-			return execsession.New(env)
-		})
-	toolBuilder.RegisterBuiltin(applypatch.MustNew(ws))
-	toolBuilder.RegisterBuiltin(webfetch.New())
-	toolBuilder.RegisterFactory("record_calls",
-		func(context.Context, sdkconfig.Input) (tool.Middleware, error) {
-			return dynamic.RecordCalls(), nil
-		})
-	toolBuilder.RegisterSourceFactory(mcp.SpecKind, mcp.SourceFactory)
-	builder.MustRegisterResource(toolBuilder)
 
-	factories := map[string]inferenceconfig.Factory{
-		"openai":   openai.Factory(),
-		"deepseek": deepseek.Factory(),
-	}
-	resolvers := map[string]inferenceconfig.SecretResolver{
-		"env": envresolver.New(),
-	}
-	builder.MustRegisterResource(inferenceconfig.NewDeployFactory(factories, resolvers))
+	// Scalar settings in the deploy document reference runtime paths
+	// through ${env:...}; publish them before resources are built.
+	_ = os.Setenv("OPEN_CRAFT_WORKDIR", o.WorkBase)
+	_ = os.Setenv("OPEN_CRAFT_CACHE", cacheDir)
+	_ = os.Setenv("OPEN_CRAFT_DATA_DIR", dataDir)
 
-	mgr, err := config.Open(config.Options{WorkDir: o.WorkBase})
-	if err != nil {
+	loader := resource.NewLoader(
+		resource.WithBaseDir(o.ConfigBase),
+		resource.WithEmbed(config.FS()),
+	)
+	reg := resource.NewRegistry()
+	if err := event.Register(reg); err != nil {
 		return nil, err
 	}
-	view, err := mgr.Load(ctx)
-	if err != nil {
+	if err := graphresource.Register(reg); err != nil {
 		return nil, err
 	}
-	if mgr.ProjectDir() != "" {
-		for _, name := range []string{"sandbox", "tools"} {
-			entry, ok := doc.Resources[name]
-			if !ok {
-				continue
-			}
-			if raw, ok := view.Raw[name+".yaml"]; ok {
-				entry.Settings = raw
-				doc.Resources[name] = entry
-			}
+	if err := workspace.Register(reg); err != nil {
+		return nil, err
+	}
+	reg.MustRegister(workspaceFactory{})
+	reg.MustRegister(sandboxFactory{})
+	if err := tool.Register(reg); err != nil {
+		return nil, err
+	}
+	if err := middleware.Register(reg); err != nil {
+		return nil, err
+	}
+	if err := inference.Register(reg); err != nil {
+		return nil, err
+	}
+	if err := scriptrt.Register(reg); err != nil {
+		return nil, err
+	}
+	if err := sandboxlocal.Register(reg); err != nil {
+		return nil, err
+	}
+	if err := bwrap.Register(reg); err != nil {
+		return nil, err
+	}
+	if err := seatbelt.Register(reg); err != nil {
+		return nil, err
+	}
+	if err := sqlite.Register(reg); err != nil {
+		return nil, err
+	}
+	if err := deepseek.Register(reg); err != nil {
+		return nil, err
+	}
+	if err := openai.Register(reg); err != nil {
+		return nil, err
+	}
+
+	reg.MustRegister(state.Factory{
+		DefaultPath: filepath.Join(dataDir, "opencraft.db"),
+	})
+	reg.MustRegister(opmemory.Factory{})
+	if err := opentools.Register(reg); err != nil {
+		return nil, err
+	}
+
+	if err := hooks.Register(reg); err != nil {
+		return nil, err
+	}
+
+	builder := runtimecore.NewBuilder(reg)
+	if err := builder.WithLoader(loader); err != nil {
+		return nil, err
+	}
+	if o.userPrompter != nil {
+		if err := builder.WithHostFactory(func(
+			base sessions.HostFactory,
+		) (sessions.HostFactory, error) {
+			return sessions.HostFactoryFunc(func(
+				ctx context.Context,
+				req sessions.HostRequest,
+			) (agent.Host, error) {
+				host, err := base.NewHost(ctx, req)
+				if err != nil {
+					return nil, err
+				}
+				return agent.HostFuncs{
+					Inner:     host,
+					AskUserFn: o.userPrompter.AskUser,
+				}, nil
+			}), nil
+		}); err != nil {
+			return nil, err
 		}
 	}
-	runtimeBuilder := runtimecore.NewBuilder(builder)
-	return runtimeBuilder.Build(ctx, doc)
+	return builder.Build(ctx, doc)
 }

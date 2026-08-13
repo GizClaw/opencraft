@@ -5,12 +5,21 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/GizClaw/flowcraft/sdk/workspace"
+	"github.com/GizClaw/flowcraft/core/workspace"
 )
+
+func memWorkspace(t *testing.T) workspace.Workspace {
+	t.Helper()
+	ws, err := workspace.NewLocalWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ws
+}
 
 func TestApplyAddUpdateDelete(t *testing.T) {
 	ctx := context.Background()
-	ws := workspace.NewMemWorkspace()
+	ws := memWorkspace(t)
 
 	// Add.
 	ops, err := Parse(`*** Begin Patch
@@ -72,7 +81,7 @@ func TestApplyAddUpdateDelete(t *testing.T) {
 
 func TestApplyInsertionHunk(t *testing.T) {
 	ctx := context.Background()
-	ws := workspace.NewMemWorkspace()
+	ws := memWorkspace(t)
 	if err := ws.Write(ctx, "a.txt", []byte("line1\nline2\n")); err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +105,7 @@ func TestApplyInsertionHunk(t *testing.T) {
 
 func TestApplyRejectsUnsafePaths(t *testing.T) {
 	ctx := context.Background()
-	ws := workspace.NewMemWorkspace()
+	ws := memWorkspace(t)
 	for _, patch := range []string{
 		"*** Begin Patch\n*** Add File: /etc/passwd\n+x\n*** End Patch\n",
 		"*** Begin Patch\n*** Add File: ../escape.txt\n+x\n*** End Patch\n",
@@ -112,7 +121,7 @@ func TestApplyRejectsUnsafePaths(t *testing.T) {
 
 func TestApplyErrors(t *testing.T) {
 	ctx := context.Background()
-	ws := workspace.NewMemWorkspace()
+	ws := memWorkspace(t)
 
 	// Add existing.
 	if err := ws.Write(ctx, "x.txt", []byte("x\n")); err != nil {
@@ -137,7 +146,7 @@ func TestApplyErrors(t *testing.T) {
 }
 
 func TestToolDefinition(t *testing.T) {
-	tool, err := New(workspace.NewMemWorkspace())
+	tool, err := New(memWorkspace(t))
 	if err != nil {
 		t.Fatal(err)
 	}

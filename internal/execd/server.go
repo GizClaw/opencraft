@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/GizClaw/flowcraft/sdk/errdefs"
-	"github.com/GizClaw/flowcraft/sdk/sandbox"
+	"github.com/GizClaw/flowcraft/core/errdefs"
+	"github.com/GizClaw/flowcraft/core/sandbox"
 
 	"github.com/rs/xid"
 )
@@ -22,23 +22,28 @@ import (
 // processes started on a session belong to it and are terminated when
 // the connection ends.
 type Server struct {
-	backend sandbox.ProcessManager
+	backend sandbox.Runner
 	in      io.Reader
 	out     io.Writer
 	mu      sync.Mutex
+
+	// DefaultEnv is applied to a start request that carries no explicit
+	// environment policy (the execd child injects the Go build/tmp
+	// cache paths this way).
+	DefaultEnv sandbox.EnvPolicy
 }
 
 // New creates a Server over the given backend and transport.
-func New(backend sandbox.ProcessManager, in io.Reader, out io.Writer) *Server {
+func New(backend sandbox.Runner, in io.Reader, out io.Writer) *Server {
 	return &Server{backend: backend, in: in, out: out}
 }
 
 type processEntry struct {
-	proc     sandbox.Process
-	watcher  sandbox.ProcessWatcher
+	proc     sandbox.Session
+	watcher  sandbox.SessionWatcher
 	writeIDs map[string]bool
 	mu       sync.Mutex
-	exit     *sandbox.ProcessExit
+	exit     *sandbox.SessionExit
 }
 
 func (e *processEntry) noteWrite(id string) bool {
@@ -135,6 +140,13 @@ func (s *Server) handle(
 			break
 		}
 		result, rpcErr = s.write(ctx, sess, p)
+	case MethodProcessCloseInput:
+		var p CloseInputParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			rpcErr = invalid("process/close_input params: " + err.Error())
+			break
+		}
+		result, rpcErr = s.closeInput(ctx, sess, p)
 	case MethodProcessSignal:
 		var p SignalParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -157,14 +169,19 @@ func (s *Server) handle(
 		}
 		result, rpcErr = s.terminate(ctx, sess, p)
 	case MethodEnvironmentInfo:
+		features := s.backend.Capabilities().Features
+		caps := []string{string(CapExec), string(CapSession)}
+		if features.TTY {
+			caps = append(caps, string(CapPTY))
+		}
+		if features.Signal {
+			caps = append(caps, string(CapSignal))
+		}
 		result = EnvironmentInfoResponse{
 			Shell:  "/bin/sh",
 			Cwd:    "",
 			TmpDir: os.TempDir(),
-			Capabilities: []string{
-				string(CapExec), string(CapSession),
-				string(CapPTY), string(CapSignal),
-			},
+			Capabilities: caps,
 		}
 	case MethodEnvironmentStatus:
 		result = EnvironmentStatusResponse{Ready: true}
@@ -201,7 +218,7 @@ func (s *Server) start(
 	}
 	sess.mu.Unlock()
 
-	spec := sandbox.ProcessSpec{
+	spec := sandbox.SessionSpec{
 		ID:   p.ProcessID,
 		Argv: p.Argv,
 		TTY:  p.TTY,
@@ -220,6 +237,9 @@ func (s *Server) start(
 	if p.Sandbox == nil && len(p.Env) > 0 {
 		spec.Opts.Env = sandbox.EnvPolicy{Inject: p.Env}
 	}
+	if isZeroEnvPolicy(spec.Opts.Env) {
+		spec.Opts.Env = s.DefaultEnv
+	}
 
 	proc, err := s.backend.Start(ctx, spec)
 	if err != nil {
@@ -233,13 +253,11 @@ func (s *Server) start(
 	sess.processes[p.ProcessID] = entry
 	sess.mu.Unlock()
 
-	if source, ok := sandbox.ProcessEventSourceOf(proc); ok {
-		if watcher, err := source.Watch(ctx); err == nil {
-			entry.watcher = watcher
-			go s.pushEvents(p.ProcessID, entry, watcher)
-		}
+	if watcher, err := proc.Watch(ctx); err == nil {
+		entry.watcher = watcher
+		go s.pushEvents(p.ProcessID, entry, watcher)
 	}
-	return ExecResponse{ProcessID: p.ProcessID}, nil
+	return ExecResponse{ProcessID: p.ProcessID, PID: proc.PID()}, nil
 }
 
 func (s *Server) read(
@@ -272,19 +290,35 @@ func (s *Server) read(
 			Seq: ch.Seq, Stream: ch.Stream.String(), Data: ch.Data,
 		})
 	}
+	entry.mu.Lock()
 	resp := ReadResponse{
 		Chunks:  chunks,
 		NextSeq: out.NextSeq,
 		EOF:     out.EOF,
 		Exited:  out.EOF,
 	}
-	entry.mu.Lock()
 	if entry.exit != nil {
 		code := int32(entry.exit.Code)
 		resp.ExitCode = &code
+		resp.Reason = exitReasonWire(entry.exit.Reason)
 	}
 	entry.mu.Unlock()
 	return resp, nil
+}
+
+func (s *Server) closeInput(
+	ctx context.Context,
+	sess *session,
+	p CloseInputParams,
+) (any, *RPCError) {
+	entry, ok := sess.get(p.ProcessID)
+	if !ok {
+		return nil, &RPCError{Code: ErrInvalid, Message: "unknown process"}
+	}
+	if err := entry.proc.CloseInput(); err != nil {
+		return nil, internal(err)
+	}
+	return map[string]bool{"ok": true}, nil
 }
 
 func (s *Server) write(
@@ -300,7 +334,7 @@ func (s *Server) write(
 		return WriteResponse{Status: WriteAccepted}, nil // idempotent
 	}
 	if err := entry.proc.Write(ctx, p.Chunk); err != nil {
-		if errors.Is(err, sandbox.ErrProcessClosed) {
+		if errors.Is(err, sandbox.ErrSessionClosed) {
 			return WriteResponse{Status: WriteStdinClosed}, nil
 		}
 		return nil, internal(err)
@@ -320,14 +354,7 @@ func (s *Server) signal(
 	if !ok {
 		return nil, &RPCError{Code: ErrInvalid, Message: "unknown process"}
 	}
-	signaler, ok := sandbox.ProcessSignalerOf(entry.proc)
-	if !ok {
-		return nil, &RPCError{
-			Code:    ErrInternal,
-			Message: "backend does not support signals",
-		}
-	}
-	if err := signaler.Signal(ctx, sandbox.ProcessSignalInterrupt); err != nil {
+	if err := entry.proc.Signal(ctx, sandbox.SessionSignalInterrupt); err != nil {
 		return nil, internal(err)
 	}
 	return map[string]bool{"ok": true}, nil
@@ -380,19 +407,19 @@ func (s *Server) terminate(
 func (s *Server) pushEvents(
 	processID string,
 	entry *processEntry,
-	watcher sandbox.ProcessWatcher,
+	watcher sandbox.SessionWatcher,
 ) {
 	defer watcher.Close()
 	for ev := range watcher.Events() {
 		switch ev.Type {
-		case sandbox.ProcessEventOutput:
+		case sandbox.SessionEventOutput:
 			s.notify(MethodProcessOutput, OutputNotification{
 				ProcessID: processID,
 				Seq:       ev.Seq,
 				Stream:    ev.Stream.String(),
 				Data:      ev.Data,
 			})
-		case sandbox.ProcessEventExited:
+		case sandbox.SessionEventExited:
 			reason := ReasonExited
 			if ev.Exit != nil {
 				entry.mu.Lock()
@@ -416,12 +443,12 @@ func (s *Server) pushEvents(
 				ProcessID: processID, Seq: ev.Seq,
 			})
 			return
-		case sandbox.ProcessEventClosed:
+		case sandbox.SessionEventClosed:
 			s.notify(MethodProcessClosed, ClosedNotification{
 				ProcessID: processID, Seq: ev.Seq,
 			})
 			return
-		case sandbox.ProcessEventLag:
+		case sandbox.SessionEventLag:
 			s.notify(MethodProcessLag, LagNotification{
 				ProcessID: processID, Seq: ev.Seq,
 			})
@@ -476,13 +503,13 @@ func (sess *session) closeAll() {
 	}
 }
 
-func exitReasonWire(r sandbox.ProcessExitReason) string {
+func exitReasonWire(r sandbox.SessionExitReason) string {
 	switch r {
-	case sandbox.ProcessExited:
+	case sandbox.SessionExited:
 		return ReasonExited
-	case sandbox.ProcessSignaled:
+	case sandbox.SessionSignaled:
 		return ReasonSignaled
-	case sandbox.ProcessTerminated:
+	case sandbox.SessionTerminated:
 		return ReasonTerminated
 	default:
 		return ReasonUnknown
@@ -501,4 +528,8 @@ func internal(err error) *RPCError {
 		return &RPCError{Code: ErrInternal, Message: err.Error()}
 	}
 	return &RPCError{Code: ErrInternal, Message: fmt.Sprintf("%v", err)}
+}
+
+func isZeroEnvPolicy(p sandbox.EnvPolicy) bool {
+	return p.Allow == nil && p.Inject == nil
 }

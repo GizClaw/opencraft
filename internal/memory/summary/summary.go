@@ -12,7 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/GizClaw/flowcraft/sdk/message"
+	"github.com/GizClaw/flowcraft/core/message"
 )
 
 // Policy configures summarization. Zero values select defaults.

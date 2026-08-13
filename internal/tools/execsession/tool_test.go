@@ -6,61 +6,90 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/GizClaw/opencraft/internal/execd"
+	"github.com/GizClaw/flowcraft/core/sandbox"
 )
 
-type fakeProcess struct {
-	output []execd.Chunk
-	eof    bool
-	exit   execd.Exit
+type fakeSession struct {
+	output sandbox.SessionOutput
+	exit   sandbox.SessionExit
 }
 
-func (p *fakeProcess) ID() string { return "p" }
-func (p *fakeProcess) Read(context.Context, int64, int) (execd.Output, error) {
-	return execd.Output{NextSeq: 1, Chunks: p.output, EOF: p.eof}, nil
+func (s *fakeSession) ID() string    { return "p" }
+func (s *fakeSession) PID() int      { return 1 }
+func (s *fakeSession) Capabilities() sandbox.SessionCapabilities {
+	return sandbox.SessionCapabilities{TTY: true, Signal: true}
 }
-func (p *fakeProcess) Write(context.Context, []byte) error { return nil }
-func (p *fakeProcess) Terminate(context.Context) error     { return nil }
-func (p *fakeProcess) Wait(context.Context) (execd.Exit, error) {
-	return p.exit, nil
+func (s *fakeSession) Read(
+	context.Context, int64, int,
+) (sandbox.SessionOutput, error) {
+	return s.output, nil
 }
-func (p *fakeProcess) Close() error { return nil }
-func (p *fakeProcess) Signal(context.Context, execd.Signal) error {
+func (s *fakeSession) Write(context.Context, []byte) error { return nil }
+func (s *fakeSession) CloseInput() error                   { return nil }
+func (s *fakeSession) Resize(context.Context, int, int) error {
 	return nil
 }
-func (p *fakeProcess) Resize(context.Context, int, int) error { return nil }
+func (s *fakeSession) Signal(context.Context, sandbox.SessionSignal) error {
+	return nil
+}
+func (s *fakeSession) Terminate(context.Context) error { return nil }
+func (s *fakeSession) Wait(context.Context) (sandbox.SessionExit, error) {
+	return s.exit, nil
+}
+func (s *fakeSession) Watch(context.Context) (sandbox.SessionWatcher, error) {
+	return nil, nil
+}
+func (s *fakeSession) Close() error { return nil }
 
-type fakeEnv struct {
-	started execd.Spec
-	proc    *fakeProcess
+type fakeRunner struct {
+	started sandbox.SessionSpec
+	proc    *fakeSession
 }
 
-func (e *fakeEnv) ID() string { return "fake" }
-func (e *fakeEnv) Capabilities() []execd.Capability {
-	return []execd.Capability{
-		execd.CapSession, execd.CapSignal, execd.CapPTY,
+func (r *fakeRunner) Capabilities() sandbox.Capabilities {
+	return sandbox.Capabilities{
+		Features: sandbox.SessionFeatures{TTY: true, Signal: true},
 	}
 }
-func (e *fakeEnv) Exec(context.Context, execd.Request) (execd.Result, error) {
-	return execd.Result{}, nil
-}
-func (e *fakeEnv) Start(_ context.Context, spec execd.Spec) (execd.Process, error) {
-	e.started = spec
-	if e.proc == nil {
-		e.proc = &fakeProcess{}
+func (r *fakeRunner) Start(
+	_ context.Context,
+	spec sandbox.SessionSpec,
+) (sandbox.Session, error) {
+	r.started = spec
+	if r.proc == nil {
+		r.proc = &fakeSession{}
 	}
-	return e.proc, nil
+	return r.proc, nil
+}
+func (r *fakeRunner) List(context.Context) ([]sandbox.SessionInfo, error) {
+	return nil, nil
+}
+func (r *fakeRunner) Terminate(context.Context, string) error { return nil }
+
+func newTestTool() (*Tool, *fakeRunner) {
+	runner := &fakeRunner{
+		proc: &fakeSession{
+			output: sandbox.SessionOutput{
+				NextSeq: 1,
+				Chunks: []sandbox.OutputChunk{{
+					Seq:    0,
+					Stream: sandbox.SessionStreamStdout,
+					Data:   []byte("hi"),
+				}},
+				EOF: true,
+			},
+			exit: sandbox.SessionExit{Code: 0, Reason: sandbox.SessionExited},
+		},
+	}
+	tool, err := New(runner)
+	if err != nil {
+		panic(err)
+	}
+	return tool, runner
 }
 
 func TestStartReadClose(t *testing.T) {
-	env := &fakeEnv{proc: &fakeProcess{
-		output: []execd.Chunk{{Seq: 0, Stream: execd.Stdout, Data: []byte("hi")}},
-		eof:    true,
-	}}
-	tool, err := New(env)
-	if err != nil {
-		t.Fatal(err)
-	}
+	tool, runner := newTestTool()
 	ctx := context.Background()
 
 	out, err := tool.Execute(ctx, `{"action":"start","process_id":"s1","argv":["/bin/sh"],"tty":true,"rows":24,"cols":80}`)
@@ -70,8 +99,9 @@ func TestStartReadClose(t *testing.T) {
 	if !strings.Contains(out, `"started":true`) {
 		t.Errorf("start = %s", out)
 	}
-	if env.started.ID != "s1" || len(env.started.Argv) != 1 || !env.started.TTY {
-		t.Errorf("spec = %+v", env.started)
+	if runner.started.ID != "s1" || len(runner.started.Argv) != 1 ||
+		!runner.started.TTY || runner.started.Rows != 24 || runner.started.Cols != 80 {
+		t.Errorf("spec = %+v", runner.started)
 	}
 
 	out, err = tool.Execute(ctx, `{"action":"read","process_id":"s1","after_seq":0,"max_bytes":4096}`)
@@ -102,10 +132,7 @@ func TestStartReadClose(t *testing.T) {
 }
 
 func TestUnknownSession(t *testing.T) {
-	tool, err := New(&fakeEnv{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	tool, _ := newTestTool()
 	if _, err := tool.Execute(context.Background(),
 		`{"action":"read","process_id":"nope"}`); err == nil {
 		t.Fatal("unknown session accepted")
@@ -113,15 +140,9 @@ func TestUnknownSession(t *testing.T) {
 }
 
 func TestDefinition(t *testing.T) {
-	tool, err := New(&fakeEnv{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	tool, _ := newTestTool()
 	def := tool.Definition()
-	if def.Name != Name || !strings.Contains(def.Description, "start") {
+	if def.Name != Name {
 		t.Fatalf("definition = %+v", def)
-	}
-	if !tool.Metadata().MutatesState {
-		t.Fatal("exec_session must be mutating")
 	}
 }

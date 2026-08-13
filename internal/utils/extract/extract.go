@@ -1,9 +1,8 @@
 // Package extract provides URL content extraction for opencraft's web
 // tools. Pure Go implementation, zero external process dependency.
 //
-// Ported from flowcraft sdkx/extract (MIT licensed), trimmed to the HTML
-// article path: readability, metadata, segments, and cleaning. The
-// YouTube / podcast / Twitter / Firecrawl paths were dropped.
+// Trimmed to the HTML article path: readability, metadata, segments,
+// and cleaning.
 package extract
 
 import (

@@ -1,10 +1,13 @@
 version: v1
 
-# opencraft internal deploy document (not user-editable). Resources and
-# agent wiring live here; only inference.yaml and workspace.yaml are
-# seeded to ~/.opencraft/config/ for user configuration.
+# opencraft internal deploy document (not user-editable). The
+# user-editable inference.yaml is seeded to ~/.opencraft/config/ on
+# first start.
 
 resources:
+  # ------------------------------------------------------------------
+  # Runtime foundations: event bus, persistence, memory, checkpoints
+  # ------------------------------------------------------------------
   events:
     kind: event.Bus
     impl: memory
@@ -20,35 +23,86 @@ resources:
       max_raw_messages: 32
       preserve_recent: 4
       max_summary_bytes: 4096
-  sandbox:
-    kind: sandbox.Registry
-    impl: yaml
-    deps:
-      workspaces: ws
+  checkpoints:
+    kind: agent.CheckpointStore
+    impl: sqlite
     settings:
-      file: ./sandbox.yaml
+      path: ${env:OPEN_CRAFT_DATA_DIR}/checkpoints.db
+
+  # ------------------------------------------------------------------
+  # Workspace and sandbox (box.settings.remote selects local/remote exec)
+  # ------------------------------------------------------------------
   ws:
-    kind: workspace.Registry
-    impl: yaml
+    kind: workspace.Workspace
+    impl: opencraft
     settings:
-      file: ./workspace.yaml
+      root: ${env:OPEN_CRAFT_WORKDIR}
+  box:
+    kind: sandbox.Runner
+    impl: opencraft
+    settings:
+      root: ${env:OPEN_CRAFT_WORKDIR}
+      writable_paths: ["${env:OPEN_CRAFT_CACHE}"]
+      remote: true
+
+  # ------------------------------------------------------------------
+  # Tool containers: each tool.Source is one tool group; tools
+  # aggregates them through many deps
+  # ------------------------------------------------------------------
+  tool.exec:
+    kind: tool.Source
+    impl: opencraft/exec
+    deps:
+      sandbox: box
+  tool.applypatch:
+    kind: tool.Source
+    impl: opencraft/applypatch
+    deps:
+      workspace: ws
+  tool.webfetch:
+    kind: tool.Source
+    impl: opencraft/webfetch
+  tools:
+    kind: tool.Assembly
+    impl: middleware
+    deps:
+      tool: tool.exec
+      tool.applypatch: tool.applypatch
+      tool.webfetch: tool.webfetch
+    settings:
+      middlewares:
+        recover:
+          enabled: true
+      dynamic:
+        default: deferred
+        exposures:
+          tool_search: always
+          exec_command: always
+          exec_session: always
+          apply_patch: always
+
+  # ------------------------------------------------------------------
+  # Inference: provider resources + assembly (provider is a many dep;
+  # add more providers as needed)
+  # ------------------------------------------------------------------
+  infer:
+    kind: inference.Assembly
+    impl: unified
+    deps:
+      provider: provider.deepseek
+  provider.deepseek:
+    kind: inference.Provider
+    impl: deepseek
+    settings: { file: inference.yaml }
+
+  # ------------------------------------------------------------------
+  # Script runtime
+  # ------------------------------------------------------------------
   js:
     kind: agent.ScriptRuntime
     impl: js
     settings:
       pool_size: 2
-  infer:
-    kind: inference.Assembly
-    impl: yaml
-    settings:
-      file: ./inference.yaml
-  tools:
-    kind: tool.Assembly
-    impl: yaml
-    deps:
-      sandbox: sandbox/main
-    settings:
-      file: ./tools.yaml
 
 agents:
   assistant:
@@ -56,39 +110,38 @@ agents:
       name: opencraft
       description: opencraft coding agent
     engine:
-      kind: graph
+      kind: agent.Engine
+      impl: graph
+      deps:
+        inference: infer
+        tools: tools
+        workspace: ws
+        sandbox: box
+        script_runtime: js
       settings:
-        graph:
-          embed: assets/graphs/assistant.yaml
+        graph: { embed: assets/graphs/assistant.yaml }
         build:
-          # 不设 max_iterations（长任务不受回合数限制）；
-          # timeout 是总时长兜底，防止异常死循环无限消耗。
           timeout: 1h
-    deps:
-      inference: infer
-      tools: tools
-      sandbox: sandbox/main
-      workspace: ws/main
-      script_runtime: js
     prepare:
       - type: opencraft.prepare
         deps:
           memory: mem
+          workspace: ws
+        settings:
+          work_dir: ${env:OPEN_CRAFT_WORKDIR}
+          user_dir: ${env:OPEN_CRAFT_DATA_DIR}
+          collaboration_mode: default
+          permission_profile: workspace
     commit:
       - type: opencraft.commit
-        deps:
-          memory: mem
+        deps: { memory: mem }
 
 runtime:
   event_bus: events
+  checkpoint_store: checkpoints
   sessions:
     idle_timeout: 10m
-    dynamic_catalog:
-      tools:
-        assistant: tools
-      default_exposure: deferred
-      exposures:
-        tool_search: always
-        exec_session: always
-        exec_command: always
-        apply_patch: always
+    resume: true
+  dynamic_catalog:
+    tools:
+      assistant: tools

@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GizClaw/flowcraft/sdk/message"
+	"github.com/GizClaw/flowcraft/core/message"
 )
 
 func TestOpenMigrateAndRoundTrip(t *testing.T) {

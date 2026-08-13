@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/GizClaw/flowcraft/sdk/config"
-	"github.com/GizClaw/flowcraft/sdk/errdefs"
+	"github.com/GizClaw/flowcraft/core/errdefs"
+	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/opencraft/internal/memory/summary"
 	"github.com/GizClaw/opencraft/internal/state"
 )
@@ -17,15 +17,15 @@ const ResourceKind = "memory"
 // depending on a state resource of kind "state".
 type Factory struct{}
 
-var _ config.Factory = Factory{}
+var _ resource.Factory = Factory{}
 
 // Spec declares the resource shape: kind memory, impl summary,
 // one required dependency on a state store.
-func (Factory) Spec() config.Spec {
-	return config.Spec{
+func (Factory) Spec() resource.Spec {
+	return resource.Spec{
 		Kind: ResourceKind,
 		Impl: "summary",
-		Deps: []config.DepSpec{
+		Deps: []resource.DepSpec{
 			{Name: "state", Type: state.ResourceKind, Required: true},
 		},
 	}
@@ -38,7 +38,7 @@ type policySettings struct {
 }
 
 // New builds the summary Assembly over the SQLite adapter.
-func (Factory) New(ctx context.Context, in config.Input) (any, error) {
+func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 	dep, ok := in.Dep("state")
 	if !ok {
 		return nil, errdefs.Validationf("memory: state dependency is required")
@@ -47,7 +47,7 @@ func (Factory) New(ctx context.Context, in config.Input) (any, error) {
 	if !ok {
 		return nil, errdefs.Validationf("memory: state dep is not *state.Store")
 	}
-	policy, err := config.DecodeSettings[policySettings](in.Settings)
+	policy, err := resource.DecodeTyped[policySettings](in.Settings)
 	if err != nil {
 		return nil, err
 	}

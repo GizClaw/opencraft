@@ -1,7 +1,7 @@
 // Package execcommand provides the shell-semantics exec_command tool:
-// it runs the model-provided command string through /bin/sh -c in an
-// execd.Environment (by default the remote execd), so
-// pipelines, redirects, and && chains work like a normal shell.
+// it runs the model-provided command string through /bin/sh -c in the
+// configured sandbox.Runner, so pipelines, redirects, and && chains
+// work like a normal shell.
 package execcommand
 
 import (
@@ -10,10 +10,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/GizClaw/flowcraft/sdk/errdefs"
-	"github.com/GizClaw/flowcraft/sdk/message"
-	"github.com/GizClaw/flowcraft/sdk/tool"
-	"github.com/GizClaw/opencraft/internal/execd"
+	"github.com/GizClaw/flowcraft/core/errdefs"
+	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/sandbox"
+	"github.com/GizClaw/flowcraft/core/tool"
 )
 
 // Name is the canonical exec_command tool name.
@@ -21,20 +21,20 @@ const Name = "exec_command"
 
 // Tool runs a shell command string via /bin/sh -c.
 type Tool struct {
-	env execd.Environment
+	runner sandbox.Runner
 }
 
-// New creates the exec_command tool. env is required.
-func New(env execd.Environment) (*Tool, error) {
-	if env == nil {
-		return nil, errInvalid("environment is required")
+// New creates the exec_command tool. runner is required.
+func New(runner sandbox.Runner) (*Tool, error) {
+	if runner == nil {
+		return nil, errInvalid("runner is required")
 	}
-	return &Tool{env: env}, nil
+	return &Tool{runner: runner}, nil
 }
 
 // MustNew panics on invalid construction; use in static wiring.
-func MustNew(env execd.Environment) *Tool {
-	t, err := New(env)
+func MustNew(runner sandbox.Runner) *Tool {
+	t, err := New(runner)
 	if err != nil {
 		panic(err)
 	}
@@ -42,7 +42,7 @@ func MustNew(env execd.Environment) *Tool {
 }
 
 // Definition implements tool.Tool.
-func (t *Tool) Definition() message.Definition {
+func (t *Tool) Definition() message.ToolDefinition {
 	return message.DefineSchema(
 		Name,
 		"Run a shell command string inside the agent's sandbox. "+
@@ -82,16 +82,16 @@ func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
 		return "", errInvalid("command is required")
 	}
 
-	req := execd.Request{
-		Argv:    []string{"/bin/sh", "-c", args.Command},
+	var timeout time.Duration
+	if args.TimeoutSeconds != nil && *args.TimeoutSeconds > 0 {
+		timeout = time.Duration(*args.TimeoutSeconds * float64(time.Second))
+	}
+	result, err := sandbox.Exec(ctx, t.runner, "/bin/sh",
+		[]string{"-c", args.Command}, sandbox.ExecOptions{
 		WorkDir: args.Workdir,
 		Stdin:   []byte(args.Stdin),
-	}
-	if args.TimeoutSeconds != nil && *args.TimeoutSeconds > 0 {
-		req.Timeout = time.Duration(*args.TimeoutSeconds * float64(time.Second))
-	}
-
-	result, err := t.env.Exec(ctx, req)
+		Timeout: timeout,
+	})
 	if err != nil {
 		return "", err
 	}

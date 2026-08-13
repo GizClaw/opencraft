@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/GizClaw/opencraft/internal/utils/httpclient"
+	"github.com/GizClaw/flowcraft/core/utils"
 
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
@@ -27,7 +27,7 @@ type FetchResult struct {
 // in-memory reader.
 func Fetch(ctx context.Context, httpClient *http.Client, timeout time.Duration, userAgent, urlStr string) (*FetchResult, error) {
 	if httpClient == nil {
-		httpClient = httpclient.NewClient(httpclient.WithTimeout(timeout))
+		httpClient = utils.NewHttpClient(utils.WithTimeout(timeout))
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", urlStr, nil)

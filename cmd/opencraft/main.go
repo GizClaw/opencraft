@@ -5,20 +5,21 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"net"
 	"os"
 	"path/filepath"
 
-	"github.com/GizClaw/flowcraft/sdk/agent"
-	"github.com/GizClaw/flowcraft/sdk/message"
-	sdkdeploy "github.com/GizClaw/flowcraft/sdkx/deploy"
-	sessions "github.com/GizClaw/flowcraft/sdkx/runtime/session"
+	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/message"
+	sessions "github.com/GizClaw/flowcraft/core/runtime/session"
 
 	app "github.com/GizClaw/opencraft/internal/app"
 	"github.com/GizClaw/opencraft/internal/config"
 	"github.com/GizClaw/opencraft/internal/execd"
+	"github.com/GizClaw/opencraft/internal/tui"
 )
 
 func main() {
@@ -29,15 +30,11 @@ func main() {
 		_ = app.LoadDotEnv(filepath.Join(dir, ".env"))
 	}
 
-	data, configBase, err := resolveDocument(*configPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "opencraft: read config: %v\n", err)
-		os.Exit(1)
-	}
-	doc, err := sdkdeploy.Parse(data)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "opencraft: parse config: %v\n", err)
-		os.Exit(1)
+	if *configPath == "" {
+		if _, err := config.EnsureUserConfig(); err != nil {
+			fmt.Fprintf(os.Stderr, "opencraft: seed config: %v\n", err)
+			os.Exit(1)
+		}
 	}
 	// The execd subcommand is self-forked by the main process and
 	// must not build a full runtime (it only serves process sessions).
@@ -45,8 +42,29 @@ func main() {
 		runExecServer()
 		return
 	}
-	rtc, err := app.NewRuntimeController(context.Background(), doc,
-		app.WithConfigBase(configBase))
+	workDir, err := os.Getwd()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "opencraft: workdir: %v\n", err)
+		os.Exit(1)
+	}
+	mgr, err := config.Open(config.Options{
+		WorkDir:  workDir,
+		Explicit: *configPath,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "opencraft: open config: %v\n", err)
+		os.Exit(1)
+	}
+	ctx := context.Background()
+	view, err := mgr.Load(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "opencraft: load config: %v\n", err)
+		os.Exit(1)
+	}
+	bridge := tui.NewBridge(256)
+	rtc, err := app.NewRuntimeController(ctx, view.Document,
+		app.WithConfigBase(mgr.UserDir()),
+		app.WithUserPrompter(bridge))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "opencraft: assemble runtime: %v\n", err)
 		os.Exit(1)
@@ -61,7 +79,10 @@ func main() {
 	case "run":
 		run(rtc, flag.Arg(1))
 	case "":
-		fmt.Println("opencraft runtime ready (config-driven assembly)")
+		if err := tui.Run(rtc, tui.Options{}, bridge); err != nil {
+			fmt.Fprintf(os.Stderr, "opencraft: tui: %v\n", err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "opencraft: unknown command %q (run)\n", flag.Arg(0))
 		os.Exit(2)
@@ -85,14 +106,16 @@ func runExecServer() {
 		fmt.Fprintf(os.Stderr, "opencraft execd: seed config: %v\n", err)
 		os.Exit(1)
 	}
-	pm, err := app.SandboxProcessManager(ctx, *workDir)
+	runner, policy, err := app.SandboxRunner(ctx, *workDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "opencraft execd: %v\n", err)
 		os.Exit(1)
 	}
 
 	if *listen == "" {
-		if err := execd.New(pm, os.Stdin, os.Stdout).Serve(ctx); err != nil {
+		srv := execd.New(runner, os.Stdin, os.Stdout)
+		srv.DefaultEnv = policy
+		if err := srv.Serve(ctx); err != nil {
 			fmt.Fprintf(os.Stderr, "opencraft execd: %v\n", err)
 			os.Exit(1)
 		}
@@ -112,26 +135,11 @@ func runExecServer() {
 		}
 		go func() {
 			defer conn.Close()
-			_ = execd.New(pm, conn, conn).Serve(ctx)
+			srv := execd.New(runner, conn, conn)
+			srv.DefaultEnv = policy
+			_ = srv.Serve(ctx)
 		}()
 	}
-}
-
-// resolveDocument reads the deploy document: an explicit -config path
-// wins; otherwise it seeds the user-facing assets into
-// ~/.opencraft/config/ and uses the embedded opencraft.yaml (which
-// references the seeded inference.yaml and embedded graph).
-func resolveDocument(explicit string) ([]byte, string, error) {
-	if explicit != "" {
-		data, err := os.ReadFile(explicit)
-		return data, filepath.Dir(explicit), err
-	}
-	dir, err := config.EnsureUserConfig()
-	if err != nil {
-		return nil, "", err
-	}
-	data, err := config.EmbeddedOpenCraft()
-	return data, dir, err
 }
 
 func run(rtc *app.RuntimeController, text string) {
@@ -160,11 +168,17 @@ func run(rtc *app.RuntimeController, text string) {
 	res, err := turn.Wait(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "opencraft: turn: %v\n", err)
+		for e := errors.Unwrap(err); e != nil; e = errors.Unwrap(e) {
+			fmt.Fprintf(os.Stderr, "opencraft:   caused by: %v\n", e)
+		}
 		os.Exit(1)
 	}
 	if res.Status != agent.StatusCompleted {
 		if res.Err != nil {
 			fmt.Fprintf(os.Stderr, "opencraft: turn failed: %v\n", res.Err)
+			for err := errors.Unwrap(res.Err); err != nil; err = errors.Unwrap(err) {
+				fmt.Fprintf(os.Stderr, "opencraft:   caused by: %v\n", err)
+			}
 		} else {
 			fmt.Fprintf(os.Stderr, "opencraft: turn status=%s\n", res.Status)
 		}

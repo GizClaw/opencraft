@@ -10,9 +10,9 @@ import (
 	"encoding/json"
 	"sync"
 
-	"github.com/GizClaw/flowcraft/sdk/agent"
-	"github.com/GizClaw/flowcraft/sdk/memory"
-	"github.com/GizClaw/flowcraft/sdk/workspace"
+	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/memory"
+	"github.com/GizClaw/flowcraft/core/workspace"
 )
 
 // Section is one world-state fragment written to the board for the
@@ -153,7 +153,7 @@ func (s *Service) memorySummary(ctx context.Context, contextID string) string {
 	res, err := s.memory.Context(ctx, memory.ContextRequest{
 		Scope:          memory.Scope{RuntimeID: "opencraft"},
 		ConversationID: contextID,
-		Budget:         memory.Budget{MaxItems: 1, MaxChars: 1 << 16},
+		Budget:         memory.Budget{MaxItems: 64, MaxChars: 1 << 16},
 	})
 	if err != nil || len(res.Items) == 0 {
 		return ""

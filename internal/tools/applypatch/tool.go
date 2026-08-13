@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/GizClaw/flowcraft/sdk/errdefs"
-	"github.com/GizClaw/flowcraft/sdk/message"
-	"github.com/GizClaw/flowcraft/sdk/tool"
-	"github.com/GizClaw/flowcraft/sdk/workspace"
+	"github.com/GizClaw/flowcraft/core/errdefs"
+	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/tool"
+	"github.com/GizClaw/flowcraft/core/workspace"
 )
 
 // Name is the canonical apply_patch tool name.
@@ -38,7 +38,7 @@ func MustNew(ws workspace.Workspace) *Tool {
 }
 
 // Definition implements tool.Tool.
-func (t *Tool) Definition() message.Definition {
+func (t *Tool) Definition() message.ToolDefinition {
 	return message.DefineSchema(
 		Name,
 		"Apply a patch to files in the workspace. The patch uses the "+

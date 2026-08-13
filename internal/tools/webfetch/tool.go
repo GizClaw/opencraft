@@ -6,9 +6,9 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/GizClaw/flowcraft/sdk/errdefs"
-	"github.com/GizClaw/flowcraft/sdk/message"
-	"github.com/GizClaw/flowcraft/sdk/tool"
+	"github.com/GizClaw/flowcraft/core/errdefs"
+	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/tool"
 	"github.com/GizClaw/opencraft/internal/utils/extract"
 )
 
@@ -28,7 +28,7 @@ func New() *Tool {
 }
 
 // Definition implements tool.Tool.
-func (t *Tool) Definition() message.Definition {
+func (t *Tool) Definition() message.ToolDefinition {
 	return message.DefineSchema(
 		Name,
 		"Fetch an HTTP(S) URL and return the extracted article content: "+
