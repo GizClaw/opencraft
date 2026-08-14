@@ -10,26 +10,29 @@ import (
 
 	"github.com/GizClaw/flowcraft/backends/checkpoint/sqlite"
 	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/agent/scriptrt"
 	"github.com/GizClaw/flowcraft/core/deploy"
 	"github.com/GizClaw/flowcraft/core/event"
 	graphresource "github.com/GizClaw/flowcraft/core/graph/resource"
 	"github.com/GizClaw/flowcraft/core/inference"
+	"github.com/GizClaw/flowcraft/core/inference/route"
 	"github.com/GizClaw/flowcraft/core/resource"
 	runtimecore "github.com/GizClaw/flowcraft/core/runtime"
+	sessions "github.com/GizClaw/flowcraft/core/runtime/session"
 	"github.com/GizClaw/flowcraft/core/sandbox/bwrap"
 	sandboxlocal "github.com/GizClaw/flowcraft/core/sandbox/local"
 	"github.com/GizClaw/flowcraft/core/sandbox/seatbelt"
-	"github.com/GizClaw/flowcraft/core/agent/scriptrt"
 	"github.com/GizClaw/flowcraft/core/tool"
+	"github.com/GizClaw/flowcraft/core/tool/mcp"
 	"github.com/GizClaw/flowcraft/core/tool/middleware"
 	"github.com/GizClaw/flowcraft/core/workspace"
 	"github.com/GizClaw/flowcraft/driver/deepseek"
 	"github.com/GizClaw/flowcraft/driver/openai"
-	sessions "github.com/GizClaw/flowcraft/core/runtime/session"
 
-	"github.com/GizClaw/opencraft/internal/config"
 	"github.com/GizClaw/opencraft/internal/app/worldstate"
+	"github.com/GizClaw/opencraft/internal/config"
 	opmemory "github.com/GizClaw/opencraft/internal/memory"
+	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/state"
 	opentools "github.com/GizClaw/opencraft/internal/tools"
 )
@@ -42,9 +45,6 @@ type Options struct {
 	// WorkBase is the sandbox/workspace root. Defaults to the current
 	// working directory (where opencraft was invoked).
 	WorkBase string
-	// userPrompter routes model questions (ask_user) to a user-facing
-	// surface such as the TUI. Nil keeps the runtime's default.
-	userPrompter agent.UserPrompter
 	// usageObserver receives every reported inference usage (including
 	// the model actually invoked). Nil disables observation.
 	usageObserver func(inference.Usage)
@@ -60,11 +60,6 @@ func WithConfigBase(dir string) Option {
 // WithWorkBase overrides the sandbox/workspace root.
 func WithWorkBase(dir string) Option {
 	return func(o *Options) { o.WorkBase = dir }
-}
-
-// WithUserPrompter injects the user-prompt surface used by ask_user.
-func WithUserPrompter(p agent.UserPrompter) Option {
-	return func(o *Options) { o.userPrompter = p }
 }
 
 // WithUsageObserver installs a usage-report observer. The callback runs
@@ -125,7 +120,13 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 	if err := middleware.Register(reg); err != nil {
 		return nil, err
 	}
+	if err := mcp.Register(reg); err != nil {
+		return nil, err
+	}
 	if err := inference.Register(reg); err != nil {
+		return nil, err
+	}
+	if err := route.Register(reg); err != nil {
 		return nil, err
 	}
 	if err := scriptrt.Register(reg); err != nil {
@@ -156,6 +157,9 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 	if err := opmemory.Register(reg); err != nil {
 		return nil, err
 	}
+	if err := ocsessions.Register(reg); err != nil {
+		return nil, err
+	}
 	if err := opentools.Register(reg); err != nil {
 		return nil, err
 	}
@@ -168,7 +172,7 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 	if err := builder.WithLoader(loader); err != nil {
 		return nil, err
 	}
-	if o.userPrompter != nil || o.usageObserver != nil {
+	if o.usageObserver != nil {
 		if err := builder.WithHostFactory(func(
 			base sessions.HostFactory,
 		) (sessions.HostFactory, error) {
@@ -181,9 +185,6 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 					return nil, err
 				}
 				hf := agent.HostFuncs{Inner: host}
-				if o.userPrompter != nil {
-					hf.AskUserFn = o.userPrompter.AskUser
-				}
 				if o.usageObserver != nil {
 					observer := o.usageObserver
 					hf.ReportUsageFn = func(

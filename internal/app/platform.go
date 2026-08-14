@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"path/filepath"
 	goruntime "runtime"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
@@ -26,9 +27,10 @@ func (sandboxFactory) Spec() resource.Spec {
 }
 
 type sandboxSettings struct {
-	Root          string   `json:"root"`
-	WritablePaths []string `json:"writable_paths,omitempty"`
-	Remote        bool     `json:"remote,omitempty"`
+	Root            string   `json:"root"`
+	WritablePaths   []string `json:"writable_paths,omitempty"`
+	Remote          bool     `json:"remote,omitempty"`
+	AllowedCommands []string `json:"allowed_commands,omitempty"`
 }
 
 func (sandboxFactory) New(ctx context.Context, in resource.Input) (any, error) {
@@ -42,21 +44,39 @@ func (sandboxFactory) New(ctx context.Context, in resource.Input) (any, error) {
 		return nil, errdefs.Validationf(
 			"opencraft sandbox: settings.root is required")
 	}
+	policy, err := New(
+		s.AllowedCommands,
+		filepath.Join(s.Root, ".opencraft", "approvals.yaml"),
+	)
+	if err != nil {
+		return nil, err
+	}
+	var runner sandbox.Runner
 	if s.Remote {
 		client, stop, err := execd.Launch(ctx, s.Root)
 		if err != nil {
 			return nil, err
 		}
-		return execd.NewRemoteRunner(client, stop)
+		runner, err = execd.NewRemoteRunner(client, stop)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		switch goruntime.GOOS {
+		case "darwin":
+			runner, err = seatbelt.New(s.Root,
+				seatbelt.WithWritablePaths(s.WritablePaths...))
+		case "linux":
+			runner, err = bwrap.New(s.Root,
+				bwrap.WithWritablePaths(s.WritablePaths...))
+		default:
+			runner = sandboxlocal.New(s.Root)
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
-	switch goruntime.GOOS {
-	case "darwin":
-		return seatbelt.New(s.Root, seatbelt.WithWritablePaths(s.WritablePaths...))
-	case "linux":
-		return bwrap.New(s.Root, bwrap.WithWritablePaths(s.WritablePaths...))
-	default:
-		return sandboxlocal.New(s.Root), nil
-	}
+	return sandbox.WithApproval(runner, policy.Approve, policy.Allowlist()), nil
 }
 
 var _ sandbox.Runner = (*sandboxlocal.Runner)(nil)

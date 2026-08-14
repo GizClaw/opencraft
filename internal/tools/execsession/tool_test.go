@@ -14,8 +14,8 @@ type fakeSession struct {
 	exit   sandbox.SessionExit
 }
 
-func (s *fakeSession) ID() string    { return "p" }
-func (s *fakeSession) PID() int      { return 1 }
+func (s *fakeSession) ID() string { return "p" }
+func (s *fakeSession) PID() int   { return 1 }
 func (s *fakeSession) Capabilities() sandbox.SessionCapabilities {
 	return sandbox.SessionCapabilities{TTY: true, Signal: true}
 }

@@ -25,11 +25,11 @@ type TurnStore interface {
 // ContextProvider (inject), so memory is wired through hooks and
 // configuration rather than called ad hoc.
 type Assembly struct {
-	store   TurnStore
-	policy  Policy
+	store    TurnStore
+	policy   Policy
 	assembly *inference.Assembly // nil => buffer fold only (P1: LLM compaction)
-	model   inference.ModelRef
-	now     func() time.Time
+	model    inference.ModelRef
+	now      func() time.Time
 }
 
 // AssemblyOption configures an Assembly.
@@ -150,9 +150,9 @@ func (a *Assembly) Context(ctx context.Context, req memory.ContextRequest) (memo
 		return memory.ContextResult{}, memory.NewError(memory.KindInternal, "context", err)
 	}
 	type rawCandidate struct {
-		id   string
-		msg  message.Message
-		seq  int
+		id  string
+		msg message.Message
+		seq int
 	}
 	candidates := make([]rawCandidate, 0, len(raw))
 	for i, msg := range raw {

@@ -1,3 +1,5 @@
 Permission profile: {{.Profile}}
 {{if .ApprovedPrefixes}}Approved command prefixes: {{.ApprovedPrefixes}}
-{{end}}Requires approval: commands outside approved prefixes, file writes outside the workspace, network access
+{{end}}Requires approval: commands outside the sandbox command allowlist
+(static allowed_commands plus project .opencraft/approvals.yaml), file
+writes outside the workspace, network access

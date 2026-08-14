@@ -2,18 +2,27 @@ package tui
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
+	sessions "github.com/GizClaw/flowcraft/core/runtime/session"
+
+	"github.com/GizClaw/opencraft/internal/interact"
+	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 )
 
 func newTestModel() *Model {
-	return New(nil, Options{}, NewBridge(16))
+	return New(nil, Options{Model: "deepseek/x"}, NewBridge(16), nil)
 }
 
 func TestTruncate(t *testing.T) {
@@ -44,164 +53,136 @@ func TestCtrlCQuitsWhenIdle(t *testing.T) {
 	}
 }
 
-func TestViewRenders(t *testing.T) {
+func TestViewRendersStatusAndPrompt(t *testing.T) {
 	m := newTestModel()
 	m.width, m.height = 80, 24
-	m.view.Width, m.view.Height = 80, 18
-	m.input.SetWidth(80)
-	m.chat.AppendUser("hello")
-	m.refresh()
 	v := m.View()
-	if !strings.Contains(v, "hello") || !strings.Contains(v, "opencraft") {
+	if !strings.Contains(v, "deepseek/x") || !strings.Contains(v, ">") {
 		t.Errorf("view = %q", v)
 	}
 }
 
-func TestAppendDelta(t *testing.T) {
-	m := newTestModel()
-	m.chat.AppendAssistant()
-	m.chat.AppendDelta(textDelta("hi"))
-	m.chat.AppendDelta(agent.StreamDeltaPayload{
-		Type: agent.StreamDeltaPart,
-		Part: message.ToolCallPart{Call: message.ToolCall{
-			ID: "call-1", Name: "exec_command",
-		}},
-	})
-	if m.chat.blocks[0].text != "hi" {
-		t.Errorf("assistant text = %q", m.chat.blocks[0].text)
-	}
-	if len(m.chat.blocks) != 2 || m.chat.blocks[1].kind != blockTool ||
-		m.chat.blocks[1].name != "exec_command" {
-		t.Errorf("blocks = %+v", m.chat.blocks)
-	}
-}
-
-func TestAppendDeltaInterleavesAssistantBlocks(t *testing.T) {
-	m := newTestModel()
-	m.chat.AppendUser("hello")
-	m.chat.AppendAssistant()
-	m.chat.AppendDelta(textDelta("let me check"))
-	m.chat.AppendDelta(agent.StreamDeltaPayload{
-		Type: agent.StreamDeltaPart,
-		Part: message.ToolCallPart{Call: message.ToolCall{
-			ID: "call-1", Name: "exec_command",
-		}},
-	})
-	m.chat.AppendDelta(textDelta("found it"))
-
-	if len(m.chat.blocks) != 4 {
-		t.Fatalf("blocks = %d, want user + assistant + tool + assistant: %+v",
-			len(m.chat.blocks), m.chat.blocks)
-	}
-	if m.chat.blocks[1].kind != blockAssistant ||
-		m.chat.blocks[1].text != "let me check" {
-		t.Errorf("first assistant block = %+v", m.chat.blocks[1])
-	}
-	if m.chat.blocks[2].kind != blockTool {
-		t.Errorf("third block = %+v, want tool", m.chat.blocks[2])
-	}
-	if m.chat.blocks[3].kind != blockAssistant ||
-		m.chat.blocks[3].text != "found it" {
-		t.Errorf("blocks = %+v, want a fresh assistant block after the tool", m.chat.blocks)
-	}
-}
-
-func TestAppendDeltaStreamsReasoningInOrder(t *testing.T) {
-	m := newTestModel()
-	m.chat.AppendUser("hello")
-	m.chat.AppendDelta(agent.StreamDeltaPayload{
-		Type: agent.StreamDeltaPart,
-		Part: message.ReasoningPart{Text: "think"},
-	})
-	m.chat.AppendDelta(textDelta("answer"))
-
-	want := []struct {
-		kind blockKind
-		text string
-	}{
-		{blockUser, "hello"},
-		{blockReasoning, "think"},
-		{blockAssistant, "answer"},
-	}
-	if len(m.chat.blocks) != len(want) {
-		t.Fatalf("blocks = %d, want %d: %+v", len(m.chat.blocks), len(want), m.chat.blocks)
-	}
-	for i, w := range want {
-		b := m.chat.blocks[i]
-		if b.kind != w.kind || b.text != w.text {
-			t.Errorf("block[%d] = %+v, want kind %v text %q", i, b, w.kind, w.text)
-		}
-	}
-}
-
-func TestFormatExecResult(t *testing.T) {
-	cases := []struct {
-		name   string
-		code   int
-		stdout string
-		stderr string
-		want   string
-	}{
-		{"empty output", 0, "", "", "exit_code=0"},
-		{"stdout only", 0, "out", "", "exit_code=0\n[stdout]\nout"},
-		{"stderr only", 1, "", "err", "exit_code=1\n[stderr]\nerr"},
-		{"both", 2, "out", "err",
-			"exit_code=2\n[stderr]\nerr\n[stdout]\nout"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := formatExecResult(tc.code, tc.stdout, tc.stderr); got != tc.want {
-				t.Errorf("formatExecResult = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestUsageAccumulatesInStatusBar(t *testing.T) {
+func TestRenderUserEcho(t *testing.T) {
 	m := newTestModel()
 	m.width = 80
-	m.applyEvent(Event{Usage: &UsageEvent{
-		InputTokens: 1200, OutputTokens: 340,
-		CacheReadTokens: 200, CacheWriteTokens: 40,
-		ReasoningTokens: 50, LatencyMs: 800,
-	}})
-	m.applyEvent(Event{Usage: &UsageEvent{
-		InputTokens: 300, OutputTokens: 10, LatencyMs: 200,
-	}})
-	bar := m.statusBar()
-	if strings.Contains(bar, "\n") {
-		t.Fatalf("status bar wrapped: %q", bar)
+	got := m.renderUserEcho("hello\nworld")
+	if !strings.Contains(got, "> hello") || !strings.Contains(got, "world") {
+		t.Errorf("echo = %q", got)
 	}
-	for _, want := range []string{
-		"in 1.5k", "out 350", "cache 200/40", "think 50", "1s",
-	} {
-		if !strings.Contains(bar, want) {
-			t.Errorf("status bar = %q, want %q", bar, want)
-		}
+	if !strings.Contains(got, "  world") {
+		t.Errorf("continuation line should align: %q", got)
 	}
 }
 
-func TestHumanInt(t *testing.T) {
-	cases := map[int64]string{
-		0: "0", 45: "45", 999: "999",
-		1000: "1.0k", 1234: "1.2k", 1_500_000: "1.5M",
-	}
-	for in, want := range cases {
-		if got := humanInt(in); got != want {
-			t.Errorf("humanInt(%d) = %q, want %q", in, got, want)
-		}
-	}
-}
-
-func TestKeyRunesUpdateInput(t *testing.T) {
+func TestErrorLineRenders(t *testing.T) {
 	m := newTestModel()
-	updated, _ := m.Update(tea.KeyMsg{
-		Type:  tea.KeyRunes,
-		Runes: []rune("hello"),
-	})
+	m.width = 80
+	m.errs.lastErr = "provider boom"
+	m.errs.lastErrRun = "run123"
+	m.errs.lastErrReq = "req456"
+	v := m.View()
+	if !strings.Contains(v, "✗ [run:run123 req:req456] provider boom") {
+		t.Errorf("view = %q", v)
+	}
+}
+
+func TestTurnDoneCapturesRequestID(t *testing.T) {
+	m := newTestModel()
+	err := errdefs.WithRequestID(errors.New("provider boom"), "req-xyz")
+	m.Update(turnDoneMsg{err: err})
+	if m.errs.lastErrReq != "req-xyz" {
+		t.Errorf("lastErrReq = %q", m.errs.lastErrReq)
+	}
+	if !strings.Contains(m.View(), "req:req-xyz") {
+		t.Errorf("view = %q", m.View())
+	}
+}
+
+func TestTurnDoneCancelMarker(t *testing.T) {
+	m := newTestModel()
+	_, cmd := m.Update(turnDoneMsg{res: &agent.Result{Status: agent.StatusCanceled}})
+	if cmd == nil || !strings.Contains(fmt.Sprintf("%#v", cmd()), "✗ cancelled") {
+		t.Errorf("flush cmd = %#v", cmd)
+	}
+}
+
+func TestTurnDoneInterruptMarker(t *testing.T) {
+	m := newTestModel()
+	_, cmd := m.Update(turnDoneMsg{res: &agent.Result{Status: agent.StatusInterrupted}})
+	if cmd == nil || !strings.Contains(fmt.Sprintf("%#v", cmd()), "✗ interrupted") {
+		t.Errorf("flush cmd = %#v", cmd)
+	}
+}
+
+func TestResumePicker(t *testing.T) {
+	store, err := ocsessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendTurn(context.Background(), id, []message.Message{
+		message.NewTextMessage(message.RoleUser, "你好"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	m := New(nil, Options{Model: "deepseek/x", Sessions: store},
+		NewBridge(16), nil)
+	m.input.SetValue("/resume")
+	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	next := updated.(*Model)
-	if next.input.Value() != "hello" {
-		t.Fatalf("input value = %q, want hello", next.input.Value())
+	if next.mode != modeResume || len(next.resume.list) != 1 {
+		t.Fatalf("resume mode not active: mode=%v list=%+v",
+			next.mode, next.resume.list)
+	}
+	if !strings.Contains(next.View(), "Select a session to resume") {
+		t.Error("resume picker not rendered")
+	}
+	updated, _ = next.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	next = updated.(*Model)
+	if next.mode != modeIdle || next.opts.ContextID != id {
+		t.Fatalf("resume failed: mode=%v id=%q want %q",
+			next.mode, next.opts.ContextID, id)
+	}
+}
+
+func TestResumeFlattensHistory(t *testing.T) {
+	store, err := ocsessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendTurn(context.Background(), id, []message.Message{
+		message.NewTextMessage(message.RoleUser, "你好"),
+		{Role: message.RoleAssistant, Content: message.Content{Parts: []message.Part{
+			message.TextPart{Text: "你好！"},
+		}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	m := New(nil, Options{Model: "deepseek/x", Sessions: store},
+		NewBridge(16), nil)
+	m.input.SetValue("/resume")
+	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	next := updated.(*Model)
+	updated, cmd := next.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	next = updated.(*Model)
+	if next.opts.ContextID != id {
+		t.Fatalf("context id = %q, want %q", next.opts.ContextID, id)
+	}
+	if cmd == nil {
+		t.Fatal("resume should flush history")
+	}
+	out := fmt.Sprintf("%#v", cmd())
+	if !strings.Contains(out, "> 你好") || !strings.Contains(out, "你好！") {
+		t.Errorf("history not flattened: %s", out)
 	}
 }
 
@@ -210,42 +191,505 @@ func TestEnterSubmitsText(t *testing.T) {
 	m.input.SetValue("hello")
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	next := updated.(*Model)
-	if len(next.chat.blocks) < 1 || next.chat.blocks[0].text != "hello" {
-		t.Errorf("blocks = %+v", next.chat.blocks)
-	}
 	if cmd == nil {
 		t.Fatal("enter should return a submit command")
 	}
 	if next.input.Value() != "" {
 		t.Errorf("input not reset: %q", next.input.Value())
 	}
+	if len(next.stream.pending) != 0 {
+		t.Errorf("echo should print directly, pending = %v",
+			next.stream.pending)
+	}
 }
 
-func TestAskModalReplies(t *testing.T) {
+func TestEnterSubmitsTransitionsToRunning(t *testing.T) {
 	m := newTestModel()
-	replyCh := make(chan agent.UserReply, 1)
-	updated, _ := m.dispatch(Event{Prompt: &PromptRequest{
-		Text: "Which file?", ReplyCh: replyCh,
+	m.input.SetValue("hello")
+	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	next := updated.(*Model)
+	if next.mode != modeRunning {
+		t.Fatalf("mode = %v, want running", next.mode)
+	}
+	if !strings.Contains(next.View(), "working") {
+		t.Errorf("status line = %q", next.View())
+	}
+}
+
+func TestRunningKeySwallowsEnter(t *testing.T) {
+	m := newTestModel()
+	m.mode = modeRunning
+	m.input.SetValue("hello")
+	updated, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	next := updated.(*Model)
+	if cmd != nil {
+		t.Fatalf("enter during running should be ignored, cmd = %v", cmd)
+	}
+	if next.input.Value() != "hello" || next.mode != modeRunning {
+		t.Errorf("input/mode changed: %q / %v", next.input.Value(), next.mode)
+	}
+}
+
+func TestCtrlCWhileRunningWithoutTurnQuits(t *testing.T) {
+	m := newTestModel()
+	m.mode = modeRunning
+	_, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlC})
+	if cmd == nil {
+		t.Fatal("ctrl+c with no turn should quit")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Fatalf("cmd = %T, want QuitMsg", cmd())
+	}
+}
+
+func TestCtrlTRequiresFoldedContent(t *testing.T) {
+	m := newTestModel()
+	m.mode = modeRunning
+	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlT})
+	next := updated.(*Model)
+	if next.mode != modeRunning {
+		t.Fatalf("mode = %v, want running (no folded content)", next.mode)
+	}
+	m.transcript.blocks = [][]string{{"a", "b", "c"}}
+	updated, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlT})
+	next = updated.(*Model)
+	if next.mode != modeTranscript {
+		t.Fatalf("mode = %v, want transcript", next.mode)
+	}
+}
+
+func TestTurnDoneReturnsToIdle(t *testing.T) {
+	m := newTestModel()
+	m.mode = modeRunning
+	m.stream.mdBuf = "unfinished paragraph"
+	m.stream.pendingCalls = map[string]pendingCall{
+		"c1": {name: "tool_a", lines: []string{"⚙ tool_a"}},
+	}
+	m.Update(turnDoneMsg{res: &agent.Result{Status: agent.StatusCanceled}})
+	if m.mode != modeIdle {
+		t.Fatalf("mode = %v, want idle", m.mode)
+	}
+	// The drained lines survive the turn; the in-flight buffers reset.
+	if len(m.stream.pendingCalls) != 0 {
+		t.Errorf("pendingCalls not drained: %v", m.stream.pendingCalls)
+	}
+}
+
+func TestExitRunningKeepsBuffersForActiveTurn(t *testing.T) {
+	m := newTestModel()
+	m.mode = modeRunning
+	m.session.turn = &sessions.Turn{}
+	m.stream.mdBuf = "partial"
+	m.stream.reasoningBuf = "think"
+	m.setMode(modeAnswering)
+	if m.stream.mdBuf != "partial" || m.stream.reasoningBuf != "think" {
+		t.Errorf("buffers lost on running -> answering: %q / %q",
+			m.stream.mdBuf, m.stream.reasoningBuf)
+	}
+	// A finished turn (handle nil) clears the text buffers on exit.
+	m.session.turn = nil
+	m.setMode(modeRunning)
+	m.stream.mdBuf = "partial"
+	m.setMode(modeIdle)
+	if m.stream.mdBuf != "" {
+		t.Errorf("buffers not cleared at turn end: %q", m.stream.mdBuf)
+	}
+}
+
+func TestInteractionReturnsToRunning(t *testing.T) {
+	m := newTestModel()
+	m.mode = modeRunning
+	replyCh := make(chan interact.Reply, 1)
+	m.dispatch(Event{Interact: &InteractEvent{
+		Spec:    interact.Spec{ID: "p1", Kind: interact.KindText, Title: "q"},
+		ReplyCh: replyCh,
+	}})
+	if m.mode != modeAnswering {
+		t.Fatalf("mode = %v, want answering", m.mode)
+	}
+	if !strings.Contains(m.View(), "answering") {
+		t.Errorf("status line = %q", m.View())
+	}
+	m.input.SetValue("ok")
+	m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.mode != modeRunning {
+		t.Fatalf("mode = %v, want running", m.mode)
+	}
+	if m.answering.interaction != nil || m.answering.selSelected == nil {
+		t.Errorf("answering state not reset: %+v", m.answering)
+	}
+}
+
+func TestResumeEscReturnsToIdle(t *testing.T) {
+	m := newTestModel()
+	m.mode = modeResume
+	m.resume.list = []ocsessions.Meta{{ID: "s1", Title: "会话"}}
+	m.resume.cursor = 0
+	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	next := updated.(*Model)
+	if next.mode != modeIdle || len(next.resume.list) != 0 {
+		t.Fatalf("esc from resume: mode=%v list=%v", next.mode, next.resume.list)
+	}
+	if next.input.Placeholder != mainPlaceholder {
+		t.Errorf("placeholder = %q", next.input.Placeholder)
+	}
+}
+
+func TestStreamMarkdownParagraphs(t *testing.T) {
+	m := newTestModel()
+	m.appendDelta(textDelta("**hi**\n\nworld"))
+	if len(m.stream.pending) != 1 {
+		t.Fatalf("pending = %+v", m.stream.pending)
+	}
+	if !strings.Contains(m.stream.pending[0], "hi") {
+		t.Errorf("rendered paragraph = %q", m.stream.pending[0])
+	}
+	if m.stream.mdBuf != "world" {
+		t.Errorf("mdBuf = %q", m.stream.mdBuf)
+	}
+	m.flushMarkdown()
+	if len(m.stream.pending) != 2 || m.stream.pending[1] != "world" {
+		t.Errorf("pending = %+v", m.stream.pending)
+	}
+}
+
+func TestStreamOrderingReasoningBeforeText(t *testing.T) {
+	m := newTestModel()
+	m.appendDelta(agent.StreamDeltaPayload{
+		Type: agent.StreamDeltaPart,
+		Part: message.ReasoningPart{Text: "think think think"},
+	})
+	m.appendDelta(textDelta("answer\n\nnext paragraph"))
+	if len(m.stream.pending) == 0 {
+		t.Fatalf("reasoning not flushed first: %v", m.stream.pending)
+	}
+	joined := strings.Join(m.stream.pending, "\n")
+	if !strings.Contains(joined, "╭") || !strings.Contains(joined, "╰") {
+		t.Errorf("reasoning not boxed: %v", m.stream.pending)
+	}
+	if strings.Index(joined, "think") > strings.Index(joined, "answer") {
+		t.Errorf("reasoning appears after text: %v", m.stream.pending)
+	}
+}
+
+func TestReasoningBoxed(t *testing.T) {
+	m := newTestModel()
+	m.width = 60
+	m.appendReasoning("line one\nline two")
+	m.flushReasoning()
+	if len(m.stream.pending) != 4 {
+		t.Fatalf("pending = %v", m.stream.pending)
+	}
+	if !strings.Contains(m.stream.pending[0], "╭") ||
+		!strings.Contains(m.stream.pending[3], "╰") {
+		t.Errorf("box borders missing: %v", m.stream.pending)
+	}
+	// The box spans the full terminal width even for short content.
+	if w := lipgloss.Width(m.stream.pending[0]); w != m.width {
+		t.Errorf("box width = %d, want %d: %q", w, m.width, m.stream.pending[0])
+	}
+	if !strings.Contains(m.stream.pending[1], "line one") ||
+		!strings.Contains(m.stream.pending[2], "line two") {
+		t.Errorf("box content missing: %v", m.stream.pending)
+	}
+	// Buffering continues until flushed; the buffer drains after.
+	if m.stream.reasoningBuf != "" {
+		t.Errorf("buffer not drained: %q", m.stream.reasoningBuf)
+	}
+}
+
+func TestWrapByWidth(t *testing.T) {
+	long := "wordwithoutspaceswordwithoutspaceswordwithoutspaces"
+	lines := wrapByWidth(long, 10)
+	if len(lines) != 6 {
+		t.Fatalf("long token lines = %d, want 6", len(lines))
+	}
+	for _, l := range lines {
+		if w := lipgloss.Width(l); w > 10 {
+			t.Errorf("line width %d > 10: %q", w, l)
+		}
+	}
+	// CJK characters are two cells wide and must not be split apart.
+	cjk := "明天北京天气怎么样"
+	lines = wrapByWidth(cjk, 4)
+	if len(lines) != 5 || lines[0] != "明天" || lines[1] != "北京" {
+		t.Errorf("cjk wrap = %v", lines)
+	}
+	joined := strings.Join(lines, "")
+	if joined != cjk {
+		t.Errorf("cjk wrap lost characters: %q != %q", joined, cjk)
+	}
+}
+
+func TestStreamToolLines(t *testing.T) {
+	m := newTestModel()
+	m.appendDelta(agent.StreamDeltaPayload{
+		Type: agent.StreamDeltaPart,
+		Part: message.ToolCallPart{Call: message.ToolCall{
+			Name: "exec_command",
+			Arguments: []byte(
+				`{"command":"pwd"}`),
+		}},
+	})
+	m.appendDelta(agent.StreamDeltaPayload{
+		Type: agent.StreamDeltaPart,
+		Part: message.ToolResultPart{Result: message.ToolResult{
+			Content: `{"exit_code":0,"stdout":"/ws\n","stderr":""}`,
+		}},
+	})
+	if len(m.stream.pending) != 3 {
+		t.Fatalf("pending = %+v", m.stream.pending)
+	}
+	if !strings.Contains(m.stream.pending[0], "• Ran pwd") {
+		t.Errorf("call line = %q", m.stream.pending[0])
+	}
+	if !strings.Contains(m.stream.pending[1], "│ /ws") {
+		t.Errorf("result line = %q", m.stream.pending[1])
+	}
+	if !strings.Contains(m.stream.pending[2], "└ ok") {
+		t.Errorf("end line = %q", m.stream.pending[2])
+	}
+}
+
+func TestFoldToolResult(t *testing.T) {
+	m := newTestModel()
+	m.appendDelta(agent.StreamDeltaPayload{
+		Type: agent.StreamDeltaPart,
+		Part: message.ToolCallPart{Call: message.ToolCall{
+			ID: "c1", Name: "exec_command",
+			Arguments: []byte(
+				`{"command":"cat big.go"}`),
+		}},
+	})
+	m.appendDelta(agent.StreamDeltaPayload{
+		Type: agent.StreamDeltaPart,
+		Part: message.ToolResultPart{Result: message.ToolResult{
+			CallID:  "c1",
+			Content: "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10",
+		}},
+	})
+	// header + 2 head + ellipsis + 2 tail + end = 7 lines.
+	if len(m.stream.pending) != 7 {
+		t.Fatalf("pending = %+v", m.stream.pending)
+	}
+	joined := strings.Join(m.stream.pending, "\n")
+	if !strings.Contains(joined, "+6 lines (Ctrl+T for full output)") {
+		t.Errorf("folded result = %q", m.stream.pending)
+	}
+	// The full block (header + 10 output + end) is kept for Ctrl+T.
+	if len(m.transcript.blocks) != 1 || len(m.transcript.blocks[0]) != 12 {
+		got := 0
+		if len(m.transcript.blocks) > 0 {
+			got = len(m.transcript.blocks[0])
+		}
+		t.Errorf("transcript = %d blocks / %d lines, want 1 block of 12",
+			len(m.transcript.blocks), got)
+	}
+}
+
+func TestAutoFoldToolResultKeepsHeadTail(t *testing.T) {
+	m := newTestModel()
+	m.appendDelta(agent.StreamDeltaPayload{
+		Type: agent.StreamDeltaPart,
+		Part: message.ToolCallPart{Call: message.ToolCall{
+			ID: "c1", Name: "exec_command",
+			Arguments: []byte(
+				`{"command":"cat long.txt"}`),
+		}},
+	})
+	m.appendDelta(agent.StreamDeltaPayload{
+		Type: agent.StreamDeltaPart,
+		Part: message.ToolResultPart{Result: message.ToolResult{
+			CallID:  "c1",
+			Content: "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10\nline11\nline12",
+		}},
+	})
+	// header + 2 head + ellipsis + 2 tail + end = 7 lines.
+	if len(m.stream.pending) != 7 {
+		t.Fatalf("pending = %v", m.stream.pending)
+	}
+	joined := strings.Join(m.stream.pending, "\n")
+	if !strings.Contains(joined, "│ line1") ||
+		!strings.Contains(joined, "│ line2") {
+		t.Errorf("head lines missing: %v", m.stream.pending)
+	}
+	if !strings.Contains(joined, "+8 lines (Ctrl+T for full output)") {
+		t.Errorf("ellipsis missing: %v", m.stream.pending)
+	}
+	if !strings.Contains(joined, "│ line11") ||
+		!strings.Contains(joined, "│ line12") ||
+		!strings.Contains(joined, "└ ok") {
+		t.Errorf("tail/end missing: %v", m.stream.pending)
+	}
+	if strings.Contains(joined, "│ line5") {
+		t.Errorf("middle leaked through: %v", m.stream.pending)
+	}
+	if len(m.transcript.blocks) != 1 || len(m.transcript.blocks[0]) != 14 {
+		t.Errorf("transcript = %d blocks / %d lines, want 1 block of 14",
+			len(m.transcript.blocks), m.transcriptLineCount())
+	}
+}
+
+func TestToolOutputGroupedPerCall(t *testing.T) {
+	m := newTestModel()
+	call := func(id, name string) agent.StreamDeltaPayload {
+		return agent.StreamDeltaPayload{
+			Type: agent.StreamDeltaPart,
+			Part: message.ToolCallPart{Call: message.ToolCall{
+				ID: id, Name: name,
+				Arguments: []byte(`{}`),
+			}},
+		}
+	}
+	result := func(id, content string) agent.StreamDeltaPayload {
+		return agent.StreamDeltaPayload{
+			Type: agent.StreamDeltaPart,
+			Part: message.ToolResultPart{Result: message.ToolResult{
+				CallID: id, Content: content,
+			}},
+		}
+	}
+	// Three parallel calls arrive before any result.
+	m.appendDelta(call("c1", "tool_a"))
+	m.appendDelta(call("c2", "tool_b"))
+	m.appendDelta(call("c3", "tool_c"))
+	if len(m.stream.pending) != 0 {
+		t.Fatalf("calls should be buffered until results: %v",
+			m.stream.pending)
+	}
+	// Results arrive in completion order; each prints as call+result.
+	m.appendDelta(result("c2", "b done"))
+	m.appendDelta(result("c1", "a done"))
+	m.appendDelta(result("c3", "c done"))
+	if len(m.stream.pending) != 9 {
+		t.Fatalf("pending = %v", m.stream.pending)
+	}
+	joined := strings.Join(m.stream.pending, "\n")
+	if strings.Index(joined, "tool_b") > strings.Index(joined, "b done") ||
+		strings.Index(joined, "tool_a") > strings.Index(joined, "a done") ||
+		strings.Index(joined, "tool_c") > strings.Index(joined, "c done") {
+		t.Errorf("call/result not paired: %v", m.stream.pending)
+	}
+}
+
+func TestTranscriptScrollAndExit(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 80, 12
+	for i := 1; i <= 8; i++ {
+		m.transcript.blocks = append(m.transcript.blocks,
+			[]string{fmt.Sprintf("block %d", i)})
+	}
+	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyCtrlT})
+	next := updated.(*Model)
+	if next.mode != modeTranscript {
+		t.Fatalf("mode = %v, want transcript", next.mode)
+	}
+	if !strings.Contains(next.View(), "full output") {
+		t.Errorf("view = %q", next.View())
+	}
+	updated, _ = next.handleKey(tea.KeyMsg{Type: tea.KeyDown})
+	next = updated.(*Model)
+	if next.transcript.scroll != 1 {
+		t.Errorf("scroll = %d, want 1", next.transcript.scroll)
+	}
+	// Esc returns to the previous mode; the transcript content is kept.
+	updated, _ = next.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	next = updated.(*Model)
+	if next.mode != modeIdle {
+		t.Fatalf("mode = %v, want idle", next.mode)
+	}
+	if len(next.transcript.blocks) != 8 {
+		t.Errorf("transcript blocks dropped: %d", len(next.transcript.blocks))
+	}
+	// Re-opening restores the overlay.
+	updated, _ = next.handleKey(tea.KeyMsg{Type: tea.KeyCtrlT})
+	next = updated.(*Model)
+	if next.mode != modeTranscript {
+		t.Fatalf("mode = %v, want transcript again", next.mode)
+	}
+}
+
+func TestFlushPendingClears(t *testing.T) {
+	m := newTestModel()
+	m.stream.pending = []string{"a", "b"}
+	if cmd := m.flushPending(); cmd == nil {
+		t.Fatal("flushPending should return a print command")
+	}
+	if len(m.stream.pending) != 0 {
+		t.Errorf("pending not cleared: %v", m.stream.pending)
+	}
+	if cmd := m.flushPending(); cmd != nil {
+		t.Error("empty pending should return nil")
+	}
+}
+
+func TestFlushTickIsSingleFlight(t *testing.T) {
+	m := newTestModel()
+	if m.flushArmed {
+		t.Fatal("flush should start unarmed")
+	}
+	cmd := m.flushTick()
+	if cmd == nil {
+		t.Fatal("first flushTick should arm and return a tick")
+	}
+	if !m.flushArmed {
+		t.Fatal("flush should be armed after first tick")
+	}
+	if again := m.flushTick(); again != nil {
+		t.Fatal("second flushTick while armed must not schedule another tick")
+	}
+	// A delivered tick disarms and re-arms the single next cycle.
+	_, next := m.Update(flushPrintMsg{})
+	if !m.flushArmed {
+		t.Fatal("flush should re-arm for the next cycle")
+	}
+	if next == nil {
+		t.Fatal("delivered flush should reschedule the drain tick")
+	}
+	if again := m.flushTick(); again != nil {
+		t.Fatal("rescheduled tick must stay single-flight")
+	}
+}
+
+func TestBatchMsgDoesNotScheduleFlushTick(t *testing.T) {
+	m := newTestModel()
+	m.flushArmed = true
+	_, cmd := m.Update(batchMsg{})
+	if cmd != nil {
+		t.Fatalf("batchMsg must not return a tick, got %v", cmd)
+	}
+}
+
+func TestInteractionSelectCursor(t *testing.T) {
+	m := newTestModel()
+	replyCh := make(chan interact.Reply, 1)
+	updated, _ := m.dispatch(Event{Interact: &InteractEvent{
+		Spec: interact.Spec{
+			ID: "p1", Kind: interact.KindSelect, Title: "选择方案",
+			Options: []interact.Option{
+				{Label: "方案 A", Value: "a"},
+				{Label: "方案 B", Value: "b"},
+			},
+		},
+		ReplyCh: replyCh,
 	}})
 	next := updated.(*Model)
-	if next.modal == nil || next.modal.Kind() != modalAsk {
-		t.Fatal("ask modal not active")
+	if next.answering.interaction == nil {
+		t.Fatal("interaction not active")
 	}
-	next.width = 80
-	if !strings.Contains(next.View(), "Which file?") {
-		t.Error("question not rendered")
+	if !strings.Contains(next.View(), "选择方案") {
+		t.Error("selector not rendered")
 	}
-
-	next.modal.Input().SetValue("main.go")
+	updated, _ = next.handleKey(tea.KeyMsg{Type: tea.KeyDown})
+	next = updated.(*Model)
 	updated, _ = next.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	next = updated.(*Model)
-	if next.modal != nil {
-		t.Fatal("ask modal still active")
+	if next.answering.interaction != nil {
+		t.Fatal("interaction still active")
 	}
 	select {
 	case reply := <-replyCh:
-		if len(reply.Parts) != 1 ||
-			reply.Parts[0].(message.TextPart).Text != "main.go" {
+		if reply.Option == nil || *reply.Option != "b" {
 			t.Errorf("reply = %+v", reply)
 		}
 	default:
@@ -253,61 +697,146 @@ func TestAskModalReplies(t *testing.T) {
 	}
 }
 
-func TestApproveModal(t *testing.T) {
+func TestInteractionMultiSelect(t *testing.T) {
 	m := newTestModel()
-	done := make(chan bool, 1)
-	updated, _ := m.dispatch(Event{Approve: &ApproveRequest{
-		Call: message.ToolCall{Name: "exec_command"},
-		Done: done,
+	replyCh := make(chan interact.Reply, 1)
+	updated, _ := m.dispatch(Event{Interact: &InteractEvent{
+		Spec: interact.Spec{
+			ID: "p1", Kind: interact.KindSelect, Title: "多选", Multi: true,
+			Options: []interact.Option{
+				{Label: "A", Value: "a"},
+				{Label: "B", Value: "b"},
+				{Label: "C", Value: "c"},
+			},
+		},
+		ReplyCh: replyCh,
 	}})
 	next := updated.(*Model)
-	if next.modal == nil || next.modal.Kind() != modalApprove {
-		t.Fatal("approve modal not active")
+	for _, key := range []tea.KeyMsg{
+		{Type: tea.KeySpace}, // pick A
+		{Type: tea.KeyDown},
+		{Type: tea.KeySpace}, // pick B
+		{Type: tea.KeyEnter},
+	} {
+		updated, _ = next.handleKey(key)
+		next = updated.(*Model)
 	}
+	select {
+	case reply := <-replyCh:
+		if len(reply.Options) != 2 || reply.Options[0] != "a" ||
+			reply.Options[1] != "b" {
+			t.Errorf("reply = %+v", reply)
+		}
+	default:
+		t.Fatal("no reply delivered")
+	}
+}
+
+func TestInteractionOtherInput(t *testing.T) {
+	m := newTestModel()
+	replyCh := make(chan interact.Reply, 1)
+	updated, _ := m.dispatch(Event{Interact: &InteractEvent{
+		Spec: interact.Spec{
+			ID: "p1", Kind: interact.KindSelect, Title: "选一个",
+			AllowOther: true,
+			Options:    []interact.Option{{Label: "A", Value: "a"}},
+		},
+		ReplyCh: replyCh,
+	}})
+	next := updated.(*Model)
+	updated, _ = next.handleKey(tea.KeyMsg{Type: tea.KeyDown}) // to Other
+	next = updated.(*Model)
+	updated, _ = next.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	next = updated.(*Model)
+	if !next.answering.selOther {
+		t.Fatal("other input mode not active")
+	}
+	next.input.SetValue("我的想法")
+	updated, _ = next.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	next = updated.(*Model)
+	select {
+	case reply := <-replyCh:
+		if reply.Text != "我的想法" {
+			t.Errorf("reply = %+v", reply)
+		}
+	default:
+		t.Fatal("no reply delivered")
+	}
+}
+
+func TestInteractionTextSubmit(t *testing.T) {
+	m := newTestModel()
+	replyCh := make(chan interact.Reply, 1)
+	updated, _ := m.dispatch(Event{Interact: &InteractEvent{
+		Spec:    interact.Spec{ID: "p1", Kind: interact.KindText, Title: "Which file?"},
+		ReplyCh: replyCh,
+	}})
+	next := updated.(*Model)
+	next.input.SetValue("main.go")
+	updated, _ = next.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	next = updated.(*Model)
+	if next.answering.interaction != nil {
+		t.Fatal("interaction still active")
+	}
+	select {
+	case reply := <-replyCh:
+		if reply.Text != "main.go" {
+			t.Errorf("reply = %+v", reply)
+		}
+	default:
+		t.Fatal("no reply delivered")
+	}
+}
+
+func TestInteractionConfirmKeys(t *testing.T) {
+	m := newTestModel()
+	replyCh := make(chan interact.Reply, 1)
+	updated, _ := m.dispatch(Event{Interact: &InteractEvent{
+		Spec:    interact.Spec{ID: "p1", Kind: interact.KindConfirm, Title: "允许?"},
+		ReplyCh: replyCh,
+	}})
+	next := updated.(*Model)
 	updated, _ = next.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
 	next = updated.(*Model)
-	if next.modal != nil {
-		t.Fatal("approve modal still active")
-	}
 	select {
-	case approved := <-done:
-		if !approved {
-			t.Error("expected approval")
+	case reply := <-replyCh:
+		if reply.Option == nil || *reply.Option != "yes" {
+			t.Errorf("reply = %+v", reply)
 		}
 	default:
-		t.Fatal("no approval delivered")
+		t.Fatal("no reply delivered")
 	}
 }
 
-func TestApproveModalReject(t *testing.T) {
+func TestInteractionCancel(t *testing.T) {
 	m := newTestModel()
-	done := make(chan bool, 1)
-	updated, _ := m.dispatch(Event{Approve: &ApproveRequest{
-		Call: message.ToolCall{Name: "exec_command"},
-		Done: done,
+	replyCh := make(chan interact.Reply, 1)
+	updated, _ := m.dispatch(Event{Interact: &InteractEvent{
+		Spec:    interact.Spec{ID: "p1", Kind: interact.KindText, Title: "q"},
+		ReplyCh: replyCh,
 	}})
 	next := updated.(*Model)
-	updated, _ = next.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	updated, _ = next.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
 	next = updated.(*Model)
-	if next.modal != nil {
-		t.Fatal("approve modal still active")
+	if next.answering.interaction != nil {
+		t.Fatal("interaction still active")
 	}
 	select {
-	case approved := <-done:
-		if approved {
-			t.Error("expected rejection")
+	case reply := <-replyCh:
+		if reply.Status != interact.ReplyCancelled {
+			t.Errorf("reply = %+v", reply)
 		}
 	default:
-		t.Fatal("no rejection delivered")
+		t.Fatal("no reply delivered")
 	}
 }
 
-func TestBridgeAskUserTimesOutWithoutUI(t *testing.T) {
+func TestBridgeAskTimesOutWithoutUI(t *testing.T) {
 	b := NewBridge(16)
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	if _, err := b.AskUser(ctx, agent.UserPrompt{}); err == nil {
-		t.Fatal("AskUser without a consuming UI should time out")
+	if _, err := b.Ask(ctx, interact.Spec{ID: "p1"}); err == nil {
+		t.Fatal("Ask without a consuming UI should time out")
 	}
 }
 

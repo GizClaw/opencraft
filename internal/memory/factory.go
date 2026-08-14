@@ -20,12 +20,14 @@ type Factory struct{}
 
 var _ resource.Factory = Factory{}
 
-// Register adds the memory assembly factory and the opencraft.commit
-// hook factory to r.
+// Register adds the memory assembly factory plus the opencraft.commit
+// (completed turns) and opencraft.archive (interrupted/failed turns)
+// hook factories to r.
 func Register(r *resource.Registry) error {
 	return errors.Join(
 		r.Register(Factory{}),
 		r.Register(commitHookFactory{}),
+		r.Register(archiveObserverFactory{}),
 	)
 }
 

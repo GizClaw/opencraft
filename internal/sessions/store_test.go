@@ -1,0 +1,95 @@
+package sessions
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+
+	"github.com/GizClaw/flowcraft/core/message"
+)
+
+func TestAppendAndHistory(t *testing.T) {
+	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs := []message.Message{
+		message.NewTextMessage(message.RoleUser, "你好"),
+		{Role: message.RoleAssistant, Content: message.Content{Parts: []message.Part{
+			message.TextPart{Text: "你好！"},
+		}}},
+	}
+	if err := store.AppendTurn(context.Background(), id, msgs); err != nil {
+		t.Fatal(err)
+	}
+	hist, err := store.History(context.Background(), id, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hist) != 2 ||
+		hist[0].Content.Text() != "你好" ||
+		hist[1].Content.Text() != "你好！" {
+		t.Errorf("history = %+v", hist)
+	}
+}
+
+func TestHistoryWindow(t *testing.T) {
+	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := store.Create()
+	for i := 0; i < 5; i++ {
+		_ = store.AppendTurn(context.Background(), id, []message.Message{
+			message.NewTextMessage(message.RoleUser, "msg"),
+		})
+	}
+	hist, _ := store.History(context.Background(), id, 3)
+	if len(hist) != 3 {
+		t.Fatalf("windowed history = %d, want 3", len(hist))
+	}
+}
+
+func TestListMeta(t *testing.T) {
+	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := store.Create()
+	_ = store.AppendTurn(context.Background(), id, []message.Message{
+		message.NewTextMessage(message.RoleUser, "这是第一条消息"),
+	})
+	list, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].ID != id || list[0].Messages != 1 {
+		t.Errorf("list = %+v", list)
+	}
+	if list[0].Title != "这是第一条消息" {
+		t.Errorf("title = %q", list[0].Title)
+	}
+}
+
+func TestAppendSkipsEmpty(t *testing.T) {
+	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := store.Create()
+	if err := store.AppendTurn(context.Background(), id, []message.Message{
+		{Role: message.RoleAssistant, Content: message.Content{Parts: []message.Part{
+			message.ToolCallPart{Call: message.ToolCall{Name: "exec_command"}},
+		}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	hist, _ := store.History(context.Background(), id, 0)
+	if len(hist) != 0 {
+		t.Errorf("tool-only turn should not be archived: %+v", hist)
+	}
+}

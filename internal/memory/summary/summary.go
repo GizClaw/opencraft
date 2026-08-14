@@ -178,17 +178,6 @@ func foldCandidates(threadID string, messages []message.Message) []foldMsg {
 	return out
 }
 
-// messageText returns the concatenated text of a message's text parts.
-func messageText(msg message.Message) string {
-	var b strings.Builder
-	for _, part := range msg.Content.Parts {
-		if text, ok := part.(message.TextPart); ok {
-			b.WriteString(text.Text)
-		}
-	}
-	return b.String()
-}
-
 func renderMessage(msg message.Message) string {
 	role := string(msg.Role)
 	if role == "" {

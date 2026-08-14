@@ -6,4 +6,4 @@ for (var i = 0; i < sections.length; i++) {
     content: { parts: [{ type: "text", text: sections[i].text }] }
   });
 }
-board.setChannel("main", msgs.concat(board.channel("main") || []));
+board.setChannel(board.MAIN_CHANNEL, msgs.concat(board.channel(board.MAIN_CHANNEL) || []));

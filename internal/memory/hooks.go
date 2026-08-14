@@ -5,8 +5,10 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	corememory "github.com/GizClaw/flowcraft/core/memory"
+	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/resource"
 
+	"github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/utils/resourcedep"
 )
 
@@ -22,6 +24,7 @@ func (commitHookFactory) Spec() resource.Spec {
 		Impl: "opencraft.commit",
 		Deps: []resource.DepSpec{
 			{Name: "memory", Type: ResourceKind, Required: true},
+			{Name: "sessions", Type: sessions.ResourceKind, Required: true},
 		},
 	}
 }
@@ -37,6 +40,10 @@ func (commitHookFactory) New(_ context.Context, in resource.Input) (any, error) 
 	if err != nil {
 		return nil, err
 	}
+	store, err := resourcedep.Required[*sessions.Store](in, "memory", "sessions")
+	if err != nil {
+		return nil, err
+	}
 	settings, err := resource.DecodeTyped[commitSettings](in.Settings)
 	if err != nil {
 		return nil, err
@@ -46,6 +53,15 @@ func (commitHookFactory) New(_ context.Context, in resource.Input) (any, error) 
 	) error {
 		if len(res.Messages) == 0 {
 			return nil
+		}
+		// Result.Messages excludes the input request; prepend it so the
+		// conversation archive has both sides.
+		history := append(
+			[]message.Message{req.Message}, res.Messages...)
+		// Full text/reasoning history goes to the project session
+		// store; memory summarization stays in the state DB.
+		if err := store.AppendTurn(ctx, req.ContextID, history); err != nil {
+			return err
 		}
 		return sink.CommitTurn(ctx, corememory.Turn{
 			Scope:          settings.scopeFor(id),

@@ -10,10 +10,6 @@ nodes:
   - id: llm
     type: inference
     config:
-      model:
-        id:
-          provider: deepseek
-          name: deepseek-v4-flash
       all_tools: true
       tool_pending_key: tool_pending
       stream: true

@@ -19,6 +19,8 @@ import (
 	app "github.com/GizClaw/opencraft/internal/app"
 	"github.com/GizClaw/opencraft/internal/config"
 	"github.com/GizClaw/opencraft/internal/execd"
+	"github.com/GizClaw/opencraft/internal/interact"
+	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/tui"
 )
 
@@ -64,7 +66,6 @@ func main() {
 	bridge := tui.NewBridge(256)
 	rtc, err := app.NewRuntimeController(ctx, view.Document,
 		app.WithConfigBase(mgr.UserDir()),
-		app.WithUserPrompter(bridge),
 		app.WithUsageObserver(bridge.Usage))
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "opencraft: assemble runtime: %v\n", err)
@@ -80,7 +81,25 @@ func main() {
 	case "run":
 		run(rtc, flag.Arg(1))
 	case "":
-		if err := tui.Run(rtc, tui.Options{}, bridge); err != nil {
+		broker := interact.New(rtc.Runtime(), bridge)
+		if err := broker.Attach(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "opencraft: attach broker: %v\n", err)
+			os.Exit(1)
+		}
+		defer broker.Close()
+		store, err := ocsessions.New(
+			filepath.Join(workDir, ".opencraft", "sessions"), 40)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "opencraft: session store: %v\n", err)
+			os.Exit(1)
+		}
+		if err := tui.Run(rtc, tui.Options{
+			Model: config.DefaultModel(),
+			// Every TUI launch starts a fresh conversation; /resume
+			// switches to an existing session id.
+			ContextID: ocsessions.NewID(),
+			Sessions:  store,
+		}, bridge, broker); err != nil {
 			fmt.Fprintf(os.Stderr, "opencraft: tui: %v\n", err)
 			os.Exit(1)
 		}
@@ -150,6 +169,13 @@ func run(rtc *app.RuntimeController, text string) {
 	}
 	ctx := context.Background()
 	rt := rtc.Runtime()
+	broker := interact.New(rt, interact.Auto{})
+	if err := broker.Attach(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "opencraft: attach broker: %v\n", err)
+		os.Exit(1)
+	}
+	defer broker.Close()
+
 	key := sessions.Key{AgentID: "assistant", ContextID: "cli"}
 	lease, err := rt.Sessions().Open(ctx, key)
 	if err != nil {
@@ -166,6 +192,8 @@ func run(rtc *app.RuntimeController, text string) {
 		fmt.Fprintf(os.Stderr, "opencraft: start turn: %v\n", err)
 		os.Exit(1)
 	}
+	broker.BindTurn(turn.RunID(), turn)
+	defer broker.UnbindTurn(turn.RunID())
 	res, err := turn.Wait(ctx)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "opencraft: turn: %v\n", err)

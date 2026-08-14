@@ -2,16 +2,18 @@ package tui
 
 import (
 	"github.com/GizClaw/flowcraft/core/agent"
-	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/runtime/session"
+
+	"github.com/GizClaw/opencraft/internal/interact"
 )
 
 // Event is one domain event delivered from the bridge layer to the UI.
 type Event struct {
-	Stream  *StreamEvent
-	Prompt  *PromptRequest
-	Approve *ApproveRequest
-	Status  *StatusEvent
-	Usage   *UsageEvent
+	Stream   *StreamEvent
+	Status   *StatusEvent
+	Usage    *UsageEvent
+	Interact *InteractEvent
+	Resolved *ResolvedEvent
 }
 
 // StreamEvent carries one runtime stream delta (token / tool call /
@@ -20,16 +22,19 @@ type StreamEvent struct {
 	Delta agent.StreamDeltaPayload
 }
 
-// PromptRequest asks the user a question (ask_user).
-type PromptRequest struct {
-	Text    string
-	ReplyCh chan agent.UserReply
+// InteractEvent asks the user one question. The UI renders the spec and
+// delivers the answer on ReplyCh.
+type InteractEvent struct {
+	Spec    interact.Spec
+	ReplyCh chan interact.Reply
 }
 
-// ApproveRequest asks the user to approve a tool call.
-type ApproveRequest struct {
-	Call message.ToolCall
-	Done chan bool
+// ResolvedEvent notifies the UI that a pending interaction was resolved
+// externally (expired / interrupted / closed) so its view can be
+// invalidated without waiting for the whole turn to end.
+type ResolvedEvent struct {
+	ID     string
+	Status session.PromptStatus
 }
 
 // StatusEvent updates the status bar.
@@ -55,10 +60,4 @@ type UsageEvent struct {
 // UI can keep up with high-throughput streams without backpressure.
 type batchMsg struct {
 	events []Event
-}
-
-// modalResultMsg reports a modal outcome.
-type modalResultMsg struct {
-	reply    *agent.UserReply // ask
-	approved *bool            // approve / confirm
 }

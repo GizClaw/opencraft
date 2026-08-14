@@ -178,9 +178,9 @@ func (s *Server) handle(
 			caps = append(caps, string(CapSignal))
 		}
 		result = EnvironmentInfoResponse{
-			Shell:  "/bin/sh",
-			Cwd:    "",
-			TmpDir: os.TempDir(),
+			Shell:        "/bin/sh",
+			Cwd:          "",
+			TmpDir:       os.TempDir(),
 			Capabilities: caps,
 		}
 	case MethodEnvironmentStatus:

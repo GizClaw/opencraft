@@ -1,13 +1,13 @@
-// Package execcommand provides the shell-semantics exec_command tool:
-// it runs the model-provided command string through /bin/sh -c in the
-// configured sandbox.Runner, so pipelines, redirects, and && chains
-// work like a normal shell.
+// Package execcommand provides the exec_command tool: simple commands
+// run directly in the sandbox (no shell wrapper), and commands needing
+// shell features run through /bin/sh -c.
 package execcommand
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
@@ -45,11 +45,14 @@ func MustNew(runner sandbox.Runner) *Tool {
 func (t *Tool) Definition() message.ToolDefinition {
 	return message.DefineSchema(
 		Name,
-		"Run a shell command string inside the agent's sandbox. "+
-			"The command is executed with /bin/sh -c, so pipelines, "+
-			"redirects, && chains, and shell builtins work. Returns "+
-			"exit_code, stdout, and stderr as JSON; a non-zero exit_code "+
-			"is reported in the result body, not as an error.",
+		"Run a command inside the agent's sandbox. Simple commands "+
+			"(a bare program with plain arguments, no shell syntax) are "+
+			"executed directly; commands needing shell features "+
+			"(pipelines, redirects, && chains, env vars, globs) run "+
+			"through /bin/sh -c and may require user approval. "+
+			"Prefer simple commands when possible. Returns exit_code, "+
+			"stdout, and stderr as JSON; a non-zero exit_code is "+
+			"reported in the result body, not as an error.",
 		message.ToolProperty("command", "string",
 			"The shell command line to run (required), e.g. "+
 				"\"rg --files internal | rg httpclient\"."),
@@ -86,13 +89,28 @@ func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
 	if args.TimeoutSeconds != nil && *args.TimeoutSeconds > 0 {
 		timeout = time.Duration(*args.TimeoutSeconds * float64(time.Second))
 	}
-	result, err := sandbox.Exec(ctx, t.runner, "/bin/sh",
-		[]string{"-c", args.Command}, sandbox.ExecOptions{
+	opts := sandbox.ExecOptions{
 		WorkDir: args.Workdir,
 		Stdin:   []byte(args.Stdin),
 		Timeout: timeout,
-	})
+	}
+	var result *sandbox.ExecResult
+	var err error
+	if argv, ok := directArgs(args.Command); ok {
+		result, err = sandbox.Exec(ctx, t.runner, argv[0], argv[1:], opts)
+	} else {
+		result, err = sandbox.Exec(ctx, t.runner, "/bin/sh",
+			[]string{"-c", args.Command}, opts)
+	}
 	if err != nil {
+		if errdefs.IsPolicyDenied(err) {
+			// The sandbox's denial message names the raw argv (e.g.
+			// "/bin/sh" for shell-wrapped commands); the tool knows the
+			// actual command string, so surface that first.
+			return "", errdefs.PolicyDeniedf(
+				"exec_command: command %q denied by sandbox policy: %v",
+				args.Command, err)
+		}
 		return "", err
 	}
 	payload, err := json.Marshal(map[string]any{
@@ -104,6 +122,37 @@ func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
 		return "", errdefs.Internalf("exec_command: encode result: %v", err)
 	}
 	return string(payload), nil
+}
+
+// directArgs reports whether command is a simple invocation that can
+// run without a shell, returning its argv. Any shell metacharacter,
+// quote, env assignment, or glob forces the shell path instead, so
+// execution semantics never change silently.
+func directArgs(command string) ([]string, bool) {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return nil, false
+	}
+	for _, f := range fields {
+		if !safeWord(f) {
+			return nil, false
+		}
+	}
+	return fields, true
+}
+
+func safeWord(s string) bool {
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z',
+			r >= 'A' && r <= 'Z',
+			r >= '0' && r <= '9':
+		case strings.ContainsRune("_./:+-", r):
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // Compile-time assertion.

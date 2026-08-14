@@ -5,20 +5,21 @@ package worldstate
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"sync"
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/memory"
 	"github.com/GizClaw/flowcraft/core/workspace"
+
+	"github.com/GizClaw/opencraft/internal/sessions"
 )
 
 // Section is one world-state fragment written to the board for the
-// graph's world node to render.
+// graph's world node to render. IDs: agents_md | permissions |
+// environment | memory_summary | history.
 type Section struct {
-	ID   string `json:"id"`   // agents_md | permissions | environment | memory_summary
+	ID   string `json:"id"`
 	Role string `json:"role"` // user | system
 	Text string `json:"text"`
 }
@@ -38,14 +39,14 @@ type Options struct {
 type Service struct {
 	opts     Options
 	memory   memory.ContextProvider // optional; set after deploy resolves it
+	history  *sessions.Store        // optional; recent history injection
 	mu       sync.Mutex
 	sessions map[string]*sessionState
 	order    []string
 }
 
 type sessionState struct {
-	static       []Section         // agents_md, permissions, environment
-	lastInjected map[string]string // section id -> hash
+	static []Section // agents_md, permissions, environment
 }
 
 // New creates a world-state service.
@@ -68,8 +69,14 @@ func New(opts Options) *Service {
 // SetMemory wires the memory context provider (resolved by deploy).
 func (s *Service) SetMemory(m memory.ContextProvider) { s.memory = m }
 
+// SetSessions wires the conversation store for history injection.
+func (s *Service) SetSessions(st *sessions.Store) { s.history = st }
+
 // RenderToBoard writes the world state into board vars:
-//   - world.sections: diffed Section list (memory_summary always fresh)
+//   - world.sections: static sections (AGENTS.md, permissions,
+//     environment), memory summary, and the recent conversation history
+//     from the session store; always injected since each turn starts
+//     with a fresh board
 //   - world.workspace_root / world.collaboration_mode /
 //     world.permission_profile
 func (s *Service) RenderToBoard(ctx context.Context, contextID string, board *agent.Board) error {
@@ -78,17 +85,12 @@ func (s *Service) RenderToBoard(ctx context.Context, contextID string, board *ag
 		return err
 	}
 
-	sections := make([]Section, 0, len(st.static)+1)
+	sections := make([]Section, 0, len(st.static)+64)
 	for _, sec := range st.static {
 		if sec.Text == "" {
 			continue
 		}
-		hash := hashOf(sec.Text)
-		if st.lastInjected[sec.ID] == hash {
-			continue
-		}
 		sections = append(sections, sec)
-		st.lastInjected[sec.ID] = hash
 	}
 	if s.memory != nil {
 		if summary := s.memorySummary(ctx, contextID); summary != "" {
@@ -97,6 +99,22 @@ func (s *Service) RenderToBoard(ctx context.Context, contextID string, board *ag
 				Role: "system",
 				Text: summary,
 			})
+		}
+	}
+	if s.history != nil {
+		hist, err := s.history.History(ctx, contextID, 0)
+		if err == nil {
+			for _, h := range hist {
+				text := h.Content.Text()
+				if text == "" {
+					continue
+				}
+				sections = append(sections, Section{
+					ID:   "history",
+					Role: string(h.Role),
+					Text: text,
+				})
+			}
 		}
 	}
 
@@ -135,7 +153,6 @@ func (s *Service) session(contextID string) (*sessionState, error) {
 			permissions,
 			environment,
 		},
-		lastInjected: make(map[string]string),
 	}
 	s.sessions[contextID] = st
 	s.order = append(s.order, contextID)
@@ -163,9 +180,4 @@ func (s *Service) memorySummary(ctx context.Context, contextID string) string {
 		text += item.Content.Text() + "\n"
 	}
 	return text
-}
-
-func hashOf(text string) string {
-	sum := sha256.Sum256([]byte(text))
-	return hex.EncodeToString(sum[:])
 }

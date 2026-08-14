@@ -128,8 +128,8 @@ type remoteSession struct {
 
 var _ sandbox.Session = (*remoteSession)(nil)
 
-func (s *remoteSession) ID() string  { return s.id }
-func (s *remoteSession) PID() int    { return s.pid }
+func (s *remoteSession) ID() string { return s.id }
+func (s *remoteSession) PID() int   { return s.pid }
 func (s *remoteSession) Capabilities() sandbox.SessionCapabilities {
 	return s.caps
 }

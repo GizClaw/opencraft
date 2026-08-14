@@ -1,9 +1,13 @@
 # opencraft user configuration layer (~/.opencraft/config/opencraft.yaml).
 # This is a partial deploy layer merged over the embedded opencraft.yaml
 # with higher priority: resource/agent fields declared here override the
-# built-in defaults.
+# built-in defaults. Resources, deps, and settings merge deeply, so a
+# partial declaration only touches the fields it lists.
 #
-# Example: add an OpenAI provider (the built-in default is DeepSeek only)
+# Example: add an OpenAI provider next to the built-in DeepSeek.
+# Two steps are required: declare the provider resource, then attach it
+# to the infer assembly's provider many-dep. deps merge, so the built-in
+# DeepSeek stays wired.
 # resources:
 #   provider.openai:
 #     kind: inference.Provider
@@ -13,3 +17,33 @@
 #       profiles:
 #         - secrets:
 #             api_key: ${env:OPENAI_API_KEY}
+#   infer:
+#     deps:
+#       provider.openai: provider.openai
+#
+# Example: route to a different model. The router's target list lives
+# in ~/.opencraft/config/inference.yaml; edit generate[].targets there
+# (deleted files are regenerated from the embedded default).
+#   generate:
+#     - tier: default
+#       targets:
+#         - model:
+#             id:
+#               provider: openai
+#               name: gpt-5
+#
+# Example: attach an external MCP server's tools (any stdio/HTTP MCP
+# server; its tools are discovered lazily through tool_search).
+# resources:
+#   tool.mcp:
+#     kind: tool.Source
+#     impl: mcp
+#     settings:
+#       servers:
+#         - name: my-server
+#           transport: stdio
+#           command: my-mcp-server
+#           args: []
+#   tools:
+#     deps:
+#       tool.mcp: tool.mcp

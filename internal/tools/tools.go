@@ -16,6 +16,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/workspace"
 
 	"github.com/GizClaw/opencraft/internal/tools/applypatch"
+	"github.com/GizClaw/opencraft/internal/tools/askuser"
 	"github.com/GizClaw/opencraft/internal/tools/execcommand"
 	"github.com/GizClaw/opencraft/internal/tools/execsession"
 	"github.com/GizClaw/opencraft/internal/tools/webfetch"
@@ -28,6 +29,7 @@ func Register(r *resource.Registry) error {
 		r.Register(execSourceFactory{}),
 		r.Register(applypatchSourceFactory{}),
 		r.Register(webfetchSourceFactory{}),
+		r.Register(askuserSourceFactory{}),
 	)
 }
 
@@ -101,6 +103,23 @@ func (webfetchSourceFactory) New(_ context.Context, in resource.Input) (any, err
 		return toolList{}, nil
 	}
 	return toolList{webfetch.New()}, nil
+}
+
+// askuserSourceFactory contributes the ask_user tool. It needs no
+// sandbox/workspace: the host is recovered from the tool context.
+type askuserSourceFactory struct{}
+
+var _ resource.Factory = askuserSourceFactory{}
+
+func (askuserSourceFactory) Spec() resource.Spec {
+	return resource.Spec{Kind: "tool.Source", Impl: "opencraft/askuser"}
+}
+
+func (askuserSourceFactory) New(_ context.Context, in resource.Input) (any, error) {
+	if !sourceEnabled(in) {
+		return toolList{}, nil
+	}
+	return toolList{askuser.New()}, nil
 }
 
 // toolList adapts a fixed []tool.Tool to tool.Source.

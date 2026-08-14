@@ -147,12 +147,12 @@ func (t *Tool) start(ctx context.Context, a args) (any, error) {
 	}
 	t.mu.Unlock()
 	proc, err := t.runner.Start(ctx, sandbox.SessionSpec{
-		ID:    a.ProcessID,
-		Argv:  a.Argv,
-		TTY:   a.TTY,
-		Rows:  a.Rows,
-		Cols:  a.Cols,
-		Opts:  sandbox.ExecOptions{WorkDir: a.Workdir},
+		ID:   a.ProcessID,
+		Argv: a.Argv,
+		TTY:  a.TTY,
+		Rows: a.Rows,
+		Cols: a.Cols,
+		Opts: sandbox.ExecOptions{WorkDir: a.Workdir},
 	})
 	if err != nil {
 		return nil, err

@@ -5,16 +5,16 @@ import (
 	"sync"
 
 	"github.com/GizClaw/flowcraft/core/agent"
-	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/event"
 	"github.com/GizClaw/flowcraft/core/inference"
-	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/runtime/session"
+
+	"github.com/GizClaw/opencraft/internal/interact"
 )
 
-// Bridge converts external sources (runtime stream, user prompts,
-// approvals) into domain Events on a channel the UI consumes. It also
-// implements agent.UserPrompter and the approval callback, blocking
-// until the UI delivers a result.
+// Bridge converts runtime streams and prompt protocol events into
+// domain Events on a channel the UI consumes, and implements the
+// interactive interact.Backend for user questions.
 type Bridge struct {
 	events chan Event
 
@@ -52,41 +52,37 @@ func (b *Bridge) Sink(
 	return nil
 }
 
-// AskUser implements agent.UserPrompter.
-func (b *Bridge) AskUser(
+// Ask implements interact.Backend: it queues the spec for the UI and
+// blocks until the UI delivers an answer or ctx ends.
+func (b *Bridge) Ask(
 	ctx context.Context,
-	prompt agent.UserPrompt,
-) (agent.UserReply, error) {
-	replyCh := make(chan agent.UserReply, 1)
-	b.events <- Event{Prompt: &PromptRequest{
-		Text:    promptText(prompt),
-		ReplyCh: replyCh,
-	}}
+	spec interact.Spec,
+) (interact.Reply, error) {
+	replyCh := make(chan interact.Reply, 1)
+	select {
+	case b.events <- Event{Interact: &InteractEvent{
+		Spec: spec, ReplyCh: replyCh,
+	}}:
+	case <-ctx.Done():
+		return interact.Reply{}, ctx.Err()
+	}
 	select {
 	case reply := <-replyCh:
 		return reply, nil
 	case <-ctx.Done():
-		return agent.UserReply{}, ctx.Err()
+		return interact.Reply{}, ctx.Err()
 	}
 }
 
-// Approve asks the user to approve one tool call.
-func (b *Bridge) Approve(
-	ctx context.Context,
-	call message.ToolCall,
+// Resolve implements interact.Resolver: it notifies the UI that a
+// pending interaction was closed externally.
+func (b *Bridge) Resolve(
+	_ context.Context,
+	id string,
+	status session.PromptStatus,
 ) error {
-	done := make(chan bool, 1)
-	b.events <- Event{Approve: &ApproveRequest{Call: call, Done: done}}
-	select {
-	case approved := <-done:
-		if !approved {
-			return errdefs.Forbiddenf(
-				"tui: user rejected %s", call.Name)
-		}
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	b.events <- Event{Resolved: &ResolvedEvent{ID: id, Status: status}}
+	return nil
 }
 
 // Status publishes a status event.
@@ -119,13 +115,5 @@ func (b *Bridge) Usage(usage inference.Usage) {
 	b.events <- Event{Usage: &ev}
 }
 
-func promptText(prompt agent.UserPrompt) string {
-	for _, part := range prompt.Parts {
-		if part.Kind() == message.PartText {
-			if text, ok := part.(message.TextPart); ok {
-				return text.Text
-			}
-		}
-	}
-	return "Question from the model"
-}
+var _ interact.Backend = (*Bridge)(nil)
+var _ interact.Resolver = (*Bridge)(nil)

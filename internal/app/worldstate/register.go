@@ -9,6 +9,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/workspace"
 
 	opmemory "github.com/GizClaw/opencraft/internal/memory"
+	"github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/utils/resourcedep"
 )
 
@@ -33,6 +34,7 @@ func (prepareFactory) Spec() resource.Spec {
 		Deps: []resource.DepSpec{
 			{Name: "memory", Type: opmemory.ResourceKind, Required: true},
 			{Name: "workspace", Type: "workspace.Workspace", Required: true},
+			{Name: "sessions", Type: sessions.ResourceKind, Required: true},
 		},
 	}
 }
@@ -53,6 +55,10 @@ func (prepareFactory) New(_ context.Context, in resource.Input) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	store, err := resourcedep.Required[*sessions.Store](in, "worldstate", "sessions")
+	if err != nil {
+		return nil, err
+	}
 	settings, err := resource.DecodeTyped[prepareSettings](
 		in.Settings, resource.ExpandEnv())
 	if err != nil {
@@ -66,6 +72,7 @@ func (prepareFactory) New(_ context.Context, in resource.Input) (any, error) {
 		Workspace:         ws,
 	})
 	service.SetMemory(mem)
+	service.SetSessions(store)
 	return agent.PreparerFunc(func(
 		ctx context.Context, _ agent.Identity, req *agent.Request, prev *agent.Board,
 	) (*agent.Board, error) {

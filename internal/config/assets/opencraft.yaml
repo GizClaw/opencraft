@@ -23,6 +23,14 @@ resources:
       max_raw_messages: 32
       preserve_recent: 4
       max_summary_bytes: 4096
+  # Project-scoped conversation store: full text/reasoning history per
+  # session under .opencraft/sessions/<id>/history/.
+  sessions:
+    kind: session.Store
+    impl: opencraft
+    settings:
+      root: ${env:OPEN_CRAFT_WORKDIR}/.opencraft/sessions
+      window: 40
   checkpoints:
     kind: agent.CheckpointStore
     impl: sqlite
@@ -44,6 +52,10 @@ resources:
       root: ${env:OPEN_CRAFT_WORKDIR}
       writable_paths: ["${env:OPEN_CRAFT_CACHE}"]
       remote: true
+      # Commands not in this list (or .opencraft/approvals.yaml in the
+      # project root) ask the user before running. Rules are token
+      # prefixes; "*" matches any remaining arguments.
+      allowed_commands: []
 
   # ------------------------------------------------------------------
   # Tool containers: each tool.Source is one tool group; tools
@@ -62,6 +74,26 @@ resources:
   tool.webfetch:
     kind: tool.Source
     impl: opencraft/webfetch
+  tool.askuser:
+    kind: tool.Source
+    impl: opencraft/askuser
+  # Default web-search tools via an MCP server (DuckDuckGo, launched
+  # through uvx on first use). Its tools are discovered lazily through
+  # tool_search; remove this resource to disable.
+  tool.mcp:
+    kind: tool.Source
+    impl: mcp
+    settings:
+      servers:
+        - name: duckduckgo
+          transport: stdio
+          # stderr is swallowed so the server's startup banner and logs
+          # do not leak into the TUI; stdout stays the MCP protocol.
+          command: sh
+          args: ["-c", "exec uvx -q duckduckgo-mcp-server 2>/dev/null"]
+          env:
+            MCP_LOG_LEVEL: ERROR
+            PYTHONWARNINGS: ignore
   tools:
     kind: tool.Assembly
     impl: middleware
@@ -69,6 +101,8 @@ resources:
       tool: tool.exec
       tool.applypatch: tool.applypatch
       tool.webfetch: tool.webfetch
+      tool.askuser: tool.askuser
+      tool.mcp: tool.mcp
     settings:
       middlewares:
         recover:
@@ -80,6 +114,7 @@ resources:
           exec_command: always
           exec_session: always
           apply_patch: always
+          ask_user: always
 
   # ------------------------------------------------------------------
   # Inference: provider resources + assembly (provider is a many dep;
@@ -90,10 +125,25 @@ resources:
     impl: unified
     deps:
       provider: provider.deepseek
+  # Route policy: selects the target model per tier/fallback from the
+  # user-editable inference.yaml (seeded to ~/.opencraft/config/).
+  router:
+    kind: inference.Router
+    impl: unified
+    deps:
+      target: infer
+    settings:
+      file: inference.yaml
   provider.deepseek:
     kind: inference.Provider
     impl: deepseek
-    settings: { file: inference.yaml }
+    settings:
+      id: deepseek
+      spec:
+        api: responses
+      profiles:
+        - secrets:
+            api_key: ${env:DEEPSEEK_API_KEY}
 
   # ------------------------------------------------------------------
   # Script runtime
@@ -114,6 +164,7 @@ agents:
       impl: graph
       deps:
         inference: infer
+        router: router
         tools: tools
         workspace: ws
         sandbox: box
@@ -127,6 +178,7 @@ agents:
         deps:
           memory: mem
           workspace: ws
+          sessions: sessions
         settings:
           work_dir: ${env:OPEN_CRAFT_WORKDIR}
           user_dir: ${env:OPEN_CRAFT_DATA_DIR}
@@ -134,14 +186,23 @@ agents:
           permission_profile: workspace
     commit:
       - type: opencraft.commit
-        deps: { memory: mem }
+        deps:
+          memory: mem
+          sessions: sessions
+    observe:
+      # Archives turns that did not complete (Ctrl+C / Esc / engine
+      # errors) so /resume keeps the interrupted conversation context.
+      - type: opencraft.archive
+        deps:
+          memory: mem
+          sessions: sessions
 
 runtime:
   event_bus: events
   checkpoint_store: checkpoints
   sessions:
     idle_timeout: 10m
-    resume: true
+    resume: false
   dynamic_catalog:
     tools:
       assistant: tools

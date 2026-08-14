@@ -1,8 +1,15 @@
-# opencraft user-editable DeepSeek provider settings
+# opencraft user-editable inference routing policy
 # (~/.opencraft/config/inference.yaml; deleted files are regenerated).
-# This file is the settings of the provider.deepseek resource;
-# ${env:...} references are expanded at build time.
-id: deepseek
-profiles:
-  - secrets:
-      api_key: ${env:DEEPSEEK_API_KEY}
+# This file is the settings of the router resource: it selects the
+# target model per tier and configures retry / circuit breaking.
+generate:
+  - tier: default
+    targets:
+      - model:
+          id:
+            provider: deepseek
+            name: deepseek-v4-flash
+retry:
+  generate:
+    max_attempts: 2
+    fallback_on_retry_exhausted: true
