@@ -46,6 +46,8 @@ type fakeRunner struct {
 	proc    *fakeSession
 }
 
+func (r *fakeRunner) Close() error { return nil }
+
 func (r *fakeRunner) Capabilities() sandbox.Capabilities {
 	return sandbox.Capabilities{
 		Features: sandbox.SessionFeatures{TTY: true, Signal: true},

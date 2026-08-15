@@ -26,8 +26,14 @@ import (
 	"github.com/GizClaw/flowcraft/core/tool/mcp"
 	"github.com/GizClaw/flowcraft/core/tool/middleware"
 	"github.com/GizClaw/flowcraft/core/workspace"
+	"github.com/GizClaw/flowcraft/driver/anthropic"
+	"github.com/GizClaw/flowcraft/driver/azure"
+	"github.com/GizClaw/flowcraft/driver/bytedance"
 	"github.com/GizClaw/flowcraft/driver/deepseek"
+	"github.com/GizClaw/flowcraft/driver/kimi"
+	"github.com/GizClaw/flowcraft/driver/minimax"
 	"github.com/GizClaw/flowcraft/driver/openai"
+	"github.com/GizClaw/flowcraft/driver/qwen"
 
 	"github.com/GizClaw/opencraft/internal/app/worldstate"
 	"github.com/GizClaw/opencraft/internal/config"
@@ -104,69 +110,42 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 		resource.WithEmbed(config.FS()),
 	)
 	reg := resource.NewRegistry()
-	if err := event.Register(reg); err != nil {
-		return nil, err
+	registers := []func(*resource.Registry) error{
+		event.Register,
+		graphresource.Register,
+		workspace.Register,
+		tool.Register,
+		middleware.Register,
+		mcp.Register,
+		inference.Register,
+		route.Register,
+		scriptrt.Register,
+		sandboxlocal.Register,
+		bwrap.Register,
+		seatbelt.Register,
+		sqlite.Register,
+		anthropic.Register,
+		azure.Register,
+		bytedance.Register,
+		deepseek.Register,
+		kimi.Register,
+		minimax.Register,
+		openai.Register,
+		qwen.Register,
+		opmemory.Register,
+		ocsessions.Register,
+		opentools.Register,
+		worldstate.Register,
 	}
-	if err := graphresource.Register(reg); err != nil {
-		return nil, err
-	}
-	if err := workspace.Register(reg); err != nil {
-		return nil, err
+	for _, register := range registers {
+		if err := register(reg); err != nil {
+			return nil, err
+		}
 	}
 	reg.MustRegister(sandboxFactory{})
-	if err := tool.Register(reg); err != nil {
-		return nil, err
-	}
-	if err := middleware.Register(reg); err != nil {
-		return nil, err
-	}
-	if err := mcp.Register(reg); err != nil {
-		return nil, err
-	}
-	if err := inference.Register(reg); err != nil {
-		return nil, err
-	}
-	if err := route.Register(reg); err != nil {
-		return nil, err
-	}
-	if err := scriptrt.Register(reg); err != nil {
-		return nil, err
-	}
-	if err := sandboxlocal.Register(reg); err != nil {
-		return nil, err
-	}
-	if err := bwrap.Register(reg); err != nil {
-		return nil, err
-	}
-	if err := seatbelt.Register(reg); err != nil {
-		return nil, err
-	}
-	if err := sqlite.Register(reg); err != nil {
-		return nil, err
-	}
-	if err := deepseek.Register(reg); err != nil {
-		return nil, err
-	}
-	if err := openai.Register(reg); err != nil {
-		return nil, err
-	}
-
 	reg.MustRegister(state.Factory{
 		DefaultPath: filepath.Join(dataDir, "opencraft.db"),
 	})
-	if err := opmemory.Register(reg); err != nil {
-		return nil, err
-	}
-	if err := ocsessions.Register(reg); err != nil {
-		return nil, err
-	}
-	if err := opentools.Register(reg); err != nil {
-		return nil, err
-	}
-
-	if err := worldstate.Register(reg); err != nil {
-		return nil, err
-	}
 
 	builder := runtimecore.NewBuilder(reg)
 	if err := builder.WithLoader(loader); err != nil {

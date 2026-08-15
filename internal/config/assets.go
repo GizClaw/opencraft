@@ -5,9 +5,10 @@ package config
 
 import "embed"
 
-// Default deploy assets. The base opencraft.yaml and graph definition
-// are internal wiring and stay embedded; the user layer and
-// execution.yaml are seeded into ~/.opencraft/config/.
+// Default deploy assets. The base opencraft.yaml stays embedded as
+// internal wiring; the user layer, inference routing, and the graph
+// definition (with its referenced prompt and world script) are seeded
+// into ~/.opencraft/config/ so they are editable at runtime.
 //
 //go:embed assets/opencraft.yaml assets/user_opencraft.yaml assets/inference.yaml assets/graphs/assistant.yaml assets/graphs/node/world.js assets/prompts/system.md
 var assets embed.FS
@@ -17,6 +18,9 @@ var assets embed.FS
 var UserAssets = []struct{ Ref, Name string }{
 	{Ref: "assets/user_opencraft.yaml", Name: "opencraft.yaml"},
 	{Ref: "assets/inference.yaml", Name: "inference.yaml"},
+	{Ref: "assets/graphs/assistant.yaml", Name: "graphs/assistant.yaml"},
+	{Ref: "assets/graphs/node/world.js", Name: "graphs/node/world.js"},
+	{Ref: "assets/prompts/system.md", Name: "prompts/system.md"},
 }
 
 // FS returns the embedded deploy asset filesystem (for embed sources

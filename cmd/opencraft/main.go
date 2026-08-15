@@ -10,7 +10,11 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"sync"
+	"syscall"
+	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/message"
@@ -116,6 +120,8 @@ func runExecServer() {
 	listen := fs.String("listen", "",
 		"unix socket path to listen on (empty: serve on stdio)")
 	workDir := fs.String("workdir", "", "working directory (default: current)")
+	parentPid := fs.Int("parent-pid", 0,
+		"exit when this parent process dies (0: disabled)")
 	if err := fs.Parse(flag.Args()[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "opencraft execd: %v\n", err)
 		os.Exit(2)
@@ -139,6 +145,7 @@ func runExecServer() {
 			fmt.Fprintf(os.Stderr, "opencraft execd: %v\n", err)
 			os.Exit(1)
 		}
+		_ = runner.Close()
 		return
 	}
 	listener, err := net.Listen("unix", *listen)
@@ -147,18 +154,102 @@ func runExecServer() {
 		os.Exit(1)
 	}
 	defer listener.Close()
+	defer os.Remove(*listen)
 	_ = os.Chmod(*listen, 0o600)
+
+	// The accept loop alone would outlive the parent: when the parent
+	// exits, established connections EOF and each Serve cleans up, but
+	// Accept keeps blocking forever, leaving an orphan that holds the
+	// socket. Watch the parent and also honor SIGTERM/SIGINT so every
+	// exit path closes the listener and terminates in-flight sessions.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const serveGrace = 5 * time.Second
+	var serveWG sync.WaitGroup
+	var connMu sync.Mutex
+	conns := make(map[net.Conn]struct{})
+
+	shutdown := make(chan struct{})
+	var shutdownOnce sync.Once
+	stopAccepting := func() {
+		shutdownOnce.Do(func() {
+			close(shutdown)
+			_ = listener.Close()
+			connMu.Lock()
+			for c := range conns {
+				_ = c.Close()
+			}
+			connMu.Unlock()
+		})
+	}
+
+	if *parentPid > 0 {
+		go watchParent(*parentPid, stopAccepting)
+	}
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	defer signal.Stop(sigCh)
+	go func() {
+		select {
+		case <-sigCh:
+			stopAccepting()
+		case <-shutdown:
+		}
+	}()
+
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			return
+			break
 		}
+		connMu.Lock()
+		conns[conn] = struct{}{}
+		connMu.Unlock()
+		serveWG.Add(1)
 		go func() {
-			defer conn.Close()
+			defer serveWG.Done()
+			defer func() {
+				connMu.Lock()
+				delete(conns, conn)
+				connMu.Unlock()
+				_ = conn.Close()
+			}()
 			srv := execd.New(runner, conn, conn)
 			srv.DefaultEnv = policy
 			_ = srv.Serve(ctx)
 		}()
+	}
+	// Listener closed: stop accepting and give in-flight serves a
+	// bounded window to terminate their sessions before the process
+	// exits. On parent death the connections have already EOF'd, so
+	// this normally completes immediately.
+	servesDone := make(chan struct{})
+	go func() {
+		serveWG.Wait()
+		close(servesDone)
+	}()
+	select {
+	case <-servesDone:
+	case <-time.After(serveGrace):
+	}
+	_ = runner.Close()
+}
+
+// watchParent invokes onDeath once ppid stops being the caller's
+// parent. When a process dies, its children are reparented (to launchd
+// or init), so a changed Getppid is a reliable death signal without
+// relying on PID-reuse-prone kill probes. Polling keeps this portable
+// across macOS and Linux; the window between parent death and cleanup
+// is at most one tick.
+func watchParent(ppid int, onDeath func()) {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for range ticker.C {
+		if os.Getppid() != ppid {
+			onDeath()
+			return
+		}
 	}
 }
 

@@ -338,18 +338,84 @@ func TestResumeEscReturnsToIdle(t *testing.T) {
 func TestStreamMarkdownParagraphs(t *testing.T) {
 	m := newTestModel()
 	m.appendDelta(textDelta("**hi**\n\nworld"))
-	if len(m.stream.pending) != 1 {
+	// blank + white rule + blank open the message block, then the
+	// completed paragraph follows.
+	if len(m.stream.pending) != 4 {
 		t.Fatalf("pending = %+v", m.stream.pending)
 	}
-	if !strings.Contains(m.stream.pending[0], "hi") {
-		t.Errorf("rendered paragraph = %q", m.stream.pending[0])
+	if !strings.Contains(m.stream.pending[3], "hi") {
+		t.Errorf("rendered paragraph = %q", m.stream.pending[3])
 	}
 	if m.stream.mdBuf != "world" {
 		t.Errorf("mdBuf = %q", m.stream.mdBuf)
 	}
 	m.flushMarkdown()
-	if len(m.stream.pending) != 2 || m.stream.pending[1] != "world" {
+	// The remaining paragraph plus the closing blank/rule/blank.
+	if len(m.stream.pending) != 8 ||
+		m.stream.pending[4] != "world" ||
+		m.stream.pending[5] != "" ||
+		!strings.Contains(m.stream.pending[6], "─") ||
+		m.stream.pending[7] != "" {
 		t.Errorf("pending = %+v", m.stream.pending)
+	}
+}
+
+func TestAssistantMessageRules(t *testing.T) {
+	m := newTestModel()
+	m.width = 40
+	m.appendDelta(textDelta("hello"))
+	// Only the opening blank/rule/blank is pending; the text stays
+	// buffered until a paragraph completes or the message flushes.
+	if len(m.stream.pending) != 3 {
+		t.Fatalf("pending = %+v", m.stream.pending)
+	}
+	if m.stream.pending[0] != "" ||
+		!strings.Contains(m.stream.pending[1], "─") ||
+		m.stream.pending[2] != "" {
+		t.Errorf("message opening = %+v", m.stream.pending)
+	}
+	if w := lipgloss.Width(m.stream.pending[1]); w != m.width {
+		t.Errorf("rule width = %d, want %d", w, m.width)
+	}
+	// A tool call closes the block; the next answer opens a new one.
+	m.appendDelta(agent.StreamDeltaPayload{
+		Type: agent.StreamDeltaPart,
+		Part: message.ToolCallPart{Call: message.ToolCall{
+			Name: "exec_command", Arguments: []byte(`{"command":"pwd"}`),
+		}},
+	})
+	if len(m.stream.pending) != 8 {
+		t.Fatalf("pending after tool call = %+v", m.stream.pending)
+	}
+	if m.stream.pending[4] != "" ||
+		!strings.Contains(m.stream.pending[5], "─") ||
+		m.stream.pending[6] != "" ||
+		!strings.Contains(m.stream.pending[3], "hello") ||
+		!strings.Contains(m.stream.pending[7], "Ran pwd") {
+		t.Errorf("message closing = %+v", m.stream.pending)
+	}
+	if m.stream.msgOpen {
+		t.Error("message still open after tool call")
+	}
+	m.appendDelta(textDelta("again"))
+	if len(m.stream.pending) != 11 {
+		t.Fatalf("pending after second answer = %+v", m.stream.pending)
+	}
+	if m.stream.pending[8] != "" ||
+		!strings.Contains(m.stream.pending[9], "─") ||
+		m.stream.pending[10] != "" {
+		t.Errorf("second message opening missing: %+v", m.stream.pending)
+	}
+	m.flushMarkdown()
+	if len(m.stream.pending) != 15 ||
+		!strings.Contains(m.stream.pending[11], "again") ||
+		m.stream.pending[12] != "" ||
+		!strings.Contains(m.stream.pending[13], "─") ||
+		m.stream.pending[14] != "" {
+		t.Errorf("pending after flush = %+v", m.stream.pending)
+	}
+	if m.stream.msgOpen {
+		t.Error("message not closed by flushMarkdown")
 	}
 }
 
@@ -360,41 +426,76 @@ func TestStreamOrderingReasoningBeforeText(t *testing.T) {
 		Part: message.ReasoningPart{Text: "think think think"},
 	})
 	m.appendDelta(textDelta("answer\n\nnext paragraph"))
-	if len(m.stream.pending) == 0 {
-		t.Fatalf("reasoning not flushed first: %v", m.stream.pending)
+	// Reasoning must not print into the scrollback; it lives only in
+	// the live panel and the archived transcript overlay.
+	for _, line := range m.stream.pending {
+		if strings.Contains(line, "think") {
+			t.Fatalf("reasoning leaked into scrollback: %v", m.stream.pending)
+		}
 	}
-	joined := strings.Join(m.stream.pending, "\n")
-	if !strings.Contains(joined, "╭") || !strings.Contains(joined, "╰") {
-		t.Errorf("reasoning not boxed: %v", m.stream.pending)
+	if len(m.transcript.blocks) != 1 {
+		t.Fatalf("reasoning not archived: %d blocks", len(m.transcript.blocks))
 	}
-	if strings.Index(joined, "think") > strings.Index(joined, "answer") {
-		t.Errorf("reasoning appears after text: %v", m.stream.pending)
+	if !strings.Contains(strings.Join(m.transcript.blocks[0], "\n"), "think") {
+		t.Errorf("archived reasoning missing: %v", m.transcript.blocks[0])
+	}
+	if m.stream.reasoningBuf != "" {
+		t.Errorf("live panel not cleared: %q", m.stream.reasoningBuf)
 	}
 }
 
-func TestReasoningBoxed(t *testing.T) {
+func TestReasoningArchived(t *testing.T) {
 	m := newTestModel()
 	m.width = 60
 	m.appendReasoning("line one\nline two")
-	m.flushReasoning()
-	if len(m.stream.pending) != 4 {
-		t.Fatalf("pending = %v", m.stream.pending)
-	}
-	if !strings.Contains(m.stream.pending[0], "╭") ||
-		!strings.Contains(m.stream.pending[3], "╰") {
-		t.Errorf("box borders missing: %v", m.stream.pending)
-	}
-	// The box spans the full terminal width even for short content.
-	if w := lipgloss.Width(m.stream.pending[0]); w != m.width {
-		t.Errorf("box width = %d, want %d: %q", w, m.width, m.stream.pending[0])
-	}
-	if !strings.Contains(m.stream.pending[1], "line one") ||
-		!strings.Contains(m.stream.pending[2], "line two") {
-		t.Errorf("box content missing: %v", m.stream.pending)
-	}
-	// Buffering continues until flushed; the buffer drains after.
+	m.archiveReasoning()
 	if m.stream.reasoningBuf != "" {
 		t.Errorf("buffer not drained: %q", m.stream.reasoningBuf)
+	}
+	if len(m.transcript.blocks) != 1 {
+		t.Fatalf("reasoning not archived: %v", m.transcript.blocks)
+	}
+	block := strings.Join(m.transcript.blocks[0], "\n")
+	if !strings.Contains(block, "line one") ||
+		!strings.Contains(block, "line two") {
+		t.Errorf("archived reasoning missing content: %q", block)
+	}
+	if !strings.Contains(block, "reasoning") {
+		t.Errorf("archived block missing label: %q", block)
+	}
+}
+
+func TestReasoningPanelShowsLastThreeWrappedLines(t *testing.T) {
+	m := newTestModel()
+	m.width = 80
+	if box := m.reasoningBox(); box != "" {
+		t.Fatalf("empty reasoning should hide panel: %q", box)
+	}
+	m.appendReasoning("R1\nR2\nR3\nR4\nR5\nR6\n")
+	box := m.reasoningBox()
+	rows := strings.Split(box, "\n")
+	// The panel is a framed box: three content rows plus the top and
+	// bottom border lines.
+	if len(rows) != reasoningTailHeight+2 {
+		t.Fatalf("panel height = %d, want %d: %q",
+			len(rows), reasoningTailHeight+2, box)
+	}
+	content := rows[1 : len(rows)-1]
+	if !strings.Contains(content[0], "…") {
+		t.Errorf("truncation marker missing: %q", content[0])
+	}
+	if strings.Contains(box, "R1") ||
+		strings.Contains(box, "R2") ||
+		strings.Contains(box, "R3") {
+		t.Errorf("old lines leaked into panel: %q", box)
+	}
+	if !strings.Contains(content[2], "R6") {
+		t.Errorf("newest line missing: %q", box)
+	}
+	// The panel sits directly above the prompt in the fixed view.
+	view := m.View()
+	if strings.Index(view, "R6") > strings.Index(view, ">") {
+		t.Errorf("reasoning panel should be above the prompt: %q", view)
 	}
 }
 
@@ -418,6 +519,18 @@ func TestWrapByWidth(t *testing.T) {
 	joined := strings.Join(lines, "")
 	if joined != cjk {
 		t.Errorf("cjk wrap lost characters: %q != %q", joined, cjk)
+	}
+	// Explicit newlines reset the width counter (instead of widening
+	// one line) and preserve interior blank lines.
+	lines = wrapByWidth("aaaa\nbbbbbbbbbbbb\n\ncc", 4)
+	want := []string{"aaaa", "bbbb", "bbbb", "bbbb", "", "cc"}
+	if len(lines) != len(want) {
+		t.Fatalf("newline wrap = %v, want %v", lines, want)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("newline wrap[%d] = %q, want %q", i, lines[i], want[i])
+		}
 	}
 }
 

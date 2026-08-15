@@ -77,23 +77,6 @@ resources:
   tool.askuser:
     kind: tool.Source
     impl: opencraft/askuser
-  # Default web-search tools via an MCP server (DuckDuckGo, launched
-  # through uvx on first use). Its tools are discovered lazily through
-  # tool_search; remove this resource to disable.
-  tool.mcp:
-    kind: tool.Source
-    impl: mcp
-    settings:
-      servers:
-        - name: duckduckgo
-          transport: stdio
-          # stderr is swallowed so the server's startup banner and logs
-          # do not leak into the TUI; stdout stays the MCP protocol.
-          command: sh
-          args: ["-c", "exec uvx -q duckduckgo-mcp-server 2>/dev/null"]
-          env:
-            MCP_LOG_LEVEL: ERROR
-            PYTHONWARNINGS: ignore
   tools:
     kind: tool.Assembly
     impl: middleware
@@ -102,7 +85,6 @@ resources:
       tool.applypatch: tool.applypatch
       tool.webfetch: tool.webfetch
       tool.askuser: tool.askuser
-      tool.mcp: tool.mcp
     settings:
       middlewares:
         recover:
@@ -170,7 +152,10 @@ agents:
         sandbox: box
         script_runtime: js
       settings:
-        graph: { embed: assets/graphs/assistant.yaml }
+        # Editable at ~/.opencraft/config/graphs/assistant.yaml
+        # (regenerated when deleted). Override with your own graph via
+        # the user or project layer if needed.
+        graph: { file: graphs/assistant.yaml }
         build:
           timeout: 1h
     prepare:

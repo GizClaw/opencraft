@@ -6,14 +6,23 @@ nodes:
     type: script
     config:
       runtime: js
-      source: {embed: assets/graphs/node/world.js}
+      source: {file: graphs/node/world.js}
   - id: llm
     type: inference
     config:
       all_tools: true
       tool_pending_key: tool_pending
       stream: true
-      system_prompt: {embed: assets/prompts/system.md}
+      system_prompt: {file: prompts/system.md}
+      # DeepSeek hosted web_search (provider-side search on the
+      # Responses API). tool_choice.required: false lets the model
+      # decide when to search; set it to true to force a search first.
+      extensions:
+        - provider: deepseek
+          id: generate_options
+          fields:
+            web_search:
+              tool_choice: {required: false}
   - id: tools
     type: tool
     config:

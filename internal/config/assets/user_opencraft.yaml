@@ -47,3 +47,13 @@
 #   tools:
 #     deps:
 #       tool.mcp: tool.mcp
+#
+# Example: use your own graph instead of the seeded default. The
+# default graph lives at ~/.opencraft/config/graphs/assistant.yaml
+# (edit it in place, or point the engine at another file under this
+# directory — file sources must be relative and cannot escape it).
+# agents:
+#   assistant:
+#     engine:
+#       settings:
+#         graph: {file: graphs/my-assistant.yaml}

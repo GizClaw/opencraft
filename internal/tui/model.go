@@ -91,6 +91,10 @@ type streamState struct {
 	pending      []string
 	mdBuf        string
 	reasoningBuf string
+	// msgOpen is true while an assistant text message is streaming;
+	// it is closed by the next boundary (tool call, question, turn
+	// end) so the message rule is printed below the last paragraph.
+	msgOpen      bool
 	lastTool     string
 	pendingCalls map[string]pendingCall
 }
@@ -262,6 +266,7 @@ func (m *Model) exitMode(prev mode) {
 		if m.session.turn == nil {
 			m.stream.mdBuf = ""
 			m.stream.reasoningBuf = ""
+			m.stream.msgOpen = false
 		}
 	case modeResume:
 		m.resume.reset()
@@ -369,6 +374,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errs.lastErrReq = ""
 		m.stream.mdBuf = ""
 		m.stream.reasoningBuf = ""
+		m.stream.msgOpen = false
 		m.stream.pendingCalls = make(map[string]pendingCall)
 		m.usageIn, m.usageOut, m.usageThink = 0, 0, 0
 		m.usageCacheR, m.usageCacheW = 0, 0
@@ -381,7 +387,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case turnDoneMsg:
 		m.flushMarkdown()
-		m.flushReasoning()
+		m.archiveReasoning()
 		// Calls whose results never arrived (interrupted/cancelled)
 		// still get printed so nothing is lost.
 		if len(m.stream.pendingCalls) > 0 {
@@ -474,7 +480,7 @@ func (m *Model) appendDelta(delta agent.StreamDeltaPayload) {
 	case message.ReasoningPart:
 		m.appendReasoning(p.Text)
 	case message.ToolCallPart:
-		m.flushReasoning()
+		m.archiveReasoning()
 		m.flushMarkdown()
 		m.stream.lastTool = p.Call.Name
 		lines := renderToolCallHeader(p.Call)
@@ -729,10 +735,16 @@ func (m *Model) foldBlock(header []string, body []string, end string) []string {
 // markdown renderer. A very long paragraph is flushed eagerly so
 // streaming stays responsive.
 func (m *Model) appendMarkdown(text string) {
-	// Reasoning arrives before the answer; flush it so the transcript
-	// keeps stream order even when the reasoning text carries no
-	// newlines and would otherwise sit buffered until turn end.
-	m.flushReasoning()
+	// Reasoning arrives before the answer; archive it so the live
+	// panel clears and the Ctrl+T transcript keeps stream order even
+	// when the reasoning text carries no newlines.
+	m.archiveReasoning()
+	// The first text of a message opens its block: a blank line, the
+	// white rule and another blank line print above the answer.
+	if !m.stream.msgOpen && strings.TrimSpace(text) != "" {
+		m.stream.msgOpen = true
+		m.stream.pending = append(m.stream.pending, m.messageRule()...)
+	}
 	m.stream.mdBuf += text
 	for {
 		idx := strings.Index(m.stream.mdBuf, "\n\n")
@@ -748,23 +760,70 @@ func (m *Model) appendMarkdown(text string) {
 	}
 }
 
-// flushMarkdown prints the remaining paragraph (tool call, question,
-// or turn end terminate a paragraph).
+// flushMarkdown prints the remaining paragraph and closes the
+// assistant message block (tool call, question, or turn end terminate
+// a message).
 func (m *Model) flushMarkdown() {
 	if strings.TrimSpace(m.stream.mdBuf) != "" {
 		m.printParagraph(m.stream.mdBuf)
 		m.stream.mdBuf = ""
 	}
+	if m.stream.msgOpen {
+		m.stream.msgOpen = false
+		m.stream.pending = append(m.stream.pending, m.messageRule()...)
+	}
 }
 
-// flushReasoning prints the buffered reasoning (including a trailing
-// partial line) as one white rounded box.
-func (m *Model) flushReasoning() {
+// archiveReasoning saves the finished reasoning block to the Ctrl+T
+// transcript overlay and clears the live panel. Reasoning no longer
+// prints into the scrollback; the gray panel above the composer is the
+// live view and the transcript overlay keeps the full text.
+func (m *Model) archiveReasoning() {
 	if strings.TrimSpace(m.stream.reasoningBuf) != "" {
-		m.stream.pending = append(m.stream.pending,
-			m.renderReasoningBox(strings.TrimSpace(m.stream.reasoningBuf))...)
+		m.transcript.append(m.reasoningHistory(
+			strings.TrimSpace(m.stream.reasoningBuf)))
 		m.stream.reasoningBuf = ""
 	}
+}
+
+// reasoningHistory renders one archived reasoning block for the
+// transcript overlay: a dim label plus the full text wrapped to the
+// current width.
+func (m *Model) reasoningHistory(text string) []string {
+	textW := max(20, m.width-4)
+	lines := wrapByWidth(text, textW)
+	out := make([]string, 0, len(lines)+1)
+	out = append(out, reasoningLabelStyle.Render("reasoning"))
+	return append(out, lines...)
+}
+
+// reasoningTailHeight is the fixed height of the live reasoning panel:
+// the last three wrapped display lines only.
+const reasoningTailHeight = 3
+
+// reasoningBox renders the live reasoning tail as a fixed three-line
+// gray panel above the composer, or "" when there is no reasoning to
+// show. Only the last three wrapped lines are visible; older content
+// stays available in the Ctrl+T transcript overlay.
+func (m *Model) reasoningBox() string {
+	if strings.TrimSpace(m.stream.reasoningBuf) == "" {
+		return ""
+	}
+	textW := max(20, m.width-4)
+	lines := wrapByWidth(m.stream.reasoningBuf, textW)
+	if len(lines) > reasoningTailHeight {
+		lines = lines[len(lines)-reasoningTailHeight:]
+		lines[0] = "…" + truncateWidth(lines[0], textW-1)
+	}
+	for len(lines) < reasoningTailHeight {
+		lines = append(lines, " ")
+	}
+	content := make([]string, len(lines))
+	for i, line := range lines {
+		content[i] = reasoningPanelText.Render(line)
+	}
+	return reasoningPanelStyle.Width(max(20, m.width-2)).
+		Render(strings.Join(content, "\n"))
 }
 
 // printParagraph renders one markdown paragraph into pending lines,
@@ -787,32 +846,25 @@ func (m *Model) appendReasoning(text string) {
 	// the transcript keeps stream order.
 	m.flushMarkdown()
 	m.stream.reasoningBuf += text
-	if len(m.stream.reasoningBuf) > 2048 {
-		m.flushReasoning()
-	}
 }
 
-// renderReasoningBox wraps reasoning text in the white rounded box.
-// The text is hard-wrapped by display width first: lipgloss's MaxWidth
-// word-wraps only at spaces and would otherwise widen the box past the
-// terminal for long tokens or CJK text.
-func (m *Model) renderReasoningBox(text string) []string {
-	textW := max(20, m.width-4)
-	var content []string
-	for _, line := range wrapByWidth(text, textW) {
-		content = append(content, reasoningStyle.Render(line))
+// messageRule returns the separator framing an assistant message
+// block: a blank line, a full-width white rule and another blank
+// line, so the rule keeps one line of breathing room from the content
+// on either side.
+func (m *Model) messageRule() []string {
+	return []string{
+		"",
+		assistantRuleStyle.Render(strings.Repeat("─", max(1, m.width))),
+		"",
 	}
-	// Pin the box (padding included) to the terminal width so short
-	// reasoning still spans edge to edge; wrapByWidth already capped
-	// every line, so Width only pads and never truncates.
-	boxed := reasoningBoxStyle.Width(max(20, m.width-2)).
-		Render(strings.Join(content, "\n"))
-	return strings.Split(strings.TrimRight(boxed, "\n"), "\n")
 }
 
 // wrapByWidth hard-wraps text into lines whose display width never
-// exceeds width. It breaks mid-token (no space-based word wrap) so
-// long runs, URLs and CJK text cannot widen a surrounding box.
+// exceeds width. Explicit newlines start a fresh line and reset the
+// width counter (interior blank lines are preserved); otherwise it
+// breaks mid-token (no space-based word wrap) so long runs, URLs and
+// CJK text cannot widen a surrounding box.
 func wrapByWidth(text string, width int) []string {
 	if width <= 0 {
 		width = 20
@@ -821,6 +873,12 @@ func wrapByWidth(text string, width int) []string {
 	cur := strings.Builder{}
 	curW := 0
 	for _, r := range text {
+		if r == '\n' {
+			lines = append(lines, cur.String())
+			cur.Reset()
+			curW = 0
+			continue
+		}
 		w := lipgloss.Width(string(r))
 		if curW > 0 && curW+w > width {
 			lines = append(lines, cur.String())
@@ -875,7 +933,7 @@ func (m *Model) dispatch(ev Event) (tea.Model, tea.Cmd) {
 // ---------- interactions ----------
 
 func (m *Model) enqueueInteraction(ev *InteractEvent) {
-	m.flushReasoning()
+	m.archiveReasoning()
 	m.flushMarkdown()
 	m.stream.pending = append(m.stream.pending,
 		reasoningLabelStyle.Render("? "+ev.Spec.Title))
@@ -1048,7 +1106,11 @@ func (m *Model) handleIdleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+t":
 		m.enterTranscript()
 		return m, nil
-	case "shift+enter", "ctrl+j":
+	// Newline is Shift+Enter / Option+Enter (codex-rs binds both). The
+	// input layer maps them to KeyCtrlJ, so they arrive here as
+	// "ctrl+j"; plain Enter stays "enter" and submits. Ctrl+Enter is
+	// dropped by the input layer.
+	case "ctrl+j":
 		m.input.InsertString("\n")
 		m.resizeInput()
 		return m, nil
@@ -1088,7 +1150,7 @@ func (m *Model) handleRunningKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+t":
 		m.enterTranscript()
 		return m, nil
-	case "shift+enter", "ctrl+j":
+	case "ctrl+j":
 		m.input.InsertString("\n")
 		m.resizeInput()
 		return m, nil
@@ -1204,8 +1266,8 @@ func (m *Model) flattenHistory(id string) {
 			}
 		}
 		if reasoning != "" {
-			m.stream.pending = append(m.stream.pending,
-				m.renderReasoningBox(strings.TrimSpace(reasoning))...)
+			m.transcript.append(m.reasoningHistory(
+				strings.TrimSpace(reasoning)))
 		}
 		if text == "" {
 			continue
@@ -1258,6 +1320,10 @@ func (m *Model) handleAnsweringKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch ev.Spec.Kind {
 	case interact.KindText:
 		switch msg.String() {
+		case "ctrl+j":
+			m.input.InsertString("\n")
+			m.resizeInput()
+			return m, nil
 		case "enter":
 			text := strings.TrimSpace(m.input.Value())
 			if text == "" {
@@ -1285,6 +1351,10 @@ func (m *Model) handleChoiceKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	ev := m.answering.interaction
 	if m.answering.selOther {
 		switch msg.String() {
+		case "ctrl+j":
+			m.input.InsertString("\n")
+			m.resizeInput()
+			return m, nil
 		case "enter":
 			text := strings.TrimSpace(m.input.Value())
 			if text == "" {
@@ -1424,6 +1494,11 @@ func (m *Model) View() string {
 		lines = append(lines, toolErrStyle.Render(
 			"✗ ["+errIDs(m.errs.lastErrRun, m.errs.lastErrReq)+"] "+
 				truncate(m.errs.lastErr, max(20, m.width-10))))
+	}
+	// The live reasoning tail sits directly above the prompt; it
+	// appears only while reasoning is streaming.
+	if box := m.reasoningBox(); box != "" {
+		lines = append(lines, box)
 	}
 	switch m.mode {
 	case modeResume:
@@ -1620,6 +1695,26 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return string(runes[:n]) + "…"
+}
+
+// truncateWidth truncates s to at most n display cells, appending an
+// ellipsis when anything was cut. Unlike truncate (rune count) this is
+// display-width aware, so CJK text cannot overrun the reasoning panel.
+func truncateWidth(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	var b strings.Builder
+	w := 0
+	for _, r := range s {
+		rw := lipgloss.Width(string(r))
+		if w+rw > n {
+			return b.String() + "…"
+		}
+		b.WriteRune(r)
+		w += rw
+	}
+	return s
 }
 
 func min(a, b int) int {

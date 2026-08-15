@@ -7,8 +7,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
+	"syscall"
 	"time"
 )
+
+// stopGrace is how long stop waits for the execd child to shut down
+// gracefully (and terminate its sessions) before SIGKILL.
+const stopGrace = 3 * time.Second
 
 // Launch forks the current executable in execd mode and dials its
 // unix socket. The returned stop function terminates the child and
@@ -32,15 +38,32 @@ func LaunchExe(
 		fmt.Sprintf("opencraft-execd-%d.sock", os.Getpid()))
 	_ = os.Remove(sock)
 
+	// The child watches its parent: if this process dies without
+	// running stop (SIGKILL, crash), the child self-terminates and
+	// removes the socket instead of leaking.
 	cmd := exec.CommandContext(ctx, executable,
-		"execd", "-listen", sock, "-workdir", workDir)
+		"execd", "-listen", sock, "-workdir", workDir,
+		"-parent-pid", strconv.Itoa(os.Getpid()))
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		return nil, nil, fmt.Errorf("execd launch: %w", err)
 	}
 	stop := func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		// SIGTERM first so the child runs its own cleanup
+		// (terminating sandbox sessions), then SIGKILL as a bound
+		// fallback.
+		_ = cmd.Process.Signal(syscall.SIGTERM)
+		waited := make(chan struct{})
+		go func() {
+			_ = cmd.Wait()
+			close(waited)
+		}()
+		select {
+		case <-waited:
+		case <-time.After(stopGrace):
+			_ = cmd.Process.Kill()
+			<-waited
+		}
 		_ = os.Remove(sock)
 	}
 

@@ -43,14 +43,33 @@ func Run(
 	// ↑/↓ pickers), and the agent transcript lives in the native
 	// terminal scrollback. Capturing mouse events would swallow text
 	// selection and wheel scrolling, so leave them to the terminal.
-	p := tea.NewProgram(m)
+	// Enable the kitty keyboard protocol via vtinput so modified keys
+	// (Shift+Enter/Option+Enter for newline, disambiguated Esc,
+	// Ctrl+letter) arrive as distinct events; unsupported terminals
+	// fall back to legacy sequences, which vtinput parses too.
+	ki, err := enableKittyInput()
+	if err != nil {
+		// Not a terminal (e.g. piped stdin): fall back to bubbletea's
+		// default input handling, which opens a TTY when needed.
+		p := tea.NewProgram(m)
+		m.program = p
+		go bridgeLoop(p, bridge)
+		_, err := p.Run()
+		return err
+	}
+	defer ki.close()
+
+	// bubbletea reads from a pipe that never produces data; real input
+	// events are forwarded from vtinput via Program.Send.
+	p := tea.NewProgram(m, tea.WithInput(ki.pipeReader))
 	m.program = p
+	go inputLoop(p, ki.events)
 	// Drain the bridge on a dedicated goroutine and deliver batches via
 	// Program.Send. A blocking waitEvents Cmd would freeze bubbletea's
 	// event loop: execBatchMsg waits for every command in a batch, so a
 	// long gap between stream events would stall the whole UI.
 	go bridgeLoop(p, bridge)
-	_, err := p.Run()
+	_, err = p.Run()
 	return err
 }
 

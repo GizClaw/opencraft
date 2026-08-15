@@ -25,6 +25,9 @@ func EnsureUserConfig() (string, error) {
 		if err != nil {
 			return "", err
 		}
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+			return "", err
+		}
 		if err := os.WriteFile(target, data, 0o600); err != nil {
 			return "", err
 		}

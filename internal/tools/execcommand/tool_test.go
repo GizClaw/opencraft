@@ -18,6 +18,8 @@ type fakeRunner struct {
 	err     error
 }
 
+func (f *fakeRunner) Close() error { return nil }
+
 func (f *fakeRunner) Capabilities() sandbox.Capabilities {
 	return sandbox.Capabilities{}
 }

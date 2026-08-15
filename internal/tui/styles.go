@@ -27,16 +27,25 @@ var (
 				Foreground(lipgloss.Color("8")).
 				Bold(true)
 
-	reasoningStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("8")).
-			Italic(true)
-
-	// reasoningBoxStyle frames reasoning output in a white rounded
-	// box; the content keeps the dim italic reasoning style.
-	reasoningBoxStyle = lipgloss.NewStyle().
+	// reasoningPanelStyle is the fixed panel above the composer
+	// showing the live reasoning tail: a transparent body with a gray
+	// rounded frame, so it stays distinct from the gray composer
+	// without tinting the terminal background.
+	reasoningPanelStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("15")).
+				BorderForeground(lipgloss.Color("8")).
 				Padding(0, 1)
+
+	// reasoningPanelText is the dim italic reasoning text inside the
+	// panel.
+	reasoningPanelText = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("8")).
+				Italic(true)
+
+	// assistantRuleStyle is the white rule framing an assistant
+	// message block, matching the reasoning box's white border.
+	assistantRuleStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("15"))
 
 	toolNameStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("13")).
