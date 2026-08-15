@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,6 +25,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/app"
 	"github.com/GizClaw/opencraft/internal/interact"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
+	"github.com/GizClaw/opencraft/internal/tools/applypatch"
 )
 
 // Messages.
@@ -338,7 +341,7 @@ func newInput(placeholder string) textarea.Model {
 
 func (m *Model) Init() tea.Cmd {
 	m.bridge.Start()
-	return tea.Batch(textarea.Blink, spinner.Tick, m.flushTick())
+	return tea.Batch(textarea.Blink, m.spinner.Tick, m.flushTick())
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -389,7 +392,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.broker.BindTurn(msg.turn.RunID(), msg.turn)
 		}
 		m.setMode(modeRunning)
-		return m, tea.Batch(m.waitCmd(), spinner.Tick)
+		return m, tea.Batch(m.waitCmd(), m.spinner.Tick)
 
 	case turnDoneMsg:
 		if m.opts.Sessions != nil {
@@ -497,7 +500,7 @@ func (m *Model) appendDelta(delta agent.StreamDeltaPayload) {
 		m.archiveReasoning()
 		m.flushMarkdown()
 		m.stream.lastTool = p.Call.Name
-		lines := renderToolCallHeader(p.Call)
+		lines := renderToolCallHeader(p.Call, m.opts.WorkDir)
 		if p.Call.ID != "" {
 			// Buffer until the result arrives so parallel calls print
 			// as call+result pairs instead of all calls then all
@@ -610,6 +613,27 @@ func (m *Model) resultParts(
 			}
 			return body, end, ok
 		}
+	case "update_plan":
+		// The plan checklist was already rendered in the call header;
+		// the tool's "Plan updated" text is noise here.
+		ok = !isErr
+		if isErr {
+			end = toolErrStyle.Render("  └ ✗")
+		} else {
+			end = toolOKStyle.Render("  └ ok")
+		}
+		return body, end, ok
+	case "apply_patch":
+		// The numbered diff was already rendered in the call header;
+		// on success the result JSON is noise here.
+		ok = !isErr
+		if isErr {
+			body = append(body, indentedLines(content, toolErrStyle)...)
+			end = toolErrStyle.Render("  └ ✗")
+		} else {
+			end = toolOKStyle.Render("  └ ok")
+		}
+		return body, end, ok
 	}
 	style := dimStyle
 	if isErr {
@@ -631,9 +655,10 @@ func (m *Model) resultParts(
 }
 
 // renderToolCallHeader renders the tool header block. Shell tools read
-// like "• Ran <command>"; everything else renders its JSON arguments
-// as "- key: value" lines under "• <name>".
-func renderToolCallHeader(call message.ToolCall) []string {
+// like "• Ran <command>"; apply_patch renders a numbered diff; plan
+// updates render a checklist; everything else renders its JSON
+// arguments as "- key: value" lines under "• <name>".
+func renderToolCallHeader(call message.ToolCall, workDir string) []string {
 	args := string(call.Arguments)
 	var a struct {
 		Command     string   `json:"command"`
@@ -642,6 +667,12 @@ func renderToolCallHeader(call message.ToolCall) []string {
 		Path        string   `json:"path"`
 		Pattern     string   `json:"pattern"`
 		Permissions []string `json:"permissions"`
+		Explanation string   `json:"explanation"`
+		Plan        []struct {
+			Step   string `json:"step"`
+			Status string `json:"status"`
+		} `json:"plan"`
+		Patch string `json:"patch"`
 	}
 	if json.Unmarshal(call.Arguments, &a) == nil {
 		if a.Command != "" {
@@ -652,6 +683,11 @@ func renderToolCallHeader(call message.ToolCall) []string {
 	}
 	args = truncate(args, 200)
 	switch call.Name {
+	case "apply_patch":
+		if lines, ok := renderApplyPatch(a.Patch, workDir); ok {
+			return lines
+		}
+		return []string{toolNameStyle.Render("• apply_patch")}
 	case "exec_command", "exec_session":
 		return []string{toolNameStyle.Render("• Ran ") + args}
 	case "read_file":
@@ -674,9 +710,27 @@ func renderToolCallHeader(call message.ToolCall) []string {
 			dimStyle.Render(" in "+truncate(where, 80))}
 	case "glob":
 		return []string{toolNameStyle.Render("• Glob ") + truncate(a.Pattern, 200)}
-	case "plan":
-		return []string{toolNameStyle.Render("• Plan")}
 	case "update_plan":
+		if n := len(a.Plan); n > 0 {
+			lines := []string{toolNameStyle.Render("• Update plan")}
+			for _, item := range a.Plan {
+				marker, style := "- [ ]", dimStyle
+				switch item.Status {
+				case "in_progress":
+					marker, style = "- [~]", statusTextStyle
+				case "completed":
+					marker = "- [x]"
+				}
+				lines = append(lines, style.Render(fmt.Sprintf(
+					"  %s %s (%s)", marker,
+					truncate(item.Step, 120), item.Status)))
+			}
+			if a.Explanation != "" {
+				lines = append(lines, dimStyle.Render(
+					"  Explanation: "+truncate(a.Explanation, 160)))
+			}
+			return lines
+		}
 		return []string{toolNameStyle.Render("• Update plan")}
 	case "request_permissions":
 		return []string{toolNameStyle.Render(fmt.Sprintf(
@@ -692,6 +746,103 @@ func renderToolCallHeader(call message.ToolCall) []string {
 		}
 		return lines
 	}
+}
+
+// renderApplyPatch renders a codex patch as a numbered, git-style diff
+// block. Real file line numbers require workDir (the workspace root);
+// without one, or when a file cannot be read, the lines still render
+// with hunk-relative numbers. ok is false for empty or unparseable
+// patches, and the caller falls back to the plain tool header.
+func renderApplyPatch(patch, workDir string) ([]string, bool) {
+	if strings.TrimSpace(patch) == "" {
+		return nil, false
+	}
+	diffs, err := applypatch.Diff(patch, diffReader(workDir))
+	if err != nil || len(diffs) == 0 {
+		return nil, false
+	}
+	lines := []string{toolNameStyle.Render("• apply_patch")}
+	for i, fd := range diffs {
+		if i > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, renderDiffFileHeader(fd))
+		lines = append(lines, renderDiffLines(fd.Lines)...)
+	}
+	return lines, true
+}
+
+// diffReader reads workspace files under workDir for line numbering.
+func diffReader(workDir string) applypatch.ReadFile {
+	if workDir == "" {
+		return nil
+	}
+	return func(path string) (string, error) {
+		clean := filepath.Clean(path)
+		if clean == ".." || strings.HasPrefix(clean, "../") {
+			return "", fmt.Errorf(
+				"apply_patch: path %q escapes the workspace", path)
+		}
+		data, err := os.ReadFile(filepath.Join(workDir, clean))
+		return string(data), err
+	}
+}
+
+// renderDiffFileHeader renders one file block header as
+// "  path (+N -M)".
+func renderDiffFileHeader(fd applypatch.FileDiff) string {
+	line := dimStyle.Render("  " + fd.Path + " (")
+	line += toolOKStyle.Render("+" + strconv.Itoa(fd.Added))
+	if fd.Removed > 0 {
+		line += dimStyle.Render(" ") +
+			toolErrStyle.Render("-"+strconv.Itoa(fd.Removed))
+	}
+	return line + dimStyle.Render(")")
+}
+
+// renderDiffLines renders one numbered line per diff entry:
+//
+//	12 │  func x() {
+//	13 │- old line
+//	13 │+ new line
+func renderDiffLines(lines []applypatch.DiffLine) []string {
+	if len(lines) == 0 {
+		return nil
+	}
+	maxNum := 1
+	for _, l := range lines {
+		if l.OldNum > maxNum {
+			maxNum = l.OldNum
+		}
+		if l.NewNum > maxNum {
+			maxNum = l.NewNum
+		}
+	}
+	width := len(strconv.Itoa(maxNum))
+	out := make([]string, 0, len(lines))
+	for _, l := range lines {
+		num := l.OldNum
+		if l.Kind == applypatch.DiffLineAdd {
+			num = l.NewNum
+		}
+		numStr := ""
+		if num > 0 {
+			numStr = strconv.Itoa(num)
+		}
+		text := truncateWidth(l.Text, 160)
+		switch l.Kind {
+		case applypatch.DiffLineAdd:
+			out = append(out, toolOKStyle.Render(fmt.Sprintf(
+				"  %*s │+ %s", width, numStr, text)))
+		case applypatch.DiffLineDelete:
+			out = append(out, toolErrStyle.Render(fmt.Sprintf(
+				"  %*s │- %s", width, numStr, text)))
+		default:
+			out = append(out, dimStyle.Render(fmt.Sprintf(
+				"  %*s │  %s", width, numStr, text)))
+		}
+	}
+	return out
 }
 
 // jsonLines flattens a JSON payload into display lines: object fields

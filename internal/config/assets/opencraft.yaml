@@ -28,10 +28,12 @@ resources:
       # the same user-editable routing policy as agent turns.
       router: router
     settings:
-      # Raw window (max_raw_messages + preserve_recent) must be >= the
-      # sessions history window (40) so worldstate injection is disjoint:
-      # the summary covers older messages, history covers the raw tail,
-      # and no message reaches the model twice (or gets dropped).
+      # Raw window (max_raw_messages + preserve_recent) is the single
+      # source of recent conversation context: the worldstate hook
+      # injects the folded summary plus this raw window, and the session
+      # archive is no longer injected into the model (it is a durability
+      # store for resume/usage). 40 keeps recency parity with the older
+      # session history window.
       max_raw_messages: 36
       preserve_recent: 4
       max_summary_bytes: 4096
@@ -144,10 +146,7 @@ resources:
           list_dir: always
           grep: always
           glob: always
-          plan: always
           update_plan: always
-          get_plan: always
-          list_plans: always
           request_permissions: always
 
   # ------------------------------------------------------------------
@@ -219,7 +218,6 @@ agents:
         deps:
           memory: mem
           workspace: ws
-          sessions: sessions
           execpolicy: execpolicy
           planstore: planstore
         settings:

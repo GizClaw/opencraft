@@ -95,7 +95,8 @@ func main() {
 			os.Exit(1)
 		}
 		if err := tui.Run(rtc, tui.Options{
-			Model: config.DefaultModel(mgr.UserDir()),
+			Model:   config.DefaultModel(mgr.UserDir()),
+			WorkDir: workDir,
 			// Every TUI launch starts a fresh conversation; /resume
 			// switches to an existing session id.
 			ContextID: ocsessions.NewID(),
@@ -159,8 +160,8 @@ func runExecServer() {
 		fmt.Fprintf(os.Stderr, "opencraft execd: listen: %v\n", err)
 		os.Exit(1)
 	}
-	defer listener.Close()
-	defer os.Remove(*listen)
+	defer func() { _ = listener.Close() }()
+	defer func() { _ = os.Remove(*listen) }()
 	_ = os.Chmod(*listen, 0o600)
 
 	// The accept loop alone would outlive the parent: when the parent
@@ -279,7 +280,7 @@ func run(rtc *app.RuntimeController, text string) {
 		fmt.Fprintf(os.Stderr, "opencraft: open session: %v\n", err)
 		os.Exit(1)
 	}
-	defer lease.Close()
+	defer func() { _ = lease.Close() }()
 
 	turn, err := lease.Session().Start(ctx, agent.Request{
 		ContextID: key.ContextID,

@@ -5,8 +5,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/GizClaw/flowcraft/core/inference/route"
 	"github.com/GizClaw/flowcraft/core/errdefs"
+	"github.com/GizClaw/flowcraft/core/inference/route"
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/opencraft/internal/memory/summary"
 	"github.com/GizClaw/opencraft/internal/state"

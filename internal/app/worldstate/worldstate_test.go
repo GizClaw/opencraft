@@ -93,6 +93,8 @@ func indexOf(s, sub string) int {
 	return -1
 }
 
+func strptr(s string) *string { return &s }
+
 type stubPrefixProvider []string
 
 func (s stubPrefixProvider) Rules() []string { return []string(s) }
@@ -133,7 +135,7 @@ func (m stubMemory) Context(
 	return corememory.ContextResult{Items: m.items}, nil
 }
 
-func TestMemorySummarySkipsRawMessages(t *testing.T) {
+func TestMemorySectionsIncludeSummariesAndRaw(t *testing.T) {
 	svc := New(Options{WorkBase: t.TempDir()})
 	svc.memory = stubMemory{items: []corememory.ContextItem{
 		{
@@ -143,25 +145,79 @@ func TestMemorySummarySkipsRawMessages(t *testing.T) {
 			}},
 		},
 		{
-			Kind: corememory.ContextRawMessage,
+			Kind:        corememory.ContextRawMessage,
+			MessageRole: message.RoleAssistant,
 			Content: message.Content{Parts: []message.Part{
 				message.TextPart{Text: "recent raw message"},
 			}},
 		},
 	}}
-	got := svc.memorySummary(context.Background(), "c1")
-	if !contains(got, "folded summary") {
-		t.Fatalf("memory summary = %q, want folded content", got)
+	got := svc.memorySections(context.Background(), "c1")
+	if len(got) != 2 {
+		t.Fatalf("sections = %+v, want summary + raw", got)
 	}
-	if contains(got, "recent raw message") {
-		t.Fatalf("memory summary = %q, must exclude raw messages (history carries them)", got)
+	if got[0].ID != "memory_summary" || got[0].Role != "system" || !contains(got[0].Text, "folded summary") {
+		t.Fatalf("summary section = %+v", got[0])
+	}
+	if got[1].ID != "memory_raw" || got[1].Role != string(message.RoleAssistant) || !contains(got[1].Text, "recent raw message") {
+		t.Fatalf("raw section = %+v", got[1])
+	}
+}
+
+func TestRenderToBoardInjectsMemorySectionsNoHistory(t *testing.T) {
+	svc := New(Options{WorkBase: t.TempDir()})
+	svc.memory = stubMemory{items: []corememory.ContextItem{
+		{
+			Kind: corememory.ContextSummary,
+			Content: message.Content{Parts: []message.Part{
+				message.TextPart{Text: "folded summary"},
+			}},
+		},
+		{
+			Kind:        corememory.ContextRawMessage,
+			MessageRole: message.RoleUser,
+			Content: message.Content{Parts: []message.Part{
+				message.TextPart{Text: "latest user turn"},
+			}},
+		},
+	}}
+	board := agent.NewBoard()
+	if err := svc.RenderToBoard(context.Background(), "c1", board); err != nil {
+		t.Fatal(err)
+	}
+	raw := board.GetVarString("world.sections")
+	var sections []Section
+	if err := json.Unmarshal([]byte(raw), &sections); err != nil {
+		t.Fatalf("sections = %q: %v", raw, err)
+	}
+	var summary, rawMsg *Section
+	for i := range sections {
+		switch sections[i].ID {
+		case "memory_summary":
+			summary = &sections[i]
+		case "memory_raw":
+			rawMsg = &sections[i]
+		case "history":
+			t.Fatalf("history section must not be injected (memory is the single source): %+v", sections[i])
+		}
+	}
+	if summary == nil || !contains(summary.Text, "folded summary") {
+		t.Fatalf("missing summary section in %+v", sections)
+	}
+	if rawMsg == nil || rawMsg.Role != string(message.RoleUser) || !contains(rawMsg.Text, "latest user turn") {
+		t.Fatalf("missing raw section with role in %+v", sections)
 	}
 }
 
 func TestRenderToBoardInjectsLatestPlan(t *testing.T) {
 	store := plan.NewStore(filepath.Join(t.TempDir(), "plans.json"))
-	p, err := store.Create("1. inspect\n2. implement", "")
-	if err != nil {
+	if _, err := store.Update(plan.UpdatePlanArgs{
+		Explanation: strptr("fix the bug"),
+		Plan: []plan.PlanItem{
+			{Step: "inspect", Status: plan.StatusInProgress},
+			{Step: "implement", Status: plan.StatusPending},
+		},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	svc := New(Options{WorkBase: t.TempDir()})
@@ -185,8 +241,10 @@ func TestRenderToBoardInjectsLatestPlan(t *testing.T) {
 	if planSec == nil {
 		t.Fatalf("no plan section in %+v", sections)
 	}
-	if !contains(planSec.Text, p.ID) || !contains(planSec.Text, "inspect") {
-		t.Fatalf("plan section = %q, want id and text", planSec.Text)
+	if !contains(planSec.Text, "inspect") ||
+		!contains(planSec.Text, plan.StatusInProgress) ||
+		!contains(planSec.Text, "fix the bug") {
+		t.Fatalf("plan section = %q, want checklist with explanation", planSec.Text)
 	}
 
 	// An empty store injects no plan section.

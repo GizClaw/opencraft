@@ -300,7 +300,8 @@ func truncateRunes(s string, maxBytes int) string {
 
 func stableMessageID(threadID string, index int, msg message.Message) string {
 	h := sha256.New()
-	fmt.Fprintf(h, "%s|%d|%s|%s", threadID, index, msg.Role, msg.Content.Text())
+	_, _ = fmt.Fprintf(h, "%s|%d|%s|%s",
+		threadID, index, msg.Role, msg.Content.Text())
 	return hex.EncodeToString(h.Sum(nil))
 }
 
@@ -311,7 +312,7 @@ func stableMessageID(threadID string, index int, msg message.Message) string {
 // rows.
 func stableID(threadID string, level int, p Policy) string {
 	h := sha256.New()
-	fmt.Fprintf(h, "%s|%d|%d:%d:%d",
+	_, _ = fmt.Fprintf(h, "%s|%d|%d:%d:%d",
 		threadID, level, p.MaxRawMessages, p.PreserveRecent, p.MaxSummaryBytes)
 	return hex.EncodeToString(h.Sum(nil))
 }

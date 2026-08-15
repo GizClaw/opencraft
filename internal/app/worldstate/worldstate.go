@@ -1,5 +1,5 @@
 // Package worldstate gathers the per-session world state (AGENTS.md,
-// permissions, environment, memory summary) into board vars. A graph
+// permissions, environment, memory context) into board vars. A graph
 // script node renders those vars into the model-facing message list.
 package worldstate
 
@@ -12,13 +12,12 @@ import (
 	"github.com/GizClaw/flowcraft/core/memory"
 	"github.com/GizClaw/flowcraft/core/workspace"
 
-	"github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/tools/plan"
 )
 
 // Section is one world-state fragment written to the board for the
 // graph's world node to render. IDs: agents_md | permissions |
-// environment | plan | memory_summary | history.
+// environment | plan | memory_summary | memory_raw.
 type Section struct {
 	ID   string `json:"id"`
 	Role string `json:"role"` // user | system
@@ -46,7 +45,6 @@ type PrefixProvider interface {
 type Service struct {
 	opts     Options
 	memory   memory.ContextProvider // optional; set after deploy resolves it
-	history  *sessions.Store        // optional; recent history injection
 	prefixes PrefixProvider         // optional; live allowlist rules
 	plans    *plan.Store            // optional; latest plan injection
 	mu       sync.Mutex
@@ -78,9 +76,6 @@ func New(opts Options) *Service {
 // SetMemory wires the memory context provider (resolved by deploy).
 func (s *Service) SetMemory(m memory.ContextProvider) { s.memory = m }
 
-// SetSessions wires the conversation store for history injection.
-func (s *Service) SetSessions(st *sessions.Store) { s.history = st }
-
 // SetPrefixProvider wires the live sandbox allowlist rules source.
 func (s *Service) SetPrefixProvider(p PrefixProvider) { s.prefixes = p }
 
@@ -90,9 +85,9 @@ func (s *Service) SetPlans(st *plan.Store) { s.plans = st }
 
 // RenderToBoard writes the world state into board vars:
 //   - world.sections: static sections (AGENTS.md, permissions,
-//     environment), memory summary, and the recent conversation history
-//     from the session store; always injected since each turn starts
-//     with a fresh board
+//     environment), the latest plan, and the memory context (folded
+//     summary + raw window) from the memory assembly; always injected
+//     since each turn starts with a fresh board
 //   - world.workspace_root / world.collaboration_mode /
 //     world.permission_profile
 func (s *Service) RenderToBoard(ctx context.Context, contextID string, board *agent.Board) error {
@@ -128,33 +123,7 @@ func (s *Service) RenderToBoard(ctx context.Context, contextID string, board *ag
 		}
 	}
 	if s.memory != nil {
-		if summary := s.memorySummary(ctx, contextID); summary != "" {
-			sections = append(sections, Section{
-				ID:   "memory_summary",
-				Role: "system",
-				Text: summary,
-			})
-		}
-	}
-	if s.history != nil {
-		// The memory raw window (max_raw_messages + preserve_recent)
-		// must cover the history window (40): summary and history are
-		// then disjoint, so the same message never reaches the model
-		// twice and no message falls between the two sources.
-		hist, err := s.history.History(ctx, contextID, 0)
-		if err == nil {
-			for _, h := range hist {
-				text := h.Content.Text()
-				if text == "" {
-					continue
-				}
-				sections = append(sections, Section{
-					ID:   "history",
-					Role: string(h.Role),
-					Text: text,
-				})
-			}
-		}
+		sections = append(sections, s.memorySections(ctx, contextID)...)
 	}
 
 	data, err := json.Marshal(sections)
@@ -197,27 +166,54 @@ func (s *Service) session(contextID string) (*sessionState, error) {
 	return st, nil
 }
 
-func (s *Service) memorySummary(ctx context.Context, contextID string) string {
+// memorySections packs the memory assembly's context items into board
+// sections. The memory assembly is the single source of conversation
+// context: folded summaries render as one system section
+// (memory_summary), then the raw window messages render as individual
+// sections that keep their user/assistant role. The session archive is
+// deliberately NOT injected here: it is a durability store (resume
+// listing, usage, full transcript) and injecting it alongside memory
+// made every turn re-read the whole archive from disk just to duplicate
+// the raw window the memory assembly already returns. The raw window
+// (max_raw_messages + preserve_recent, 40 in the default deployment)
+// plus the folded summary cover exactly what the old history window
+// carried, so dropping the archive injection loses nothing.
+func (s *Service) memorySections(ctx context.Context, contextID string) []Section {
 	if s.memory == nil {
-		return ""
+		return nil
 	}
 	res, err := s.memory.Context(ctx, memory.ContextRequest{
 		Scope:          memory.Scope{RuntimeID: "opencraft"},
 		ConversationID: contextID,
 		Budget:         memory.Budget{MaxItems: 64, MaxChars: 1 << 16},
 	})
-	if err != nil || len(res.Items) == 0 {
-		return ""
+	if err != nil {
+		return nil
 	}
-	var text string
+	sections := make([]Section, 0, len(res.Items))
 	for _, item := range res.Items {
-		// History injection already carries the recent raw window, so
-		// only folded summaries go into memory_summary; otherwise the
-		// same messages reach the model twice per turn.
-		if item.Kind != memory.ContextSummary {
+		text := item.Content.Text()
+		if text == "" {
 			continue
 		}
-		text += item.Content.Text() + "\n"
+		switch item.Kind {
+		case memory.ContextSummary:
+			sections = append(sections, Section{
+				ID:   "memory_summary",
+				Role: "system",
+				Text: text,
+			})
+		case memory.ContextRawMessage:
+			role := string(item.MessageRole)
+			if role == "" {
+				role = "user"
+			}
+			sections = append(sections, Section{
+				ID:   "memory_raw",
+				Role: role,
+				Text: text,
+			})
+		}
 	}
-	return text
+	return sections
 }

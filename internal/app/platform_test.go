@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/GizClaw/flowcraft/core/sandbox"
 	"github.com/GizClaw/flowcraft/core/resource"
+	"github.com/GizClaw/flowcraft/core/sandbox"
 )
 
 func TestSandboxSettingsDecodeAndPolicy(t *testing.T) {
@@ -66,8 +66,8 @@ func TestSandboxSettingsNoEnvPolicyFallsBack(t *testing.T) {
 func TestLocalSandboxAppliesEnvPolicy(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	settings, err := json.Marshal(map[string]any{
-		"root":            t.TempDir(),
-		"remote":          false,
+		"root":             t.TempDir(),
+		"remote":           false,
 		"allowed_commands": []string{"*"},
 		"env_policy": map[string]any{
 			"allow":  []string{"PATH"},

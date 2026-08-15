@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -701,6 +702,152 @@ func TestStreamToolLines(t *testing.T) {
 	}
 }
 
+func TestUpdatePlanRendersChecklist(t *testing.T) {
+	m := newTestModel()
+	m.appendDelta(agent.StreamDeltaPayload{
+		Type: agent.StreamDeltaPart,
+		Part: message.ToolCallPart{Call: message.ToolCall{
+			Name: "update_plan",
+			Arguments: []byte(`{
+				"explanation": "kick off",
+				"plan": [
+					{"step": "Inspect behavior", "status": "in_progress"},
+					{"step": "Patch failing path", "status": "pending"},
+					{"step": "Run focused tests", "status": "completed"}
+				]}`),
+		}},
+	})
+	m.appendDelta(agent.StreamDeltaPayload{
+		Type: agent.StreamDeltaPart,
+		Part: message.ToolResultPart{Result: message.ToolResult{
+			Content: "Plan updated",
+		}},
+	})
+	joined := strings.Join(m.stream.pending, "\n")
+	for _, want := range []string{
+		"• Update plan",
+		"- [~] Inspect behavior (in_progress)",
+		"- [ ] Patch failing path (pending)",
+		"- [x] Run focused tests (completed)",
+		"Explanation: kick off",
+		"└ ok",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("rendered output missing %q:\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "Plan updated") {
+		t.Errorf("redundant tool result text leaked into UI:\n%s", joined)
+	}
+}
+
+func TestUpdatePlanRendersFailure(t *testing.T) {
+	m := newTestModel()
+	m.appendDelta(agent.StreamDeltaPayload{
+		Type: agent.StreamDeltaPart,
+		Part: message.ToolCallPart{Call: message.ToolCall{
+			Name: "update_plan",
+			Arguments: []byte(`{
+				"plan": [
+					{"step": "a", "status": "in_progress"},
+					{"step": "b", "status": "in_progress"}
+				]}`),
+		}},
+	})
+	m.appendDelta(agent.StreamDeltaPayload{
+		Type: agent.StreamDeltaPart,
+		Part: message.ToolResultPart{Result: message.ToolResult{
+			Content: "update_plan: at most one step can be in_progress",
+			IsError: true,
+		}},
+	})
+	joined := strings.Join(m.stream.pending, "\n")
+	if !strings.Contains(joined, "- [~] a (in_progress)") ||
+		!strings.Contains(joined, "- [~] b (in_progress)") {
+		t.Errorf("checklist missing in failure view:\n%s", joined)
+	}
+	if !strings.Contains(joined, "└ ✗") {
+		t.Errorf("failure marker missing:\n%s", joined)
+	}
+}
+
+func TestApplyPatchRendersNumberedDiff(t *testing.T) {
+	work := t.TempDir()
+	content := "line1\nline2\nline3\nline4\n"
+	if err := os.WriteFile(
+		filepath.Join(work, "app.go"), []byte(content), 0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	m := New(nil, Options{Model: "deepseek/x", WorkDir: work},
+		NewBridge(16), nil)
+	m.appendDelta(agent.StreamDeltaPayload{
+		Type: agent.StreamDeltaPart,
+		Part: message.ToolCallPart{Call: message.ToolCall{
+			Name: "apply_patch",
+			Arguments: []byte(`{
+				"patch": "*** Begin Patch\n*** Update File: app.go\n@@ anchor\n line1\n-line2\n+line2b\n line3\n*** End Patch"
+			}`),
+		}},
+	})
+	m.appendDelta(agent.StreamDeltaPayload{
+		Type: agent.StreamDeltaPart,
+		Part: message.ToolResultPart{Result: message.ToolResult{
+			Content: `{"files":[{"path":"app.go","action":"update"}]}`,
+		}},
+	})
+	joined := strings.Join(m.stream.pending, "\n")
+	for _, want := range []string{
+		"• apply_patch",
+		"app.go (+1 -1)",
+		"│  line1",
+		"│- line2",
+		"│+ line2b",
+		"│  line3",
+		"└ ok",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("rendered output missing %q:\n%s", want, joined)
+		}
+	}
+	if !strings.Contains(joined, "│- line2") ||
+		!strings.Contains(joined, "2 │") {
+		t.Errorf("real line numbers missing:\n%s", joined)
+	}
+	if strings.Contains(joined, `"files"`) {
+		t.Errorf("redundant result JSON leaked into UI:\n%s", joined)
+	}
+}
+
+func TestApplyPatchRendersFailure(t *testing.T) {
+	m := newTestModel()
+	m.appendDelta(agent.StreamDeltaPayload{
+		Type: agent.StreamDeltaPart,
+		Part: message.ToolCallPart{Call: message.ToolCall{
+			Name: "apply_patch",
+			Arguments: []byte(`{
+				"patch": "*** Begin Patch\n*** Update File: app.go\n@@ anchor\n-old\n+new\n*** End Patch"
+			}`),
+		}},
+	})
+	m.appendDelta(agent.StreamDeltaPayload{
+		Type: agent.StreamDeltaPart,
+		Part: message.ToolResultPart{Result: message.ToolResult{
+			Content: "apply_patch: file \"app.go\" does not exist",
+			IsError: true,
+		}},
+	})
+	joined := strings.Join(m.stream.pending, "\n")
+	if !strings.Contains(joined, "│- old") ||
+		!strings.Contains(joined, "│+ new") {
+		t.Errorf("diff missing in failure view:\n%s", joined)
+	}
+	if !strings.Contains(joined, "does not exist") ||
+		!strings.Contains(joined, "└ ✗") {
+		t.Errorf("error text or marker missing:\n%s", joined)
+	}
+}
+
 func TestFoldToolResult(t *testing.T) {
 	m := newTestModel()
 	m.appendDelta(agent.StreamDeltaPayload{
@@ -1002,8 +1149,7 @@ func TestInteractionOtherInput(t *testing.T) {
 		t.Fatal("other input mode not active")
 	}
 	next.input.SetValue("我的想法")
-	updated, _ = next.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
-	next = updated.(*Model)
+	_, _ = next.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	select {
 	case reply := <-replyCh:
 		if reply.Text != "我的想法" {
@@ -1046,8 +1192,7 @@ func TestInteractionConfirmKeys(t *testing.T) {
 		ReplyCh: replyCh,
 	}})
 	next := updated.(*Model)
-	updated, _ = next.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
-	next = updated.(*Model)
+	_, _ = next.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
 	select {
 	case reply := <-replyCh:
 		if reply.Option == nil || *reply.Option != "yes" {

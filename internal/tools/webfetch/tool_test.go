@@ -11,7 +11,7 @@ import (
 
 func TestToolExtractsArticle(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`<!doctype html><html><head>
+		_, _ = w.Write([]byte(`<!doctype html><html><head>
 			<title>FlowCraft SDK</title>
 			<meta name="description" content="Go toolkit for AI agents">
 			<meta property="og:site_name" content="GitHub">
@@ -59,7 +59,7 @@ func TestToolExtractsArticle(t *testing.T) {
 
 func TestToolTruncates(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("<html><body><p>" + strings.Repeat("x", 500) + "</p></body></html>"))
+		_, _ = w.Write([]byte("<html><body><p>" + strings.Repeat("x", 500) + "</p></body></html>"))
 	}))
 	defer srv.Close()
 

@@ -9,7 +9,6 @@ import (
 	"github.com/GizClaw/flowcraft/core/workspace"
 
 	opmemory "github.com/GizClaw/opencraft/internal/memory"
-	"github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/tools/plan"
 	"github.com/GizClaw/opencraft/internal/utils/resourcedep"
 )
@@ -35,7 +34,6 @@ func (prepareFactory) Spec() resource.Spec {
 		Deps: []resource.DepSpec{
 			{Name: "memory", Type: opmemory.ResourceKind, Required: true},
 			{Name: "workspace", Type: "workspace.Workspace", Required: true},
-			{Name: "sessions", Type: sessions.ResourceKind, Required: true},
 			// Optional: the sandbox exec policy rules source. Deployments
 			// without it simply omit the approved-prefix line.
 			{Name: "execpolicy", Type: "opencraft.execpolicy", Required: false},
@@ -62,10 +60,6 @@ func (prepareFactory) New(_ context.Context, in resource.Input) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	store, err := resourcedep.Required[*sessions.Store](in, "worldstate", "sessions")
-	if err != nil {
-		return nil, err
-	}
 	settings, err := resource.DecodeTyped[prepareSettings](
 		in.Settings, resource.ExpandEnv())
 	if err != nil {
@@ -79,7 +73,6 @@ func (prepareFactory) New(_ context.Context, in resource.Input) (any, error) {
 		Workspace:         ws,
 	})
 	service.SetMemory(mem)
-	service.SetSessions(store)
 	if dep, ok := in.Dep("execpolicy"); ok {
 		if prefixes, ok := dep.(PrefixProvider); ok {
 			service.SetPrefixProvider(prefixes)

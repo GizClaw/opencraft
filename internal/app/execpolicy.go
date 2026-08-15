@@ -18,9 +18,9 @@ import (
 	"github.com/GizClaw/flowcraft/core/sandbox"
 	"sigs.k8s.io/yaml"
 
+	"github.com/GizClaw/opencraft/internal/app/worldstate"
 	"github.com/GizClaw/opencraft/internal/interact"
 	"github.com/GizClaw/opencraft/internal/tools/requestpermissions"
-	"github.com/GizClaw/opencraft/internal/app/worldstate"
 )
 
 // approvalsFile is the on-disk shape of .opencraft/approvals.yaml:
@@ -185,9 +185,9 @@ func (m *Manager) writeFile(entries []string) error {
 		return err
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
+	defer func() { _ = os.Remove(tmpName) }()
 	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+		_ = tmp.Close()
 		return err
 	}
 	if err := tmp.Close(); err != nil {

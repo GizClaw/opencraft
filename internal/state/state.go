@@ -248,7 +248,7 @@ func (s *Store) LoadItems(ctx context.Context, threadID string) ([]Item, error) 
 	if err != nil {
 		return nil, fmt.Errorf("state: load items: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanItems(rows)
 }
 
@@ -292,7 +292,7 @@ func (s *Store) LoadItemsRange(ctx context.Context, threadID string, from, to in
 	if err != nil {
 		return nil, fmt.Errorf("state: load items range: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanItems(rows)
 }
 
@@ -362,7 +362,7 @@ func (s *Store) ListSummaryNodes(ctx context.Context, threadID string) ([]Summar
 	if err != nil {
 		return nil, fmt.Errorf("state: list summary nodes: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var nodes []SummaryNode
 	for rows.Next() {
 		var n SummaryNode

@@ -177,14 +177,14 @@ func (requestpermissionsSourceFactory) New(
 	return toolList{requestpermissions.New()}, nil
 }
 
-// PlanSourceFactory contributes the plan/update_plan tools over a
+// PlanSourceFactory contributes the update_plan tool over a
 // runtime-scoped store.
 type PlanSourceFactory struct {
 	store *plan.Store
 }
 
-// NewPlanSourceFactory returns a tool.Source factory for the plan
-// tools. store must not be nil.
+// NewPlanSourceFactory returns a tool.Source factory for the
+// update_plan tool. store must not be nil.
 func NewPlanSourceFactory(store *plan.Store) resource.Factory {
 	return PlanSourceFactory{store: store}
 }
@@ -205,7 +205,7 @@ func (f PlanSourceFactory) New(
 	}
 	if f.store == nil {
 		return nil, errdefs.Validationf(
-			"plan tool resource: store is required")
+			"update_plan tool resource: store is required")
 	}
 	return toolList(plan.MustNew(f.store).Tools()), nil
 }

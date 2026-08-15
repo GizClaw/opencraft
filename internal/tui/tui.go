@@ -22,6 +22,9 @@ type Options struct {
 	Model string
 	// Sessions is the project conversation store used by /resume.
 	Sessions *sessions.Store
+	// WorkDir is the workspace root apply_patch renders diffs against
+	// (real file line numbers). Empty disables file-based numbering.
+	WorkDir string
 }
 
 // Run starts the TUI and blocks until it exits.

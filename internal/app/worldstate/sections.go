@@ -52,20 +52,31 @@ func (s *Service) environmentSection() (Section, error) {
 	return Section{ID: "environment", Role: "system", Text: text}, nil
 }
 
-// renderPlanSection formats the latest plan for the world state: the
-// plan text plus its id and status so the model can refer to it with
-// get_plan/update_plan.
+// renderPlanSection formats the latest plan for the world state as a
+// checklist so the model sees its TODO list with statuses.
 func renderPlanSection(p plan.Plan) string {
 	var b strings.Builder
-	b.WriteString("Active plan (id ")
-	b.WriteString(p.ID)
-	if p.Status != "" && p.Status != "active" {
-		b.WriteString(", status ")
-		b.WriteString(p.Status)
+	b.WriteString("Current plan:\n")
+	for _, item := range p.Items {
+		switch item.Status {
+		case plan.StatusCompleted:
+			b.WriteString("- [x] ")
+		case plan.StatusInProgress:
+			b.WriteString("- [~] ")
+		default:
+			b.WriteString("- [ ] ")
+		}
+		b.WriteString(item.Step)
+		b.WriteString(" (")
+		b.WriteString(item.Status)
+		b.WriteString(")\n")
 	}
-	b.WriteString("):\n")
-	b.WriteString(p.Text)
-	return b.String()
+	if p.Explanation != "" {
+		b.WriteString("Explanation: ")
+		b.WriteString(p.Explanation)
+		b.WriteString("\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // discoverAgents collects AGENTS.md from the project root down to the

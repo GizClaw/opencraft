@@ -405,7 +405,7 @@ func (s *Server) pushEvents(
 	entry *processEntry,
 	watcher sandbox.SessionWatcher,
 ) {
-	defer watcher.Close()
+	defer func() { _ = watcher.Close() }()
 	for ev := range watcher.Events() {
 		switch ev.Type {
 		case sandbox.SessionEventOutput:

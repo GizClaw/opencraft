@@ -25,7 +25,7 @@ func TestExecdExitsWhenParentDies(t *testing.T) {
 	sock := filepath.Join(os.TempDir(),
 		fmt.Sprintf("opencraft-execd-parent-%d.sock", os.Getpid()))
 	_ = os.Remove(sock)
-	defer os.Remove(sock)
+	defer func() { _ = os.Remove(sock) }()
 
 	// Re-exec this test binary as the parent proxy: it forks execd
 	// with its own PID as -parent-pid, announces readiness, then

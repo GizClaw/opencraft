@@ -57,5 +57,5 @@ func TestBuildRuntimeAssemblesNewTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildRuntime: %v", err)
 	}
-	defer rt.Close()
+	defer func() { _ = rt.Close() }()
 }

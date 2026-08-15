@@ -368,7 +368,7 @@ func TestAssemblyCondenseMergesPreviousSummary(t *testing.T) {
 		_ context.Context,
 		req inference.GenerateRequest,
 	) (inference.GenerateResponse, error) {
-		prompts = append(prompts, req.Input.Content.Content.Text())
+		prompts = append(prompts, req.Input.Content.Text())
 		return inference.GenerateResponse{
 			Message:      message.NewTextMessage(message.RoleAssistant, fmt.Sprintf("C%d", len(prompts))),
 			FinishReason: inference.FinishCompleted,

@@ -11,7 +11,7 @@ import (
 
 func TestDefaultExtractorArticle(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`<!doctype html><html><head>
+		_, _ = w.Write([]byte(`<!doctype html><html><head>
 			<title>FlowCraft</title>
 			<meta name="description" content="A Go toolkit for AI agents.">
 			</head><body><article>
@@ -48,7 +48,7 @@ func TestDefaultExtractorArticle(t *testing.T) {
 
 func TestDefaultExtractorMarkdown(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`<html><head><title>Doc</title></head>
+		_, _ = w.Write([]byte(`<html><head><title>Doc</title></head>
 			<body><p>Body text.</p></body></html>`))
 	}))
 	defer srv.Close()
@@ -64,7 +64,7 @@ func TestDefaultExtractorMarkdown(t *testing.T) {
 
 func TestDefaultExtractorRejectsBlockedPage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte(`<html><body>
+		_, _ = w.Write([]byte(`<html><body>
 			<p>Access denied. Enable JavaScript.</p>
 			<p>Verify you are human. Cloudflare.</p>
 			</body></html>`))
@@ -139,7 +139,7 @@ func TestApplyBudgetTruncatesAtBoundary(t *testing.T) {
 func TestFetchRejectsNonHTML(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/pdf")
-		w.Write([]byte("%PDF-1.4"))
+		_, _ = w.Write([]byte("%PDF-1.4"))
 	}))
 	defer srv.Close()
 

@@ -18,7 +18,7 @@ func TestSandboxRunnerEmptyPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer runner.Close()
+	defer func() { _ = runner.Close() }()
 	want := sandbox.EnvPolicy{}
 	if !reflect.DeepEqual(policy, want) {
 		t.Errorf("empty policy = %+v, want zero-value EnvPolicy", policy)
@@ -43,7 +43,7 @@ func TestSandboxRunnerConfiguredPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer runner.Close()
+	defer func() { _ = runner.Close() }()
 	want := sandbox.EnvPolicy{
 		Allow:  pol.EnvPolicy.Allow,
 		Inject: pol.EnvPolicy.Inject,

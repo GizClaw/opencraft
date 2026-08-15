@@ -17,7 +17,7 @@ func TestOpenMigrateAndRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	now := time.Now().UTC()
 	thread := Thread{
@@ -84,13 +84,13 @@ func TestSessionDBSharedWithCheckpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	cp, err := cpsqlite.Open(path)
 	if err != nil {
 		t.Fatalf("checkpoint store on shared file: %v", err)
 	}
-	defer cp.Close()
+	defer func() { _ = cp.Close() }()
 
 	// Both schemas exist in the same file.
 	rows, err := s.db.Query(
@@ -98,7 +98,7 @@ func TestSessionDBSharedWithCheckpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	tables := map[string]bool{}
 	for rows.Next() {
 		var name string
@@ -141,7 +141,7 @@ func TestUpsertSummaryNodeReplacesAndDeleteSummaryNodes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	now := time.Now().UTC()
 	if err := s.CreateThread(ctx, Thread{
@@ -219,7 +219,7 @@ func TestCountNextSeqAndLoadItemsRange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	now := time.Now().UTC()
 	if err := s.CreateThread(ctx, Thread{
