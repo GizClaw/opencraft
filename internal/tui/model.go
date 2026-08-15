@@ -28,6 +28,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/interact"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/tools/applypatch"
+	"github.com/GizClaw/opencraft/internal/tui/commands"
 )
 
 // Messages.
@@ -132,8 +133,8 @@ func (r *resumeState) reset() {
 }
 
 // permissionsState is live while mode == modePermissions: the sandbox
-// mode picker (workspace | yolo), with a typed confirmation required
-// before entering yolo.
+// mode picker (workspace | yolo), with an explicit y/Enter
+// confirmation required before entering yolo.
 type permissionsState struct {
 	cursor  int
 	confirm bool
@@ -196,6 +197,12 @@ type Model struct {
 	// permissions is live while mode == modePermissions.
 	permissions permissionsState
 
+	// palette is the inline /-command search while mode == modeIdle.
+	palette paletteState
+
+	// commandIndex is the BM25 index over the slash command corpus.
+	commandIndex *commands.Index
+
 	// prevMode is the mode restored when the transcript overlay
 	// closes.
 	prevMode mode
@@ -247,16 +254,17 @@ func New(
 	spin.Style = spinnerStyle
 
 	return &Model{
-		rtc:       rtc,
-		opts:      opts,
-		ctx:       context.Background(),
-		bridge:    bridge,
-		broker:    broker,
-		model:     opts.Model,
-		input:     input,
-		spinner:   spin,
-		answering: answeringState{selSelected: make(map[int]bool)},
-		stream:    streamState{pendingCalls: make(map[string]pendingCall)},
+		rtc:          rtc,
+		opts:         opts,
+		ctx:          context.Background(),
+		bridge:       bridge,
+		broker:       broker,
+		model:        opts.Model,
+		input:        input,
+		spinner:      spin,
+		commandIndex: commands.NewIndex(),
+		answering:    answeringState{selSelected: make(map[int]bool)},
+		stream:       streamState{pendingCalls: make(map[string]pendingCall)},
 	}
 }
 
@@ -273,6 +281,8 @@ func (m *Model) setMode(next mode) {
 
 func (m *Model) exitMode(prev mode) {
 	switch prev {
+	case modeIdle:
+		m.palette.reset()
 	case modeAnswering:
 		m.answering.reset()
 	case modeRunning:
@@ -301,12 +311,14 @@ func (m *Model) enterMode(next mode) {
 		m.note = ""
 		m.input.Reset()
 		m.input.Placeholder = mainPlaceholder
+		m.palette.reset()
 	case modeResume:
 		m.input.Reset()
 		m.input.Placeholder = resumePlaceholder
 	case modePermissions:
 		m.input.Reset()
 		m.input.Placeholder = permissionsPlaceholder
+		m.input.Focus()
 	}
 }
 
@@ -1350,28 +1362,59 @@ func (m *Model) handleIdleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+j":
 		m.input.InsertString("\n")
 		m.resizeInput()
+		m.refreshPalette()
 		return m, nil
 	case "enter":
 		text := strings.TrimSpace(m.input.Value())
 		if text == "" {
 			return m, nil
 		}
-		if text == "/resume" {
-			return m.enterResumeMode(), nil
-		}
-		if text == "/permissions" {
-			return m.enterPermissionsMode(), nil
+		if strings.HasPrefix(text, "/") {
+			if name := m.paletteSelection(); name != "" {
+				m.palette.reset()
+				return m.runCommand(name)
+			}
 		}
 		m.input.Reset()
 		m.input.Placeholder = mainPlaceholder
 		echo := tea.Println(m.renderUserEcho(text))
 		m.setMode(modeRunning)
 		return m, tea.Batch(echo, m.startTurnCmd(text))
+	// Arrow keys navigate the palette. "k"/"j" are deliberately not
+	// bound here: the palette input is typed inline, so consuming
+	// them would make it impossible to enter any command whose name
+	// contains j or k (e.g. /jump). They fall through to the input
+	// layer and insert normally.
+	case "up", "down":
+		if m.paletteOpen() && len(m.palette.results) > 0 {
+			n := len(m.palette.results)
+			if msg.String() == "up" {
+				m.palette.cursor = (m.palette.cursor + n - 1) % n
+			} else {
+				m.palette.cursor = (m.palette.cursor + 1) % n
+			}
+			return m, nil
+		}
+	case "esc":
+		if m.paletteOpen() {
+			m.palette.reset()
+			m.input.Reset()
+			m.input.Placeholder = mainPlaceholder
+			return m, nil
+		}
+	case "tab":
+		if m.paletteOpen() && len(m.palette.results) > 0 {
+			m.input.SetValue("/" + m.palette.results[m.palette.cursor])
+			m.input.CursorEnd()
+			m.refreshPalette()
+			return m, nil
+		}
 	}
 
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	m.resizeInput()
+	m.refreshPalette()
 	return m, cmd
 }
 
@@ -1504,20 +1547,16 @@ func (m *Model) enterPermissionsMode() tea.Model {
 }
 
 // handlePermissionsKey drives the sandbox mode picker. Entering YOLO
-// requires typing "yolo" as a second step; switching back to workspace
-// applies immediately.
+// requires an explicit y/Enter confirmation as a second step;
+// switching back to workspace applies immediately.
 func (m *Model) handlePermissionsKey(
 	msg tea.KeyMsg,
 ) (tea.Model, tea.Cmd) {
 	if m.permissions.confirm {
 		switch msg.String() {
-		case "enter":
-			if strings.EqualFold(
-				strings.TrimSpace(m.input.Value()), "yolo") {
-				return m.applyPermissionsMode(ocsessions.ModeYOLO)
-			}
-			return m, nil
-		case "esc":
+		case "y", "Y", "enter":
+			return m.applyPermissionsMode(ocsessions.ModeYOLO)
+		case "n", "N", "esc":
 			m.permissions.confirm = false
 			m.input.Reset()
 			m.input.Placeholder = permissionsPlaceholder
@@ -1525,14 +1564,14 @@ func (m *Model) handlePermissionsKey(
 		case "ctrl+c":
 			return m, tea.Quit
 		}
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(msg)
-		return m, cmd
+		return m, nil
 	}
 
 	switch msg.String() {
 	case "up", "k":
-		m.permissions.cursor = (m.permissions.cursor + 1) % 2
+		// Decrement with wrap; with only two modes the result equals
+		// the increment below, but the direction must stay explicit.
+		m.permissions.cursor = (m.permissions.cursor - 1 + 2) % 2
 	case "down", "j":
 		m.permissions.cursor = (m.permissions.cursor + 1) % 2
 	case "enter":
@@ -1543,7 +1582,7 @@ func (m *Model) handlePermissionsKey(
 		if mode == ocsessions.ModeYOLO {
 			m.permissions.confirm = true
 			m.input.Reset()
-			m.input.Placeholder = "Type yolo to confirm · Esc cancel"
+			m.input.Placeholder = "y/Enter confirm · n/Esc cancel"
 			return m, nil
 		}
 		return m.applyPermissionsMode(ocsessions.ModeWorkspace)
@@ -1870,6 +1909,9 @@ func (m *Model) View() string {
 			lines = append(lines, m.composerBar())
 		}
 	default:
+		if m.paletteOpen() {
+			lines = append(lines, m.paletteView())
+		}
 		lines = append(lines, m.composerBar())
 	}
 	// The footer context line (model · project path) stays pinned
@@ -1999,6 +2041,17 @@ func (m *Model) resumePicker() string {
 
 // permissionsPicker renders the sandbox mode selector.
 func (m *Model) permissionsPicker() string {
+	if m.permissions.confirm {
+		rows := []string{reasoningLabelStyle.Render(
+			"? Switch to YOLO mode?")}
+		rows = append(rows,
+			toolErrStyle.Render(
+				"  Commands run unconfined with the full host environment"),
+			toolErrStyle.Render(
+				"  and no approval prompts; file tools can reach any path."),
+			dimStyle.Render("  y/Enter confirm · n/Esc cancel"))
+		return lipgloss.JoinVertical(lipgloss.Left, rows...)
+	}
 	rows := []string{reasoningLabelStyle.Render("? Select permission mode")}
 	modes := []ocsessions.Mode{
 		ocsessions.ModeWorkspace,
@@ -2020,9 +2073,6 @@ func (m *Model) permissionsPicker() string {
 		}
 	}
 	hint := "↑/↓ choose · Enter apply · Esc cancel"
-	if m.permissions.confirm {
-		hint = "Type yolo to confirm · Esc cancel"
-	}
 	rows = append(rows, dimStyle.Render("  "+hint))
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }

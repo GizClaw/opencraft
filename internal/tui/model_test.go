@@ -302,19 +302,29 @@ func TestPermissionsYoloRequiresConfirmation(t *testing.T) {
 	if !m.permissions.confirm {
 		t.Fatal("yolo selection must require typed confirmation")
 	}
+	// The confirm step renders a distinct warning panel.
+	if v := m.View(); !strings.Contains(v, "Switch to YOLO mode?") {
+		t.Errorf("confirm view must show the warning panel: %q", v)
+	}
 	if mode, _ := m.opts.Sessions.Mode(m.opts.ContextID); mode == ocsessions.ModeYOLO {
 		t.Fatal("mode must not change before confirmation")
 	}
-	// Wrong input does not apply.
-	m.input.SetValue("yes")
+	// Deny: n returns to the picker without changing the mode.
+	updated, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("n")})
+	m = updated.(*Model)
+	if m.permissions.confirm {
+		t.Fatal("n should leave the confirm step")
+	}
+	if mode, _ := m.opts.Sessions.Mode(m.opts.ContextID); mode == ocsessions.ModeYOLO {
+		t.Fatal("mode changed after deny")
+	}
+	// Select yolo again (the cursor stayed on it) and confirm with y.
 	updated, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	m = updated.(*Model)
-	if mode, _ := m.opts.Sessions.Mode(m.opts.ContextID); mode == ocsessions.ModeYOLO {
-		t.Fatal("mode changed without yolo confirmation")
+	if !m.permissions.confirm {
+		t.Fatal("expected confirm gate again")
 	}
-	// Typing yolo applies and returns to idle.
-	m.input.SetValue("yolo")
-	updated, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("y")})
 	m = updated.(*Model)
 	if m.mode != modeIdle {
 		t.Fatalf("mode = %v, want idle after apply", m.mode)
@@ -339,6 +349,26 @@ func TestPermissionsEscCancels(t *testing.T) {
 	}
 	if mode, _ := m.opts.Sessions.Mode(m.opts.ContextID); mode != ocsessions.ModeWorkspace {
 		t.Fatalf("mode = %q, want workspace", mode)
+	}
+}
+
+func TestPermissionsConfirmEnterAppliesYolo(t *testing.T) {
+	m := permissionsTestModel(t)
+	m.input.SetValue("/permissions")
+	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(*Model)
+	updated, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(*Model)
+	updated, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(*Model)
+	// A second Enter on the confirm panel applies YOLO.
+	updated, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(*Model)
+	if m.mode != modeIdle {
+		t.Fatalf("mode = %v, want idle after confirm", m.mode)
+	}
+	if mode, _ := m.opts.Sessions.Mode(m.opts.ContextID); mode != ocsessions.ModeYOLO {
+		t.Fatalf("mode = %q, want yolo", mode)
 	}
 }
 
