@@ -191,7 +191,7 @@ func TestResumeFlattensHistory(t *testing.T) {
 	if err := store.AppendTurn(context.Background(), id, []message.Message{
 		message.NewTextMessage(message.RoleUser, "你好"),
 		{Role: message.RoleAssistant, Content: message.Content{Parts: []message.Part{
-			message.TextPart{Text: "你好！"},
+			message.TextPart{Text: "**你好**\n\n这是第二段"},
 		}}},
 	}); err != nil {
 		t.Fatal(err)
@@ -199,6 +199,7 @@ func TestResumeFlattensHistory(t *testing.T) {
 
 	m := New(nil, Options{Model: "deepseek/x", Sessions: store},
 		NewBridge(16), nil)
+	m.width = 80
 	m.input.SetValue("/resume")
 	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	next := updated.(*Model)
@@ -210,8 +211,18 @@ func TestResumeFlattensHistory(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("resume should flush history")
 	}
-	out := fmt.Sprintf("%#v", cmd())
-	if !strings.Contains(out, "> 你好") || !strings.Contains(out, "你好！") {
+	// %v prints the raw message body, keeping ANSI escapes intact.
+	out := fmt.Sprintf("%v", cmd())
+	// User messages echo exactly like a live Enter submission: the
+	// full-width composer box, not the plain "> " user-message style.
+	if !strings.Contains(out, eraseEOL(m.renderUserEcho("你好"))) {
+		t.Errorf("user message not echoed as composer bar: %s", out)
+	}
+	// Assistant messages render through the markdown path: bold text,
+	// paragraph splitting, and the assistant message rule framing.
+	if !strings.Contains(out, "\x1b[1m") ||
+		!strings.Contains(out, "这是第二段") ||
+		!strings.Contains(out, "─") {
 		t.Errorf("history not flattened: %s", out)
 	}
 }

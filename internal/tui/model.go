@@ -1476,7 +1476,9 @@ func (m *Model) handleResumeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // flattenHistory prints the stored conversation into the transcript so
-// a resumed session is visible above the input box.
+// a resumed session is visible above the input box. User messages use
+// the same composer echo as a live Enter submission; assistant
+// messages render through the same markdown path as streamed output.
 func (m *Model) flattenHistory(id string) {
 	if m.opts.Sessions == nil {
 		return
@@ -1504,9 +1506,10 @@ func (m *Model) flattenHistory(id string) {
 		}
 		if h.Role == message.RoleUser {
 			m.stream.pending = append(m.stream.pending,
-				userStyle.Render("> "+text))
+				m.renderUserEcho(text))
 		} else {
-			m.stream.pending = append(m.stream.pending, text)
+			m.appendMarkdown(text)
+			m.flushMarkdown()
 		}
 	}
 }
