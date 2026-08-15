@@ -1,0 +1,13 @@
+.PHONY: all fmt lint test
+
+all: fmt lint test
+
+fmt:
+	go fmt ./...
+
+lint:
+	golangci-lint run ./...
+	staticcheck ./...
+
+test:
+	go test ./...

@@ -15,6 +15,9 @@
 # ── Go CI ──
 !.golangci.yml
 
+# ── Build ──
+!Makefile
+
 # ── Go source ──
 !go.mod
 !go.sum
