@@ -88,13 +88,15 @@ func (prepareFactory) New(_ context.Context, in resource.Input) (any, error) {
 		}
 	}
 	return agent.PreparerFunc(func(
-		ctx context.Context, _ agent.Identity, req *agent.Request, prev *agent.Board,
+		ctx context.Context, identity agent.Identity, req *agent.Request, prev *agent.Board,
 	) (*agent.Board, error) {
 		board := prev
 		if board == nil {
 			board = agent.NewBoard()
 		}
-		if err := service.RenderToBoard(ctx, req.ContextID, board); err != nil {
+		if err := service.RenderToBoard(
+			ctx, identity.AgentID, req.ContextID, board,
+		); err != nil {
 			return board, err
 		}
 		return board, nil

@@ -182,7 +182,9 @@ func TestRenderToBoardInjectsMemorySectionsNoHistory(t *testing.T) {
 		},
 	}}
 	board := agent.NewBoard()
-	if err := svc.RenderToBoard(context.Background(), "c1", board); err != nil {
+	if err := svc.RenderToBoard(
+		context.Background(), "assistant", "c1", board,
+	); err != nil {
 		t.Fatal(err)
 	}
 	raw := board.GetVarString("world.sections")
@@ -210,8 +212,8 @@ func TestRenderToBoardInjectsMemorySectionsNoHistory(t *testing.T) {
 }
 
 func TestRenderToBoardInjectsLatestPlan(t *testing.T) {
-	store := plan.NewStore(filepath.Join(t.TempDir(), "plans.json"))
-	if _, err := store.Update(plan.UpdatePlanArgs{
+	store := plan.NewStore(filepath.Join(t.TempDir(), "sessions"))
+	if _, err := store.Update("assistant", "c1", plan.UpdatePlanArgs{
 		Explanation: strptr("fix the bug"),
 		Plan: []plan.PlanItem{
 			{Step: "inspect", Status: plan.StatusInProgress},
@@ -223,7 +225,9 @@ func TestRenderToBoardInjectsLatestPlan(t *testing.T) {
 	svc := New(Options{WorkBase: t.TempDir()})
 	svc.SetPlans(store)
 	board := agent.NewBoard()
-	if err := svc.RenderToBoard(context.Background(), "c1", board); err != nil {
+	if err := svc.RenderToBoard(
+		context.Background(), "assistant", "c1", board,
+	); err != nil {
 		t.Fatal(err)
 	}
 	raw := board.GetVarString("world.sections")
@@ -249,9 +253,11 @@ func TestRenderToBoardInjectsLatestPlan(t *testing.T) {
 
 	// An empty store injects no plan section.
 	empty := New(Options{WorkBase: t.TempDir()})
-	empty.SetPlans(plan.NewStore(filepath.Join(t.TempDir(), "empty.json")))
+	empty.SetPlans(plan.NewStore(filepath.Join(t.TempDir(), "sessions")))
 	board2 := agent.NewBoard()
-	if err := empty.RenderToBoard(context.Background(), "c2", board2); err != nil {
+	if err := empty.RenderToBoard(
+		context.Background(), "assistant", "c2", board2,
+	); err != nil {
 		t.Fatal(err)
 	}
 	raw2 := board2.GetVarString("world.sections")
@@ -262,6 +268,35 @@ func TestRenderToBoardInjectsLatestPlan(t *testing.T) {
 	for _, sec := range sections2 {
 		if sec.ID == "plan" {
 			t.Fatal("empty store must not inject a plan section")
+		}
+	}
+
+	// A fully completed plan is stale context and must not be injected.
+	done := New(Options{WorkBase: t.TempDir()})
+	doneStore := plan.NewStore(filepath.Join(t.TempDir(), "sessions"))
+	if _, err := doneStore.Update("assistant", "c3", plan.UpdatePlanArgs{
+		Plan: []plan.PlanItem{
+			{Step: "inspect", Status: plan.StatusCompleted},
+			{Step: "implement", Status: plan.StatusCompleted},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	done.SetPlans(doneStore)
+	board3 := agent.NewBoard()
+	if err := done.RenderToBoard(
+		context.Background(), "assistant", "c3", board3,
+	); err != nil {
+		t.Fatal(err)
+	}
+	raw3 := board3.GetVarString("world.sections")
+	var sections3 []Section
+	if err := json.Unmarshal([]byte(raw3), &sections3); err != nil {
+		t.Fatal(err)
+	}
+	for _, sec := range sections3 {
+		if sec.ID == "plan" {
+			t.Fatalf("completed plan must not be injected: %+v", sections3)
 		}
 	}
 }

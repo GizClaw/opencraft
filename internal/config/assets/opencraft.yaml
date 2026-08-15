@@ -37,11 +37,21 @@ resources:
       max_raw_messages: 36
       preserve_recent: 4
       max_summary_bytes: 4096
-  # Live sandbox allowlist rules source for the worldstate permissions
-  # section (filled by the sandbox factory during build).
+  # Sandbox exec policy: static allowed_commands plus the project
+  # approvals file merge into one allowlist. The sandbox runner, the
+  # worldstate permissions section, and request_permissions all depend
+  # on this resource.
   execpolicy:
     kind: opencraft.execpolicy
-    impl: holder
+    impl: manager
+    settings:
+      # Commands not in this list (or in approvals_path) ask the user
+      # before running. Rules are token prefixes; "*" matches any
+      # remaining arguments.
+      allowed_commands: []
+      # Path of the project approvals file (env-expanded); commands
+      # approved via "Always allow" / request_permissions land here.
+      approvals_path: ${env:OPEN_CRAFT_WORKDIR}/.opencraft/config/approvals.yaml
   # Runtime-scoped plan store: tools persist plans to it and the
   # worldstate prepare hook injects the latest plan into the model.
   planstore:
@@ -72,14 +82,12 @@ resources:
   box:
     kind: sandbox.Runner
     impl: opencraft
+    deps:
+      execpolicy: execpolicy
     settings:
       root: ${env:OPEN_CRAFT_WORKDIR}
       writable_paths: ["${env:OPEN_CRAFT_CACHE}"]
       remote: true
-      # Commands not in this list (or .opencraft/approvals.yaml in the
-      # project root) ask the user before running. Rules are token
-      # prefixes; "*" matches any remaining arguments.
-      allowed_commands: []
       # Sandbox environment defaults to inheriting the external
       # environment wholesale. Projects that need to restrict
       # visibility or redirect caches declare env_policy in their
@@ -116,6 +124,8 @@ resources:
   tool.requestpermissions:
     kind: tool.Source
     impl: opencraft/requestpermissions
+    deps:
+      execpolicy: execpolicy
   tools:
     kind: tool.Assembly
     impl: middleware

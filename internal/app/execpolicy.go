@@ -15,6 +15,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/sandbox"
 	"sigs.k8s.io/yaml"
 
@@ -75,6 +76,15 @@ func (m *Manager) Allowlist() *sandbox.Allowlist {
 func (m *Manager) Rules() []string {
 	return m.allowlist.Rules()
 }
+
+// execPolicy is the slice of the policy manager the sandbox runner
+// needs: the approval decision plus the live allowlist it wraps.
+type execPolicy interface {
+	Approve(ctx context.Context, req sandbox.ApprovalRequest) (sandbox.Decision, error)
+	Allowlist() *sandbox.Allowlist
+}
+
+var _ execPolicy = (*Manager)(nil)
 
 // Approve implements sandbox.ApprovalFunc: it asks the user through
 // the core prompt protocol and grows the allowlist when the user
@@ -153,6 +163,9 @@ func NormaliseCommand(req sandbox.ExecRequest) string {
 }
 
 func (m *Manager) readFile() ([]string, error) {
+	if m.path == "" {
+		return nil, nil
+	}
 	data, err := os.ReadFile(m.path)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -169,6 +182,9 @@ func (m *Manager) readFile() ([]string, error) {
 }
 
 func (m *Manager) writeFile(entries []string) error {
+	if m.path == "" {
+		return nil
+	}
 	data, err := yaml.Marshal(approvalsFile{
 		Version: approvalsVersion,
 		Allow:   entries,
@@ -200,69 +216,47 @@ func (m *Manager) writeFile(entries []string) error {
 }
 
 // ---------------------------------------------------------------------------
-// Host capability: expose the policy manager to tools.
+// Deploy resource: the execpolicy resource owns the policy manager.
 // ---------------------------------------------------------------------------
 
-type execPolicyHost struct {
-	agent.Host
-	policy requestpermissions.Policy
+// execPolicySettings is the deploy-document shape of the execpolicy
+// resource: the static command rules plus the path of the project
+// approvals file (env-expanded, so ${env:OPEN_CRAFT_WORKDIR} works).
+// An empty approvals_path keeps the policy in-memory only.
+type execPolicySettings struct {
+	AllowedCommands []string `json:"allowed_commands,omitempty"`
+	ApprovalsPath   string   `json:"approvals_path"`
 }
 
-// ExecPolicy implements requestpermissions.PolicyProvider.
-func (h execPolicyHost) ExecPolicy() requestpermissions.Policy { return h.policy }
+// execPolicyResource is the opencraft.execpolicy deploy resource. It
+// owns the sandbox exec policy: static rules plus the project
+// approvals file merge into one allowlist, and every consumer (the
+// sandbox runner, the worldstate permissions section, and the
+// request_permissions tool) depends on this resource instead of
+// building its own manager.
+type execPolicyResource struct{}
 
-// UnwrapHost preserves optional capabilities of the inner host.
-func (h execPolicyHost) UnwrapHost() agent.Host { return h.Host }
+var _ resource.Factory = execPolicyResource{}
 
-// WithExecPolicy wraps h with the exec policy capability. Install it
-// before host middleware so built-in decorators preserve access.
-func WithExecPolicy(h agent.Host, policy requestpermissions.Policy) agent.Host {
-	if h == nil || policy == nil {
-		panic("opencraft execpolicy: WithExecPolicy requires a host and policy")
+func (execPolicyResource) Spec() resource.Spec {
+	return resource.Spec{
+		Kind: "opencraft.execpolicy",
+		Impl: "manager",
 	}
-	return execPolicyHost{Host: h, policy: policy}
 }
 
-// ExecPolicyFromHost returns the exec policy exposed by h, if any.
-func ExecPolicyFromHost(h agent.Host) (requestpermissions.Policy, bool) {
-	provider, ok := agent.CapabilityFromHost[requestpermissions.PolicyProvider](h)
-	if !ok || provider.ExecPolicy() == nil {
-		return nil, false
+func (execPolicyResource) New(
+	_ context.Context,
+	in resource.Input,
+) (any, error) {
+	settings, err := resource.DecodeTyped[execPolicySettings](
+		in.Settings, resource.ExpandEnv())
+	if err != nil {
+		return nil, errdefs.Validationf(
+			"opencraft execpolicy: decode settings: %v", err)
 	}
-	return provider.ExecPolicy(), true
+	return New(settings.AllowedCommands, settings.ApprovalsPath)
 }
 
-// policyHolder captures the policy manager built by the sandbox
-// factory so the runtime can wrap it into every turn host.
-type policyHolder struct {
-	mu     sync.Mutex
-	policy requestpermissions.Policy
-}
-
-func (h *policyHolder) set(policy requestpermissions.Policy) {
-	h.mu.Lock()
-	h.policy = policy
-	h.mu.Unlock()
-}
-
-func (h *policyHolder) get() requestpermissions.Policy {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.policy
-}
-
-// Rules implements worldstate.PrefixProvider on the holder so the
-// permissions section can read the live allowlist without racing the
-// sandbox factory that fills it during build.
-func (h *policyHolder) Rules() []string {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.policy == nil {
-		return nil
-	}
-	return h.policy.Rules()
-}
-
-var _ requestpermissions.PolicyProvider = execPolicyHost{}
 var _ requestpermissions.Policy = (*Manager)(nil)
-var _ worldstate.PrefixProvider = (*policyHolder)(nil)
+var _ worldstate.PrefixProvider = (*Manager)(nil)

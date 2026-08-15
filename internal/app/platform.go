@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"encoding/json"
-	"path/filepath"
 	goruntime "runtime"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
@@ -18,44 +17,26 @@ import (
 
 // sandboxFactory implements the sandbox.Runner resource with the
 // platform backend (seatbelt on macOS, bwrap on Linux, local
-// elsewhere) and env-expanded settings. holder receives the built
-// execpolicy manager so the runtime can expose it to tools through
-// the turn host.
-type sandboxFactory struct {
-	holder *policyHolder
-}
+// elsewhere), env-expanded settings, and the execpolicy resource's
+// approval wrapper.
+type sandboxFactory struct{}
 
 var _ resource.Factory = sandboxFactory{}
 
 func (sandboxFactory) Spec() resource.Spec {
-	return resource.Spec{Kind: "sandbox.Runner", Impl: "opencraft"}
-}
-
-// execPolicyResource exposes the runtime's policy holder as a deploy
-// resource so hooks (worldstate prepare) can read the live allowlist
-// rules. It is a value holder, not a policy enforcement point.
-type execPolicyResource struct {
-	holder *policyHolder
-}
-
-var _ resource.Factory = execPolicyResource{}
-
-func (execPolicyResource) Spec() resource.Spec {
-	return resource.Spec{Kind: "opencraft.execpolicy", Impl: "holder"}
-}
-
-func (f execPolicyResource) New(
-	_ context.Context,
-	_ resource.Input,
-) (any, error) {
-	return f.holder, nil
+	return resource.Spec{
+		Kind: "sandbox.Runner",
+		Impl: "opencraft",
+		Deps: []resource.DepSpec{
+			{Name: "execpolicy", Type: "opencraft.execpolicy", Required: true},
+		},
+	}
 }
 
 type sandboxSettings struct {
 	Root            string   `json:"root"`
 	WritablePaths   []string `json:"writable_paths,omitempty"`
 	Remote          bool     `json:"remote,omitempty"`
-	AllowedCommands []string `json:"allowed_commands,omitempty"`
 	EnvPolicy       *struct {
 		Allow  []string          `json:"allow,omitempty"`
 		Inject map[string]string `json:"inject,omitempty"`
@@ -101,15 +82,16 @@ func (f sandboxFactory) New(ctx context.Context, in resource.Input) (any, error)
 		return nil, errdefs.Validationf(
 			"opencraft sandbox: settings.root is required")
 	}
-	policy, err := New(
-		s.AllowedCommands,
-		filepath.Join(s.Root, ".opencraft", "approvals.yaml"),
-	)
-	if err != nil {
-		return nil, err
+	policy, ok := in.Dep("execpolicy")
+	if !ok {
+		return nil, errdefs.Validationf(
+			"opencraft sandbox: execpolicy dependency is required")
 	}
-	if f.holder != nil {
-		f.holder.set(policy)
+	execPolicy, ok := policy.(execPolicy)
+	if !ok {
+		return nil, errdefs.Validationf(
+			"opencraft sandbox: execpolicy dep is %T, want execPolicy",
+			policy)
 	}
 	var runner sandbox.Runner
 	if s.Remote {
@@ -148,7 +130,8 @@ func (f sandboxFactory) New(ctx context.Context, in resource.Input) (any, error)
 	runner = sandbox.WithDefaults(runner, sandbox.ExecOptions{
 		Env: s.envPolicy(),
 	})
-	return sandbox.WithApproval(runner, policy.Approve, policy.Allowlist()), nil
+	return sandbox.WithApproval(
+		runner, execPolicy.Approve, execPolicy.Allowlist()), nil
 }
 
 var _ sandbox.Runner = (*sandboxlocal.Runner)(nil)

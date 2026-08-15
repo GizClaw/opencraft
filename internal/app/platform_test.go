@@ -16,7 +16,6 @@ func TestSandboxSettingsDecodeAndPolicy(t *testing.T) {
 		"root": "/ws",
 		"writable_paths": ["/ws/cache"],
 		"remote": true,
-		"allowed_commands": ["ls *"],
 		"env_policy": {
 			"allow": ["PATH", "HOME"],
 			"inject": {"GOCACHE": "/ws/cache/go", "TMPDIR": "/ws/cache/tmp"}
@@ -65,10 +64,13 @@ func TestSandboxSettingsNoEnvPolicyFallsBack(t *testing.T) {
 
 func TestLocalSandboxAppliesEnvPolicy(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	mgr, err := New([]string{"env *"}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	settings, err := json.Marshal(map[string]any{
 		"root":             t.TempDir(),
 		"remote":           false,
-		"allowed_commands": []string{"*"},
 		"env_policy": map[string]any{
 			"allow":  []string{"PATH"},
 			"inject": map[string]string{"OPENCRAFT_TEST_MARKER": "policy-ok"},
@@ -77,9 +79,11 @@ func TestLocalSandboxAppliesEnvPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	holder := &policyHolder{}
-	value, err := (sandboxFactory{holder: holder}).New(
-		context.Background(), resource.Input{Settings: settings})
+	value, err := (sandboxFactory{}).New(
+		context.Background(), resource.Input{
+			Settings: settings,
+			Deps:     map[string]any{"execpolicy": mgr},
+		})
 	if err != nil {
 		t.Skipf("sandbox backend unavailable: %v", err)
 	}
@@ -100,8 +104,8 @@ func TestLocalSandboxAppliesEnvPolicy(t *testing.T) {
 	if strings.Contains(res.Stdout, "HOME=") {
 		t.Errorf("stdout = %q, HOME leaked through the allow filter", res.Stdout)
 	}
-	// The policy holder must expose the allowlist rules for worldstate.
-	if rules := holder.Rules(); len(rules) != 1 || rules[0] != "*" {
-		t.Fatalf("holder rules = %v, want [\"*\"]", rules)
+	// The policy manager must expose the allowlist rules for worldstate.
+	if rules := mgr.Rules(); len(rules) != 1 || rules[0] != "env *" {
+		t.Fatalf("policy rules = %v, want [\"env *\"]", rules)
 	}
 }

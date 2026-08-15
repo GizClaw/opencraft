@@ -101,7 +101,9 @@ func (s *Service) SetPlans(st *plan.Store) { s.plans = st }
 //     since each turn starts with a fresh board
 //   - world.workspace_root / world.collaboration_mode /
 //     world.permission_profile
-func (s *Service) RenderToBoard(ctx context.Context, contextID string, board *agent.Board) error {
+func (s *Service) RenderToBoard(
+	ctx context.Context, agentID, contextID string, board *agent.Board,
+) error {
 	st, err := s.session(contextID)
 	if err != nil {
 		return err
@@ -125,7 +127,9 @@ func (s *Service) RenderToBoard(ctx context.Context, contextID string, board *ag
 		sections = append(sections, permissions)
 	}
 	if s.plans != nil {
-		if p, ok := s.plans.Latest(); ok {
+		// Inject only while there is still work: a fully completed
+		// plan is stale context, so it is dropped from the prompt.
+		if p, ok := s.plans.Latest(agentID, contextID); ok && !p.Done() {
 			sections = append(sections, Section{
 				ID:   "plan",
 				Role: "system",

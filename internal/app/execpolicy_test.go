@@ -2,12 +2,14 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/sandbox"
 
 	"github.com/GizClaw/opencraft/internal/interact"
@@ -77,6 +79,60 @@ func TestAlwaysAllowPersists(t *testing.T) {
 		Command: "go", Args: []string{"run", "main.go"},
 	}) {
 		t.Error("persisted rule not loaded")
+	}
+}
+
+func TestExecPolicyResourceDecodesSettings(t *testing.T) {
+	approvals := filepath.Join(t.TempDir(), "approvals.yaml")
+	if err := os.WriteFile(approvals, []byte(
+		"version: v1\nallow:\n  - \"cat *\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	settings, err := json.Marshal(map[string]any{
+		"allowed_commands": []string{"git status"},
+		"approvals_path":   approvals,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := (execPolicyResource{}).New(
+		context.Background(), resource.Input{Settings: settings})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr, ok := value.(*Manager)
+	if !ok {
+		t.Fatalf("resource value = %T, want *Manager", value)
+	}
+	if !mgr.Allowlist().Matches(sandbox.ExecRequest{
+		Command: "/bin/sh", Args: []string{"-c", "git status"},
+	}) {
+		t.Error("static rule should match")
+	}
+	if !mgr.Allowlist().Matches(sandbox.ExecRequest{
+		Command: "cat", Args: []string{"main.go"},
+	}) {
+		t.Error("approvals file rule should match")
+	}
+}
+
+func TestExecPolicyResourceEmptyPathInMemory(t *testing.T) {
+	value, err := (execPolicyResource{}).New(
+		context.Background(), resource.Input{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr, ok := value.(*Manager)
+	if !ok {
+		t.Fatalf("resource value = %T, want *Manager", value)
+	}
+	if err := mgr.AlwaysAllow("go run *"); err != nil {
+		t.Fatal(err)
+	}
+	if !mgr.Allowlist().Matches(sandbox.ExecRequest{
+		Command: "go", Args: []string{"run", "main.go"},
+	}) {
+		t.Error("in-memory rule should match")
 	}
 }
 

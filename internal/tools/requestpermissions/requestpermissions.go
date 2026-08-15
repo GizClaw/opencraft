@@ -31,18 +31,15 @@ type Policy interface {
 	Rules() []string
 }
 
-// PolicyProvider is an optional Host capability exposing the exec
-// policy to tools.
-type PolicyProvider interface {
-	ExecPolicy() Policy
+// Tool asks the user to grant command permissions through the core
+// prompt protocol. It holds the runtime exec policy resolved from the
+// execpolicy deploy resource.
+type Tool struct {
+	policy Policy
 }
 
-// Tool asks the user to grant command permissions through the core
-// prompt protocol.
-type Tool struct{}
-
-// New creates the request_permissions tool.
-func New() *Tool { return &Tool{} }
+// New creates the request_permissions tool over the exec policy.
+func New(policy Policy) *Tool { return &Tool{policy: policy} }
 
 // Definition implements tool.Tool.
 func (t *Tool) Definition() message.ToolDefinition {
@@ -96,15 +93,14 @@ func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
 			"%s: at least one non-empty permission is required", Name)
 	}
 
+	if t.policy == nil {
+		return "", errdefs.NotAvailablef(
+			"%s: runtime has no exec policy", Name)
+	}
 	host, ok := agent.HostFromContext(ctx)
 	if !ok {
 		return "", errdefs.NotAvailablef(
 			"%s: no host in tool context", Name)
-	}
-	provider, ok := agent.CapabilityFromHost[PolicyProvider](host)
-	if !ok || provider.ExecPolicy() == nil {
-		return "", errdefs.NotAvailablef(
-			"%s: runtime has no exec policy on the host", Name)
 	}
 
 	listed := strings.Join(rules, "\n  • ")
@@ -135,7 +131,7 @@ func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
 	applied := make([]string, 0, len(rules))
 	if granted {
 		for _, rule := range rules {
-			if err := provider.ExecPolicy().AlwaysAllow(rule); err != nil {
+			if err := t.policy.AlwaysAllow(rule); err != nil {
 				return "", err
 			}
 			applied = append(applied, rule)

@@ -44,6 +44,18 @@ func TestEmptyEnterNoSubmit(t *testing.T) {
 	}
 }
 
+func TestViewTrailingBlankLine(t *testing.T) {
+	m := newTestModel()
+	m.width = 80
+	// bubbletea's standard renderer erases the last rendered row on
+	// exit; a trailing blank row keeps the composer bar intact there.
+	v := m.View()
+	last := strings.Split(v, "\n")
+	if strings.TrimSpace(last[len(last)-1]) != "" {
+		t.Errorf("view should end with a trailing blank row: %q", v)
+	}
+}
+
 func TestCtrlCQuitsWhenIdle(t *testing.T) {
 	m := newTestModel()
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})

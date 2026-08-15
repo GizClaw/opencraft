@@ -132,12 +132,10 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 	_ = os.Setenv("OPEN_CRAFT_CACHE", cacheDir)
 	_ = os.Setenv("OPEN_CRAFT_DATA_DIR", dataDir)
 
-	// Runtime-scoped shared state for tools: the exec policy manager
-	// (filled by the sandbox factory during build, exposed on every
-	// turn host) and the plan store.
-	policy := &policyHolder{}
+	// Runtime-scoped shared state for tools: the per-session plan
+	// store (the exec policy is a deploy resource built below).
 	planStore := plan.NewStore(
-		filepath.Join(o.WorkBase, ".opencraft", "plans.json"))
+		filepath.Join(o.WorkBase, ".opencraft", "sessions"))
 
 	loader := resource.NewLoader(
 		resource.WithBaseDir(o.ConfigBase),
@@ -176,8 +174,8 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 			return nil, err
 		}
 	}
-	reg.MustRegister(sandboxFactory{holder: policy})
-	reg.MustRegister(execPolicyResource{holder: policy})
+	reg.MustRegister(sandboxFactory{})
+	reg.MustRegister(execPolicyResource{})
 	reg.MustRegister(planStoreResource{store: planStore})
 	reg.MustRegister(opentools.NewPlanSourceFactory(planStore))
 	reg.MustRegister(state.Factory{
@@ -198,11 +196,6 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 			host, err := base.NewHost(ctx, req)
 			if err != nil {
 				return nil, err
-			}
-			// Expose the exec policy (built by the sandbox factory)
-			// so request_permissions can grant command rules.
-			if p := policy.get(); p != nil {
-				host = WithExecPolicy(host, p)
 			}
 			hf := agent.HostFuncs{Inner: host}
 			if o.usageObserver != nil {

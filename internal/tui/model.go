@@ -1744,6 +1744,12 @@ func (m *Model) View() string {
 	default:
 		lines = append(lines, m.composerBar())
 	}
+	// Trailing blank row: bubbletea's standard renderer erases the
+	// cursor's current line (the last rendered row) when the program
+	// exits, which would otherwise cut off the composer bar's gray
+	// bottom padding. Keeping a real row below the prompt makes that
+	// erase hit an empty line instead.
+	lines = append(lines, "")
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
 }
 

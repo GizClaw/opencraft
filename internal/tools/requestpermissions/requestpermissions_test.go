@@ -21,16 +21,8 @@ func (p *fakePolicy) AlwaysAllow(rule string) error {
 
 func (p *fakePolicy) Rules() []string { return nil }
 
-type policyHost struct {
-	agent.Host
-	policy Policy
-}
-
-func (h policyHost) ExecPolicy() Policy     { return h.policy }
-func (h policyHost) UnwrapHost() agent.Host { return h.Host }
-
-func newCtx(choice string, policy Policy) context.Context {
-	var host agent.Host = agent.HostFuncs{
+func newCtx(choice string) context.Context {
+	return agent.ContextWithHost(context.Background(), agent.HostFuncs{
 		Inner: agent.NoopHost{},
 		AskUserFn: func(
 			_ context.Context,
@@ -40,16 +32,12 @@ func newCtx(choice string, policy Policy) context.Context {
 				interact.MetaChoice: choice,
 			}}, nil
 		},
-	}
-	if policy != nil {
-		host = policyHost{Host: host, policy: policy}
-	}
-	return agent.ContextWithHost(context.Background(), host)
+	})
 }
 
 func TestRequestPermissionsGrant(t *testing.T) {
 	policy := &fakePolicy{}
-	out, err := New().Execute(newCtx("grant", policy),
+	out, err := New(policy).Execute(newCtx("grant"),
 		`{"permissions":["npm install","git push"],"reason":"deploy"}`)
 	if err != nil {
 		t.Fatalf("request_permissions: %v", err)
@@ -67,7 +55,7 @@ func TestRequestPermissionsGrant(t *testing.T) {
 
 func TestRequestPermissionsDeny(t *testing.T) {
 	policy := &fakePolicy{}
-	out, err := New().Execute(newCtx("deny", policy),
+	out, err := New(policy).Execute(newCtx("deny"),
 		`{"permissions":["rm -rf /"]}`)
 	if err != nil {
 		t.Fatalf("request_permissions: %v", err)
@@ -81,19 +69,15 @@ func TestRequestPermissionsDeny(t *testing.T) {
 }
 
 func TestRequestPermissionsValidation(t *testing.T) {
-	ctx := newCtx("grant", &fakePolicy{})
-	if _, err := New().Execute(ctx, `{"permissions":[]}`); err == nil {
+	ctx := newCtx("grant")
+	if _, err := New(&fakePolicy{}).Execute(ctx, `{"permissions":[]}`); err == nil {
 		t.Error("empty permissions should error")
 	}
-	if _, err := New().Execute(ctx, `{"permissions":["  "]}`); err == nil {
+	if _, err := New(&fakePolicy{}).Execute(ctx, `{"permissions":["  "]}`); err == nil {
 		t.Error("blank permissions should error")
 	}
-	// No policy on the host -> NotAvailable.
-	plain := agent.ContextWithHost(context.Background(),
-		agent.HostFuncs{Inner: agent.NoopHost{}})
-	if _, err := New().Execute(plain, `{"permissions":["ls *"]}`); err == nil {
+	// No policy on the tool -> NotAvailable.
+	if _, err := New(nil).Execute(ctx, `{"permissions":["ls *"]}`); err == nil {
 		t.Error("missing policy should error")
 	}
 }
-
-var _ PolicyProvider = policyHost{}

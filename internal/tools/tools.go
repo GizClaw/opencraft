@@ -155,7 +155,7 @@ func (filesSourceFactory) New(_ context.Context, in resource.Input) (any, error)
 }
 
 // requestpermissionsSourceFactory contributes the request_permissions
-// tool; the exec policy is resolved from the turn host at call time.
+// tool over the runtime execpolicy resource.
 type requestpermissionsSourceFactory struct{}
 
 var _ resource.Factory = requestpermissionsSourceFactory{}
@@ -164,6 +164,9 @@ func (requestpermissionsSourceFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "tool.Source",
 		Impl: "opencraft/requestpermissions",
+		Deps: []resource.DepSpec{
+			{Name: "execpolicy", Type: "opencraft.execpolicy", Required: true},
+		},
 	}
 }
 
@@ -174,7 +177,12 @@ func (requestpermissionsSourceFactory) New(
 	if !sourceEnabled(in) {
 		return toolList{}, nil
 	}
-	return toolList{requestpermissions.New()}, nil
+	policy, err := resourcedep.Required[requestpermissions.Policy](
+		in, "requestpermissions", "execpolicy")
+	if err != nil {
+		return nil, err
+	}
+	return toolList{requestpermissions.New(policy)}, nil
 }
 
 // PlanSourceFactory contributes the update_plan tool over a

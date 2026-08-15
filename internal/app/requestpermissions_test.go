@@ -51,9 +51,9 @@ func TestRequestPermissionsGrantsAndPersists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := agent.ContextWithHost(context.Background(), WithExecPolicy(grantHost{}, mgr))
+	ctx := agent.ContextWithHost(context.Background(), grantHost{})
 
-	tool := requestpermissions.New()
+	tool := requestpermissions.New(mgr)
 	out, err := tool.Execute(ctx,
 		`{"permissions":["npm install", "  git   push  "], "reason":"deploy"}`)
 	if err != nil {
@@ -97,9 +97,9 @@ func TestRequestPermissionsDenied(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := agent.ContextWithHost(context.Background(), WithExecPolicy(denyHost{}, mgr))
+	ctx := agent.ContextWithHost(context.Background(), denyHost{})
 
-	tool := requestpermissions.New()
+	tool := requestpermissions.New(mgr)
 	out, err := tool.Execute(ctx, `{"permissions":["git push"]}`)
 	if err != nil {
 		t.Fatal(err)
@@ -121,10 +121,10 @@ func TestRequestPermissionsDenied(t *testing.T) {
 
 func TestRequestPermissionsRequiresExecPolicy(t *testing.T) {
 	ctx := agent.ContextWithHost(context.Background(), agent.NoopHost{})
-	tool := requestpermissions.New()
+	tool := requestpermissions.New(nil)
 	_, err := tool.Execute(ctx, `{"permissions":["git push"]}`)
 	if err == nil {
-		t.Fatal("expected error when host has no exec policy")
+		t.Fatal("expected error when runtime has no exec policy")
 	}
 	if !errdefs.IsNotAvailable(err) {
 		t.Fatalf("error = %v, want NotAvailable", err)
