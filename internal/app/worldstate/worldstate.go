@@ -31,6 +31,11 @@ type Options struct {
 	CollaborationMode string
 	PermissionProfile string
 	MaxSessionCache   int
+	// MemoryMaxItems / MemoryMaxChars bound the memory context budget
+	// (folded summary + raw window) injected per turn. Zero uses the
+	// defaults below.
+	MemoryMaxItems int
+	MemoryMaxChars int
 	Workspace         workspace.Workspace // optional; in-root file reads go through it
 }
 
@@ -66,6 +71,12 @@ func New(opts Options) *Service {
 	}
 	if opts.MaxSessionCache <= 0 {
 		opts.MaxSessionCache = 64
+	}
+	if opts.MemoryMaxItems <= 0 {
+		opts.MemoryMaxItems = 64
+	}
+	if opts.MemoryMaxChars <= 0 {
+		opts.MemoryMaxChars = 1 << 16 // 64 KiB
 	}
 	return &Service{
 		opts:     opts,
@@ -185,7 +196,10 @@ func (s *Service) memorySections(ctx context.Context, contextID string) []Sectio
 	res, err := s.memory.Context(ctx, memory.ContextRequest{
 		Scope:          memory.Scope{RuntimeID: "opencraft"},
 		ConversationID: contextID,
-		Budget:         memory.Budget{MaxItems: 64, MaxChars: 1 << 16},
+		Budget: memory.Budget{
+			MaxItems: s.opts.MemoryMaxItems,
+			MaxChars: s.opts.MemoryMaxChars,
+		},
 	})
 	if err != nil {
 		return nil

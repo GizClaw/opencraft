@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/errdefs"
+	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/message"
 	sessions "github.com/GizClaw/flowcraft/core/runtime/session"
 
@@ -78,13 +80,6 @@ const (
 type sessionState struct {
 	lease *sessions.Lease
 	turn  *sessions.Turn
-}
-
-// errState surfaces the last turn error above the prompt.
-type errState struct {
-	lastErr    string
-	lastErrRun string
-	lastErrReq string
 }
 
 // streamState carries the transcript buffers for the current turn: the
@@ -171,9 +166,6 @@ type Model struct {
 
 	// session is the active turn (nil when idle).
 	session sessionState
-
-	// errs is the last turn error surfaced above the prompt.
-	errs errState
 
 	// stream holds the turn-bounded transcript buffers.
 	stream streamState
@@ -375,9 +367,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case turnStartedMsg:
 		m.session.lease = msg.lease
 		m.session.turn = msg.turn
-		m.errs.lastErr = ""
-		m.errs.lastErrRun = ""
-		m.errs.lastErrReq = ""
 		m.stream.mdBuf = ""
 		m.stream.reasoningBuf = ""
 		m.stream.msgOpen = false
@@ -414,16 +403,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.stream.pendingCalls = make(map[string]pendingCall)
 		}
 		if msg.err != nil {
-			runID := ""
-			if m.session.turn != nil {
-				runID = m.session.turn.RunID()
-			}
-			reqID, _ := errdefs.RequestID(msg.err)
-			m.errs.lastErr = msg.err.Error()
-			m.errs.lastErrRun = runID
-			m.errs.lastErrReq = reqID
-			m.stream.pending = append(m.stream.pending, toolErrStyle.Render(
-				"✗ ["+runID+"] "+msg.err.Error()))
+			m.appendTurnError(msg.err)
 		}
 		if msg.res != nil {
 			runID := ""
@@ -437,6 +417,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case agent.StatusInterrupted:
 				m.stream.pending = append(m.stream.pending, toolErrStyle.Render(
 					"✗ interrupted ["+runID+"]"))
+			case agent.StatusFailed, agent.StatusAborted:
+				err := msg.res.Err
+				if err == nil {
+					err = fmt.Errorf("turn %s", msg.res.Status)
+				}
+				m.appendTurnError(err)
 			}
 		}
 		if m.session.lease != nil {
@@ -1719,15 +1705,23 @@ func (m *Model) waitCmd() tea.Cmd {
 	}
 }
 
+// appendTurnError queues a turn-level error into the same flushed
+// output where the cancel/interrupt markers are printed, so every
+// turn outcome lands in one place in the terminal scrollback.
+func (m *Model) appendTurnError(err error) {
+	runID := ""
+	if m.session.turn != nil {
+		runID = m.session.turn.RunID()
+	}
+	reqID := errRequestID(err)
+	m.stream.pending = append(m.stream.pending, toolErrStyle.Render(
+		"✗ ["+errIDs(runID, reqID)+"] "+errDetail(err)))
+}
+
 // ---------- view ----------
 
 func (m *Model) View() string {
 	lines := []string{m.statusLine()}
-	if m.errs.lastErr != "" {
-		lines = append(lines, toolErrStyle.Render(
-			"✗ ["+errIDs(m.errs.lastErrRun, m.errs.lastErrReq)+"] "+
-				truncate(m.errs.lastErr, max(20, m.width-10))))
-	}
 	// The live reasoning tail sits directly above the prompt; it
 	// appears only while reasoning is streaming.
 	if box := m.reasoningBox(); box != "" {
@@ -1828,11 +1822,47 @@ func (m *Model) resumePicker() string {
 
 // errIDs renders the run/request identifiers for an error line.
 func errIDs(runID, reqID string) string {
-	ids := "run:" + truncate(runID, 12)
+	ids := truncate(runID, 12)
+	if !strings.HasPrefix(ids, "run-") && !strings.HasPrefix(ids, "run:") {
+		ids = "run:" + ids
+	}
 	if reqID != "" {
 		ids += " req:" + truncate(reqID, 16)
 	}
 	return ids
+}
+
+// errRequestID extracts the provider request identifier attached to a
+// turn error. Drivers attach it to the chain via errdefs.WithRequestID;
+// the inference error also carries it as a field when the provider
+// reported one, so both sources are checked.
+func errRequestID(err error) string {
+	if id, ok := errdefs.RequestID(err); ok {
+		return id
+	}
+	var infErr *inference.Error
+	if errors.As(err, &infErr) {
+		return infErr.RequestID
+	}
+	return ""
+}
+
+// errDetail renders the concrete failure text for a turn error.
+// inference.Error.Error() is deliberately redacted ("provider_failure
+// during …" without the cause); the UI appends one level of the
+// classified provider cause, which carries the actual message. The
+// deeper chain is not rendered because it can contain prompts or wire
+// payloads.
+func errDetail(err error) string {
+	var infErr *inference.Error
+	if errors.As(err, &infErr) {
+		if cause := errors.Unwrap(infErr); cause != nil {
+			if msg := cause.Error(); msg != "" && msg != infErr.Error() {
+				return err.Error() + " — " + msg
+			}
+		}
+	}
+	return err.Error()
 }
 
 // interactionSelector renders the checkbox panel for confirm/select

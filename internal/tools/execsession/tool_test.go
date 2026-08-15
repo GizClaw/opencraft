@@ -3,6 +3,7 @@ package execsession
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -146,5 +147,49 @@ func TestDefinition(t *testing.T) {
 	def := tool.Definition()
 	if def.Name != Name {
 		t.Fatalf("definition = %+v", def)
+	}
+}
+
+// TestWaitRemovesSession verifies a waited session is dropped from the
+// map: the process has exited, so keeping it would only pin the handle
+// and its output buffer for sessions the model never closes. Starting
+// the same id again must succeed, and a close on the old one must fail.
+func TestWaitRemovesSession(t *testing.T) {
+	tool, _ := newTestTool()
+	ctx := context.Background()
+
+	if _, err := tool.Execute(ctx, `{"action":"start","process_id":"s1","argv":["true"]}`); err != nil {
+		t.Fatal(err)
+	}
+	out, err := tool.Execute(ctx, `{"action":"wait","process_id":"s1"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `"exit_code":0`) {
+		t.Errorf("wait = %s", out)
+	}
+
+	// The id is reusable after wait.
+	if _, err := tool.Execute(ctx, `{"action":"start","process_id":"s1","argv":["true"]}`); err != nil {
+		t.Fatalf("reuse after wait failed: %v", err)
+	}
+}
+
+// TestMaxSessions verifies the live-session cap: starting beyond it is
+// rejected with a clear error instead of growing the map without bound.
+func TestMaxSessions(t *testing.T) {
+	tool, _ := newTestTool()
+	ctx := context.Background()
+
+	for i := 0; i < maxSessions; i++ {
+		if _, err := tool.Execute(ctx, fmt.Sprintf(
+			`{"action":"start","process_id":"s%d","argv":["true"]}`, i)); err != nil {
+			t.Fatalf("start %d: %v", i, err)
+		}
+	}
+	if _, err := tool.Execute(ctx, `{"action":"start","process_id":"overflow","argv":["true"]}`); err == nil {
+		t.Fatal("start beyond cap accepted")
+	} else if !strings.Contains(err.Error(), "too many live sessions") {
+		t.Fatalf("cap error = %v", err)
 	}
 }

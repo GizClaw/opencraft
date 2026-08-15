@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/sandbox"
 	"github.com/GizClaw/flowcraft/core/sandbox/local"
 )
 
@@ -257,5 +258,172 @@ func TestServeEventNotifications(t *testing.T) {
 		t.Errorf("output notifications = %q", joined)
 	}
 }
+
+// TestServeReadExitedFromWatcherEvent verifies that Exited is driven
+// by the watcher's exit event, not by output EOF. With a stub session
+// whose Read reports EOF while the process is still alive, Read must
+// stay Exited=false until the exit event arrives — and then carry the
+// real exit code (never Exited=true with a nil code).
+func TestServeReadExitedFromWatcherEvent(t *testing.T) {
+	backend := &stubRunner{sess: &stubSession{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	serverConn, clientConn := net.Pipe()
+	go func() {
+		_ = New(backend, serverConn, serverConn).Serve(ctx)
+	}()
+	client, err := Dial(ctx, clientConn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = client.Close()
+		cancel()
+	})
+
+	if _, err := client.Start(ctx, ExecParams{
+		ProcessID: "stub",
+		Argv:      []string{"/bin/true"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Output EOF alone must not report Exited.
+	after := int64(0)
+	read, err := client.Read(ctx, ReadParams{
+		ProcessID: "stub",
+		AfterSeq:  &after,
+		MaxBytes:  intPtr(4096),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !read.EOF {
+		t.Fatalf("EOF = false, want true")
+	}
+	if read.Exited {
+		t.Fatalf("Exited = true before the watcher delivered the exit event")
+	}
+
+	// Deliver the exit event; the next Read must report the real code.
+	backend.sess.watcher.emit(sandbox.SessionEvent{
+		Seq:  1,
+		Type: sandbox.SessionEventExited,
+		Exit: &sandbox.SessionExit{Code: 7, Reason: sandbox.SessionExited},
+	})
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for Exited")
+		}
+		read, err = client.Read(ctx, ReadParams{
+			ProcessID: "stub",
+			AfterSeq:  &after,
+			MaxBytes:  intPtr(4096),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		after = read.NextSeq
+		if read.Exited {
+			if read.ExitCode == nil || *read.ExitCode != 7 {
+				t.Fatalf("ExitCode = %v, want 7", read.ExitCode)
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// TestServeReadExitCode verifies the real exit code of a short-lived
+// process survives the race between output EOF and the watcher's exit
+// event: Exited is never reported without an attached ExitCode.
+func TestServeReadExitCode(t *testing.T) {
+	client, _ := testPair(t)
+	ctx := context.Background()
+
+	if _, err := client.Start(ctx, ExecParams{
+		ProcessID: "p-code",
+		Argv:      []string{"/bin/sh", "-c", "exit 7"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	after := int64(0)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for exited")
+		}
+		read, err := client.Read(ctx, ReadParams{
+			ProcessID: "p-code",
+			AfterSeq:  &after,
+			MaxBytes:  intPtr(4096),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		after = read.NextSeq
+		if read.Exited {
+			if read.ExitCode == nil || *read.ExitCode != 7 {
+				t.Fatalf("ExitCode = %v, want 7", read.ExitCode)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// stubSession is a controllable sandbox.Session for exercising server
+// semantics without real processes: Read reports EOF immediately while
+// the process stays alive until the test emits the exit event.
+type stubSession struct {
+	watcher *stubWatcher
+}
+
+func (s *stubSession) ID() string { return "stub" }
+func (s *stubSession) PID() int   { return 42 }
+func (s *stubSession) Capabilities() sandbox.SessionCapabilities {
+	return sandbox.SessionCapabilities{Signal: true, Events: true}
+}
+func (s *stubSession) Read(context.Context, int64, int) (sandbox.SessionOutput, error) {
+	return sandbox.SessionOutput{NextSeq: 0, EOF: true}, nil
+}
+func (s *stubSession) Write(context.Context, []byte) error                 { return nil }
+func (s *stubSession) CloseInput() error                                   { return nil }
+func (s *stubSession) Resize(context.Context, int, int) error              { return nil }
+func (s *stubSession) Signal(context.Context, sandbox.SessionSignal) error { return nil }
+func (s *stubSession) Terminate(context.Context) error                     { return nil }
+func (s *stubSession) Wait(context.Context) (sandbox.SessionExit, error) {
+	return sandbox.SessionExit{}, nil
+}
+func (s *stubSession) Watch(context.Context) (sandbox.SessionWatcher, error) {
+	s.watcher = &stubWatcher{events: make(chan sandbox.SessionEvent, 8)}
+	return s.watcher, nil
+}
+func (s *stubSession) Close() error { return nil }
+
+type stubWatcher struct {
+	events chan sandbox.SessionEvent
+}
+
+func (w *stubWatcher) Events() <-chan sandbox.SessionEvent { return w.events }
+func (w *stubWatcher) Close() error                        { return nil }
+func (w *stubWatcher) emit(ev sandbox.SessionEvent)        { w.events <- ev }
+
+type stubRunner struct {
+	sess *stubSession
+}
+
+func (r *stubRunner) Close() error { return nil }
+func (r *stubRunner) Capabilities() sandbox.Capabilities {
+	return sandbox.Capabilities{
+		Features: sandbox.SessionFeatures{Signal: true, Events: true},
+	}
+}
+func (r *stubRunner) Start(context.Context, sandbox.SessionSpec) (sandbox.Session, error) {
+	return r.sess, nil
+}
+func (r *stubRunner) List(context.Context) ([]sandbox.SessionInfo, error) { return nil, nil }
+func (r *stubRunner) Terminate(context.Context, string) error             { return nil }
 
 func intPtr(v int) *int { return &v }

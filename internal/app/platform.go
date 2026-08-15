@@ -118,7 +118,7 @@ func (f sandboxFactory) New(ctx context.Context, in resource.Input) (any, error)
 			return nil, errdefs.Validationf(
 				"opencraft sandbox: encode env policy: %v", err)
 		}
-		client, stop, err := execd.Launch(ctx, s.Root, string(polJSON))
+		client, _, stop, err := execd.Launch(ctx, s.Root, string(polJSON))
 		if err != nil {
 			return nil, err
 		}

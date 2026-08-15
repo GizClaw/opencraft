@@ -15,6 +15,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/errdefs"
+	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/message"
 	sessions "github.com/GizClaw/flowcraft/core/runtime/session"
 
@@ -104,27 +105,52 @@ func TestRenderUserEcho(t *testing.T) {
 	}
 }
 
-func TestErrorLineRenders(t *testing.T) {
+func TestTurnErrorFlushedToStream(t *testing.T) {
 	m := newTestModel()
-	m.width = 80
-	m.errs.lastErr = "provider boom"
-	m.errs.lastErrRun = "run123"
-	m.errs.lastErrReq = "req456"
-	v := m.View()
-	if !strings.Contains(v, "✗ [run:run123 req:req456] provider boom") {
-		t.Errorf("view = %q", v)
+	_, cmd := m.Update(turnDoneMsg{err: errors.New("provider boom")})
+	if cmd == nil || !strings.Contains(fmt.Sprintf("%#v", cmd()), "provider boom") {
+		t.Errorf("flush cmd = %#v", cmd)
+	}
+	if strings.Contains(m.View(), "provider boom") {
+		t.Errorf("error must not render a separate view line: %q", m.View())
 	}
 }
 
 func TestTurnDoneCapturesRequestID(t *testing.T) {
 	m := newTestModel()
 	err := errdefs.WithRequestID(errors.New("provider boom"), "req-xyz")
-	m.Update(turnDoneMsg{err: err})
-	if m.errs.lastErrReq != "req-xyz" {
-		t.Errorf("lastErrReq = %q", m.errs.lastErrReq)
+	_, cmd := m.Update(turnDoneMsg{err: err})
+	if cmd == nil || !strings.Contains(fmt.Sprintf("%#v", cmd()), "req:req-xyz") {
+		t.Errorf("flush cmd = %#v", cmd)
 	}
-	if !strings.Contains(m.View(), "req:req-xyz") {
-		t.Errorf("view = %q", m.View())
+}
+
+func TestTurnErrorShowsInferenceRequestIDAndDetail(t *testing.T) {
+	cause := errdefs.Unauthorized(
+		fmt.Errorf("openai: %w", errors.New("invalid api key")))
+	infErr := inference.NewError(
+		inference.ProviderFailure, inference.OperationGenerate, "", cause)
+	infErr.RequestID = "req_inf_xyz"
+	m := newTestModel()
+	_, cmd := m.Update(turnDoneMsg{err: infErr})
+	out := fmt.Sprintf("%#v", cmd())
+	if !strings.Contains(out, "req:req_inf_xyz") {
+		t.Errorf("request id missing: %s", out)
+	}
+	if !strings.Contains(out, "invalid api key") {
+		t.Errorf("cause detail missing: %s", out)
+	}
+	if !strings.Contains(out, "provider_failure during generate") {
+		t.Errorf("redacted kind missing: %s", out)
+	}
+}
+
+func TestErrIDsNoRunPrefixDuplicate(t *testing.T) {
+	if got := errIDs("run-b0d46e9c123456", "req_xyz"); got != "run-b0d46e9c… req:req_xyz" {
+		t.Errorf("errIDs = %q", got)
+	}
+	if got := errIDs("1234567890ab", ""); got != "run:1234567890ab" {
+		t.Errorf("errIDs = %q", got)
 	}
 }
 
@@ -140,6 +166,38 @@ func TestTurnDoneInterruptMarker(t *testing.T) {
 	m := newTestModel()
 	_, cmd := m.Update(turnDoneMsg{res: &agent.Result{Status: agent.StatusInterrupted}})
 	if cmd == nil || !strings.Contains(fmt.Sprintf("%#v", cmd()), "✗ interrupted") {
+		t.Errorf("flush cmd = %#v", cmd)
+	}
+}
+
+func TestTurnDoneFailedMarker(t *testing.T) {
+	m := newTestModel()
+	_, cmd := m.Update(turnDoneMsg{res: &agent.Result{
+		Status: agent.StatusFailed,
+		Err:    errors.New("provider boom"),
+	}})
+	if cmd == nil || !strings.Contains(fmt.Sprintf("%#v", cmd()), "provider boom") {
+		t.Errorf("flush cmd = %#v", cmd)
+	}
+}
+
+func TestTurnDoneAbortedMarker(t *testing.T) {
+	m := newTestModel()
+	_, cmd := m.Update(turnDoneMsg{res: &agent.Result{
+		Status: agent.StatusAborted,
+		Err:    errors.New("engine halt"),
+	}})
+	if cmd == nil || !strings.Contains(fmt.Sprintf("%#v", cmd()), "engine halt") {
+		t.Errorf("flush cmd = %#v", cmd)
+	}
+}
+
+func TestTurnDoneFailedWithoutErrFallsBack(t *testing.T) {
+	m := newTestModel()
+	_, cmd := m.Update(turnDoneMsg{res: &agent.Result{
+		Status: agent.StatusFailed,
+	}})
+	if cmd == nil || !strings.Contains(fmt.Sprintf("%#v", cmd()), "turn failed") {
 		t.Errorf("flush cmd = %#v", cmd)
 	}
 }

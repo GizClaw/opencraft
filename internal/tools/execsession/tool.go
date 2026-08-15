@@ -17,6 +17,12 @@ import (
 // Name is the canonical exec_session tool name.
 const Name = "exec_session"
 
+// maxSessions bounds the number of concurrently live sessions. Sessions
+// are removed on wait/close, but a model that forgets to close would
+// otherwise grow the map without bound (each entry pins the process
+// handle and its output buffer).
+const maxSessions = 64
+
 // Tool manages named sessions on one environment. It is safe for
 // concurrent use.
 type Tool struct {
@@ -145,6 +151,12 @@ func (t *Tool) start(ctx context.Context, a args) (any, error) {
 		return nil, errdefs.Conflictf(
 			"exec_session: process %q already exists", a.ProcessID)
 	}
+	if len(t.sessions) >= maxSessions {
+		t.mu.Unlock()
+		return nil, errdefs.Conflictf(
+			"exec_session: too many live sessions (%d); close one before starting another",
+			maxSessions)
+	}
 	t.mu.Unlock()
 	proc, err := t.runner.Start(ctx, sandbox.SessionSpec{
 		ID:   a.ProcessID,
@@ -249,6 +261,13 @@ func (t *Tool) wait(ctx context.Context, a args) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The session has ended: drop it so finished processes the model
+	// never closes do not accumulate in the map. (Read's EOF flag is
+	// not a reliable exit signal, so removal happens only here, on the
+	// explicit wait.)
+	t.mu.Lock()
+	delete(t.sessions, a.ProcessID)
+	t.mu.Unlock()
 	return map[string]any{
 		"process_id": a.ProcessID,
 		"exit_code":  exit.Code,

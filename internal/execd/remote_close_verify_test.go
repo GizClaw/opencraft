@@ -2,7 +2,6 @@ package execd
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -23,7 +22,7 @@ func TestRemoteRunnerCloseThroughApproval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, stop, err := LaunchExe(ctx, root, bin, "")
+	client, sock, stop, err := LaunchExe(ctx, root, bin, "")
 	if err != nil {
 		t.Fatalf("LaunchExe: %v", err)
 	}
@@ -39,8 +38,6 @@ func TestRemoteRunnerCloseThroughApproval(t *testing.T) {
 		t.Fatal("decorated remote runner must implement io.Closer")
 	}
 
-	sock := filepath.Join(os.TempDir(),
-		fmt.Sprintf("opencraft-execd-%d.sock", os.Getpid()))
 	if _, err := os.Stat(sock); err != nil {
 		t.Fatalf("socket %s should exist while the child is alive: %v", sock, err)
 	}
@@ -51,7 +48,7 @@ func TestRemoteRunnerCloseThroughApproval(t *testing.T) {
 		t.Fatalf("socket %s should be removed after Close, stat err = %v", sock, err)
 	}
 	out, err := exec.Command("pgrep", "-f",
-		fmt.Sprintf("opencraft-execd-%d.sock", os.Getpid())).CombinedOutput()
+		sock).CombinedOutput()
 	if err == nil {
 		t.Fatalf("execd child still running after Close: %s", out)
 	}

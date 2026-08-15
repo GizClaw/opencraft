@@ -54,7 +54,7 @@ func TestLaunchForksExecServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	client, stop, err := LaunchExe(ctx, root, bin, "")
+	client, _, stop, err := LaunchExe(ctx, root, bin, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,7 +104,7 @@ func TestLaunchAppliesSandboxPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	client, stop, err := LaunchExe(ctx, root, bin,
+	client, _, stop, err := LaunchExe(ctx, root, bin,
 		`{"env_policy":{"allow":["PATH"],"inject":{"OPENCRAFT_TEST_MARKER":"policy-ok"}}}`)
 	if err != nil {
 		t.Fatal(err)

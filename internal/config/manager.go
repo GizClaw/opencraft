@@ -29,8 +29,12 @@ type Options struct {
 	// UserDir overrides the global user configuration directory
 	// (defaults to ~/.opencraft/config).
 	UserDir string
-	// Explicit overrides the base embedded deploy document with an
-	// on-disk full document (the -config flag).
+	// Explicit adds an on-disk deploy document as a layer above the
+	// embedded base (the -config flag). It may be partial: resources it
+	// does not name keep the embedded defaults, and anything it names
+	// overrides them. A full document therefore behaves like a wholesale
+	// replacement, while a partial document no longer silently drops
+	// every built-in default (the pre-merge behavior).
 	Explicit string
 }
 
@@ -93,12 +97,15 @@ func (m *Manager) Load(ctx context.Context) (*View, error) {
 		Embed:    FS(),
 	}}
 	if m.explicit != "" {
-		layers[0] = deploy.Layer{
-			Priority: 0,
+		// Above embedded, below the user layer: -config is meant to
+		// override built-ins, but user/project layers still win for
+		// the keys they set.
+		layers = append(layers, deploy.Layer{
+			Priority: 5,
 			Name:     "explicit",
 			Source:   resource.Source{File: filepath.Base(m.explicit)},
 			BaseDir:  filepath.Dir(m.explicit),
-		}
+		})
 	}
 	layers = append(layers, deploy.Layer{
 		Priority: 10,

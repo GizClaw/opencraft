@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -120,8 +121,9 @@ func (s *Store) AppendTurn(_ context.Context, id string, msgs []message.Message)
 	}
 	file := struct {
 		Seq      int               `json:"seq"`
+		At       time.Time         `json:"at"`
 		Messages []message.Message `json:"messages"`
-	}{Seq: seq, Messages: archived}
+	}{Seq: seq, At: time.Now().UTC(), Messages: archived}
 	data, err := json.MarshalIndent(file, "", "  ")
 	if err != nil {
 		return err
@@ -194,14 +196,19 @@ func (s *Store) List() ([]Meta, error) {
 		}
 		if info != nil {
 			m.CreatedAt = info.ModTime()
+			m.UpdatedAt = info.ModTime()
 		}
-		// Title: first user message; UpdatedAt: last message time.
+		// Prefer the archived turn timestamps over the directory mtime:
+		// the directory is touched on every append, so its mtime drifts
+		// from the actual message times.
+		if times := s.turnTimes(id); len(times) > 0 {
+			m.CreatedAt = times[0]
+			m.UpdatedAt = times[len(times)-1]
+		}
+		// Title: first user message.
 		for _, h := range hist {
 			if h.Role == message.RoleUser && m.Title == "" {
 				m.Title = firstLine(h.Content.Text())
-			}
-			if h.Content.Text() != "" {
-				m.UpdatedAt = info.ModTime()
 			}
 		}
 		if m.Title == "" {
@@ -255,7 +262,46 @@ func (s *Store) nextSeq(historyDir string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return len(files) + 1, nil
+	// Derive the next sequence from the largest file name rather than the
+	// file count: the archive is append-only today, but a count-based seq
+	// would collide after any future cleanup or compaction.
+	max := 0
+	for _, path := range files {
+		n, err := strconv.Atoi(strings.TrimSuffix(filepath.Base(path), ".json"))
+		if err != nil {
+			continue
+		}
+		if n > max {
+			max = n
+		}
+	}
+	return max + 1, nil
+}
+
+// turnTimes returns the archived turn timestamps in seq order. Turns
+// written before the "at" field existed (zero time) are skipped so old
+// archives fall back to the directory mtime in List.
+func (s *Store) turnTimes(id string) []time.Time {
+	files, err := filepath.Glob(filepath.Join(s.dir(id), "history", "*.json"))
+	if err != nil {
+		return nil
+	}
+	sort.Strings(files)
+	var out []time.Time
+	for _, path := range files {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var turn struct {
+			At time.Time `json:"at"`
+		}
+		if json.Unmarshal(data, &turn) != nil || turn.At.IsZero() {
+			continue
+		}
+		out = append(out, turn.At)
+	}
+	return out
 }
 
 func firstLine(s string) string {

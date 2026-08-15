@@ -43,13 +43,20 @@ func (b *Bridge) Start() {
 }
 
 // Sink adapts a stream delta into a domain event.
+// Output deltas are never dropped (the UI must render every byte), but
+// the send bails out as soon as ctx ends, so a stalled UI cannot block
+// the engine past cancellation.
 func (b *Bridge) Sink(
-	_ context.Context,
+	ctx context.Context,
 	_ event.Envelope,
 	delta agent.StreamDeltaPayload,
 ) error {
-	b.events <- Event{Stream: &StreamEvent{Delta: delta}}
-	return nil
+	select {
+	case b.events <- Event{Stream: &StreamEvent{Delta: delta}}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // Ask implements interact.Backend: it queues the spec for the UI and
@@ -77,21 +84,32 @@ func (b *Bridge) Ask(
 // Resolve implements interact.Resolver: it notifies the UI that a
 // pending interaction was closed externally.
 func (b *Bridge) Resolve(
-	_ context.Context,
+	ctx context.Context,
 	id string,
 	status session.PromptStatus,
 ) error {
-	b.events <- Event{Resolved: &ResolvedEvent{ID: id, Status: status}}
-	return nil
+	select {
+	case b.events <- Event{Resolved: &ResolvedEvent{ID: id, Status: status}}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
-// Status publishes a status event.
+// Status publishes a status annotation. The status line is derived
+// from the UI mode; the event is cosmetic, so a stalled UI drops it
+// rather than blocking the engine.
 func (b *Bridge) Status(text string, busy bool) {
-	b.events <- Event{Status: &StatusEvent{Text: text, Busy: busy}}
+	select {
+	case b.events <- Event{Status: &StatusEvent{Text: text, Busy: busy}}:
+	default:
+	}
 }
 
 // Usage publishes an inference usage report (tokens, latency, and the
-// model that produced it).
+// model that produced it). The observer runs on the engine's goroutine
+// and must be non-blocking (see app.WithUsageObserver), so a slow UI
+// drops the report instead of stalling inference.
 func (b *Bridge) Usage(usage inference.Usage) {
 	ev := UsageEvent{
 		InputTokens:  usage.InputTokens,
@@ -112,7 +130,10 @@ func (b *Bridge) Usage(usage inference.Usage) {
 	if id.Provider != "" && id.Name != "" {
 		ev.Model = id.Provider + "/" + id.Name
 	}
-	b.events <- Event{Usage: &ev}
+	select {
+	case b.events <- Event{Usage: &ev}:
+	default:
+	}
 }
 
 var _ interact.Backend = (*Bridge)(nil)

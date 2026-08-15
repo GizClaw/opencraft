@@ -49,6 +49,8 @@ type prepareSettings struct {
 	UserDir           string `json:"user_dir"`
 	CollaborationMode string `json:"collaboration_mode,omitempty"`
 	PermissionProfile string `json:"permission_profile,omitempty"`
+	MemoryMaxItems    int    `json:"memory_max_items,omitempty"`
+	MemoryMaxChars    int    `json:"memory_max_chars,omitempty"`
 }
 
 func (prepareFactory) New(_ context.Context, in resource.Input) (any, error) {
@@ -70,6 +72,8 @@ func (prepareFactory) New(_ context.Context, in resource.Input) (any, error) {
 		UserDir:           settings.UserDir,
 		CollaborationMode: settings.CollaborationMode,
 		PermissionProfile: settings.PermissionProfile,
+		MemoryMaxItems:    settings.MemoryMaxItems,
+		MemoryMaxChars:    settings.MemoryMaxChars,
 		Workspace:         ws,
 	})
 	service.SetMemory(mem)

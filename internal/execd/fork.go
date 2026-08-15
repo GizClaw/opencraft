@@ -2,6 +2,8 @@ package execd
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"os"
@@ -21,14 +23,15 @@ const stopGrace = 3 * time.Second
 // (writable paths + environment policy); it is forwarded to the child
 // as -sandbox-policy so the child's default environment matches the
 // deploy document. The returned stop function terminates the child
-// and removes the socket.
+// and removes the socket. The returned socket path is the unix socket
+// the child listens on (useful for cleanup verification and status).
 func Launch(
 	ctx context.Context,
 	workDir, policyJSON string,
-) (*Client, func(), error) {
+) (*Client, string, func(), error) {
 	executable, err := os.Executable()
 	if err != nil {
-		return nil, nil, fmt.Errorf("execd executable: %w", err)
+		return nil, "", nil, fmt.Errorf("execd executable: %w", err)
 	}
 	return LaunchExe(ctx, workDir, executable, policyJSON)
 }
@@ -40,9 +43,11 @@ func Launch(
 func LaunchExe(
 	ctx context.Context,
 	workDir, executable, policyJSON string,
-) (*Client, func(), error) {
-	sock := filepath.Join(os.TempDir(),
-		fmt.Sprintf("opencraft-execd-%d.sock", os.Getpid()))
+) (*Client, string, func(), error) {
+	sock, err := execdSocketPath()
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("execd socket path: %w", err)
+	}
 	_ = os.Remove(sock)
 
 	// The child watches its parent: if this process dies without
@@ -58,7 +63,7 @@ func LaunchExe(
 	cmd := exec.CommandContext(ctx, executable, args...)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
-		return nil, nil, fmt.Errorf("execd launch: %w", err)
+		return nil, sock, nil, fmt.Errorf("execd launch: %w", err)
 	}
 	stop := func() {
 		// SIGTERM first so the child runs its own cleanup
@@ -90,19 +95,58 @@ func LaunchExe(
 			if err != nil {
 				_ = conn.Close()
 				stop()
-				return nil, nil, fmt.Errorf("execd handshake: %w", err)
+				return nil, sock, stop, fmt.Errorf("execd handshake: %w", err)
 			}
-			return client, stop, nil
+			return client, sock, stop, nil
 		}
 		if time.Now().After(deadline) {
 			stop()
-			return nil, nil, fmt.Errorf("execd: socket not ready: %w", err)
+			return nil, sock, stop, fmt.Errorf("execd: socket not ready: %w", err)
 		}
 		select {
 		case <-ctx.Done():
 			stop()
-			return nil, nil, ctx.Err()
+			return nil, sock, stop, ctx.Err()
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
+}
+
+// execdSocketPath returns a fresh, unguessable unix socket path for the
+// execd child. The path is private to the user (the user cache dir, mode
+// 0700) and carries a random component, so other users on a shared box
+// cannot pre-create or guess it (the old /tmp/<pid>.sock scheme was
+// predictable and exposed a symlink race before the 0600 chmod in the
+// server applied). Falls back to the temp dir if the cache dir is
+// unavailable or unwritable (constrained sandboxes, CI); the random
+// component keeps even that fallback safe.
+func execdSocketPath() (string, error) {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		dir = os.TempDir()
+	}
+	base := filepath.Join(dir, "opencraft")
+	if err := ensurePrivateDir(base); err != nil {
+		// os.UserCacheDir can return a path whose parent is not
+		// writable (e.g. ~/Library/Caches inside a seatbelt sandbox):
+		// fall back to the system temp dir before giving up.
+		base = filepath.Join(os.TempDir(), "opencraft")
+		if err := ensurePrivateDir(base); err != nil {
+			return "", err
+		}
+	}
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "execd-"+hex.EncodeToString(b[:])+".sock"), nil
+}
+
+// ensurePrivateDir creates dir as 0700 and tightens the mode in case a
+// looser directory pre-existed.
+func ensurePrivateDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	return os.Chmod(dir, 0o700)
 }

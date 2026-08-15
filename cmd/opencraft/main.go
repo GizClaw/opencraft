@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -26,17 +27,62 @@ import (
 	"github.com/GizClaw/opencraft/internal/execd"
 	"github.com/GizClaw/opencraft/internal/interact"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
+	"github.com/GizClaw/opencraft/internal/telemetry"
 	"github.com/GizClaw/opencraft/internal/tui"
 )
 
+// telemetryShutdown flushes and tears down the OTel pipelines. It is
+// also drained explicitly by fatal before os.Exit, which skips defers.
+var telemetryShutdown func(context.Context) error
+
 func main() {
 	configPath := flag.String("config", "", "deploy document path (default: embedded, overridable by ~/.opencraft/config/opencraft.yaml)")
+	otelEndpoint := flag.String("otel-endpoint", os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT"),
+		"OTLP/HTTP collector endpoint host[:port] (scheme optional); env OTEL_EXPORTER_OTLP_ENDPOINT")
+	otelInsecure := flag.Bool("otel-insecure", envBool("OTEL_EXPORTER_OTLP_INSECURE", false),
+		"disable TLS for OTLP (auto-enabled for http:// and loopback endpoints); env OTEL_EXPORTER_OTLP_INSECURE")
+	logFile := flag.String("log-file", os.Getenv("OPENCRAFT_LOG_FILE"),
+		"rotating plain-text log file (default: ~/.opencraft/logs/<mode>.log); env OPENCRAFT_LOG_FILE")
 	flag.Parse()
+
+	// Logs go to ~/.opencraft/logs by default (execd gets its own
+	// file so the self-forked child does not share a lumberjack file
+	// with the parent). Nothing is written to the console: the TUI
+	// owns stdout and execd's stdio mode uses stdout as its protocol
+	// channel.
+	logPath := *logFile
+	if logPath == "" {
+		dataDir, err := config.UserDataDir()
+		if err != nil {
+			fatal(1, "opencraft: log dir: %v", err)
+		}
+		logName := "opencraft.log"
+		if flag.Arg(0) == "execd" {
+			logName = "execd.log"
+		}
+		logPath = filepath.Join(dataDir, "logs", logName)
+	}
+
+	// Initialize telemetry before any work so startup failures are
+	// captured too.
+	shutdown, err := telemetry.Init(context.Background(), telemetry.Options{
+		OTLPEndpoint: *otelEndpoint,
+		OTLPInsecure: *otelInsecure,
+		LogFile:      logPath,
+	})
+	if err != nil {
+		fatal(1, "opencraft: init telemetry: %v", err)
+	}
+	telemetryShutdown = shutdown
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = shutdown(ctx)
+	}()
 
 	if *configPath == "" {
 		if _, err := config.EnsureUserConfig(); err != nil {
-			fmt.Fprintf(os.Stderr, "opencraft: seed config: %v\n", err)
-			os.Exit(1)
+			fatal(1, "opencraft: seed config: %v", err)
 		}
 	}
 	// The execd subcommand is self-forked by the main process and
@@ -47,34 +93,30 @@ func main() {
 	}
 	workDir, err := os.Getwd()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "opencraft: workdir: %v\n", err)
-		os.Exit(1)
+		fatal(1, "opencraft: workdir: %v", err)
 	}
 	mgr, err := config.Open(config.Options{
 		WorkDir:  workDir,
 		Explicit: *configPath,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "opencraft: open config: %v\n", err)
-		os.Exit(1)
+		fatal(1, "opencraft: open config: %v", err)
 	}
 	ctx := context.Background()
 	view, err := mgr.Load(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "opencraft: load config: %v\n", err)
-		os.Exit(1)
+		fatal(1, "opencraft: load config: %v", err)
 	}
 	bridge := tui.NewBridge(256)
 	rtc, err := app.NewRuntimeController(ctx, view.Document,
 		app.WithConfigBase(mgr.UserDir()),
 		app.WithUsageObserver(bridge.Usage))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "opencraft: assemble runtime: %v\n", err)
-		os.Exit(1)
+		fatal(1, "opencraft: assemble runtime: %v", err)
 	}
 	defer func() {
 		if err := rtc.Close(); err != nil {
-			fmt.Fprintf(os.Stderr, "opencraft: close runtime: %v\n", err)
+			telemetry.Error(context.Background(), fmt.Sprintf("opencraft: close runtime: %v", err))
 		}
 	}()
 
@@ -84,15 +126,13 @@ func main() {
 	case "":
 		broker := interact.New(rtc.Runtime(), bridge)
 		if err := broker.Attach(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "opencraft: attach broker: %v\n", err)
-			os.Exit(1)
+			fatal(1, "opencraft: attach broker: %v", err)
 		}
 		defer broker.Close()
 		store, err := ocsessions.New(
 			filepath.Join(workDir, ".opencraft", "sessions"), 40)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "opencraft: session store: %v\n", err)
-			os.Exit(1)
+			fatal(1, "opencraft: session store: %v", err)
 		}
 		if err := tui.Run(rtc, tui.Options{
 			Model:   config.DefaultModel(mgr.UserDir()),
@@ -102,13 +142,45 @@ func main() {
 			ContextID: ocsessions.NewID(),
 			Sessions:  store,
 		}, bridge, broker); err != nil {
-			fmt.Fprintf(os.Stderr, "opencraft: tui: %v\n", err)
-			os.Exit(1)
+			fatal(1, "opencraft: tui: %v", err)
 		}
 	default:
-		fmt.Fprintf(os.Stderr, "opencraft: unknown command %q (run)\n", flag.Arg(0))
-		os.Exit(2)
+		fatal(2, "opencraft: unknown command %q (run)", flag.Arg(0))
 	}
+}
+
+// envBool parses a boolean environment variable, falling back to def
+// when unset or unparsable (accepts 1/t/true/yes and their false forms).
+func envBool(key string, def bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return def
+	}
+	return b
+}
+
+// fatal logs msg through the telemetry pipeline, drains it so batched
+// records reach their sinks, and exits with code. Telemetry may not be
+// initialized yet during early startup (log-dir resolution or the
+// telemetry pipeline itself failed); in that window the message falls
+// back to stderr, the only sink that exists.
+func fatal(code int, format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	// Safe no-op before Init: the global OTel logger provider defaults
+	// to a no-op until the pipelines are installed.
+	telemetry.Error(context.Background(), msg)
+	if telemetryShutdown == nil {
+		fmt.Fprintf(os.Stderr, "%s\n", msg)
+	} else {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = telemetryShutdown(ctx)
+	}
+	os.Exit(code)
 }
 
 // runExecServer serves the exec JSON-RPC protocol on stdio or a unix
@@ -123,42 +195,36 @@ func runExecServer() {
 	parentPid := fs.Int("parent-pid", 0,
 		"exit when this parent process dies (0: disabled)")
 	if err := fs.Parse(flag.Args()[1:]); err != nil {
-		fmt.Fprintf(os.Stderr, "opencraft execd: %v\n", err)
-		os.Exit(2)
+		fatal(2, "opencraft execd: %v", err)
 	}
 
 	ctx := context.Background()
 	if _, err := config.EnsureUserConfig(); err != nil {
-		fmt.Fprintf(os.Stderr, "opencraft execd: seed config: %v\n", err)
-		os.Exit(1)
+		fatal(1, "opencraft execd: seed config: %v", err)
 	}
 	var pol app.SandboxPolicy
 	if *sandboxPolicy != "" {
 		if err := json.Unmarshal([]byte(*sandboxPolicy), &pol); err != nil {
-			fmt.Fprintf(os.Stderr, "opencraft execd: sandbox policy: %v\n", err)
-			os.Exit(1)
+			fatal(1, "opencraft execd: sandbox policy: %v", err)
 		}
 	}
 	runner, policy, err := app.SandboxRunner(ctx, *workDir, pol)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "opencraft execd: %v\n", err)
-		os.Exit(1)
+		fatal(1, "opencraft execd: %v", err)
 	}
 
 	if *listen == "" {
 		srv := execd.New(runner, os.Stdin, os.Stdout)
 		srv.DefaultEnv = policy
 		if err := srv.Serve(ctx); err != nil {
-			fmt.Fprintf(os.Stderr, "opencraft execd: %v\n", err)
-			os.Exit(1)
+			fatal(1, "opencraft execd: %v", err)
 		}
 		_ = runner.Close()
 		return
 	}
 	listener, err := net.Listen("unix", *listen)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "opencraft execd: listen: %v\n", err)
-		os.Exit(1)
+		fatal(1, "opencraft execd: listen: %v", err)
 	}
 	defer func() { _ = listener.Close() }()
 	defer func() { _ = os.Remove(*listen) }()
@@ -262,23 +328,20 @@ func watchParent(ppid int, onDeath func()) {
 
 func run(rtc *app.RuntimeController, text string) {
 	if text == "" {
-		fmt.Fprintln(os.Stderr, "opencraft: run requires a message")
-		os.Exit(2)
+		fatal(2, "opencraft: run requires a message")
 	}
 	ctx := context.Background()
 	rt := rtc.Runtime()
 	broker := interact.New(rt, interact.Auto{})
 	if err := broker.Attach(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "opencraft: attach broker: %v\n", err)
-		os.Exit(1)
+		fatal(1, "opencraft: attach broker: %v", err)
 	}
 	defer broker.Close()
 
 	key := sessions.Key{AgentID: "assistant", ContextID: "cli"}
 	lease, err := rt.Sessions().Open(ctx, key)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "opencraft: open session: %v\n", err)
-		os.Exit(1)
+		fatal(1, "opencraft: open session: %v", err)
 	}
 	defer func() { _ = lease.Close() }()
 
@@ -287,32 +350,33 @@ func run(rtc *app.RuntimeController, text string) {
 		Message:   message.NewTextMessage(message.RoleUser, text),
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "opencraft: start turn: %v\n", err)
-		os.Exit(1)
+		fatal(1, "opencraft: start turn: %v", err)
 	}
 	broker.BindTurn(turn.RunID(), turn)
 	defer broker.UnbindTurn(turn.RunID())
 	res, err := turn.Wait(ctx)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "opencraft: turn: %v\n", err)
+		telemetry.Error(ctx, fmt.Sprintf("opencraft: turn: %v", err))
 		for e := errors.Unwrap(err); e != nil; e = errors.Unwrap(e) {
-			fmt.Fprintf(os.Stderr, "opencraft:   caused by: %v\n", e)
+			telemetry.Error(ctx, fmt.Sprintf("opencraft:   caused by: %v", e))
 		}
-		os.Exit(1)
+		fatal(1, "opencraft: turn failed")
 	}
 	if res.Status != agent.StatusCompleted {
 		if res.Err != nil {
-			fmt.Fprintf(os.Stderr, "opencraft: turn failed: %v\n", res.Err)
+			telemetry.Error(ctx, fmt.Sprintf("opencraft: turn failed: %v", res.Err))
 			for err := errors.Unwrap(res.Err); err != nil; err = errors.Unwrap(err) {
-				fmt.Fprintf(os.Stderr, "opencraft:   caused by: %v\n", err)
+				telemetry.Error(ctx, fmt.Sprintf("opencraft:   caused by: %v", err))
 			}
 		} else {
-			fmt.Fprintf(os.Stderr, "opencraft: turn status=%s\n", res.Status)
+			telemetry.Error(ctx, fmt.Sprintf("opencraft: turn status=%s", res.Status))
 		}
-		os.Exit(1)
+		fatal(1, "opencraft: turn did not complete")
 	}
 	for _, msg := range res.Messages {
 		if msg.Role == message.RoleAssistant {
+			// CLI program output (the answer), not a log: it must reach
+			// stdout for pipes/scripts, so it stays out of telemetry.
 			fmt.Println(msg.Content.Text())
 		}
 	}

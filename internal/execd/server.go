@@ -287,11 +287,21 @@ func (s *Server) read(
 		})
 	}
 	entry.mu.Lock()
+	// Process exit is authoritative only when a watcher is running: EOF
+	// on the output stream merely means the process closed its
+	// descriptors (it may still be alive, e.g. a daemonised child), and
+	// the watcher's exit event carries the real code/reason. Without a
+	// watcher (backend without Watch support) EOF is the only exit
+	// signal we have, so fall back to it.
+	exited := out.EOF
+	if entry.watcher != nil {
+		exited = entry.exit != nil
+	}
 	resp := ReadResponse{
 		Chunks:  chunks,
 		NextSeq: out.NextSeq,
 		EOF:     out.EOF,
-		Exited:  out.EOF,
+		Exited:  exited,
 	}
 	if entry.exit != nil {
 		code := int32(entry.exit.Code)

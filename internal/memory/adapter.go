@@ -54,6 +54,9 @@ func (a *sqliteTurnStore) LoadMessages(
 	if err != nil {
 		return nil, err
 	}
+	if len(items) == 0 {
+		return nil, nil
+	}
 	out := make([]message.Message, 0, len(items))
 	for _, item := range items {
 		text, _ := item.Payload["text"].(string)
@@ -85,6 +88,9 @@ func (a *sqliteTurnStore) LoadMessagesRange(
 	items, err := a.s.LoadItemsRange(ctx, conversationID, int64(from), int64(to))
 	if err != nil {
 		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, nil
 	}
 	out := make([]message.Message, 0, len(items))
 	for _, item := range items {

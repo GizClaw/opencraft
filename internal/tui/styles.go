@@ -4,8 +4,8 @@ import "github.com/charmbracelet/lipgloss"
 
 // The palette sticks to the 16 semantic ANSI colors (no 256-color
 // indexes and no RGB), following the Codex-style CLI guidelines,
-// except the composer bar, which uses 256-level grays so the box
-// reads as opaque and its white text stays crisp:
+// except the composer bar, which uses true-color neutral grays so
+// the box reads as opaque and its white text stays crisp:
 //
 //	bright cyan    - user replies, selections, status
 //	bright green   - success / additions
@@ -63,11 +63,13 @@ var (
 	statusTextStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("14"))
 
-	// composerBG is the solid gray behind the input bar, picked from
-	// the 256 grays so it reads as opaque instead of washing into the
-	// terminal background. composerText is white on dark terminals and
-	// black on light ones so the text stays readable either way.
-	composerBG   = lipgloss.AdaptiveColor{Light: "250", Dark: "238"}
+	// composerBG is the solid neutral gray behind the input bar. It
+	// uses true-color hex instead of a 256-color gray index because
+	// themes remap the gray ramp to warm tones (which reads as a
+	// brown tint); a hex value stays neutral on every terminal.
+	// composerText is white on dark terminals and black on light ones
+	// so the text stays readable either way.
+	composerBG   = lipgloss.AdaptiveColor{Light: "#F2F2F2", Dark: "#3A3A3A"}
 	composerText = lipgloss.AdaptiveColor{Light: "0", Dark: "15"}
 
 	// inputBoxStyle is the gray composer bar around the prompt; it
