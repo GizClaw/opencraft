@@ -539,6 +539,34 @@ func (m *Model) resultParts(
 			}
 			return body, end, ok
 		}
+	case "read_file":
+		var r struct {
+			FilePath string `json:"file_path"`
+			Content  string `json:"content"`
+		}
+		if json.Unmarshal([]byte(content), &r) == nil {
+			body = append(body, indentedLines(r.Content, dimStyle)...)
+			ok = true
+			end = toolOKStyle.Render("  └ " + r.FilePath)
+			return body, end, ok
+		}
+	case "grep":
+		var r struct {
+			Matches []struct {
+				Path       string `json:"path"`
+				LineNumber int    `json:"line_number"`
+				Line       string `json:"line"`
+			} `json:"matches"`
+		}
+		if json.Unmarshal([]byte(content), &r) == nil {
+			for _, m := range r.Matches {
+				body = append(body, dimStyle.Render(fmt.Sprintf(
+					"  %s:%d: %s", m.Path, m.LineNumber, m.Line)))
+			}
+			ok = true
+			end = toolOKStyle.Render(fmt.Sprintf("  └ %d matches", len(r.Matches)))
+			return body, end, ok
+		}
 	case "exec_session":
 		var r struct {
 			ExitCode *int   `json:"exit_code"`
@@ -594,8 +622,12 @@ func (m *Model) resultParts(
 func renderToolCallHeader(call message.ToolCall) []string {
 	args := string(call.Arguments)
 	var a struct {
-		Command string   `json:"command"`
-		Argv    []string `json:"argv"`
+		Command     string   `json:"command"`
+		Argv        []string `json:"argv"`
+		FilePath    string   `json:"file_path"`
+		Path        string   `json:"path"`
+		Pattern     string   `json:"pattern"`
+		Permissions []string `json:"permissions"`
 	}
 	if json.Unmarshal(call.Arguments, &a) == nil {
 		if a.Command != "" {
@@ -608,6 +640,33 @@ func renderToolCallHeader(call message.ToolCall) []string {
 	switch call.Name {
 	case "exec_command", "exec_session":
 		return []string{toolNameStyle.Render("• Ran ") + args}
+	case "read_file":
+		return []string{toolNameStyle.Render("• Read ") + truncate(a.FilePath, 200)}
+	case "write_file":
+		return []string{toolNameStyle.Render("• Wrote ") + truncate(a.FilePath, 200)}
+	case "list_dir":
+		where := a.Path
+		if where == "" {
+			where = "."
+		}
+		return []string{toolNameStyle.Render("• Listed ") + truncate(where, 200)}
+	case "grep":
+		where := a.Path
+		if where == "" {
+			where = "."
+		}
+		return []string{toolNameStyle.Render(
+			"• Grep ") + truncate(a.Pattern, 120) +
+			dimStyle.Render(" in "+truncate(where, 80))}
+	case "glob":
+		return []string{toolNameStyle.Render("• Glob ") + truncate(a.Pattern, 200)}
+	case "plan":
+		return []string{toolNameStyle.Render("• Plan")}
+	case "update_plan":
+		return []string{toolNameStyle.Render("• Update plan")}
+	case "request_permissions":
+		return []string{toolNameStyle.Render(fmt.Sprintf(
+			"• Request permissions (%d)", len(a.Permissions)))}
 	default:
 		lines := []string{toolNameStyle.Render("• " + call.Name)}
 		if jl := jsonLines(call.Arguments); len(jl) > 0 {

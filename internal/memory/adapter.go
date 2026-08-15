@@ -103,6 +103,12 @@ func (a *sqliteTurnStore) ListSummaryNodes(
 	return out, nil
 }
 
+func (a *sqliteTurnStore) DeleteSummaryNodes(
+	ctx context.Context, conversationID string, level int, keepID string,
+) error {
+	return a.s.DeleteSummaryNodes(ctx, conversationID, level, keepID)
+}
+
 func itoa(i int) string {
 	if i == 0 {
 		return "0"

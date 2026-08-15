@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 
+	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/sandbox"
 	"github.com/GizClaw/flowcraft/core/tool"
@@ -19,6 +20,9 @@ import (
 	"github.com/GizClaw/opencraft/internal/tools/askuser"
 	"github.com/GizClaw/opencraft/internal/tools/execcommand"
 	"github.com/GizClaw/opencraft/internal/tools/execsession"
+	"github.com/GizClaw/opencraft/internal/tools/files"
+	"github.com/GizClaw/opencraft/internal/tools/plan"
+	"github.com/GizClaw/opencraft/internal/tools/requestpermissions"
 	"github.com/GizClaw/opencraft/internal/tools/webfetch"
 	"github.com/GizClaw/opencraft/internal/utils/resourcedep"
 )
@@ -30,6 +34,8 @@ func Register(r *resource.Registry) error {
 		r.Register(applypatchSourceFactory{}),
 		r.Register(webfetchSourceFactory{}),
 		r.Register(askuserSourceFactory{}),
+		r.Register(filesSourceFactory{}),
+		r.Register(requestpermissionsSourceFactory{}),
 	)
 }
 
@@ -120,6 +126,88 @@ func (askuserSourceFactory) New(_ context.Context, in resource.Input) (any, erro
 		return toolList{}, nil
 	}
 	return toolList{askuser.New()}, nil
+}
+
+// filesSourceFactory contributes the workspace-backed file tools.
+type filesSourceFactory struct{}
+
+var _ resource.Factory = filesSourceFactory{}
+
+func (filesSourceFactory) Spec() resource.Spec {
+	return resource.Spec{
+		Kind: "tool.Source",
+		Impl: "opencraft/files",
+		Deps: []resource.DepSpec{
+			{Name: "workspace", Type: "workspace.Workspace", Required: true},
+		},
+	}
+}
+
+func (filesSourceFactory) New(_ context.Context, in resource.Input) (any, error) {
+	if !sourceEnabled(in) {
+		return toolList{}, nil
+	}
+	ws, err := resourcedep.Required[workspace.Workspace](in, "tool source", "workspace")
+	if err != nil {
+		return nil, err
+	}
+	return toolList(files.MustNew(ws).Tools()), nil
+}
+
+// requestpermissionsSourceFactory contributes the request_permissions
+// tool; the exec policy is resolved from the turn host at call time.
+type requestpermissionsSourceFactory struct{}
+
+var _ resource.Factory = requestpermissionsSourceFactory{}
+
+func (requestpermissionsSourceFactory) Spec() resource.Spec {
+	return resource.Spec{
+		Kind: "tool.Source",
+		Impl: "opencraft/requestpermissions",
+	}
+}
+
+func (requestpermissionsSourceFactory) New(
+	_ context.Context,
+	in resource.Input,
+) (any, error) {
+	if !sourceEnabled(in) {
+		return toolList{}, nil
+	}
+	return toolList{requestpermissions.New()}, nil
+}
+
+// PlanSourceFactory contributes the plan/update_plan tools over a
+// runtime-scoped store.
+type PlanSourceFactory struct {
+	store *plan.Store
+}
+
+// NewPlanSourceFactory returns a tool.Source factory for the plan
+// tools. store must not be nil.
+func NewPlanSourceFactory(store *plan.Store) resource.Factory {
+	return PlanSourceFactory{store: store}
+}
+
+func (PlanSourceFactory) Spec() resource.Spec {
+	return resource.Spec{
+		Kind: "tool.Source",
+		Impl: "opencraft/plan",
+	}
+}
+
+func (f PlanSourceFactory) New(
+	_ context.Context,
+	in resource.Input,
+) (any, error) {
+	if !sourceEnabled(in) {
+		return toolList{}, nil
+	}
+	if f.store == nil {
+		return nil, errdefs.Validationf(
+			"plan tool resource: store is required")
+	}
+	return toolList(plan.MustNew(f.store).Tools()), nil
 }
 
 // toolList adapts a fixed []tool.Tool to tool.Source.

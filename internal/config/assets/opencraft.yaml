@@ -56,6 +56,10 @@ resources:
       # project root) ask the user before running. Rules are token
       # prefixes; "*" matches any remaining arguments.
       allowed_commands: []
+      # Sandbox environment defaults to inheriting the external
+      # environment wholesale. Projects that need to restrict
+      # visibility or redirect caches declare env_policy in their
+      # config layer (see ~/.opencraft/config/opencraft.yaml examples).
 
   # ------------------------------------------------------------------
   # Tool containers: each tool.Source is one tool group; tools
@@ -77,6 +81,17 @@ resources:
   tool.askuser:
     kind: tool.Source
     impl: opencraft/askuser
+  tool.files:
+    kind: tool.Source
+    impl: opencraft/files
+    deps:
+      workspace: ws
+  tool.plan:
+    kind: tool.Source
+    impl: opencraft/plan
+  tool.requestpermissions:
+    kind: tool.Source
+    impl: opencraft/requestpermissions
   tools:
     kind: tool.Assembly
     impl: middleware
@@ -85,10 +100,15 @@ resources:
       tool.applypatch: tool.applypatch
       tool.webfetch: tool.webfetch
       tool.askuser: tool.askuser
+      tool.files: tool.files
+      tool.plan: tool.plan
+      tool.requestpermissions: tool.requestpermissions
     settings:
       middlewares:
         recover:
           enabled: true
+        timeout:
+          default: 5m
       dynamic:
         default: deferred
         exposures:
@@ -97,6 +117,14 @@ resources:
           exec_session: always
           apply_patch: always
           ask_user: always
+          read_file: always
+          write_file: always
+          list_dir: always
+          grep: always
+          glob: always
+          plan: always
+          update_plan: always
+          request_permissions: always
 
   # ------------------------------------------------------------------
   # Inference: provider resources + assembly (provider is a many dep;

@@ -48,6 +48,19 @@
 #     deps:
 #       tool.mcp: tool.mcp
 #
+# Example: configure the sandbox environment policy. By default the
+# external environment is inherited wholesale; setting allow replaces
+# that with a restricted list, and inject adds/overrides values.
+# Redirecting the Go module cache under the sandbox cache keeps
+# `go test` writes inside the writable root.
+# resources:
+#   box:
+#     settings:
+#       env_policy:
+#         allow: ["PATH", "HOME", "GOPROXY"]
+#         inject:
+#           GOMODCACHE: ${env:OPEN_CRAFT_CACHE}/go/pkg/mod
+#
 # Example: use your own graph instead of the seeded default. The
 # default graph lives at ~/.opencraft/config/graphs/assistant.yaml
 # (edit it in place, or point the engine at another file under this

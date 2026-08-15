@@ -79,9 +79,32 @@ type foldMsg struct {
 	msg message.Message
 }
 
-// BufferFold folds messages older than the raw window into a level-0
-// summary node. It never calls an LLM and is a pure function of its
-// inputs. Returns nil when there is nothing new to fold.
+// BufferFold folds messages older than the raw window into the thread's
+// level-0 rolling summary. It never calls an LLM and is a pure function of
+// its inputs. Returns nil when there is nothing new to fold.
+//
+// Design notes (fixes over the original chain-prev + tail-truncate fold):
+//
+//   - Rolling window: the summary keeps the NEWEST foldable messages that
+//     fit MaxSummaryBytes and drops the OLDEST when full. The old code
+//     prepended the previous summary and tail-truncated, so once the summary
+//     reached the byte cap every new fold was truncated away and the memory
+//     froze — the middle of long conversations was permanently lost. The
+//     rolling window guarantees the most recent information always survives.
+//
+//   - Honest coverage: SourceIDs list exactly the messages rendered in the
+//     summary text. Messages dropped by the rolling window are not covered,
+//     so the summary never claims to contain text it does not.
+//
+//   - Stable node ID: the level-0 buffer fold is a single rolling summary
+//     per thread, so its ID derives from (thread, level, policy) only and
+//     the store Upsert replaces the previous node in place. The old ID
+//     embedded the source IDs, so every fold inserted a new row and
+//     summary_nodes accumulated without bound.
+//
+//   - PreserveRecent is real: the fold boundary keeps the last
+//     MaxRawMessages + PreserveRecent messages raw, so the newest messages
+//     get extra protection from folding.
 //
 // sdk/message.Message has no identity field, so each folded message gets a
 // stable ID derived from (thread, original index, role, text). The same turn
@@ -89,65 +112,33 @@ type foldMsg struct {
 func BufferFold(policy Policy, threadID string, messages []message.Message, prev *SummaryNode, now time.Time) (*SummaryNode, error) {
 	p := policy.Normalize()
 	textMsgs := foldCandidates(threadID, messages)
-	if len(textMsgs) <= p.MaxRawMessages {
-		return nil, nil
-	}
-	foldBoundary := len(textMsgs) - p.MaxRawMessages
+	// Messages older than the raw window plus the preserve-recent band are
+	// fold candidates; the rest stay raw in context.
+	foldBoundary := len(textMsgs) - p.MaxRawMessages - p.PreserveRecent
 	if foldBoundary <= 0 {
 		return nil, nil
 	}
 
-	covered := map[string]struct{}{}
-	if prev != nil {
-		for _, id := range prev.SourceIDs {
-			covered[id] = struct{}{}
-		}
+	kept, keptIDs := rollingWindow(p, textMsgs[:foldBoundary])
+	if len(kept) == 0 {
+		return nil, nil
 	}
+	text := renderKept(p, kept)
 
-	var folded []foldMsg
-	var foldedIDs []string
-	for _, fm := range textMsgs[:foldBoundary] {
-		if _, ok := covered[fm.id]; ok {
-			continue
-		}
-		folded = append(folded, fm)
-		foldedIDs = append(foldedIDs, fm.id)
-	}
-	if len(folded) == 0 {
+	// Idempotency: an unchanged rolling window yields the same node; skip
+	// the write. SourceIDs always match the rendered text, so nothing
+	// silently claims coverage of dropped messages.
+	if prev != nil && slices.Equal(prev.SourceIDs, keptIDs) && prev.Content.Text() == text {
 		return nil, nil
 	}
 
-	var b strings.Builder
-	if prev != nil && prev.Content.Text() != "" {
-		b.WriteString(prev.Content.Text())
-		b.WriteString("\n")
-	}
-	for i, fm := range folded {
-		if i > 0 {
-			b.WriteString("\n")
-		}
-		b.WriteString(renderMessage(fm.msg))
-	}
-
-	sourceIDs := make([]string, 0, len(prevSourceIDs(prev))+len(foldedIDs))
-	sourceIDs = append(sourceIDs, prevSourceIDs(prev)...)
-	sourceIDs = append(sourceIDs, foldedIDs...)
-	sourceIDs = dedupSorted(sourceIDs)
-
-	parentIDs := []string(nil)
-	if prev != nil {
-		parentIDs = []string{prev.ID}
-	}
-
-	node := SummaryNode{
-		ID:        stableID(threadID, 0, parentIDs, sourceIDs, p),
+	return &SummaryNode{
+		ID:        stableID(threadID, 0, p),
 		ThreadID:  threadID,
 		Level:     0,
-		ParentIDs: parentIDs,
-		SourceIDs: sourceIDs,
-		Content: message.Content{Parts: []message.Part{
-			message.TextPart{Text: truncateRunes(b.String(), p.MaxSummaryBytes)},
-		}},
+		ParentIDs: nil,
+		SourceIDs: keptIDs,
+		Content:   message.Content{Parts: []message.Part{message.TextPart{Text: text}}},
 		CreatedAt: now,
 		UpdatedAt: now,
 		Metadata: map[string]any{
@@ -155,10 +146,9 @@ func BufferFold(policy Policy, threadID string, messages []message.Message, prev
 			"max_raw_messages":     p.MaxRawMessages,
 			"preserve_recent":      p.PreserveRecent,
 			"max_summary_bytes":    p.MaxSummaryBytes,
-			"folded_message_count": len(folded),
+			"folded_message_count": len(kept),
 		},
-	}
-	return &node, nil
+	}, nil
 }
 
 // foldCandidates keeps text-bearing messages and assigns stable IDs. The
@@ -178,6 +168,61 @@ func foldCandidates(threadID string, messages []message.Message) []foldMsg {
 	return out
 }
 
+// rollingWindow keeps the newest messages of foldable that fit the byte
+// budget. Walking newest→oldest means the most recent information always
+// survives: when the summary is full the OLDEST content is dropped instead
+// of the newest. If even the newest message alone overflows the budget it
+// is still kept and truncated at render time, so a single oversized tool
+// output can never freeze the memory. The returned slice is in
+// chronological order; SourceIDs correspond exactly to the kept messages.
+func rollingWindow(p Policy, foldable []foldMsg) ([]foldMsg, []string) {
+	kept := make([]foldMsg, 0, len(foldable))
+	used := 0
+	for i := len(foldable) - 1; i >= 0; i-- {
+		fm := foldable[i]
+		size := len(renderMessage(fm.msg)) + 1 // +1 for the "\n" separator
+		if used+size > p.MaxSummaryBytes {
+			if len(kept) == 0 {
+				// The newest foldable message alone overflows: keep it so
+				// recent information is never dropped; truncate at render.
+				kept = append(kept, fm)
+			}
+			break
+		}
+		kept = append(kept, fm)
+		used += size
+	}
+	// kept is newest-first; restore chronological order for rendering.
+	for i, j := 0, len(kept)-1; i < j; i, j = i+1, j-1 {
+		kept[i], kept[j] = kept[j], kept[i]
+	}
+	ids := make([]string, len(kept))
+	for i := range kept {
+		ids[i] = kept[i].id
+	}
+	return kept, ids
+}
+
+// renderKept renders kept messages in chronological order, truncating only
+// the overflow tail of the newest message when it alone exceeds the budget.
+func renderKept(p Policy, kept []foldMsg) string {
+	var b strings.Builder
+	for i, fm := range kept {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		text := renderMessage(fm.msg)
+		if remaining := p.MaxSummaryBytes - b.Len(); len(text) > remaining {
+			text = truncateLines(text, remaining)
+		}
+		b.WriteString(text)
+		if b.Len() >= p.MaxSummaryBytes {
+			break
+		}
+	}
+	return b.String()
+}
+
 func renderMessage(msg message.Message) string {
 	role := string(msg.Role)
 	if role == "" {
@@ -186,19 +231,17 @@ func renderMessage(msg message.Message) string {
 	return role + ": " + msg.Content.Text()
 }
 
-func prevSourceIDs(prev *SummaryNode) []string {
-	if prev == nil {
-		return nil
+// truncateLines cuts s to maxBytes, preferring a line boundary so code and
+// structured output are not split mid-line; it falls back to a rune
+// boundary and never splits a UTF-8 character.
+func truncateLines(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
 	}
-	return prev.SourceIDs
-}
-
-func dedupSorted(ids []string) []string {
-	if len(ids) == 0 {
-		return nil
+	if idx := strings.LastIndexByte(s[:maxBytes], '\n'); idx >= 0 {
+		return s[:idx+1]
 	}
-	slices.Sort(ids)
-	return slices.Compact(ids)
+	return truncateRunes(s, maxBytes)
 }
 
 func truncateRunes(s string, maxBytes int) string {
@@ -218,10 +261,14 @@ func stableMessageID(threadID string, index int, msg message.Message) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func stableID(threadID string, level int, parentIDs, sourceIDs []string, p Policy) string {
+// stableID returns the stable node id for a thread's summary node at level.
+// It deliberately excludes source IDs: the level-0 buffer fold is a single
+// rolling summary per thread, so the id must stay constant across folds for
+// the store Upsert to replace the node in place instead of accumulating
+// rows.
+func stableID(threadID string, level int, p Policy) string {
 	h := sha256.New()
-	fmt.Fprintf(h, "%s|%d|%v|%v|%d:%d:%d:%d",
-		threadID, level, parentIDs, sourceIDs,
-		p.MaxRawMessages, p.PreserveRecent, p.MaxSummaryBytes, p.CondenseFanout)
+	fmt.Fprintf(h, "%s|%d|%d:%d:%d",
+		threadID, level, p.MaxRawMessages, p.PreserveRecent, p.MaxSummaryBytes)
 	return hex.EncodeToString(h.Sum(nil))
 }

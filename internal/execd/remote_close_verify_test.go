@@ -23,7 +23,7 @@ func TestRemoteRunnerCloseThroughApproval(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	client, stop, err := LaunchExe(ctx, root, bin)
+	client, stop, err := LaunchExe(ctx, root, bin, "")
 	if err != nil {
 		t.Fatalf("LaunchExe: %v", err)
 	}

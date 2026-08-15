@@ -282,7 +282,10 @@ func (s *Store) UpsertSummaryNode(ctx context.Context, n SummaryNode) error {
 		id, thread_id, level, parent_ids, source_ids, summary, created_at, updated_at, metadata
 	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(id) DO UPDATE SET
+		parent_ids = excluded.parent_ids,
+		source_ids = excluded.source_ids,
 		summary = excluded.summary,
+		created_at = excluded.created_at,
 		updated_at = excluded.updated_at,
 		metadata = excluded.metadata`,
 		n.ID, n.ThreadID, n.Level, string(parents), string(sources), string(content),
@@ -322,6 +325,20 @@ func (s *Store) ListSummaryNodes(ctx context.Context, threadID string) ([]Summar
 		nodes = append(nodes, n)
 	}
 	return nodes, rows.Err()
+}
+
+// DeleteSummaryNodes removes summary nodes of a thread at a level, keeping
+// the node whose id equals keepID (pass "" to delete all at that level).
+// It backs the level-0 rolling summary, which replaces its previous node in
+// place instead of accumulating rows per fold.
+func (s *Store) DeleteSummaryNodes(ctx context.Context, threadID string, level int, keepID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM summary_nodes WHERE thread_id = ? AND level = ? AND id != ?`,
+		threadID, level, keepID)
+	if err != nil {
+		return fmt.Errorf("state: delete summary nodes: %w", err)
+	}
+	return nil
 }
 
 // ErrNotFound is returned when a requested row does not exist.

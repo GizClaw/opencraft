@@ -2,6 +2,8 @@ package summary
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/memory"
@@ -43,16 +45,30 @@ func (f *fakeTurnStore) ListSummaryNodes(_ context.Context, conversationID strin
 	return out, nil
 }
 
+func (f *fakeTurnStore) DeleteSummaryNodes(_ context.Context, conversationID string, level int, keepID string) error {
+	var out []SummaryNode
+	for _, n := range f.nodes {
+		if n.ThreadID == conversationID && n.Level == level && n.ID != keepID {
+			continue
+		}
+		out = append(out, n)
+	}
+	f.nodes = out
+	return nil
+}
+
 func TestAssemblyCommitTurnFoldsOverWindow(t *testing.T) {
 	ctx := context.Background()
 	store := &fakeTurnStore{msgs: map[string][]message.Message{}}
 	a := NewAssembly(store, WithAssemblyPolicy(Policy{MaxRawMessages: 2, PreserveRecent: 2}))
 
-	for i := 0; i < 2; i++ {
+	// MaxRaw + PreserveRecent = 4 messages stay raw; folding starts once
+	// the conversation passes 4 text messages.
+	for i := 0; i < 4; i++ {
 		turn := memory.Turn{
 			Scope:          memory.Scope{RuntimeID: "rt", AgentID: "a"},
 			ConversationID: "c1",
-			IdempotencyKey: "t" + string(rune('0'+i)),
+			IdempotencyKey: fmt.Sprintf("t%d", i),
 			Messages: []message.Message{
 				message.NewTextMessage(message.RoleUser, "msg"),
 			},
@@ -62,15 +78,15 @@ func TestAssemblyCommitTurnFoldsOverWindow(t *testing.T) {
 		}
 	}
 	if len(store.nodes) != 0 {
-		t.Fatalf("want no fold at window boundary, got %d nodes", len(store.nodes))
+		t.Fatalf("want no fold at raw+preserve boundary, got %d nodes", len(store.nodes))
 	}
 
 	turn := memory.Turn{
 		Scope:          memory.Scope{RuntimeID: "rt", AgentID: "a"},
 		ConversationID: "c1",
-		IdempotencyKey: "t3",
+		IdempotencyKey: "t4",
 		Messages: []message.Message{
-			message.NewTextMessage(message.RoleUser, "third"),
+			message.NewTextMessage(message.RoleUser, "fifth"),
 		},
 	}
 	if err := a.CommitTurn(ctx, turn); err != nil {
@@ -93,6 +109,36 @@ func TestAssemblyCommitTurnFoldsOverWindow(t *testing.T) {
 	}
 	if len(res.Items) != 1 || res.Items[0].Kind != memory.ContextSummary {
 		t.Fatalf("context items = %+v", res.Items)
+	}
+}
+
+func TestAssemblyFoldReplacesNodeNoAccumulation(t *testing.T) {
+	ctx := context.Background()
+	store := &fakeTurnStore{msgs: map[string][]message.Message{}}
+	a := NewAssembly(store, WithAssemblyPolicy(Policy{MaxRawMessages: 1, PreserveRecent: 1}))
+
+	// Every turn past the raw+preserve boundary re-folds; the level-0 node
+	// must be replaced in place so rows never accumulate.
+	for i := 0; i < 10; i++ {
+		turn := memory.Turn{
+			Scope:          memory.Scope{RuntimeID: "rt", AgentID: "a"},
+			ConversationID: "c1",
+			IdempotencyKey: fmt.Sprintf("t%d", i),
+			Messages: []message.Message{
+				message.NewTextMessage(message.RoleUser, fmt.Sprintf("msg-%02d", i)),
+			},
+		}
+		if err := a.CommitTurn(ctx, turn); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(store.nodes) != 1 {
+		t.Fatalf("want exactly 1 level-0 node after many folds, got %d", len(store.nodes))
+	}
+	// The summary must have advanced with the conversation (no freeze).
+	node := store.nodes[0]
+	if !strings.Contains(node.Content.Text(), "msg-07") {
+		t.Fatalf("summary must advance with the conversation, got %q", node.Content.Text())
 	}
 }
 

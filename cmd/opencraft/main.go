@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -120,6 +121,8 @@ func runExecServer() {
 	listen := fs.String("listen", "",
 		"unix socket path to listen on (empty: serve on stdio)")
 	workDir := fs.String("workdir", "", "working directory (default: current)")
+	sandboxPolicy := fs.String("sandbox-policy", "",
+		"JSON-encoded sandbox policy from the parent (writable paths + env policy)")
 	parentPid := fs.Int("parent-pid", 0,
 		"exit when this parent process dies (0: disabled)")
 	if err := fs.Parse(flag.Args()[1:]); err != nil {
@@ -132,7 +135,14 @@ func runExecServer() {
 		fmt.Fprintf(os.Stderr, "opencraft execd: seed config: %v\n", err)
 		os.Exit(1)
 	}
-	runner, policy, err := app.SandboxRunner(ctx, *workDir)
+	var pol app.SandboxPolicy
+	if *sandboxPolicy != "" {
+		if err := json.Unmarshal([]byte(*sandboxPolicy), &pol); err != nil {
+			fmt.Fprintf(os.Stderr, "opencraft execd: sandbox policy: %v\n", err)
+			os.Exit(1)
+		}
+	}
+	runner, policy, err := app.SandboxRunner(ctx, *workDir, pol)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "opencraft execd: %v\n", err)
 		os.Exit(1)

@@ -17,22 +17,29 @@ import (
 const stopGrace = 3 * time.Second
 
 // Launch forks the current executable in execd mode and dials its
-// unix socket. The returned stop function terminates the child and
-// removes the socket.
-func Launch(ctx context.Context, workDir string) (*Client, func(), error) {
+// unix socket. policyJSON is the parent's serialized sandbox policy
+// (writable paths + environment policy); it is forwarded to the child
+// as -sandbox-policy so the child's default environment matches the
+// deploy document. The returned stop function terminates the child
+// and removes the socket.
+func Launch(
+	ctx context.Context,
+	workDir, policyJSON string,
+) (*Client, func(), error) {
 	executable, err := os.Executable()
 	if err != nil {
 		return nil, nil, fmt.Errorf("execd executable: %w", err)
 	}
-	return LaunchExe(ctx, workDir, executable)
+	return LaunchExe(ctx, workDir, executable, policyJSON)
 }
 
 // LaunchExe forks the given executable in execd mode and dials
 // its unix socket. Launch uses os.Executable; LaunchExe exists for
 // tests and embedded hosts that know a different binary path.
+// policyJSON is optional ("" applies an empty environment policy).
 func LaunchExe(
 	ctx context.Context,
-	workDir, executable string,
+	workDir, executable, policyJSON string,
 ) (*Client, func(), error) {
 	sock := filepath.Join(os.TempDir(),
 		fmt.Sprintf("opencraft-execd-%d.sock", os.Getpid()))
@@ -41,9 +48,14 @@ func LaunchExe(
 	// The child watches its parent: if this process dies without
 	// running stop (SIGKILL, crash), the child self-terminates and
 	// removes the socket instead of leaking.
-	cmd := exec.CommandContext(ctx, executable,
+	args := []string{
 		"execd", "-listen", sock, "-workdir", workDir,
-		"-parent-pid", strconv.Itoa(os.Getpid()))
+		"-parent-pid", strconv.Itoa(os.Getpid()),
+	}
+	if policyJSON != "" {
+		args = append(args, "-sandbox-policy", policyJSON)
+	}
+	cmd := exec.CommandContext(ctx, executable, args...)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		return nil, nil, fmt.Errorf("execd launch: %w", err)

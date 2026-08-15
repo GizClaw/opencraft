@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	goruntime "runtime"
 
@@ -17,8 +18,12 @@ import (
 
 // sandboxFactory implements the sandbox.Runner resource with the
 // platform backend (seatbelt on macOS, bwrap on Linux, local
-// elsewhere) and env-expanded settings.
-type sandboxFactory struct{}
+// elsewhere) and env-expanded settings. holder receives the built
+// execpolicy manager so the runtime can expose it to tools through
+// the turn host.
+type sandboxFactory struct {
+	holder *policyHolder
+}
 
 var _ resource.Factory = sandboxFactory{}
 
@@ -31,9 +36,28 @@ type sandboxSettings struct {
 	WritablePaths   []string `json:"writable_paths,omitempty"`
 	Remote          bool     `json:"remote,omitempty"`
 	AllowedCommands []string `json:"allowed_commands,omitempty"`
+	EnvPolicy       *struct {
+		Allow  []string          `json:"allow,omitempty"`
+		Inject map[string]string `json:"inject,omitempty"`
+	} `json:"env_policy,omitempty"`
 }
 
-func (sandboxFactory) New(ctx context.Context, in resource.Input) (any, error) {
+// sandboxPolicy converts decoded settings into the policy handed to the
+// execd child. A nil env_policy leaves the policy's EnvPolicy nil, so
+// the child applies an empty environment policy (inherit host env,
+// no injection).
+func (s sandboxSettings) sandboxPolicy() SandboxPolicy {
+	pol := SandboxPolicy{WritablePaths: s.WritablePaths}
+	if s.EnvPolicy != nil {
+		pol.EnvPolicy = &EnvPolicyConfig{
+			Allow:  s.EnvPolicy.Allow,
+			Inject: s.EnvPolicy.Inject,
+		}
+	}
+	return pol
+}
+
+func (f sandboxFactory) New(ctx context.Context, in resource.Input) (any, error) {
 	s, err := resource.DecodeTyped[sandboxSettings](
 		in.Settings, resource.ExpandEnv())
 	if err != nil {
@@ -51,9 +75,17 @@ func (sandboxFactory) New(ctx context.Context, in resource.Input) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	if f.holder != nil {
+		f.holder.set(policy)
+	}
 	var runner sandbox.Runner
 	if s.Remote {
-		client, stop, err := execd.Launch(ctx, s.Root)
+		polJSON, err := json.Marshal(s.sandboxPolicy())
+		if err != nil {
+			return nil, errdefs.Validationf(
+				"opencraft sandbox: encode env policy: %v", err)
+		}
+		client, stop, err := execd.Launch(ctx, s.Root, string(polJSON))
 		if err != nil {
 			return nil, err
 		}

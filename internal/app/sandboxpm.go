@@ -14,13 +14,35 @@ import (
 	"github.com/GizClaw/opencraft/internal/config"
 )
 
+// EnvPolicyConfig is the configurable environment policy: allow lists
+// which host variables the sandboxed child can observe (a full
+// replacement list), inject sets or overrides values. It mirrors
+// flowcraft's sandbox.EnvPolicy with config-friendly JSON names.
+type EnvPolicyConfig struct {
+	Allow  []string          `json:"allow,omitempty"`
+	Inject map[string]string `json:"inject,omitempty"`
+}
+
+// SandboxPolicy is the sandbox policy handed from the parent process
+// to the execd child: project-configured writable paths plus the
+// environment policy. It is serialized over the -sandbox-policy flag;
+// a nil EnvPolicy leaves the environment policy empty (no allow
+// filter, no injection), so spawned commands inherit the host
+// environment unless the deploy document configures env_policy.
+type SandboxPolicy struct {
+	WritablePaths []string         `json:"writable_paths,omitempty"`
+	EnvPolicy     *EnvPolicyConfig `json:"env_policy,omitempty"`
+}
+
 // SandboxRunner builds the platform sandbox runner for the execd child
-// (seatbelt on macOS, bwrap on Linux, local elsewhere) plus the default
-// environment policy that points Go build/tmp caches into
-// ~/.opencraft/cache.
+// (seatbelt on macOS, bwrap on Linux, local elsewhere). Writable paths
+// are the internal cache directory plus the project-configured
+// writable_paths; the environment policy is the configured policy
+// verbatim, or empty when the deploy document does not declare one.
 func SandboxRunner(
 	_ context.Context,
 	workDir string,
+	pol SandboxPolicy,
 ) (sandbox.Runner, sandbox.EnvPolicy, error) {
 	dataDir, err := config.UserDataDir()
 	if err != nil {
@@ -32,27 +54,42 @@ func SandboxRunner(
 			return nil, sandbox.EnvPolicy{}, err
 		}
 	}
-	policy := sandbox.EnvPolicy{
-		Allow: []string{"PATH", "HOME"},
-		Inject: map[string]string{
-			"GOCACHE": filepath.Join(cacheDir, "go"),
-			"TMPDIR":  filepath.Join(cacheDir, "tmp"),
-		},
+	var policy sandbox.EnvPolicy
+	if pol.EnvPolicy != nil {
+		policy = sandbox.EnvPolicy{
+			Allow:  pol.EnvPolicy.Allow,
+			Inject: pol.EnvPolicy.Inject,
+		}
 	}
+	writable := append([]string{cacheDir}, pol.WritablePaths...)
+	writable = dedupeStrings(writable)
 	switch goruntime.GOOS {
 	case "darwin":
-		runner, err := seatbelt.New(workDir, seatbelt.WithWritablePaths(cacheDir))
+		runner, err := seatbelt.New(workDir, seatbelt.WithWritablePaths(writable...))
 		if err == nil {
 			return runner, policy, nil
 		}
-		return sandboxlocal.New(workDir), sandbox.EnvPolicy{}, nil
+		return sandboxlocal.New(workDir), policy, nil
 	case "linux":
-		runner, err := bwrap.New(workDir, bwrap.WithWritablePaths(cacheDir))
+		runner, err := bwrap.New(workDir, bwrap.WithWritablePaths(writable...))
 		if err == nil {
 			return runner, policy, nil
 		}
-		return sandboxlocal.New(workDir), sandbox.EnvPolicy{}, nil
+		return sandboxlocal.New(workDir), policy, nil
 	default:
-		return sandboxlocal.New(workDir), sandbox.EnvPolicy{}, nil
+		return sandboxlocal.New(workDir), policy, nil
 	}
+}
+
+func dedupeStrings(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
 }

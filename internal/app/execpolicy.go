@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/GizClaw/opencraft/internal/interact"
+	"github.com/GizClaw/opencraft/internal/tools/requestpermissions"
 )
 
 // approvalsFile is the on-disk shape of .opencraft/approvals.yaml:
@@ -189,3 +190,58 @@ func (m *Manager) writeFile(entries []string) error {
 	}
 	return os.Rename(tmpName, m.path)
 }
+
+// ---------------------------------------------------------------------------
+// Host capability: expose the policy manager to tools.
+// ---------------------------------------------------------------------------
+
+type execPolicyHost struct {
+	agent.Host
+	policy requestpermissions.Policy
+}
+
+// ExecPolicy implements requestpermissions.PolicyProvider.
+func (h execPolicyHost) ExecPolicy() requestpermissions.Policy { return h.policy }
+
+// UnwrapHost preserves optional capabilities of the inner host.
+func (h execPolicyHost) UnwrapHost() agent.Host { return h.Host }
+
+// WithExecPolicy wraps h with the exec policy capability. Install it
+// before host middleware so built-in decorators preserve access.
+func WithExecPolicy(h agent.Host, policy requestpermissions.Policy) agent.Host {
+	if h == nil || policy == nil {
+		panic("opencraft execpolicy: WithExecPolicy requires a host and policy")
+	}
+	return execPolicyHost{Host: h, policy: policy}
+}
+
+// ExecPolicyFromHost returns the exec policy exposed by h, if any.
+func ExecPolicyFromHost(h agent.Host) (requestpermissions.Policy, bool) {
+	provider, ok := agent.CapabilityFromHost[requestpermissions.PolicyProvider](h)
+	if !ok || provider.ExecPolicy() == nil {
+		return nil, false
+	}
+	return provider.ExecPolicy(), true
+}
+
+// policyHolder captures the policy manager built by the sandbox
+// factory so the runtime can wrap it into every turn host.
+type policyHolder struct {
+	mu     sync.Mutex
+	policy requestpermissions.Policy
+}
+
+func (h *policyHolder) set(policy requestpermissions.Policy) {
+	h.mu.Lock()
+	h.policy = policy
+	h.mu.Unlock()
+}
+
+func (h *policyHolder) get() requestpermissions.Policy {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.policy
+}
+
+var _ requestpermissions.PolicyProvider = execPolicyHost{}
+var _ requestpermissions.Policy = (*Manager)(nil)

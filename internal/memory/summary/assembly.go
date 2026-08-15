@@ -18,6 +18,9 @@ type TurnStore interface {
 	LoadMessages(ctx context.Context, conversationID string) ([]message.Message, error)
 	UpsertSummaryNode(ctx context.Context, node SummaryNode) error
 	ListSummaryNodes(ctx context.Context, conversationID string) ([]SummaryNode, error)
+	// DeleteSummaryNodes removes a thread's nodes at level except the node
+	// whose id equals keepID (pass "" to delete all at that level).
+	DeleteSummaryNodes(ctx context.Context, conversationID string, level int, keepID string) error
 }
 
 // Assembly implements flowcraft's sdk/memory.Assembly on top of the summary
@@ -96,6 +99,12 @@ func (a *Assembly) fold(ctx context.Context, conversationID string) error {
 	if node == nil {
 		return nil
 	}
+	// The level-0 buffer fold is a single rolling summary per thread:
+	// retire any other level-0 nodes (e.g. rows written before the
+	// stable-id fix) so summary_nodes never accumulates.
+	if err := a.store.DeleteSummaryNodes(ctx, conversationID, 0, node.ID); err != nil {
+		return memory.NewError(memory.KindInternal, "turn", err)
+	}
 	if err := a.store.UpsertSummaryNode(ctx, *node); err != nil {
 		return memory.NewError(memory.KindInternal, "turn", err)
 	}
@@ -141,29 +150,37 @@ func (a *Assembly) Context(ctx context.Context, req memory.ContextRequest) (memo
 		totalChars += len(text)
 	}
 
-	// Recent raw messages carry the conversation between folds. The
-	// newest messages are kept first so a tight budget preserves the
-	// most relevant tail; the appended chunk is reversed afterwards to
-	// keep chronological order.
+	// Recent raw messages carry the conversation between folds. Only the
+	// raw window (the last MaxRawMessages + PreserveRecent text messages)
+	// is eligible: messages older than the window that the rolling summary
+	// dropped are not covered, so without this bound they would leak back
+	// into context and crowd out genuinely recent messages. LoadMessages
+	// already excludes empty-text messages, so its index space matches
+	// foldCandidates used by BufferFold. The newest messages are kept
+	// first so a tight budget preserves the most relevant tail; the
+	// appended chunk is reversed afterwards to keep chronological order.
 	raw, err := a.store.LoadMessages(ctx, req.ConversationID)
 	if err != nil {
 		return memory.ContextResult{}, memory.NewError(memory.KindInternal, "context", err)
 	}
+	p := a.policy.Normalize()
+	boundary := len(raw) - p.MaxRawMessages - p.PreserveRecent
+	if boundary < 0 {
+		boundary = 0
+	}
+	window := raw[boundary:]
 	type rawCandidate struct {
 		id  string
 		msg message.Message
 		seq int
 	}
-	candidates := make([]rawCandidate, 0, len(raw))
-	for i, msg := range raw {
-		if msg.Content.Text() == "" {
-			continue
-		}
-		id := stableMessageID(req.ConversationID, i, msg)
+	candidates := make([]rawCandidate, 0, len(window))
+	for i, msg := range window {
+		id := stableMessageID(req.ConversationID, boundary+i, msg)
 		if _, ok := covered[id]; ok {
 			continue
 		}
-		candidates = append(candidates, rawCandidate{id: id, msg: msg, seq: i})
+		candidates = append(candidates, rawCandidate{id: id, msg: msg, seq: boundary + i})
 	}
 	rawCount := len(candidates)
 	appended := make([]memory.ContextItem, 0, rawCount)
