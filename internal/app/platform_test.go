@@ -1,9 +1,13 @@
 package app
 
 import (
+	"context"
+	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/GizClaw/flowcraft/core/sandbox"
 	"github.com/GizClaw/flowcraft/core/resource"
 )
 
@@ -56,5 +60,48 @@ func TestSandboxSettingsNoEnvPolicyFallsBack(t *testing.T) {
 	}
 	if len(pol.WritablePaths) != 0 {
 		t.Fatalf("writable paths = %v, want none", pol.WritablePaths)
+	}
+}
+
+func TestLocalSandboxAppliesEnvPolicy(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	settings, err := json.Marshal(map[string]any{
+		"root":            t.TempDir(),
+		"remote":          false,
+		"allowed_commands": []string{"*"},
+		"env_policy": map[string]any{
+			"allow":  []string{"PATH"},
+			"inject": map[string]string{"OPENCRAFT_TEST_MARKER": "policy-ok"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	holder := &policyHolder{}
+	value, err := (sandboxFactory{holder: holder}).New(
+		context.Background(), resource.Input{Settings: settings})
+	if err != nil {
+		t.Skipf("sandbox backend unavailable: %v", err)
+	}
+	runner, ok := value.(sandbox.Runner)
+	if !ok {
+		t.Fatalf("factory value = %T, want sandbox.Runner", value)
+	}
+	defer func() { _ = runner.Close() }()
+
+	res, err := sandbox.Exec(context.Background(), runner,
+		"/bin/sh", []string{"-c", "env"}, sandbox.ExecOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Stdout, "OPENCRAFT_TEST_MARKER=policy-ok") {
+		t.Fatalf("stdout = %q, want injected env var", res.Stdout)
+	}
+	if strings.Contains(res.Stdout, "HOME=") {
+		t.Errorf("stdout = %q, HOME leaked through the allow filter", res.Stdout)
+	}
+	// The policy holder must expose the allowlist rules for worldstate.
+	if rules := holder.Rules(); len(rules) != 1 || rules[0] != "*" {
+		t.Fatalf("holder rules = %v, want [\"*\"]", rules)
 	}
 }

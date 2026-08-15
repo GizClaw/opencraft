@@ -62,6 +62,35 @@ func TestViewRendersStatusAndPrompt(t *testing.T) {
 	}
 }
 
+func TestStatusLineShowsCacheHitRate(t *testing.T) {
+	m := newTestModel()
+	m.applyEvent(Event{Usage: &UsageEvent{
+		InputTokens:      800,
+		CacheReadTokens:  500,
+		CacheWriteTokens: 100,
+		ReasoningTokens:  120,
+		LatencyMs:        300,
+	}})
+	line := m.statusLine()
+	if !strings.Contains(line, "CHR 62.50%") {
+		t.Errorf("status line = %q, want CHR 62.50%%", line)
+	}
+	if !strings.Contains(line, "think 120") {
+		t.Errorf("status line = %q, want think 120", line)
+	}
+}
+
+func TestStatusLineOmitsChrWithoutInput(t *testing.T) {
+	m := newTestModel()
+	m.applyEvent(Event{Usage: &UsageEvent{
+		OutputTokens: 10,
+		TotalTokens:  10,
+	}})
+	if strings.Contains(m.statusLine(), "CHR") {
+		t.Errorf("status line = %q, want no CHR", m.statusLine())
+	}
+}
+
 func TestRenderUserEcho(t *testing.T) {
 	m := newTestModel()
 	m.width = 80
@@ -332,6 +361,114 @@ func TestResumeEscReturnsToIdle(t *testing.T) {
 	}
 	if next.input.Placeholder != mainPlaceholder {
 		t.Errorf("placeholder = %q", next.input.Placeholder)
+	}
+}
+
+func TestResumeRestoresSessionUsage(t *testing.T) {
+	m := newTestModel()
+	store, err := ocsessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordUsage(context.Background(), id, ocsessions.Usage{
+		InputTokens:     800,
+		OutputTokens:    200,
+		CacheReadTokens: 500,
+		ReasoningTokens: 120,
+		LatencyMs:       300,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m.opts.Sessions = store
+	m.mode = modeResume
+	m.resume.list = []ocsessions.Meta{{ID: id, Title: "会话"}}
+	m.resume.cursor = 0
+	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	next := updated.(*Model)
+	if next.opts.ContextID != id {
+		t.Fatalf("context id = %q, want %q", next.opts.ContextID, id)
+	}
+	line := next.statusLine()
+	if !strings.Contains(line, "in 800 · out 200") {
+		t.Errorf("status line = %q, want restored in/out", line)
+	}
+	if !strings.Contains(line, "CHR 62.50%") {
+		t.Errorf("status line = %q, want restored CHR", line)
+	}
+}
+
+func TestSessionUsagePersistsBasePlusLive(t *testing.T) {
+	m := newTestModel()
+	m.usageBase = ocsessions.Usage{
+		InputTokens:     800,
+		OutputTokens:    200,
+		CacheReadTokens: 500,
+		ReasoningTokens: 120,
+		LatencyMs:       300,
+	}
+	m.usageIn = 200
+	m.usageOut = 50
+	m.usageCacheR = 100
+	m.usageThink = 30
+	m.usageLat = 100
+	got := m.sessionUsage()
+	if got.InputTokens != 1000 || got.OutputTokens != 250 ||
+		got.CacheReadTokens != 600 || got.ReasoningTokens != 150 ||
+		got.LatencyMs != 400 {
+		t.Errorf("session usage = %+v", got)
+	}
+}
+
+func TestUsageBaseAccumulatesAcrossTurns(t *testing.T) {
+	m := newTestModel()
+	store, err := ocsessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.opts.Sessions = store
+
+	// Turn 1: one usage report, then the turn ends. The recorded total
+	// must become the base for the next turn.
+	m.applyEvent(Event{Usage: &UsageEvent{
+		InputTokens:  300,
+		OutputTokens: 100,
+		TotalTokens:  400,
+		LatencyMs:    50,
+	}})
+	_, _ = m.Update(turnDoneMsg{
+		res: &agent.Result{Status: agent.StatusCompleted},
+	})
+	if m.usageBase.InputTokens != 300 {
+		t.Fatalf("base after turn 1 = %+v, want in=300", m.usageBase)
+	}
+
+	// Turn 2 starts with reset live counters; new usage must add to the
+	// base instead of replacing it.
+	m.usageIn, m.usageOut, m.usageTotal = 0, 0, 0
+	m.usageSeen = false
+	m.applyEvent(Event{Usage: &UsageEvent{
+		InputTokens:  200,
+		OutputTokens: 50,
+		TotalTokens:  250,
+		LatencyMs:    25,
+	}})
+	_, _ = m.Update(turnDoneMsg{
+		res: &agent.Result{Status: agent.StatusCompleted},
+	})
+	if m.usageBase.InputTokens != 500 || m.usageBase.OutputTokens != 150 {
+		t.Fatalf("base after turn 2 = %+v, want in=500 out=150", m.usageBase)
+	}
+
+	loaded, err := store.LoadUsage(context.Background(), m.opts.ContextID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.InputTokens != 500 || loaded.OutputTokens != 150 {
+		t.Fatalf("persisted usage = %+v, want cumulative in=500 out=150", loaded)
 	}
 }
 

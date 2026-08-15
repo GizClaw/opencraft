@@ -31,6 +31,26 @@ func (sandboxFactory) Spec() resource.Spec {
 	return resource.Spec{Kind: "sandbox.Runner", Impl: "opencraft"}
 }
 
+// execPolicyResource exposes the runtime's policy holder as a deploy
+// resource so hooks (worldstate prepare) can read the live allowlist
+// rules. It is a value holder, not a policy enforcement point.
+type execPolicyResource struct {
+	holder *policyHolder
+}
+
+var _ resource.Factory = execPolicyResource{}
+
+func (execPolicyResource) Spec() resource.Spec {
+	return resource.Spec{Kind: "opencraft.execpolicy", Impl: "holder"}
+}
+
+func (f execPolicyResource) New(
+	_ context.Context,
+	_ resource.Input,
+) (any, error) {
+	return f.holder, nil
+}
+
 type sandboxSettings struct {
 	Root            string   `json:"root"`
 	WritablePaths   []string `json:"writable_paths,omitempty"`
@@ -40,6 +60,19 @@ type sandboxSettings struct {
 		Allow  []string          `json:"allow,omitempty"`
 		Inject map[string]string `json:"inject,omitempty"`
 	} `json:"env_policy,omitempty"`
+}
+
+// envPolicy converts the configured environment policy into the
+// sandbox EnvPolicy applied to every spawn. A nil env_policy yields a
+// zero policy (inherit host env, no injection).
+func (s sandboxSettings) envPolicy() sandbox.EnvPolicy {
+	if s.EnvPolicy == nil {
+		return sandbox.EnvPolicy{}
+	}
+	return sandbox.EnvPolicy{
+		Allow:  s.EnvPolicy.Allow,
+		Inject: s.EnvPolicy.Inject,
+	}
 }
 
 // sandboxPolicy converts decoded settings into the policy handed to the
@@ -108,6 +141,13 @@ func (f sandboxFactory) New(ctx context.Context, in resource.Input) (any, error)
 			return nil, err
 		}
 	}
+	// Env policy is part of the sandbox contract in both modes: the
+	// execd child applies it as its DefaultEnv, and the local backend
+	// gets it through WithDefaults so remote:false behaves identically
+	// instead of silently inheriting the host environment.
+	runner = sandbox.WithDefaults(runner, sandbox.ExecOptions{
+		Env: s.envPolicy(),
+	})
 	return sandbox.WithApproval(runner, policy.Approve, policy.Allowlist()), nil
 }
 

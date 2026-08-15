@@ -19,6 +19,8 @@ func (p *fakePolicy) AlwaysAllow(rule string) error {
 	return nil
 }
 
+func (p *fakePolicy) Rules() []string { return nil }
+
 type policyHost struct {
 	agent.Host
 	policy Policy

@@ -1,6 +1,6 @@
-// Package plan provides the plan and update_plan tools plus an
-// in-memory plan store. Plans are runtime-scoped: they survive across
-// turns within one runtime but are not yet persisted to disk.
+// Package plan provides the plan and update_plan tools plus a plan
+// store that survives restarts: mutations are persisted atomically to
+// a JSON file when a path is configured.
 package plan
 
 import (
@@ -9,6 +9,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -23,6 +26,10 @@ const (
 	PlanName = "plan"
 	// UpdatePlanName is the canonical update_plan tool name.
 	UpdatePlanName = "update_plan"
+	// GetPlanName is the canonical get_plan tool name.
+	GetPlanName = "get_plan"
+	// ListPlansName is the canonical list_plans tool name.
+	ListPlansName = "list_plans"
 )
 
 // Plan is one immutable snapshot of the agent's plan.
@@ -34,17 +41,23 @@ type Plan struct {
 	UpdatedAt string `json:"updated_at"`
 }
 
-// Store keeps the latest plan per runtime. It is safe for concurrent
-// use.
+// Store keeps the latest plan per runtime, persisted to path on every
+// mutation (empty path keeps the store in-memory only). It is safe for
+// concurrent use.
 type Store struct {
 	mu     sync.Mutex
 	plans  map[string]Plan
 	latest string
+	path   string
 }
 
-// NewStore creates an empty plan store.
-func NewStore() *Store {
-	return &Store{plans: make(map[string]Plan)}
+// NewStore creates a plan store. When path is non-empty, existing
+// plans are loaded from it and every mutation is written back
+// atomically; a missing or unreadable file starts an empty store.
+func NewStore(path string) *Store {
+	s := &Store{plans: make(map[string]Plan), path: path}
+	_ = s.load()
+	return s
 }
 
 // Create stores a new plan and makes it the latest.
@@ -67,6 +80,9 @@ func (s *Store) Create(text, focus string) (Plan, error) {
 	s.plans[p.ID] = p
 	s.latest = p.ID
 	s.mu.Unlock()
+	if err := s.save(); err != nil {
+		return Plan{}, err
+	}
 	return p, nil
 }
 
@@ -98,6 +114,9 @@ func (s *Store) Update(id, text, status, focus string) (Plan, error) {
 	p.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
 	s.plans[p.ID] = p
 	s.latest = p.ID
+	if err := s.save(); err != nil {
+		return Plan{}, err
+	}
 	return p, nil
 }
 
@@ -117,6 +136,81 @@ func (s *Store) Latest() (Plan, bool) {
 	return p, ok
 }
 
+// List returns every stored plan, newest first.
+func (s *Store) List() []Plan {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Plan, 0, len(s.plans))
+	for _, p := range s.plans {
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].UpdatedAt > out[j].UpdatedAt
+	})
+	return out
+}
+
+type persistFile struct {
+	Latest string          `json:"latest"`
+	Plans  map[string]Plan `json:"plans"`
+}
+
+func (s *Store) load() error {
+	if s.path == "" {
+		return nil
+	}
+	data, err := os.ReadFile(s.path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	var file persistFile
+	if err := json.Unmarshal(data, &file); err != nil {
+		return err
+	}
+	if file.Plans != nil {
+		s.plans = file.Plans
+	}
+	s.latest = file.Latest
+	return nil
+}
+
+func (s *Store) save() error {
+	if s.path == "" {
+		return nil
+	}
+	data, err := json.MarshalIndent(persistFile{
+		Latest: s.latest,
+		Plans:  s.plans,
+	}, "", "  ")
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(s.path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".plans-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, s.path)
+}
+
 func newID() string {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -129,7 +223,7 @@ func newID() string {
 // tools
 // ---------------------------------------------------------------------------
 
-// Tool is the plan/update_plan tool pair sharing one store.
+// Tool is the plan tool group sharing one store.
 type Tool struct {
 	store *Store
 }
@@ -151,9 +245,14 @@ func MustNew(store *Store) *Tool {
 	return t
 }
 
-// Tools returns the plan and update_plan tools.
+// Tools returns the plan, update_plan, get_plan, and list_plans tools.
 func (t *Tool) Tools() []tool.Tool {
-	return []tool.Tool{planTool{t.store}, updatePlanTool{t.store}}
+	return []tool.Tool{
+		planTool{t.store},
+		updatePlanTool{t.store},
+		getPlanTool{t.store},
+		listPlansTool{t.store},
+	}
 }
 
 type planTool struct{ store *Store }
@@ -233,6 +332,78 @@ func (t updatePlanTool) Execute(_ context.Context, arguments string) (string, er
 		return "", err
 	}
 	return encodePlan(p)
+}
+
+// ---------------------------------------------------------------------------
+// get_plan / list_plans
+// ---------------------------------------------------------------------------
+
+type getPlanTool struct{ store *Store }
+
+var _ tool.Tool = getPlanTool{}
+
+func (getPlanTool) Definition() message.ToolDefinition {
+	return message.DefineSchema(
+		GetPlanName,
+		"Read a stored plan. Pass plan_id to read a specific plan, or "+
+			"omit it to read the latest plan. Returns the full plan JSON: "+
+			"{plan_id, text, status, created_at, updated_at}.",
+		message.ToolProperty("plan_id", "string",
+			"Plan id to read; omit to read the latest plan."),
+	).DisallowAdditionalProperties().Build()
+}
+
+func (getPlanTool) Metadata() tool.ToolMeta { return tool.ToolMeta{} }
+
+func (t getPlanTool) Execute(_ context.Context, arguments string) (string, error) {
+	var args struct {
+		PlanID string `json:"plan_id"`
+	}
+	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+		return "", errdefs.Validationf(
+			"%s: parse arguments: %v", GetPlanName, err)
+	}
+	p, ok := t.store.Get(args.PlanID)
+	if args.PlanID == "" {
+		p, ok = t.store.Latest()
+	}
+	if !ok {
+		return "", errdefs.NotFoundf(
+			"%s: no plan found", GetPlanName)
+	}
+	return encodePlan(p)
+}
+
+type listPlansTool struct{ store *Store }
+
+var _ tool.Tool = listPlansTool{}
+
+func (listPlansTool) Definition() message.ToolDefinition {
+	return message.DefineSchema(
+		ListPlansName,
+		"List every stored plan, newest first. Returns JSON: "+
+			"{plans: [{plan_id, text, status, created_at, updated_at}]}.",
+	).DisallowAdditionalProperties().Build()
+}
+
+func (listPlansTool) Metadata() tool.ToolMeta { return tool.ToolMeta{} }
+
+func (t listPlansTool) Execute(_ context.Context, arguments string) (string, error) {
+	var args struct{}
+	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+		return "", errdefs.Validationf(
+			"%s: parse arguments: %v", ListPlansName, err)
+	}
+	plans := t.store.List()
+	if plans == nil {
+		plans = []Plan{}
+	}
+	payload, err := json.Marshal(map[string]any{"plans": plans})
+	if err != nil {
+		return "", errdefs.Internalf(
+			"%s: encode result: %v", ListPlansName, err)
+	}
+	return string(payload), nil
 }
 
 func encodePlan(p Plan) (string, error) {

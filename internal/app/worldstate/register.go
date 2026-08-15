@@ -10,6 +10,7 @@ import (
 
 	opmemory "github.com/GizClaw/opencraft/internal/memory"
 	"github.com/GizClaw/opencraft/internal/sessions"
+	"github.com/GizClaw/opencraft/internal/tools/plan"
 	"github.com/GizClaw/opencraft/internal/utils/resourcedep"
 )
 
@@ -35,6 +36,12 @@ func (prepareFactory) Spec() resource.Spec {
 			{Name: "memory", Type: opmemory.ResourceKind, Required: true},
 			{Name: "workspace", Type: "workspace.Workspace", Required: true},
 			{Name: "sessions", Type: sessions.ResourceKind, Required: true},
+			// Optional: the sandbox exec policy rules source. Deployments
+			// without it simply omit the approved-prefix line.
+			{Name: "execpolicy", Type: "opencraft.execpolicy", Required: false},
+			// Optional: the runtime plan store. Deployments without it
+			// simply omit the plan section.
+			{Name: "planstore", Type: "opencraft.planstore", Required: false},
 		},
 	}
 }
@@ -73,6 +80,16 @@ func (prepareFactory) New(_ context.Context, in resource.Input) (any, error) {
 	})
 	service.SetMemory(mem)
 	service.SetSessions(store)
+	if dep, ok := in.Dep("execpolicy"); ok {
+		if prefixes, ok := dep.(PrefixProvider); ok {
+			service.SetPrefixProvider(prefixes)
+		}
+	}
+	if dep, ok := in.Dep("planstore"); ok {
+		if store, ok := dep.(*plan.Store); ok {
+			service.SetPlans(store)
+		}
+	}
 	return agent.PreparerFunc(func(
 		ctx context.Context, _ agent.Identity, req *agent.Request, prev *agent.Board,
 	) (*agent.Board, error) {

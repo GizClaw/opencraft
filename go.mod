@@ -18,7 +18,6 @@ require (
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/glamour v1.0.0
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250404203927-76690c660834
-	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-shiori/go-readability v0.0.0-20251205110129-5db1dc9836f0
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/rs/xid v1.6.0

@@ -75,6 +75,52 @@ func TestListMeta(t *testing.T) {
 	}
 }
 
+func TestRecordAndLoadUsage(t *testing.T) {
+	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A fresh session reports no usage.
+	got, err := store.LoadUsage(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != (Usage{}) {
+		t.Errorf("fresh usage = %+v, want zero", got)
+	}
+	want := Usage{
+		InputTokens:      1000,
+		OutputTokens:     500,
+		TotalTokens:      1500,
+		CacheReadTokens:  600,
+		CacheWriteTokens: 50,
+		ReasoningTokens:  200,
+		LatencyMs:        1234,
+	}
+	if err := store.RecordUsage(context.Background(), id, want); err != nil {
+		t.Fatal(err)
+	}
+	got, err = store.LoadUsage(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("usage = %+v, want %+v", got, want)
+	}
+	// List exposes the recorded usage so the /resume picker can show it.
+	list, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Usage != want {
+		t.Errorf("list usage = %+v, want %+v", list, want)
+	}
+}
+
 func TestAppendSkipsEmpty(t *testing.T) {
 	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {

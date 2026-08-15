@@ -1,5 +1,7 @@
 Permission profile: {{.Profile}}
 {{if .ApprovedPrefixes}}Approved command prefixes: {{.ApprovedPrefixes}}
-{{end}}Requires approval: commands outside the sandbox command allowlist
-(static allowed_commands plus project .opencraft/approvals.yaml), file
-writes outside the workspace, network access
+{{end}}Commands outside the approved allowlist ask the user for approval
+(allow once / always allow / deny; "always allow" rules are persisted to
+the project .opencraft/approvals.yaml).
+File reads and writes are confined to the workspace root; paths outside
+it are rejected without asking.

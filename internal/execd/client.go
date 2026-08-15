@@ -100,14 +100,6 @@ func (c *Client) EnvironmentInfo(ctx context.Context) (*EnvironmentInfoResponse,
 	return &out, nil
 }
 
-func (c *Client) EnvironmentStatus(ctx context.Context) (*EnvironmentStatusResponse, error) {
-	var out EnvironmentStatusResponse
-	if err := c.call(ctx, MethodEnvironmentStatus, nil, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
-}
-
 // Close closes the connection; the read loop exits and all pending
 // calls fail.
 func (c *Client) Close() error {

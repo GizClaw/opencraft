@@ -60,14 +60,6 @@ func TestLaunchForksExecServer(t *testing.T) {
 	}
 	defer stop()
 
-	status, err := client.EnvironmentStatus(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !status.Ready {
-		t.Error("execd not ready")
-	}
-
 	if _, err := client.Start(ctx, ExecParams{
 		ProcessID: "fork",
 		Argv:      []string{"/bin/sh", "-c", "echo forked-ok"},

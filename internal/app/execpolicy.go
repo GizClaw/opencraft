@@ -20,6 +20,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/interact"
 	"github.com/GizClaw/opencraft/internal/tools/requestpermissions"
+	"github.com/GizClaw/opencraft/internal/app/worldstate"
 )
 
 // approvalsFile is the on-disk shape of .opencraft/approvals.yaml:
@@ -66,6 +67,13 @@ func New(rules []string, approvalsPath string) (*Manager, error) {
 // Allowlist returns the shared allowlist used by sandbox.WithApproval.
 func (m *Manager) Allowlist() *sandbox.Allowlist {
 	return m.allowlist
+}
+
+// Rules returns the current allowlist rules (static allowed_commands
+// plus dynamically approved commands). It feeds the worldstate
+// permissions section so the model always sees the live allowlist.
+func (m *Manager) Rules() []string {
+	return m.allowlist.Rules()
 }
 
 // Approve implements sandbox.ApprovalFunc: it asks the user through
@@ -243,5 +251,18 @@ func (h *policyHolder) get() requestpermissions.Policy {
 	return h.policy
 }
 
+// Rules implements worldstate.PrefixProvider on the holder so the
+// permissions section can read the live allowlist without racing the
+// sandbox factory that fills it during build.
+func (h *policyHolder) Rules() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.policy == nil {
+		return nil
+	}
+	return h.policy.Rules()
+}
+
 var _ requestpermissions.PolicyProvider = execPolicyHost{}
 var _ requestpermissions.Policy = (*Manager)(nil)
+var _ worldstate.PrefixProvider = (*policyHolder)(nil)

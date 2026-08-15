@@ -9,6 +9,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/GizClaw/flowcraft/core/workspace"
+
+	"github.com/GizClaw/opencraft/internal/tools/plan"
 )
 
 const (
@@ -25,9 +27,13 @@ func (s *Service) agentsSection() (Section, error) {
 }
 
 func (s *Service) permissionsSection() (Section, error) {
+	var prefixes []string
+	if s.prefixes != nil {
+		prefixes = s.prefixes.Rules()
+	}
 	text, err := render(permissionsTmpl, permissionsData{
 		Profile:          s.opts.PermissionProfile,
-		ApprovedPrefixes: strings.Join(s.opts.ApprovedPrefixes, ", "),
+		ApprovedPrefixes: strings.Join(prefixes, ", "),
 	})
 	if err != nil {
 		return Section{}, err
@@ -44,6 +50,22 @@ func (s *Service) environmentSection() (Section, error) {
 		return Section{}, err
 	}
 	return Section{ID: "environment", Role: "system", Text: text}, nil
+}
+
+// renderPlanSection formats the latest plan for the world state: the
+// plan text plus its id and status so the model can refer to it with
+// get_plan/update_plan.
+func renderPlanSection(p plan.Plan) string {
+	var b strings.Builder
+	b.WriteString("Active plan (id ")
+	b.WriteString(p.ID)
+	if p.Status != "" && p.Status != "active" {
+		b.WriteString(", status ")
+		b.WriteString(p.Status)
+	}
+	b.WriteString("):\n")
+	b.WriteString(p.Text)
+	return b.String()
 }
 
 // discoverAgents collects AGENTS.md from the project root down to the

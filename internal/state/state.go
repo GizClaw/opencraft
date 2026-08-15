@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/message"
@@ -74,6 +76,11 @@ type SummaryNode struct {
 // Open opens (creating if necessary) the SQLite database at path,
 // applies migrations, and returns a Store that owns the handle.
 func Open(path string) (*Store, error) {
+	if dir := filepath.Dir(path); dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("state: create directory: %w", err)
+		}
+	}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("state: open %s: %w", path, err)
@@ -242,6 +249,54 @@ func (s *Store) LoadItems(ctx context.Context, threadID string) ([]Item, error) 
 		return nil, fmt.Errorf("state: load items: %w", err)
 	}
 	defer rows.Close()
+	return scanItems(rows)
+}
+
+// CountItems returns the number of items stored for a thread. All items are
+// text-bearing (AppendItem callers skip empty text), so this equals the
+// thread's text-message count and the index space of LoadItems /
+// LoadItemsRange.
+func (s *Store) CountItems(ctx context.Context, threadID string) (int, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM items WHERE thread_id = ?`, threadID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("state: count items: %w", err)
+	}
+	return n, nil
+}
+
+// NextSeq returns the next append sequence for a thread (max(seq)+1, 0 for
+// an empty thread). It replaces the previous count-then-append pattern that
+// loaded every item just to size the sequence, turning each append from an
+// O(n) scan into a single index lookup.
+func (s *Store) NextSeq(ctx context.Context, threadID string) (int64, error) {
+	var n int64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(seq), -1) + 1 FROM items WHERE thread_id = ?`, threadID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("state: next seq: %w", err)
+	}
+	return n, nil
+}
+
+// LoadItemsRange returns items of a thread with seq in [from, to] (inclusive)
+// ordered by seq. An empty range (from > to) returns nil. It backs the
+// incremental fold and context paths, which only need a bounded tail of the
+// conversation rather than the whole thread.
+func (s *Store) LoadItemsRange(ctx context.Context, threadID string, from, to int64) ([]Item, error) {
+	if from > to {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT id, thread_id, turn_id, seq,
+		item_type, role, payload, created_at FROM items
+		WHERE thread_id = ? AND seq BETWEEN ? AND ? ORDER BY seq`, threadID, from, to)
+	if err != nil {
+		return nil, fmt.Errorf("state: load items range: %w", err)
+	}
+	defer rows.Close()
+	return scanItems(rows)
+}
+
+func scanItems(rows *sql.Rows) ([]Item, error) {
 	var items []Item
 	for rows.Next() {
 		var it Item

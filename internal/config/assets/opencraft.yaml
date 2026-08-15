@@ -14,15 +14,37 @@ resources:
   db:
     kind: state
     impl: sqlite
+    settings:
+      # Project-scoped state: memory items + summary nodes share one
+      # session.db with the checkpoint store, so a project's entire
+      # conversation state is self-contained and movable.
+      path: ${env:OPEN_CRAFT_WORKDIR}/.opencraft/sessions/session.db
   mem:
     kind: memory
     impl: summary
     deps:
       state: db
+      # LLM condensation routes through the inference router so it uses
+      # the same user-editable routing policy as agent turns.
+      router: router
     settings:
-      max_raw_messages: 32
+      # Raw window (max_raw_messages + preserve_recent) must be >= the
+      # sessions history window (40) so worldstate injection is disjoint:
+      # the summary covers older messages, history covers the raw tail,
+      # and no message reaches the model twice (or gets dropped).
+      max_raw_messages: 36
       preserve_recent: 4
       max_summary_bytes: 4096
+  # Live sandbox allowlist rules source for the worldstate permissions
+  # section (filled by the sandbox factory during build).
+  execpolicy:
+    kind: opencraft.execpolicy
+    impl: holder
+  # Runtime-scoped plan store: tools persist plans to it and the
+  # worldstate prepare hook injects the latest plan into the model.
+  planstore:
+    kind: opencraft.planstore
+    impl: holder
   # Project-scoped conversation store: full text/reasoning history per
   # session under .opencraft/sessions/<id>/history/.
   sessions:
@@ -35,7 +57,7 @@ resources:
     kind: agent.CheckpointStore
     impl: sqlite
     settings:
-      path: ${env:OPEN_CRAFT_DATA_DIR}/checkpoints.db
+      path: ${env:OPEN_CRAFT_WORKDIR}/.opencraft/sessions/session.db
 
   # ------------------------------------------------------------------
   # Workspace and sandbox (box.settings.remote selects local/remote exec)
@@ -124,6 +146,8 @@ resources:
           glob: always
           plan: always
           update_plan: always
+          get_plan: always
+          list_plans: always
           request_permissions: always
 
   # ------------------------------------------------------------------
@@ -149,6 +173,10 @@ resources:
     impl: deepseek
     settings:
       id: deepseek
+      # Secrets resolve from the process environment only. There is no
+      # local .env loading; inject DEEPSEEK_API_KEY via the environment
+      # (systemd/systemd Environment=, k8s secrets, or your process
+      # supervisor) so the key never lives on disk next to the config.
       spec:
         api: responses
       profiles:
@@ -192,6 +220,8 @@ agents:
           memory: mem
           workspace: ws
           sessions: sessions
+          execpolicy: execpolicy
+          planstore: planstore
         settings:
           work_dir: ${env:OPEN_CRAFT_WORKDIR}
           user_dir: ${env:OPEN_CRAFT_DATA_DIR}

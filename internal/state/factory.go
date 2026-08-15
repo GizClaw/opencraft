@@ -12,7 +12,8 @@ const ResourceKind = "state"
 
 // Factory builds a SQLite state store from deploy settings. DefaultPath
 // is used when the document does not set an explicit path; the
-// application injects it (e.g. ~/.opencraft/opencraft.db).
+// application injects a project-scoped default so memory state always
+// stays with the project.
 type Factory struct {
 	DefaultPath string
 }
@@ -30,7 +31,7 @@ type settings struct {
 
 // New opens the SQLite store at the configured path.
 func (f Factory) New(ctx context.Context, in resource.Input) (any, error) {
-	s, err := resource.DecodeTyped[settings](in.Settings)
+	s, err := resource.DecodeTyped[settings](in.Settings, resource.ExpandEnv())
 	if err != nil {
 		return nil, err
 	}

@@ -75,6 +75,25 @@ func WithUsageObserver(fn func(inference.Usage)) Option {
 	return func(o *Options) { o.usageObserver = fn }
 }
 
+// planStoreResource exposes the runtime-scoped plan store as a deploy
+// resource so the worldstate prepare hook can inject the latest plan.
+type planStoreResource struct {
+	store *plan.Store
+}
+
+var _ resource.Factory = planStoreResource{}
+
+func (planStoreResource) Spec() resource.Spec {
+	return resource.Spec{Kind: "opencraft.planstore", Impl: "holder"}
+}
+
+func (f planStoreResource) New(
+	_ context.Context,
+	_ resource.Input,
+) (any, error) {
+	return f.store, nil
+}
+
 // BuildRuntime assembles an opencraft runtime from a deploy document.
 func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*runtimecore.Runtime, error) {
 	o := Options{}
@@ -99,6 +118,13 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 			return nil, err
 		}
 	}
+	// Project conversation state (memory DB + checkpoints) lives under
+	// <project>/.opencraft/sessions; ensure the directory exists before
+	// any resource opens a database there.
+	sessionDir := filepath.Join(o.WorkBase, ".opencraft", "sessions")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		return nil, err
+	}
 
 	// Scalar settings in the deploy document reference runtime paths
 	// through ${env:...}; publish them before resources are built.
@@ -110,7 +136,8 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 	// (filled by the sandbox factory during build, exposed on every
 	// turn host) and the plan store.
 	policy := &policyHolder{}
-	planStore := plan.NewStore()
+	planStore := plan.NewStore(
+		filepath.Join(o.WorkBase, ".opencraft", "plans.json"))
 
 	loader := resource.NewLoader(
 		resource.WithBaseDir(o.ConfigBase),
@@ -150,9 +177,11 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 		}
 	}
 	reg.MustRegister(sandboxFactory{holder: policy})
+	reg.MustRegister(execPolicyResource{holder: policy})
+	reg.MustRegister(planStoreResource{store: planStore})
 	reg.MustRegister(opentools.NewPlanSourceFactory(planStore))
 	reg.MustRegister(state.Factory{
-		DefaultPath: filepath.Join(dataDir, "opencraft.db"),
+		DefaultPath: filepath.Join(sessionDir, "session.db"),
 	})
 
 	builder := runtimecore.NewBuilder(reg)

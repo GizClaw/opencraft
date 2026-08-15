@@ -45,13 +45,6 @@ func TestServeEnvironment(t *testing.T) {
 	if info.Shell != "/bin/sh" || !strings.Contains(strings.Join(info.Capabilities, ","), "signal") {
 		t.Errorf("info = %+v", info)
 	}
-	status, err := client.EnvironmentStatus(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !status.Ready {
-		t.Error("not ready")
-	}
 }
 
 func TestServeStartRead(t *testing.T) {

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	goruntime "runtime"
@@ -39,6 +40,9 @@ type SandboxPolicy struct {
 // are the internal cache directory plus the project-configured
 // writable_paths; the environment policy is the configured policy
 // verbatim, or empty when the deploy document does not declare one.
+// Sandbox construction failures are fatal: silently falling back to the
+// local runner would let the parent believe commands are isolated when
+// they are not, so the child fails closed instead.
 func SandboxRunner(
 	_ context.Context,
 	workDir string,
@@ -66,16 +70,18 @@ func SandboxRunner(
 	switch goruntime.GOOS {
 	case "darwin":
 		runner, err := seatbelt.New(workDir, seatbelt.WithWritablePaths(writable...))
-		if err == nil {
-			return runner, policy, nil
+		if err != nil {
+			return nil, sandbox.EnvPolicy{}, fmt.Errorf(
+				"opencraft sandbox: seatbelt: %w", err)
 		}
-		return sandboxlocal.New(workDir), policy, nil
+		return runner, policy, nil
 	case "linux":
 		runner, err := bwrap.New(workDir, bwrap.WithWritablePaths(writable...))
-		if err == nil {
-			return runner, policy, nil
+		if err != nil {
+			return nil, sandbox.EnvPolicy{}, fmt.Errorf(
+				"opencraft sandbox: bwrap: %w", err)
 		}
-		return sandboxlocal.New(workDir), policy, nil
+		return runner, policy, nil
 	default:
 		return sandboxlocal.New(workDir), policy, nil
 	}

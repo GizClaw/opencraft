@@ -73,10 +73,12 @@ type SummaryNode struct {
 	Metadata  map[string]any
 }
 
-// foldMsg pairs a stable source ID with a canonical sdk message.
+// foldMsg pairs a canonical sdk message with its original index (used to
+// derive the stable source ID) and the precomputed stable source ID.
 type foldMsg struct {
-	id  string
-	msg message.Message
+	index int
+	id    string
+	msg   message.Message
 }
 
 // BufferFold folds messages older than the raw window into the thread's
@@ -111,19 +113,55 @@ type foldMsg struct {
 // committed twice produces the same IDs, which keeps folding idempotent.
 func BufferFold(policy Policy, threadID string, messages []message.Message, prev *SummaryNode, now time.Time) (*SummaryNode, error) {
 	p := policy.Normalize()
-	textMsgs := foldCandidates(threadID, messages)
+	candidates := foldCandidates(threadID, messages)
+	return bufferFoldCandidates(p, threadID, candidates, len(candidates), prev, now)
+}
+
+// bufferFoldCandidates is the rolling fold over an explicit candidate list.
+// totalText is the thread's total text-message count (the boundary is a
+// count of text messages, not a message index). candidates must be in
+// chronological order and cover the NEWEST foldable messages the rolling
+// window can keep: either the whole foldable region (positions
+// [0, foldBoundary)) or a suffix of it that already overflows the byte
+// budget. Anything older than that suffix is provably dropped by the budget,
+// so it never needs to be loaded.
+func bufferFoldCandidates(
+	p Policy,
+	threadID string,
+	candidates []foldMsg,
+	totalText int,
+	prev *SummaryNode,
+	now time.Time,
+) (*SummaryNode, error) {
 	// Messages older than the raw window plus the preserve-recent band are
 	// fold candidates; the rest stay raw in context.
-	foldBoundary := len(textMsgs) - p.MaxRawMessages - p.PreserveRecent
+	foldBoundary := totalText - p.MaxRawMessages - p.PreserveRecent
 	if foldBoundary <= 0 {
 		return nil, nil
 	}
+	// Trim defensively to the foldable region (position-based; a caller may
+	// pass the full candidate list including raw-window messages). A suffix
+	// shorter than the boundary passes through untouched.
+	if len(candidates) > foldBoundary {
+		candidates = candidates[:foldBoundary]
+	}
+	if len(candidates) == 0 {
+		return nil, nil
+	}
 
-	kept, keptIDs := rollingWindow(p, textMsgs[:foldBoundary])
+	kept, keptIDs := rollingWindow(p, candidates)
 	if len(kept) == 0 {
 		return nil, nil
 	}
 	text := renderKept(p, kept)
+	// dropped counts every foldable message the budget could not hold,
+	// including any older than a loaded suffix: the rolling window keeps
+	// the NEWEST foldable messages that fit, so everything older than the
+	// kept tail is dropped by construction.
+	dropped := foldBoundary - len(kept)
+	if dropped < 0 {
+		dropped = 0
+	}
 
 	// Idempotency: an unchanged rolling window yields the same node; skip
 	// the write. SourceIDs always match the rendered text, so nothing
@@ -147,6 +185,10 @@ func BufferFold(policy Policy, threadID string, messages []message.Message, prev
 			"preserve_recent":      p.PreserveRecent,
 			"max_summary_bytes":    p.MaxSummaryBytes,
 			"folded_message_count": len(kept),
+			// How many foldable messages the byte budget dropped. The
+			// LLM condensation stage keys off this: buffer fold only
+			// needs compaction once it actually loses information.
+			"dropped_message_count": dropped,
 		},
 	}, nil
 }
@@ -161,8 +203,9 @@ func foldCandidates(threadID string, messages []message.Message) []foldMsg {
 			continue
 		}
 		out = append(out, foldMsg{
-			id:  stableMessageID(threadID, i, msg),
-			msg: msg,
+			index: i,
+			id:    stableMessageID(threadID, i, msg),
+			msg:   msg,
 		})
 	}
 	return out
@@ -174,7 +217,7 @@ func foldCandidates(threadID string, messages []message.Message) []foldMsg {
 // of the newest. If even the newest message alone overflows the budget it
 // is still kept and truncated at render time, so a single oversized tool
 // output can never freeze the memory. The returned slice is in
-// chronological order; SourceIDs correspond exactly to the kept messages.
+// chronological order; SourceIDs correspond exactly to the kept messages;
 func rollingWindow(p Policy, foldable []foldMsg) ([]foldMsg, []string) {
 	kept := make([]foldMsg, 0, len(foldable))
 	used := 0

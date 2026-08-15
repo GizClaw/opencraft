@@ -31,6 +31,18 @@ type Meta struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	Messages  int
+	Usage     Usage
+}
+
+// Usage is the cumulative token usage recorded for one session.
+type Usage struct {
+	InputTokens      int64 `json:"input_tokens,omitempty"`
+	OutputTokens     int64 `json:"output_tokens,omitempty"`
+	TotalTokens      int64 `json:"total_tokens,omitempty"`
+	CacheReadTokens  int64 `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int64 `json:"cache_write_tokens,omitempty"`
+	ReasoningTokens  int64 `json:"reasoning_tokens,omitempty"`
+	LatencyMs        int64 `json:"latency_ms,omitempty"`
 }
 
 // Store persists conversations under a root directory. It is safe for
@@ -170,13 +182,15 @@ func (s *Store) List() ([]Meta, error) {
 		}
 		id := e.Name()
 		hist, _ := s.History(context.Background(), id, 0)
-		if len(hist) == 0 {
+		usage, _ := s.LoadUsage(context.Background(), id)
+		if len(hist) == 0 && usage == (Usage{}) {
 			continue
 		}
 		info, _ := e.Info()
 		m := Meta{
 			ID:       id,
 			Messages: len(hist),
+			Usage:    usage,
 		}
 		if info != nil {
 			m.CreatedAt = info.ModTime()
@@ -199,6 +213,37 @@ func (s *Store) List() ([]Meta, error) {
 		return out[i].UpdatedAt.After(out[j].UpdatedAt)
 	})
 	return out, nil
+}
+
+// LoadUsage returns the cumulative token usage recorded for a session.
+func (s *Store) LoadUsage(_ context.Context, id string) (Usage, error) {
+	var usage Usage
+	data, err := os.ReadFile(filepath.Join(s.dir(id), "meta.json"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return usage, nil
+		}
+		return usage, err
+	}
+	if err := json.Unmarshal(data, &usage); err != nil {
+		return usage, err
+	}
+	return usage, nil
+}
+
+// RecordUsage persists the cumulative token usage for a session. The
+// caller supplies the full session totals; it is written atomically.
+func (s *Store) RecordUsage(_ context.Context, id string, usage Usage) error {
+	data, err := json.MarshalIndent(usage, "", "  ")
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(s.dir(id), "meta.json")
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func (s *Store) dir(id string) string {

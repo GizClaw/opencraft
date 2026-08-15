@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -26,8 +28,12 @@ func TestSandboxRunnerEmptyPolicy(t *testing.T) {
 func TestSandboxRunnerConfiguredPolicy(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	ctx := context.Background()
+	extra := filepath.Join(t.TempDir(), "extra")
+	if err := os.MkdirAll(extra, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	pol := SandboxPolicy{
-		WritablePaths: []string{"/tmp/opencraft-extra"},
+		WritablePaths: []string{extra},
 		EnvPolicy: &EnvPolicyConfig{
 			Allow:  []string{"PATH", "GOPROXY"},
 			Inject: map[string]string{"GOMODCACHE": "/cache/pkg/mod"},

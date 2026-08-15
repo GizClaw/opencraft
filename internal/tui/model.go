@@ -204,7 +204,10 @@ type Model struct {
 	usageTotal  int64
 	usageLat    int64
 	usageSeen   bool
-	note        string // transient annotation (e.g. "cancelling…")
+	// usageBase is the cumulative token usage of a resumed session,
+	// carried across turns so the status line keeps showing it.
+	usageBase ocsessions.Usage
+	note      string // transient annotation (e.g. "cancelling…")
 
 	input   textarea.Model
 	spinner spinner.Model
@@ -378,7 +381,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.stream.pendingCalls = make(map[string]pendingCall)
 		m.usageIn, m.usageOut, m.usageThink = 0, 0, 0
 		m.usageCacheR, m.usageCacheW = 0, 0
-		m.usageTotal, m.usageLat, m.usageSeen = 0, 0, false
+		m.usageTotal, m.usageLat = 0, 0
+		// A resumed session carries its baseline into the next turn;
+		// a fresh session starts hidden until the first usage report.
+		m.usageSeen = m.usageBase != (ocsessions.Usage{})
 		if m.broker != nil && msg.turn != nil {
 			m.broker.BindTurn(msg.turn.RunID(), msg.turn)
 		}
@@ -386,6 +392,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.waitCmd(), spinner.Tick)
 
 	case turnDoneMsg:
+		if m.opts.Sessions != nil {
+			usage := m.sessionUsage()
+			_ = m.opts.Sessions.RecordUsage(m.ctx, m.opts.ContextID, usage)
+			// Carry the session total into the next turn so consecutive
+			// turns accumulate instead of each overwriting meta.json
+			// with only its own usage.
+			m.usageBase = usage
+		}
 		m.flushMarkdown()
 		m.archiveReasoning()
 		// Calls whose results never arrived (interrupted/cancelled)
@@ -1292,6 +1306,12 @@ func (m *Model) handleResumeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		meta := m.resume.list[m.resume.cursor]
 		m.opts.ContextID = meta.ID
+		if m.opts.Sessions != nil {
+			if usage, err := m.opts.Sessions.LoadUsage(m.ctx, meta.ID); err == nil {
+				m.usageBase = usage
+				m.applyUsageBase()
+			}
+		}
 		m.stream.pending = append(m.stream.pending,
 			userStyle.Render("↩ Resumed session: "+meta.Title))
 		m.flattenHistory(meta.ID)
@@ -1712,19 +1732,52 @@ func (m *Model) statusLine() string {
 		parts = append(parts, statusTextStyle.Render(m.note))
 	}
 	if m.usageSeen {
+		base := m.usageBase
 		parts = append(parts, dimStyle.Render(fmt.Sprintf(
-			"in %s · out %s", humanInt(m.usageIn), humanInt(m.usageOut))))
-		if m.usageCacheR > 0 || m.usageCacheW > 0 {
+			"in %s · out %s",
+			humanInt(base.InputTokens+m.usageIn),
+			humanInt(base.OutputTokens+m.usageOut))))
+		if m.usageCacheR > 0 || m.usageCacheW > 0 ||
+			base.CacheReadTokens > 0 || base.CacheWriteTokens > 0 {
 			parts = append(parts, dimStyle.Render(fmt.Sprintf(
-				"cache %s/%s", humanInt(m.usageCacheR), humanInt(m.usageCacheW))))
+				"cache %s/%s",
+				humanInt(base.CacheReadTokens+m.usageCacheR),
+				humanInt(base.CacheWriteTokens+m.usageCacheW))))
 		}
 		parts = append(parts, dimStyle.Render(fmt.Sprintf(
-			"think %s · %s", humanInt(m.usageThink), humanLatency(m.usageLat))))
+			"think %s · %s",
+			humanInt(base.ReasoningTokens+m.usageThink),
+			humanLatency(base.LatencyMs+m.usageLat))))
+		if base.InputTokens+m.usageIn > 0 {
+			chr := 100 * float64(base.CacheReadTokens+m.usageCacheR) /
+				float64(base.InputTokens+m.usageIn)
+			parts = append(parts, dimStyle.Render(fmt.Sprintf("CHR %.2f%%", chr)))
+		}
 	}
 	if len(parts) == 0 {
 		return identityStyle.Render("opencraft")
 	}
 	return dimStyle.Render(strings.Join(parts, " · "))
+}
+
+// sessionUsage returns the cumulative usage of the active session:
+// the resumed baseline plus the live turn counters.
+func (m *Model) sessionUsage() ocsessions.Usage {
+	return ocsessions.Usage{
+		InputTokens:      m.usageBase.InputTokens + m.usageIn,
+		OutputTokens:     m.usageBase.OutputTokens + m.usageOut,
+		TotalTokens:      m.usageBase.TotalTokens + m.usageTotal,
+		CacheReadTokens:  m.usageBase.CacheReadTokens + m.usageCacheR,
+		CacheWriteTokens: m.usageBase.CacheWriteTokens + m.usageCacheW,
+		ReasoningTokens:  m.usageBase.ReasoningTokens + m.usageThink,
+		LatencyMs:        m.usageBase.LatencyMs + m.usageLat,
+	}
+}
+
+// applyUsageBase shows the resumed session's cumulative usage in the
+// status line while it is idle (before the next turn starts).
+func (m *Model) applyUsageBase() {
+	m.usageSeen = m.usageBase != (ocsessions.Usage{})
 }
 
 func humanInt(n int64) string {

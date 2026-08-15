@@ -2,10 +2,13 @@ package state
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/message"
+
+	cpsqlite "github.com/GizClaw/flowcraft/backends/checkpoint/sqlite"
 )
 
 func TestOpenMigrateAndRoundTrip(t *testing.T) {
@@ -68,6 +71,68 @@ func TestOpenMigrateAndRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = s2.Close()
+}
+
+// TestSessionDBSharedWithCheckpoints verifies the state store and the
+// flowcraft checkpoint store can share one database file (the embedded
+// document points both at <project>/.opencraft/sessions/session.db):
+// their schemas must coexist and both connections must work.
+func TestSessionDBSharedWithCheckpoints(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "sessions", "session.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	cp, err := cpsqlite.Open(path)
+	if err != nil {
+		t.Fatalf("checkpoint store on shared file: %v", err)
+	}
+	defer cp.Close()
+
+	// Both schemas exist in the same file.
+	rows, err := s.db.Query(
+		"SELECT name FROM sqlite_master WHERE type='table'")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	tables := map[string]bool{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		tables[name] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"items", "summary_nodes", "schema_migrations", "agent_checkpoints",
+	} {
+		if !tables[want] {
+			t.Errorf("shared session.db missing table %q (tables: %v)",
+				want, tables)
+		}
+	}
+
+	// Both stores remain writable after sharing the file.
+	now := time.Now().UTC()
+	if err := s.AppendItem(ctx, Item{
+		ID:        "i1",
+		ThreadID:  "t1",
+		TurnID:    "r1",
+		Seq:       0,
+		ItemType:  "text",
+		Role:      "user",
+		Payload:   map[string]any{"text": "hello"},
+		CreatedAt: now,
+	}); err != nil {
+		t.Fatalf("append item after sharing: %v", err)
+	}
 }
 
 func TestUpsertSummaryNodeReplacesAndDeleteSummaryNodes(t *testing.T) {
@@ -146,4 +211,95 @@ func TestUpsertSummaryNodeReplacesAndDeleteSummaryNodes(t *testing.T) {
 	if len(nodes) != 0 {
 		t.Fatalf("nodes = %d after delete-keeping-other, want 0", len(nodes))
 	}
+}
+
+func TestCountNextSeqAndLoadItemsRange(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open("file::memory:?cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	now := time.Now().UTC()
+	if err := s.CreateThread(ctx, Thread{
+		ID: "t1", AgentID: "agent-a", ContextID: "ctx-1",
+		Title: "test", Metadata: map[string]any{},
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// NextSeq starts at 0 for an empty thread.
+	seq, err := s.NextSeq(ctx, "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seq != 0 {
+		t.Fatalf("next seq = %d, want 0 for empty thread", seq)
+	}
+
+	for i := int64(0); i < 5; i++ {
+		if err := s.AppendItem(ctx, Item{
+			ID: "i" + itoaTest(i), ThreadID: "t1", TurnID: "turn",
+			Seq: i, ItemType: "text", Role: "user",
+			Payload:   map[string]any{"text": "msg"},
+			CreatedAt: now,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	n, err := s.CountItems(ctx, "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 5 {
+		t.Fatalf("count = %d, want 5", n)
+	}
+	seq, err = s.NextSeq(ctx, "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seq != 5 {
+		t.Fatalf("next seq = %d, want 5", seq)
+	}
+
+	items, err := s.LoadItemsRange(ctx, "t1", 1, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 3 || items[0].Seq != 1 || items[2].Seq != 3 {
+		t.Fatalf("range items = %+v, want seqs 1..3", items)
+	}
+
+	// Empty range and out-of-range bounds are safe.
+	items, err = s.LoadItemsRange(ctx, "t1", 4, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 0 {
+		t.Fatalf("empty range returned %d items, want 0", len(items))
+	}
+	items, err = s.LoadItemsRange(ctx, "t1", 0, 99)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 5 {
+		t.Fatalf("clamped range returned %d items, want 5", len(items))
+	}
+}
+
+func itoaTest(i int64) string {
+	if i == 0 {
+		return "0"
+	}
+	var b [20]byte
+	pos := len(b)
+	for i > 0 {
+		pos--
+		b[pos] = byte('0' + i%10)
+		i /= 10
+	}
+	return string(b[pos:])
 }

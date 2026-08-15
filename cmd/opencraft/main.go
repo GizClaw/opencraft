@@ -32,10 +32,6 @@ import (
 func main() {
 	configPath := flag.String("config", "", "deploy document path (default: embedded, overridable by ~/.opencraft/config/opencraft.yaml)")
 	flag.Parse()
-	_ = app.LoadDotEnv(".env")
-	if dir, err := config.UserDataDir(); err == nil {
-		_ = app.LoadDotEnv(filepath.Join(dir, ".env"))
-	}
 
 	if *configPath == "" {
 		if _, err := config.EnsureUserConfig(); err != nil {
@@ -99,7 +95,7 @@ func main() {
 			os.Exit(1)
 		}
 		if err := tui.Run(rtc, tui.Options{
-			Model: config.DefaultModel(),
+			Model: config.DefaultModel(mgr.UserDir()),
 			// Every TUI launch starts a fresh conversation; /resume
 			// switches to an existing session id.
 			ContextID: ocsessions.NewID(),

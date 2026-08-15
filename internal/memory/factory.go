@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/inference/route"
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/opencraft/internal/memory/summary"
@@ -39,6 +40,11 @@ func (Factory) Spec() resource.Spec {
 		Impl: "summary",
 		Deps: []resource.DepSpec{
 			{Name: "state", Type: state.ResourceKind, Required: true},
+			// Optional: the inference router. LLM condensation goes
+			// through it so the compaction model follows the
+			// user-editable routing policy; absent deployments stay
+			// buffer-fold only.
+			{Name: "router", Type: "inference.Router", Required: false},
 		},
 	}
 }
@@ -69,6 +75,11 @@ func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 			PreserveRecent:  policy.PreserveRecent,
 			MaxSummaryBytes: policy.MaxSummaryBytes,
 		}),
+	}
+	if dep, ok := in.Dep("router"); ok {
+		if router, ok := dep.(*route.Router); ok {
+			opts = append(opts, summary.WithRouter(router))
+		}
 	}
 	return summary.NewAssembly(&sqliteTurnStore{s: store}, opts...), nil
 }

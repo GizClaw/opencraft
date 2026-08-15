@@ -31,7 +31,6 @@ const SignalInterrupt Signal = "interrupt"
 // Method names.
 const (
 	MethodInitialize        = "initialize"
-	MethodInitialized       = "initialized"
 	MethodProcessStart      = "process/start"
 	MethodProcessRead       = "process/read"
 	MethodProcessWrite      = "process/write"
@@ -44,7 +43,6 @@ const (
 	MethodProcessClosed     = "process/closed"
 	MethodProcessLag        = "process/lag"
 	MethodEnvironmentInfo   = "environment/info"
-	MethodEnvironmentStatus = "environment/status"
 )
 
 // RPCRequest is the JSON-RPC 2.0 request envelope.
@@ -232,9 +230,4 @@ type EnvironmentInfoResponse struct {
 	Cwd          string   `json:"cwd"`
 	TmpDir       string   `json:"tmpdir"`
 	Capabilities []string `json:"capabilities"`
-}
-
-// EnvironmentStatusResponse is the readiness probe.
-type EnvironmentStatusResponse struct {
-	Ready bool `json:"ready"`
 }

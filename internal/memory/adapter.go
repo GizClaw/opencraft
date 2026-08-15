@@ -18,11 +18,13 @@ type sqliteTurnStore struct {
 func (a *sqliteTurnStore) AppendMessages(
 	ctx context.Context, conversationID, turnID string, msgs []message.Message,
 ) error {
-	existing, err := a.s.LoadItems(ctx, conversationID)
+	// NextSeq is a single indexed MAX(seq) lookup instead of loading every
+	// item just to size the append: appends stay O(1) as the conversation
+	// grows instead of degrading to O(n) per turn.
+	seq, err := a.s.NextSeq(ctx, conversationID)
 	if err != nil {
 		return err
 	}
-	seq := int64(len(existing))
 	for i, msg := range msgs {
 		if msg.Content.Text() == "" {
 			continue
@@ -58,6 +60,35 @@ func (a *sqliteTurnStore) LoadMessages(
 		if text == "" {
 			continue
 		}
+		out = append(out, message.NewTextMessage(message.Role(item.Role), text))
+	}
+	return out, nil
+}
+
+// CountMessages implements summary.TurnStore. All stored items are
+// text-bearing (AppendMessages skips empty text), so the item count is the
+// text-message count whose index space stable IDs are derived from.
+func (a *sqliteTurnStore) CountMessages(
+	ctx context.Context, conversationID string,
+) (int, error) {
+	return a.s.CountItems(ctx, conversationID)
+}
+
+// LoadMessagesRange implements summary.TurnStore. It returns the messages
+// with original seq in [from, to]; message i of the result has original
+// index from+i. No empty-text filtering is applied: the store only ever
+// holds text-bearing items (AppendMessages skips empty text), so the index
+// space of the range is exactly the seq space.
+func (a *sqliteTurnStore) LoadMessagesRange(
+	ctx context.Context, conversationID string, from, to int,
+) ([]message.Message, error) {
+	items, err := a.s.LoadItemsRange(ctx, conversationID, int64(from), int64(to))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]message.Message, 0, len(items))
+	for _, item := range items {
+		text, _ := item.Payload["text"].(string)
 		out = append(out, message.NewTextMessage(message.Role(item.Role), text))
 	}
 	return out, nil

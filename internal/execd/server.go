@@ -117,8 +117,6 @@ func (s *Server) handle(
 	switch req.Method {
 	case MethodInitialize:
 		result = InitializeResponse{SessionID: sess.id}
-	case MethodInitialized:
-		result = map[string]bool{"ok": true}
 	case MethodProcessStart:
 		var p ExecParams
 		if err := json.Unmarshal(req.Params, &p); err != nil {
@@ -183,8 +181,6 @@ func (s *Server) handle(
 			TmpDir:       os.TempDir(),
 			Capabilities: caps,
 		}
-	case MethodEnvironmentStatus:
-		result = EnvironmentStatusResponse{Ready: true}
 	default:
 		rpcErr = &RPCError{Code: ErrMethod, Message: "method not found"}
 	}
