@@ -64,6 +64,9 @@ const mainPlaceholder = "Ask opencraft…"
 // resumePlaceholder is the picker hint shown in /resume mode.
 const resumePlaceholder = "↑/↓ pick session · Enter resume · Esc cancel"
 
+// permissionsPlaceholder is the picker hint shown in /permissions mode.
+const permissionsPlaceholder = "↑/↓ pick mode · Enter apply · Esc cancel"
+
 // mode is the explicit top-level UI state. Keyboard routing and the
 // status line derive from it instead of scattered boolean flags.
 type mode int
@@ -73,6 +76,7 @@ const (
 	modeRunning
 	modeAnswering
 	modeResume
+	modePermissions
 	modeTranscript
 )
 
@@ -127,6 +131,19 @@ func (r *resumeState) reset() {
 	r.cursor = 0
 }
 
+// permissionsState is live while mode == modePermissions: the sandbox
+// mode picker (workspace | yolo), with a typed confirmation required
+// before entering yolo.
+type permissionsState struct {
+	cursor  int
+	confirm bool
+}
+
+func (p *permissionsState) reset() {
+	p.cursor = 0
+	p.confirm = false
+}
+
 // transcriptState is live while mode == modeTranscript: the full
 // content of every block that was folded on screen, scrollable above
 // the prompt.
@@ -175,6 +192,9 @@ type Model struct {
 
 	// resume is live while mode == modeResume.
 	resume resumeState
+
+	// permissions is live while mode == modePermissions.
+	permissions permissionsState
 
 	// prevMode is the mode restored when the transcript overlay
 	// closes.
@@ -268,6 +288,8 @@ func (m *Model) exitMode(prev mode) {
 		}
 	case modeResume:
 		m.resume.reset()
+	case modePermissions:
+		m.permissions.reset()
 	case modeTranscript:
 		m.transcript.scroll = 0
 	}
@@ -282,6 +304,9 @@ func (m *Model) enterMode(next mode) {
 	case modeResume:
 		m.input.Reset()
 		m.input.Placeholder = resumePlaceholder
+	case modePermissions:
+		m.input.Reset()
+		m.input.Placeholder = permissionsPlaceholder
 	}
 }
 
@@ -1302,6 +1327,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleAnsweringKey(msg)
 	case modeResume:
 		return m.handleResumeKey(msg)
+	case modePermissions:
+		return m.handlePermissionsKey(msg)
 	case modeRunning:
 		return m.handleRunningKey(msg)
 	default:
@@ -1331,6 +1358,9 @@ func (m *Model) handleIdleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if text == "/resume" {
 			return m.enterResumeMode(), nil
+		}
+		if text == "/permissions" {
+			return m.enterPermissionsMode(), nil
 		}
 		m.input.Reset()
 		m.input.Placeholder = mainPlaceholder
@@ -1459,6 +1489,102 @@ func (m *Model) handleResumeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, nil
+}
+
+// enterPermissionsMode opens the sandbox mode picker, starting at the
+// currently active mode.
+func (m *Model) enterPermissionsMode() tea.Model {
+	m.permissions.cursor = 0
+	m.permissions.confirm = false
+	if m.currentSandboxMode() == ocsessions.ModeYOLO {
+		m.permissions.cursor = 1
+	}
+	m.setMode(modePermissions)
+	return m
+}
+
+// handlePermissionsKey drives the sandbox mode picker. Entering YOLO
+// requires typing "yolo" as a second step; switching back to workspace
+// applies immediately.
+func (m *Model) handlePermissionsKey(
+	msg tea.KeyMsg,
+) (tea.Model, tea.Cmd) {
+	if m.permissions.confirm {
+		switch msg.String() {
+		case "enter":
+			if strings.EqualFold(
+				strings.TrimSpace(m.input.Value()), "yolo") {
+				return m.applyPermissionsMode(ocsessions.ModeYOLO)
+			}
+			return m, nil
+		case "esc":
+			m.permissions.confirm = false
+			m.input.Reset()
+			m.input.Placeholder = permissionsPlaceholder
+			return m, nil
+		case "ctrl+c":
+			return m, tea.Quit
+		}
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(msg)
+		return m, cmd
+	}
+
+	switch msg.String() {
+	case "up", "k":
+		m.permissions.cursor = (m.permissions.cursor + 1) % 2
+	case "down", "j":
+		m.permissions.cursor = (m.permissions.cursor + 1) % 2
+	case "enter":
+		mode := ocsessions.ModeWorkspace
+		if m.permissions.cursor == 1 {
+			mode = ocsessions.ModeYOLO
+		}
+		if mode == ocsessions.ModeYOLO {
+			m.permissions.confirm = true
+			m.input.Reset()
+			m.input.Placeholder = "Type yolo to confirm · Esc cancel"
+			return m, nil
+		}
+		return m.applyPermissionsMode(ocsessions.ModeWorkspace)
+	case "esc":
+		m.setMode(modeIdle)
+		return m, nil
+	case "ctrl+c":
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+// applyPermissionsMode switches the runtime sandbox mode, prints the
+// result into the stream, and returns to idle.
+func (m *Model) applyPermissionsMode(
+	mode ocsessions.Mode,
+) (tea.Model, tea.Cmd) {
+	if m.opts.Sessions != nil {
+		if err := m.opts.Sessions.SetMode(m.opts.ContextID, mode); err != nil {
+			m.stream.pending = append(m.stream.pending,
+				toolErrStyle.Render("✗ permission mode: "+err.Error()))
+		} else {
+			m.stream.pending = append(m.stream.pending,
+				userStyle.Render("↩ Permission mode: "+string(mode)))
+		}
+	}
+	m.setMode(modeIdle)
+	return m, m.flushPending()
+}
+
+// currentSandboxMode returns the active sandbox mode, defaulting to
+// workspace when no session store is attached.
+func (m *Model) currentSandboxMode() ocsessions.Mode {
+	if m.opts.Sessions == nil {
+		return ocsessions.ModeWorkspace
+	}
+	mode, err := m.opts.Sessions.Mode(m.opts.ContextID)
+	if err != nil {
+		return ocsessions.ModeWorkspace
+	}
+	return mode
 }
 
 // flattenHistory prints the stored conversation into the transcript so
@@ -1730,6 +1856,8 @@ func (m *Model) View() string {
 	switch m.mode {
 	case modeResume:
 		lines = append(lines, m.resumePicker())
+	case modePermissions:
+		lines = append(lines, m.permissionsPicker())
 	case modeTranscript:
 		lines = append(lines, m.transcriptView())
 	case modeAnswering:
@@ -1744,6 +1872,11 @@ func (m *Model) View() string {
 	default:
 		lines = append(lines, m.composerBar())
 	}
+	// The footer context line (model · project path) stays pinned
+	// below the composer in every mode.
+	if footer := m.footerLine(); footer != "" {
+		lines = append(lines, footer)
+	}
 	// Trailing blank row: bubbletea's standard renderer erases the
 	// cursor's current line (the last rendered row) when the program
 	// exits, which would otherwise cut off the composer bar's gray
@@ -1751,6 +1884,42 @@ func (m *Model) View() string {
 	// erase hit an empty line instead.
 	lines = append(lines, "")
 	return lipgloss.JoinVertical(lipgloss.Left, lines...)
+}
+
+// footerLine renders the active model and the project path below the
+// composer: "deepseek/deepseek-v4-flash · ~/Workspace/opencraft".
+func (m *Model) footerLine() string {
+	var parts []string
+	if m.model != "" {
+		parts = append(parts, statusTextStyle.Render(m.model))
+	}
+	if path := displayPath(m.opts.WorkDir); path != "" {
+		parts = append(parts, dimStyle.Render(path))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, dimStyle.Render(" · "))
+}
+
+// displayPath abbreviates a directory under the user's home to "~",
+// e.g. /Users/alice/Workspace/proj -> ~/Workspace/proj. Paths outside
+// home are returned unchanged.
+func displayPath(dir string) string {
+	if dir == "" {
+		return ""
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return dir
+	}
+	if dir == home {
+		return "~"
+	}
+	if strings.HasPrefix(dir, home+string(os.PathSeparator)) {
+		return "~" + dir[len(home):]
+	}
+	return dir
 }
 
 // transcriptView renders the full-output overlay: every folded block
@@ -1764,7 +1933,9 @@ func (m *Model) transcriptView() string {
 		all = append(all, b...)
 		all = append(all, "")
 	}
-	viewH := max(1, m.height-2)
+	// One row is reserved for the footer context line below the
+	// overlay so the transcript still fits the terminal height.
+	viewH := max(1, m.height-3)
 	maxScroll := max(0, len(all)-viewH)
 	if m.transcript.scroll > maxScroll {
 		m.transcript.scroll = maxScroll
@@ -1823,6 +1994,36 @@ func (m *Model) resumePicker() string {
 		}
 	}
 	rows = append(rows, dimStyle.Render("  ↑/↓ choose · Enter resume · Esc cancel"))
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+}
+
+// permissionsPicker renders the sandbox mode selector.
+func (m *Model) permissionsPicker() string {
+	rows := []string{reasoningLabelStyle.Render("? Select permission mode")}
+	modes := []ocsessions.Mode{
+		ocsessions.ModeWorkspace,
+		ocsessions.ModeYOLO,
+	}
+	for i, mode := range modes {
+		prefix := "  "
+		if i == m.permissions.cursor {
+			prefix = "❯ "
+		}
+		line := string(mode)
+		if mode == ocsessions.ModeYOLO {
+			line += " — no sandbox, full host access, no prompts"
+		}
+		if i == m.permissions.cursor {
+			rows = append(rows, userStyle.Render(prefix+line))
+		} else {
+			rows = append(rows, dimStyle.Render(prefix+line))
+		}
+	}
+	hint := "↑/↓ choose · Enter apply · Esc cancel"
+	if m.permissions.confirm {
+		hint = "Type yolo to confirm · Esc cancel"
+	}
+	rows = append(rows, dimStyle.Render("  "+hint))
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
 
@@ -1905,9 +2106,6 @@ func (m *Model) interactionSelector() string {
 
 func (m *Model) statusLine() string {
 	var parts []string
-	if m.model != "" {
-		parts = append(parts, statusTextStyle.Render(m.model))
-	}
 	switch m.mode {
 	case modeRunning:
 		parts = append(parts, m.spinner.View()+" working")
@@ -1915,8 +2113,16 @@ func (m *Model) statusLine() string {
 		parts = append(parts, statusTextStyle.Render("answering"))
 	case modeResume:
 		parts = append(parts, statusTextStyle.Render("resume"))
+	case modePermissions:
+		parts = append(parts, statusTextStyle.Render("permissions"))
 	case modeTranscript:
 		parts = append(parts, statusTextStyle.Render("transcript"))
+	}
+	// The yolo badge stays visible outside the picker so the unconfined
+	// mode can never be forgotten mid-session.
+	if m.currentSandboxMode() == ocsessions.ModeYOLO &&
+		m.mode != modePermissions {
+		parts = append(parts, toolErrStyle.Render("yolo"))
 	}
 	if m.note != "" {
 		parts = append(parts, statusTextStyle.Render(m.note))

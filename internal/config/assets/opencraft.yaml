@@ -6,24 +6,16 @@ version: v1
 
 resources:
   # ------------------------------------------------------------------
-  # Runtime foundations: event bus, persistence, memory, checkpoints
+  # Runtime foundations: event bus, memory, session store
   # ------------------------------------------------------------------
   events:
     kind: event.Bus
     impl: memory
-  db:
-    kind: state
-    impl: sqlite
-    settings:
-      # Project-scoped state: memory items + summary nodes share one
-      # session.db with the checkpoint store, so a project's entire
-      # conversation state is self-contained and movable.
-      path: ${env:OPEN_CRAFT_WORKDIR}/.opencraft/sessions/session.db
   mem:
     kind: memory
     impl: summary
     deps:
-      state: db
+      sessions: sessions
       # LLM condensation routes through the inference router so it uses
       # the same user-editable routing policy as agent turns.
       router: router
@@ -52,24 +44,16 @@ resources:
       # Path of the project approvals file (env-expanded); commands
       # approved via "Always allow" / request_permissions land here.
       approvals_path: ${env:OPEN_CRAFT_WORKDIR}/.opencraft/config/approvals.yaml
-  # Runtime-scoped plan store: tools persist plans to it and the
-  # worldstate prepare hook injects the latest plan into the model.
-  planstore:
-    kind: opencraft.planstore
-    impl: holder
-  # Project-scoped conversation store: full text/reasoning history per
-  # session under .opencraft/sessions/<id>/history/.
+  # Project-scoped session store: per-session JSON (history, usage,
+  # permissions, plans) under .opencraft/sessions/<id>/, plus the
+  # SQLite session.db it opens at <root>/session.db (conversation
+  # state tables + agent checkpoints).
   sessions:
     kind: session.Store
     impl: opencraft
     settings:
       root: ${env:OPEN_CRAFT_WORKDIR}/.opencraft/sessions
       window: 40
-  checkpoints:
-    kind: agent.CheckpointStore
-    impl: sqlite
-    settings:
-      path: ${env:OPEN_CRAFT_WORKDIR}/.opencraft/sessions/session.db
 
   # ------------------------------------------------------------------
   # Workspace and sandbox (box.settings.remote selects local/remote exec)
@@ -79,11 +63,23 @@ resources:
     impl: local
     settings:
       root: ${env:OPEN_CRAFT_WORKDIR}
+  # Mode-aware workspace for the file tools: in workspace mode it
+  # delegates to a LocalWorkspace rooted at settings.root; in yolo mode
+  # it allows any host path. The mode is the session's persisted
+  # permission state (switched with /permissions).
+  hostws:
+    kind: opencraft.hostworkspace
+    impl: local
+    deps:
+      sessions: sessions
+    settings:
+      root: ${env:OPEN_CRAFT_WORKDIR}
   box:
     kind: sandbox.Runner
     impl: opencraft
     deps:
       execpolicy: execpolicy
+      sessions: sessions
     settings:
       root: ${env:OPEN_CRAFT_WORKDIR}
       writable_paths: ["${env:OPEN_CRAFT_CACHE}"]
@@ -106,7 +102,7 @@ resources:
     kind: tool.Source
     impl: opencraft/applypatch
     deps:
-      workspace: ws
+      hostworkspace: hostws
   tool.webfetch:
     kind: tool.Source
     impl: opencraft/webfetch
@@ -117,10 +113,12 @@ resources:
     kind: tool.Source
     impl: opencraft/files
     deps:
-      workspace: ws
+      hostworkspace: hostws
   tool.plan:
     kind: tool.Source
     impl: opencraft/plan
+    deps:
+      sessions: sessions
   tool.requestpermissions:
     kind: tool.Source
     impl: opencraft/requestpermissions
@@ -229,7 +227,7 @@ agents:
           memory: mem
           workspace: ws
           execpolicy: execpolicy
-          planstore: planstore
+          sessions: sessions
         settings:
           work_dir: ${env:OPEN_CRAFT_WORKDIR}
           user_dir: ${env:OPEN_CRAFT_DATA_DIR}
@@ -250,7 +248,9 @@ agents:
 
 runtime:
   event_bus: events
-  checkpoint_store: checkpoints
+  # The session store owns the project's session.db and serves as the
+  # agent checkpoint store (one SQLite connection, one schema owner).
+  checkpoint_store: sessions
   sessions:
     idle_timeout: 10m
     resume: false

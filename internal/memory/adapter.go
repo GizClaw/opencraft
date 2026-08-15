@@ -7,7 +7,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/opencraft/internal/memory/summary"
-	"github.com/GizClaw/opencraft/internal/state"
+	"github.com/GizClaw/opencraft/internal/sessions/state"
 )
 
 // sqliteTurnStore adapts *state.Store to summary.TurnStore.

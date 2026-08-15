@@ -77,15 +77,6 @@ func (m *Manager) Rules() []string {
 	return m.allowlist.Rules()
 }
 
-// execPolicy is the slice of the policy manager the sandbox runner
-// needs: the approval decision plus the live allowlist it wraps.
-type execPolicy interface {
-	Approve(ctx context.Context, req sandbox.ApprovalRequest) (sandbox.Decision, error)
-	Allowlist() *sandbox.Allowlist
-}
-
-var _ execPolicy = (*Manager)(nil)
-
 // Approve implements sandbox.ApprovalFunc: it asks the user through
 // the core prompt protocol and grows the allowlist when the user
 // chooses to always allow the command. Ask failures are fail-closed.

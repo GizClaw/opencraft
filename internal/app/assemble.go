@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/GizClaw/flowcraft/backends/checkpoint/sqlite"
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/agent/scriptrt"
 	"github.com/GizClaw/flowcraft/core/deploy"
@@ -38,10 +37,9 @@ import (
 	"github.com/GizClaw/opencraft/internal/app/worldstate"
 	"github.com/GizClaw/opencraft/internal/config"
 	opmemory "github.com/GizClaw/opencraft/internal/memory"
+	"github.com/GizClaw/opencraft/internal/sandbox"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
-	"github.com/GizClaw/opencraft/internal/state"
 	opentools "github.com/GizClaw/opencraft/internal/tools"
-	"github.com/GizClaw/opencraft/internal/tools/plan"
 )
 
 // Options controls assembly paths.
@@ -75,25 +73,6 @@ func WithUsageObserver(fn func(inference.Usage)) Option {
 	return func(o *Options) { o.usageObserver = fn }
 }
 
-// planStoreResource exposes the runtime-scoped plan store as a deploy
-// resource so the worldstate prepare hook can inject the latest plan.
-type planStoreResource struct {
-	store *plan.Store
-}
-
-var _ resource.Factory = planStoreResource{}
-
-func (planStoreResource) Spec() resource.Spec {
-	return resource.Spec{Kind: "opencraft.planstore", Impl: "holder"}
-}
-
-func (f planStoreResource) New(
-	_ context.Context,
-	_ resource.Input,
-) (any, error) {
-	return f.store, nil
-}
-
 // BuildRuntime assembles an opencraft runtime from a deploy document.
 func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*runtimecore.Runtime, error) {
 	o := Options{}
@@ -118,24 +97,11 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 			return nil, err
 		}
 	}
-	// Project conversation state (memory DB + checkpoints) lives under
-	// <project>/.opencraft/sessions; ensure the directory exists before
-	// any resource opens a database there.
-	sessionDir := filepath.Join(o.WorkBase, ".opencraft", "sessions")
-	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
-		return nil, err
-	}
-
 	// Scalar settings in the deploy document reference runtime paths
 	// through ${env:...}; publish them before resources are built.
 	_ = os.Setenv("OPEN_CRAFT_WORKDIR", o.WorkBase)
 	_ = os.Setenv("OPEN_CRAFT_CACHE", cacheDir)
 	_ = os.Setenv("OPEN_CRAFT_DATA_DIR", dataDir)
-
-	// Runtime-scoped shared state for tools: the per-session plan
-	// store (the exec policy is a deploy resource built below).
-	planStore := plan.NewStore(
-		filepath.Join(o.WorkBase, ".opencraft", "sessions"))
 
 	loader := resource.NewLoader(
 		resource.WithBaseDir(o.ConfigBase),
@@ -155,7 +121,6 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 		sandboxlocal.Register,
 		bwrap.Register,
 		seatbelt.Register,
-		sqlite.Register,
 		anthropic.Register,
 		azure.Register,
 		bytedance.Register,
@@ -167,6 +132,7 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 		opmemory.Register,
 		ocsessions.Register,
 		opentools.Register,
+		sandbox.Register,
 		worldstate.Register,
 	}
 	for _, register := range registers {
@@ -174,13 +140,7 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 			return nil, err
 		}
 	}
-	reg.MustRegister(sandboxFactory{})
 	reg.MustRegister(execPolicyResource{})
-	reg.MustRegister(planStoreResource{store: planStore})
-	reg.MustRegister(opentools.NewPlanSourceFactory(planStore))
-	reg.MustRegister(state.Factory{
-		DefaultPath: filepath.Join(sessionDir, "session.db"),
-	})
 
 	builder := runtimecore.NewBuilder(reg)
 	if err := builder.WithLoader(loader); err != nil {

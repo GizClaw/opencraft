@@ -17,6 +17,7 @@ var (
 type permissionsData struct {
 	Profile          string
 	ApprovedPrefixes string
+	YOLO             bool
 }
 
 type environmentData struct {

@@ -1,4 +1,4 @@
-package app
+package sandbox
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/GizClaw/flowcraft/core/sandbox"
+	coresandbox "github.com/GizClaw/flowcraft/core/sandbox"
 )
 
 func TestSandboxRunnerEmptyPolicy(t *testing.T) {
@@ -19,7 +19,7 @@ func TestSandboxRunnerEmptyPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = runner.Close() }()
-	want := sandbox.EnvPolicy{}
+	want := coresandbox.EnvPolicy{}
 	if !reflect.DeepEqual(policy, want) {
 		t.Errorf("empty policy = %+v, want zero-value EnvPolicy", policy)
 	}
@@ -44,7 +44,7 @@ func TestSandboxRunnerConfiguredPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = runner.Close() }()
-	want := sandbox.EnvPolicy{
+	want := coresandbox.EnvPolicy{
 		Allow:  pol.EnvPolicy.Allow,
 		Inject: pol.EnvPolicy.Inject,
 	}

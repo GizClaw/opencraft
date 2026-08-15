@@ -6,9 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/message"
-
-	cpsqlite "github.com/GizClaw/flowcraft/backends/checkpoint/sqlite"
 )
 
 func TestOpenMigrateAndRoundTrip(t *testing.T) {
@@ -73,11 +72,10 @@ func TestOpenMigrateAndRoundTrip(t *testing.T) {
 	_ = s2.Close()
 }
 
-// TestSessionDBSharedWithCheckpoints verifies the state store and the
-// flowcraft checkpoint store can share one database file (the embedded
-// document points both at <project>/.opencraft/sessions/session.db):
-// their schemas must coexist and both connections must work.
-func TestSessionDBSharedWithCheckpoints(t *testing.T) {
+// TestStateServesCheckpoints verifies that the opencraft state store
+// is the single SQLite owner: it implements agent.CheckpointStore on
+// its own connection instead of a second backend sharing the file.
+func TestStateServesCheckpoints(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "sessions", "session.db")
 	s, err := Open(path)
@@ -86,13 +84,7 @@ func TestSessionDBSharedWithCheckpoints(t *testing.T) {
 	}
 	defer func() { _ = s.Close() }()
 
-	cp, err := cpsqlite.Open(path)
-	if err != nil {
-		t.Fatalf("checkpoint store on shared file: %v", err)
-	}
-	defer func() { _ = cp.Close() }()
-
-	// Both schemas exist in the same file.
+	// The checkpoint schema is part of state's own migrations.
 	rows, err := s.db.Query(
 		"SELECT name FROM sqlite_master WHERE type='table'")
 	if err != nil {
@@ -119,19 +111,44 @@ func TestSessionDBSharedWithCheckpoints(t *testing.T) {
 		}
 	}
 
-	// Both stores remain writable after sharing the file.
-	now := time.Now().UTC()
-	if err := s.AppendItem(ctx, Item{
-		ID:        "i1",
-		ThreadID:  "t1",
-		TurnID:    "r1",
-		Seq:       0,
-		ItemType:  "text",
-		Role:      "user",
-		Payload:   map[string]any{"text": "hello"},
-		CreatedAt: now,
-	}); err != nil {
-		t.Fatalf("append item after sharing: %v", err)
+	// state.Store persists and loads checkpoints on its own handle.
+	cp := agent.Checkpoint{
+		ExecID:    "run-1",
+		Steps:     []string{"step-a"},
+		Iteration: 2,
+		Board: &agent.BoardSnapshot{
+			Vars: map[string]any{"k": "v"},
+		},
+		Attributes: map[string]string{"graph": "assistant"},
+		Timestamp:  time.Now().UTC(),
+	}
+	if err := s.Save(ctx, cp); err != nil {
+		t.Fatalf("save checkpoint: %v", err)
+	}
+	loaded, err := s.Load(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("load checkpoint: %v", err)
+	}
+	if loaded == nil || loaded.ExecID != "run-1" ||
+		loaded.Iteration != 2 || len(loaded.Steps) != 1 ||
+		loaded.Board == nil {
+		t.Fatalf("loaded checkpoint = %+v", loaded)
+	}
+	// A missing exec id returns (nil, nil).
+	missing, err := s.Load(ctx, "nope")
+	if err != nil || missing != nil {
+		t.Fatalf("load missing = %v, %v", missing, err)
+	}
+	// List and Delete round out the optional interfaces.
+	ids, err := s.List(ctx)
+	if err != nil || len(ids) != 1 || ids[0] != "run-1" {
+		t.Fatalf("list = %v, %v", ids, err)
+	}
+	if err := s.Delete(ctx, "run-1"); err != nil {
+		t.Fatalf("delete checkpoint: %v", err)
+	}
+	if got, _ := s.Load(ctx, "run-1"); got != nil {
+		t.Fatal("checkpoint not deleted")
 	}
 }
 

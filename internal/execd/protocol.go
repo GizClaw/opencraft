@@ -103,6 +103,10 @@ type ExecParams struct {
 	Rows      int                  `json:"rows,omitempty"`
 	Cols      int                  `json:"cols,omitempty"`
 	Sandbox   *sandbox.ExecOptions `json:"sandbox,omitempty"`
+	// Unconfined requests host-direct execution (YOLO mode): the child
+	// runs the command through its unconfined backend with the full
+	// host environment instead of the platform sandbox.
+	Unconfined bool `json:"unconfined,omitempty"`
 }
 
 // ExecResponse confirms a started process.

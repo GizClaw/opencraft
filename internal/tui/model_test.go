@@ -76,6 +76,52 @@ func TestViewRendersStatusAndPrompt(t *testing.T) {
 	}
 }
 
+func TestFooterShowsModelAndProjectPath(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := New(nil, Options{
+		Model:   "deepseek/x",
+		WorkDir: filepath.Join(home, "Workspace", "opencraft"),
+	}, NewBridge(16), nil)
+	m.width = 80
+	// The model moves out of the status line into the footer below
+	// the input box, next to the project path.
+	if st := m.statusLine(); strings.Contains(st, "deepseek/x") {
+		t.Errorf("status line must not show the model: %q", st)
+	}
+	v := m.View()
+	if !strings.Contains(v, "deepseek/x · ~/Workspace/opencraft") {
+		t.Errorf("footer must show model and project path: %q", v)
+	}
+	lines := strings.Split(v, "\n")
+	// The footer is the last content row: directly below the composer
+	// bar, with only the trailing blank row after it.
+	if last := strings.TrimSpace(lines[len(lines)-1]); last != "" {
+		t.Fatalf("view should end with a trailing blank row: %q", v)
+	}
+	if !strings.Contains(lines[len(lines)-2], "~/Workspace/opencraft") {
+		t.Errorf("footer must be the bottom content line: %q", v)
+	}
+}
+
+func TestDisplayPathAbbreviatesHome(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := displayPath(filepath.Join(home, "proj")); got != "~/proj" {
+		t.Errorf("displayPath(home/proj) = %q, want ~/proj", got)
+	}
+	if got := displayPath("/opt/elsewhere"); got != "/opt/elsewhere" {
+		t.Errorf("displayPath outside home = %q", got)
+	}
+	if got := displayPath(""); got != "" {
+		t.Errorf("displayPath empty = %q", got)
+	}
+}
+
 func TestStatusLineShowsCacheHitRate(t *testing.T) {
 	m := newTestModel()
 	m.applyEvent(Event{Usage: &UsageEvent{
@@ -211,6 +257,88 @@ func TestTurnDoneFailedWithoutErrFallsBack(t *testing.T) {
 	}})
 	if cmd == nil || !strings.Contains(fmt.Sprintf("%#v", cmd()), "turn failed") {
 		t.Errorf("flush cmd = %#v", cmd)
+	}
+}
+
+func permissionsTestModel(t *testing.T) *Model {
+	t.Helper()
+	store, err := ocsessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return New(nil, Options{
+		ContextID: id,
+		Sessions:  store,
+	}, NewBridge(16), nil)
+}
+
+func TestPermissionsCommandEntersPicker(t *testing.T) {
+	m := permissionsTestModel(t)
+	m.input.SetValue("/permissions")
+	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	next := updated.(*Model)
+	if next.mode != modePermissions {
+		t.Fatalf("mode = %v, want permissions picker", next.mode)
+	}
+	if !strings.Contains(next.View(), "workspace") ||
+		!strings.Contains(next.View(), "yolo") {
+		t.Errorf("picker = %q", next.View())
+	}
+}
+
+func TestPermissionsYoloRequiresConfirmation(t *testing.T) {
+	m := permissionsTestModel(t)
+	m.input.SetValue("/permissions")
+	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(*Model)
+	updated, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyDown})
+	m = updated.(*Model)
+	updated, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(*Model)
+	if !m.permissions.confirm {
+		t.Fatal("yolo selection must require typed confirmation")
+	}
+	if mode, _ := m.opts.Sessions.Mode(m.opts.ContextID); mode == ocsessions.ModeYOLO {
+		t.Fatal("mode must not change before confirmation")
+	}
+	// Wrong input does not apply.
+	m.input.SetValue("yes")
+	updated, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(*Model)
+	if mode, _ := m.opts.Sessions.Mode(m.opts.ContextID); mode == ocsessions.ModeYOLO {
+		t.Fatal("mode changed without yolo confirmation")
+	}
+	// Typing yolo applies and returns to idle.
+	m.input.SetValue("yolo")
+	updated, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(*Model)
+	if m.mode != modeIdle {
+		t.Fatalf("mode = %v, want idle after apply", m.mode)
+	}
+	if mode, _ := m.opts.Sessions.Mode(m.opts.ContextID); mode != ocsessions.ModeYOLO {
+		t.Fatalf("mode = %q, want yolo", mode)
+	}
+	if !strings.Contains(m.statusLine(), "yolo") {
+		t.Errorf("status line should show the yolo badge: %q", m.statusLine())
+	}
+}
+
+func TestPermissionsEscCancels(t *testing.T) {
+	m := permissionsTestModel(t)
+	m.input.SetValue("/permissions")
+	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(*Model)
+	updated, _ = m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(*Model)
+	if m.mode != modeIdle {
+		t.Fatalf("mode = %v, want idle after esc", m.mode)
+	}
+	if mode, _ := m.opts.Sessions.Mode(m.opts.ContextID); mode != ocsessions.ModeWorkspace {
+		t.Fatalf("mode = %q, want workspace", mode)
 	}
 }
 

@@ -26,6 +26,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/config"
 	"github.com/GizClaw/opencraft/internal/execd"
 	"github.com/GizClaw/opencraft/internal/interact"
+	"github.com/GizClaw/opencraft/internal/sandbox"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/telemetry"
 	"github.com/GizClaw/opencraft/internal/tui"
@@ -202,13 +203,13 @@ func runExecServer() {
 	if _, err := config.EnsureUserConfig(); err != nil {
 		fatal(1, "opencraft execd: seed config: %v", err)
 	}
-	var pol app.SandboxPolicy
+	var pol sandbox.SandboxPolicy
 	if *sandboxPolicy != "" {
 		if err := json.Unmarshal([]byte(*sandboxPolicy), &pol); err != nil {
 			fatal(1, "opencraft execd: sandbox policy: %v", err)
 		}
 	}
-	runner, policy, err := app.SandboxRunner(ctx, *workDir, pol)
+	runner, policy, err := sandbox.SandboxRunner(ctx, *workDir, pol)
 	if err != nil {
 		fatal(1, "opencraft execd: %v", err)
 	}
@@ -216,6 +217,7 @@ func runExecServer() {
 	if *listen == "" {
 		srv := execd.New(runner, os.Stdin, os.Stdout)
 		srv.DefaultEnv = policy
+		srv.SetUnconfinedBackend(sandbox.UnconfinedRunner(*workDir))
 		if err := srv.Serve(ctx); err != nil {
 			fatal(1, "opencraft execd: %v", err)
 		}
@@ -290,6 +292,7 @@ func runExecServer() {
 			}()
 			srv := execd.New(runner, conn, conn)
 			srv.DefaultEnv = policy
+			srv.SetUnconfinedBackend(sandbox.UnconfinedRunner(*workDir))
 			_ = srv.Serve(ctx)
 		}()
 	}

@@ -1,4 +1,7 @@
 Permission profile: {{.Profile}}
+{{if .YOLO}}Sandbox mode: yolo — commands run unconfined with the full host
+environment and no approval prompts; file tools may reach any path.
+{{end}}
 {{if .ApprovedPrefixes}}Approved command prefixes: {{.ApprovedPrefixes}}
 {{end}}Commands outside the approved allowlist ask the user for approval
 (allow once / always allow / deny; "always allow" rules are persisted to

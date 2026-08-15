@@ -12,6 +12,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/memory"
 	"github.com/GizClaw/flowcraft/core/workspace"
 
+	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/tools/plan"
 )
 
@@ -36,7 +37,7 @@ type Options struct {
 	// defaults below.
 	MemoryMaxItems int
 	MemoryMaxChars int
-	Workspace         workspace.Workspace // optional; in-root file reads go through it
+	Workspace      workspace.Workspace // optional; in-root file reads go through it
 }
 
 // PrefixProvider supplies the current sandbox allowlist rules. The
@@ -48,13 +49,13 @@ type PrefixProvider interface {
 
 // Service gathers and caches world state per conversation.
 type Service struct {
-	opts     Options
-	memory   memory.ContextProvider // optional; set after deploy resolves it
-	prefixes PrefixProvider         // optional; live allowlist rules
-	plans    *plan.Store            // optional; latest plan injection
-	mu       sync.Mutex
-	sessions map[string]*sessionState
-	order    []string
+	opts         Options
+	memory       memory.ContextProvider // optional; set after deploy resolves it
+	prefixes     PrefixProvider         // optional; live allowlist rules
+	sessionStore *ocsessions.Store      // optional; per-session sandbox mode
+	mu           sync.Mutex
+	sessions     map[string]*sessionState
+	order        []string
 }
 
 type sessionState struct {
@@ -90,9 +91,9 @@ func (s *Service) SetMemory(m memory.ContextProvider) { s.memory = m }
 // SetPrefixProvider wires the live sandbox allowlist rules source.
 func (s *Service) SetPrefixProvider(p PrefixProvider) { s.prefixes = p }
 
-// SetPlans wires the plan store so the latest plan is visible to the
-// model on every turn.
-func (s *Service) SetPlans(st *plan.Store) { s.plans = st }
+// SetSessions wires the session store so the permissions section can
+// report whether the current session is running unconfined (YOLO).
+func (s *Service) SetSessions(st *ocsessions.Store) { s.sessionStore = st }
 
 // RenderToBoard writes the world state into board vars:
 //   - world.sections: static sections (AGENTS.md, permissions,
@@ -119,17 +120,19 @@ func (s *Service) RenderToBoard(
 	// Permissions are live state: the allowlist grows when the user
 	// approves commands, so render it on every turn instead of caching
 	// it with the static sections.
-	permissions, err := s.permissionsSection()
+	permissions, err := s.permissionsSection(contextID)
 	if err != nil {
 		return err
 	}
 	if permissions.Text != "" {
 		sections = append(sections, permissions)
 	}
-	if s.plans != nil {
+	if s.sessionStore != nil {
 		// Inject only while there is still work: a fully completed
 		// plan is stale context, so it is dropped from the prompt.
-		if p, ok := s.plans.Latest(agentID, contextID); ok && !p.Done() {
+		if p, ok := plan.NewStore(s.sessionStore).Latest(
+			agentID, contextID,
+		); ok && !p.Done() {
 			sections = append(sections, Section{
 				ID:   "plan",
 				Role: "system",

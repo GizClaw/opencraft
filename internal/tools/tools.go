@@ -10,12 +10,12 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/sandbox"
 	"github.com/GizClaw/flowcraft/core/tool"
 	"github.com/GizClaw/flowcraft/core/workspace"
 
+	"github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/tools/applypatch"
 	"github.com/GizClaw/opencraft/internal/tools/askuser"
 	"github.com/GizClaw/opencraft/internal/tools/execcommand"
@@ -36,6 +36,7 @@ func Register(r *resource.Registry) error {
 		r.Register(askuserSourceFactory{}),
 		r.Register(filesSourceFactory{}),
 		r.Register(requestpermissionsSourceFactory{}),
+		r.Register(planSourceFactory{}),
 	)
 }
 
@@ -79,7 +80,7 @@ func (applypatchSourceFactory) Spec() resource.Spec {
 		Kind: "tool.Source",
 		Impl: "opencraft/applypatch",
 		Deps: []resource.DepSpec{
-			{Name: "workspace", Type: "workspace.Workspace", Required: true},
+			{Name: "hostworkspace", Type: "opencraft.hostworkspace", Required: true},
 		},
 	}
 }
@@ -88,7 +89,8 @@ func (applypatchSourceFactory) New(_ context.Context, in resource.Input) (any, e
 	if !sourceEnabled(in) {
 		return toolList{}, nil
 	}
-	ws, err := resourcedep.Required[workspace.Workspace](in, "tool source", "workspace")
+	ws, err := resourcedep.Required[workspace.Workspace](
+		in, "tool source", "hostworkspace")
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +140,7 @@ func (filesSourceFactory) Spec() resource.Spec {
 		Kind: "tool.Source",
 		Impl: "opencraft/files",
 		Deps: []resource.DepSpec{
-			{Name: "workspace", Type: "workspace.Workspace", Required: true},
+			{Name: "hostworkspace", Type: "opencraft.hostworkspace", Required: true},
 		},
 	}
 }
@@ -147,7 +149,8 @@ func (filesSourceFactory) New(_ context.Context, in resource.Input) (any, error)
 	if !sourceEnabled(in) {
 		return toolList{}, nil
 	}
-	ws, err := resourcedep.Required[workspace.Workspace](in, "tool source", "workspace")
+	ws, err := resourcedep.Required[workspace.Workspace](
+		in, "tool source", "hostworkspace")
 	if err != nil {
 		return nil, err
 	}
@@ -185,37 +188,33 @@ func (requestpermissionsSourceFactory) New(
 	return toolList{requestpermissions.New(policy)}, nil
 }
 
-// PlanSourceFactory contributes the update_plan tool over a
-// runtime-scoped store.
-type PlanSourceFactory struct {
-	store *plan.Store
-}
+// planSourceFactory contributes the update_plan tool over the session
+// store (plan persistence lives with the session's other state).
+type planSourceFactory struct{}
 
-// NewPlanSourceFactory returns a tool.Source factory for the
-// update_plan tool. store must not be nil.
-func NewPlanSourceFactory(store *plan.Store) resource.Factory {
-	return PlanSourceFactory{store: store}
-}
-
-func (PlanSourceFactory) Spec() resource.Spec {
+func (planSourceFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "tool.Source",
 		Impl: "opencraft/plan",
+		Deps: []resource.DepSpec{
+			{Name: "sessions", Type: sessions.ResourceKind, Required: true},
+		},
 	}
 }
 
-func (f PlanSourceFactory) New(
+func (planSourceFactory) New(
 	_ context.Context,
 	in resource.Input,
 ) (any, error) {
 	if !sourceEnabled(in) {
 		return toolList{}, nil
 	}
-	if f.store == nil {
-		return nil, errdefs.Validationf(
-			"update_plan tool resource: store is required")
+	store, err := resourcedep.Required[*sessions.Store](
+		in, "update_plan tool", "sessions")
+	if err != nil {
+		return nil, err
 	}
-	return toolList(plan.MustNew(f.store).Tools()), nil
+	return toolList(plan.MustNew(plan.NewStore(store)).Tools()), nil
 }
 
 // toolList adapts a fixed []tool.Tool to tool.Source.

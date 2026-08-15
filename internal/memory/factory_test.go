@@ -10,14 +10,14 @@ import (
 	"github.com/GizClaw/flowcraft/core/resource"
 
 	"github.com/GizClaw/opencraft/internal/memory/summary"
-	"github.com/GizClaw/opencraft/internal/state"
+	"github.com/GizClaw/opencraft/internal/sessions"
 )
 
 // TestFactoryWiresRouter verifies the memory assembly builds over a
 // router dep (the wiring used by the embedded deploy document) and
 // still assembles without one (buffer-fold-only deployments).
 func TestFactoryWiresRouter(t *testing.T) {
-	store, err := state.Open(filepath.Join(t.TempDir(), "state.db"))
+	store, err := sessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,8 +44,8 @@ func TestFactoryWiresRouter(t *testing.T) {
 	value, err := (Factory{}).New(context.Background(), resource.Input{
 		Settings: []byte(`{"max_raw_messages":32,"preserve_recent":4}`),
 		Deps: map[string]any{
-			"state":  store,
-			"router": router,
+			"sessions": store,
+			"router":   router,
 		},
 	})
 	if err != nil {
@@ -59,7 +59,7 @@ func TestFactoryWiresRouter(t *testing.T) {
 	value, err = (Factory{}).New(context.Background(), resource.Input{
 		Settings: []byte(`{"max_raw_messages":32,"preserve_recent":4}`),
 		Deps: map[string]any{
-			"state": store,
+			"sessions": store,
 		},
 	})
 	if err != nil {

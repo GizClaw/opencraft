@@ -5,11 +5,30 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+
+	"github.com/GizClaw/opencraft/internal/sessions"
 )
+
+func newSessionsStore(t *testing.T) *sessions.Store {
+	t.Helper()
+	store, err := sessions.New(t.TempDir(), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+func mustSessions(t *testing.T, root string) *sessions.Store {
+	t.Helper()
+	store, err := sessions.New(root, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
 
 // sessionCtx wraps ctx with the RunInfo flowcraft injects during graph
 // execution, so update_plan can resolve its agent/session identity.
@@ -23,7 +42,7 @@ func sessionCtx(agentID, sessionID string) context.Context {
 }
 
 func TestUpdatePlanReplacesSnapshot(t *testing.T) {
-	store := NewStore("")
+	store := NewStore(newSessionsStore(t))
 	tool, err := New(store)
 	if err != nil {
 		t.Fatalf("plan.New: %v", err)
@@ -68,7 +87,7 @@ func TestUpdatePlanReplacesSnapshot(t *testing.T) {
 }
 
 func TestPlanIsolatedByAgentAndSession(t *testing.T) {
-	store := NewStore("")
+	store := NewStore(newSessionsStore(t))
 	tool := MustNew(store).Tools()[0]
 
 	for _, tc := range []struct {
@@ -122,7 +141,7 @@ func TestKeyFromContext(t *testing.T) {
 }
 
 func TestUpdatePlanValidation(t *testing.T) {
-	store := NewStore("")
+	store := NewStore(newSessionsStore(t))
 	tool := MustNew(store).Tools()[0]
 	ctx := context.Background()
 
@@ -167,7 +186,7 @@ func TestUpdatePlanValidation(t *testing.T) {
 
 func TestPlanPersistsAcrossStores(t *testing.T) {
 	root := t.TempDir()
-	store := NewStore(root)
+	store := NewStore(mustSessions(t, root))
 	if _, err := store.Update("assistant", "sess-1", UpdatePlanArgs{
 		Explanation: strptr("persist me"),
 		Plan: []PlanItem{
@@ -195,8 +214,8 @@ func TestPlanPersistsAcrossStores(t *testing.T) {
 		t.Fatalf("plans.json missing agent key: %s", data)
 	}
 
-	// A fresh store over the same root must see the persisted plan.
-	reopened := NewStore(root)
+	// A fresh plan store over the same session root must see the plan.
+	reopened := NewStore(mustSessions(t, root))
 	got, ok := reopened.Latest("assistant", "sess-1")
 	if !ok {
 		t.Fatal("persisted plan not found")
@@ -209,7 +228,7 @@ func TestPlanPersistsAcrossStores(t *testing.T) {
 
 func TestPlansFileKeyedByAgent(t *testing.T) {
 	root := t.TempDir()
-	store := NewStore(root)
+	store := NewStore(mustSessions(t, root))
 	if _, err := store.Update("assistant", "sess-1", UpdatePlanArgs{
 		Plan: []PlanItem{{Step: "agent a", Status: StatusInProgress}},
 	}); err != nil {
@@ -235,7 +254,7 @@ func TestPlansFileKeyedByAgent(t *testing.T) {
 	}
 
 	// A fresh store sees both entries, still isolated per agent.
-	reopened := NewStore(root)
+	reopened := NewStore(mustSessions(t, root))
 	gotA, okA := reopened.Latest("assistant", "sess-1")
 	gotB, okB := reopened.Latest("reviewer", "sess-1")
 	if !okA || gotA.Items[0].Step != "agent a" ||
@@ -246,7 +265,7 @@ func TestPlansFileKeyedByAgent(t *testing.T) {
 
 func TestUpdateDoesNotClobberOtherAgent(t *testing.T) {
 	root := t.TempDir()
-	first := NewStore(root)
+	first := NewStore(mustSessions(t, root))
 	if _, err := first.Update("assistant", "sess-1", UpdatePlanArgs{
 		Plan: []PlanItem{{Step: "keep me", Status: StatusInProgress}},
 	}); err != nil {
@@ -254,23 +273,23 @@ func TestUpdateDoesNotClobberOtherAgent(t *testing.T) {
 	}
 	// A second store over the same root updates another agent in the
 	// same session: the first agent's plan must survive the rewrite.
-	second := NewStore(root)
+	second := NewStore(mustSessions(t, root))
 	if _, err := second.Update("reviewer", "sess-1", UpdatePlanArgs{
 		Plan: []PlanItem{{Step: "new agent", Status: StatusPending}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	reopened := NewStore(root)
+	reopened := NewStore(mustSessions(t, root))
 	got, ok := reopened.Latest("assistant", "sess-1")
 	if !ok || got.Items[0].Step != "keep me" {
 		t.Errorf("assistant plan clobbered: %+v", got)
 	}
 }
 
-func TestStoreWithoutPathStaysEmpty(t *testing.T) {
-	store := NewStore("")
+func TestEmptySessionHasNoPlan(t *testing.T) {
+	store := NewStore(newSessionsStore(t))
 	if _, ok := store.Latest("assistant", "sess-1"); ok {
-		t.Fatal("empty store must not report a plan")
+		t.Fatal("session without a plan file must not report one")
 	}
 }
 
@@ -299,17 +318,6 @@ func TestPlanDone(t *testing.T) {
 				t.Errorf("Done() = %v, want %v", got, tc.done)
 			}
 		})
-	}
-}
-
-func TestPathForSanitizesIDs(t *testing.T) {
-	store := NewStore("/root")
-	got := store.pathFor("a/b")
-	if got != "/root/default/plans.json" {
-		t.Errorf("unsafe ids not sanitized: %q", got)
-	}
-	if ok := strings.Contains(store.pathFor("sess-1"), "/sess-1/plans.json"); !ok {
-		t.Errorf("pathFor = %q", store.pathFor("sess-1"))
 	}
 }
 

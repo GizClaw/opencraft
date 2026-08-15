@@ -9,14 +9,14 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference/route"
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/opencraft/internal/memory/summary"
-	"github.com/GizClaw/opencraft/internal/state"
+	"github.com/GizClaw/opencraft/internal/sessions"
 )
 
 // ResourceKind is the deploy resource kind for opencraft memory.
 const ResourceKind = "memory"
 
 // Factory builds the summary memory assembly from deploy settings,
-// depending on a state resource of kind "state".
+// depending on the session store (which owns the SQLite state).
 type Factory struct{}
 
 var _ resource.Factory = Factory{}
@@ -39,7 +39,7 @@ func (Factory) Spec() resource.Spec {
 		Kind: ResourceKind,
 		Impl: "summary",
 		Deps: []resource.DepSpec{
-			{Name: "state", Type: state.ResourceKind, Required: true},
+			{Name: "sessions", Type: sessions.ResourceKind, Required: true},
 			// Optional: the inference router. LLM condensation goes
 			// through it so the compaction model follows the
 			// user-editable routing policy; absent deployments stay
@@ -57,13 +57,15 @@ type policySettings struct {
 
 // New builds the summary Assembly over the SQLite adapter.
 func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
-	dep, ok := in.Dep("state")
+	dep, ok := in.Dep("sessions")
 	if !ok {
-		return nil, errdefs.Validationf("memory: state dependency is required")
+		return nil, errdefs.Validationf(
+			"memory: sessions dependency is required")
 	}
-	store, ok := dep.(*state.Store)
+	sessionsStore, ok := dep.(*sessions.Store)
 	if !ok {
-		return nil, errdefs.Validationf("memory: state dep is not *state.Store")
+		return nil, errdefs.Validationf(
+			"memory: sessions dep is not *sessions.Store")
 	}
 	policy, err := resource.DecodeTyped[policySettings](in.Settings)
 	if err != nil {
@@ -81,7 +83,8 @@ func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 			opts = append(opts, summary.WithRouter(router))
 		}
 	}
-	return summary.NewAssembly(&sqliteTurnStore{s: store}, opts...), nil
+	return summary.NewAssembly(
+		&sqliteTurnStore{s: sessionsStore.State()}, opts...), nil
 }
 
 func timeNow() time.Time { return time.Now().UTC() }

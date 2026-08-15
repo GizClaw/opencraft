@@ -10,8 +10,6 @@ github.com/AzureAD/microsoft-authentication-library-for-go v1.7.2/go.mod h1:HKpQ
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
 github.com/GizClaw/doubao-speech-go v0.0.0-20260723152315-fe8153366feb h1:iS4tRKtteioA1ZDrUqn2tGkBjM4fiQeRoqJx6E3dD34=
 github.com/GizClaw/doubao-speech-go v0.0.0-20260723152315-fe8153366feb/go.mod h1:4R3wUAZkYk1BSgzv+QVF+2SZPu3VDy8NvaQdNRYGgBs=
-github.com/GizClaw/flowcraft/backends/checkpoint v0.1.0 h1:owLPOHCl1RqoyPmgGnqakUi2lZCP6/7rh0gEgo7Jimo=
-github.com/GizClaw/flowcraft/backends/checkpoint v0.1.0/go.mod h1:Pa4XnKoEaQ0Ew95/8z771sYQgA8ohScJoWdIc5yp7ys=
 github.com/GizClaw/flowcraft/core v0.1.10 h1:Z0NAbJfNRPME/9hR6zqHxOEx5h4ktCJtVxVBjm+bgFY=
 github.com/GizClaw/flowcraft/core v0.1.10/go.mod h1:t4e1E55RSCsZTDGLCKLeg0Qags72Y2Yz2ZtL3EyGy1k=
 github.com/GizClaw/flowcraft/driver/anthropic v0.1.2 h1:ePmRv0M8pEDnE4f5GmPaF+n09f+J4IHF/HfiNddSRwA=

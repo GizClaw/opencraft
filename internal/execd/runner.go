@@ -20,6 +20,7 @@ type RemoteRunner struct {
 	client *Client
 	stop   func()
 	caps   sandbox.Capabilities
+	modeFn func(context.Context) bool
 }
 
 // NewRemoteRunner queries the child's capabilities and returns a
@@ -52,6 +53,13 @@ func NewRemoteRunner(client *Client, stop func()) (*RemoteRunner, error) {
 	}, nil
 }
 
+// SetModeFunc wires a per-request YOLO resolver: it receives the start
+// request's context (which carries the session identity) and reports
+// whether the command should run unconfined.
+func (r *RemoteRunner) SetModeFunc(fn func(context.Context) bool) {
+	r.modeFn = fn
+}
+
 var _ sandbox.Runner = (*RemoteRunner)(nil)
 
 // Capabilities reports the child server's session features.
@@ -67,15 +75,16 @@ func (r *RemoteRunner) Start(
 	}
 	opts := spec.Opts
 	resp, err := r.client.Start(ctx, ExecParams{
-		ProcessID: spec.ID,
-		Argv:      spec.Argv,
-		Cwd:       opts.WorkDir,
-		Env:       opts.Env.Inject,
-		TTY:       spec.TTY,
-		Timeout:   opts.Timeout,
-		Rows:      spec.Rows,
-		Cols:      spec.Cols,
-		Sandbox:   &opts,
+		ProcessID:  spec.ID,
+		Argv:       spec.Argv,
+		Cwd:        opts.WorkDir,
+		Env:        opts.Env.Inject,
+		TTY:        spec.TTY,
+		Timeout:    opts.Timeout,
+		Rows:       spec.Rows,
+		Cols:       spec.Cols,
+		Sandbox:    &opts,
+		Unconfined: r.modeFn != nil && r.modeFn(ctx),
 	})
 	if err != nil {
 		return nil, err

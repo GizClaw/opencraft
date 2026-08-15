@@ -17,9 +17,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/resource"
+
+	"github.com/GizClaw/opencraft/internal/sessions/state"
 )
 
 // ResourceKind is the deploy resource kind implemented by this package.
@@ -46,11 +49,14 @@ type Usage struct {
 	LatencyMs        int64 `json:"latency_ms,omitempty"`
 }
 
-// Store persists conversations under a root directory. It is safe for
-// concurrent use.
+// Store is the project's single session store: per-session JSON state
+// (history, usage, permissions, plans) under <root>/<sid>/, plus the
+// SQLite database at <root>/session.db that owns the conversation
+// state tables and agent checkpoints. It is safe for concurrent use.
 type Store struct {
 	root   string
 	window int
+	db     *state.Store
 }
 
 // New creates a Store rooted at root. The window is the number of
@@ -65,8 +71,43 @@ func New(root string, window int) (*Store, error) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, err
 	}
-	return &Store{root: root, window: window}, nil
+	db, err := state.Open(filepath.Join(root, "session.db"))
+	if err != nil {
+		return nil, err
+	}
+	return &Store{root: root, window: window, db: db}, nil
 }
+
+// State returns the SQLite store backing this session store (the
+// conversation state tables and agent checkpoints).
+func (s *Store) State() *state.Store { return s.db }
+
+// Close closes the SQLite database handle.
+func (s *Store) Close() error {
+	if s.db == nil {
+		return nil
+	}
+	return s.db.Close()
+}
+
+// Save implements agent.CheckpointStore (delegating to the SQLite
+// store, which is the single checkpoint owner).
+func (s *Store) Save(ctx context.Context, cp agent.Checkpoint) error {
+	return s.db.Save(ctx, cp)
+}
+
+// Load implements agent.CheckpointStore.
+func (s *Store) Load(ctx context.Context, execID string) (*agent.Checkpoint, error) {
+	return s.db.Load(ctx, execID)
+}
+
+// Delete implements agent.CheckpointDeleter.
+func (s *Store) Delete(ctx context.Context, execID string) error {
+	return s.db.Delete(ctx, execID)
+}
+
+var _ agent.CheckpointStore = (*Store)(nil)
+var _ agent.CheckpointDeleter = (*Store)(nil)
 
 // NewID returns a fresh random session id.
 func NewID() string {

@@ -9,7 +9,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/workspace"
 
 	opmemory "github.com/GizClaw/opencraft/internal/memory"
-	"github.com/GizClaw/opencraft/internal/tools/plan"
+	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/utils/resourcedep"
 )
 
@@ -37,9 +37,9 @@ func (prepareFactory) Spec() resource.Spec {
 			// Optional: the sandbox exec policy rules source. Deployments
 			// without it simply omit the approved-prefix line.
 			{Name: "execpolicy", Type: "opencraft.execpolicy", Required: false},
-			// Optional: the runtime plan store. Deployments without it
-			// simply omit the plan section.
-			{Name: "planstore", Type: "opencraft.planstore", Required: false},
+			// Optional: the session store. Deployments without it
+			// simply omit the yolo marker from the permissions section.
+			{Name: "sessions", Type: ocsessions.ResourceKind, Required: false},
 		},
 	}
 }
@@ -82,9 +82,9 @@ func (prepareFactory) New(_ context.Context, in resource.Input) (any, error) {
 			service.SetPrefixProvider(prefixes)
 		}
 	}
-	if dep, ok := in.Dep("planstore"); ok {
-		if store, ok := dep.(*plan.Store); ok {
-			service.SetPlans(store)
+	if dep, ok := in.Dep("sessions"); ok {
+		if st, ok := dep.(*ocsessions.Store); ok {
+			service.SetSessions(st)
 		}
 	}
 	return agent.PreparerFunc(func(

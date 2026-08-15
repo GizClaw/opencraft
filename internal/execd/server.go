@@ -22,10 +22,11 @@ import (
 // processes started on a session belong to it and are terminated when
 // the connection ends.
 type Server struct {
-	backend sandbox.Runner
-	in      io.Reader
-	out     io.Writer
-	mu      sync.Mutex
+	backend    sandbox.Runner
+	unconfined sandbox.Runner // optional; used for Unconfined (YOLO) starts
+	in         io.Reader
+	out        io.Writer
+	mu         sync.Mutex
 
 	// DefaultEnv is applied to a start request that carries no explicit
 	// environment policy (the execd child injects the Go build/tmp
@@ -37,6 +38,11 @@ type Server struct {
 func New(backend sandbox.Runner, in io.Reader, out io.Writer) *Server {
 	return &Server{backend: backend, in: in, out: out}
 }
+
+// SetUnconfinedBackend installs the runner used for Unconfined start
+// requests (YOLO mode). Optional: requests without one fall back to
+// the platform backend.
+func (s *Server) SetUnconfinedBackend(r sandbox.Runner) { s.unconfined = r }
 
 type processEntry struct {
 	proc     sandbox.Session
@@ -221,6 +227,7 @@ func (s *Server) start(
 		Rows: p.Rows,
 		Cols: p.Cols,
 	}
+	backend := s.backend
 	if p.Sandbox != nil {
 		spec.Opts = *p.Sandbox
 	}
@@ -230,14 +237,23 @@ func (s *Server) start(
 	if p.Timeout > 0 {
 		spec.Opts.Timeout = p.Timeout
 	}
-	if p.Sandbox == nil && len(p.Env) > 0 {
-		spec.Opts.Env = sandbox.EnvPolicy{Inject: p.Env}
-	}
-	if isZeroEnvPolicy(spec.Opts.Env) {
-		spec.Opts.Env = s.DefaultEnv
+	if p.Unconfined {
+		// YOLO: direct host execution with the full environment; the
+		// configured env policy and default injection are skipped.
+		if s.unconfined != nil {
+			backend = s.unconfined
+		}
+		spec.Opts.Env = sandbox.EnvPolicy{}
+	} else {
+		if p.Sandbox == nil && len(p.Env) > 0 {
+			spec.Opts.Env = sandbox.EnvPolicy{Inject: p.Env}
+		}
+		if isZeroEnvPolicy(spec.Opts.Env) {
+			spec.Opts.Env = s.DefaultEnv
+		}
 	}
 
-	proc, err := s.backend.Start(ctx, spec)
+	proc, err := backend.Start(ctx, spec)
 	if err != nil {
 		return nil, internal(err)
 	}

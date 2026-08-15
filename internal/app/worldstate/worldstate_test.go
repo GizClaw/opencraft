@@ -11,6 +11,7 @@ import (
 	corememory "github.com/GizClaw/flowcraft/core/memory"
 	"github.com/GizClaw/flowcraft/core/message"
 
+	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/tools/plan"
 )
 
@@ -22,6 +23,15 @@ func write(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func newSessionStore(t *testing.T) *ocsessions.Store {
+	t.Helper()
+	sess, err := ocsessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sess
 }
 
 func TestDiscoverAgentsRootToCwdWithOverride(t *testing.T) {
@@ -102,7 +112,7 @@ func (s stubPrefixProvider) Rules() []string { return []string(s) }
 func TestPermissionsSectionShowsLiveRules(t *testing.T) {
 	svc := New(Options{WorkBase: t.TempDir()})
 	svc.SetPrefixProvider(stubPrefixProvider{"go test", "npm install"})
-	sec, err := svc.permissionsSection()
+	sec, err := svc.permissionsSection("c1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,12 +125,43 @@ func TestPermissionsSectionShowsLiveRules(t *testing.T) {
 
 	// Without a provider the approved-prefix line is omitted entirely.
 	plain := New(Options{WorkBase: t.TempDir()})
-	sec2, err := plain.permissionsSection()
+	sec2, err := plain.permissionsSection("c1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if contains(sec2.Text, "Approved command prefixes") {
 		t.Fatalf("permissions section = %q, want no approved-prefix line", sec2.Text)
+	}
+}
+
+func TestPermissionsSectionShowsYOLOForSession(t *testing.T) {
+	store, err := ocsessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := New(Options{WorkBase: t.TempDir()})
+	svc.SetSessions(store)
+
+	sec, err := svc.permissionsSection(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains(sec.Text, "yolo") {
+		t.Fatalf("workspace session must not show yolo: %q", sec.Text)
+	}
+	if err := store.SetMode(id, ocsessions.ModeYOLO); err != nil {
+		t.Fatal(err)
+	}
+	sec2, err := svc.permissionsSection(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(sec2.Text, "yolo") {
+		t.Fatalf("yolo session must show the marker: %q", sec2.Text)
 	}
 }
 
@@ -212,7 +253,8 @@ func TestRenderToBoardInjectsMemorySectionsNoHistory(t *testing.T) {
 }
 
 func TestRenderToBoardInjectsLatestPlan(t *testing.T) {
-	store := plan.NewStore(filepath.Join(t.TempDir(), "sessions"))
+	sess := newSessionStore(t)
+	store := plan.NewStore(sess)
 	if _, err := store.Update("assistant", "c1", plan.UpdatePlanArgs{
 		Explanation: strptr("fix the bug"),
 		Plan: []plan.PlanItem{
@@ -223,7 +265,7 @@ func TestRenderToBoardInjectsLatestPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc := New(Options{WorkBase: t.TempDir()})
-	svc.SetPlans(store)
+	svc.SetSessions(sess)
 	board := agent.NewBoard()
 	if err := svc.RenderToBoard(
 		context.Background(), "assistant", "c1", board,
@@ -253,7 +295,7 @@ func TestRenderToBoardInjectsLatestPlan(t *testing.T) {
 
 	// An empty store injects no plan section.
 	empty := New(Options{WorkBase: t.TempDir()})
-	empty.SetPlans(plan.NewStore(filepath.Join(t.TempDir(), "sessions")))
+	empty.SetSessions(newSessionStore(t))
 	board2 := agent.NewBoard()
 	if err := empty.RenderToBoard(
 		context.Background(), "assistant", "c2", board2,
@@ -273,7 +315,8 @@ func TestRenderToBoardInjectsLatestPlan(t *testing.T) {
 
 	// A fully completed plan is stale context and must not be injected.
 	done := New(Options{WorkBase: t.TempDir()})
-	doneStore := plan.NewStore(filepath.Join(t.TempDir(), "sessions"))
+	doneSess := newSessionStore(t)
+	doneStore := plan.NewStore(doneSess)
 	if _, err := doneStore.Update("assistant", "c3", plan.UpdatePlanArgs{
 		Plan: []plan.PlanItem{
 			{Step: "inspect", Status: plan.StatusCompleted},
@@ -282,7 +325,7 @@ func TestRenderToBoardInjectsLatestPlan(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	done.SetPlans(doneStore)
+	done.SetSessions(doneSess)
 	board3 := agent.NewBoard()
 	if err := done.RenderToBoard(
 		context.Background(), "assistant", "c3", board3,

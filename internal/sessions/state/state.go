@@ -1,5 +1,7 @@
-// Package state implements opencraft's default SQLite storage: threads,
-// turns, items, summary nodes, and schema migrations.
+// Package state implements the SQLite storage owned by the session
+// store: threads, turns, items, summary nodes, agent checkpoints, and
+// schema migrations. It is opened by sessions.Store at
+// <root>/session.db and is not a deploy resource of its own.
 package state
 
 import (
@@ -10,8 +12,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
 	_ "modernc.org/sqlite" // registers the "sqlite" driver.
 )
@@ -166,6 +171,12 @@ func (s *Store) migrate() error {
 			metadata TEXT NOT NULL DEFAULT '{}'
 		);
 		CREATE INDEX IF NOT EXISTS idx_summary_thread_level ON summary_nodes(thread_id, level);`,
+		`CREATE TABLE IF NOT EXISTS agent_checkpoints (
+			exec_id  TEXT PRIMARY KEY,
+			data     TEXT NOT NULL,
+			revision INTEGER NOT NULL DEFAULT 1,
+			saved_at TEXT NOT NULL
+		);`,
 	}
 	for i, stmt := range migrations {
 		version := i + 1
@@ -398,3 +409,99 @@ func (s *Store) DeleteSummaryNodes(ctx context.Context, threadID string, level i
 
 // ErrNotFound is returned when a requested row does not exist.
 var ErrNotFound = errors.New("state: not found")
+
+// ---------------------------------------------------------------------------
+// Checkpoints: state is the project's single SQLite store, so it also
+// serves as the agent checkpoint store (one connection, one schema
+// owner) instead of a second sqlite backend sharing the same file.
+// ---------------------------------------------------------------------------
+
+// Save implements agent.CheckpointStore: an atomic upsert keyed by exec
+// id; the later of two overlapping saves wins.
+func (s *Store) Save(ctx context.Context, cp agent.Checkpoint) error {
+	if err := cp.Validate(); err != nil {
+		return err
+	}
+	data, err := json.Marshal(cp.Clone())
+	if err != nil {
+		return fmt.Errorf("state: encode checkpoint: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO agent_checkpoints (exec_id, data, revision, saved_at)
+		VALUES (?, ?, 1, ?)
+		ON CONFLICT(exec_id) DO UPDATE SET
+			data = excluded.data,
+			revision = agent_checkpoints.revision + 1,
+			saved_at = excluded.saved_at
+	`, cp.ExecID, string(data), time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("state: save checkpoint %s: %w", cp.ExecID, err)
+	}
+	return nil
+}
+
+// Load implements agent.CheckpointStore. A missing record returns
+// (nil, nil); the returned checkpoint is caller-owned.
+func (s *Store) Load(ctx context.Context, execID string) (*agent.Checkpoint, error) {
+	if strings.TrimSpace(execID) == "" {
+		return nil, errdefs.Validation(
+			errors.New("state: checkpoint exec_id is required"))
+	}
+	var data string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT data FROM agent_checkpoints WHERE exec_id = ?`, execID,
+	).Scan(&data)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("state: load checkpoint %s: %w", execID, err)
+	}
+	var cp agent.Checkpoint
+	if err := json.Unmarshal([]byte(data), &cp); err != nil {
+		return nil, fmt.Errorf("state: decode checkpoint %s: %w", execID, err)
+	}
+	if err := cp.Validate(); err != nil {
+		return nil, fmt.Errorf("state: corrupt checkpoint %s: %w", execID, err)
+	}
+	return &cp, nil
+}
+
+// List implements agent.CheckpointLister.
+func (s *Store) List(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT exec_id FROM agent_checkpoints ORDER BY exec_id`)
+	if err != nil {
+		return nil, fmt.Errorf("state: list checkpoints: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	ids := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("state: list checkpoints: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list checkpoints: %w", err)
+	}
+	return ids, nil
+}
+
+// Delete implements agent.CheckpointDeleter.
+func (s *Store) Delete(ctx context.Context, execID string) error {
+	if strings.TrimSpace(execID) == "" {
+		return errdefs.Validation(
+			errors.New("state: checkpoint exec_id is required"))
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`DELETE FROM agent_checkpoints WHERE exec_id = ?`, execID); err != nil {
+		return fmt.Errorf("state: delete checkpoint %s: %w", execID, err)
+	}
+	return nil
+}
+
+var _ agent.CheckpointStore = (*Store)(nil)
+var _ agent.CheckpointLister = (*Store)(nil)
+var _ agent.CheckpointDeleter = (*Store)(nil)

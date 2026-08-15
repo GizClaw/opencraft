@@ -9,7 +9,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/memory/summary"
-	"github.com/GizClaw/opencraft/internal/state"
+	"github.com/GizClaw/opencraft/internal/sessions/state"
 )
 
 // newSQLiteTurnStore opens a throwaway state DB and wraps it in the

@@ -1,16 +1,15 @@
 // Package plan provides the update_plan tool plus a store that
 // survives restarts. The tool follows codex-rs semantics: every call
 // submits a full checklist snapshot (optional explanation + list of
-// steps with statuses), at most one step may be in_progress, and the
-// latest snapshot is persisted atomically to a JSON file when a path
-// is configured.
+// steps with statuses), at most one step may be in_progress. The
+// latest snapshot is persisted per session by the session store
+// (WriteState/ReadState); this package only owns the plan semantics.
 package plan
 
 import (
 	"context"
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -19,6 +18,8 @@ import (
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/tool"
+
+	"github.com/GizClaw/opencraft/internal/sessions"
 )
 
 // UpdatePlanName is the canonical update_plan tool name.
@@ -65,29 +66,17 @@ type UpdatePlanArgs struct {
 	Plan        []PlanItem `json:"plan"`
 }
 
-// storeKey identifies one plan: the agent + session pair. Mirroring
-// flowcraft's sessions.Key, two agents in the same conversation keep
-// separate plans.
-type storeKey struct {
-	agentID   string
-	sessionID string
-}
-
-// Store keeps the latest plan per agent/session pair, persisted to
-// <root>/<sessionID>/plans.json as one entry per agent on every
-// mutation (empty root keeps the store in-memory only). It is safe for
+// Store keeps the latest plan per agent/session pair, persisted by the
+// session store as <session>/plans.json keyed by agent. It is safe for
 // concurrent use.
 type Store struct {
 	mu    sync.Mutex
-	plans map[storeKey]*Plan
-	root  string
+	store *sessions.Store
 }
 
-// NewStore creates a per-session plan store rooted at dir. Existing
-// plans are loaded lazily on first access; a missing or unreadable
-// file simply means no plan for that session yet.
-func NewStore(root string) *Store {
-	return &Store{root: root, plans: make(map[storeKey]*Plan)}
+// NewStore creates a plan store over the session store.
+func NewStore(store *sessions.Store) *Store {
+	return &Store{store: store}
 }
 
 // Update validates and replaces the agent/session plan with a new
@@ -101,31 +90,29 @@ func (s *Store) Update(agentID, sessionID string, args UpdatePlanArgs) (Plan, er
 		p.Explanation = *args.Explanation
 	}
 	p.Items = append([]PlanItem(nil), args.Plan...)
-	key := storeKey{agentID: agentID, sessionID: sessionID}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.plans[key] = &p
-	if err := s.saveLocked(sessionID); err != nil {
+	byAgent := map[string]Plan{}
+	if err := s.store.ReadState(sessionID, "plans", &byAgent); err != nil &&
+		!os.IsNotExist(err) {
+		return Plan{}, err
+	}
+	byAgent[agentID] = p
+	if err := s.store.WriteState(sessionID, "plans", byAgent); err != nil {
 		return Plan{}, err
 	}
 	return p, nil
 }
 
 // Latest returns the most recent plan snapshot for the agent/session
-// pair, loading it from disk on first access.
+// pair.
 func (s *Store) Latest(agentID, sessionID string) (Plan, bool) {
-	key := storeKey{agentID: agentID, sessionID: sessionID}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if p, ok := s.plans[key]; ok {
-		return *p, true
-	}
-	s.loadLocked(sessionID)
-	p, ok := s.plans[key]
-	if !ok {
+	var byAgent map[string]Plan
+	if err := s.store.ReadState(sessionID, "plans", &byAgent); err != nil {
 		return Plan{}, false
 	}
-	return *p, true
+	p, ok := byAgent[agentID]
+	return p, ok
 }
 
 // KeyFromContext returns the agent + conversation ids of the running
@@ -144,109 +131,6 @@ func KeyFromContext(ctx context.Context) (agentID, sessionID string) {
 		sessionID = "default"
 	}
 	return agentID, sessionID
-}
-
-// loadLocked fills the cache with every agent's plan persisted for the
-// session, without overwriting entries already in memory. Callers must
-// hold the store mutex.
-func (s *Store) loadLocked(sessionID string) {
-	if s.root == "" {
-		return
-	}
-	byAgent, err := s.readFile(sessionID)
-	if err != nil {
-		return
-	}
-	for agentID, p := range byAgent {
-		k := storeKey{agentID: agentID, sessionID: sessionID}
-		if _, ok := s.plans[k]; ok {
-			continue
-		}
-		pp := p
-		s.plans[k] = &pp
-	}
-}
-
-// saveLocked writes the session's plan file: every agent entry on
-// disk is merged with the in-memory state so a second store updating a
-// different agent cannot clobber the first. Callers must hold the
-// store mutex.
-func (s *Store) saveLocked(sessionID string) error {
-	if s.root == "" {
-		return nil
-	}
-	byAgent, err := s.readFile(sessionID)
-	if err != nil {
-		return err
-	}
-	if byAgent == nil {
-		byAgent = make(map[string]Plan)
-	}
-	for key, p := range s.plans {
-		if key.sessionID == sessionID {
-			byAgent[key.agentID] = *p
-		}
-	}
-	data, err := json.MarshalIndent(byAgent, "", "  ")
-	if err != nil {
-		return err
-	}
-	path := s.pathFor(sessionID)
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(dir, ".plans-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
-}
-
-// readFile returns the persisted per-agent plans for a session, or nil
-// when no file exists yet.
-func (s *Store) readFile(sessionID string) (map[string]Plan, error) {
-	if s.root == "" {
-		return nil, nil
-	}
-	data, err := os.ReadFile(s.pathFor(sessionID))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	var byAgent map[string]Plan
-	if err := json.Unmarshal(data, &byAgent); err != nil {
-		return nil, err
-	}
-	return byAgent, nil
-}
-
-// pathFor returns the plan file for a session. Session ids are opaque
-// file names; ids that could escape the root fall back to "default".
-func (s *Store) pathFor(sessionID string) string {
-	if unsafeName(sessionID) {
-		sessionID = "default"
-	}
-	return filepath.Join(s.root, sessionID, "plans.json")
-}
-
-func unsafeName(name string) bool {
-	return name == "" || name == "." || name == ".." ||
-		strings.ContainsAny(name, `/\`)
 }
 
 // validate enforces the update_plan contract: plan is required, each
