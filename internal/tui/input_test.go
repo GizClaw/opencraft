@@ -31,6 +31,44 @@ func readKey(t *testing.T, data []byte) (tea.KeyMsg, bool) {
 	return mapInputEvent(ev)
 }
 
+func TestMapMouseEvent(t *testing.T) {
+	wheel, ok := mapMouseEvent(&vtinput.InputEvent{
+		Type:           vtinput.MouseEventType,
+		WheelDirection: 1,
+	})
+	if !ok || wheel.Button != tea.MouseButtonWheelUp ||
+		wheel.Action != tea.MouseActionPress {
+		t.Errorf("wheel up = %+v, ok=%v", wheel, ok)
+	}
+	press, ok := mapMouseEvent(&vtinput.InputEvent{
+		Type:        vtinput.MouseEventType,
+		KeyDown:     true,
+		ButtonState: vtinput.FromLeft1stButtonPressed,
+		MouseX:      3,
+		MouseY:      4,
+	})
+	if !ok || press.Button != tea.MouseButtonLeft ||
+		press.Action != tea.MouseActionPress ||
+		press.X != 3 || press.Y != 4 {
+		t.Errorf("press = %+v, ok=%v", press, ok)
+	}
+	motion, ok := mapMouseEvent(&vtinput.InputEvent{
+		Type:            vtinput.MouseEventType,
+		MouseEventFlags: vtinput.MouseMoved,
+	})
+	if !ok || motion.Action != tea.MouseActionMotion {
+		t.Errorf("motion = %+v, ok=%v", motion, ok)
+	}
+	release, ok := mapMouseEvent(&vtinput.InputEvent{
+		Type:    vtinput.MouseEventType,
+		KeyDown: false,
+	})
+	if !ok || release.Action != tea.MouseActionRelease ||
+		release.Button != tea.MouseButtonLeft {
+		t.Errorf("release = %+v, ok=%v", release, ok)
+	}
+}
+
 func TestMapInputEvent(t *testing.T) {
 	cases := []struct {
 		name string

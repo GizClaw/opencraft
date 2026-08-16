@@ -12,6 +12,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/errdefs"
@@ -152,9 +153,7 @@ func TestStatusLineOmitsChrWithoutInput(t *testing.T) {
 }
 
 func TestRenderUserEcho(t *testing.T) {
-	m := newTestModel()
-	m.width = 80
-	got := m.renderUserEcho("hello\nworld")
+	got := strings.Join(renderEchoBox("hello\nworld", 80), "\n")
 	if !strings.Contains(got, "> hello") || !strings.Contains(got, "world") {
 		t.Errorf("echo = %q", got)
 	}
@@ -165,21 +164,21 @@ func TestRenderUserEcho(t *testing.T) {
 
 func TestTurnErrorFlushedToStream(t *testing.T) {
 	m := newTestModel()
-	_, cmd := m.Update(turnDoneMsg{err: errors.New("provider boom")})
-	if cmd == nil || !strings.Contains(fmt.Sprintf("%#v", cmd()), "provider boom") {
-		t.Errorf("flush cmd = %#v", cmd)
+	m.Update(turnDoneMsg{err: errors.New("provider boom")})
+	if got := m.transcriptText(); !strings.Contains(got, "provider boom") {
+		t.Errorf("turn error missing from transcript: %q", got)
 	}
-	if strings.Contains(m.View(), "provider boom") {
-		t.Errorf("error must not render a separate view line: %q", m.View())
+	if !strings.Contains(m.View(), "provider boom") {
+		t.Errorf("turn error not rendered in the viewport: %q", m.View())
 	}
 }
 
 func TestTurnDoneCapturesRequestID(t *testing.T) {
 	m := newTestModel()
 	err := errdefs.WithRequestID(errors.New("provider boom"), "req-xyz")
-	_, cmd := m.Update(turnDoneMsg{err: err})
-	if cmd == nil || !strings.Contains(fmt.Sprintf("%#v", cmd()), "req:req-xyz") {
-		t.Errorf("flush cmd = %#v", cmd)
+	m.Update(turnDoneMsg{err: err})
+	if got := m.transcriptText(); !strings.Contains(got, "req:req-xyz") {
+		t.Errorf("request id missing from transcript: %q", got)
 	}
 }
 
@@ -190,8 +189,10 @@ func TestTurnErrorShowsInferenceRequestIDAndDetail(t *testing.T) {
 		inference.ProviderFailure, inference.OperationGenerate, "", cause)
 	infErr.RequestID = "req_inf_xyz"
 	m := newTestModel()
-	_, cmd := m.Update(turnDoneMsg{err: infErr})
-	out := fmt.Sprintf("%#v", cmd())
+	m.Update(turnDoneMsg{err: infErr})
+	// Wrapping can split a phrase across display lines; normalize the
+	// newlines away before asserting on the content.
+	out := strings.ReplaceAll(m.transcriptText(), "\n", " ")
 	if !strings.Contains(out, "req:req_inf_xyz") {
 		t.Errorf("request id missing: %s", out)
 	}
@@ -214,49 +215,49 @@ func TestErrIDsNoRunPrefixDuplicate(t *testing.T) {
 
 func TestTurnDoneCancelMarker(t *testing.T) {
 	m := newTestModel()
-	_, cmd := m.Update(turnDoneMsg{res: &agent.Result{Status: agent.StatusCanceled}})
-	if cmd == nil || !strings.Contains(fmt.Sprintf("%#v", cmd()), "✗ cancelled") {
-		t.Errorf("flush cmd = %#v", cmd)
+	m.Update(turnDoneMsg{res: &agent.Result{Status: agent.StatusCanceled}})
+	if got := m.transcriptText(); !strings.Contains(got, "✗ cancelled") {
+		t.Errorf("cancel marker missing from transcript: %q", got)
 	}
 }
 
 func TestTurnDoneInterruptMarker(t *testing.T) {
 	m := newTestModel()
-	_, cmd := m.Update(turnDoneMsg{res: &agent.Result{Status: agent.StatusInterrupted}})
-	if cmd == nil || !strings.Contains(fmt.Sprintf("%#v", cmd()), "✗ interrupted") {
-		t.Errorf("flush cmd = %#v", cmd)
+	m.Update(turnDoneMsg{res: &agent.Result{Status: agent.StatusInterrupted}})
+	if got := m.transcriptText(); !strings.Contains(got, "✗ interrupted") {
+		t.Errorf("interrupt marker missing from transcript: %q", got)
 	}
 }
 
 func TestTurnDoneFailedMarker(t *testing.T) {
 	m := newTestModel()
-	_, cmd := m.Update(turnDoneMsg{res: &agent.Result{
+	m.Update(turnDoneMsg{res: &agent.Result{
 		Status: agent.StatusFailed,
 		Err:    errors.New("provider boom"),
 	}})
-	if cmd == nil || !strings.Contains(fmt.Sprintf("%#v", cmd()), "provider boom") {
-		t.Errorf("flush cmd = %#v", cmd)
+	if got := m.transcriptText(); !strings.Contains(got, "provider boom") {
+		t.Errorf("failure missing from transcript: %q", got)
 	}
 }
 
 func TestTurnDoneAbortedMarker(t *testing.T) {
 	m := newTestModel()
-	_, cmd := m.Update(turnDoneMsg{res: &agent.Result{
+	m.Update(turnDoneMsg{res: &agent.Result{
 		Status: agent.StatusAborted,
 		Err:    errors.New("engine halt"),
 	}})
-	if cmd == nil || !strings.Contains(fmt.Sprintf("%#v", cmd()), "engine halt") {
-		t.Errorf("flush cmd = %#v", cmd)
+	if got := m.transcriptText(); !strings.Contains(got, "engine halt") {
+		t.Errorf("abort missing from transcript: %q", got)
 	}
 }
 
 func TestTurnDoneFailedWithoutErrFallsBack(t *testing.T) {
 	m := newTestModel()
-	_, cmd := m.Update(turnDoneMsg{res: &agent.Result{
+	m.Update(turnDoneMsg{res: &agent.Result{
 		Status: agent.StatusFailed,
 	}})
-	if cmd == nil || !strings.Contains(fmt.Sprintf("%#v", cmd()), "turn failed") {
-		t.Errorf("flush cmd = %#v", cmd)
+	if got := m.transcriptText(); !strings.Contains(got, "turn failed") {
+		t.Errorf("fallback failure missing from transcript: %q", got)
 	}
 }
 
@@ -431,19 +432,17 @@ func TestResumeFlattensHistory(t *testing.T) {
 	m.input.SetValue("/resume")
 	updated, _ := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	next := updated.(*Model)
-	updated, cmd := next.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	updated, _ = next.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
 	next = updated.(*Model)
 	if next.opts.ContextID != id {
 		t.Fatalf("context id = %q, want %q", next.opts.ContextID, id)
 	}
-	if cmd == nil {
-		t.Fatal("resume should flush history")
-	}
-	// %v prints the raw message body, keeping ANSI escapes intact.
-	out := fmt.Sprintf("%v", cmd())
+	// The flattened history lands in the in-memory transcript and
+	// renders in the viewport.
+	out := next.View()
 	// User messages echo exactly like a live Enter submission: the
 	// full-width composer box, not the plain "> " user-message style.
-	if !strings.Contains(out, eraseEOL(m.renderUserEcho("你好"))) {
+	if !strings.Contains(out, "你好") {
 		t.Errorf("user message not echoed as composer bar: %s", out)
 	}
 	// Assistant messages render through the markdown path: bold text,
@@ -720,8 +719,8 @@ func TestStreamMarkdownParagraphs(t *testing.T) {
 	if len(m.stream.pending) != 4 {
 		t.Fatalf("pending = %+v", m.stream.pending)
 	}
-	if !strings.Contains(m.stream.pending[3], "hi") {
-		t.Errorf("rendered paragraph = %q", m.stream.pending[3])
+	if got := strings.Join(m.stream.pending[3].lines, "\n"); !strings.Contains(got, "hi") {
+		t.Errorf("rendered paragraph = %q", got)
 	}
 	if m.stream.mdBuf != "world" {
 		t.Errorf("mdBuf = %q", m.stream.mdBuf)
@@ -729,10 +728,10 @@ func TestStreamMarkdownParagraphs(t *testing.T) {
 	m.flushMarkdown()
 	// The remaining paragraph plus the closing blank/rule/blank.
 	if len(m.stream.pending) != 8 ||
-		m.stream.pending[4] != "world" ||
-		m.stream.pending[5] != "" ||
-		!strings.Contains(m.stream.pending[6], "─") ||
-		m.stream.pending[7] != "" {
+		!strings.Contains(strings.Join(m.stream.pending[4].lines, "\n"), "world") ||
+		strings.Join(m.stream.pending[5].lines, "\n") != "" ||
+		m.stream.pending[6].kind != logRule ||
+		strings.Join(m.stream.pending[7].lines, "\n") != "" {
 		t.Errorf("pending = %+v", m.stream.pending)
 	}
 }
@@ -746,12 +745,13 @@ func TestAssistantMessageRules(t *testing.T) {
 	if len(m.stream.pending) != 3 {
 		t.Fatalf("pending = %+v", m.stream.pending)
 	}
-	if m.stream.pending[0] != "" ||
-		!strings.Contains(m.stream.pending[1], "─") ||
-		m.stream.pending[2] != "" {
+	if strings.Join(m.stream.pending[0].lines, "\n") != "" ||
+		m.stream.pending[1].kind != logRule ||
+		strings.Join(m.stream.pending[2].lines, "\n") != "" {
 		t.Errorf("message opening = %+v", m.stream.pending)
 	}
-	if w := lipgloss.Width(m.stream.pending[1]); w != m.width {
+	if w := lipgloss.Width(m.renderEntries(
+		[]logEntry{m.stream.pending[1]}, m.width)[0]); w != m.width {
 		t.Errorf("rule width = %d, want %d", w, m.width)
 	}
 	// A tool call closes the block; the next answer opens a new one.
@@ -764,11 +764,11 @@ func TestAssistantMessageRules(t *testing.T) {
 	if len(m.stream.pending) != 8 {
 		t.Fatalf("pending after tool call = %+v", m.stream.pending)
 	}
-	if m.stream.pending[4] != "" ||
-		!strings.Contains(m.stream.pending[5], "─") ||
-		m.stream.pending[6] != "" ||
-		!strings.Contains(m.stream.pending[3], "hello") ||
-		!strings.Contains(m.stream.pending[7], "Ran pwd") {
+	if strings.Join(m.stream.pending[4].lines, "\n") != "" ||
+		m.stream.pending[5].kind != logRule ||
+		strings.Join(m.stream.pending[6].lines, "\n") != "" ||
+		!strings.Contains(strings.Join(m.stream.pending[3].lines, "\n"), "hello") ||
+		!strings.Contains(strings.Join(m.stream.pending[7].lines, "\n"), "Ran pwd") {
 		t.Errorf("message closing = %+v", m.stream.pending)
 	}
 	if m.stream.msgOpen {
@@ -778,17 +778,17 @@ func TestAssistantMessageRules(t *testing.T) {
 	if len(m.stream.pending) != 11 {
 		t.Fatalf("pending after second answer = %+v", m.stream.pending)
 	}
-	if m.stream.pending[8] != "" ||
-		!strings.Contains(m.stream.pending[9], "─") ||
-		m.stream.pending[10] != "" {
+	if strings.Join(m.stream.pending[8].lines, "\n") != "" ||
+		m.stream.pending[9].kind != logRule ||
+		strings.Join(m.stream.pending[10].lines, "\n") != "" {
 		t.Errorf("second message opening missing: %+v", m.stream.pending)
 	}
 	m.flushMarkdown()
 	if len(m.stream.pending) != 15 ||
-		!strings.Contains(m.stream.pending[11], "again") ||
-		m.stream.pending[12] != "" ||
-		!strings.Contains(m.stream.pending[13], "─") ||
-		m.stream.pending[14] != "" {
+		!strings.Contains(strings.Join(m.stream.pending[11].lines, "\n"), "again") ||
+		strings.Join(m.stream.pending[12].lines, "\n") != "" ||
+		m.stream.pending[13].kind != logRule ||
+		strings.Join(m.stream.pending[14].lines, "\n") != "" {
 		t.Errorf("pending after flush = %+v", m.stream.pending)
 	}
 	if m.stream.msgOpen {
@@ -805,9 +805,11 @@ func TestStreamOrderingReasoningBeforeText(t *testing.T) {
 	m.appendDelta(textDelta("answer\n\nnext paragraph"))
 	// Reasoning must not print into the scrollback; it lives only in
 	// the live panel and the archived transcript overlay.
-	for _, line := range m.stream.pending {
-		if strings.Contains(line, "think") {
-			t.Fatalf("reasoning leaked into scrollback: %v", m.stream.pending)
+	for _, e := range m.stream.pending {
+		for _, line := range e.lines {
+			if strings.Contains(line, "think") {
+				t.Fatalf("reasoning leaked into scrollback: %v", m.stream.pending)
+			}
 		}
 	}
 	if len(m.transcript.blocks) != 1 {
@@ -927,17 +929,18 @@ func TestStreamToolLines(t *testing.T) {
 			Content: `{"exit_code":0,"stdout":"/ws\n","stderr":""}`,
 		}},
 	})
-	if len(m.stream.pending) != 3 {
+	flat := flattenEntries(m.stream.pending)
+	if len(flat) != 3 {
 		t.Fatalf("pending = %+v", m.stream.pending)
 	}
-	if !strings.Contains(m.stream.pending[0], "• Ran pwd") {
-		t.Errorf("call line = %q", m.stream.pending[0])
+	if !strings.Contains(flat[0], "• Ran pwd") {
+		t.Errorf("call line = %q", flat[0])
 	}
-	if !strings.Contains(m.stream.pending[1], "│ /ws") {
-		t.Errorf("result line = %q", m.stream.pending[1])
+	if !strings.Contains(flat[1], "│ /ws") {
+		t.Errorf("result line = %q", flat[1])
 	}
-	if !strings.Contains(m.stream.pending[2], "└ ok") {
-		t.Errorf("end line = %q", m.stream.pending[2])
+	if !strings.Contains(flat[2], "└ ok") {
+		t.Errorf("end line = %q", flat[2])
 	}
 }
 
@@ -962,7 +965,7 @@ func TestUpdatePlanRendersChecklist(t *testing.T) {
 			Content: "Plan updated",
 		}},
 	})
-	joined := strings.Join(m.stream.pending, "\n")
+	joined := strings.Join(flattenEntries(m.stream.pending), "\n")
 	for _, want := range []string{
 		"• Update plan",
 		"- [~] Inspect behavior (in_progress)",
@@ -1000,7 +1003,7 @@ func TestUpdatePlanRendersFailure(t *testing.T) {
 			IsError: true,
 		}},
 	})
-	joined := strings.Join(m.stream.pending, "\n")
+	joined := strings.Join(flattenEntries(m.stream.pending), "\n")
 	if !strings.Contains(joined, "- [~] a (in_progress)") ||
 		!strings.Contains(joined, "- [~] b (in_progress)") {
 		t.Errorf("checklist missing in failure view:\n%s", joined)
@@ -1035,7 +1038,7 @@ func TestApplyPatchRendersNumberedDiff(t *testing.T) {
 			Content: `{"files":[{"path":"app.go","action":"update"}]}`,
 		}},
 	})
-	joined := strings.Join(m.stream.pending, "\n")
+	joined := strings.Join(flattenEntries(m.stream.pending), "\n")
 	for _, want := range []string{
 		"• apply_patch",
 		"app.go (+1 -1)",
@@ -1076,7 +1079,7 @@ func TestApplyPatchRendersFailure(t *testing.T) {
 			IsError: true,
 		}},
 	})
-	joined := strings.Join(m.stream.pending, "\n")
+	joined := strings.Join(flattenEntries(m.stream.pending), "\n")
 	if !strings.Contains(joined, "│- old") ||
 		!strings.Contains(joined, "│+ new") {
 		t.Errorf("diff missing in failure view:\n%s", joined)
@@ -1105,12 +1108,12 @@ func TestFoldToolResult(t *testing.T) {
 		}},
 	})
 	// header + 2 head + ellipsis + 2 tail + end = 7 lines.
-	if len(m.stream.pending) != 7 {
+	if flat := flattenEntries(m.stream.pending); len(flat) != 7 {
 		t.Fatalf("pending = %+v", m.stream.pending)
 	}
-	joined := strings.Join(m.stream.pending, "\n")
+	joined := strings.Join(flattenEntries(m.stream.pending), "\n")
 	if !strings.Contains(joined, "+6 lines (Ctrl+T for full output)") {
-		t.Errorf("folded result = %q", m.stream.pending)
+		t.Errorf("folded result = %q", joined)
 	}
 	// The full block (header + 10 output + end) is kept for Ctrl+T.
 	if len(m.transcript.blocks) != 1 || len(m.transcript.blocks[0]) != 12 {
@@ -1141,10 +1144,10 @@ func TestAutoFoldToolResultKeepsHeadTail(t *testing.T) {
 		}},
 	})
 	// header + 2 head + ellipsis + 2 tail + end = 7 lines.
-	if len(m.stream.pending) != 7 {
+	if flat := flattenEntries(m.stream.pending); len(flat) != 7 {
 		t.Fatalf("pending = %v", m.stream.pending)
 	}
-	joined := strings.Join(m.stream.pending, "\n")
+	joined := strings.Join(flattenEntries(m.stream.pending), "\n")
 	if !strings.Contains(joined, "│ line1") ||
 		!strings.Contains(joined, "│ line2") {
 		t.Errorf("head lines missing: %v", m.stream.pending)
@@ -1197,10 +1200,10 @@ func TestToolOutputGroupedPerCall(t *testing.T) {
 	m.appendDelta(result("c2", "b done"))
 	m.appendDelta(result("c1", "a done"))
 	m.appendDelta(result("c3", "c done"))
-	if len(m.stream.pending) != 9 {
+	if flat := flattenEntries(m.stream.pending); len(flat) != 9 {
 		t.Fatalf("pending = %v", m.stream.pending)
 	}
-	joined := strings.Join(m.stream.pending, "\n")
+	joined := strings.Join(flattenEntries(m.stream.pending), "\n")
 	if strings.Index(joined, "tool_b") > strings.Index(joined, "b done") ||
 		strings.Index(joined, "tool_a") > strings.Index(joined, "a done") ||
 		strings.Index(joined, "tool_c") > strings.Index(joined, "c done") {
@@ -1247,15 +1250,13 @@ func TestTranscriptScrollAndExit(t *testing.T) {
 
 func TestFlushPendingClears(t *testing.T) {
 	m := newTestModel()
-	m.stream.pending = []string{"a", "b"}
-	if cmd := m.flushPending(); cmd == nil {
-		t.Fatal("flushPending should return a print command")
-	}
+	m.stream.pending = []logEntry{{kind: logStyled, lines: []string{"a", "b"}}}
+	m.flushPending()
 	if len(m.stream.pending) != 0 {
 		t.Errorf("pending not cleared: %v", m.stream.pending)
 	}
-	if cmd := m.flushPending(); cmd != nil {
-		t.Error("empty pending should return nil")
+	if len(m.log) != 1 || strings.Join(m.log[0].lines, "\n") != "a\nb" {
+		t.Errorf("pending should drain into the transcript log: %v", m.log)
 	}
 }
 
@@ -1474,9 +1475,275 @@ func TestBridgeAskTimesOutWithoutUI(t *testing.T) {
 	}
 }
 
+// ---------- transcript viewport ----------
+
+func TestViewportShowsTranscript(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 80, 24
+	m.queue("hello transcript")
+	m.drainPending()
+	v := m.View()
+	if !strings.Contains(v, "hello transcript") {
+		t.Errorf("viewport missing transcript: %q", v)
+	}
+	if m.viewport.Width != 80 || m.viewport.Height <= 0 {
+		t.Errorf("viewport not sized: %dx%d", m.viewport.Width, m.viewport.Height)
+	}
+}
+
+func TestViewportAutoFollowsAndStaysPutWhenScrolled(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 80, 24
+	for i := range 60 {
+		m.queue(fmt.Sprintf("line %d", i))
+	}
+	m.drainPending()
+	if !m.viewport.AtBottom() {
+		t.Error("viewport should follow the stream to the bottom")
+	}
+	m.viewport.ScrollUp(10)
+	before := m.viewport.YOffset
+	if before == 0 {
+		t.Fatal("viewport did not scroll up")
+	}
+	m.queue("new line")
+	m.drainPending()
+	if m.viewport.YOffset != before {
+		t.Errorf("scrolled viewport jumped on append: %d -> %d",
+			before, m.viewport.YOffset)
+	}
+	if !strings.Contains(m.View(), "↑ history") {
+		t.Error("status line should mark the scrolled-back state")
+	}
+}
+
+func TestViewportScrollKeys(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 80, 24
+	for i := range 60 {
+		m.queue(fmt.Sprintf("line %d", i))
+	}
+	m.drainPending()
+	top := m.viewport.YOffset
+	m.handleKey(tea.KeyMsg{Type: tea.KeyPgUp})
+	if m.viewport.YOffset >= top {
+		t.Errorf("pgup should scroll up: %d -> %d", top, m.viewport.YOffset)
+	}
+	m.handleKey(tea.KeyMsg{Type: tea.KeyPgDown})
+	if !m.viewport.AtBottom() {
+		t.Error("pgdown should return to the bottom")
+	}
+	// With text in the prompt, the arrow keys belong to the input.
+	m.viewport.ScrollUp(5)
+	m.input.SetValue("x")
+	m.handleKey(tea.KeyMsg{Type: tea.KeyUp})
+	if m.viewport.AtBottom() {
+		t.Error("up with a non-empty prompt must not scroll the viewport")
+	}
+	m.handleKey(tea.KeyMsg{Type: tea.KeyDown})
+	if m.viewport.AtBottom() {
+		t.Error("down with a non-empty prompt must not scroll the viewport")
+	}
+}
+
+func TestViewportResizeRepaintsFullFrame(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 80, 24
+	m.syncViewport()
+	before := m.viewport.Height
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	next := updated.(*Model)
+	if next.viewport.Width != 120 || next.viewport.Height <= before {
+		t.Errorf("viewport not resized: %dx%d", next.viewport.Width, next.viewport.Height)
+	}
+	if rows := strings.Count(next.View(), "\n") + 1; rows != 40 {
+		t.Errorf("view should fill the terminal after resize: %d rows", rows)
+	}
+}
+
+func TestMouseWheelScrollsViewport(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 80, 24
+	for i := range 60 {
+		m.queue(fmt.Sprintf("line %d", i))
+	}
+	m.drainPending()
+	before := m.viewport.YOffset
+	m.Update(tea.MouseMsg{
+		Button: tea.MouseButtonWheelUp,
+		Action: tea.MouseActionPress,
+	})
+	if m.viewport.YOffset >= before {
+		t.Error("wheel up should scroll the viewport")
+	}
+}
+
+func TestTranscriptWrapsToWidthAndReflows(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 80, 24
+	m.queue("short")
+	m.queue(strings.Repeat("x", 200))
+	m.drainPending()
+	for _, l := range m.display {
+		if w := lipgloss.Width(l); w > 80 {
+			t.Errorf("line overflows width: %q (%d)", l, w)
+		}
+	}
+	if len(m.display) < 4 {
+		t.Errorf("long line should wrap, got %d display lines", len(m.display))
+	}
+	// A resize reflows the whole transcript to the new width.
+	m.Update(tea.WindowSizeMsg{Width: 40, Height: 24})
+	for _, l := range m.display {
+		if w := lipgloss.Width(l); w > 40 {
+			t.Errorf("line overflows after reflow: %q (%d)", l, w)
+		}
+	}
+	if len(m.display) < 6 {
+		t.Errorf("narrower width should produce more rows, got %d",
+			len(m.display))
+	}
+}
+
+func TestUserEchoAdaptsToWidth(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 80, 24
+	m.queueUser("hello world " + strings.Repeat("x", 120))
+	m.drainPending()
+	for _, l := range m.display {
+		if w := lipgloss.Width(l); w != 80 {
+			t.Errorf("echo box line width = %d, want 80: %q", w, l)
+		}
+	}
+	m.Update(tea.WindowSizeMsg{Width: 40, Height: 24})
+	for _, l := range m.display {
+		if w := lipgloss.Width(l); w != 40 {
+			t.Errorf("echo box width after resize = %d, want 40: %q", w, l)
+		}
+	}
+}
+
+func TestMouseDragSelectsAndCopies(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 80, 24
+	m.queue("hello world")
+	m.drainPending()
+	m.syncViewport()
+	m.handleMouse(tea.MouseMsg{
+		X: 0, Y: 0, Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	})
+	m.handleMouse(tea.MouseMsg{
+		X: 5, Y: 0, Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionMotion,
+	})
+	m.handleMouse(tea.MouseMsg{
+		X: 5, Y: 0, Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionRelease,
+	})
+	if !m.selection.active {
+		t.Fatal("drag should activate a selection")
+	}
+	if got := m.selectedText(); got != "hello" {
+		t.Errorf("selectedText = %q, want hello", got)
+	}
+	// The highlighted view keeps the selection visible.
+	prevProfile := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI)
+	defer lipgloss.SetColorProfile(prevProfile)
+	hl := strings.Join(m.highlighted(m.display), "\n")
+	if !strings.Contains(hl, "\x1b[7m") {
+		t.Errorf("selection not highlighted: %q", hl)
+	}
+	// y copies the selection (via the injectable clipboard writer).
+	var copied string
+	m.copyFn = func(s string) error { copied = s; return nil }
+	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if copied != "hello" {
+		t.Errorf("copied = %q, want hello", copied)
+	}
+	if m.selection.active {
+		t.Error("selection should clear after copy")
+	}
+	if !strings.Contains(m.statusLine(), "copied") {
+		t.Errorf("status should confirm the copy: %q", m.statusLine())
+	}
+}
+
+func TestSelectionEscClearsAndResizeDrops(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 80, 24
+	m.queue("hello world")
+	m.drainPending()
+	m.selection.active = true
+	m.selection.startY, m.selection.startX = 0, 0
+	m.selection.endY, m.selection.endX = 0, 5
+	m.handleKey(tea.KeyMsg{Type: tea.KeyEsc})
+	if m.selection.active {
+		t.Error("esc should clear the selection")
+	}
+	m.selection.active = true
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	if m.selection.active {
+		t.Error("resize should drop the selection (coordinates are stale)")
+	}
+}
+
+func TestClickOutsideViewportClearsSelection(t *testing.T) {
+	m := newTestModel()
+	m.width, m.height = 80, 24
+	m.queue("hello world")
+	m.drainPending()
+	m.syncViewport()
+	// Drag a selection inside the transcript viewport.
+	m.handleMouse(tea.MouseMsg{X: 0, Y: 0, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
+	m.handleMouse(tea.MouseMsg{X: 5, Y: 0, Button: tea.MouseButtonLeft, Action: tea.MouseActionMotion})
+	m.handleMouse(tea.MouseMsg{X: 5, Y: 0, Button: tea.MouseButtonLeft, Action: tea.MouseActionRelease})
+	if !m.selection.active {
+		t.Fatal("drag should activate a selection")
+	}
+	// A left click on the composer area (below the viewport) drops
+	// the selection, so the "y" typed next is not swallowed by copy.
+	m.handleMouse(tea.MouseMsg{
+		X: 2, Y: m.viewport.Height + 1, Button: tea.MouseButtonLeft,
+		Action: tea.MouseActionPress,
+	})
+	if m.selection.active {
+		t.Error("click outside the viewport should clear the selection")
+	}
+	if m.dragging {
+		t.Error("click outside the viewport should stop dragging")
+	}
+	// The next "y" is a real character, not a copy command.
+	var copied string
+	m.copyFn = func(s string) error { copied = s; return nil }
+	m.handleKey(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	if copied != "" {
+		t.Errorf("y after an outside click must not copy: got %q", copied)
+	}
+	if got := m.input.Value(); got != "y" {
+		t.Errorf("y should reach the composer input, got %q", got)
+	}
+}
+
 func textDelta(content string) agent.StreamDeltaPayload {
 	return agent.StreamDeltaPayload{
 		Type: agent.StreamDeltaPart,
 		Part: message.TextPart{Text: content},
 	}
+}
+
+// flattenEntries joins log entries into their styled lines in stream
+// order, for assertions on the pre-drain queue.
+func flattenEntries(entries []logEntry) []string {
+	var out []string
+	for _, e := range entries {
+		switch e.kind {
+		case logUser:
+			out = append(out, e.text)
+		default:
+			out = append(out, e.lines...)
+		}
+	}
+	return out
 }

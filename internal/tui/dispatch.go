@@ -24,7 +24,6 @@ func (m *Model) runCommand(name string) (tea.Model, tea.Cmd) {
 	// corpus, so a miss here means the corpus and slashHandlers have
 	// drifted apart (guarded by TestSlashHandlersMatchCorpus). Surface
 	// it instead of silently doing nothing.
-	m.stream.pending = append(m.stream.pending,
-		dimStyle.Render("unknown command: /"+name))
+	m.queue(dimStyle.Render("unknown command: /" + name))
 	return m, m.flushPending()
 }

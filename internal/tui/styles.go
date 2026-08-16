@@ -63,6 +63,12 @@ var (
 	statusTextStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("14"))
 
+	// selectionStyle is the reverse-video highlight of an active text
+	// selection in the transcript (app-side selection; the terminal's
+	// native selection is unavailable while mouse capture is on).
+	selectionStyle = lipgloss.NewStyle().
+			Reverse(true)
+
 	// composerBG is the solid neutral gray behind the input bar. It
 	// uses true-color hex instead of a 256-color gray index because
 	// themes remap the gray ramp to warm tones (which reads as a

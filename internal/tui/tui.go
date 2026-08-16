@@ -19,6 +19,9 @@ type Options struct {
 	// Model is the initially configured model ("provider/name") shown
 	// in the header until the first usage report arrives.
 	Model string
+	// Version is the opencraft build version shown in the startup
+	// brand block. Empty hides the version badge.
+	Version string
 	// Sessions is the project conversation store used by /resume.
 	Sessions *sessions.Store
 	// WorkDir is the workspace root apply_patch renders diffs against
@@ -41,10 +44,12 @@ func Run(
 	// otherwise lipgloss re-queries the background color while the UI is
 	// running and the terminal response arrives as keyboard input.
 	_ = lipgloss.HasDarkBackground()
-	// No mouse tracking: the UI is keyboard-driven (Ctrl+O folding,
-	// ↑/↓ pickers), and the agent transcript lives in the native
-	// terminal scrollback. Capturing mouse events would swallow text
-	// selection and wheel scrolling, so leave them to the terminal.
+	// Mouse cell motion is enabled for the transcript viewport's wheel
+	// scrolling (the whole screen is now managed by the app, so the
+	// native scrollback no longer needs mouse access). Clicks are
+	// ignored: the UI stays keyboard-driven (Ctrl+T folding, ↑/↓
+	// pickers), and text selection is only affected while a button is
+	// held.
 	// Enable the kitty keyboard protocol via vtinput so modified keys
 	// (Shift+Enter/Option+Enter for newline, disambiguated Esc,
 	// Ctrl+letter) arrive as distinct events; unsupported terminals
@@ -62,8 +67,13 @@ func Run(
 	defer ki.close()
 
 	// bubbletea reads from a pipe that never produces data; real input
-	// events are forwarded from vtinput via Program.Send.
-	p := tea.NewProgram(m, tea.WithInput(ki.pipeReader))
+	// events are forwarded from vtinput via Program.Send. The alternate
+	// screen gives bubbletea a full frame to manage, so resizes repaint
+	// cleanly instead of fighting the terminal scrollback.
+	p := tea.NewProgram(m,
+		tea.WithInput(ki.pipeReader),
+		tea.WithAltScreen(),
+		tea.WithMouseCellMotion())
 	m.program = p
 	go inputLoop(p, ki.events)
 	// Drain the bridge on a dedicated goroutine and deliver batches via

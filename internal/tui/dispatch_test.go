@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/GizClaw/opencraft/internal/tui/commands"
@@ -34,13 +35,14 @@ func TestSlashHandlersMatchCorpus(t *testing.T) {
 // outside the corpus must not silently no-op.
 func TestRunCommandUnknownSurfacesError(t *testing.T) {
 	m := newTestModel()
-	updated, cmd := m.runCommand("definitely-not-a-command")
+	updated, _ := m.runCommand("definitely-not-a-command")
 	next := updated.(*Model)
-	if cmd == nil {
-		t.Fatal("unknown command should flush a pending message")
-	}
 	if len(next.stream.pending) != 0 {
-		t.Errorf("pending should be drained by the flush command, got %v",
+		t.Errorf("pending should be drained into the transcript, got %v",
 			next.stream.pending)
+	}
+	if got := next.transcriptText(); !strings.Contains(got,
+		"unknown command: /definitely-not-a-command") {
+		t.Errorf("unknown command not surfaced in the transcript: %q", got)
 	}
 }

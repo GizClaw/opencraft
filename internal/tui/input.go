@@ -202,14 +202,62 @@ func homeEndKey(base tea.KeyType, ctrl, shift, alt bool) tea.KeyType {
 	return base
 }
 
-// inputLoop forwards parsed input events to the program as KeyMsgs. It
-// exits when the vtinput event channel closes (reader shutdown).
+// inputLoop forwards parsed input events to the program. Key events
+// become KeyMsgs; mouse wheel events become MouseMsgs so the
+// transcript viewport can scroll. It exits when the vtinput event
+// channel closes (reader shutdown).
 func inputLoop(p *tea.Program, events <-chan *vtinput.InputEvent) {
 	for ev := range events {
 		if msg, ok := mapInputEvent(ev); ok {
 			p.Send(msg)
+			continue
+		}
+		if msg, ok := mapMouseEvent(ev); ok {
+			p.Send(msg)
 		}
 	}
+}
+
+// mapMouseEvent maps a vtinput mouse event onto the bubbletea MouseMsg
+// the UI understands: wheel events scroll the viewport, and left
+// button press/motion/release drive drag selection. Other buttons and
+// plain motion are dropped.
+func mapMouseEvent(ev *vtinput.InputEvent) (tea.MouseMsg, bool) {
+	if ev == nil || ev.Type != vtinput.MouseEventType {
+		return tea.MouseMsg{}, false
+	}
+	msg := tea.MouseMsg{X: int(ev.MouseX), Y: int(ev.MouseY)}
+	if ev.WheelDirection != 0 {
+		if ev.WheelDirection > 0 {
+			msg.Button = tea.MouseButtonWheelUp
+		} else {
+			msg.Button = tea.MouseButtonWheelDown
+		}
+		msg.Action = tea.MouseActionPress
+		return msg, true
+	}
+	if ev.MouseEventFlags&vtinput.MouseMoved != 0 {
+		msg.Button = tea.MouseButtonLeft
+		msg.Action = tea.MouseActionMotion
+		return msg, true
+	}
+	if ev.ButtonState&vtinput.FromLeft1stButtonPressed != 0 {
+		msg.Button = tea.MouseButtonLeft
+		if ev.KeyDown {
+			msg.Action = tea.MouseActionPress
+		} else {
+			msg.Action = tea.MouseActionRelease
+		}
+		return msg, true
+	}
+	if !ev.KeyDown {
+		// Release events can arrive with an empty button state; treat
+		// them as a left-button release so the drag always ends.
+		msg.Button = tea.MouseButtonLeft
+		msg.Action = tea.MouseActionRelease
+		return msg, true
+	}
+	return tea.MouseMsg{}, false
 }
 
 // kittyInput owns the terminal state vtinput changed and the event
@@ -224,10 +272,9 @@ type kittyInput struct {
 }
 
 // enableKittyInput puts stdin in raw mode and pushes the kitty
-// keyboard protocol. Only the keyboard protocol is enabled: mouse
-// tracking stays off (the UI is keyboard-driven and the transcript
-// lives in native scrollback), and bracketed paste is already handled
-// by bubbletea's renderer.
+// keyboard protocol. Mouse tracking is enabled separately by
+// bubbletea (WithMouseCellMotion) for viewport wheel scrolling;
+// bracketed paste is already handled by bubbletea's renderer.
 func enableKittyInput() (*kittyInput, error) {
 	fd := int(os.Stdin.Fd())
 	oldState, err := term.MakeRaw(fd)

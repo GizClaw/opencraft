@@ -13,10 +13,15 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/muesli/reflow/wordwrap"
+	"github.com/muesli/reflow/wrap"
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/errdefs"
@@ -41,8 +46,8 @@ type turnDoneMsg struct {
 	err error
 }
 
-// flushPrintMsg drains the pending output queue into the terminal
-// above the prompt (stdout-style streaming).
+// flushPrintMsg drains the pending output queue into the in-memory
+// transcript viewport on the 50ms streaming tick.
 type flushPrintMsg struct{}
 
 // pendingCall is one buffered tool-call header waiting for its result.
@@ -59,7 +64,7 @@ const collapseThreshold = 8
 const collapseHeadTail = 2
 
 // mainPlaceholder is the idle prompt placeholder.
-const mainPlaceholder = "Ask opencraft…"
+const mainPlaceholder = "Ask OpenCraft…"
 
 // resumePlaceholder is the picker hint shown in /resume mode.
 const resumePlaceholder = "↑/↓ pick session · Enter resume · Esc cancel"
@@ -87,10 +92,11 @@ type sessionState struct {
 }
 
 // streamState carries the transcript buffers for the current turn: the
-// print queue plus the in-flight text/reasoning/tool lines. It is
-// drained to the terminal by flushPending and reset at turn boundaries.
+// print queue plus the in-flight text/reasoning/tool lines. The queue
+// is drained into the in-memory viewport by flushPending and reset at
+// turn boundaries.
 type streamState struct {
-	pending      []string
+	pending      []logEntry
 	mdBuf        string
 	reasoningBuf string
 	// msgOpen is true while an assistant text message is streaming;
@@ -99,6 +105,30 @@ type streamState struct {
 	msgOpen      bool
 	lastTool     string
 	pendingCalls map[string]pendingCall
+}
+
+// logKind selects how a log entry renders at the current terminal
+// width. Everything width-dependent (wrapping, message rules, the user
+// echo box) is rendered from content at display time, so a resize
+// reflows the whole transcript instead of leaving stale widths behind.
+type logKind int
+
+const (
+	// logStyled carries pre-styled logical lines (markdown output, tool
+	// blocks, status lines). They wrap to the current width on render.
+	logStyled logKind = iota
+	// logRule renders one full-width message divider.
+	logRule
+	// logUser carries the raw user message text, rendered as the
+	// composer echo box at the current width.
+	logUser
+)
+
+// logEntry is one transcript document node.
+type logEntry struct {
+	kind  logKind
+	lines []string // styled logical lines for logStyled
+	text  string   // raw message text for logUser
 }
 
 // answeringState is live while mode == modeAnswering: the active
@@ -152,6 +182,14 @@ type transcriptState struct {
 	scroll int
 }
 
+// selectionState is an active text selection over the rendered
+// transcript, in display coordinates (wrapped lines × cells).
+type selectionState struct {
+	active         bool
+	startY, startX int
+	endY, endX     int
+}
+
 func (t *transcriptState) append(full []string) {
 	t.blocks = append(t.blocks, full)
 	// Bound the in-memory transcript so long sessions cannot grow it
@@ -167,10 +205,10 @@ func (t *transcriptState) append(full []string) {
 	}
 }
 
-// Model is the stdout-style REPL: agent output streams into the
-// terminal scrollback above a single prompt line. The View only ever
-// covers the status line plus the input line (or the interaction
-// selector / resume picker), never the full screen.
+// Model is the full-screen TUI: agent output streams into an
+// in-memory transcript rendered by a scrollable viewport, with the
+// status line, composer bar and footer pinned below it. The alternate
+// screen is managed by bubbletea, so resizes repaint the whole frame.
 type Model struct {
 	rtc     *runtime.Controller
 	opts    Options
@@ -215,8 +253,40 @@ type Model struct {
 	// render, which would otherwise spiral into a message storm.
 	flushArmed bool
 
+	// log is the full in-memory transcript document. Every line that
+	// used to stream into the terminal scrollback now lives here, so
+	// the user can scroll back through it at any time.
+	log []logEntry
+
+	// logVer bumps on every drain; display re-renders when it or the
+	// terminal width changes.
+	logVer int
+
+	// display is the width-wrapped rendering of log, fed to the
+	// viewport. It is the source for selection coordinates and copy.
+	display    []string
+	displayW   int
+	displayVer int
+
+	// logTrimmed is set when trimLog dropped head lines, forcing a
+	// full display re-render on the next drain.
+	logTrimmed bool
+
+	// selection is the active text selection (drag to select, y to
+	// copy, Esc to clear). dragging tracks a live mouse drag.
+	selection selectionState
+	dragging  bool
+
+	// copyFn writes selected text to the clipboard; injectable for
+	// tests.
+	copyFn func(string) error
+
+	// viewport renders log with wheel/pgup/pgdn scrolling.
+	viewport viewport.Model
+
 	// display: model id, token usage and transient status annotation.
 	model       string
+	version     string
 	usageIn     int64
 	usageOut    int64
 	usageCacheR int64
@@ -259,11 +329,14 @@ func New(
 		bridge:       bridge,
 		broker:       broker,
 		model:        opts.Model,
+		version:      opts.Version,
 		input:        input,
 		spinner:      spin,
 		commandIndex: commands.NewIndex(),
 		answering:    answeringState{selSelected: make(map[int]bool)},
 		stream:       streamState{pendingCalls: make(map[string]pendingCall)},
+		viewport:     viewport.New(0, 0),
+		copyFn:       clipboard.WriteAll,
 	}
 }
 
@@ -369,6 +442,7 @@ func newInput(placeholder string) textarea.Model {
 
 func (m *Model) Init() tea.Cmd {
 	m.bridge.Start()
+	m.queue(startupBanner(m.opts, m.version)...)
 	return tea.Batch(textarea.Blink, m.spinner.Tick, m.flushTick())
 }
 
@@ -380,10 +454,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// composer spans the full terminal width.
 		m.input.SetWidth(max(20, msg.Width-2))
 		m.resizeInput()
+		// Selection coordinates are display-space; after a reflow they
+		// no longer point at the same text, so drop the selection.
+		m.selection.active = false
+		m.dragging = false
+		m.syncViewport()
 		return m, nil
 
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+
+	case tea.MouseMsg:
+		m.handleMouse(msg)
+		return m, nil
 
 	case spinner.TickMsg:
 		var cmd tea.Cmd
@@ -398,7 +481,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case flushPrintMsg:
 		m.flushArmed = false
-		return m, tea.Batch(m.flushPending(), m.flushTick())
+		m.drainPending()
+		return m, m.flushTick()
 
 	case turnStartedMsg:
 		m.session.lease = msg.lease
@@ -434,7 +518,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// still get printed so nothing is lost.
 		if len(m.stream.pendingCalls) > 0 {
 			for _, c := range m.stream.pendingCalls {
-				m.stream.pending = append(m.stream.pending, c.lines...)
+				m.queue(c.lines...)
 			}
 			m.stream.pendingCalls = make(map[string]pendingCall)
 		}
@@ -448,11 +532,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			switch msg.res.Status {
 			case agent.StatusCanceled:
-				m.stream.pending = append(m.stream.pending, toolErrStyle.Render(
-					"✗ cancelled ["+runID+"]"))
+				m.queue(toolErrStyle.Render("✗ cancelled [" + runID + "]"))
 			case agent.StatusInterrupted:
-				m.stream.pending = append(m.stream.pending, toolErrStyle.Render(
-					"✗ interrupted ["+runID+"]"))
+				m.queue(toolErrStyle.Render("✗ interrupted [" + runID + "]"))
 			case agent.StatusFailed, agent.StatusAborted:
 				err := msg.res.Err
 				if err == nil {
@@ -531,7 +613,7 @@ func (m *Model) appendDelta(delta agent.StreamDeltaPayload) {
 				name: p.Call.Name, lines: lines,
 			}
 		} else {
-			m.stream.pending = append(m.stream.pending, lines...)
+			m.queue(lines...)
 		}
 	case message.ToolResultPart:
 		content := p.Result.Content
@@ -548,8 +630,7 @@ func (m *Model) appendDelta(delta agent.StreamDeltaPayload) {
 		if hasCall {
 			header = call.lines
 		}
-		m.stream.pending = append(
-			m.stream.pending, m.foldBlock(header, body, end)...)
+		m.queue(m.foldBlock(header, body, end)...)
 		m.stream.lastTool = ""
 	}
 }
@@ -989,7 +1070,9 @@ func (m *Model) appendMarkdown(text string) {
 	// white rule and another blank line print above the answer.
 	if !m.stream.msgOpen && strings.TrimSpace(text) != "" {
 		m.stream.msgOpen = true
-		m.stream.pending = append(m.stream.pending, m.messageRule()...)
+		m.queue("")
+		m.queueRule()
+		m.queue("")
 	}
 	m.stream.mdBuf += text
 	for {
@@ -1016,7 +1099,9 @@ func (m *Model) flushMarkdown() {
 	}
 	if m.stream.msgOpen {
 		m.stream.msgOpen = false
-		m.stream.pending = append(m.stream.pending, m.messageRule()...)
+		m.queue("")
+		m.queueRule()
+		m.queue("")
 	}
 }
 
@@ -1080,7 +1165,7 @@ func (m *Model) printParagraph(para string) {
 		return
 	}
 	lines := renderMarkdown(trimmed)
-	m.stream.pending = append(m.stream.pending, m.foldBlock(nil, lines, "")...)
+	m.queue(m.foldBlock(nil, lines, "")...)
 }
 
 // appendReasoning buffers reasoning text; the whole block is rendered
@@ -1092,18 +1177,6 @@ func (m *Model) appendReasoning(text string) {
 	// the transcript keeps stream order.
 	m.flushMarkdown()
 	m.stream.reasoningBuf += text
-}
-
-// messageRule returns the separator framing an assistant message
-// block: a blank line, a full-width white rule and another blank
-// line, so the rule keeps one line of breathing room from the content
-// on either side.
-func (m *Model) messageRule() []string {
-	return []string{
-		"",
-		assistantRuleStyle.Render(strings.Repeat("─", max(1, m.width))),
-		"",
-	}
 }
 
 // wrapByWidth hard-wraps text into lines whose display width never
@@ -1140,23 +1213,400 @@ func wrapByWidth(text string, width int) []string {
 	return lines
 }
 
-// flushPending prints every queued line above the prompt.
+// flushPending drains every queued line into the in-memory transcript
+// viewport immediately. It returns nil: the next frame renders the
+// new content. Callers that previously relied on the returned print
+// command can keep the same call shape.
 func (m *Model) flushPending() tea.Cmd {
-	if len(m.stream.pending) == 0 {
-		return nil
-	}
-	lines := m.stream.pending
-	m.stream.pending = nil
-	return tea.Println(eraseEOL(strings.Join(lines, "\n")))
+	m.drainPending()
+	return nil
 }
 
-// eraseEOL appends an erase-to-end-of-line after every line. A queued
-// output line longer than the terminal wraps, and the wrapped rows
-// keep whatever was underneath; without the erase the tail of a
-// wrapped line would retain stale background cells from the full-width
-// composer bar.
-func eraseEOL(s string) string {
-	return strings.ReplaceAll(s, "\n", "\x1b[K\n") + "\x1b[K"
+// drainPending moves the queued transcript lines into the in-memory
+// log and refreshes the viewport. While the viewport sits at the
+// bottom it keeps following the stream; once the user scrolls back it
+// stays put so the reading position is never yanked.
+func (m *Model) drainPending() {
+	if len(m.stream.pending) == 0 {
+		return
+	}
+	// Size the viewport first so the follow math uses the real window
+	// (at startup the first drains can arrive before WindowSizeMsg).
+	m.syncViewport()
+	follow := m.viewport.AtBottom()
+	newEntries := m.stream.pending
+	m.stream.pending = nil
+	m.log = append(m.log, newEntries...)
+	m.logVer++
+	if follow {
+		m.trimLog()
+	}
+	w := m.currentWidth()
+	// Incremental case: nothing was trimmed and the display is already
+	// rendered at this width, so only the new entries need wrapping.
+	if m.displayVer == m.logVer-1 && m.displayW == w && !m.logTrimmed {
+		m.display = append(m.display, m.renderEntries(newEntries, w)...)
+		m.displayVer = m.logVer
+	} else {
+		m.renderDisplay(w)
+	}
+	m.logTrimmed = false
+	m.pushDisplay()
+	if follow {
+		m.viewport.GotoBottom()
+	}
+}
+
+// queue appends one styled block of logical lines to the pending
+// transcript queue.
+func (m *Model) queue(lines ...string) {
+	if len(lines) == 0 {
+		return
+	}
+	m.stream.pending = append(m.stream.pending, logEntry{
+		kind:  logStyled,
+		lines: lines,
+	})
+}
+
+// queueRule appends a full-width message divider.
+func (m *Model) queueRule() {
+	m.stream.pending = append(m.stream.pending, logEntry{kind: logRule})
+}
+
+// queueUser appends the raw user message, rendered as the composer
+// echo box at the current width.
+func (m *Model) queueUser(text string) {
+	m.stream.pending = append(m.stream.pending, logEntry{
+		kind: logUser,
+		text: text,
+	})
+}
+
+// trimLog bounds the in-memory transcript so a very long session
+// cannot grow it without limit. Only called while following, so a
+// scrolled-up reader never loses lines under their cursor.
+func (m *Model) trimLog() {
+	const maxLogLines = 10000
+	if len(m.log) <= maxLogLines {
+		return
+	}
+	drop := len(m.log) - maxLogLines
+	m.log = append([]logEntry(nil), m.log[drop:]...)
+	m.logTrimmed = true
+}
+
+// currentWidth returns the effective transcript width.
+func (m *Model) currentWidth() int {
+	if m.width <= 0 {
+		return 80
+	}
+	return m.width
+}
+
+// renderDisplay re-renders the whole document at the given width.
+func (m *Model) renderDisplay(w int) {
+	m.display = m.renderEntries(m.log, w)
+	m.displayW = w
+	m.displayVer = m.logVer
+}
+
+// renderEntries renders log entries into width-wrapped display lines.
+func (m *Model) renderEntries(entries []logEntry, w int) []string {
+	var out []string
+	for _, e := range entries {
+		switch e.kind {
+		case logRule:
+			out = append(out, assistantRuleStyle.Render(
+				strings.Repeat("─", max(1, w))))
+		case logUser:
+			out = append(out, renderEchoBox(e.text, w)...)
+		default:
+			for _, l := range e.lines {
+				out = append(out, wrapStyled(l, w)...)
+			}
+		}
+	}
+	return out
+}
+
+// wrapStyled wraps one styled logical line to the display width:
+// word wrapping for prose, with a hard-wrap fallback so pathological
+// tokens (URLs, base64, long code) still break instead of vanishing.
+func wrapStyled(line string, w int) []string {
+	if w <= 0 || lipgloss.Width(line) <= w {
+		return []string{line}
+	}
+	wrapped := strings.Split(wordwrap.String(line, w), "\n")
+	var out []string
+	for _, l := range wrapped {
+		if lipgloss.Width(l) <= w {
+			out = append(out, l)
+			continue
+		}
+		out = append(out, strings.Split(wrap.String(l, w), "\n")...)
+	}
+	return out
+}
+
+// renderEchoBox renders the user message as the composer echo box at
+// the current width, exactly like the live composer bar: full-width
+// gray background, one-cell padding, "> " prefix on the first line.
+func renderEchoBox(text string, w int) []string {
+	contentW := max(1, w-2)
+	// The "> " / "  " prefix occupies two cells, so the text wraps to
+	// contentW-2 and the prefixed line fills the content width exactly.
+	textW := max(1, contentW-2)
+	lines := strings.Split(wordwrap.String(text, textW), "\n")
+	var wrapped []string
+	for _, l := range lines {
+		if lipgloss.Width(l) <= textW {
+			wrapped = append(wrapped, l)
+			continue
+		}
+		wrapped = append(wrapped,
+			strings.Split(wrap.String(l, textW), "\n")...)
+	}
+	lines = wrapped
+	for i, l := range lines {
+		if i == 0 {
+			lines[i] = composerPromptStyle.Render("> ") +
+				inputTextStyle.Render(l)
+		} else {
+			lines[i] = inputTextStyle.Render("  " + l)
+		}
+		if pad := contentW - lipgloss.Width(lines[i]); pad > 0 {
+			lines[i] += inputTextStyle.Render(strings.Repeat(" ", pad))
+		}
+	}
+	return strings.Split(inputBoxStyle.Render(strings.Join(lines, "\n")), "\n")
+}
+
+// pushDisplay feeds the (selection-highlighted) display into the
+// viewport. The viewport keeps its scroll offset, so dragging a
+// selection does not move the window.
+func (m *Model) pushDisplay() {
+	m.viewport.SetContent(strings.Join(m.highlighted(m.display), "\n"))
+}
+
+// transcriptText returns the rendered transcript as plain display
+// text (ANSI codes included); used by tests.
+func (m *Model) transcriptText() string {
+	return strings.Join(m.display, "\n")
+}
+
+// highlighted returns the display with the active selection rendered
+// in reverse video. Lines outside the selection pass through.
+func (m *Model) highlighted(lines []string) []string {
+	if !m.selection.active || len(lines) == 0 {
+		return lines
+	}
+	y0, y1 := m.selection.startY, m.selection.endY
+	if y0 > y1 {
+		y0, y1 = y1, y0
+	}
+	x0, x1 := m.selection.startX, m.selection.endX
+	if m.selection.startY > m.selection.endY {
+		x0, x1 = x1, x0
+	}
+	out := make([]string, len(lines))
+	copy(out, lines)
+	if y1 >= len(lines) {
+		y1 = len(lines) - 1
+	}
+	for y := y0; y <= y1 && y < len(lines); y++ {
+		c0, c1 := 0, lipgloss.Width(lines[y])
+		if y == y0 {
+			c0 = x0
+		}
+		if y == y1 {
+			c1 = x1
+		}
+		if c1 <= c0 {
+			continue
+		}
+		out[y] = highlightRange(lines[y], c0, c1)
+	}
+	return out
+}
+
+// highlightRange reverses the display cells [c0, c1) of one styled
+// line, keeping the surrounding styles intact.
+func highlightRange(line string, c0, c1 int) string {
+	width := lipgloss.Width(line)
+	if c1 > width {
+		c1 = width
+	}
+	if c0 >= c1 {
+		return line
+	}
+	pre := ansi.Cut(line, 0, c0)
+	sel := ansi.Cut(line, c0, c1)
+	post := ansi.Cut(line, c1, width)
+	return pre + selectionStyle.Render(sel) + post
+}
+
+// selectedText returns the plain text covered by the selection.
+func (m *Model) selectedText() string {
+	if !m.selection.active {
+		return ""
+	}
+	y0, y1 := m.selection.startY, m.selection.endY
+	if y0 > y1 {
+		y0, y1 = y1, y0
+	}
+	x0, x1 := m.selection.startX, m.selection.endX
+	if m.selection.startY > m.selection.endY {
+		x0, x1 = x1, x0
+	}
+	var b strings.Builder
+	for y := y0; y <= y1 && y < len(m.display); y++ {
+		c0, c1 := 0, lipgloss.Width(m.display[y])
+		if y == y0 {
+			c0 = x0
+		}
+		if y == y1 {
+			c1 = x1
+		}
+		part := ansi.Cut(m.display[y], c0, c1)
+		b.WriteString(strings.TrimRight(ansi.Strip(part), " "))
+		b.WriteString("\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// clearSelection drops an active selection and repaints the viewport
+// without the highlight. It is used after a copy, on Esc, and when a
+// left click lands outside the transcript (terminal convention:
+// clicking elsewhere cancels the selection).
+func (m *Model) clearSelection() {
+	m.selection.active = false
+	m.dragging = false
+	m.pushDisplay()
+}
+
+// handleMouse routes wheel events to the viewport and drives drag
+// selection inside the transcript area.
+func (m *Model) handleMouse(msg tea.MouseMsg) {
+	if m.mode == modeTranscript {
+		return
+	}
+	if tea.MouseEvent(msg).IsWheel() {
+		vp, _ := m.viewport.Update(msg)
+		m.viewport = vp
+		return
+	}
+	// Selection only makes sense inside the transcript viewport rows.
+	// A left click on the composer, pickers or footer drops any active
+	// selection, so copy mode cannot hijack the keys typed below (the
+	// composer's first "y" in particular).
+	if m.viewport.Height <= 0 || msg.Y < 0 || msg.Y >= m.viewport.Height {
+		if msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+			m.clearSelection()
+		}
+		return
+	}
+	y := m.viewport.YOffset + msg.Y
+	if y >= len(m.display) {
+		y = len(m.display) - 1
+	}
+	if y < 0 {
+		return
+	}
+	x := msg.X
+	if x < 0 {
+		x = 0
+	}
+	switch msg.Action {
+	case tea.MouseActionPress:
+		if msg.Button == tea.MouseButtonLeft {
+			m.selection.active = true
+			m.selection.startY, m.selection.startX = y, x
+			m.selection.endY, m.selection.endX = y, x
+			m.dragging = true
+			m.pushDisplay()
+		}
+	case tea.MouseActionMotion:
+		if m.dragging && m.selection.active {
+			m.selection.endY, m.selection.endX = y, x
+			m.pushDisplay()
+		}
+	case tea.MouseActionRelease:
+		m.dragging = false
+		if m.selection.active {
+			m.pushDisplay()
+		}
+	}
+}
+
+// syncViewport sizes the viewport to the current layout and refreshes
+// its content when new lines drained. It is idempotent and cheap when
+// nothing changed, so it can run on every resize and drain.
+func (m *Model) syncViewport() {
+	w := m.currentWidth()
+	h := m.viewportHeight()
+	if h < 1 {
+		h = 1
+	}
+	if w != m.viewport.Width {
+		m.viewport.Width = w
+	}
+	if h != m.viewport.Height {
+		m.viewport.Height = h
+	}
+	if m.displayVer != m.logVer || m.displayW != w {
+		m.renderDisplay(w)
+		m.pushDisplay()
+	}
+	// Clamp any scroll offset that is stale after a height change or a
+	// content trim.
+	m.viewport.SetYOffset(m.viewport.YOffset)
+}
+
+// viewportHeight returns the number of rows the transcript viewport
+// gets: the terminal height minus the pinned bottom stack (status,
+// reasoning panel, composer or picker, footer and trailing blank).
+// The transcript overlay mode replaces the viewport entirely, so its
+// height is irrelevant and reported as zero.
+func (m *Model) viewportHeight() int {
+	h := m.height
+	if h <= 0 {
+		h = 24
+	}
+	switch m.mode {
+	case modeTranscript:
+		return 0
+	}
+	bottom := 2 // footer + trailing blank
+	if m.statusLine() != "" {
+		bottom++
+	}
+	if box := m.reasoningBox(); box != "" {
+		bottom += len(strings.Split(box, "\n"))
+	}
+	switch m.mode {
+	case modeResume:
+		bottom += len(strings.Split(m.resumePicker(), "\n"))
+	case modePermissions:
+		bottom += len(strings.Split(m.permissionsPicker(), "\n"))
+	case modeAnswering:
+		ev := m.answering.interaction
+		if ev != nil && !m.answering.selOther &&
+			(ev.Spec.Kind == runtime.KindSelect ||
+				ev.Spec.Kind == runtime.KindConfirm) {
+			bottom += len(strings.Split(m.interactionSelector(), "\n"))
+		} else {
+			// The composer bar carries one row of vertical padding on
+			// each side.
+			bottom += m.input.Height() + 2
+		}
+	default:
+		if m.paletteOpen() {
+			bottom += len(strings.Split(m.paletteView(), "\n"))
+		}
+		bottom += m.input.Height() + 2
+	}
+	return max(1, h-bottom)
 }
 
 func (m *Model) flushTick() tea.Cmd {
@@ -1181,8 +1631,7 @@ func (m *Model) dispatch(ev Event) (tea.Model, tea.Cmd) {
 func (m *Model) enqueueInteraction(ev *InteractEvent) {
 	m.archiveReasoning()
 	m.flushMarkdown()
-	m.stream.pending = append(m.stream.pending,
-		reasoningLabelStyle.Render("? "+ev.Spec.Title))
+	m.queue(reasoningLabelStyle.Render("? " + ev.Spec.Title))
 	m.answering.interactQ = append(m.answering.interactQ, ev)
 	if m.answering.interaction == nil {
 		m.promoteInteraction()
@@ -1227,8 +1676,7 @@ func interactionPlaceholder(spec runtime.Spec) string {
 
 func (m *Model) chatResolved(id string, status sessions.PromptStatus) {
 	if m.answering.interaction != nil && m.answering.interaction.Spec.ID == id {
-		m.stream.pending = append(m.stream.pending,
-			dimStyle.Render("✗ "+string(status)))
+		m.queue(dimStyle.Render("✗ " + string(status)))
 		m.answering.interaction = nil
 		m.promoteInteraction()
 		return
@@ -1248,7 +1696,7 @@ func (m *Model) finishInteraction(reply runtime.Reply) {
 	}
 	ev := m.answering.interaction
 	reply.ID = ev.Spec.ID
-	m.stream.pending = append(m.stream.pending, renderReplyLine(ev.Spec, reply))
+	m.queue(renderReplyLine(ev.Spec, reply))
 	select {
 	case ev.ReplyCh <- reply:
 	default:
@@ -1262,7 +1710,7 @@ func (m *Model) cancelInteraction() {
 		return
 	}
 	ev := m.answering.interaction
-	m.stream.pending = append(m.stream.pending, dimStyle.Render("✗ cancelled"))
+	m.queue(dimStyle.Render("✗ cancelled"))
 	select {
 	case ev.ReplyCh <- runtime.Reply{
 		ID:     ev.Spec.ID,
@@ -1331,6 +1779,27 @@ func (m *Model) choiceOptions() []string {
 // ---------- keys ----------
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.selection.active && !m.dragging {
+		switch msg.String() {
+		case "y":
+			text := m.selectedText()
+			if text != "" {
+				if err := m.copyFn(text); err != nil {
+					m.note = "copy failed"
+				} else {
+					m.note = "copied"
+				}
+			}
+			m.clearSelection()
+			return m, nil
+		case "esc":
+			m.clearSelection()
+			return m, nil
+		}
+	}
+	if m.scrollTranscriptKey(msg) {
+		return m, nil
+	}
 	switch m.mode {
 	case modeTranscript:
 		return m.handleTranscriptKey(msg)
@@ -1345,6 +1814,46 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	default:
 		return m.handleIdleKey(msg)
 	}
+}
+
+// scrollTranscriptKey scrolls the transcript viewport from the
+// keyboard: PageUp/PageDown always scroll; Ctrl+U/Ctrl+D and the arrow
+// keys scroll when the prompt is empty (so typing and the palette keep
+// them). The transcript overlay mode owns its own scrolling and is
+// excluded here.
+func (m *Model) scrollTranscriptKey(msg tea.KeyMsg) bool {
+	if m.mode == modeTranscript {
+		return false
+	}
+	switch msg.String() {
+	case "pgup":
+		m.viewport.PageUp()
+		return true
+	case "pgdown":
+		m.viewport.PageDown()
+		return true
+	case "ctrl+u":
+		if m.input.Value() == "" {
+			m.viewport.HalfPageUp()
+			return true
+		}
+	case "ctrl+d":
+		if m.input.Value() == "" {
+			m.viewport.HalfPageDown()
+			return true
+		}
+	case "up", "down":
+		if m.input.Value() == "" && !m.paletteOpen() &&
+			(m.mode == modeIdle || m.mode == modeRunning) {
+			if msg.String() == "up" {
+				m.viewport.ScrollUp(3)
+			} else {
+				m.viewport.ScrollDown(3)
+			}
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Model) handleIdleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -1376,9 +1885,10 @@ func (m *Model) handleIdleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.input.Reset()
 		m.input.Placeholder = mainPlaceholder
-		echo := tea.Println(m.renderUserEcho(text))
+		m.queueUser(text)
+		m.drainPending()
 		m.setMode(modeRunning)
-		return m, tea.Batch(echo, m.startTurnCmd(text))
+		return m, m.startTurnCmd(text)
 	// Arrow keys navigate the palette. "k"/"j" are deliberately not
 	// bound here: the palette input is typed inline, so consuming
 	// them would make it impossible to enter any command whose name
@@ -1491,8 +2001,7 @@ func (m *Model) transcriptLineCount() int {
 func (m *Model) enterResumeMode() tea.Model {
 	list, err := m.opts.Sessions.List()
 	if err != nil || len(list) == 0 {
-		m.stream.pending = append(m.stream.pending,
-			dimStyle.Render("No sessions to resume"))
+		m.queue(dimStyle.Render("No sessions to resume"))
 		m.input.Reset()
 		m.input.Placeholder = mainPlaceholder
 		return m
@@ -1521,8 +2030,7 @@ func (m *Model) handleResumeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.applyUsageBase()
 			}
 		}
-		m.stream.pending = append(m.stream.pending,
-			userStyle.Render("↩ Resumed session: "+meta.Title))
+		m.queue(userStyle.Render("↩ Resumed session: " + meta.Title))
 		m.flattenHistory(meta.ID)
 		m.setMode(modeIdle)
 		return m, m.flushPending()
@@ -1601,11 +2109,9 @@ func (m *Model) applyPermissionsMode(
 ) (tea.Model, tea.Cmd) {
 	if m.opts.Sessions != nil {
 		if err := m.opts.Sessions.SetMode(m.opts.ContextID, mode); err != nil {
-			m.stream.pending = append(m.stream.pending,
-				toolErrStyle.Render("✗ permission mode: "+err.Error()))
+			m.queue(toolErrStyle.Render("✗ permission mode: " + err.Error()))
 		} else {
-			m.stream.pending = append(m.stream.pending,
-				userStyle.Render("↩ Permission mode: "+string(mode)))
+			m.queue(userStyle.Render("↩ Permission mode: " + string(mode)))
 		}
 	}
 	m.setMode(modeIdle)
@@ -1655,32 +2161,12 @@ func (m *Model) flattenHistory(id string) {
 			continue
 		}
 		if h.Role == message.RoleUser {
-			m.stream.pending = append(m.stream.pending,
-				m.renderUserEcho(text))
+			m.queueUser(text)
 		} else {
 			m.appendMarkdown(text)
 			m.flushMarkdown()
 		}
 	}
-}
-
-// renderUserEcho renders the submitted message exactly like the
-// composer bar: full-width gray background, one-cell padding, first
-// line prefixed with "> ".
-func (m *Model) renderUserEcho(text string) string {
-	lines := strings.Split(text, "\n")
-	contentW := max(1, m.width-2)
-	for i, l := range lines {
-		if i == 0 {
-			lines[i] = composerPromptStyle.Render("> ") + inputTextStyle.Render(l)
-		} else {
-			lines[i] = inputTextStyle.Render("  " + l)
-		}
-		if pad := contentW - lipgloss.Width(lines[i]); pad > 0 {
-			lines[i] += inputTextStyle.Render(strings.Repeat(" ", pad))
-		}
-	}
-	return inputBoxStyle.Render(strings.Join(lines, "\n"))
 }
 
 // resizeInput grows the textarea with its content (wrapped-line
@@ -1878,14 +2364,36 @@ func (m *Model) appendTurnError(err error) {
 		runID = m.session.turn.RunID()
 	}
 	reqID := errRequestID(err)
-	m.stream.pending = append(m.stream.pending, toolErrStyle.Render(
-		"✗ ["+errIDs(runID, reqID)+"] "+errDetail(err)))
+	m.queue(toolErrStyle.Render(
+		"✗ [" + errIDs(runID, reqID) + "] " + errDetail(err)))
 }
 
 // ---------- view ----------
 
 func (m *Model) View() string {
-	lines := []string{m.statusLine()}
+	m.syncViewport()
+	var lines []string
+	switch m.mode {
+	case modeTranscript:
+		// The full-output overlay replaces the viewport and the
+		// composer; the status line stays as its header.
+		if line := m.statusLine(); line != "" {
+			lines = append(lines, line)
+		}
+		lines = append(lines, m.transcriptView())
+		if footer := m.footerLine(); footer != "" {
+			lines = append(lines, footer)
+		}
+		lines = append(lines, "")
+		return lipgloss.JoinVertical(lipgloss.Left, lines...)
+	}
+	// The scrollable transcript fills the screen; the status line,
+	// reasoning panel, composer (or picker), footer and a trailing
+	// blank row stay pinned below it.
+	lines = append(lines, m.viewport.View())
+	if line := m.statusLine(); line != "" {
+		lines = append(lines, line)
+	}
 	// The live reasoning tail sits directly above the prompt; it
 	// appears only while reasoning is streaming.
 	if box := m.reasoningBox(); box != "" {
@@ -1896,8 +2404,6 @@ func (m *Model) View() string {
 		lines = append(lines, m.resumePicker())
 	case modePermissions:
 		lines = append(lines, m.permissionsPicker())
-	case modeTranscript:
-		lines = append(lines, m.transcriptView())
 	case modeAnswering:
 		ev := m.answering.interaction
 		if ev != nil && !m.answering.selOther &&
@@ -2199,8 +2705,13 @@ func (m *Model) statusLine() string {
 			parts = append(parts, dimStyle.Render(fmt.Sprintf("CHR %.2f%%", chr)))
 		}
 	}
-	if len(parts) == 0 {
-		return identityStyle.Render("opencraft")
+	// Scrolled back into history: a quiet marker so the reader knows
+	// the viewport is no longer following the live stream.
+	if len(m.log) > 0 && !m.viewport.AtBottom() {
+		parts = append(parts, statusTextStyle.Render("↑ history"))
+	}
+	if m.selection.active && !m.dragging {
+		parts = append(parts, statusTextStyle.Render("y copy · Esc clear"))
 	}
 	return dimStyle.Render(strings.Join(parts, " · "))
 }

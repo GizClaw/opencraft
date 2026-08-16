@@ -138,6 +138,7 @@ func main() {
 		}
 		if err := tui.Run(rtc, tui.Options{
 			Model:   config.DefaultModel(mgr.UserDir()),
+			Version: app.ServiceVersion,
 			WorkDir: workDir,
 			// Every TUI launch starts a fresh conversation; /resume
 			// switches to an existing session id.
