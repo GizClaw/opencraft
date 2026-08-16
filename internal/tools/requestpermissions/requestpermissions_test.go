@@ -7,7 +7,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/agent"
 
-	"github.com/GizClaw/opencraft/internal/interact"
+	"github.com/GizClaw/opencraft/internal/runtime"
 )
 
 type fakePolicy struct {
@@ -29,7 +29,7 @@ func newCtx(choice string) context.Context {
 			_ agent.UserPrompt,
 		) (agent.UserReply, error) {
 			return agent.UserReply{Metadata: map[string]string{
-				interact.MetaChoice: choice,
+				runtime.MetaChoice: choice,
 			}}, nil
 		},
 	})
@@ -42,8 +42,10 @@ func TestRequestPermissionsGrant(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request_permissions: %v", err)
 	}
-	for _, want := range []string{`"granted":true`, `"scope":"session"`,
-		`"npm install"`, `"git push"`} {
+	for _, want := range []string{
+		`"granted":true`, `"scope":"session"`,
+		`"npm install"`, `"git push"`,
+	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("result missing %s: %s", want, out)
 		}

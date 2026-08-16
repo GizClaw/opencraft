@@ -1,12 +1,12 @@
-// Package telemetry wires flowcraft's OpenTelemetry pipelines for
+// telemetry.go wires flowcraft's OpenTelemetry pipelines for
 // opencraft: a tracer provider (so emitted log records carry
 // trace_id/span_id), a metric pipeline, and log sinks. Logs go to a
 // rotating file and/or an OTLP collector; nothing is written to the
 // console, keeping the TUI and the execd stdio protocol clean.
 //
 // The convenience log helpers (Info/Warn/Error) forward to flowcraft's
-// global OTel logger, whose scope name is set to "opencraft" by Init.
-package telemetry
+// global OTel logger, whose scope name is set to "opencraft" by InitOtel.
+package app
 
 import (
 	"context"
@@ -18,7 +18,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/telemetry/logfile"
-	sdklog "go.opentelemetry.io/otel/sdk/log"
+	"go.opentelemetry.io/otel/sdk/log"
 )
 
 const (
@@ -28,10 +28,11 @@ const (
 	ServiceVersion = "0.1.0"
 )
 
-// Options configures the telemetry pipelines. All fields are optional;
-// a zero Options installs a working no-op setup (valid trace IDs are
+// TelemetryOptions configures the telemetry pipelines. All fields are
+// optional; a zero TelemetryOptions installs a working no-op setup
+// (valid trace IDs are
 // still generated for log correlation, nothing is exported).
-type Options struct {
+type TelemetryOptions struct {
 	// OTLPEndpoint is the OTLP/HTTP collector endpoint host[:port].
 	// A leading http:// or https:// scheme is accepted and stripped.
 	// Empty disables the OTLP sink. Examples: "otel-collector:4318",
@@ -49,11 +50,11 @@ type Options struct {
 	LogFile string
 }
 
-// Init builds the tracer and logger pipelines and installs them as the
+// InitOtel builds the tracer and logger pipelines and installs them as the
 // global OTel providers. It returns a shutdown function that flushes
 // and tears down the pipelines in reverse order; call it on exit (with
 // a timeout context) so batched records drain.
-func Init(ctx context.Context, opts Options) (shutdown func(context.Context) error, err error) {
+func InitOtel(ctx context.Context, opts TelemetryOptions) (shutdown func(context.Context) error, err error) {
 	endpoint, insecure := normalizeOTLP(opts.OTLPEndpoint, opts.OTLPInsecure)
 
 	// The tracer is always initialized: flowcraft emits spans during
@@ -99,7 +100,7 @@ func Init(ctx context.Context, opts Options) (shutdown func(context.Context) err
 			return nil, fmt.Errorf("telemetry: log file: %w", err)
 		}
 		logOpts = append(logOpts,
-			telemetry.WithLogProcessor(sdklog.NewBatchProcessor(exp)),
+			telemetry.WithLogProcessor(log.NewBatchProcessor(exp)),
 		)
 	}
 
@@ -107,15 +108,6 @@ func Init(ctx context.Context, opts Options) (shutdown func(context.Context) err
 	telemetry.SetLoggerName(ServiceName)
 	return telemetry.InitAll(ctx, initOpts...)
 }
-
-// Info, Warn and Error forward to flowcraft's global OTel log helpers,
-// logging under the "opencraft" scope set by Init. Records emitted with
-// a context that carries a span get trace_id/span_id attached.
-var (
-	Info  = telemetry.Info
-	Warn  = telemetry.Warn
-	Error = telemetry.Error
-)
 
 // normalizeOTLP strips an optional scheme (http:// forces insecure,
 // https:// forces TLS) and auto-enables insecure mode for loopback

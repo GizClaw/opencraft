@@ -12,7 +12,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/tool"
 
-	"github.com/GizClaw/opencraft/internal/interact"
+	"github.com/GizClaw/opencraft/internal/runtime"
 )
 
 // Name is the canonical ask_user tool name.
@@ -69,37 +69,37 @@ func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
 	if args.Question == "" {
 		return "", errdefs.Validationf("ask_user: question is required")
 	}
-	kind := interact.Kind(args.Kind)
+	kind := runtime.Kind(args.Kind)
 	switch kind {
-	case "", interact.KindText:
-		kind = interact.KindText
-	case interact.KindConfirm, interact.KindSelect:
+	case "", runtime.KindText:
+		kind = runtime.KindText
+	case runtime.KindConfirm, runtime.KindSelect:
 	default:
 		return "", errdefs.Validationf("ask_user: invalid kind %q", args.Kind)
 	}
 
-	opts := make([]interact.Option, 0, len(args.Options))
+	opts := make([]runtime.Option, 0, len(args.Options))
 	for _, o := range args.Options {
-		opts = append(opts, interact.Option{Label: o, Value: o})
+		opts = append(opts, runtime.Option{Label: o, Value: o})
 	}
-	if kind == interact.KindConfirm && len(opts) == 0 {
-		opts = []interact.Option{
+	if kind == runtime.KindConfirm && len(opts) == 0 {
+		opts = []runtime.Option{
 			{Label: "Yes", Value: "yes"},
 			{Label: "No", Value: "no"},
 		}
 	}
-	if (kind == interact.KindConfirm || kind == interact.KindSelect) &&
+	if (kind == runtime.KindConfirm || kind == runtime.KindSelect) &&
 		len(opts) == 0 {
 		return "", errdefs.Validationf(
 			"ask_user: kind %s requires options", kind)
 	}
 	multiple := args.Multiple != nil && *args.Multiple
-	if multiple && kind != interact.KindSelect {
+	if multiple && kind != runtime.KindSelect {
 		return "", errdefs.Validationf(
 			"ask_user: multiple only applies to kind=select")
 	}
 	allowOther := args.Other == nil || *args.Other
-	if kind != interact.KindSelect {
+	if kind != runtime.KindSelect {
 		allowOther = false
 	}
 
@@ -110,15 +110,15 @@ func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
 	}
 	rawOpts, _ := json.Marshal(opts)
 	meta := map[string]string{
-		interact.MetaKind:    string(kind),
-		interact.MetaTitle:   args.Question,
-		interact.MetaOptions: string(rawOpts),
+		runtime.MetaKind:    string(kind),
+		runtime.MetaTitle:   args.Question,
+		runtime.MetaOptions: string(rawOpts),
 	}
 	if multiple {
-		meta[interact.MetaMulti] = "true"
+		meta[runtime.MetaMulti] = "true"
 	}
 	if !allowOther {
-		meta[interact.MetaAllowOther] = "false"
+		meta[runtime.MetaAllowOther] = "false"
 	}
 	reply, err := host.AskUser(ctx, agent.UserPrompt{
 		Parts:    []message.Part{message.TextPart{Text: args.Question}},
@@ -129,16 +129,16 @@ func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
 		return "", err
 	}
 	var choices []string
-	if raw := reply.Metadata[interact.MetaChoices]; raw != "" {
+	if raw := reply.Metadata[runtime.MetaChoices]; raw != "" {
 		_ = json.Unmarshal([]byte(raw), &choices)
 	}
 	out := map[string]any{
-		"cancelled": reply.Metadata[interact.MetaStatus] ==
-			string(interact.ReplyCancelled),
-		"choice":  reply.Metadata[interact.MetaChoice],
+		"cancelled": reply.Metadata[runtime.MetaStatus] ==
+			string(runtime.ReplyCancelled),
+		"choice":  reply.Metadata[runtime.MetaChoice],
 		"choices": choices,
-		"other":   reply.Metadata[interact.MetaOther],
-		"text":    interact.PartsText(reply.Parts),
+		"other":   reply.Metadata[runtime.MetaOther],
+		"text":    runtime.PartsText(reply.Parts),
 	}
 	res, err := json.Marshal(out)
 	if err != nil {

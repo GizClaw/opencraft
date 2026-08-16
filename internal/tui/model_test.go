@@ -19,7 +19,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 	sessions "github.com/GizClaw/flowcraft/core/runtime/session"
 
-	"github.com/GizClaw/opencraft/internal/interact"
+	"github.com/GizClaw/opencraft/internal/runtime"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 )
 
@@ -568,9 +568,9 @@ func TestExitRunningKeepsBuffersForActiveTurn(t *testing.T) {
 func TestInteractionReturnsToRunning(t *testing.T) {
 	m := newTestModel()
 	m.mode = modeRunning
-	replyCh := make(chan interact.Reply, 1)
+	replyCh := make(chan runtime.Reply, 1)
 	m.dispatch(Event{Interact: &InteractEvent{
-		Spec:    interact.Spec{ID: "p1", Kind: interact.KindText, Title: "q"},
+		Spec:    runtime.Spec{ID: "p1", Kind: runtime.KindText, Title: "q"},
 		ReplyCh: replyCh,
 	}})
 	if m.mode != modeAnswering {
@@ -1298,11 +1298,11 @@ func TestBatchMsgDoesNotScheduleFlushTick(t *testing.T) {
 
 func TestInteractionSelectCursor(t *testing.T) {
 	m := newTestModel()
-	replyCh := make(chan interact.Reply, 1)
+	replyCh := make(chan runtime.Reply, 1)
 	updated, _ := m.dispatch(Event{Interact: &InteractEvent{
-		Spec: interact.Spec{
-			ID: "p1", Kind: interact.KindSelect, Title: "选择方案",
-			Options: []interact.Option{
+		Spec: runtime.Spec{
+			ID: "p1", Kind: runtime.KindSelect, Title: "选择方案",
+			Options: []runtime.Option{
 				{Label: "方案 A", Value: "a"},
 				{Label: "方案 B", Value: "b"},
 			},
@@ -1335,11 +1335,11 @@ func TestInteractionSelectCursor(t *testing.T) {
 
 func TestInteractionMultiSelect(t *testing.T) {
 	m := newTestModel()
-	replyCh := make(chan interact.Reply, 1)
+	replyCh := make(chan runtime.Reply, 1)
 	updated, _ := m.dispatch(Event{Interact: &InteractEvent{
-		Spec: interact.Spec{
-			ID: "p1", Kind: interact.KindSelect, Title: "多选", Multi: true,
-			Options: []interact.Option{
+		Spec: runtime.Spec{
+			ID: "p1", Kind: runtime.KindSelect, Title: "多选", Multi: true,
+			Options: []runtime.Option{
 				{Label: "A", Value: "a"},
 				{Label: "B", Value: "b"},
 				{Label: "C", Value: "c"},
@@ -1370,12 +1370,12 @@ func TestInteractionMultiSelect(t *testing.T) {
 
 func TestInteractionOtherInput(t *testing.T) {
 	m := newTestModel()
-	replyCh := make(chan interact.Reply, 1)
+	replyCh := make(chan runtime.Reply, 1)
 	updated, _ := m.dispatch(Event{Interact: &InteractEvent{
-		Spec: interact.Spec{
-			ID: "p1", Kind: interact.KindSelect, Title: "选一个",
+		Spec: runtime.Spec{
+			ID: "p1", Kind: runtime.KindSelect, Title: "选一个",
 			AllowOther: true,
-			Options:    []interact.Option{{Label: "A", Value: "a"}},
+			Options:    []runtime.Option{{Label: "A", Value: "a"}},
 		},
 		ReplyCh: replyCh,
 	}})
@@ -1401,9 +1401,9 @@ func TestInteractionOtherInput(t *testing.T) {
 
 func TestInteractionTextSubmit(t *testing.T) {
 	m := newTestModel()
-	replyCh := make(chan interact.Reply, 1)
+	replyCh := make(chan runtime.Reply, 1)
 	updated, _ := m.dispatch(Event{Interact: &InteractEvent{
-		Spec:    interact.Spec{ID: "p1", Kind: interact.KindText, Title: "Which file?"},
+		Spec:    runtime.Spec{ID: "p1", Kind: runtime.KindText, Title: "Which file?"},
 		ReplyCh: replyCh,
 	}})
 	next := updated.(*Model)
@@ -1425,9 +1425,9 @@ func TestInteractionTextSubmit(t *testing.T) {
 
 func TestInteractionConfirmKeys(t *testing.T) {
 	m := newTestModel()
-	replyCh := make(chan interact.Reply, 1)
+	replyCh := make(chan runtime.Reply, 1)
 	updated, _ := m.dispatch(Event{Interact: &InteractEvent{
-		Spec:    interact.Spec{ID: "p1", Kind: interact.KindConfirm, Title: "允许?"},
+		Spec:    runtime.Spec{ID: "p1", Kind: runtime.KindConfirm, Title: "允许?"},
 		ReplyCh: replyCh,
 	}})
 	next := updated.(*Model)
@@ -1444,9 +1444,9 @@ func TestInteractionConfirmKeys(t *testing.T) {
 
 func TestInteractionCancel(t *testing.T) {
 	m := newTestModel()
-	replyCh := make(chan interact.Reply, 1)
+	replyCh := make(chan runtime.Reply, 1)
 	updated, _ := m.dispatch(Event{Interact: &InteractEvent{
-		Spec:    interact.Spec{ID: "p1", Kind: interact.KindText, Title: "q"},
+		Spec:    runtime.Spec{ID: "p1", Kind: runtime.KindText, Title: "q"},
 		ReplyCh: replyCh,
 	}})
 	next := updated.(*Model)
@@ -1457,7 +1457,7 @@ func TestInteractionCancel(t *testing.T) {
 	}
 	select {
 	case reply := <-replyCh:
-		if reply.Status != interact.ReplyCancelled {
+		if reply.Status != runtime.ReplyCancelled {
 			t.Errorf("reply = %+v", reply)
 		}
 	default:
@@ -1469,7 +1469,7 @@ func TestBridgeAskTimesOutWithoutUI(t *testing.T) {
 	b := NewBridge(16)
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	if _, err := b.Ask(ctx, interact.Spec{ID: "p1"}); err == nil {
+	if _, err := b.Ask(ctx, runtime.Spec{ID: "p1"}); err == nil {
 		t.Fatal("Ask without a consuming UI should time out")
 	}
 }

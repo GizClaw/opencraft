@@ -1,13 +1,9 @@
-// Package interact brokers user interactions between the opencraft
-// runtime and a UI backend. It adapts flowcraft core's event-driven
-// prompt protocol (PromptRequested / PromptResolved) into Spec/Reply
-// values, routes each Spec to the registered Backend, and delivers
-// replies back through Turn.Reply.
-package interact
+package runtime
 
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"strings"
 
 	"github.com/GizClaw/flowcraft/core/agent"
@@ -150,9 +146,7 @@ func FromPrompt(p agent.UserPrompt, id, runID, turnID string) Spec {
 // metadata otherwise.
 func ToUserReply(r Reply) agent.UserReply {
 	meta := map[string]string{MetaStatus: string(r.Status)}
-	for k, v := range r.Metadata {
-		meta[k] = v
-	}
+	maps.Copy(meta, r.Metadata)
 	if r.Option != nil {
 		meta[MetaChoice] = *r.Option
 	}

@@ -20,7 +20,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/GizClaw/opencraft/internal/app/worldstate"
-	"github.com/GizClaw/opencraft/internal/interact"
+	"github.com/GizClaw/opencraft/internal/runtime"
 	"github.com/GizClaw/opencraft/internal/tools/requestpermissions"
 )
 
@@ -90,7 +90,7 @@ func (m *Manager) Approve(
 		return sandbox.Deny, errdefs.NotAvailablef(
 			"opencraft execpolicy: no host in tool context")
 	}
-	opts, _ := json.Marshal([]interact.Option{
+	opts, _ := json.Marshal([]runtime.Option{
 		{Label: "Allow once", Value: "allow_once"},
 		{Label: "Deny", Value: "deny"},
 		{Label: "Always allow", Value: "always"},
@@ -103,16 +103,16 @@ func (m *Manager) Approve(
 		}},
 		Source: "opencraft.sandbox.approval",
 		Metadata: map[string]string{
-			interact.MetaKind:       string(interact.KindSelect),
-			interact.MetaTitle:      "Allow running " + command + "?",
-			interact.MetaOptions:    string(opts),
-			interact.MetaAllowOther: "false",
+			runtime.MetaKind:       string(runtime.KindSelect),
+			runtime.MetaTitle:      "Allow running " + command + "?",
+			runtime.MetaOptions:    string(opts),
+			runtime.MetaAllowOther: "false",
 		},
 	})
 	if err != nil {
 		return sandbox.Deny, err
 	}
-	switch reply.Metadata[interact.MetaChoice] {
+	switch reply.Metadata[runtime.MetaChoice] {
 	case "allow_once":
 		return sandbox.Allow, nil
 	case "always":

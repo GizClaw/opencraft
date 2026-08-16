@@ -13,7 +13,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/tool"
 
-	"github.com/GizClaw/opencraft/internal/interact"
+	"github.com/GizClaw/opencraft/internal/runtime"
 )
 
 // Name is the canonical request_permissions tool name.
@@ -108,7 +108,7 @@ func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
 	if args.Reason != "" {
 		prompt += "\n\nReason: " + args.Reason
 	}
-	opts, _ := json.Marshal([]interact.Option{
+	opts, _ := json.Marshal([]runtime.Option{
 		{Label: "Grant", Value: "grant"},
 		{Label: "Deny", Value: "deny"},
 	})
@@ -116,18 +116,18 @@ func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
 		Parts:  []message.Part{message.TextPart{Text: prompt}},
 		Source: "opencraft.request_permissions",
 		Metadata: map[string]string{
-			interact.MetaKind:       string(interact.KindSelect),
-			interact.MetaTitle:      "Grant permissions?",
-			interact.MetaOptions:    string(opts),
-			interact.MetaAllowOther: "false",
+			runtime.MetaKind:       string(runtime.KindSelect),
+			runtime.MetaTitle:      "Grant permissions?",
+			runtime.MetaOptions:    string(opts),
+			runtime.MetaAllowOther: "false",
 		},
 	})
 	if err != nil {
 		return "", err
 	}
-	cancelled := reply.Metadata[interact.MetaStatus] ==
-		string(interact.ReplyCancelled)
-	granted := !cancelled && reply.Metadata[interact.MetaChoice] == "grant"
+	cancelled := reply.Metadata[runtime.MetaStatus] ==
+		string(runtime.ReplyCancelled)
+	granted := !cancelled && reply.Metadata[runtime.MetaChoice] == "grant"
 	applied := make([]string, 0, len(rules))
 	if granted {
 		for _, rule := range rules {

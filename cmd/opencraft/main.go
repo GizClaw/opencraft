@@ -21,14 +21,14 @@ import (
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/message"
 	sessions "github.com/GizClaw/flowcraft/core/runtime/session"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	app "github.com/GizClaw/opencraft/internal/app"
 	"github.com/GizClaw/opencraft/internal/config"
 	"github.com/GizClaw/opencraft/internal/execd"
-	"github.com/GizClaw/opencraft/internal/interact"
+	"github.com/GizClaw/opencraft/internal/runtime"
 	"github.com/GizClaw/opencraft/internal/sandbox"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
-	"github.com/GizClaw/opencraft/internal/telemetry"
 	"github.com/GizClaw/opencraft/internal/tui"
 )
 
@@ -66,7 +66,7 @@ func main() {
 
 	// Initialize telemetry before any work so startup failures are
 	// captured too.
-	shutdown, err := telemetry.Init(context.Background(), telemetry.Options{
+	shutdown, err := app.InitOtel(context.Background(), app.TelemetryOptions{
 		OTLPEndpoint: *otelEndpoint,
 		OTLPInsecure: *otelInsecure,
 		LogFile:      logPath,
@@ -109,12 +109,13 @@ func main() {
 		fatal(1, "opencraft: load config: %v", err)
 	}
 	bridge := tui.NewBridge(256)
-	rtc, err := app.NewRuntimeController(ctx, view.Document,
+	rt, err := app.BuildRuntime(ctx, view.Document,
 		app.WithConfigBase(mgr.UserDir()),
 		app.WithUsageObserver(bridge.Usage))
 	if err != nil {
 		fatal(1, "opencraft: assemble runtime: %v", err)
 	}
+	rtc := runtime.NewController(rt)
 	defer func() {
 		if err := rtc.Close(); err != nil {
 			telemetry.Error(context.Background(), fmt.Sprintf("opencraft: close runtime: %v", err))
@@ -125,7 +126,7 @@ func main() {
 	case "run":
 		run(rtc, flag.Arg(1))
 	case "":
-		broker := interact.New(rtc.Runtime(), bridge)
+		broker := rtc.Broker(bridge)
 		if err := broker.Attach(ctx); err != nil {
 			fatal(1, "opencraft: attach broker: %v", err)
 		}
@@ -329,13 +330,13 @@ func watchParent(ppid int, onDeath func()) {
 	}
 }
 
-func run(rtc *app.RuntimeController, text string) {
+func run(rtc *runtime.Controller, text string) {
 	if text == "" {
 		fatal(2, "opencraft: run requires a message")
 	}
 	ctx := context.Background()
 	rt := rtc.Runtime()
-	broker := interact.New(rt, interact.Auto{})
+	broker := rtc.Broker(runtime.Auto{})
 	if err := broker.Attach(ctx); err != nil {
 		fatal(1, "opencraft: attach broker: %v", err)
 	}

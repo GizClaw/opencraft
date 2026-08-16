@@ -24,8 +24,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 	sessions "github.com/GizClaw/flowcraft/core/runtime/session"
 
-	"github.com/GizClaw/opencraft/internal/app"
-	"github.com/GizClaw/opencraft/internal/interact"
+	"github.com/GizClaw/opencraft/internal/runtime"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/tools/applypatch"
 	"github.com/GizClaw/opencraft/internal/tui/commands"
@@ -173,12 +172,12 @@ func (t *transcriptState) append(full []string) {
 // covers the status line plus the input line (or the interaction
 // selector / resume picker), never the full screen.
 type Model struct {
-	rtc     *app.RuntimeController
+	rtc     *runtime.Controller
 	opts    Options
 	ctx     context.Context
 	program *tea.Program
 	bridge  *Bridge
-	broker  *interact.Broker
+	broker  *runtime.Broker
 
 	mode mode
 
@@ -241,10 +240,10 @@ type Model struct {
 // New creates the stdout-REPL model over the bridge and interaction
 // broker.
 func New(
-	rtc *app.RuntimeController,
+	rtc *runtime.Controller,
 	opts Options,
 	bridge *Bridge,
-	broker *interact.Broker,
+	broker *runtime.Broker,
 ) *Model {
 	input := newInput(mainPlaceholder)
 	input.Focus()
@@ -1199,8 +1198,8 @@ func (m *Model) promoteInteraction() {
 	}
 	ev := m.answering.interactQ[0]
 	m.answering.interactQ = m.answering.interactQ[1:]
-	if ev.Spec.Kind == interact.KindConfirm && len(ev.Spec.Options) == 0 {
-		ev.Spec.Options = []interact.Option{
+	if ev.Spec.Kind == runtime.KindConfirm && len(ev.Spec.Options) == 0 {
+		ev.Spec.Options = []runtime.Option{
 			{Label: "Yes", Value: "yes"},
 			{Label: "No", Value: "no"},
 		}
@@ -1215,11 +1214,11 @@ func (m *Model) promoteInteraction() {
 	m.input.Focus()
 }
 
-func interactionPlaceholder(spec interact.Spec) string {
+func interactionPlaceholder(spec runtime.Spec) string {
 	switch spec.Kind {
-	case interact.KindText:
+	case runtime.KindText:
 		return "Type your answer… (Enter to send, Esc to cancel)"
-	case interact.KindConfirm:
+	case runtime.KindConfirm:
 		return "↑/↓ or y/n choose · Enter confirm · Esc cancel"
 	default:
 		return "↑/↓ choose · Space multi-pick · Enter confirm · Esc cancel"
@@ -1243,7 +1242,7 @@ func (m *Model) chatResolved(id string, status sessions.PromptStatus) {
 	}
 }
 
-func (m *Model) finishInteraction(reply interact.Reply) {
+func (m *Model) finishInteraction(reply runtime.Reply) {
 	if m.answering.interaction == nil {
 		return
 	}
@@ -1265,9 +1264,9 @@ func (m *Model) cancelInteraction() {
 	ev := m.answering.interaction
 	m.stream.pending = append(m.stream.pending, dimStyle.Render("✗ cancelled"))
 	select {
-	case ev.ReplyCh <- interact.Reply{
+	case ev.ReplyCh <- runtime.Reply{
 		ID:     ev.Spec.ID,
-		Status: interact.ReplyCancelled,
+		Status: runtime.ReplyCancelled,
 	}:
 	default:
 	}
@@ -1277,9 +1276,9 @@ func (m *Model) cancelInteraction() {
 
 // renderReplyLine renders the printed answer for a finished
 // interaction (mirrors the old transcript block).
-func renderReplyLine(spec interact.Spec, reply interact.Reply) string {
+func renderReplyLine(spec runtime.Spec, reply runtime.Reply) string {
 	switch reply.Status {
-	case interact.ReplyCancelled:
+	case runtime.ReplyCancelled:
 		return dimStyle.Render("✗ cancelled")
 	default:
 		var labels []string
@@ -1303,7 +1302,7 @@ func renderReplyLine(spec interact.Spec, reply interact.Reply) string {
 	}
 }
 
-func optionLabel(spec interact.Spec, value string) string {
+func optionLabel(spec runtime.Spec, value string) string {
 	for _, o := range spec.Options {
 		if o.Value == value {
 			return o.Label
@@ -1702,7 +1701,7 @@ func (m *Model) resizeInput() {
 func (m *Model) handleAnsweringKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	ev := m.answering.interaction
 	switch ev.Spec.Kind {
-	case interact.KindText:
+	case runtime.KindText:
 		switch msg.String() {
 		case "ctrl+j":
 			m.input.InsertString("\n")
@@ -1713,8 +1712,8 @@ func (m *Model) handleAnsweringKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if text == "" {
 				return m, nil
 			}
-			m.finishInteraction(interact.Reply{
-				Status: interact.ReplyOK,
+			m.finishInteraction(runtime.Reply{
+				Status: runtime.ReplyOK,
 				Text:   text,
 			})
 			return m, m.flushPending()
@@ -1722,7 +1721,7 @@ func (m *Model) handleAnsweringKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.cancelInteraction()
 			return m, m.flushPending()
 		}
-	case interact.KindConfirm, interact.KindSelect:
+	case runtime.KindConfirm, runtime.KindSelect:
 		return m.handleChoiceKey(msg)
 	}
 
@@ -1744,8 +1743,8 @@ func (m *Model) handleChoiceKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if text == "" {
 				return m, nil
 			}
-			m.finishInteraction(interact.Reply{
-				Status: interact.ReplyOK,
+			m.finishInteraction(runtime.Reply{
+				Status: runtime.ReplyOK,
 				Text:   text,
 			})
 			return m, m.flushPending()
@@ -1800,29 +1799,29 @@ func (m *Model) handleChoiceKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					values = append(values, opt.Value)
 				}
 			}
-			m.finishInteraction(interact.Reply{
-				Status:  interact.ReplyOK,
+			m.finishInteraction(runtime.Reply{
+				Status:  runtime.ReplyOK,
 				Options: values,
 			})
 			return m, m.flushPending()
 		}
-		m.finishInteraction(interact.Reply{
-			Status: interact.ReplyOK,
+		m.finishInteraction(runtime.Reply{
+			Status: runtime.ReplyOK,
 			Option: &ev.Spec.Options[m.answering.selCursor].Value,
 		})
 		return m, m.flushPending()
 	case "y", "Y":
-		if ev.Spec.Kind == interact.KindConfirm {
-			m.finishInteraction(interact.Reply{
-				Status: interact.ReplyOK,
+		if ev.Spec.Kind == runtime.KindConfirm {
+			m.finishInteraction(runtime.Reply{
+				Status: runtime.ReplyOK,
 				Option: strPtr("yes"),
 			})
 			return m, m.flushPending()
 		}
 	case "n", "N":
-		if ev.Spec.Kind == interact.KindConfirm {
-			m.finishInteraction(interact.Reply{
-				Status: interact.ReplyOK,
+		if ev.Spec.Kind == runtime.KindConfirm {
+			m.finishInteraction(runtime.Reply{
+				Status: runtime.ReplyOK,
 				Option: strPtr("no"),
 			})
 			return m, m.flushPending()
@@ -1902,8 +1901,8 @@ func (m *Model) View() string {
 	case modeAnswering:
 		ev := m.answering.interaction
 		if ev != nil && !m.answering.selOther &&
-			(ev.Spec.Kind == interact.KindSelect ||
-				ev.Spec.Kind == interact.KindConfirm) {
+			(ev.Spec.Kind == runtime.KindSelect ||
+				ev.Spec.Kind == runtime.KindConfirm) {
 			lines = append(lines, m.interactionSelector())
 		} else {
 			lines = append(lines, m.composerBar())
@@ -2145,7 +2144,7 @@ func (m *Model) interactionSelector() string {
 		}
 	}
 	hint := "↑/↓ move · Enter confirm"
-	if ev.Spec.Kind == interact.KindConfirm {
+	if ev.Spec.Kind == runtime.KindConfirm {
 		hint = "↑/↓ or y/n choose · Enter confirm"
 	} else if ev.Spec.Multi {
 		hint = "↑/↓ move · Space multi-pick · Enter confirm"

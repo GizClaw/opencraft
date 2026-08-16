@@ -7,8 +7,7 @@ import (
 	"github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/GizClaw/opencraft/internal/app"
-	"github.com/GizClaw/opencraft/internal/interact"
+	"github.com/GizClaw/opencraft/internal/runtime"
 	"github.com/GizClaw/opencraft/internal/sessions"
 )
 
@@ -29,10 +28,10 @@ type Options struct {
 
 // Run starts the TUI and blocks until it exits.
 func Run(
-	rtc *app.RuntimeController,
+	rtc *runtime.Controller,
 	opts Options,
 	bridge *Bridge,
-	broker *interact.Broker,
+	broker *runtime.Broker,
 ) error {
 	if opts.ContextID == "" {
 		opts.ContextID = "tui"

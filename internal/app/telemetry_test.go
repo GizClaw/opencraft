@@ -1,4 +1,4 @@
-package telemetry
+package app
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	fctel "github.com/GizClaw/flowcraft/core/telemetry"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 )
 
 func TestNormalizeOTLP(t *testing.T) {
@@ -42,14 +42,14 @@ func TestInit_NoopIsSafe(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	shutdown, err := Init(ctx, Options{})
+	shutdown, err := InitOtel(ctx, TelemetryOptions{})
 	if err != nil {
 		t.Fatalf("Init: %v", err)
 	}
 	// These must not panic even though no sink is attached.
-	Info(ctx, "noop info")
-	Warn(ctx, "noop warn")
-	Error(ctx, "noop error")
+	telemetry.Info(ctx, "noop info")
+	telemetry.Warn(ctx, "noop warn")
+	telemetry.Error(ctx, "noop error")
 	if err := shutdown(ctx); err != nil {
 		t.Fatalf("shutdown: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestInit_InvalidOTLPEndpointReportsError(t *testing.T) {
 
 	// The exporter construction is lazy, but a malformed endpoint
 	// fails at option-build time and must surface from Init.
-	shutdown, err := Init(ctx, Options{
+	shutdown, err := InitOtel(ctx, TelemetryOptions{
 		OTLPEndpoint: "://bad",
 	})
 	if err == nil {
@@ -78,13 +78,13 @@ func TestInit_LogFileSinkWritesRecords(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	shutdown, err := Init(ctx, Options{LogFile: logPath})
+	shutdown, err := InitOtel(ctx, TelemetryOptions{LogFile: logPath})
 	if err != nil {
 		t.Fatalf("Init: %v", err)
 	}
-	Info(ctx, "logged-info-record")
-	Warn(ctx, "logged-warning-record")
-	Error(ctx, "logged-error-record")
+	telemetry.Info(ctx, "logged-info-record")
+	telemetry.Warn(ctx, "logged-warning-record")
+	telemetry.Error(ctx, "logged-error-record")
 	if err := shutdown(ctx); err != nil {
 		t.Fatalf("shutdown: %v", err)
 	}
@@ -115,12 +115,12 @@ func TestInit_OTLPMetricsDeliveredToCollector(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	shutdown, err := Init(ctx, Options{OTLPEndpoint: strings.TrimPrefix(srv.URL, "http://")})
+	shutdown, err := InitOtel(ctx, TelemetryOptions{OTLPEndpoint: strings.TrimPrefix(srv.URL, "http://")})
 	if err != nil {
 		t.Fatalf("Init: %v", err)
 	}
 
-	counter, err := fctel.Meter().Int64Counter("opencraft.test.counter")
+	counter, err := telemetry.Meter().Int64Counter("opencraft.test.counter")
 	if err != nil {
 		t.Fatalf("create counter: %v", err)
 	}

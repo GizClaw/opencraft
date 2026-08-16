@@ -9,7 +9,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/message"
 
-	"github.com/GizClaw/opencraft/internal/interact"
+	"github.com/GizClaw/opencraft/internal/runtime"
 )
 
 func TestDefinition(t *testing.T) {
@@ -39,7 +39,7 @@ func TestExecuteText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Metadata[interact.MetaKind] != string(interact.KindText) {
+	if got.Metadata[runtime.MetaKind] != string(runtime.KindText) {
 		t.Errorf("kind = %+v", got.Metadata)
 	}
 	var res struct {
@@ -58,7 +58,7 @@ func TestExecuteSelectMapsChoice(t *testing.T) {
 		got = prompt
 		return agent.UserReply{
 			Metadata: map[string]string{
-				interact.MetaChoice: "方案 B",
+				runtime.MetaChoice: "方案 B",
 			},
 		}, nil
 	}}
@@ -68,8 +68,8 @@ func TestExecuteSelectMapsChoice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Metadata[interact.MetaKind] != string(interact.KindSelect) ||
-		!strings.Contains(got.Metadata[interact.MetaOptions], "方案 B") {
+	if got.Metadata[runtime.MetaKind] != string(runtime.KindSelect) ||
+		!strings.Contains(got.Metadata[runtime.MetaOptions], "方案 B") {
 		t.Errorf("prompt = %+v", got)
 	}
 	var res struct {
@@ -87,15 +87,15 @@ func TestExecuteConfirmDefaults(t *testing.T) {
 	) (agent.UserReply, error) {
 		got = prompt
 		return agent.UserReply{
-			Metadata: map[string]string{interact.MetaChoice: "no"},
+			Metadata: map[string]string{runtime.MetaChoice: "no"},
 		}, nil
 	}}
 	ctx := agent.ContextWithHost(context.Background(), host)
 	if _, err := New().Execute(ctx, `{"question":"继续?","kind":"confirm"}`); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(got.Metadata[interact.MetaOptions], "\"yes\"") {
-		t.Errorf("confirm options = %s", got.Metadata[interact.MetaOptions])
+	if !strings.Contains(got.Metadata[runtime.MetaOptions], "\"yes\"") {
+		t.Errorf("confirm options = %s", got.Metadata[runtime.MetaOptions])
 	}
 }
 
@@ -107,8 +107,8 @@ func TestExecuteSelectMultiAndOther(t *testing.T) {
 		got = prompt
 		return agent.UserReply{
 			Metadata: map[string]string{
-				interact.MetaChoices: `["方案 A","方案 C"]`,
-				interact.MetaOther:   "我的想法",
+				runtime.MetaChoices: `["方案 A","方案 C"]`,
+				runtime.MetaOther:   "我的想法",
 			},
 		}, nil
 	}}
@@ -118,7 +118,7 @@ func TestExecuteSelectMultiAndOther(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Metadata[interact.MetaMulti] != "true" {
+	if got.Metadata[runtime.MetaMulti] != "true" {
 		t.Errorf("prompt = %+v", got)
 	}
 	var res struct {
@@ -140,7 +140,7 @@ func TestExecuteSelectDisableOther(t *testing.T) {
 	) (agent.UserReply, error) {
 		got = prompt
 		return agent.UserReply{Metadata: map[string]string{
-			interact.MetaChoice: "a",
+			runtime.MetaChoice: "a",
 		}}, nil
 	}}
 	ctx := agent.ContextWithHost(context.Background(), host)
@@ -148,7 +148,7 @@ func TestExecuteSelectDisableOther(t *testing.T) {
 		`{"question":"q","kind":"select","options":["a"],"allow_other":false}`); err != nil {
 		t.Fatal(err)
 	}
-	if got.Metadata[interact.MetaAllowOther] != "false" {
+	if got.Metadata[runtime.MetaAllowOther] != "false" {
 		t.Errorf("prompt = %+v", got)
 	}
 }

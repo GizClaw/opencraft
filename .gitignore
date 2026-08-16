@@ -14,6 +14,8 @@
 
 # ── Go CI ──
 !.golangci.yml
+!.github/
+!.github/**
 
 # ── Build ──
 !Makefile

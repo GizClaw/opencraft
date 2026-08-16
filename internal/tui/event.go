@@ -4,7 +4,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/runtime/session"
 
-	"github.com/GizClaw/opencraft/internal/interact"
+	"github.com/GizClaw/opencraft/internal/runtime"
 )
 
 // Event is one domain event delivered from the bridge layer to the UI.
@@ -25,8 +25,8 @@ type StreamEvent struct {
 // InteractEvent asks the user one question. The UI renders the spec and
 // delivers the answer on ReplyCh.
 type InteractEvent struct {
-	Spec    interact.Spec
-	ReplyCh chan interact.Reply
+	Spec    runtime.Spec
+	ReplyCh chan runtime.Reply
 }
 
 // ResolvedEvent notifies the UI that a pending interaction was resolved
