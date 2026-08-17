@@ -96,7 +96,9 @@ func (t *readFileTool) Definition() message.ToolDefinition {
 			"total_lines, is_truncated}. For large files prefer grep "+
 			"or a narrow offset/limit range.",
 		message.ToolProperty("file_path", "string",
-			"The file to read, relative to the workspace root (required)."),
+			"The file to read: relative to the workspace root, or an "+
+				"absolute path under an allowed root (workspace, skill "+
+				"roots, cache) in workspace mode (required)."),
 		message.ToolProperty("offset", "integer",
 			"1-based line to start from (default 1)."),
 		message.ToolProperty("limit", "integer",
@@ -560,8 +562,10 @@ func depthBelow(root, p string) int {
 	return strings.Count(rel, string(filepath.Separator))
 }
 
-// validateFilePath rejects absolute paths, "..", ".", and empty paths
-// for file operations.
+// validateFilePath rejects "..", ".", and empty paths for file
+// operations. Absolute paths are allowed through to the workspace,
+// which enforces the per-mode policy (confined root, readonly skill
+// roots, or YOLO host paths).
 func validateFilePath(p string) error {
 	if p == "" {
 		return errdefs.Validationf("files: path is required")
@@ -584,9 +588,6 @@ func validateDirPath(p string) error {
 }
 
 func validatePath(p string) error {
-	if strings.HasPrefix(p, "/") || strings.HasPrefix(p, "\\") {
-		return errdefs.Validationf("files: absolute path %q rejected", p)
-	}
 	if strings.Contains(p, "\\") {
 		return errdefs.Validationf("files: backslash in path %q rejected; use forward slashes", p)
 	}
@@ -602,9 +603,6 @@ func validatePath(p string) error {
 }
 
 func validatePattern(p string) error {
-	if strings.HasPrefix(p, "/") || strings.HasPrefix(p, "\\") {
-		return errdefs.Validationf("files: absolute pattern %q rejected", p)
-	}
 	for _, seg := range strings.Split(strings.TrimPrefix(p, "./"), "/") {
 		if seg == ".." {
 			return errdefs.Validationf("files: pattern traversal %q rejected", p)

@@ -97,23 +97,23 @@ func (o *archiveObserver) OnRunEnd(ctx context.Context, id agent.Identity, res *
 	// actually exchanged (request + assistant/tool messages, excluding
 	// the world-state context sections) so an interrupted turn keeps
 	// its intermediate tool activity for /resume and memory.
-	conversation := conversationFromResult(req, res)
-	if len(conversation) == 0 {
+	raw := extractConversation(req, res)
+	if len(raw) == 0 {
 		return
 	}
-	if err := o.store.AppendTurn(ctx, id.ConversationID, conversation); err != nil {
+	if err := o.store.AppendTurn(ctx, id.ConversationID, raw); err != nil {
 		return
 	}
 	// Memory folding needs at least one produced message; a turn that
 	// stopped before any output is already covered by the request
 	// being archived above.
-	if len(conversation) <= 1 {
+	if len(raw) <= 1 {
 		return
 	}
 	_ = o.sink.CommitTurn(ctx, corememory.Turn{
 		Scope:          o.settings.scopeFor(id),
 		ConversationID: id.ConversationID,
 		IdempotencyKey: res.RunID,
-		Messages:       conversation,
+		Messages:       renderConversation(raw),
 	})
 }

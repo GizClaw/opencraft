@@ -2288,29 +2288,23 @@ func (m *Model) flattenHistory(id string) {
 	if err != nil {
 		return
 	}
+	// The archive keeps the original message parts (text, reasoning,
+	// tool calls, tool results), so resume replays them through the
+	// exact same rendering path as live streaming — including call/
+	// result pairing by call id. Only user messages use the composer
+	// echo box.
 	for _, h := range hist {
-		var reasoning, text string
-		for _, p := range h.Content.Parts {
-			switch part := p.(type) {
-			case message.ReasoningPart:
-				reasoning += part.Text
-			case message.TextPart:
-				text += part.Text
-			}
-		}
-		if reasoning != "" {
-			m.transcript.append(m.reasoningHistory(
-				strings.TrimSpace(reasoning)))
-		}
-		if text == "" {
+		if h.Role == message.RoleUser {
+			m.queueUser(h.Content.Text())
 			continue
 		}
-		if h.Role == message.RoleUser {
-			m.queueUser(text)
-		} else {
-			m.appendMarkdown(text)
-			m.flushMarkdown()
+		for _, p := range h.Content.Parts {
+			m.appendDelta(agent.StreamDeltaPayload{
+				Type: agent.StreamDeltaPart,
+				Part: p,
+			})
 		}
+		m.flushMarkdown()
 	}
 }
 

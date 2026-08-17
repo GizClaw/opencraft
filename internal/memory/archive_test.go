@@ -143,11 +143,13 @@ func TestArchiveObserverKeepsIntermediateToolActivity(t *testing.T) {
 	if hist[0].Role != message.RoleUser || hist[0].Content.Text() != "部署一下" {
 		t.Errorf("first message = %+v", hist[0])
 	}
-	if !strings.Contains(hist[1].Content.Text(), "tool_call: execcommand") {
-		t.Errorf("tool-call assistant message = %+v", hist[1])
+	if call, ok := hist[1].Content.Parts[0].(message.ToolCallPart); !ok ||
+		call.Call.Name != "execcommand" {
+		t.Errorf("tool-call assistant message = %+v, want structured ToolCallPart", hist[1])
 	}
-	if !strings.Contains(hist[2].Content.Text(), "tool_result: build ok") {
-		t.Errorf("tool result message = %+v", hist[2])
+	if result, ok := hist[2].Content.Parts[0].(message.ToolResultPart); !ok ||
+		result.Result.Content != "build ok" {
+		t.Errorf("tool result message = %+v, want structured ToolResultPart", hist[2])
 	}
 	for _, m := range hist {
 		if m.Role == message.RoleSystem {

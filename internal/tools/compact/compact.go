@@ -191,7 +191,11 @@ func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
 	if art.Summary != "" {
 		raw = art.Summary + "\n\n" + raw
 	}
-	resp, err := t.generate(ctx, condenseRequest(raw, budget))
+	req, err := condenseRequest(raw, budget)
+	if err != nil {
+		return "", err
+	}
+	resp, err := t.generate(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("compact: condense: %w", err)
 	}
@@ -277,36 +281,32 @@ func renderMessages(msgs []message.Message) string {
 	return b.String()
 }
 
-func condenseRequest(raw string, budget int) inference.GenerateRequest {
+func condenseRequest(raw string, budget int) (inference.GenerateRequest, error) {
+	systemText, err := renderSystemPrompt()
+	if err != nil {
+		return inference.GenerateRequest{}, fmt.Errorf(
+			"compact: render condense prompt: %w", err)
+	}
 	maxOut := max(budget/3, 256)
 	return inference.GenerateRequest{
+		// The instruction is a system message; the transcript is the
+		// current user turn, so the provider applies the instruction
+		// as context and never mixes it into the data.
+		Context: []message.Message{
+			message.NewTextMessage(message.RoleSystem, systemText),
+		},
 		Input: inference.GenerateInput{
 			Role: inference.InputRoleUser,
 			Content: inference.InputContent{
 				Content: message.Content{Parts: []message.Part{
-					message.TextPart{Text: condensePrompt(raw)},
+					message.TextPart{Text: raw},
 				}},
 				Intent: inference.Intent{
 					Text: &inference.TextIntent{MaxOutputTokens: &maxOut},
 				},
 			},
 		},
-	}
-}
-
-func condensePrompt(raw string) string {
-	const instruction = `You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary ` +
-		`for another LLM that will resume the task.
-
-Include:
-- Current progress and key decisions made
-- Important context, constraints, or user preferences
-- What remains to be done (clear next steps)
-- Any critical data, examples, or references needed to continue - file paths, commands run, tool results, and exact names or values that must not be paraphrased
-Preserve the substance of any prior checkpoint summary below.
-
-Be concise, structured, and focused on helping the next LLM seamlessly continue the work. Output only the summary, with no preamble.`
-	return instruction + "\n\n" + raw
+	}, nil
 }
 
 func containsID(ids []string, want string) bool {

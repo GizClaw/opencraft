@@ -201,6 +201,12 @@ resources:
           glob: always
           update_plan: always
           request_permissions: always
+          # Skill tools are advertised in the per-turn skills section,
+          # so the model must be able to call them immediately; the
+          # tool_search select/next-round dance is too fragile for
+          # them. skill_install stays deferred (mutating, heavier).
+          skill_search: always
+          skill_read: always
           # Internal machinery: callable by exact name (the compact
           # graph node), never offered to the model.
           compact: hidden

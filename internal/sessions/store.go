@@ -126,9 +126,11 @@ func (s *Store) Create() (string, error) {
 	return id, nil
 }
 
-// AppendTurn persists one turn. Only text and reasoning parts are
-// archived; other modalities (tool calls, images, …) are dropped so
-// the archive stays a compact conversation transcript.
+// AppendTurn persists one turn. Text, reasoning, tool call, and tool
+// result parts are archived; images/audio/data are dropped so the
+// archive stays a compact conversation transcript. Keeping the
+// structured tool parts lets /resume replay the live rendering path
+// instead of parsing flattened text.
 func (s *Store) AppendTurn(_ context.Context, id string, msgs []message.Message) error {
 	dir := s.dir(id)
 	historyDir := filepath.Join(dir, "history")
@@ -147,6 +149,10 @@ func (s *Store) AppendTurn(_ context.Context, id string, msgs []message.Message)
 			case message.TextPart:
 				parts = append(parts, part)
 			case message.ReasoningPart:
+				parts = append(parts, part)
+			case message.ToolCallPart:
+				parts = append(parts, part)
+			case message.ToolResultPart:
 				parts = append(parts, part)
 			}
 		}

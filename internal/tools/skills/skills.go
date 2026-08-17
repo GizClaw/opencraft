@@ -68,8 +68,8 @@ func (searchTool) Definition() message.ToolDefinition {
 		SearchName,
 		"Searches the discovered skills catalog and returns "+
 			"matching skill metadata (name, description, path). "+
-			"Use skill_read to load a skill's full instructions, "+
-			"or mention $<name> to activate it for this turn.",
+			"Use skill_read to load a skill's full instructions, or "+
+			"mention $<name> to activate it for this turn.",
 		message.ToolProperty("query", "string",
 			"Search text; empty lists the first skills."),
 		message.ToolPropertyWithDefault("limit", "integer",

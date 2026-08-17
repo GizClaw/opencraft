@@ -60,20 +60,21 @@ func (commitHookFactory) New(_ context.Context, in resource.Input) (any, error) 
 		// the user request, every assistant reply (including tool-call
 		// rounds), and the tool results — but never the world-state
 		// context sections the graph prepends to MainChannel.
-		conversation := conversationFromResult(req, res)
-		if len(conversation) == 0 {
+		raw := extractConversation(req, res)
+		if len(raw) == 0 {
 			return nil
 		}
-		// Full text/reasoning history goes to the project session
-		// store; memory summarization stays in the state DB.
-		if err := store.AppendTurn(ctx, req.ContextID, conversation); err != nil {
+		// The project session store keeps the original parts (so
+		// /resume re-renders tool activity like the live stream); the
+		// memory raw window gets the text-bearing rendering.
+		if err := store.AppendTurn(ctx, req.ContextID, raw); err != nil {
 			return err
 		}
 		return sink.CommitTurn(ctx, corememory.Turn{
 			Scope:          settings.scopeFor(id),
 			ConversationID: req.ContextID,
 			IdempotencyKey: res.RunID,
-			Messages:       conversation,
+			Messages:       renderConversation(raw),
 		})
 	}), nil
 }
@@ -97,16 +98,14 @@ func (s commitSettings) scopeFor(id agent.Identity) corememory.Scope {
 // injected context when persisting a turn.
 const worldSectionsCountVar = "world.sections.count"
 
-// conversationFromResult extracts the turn's conversation messages from
-// the final board: everything after the world-state section prefix,
-// rendered into text-bearing form so tool calls and results survive
-// both the text-only session archive and the memory raw window.
+// extractConversation pulls the turn's raw conversation messages from
+// the final board: everything after the world-state section prefix.
 // Compaction summaries appended by the compact graph node are filtered
 // out: they are derived context, not conversation. When the board or
 // the section boundary marker is unavailable (custom graphs, tests,
 // non-graph engines), it falls back to the request plus the result's
 // trailing assistant messages.
-func conversationFromResult(req *agent.Request, res *agent.Result) []message.Message {
+func extractConversation(req *agent.Request, res *agent.Result) []message.Message {
 	var msgs []message.Message
 	if res != nil && res.LastBoard != nil {
 		channel := res.LastBoard.Channel(agent.MainChannel)
@@ -124,6 +123,17 @@ func conversationFromResult(req *agent.Request, res *agent.Result) []message.Mes
 		if isSummaryMessage(m) {
 			continue
 		}
+		out = append(out, m)
+	}
+	return out
+}
+
+// renderConversation renders raw messages into text-bearing form, so
+// tool calls and results survive the memory raw window (which only
+// reads Content.Text()).
+func renderConversation(msgs []message.Message) []message.Message {
+	out := make([]message.Message, 0, len(msgs))
+	for _, m := range msgs {
 		if rendered := renderConversationMessage(m); rendered != nil {
 			out = append(out, *rendered)
 		}

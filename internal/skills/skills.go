@@ -309,25 +309,13 @@ func (s *Service) ReadFull(name string) (SkillMetadata, string, error) {
 }
 
 // RenderSection renders the per-turn "## Skills" metadata list. Bodies
-// are never inlined; the model opens them via $mention, skill_read or
-// read_file.
+// are never inlined; the model opens them via the always-exposed skill
+// tools: skill_search to find one and skill_read to load it.
 func RenderSection(skills []SkillMetadata) string {
 	if len(skills) == 0 {
 		return ""
 	}
-	var b strings.Builder
-	b.WriteString("## Skills\n")
-	b.WriteString("Skills relevant to this turn. To use one, load its full instructions with skill_read (or read_file on the path). The user can also activate a skill by mentioning $name in their message.\n")
-	for _, sk := range skills {
-		b.WriteString("- ")
-		b.WriteString(sk.Name)
-		b.WriteString(": ")
-		b.WriteString(truncateUTF8(sk.Description, maxDescriptionLen))
-		b.WriteString(" (file: ")
-		b.WriteString(sk.Path)
-		b.WriteString(")\n")
-	}
-	return strings.TrimRight(b.String(), "\n")
+	return renderSkillsSection(skills)
 }
 
 // Discover scans repo-level .agents/skills from cwd up to the repo

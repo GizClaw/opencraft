@@ -479,6 +479,65 @@ func TestPermissionsYoloRequiresConfirmation(t *testing.T) {
 	}
 }
 
+// TestFlattenHistoryRendersToolActivity verifies that a resumed
+// session renders persisted tool calls and results with the live tool
+// styles instead of dumping their text as assistant markdown.
+func TestFlattenHistoryRendersToolActivity(t *testing.T) {
+	store, err := ocsessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The archive shape: original parts preserved (text, reasoning,
+	// tool calls, tool results).
+	err = store.AppendTurn(context.Background(), id, []message.Message{
+		message.NewTextMessage(message.RoleUser, "帮我看看"),
+		message.NewTextMessage(message.RoleAssistant, "好的"),
+		{
+			Role: message.RoleAssistant,
+			Content: message.Content{Parts: []message.Part{
+				message.ToolCallPart{Call: message.ToolCall{
+					ID: "c1", Name: "exec_command",
+					Arguments: []byte(`{"command":"ls -la"}`),
+				}},
+			}},
+		},
+		{
+			Role: message.RoleTool,
+			Content: message.Content{Parts: []message.Part{
+				message.ToolResultPart{Result: message.ToolResult{
+					CallID: "c1",
+					Content: `{"exit_code":0,"stdout":"a.txt","stderr":""}`,
+				}},
+			}},
+		},
+		message.NewTextMessage(message.RoleAssistant, "完成"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := New(nil, Options{
+		ContextID: id,
+		Sessions:  store,
+	}, NewBridge(16), nil)
+	m.flattenHistory(id)
+	m.drainPending()
+	got := m.transcriptText()
+
+	for _, want := range []string{"帮我看看", "ls -la", "a.txt", "完成"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("resumed transcript missing %q: %q", want, got)
+		}
+	}
+	if strings.Contains(got, "tool_result:") {
+		t.Errorf("tool result leaked as raw text: %q", got)
+	}
+}
+
 func TestPermissionsEscCancels(t *testing.T) {
 	m := permissionsTestModel(t)
 	m.input.SetValue("/permissions")

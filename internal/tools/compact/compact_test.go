@@ -34,9 +34,16 @@ func TestExecuteCondensesAndPersistsArtifact(t *testing.T) {
 			_ context.Context, req inference.GenerateRequest,
 		) (inference.GenerateResponse, error) {
 			calls++
-			text := req.Input.Content.Content.Text()
-			if !strings.Contains(text, "CONTEXT CHECKPOINT COMPACTION") {
-				t.Errorf("condense prompt missing instruction: %q", text)
+			if len(req.Context) != 1 ||
+				req.Context[0].Role != message.RoleSystem ||
+				!strings.Contains(req.Context[0].Content.Text(),
+					"CONTEXT CHECKPOINT COMPACTION") {
+				t.Errorf("condense request missing system instruction: %+v",
+					req.Context)
+			}
+			if !strings.Contains(req.Input.Content.Content.Text(), "m1") {
+				t.Errorf("condense input missing conversation: %q",
+					req.Input.Content.Content.Text())
 			}
 			return inference.GenerateResponse{
 				Message: message.NewTextMessage(message.RoleAssistant, "S1"),
@@ -82,7 +89,7 @@ func TestExecuteMergesNewMessagesWithArtifact(t *testing.T) {
 		generate: func(
 			_ context.Context, req inference.GenerateRequest,
 		) (inference.GenerateResponse, error) {
-			text := req.Input.Content.Content.Text()
+			text := req.Input.Content.Text()
 			calls++
 			if calls == 1 {
 				return inference.GenerateResponse{
@@ -147,7 +154,7 @@ func TestExecuteSkipsSummaryMarkedMessages(t *testing.T) {
 		generate: func(
 			_ context.Context, req inference.GenerateRequest,
 		) (inference.GenerateResponse, error) {
-			text := req.Input.Content.Content.Text()
+			text := req.Input.Content.Text()
 			calls++
 			if strings.Contains(text, SummaryPrefix) {
 				t.Errorf("condense input must skip marked summary message: %q", text)
@@ -222,7 +229,7 @@ func TestExecuteRendersToolActivity(t *testing.T) {
 		generate: func(
 			_ context.Context, req inference.GenerateRequest,
 		) (inference.GenerateResponse, error) {
-			got = req.Input.Content.Content.Text()
+			got = req.Input.Content.Text()
 			return inference.GenerateResponse{
 				Message: message.NewTextMessage(message.RoleAssistant, "S1"),
 			}, nil
@@ -263,6 +270,21 @@ func TestExecuteRendersToolActivity(t *testing.T) {
 	}
 	if !strings.Contains(got, "tool_result: build ok") {
 		t.Errorf("condense input missing tool result rendering: %q", got)
+	}
+}
+
+// TestRenderSystemPrompt verifies the embedded template renders the
+// handoff instruction as the system message.
+func TestRenderSystemPrompt(t *testing.T) {
+	got, err := renderSystemPrompt()
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(got, "CONTEXT CHECKPOINT COMPACTION") {
+		t.Errorf("prompt missing instruction: %q", got)
+	}
+	if strings.Contains(got, "{{") {
+		t.Errorf("prompt must not carry template placeholders: %q", got)
 	}
 }
 

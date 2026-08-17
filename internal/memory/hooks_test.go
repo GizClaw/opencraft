@@ -218,11 +218,17 @@ func TestCommitHookPersistsFullConversation(t *testing.T) {
 	if hist[0].Role != message.RoleUser || hist[0].Content.Text() != "查一下天气" {
 		t.Errorf("first message = %+v", hist[0])
 	}
-	if hist[1].Role != message.RoleAssistant || !strings.Contains(hist[1].Content.Text(), "tool_call: webfetch") {
-		t.Errorf("tool-call assistant message = %+v", hist[1])
+	if hist[1].Role != message.RoleAssistant {
+		t.Errorf("second message = %+v", hist[1])
+	} else if call, ok := hist[1].Content.Parts[0].(message.ToolCallPart); !ok ||
+		call.Call.Name != "webfetch" {
+		t.Errorf("tool-call assistant message = %+v, want structured ToolCallPart", hist[1])
 	}
-	if hist[2].Role != message.RoleTool || !strings.Contains(hist[2].Content.Text(), "tool_result: sunny 28C") {
-		t.Errorf("tool result message = %+v", hist[2])
+	if hist[2].Role != message.RoleTool {
+		t.Errorf("third message = %+v", hist[2])
+	} else if result, ok := hist[2].Content.Parts[0].(message.ToolResultPart); !ok ||
+		result.Result.Content != "sunny 28C" {
+		t.Errorf("tool result message = %+v, want structured ToolResultPart", hist[2])
 	}
 	if hist[3].Role != message.RoleAssistant || hist[3].Content.Text() != "今天 28 度" {
 		t.Errorf("final message = %+v", hist[3])
@@ -240,13 +246,13 @@ func TestCommitHookPersistsFullConversation(t *testing.T) {
 	if len(turn.Messages) != 4 {
 		t.Fatalf("sink messages = %d, want 4", len(turn.Messages))
 	}
-	if turn.Messages[1].Content.Text() != hist[1].Content.Text() {
-		t.Errorf("sink assistant tool-call text = %q, want %q",
-			turn.Messages[1].Content.Text(), hist[1].Content.Text())
+	if !strings.Contains(turn.Messages[1].Content.Text(), "tool_call: webfetch") {
+		t.Errorf("sink assistant tool-call text = %q, want rendered tool_call line",
+			turn.Messages[1].Content.Text())
 	}
-	if turn.Messages[2].Content.Text() != hist[2].Content.Text() {
-		t.Errorf("sink tool text = %q, want %q",
-			turn.Messages[2].Content.Text(), hist[2].Content.Text())
+	if !strings.Contains(turn.Messages[2].Content.Text(), "tool_result: sunny 28C") {
+		t.Errorf("sink tool text = %q, want rendered tool_result line",
+			turn.Messages[2].Content.Text())
 	}
 }
 

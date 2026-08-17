@@ -4,14 +4,17 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	coresandbox "github.com/GizClaw/flowcraft/core/sandbox"
+	"github.com/GizClaw/flowcraft/core/tool"
 	"github.com/GizClaw/flowcraft/core/workspace"
 
 	"github.com/GizClaw/opencraft/internal/sessions"
+	"github.com/GizClaw/opencraft/internal/tools/files"
 )
 
 // sessionCtx wraps ctx with the RunInfo flowcraft injects during graph
@@ -171,5 +174,74 @@ func TestHostWorkspaceReadonlyRoots(t *testing.T) {
 	// Paths outside both the root and the readonly allowlist stay denied.
 	if _, err := hw.Read(sessionCtx("s1"), otherOutside); err == nil {
 		t.Fatal("workspace mode must reject paths outside root and readonly roots")
+	}
+}
+
+// TestFilesToolReadsReadonlySkillRoot verifies the full chain for the
+// reported skill-reference read: the file tools pass absolute paths
+// through to the workspace, whose readonly skill roots are served
+// read-only in workspace mode, while everything else stays denied.
+func TestFilesToolReadsReadonlySkillRoot(t *testing.T) {
+	root := t.TempDir()
+	skillDir := t.TempDir()
+	refDir := filepath.Join(skillDir, "references")
+	if err := os.MkdirAll(refDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	skillFile := filepath.Join(refDir, "deploy.md")
+	if err := os.WriteFile(skillFile, []byte("skill reference body"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	if err := os.WriteFile(outside, []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	confined, err := workspace.NewLocalWorkspace(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hw := &HostWorkspace{
+		sessions: newTestStore(t),
+		confined: confined,
+		host:     &hostWorkspace{root: root},
+		readonly: []string{skillDir},
+	}
+	ft, err := files.New(hw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var readFile, writeFile tool.Tool
+	for _, tt := range ft.Tools() {
+		switch tt.Definition().Name {
+		case files.ReadFileName:
+			readFile = tt
+		case files.WriteFileName:
+			writeFile = tt
+		}
+	}
+	if readFile == nil || writeFile == nil {
+		t.Fatal("files tool group missing read_file/write_file")
+	}
+	ctx := sessionCtx("s1")
+
+	// Workspace mode: a skill reference under the readonly root is
+	// readable through read_file with its absolute path...
+	got, err := readFile.Execute(ctx, `{"file_path":"`+skillFile+`"}`)
+	if err != nil {
+		t.Fatalf("read_file skill reference: %v", err)
+	}
+	if !strings.Contains(got, "skill reference body") {
+		t.Errorf("read_file result = %q, want skill body", got)
+	}
+	// ...paths outside both the root and the readonly allowlist stay
+	// denied...
+	if _, err := readFile.Execute(ctx, `{"file_path":"`+outside+`"}`); err == nil {
+		t.Fatal("read_file outside workspace and readonly roots must fail")
+	}
+	// ...and writes never escape to readonly roots.
+	if _, err := writeFile.Execute(ctx,
+		`{"file_path":"`+skillFile+`","content":"x"}`); err == nil {
+		t.Fatal("write_file to readonly root must fail")
 	}
 }

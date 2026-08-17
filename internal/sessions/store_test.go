@@ -128,14 +128,12 @@ func TestAppendSkipsEmpty(t *testing.T) {
 	}
 	id, _ := store.Create()
 	if err := store.AppendTurn(context.Background(), id, []message.Message{
-		{Role: message.RoleAssistant, Content: message.Content{Parts: []message.Part{
-			message.ToolCallPart{Call: message.ToolCall{Name: "exec_command"}},
-		}}},
+		{Role: message.RoleAssistant, Content: message.Content{Parts: nil}},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	hist, _ := store.History(context.Background(), id, 0)
 	if len(hist) != 0 {
-		t.Errorf("tool-only turn should not be archived: %+v", hist)
+		t.Errorf("empty turn should not be archived: %+v", hist)
 	}
 }
