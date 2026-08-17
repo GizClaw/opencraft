@@ -301,6 +301,13 @@ type Model struct {
 	selection selectionState
 	dragging  bool
 
+	// mouseCapture mirrors the terminal's mouse-reporting state.
+	// Bubbletea captures the mouse for transcript drag selection,
+	// which disables the terminal's native selection — including the
+	// composer input. Ctrl+E toggles capture off so the user can
+	// native-select text, and back on for drag selection.
+	mouseCapture bool
+
 	// copyFn writes selected text to the clipboard; injectable for
 	// tests.
 	copyFn func(string) error
@@ -366,6 +373,7 @@ func New(
 		answering:    answeringState{selSelected: make(map[int]bool)},
 		stream:       streamState{pendingCalls: make(map[string]pendingCall)},
 		viewport:     viewport.New(0, 0),
+		mouseCapture: true,
 		copyFn:       clipboard.WriteAll,
 	}
 }
@@ -1525,6 +1533,9 @@ func (m *Model) clearSelection() {
 // handleMouse routes wheel events to the viewport and drives drag
 // selection inside the transcript area.
 func (m *Model) handleMouse(msg tea.MouseMsg) {
+	if !m.mouseCapture {
+		return
+	}
 	if m.mode == modeTranscript {
 		return
 	}
@@ -1574,6 +1585,19 @@ func (m *Model) handleMouse(msg tea.MouseMsg) {
 			m.pushDisplay()
 		}
 	}
+}
+
+// toggleMouseCapture flips the terminal mouse-reporting state. Capture
+// off restores the terminal's native selection (so the user can select
+// text in the composer); capture on re-enables transcript drag
+// selection.
+func (m *Model) toggleMouseCapture() tea.Cmd {
+	m.mouseCapture = !m.mouseCapture
+	if m.mouseCapture {
+		return tea.EnableMouseCellMotion
+	}
+	m.clearSelection()
+	return tea.DisableMouse
 }
 
 // syncViewport sizes the viewport to the current layout and refreshes
@@ -1934,6 +1958,8 @@ func (m *Model) handleIdleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+t":
 		m.enterTranscript()
 		return m, nil
+	case "ctrl+e":
+		return m, m.toggleMouseCapture()
 	// Newline is Shift+Enter / Option+Enter (codex-rs binds both). The
 	// input layer maps them to KeyCtrlJ, so they arrive here as
 	// "ctrl+j"; plain Enter stays "enter" and submits. Ctrl+Enter is
@@ -2585,6 +2611,9 @@ func (m *Model) footerLine() string {
 	}
 	if path := displayPath(m.opts.WorkDir); path != "" {
 		parts = append(parts, dimStyle.Render(path))
+	}
+	if !m.mouseCapture {
+		parts = append(parts, dimStyle.Render("native select · ctrl+e mouse"))
 	}
 	if len(parts) == 0 {
 		return ""

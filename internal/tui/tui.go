@@ -52,8 +52,9 @@ func Run(
 	// scrolling (the whole screen is now managed by the app, so the
 	// native scrollback no longer needs mouse access). Clicks are
 	// ignored: the UI stays keyboard-driven (Ctrl+T folding, ↑/↓
-	// pickers), and text selection is only affected while a button is
-	// held.
+	// pickers). Note that mouse reporting disables the terminal's
+	// native selection everywhere — including the composer input —
+	// so Ctrl+E in the TUI toggles capture off/on.
 	// Enable the kitty keyboard protocol via vtinput so modified keys
 	// (Shift+Enter/Option+Enter for newline, disambiguated Esc,
 	// Ctrl+letter) arrive as distinct events; unsupported terminals

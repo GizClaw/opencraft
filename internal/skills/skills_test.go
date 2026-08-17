@@ -336,6 +336,15 @@ func TestStageCopiesSkill(t *testing.T) {
 			t.Fatalf("staged %s missing: %v", rel, err)
 		}
 	}
+	// The staged copy keeps the source executable bit so the sandbox
+	// can fork/exec skill scripts.
+	info, err := os.Stat(filepath.Join(staged, "scripts", "run.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&0o111 == 0 {
+		t.Fatalf("staged run.sh mode = %v, want executable", info.Mode())
+	}
 	// Symlink targets must NOT be followed out of the staged copy.
 	if _, err := os.Stat(filepath.Join(staged, "leak")); err == nil {
 		t.Fatal("symlink must not be copied into the staged skill")

@@ -57,7 +57,10 @@ func (s *Service) Stage(sk SkillMetadata, dstDir string) (string, error) {
 		if err != nil {
 			return err
 		}
-		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+		// Preserve the source permissions (including the executable
+		// bit) so staged skill scripts can run from the sandbox cache.
+		out, err := os.OpenFile(target,
+			os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
 		if err != nil {
 			_ = in.Close()
 			return err
