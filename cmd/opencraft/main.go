@@ -19,7 +19,9 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/deploy"
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/resource"
 	sessions "github.com/GizClaw/flowcraft/core/runtime/session"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
@@ -29,6 +31,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/runtime"
 	"github.com/GizClaw/opencraft/internal/sandbox"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
+	"github.com/GizClaw/opencraft/internal/skills"
 	"github.com/GizClaw/opencraft/internal/tui"
 )
 
@@ -136,10 +139,19 @@ func main() {
 		if err != nil {
 			fatal(1, "opencraft: session store: %v", err)
 		}
+		userDataDir, err := config.UserDataDir()
+		if err != nil {
+			fatal(1, "opencraft: user data dir: %v", err)
+		}
+		// TUI-side skills registry for /skills and $mention
+		// completion. The runtime builds its own instance from the
+		// deploy document; both share the same settings.
+		skillsSvc := skillsFromDocument(view.Document, workDir, userDataDir)
 		if err := tui.Run(rtc, tui.Options{
 			Model:   config.DefaultModel(mgr.UserDir()),
 			Version: app.ServiceVersion,
 			WorkDir: workDir,
+			Skills:  skillsSvc,
 			// Every TUI launch starts a fresh conversation; /resume
 			// switches to an existing session id.
 			ContextID: ocsessions.NewID(),
@@ -164,6 +176,56 @@ func envBool(key string, def bool) bool {
 		return def
 	}
 	return b
+}
+
+// skillsFromDocument builds the TUI-side skills registry from the
+// merged deploy document (user/project layers already applied), so
+// /skills and $mention completion use exactly the same settings as
+// the runtime's opencraft.skills resource. Falls back to defaults
+// when the resource is absent or its settings are malformed.
+func skillsFromDocument(
+	doc deploy.Document,
+	workDir, userDataDir string,
+) *skills.Service {
+	defaults := func() *skills.Service {
+		return skills.NewService(skills.Options{
+			WorkBase: workDir,
+			UserDir:  userDataDir,
+			Enabled:  true,
+			TopN:     5,
+		})
+	}
+	res, ok := doc.Resources["skills"]
+	if !ok {
+		return defaults()
+	}
+	var settings skills.Settings
+	decoded, err := resource.DecodeTyped[skills.Settings](
+		res.Settings, resource.ExpandEnv())
+	if err != nil {
+		return defaults()
+	}
+	settings = decoded
+	enabled := true
+	if settings.Enabled != nil {
+		enabled = *settings.Enabled
+	}
+	opts := skills.Options{
+		WorkBase:   settings.WorkDir,
+		UserDir:    settings.UserDir,
+		Enabled:    enabled,
+		TopN:       settings.TopN,
+		MinScore:   settings.MinScore,
+		ExtraRoots: settings.ExtraRoots,
+		Disabled:   settings.Disabled,
+	}
+	if opts.WorkBase == "" {
+		opts.WorkBase = workDir
+	}
+	if opts.UserDir == "" {
+		opts.UserDir = userDataDir
+	}
+	return skills.NewService(opts)
 }
 
 // fatal logs msg through the telemetry pipeline, drains it so batched

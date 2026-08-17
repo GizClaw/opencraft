@@ -9,6 +9,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/runtime"
 	"github.com/GizClaw/opencraft/internal/sessions"
+	"github.com/GizClaw/opencraft/internal/skills"
 )
 
 // Options configures the TUI.
@@ -27,6 +28,9 @@ type Options struct {
 	// WorkDir is the workspace root apply_patch renders diffs against
 	// (real file line numbers). Empty disables file-based numbering.
 	WorkDir string
+	// Skills is the discovered skills registry backing /skills. Nil
+	// hides the picker (skills not wired).
+	Skills *skills.Service
 }
 
 // Run starts the TUI and blocks until it exits.

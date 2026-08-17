@@ -31,6 +31,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/runtime"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
+	"github.com/GizClaw/opencraft/internal/skills"
 	"github.com/GizClaw/opencraft/internal/tools/applypatch"
 	"github.com/GizClaw/opencraft/internal/tui/commands"
 )
@@ -72,6 +73,9 @@ const resumePlaceholder = "↑/↓ pick session · Enter resume · Esc cancel"
 // permissionsPlaceholder is the picker hint shown in /permissions mode.
 const permissionsPlaceholder = "↑/↓ pick mode · Enter apply · Esc cancel"
 
+// skillsPlaceholder is the picker hint shown in /skills mode.
+const skillsPlaceholder = "↑/↓ pick skill · Enter insert $name · Esc cancel"
+
 // mode is the explicit top-level UI state. Keyboard routing and the
 // status line derive from it instead of scattered boolean flags.
 type mode int
@@ -82,6 +86,7 @@ const (
 	modeAnswering
 	modeResume
 	modePermissions
+	modeSkills
 	modeTranscript
 )
 
@@ -174,6 +179,19 @@ func (p *permissionsState) reset() {
 	p.confirm = false
 }
 
+// skillsState is live while mode == modeSkills: the discovered skill
+// picker. Selecting a skill inserts "$name" into the composer; the
+// backend (worldstate prepare) is the only injection owner.
+type skillsState struct {
+	list   []skills.SkillMetadata
+	cursor int
+}
+
+func (s *skillsState) reset() {
+	s.list = nil
+	s.cursor = 0
+}
+
 // transcriptState is live while mode == modeTranscript: the full
 // content of every block that was folded on screen, scrollable above
 // the prompt.
@@ -234,8 +252,14 @@ type Model struct {
 	// permissions is live while mode == modePermissions.
 	permissions permissionsState
 
+	// skills is live while mode == modeSkills.
+	skills skillsState
+
 	// palette is the inline /-command search while mode == modeIdle.
 	palette paletteState
+
+	// mention is the inline $skill completion while mode == modeIdle.
+	mention mentionState
 
 	// commandIndex is the BM25 index over the slash command corpus.
 	commandIndex *commands.Index
@@ -299,6 +323,12 @@ type Model struct {
 	// carried across turns so the status line keeps showing it.
 	usageBase ocsessions.Usage
 	note      string // transient annotation (e.g. "cancelling…")
+
+	// interruptCause is the most recent cooperative interrupt the UI
+	// sent the turn (Esc). Prompt resolutions that arrive without a
+	// reason use it to label the marker, because the broker never
+	// observes an Ask error for a cooperative interrupt.
+	interruptCause agent.Cause
 
 	input   textarea.Model
 	spinner spinner.Model
@@ -372,6 +402,8 @@ func (m *Model) exitMode(prev mode) {
 		m.resume.reset()
 	case modePermissions:
 		m.permissions.reset()
+	case modeSkills:
+		m.skills.reset()
 	case modeTranscript:
 		m.transcript.scroll = 0
 	}
@@ -384,12 +416,17 @@ func (m *Model) enterMode(next mode) {
 		m.input.Reset()
 		m.input.Placeholder = mainPlaceholder
 		m.palette.reset()
+		m.mention.reset()
 	case modeResume:
 		m.input.Reset()
 		m.input.Placeholder = resumePlaceholder
 	case modePermissions:
 		m.input.Reset()
 		m.input.Placeholder = permissionsPlaceholder
+		m.input.Focus()
+	case modeSkills:
+		m.input.Reset()
+		m.input.Placeholder = skillsPlaceholder
 		m.input.Focus()
 	}
 }
@@ -570,7 +607,7 @@ func (m *Model) applyEvent(ev Event) {
 	case ev.Interact != nil:
 		m.enqueueInteraction(ev.Interact)
 	case ev.Resolved != nil:
-		m.chatResolved(ev.Resolved.ID, ev.Resolved.Status)
+		m.chatResolved(ev.Resolved.ID, ev.Resolved.Status, ev.Resolved.Reason)
 	case ev.Status != nil:
 		// The status line is derived from the mode; an external
 		// status event only annotates it.
@@ -1589,6 +1626,8 @@ func (m *Model) viewportHeight() int {
 		bottom += len(strings.Split(m.resumePicker(), "\n"))
 	case modePermissions:
 		bottom += len(strings.Split(m.permissionsPicker(), "\n"))
+	case modeSkills:
+		bottom += len(strings.Split(m.skillsPicker(), "\n"))
 	case modeAnswering:
 		ev := m.answering.interaction
 		if ev != nil && !m.answering.selOther &&
@@ -1603,6 +1642,8 @@ func (m *Model) viewportHeight() int {
 	default:
 		if m.paletteOpen() {
 			bottom += len(strings.Split(m.paletteView(), "\n"))
+		} else if m.mentionOpen() {
+			bottom += len(strings.Split(m.mentionView(), "\n"))
 		}
 		bottom += m.input.Height() + 2
 	}
@@ -1674,9 +1715,9 @@ func interactionPlaceholder(spec runtime.Spec) string {
 	}
 }
 
-func (m *Model) chatResolved(id string, status sessions.PromptStatus) {
+func (m *Model) chatResolved(id string, status sessions.PromptStatus, reason string) {
 	if m.answering.interaction != nil && m.answering.interaction.Spec.ID == id {
-		m.queue(dimStyle.Render("✗ " + string(status)))
+		m.queue(dimStyle.Render("✗ " + m.resolutionLabel(status, reason)))
 		m.answering.interaction = nil
 		m.promoteInteraction()
 		return
@@ -1687,6 +1728,34 @@ func (m *Model) chatResolved(id string, status sessions.PromptStatus) {
 				m.answering.interactQ[:i], m.answering.interactQ[i+1:]...)
 			return
 		}
+	}
+}
+
+// resolutionLabel renders one prompt-resolution marker. The runtime
+// supplies the reason when it can observe it; interrupted prompts
+// fall back to the cause the UI sent itself.
+func (m *Model) resolutionLabel(status sessions.PromptStatus, reason string) string {
+	if status == sessions.PromptInterrupted && reason == "" {
+		reason = interruptReason(m.interruptCause)
+	}
+	if reason == "" {
+		return string(status)
+	}
+	return string(status) + " (" + reason + ")"
+}
+
+// interruptReason maps a cooperative interrupt cause to the label
+// shown in the transcript.
+func interruptReason(cause agent.Cause) string {
+	switch cause {
+	case agent.CauseUserInput:
+		return "user input"
+	case agent.CauseUserCancel:
+		return "user cancel"
+	case agent.CauseHostShutdown:
+		return "host shutdown"
+	default:
+		return string(cause)
 	}
 }
 
@@ -1809,6 +1878,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleResumeKey(msg)
 	case modePermissions:
 		return m.handlePermissionsKey(msg)
+	case modeSkills:
+		return m.handleSkillsKey(msg)
 	case modeRunning:
 		return m.handleRunningKey(msg)
 	default:
@@ -1871,11 +1942,19 @@ func (m *Model) handleIdleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.input.InsertString("\n")
 		m.resizeInput()
 		m.refreshPalette()
+		m.refreshMention()
 		return m, nil
 	case "enter":
 		text := strings.TrimSpace(m.input.Value())
 		if text == "" {
 			return m, nil
+		}
+		if m.mentionOpen() {
+			if sk, ok := m.mentionSelection(); ok {
+				m.completeMention(sk)
+				m.mention.reset()
+				return m, nil
+			}
 		}
 		if strings.HasPrefix(text, "/") {
 			if name := m.paletteSelection(); name != "" {
@@ -1904,11 +1983,24 @@ func (m *Model) handleIdleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.mentionOpen() && len(m.mention.results) > 0 {
+			n := len(m.mention.results)
+			if msg.String() == "up" {
+				m.mention.cursor = (m.mention.cursor + n - 1) % n
+			} else {
+				m.mention.cursor = (m.mention.cursor + 1) % n
+			}
+			return m, nil
+		}
 	case "esc":
 		if m.paletteOpen() {
 			m.palette.reset()
 			m.input.Reset()
 			m.input.Placeholder = mainPlaceholder
+			return m, nil
+		}
+		if m.mentionOpen() {
+			m.mention.reset()
 			return m, nil
 		}
 	case "tab":
@@ -1918,12 +2010,20 @@ func (m *Model) handleIdleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.refreshPalette()
 			return m, nil
 		}
+		if m.mentionOpen() {
+			if sk, ok := m.mentionSelection(); ok {
+				m.completeMention(sk)
+				m.mention.reset()
+				return m, nil
+			}
+		}
 	}
 
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	m.resizeInput()
 	m.refreshPalette()
+	m.refreshMention()
 	return m, cmd
 }
 
@@ -1948,9 +2048,11 @@ func (m *Model) handleRunningKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "esc":
 		if m.session.turn != nil {
-			_ = m.session.turn.Interrupt(agent.Interrupt{
+			intr := agent.Interrupt{
 				Cause: agent.CauseUserInput,
-			})
+			}
+			m.interruptCause = intr.Cause
+			_ = m.session.turn.Interrupt(intr)
 			return m, nil
 		}
 	case "enter":
@@ -2034,6 +2136,49 @@ func (m *Model) handleResumeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.flattenHistory(meta.ID)
 		m.setMode(modeIdle)
 		return m, m.flushPending()
+	case "esc", "ctrl+c":
+		m.setMode(modeIdle)
+		return m, nil
+	}
+	return m, nil
+}
+
+// enterSkillsMode lists the discovered skills and shows the picker.
+// Selecting a skill inserts "$name" into the composer so the user can
+// extend the prompt; the injection itself happens in the backend.
+func (m *Model) enterSkillsMode() tea.Model {
+	if m.opts.Skills == nil || !m.opts.Skills.Enabled() {
+		m.queue(dimStyle.Render("Skills are disabled"))
+		m.input.Reset()
+		m.input.Placeholder = mainPlaceholder
+		return m
+	}
+	m.skills.list = m.opts.Skills.List()
+	if len(m.skills.list) == 0 && len(m.opts.Skills.Errors()) == 0 {
+		m.queue(dimStyle.Render("No skills discovered"))
+		m.input.Reset()
+		m.input.Placeholder = mainPlaceholder
+		return m
+	}
+	m.skills.cursor = 0
+	m.setMode(modeSkills)
+	return m
+}
+
+// handleSkillsKey drives the skill picker.
+func (m *Model) handleSkillsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		m.skills.cursor = (m.skills.cursor + len(m.skills.list) - 1) %
+			len(m.skills.list)
+	case "down", "j":
+		m.skills.cursor = (m.skills.cursor + 1) % len(m.skills.list)
+	case "enter":
+		sk := m.skills.list[m.skills.cursor]
+		m.setMode(modeIdle)
+		m.input.SetValue("$" + sk.Name + " ")
+		m.input.CursorEnd()
+		return m, nil
 	case "esc", "ctrl+c":
 		m.setMode(modeIdle)
 		return m, nil
@@ -2404,6 +2549,8 @@ func (m *Model) View() string {
 		lines = append(lines, m.resumePicker())
 	case modePermissions:
 		lines = append(lines, m.permissionsPicker())
+	case modeSkills:
+		lines = append(lines, m.skillsPicker())
 	case modeAnswering:
 		ev := m.answering.interaction
 		if ev != nil && !m.answering.selOther &&
@@ -2416,6 +2563,8 @@ func (m *Model) View() string {
 	default:
 		if m.paletteOpen() {
 			lines = append(lines, m.paletteView())
+		} else if m.mentionOpen() {
+			lines = append(lines, m.mentionView())
 		}
 		lines = append(lines, m.composerBar())
 	}
@@ -2541,6 +2690,43 @@ func (m *Model) resumePicker() string {
 		}
 	}
 	rows = append(rows, dimStyle.Render("  ↑/↓ choose · Enter resume · Esc cancel"))
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+}
+
+// skillsPicker renders the discovered skill list for /skills.
+func (m *Model) skillsPicker() string {
+	rows := []string{reasoningLabelStyle.Render("? Select a skill to mention")}
+	for i, sk := range m.skills.list {
+		prefix := "  "
+		if i == m.skills.cursor {
+			prefix = "❯ "
+		}
+		badge := ""
+		switch sk.Scope {
+		case "builtin":
+			badge = " " + dimStyle.Render("[builtin]")
+		case "user":
+			badge = " " + toolErrStyle.Render("[user]")
+		}
+		line := fmt.Sprintf("%s%s%s — %s", prefix, sk.Name, badge,
+			truncate(sk.Description, 52))
+		if i == m.skills.cursor {
+			rows = append(rows, userStyle.Render(line))
+		} else {
+			rows = append(rows, dimStyle.Render(line))
+		}
+	}
+	if errs := m.opts.Skills.Errors(); len(errs) > 0 {
+		rows = append(rows, toolErrStyle.Render(
+			fmt.Sprintf("  ⚠ %d skill(s) failed to load:", len(errs))))
+		n := min(3, len(errs))
+		for _, e := range errs[:n] {
+			rows = append(rows, dimStyle.Render(
+				"    "+truncate(e.Path+": "+e.Message, 60)))
+		}
+	}
+	rows = append(rows, dimStyle.Render(
+		"  ↑/↓ choose · Enter insert $name · Esc cancel"))
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
 
@@ -2670,6 +2856,8 @@ func (m *Model) statusLine() string {
 		parts = append(parts, statusTextStyle.Render("resume"))
 	case modePermissions:
 		parts = append(parts, statusTextStyle.Render("permissions"))
+	case modeSkills:
+		parts = append(parts, statusTextStyle.Render("skills"))
 	case modeTranscript:
 		parts = append(parts, statusTextStyle.Render("transcript"))
 	}

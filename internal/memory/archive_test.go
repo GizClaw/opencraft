@@ -90,6 +90,79 @@ func TestArchiveObserverArchivesCanceledTurn(t *testing.T) {
 	}
 }
 
+// TestArchiveObserverKeepsIntermediateToolActivity verifies an
+// interrupted turn persists its partial conversation from the final
+// board: world-state sections excluded, tool-call and tool-result
+// messages included.
+func TestArchiveObserverKeepsIntermediateToolActivity(t *testing.T) {
+	obs, store, sink := newArchiveObserver(t)
+	ctx := context.Background()
+	id := agent.Identity{RunID: "run-1", AgentID: "assistant", ConversationID: "s-1"}
+	req := &agent.Request{
+		ContextID: "s-1",
+		Message:   message.NewTextMessage(message.RoleUser, "部署一下"),
+	}
+	obs.OnRunStart(ctx, id, req)
+
+	board := agent.NewBoard()
+	board.AppendChannelMessage(agent.MainChannel,
+		message.NewTextMessage(message.RoleSystem, "environment section"))
+	board.AppendChannelMessage(agent.MainChannel,
+		message.NewTextMessage(message.RoleUser, "部署一下"))
+	board.AppendChannelMessage(agent.MainChannel, message.Message{
+		Role: message.RoleAssistant,
+		Content: message.Content{Parts: []message.Part{
+			message.ToolCallPart{Call: message.ToolCall{
+				ID: "c1", Name: "execcommand", Arguments: []byte(`{"cmd":"go build"}`),
+			}},
+		}},
+	})
+	board.AppendChannelMessage(agent.MainChannel, message.Message{
+		Role: message.RoleTool,
+		Content: message.Content{Parts: []message.Part{
+			message.ToolResultPart{Result: message.ToolResult{
+				CallID: "c1", Content: "build ok",
+			}},
+		}},
+	})
+	board.SetVar("world.sections.count", int64(1))
+
+	obs.OnRunEnd(ctx, id, &agent.Result{
+		RunID:     "run-1",
+		Status:    agent.StatusInterrupted,
+		LastBoard: board,
+	})
+
+	hist, err := store.History(ctx, "s-1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hist) != 3 {
+		t.Fatalf("history = %d messages, want 3 (user, tool-call assistant, tool result)", len(hist))
+	}
+	if hist[0].Role != message.RoleUser || hist[0].Content.Text() != "部署一下" {
+		t.Errorf("first message = %+v", hist[0])
+	}
+	if !strings.Contains(hist[1].Content.Text(), "tool_call: execcommand") {
+		t.Errorf("tool-call assistant message = %+v", hist[1])
+	}
+	if !strings.Contains(hist[2].Content.Text(), "tool_result: build ok") {
+		t.Errorf("tool result message = %+v", hist[2])
+	}
+	for _, m := range hist {
+		if m.Role == message.RoleSystem {
+			t.Fatalf("world-state section leaked into history: %+v", m)
+		}
+	}
+
+	if sink.count() != 1 {
+		t.Fatalf("memory sink turns = %d, want 1", sink.count())
+	}
+	if len(sink.turns[0].Messages) != 3 {
+		t.Fatalf("sink messages = %d, want 3", len(sink.turns[0].Messages))
+	}
+}
+
 func TestArchiveObserverSkipsCompletedTurn(t *testing.T) {
 	obs, store, sink := newArchiveObserver(t)
 	ctx := context.Background()

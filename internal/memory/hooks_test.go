@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/resource"
 
 	"github.com/GizClaw/opencraft/internal/sessions"
+	"github.com/GizClaw/opencraft/internal/tools/compact"
 )
 
 // TestCommitHookFactoryCommitsTurn verifies the opencraft.commit committer:
@@ -87,8 +89,12 @@ func TestCommitHookFactoryCommitsTurn(t *testing.T) {
 	if turn.IdempotencyKey != "run-1" {
 		t.Errorf("idempotency key = %q, want run-1", turn.IdempotencyKey)
 	}
-	if len(turn.Messages) != 1 || turn.Messages[0].Content.Text() != "好的，已实现" {
-		t.Errorf("sink messages = %+v", turn.Messages)
+	if len(turn.Messages) != 2 ||
+		turn.Messages[0].Role != message.RoleUser ||
+		turn.Messages[0].Content.Text() != "实现一个缓存" ||
+		turn.Messages[1].Role != message.RoleAssistant ||
+		turn.Messages[1].Content.Text() != "好的，已实现" {
+		t.Errorf("sink messages = %+v, want user request then final assistant", turn.Messages)
 	}
 }
 
@@ -128,6 +134,221 @@ func TestCommitHookSkipsEmptyResult(t *testing.T) {
 	}
 	if sink.count() != 0 {
 		t.Fatalf("memory sink turns = %d, want 0", sink.count())
+	}
+}
+
+// TestCommitHookPersistsFullConversation verifies that when the final
+// board carries the world-state section marker, the committer archives
+// and commits the whole turn conversation — user request, assistant
+// tool-call round, tool result, final reply — while excluding the
+// injected context sections, with tool activity rendered as text.
+func TestCommitHookPersistsFullConversation(t *testing.T) {
+	store, err := sessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &stubSink{}
+
+	value, err := (commitHookFactory{}).New(context.Background(), resource.Input{
+		Settings: []byte(`{}`),
+		Deps: map[string]any{
+			"memory":   sink,
+			"sessions": store,
+		},
+	})
+	if err != nil {
+		t.Fatalf("factory New: %v", err)
+	}
+	committer := value.(agent.CommitterFunc)
+
+	ctx := context.Background()
+	id := agent.Identity{RunID: "run-1", AgentID: "assistant", ConversationID: "s-1"}
+	req := &agent.Request{
+		ContextID: "s-1",
+		Message:   message.NewTextMessage(message.RoleUser, "查一下天气"),
+	}
+
+	board := agent.NewBoard()
+	board.AppendChannelMessage(agent.MainChannel,
+		message.NewTextMessage(message.RoleSystem, "environment section"))
+	board.AppendChannelMessage(agent.MainChannel,
+		message.NewTextMessage(message.RoleSystem, "memory summary section"))
+	board.AppendChannelMessage(agent.MainChannel,
+		message.NewTextMessage(message.RoleUser, "查一下天气"))
+	board.AppendChannelMessage(agent.MainChannel, message.Message{
+		Role: message.RoleAssistant,
+		Content: message.Content{Parts: []message.Part{
+			message.ToolCallPart{Call: message.ToolCall{
+				ID: "c1", Name: "webfetch",
+				Arguments: json.RawMessage(`{"url":"https://example.com"}`),
+			}},
+		}},
+	})
+	board.AppendChannelMessage(agent.MainChannel, message.Message{
+		Role: message.RoleTool,
+		Content: message.Content{Parts: []message.Part{
+			message.ToolResultPart{Result: message.ToolResult{
+				CallID: "c1", Content: "sunny 28C",
+			}},
+		}},
+	})
+	board.AppendChannelMessage(agent.MainChannel,
+		message.NewTextMessage(message.RoleAssistant, "今天 28 度"))
+	board.SetVar("world.sections.count", int64(2))
+
+	res := &agent.Result{
+		RunID:     "run-1",
+		Status:    agent.StatusCompleted,
+		LastBoard: board,
+		Messages: []message.Message{
+			message.NewTextMessage(message.RoleAssistant, "今天 28 度"),
+		},
+	}
+	if err := committer(ctx, id, req, res); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	hist, err := store.History(ctx, "s-1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hist) != 4 {
+		t.Fatalf("history = %d messages, want 4 (user, tool-call assistant, tool result, final)", len(hist))
+	}
+	if hist[0].Role != message.RoleUser || hist[0].Content.Text() != "查一下天气" {
+		t.Errorf("first message = %+v", hist[0])
+	}
+	if hist[1].Role != message.RoleAssistant || !strings.Contains(hist[1].Content.Text(), "tool_call: webfetch") {
+		t.Errorf("tool-call assistant message = %+v", hist[1])
+	}
+	if hist[2].Role != message.RoleTool || !strings.Contains(hist[2].Content.Text(), "tool_result: sunny 28C") {
+		t.Errorf("tool result message = %+v", hist[2])
+	}
+	if hist[3].Role != message.RoleAssistant || hist[3].Content.Text() != "今天 28 度" {
+		t.Errorf("final message = %+v", hist[3])
+	}
+	for _, m := range hist {
+		if m.Role == message.RoleSystem {
+			t.Fatalf("world-state section leaked into history: %+v", m)
+		}
+	}
+
+	if sink.count() != 1 {
+		t.Fatalf("memory sink turns = %d, want 1", sink.count())
+	}
+	turn := sink.turns[0]
+	if len(turn.Messages) != 4 {
+		t.Fatalf("sink messages = %d, want 4", len(turn.Messages))
+	}
+	if turn.Messages[1].Content.Text() != hist[1].Content.Text() {
+		t.Errorf("sink assistant tool-call text = %q, want %q",
+			turn.Messages[1].Content.Text(), hist[1].Content.Text())
+	}
+	if turn.Messages[2].Content.Text() != hist[2].Content.Text() {
+		t.Errorf("sink tool text = %q, want %q",
+			turn.Messages[2].Content.Text(), hist[2].Content.Text())
+	}
+}
+
+// TestCommitHookExcludesCompactionSummary verifies that a compaction
+// summary appended by the compact graph node as a marked user message
+// is kept out of both the session archive and the memory raw window:
+// it is derived context, not conversation.
+func TestCommitHookExcludesCompactionSummary(t *testing.T) {
+	store, err := sessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &stubSink{}
+
+	value, err := (commitHookFactory{}).New(context.Background(), resource.Input{
+		Settings: []byte(`{}`),
+		Deps: map[string]any{
+			"memory":   sink,
+			"sessions": store,
+		},
+	})
+	if err != nil {
+		t.Fatalf("factory New: %v", err)
+	}
+	committer := value.(agent.CommitterFunc)
+
+	ctx := context.Background()
+	id := agent.Identity{RunID: "run-1", AgentID: "assistant", ConversationID: "s-1"}
+	req := &agent.Request{
+		ContextID: "s-1",
+		Message:   message.NewTextMessage(message.RoleUser, "查一下天气"),
+	}
+
+	board := agent.NewBoard()
+	board.AppendChannelMessage(agent.MainChannel,
+		message.NewTextMessage(message.RoleSystem, "environment section"))
+	board.AppendChannelMessage(agent.MainChannel,
+		message.NewTextMessage(message.RoleSystem, "memory summary section"))
+	board.AppendChannelMessage(agent.MainChannel,
+		message.NewTextMessage(message.RoleUser, "查一下天气"))
+	board.AppendChannelMessage(agent.MainChannel, message.Message{
+		Role: message.RoleAssistant,
+		Content: message.Content{Parts: []message.Part{
+			message.ToolCallPart{Call: message.ToolCall{
+				ID: "c1", Name: "webfetch",
+				Arguments: json.RawMessage(`{"url":"https://example.com"}`),
+			}},
+		}},
+	})
+	board.AppendChannelMessage(agent.MainChannel, message.Message{
+		Role: message.RoleTool,
+		Content: message.Content{Parts: []message.Part{
+			message.ToolResultPart{Result: message.ToolResult{
+				CallID: "c1", Content: "sunny 28C",
+			}},
+		}},
+	})
+	board.AppendChannelMessage(agent.MainChannel,
+		message.NewTextMessage(message.RoleAssistant, "今天 28 度"))
+	board.AppendChannelMessage(agent.MainChannel,
+		message.NewTextMessage(message.RoleUser,
+			compact.SummaryPrefix+"\n查天气的进度与结论"))
+	board.SetVar("world.sections.count", int64(2))
+
+	res := &agent.Result{
+		RunID:     "run-1",
+		Status:    agent.StatusCompleted,
+		LastBoard: board,
+		Messages: []message.Message{
+			message.NewTextMessage(message.RoleAssistant, "今天 28 度"),
+		},
+	}
+	if err := committer(ctx, id, req, res); err != nil {
+		t.Fatalf("commit: %v", err)
+	}
+
+	hist, err := store.History(ctx, "s-1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hist) != 4 {
+		t.Fatalf("history = %d messages, want 4 (user, tool-call assistant, tool result, final)", len(hist))
+	}
+	for _, m := range hist {
+		if m.Role == message.RoleSystem {
+			t.Fatalf("world-state section leaked into history: %+v", m)
+		}
+		if strings.HasPrefix(m.Content.Text(), compact.SummaryPrefix+"\n") {
+			t.Fatalf("compaction summary leaked into history: %+v", m)
+		}
+	}
+	if sink.count() != 1 {
+		t.Fatalf("memory sink turns = %d, want 1", sink.count())
+	}
+	turn := sink.turns[0]
+	if len(turn.Messages) != 4 {
+		t.Fatalf("sink messages = %d, want 4", len(turn.Messages))
+	}
+	for _, m := range turn.Messages {
+		if strings.HasPrefix(m.Content.Text(), compact.SummaryPrefix+"\n") {
+			t.Fatalf("compaction summary leaked into memory raw window: %+v", m)
+		}
 	}
 }
 

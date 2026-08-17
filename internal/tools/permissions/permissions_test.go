@@ -1,4 +1,4 @@
-package requestpermissions
+package permissions
 
 import (
 	"context"

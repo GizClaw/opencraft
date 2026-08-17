@@ -21,7 +21,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/app/worldstate"
 	"github.com/GizClaw/opencraft/internal/runtime"
-	"github.com/GizClaw/opencraft/internal/tools/requestpermissions"
+	"github.com/GizClaw/opencraft/internal/tools/permissions"
 )
 
 // approvalsFile is the on-disk shape of .opencraft/approvals.yaml:
@@ -249,5 +249,5 @@ func (execPolicyResource) New(
 	return New(settings.AllowedCommands, settings.ApprovalsPath)
 }
 
-var _ requestpermissions.Policy = (*Manager)(nil)
+var _ permissions.Policy = (*Manager)(nil)
 var _ worldstate.PrefixProvider = (*Manager)(nil)

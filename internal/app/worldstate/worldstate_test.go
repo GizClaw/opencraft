@@ -12,6 +12,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
+	"github.com/GizClaw/opencraft/internal/skills"
 	"github.com/GizClaw/opencraft/internal/tools/plan"
 )
 
@@ -205,6 +206,30 @@ func TestMemorySectionsIncludeSummariesAndRaw(t *testing.T) {
 	}
 }
 
+// TestMemorySectionsMapToolRoleToUser verifies persisted tool-result
+// messages are injected as user context: the provider wire format
+// requires role=tool messages to carry a tool_call_id paired with a
+// preceding assistant call, which rendered raw context does not have.
+func TestMemorySectionsMapToolRoleToUser(t *testing.T) {
+	svc := New(Options{WorkBase: t.TempDir()})
+	svc.memory = stubMemory{items: []corememory.ContextItem{
+		{
+			Kind:        corememory.ContextRawMessage,
+			MessageRole: message.RoleTool,
+			Content: message.Content{Parts: []message.Part{
+				message.TextPart{Text: "tool_result: build ok"},
+			}},
+		},
+	}}
+	got := svc.memorySections(context.Background(), "c1")
+	if len(got) != 1 {
+		t.Fatalf("sections = %+v, want one raw section", got)
+	}
+	if got[0].ID != "memory_raw" || got[0].Role != string(message.RoleUser) || !contains(got[0].Text, "tool_result: build ok") {
+		t.Fatalf("tool raw section = %+v, want role user", got[0])
+	}
+}
+
 func TestRenderToBoardInjectsMemorySectionsNoHistory(t *testing.T) {
 	svc := New(Options{WorkBase: t.TempDir()})
 	svc.memory = stubMemory{items: []corememory.ContextItem{
@@ -224,7 +249,7 @@ func TestRenderToBoardInjectsMemorySectionsNoHistory(t *testing.T) {
 	}}
 	board := agent.NewBoard()
 	if err := svc.RenderToBoard(
-		context.Background(), "assistant", "c1", board,
+		context.Background(), "assistant", "c1", "latest user turn", nil, board,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +293,7 @@ func TestRenderToBoardInjectsLatestPlan(t *testing.T) {
 	svc.SetSessions(sess)
 	board := agent.NewBoard()
 	if err := svc.RenderToBoard(
-		context.Background(), "assistant", "c1", board,
+		context.Background(), "assistant", "c1", "", nil, board,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +323,7 @@ func TestRenderToBoardInjectsLatestPlan(t *testing.T) {
 	empty.SetSessions(newSessionStore(t))
 	board2 := agent.NewBoard()
 	if err := empty.RenderToBoard(
-		context.Background(), "assistant", "c2", board2,
+		context.Background(), "assistant", "c2", "", nil, board2,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +353,7 @@ func TestRenderToBoardInjectsLatestPlan(t *testing.T) {
 	done.SetSessions(doneSess)
 	board3 := agent.NewBoard()
 	if err := done.RenderToBoard(
-		context.Background(), "assistant", "c3", board3,
+		context.Background(), "assistant", "c3", "", nil, board3,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -342,4 +367,203 @@ func TestRenderToBoardInjectsLatestPlan(t *testing.T) {
 			t.Fatalf("completed plan must not be injected: %+v", sections3)
 		}
 	}
+}
+
+// writeSkillFile creates a discoverable skill under workBase.
+func writeSkillFile(t *testing.T, workBase, name, description string) {
+	t.Helper()
+	dir := filepath.Join(workBase, ".agents", "skills", name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "---\nname: " + name + "\ndescription: " + description +
+		"\n---\n\n# " + name + "\nDo the " + name + " thing.\n"
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"),
+		[]byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRenderToBoardInjectsRankedSkills(t *testing.T) {
+	workBase := t.TempDir()
+	writeSkillFile(t, workBase, "review", "review code and docs")
+	writeSkillFile(t, workBase, "plan", "build execution plans")
+	svc := skills.NewService(skills.Options{
+		WorkBase: workBase, Enabled: true, TopN: 5,
+	})
+	ws := New(Options{WorkBase: workBase})
+	ws.SetSkills(svc)
+
+	board := agent.NewBoard()
+	if err := ws.RenderToBoard(
+		context.Background(), "assistant", "c1", "please review the docs", nil, board,
+	); err != nil {
+		t.Fatal(err)
+	}
+	sections := unmarshalSections(t, board)
+	var skillsSec *Section
+	for i := range sections {
+		if sections[i].ID == "skills" {
+			skillsSec = &sections[i]
+		}
+		if sections[i].ID == "skill" {
+			t.Fatal("no mention, no full-text skill section expected")
+		}
+	}
+	if skillsSec == nil {
+		t.Fatalf("no skills section in %+v", sections)
+	}
+	if !contains(skillsSec.Text, "review") ||
+		contains(skillsSec.Text, "Do the review thing.") {
+		t.Fatalf("skills section = %q, want metadata only", skillsSec.Text)
+	}
+}
+
+func TestRenderToBoardSkipsSkillsWhenNoMatch(t *testing.T) {
+	workBase := t.TempDir()
+	writeSkillFile(t, workBase, "review", "review code and docs")
+	svc := skills.NewService(skills.Options{WorkBase: workBase, Enabled: true})
+	ws := New(Options{WorkBase: workBase})
+	ws.SetSkills(svc)
+
+	board := agent.NewBoard()
+	if err := ws.RenderToBoard(
+		context.Background(), "assistant", "c1", "zzzzqqqq nothing relevant", nil, board,
+	); err != nil {
+		t.Fatal(err)
+	}
+	for _, sec := range unmarshalSections(t, board) {
+		if sec.ID == "skills" || sec.ID == "skill" {
+			t.Fatalf("no match must not inject skills: %+v", sec)
+		}
+	}
+}
+
+func TestRenderToBoardMentionInjectsFullText(t *testing.T) {
+	workBase := t.TempDir()
+	writeSkillFile(t, workBase, "review", "review code and docs")
+	svc := skills.NewService(skills.Options{WorkBase: workBase, Enabled: true})
+	ws := New(Options{WorkBase: workBase})
+	ws.SetSkills(svc)
+
+	board := agent.NewBoard()
+	if err := ws.RenderToBoard(
+		context.Background(), "assistant", "c1", "use $review now", nil, board,
+	); err != nil {
+		t.Fatal(err)
+	}
+	var full *Section
+	for _, sec := range unmarshalSections(t, board) {
+		if sec.ID == "skill" {
+			full = &sec
+		}
+	}
+	if full == nil {
+		t.Fatalf("mention must inject a full-text skill section")
+	}
+	if full.Role != "user" || !contains(full.Text, "Do the review thing.") {
+		t.Fatalf("skill section = %+v, want user role with full body", full)
+	}
+}
+
+func TestMentionStagesSkillToCache(t *testing.T) {
+	workBase := t.TempDir()
+	writeSkillFile(t, workBase, "review", "review code and docs")
+	scripts := filepath.Join(workBase, ".agents", "skills", "review", "scripts")
+	if err := os.MkdirAll(scripts, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(scripts, "run.sh"),
+		[]byte("#!/bin/sh\necho hi\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	userDir := t.TempDir()
+	svc := skills.NewService(skills.Options{WorkBase: workBase, Enabled: true})
+	ws := New(Options{WorkBase: workBase, UserDir: userDir})
+	ws.SetSkills(svc)
+
+	board := agent.NewBoard()
+	if err := ws.RenderToBoard(
+		context.Background(), "assistant", "c1", "use $review", nil, board,
+	); err != nil {
+		t.Fatal(err)
+	}
+	var full *Section
+	for _, sec := range unmarshalSections(t, board) {
+		if sec.ID == "skill" {
+			full = &sec
+		}
+	}
+	if full == nil || !contains(full.Text, "staged copy for execution") {
+		t.Fatalf("mention must stage the skill: %+v", full)
+	}
+	staged := filepath.Join(userDir, "cache", "staged", "c1",
+		"review", "scripts", "run.sh")
+	if _, err := os.Stat(staged); err != nil {
+		t.Fatalf("staged script missing: %v", err)
+	}
+}
+
+func TestModelRequestedActivation(t *testing.T) {
+	workBase := t.TempDir()
+	writeSkillFile(t, workBase, "review", "review code and docs")
+	sess := newSessionStore(t)
+	svc := skills.NewService(skills.Options{WorkBase: workBase, Enabled: true})
+
+	// The model asks for $review at the end of a turn; the observe
+	// hook persists the request.
+	obs := &activateObserver{svc: svc, store: sess}
+	obs.OnRunEnd(context.Background(),
+		agent.Identity{AgentID: "assistant", ConversationID: "c1"},
+		&agent.Result{
+			Status: agent.StatusCompleted,
+			Messages: []message.Message{
+				message.NewTextMessage(message.RoleAssistant,
+					"I'll use $review on the next turn"),
+			},
+		})
+
+	ws := New(Options{WorkBase: workBase})
+	ws.SetSkills(svc)
+	ws.SetSessions(sess)
+
+	board := agent.NewBoard()
+	if err := ws.RenderToBoard(
+		context.Background(), "assistant", "c1", "go ahead", nil, board,
+	); err != nil {
+		t.Fatal(err)
+	}
+	var injected *Section
+	for _, sec := range unmarshalSections(t, board) {
+		if sec.ID == "skill" && contains(sec.Text, "requested by the model") {
+			injected = &sec
+		}
+	}
+	if injected == nil || !contains(injected.Text, "Do the review thing.") {
+		t.Fatalf("model-requested activation missing: %+v",
+			unmarshalSections(t, board))
+	}
+
+	// consume-on-read: the next turn injects nothing.
+	board2 := agent.NewBoard()
+	if err := ws.RenderToBoard(
+		context.Background(), "assistant", "c1", "again", nil, board2,
+	); err != nil {
+		t.Fatal(err)
+	}
+	for _, sec := range unmarshalSections(t, board2) {
+		if sec.ID == "skill" && contains(sec.Text, "requested by the model") {
+			t.Fatalf("activation must be consumed after one turn: %+v", sec)
+		}
+	}
+}
+
+func unmarshalSections(t *testing.T, board *agent.Board) []Section {
+	t.Helper()
+	raw := board.GetVarString("world.sections")
+	var sections []Section
+	if err := json.Unmarshal([]byte(raw), &sections); err != nil {
+		t.Fatalf("sections = %q: %v", raw, err)
+	}
+	return sections
 }

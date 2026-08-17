@@ -23,6 +23,10 @@ var all = []Command{
 		Name: "permissions",
 		Desc: "switch the sandbox permission mode (workspace | yolo)",
 	},
+	{
+		Name: "skills",
+		Desc: "list discovered skills and insert a $mention",
+	},
 }
 
 // List returns a copy of every registered command.

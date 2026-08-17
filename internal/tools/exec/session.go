@@ -1,7 +1,4 @@
-// Package execsession provides the exec_session tool: long-running
-// sessions over a sandbox.Runner, with start/read/write/
-// signal/resize/terminate/wait actions.
-package execsession
+package exec
 
 import (
 	"context"
@@ -14,8 +11,8 @@ import (
 	"github.com/GizClaw/flowcraft/core/tool"
 )
 
-// Name is the canonical exec_session tool name.
-const Name = "exec_session"
+// SessionName is the canonical exec_session tool name.
+const SessionName = "exec_session"
 
 // maxSessions bounds the number of concurrently live sessions. Sessions
 // are removed on wait/close, but a model that forgets to close would
@@ -23,27 +20,30 @@ const Name = "exec_session"
 // handle and its output buffer).
 const maxSessions = 64
 
-// Tool manages named sessions on one environment. It is safe for
-// concurrent use.
-type Tool struct {
+// SessionTool manages named sessions on one environment. It is safe
+// for concurrent use.
+type SessionTool struct {
 	runner sandbox.Runner
 
 	mu       sync.Mutex
 	sessions map[string]sandbox.Session
 }
 
-// New creates the exec_session tool.
-func New(runner sandbox.Runner) (*Tool, error) {
+// NewSession creates the exec_session tool.
+func NewSession(runner sandbox.Runner) (*SessionTool, error) {
 	if runner == nil {
 		return nil, errdefs.Validationf(
 			"exec_session: runner is required")
 	}
-	return &Tool{runner: runner, sessions: make(map[string]sandbox.Session)}, nil
+	return &SessionTool{
+		runner:   runner,
+		sessions: make(map[string]sandbox.Session),
+	}, nil
 }
 
-// MustNew panics on invalid construction; use in static wiring.
-func MustNew(runner sandbox.Runner) *Tool {
-	t, err := New(runner)
+// MustNewSession panics on invalid construction; use in static wiring.
+func MustNewSession(runner sandbox.Runner) *SessionTool {
+	t, err := NewSession(runner)
 	if err != nil {
 		panic(err)
 	}
@@ -51,9 +51,9 @@ func MustNew(runner sandbox.Runner) *Tool {
 }
 
 // Definition implements tool.Tool.
-func (t *Tool) Definition() message.ToolDefinition {
+func (t *SessionTool) Definition() message.ToolDefinition {
 	return message.DefineSchema(
-		Name,
+		SessionName,
 		"Manage a long-running shell session in the execution "+
 			"environment. Actions: start (launch a session with argv), "+
 			"read (pull output after an after_seq cursor), write (send "+
@@ -83,7 +83,7 @@ func (t *Tool) Definition() message.ToolDefinition {
 }
 
 // Metadata implements tool.ToolMetadata.
-func (t *Tool) Metadata() tool.ToolMeta {
+func (t *SessionTool) Metadata() tool.ToolMeta {
 	return tool.ToolMeta{MutatesState: true}
 }
 
@@ -101,7 +101,7 @@ type args struct {
 }
 
 // Execute implements tool.Tool.
-func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
+func (t *SessionTool) Execute(ctx context.Context, arguments string) (string, error) {
 	var a args
 	if err := json.Unmarshal([]byte(arguments), &a); err != nil {
 		return "", errdefs.Validationf("exec_session: parse arguments: %v", err)
@@ -144,7 +144,7 @@ func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
 	return string(payload), nil
 }
 
-func (t *Tool) start(ctx context.Context, a args) (any, error) {
+func (t *SessionTool) start(ctx context.Context, a args) (any, error) {
 	t.mu.Lock()
 	if _, exists := t.sessions[a.ProcessID]; exists {
 		t.mu.Unlock()
@@ -175,7 +175,7 @@ func (t *Tool) start(ctx context.Context, a args) (any, error) {
 	return map[string]any{"process_id": a.ProcessID, "started": true}, nil
 }
 
-func (t *Tool) read(ctx context.Context, a args) (any, error) {
+func (t *SessionTool) read(ctx context.Context, a args) (any, error) {
 	proc, err := t.get(a.ProcessID)
 	if err != nil {
 		return nil, err
@@ -208,7 +208,7 @@ func (t *Tool) read(ctx context.Context, a args) (any, error) {
 	}, nil
 }
 
-func (t *Tool) write(ctx context.Context, a args) (any, error) {
+func (t *SessionTool) write(ctx context.Context, a args) (any, error) {
 	proc, err := t.get(a.ProcessID)
 	if err != nil {
 		return nil, err
@@ -219,7 +219,7 @@ func (t *Tool) write(ctx context.Context, a args) (any, error) {
 	return map[string]bool{"written": true}, nil
 }
 
-func (t *Tool) signal(ctx context.Context, a args) (any, error) {
+func (t *SessionTool) signal(ctx context.Context, a args) (any, error) {
 	proc, err := t.get(a.ProcessID)
 	if err != nil {
 		return nil, err
@@ -230,7 +230,7 @@ func (t *Tool) signal(ctx context.Context, a args) (any, error) {
 	return map[string]bool{"signaled": true}, nil
 }
 
-func (t *Tool) resize(ctx context.Context, a args) (any, error) {
+func (t *SessionTool) resize(ctx context.Context, a args) (any, error) {
 	proc, err := t.get(a.ProcessID)
 	if err != nil {
 		return nil, err
@@ -241,7 +241,7 @@ func (t *Tool) resize(ctx context.Context, a args) (any, error) {
 	return map[string]bool{"resized": true}, nil
 }
 
-func (t *Tool) terminate(ctx context.Context, a args) (any, error) {
+func (t *SessionTool) terminate(ctx context.Context, a args) (any, error) {
 	proc, err := t.get(a.ProcessID)
 	if err != nil {
 		return nil, err
@@ -252,7 +252,7 @@ func (t *Tool) terminate(ctx context.Context, a args) (any, error) {
 	return map[string]bool{"terminated": true}, nil
 }
 
-func (t *Tool) wait(ctx context.Context, a args) (any, error) {
+func (t *SessionTool) wait(ctx context.Context, a args) (any, error) {
 	proc, err := t.get(a.ProcessID)
 	if err != nil {
 		return nil, err
@@ -275,7 +275,7 @@ func (t *Tool) wait(ctx context.Context, a args) (any, error) {
 	}, nil
 }
 
-func (t *Tool) close(ctx context.Context, a args) (any, error) {
+func (t *SessionTool) close(ctx context.Context, a args) (any, error) {
 	t.mu.Lock()
 	proc, ok := t.sessions[a.ProcessID]
 	if ok {
@@ -292,7 +292,7 @@ func (t *Tool) close(ctx context.Context, a args) (any, error) {
 	return map[string]bool{"closed": true}, nil
 }
 
-func (t *Tool) get(id string) (sandbox.Session, error) {
+func (t *SessionTool) get(id string) (sandbox.Session, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	proc, ok := t.sessions[id]
@@ -303,4 +303,4 @@ func (t *Tool) get(id string) (sandbox.Session, error) {
 	return proc, nil
 }
 
-var _ tool.Tool = (*Tool)(nil)
+var _ tool.Tool = (*SessionTool)(nil)

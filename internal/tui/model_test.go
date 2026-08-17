@@ -22,6 +22,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/runtime"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
+	"github.com/GizClaw/opencraft/internal/skills"
 )
 
 func newTestModel() *Model {
@@ -42,6 +43,109 @@ func TestEmptyEnterNoSubmit(t *testing.T) {
 	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd != nil {
 		t.Fatal("empty enter should not submit")
+	}
+}
+
+func TestSkillsPickerInsertsMention(t *testing.T) {
+	root := t.TempDir()
+	scan := filepath.Join(root, ".agents", "skills", "review")
+	if err := os.MkdirAll(scan, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(scan, "SKILL.md"),
+		[]byte("---\nname: review\ndescription: review code\n---\n\nbody\n"),
+		0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := newTestModel()
+	m.opts.Skills = skills.NewService(skills.Options{
+		WorkBase: root, Enabled: true,
+	})
+
+	m.enterSkillsMode()
+	if m.mode != modeSkills || len(m.skills.list) == 0 {
+		t.Fatalf("skills mode: mode=%v list=%+v", m.mode, m.skills.list)
+	}
+	v := m.View()
+	if !strings.Contains(v, "review") {
+		t.Fatalf("skills picker not rendered: %q", v)
+	}
+	m.skills.cursor = 0
+	for i, sk := range m.skills.list {
+		if sk.Name == "review" {
+			m.skills.cursor = i
+			break
+		}
+	}
+
+	m.handleSkillsKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if m.mode != modeIdle || m.input.Value() != "$review " {
+		t.Fatalf("enter should insert $mention and return idle: mode=%v input=%q",
+			m.mode, m.input.Value())
+	}
+}
+
+func TestMentionCompletion(t *testing.T) {
+	root := t.TempDir()
+	scan := filepath.Join(root, ".agents", "skills", "review")
+	if err := os.MkdirAll(scan, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(scan, "SKILL.md"),
+		[]byte("---\nname: review\ndescription: review code\n---\n\nbody\n"),
+		0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := newTestModel()
+	m.opts.Skills = skills.NewService(skills.Options{
+		WorkBase: root, Enabled: true,
+	})
+	m.width = 80
+
+	typeKeys(m, "please $re")
+	if !m.mentionOpen() {
+		t.Fatalf("$re should open mention completion: %q", m.input.Value())
+	}
+	if v := m.View(); !strings.Contains(v, "$review") {
+		t.Fatalf("mention completion not rendered: %q", v)
+	}
+
+	// Enter completes the token without submitting the turn.
+	_, cmd := m.handleKey(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Fatalf("completion must not submit: cmd=%v", cmd)
+	}
+	if m.input.Value() != "please $review " {
+		t.Fatalf("completed input = %q, want \"please $review \"", m.input.Value())
+	}
+	if m.mentionOpen() {
+		t.Fatal("completion must close the popup")
+	}
+}
+
+func TestSkillsPickerShowsLoadErrors(t *testing.T) {
+	root := t.TempDir()
+	bad := filepath.Join(root, ".agents", "skills", "bad")
+	if err := os.MkdirAll(bad, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Missing description -> parse failure recorded, skill skipped.
+	if err := os.WriteFile(filepath.Join(bad, "SKILL.md"),
+		[]byte("---\nname: bad\n---\n\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	m := newTestModel()
+	m.opts.Skills = skills.NewService(skills.Options{
+		WorkBase: root, Enabled: true,
+	})
+
+	m.enterSkillsMode()
+	if m.mode != modeSkills {
+		t.Fatalf("picker must open even with zero valid skills when errors exist: %v",
+			m.mode)
+	}
+	if v := m.View(); !strings.Contains(v, "failed to load") {
+		t.Fatalf("load errors not shown in picker: %q", v)
 	}
 }
 
@@ -226,6 +330,43 @@ func TestTurnDoneInterruptMarker(t *testing.T) {
 	m.Update(turnDoneMsg{res: &agent.Result{Status: agent.StatusInterrupted}})
 	if got := m.transcriptText(); !strings.Contains(got, "✗ interrupted") {
 		t.Errorf("interrupt marker missing from transcript: %q", got)
+	}
+}
+
+func TestChatResolvedRendersReason(t *testing.T) {
+	m := newTestModel()
+	replyCh := make(chan runtime.Reply, 1)
+	m.dispatch(Event{Interact: &InteractEvent{
+		Spec:    runtime.Spec{ID: "p1", Kind: runtime.KindText, Title: "q"},
+		ReplyCh: replyCh,
+	}})
+	m.dispatch(Event{Resolved: &ResolvedEvent{
+		ID: "p1", Status: sessions.PromptExpired, Reason: "timeout",
+	}})
+	m.drainPending()
+	if got := m.transcriptText(); !strings.Contains(got, "✗ expired (timeout)") {
+		t.Errorf("reason missing from marker: %q", got)
+	}
+	if m.mode != modeRunning || m.answering.interaction != nil {
+		t.Errorf("interaction not closed: mode=%v interaction=%v",
+			m.mode, m.answering.interaction)
+	}
+}
+
+func TestChatResolvedInterruptedUsesLocalCause(t *testing.T) {
+	m := newTestModel()
+	m.interruptCause = agent.CauseUserInput
+	replyCh := make(chan runtime.Reply, 1)
+	m.dispatch(Event{Interact: &InteractEvent{
+		Spec:    runtime.Spec{ID: "p1", Kind: runtime.KindText, Title: "q"},
+		ReplyCh: replyCh,
+	}})
+	m.dispatch(Event{Resolved: &ResolvedEvent{
+		ID: "p1", Status: sessions.PromptInterrupted,
+	}})
+	m.drainPending()
+	if got := m.transcriptText(); !strings.Contains(got, "✗ interrupted (user input)") {
+		t.Errorf("interrupt cause missing from marker: %q", got)
 	}
 }
 

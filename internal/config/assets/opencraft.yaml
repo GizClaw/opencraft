@@ -63,6 +63,20 @@ resources:
     impl: local
     settings:
       root: ${env:OPEN_CRAFT_WORKDIR}
+  # Shared skills registry: one discovery pass per process lifetime.
+  # The worldstate prepare hook (per-turn top-5 injection + $mention
+  # full-text activation) and tool.skills both consume it.
+  skills:
+    kind: opencraft.skills
+    impl: local
+    deps:
+      workspace: ws
+    settings:
+      enabled: true
+      work_dir: ${env:OPEN_CRAFT_WORKDIR}
+      user_dir: ${env:OPEN_CRAFT_DATA_DIR}
+      top_n: 5
+      min_score: 0
   # Mode-aware workspace for the file tools: in workspace mode it
   # delegates to a LocalWorkspace rooted at settings.root; in yolo mode
   # it allows any host path. The mode is the session's persisted
@@ -72,8 +86,14 @@ resources:
     impl: local
     deps:
       sessions: sessions
+      # Contributes discovered skill roots to the workspace-mode
+      # read-only allowlist (read_file on references/assets).
+      skills: skills
     settings:
       root: ${env:OPEN_CRAFT_WORKDIR}
+      # Staged skill copies live under the cache dir, which the exec
+      # sandbox may write; file tools only need read access to it.
+      readonly_roots: ["${env:OPEN_CRAFT_DATA_DIR}/cache"]
   box:
     kind: sandbox.Runner
     impl: opencraft
@@ -119,14 +139,28 @@ resources:
     impl: opencraft/plan
     deps:
       sessions: sessions
-  tool.requestpermissions:
+  tool.skills:
     kind: tool.Source
-    impl: opencraft/requestpermissions
+    impl: opencraft/skills
+    deps:
+      skills: skills
+  # Internal conversation compaction: folds the loop's older rounds into
+  # a summary (router condensation) and persists the artifact per
+  # conversation via the session store.
+  tool.compact:
+    kind: tool.Source
+    impl: opencraft/compact
+    deps:
+      router: router
+      sessions: sessions
+  tool.permissions:
+    kind: tool.Source
+    impl: opencraft/permissions
     deps:
       execpolicy: execpolicy
   tools:
     kind: tool.Assembly
-    impl: middleware
+    impl: opencraft
     deps:
       tool: tool.exec
       tool.applypatch: tool.applypatch
@@ -134,13 +168,24 @@ resources:
       tool.askuser: tool.askuser
       tool.files: tool.files
       tool.plan: tool.plan
-      tool.requestpermissions: tool.requestpermissions
+      tool.skills: tool.skills
+      tool.compact: tool.compact
+      tool.permissions: tool.permissions
     settings:
       middlewares:
         recover:
           enabled: true
         timeout:
           default: 5m
+        # Oversized tool outputs are persisted in full under
+        # .opencraft/cache/tools/<call_id>.output and truncated in
+        # context, keeping the loop's MainChannel from growing unbounded
+        # on a single tool result.
+        truncate:
+          enabled: true
+          max_chars: 8000
+          dir: ${env:OPEN_CRAFT_WORKDIR}/.opencraft/cache/tools
+          work_dir: ${env:OPEN_CRAFT_WORKDIR}
       dynamic:
         default: deferred
         exposures:
@@ -156,6 +201,9 @@ resources:
           glob: always
           update_plan: always
           request_permissions: always
+          # Internal machinery: callable by exact name (the compact
+          # graph node), never offered to the model.
+          compact: hidden
 
   # ------------------------------------------------------------------
   # Inference: provider resources + assembly (provider is a many dep;
@@ -215,10 +263,11 @@ agents:
         sandbox: box
         script_runtime: js
       settings:
-        # Editable at ~/.opencraft/config/graphs/assistant.yaml
-        # (regenerated when deleted). Override with your own graph via
-        # the user or project layer if needed.
-        graph: { file: graphs/assistant.yaml }
+        # The default graph ships embedded (graph + node scripts +
+        # system prompt all resolve from the binary). To use your own,
+        # override this reference in the user or project layer, e.g.
+        # graph: { file: graphs/my-assistant.yaml }.
+        graph: { embed: assets/graphs/assistant.yaml }
         build:
           timeout: 1h
     prepare:
@@ -228,6 +277,7 @@ agents:
           workspace: ws
           execpolicy: execpolicy
           sessions: sessions
+          skills: skills
         settings:
           work_dir: ${env:OPEN_CRAFT_WORKDIR}
           user_dir: ${env:OPEN_CRAFT_DATA_DIR}
@@ -244,6 +294,13 @@ agents:
       - type: opencraft.archive
         deps:
           memory: mem
+          sessions: sessions
+      # Detects $name mentions in the model's replies and injects the
+      # full SKILL.md on the next turn (codex-style implicit
+      # invocation).
+      - type: opencraft.skillactivate
+        deps:
+          skills: skills
           sessions: sessions
 
 runtime:

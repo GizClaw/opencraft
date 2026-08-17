@@ -22,7 +22,7 @@ func TestPaletteOpensAndRanks(t *testing.T) {
 	if !m.paletteOpen() {
 		t.Fatal("palette should open when input starts with /")
 	}
-	if len(m.palette.results) != 2 {
+	if len(m.palette.results) != 3 {
 		t.Fatalf("empty query should list all commands: %v",
 			m.palette.results)
 	}

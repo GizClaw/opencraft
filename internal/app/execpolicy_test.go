@@ -15,7 +15,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/sandbox"
 
 	"github.com/GizClaw/opencraft/internal/runtime"
-	"github.com/GizClaw/opencraft/internal/tools/requestpermissions"
+	"github.com/GizClaw/opencraft/internal/tools/permissions"
 )
 
 func TestNormaliseCommandUnwrapsShell(t *testing.T) {
@@ -250,7 +250,7 @@ func TestRequestPermissionsGrantsAndPersists(t *testing.T) {
 	}
 	ctx := agent.ContextWithHost(context.Background(), grantHost{})
 
-	tool := requestpermissions.New(mgr)
+	tool := permissions.New(mgr)
 	out, err := tool.Execute(ctx,
 		`{"permissions":["npm install", "  git   push  "], "reason":"deploy"}`)
 	if err != nil {
@@ -296,7 +296,7 @@ func TestRequestPermissionsDenied(t *testing.T) {
 	}
 	ctx := agent.ContextWithHost(context.Background(), denyHost{})
 
-	tool := requestpermissions.New(mgr)
+	tool := permissions.New(mgr)
 	out, err := tool.Execute(ctx, `{"permissions":["git push"]}`)
 	if err != nil {
 		t.Fatal(err)
@@ -318,7 +318,7 @@ func TestRequestPermissionsDenied(t *testing.T) {
 
 func TestRequestPermissionsRequiresExecPolicy(t *testing.T) {
 	ctx := agent.ContextWithHost(context.Background(), agent.NoopHost{})
-	tool := requestpermissions.New(nil)
+	tool := permissions.New(nil)
 	_, err := tool.Execute(ctx, `{"permissions":["git push"]}`)
 	if err == nil {
 		t.Fatal("expected error when runtime has no exec policy")

@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -136,5 +137,39 @@ func TestHostWorkspaceSwitchesBySessionMode(t *testing.T) {
 	data, err := hw.Read(sessionCtx("s1"), outside)
 	if err != nil || string(data) != "s3cret" {
 		t.Fatalf("yolo read = %q, %v", data, err)
+	}
+}
+
+func TestHostWorkspaceReadonlyRoots(t *testing.T) {
+	root := t.TempDir()
+	readonlyDir := t.TempDir()
+	skillFile := filepath.Join(readonlyDir, "SKILL.md")
+	if err := os.WriteFile(skillFile, []byte("skill body"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	otherOutside := filepath.Join(t.TempDir(), "secret.txt")
+	confined, err := workspace.NewLocalWorkspace(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hw := &HostWorkspace{
+		sessions: newTestStore(t),
+		confined: confined,
+		host:     &hostWorkspace{root: root},
+		readonly: []string{readonlyDir},
+	}
+
+	// Workspace mode: read-only roots are readable...
+	data, err := hw.Read(sessionCtx("s1"), skillFile)
+	if err != nil || string(data) != "skill body" {
+		t.Fatalf("readonly root read = %q, %v", data, err)
+	}
+	// ...but writes still go to the confined workspace and are rejected.
+	if err := hw.Write(sessionCtx("s1"), skillFile, []byte("x")); err == nil {
+		t.Fatal("write to readonly root must be rejected in workspace mode")
+	}
+	// Paths outside both the root and the readonly allowlist stay denied.
+	if _, err := hw.Read(sessionCtx("s1"), otherOutside); err == nil {
+		t.Fatal("workspace mode must reject paths outside root and readonly roots")
 	}
 }

@@ -12,6 +12,9 @@ var slashHandlers = map[string]func(m *Model) (tea.Model, tea.Cmd){
 	"permissions": func(m *Model) (tea.Model, tea.Cmd) {
 		return m.enterPermissionsMode(), nil
 	},
+	"skills": func(m *Model) (tea.Model, tea.Cmd) {
+		return m.enterSkillsMode(), nil
+	},
 }
 
 // runCommand executes a slash command by name and returns the model

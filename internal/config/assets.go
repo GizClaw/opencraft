@@ -6,21 +6,24 @@ package config
 import "embed"
 
 // Default deploy assets. The base opencraft.yaml stays embedded as
-// internal wiring; the user layer, inference routing, and the graph
-// definition (with its referenced prompt and world script) are seeded
-// into ~/.opencraft/config/ so they are editable at runtime.
+// internal wiring; the user layer and inference routing are seeded
+// into ~/.opencraft/config/ so they are editable at runtime. The graph
+// definition and its node scripts/prompt are embedded too — they are
+// only read from disk when a config layer overrides the graph
+// reference with a {file: ...} source.
 //
-//go:embed assets/opencraft.yaml assets/user_opencraft.yaml assets/inference.yaml assets/graphs/assistant.yaml assets/graphs/node/world.js assets/prompts/system.md
+//go:embed assets/opencraft.yaml assets/user_opencraft.yaml assets/inference.yaml assets/graphs/assistant.yaml assets/graphs/nodes/world.js assets/graphs/nodes/compact.js assets/graphs/prompts/system.md
 var assets embed.FS
 
 // UserAssets are the embedded files seeded into ~/.opencraft/config/
-// (embed ref -> on-disk name).
+// (embed ref -> on-disk name). Only the config documents need a disk
+// copy: the deploy loader resolves file sources strictly, so the user
+// layer and the router's inference.yaml must exist. The default graph
+// is deliberately absent — it resolves from the embedded FS unless the
+// user overrides the graph reference.
 var UserAssets = []struct{ Ref, Name string }{
 	{Ref: "assets/user_opencraft.yaml", Name: "opencraft.yaml"},
 	{Ref: "assets/inference.yaml", Name: "inference.yaml"},
-	{Ref: "assets/graphs/assistant.yaml", Name: "graphs/assistant.yaml"},
-	{Ref: "assets/graphs/node/world.js", Name: "graphs/node/world.js"},
-	{Ref: "assets/prompts/system.md", Name: "prompts/system.md"},
 }
 
 // FS returns the embedded deploy asset filesystem (for embed sources

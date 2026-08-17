@@ -35,6 +35,7 @@ type InteractEvent struct {
 type ResolvedEvent struct {
 	ID     string
 	Status session.PromptStatus
+	Reason string
 }
 
 // StatusEvent updates the status bar.

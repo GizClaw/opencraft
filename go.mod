@@ -3,15 +3,15 @@ module github.com/GizClaw/opencraft
 go 1.26.5
 
 require (
-	github.com/GizClaw/flowcraft/core v0.1.10
-	github.com/GizClaw/flowcraft/driver/anthropic v0.1.2
-	github.com/GizClaw/flowcraft/driver/azure v0.1.2
-	github.com/GizClaw/flowcraft/driver/bytedance v0.1.2
-	github.com/GizClaw/flowcraft/driver/deepseek v0.1.2
-	github.com/GizClaw/flowcraft/driver/kimi v0.1.2
-	github.com/GizClaw/flowcraft/driver/minimax v0.1.2
-	github.com/GizClaw/flowcraft/driver/openai v0.1.2
-	github.com/GizClaw/flowcraft/driver/qwen v0.1.2
+	github.com/GizClaw/flowcraft/core v0.1.13
+	github.com/GizClaw/flowcraft/driver/anthropic v0.1.3
+	github.com/GizClaw/flowcraft/driver/azure v0.1.3
+	github.com/GizClaw/flowcraft/driver/bytedance v0.1.3
+	github.com/GizClaw/flowcraft/driver/deepseek v0.1.3
+	github.com/GizClaw/flowcraft/driver/kimi v0.1.3
+	github.com/GizClaw/flowcraft/driver/minimax v0.1.3
+	github.com/GizClaw/flowcraft/driver/openai v0.1.3
+	github.com/GizClaw/flowcraft/driver/qwen v0.1.3
 	github.com/PuerkitoBio/goquery v1.12.0
 	github.com/atotto/clipboard v0.1.4
 	github.com/charmbracelet/bubbles v1.0.0
@@ -25,6 +25,7 @@ require (
 	github.com/muesli/termenv v0.16.0
 	github.com/rs/xid v1.6.0
 	github.com/unxed/vtinput v0.1.2
+	go.opentelemetry.io/otel/log v0.16.0
 	go.opentelemetry.io/otel/sdk/log v0.16.0
 	golang.org/x/net v0.57.0
 	golang.org/x/term v0.45.0
@@ -108,7 +109,6 @@ require (
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp v1.40.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.40.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp v1.40.0 // indirect
-	go.opentelemetry.io/otel/log v0.16.0 // indirect
 	go.opentelemetry.io/otel/metric v1.43.0 // indirect
 	go.opentelemetry.io/otel/sdk v1.43.0 // indirect
 	go.opentelemetry.io/otel/sdk/metric v1.43.0 // indirect

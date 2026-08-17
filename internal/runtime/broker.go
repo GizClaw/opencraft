@@ -3,9 +3,12 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"strings"
 	"sync"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/event"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/runtime/session"
@@ -19,10 +22,11 @@ type Broker struct {
 	rt      Runtime
 	backend Backend
 
-	mu     sync.Mutex
-	detach []func()
-	closed bool
-	turns  map[string]Replier
+	mu      sync.Mutex
+	detach  []func()
+	closed  bool
+	turns   map[string]Replier
+	reasons map[string]error // promptID -> Ask error, consumed by PromptResolved
 }
 
 // New creates a Broker over rt with one backend.
@@ -161,10 +165,79 @@ func (b *Broker) ask(ctx context.Context, spec Spec) {
 		// The UI is unavailable (or cancelled); resolve the prompt
 		// empty so the agent does not block forever. Failures are
 		// best-effort: the runtime prompt state machine still owns the
-		// final outcome.
+		// final outcome. Remember why Ask failed so the subsequent
+		// PromptResolved can label the UI marker with the reason.
+		b.mu.Lock()
+		if b.reasons == nil {
+			b.reasons = make(map[string]error)
+		}
+		b.reasons[spec.ID] = err
+		b.mu.Unlock()
 		reply = Reply{ID: spec.ID, Status: ReplyCancelled}
 	}
 	b.deliver(spec, reply)
+}
+
+// resolutionReason returns the reason attached to one prompt
+// resolution, consuming the recorded Ask error. When no Ask error was
+// observed yet (or ever, e.g. a cooperative interrupt), it falls back
+// to a label derived from the status so the marker is never bare.
+func (b *Broker) resolutionReason(id string, status session.PromptStatus) string {
+	b.mu.Lock()
+	err := b.reasons[id]
+	delete(b.reasons, id)
+	b.mu.Unlock()
+	if err != nil {
+		return promptReason(err, status)
+	}
+	return fallbackPromptReason(status)
+}
+
+// promptReason maps an Ask failure to a short display label. The
+// status arrives independently via PromptResolved, so some labels
+// depend on it: a cancelled context means "turn ended" when the prompt
+// closed with the turn, but "cancelled" when it merely expired.
+func promptReason(err error, status session.PromptStatus) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.Is(err, context.Canceled):
+		if status == session.PromptClosed {
+			return "turn ended"
+		}
+		return "cancelled"
+	case errdefs.IsInterrupted(err):
+		var intr agent.InterruptedError
+		if errors.As(err, &intr) {
+			if intr.Detail != "" {
+				return intr.Detail
+			}
+			if intr.Cause != "" && intr.Cause != agent.CauseUnknown {
+				return string(intr.Cause)
+			}
+		}
+		return "interrupted"
+	default:
+		msg := err.Error()
+		if i := strings.IndexByte(msg, '\n'); i >= 0 {
+			msg = msg[:i]
+		}
+		return msg
+	}
+}
+
+// fallbackPromptReason labels a resolution whose Ask outcome was not
+// observable at this layer (the PromptResolved envelope won the race,
+// or the interruption bypassed the Ask path entirely).
+func fallbackPromptReason(status session.PromptStatus) string {
+	switch status {
+	case session.PromptExpired:
+		return "context ended"
+	case session.PromptClosed:
+		return "turn ended"
+	default:
+		return ""
+	}
 }
 
 func (b *Broker) deliver(spec Spec, reply Reply) {
@@ -175,7 +248,14 @@ func (b *Broker) deliver(spec Spec, reply Reply) {
 		return
 	}
 	reply.ID = spec.ID
-	_ = turn.Reply(context.Background(), spec.ID, ToUserReply(reply))
+	err := turn.Reply(context.Background(), spec.ID, ToUserReply(reply))
+	if err == nil {
+		// A successful reply resolved the prompt; no PromptResolved
+		// will follow, so drop any recorded Ask-error reason.
+		b.mu.Lock()
+		delete(b.reasons, spec.ID)
+		b.mu.Unlock()
+	}
 }
 
 func (b *Broker) onPromptResolved(ctx context.Context, env event.Envelope) error {
@@ -184,7 +264,10 @@ func (b *Broker) onPromptResolved(ctx context.Context, env event.Envelope) error
 		return err
 	}
 	if r, ok := b.backend.(Resolver); ok {
-		_ = r.Resolve(ctx, res.PromptID, res.Status)
+		_ = r.Resolve(ctx, res.PromptID, res.Status,
+			b.resolutionReason(res.PromptID, res.Status))
+	} else {
+		b.resolutionReason(res.PromptID, res.Status)
 	}
 	return nil
 }

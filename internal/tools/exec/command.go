@@ -1,7 +1,9 @@
-// Package execcommand provides the exec_command tool: simple commands
-// run directly in the sandbox (no shell wrapper), and commands needing
-// shell features run through /bin/sh -c.
-package execcommand
+// Package exec provides the exec_command and exec_session tools, both
+// backed by a sandbox.Runner: exec_command runs simple commands
+// directly in the sandbox (no shell wrapper), and commands needing
+// shell features run through /bin/sh -c; exec_session manages
+// long-running sessions.
+package exec
 
 import (
 	"context"
@@ -16,25 +18,25 @@ import (
 	"github.com/GizClaw/flowcraft/core/tool"
 )
 
-// Name is the canonical exec_command tool name.
-const Name = "exec_command"
+// CommandName is the canonical exec_command tool name.
+const CommandName = "exec_command"
 
-// Tool runs a shell command string via /bin/sh -c.
-type Tool struct {
+// CommandTool runs a shell command string via /bin/sh -c.
+type CommandTool struct {
 	runner sandbox.Runner
 }
 
-// New creates the exec_command tool. runner is required.
-func New(runner sandbox.Runner) (*Tool, error) {
+// NewCommand creates the exec_command tool. runner is required.
+func NewCommand(runner sandbox.Runner) (*CommandTool, error) {
 	if runner == nil {
 		return nil, errInvalid("runner is required")
 	}
-	return &Tool{runner: runner}, nil
+	return &CommandTool{runner: runner}, nil
 }
 
-// MustNew panics on invalid construction; use in static wiring.
-func MustNew(runner sandbox.Runner) *Tool {
-	t, err := New(runner)
+// MustNewCommand panics on invalid construction; use in static wiring.
+func MustNewCommand(runner sandbox.Runner) *CommandTool {
+	t, err := NewCommand(runner)
 	if err != nil {
 		panic(err)
 	}
@@ -42,9 +44,9 @@ func MustNew(runner sandbox.Runner) *Tool {
 }
 
 // Definition implements tool.Tool.
-func (t *Tool) Definition() message.ToolDefinition {
+func (t *CommandTool) Definition() message.ToolDefinition {
 	return message.DefineSchema(
-		Name,
+		CommandName,
 		"Run a command inside the agent's sandbox. Simple commands "+
 			"(a bare program with plain arguments, no shell syntax) are "+
 			"executed directly; commands needing shell features "+
@@ -66,12 +68,12 @@ func (t *Tool) Definition() message.ToolDefinition {
 }
 
 // Metadata implements tool.ToolMetadata.
-func (t *Tool) Metadata() tool.ToolMeta {
+func (t *CommandTool) Metadata() tool.ToolMeta {
 	return tool.ToolMeta{MutatesState: true}
 }
 
 // Execute implements tool.Tool.
-func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
+func (t *CommandTool) Execute(ctx context.Context, arguments string) (string, error) {
 	var args struct {
 		Command        string   `json:"command"`
 		Workdir        string   `json:"workdir"`
@@ -156,7 +158,7 @@ func safeWord(s string) bool {
 }
 
 // Compile-time assertion.
-var _ tool.Tool = (*Tool)(nil)
+var _ tool.Tool = (*CommandTool)(nil)
 
 func errInvalid(msg string) error {
 	return fmt.Errorf("exec_command: %s", msg)

@@ -73,7 +73,11 @@ type Backend interface {
 // closed) so the UI can close or invalidate the rendered interaction
 // instead of waiting for the whole turn to end.
 type Resolver interface {
-	Resolve(ctx context.Context, id string, status session.PromptStatus) error
+	// Resolve reports one prompt resolution. reason is a short
+	// human-readable label (e.g. "timeout", "turn ended") when the
+	// runtime could observe why the prompt stopped waiting; it is
+	// empty when the cause is not observable at this layer.
+	Resolve(ctx context.Context, id string, status session.PromptStatus, reason string) error
 }
 
 // Runtime is the runtime surface the Broker needs. *runtime.Runtime

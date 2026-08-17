@@ -6,14 +6,30 @@ nodes:
     type: script
     config:
       runtime: js
-      source: {file: graphs/node/world.js}
+      # Embedded default: the graph itself ships as an embedded asset,
+      # so its node sources resolve from the binary, not the user dir.
+      source: {embed: assets/graphs/nodes/world.js}
+  - id: compact
+    type: script
+    config:
+      runtime: js
+      source: {embed: assets/graphs/nodes/compact.js}
+      config:
+        # Keep the latest rounds raw so the pending tool result stays
+        # the channel tail for the next LLM call.
+        preserve_recent: 10
+        budget_chars: 4096
+        threshold_ratio: 0.85
+        max_compactions: 3
+        max_input_tokens: 0
+        system_prompt_tokens: 2000
   - id: llm
     type: inference
     config:
       all_tools: true
       tool_pending_key: tool_pending
       stream: true
-      system_prompt: {file: prompts/system.md}
+      system_prompt: {embed: assets/graphs/prompts/system.md}
       # DeepSeek hosted web_search (provider-side search on the
       # Responses API). tool_choice.required: false lets the model
       # decide when to search; set it to true to force a search first.
@@ -29,7 +45,9 @@ nodes:
       results_key: tool_results
 
 edges:
-  - {from: world, to: llm}
+  - {from: world, to: compact}
+  - {from: compact, to: llm, condition: "tool_pending == false"}
+  - {from: compact, to: tools, condition: "tool_pending == true"}
   - {from: llm, to: tools, condition: "tool_pending == true"}
   - {from: llm, to: __end__, condition: "tool_pending == false"}
-  - {from: tools, to: llm}
+  - {from: tools, to: compact}

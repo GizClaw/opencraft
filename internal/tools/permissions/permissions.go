@@ -1,7 +1,7 @@
-// Package requestpermissions provides the request_permissions tool:
+// Package permissions provides the request_permissions tool:
 // the model can proactively ask the user to grant command permissions
 // so later shell calls run without per-command approval prompts.
-package requestpermissions
+package permissions
 
 import (
 	"context"

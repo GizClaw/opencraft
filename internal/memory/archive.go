@@ -6,7 +6,6 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	corememory "github.com/GizClaw/flowcraft/core/memory"
-	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/resource"
 
 	"github.com/GizClaw/opencraft/internal/sessions"
@@ -94,23 +93,27 @@ func (o *archiveObserver) OnRunEnd(ctx context.Context, id agent.Identity, res *
 		return
 	}
 
-	// Result.Messages excludes the input request; prepend it so the
-	// conversation archive keeps both sides of the interrupted turn.
-	history := append(
-		[]message.Message{req.Message}, res.Messages...)
-	if err := o.store.AppendTurn(ctx, id.ConversationID, history); err != nil {
+	// Like the committer, archive the full conversation the turn
+	// actually exchanged (request + assistant/tool messages, excluding
+	// the world-state context sections) so an interrupted turn keeps
+	// its intermediate tool activity for /resume and memory.
+	conversation := conversationFromResult(req, res)
+	if len(conversation) == 0 {
+		return
+	}
+	if err := o.store.AppendTurn(ctx, id.ConversationID, conversation); err != nil {
 		return
 	}
 	// Memory folding needs at least one produced message; a turn that
 	// stopped before any output is already covered by the request
 	// being archived above.
-	if len(res.Messages) == 0 {
+	if len(conversation) <= 1 {
 		return
 	}
 	_ = o.sink.CommitTurn(ctx, corememory.Turn{
 		Scope:          o.settings.scopeFor(id),
 		ConversationID: id.ConversationID,
 		IdempotencyKey: res.RunID,
-		Messages:       res.Messages,
+		Messages:       conversation,
 	})
 }

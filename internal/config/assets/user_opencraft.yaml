@@ -61,10 +61,13 @@
 #         inject:
 #           GOMODCACHE: ${env:OPEN_CRAFT_CACHE}/go/pkg/mod
 #
-# Example: use your own graph instead of the seeded default. The
-# default graph lives at ~/.opencraft/config/graphs/assistant.yaml
-# (edit it in place, or point the engine at another file under this
-# directory — file sources must be relative and cannot escape it).
+# Example: use your own graph instead of the embedded default. Point
+# the engine at a file under this directory — file sources must be
+# relative and cannot escape it. The default graph template can be
+# copied from the embedded assets (its node sources reference embedded
+# files via {embed: assets/...}, which keeps working in a copy); to
+# override a node's script or prompt on disk, switch that source to
+# {file: ...}.
 # agents:
 #   assistant:
 #     engine:

@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -137,8 +138,11 @@ func (f *fakeRuntime) publish(t *testing.T, payload any, subject event.Subject) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, s := range f.sinks {
-		if err := s.OnEnvelope(context.Background(), env); err != nil {
+	for i, pattern := range f.patterns {
+		if !pattern.Matches(subject) {
+			continue
+		}
+		if err := f.sinks[i].OnEnvelope(context.Background(), env); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -164,14 +168,16 @@ type fakeReplier struct {
 	mu    sync.Mutex
 	id    string
 	reply agent.UserReply
+	err   error
 }
 
 func (r *fakeReplier) Reply(_ context.Context, promptID string, reply agent.UserReply) error {
 	r.mu.Lock()
 	r.id = promptID
 	r.reply = reply
+	err := r.err
 	r.mu.Unlock()
-	return nil
+	return err
 }
 
 func TestBrokerRoutesPromptToTurnReply(t *testing.T) {
@@ -256,7 +262,10 @@ func TestBrokerBackendErrorResolvesEmpty(t *testing.T) {
 
 func TestBrokerForwardsResolved(t *testing.T) {
 	rt := &fakeRuntime{}
-	backend := &resolvingBackend{ch: make(chan session.PromptStatus, 1)}
+	backend := &resolvingBackend{
+		ch:       make(chan session.PromptStatus, 1),
+		reasonCh: make(chan string, 1),
+	}
 	broker := New(rt, backend)
 	if err := broker.Attach(context.Background()); err != nil {
 		t.Fatal(err)
@@ -273,19 +282,97 @@ func TestBrokerForwardsResolved(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("resolved not forwarded")
 	}
+	select {
+	case reason := <-backend.reasonCh:
+		// No Ask ran for this prompt, so the reason falls back to a
+		// label derived from the status.
+		if reason != "context ended" {
+			t.Errorf("reason = %q, want %q", reason, "context ended")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("reason not forwarded")
+	}
+}
+
+func TestBrokerResolvedReasonFromAskError(t *testing.T) {
+	rt := &fakeRuntime{}
+	backend := &resolvingBackend{
+		err:      context.DeadlineExceeded,
+		ch:       make(chan session.PromptStatus, 1),
+		reasonCh: make(chan string, 1),
+	}
+	broker := New(rt, backend)
+	if err := broker.Attach(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	turn := &fakeReplier{err: errors.New("prompt already resolved")}
+	broker.BindTurn("t1", turn)
+
+	rt.publish(t, session.PromptRequested{
+		RunID: "r1", TurnID: "t1", PromptID: "p1",
+		Prompt: agent.UserPrompt{},
+	}, session.SubjectPromptRequested("r1"))
+
+	// Wait for the ask goroutine to record the failure so the reason
+	// is deterministically available when the resolution arrives.
+	deadline := time.Now().Add(time.Second)
+	for {
+		broker.mu.Lock()
+		_, ok := broker.reasons["p1"]
+		broker.mu.Unlock()
+		if ok {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("ask error not recorded")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	rt.publish(t, session.PromptResolved{
+		RunID: "r1", TurnID: "t1", PromptID: "p1",
+		Status: session.PromptExpired,
+	}, session.SubjectPromptResolved("r1"))
+
+	select {
+	case status := <-backend.ch:
+		if status != session.PromptExpired {
+			t.Errorf("status = %s", status)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("resolved not forwarded")
+	}
+	select {
+	case reason := <-backend.reasonCh:
+		if reason != "timeout" {
+			t.Errorf("reason = %q, want %q", reason, "timeout")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("reason not forwarded")
+	}
 }
 
 var errTest = context.Canceled
 
 type resolvingBackend struct {
-	ch chan session.PromptStatus
+	err      error
+	ch       chan session.PromptStatus
+	reasonCh chan string
 }
 
 func (b *resolvingBackend) Ask(context.Context, Spec) (Reply, error) {
-	return Reply{}, context.Canceled
+	return Reply{}, b.err
 }
 
-func (b *resolvingBackend) Resolve(_ context.Context, _ string, status session.PromptStatus) error {
+func (b *resolvingBackend) Resolve(
+	_ context.Context,
+	_ string,
+	status session.PromptStatus,
+	reason string,
+) error {
 	b.ch <- status
+	if b.reasonCh != nil {
+		b.reasonCh <- reason
+	}
 	return nil
 }

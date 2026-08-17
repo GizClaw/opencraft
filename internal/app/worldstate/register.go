@@ -2,6 +2,7 @@ package worldstate
 
 import (
 	"context"
+	"errors"
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/memory"
@@ -10,13 +11,17 @@ import (
 
 	opmemory "github.com/GizClaw/opencraft/internal/memory"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
+	"github.com/GizClaw/opencraft/internal/skills"
 	"github.com/GizClaw/opencraft/internal/utils/resourcedep"
 )
 
 // Register adds the opencraft.prepare hook factory (the worldstate
 // injection hook) to r.
 func Register(r *resource.Registry) error {
-	return r.Register(prepareFactory{})
+	return errors.Join(
+		r.Register(prepareFactory{}),
+		r.Register(activateObserverFactory{}),
+	)
 }
 
 // prepareFactory builds the opencraft.prepare hook: it gathers the
@@ -40,6 +45,9 @@ func (prepareFactory) Spec() resource.Spec {
 			// Optional: the session store. Deployments without it
 			// simply omit the yolo marker from the permissions section.
 			{Name: "sessions", Type: ocsessions.ResourceKind, Required: false},
+			// Optional: the shared skills registry. Deployments without
+			// it omit the per-turn skills section entirely.
+			{Name: "skills", Type: skills.ResourceKind, Required: false},
 		},
 	}
 }
@@ -76,6 +84,11 @@ func (prepareFactory) New(_ context.Context, in resource.Input) (any, error) {
 		MemoryMaxChars:    settings.MemoryMaxChars,
 		Workspace:         ws,
 	})
+	if dep, ok := in.Dep("skills"); ok {
+		if svc, ok := dep.(*skills.Service); ok {
+			service.SetSkills(svc)
+		}
+	}
 	service.SetMemory(mem)
 	if dep, ok := in.Dep("execpolicy"); ok {
 		if prefixes, ok := dep.(PrefixProvider); ok {
@@ -95,7 +108,12 @@ func (prepareFactory) New(_ context.Context, in resource.Input) (any, error) {
 			board = agent.NewBoard()
 		}
 		if err := service.RenderToBoard(
-			ctx, identity.AgentID, req.ContextID, board,
+			ctx,
+			identity.AgentID,
+			req.ContextID,
+			req.Message.Content.Text(),
+			nil,
+			board,
 		); err != nil {
 			return board, err
 		}

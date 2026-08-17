@@ -1,4 +1,4 @@
-package execcommand
+package exec
 
 import (
 	"context"
@@ -11,20 +11,20 @@ import (
 	"github.com/GizClaw/flowcraft/core/sandbox"
 )
 
-type fakeRunner struct {
+type cmdRunner struct {
 	started []sandbox.SessionSpec
 	out     sandbox.SessionOutput
 	exit    sandbox.SessionExit
 	err     error
 }
 
-func (f *fakeRunner) Close() error { return nil }
+func (f *cmdRunner) Close() error { return nil }
 
-func (f *fakeRunner) Capabilities() sandbox.Capabilities {
+func (f *cmdRunner) Capabilities() sandbox.Capabilities {
 	return sandbox.Capabilities{}
 }
 
-func (f *fakeRunner) Start(
+func (f *cmdRunner) Start(
 	_ context.Context,
 	spec sandbox.SessionSpec,
 ) (sandbox.Session, error) {
@@ -32,49 +32,49 @@ func (f *fakeRunner) Start(
 		return nil, f.err
 	}
 	f.started = append(f.started, spec)
-	return &fakeSession{out: f.out, exit: f.exit}, nil
+	return &cmdSession{out: f.out, exit: f.exit}, nil
 }
 
-func (f *fakeRunner) List(context.Context) ([]sandbox.SessionInfo, error) {
+func (f *cmdRunner) List(context.Context) ([]sandbox.SessionInfo, error) {
 	return nil, nil
 }
 
-func (f *fakeRunner) Terminate(context.Context, string) error { return nil }
+func (f *cmdRunner) Terminate(context.Context, string) error { return nil }
 
-type fakeSession struct {
+type cmdSession struct {
 	out  sandbox.SessionOutput
 	exit sandbox.SessionExit
 }
 
-func (s *fakeSession) ID() string { return "s" }
-func (s *fakeSession) PID() int   { return 1 }
-func (s *fakeSession) Capabilities() sandbox.SessionCapabilities {
+func (s *cmdSession) ID() string { return "s" }
+func (s *cmdSession) PID() int   { return 1 }
+func (s *cmdSession) Capabilities() sandbox.SessionCapabilities {
 	return sandbox.SessionCapabilities{}
 }
-func (s *fakeSession) Read(
+func (s *cmdSession) Read(
 	context.Context, int64, int,
 ) (sandbox.SessionOutput, error) {
 	return s.out, nil
 }
-func (s *fakeSession) Write(context.Context, []byte) error { return nil }
-func (s *fakeSession) CloseInput() error                   { return nil }
-func (s *fakeSession) Resize(context.Context, int, int) error {
+func (s *cmdSession) Write(context.Context, []byte) error { return nil }
+func (s *cmdSession) CloseInput() error                   { return nil }
+func (s *cmdSession) Resize(context.Context, int, int) error {
 	return nil
 }
-func (s *fakeSession) Signal(context.Context, sandbox.SessionSignal) error {
+func (s *cmdSession) Signal(context.Context, sandbox.SessionSignal) error {
 	return nil
 }
-func (s *fakeSession) Terminate(context.Context) error { return nil }
-func (s *fakeSession) Wait(context.Context) (sandbox.SessionExit, error) {
+func (s *cmdSession) Terminate(context.Context) error { return nil }
+func (s *cmdSession) Wait(context.Context) (sandbox.SessionExit, error) {
 	return s.exit, nil
 }
-func (s *fakeSession) Watch(context.Context) (sandbox.SessionWatcher, error) {
+func (s *cmdSession) Watch(context.Context) (sandbox.SessionWatcher, error) {
 	return nil, nil
 }
-func (s *fakeSession) Close() error { return nil }
+func (s *cmdSession) Close() error { return nil }
 
-func newTestTool() (*Tool, *fakeRunner) {
-	runner := &fakeRunner{
+func newCommandTool() (*CommandTool, *cmdRunner) {
+	runner := &cmdRunner{
 		out: sandbox.SessionOutput{
 			NextSeq: 1,
 			Chunks: []sandbox.OutputChunk{{
@@ -86,7 +86,7 @@ func newTestTool() (*Tool, *fakeRunner) {
 		},
 		exit: sandbox.SessionExit{Code: 0, Reason: sandbox.SessionExited},
 	}
-	tool, err := New(runner)
+	tool, err := NewCommand(runner)
 	if err != nil {
 		panic(err)
 	}
@@ -94,7 +94,7 @@ func newTestTool() (*Tool, *fakeRunner) {
 }
 
 func TestExecuteRunsShellCommand(t *testing.T) {
-	tool, runner := newTestTool()
+	tool, runner := newCommandTool()
 	out, err := tool.Execute(context.Background(),
 		`{"command":"rg --files internal | rg httpclient"}`)
 	if err != nil {
@@ -117,7 +117,7 @@ func TestExecuteRunsShellCommand(t *testing.T) {
 }
 
 func TestExecuteRunsSimpleCommandDirectly(t *testing.T) {
-	tool, runner := newTestTool()
+	tool, runner := newCommandTool()
 	if _, err := tool.Execute(context.Background(),
 		`{"command":"rg --files internal"}`); err != nil {
 		t.Fatal(err)
@@ -153,7 +153,7 @@ func TestDirectArgs(t *testing.T) {
 }
 
 func TestExecuteRewritesPolicyDeniedWithRealCommand(t *testing.T) {
-	tool, runner := newTestTool()
+	tool, runner := newCommandTool()
 	runner.err = errdefs.PolicyDeniedf(
 		`sandbox: execution of "/bin/sh" denied: command not in sandbox allowlist`)
 	_, err := tool.Execute(context.Background(),
@@ -171,7 +171,7 @@ func TestExecuteRewritesPolicyDeniedWithRealCommand(t *testing.T) {
 }
 
 func TestExecuteTimeout(t *testing.T) {
-	tool, runner := newTestTool()
+	tool, runner := newCommandTool()
 	if _, err := tool.Execute(context.Background(),
 		`{"command":"sleep 1","timeout_seconds":2}`); err != nil {
 		t.Fatal(err)
@@ -182,16 +182,16 @@ func TestExecuteTimeout(t *testing.T) {
 }
 
 func TestExecuteRejectsEmptyCommand(t *testing.T) {
-	tool, _ := newTestTool()
+	tool, _ := newCommandTool()
 	if _, err := tool.Execute(context.Background(), `{"command":""}`); err == nil {
 		t.Fatal("empty command unexpectedly accepted")
 	}
 }
 
-func TestDefinition(t *testing.T) {
-	tool, _ := newTestTool()
+func TestCommandDefinition(t *testing.T) {
+	tool, _ := newCommandTool()
 	def := tool.Definition()
-	if def.Name != Name || !strings.Contains(def.Description, "directly") {
+	if def.Name != CommandName || !strings.Contains(def.Description, "directly") {
 		t.Fatalf("definition = %+v", def)
 	}
 	if !tool.Metadata().MutatesState {

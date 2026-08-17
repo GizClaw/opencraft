@@ -6,13 +6,19 @@ package worldstate
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/memory"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/workspace"
+	"go.opentelemetry.io/otel/log"
 
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
+	"github.com/GizClaw/opencraft/internal/skills"
 	"github.com/GizClaw/opencraft/internal/tools/plan"
 )
 
@@ -38,6 +44,7 @@ type Options struct {
 	MemoryMaxItems int
 	MemoryMaxChars int
 	Workspace      workspace.Workspace // optional; in-root file reads go through it
+	Skills         *skills.Service     // optional; per-turn dynamic skill injection
 }
 
 // PrefixProvider supplies the current sandbox allowlist rules. The
@@ -88,6 +95,9 @@ func New(opts Options) *Service {
 // SetMemory wires the memory context provider (resolved by deploy).
 func (s *Service) SetMemory(m memory.ContextProvider) { s.memory = m }
 
+// SetSkills wires the shared skills registry (resolved by deploy).
+func (s *Service) SetSkills(sk *skills.Service) { s.opts.Skills = sk }
+
 // SetPrefixProvider wires the live sandbox allowlist rules source.
 func (s *Service) SetPrefixProvider(p PrefixProvider) { s.prefixes = p }
 
@@ -103,7 +113,10 @@ func (s *Service) SetSessions(st *ocsessions.Store) { s.sessionStore = st }
 //   - world.workspace_root / world.collaboration_mode /
 //     world.permission_profile
 func (s *Service) RenderToBoard(
-	ctx context.Context, agentID, contextID string, board *agent.Board,
+	ctx context.Context,
+	agentID, contextID, reqText string,
+	extras []Section,
+	board *agent.Board,
 ) error {
 	st, err := s.session(contextID)
 	if err != nil {
@@ -143,6 +156,11 @@ func (s *Service) RenderToBoard(
 	if s.memory != nil {
 		sections = append(sections, s.memorySections(ctx, contextID)...)
 	}
+	if s.opts.Skills != nil && s.opts.Skills.Enabled() {
+		sections = append(sections,
+			s.skillsSections(ctx, agentID, contextID, reqText)...)
+	}
+	sections = append(sections, extras...)
 
 	data, err := json.Marshal(sections)
 	if err != nil {
@@ -153,6 +171,127 @@ func (s *Service) RenderToBoard(
 	board.SetVar("world.collaboration_mode", s.opts.CollaborationMode)
 	board.SetVar("world.permission_profile", s.opts.PermissionProfile)
 	return nil
+}
+
+// skillsSections renders the per-turn skills list (top-N by BM25 over
+// the user input, plus any $mention) and injects the full SKILL.md
+// body for explicitly mentioned skills. Rendered every turn like the
+// permissions section, never cached in sessionState.static.
+func (s *Service) skillsSections(
+	ctx context.Context,
+	agentID, contextID, reqText string,
+) []Section {
+	svc := s.opts.Skills
+	mentioned := svc.Mentioned(reqText)
+	modelRequested := s.consumeActivations(agentID, contextID)
+	scored := svc.RankScored(reqText, svc.TopN(), svc.MinScore())
+	ranked := make([]skills.SkillMetadata, 0, len(scored))
+	for _, sc := range scored {
+		ranked = append(ranked, sc.Skill)
+	}
+	list := mergeSkillLists(mentioned, ranked)
+	var out []Section
+	if len(list) > 0 {
+		out = append(out, Section{
+			ID:   "skills",
+			Role: "system",
+			Text: skills.RenderSection(list),
+		})
+		attrs := []log.KeyValue{
+			log.String("query", truncateLog(reqText, 200)),
+			log.Int("count", len(list)),
+		}
+		for i, sc := range scored {
+			attrs = append(attrs, log.String(
+				fmt.Sprintf("rank_%d", i+1),
+				fmt.Sprintf("%s=%.3f", sc.Skill.Name, sc.Score)))
+		}
+		telemetry.Info(ctx, "skills: ranked list injected", attrs...)
+	}
+	for _, sk := range mentioned {
+		_, content, err := svc.ReadFull(sk.Name)
+		if err != nil {
+			out = append(out, Section{
+				ID:   "skill",
+				Role: "user",
+				Text: fmt.Sprintf("## Skill: %s\n\n(load failed: %v)", sk.Name, err),
+			})
+			continue
+		}
+		out = append(out, Section{
+			ID:   "skill",
+			Role: "user",
+			Text: skillSourceHeader(sk, s.stageSkill(sk, contextID)) + content,
+		})
+	}
+	for _, name := range modelRequested {
+		sk, content, err := svc.ReadFull(name)
+		if err != nil {
+			continue
+		}
+		header := "> requested by the model in a previous reply.\n\n"
+		out = append(out, Section{
+			ID:   "skill",
+			Role: "user",
+			Text: skillSourceHeader(sk, s.stageSkill(sk, contextID)) + header + content,
+		})
+		telemetry.Info(ctx, "skills: model-requested activation injected",
+			log.String("skill", sk.Name))
+	}
+	return out
+}
+
+// skillSourceHeader annotates an activated skill with its scope and a
+// trust warning for user-installed / third-party skills (D12).
+func skillSourceHeader(sk skills.SkillMetadata, staged string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "## Skill: %s (file: %s)\n", sk.Name, sk.Path)
+	if sk.Scope != "repo" && sk.Scope != "builtin" {
+		b.WriteString("> user-installed or third-party skill: follow its instructions with care.\n")
+	}
+	if staged != "" {
+		b.WriteString("> staged copy for execution: " + staged + "\n")
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// stageSkill copies an activated skill into the sandbox-writable
+// cache (OPEN_CRAFT_DATA_DIR/cache/staged/<contextID>/<name>) so its
+// scripts are executable under exec even when the skill root itself
+// is outside the workspace. Builtins ship no files and are skipped.
+func (s *Service) stageSkill(sk skills.SkillMetadata, contextID string) string {
+	if sk.Scope == "builtin" || s.opts.UserDir == "" {
+		return ""
+	}
+	root, err := s.opts.Skills.Stage(sk,
+		filepath.Join(s.opts.UserDir, "cache", "staged", contextID))
+	if err != nil {
+		return ""
+	}
+	return root
+}
+
+func truncateLog(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "…"
+}
+
+// mergeSkillLists keeps mentioned skills first (mention order), then
+// ranked skills, de-duplicating by path.
+func mergeSkillLists(mentioned, ranked []skills.SkillMetadata) []skills.SkillMetadata {
+	seen := map[string]bool{}
+	var out []skills.SkillMetadata
+	for _, sk := range append(append([]skills.SkillMetadata(nil), mentioned...), ranked...) {
+		if seen[sk.Path] {
+			continue
+		}
+		seen[sk.Path] = true
+		out = append(out, sk)
+	}
+	return out
 }
 
 func (s *Service) session(contextID string) (*sessionState, error) {
@@ -226,7 +365,17 @@ func (s *Service) memorySections(ctx context.Context, contextID string) []Sectio
 			})
 		case memory.ContextRawMessage:
 			role := string(item.MessageRole)
-			if role == "" {
+			switch role {
+			case "user", "assistant":
+				// keep
+			case "tool":
+				// Tool results are persisted as role=tool items, but the
+				// provider wire format requires a role=tool message to
+				// carry a tool_call_id paired with a preceding assistant
+				// call. Rendered as plain context, they read as
+				// user-supplied material, so inject them as user.
+				role = "user"
+			default:
 				role = "user"
 			}
 			sections = append(sections, Section{

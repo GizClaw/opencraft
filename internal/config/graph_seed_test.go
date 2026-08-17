@@ -10,11 +10,12 @@ import (
 	"github.com/GizClaw/flowcraft/core/resource"
 )
 
-// TestGraphSeededAndFileResolvable verifies the dynamically editable
-// graph: the default graph and its referenced files are seeded into
-// the user config dir, and every file source in the graph definition
-// resolves against that dir through the deploy loader.
-func TestGraphSeededAndFileResolvable(t *testing.T) {
+// TestGraphEmbeddedNotSeeded verifies the default graph stays in the
+// binary: EnsureUserConfig seeds only the user config documents
+// (opencraft.yaml + inference.yaml), never the graph or its node
+// sources, and the embedded graph definition resolves its node
+// sources through the same embed FS at load time.
+func TestGraphEmbeddedNotSeeded(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 
@@ -22,14 +23,22 @@ func TestGraphSeededAndFileResolvable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{
-		"graphs/assistant.yaml",
-		"graphs/node/world.js",
-		"prompts/system.md",
-	} {
+	for _, name := range []string{"opencraft.yaml", "inference.yaml"} {
 		target := filepath.Join(cfgDir, filepath.FromSlash(name))
 		if _, err := os.Stat(target); err != nil {
-			t.Fatalf("seeded %s: %v", name, err)
+			t.Fatalf("seeded config document %s: %v", name, err)
+		}
+	}
+	for _, name := range []string{
+		"graphs/assistant.yaml",
+		"graphs/nodes/world.js",
+		"graphs/nodes/compact.js",
+		"graphs/prompts/system.md",
+	} {
+		if _, err := os.Stat(filepath.Join(cfgDir, filepath.FromSlash(name))); err == nil {
+			t.Fatalf("default graph asset %s must not be seeded to the user dir", name)
+		} else if !os.IsNotExist(err) {
+			t.Fatalf("stat %s: %v", name, err)
 		}
 	}
 
@@ -38,9 +47,10 @@ func TestGraphSeededAndFileResolvable(t *testing.T) {
 		resource.WithEmbed(FS()),
 	)
 	for _, src := range []resource.Source{
-		{File: "graphs/assistant.yaml"},
-		{File: "graphs/node/world.js"},
-		{File: "prompts/system.md"},
+		{Embed: "assets/graphs/assistant.yaml"},
+		{Embed: "assets/graphs/nodes/world.js"},
+		{Embed: "assets/graphs/nodes/compact.js"},
+		{Embed: "assets/graphs/prompts/system.md"},
 	} {
 		data, err := loader.Load(context.Background(), src)
 		if err != nil {
@@ -51,13 +61,28 @@ func TestGraphSeededAndFileResolvable(t *testing.T) {
 		}
 	}
 
-	// The embedded base document must reference the graph as a file
-	// source so the seeded copy is the one used at runtime.
+	// The embedded base document must reference the graph as an embed
+	// source so the binary copy is the one used at runtime, and the
+	// graph's node sources must do the same.
 	base, err := EmbeddedOpenCraft()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(base, []byte("file: graphs/assistant.yaml")) {
-		t.Fatal("embedded opencraft.yaml does not reference the graph via file source")
+	if !bytes.Contains(base, []byte("embed: assets/graphs/assistant.yaml")) {
+		t.Fatal("embedded opencraft.yaml does not reference the graph via embed source")
+	}
+	graph, err := loader.Load(context.Background(),
+		resource.Source{Embed: "assets/graphs/assistant.yaml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, ref := range []string{
+		"embed: assets/graphs/nodes/world.js",
+		"embed: assets/graphs/nodes/compact.js",
+		"embed: assets/graphs/prompts/system.md",
+	} {
+		if !bytes.Contains(graph, []byte(ref)) {
+			t.Fatalf("embedded graph does not reference %s via embed source", ref)
+		}
 	}
 }

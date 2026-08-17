@@ -10,19 +10,23 @@ import (
 	"encoding/json"
 	"errors"
 
+	"github.com/GizClaw/flowcraft/core/inference/route"
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/sandbox"
 	"github.com/GizClaw/flowcraft/core/tool"
 	"github.com/GizClaw/flowcraft/core/workspace"
 
 	"github.com/GizClaw/opencraft/internal/sessions"
+	skillsvc "github.com/GizClaw/opencraft/internal/skills"
 	"github.com/GizClaw/opencraft/internal/tools/applypatch"
 	"github.com/GizClaw/opencraft/internal/tools/askuser"
-	"github.com/GizClaw/opencraft/internal/tools/execcommand"
-	"github.com/GizClaw/opencraft/internal/tools/execsession"
+	"github.com/GizClaw/opencraft/internal/tools/compact"
+	"github.com/GizClaw/opencraft/internal/tools/exec"
 	"github.com/GizClaw/opencraft/internal/tools/files"
+	"github.com/GizClaw/opencraft/internal/tools/permissions"
 	"github.com/GizClaw/opencraft/internal/tools/plan"
-	"github.com/GizClaw/opencraft/internal/tools/requestpermissions"
+	skillstools "github.com/GizClaw/opencraft/internal/tools/skills"
+	"github.com/GizClaw/opencraft/internal/tools/truncate"
 	"github.com/GizClaw/opencraft/internal/tools/webfetch"
 	"github.com/GizClaw/opencraft/internal/utils/resourcedep"
 )
@@ -35,9 +39,47 @@ func Register(r *resource.Registry) error {
 		r.Register(webfetchSourceFactory{}),
 		r.Register(askuserSourceFactory{}),
 		r.Register(filesSourceFactory{}),
-		r.Register(requestpermissionsSourceFactory{}),
+		r.Register(permissionsSourceFactory{}),
 		r.Register(planSourceFactory{}),
+		r.Register(skillsSourceFactory{}),
+		r.Register(compactSourceFactory{}),
+		r.Register(truncate.AssemblyFactory{}),
 	)
+}
+
+// compactSourceFactory contributes the internal compact tool. It needs
+// the router for LLM condensation and the session store for the
+// per-conversation compaction artifact.
+type compactSourceFactory struct{}
+
+var _ resource.Factory = compactSourceFactory{}
+
+func (compactSourceFactory) Spec() resource.Spec {
+	return resource.Spec{
+		Kind: "tool.Source",
+		Impl: "opencraft/compact",
+		Deps: []resource.DepSpec{
+			{Name: "router", Type: "inference.Router", Required: true},
+			{Name: "sessions", Type: sessions.ResourceKind, Required: true},
+		},
+	}
+}
+
+func (compactSourceFactory) New(_ context.Context, in resource.Input) (any, error) {
+	if !sourceEnabled(in) {
+		return toolList{}, nil
+	}
+	router, err := resourcedep.Required[*route.Router](
+		in, "compact tool", "router")
+	if err != nil {
+		return nil, err
+	}
+	store, err := resourcedep.Required[*sessions.Store](
+		in, "compact tool", "sessions")
+	if err != nil {
+		return nil, err
+	}
+	return toolList{compact.New(router, store)}, nil
 }
 
 // execSourceFactory contributes the sandbox-backed exec tools.
@@ -64,8 +106,8 @@ func (execSourceFactory) New(_ context.Context, in resource.Input) (any, error) 
 		return nil, err
 	}
 	return toolList{
-		execcommand.MustNew(runner),
-		execsession.MustNew(runner),
+		exec.MustNewCommand(runner),
+		exec.MustNewSession(runner),
 	}, nil
 }
 
@@ -157,35 +199,35 @@ func (filesSourceFactory) New(_ context.Context, in resource.Input) (any, error)
 	return toolList(files.MustNew(ws).Tools()), nil
 }
 
-// requestpermissionsSourceFactory contributes the request_permissions
-// tool over the runtime execpolicy resource.
-type requestpermissionsSourceFactory struct{}
+// permissionsSourceFactory contributes the request_permissions tool
+// over the runtime execpolicy resource.
+type permissionsSourceFactory struct{}
 
-var _ resource.Factory = requestpermissionsSourceFactory{}
+var _ resource.Factory = permissionsSourceFactory{}
 
-func (requestpermissionsSourceFactory) Spec() resource.Spec {
+func (permissionsSourceFactory) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "tool.Source",
-		Impl: "opencraft/requestpermissions",
+		Impl: "opencraft/permissions",
 		Deps: []resource.DepSpec{
 			{Name: "execpolicy", Type: "opencraft.execpolicy", Required: true},
 		},
 	}
 }
 
-func (requestpermissionsSourceFactory) New(
+func (permissionsSourceFactory) New(
 	_ context.Context,
 	in resource.Input,
 ) (any, error) {
 	if !sourceEnabled(in) {
 		return toolList{}, nil
 	}
-	policy, err := resourcedep.Required[requestpermissions.Policy](
-		in, "requestpermissions", "execpolicy")
+	policy, err := resourcedep.Required[permissions.Policy](
+		in, "permissions", "execpolicy")
 	if err != nil {
 		return nil, err
 	}
-	return toolList{requestpermissions.New(policy)}, nil
+	return toolList{permissions.New(policy)}, nil
 }
 
 // planSourceFactory contributes the update_plan tool over the session
@@ -215,6 +257,34 @@ func (planSourceFactory) New(
 		return nil, err
 	}
 	return toolList(plan.MustNew(plan.NewStore(store)).Tools()), nil
+}
+
+// skillsSourceFactory contributes the skill_search / skill_read tools
+// over the shared skills registry.
+type skillsSourceFactory struct{}
+
+var _ resource.Factory = skillsSourceFactory{}
+
+func (skillsSourceFactory) Spec() resource.Spec {
+	return resource.Spec{
+		Kind: "tool.Source",
+		Impl: "opencraft/skills",
+		Deps: []resource.DepSpec{
+			{Name: "skills", Type: skillsvc.ResourceKind, Required: true},
+		},
+	}
+}
+
+func (skillsSourceFactory) New(_ context.Context, in resource.Input) (any, error) {
+	if !sourceEnabled(in) {
+		return toolList{}, nil
+	}
+	svc, err := resourcedep.Required[*skillsvc.Service](
+		in, "tool source", "skills")
+	if err != nil {
+		return nil, err
+	}
+	return toolList(skillstools.MustNew(svc).Tools()), nil
 }
 
 // toolList adapts a fixed []tool.Tool to tool.Source.

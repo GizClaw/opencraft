@@ -1,4 +1,4 @@
-package execsession
+package exec
 
 import (
 	"context"
@@ -10,68 +10,68 @@ import (
 	"github.com/GizClaw/flowcraft/core/sandbox"
 )
 
-type fakeSession struct {
+type sessSession struct {
 	output sandbox.SessionOutput
 	exit   sandbox.SessionExit
 }
 
-func (s *fakeSession) ID() string { return "p" }
-func (s *fakeSession) PID() int   { return 1 }
-func (s *fakeSession) Capabilities() sandbox.SessionCapabilities {
+func (s *sessSession) ID() string { return "p" }
+func (s *sessSession) PID() int   { return 1 }
+func (s *sessSession) Capabilities() sandbox.SessionCapabilities {
 	return sandbox.SessionCapabilities{TTY: true, Signal: true}
 }
-func (s *fakeSession) Read(
+func (s *sessSession) Read(
 	context.Context, int64, int,
 ) (sandbox.SessionOutput, error) {
 	return s.output, nil
 }
-func (s *fakeSession) Write(context.Context, []byte) error { return nil }
-func (s *fakeSession) CloseInput() error                   { return nil }
-func (s *fakeSession) Resize(context.Context, int, int) error {
+func (s *sessSession) Write(context.Context, []byte) error { return nil }
+func (s *sessSession) CloseInput() error                   { return nil }
+func (s *sessSession) Resize(context.Context, int, int) error {
 	return nil
 }
-func (s *fakeSession) Signal(context.Context, sandbox.SessionSignal) error {
+func (s *sessSession) Signal(context.Context, sandbox.SessionSignal) error {
 	return nil
 }
-func (s *fakeSession) Terminate(context.Context) error { return nil }
-func (s *fakeSession) Wait(context.Context) (sandbox.SessionExit, error) {
+func (s *sessSession) Terminate(context.Context) error { return nil }
+func (s *sessSession) Wait(context.Context) (sandbox.SessionExit, error) {
 	return s.exit, nil
 }
-func (s *fakeSession) Watch(context.Context) (sandbox.SessionWatcher, error) {
+func (s *sessSession) Watch(context.Context) (sandbox.SessionWatcher, error) {
 	return nil, nil
 }
-func (s *fakeSession) Close() error { return nil }
+func (s *sessSession) Close() error { return nil }
 
-type fakeRunner struct {
+type sessRunner struct {
 	started sandbox.SessionSpec
-	proc    *fakeSession
+	proc    *sessSession
 }
 
-func (r *fakeRunner) Close() error { return nil }
+func (r *sessRunner) Close() error { return nil }
 
-func (r *fakeRunner) Capabilities() sandbox.Capabilities {
+func (r *sessRunner) Capabilities() sandbox.Capabilities {
 	return sandbox.Capabilities{
 		Features: sandbox.SessionFeatures{TTY: true, Signal: true},
 	}
 }
-func (r *fakeRunner) Start(
+func (r *sessRunner) Start(
 	_ context.Context,
 	spec sandbox.SessionSpec,
 ) (sandbox.Session, error) {
 	r.started = spec
 	if r.proc == nil {
-		r.proc = &fakeSession{}
+		r.proc = &sessSession{}
 	}
 	return r.proc, nil
 }
-func (r *fakeRunner) List(context.Context) ([]sandbox.SessionInfo, error) {
+func (r *sessRunner) List(context.Context) ([]sandbox.SessionInfo, error) {
 	return nil, nil
 }
-func (r *fakeRunner) Terminate(context.Context, string) error { return nil }
+func (r *sessRunner) Terminate(context.Context, string) error { return nil }
 
-func newTestTool() (*Tool, *fakeRunner) {
-	runner := &fakeRunner{
-		proc: &fakeSession{
+func newSessionTool() (*SessionTool, *sessRunner) {
+	runner := &sessRunner{
+		proc: &sessSession{
 			output: sandbox.SessionOutput{
 				NextSeq: 1,
 				Chunks: []sandbox.OutputChunk{{
@@ -84,7 +84,7 @@ func newTestTool() (*Tool, *fakeRunner) {
 			exit: sandbox.SessionExit{Code: 0, Reason: sandbox.SessionExited},
 		},
 	}
-	tool, err := New(runner)
+	tool, err := NewSession(runner)
 	if err != nil {
 		panic(err)
 	}
@@ -92,7 +92,7 @@ func newTestTool() (*Tool, *fakeRunner) {
 }
 
 func TestStartReadClose(t *testing.T) {
-	tool, runner := newTestTool()
+	tool, runner := newSessionTool()
 	ctx := context.Background()
 
 	out, err := tool.Execute(ctx, `{"action":"start","process_id":"s1","argv":["/bin/sh"],"tty":true,"rows":24,"cols":80}`)
@@ -135,17 +135,17 @@ func TestStartReadClose(t *testing.T) {
 }
 
 func TestUnknownSession(t *testing.T) {
-	tool, _ := newTestTool()
+	tool, _ := newSessionTool()
 	if _, err := tool.Execute(context.Background(),
 		`{"action":"read","process_id":"nope"}`); err == nil {
 		t.Fatal("unknown session accepted")
 	}
 }
 
-func TestDefinition(t *testing.T) {
-	tool, _ := newTestTool()
+func TestSessionDefinition(t *testing.T) {
+	tool, _ := newSessionTool()
 	def := tool.Definition()
-	if def.Name != Name {
+	if def.Name != SessionName {
 		t.Fatalf("definition = %+v", def)
 	}
 }
@@ -155,7 +155,7 @@ func TestDefinition(t *testing.T) {
 // and its output buffer for sessions the model never closes. Starting
 // the same id again must succeed, and a close on the old one must fail.
 func TestWaitRemovesSession(t *testing.T) {
-	tool, _ := newTestTool()
+	tool, _ := newSessionTool()
 	ctx := context.Background()
 
 	if _, err := tool.Execute(ctx, `{"action":"start","process_id":"s1","argv":["true"]}`); err != nil {
@@ -178,7 +178,7 @@ func TestWaitRemovesSession(t *testing.T) {
 // TestMaxSessions verifies the live-session cap: starting beyond it is
 // rejected with a clear error instead of growing the map without bound.
 func TestMaxSessions(t *testing.T) {
-	tool, _ := newTestTool()
+	tool, _ := newSessionTool()
 	ctx := context.Background()
 
 	for i := 0; i < maxSessions; i++ {

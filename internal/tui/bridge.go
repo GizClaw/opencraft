@@ -87,9 +87,12 @@ func (b *Bridge) Resolve(
 	ctx context.Context,
 	id string,
 	status session.PromptStatus,
+	reason string,
 ) error {
 	select {
-	case b.events <- Event{Resolved: &ResolvedEvent{ID: id, Status: status}}:
+	case b.events <- Event{Resolved: &ResolvedEvent{
+		ID: id, Status: status, Reason: reason,
+	}}:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

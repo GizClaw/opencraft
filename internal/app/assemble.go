@@ -39,6 +39,7 @@ import (
 	opmemory "github.com/GizClaw/opencraft/internal/memory"
 	"github.com/GizClaw/opencraft/internal/sandbox"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
+	"github.com/GizClaw/opencraft/internal/skills"
 	opentools "github.com/GizClaw/opencraft/internal/tools"
 )
 
@@ -131,6 +132,7 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 		qwen.Register,
 		opmemory.Register,
 		ocsessions.Register,
+		skills.Register,
 		opentools.Register,
 		sandbox.Register,
 		worldstate.Register,
@@ -176,5 +178,9 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 	}); err != nil {
 		return nil, err
 	}
+	// A user-layer graph override merges with the embedded default into
+	// a two-key source object; reduce it back to the explicit file ref
+	// before the graph engine parses it.
+	normalizeGraphOverride(doc)
 	return builder.Build(ctx, doc)
 }

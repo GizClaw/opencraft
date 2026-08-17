@@ -6,9 +6,12 @@ import (
 	"path/filepath"
 )
 
-// EnsureUserConfig seeds ~/.opencraft/config with the user-facing assets
-// and returns the directory. Existing files are preserved (user edits
-// win); deleted files are regenerated on the next start.
+// EnsureUserConfig seeds ~/.opencraft/config with the user-facing
+// config documents (user opencraft.yaml layer + inference routing) and
+// returns the directory. Existing files are preserved (user edits win);
+// deleted files are regenerated on the next start. The default graph
+// and its node sources are not seeded: they resolve from the embedded
+// FS unless a config layer overrides the graph reference.
 func EnsureUserConfig() (string, error) {
 	dir, err := UserConfigDir()
 	if err != nil {
