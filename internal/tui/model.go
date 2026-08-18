@@ -318,6 +318,7 @@ type Model struct {
 	// display: model id, token usage and transient status annotation.
 	model       string
 	version     string
+	thinkLevel  string
 	usageIn     int64
 	usageOut    int64
 	usageCacheR int64
@@ -367,6 +368,7 @@ func New(
 		broker:       broker,
 		model:        opts.Model,
 		version:      opts.Version,
+		thinkLevel:   effortOrDefault(loadSettings(opts.ConfigDir).ReasoningEffort),
 		input:        input,
 		spinner:      spin,
 		commandIndex: commands.NewIndex(),
@@ -2224,6 +2226,51 @@ func (m *Model) enterPermissionsMode() tea.Model {
 	return m
 }
 
+// handleThinkCommand applies /think: an explicit low|medium|high
+// argument sets the level, no argument cycles to the next level. The
+// choice is persisted to the user config directory and printed into
+// the stream; the composer returns to idle.
+func (m *Model) handleThinkCommand() (tea.Model, tea.Cmd) {
+	fields := strings.Fields(m.input.Value())
+	arg := ""
+	if len(fields) > 1 {
+		arg = strings.ToLower(strings.TrimSpace(fields[1]))
+	}
+	switch arg {
+	case "":
+		// Cycle low -> medium -> high -> low.
+		switch m.thinkLevel {
+		case EffortLow:
+			arg = EffortMedium
+		case EffortMedium:
+			arg = EffortHigh
+		default:
+			arg = EffortLow
+		}
+	case EffortLow, EffortMedium, EffortHigh:
+	default:
+		m.input.Reset()
+		m.input.Placeholder = mainPlaceholder
+		m.palette.reset()
+		m.queue(toolErrStyle.Render(
+			"/think: 用法 /think low | medium | high（不带参数循环切换）"))
+		return m, m.flushPending()
+	}
+	m.thinkLevel = arg
+	if err := saveSettings(m.opts.ConfigDir, settings{
+		ReasoningEffort: arg,
+	}); err != nil {
+		m.queue(toolErrStyle.Render("think: 持久化失败: " + err.Error()))
+	} else {
+		m.queue(toolOKStyle.Render("think: " + arg))
+	}
+	m.input.Reset()
+	m.input.Placeholder = mainPlaceholder
+	m.palette.reset()
+	m.refreshPalette()
+	return m, m.flushPending()
+}
+
 // handlePermissionsKey drives the sandbox mode picker. Entering YOLO
 // requires an explicit y/Enter confirmation as a second step;
 // switching back to workspace applies immediately.
@@ -2496,6 +2543,9 @@ func (m *Model) startTurnCmd(text string) tea.Cmd {
 		turn, err := lease.Session().Start(m.ctx, agent.Request{
 			ContextID: key.ContextID,
 			Message:   message.NewTextMessage(message.RoleUser, text),
+			// Think level rides the board into the graph's
+			// ${board.think_level} inference node reference.
+			Inputs: map[string]any{"think_level": m.thinkLevel},
 		}, sessions.SinkSpec{
 			ID:         "tui",
 			Sink:       agent.StreamSinkFunc(m.bridge.Sink),
@@ -2609,6 +2659,7 @@ func (m *Model) footerLine() string {
 	if m.model != "" {
 		parts = append(parts, statusTextStyle.Render(m.model))
 	}
+	parts = append(parts, dimStyle.Render("effort "+m.thinkLevel))
 	if path := displayPath(m.opts.WorkDir); path != "" {
 		parts = append(parts, dimStyle.Render(path))
 	}

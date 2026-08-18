@@ -29,6 +29,11 @@ nodes:
       all_tools: true
       tool_pending_key: tool_pending
       stream: true
+      # Think level is a per-turn board input: the TUI injects
+      # think_level via agent.Request.Inputs (/think command) and the
+      # board-ref default keeps non-TUI callers (e.g. `opencraft run`)
+      # on a sane explicit effort instead of the provider default.
+      reasoning_effort: ${board.think_level:medium}
       system_prompt: {embed: assets/graphs/prompts/system.md}
       # Hosted web_search extensions (provider-side search). Every
       # provider that is ALWAYS registered and exposes one is declared

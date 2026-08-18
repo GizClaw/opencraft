@@ -17,6 +17,10 @@ type Options struct {
 	// ContextID is the session context used for every turn (default
 	// "tui").
 	ContextID string
+	// ConfigDir is the user configuration directory
+	// (~/.opencraft/config) where TUI preferences (tui.yaml) are
+	// persisted. Empty disables persistence.
+	ConfigDir string
 	// Model is the initially configured model ("provider/name") shown
 	// in the header until the first usage report arrives.
 	Model string

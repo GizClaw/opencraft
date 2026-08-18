@@ -16,8 +16,11 @@ func TestLookupAndList(t *testing.T) {
 	if _, ok := Lookup("skills"); !ok {
 		t.Error("skills should be registered")
 	}
-	if got := len(List()); got != 3 {
-		t.Errorf("List() = %d commands, want 3", got)
+	if c, ok := Lookup("think"); !ok || c.Desc == "" {
+		t.Errorf("think should have a description: %+v", c)
+	}
+	if got := len(List()); got != 4 {
+		t.Errorf("List() = %d commands, want 4", got)
 	}
 }
 

@@ -27,6 +27,10 @@ var all = []Command{
 		Name: "skills",
 		Desc: "list discovered skills and insert a $mention",
 	},
+	{
+		Name: "think",
+		Desc: "set model reasoning effort (low | medium | high)",
+	},
 }
 
 // List returns a copy of every registered command.

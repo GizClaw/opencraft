@@ -15,6 +15,9 @@ var slashHandlers = map[string]func(m *Model) (tea.Model, tea.Cmd){
 	"skills": func(m *Model) (tea.Model, tea.Cmd) {
 		return m.enterSkillsMode(), nil
 	},
+	"think": func(m *Model) (tea.Model, tea.Cmd) {
+		return m.handleThinkCommand()
+	},
 }
 
 // runCommand executes a slash command by name and returns the model

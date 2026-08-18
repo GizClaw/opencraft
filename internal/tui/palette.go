@@ -61,9 +61,15 @@ func (m *Model) refreshPalette() {
 // normal message).
 func (m *Model) paletteSelection() string {
 	text := strings.TrimSpace(m.input.Value())
-	name := strings.TrimSpace(strings.TrimPrefix(text, "/"))
-	if _, ok := commands.Lookup(name); ok {
-		return name
+	// Commands may carry an argument (/think high); the leading word
+	// is the command name, the rest stays in the input for the
+	// handler to read.
+	if fields := strings.Fields(text); len(fields) > 0 {
+		if name := strings.TrimPrefix(fields[0], "/"); name != fields[0] {
+			if _, ok := commands.Lookup(name); ok {
+				return name
+			}
+		}
 	}
 	if m.paletteOpen() && len(m.palette.results) > 0 {
 		idx := m.palette.cursor

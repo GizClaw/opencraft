@@ -185,7 +185,11 @@ func main() {
 			Model:   config.DefaultModel(mgr.UserDir()),
 			Version: app.ServiceVersion,
 			WorkDir: workDir,
-			Skills:  skillsSvc,
+			// TUI preferences (think level) persist under the user
+			// config directory, next to the setup-written deploy
+			// layer.
+			ConfigDir: mgr.UserDir(),
+			Skills:    skillsSvc,
 			// Every TUI launch starts a fresh conversation; /resume
 			// switches to an existing session id.
 			ContextID: ocsessions.NewID(),

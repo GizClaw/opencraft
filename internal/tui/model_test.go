@@ -197,7 +197,7 @@ func TestFooterShowsModelAndProjectPath(t *testing.T) {
 		t.Errorf("status line must not show the model: %q", st)
 	}
 	v := m.View()
-	if !strings.Contains(v, "deepseek/x · ~/Workspace/opencraft") {
+	if !strings.Contains(v, "deepseek/x · effort medium · ~/Workspace/opencraft") {
 		t.Errorf("footer must show model and project path: %q", v)
 	}
 	lines := strings.Split(v, "\n")
@@ -509,7 +509,7 @@ func TestFlattenHistoryRendersToolActivity(t *testing.T) {
 			Role: message.RoleTool,
 			Content: message.Content{Parts: []message.Part{
 				message.ToolResultPart{Result: message.ToolResult{
-					CallID: "c1",
+					CallID:  "c1",
 					Content: `{"exit_code":0,"stdout":"a.txt","stderr":""}`,
 				}},
 			}},

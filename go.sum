@@ -12,6 +12,8 @@ github.com/GizClaw/doubao-speech-go v0.0.0-20260723152315-fe8153366feb h1:iS4tRK
 github.com/GizClaw/doubao-speech-go v0.0.0-20260723152315-fe8153366feb/go.mod h1:4R3wUAZkYk1BSgzv+QVF+2SZPu3VDy8NvaQdNRYGgBs=
 github.com/GizClaw/flowcraft/core v0.1.13 h1:Ld0Kmxr3GPsDFwX3sb8bKDeznjiJKgMm2I6yZiDJTSk=
 github.com/GizClaw/flowcraft/core v0.1.13/go.mod h1:t4e1E55RSCsZTDGLCKLeg0Qags72Y2Yz2ZtL3EyGy1k=
+github.com/GizClaw/flowcraft/core v0.1.15 h1:4UPQ0Jy4JfKk8/dzq9kZlZja9gvmWIccEsi9/0Wl5Bg=
+github.com/GizClaw/flowcraft/core v0.1.15/go.mod h1:t4e1E55RSCsZTDGLCKLeg0Qags72Y2Yz2ZtL3EyGy1k=
 github.com/GizClaw/flowcraft/driver/anthropic v0.1.3 h1:jozIxNgbQDePQ1m7oBXpSfhh+usyMfZa7oOyjUlfqvU=
 github.com/GizClaw/flowcraft/driver/anthropic v0.1.3/go.mod h1:SZhkK+l61a9m70et9QvsHZOZnuBiD7iP6g96wYs7ojQ=
 github.com/GizClaw/flowcraft/driver/azure v0.1.3 h1:gJt2dVN5TJDQirJoXV9xGXpYG+60OhSGxnfO1TyprZ0=
