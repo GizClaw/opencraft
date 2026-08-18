@@ -360,6 +360,13 @@ func New(
 	spin.Spinner = spinner.Dot
 	spin.Style = spinnerStyle
 
+	thinkLevel := string(ocsessions.ThinkMedium)
+	if opts.Sessions != nil {
+		if level, err := opts.Sessions.Think(opts.ContextID); err == nil {
+			thinkLevel = string(level)
+		}
+	}
+
 	return &Model{
 		rtc:          rtc,
 		opts:         opts,
@@ -368,7 +375,7 @@ func New(
 		broker:       broker,
 		model:        opts.Model,
 		version:      opts.Version,
-		thinkLevel:   effortOrDefault(loadSettings(opts.ConfigDir).ReasoningEffort),
+		thinkLevel:   thinkLevel,
 		input:        input,
 		spinner:      spin,
 		commandIndex: commands.NewIndex(),
@@ -2159,6 +2166,11 @@ func (m *Model) handleResumeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.usageBase = usage
 				m.applyUsageBase()
 			}
+			// The resumed session carries its own think level; the
+			// footer and the next /think cycle pick it up.
+			if level, err := m.opts.Sessions.Think(meta.ID); err == nil {
+				m.thinkLevel = string(level)
+			}
 		}
 		m.queue(userStyle.Render("↩ Resumed session: " + meta.Title))
 		m.flattenHistory(meta.ID)
@@ -2228,8 +2240,8 @@ func (m *Model) enterPermissionsMode() tea.Model {
 
 // handleThinkCommand applies /think: an explicit low|medium|high
 // argument sets the level, no argument cycles to the next level. The
-// choice is persisted to the user config directory and printed into
-// the stream; the composer returns to idle.
+// choice is persisted to the session store and printed into the
+// stream; the composer returns to idle.
 func (m *Model) handleThinkCommand() (tea.Model, tea.Cmd) {
 	fields := strings.Fields(m.input.Value())
 	arg := ""
@@ -2240,14 +2252,16 @@ func (m *Model) handleThinkCommand() (tea.Model, tea.Cmd) {
 	case "":
 		// Cycle low -> medium -> high -> low.
 		switch m.thinkLevel {
-		case EffortLow:
-			arg = EffortMedium
-		case EffortMedium:
-			arg = EffortHigh
+		case string(ocsessions.ThinkLow):
+			arg = string(ocsessions.ThinkMedium)
+		case string(ocsessions.ThinkMedium):
+			arg = string(ocsessions.ThinkHigh)
 		default:
-			arg = EffortLow
+			arg = string(ocsessions.ThinkLow)
 		}
-	case EffortLow, EffortMedium, EffortHigh:
+	case string(ocsessions.ThinkLow),
+		string(ocsessions.ThinkMedium),
+		string(ocsessions.ThinkHigh):
 	default:
 		m.input.Reset()
 		m.input.Placeholder = mainPlaceholder
@@ -2257,10 +2271,13 @@ func (m *Model) handleThinkCommand() (tea.Model, tea.Cmd) {
 		return m, m.flushPending()
 	}
 	m.thinkLevel = arg
-	if err := saveSettings(m.opts.ConfigDir, settings{
-		ReasoningEffort: arg,
-	}); err != nil {
-		m.queue(toolErrStyle.Render("think: 持久化失败: " + err.Error()))
+	if m.opts.Sessions == nil {
+		m.queue(toolOKStyle.Render("think: " + arg))
+	} else if err := m.opts.Sessions.SetThink(
+		m.opts.ContextID,
+		ocsessions.ThinkLevel(arg),
+	); err != nil {
+		m.queue(toolErrStyle.Render("think: 保存失败: " + err.Error()))
 	} else {
 		m.queue(toolOKStyle.Render("think: " + arg))
 	}
