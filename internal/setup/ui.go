@@ -20,6 +20,7 @@ type step int
 const (
 	stepWelcome step = iota
 	stepProvider
+	stepProviderOrder
 	stepProviderConfig
 	stepConfirm
 	stepDone
@@ -49,8 +50,11 @@ type model struct {
 	step        step
 	selected    []bool
 	keys        []KeyedProvider // parallel to Providers; only selected filled
+	order       []int           // selected provider indices, priority order
+	orderCursor int
 	cursor      int
 	providerIdx int
+	orderPos    int
 	phase       phase
 	keySource   int
 	errMsg      string
@@ -131,6 +135,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cursor = (m.cursor + 1) % len(Providers)
 		case " ":
 			m.selected[m.cursor] = !m.selected[m.cursor]
+		case "enter":
+			m.beginOrder()
+		}
+
+	case stepProviderOrder:
+		switch key.String() {
+		case "up", "k":
+			m.orderCursor = (m.orderCursor + len(m.order) - 1) % len(m.order)
+		case "down", "j":
+			m.orderCursor = (m.orderCursor + 1) % len(m.order)
+		case "u":
+			m.moveOrder(-1)
+		case "d":
+			m.moveOrder(+1)
 		case "enter":
 			m.beginProviderConfig()
 		}
@@ -216,20 +234,49 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) beginProviderConfig() {
-	m.providerIdx = -1
+	m.orderPos = -1
 	m.advanceProvider()
 	if m.providerIdx >= 0 {
 		m.step = stepProviderConfig
 	}
 }
 
-func (m *model) advanceProvider() {
-	for i := m.providerIdx + 1; i < len(Providers); i++ {
-		if m.selected[i] {
-			m.providerIdx = i
-			m.prepareProvider()
-			return
+// beginOrder snapshots the selected providers into the priority list
+// (catalog order) and shows the ordering step.
+func (m *model) beginOrder() {
+	m.order = m.order[:0]
+	for i, selected := range m.selected {
+		if selected {
+			m.order = append(m.order, i)
 		}
+	}
+	if len(m.order) == 0 {
+		return
+	}
+	m.orderCursor = 0
+	m.step = stepProviderOrder
+}
+
+// moveOrder shifts the item under the cursor by delta within the
+// priority list (clamped at the ends).
+func (m *model) moveOrder(delta int) {
+	if len(m.order) < 2 {
+		return
+	}
+	target := m.orderCursor + delta
+	if target < 0 || target >= len(m.order) {
+		return
+	}
+	m.order[m.orderCursor], m.order[target] = m.order[target], m.order[m.orderCursor]
+	m.orderCursor = target
+}
+
+func (m *model) advanceProvider() {
+	for pos := m.orderPos + 1; pos < len(m.order); pos++ {
+		m.orderPos = pos
+		m.providerIdx = m.order[pos]
+		m.prepareProvider()
+		return
 	}
 	m.step = stepConfirm
 }
@@ -257,10 +304,12 @@ func (m model) backStep() step {
 	switch m.step {
 	case stepProvider:
 		return stepWelcome
+	case stepProviderOrder:
+		return stepProvider
 	case stepProviderConfig:
-		return stepProvider
+		return stepProviderOrder
 	case stepConfirm:
-		return stepProvider
+		return stepProviderOrder
 	}
 	return stepWelcome
 }
@@ -268,10 +317,8 @@ func (m model) backStep() step {
 // config assembles the final Config from the selected providers.
 func (m model) config() Config {
 	var cfg Config
-	for i, selected := range m.selected {
-		if selected {
-			cfg.Providers = append(cfg.Providers, m.keys[i])
-		}
+	for _, i := range m.order {
+		cfg.Providers = append(cfg.Providers, m.keys[i])
 	}
 	return cfg
 }
@@ -282,6 +329,8 @@ func (m model) View() string {
 		return m.viewWelcome()
 	case stepProvider:
 		return m.viewProvider()
+	case stepProviderOrder:
+		return m.viewProviderOrder()
 	case stepProviderConfig:
 		return m.viewProviderConfig()
 	case stepConfirm:
@@ -300,7 +349,8 @@ func (m model) viewWelcome() string {
 	b.WriteString("向导生成 ")
 	b.WriteString(dimStyle.Render("~/.opencraft/config/opencraft.yaml"))
 	b.WriteString("，之后所有配置都写在这个文件里。\n")
-	b.WriteString("router 会按优先级自动选择，失败的 provider 自动顺延到下一个。\n")
+	b.WriteString("router 会按优先级自动选择，失败的 provider 自动顺延到下一个；\n")
+	b.WriteString("勾选后还可以调整优先级顺序。\n")
 	if m.fileExists {
 		b.WriteString("\n" + errStyle.Render("注意：已存在 opencraft.yaml，确认后将整文件覆盖。") + "\n")
 	}
@@ -332,24 +382,39 @@ func (m model) viewProvider() string {
 		b.WriteString(fmt.Sprintf("%s %s %-24s %-32s %s\n",
 			marker, state, name, model, dimStyle.Render(p.EnvVar)))
 	}
-	b.WriteString("\n" + dimStyle.Render("↑/↓ 或 j/k 移动 · Space 选择 · Enter 继续 · Esc 返回"))
+	b.WriteString("\n" + dimStyle.Render("↑/↓ 或 j/k 移动 · Space 选择 · Enter 调整优先级 · Esc 返回"))
+	return b.String()
+}
+
+func (m model) viewProviderOrder() string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render("调整 router 优先级（从上到下）"))
+	b.WriteString("\n\n")
+	b.WriteString("第一个是主模型，失败后按顺序顺延。\n\n")
+	for i, idx := range m.order {
+		p := Providers[idx]
+		marker := "  "
+		if i == m.orderCursor {
+			marker = cursorStyle.Render("▸") + " "
+		}
+		model := p.DefaultModel
+		if p.Azure {
+			model = m.keys[idx].Model
+			if model == "" {
+				model = "endpoint + deployment"
+			}
+		}
+		b.WriteString(fmt.Sprintf("%s %d. %-20s %s\n",
+			marker, i+1, p.Name, dimStyle.Render(model)))
+	}
+	b.WriteString("\n" + dimStyle.Render("↑/↓ 或 j/k 移动 · u/d 上移/下移 · Enter 继续 · Esc 返回"))
 	return b.String()
 }
 
 func (m model) viewProviderConfig() string {
 	p := Providers[m.providerIdx]
-	index := 0
-	for i := 0; i <= m.providerIdx; i++ {
-		if m.selected[i] {
-			index++
-		}
-	}
-	total := 0
-	for _, s := range m.selected {
-		if s {
-			total++
-		}
-	}
+	index := m.orderPos + 1
+	total := len(m.order)
 	header := fmt.Sprintf("%s（%d/%d）", p.Name, index, total)
 	switch m.phase {
 	case phaseEndpoint:
