@@ -177,6 +177,11 @@ func (s *Store) migrate() error {
 			revision INTEGER NOT NULL DEFAULT 1,
 			saved_at TEXT NOT NULL
 		);`,
+		`CREATE TABLE IF NOT EXISTS session_settings (
+			context_id TEXT PRIMARY KEY,
+			think_level TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		);`,
 	}
 	for i, stmt := range migrations {
 		version := i + 1
@@ -505,3 +510,44 @@ func (s *Store) Delete(ctx context.Context, execID string) error {
 var _ agent.CheckpointStore = (*Store)(nil)
 var _ agent.CheckpointLister = (*Store)(nil)
 var _ agent.CheckpointDeleter = (*Store)(nil)
+
+// SetThinkLevel upserts the per-session reasoning effort
+// (low | medium | high) into the session_settings table.
+func (s *Store) SetThinkLevel(ctx context.Context, contextID, level string) error {
+	if strings.TrimSpace(contextID) == "" {
+		return errdefs.Validation(
+			errors.New("state: session context_id is required"))
+	}
+	if strings.TrimSpace(level) == "" {
+		return errdefs.Validation(
+			errors.New("state: think level is required"))
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO session_settings (context_id, think_level, updated_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(context_id) DO UPDATE SET
+			think_level = excluded.think_level,
+			updated_at = excluded.updated_at
+	`, contextID, level, time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("state: set think level %s: %w", contextID, err)
+	}
+	return nil
+}
+
+// ThinkLevel returns the persisted reasoning effort for a session.
+// A missing row returns "", letting the caller apply its default.
+func (s *Store) ThinkLevel(ctx context.Context, contextID string) (string, error) {
+	var level string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT think_level FROM session_settings WHERE context_id = ?`,
+		contextID,
+	).Scan(&level)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("state: load think level %s: %w", contextID, err)
+	}
+	return level, nil
+}
