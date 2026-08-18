@@ -8,39 +8,40 @@ import (
 )
 
 // DefaultModel returns the first target of the router policy's default
-// tier as "provider/name", or "" when inference.yaml does not declare
-// one. It powers the TUI header until the first usage report arrives.
-// configDir is the user configuration directory: when it contains an
-// inference.yaml, that file wins over the embedded default so edits to
-// the seeded routing policy are reflected immediately.
+// tier as "provider/name", or "" when the user configuration layer does
+// not declare one. It powers the TUI header until the first usage
+// report arrives. configDir is the user configuration directory; the
+// router policy lives inline in opencraft.yaml (written by first-run
+// setup).
 func DefaultModel(configDir string) string {
-	data, err := FS().ReadFile("assets/inference.yaml")
+	if configDir == "" {
+		return ""
+	}
+	data, err := os.ReadFile(filepath.Join(configDir, "opencraft.yaml"))
 	if err != nil {
 		return ""
 	}
-	if configDir != "" {
-		if userData, err := os.ReadFile(
-			filepath.Join(configDir, "inference.yaml"),
-		); err == nil && len(userData) > 0 {
-			data = userData
-		}
+	return modelFromRouter(data)
+}
+
+// modelFromRouter extracts the first default-tier generate target from
+// the router resource subtree (resources.router.settings.generate).
+func modelFromRouter(data []byte) string {
+	var router struct {
+		Resources map[string]struct {
+			Settings struct {
+				Generate []pool `json:"generate"`
+			} `json:"settings"`
+		} `json:"resources"`
 	}
-	var g struct {
-		Generate []struct {
-			Targets []struct {
-				Model struct {
-					ID struct {
-						Provider string `json:"provider"`
-						Name     string `json:"name"`
-					} `json:"id"`
-				} `json:"model"`
-			} `json:"targets"`
-		} `json:"generate"`
-	}
-	if err := yaml.Unmarshal(data, &g); err != nil {
+	if err := yaml.Unmarshal(data, &router); err != nil {
 		return ""
 	}
-	for _, pool := range g.Generate {
+	res, ok := router.Resources["router"]
+	if !ok {
+		return ""
+	}
+	for _, pool := range res.Settings.Generate {
 		if len(pool.Targets) == 0 {
 			continue
 		}
@@ -50,4 +51,15 @@ func DefaultModel(configDir string) string {
 		}
 	}
 	return ""
+}
+
+type pool struct {
+	Targets []struct {
+		Model struct {
+			ID struct {
+				Provider string `json:"provider"`
+				Name     string `json:"name"`
+			} `json:"id"`
+		} `json:"model"`
+	} `json:"targets"`
 }

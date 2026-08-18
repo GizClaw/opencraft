@@ -1,8 +1,9 @@
 version: v1
 
-# opencraft internal deploy document (not user-editable). The
-# user-editable inference.yaml is seeded to ~/.opencraft/config/ on
-# first start.
+# opencraft internal deploy document (not user-editable). Inference
+# wiring (provider / infer assembly / router) is intentionally NOT
+# here: the first-run setup writes it to ~/.opencraft/config/opencraft.yaml
+# and the optional project layer can override it per repo.
 
 resources:
   # ------------------------------------------------------------------
@@ -210,39 +211,6 @@ resources:
           # Internal machinery: callable by exact name (the compact
           # graph node), never offered to the model.
           compact: hidden
-
-  # ------------------------------------------------------------------
-  # Inference: provider resources + assembly (provider is a many dep;
-  # add more providers as needed)
-  # ------------------------------------------------------------------
-  infer:
-    kind: inference.Assembly
-    impl: unified
-    deps:
-      provider: provider.deepseek
-  # Route policy: selects the target model per tier/fallback from the
-  # user-editable inference.yaml (seeded to ~/.opencraft/config/).
-  router:
-    kind: inference.Router
-    impl: unified
-    deps:
-      target: infer
-    settings:
-      file: inference.yaml
-  provider.deepseek:
-    kind: inference.Provider
-    impl: deepseek
-    settings:
-      id: deepseek
-      # Secrets resolve from the process environment only. There is no
-      # local .env loading; inject DEEPSEEK_API_KEY via the environment
-      # (systemd/systemd Environment=, k8s secrets, or your process
-      # supervisor) so the key never lives on disk next to the config.
-      spec:
-        api: responses
-      profiles:
-        - secrets:
-            api_key: ${env:DEEPSEEK_API_KEY}
 
   # ------------------------------------------------------------------
   # Script runtime

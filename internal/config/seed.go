@@ -1,44 +1,22 @@
 package config
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 )
 
-// EnsureUserConfig seeds ~/.opencraft/config with the user-facing
-// config documents (user opencraft.yaml layer + inference routing) and
-// returns the directory. Existing files are preserved (user edits win);
-// deleted files are regenerated on the next start. The default graph
-// and its node sources are not seeded: they resolve from the embedded
-// FS unless a config layer overrides the graph reference.
+// EnsureUserConfig ensures the user configuration directory and the
+// sandbox cache exist and returns the config directory. Configuration
+// documents are NOT seeded here anymore: the first-run setup wizard
+// writes the user layer (~/.opencraft/config/opencraft.yaml) so every
+// user-visible setting lives in that single editable document. The
+// default graph and its node sources also stay embedded unless a
+// config layer overrides the graph reference.
 func EnsureUserConfig() (string, error) {
 	dir, err := UserConfigDir()
 	if err != nil {
 		return "", err
 	}
-	for _, asset := range UserAssets {
-		target := filepath.Join(dir, filepath.FromSlash(asset.Name))
-		if _, err := os.Stat(target); err == nil {
-			continue
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return "", err
-		}
-		data, err := FS().ReadFile(asset.Ref)
-		if err != nil {
-			return "", err
-		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return "", err
-		}
-		if err := os.WriteFile(target, data, 0o600); err != nil {
-			return "", err
-		}
-	}
-	// The sandbox cache directory (~/.opencraft/cache) is created at
-	// assembly time by the app; there is no user-editable sandbox
-	// document anymore — the sandbox backend is selected from the
-	// platform in internal/app.
 	dataDir, err := UserDataDir()
 	if err != nil {
 		return "", err

@@ -69,7 +69,8 @@ func WithAssemblyPolicy(p Policy) AssemblyOption {
 
 // WithRouter enables the LLM layered compaction stage through the
 // deployment's inference router. The router selects the model from the
-// user-editable routing policy (inference.yaml) and applies its retry /
+// user-editable routing policy (router settings in the user config
+// layer, opencraft.yaml) and applies its retry /
 // fallback policy, so memory compaction follows the exact same routing
 // as agent turns and cannot drift from it.
 func WithRouter(router *route.Router) AssemblyOption {

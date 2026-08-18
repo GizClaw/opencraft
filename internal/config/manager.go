@@ -95,6 +95,15 @@ func (m *Manager) Load(ctx context.Context) (*View, error) {
 		Name:     "embedded",
 		Source:   resource.Source{Embed: "assets/opencraft.yaml"},
 		Embed:    FS(),
+	}, {
+		// Fixed inference wiring (providers + infer assembly + router
+		// retry shell) lives in its own embedded layer so the
+		// setup-written user layer only carries the variable parts
+		// (key profiles, azure, generate targets).
+		Priority: 1,
+		Name:     "embedded-inference",
+		Source:   resource.Source{Embed: "assets/inference.yaml"},
+		Embed:    FS(),
 	}}
 	if m.explicit != "" {
 		// Above embedded, below the user layer: -config is meant to
@@ -107,12 +116,17 @@ func (m *Manager) Load(ctx context.Context) (*View, error) {
 			BaseDir:  filepath.Dir(m.explicit),
 		})
 	}
-	layers = append(layers, deploy.Layer{
-		Priority: 10,
-		Name:     string(LayerUser),
-		Source:   resource.Source{File: "opencraft.yaml"},
-		BaseDir:  m.userDir,
-	})
+	// The user layer is created by the first-run setup wizard; before
+	// that (or after a reset) it is absent and the embedded base alone
+	// has no inference wiring — main gates startup behind the wizard.
+	if _, err := os.Stat(filepath.Join(m.userDir, "opencraft.yaml")); err == nil {
+		layers = append(layers, deploy.Layer{
+			Priority: 10,
+			Name:     string(LayerUser),
+			Source:   resource.Source{File: "opencraft.yaml"},
+			BaseDir:  m.userDir,
+		})
+	}
 	if m.projectDir != "" {
 		layers = append(layers, deploy.Layer{
 			Priority: 20,

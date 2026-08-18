@@ -10,12 +10,12 @@ import (
 	"github.com/GizClaw/flowcraft/core/resource"
 )
 
-// TestGraphEmbeddedNotSeeded verifies the default graph stays in the
-// binary: EnsureUserConfig seeds only the user config documents
-// (opencraft.yaml + inference.yaml), never the graph or its node
-// sources, and the embedded graph definition resolves its node
-// sources through the same embed FS at load time.
-func TestGraphEmbeddedNotSeeded(t *testing.T) {
+// TestUserConfigAndGraphNotSeeded verifies EnsureUserConfig creates no
+// config documents (the first-run wizard owns the user layer) and the
+// default graph stays in the binary: neither the graph nor its node
+// sources are seeded, and the embedded graph definition resolves its
+// node sources through the same embed FS at load time.
+func TestUserConfigAndGraphNotSeeded(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 
@@ -25,8 +25,10 @@ func TestGraphEmbeddedNotSeeded(t *testing.T) {
 	}
 	for _, name := range []string{"opencraft.yaml", "inference.yaml"} {
 		target := filepath.Join(cfgDir, filepath.FromSlash(name))
-		if _, err := os.Stat(target); err != nil {
-			t.Fatalf("seeded config document %s: %v", name, err)
+		if _, err := os.Stat(target); err == nil {
+			t.Fatalf("config document %s must not be seeded (wizard-owned)", name)
+		} else if !os.IsNotExist(err) {
+			t.Fatalf("stat %s: %v", name, err)
 		}
 	}
 	for _, name := range []string{
@@ -48,6 +50,7 @@ func TestGraphEmbeddedNotSeeded(t *testing.T) {
 	)
 	for _, src := range []resource.Source{
 		{Embed: "assets/graphs/assistant.yaml"},
+		{Embed: "assets/inference.yaml"},
 		{Embed: "assets/graphs/nodes/world.js"},
 		{Embed: "assets/graphs/nodes/compact.js"},
 		{Embed: "assets/graphs/prompts/system.md"},

@@ -30,15 +30,35 @@ nodes:
       tool_pending_key: tool_pending
       stream: true
       system_prompt: {embed: assets/graphs/prompts/system.md}
-      # DeepSeek hosted web_search (provider-side search on the
-      # Responses API). tool_choice.required: false lets the model
-      # decide when to search; set it to true to force a search first.
+      # Hosted web_search extensions (provider-side search). Every
+      # provider that is ALWAYS registered and exposes one is declared
+      # here: the router's selected provider activates its own
+      # extension while ignoring the others. Azure also exposes
+      # generate_options/web_search but is only registered when the
+      # user configures it (endpoint + deployment required), so its
+      # extension cannot live in this static graph — azure setups get
+      # web_search via a setup-generated graph override (future work).
+      # Each provider uses the knobs its own schema supports:
+      # deepseek/openai accept tool_choice (auto, the model decides
+      # when to search); bytedance does not, so it stays empty.
+      # Deployment-specific knobs (allowed_domains, user_location,
+      # search_context_size) are intentionally not set as global
+      # defaults.
       extensions:
         - provider: deepseek
           id: generate_options
           fields:
             web_search:
               tool_choice: {required: false}
+        - provider: openai
+          id: generate_options
+          fields:
+            web_search:
+              tool_choice: {required: false}
+        - provider: bytedance
+          id: generate_options
+          fields:
+            web_search: {}
   - id: tools
     type: tool
     config:
