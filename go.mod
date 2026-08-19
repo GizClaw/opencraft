@@ -3,15 +3,15 @@ module github.com/GizClaw/opencraft
 go 1.26.5
 
 require (
-	github.com/GizClaw/flowcraft/core v0.1.15
-	github.com/GizClaw/flowcraft/driver/anthropic v0.1.3
-	github.com/GizClaw/flowcraft/driver/azure v0.1.3
-	github.com/GizClaw/flowcraft/driver/bytedance v0.1.3
-	github.com/GizClaw/flowcraft/driver/deepseek v0.1.3
-	github.com/GizClaw/flowcraft/driver/kimi v0.1.3
-	github.com/GizClaw/flowcraft/driver/minimax v0.1.3
-	github.com/GizClaw/flowcraft/driver/openai v0.1.3
-	github.com/GizClaw/flowcraft/driver/qwen v0.1.3
+	github.com/GizClaw/flowcraft/core v0.1.16
+	github.com/GizClaw/flowcraft/driver/anthropic v0.1.4
+	github.com/GizClaw/flowcraft/driver/azure v0.1.4
+	github.com/GizClaw/flowcraft/driver/bytedance v0.1.5
+	github.com/GizClaw/flowcraft/driver/deepseek v0.1.4
+	github.com/GizClaw/flowcraft/driver/kimi v0.1.4
+	github.com/GizClaw/flowcraft/driver/minimax v0.1.4
+	github.com/GizClaw/flowcraft/driver/openai v0.1.4
+	github.com/GizClaw/flowcraft/driver/qwen v0.1.4
 	github.com/PuerkitoBio/goquery v1.12.0
 	github.com/atotto/clipboard v0.1.4
 	github.com/charmbracelet/bubbles v1.0.0
