@@ -19,8 +19,11 @@ func TestLookupAndList(t *testing.T) {
 	if c, ok := Lookup("think"); !ok || c.Desc == "" {
 		t.Errorf("think should have a description: %+v", c)
 	}
-	if got := len(List()); got != 4 {
-		t.Errorf("List() = %d commands, want 4", got)
+	if c, ok := Lookup("agents"); !ok || c.Desc == "" {
+		t.Errorf("agents should have a description: %+v", c)
+	}
+	if got := len(List()); got != 5 {
+		t.Errorf("List() = %d commands, want 5", got)
 	}
 }
 

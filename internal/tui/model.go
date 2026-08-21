@@ -24,6 +24,7 @@ import (
 	"github.com/muesli/reflow/wrap"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/delegation/kanban"
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/message"
@@ -88,6 +89,7 @@ const (
 	modePermissions
 	modeSkills
 	modeTranscript
+	modeKanban
 )
 
 // sessionState is the active turn context; it is nil when idle.
@@ -200,6 +202,18 @@ type transcriptState struct {
 	scroll int
 }
 
+// kanbanState is live while mode == modeKanban: a snapshot of the
+// delegation board cards, scrollable above the prompt.
+type kanbanState struct {
+	cards  []*kanban.Card
+	scroll int
+}
+
+func (k *kanbanState) reset() {
+	k.cards = nil
+	k.scroll = 0
+}
+
 // selectionState is an active text selection over the rendered
 // transcript, in display coordinates (wrapped lines × cells).
 type selectionState struct {
@@ -270,6 +284,9 @@ type Model struct {
 
 	// transcript is live while mode == modeTranscript.
 	transcript transcriptState
+
+	// kanban is live while mode == modeKanban.
+	kanban kanbanState
 
 	// flushArmed tracks the single in-flight flushPrint tick. The
 	// pending drain is a self-rescheduling 50ms tick; arming keeps the
@@ -423,6 +440,8 @@ func (m *Model) exitMode(prev mode) {
 		m.skills.reset()
 	case modeTranscript:
 		m.transcript.scroll = 0
+	case modeKanban:
+		m.kanban.reset()
 	}
 }
 
@@ -467,6 +486,62 @@ func (m *Model) leaveTranscript() {
 	m.prevMode = modeIdle
 	m.setMode(prev)
 }
+
+// enterKanbanMode opens the delegation board overlay, snapshotting
+// the kanban cards and arming the live refresh tick. It returns the
+// model and the tick command.
+func (m *Model) enterKanbanMode() (tea.Model, tea.Cmd) {
+	m.kanban.cards = m.delegationCards()
+	m.kanban.scroll = 0
+	m.prevMode = m.mode
+	m.mode = modeKanban
+	return m, m.kanbanTick()
+}
+
+// leaveKanban closes the delegation board overlay, restoring the
+// mode that was active before it opened.
+func (m *Model) leaveKanban() {
+	prev := m.prevMode
+	m.prevMode = modeIdle
+	m.setMode(prev)
+}
+
+// delegationBoard returns the kanban delegation backend from the
+// assembled runtime, or nil when delegation is not wired.
+func (m *Model) delegationBoard() *kanban.Board {
+	if m.rtc == nil {
+		return nil
+	}
+	value, ok := m.rtc.Runtime().Resource("delegate.backend")
+	if !ok {
+		return nil
+	}
+	board, _ := value.(*kanban.Board)
+	return board
+}
+
+// delegationCards snapshots the current board cards, newest first.
+func (m *Model) delegationCards() []*kanban.Card {
+	board := m.delegationBoard()
+	if board == nil {
+		return nil
+	}
+	cards := board.Query(kanban.Filter{})
+	sort.SliceStable(cards, func(i, j int) bool {
+		return cards[i].CreatedAt.After(cards[j].CreatedAt)
+	})
+	return cards
+}
+
+// kanbanTick re-snapshots the board every second while the kanban
+// overlay is open so async lanes progress on screen.
+func (m *Model) kanbanTick() tea.Cmd {
+	return tea.Tick(time.Second, func(time.Time) tea.Msg {
+		return kanbanTickMsg{}
+	})
+}
+
+type kanbanTickMsg struct{}
 
 // newInput builds the prompt textarea: multiline and growing with
 // content, with the semantic palette applied.
@@ -537,6 +612,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.flushArmed = false
 		m.drainPending()
 		return m, m.flushTick()
+
+	case kanbanTickMsg:
+		if m.mode != modeKanban {
+			return m, nil
+		}
+		m.kanban.cards = m.delegationCards()
+		return m, m.kanbanTick()
 
 	case turnStartedMsg:
 		m.session.lease = msg.lease
@@ -1545,7 +1627,7 @@ func (m *Model) handleMouse(msg tea.MouseMsg) {
 	if !m.mouseCapture {
 		return
 	}
-	if m.mode == modeTranscript {
+	if m.mode == modeTranscript || m.mode == modeKanban {
 		return
 	}
 	if tea.MouseEvent(msg).IsWheel() {
@@ -1645,6 +1727,8 @@ func (m *Model) viewportHeight() int {
 	}
 	switch m.mode {
 	case modeTranscript:
+		return 0
+	case modeKanban:
 		return 0
 	}
 	bottom := 2 // footer + trailing blank
@@ -1905,6 +1989,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.mode {
 	case modeTranscript:
 		return m.handleTranscriptKey(msg)
+	case modeKanban:
+		return m.handleKanbanKey(msg)
 	case modeAnswering:
 		return m.handleAnsweringKey(msg)
 	case modeResume:
@@ -1926,7 +2012,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // them). The transcript overlay mode owns its own scrolling and is
 // excluded here.
 func (m *Model) scrollTranscriptKey(msg tea.KeyMsg) bool {
-	if m.mode == modeTranscript {
+	if m.mode == modeTranscript || m.mode == modeKanban {
 		return false
 	}
 	switch msg.String() {
@@ -2121,6 +2207,38 @@ func (m *Model) handleTranscriptKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	}
 	return m, nil
+}
+
+// handleKanbanKey scrolls the delegation board overlay. Esc returns
+// to the mode that was active before it opened.
+func (m *Model) handleKanbanKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	total := m.kanbanLineCount()
+	switch msg.String() {
+	case "up", "k":
+		m.kanban.scroll = max(0, m.kanban.scroll-1)
+	case "down", "j":
+		m.kanban.scroll = min(max(0, total-1), m.kanban.scroll+1)
+	case "pgup", "ctrl+b", "ctrl+u":
+		m.kanban.scroll = max(0, m.kanban.scroll-max(1, m.height))
+	case "pgdown", "ctrl+f", "ctrl+d":
+		m.kanban.scroll = min(
+			max(0, total-1), m.kanban.scroll+max(1, m.height))
+	case "esc":
+		m.leaveKanban()
+	case "ctrl+c":
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+// kanbanLineCount returns the total rendered line count of every
+// card block, including the separator blank between blocks.
+func (m *Model) kanbanLineCount() int {
+	total := 0
+	for _, card := range m.kanban.cards {
+		total += len(m.renderKanbanCard(card)) + 1
+	}
+	return total
 }
 
 // transcriptLineCount returns the total line count of every folded
@@ -2618,6 +2736,18 @@ func (m *Model) View() string {
 		}
 		lines = append(lines, "")
 		return lipgloss.JoinVertical(lipgloss.Left, lines...)
+	case modeKanban:
+		// The delegation board overlay replaces the viewport and the
+		// composer; the status line stays as its header.
+		if line := m.statusLine(); line != "" {
+			lines = append(lines, line)
+		}
+		lines = append(lines, m.kanbanView())
+		if footer := m.footerLine(); footer != "" {
+			lines = append(lines, footer)
+		}
+		lines = append(lines, "")
+		return lipgloss.JoinVertical(lipgloss.Left, lines...)
 	}
 	// The scrollable transcript fills the screen; the status line,
 	// reasoning panel, composer (or picker), footer and a trailing
@@ -2735,6 +2865,87 @@ func (m *Model) transcriptView() string {
 		"— %d/%d —", m.transcript.scroll+1, len(all)))
 	return lipgloss.JoinVertical(lipgloss.Left,
 		header, strings.Join(lines, "\n"), footer)
+}
+
+// kanbanView renders the delegation board overlay: every card in
+// full, scrollable, above the status line.
+func (m *Model) kanbanView() string {
+	if len(m.kanban.cards) == 0 {
+		if m.delegationBoard() == nil {
+			return dimStyle.Render("— delegation 未启用 —")
+		}
+		return dimStyle.Render("— 没有进行中的委托 —")
+	}
+	var all []string
+	for _, card := range m.kanban.cards {
+		all = append(all, m.renderKanbanCard(card)...)
+		all = append(all, "")
+	}
+	// One row is reserved for the footer context line below the
+	// overlay so the board still fits the terminal height.
+	viewH := max(1, m.height-3)
+	maxScroll := max(0, len(all)-viewH)
+	if m.kanban.scroll > maxScroll {
+		m.kanban.scroll = maxScroll
+	}
+	end := min(len(all), m.kanban.scroll+viewH)
+	lines := all[m.kanban.scroll:end]
+	header := dimStyle.Render(
+		"— subagents · ↑/↓ scroll · Esc close —")
+	footer := dimStyle.Render(fmt.Sprintf(
+		"— %d/%d —", m.kanban.scroll+1, len(all)))
+	return lipgloss.JoinVertical(lipgloss.Left,
+		header, strings.Join(lines, "\n"), footer)
+}
+
+// renderKanbanCard renders one delegation card as logical lines: a
+// status line (state, target, elapsed), the delegated input, and the
+// terminal result when present.
+func (m *Model) renderKanbanCard(card *kanban.Card) []string {
+	status := kanbanStatusStyle(card)
+	target, input := "?", ""
+	if card.Task != nil {
+		target = card.Task.Request.Request.Target
+		input = card.Task.Request.Request.Input
+	}
+	head := fmt.Sprintf("%s %s · %s · %s",
+		status,
+		statusTextStyle.Render(target),
+		dimStyle.Render(truncate(card.ID, 12)),
+		dimStyle.Render(card.Elapsed().Round(time.Second).String()),
+	)
+	lines := []string{head}
+	if text := strings.TrimSpace(input); text != "" {
+		lines = append(lines, dimStyle.Render("  "+truncateWidth(text, max(20, m.width-8))))
+	}
+	if card.Result != nil {
+		if out := strings.TrimSpace(card.Result.Response.Output); out != "" {
+			lines = append(lines, dimStyle.Render("  → "+truncateWidth(out, max(20, m.width-8))))
+		}
+		if errText := strings.TrimSpace(card.Result.Response.Error); errText != "" {
+			lines = append(lines, toolErrStyle.Render("  ✗ "+truncateWidth(errText, max(20, m.width-8))))
+		}
+	}
+	return lines
+}
+
+// kanbanStatusStyle renders the card state marker with a semantic
+// color: pending/claimed are neutral, done green, failed red.
+func kanbanStatusStyle(card *kanban.Card) string {
+	switch card.Status {
+	case kanban.StatusDone:
+		return toolOKStyle.Render("✓")
+	case kanban.StatusFailed:
+		return toolErrStyle.Render("✗")
+	case kanban.StatusCancelled:
+		return dimStyle.Render("⊘")
+	case kanban.StatusClaimed:
+		return statusTextStyle.Render("●")
+	case kanban.StatusSuspended:
+		return dimStyle.Render("⏸")
+	default:
+		return dimStyle.Render("○")
+	}
 }
 
 // composerBar renders the full-width composer bar. The idle state
@@ -2951,6 +3162,8 @@ func (m *Model) statusLine() string {
 		parts = append(parts, statusTextStyle.Render("skills"))
 	case modeTranscript:
 		parts = append(parts, statusTextStyle.Render("transcript"))
+	case modeKanban:
+		parts = append(parts, statusTextStyle.Render("agents"))
 	}
 	// The yolo badge stays visible outside the picker so the unconfined
 	// mode can never be forgotten mid-session.

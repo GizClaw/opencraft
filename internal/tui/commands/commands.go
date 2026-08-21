@@ -31,6 +31,10 @@ var all = []Command{
 		Name: "think",
 		Desc: "set model reasoning effort (low | medium | high)",
 	},
+	{
+		Name: "agents",
+		Desc: "view the subagent delegation board",
+	},
 }
 
 // List returns a copy of every registered command.
