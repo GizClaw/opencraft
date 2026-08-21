@@ -35,7 +35,7 @@ func TestFactoryWiresRouter(t *testing.T) {
 					},
 				}}},
 			}},
-		}.Selectors(),
+		}.Selectors(&inference.Assembly{}),
 	)
 	if err != nil {
 		t.Fatal(err)

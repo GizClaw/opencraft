@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	sdkdelegation "github.com/GizClaw/flowcraft/core/delegation"
+
 	"github.com/GizClaw/opencraft/internal/config"
 	"github.com/GizClaw/opencraft/internal/setup"
 )
@@ -71,6 +73,30 @@ func TestBuildRuntimeAssemblesNewTools(t *testing.T) {
 		t.Fatalf("BuildRuntime: %v", err)
 	}
 	defer func() { _ = rt.Close() }()
+
+	// Delegation wiring: the service and kanban backend resources
+	// build, and the deployed assistant is a delegate target (the
+	// deploy builder binds the directory through DeploymentBinder, so
+	// a successful build implies the bind succeeded).
+	serviceValue, ok := rt.Resource("delegate")
+	if !ok {
+		t.Fatal("delegate resource missing")
+	}
+	service, ok := serviceValue.(sdkdelegation.Service)
+	if !ok || service == nil {
+		t.Fatal("delegate resource is not a delegation.Service")
+	}
+	backendValue, ok := rt.Resource("delegate.backend")
+	if !ok {
+		t.Fatal("delegate.backend resource missing")
+	}
+	backend, ok := backendValue.(sdkdelegation.AsyncBackend)
+	if !ok || backend == nil {
+		t.Fatal("delegate.backend resource is not a delegation.AsyncBackend")
+	}
+	if _, ok := rt.Agent("assistant"); !ok {
+		t.Fatal("assistant agent not deployed as a delegation target")
+	}
 }
 
 // TestBuildRuntimeUsesUserGraphOverride verifies the user-override

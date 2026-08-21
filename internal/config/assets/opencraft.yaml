@@ -57,6 +57,28 @@ resources:
       window: 40
 
   # ------------------------------------------------------------------
+  # Delegation: deployed agents are delegate targets; the model may
+  # assign work to them via the delegate / delegation_status tools.
+  # ------------------------------------------------------------------
+  delegate.backend:
+    kind: delegation.AsyncBackend
+    impl: kanban-memory
+    deps:
+      event_bus: events
+  delegate.directory:
+    kind: delegation.Directory
+    impl: local
+  delegate:
+    kind: delegation.Service
+    impl: local
+    deps:
+      backend: delegate.backend
+      directory: delegate.directory
+    settings:
+      max_concurrency: 4
+      max_depth: 8
+
+  # ------------------------------------------------------------------
   # Workspace and sandbox (box.settings.remote selects local/remote exec)
   # ------------------------------------------------------------------
   ws:
@@ -159,6 +181,14 @@ resources:
     impl: opencraft/permissions
     deps:
       execpolicy: execpolicy
+  # Subagent delegation tools (delegate / delegation_status /
+  # delegation_targets): target discovery resolves the per-generation
+  # delegation directory at call time.
+  tool.delegate:
+    kind: tool.Source
+    impl: delegation
+    deps:
+      directory: delegate.directory
   tools:
     kind: tool.Assembly
     impl: opencraft
@@ -172,6 +202,7 @@ resources:
       tool.skills: tool.skills
       tool.compact: tool.compact
       tool.permissions: tool.permissions
+      tool.delegate: tool.delegate
     settings:
       middlewares:
         recover:

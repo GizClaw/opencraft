@@ -71,6 +71,12 @@ type KeyedProvider struct {
 	KeyValue  string // literal key (KeyLiteral only)
 	Model     string // Azure: deployment name; empty uses the default
 	Endpoint  string // Azure resource URL
+	// Azure capability declarations (capability-aware routing, core
+	// v0.1.22+). Text output is always emitted for generate
+	// deployments; these knobs declare the optional channels.
+	Vision    bool   // capabilities.inputs: [image]
+	Reasoning string // "" | "always" | "toggle" → capabilities.reasoning
+	WebSearch bool   // capabilities.hosted_web_search: true
 }
 
 // Config is one completed wizard configuration: the subset of
@@ -220,6 +226,22 @@ func (c Config) UserConfigYAML() ([]byte, error) {
 		fmt.Fprintf(&b, "        models:\n")
 		fmt.Fprintf(&b, "          - name: %s\n", yamlQuote(azure.Model))
 		fmt.Fprintf(&b, "            kind: generate\n")
+		// Capability-aware routing (core v0.1.22+) requires generate
+		// deployments to declare text output; setup emits the minimal
+		// mandatory declaration. Vision / reasoning / hosted web
+		// search can be added manually via capabilities until the
+		// wizard grows those knobs.
+		fmt.Fprintf(&b, "            capabilities:\n")
+		fmt.Fprintf(&b, "              outputs: [text]\n")
+		if azure.Vision {
+			fmt.Fprintf(&b, "              inputs: [image]\n")
+		}
+		if azure.Reasoning != "" {
+			fmt.Fprintf(&b, "              reasoning: %s\n", yamlQuote(azure.Reasoning))
+		}
+		if azure.WebSearch {
+			fmt.Fprintf(&b, "              hosted_web_search: true\n")
+		}
 		fmt.Fprintf(&b, "      profiles:\n")
 		fmt.Fprintf(&b, "        - secrets:\n")
 		fmt.Fprintf(&b, "            api_key: %s\n", azure.apiKey())

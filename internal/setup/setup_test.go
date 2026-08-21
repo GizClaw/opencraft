@@ -142,6 +142,8 @@ func TestUserConfigYAMLAzure(t *testing.T) {
 		"endpoint: 'https://res.openai.azure.com'",
 		"name: 'gpt-5.6-sol-deploy'",
 		"kind: generate",
+		"capabilities:",
+		"outputs: [text]",
 		"provider.azure: provider.azure", // infer dep merge
 		"provider: azure",                // router target
 	} {
@@ -155,6 +157,50 @@ func TestUserConfigYAMLAzure(t *testing.T) {
 	bad.Providers = append(bad.Providers, KeyedProvider{Provider: mustProvider(t, "azure")})
 	if _, err := bad.UserConfigYAML(); err == nil {
 		t.Fatal("azure without endpoint must fail")
+	}
+}
+
+func TestUserConfigYAMLAzureCapabilities(t *testing.T) {
+	cfg := envKeyed(t, "deepseek")
+	cfg.Providers = append(cfg.Providers, KeyedProvider{
+		Provider:  mustProvider(t, "azure"),
+		KeySource: KeyEnv,
+		Endpoint:  "https://res.openai.azure.com",
+		Model:     "gpt-5.6-sol-deploy",
+		Vision:    true,
+		Reasoning: "toggle",
+		WebSearch: true,
+	})
+	data, err := cfg.UserConfigYAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+	for _, want := range []string{
+		"outputs: [text]",
+		"inputs: [image]",
+		"reasoning: 'toggle'",
+		"hosted_web_search: true",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Fatalf("azure capabilities doc missing %q:\n%s", want, doc)
+		}
+	}
+
+	// Reasoning "关闭" must not emit a reasoning declaration.
+	off := envKeyed(t, "deepseek")
+	off.Providers = append(off.Providers, KeyedProvider{
+		Provider:  mustProvider(t, "azure"),
+		KeySource: KeyEnv,
+		Endpoint:  "https://res.openai.azure.com",
+		Model:     "gpt-5.6-sol-deploy",
+	})
+	data, err = off.UserConfigYAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "reasoning:") {
+		t.Fatalf("default azure must not declare reasoning:\n%s", data)
 	}
 }
 

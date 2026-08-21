@@ -3,15 +3,15 @@ module github.com/GizClaw/opencraft
 go 1.26.5
 
 require (
-	github.com/GizClaw/flowcraft/core v0.1.16
-	github.com/GizClaw/flowcraft/driver/anthropic v0.1.4
-	github.com/GizClaw/flowcraft/driver/azure v0.1.4
-	github.com/GizClaw/flowcraft/driver/bytedance v0.1.5
-	github.com/GizClaw/flowcraft/driver/deepseek v0.1.4
-	github.com/GizClaw/flowcraft/driver/kimi v0.1.4
-	github.com/GizClaw/flowcraft/driver/minimax v0.1.4
-	github.com/GizClaw/flowcraft/driver/openai v0.1.4
-	github.com/GizClaw/flowcraft/driver/qwen v0.1.4
+	github.com/GizClaw/flowcraft/core v0.1.23
+	github.com/GizClaw/flowcraft/driver/anthropic v0.1.6
+	github.com/GizClaw/flowcraft/driver/azure v0.1.8
+	github.com/GizClaw/flowcraft/driver/bytedance v0.1.9
+	github.com/GizClaw/flowcraft/driver/deepseek v0.1.6
+	github.com/GizClaw/flowcraft/driver/kimi v0.1.6
+	github.com/GizClaw/flowcraft/driver/minimax v0.1.6
+	github.com/GizClaw/flowcraft/driver/openai v0.1.6
+	github.com/GizClaw/flowcraft/driver/qwen v0.1.6
 	github.com/PuerkitoBio/goquery v1.12.0
 	github.com/atotto/clipboard v0.1.4
 	github.com/charmbracelet/bubbles v1.0.0
@@ -74,6 +74,7 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.7 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
+	github.com/klauspost/compress v1.13.5 // indirect
 	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect
@@ -96,7 +97,7 @@ require (
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/unxed/winkeys v0.1.1 // indirect
 	github.com/volcengine/volc-sdk-golang v1.0.23 // indirect
-	github.com/volcengine/volcengine-go-sdk v1.2.14 // indirect
+	github.com/volcengine/volcengine-go-sdk v1.2.48 // indirect
 	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/yuin/goldmark v1.7.13 // indirect

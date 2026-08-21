@@ -10,6 +10,10 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/agent/scriptrt"
+	sdkdelegation "github.com/GizClaw/flowcraft/core/delegation"
+	delegationhostwrap "github.com/GizClaw/flowcraft/core/delegation/hostwrap"
+	delegationkanban "github.com/GizClaw/flowcraft/core/delegation/kanban/resource"
+	tooldelegation "github.com/GizClaw/flowcraft/core/delegation/tool"
 	"github.com/GizClaw/flowcraft/core/deploy"
 	"github.com/GizClaw/flowcraft/core/event"
 	graphresource "github.com/GizClaw/flowcraft/core/graph/resource"
@@ -136,6 +140,15 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 		opentools.Register,
 		sandbox.Register,
 		worldstate.Register,
+		delegationkanban.Register,
+		sdkdelegation.RegisterDirectory,
+		sdkdelegation.RegisterSessionProvider,
+		func(r *resource.Registry) error {
+			return r.Register(sdkdelegation.NewServiceFactory())
+		},
+		func(r *resource.Registry) error {
+			return r.Register(tooldelegation.NewSourceFactory())
+		},
 	}
 	for _, register := range registers {
 		if err := register(reg); err != nil {
@@ -175,6 +188,16 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 			}
 			return hf, nil
 		}), nil
+	}); err != nil {
+		return nil, err
+	}
+	// Expose the delegation service on every turn host so the
+	// delegate / delegation_status tools can resolve it at call time.
+	if err := builder.WithResultHostFactory(func(
+		result *deploy.Result,
+		factory sessions.HostFactory,
+	) (sessions.HostFactory, error) {
+		return delegationhostwrap.Wrap(factory, result)
 	}); err != nil {
 		return nil, err
 	}

@@ -34,7 +34,14 @@ const (
 	phaseKeyInput
 	phaseEndpoint // azure
 	phaseModel    // azure deployment name
+	phaseCapVision
+	phaseCapReasoning
+	phaseCapWebSearch
 )
+
+// azureReasoningOptions is the reasoning capability select. The empty
+// entry means no reasoning declaration; display maps it to "关闭".
+var azureReasoningOptions = []string{"", "always", "toggle"}
 
 var (
 	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("39"))
@@ -57,6 +64,7 @@ type model struct {
 	orderPos    int
 	phase       phase
 	keySource   int
+	capCursor   int
 	errMsg      string
 	fileExists  bool
 
@@ -208,6 +216,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.errMsg = ""
 				m.keys[m.providerIdx].Model = value
+				m.phase = phaseCapVision
+				m.capCursor = boolIndex(m.keys[m.providerIdx].Vision)
+			}
+		case phaseCapVision:
+			if m.moveCapCursor(key) {
+				return m, nil
+			}
+			if key.String() == "enter" {
+				m.keys[m.providerIdx].Vision = m.capCursor == 1
+				m.phase = phaseCapReasoning
+				m.capCursor = reasoningIndex(m.keys[m.providerIdx].Reasoning)
+			}
+		case phaseCapReasoning:
+			if m.moveCapCursor(key) {
+				return m, nil
+			}
+			if key.String() == "enter" {
+				m.keys[m.providerIdx].Reasoning = azureReasoningOptions[m.capCursor]
+				m.phase = phaseCapWebSearch
+				m.capCursor = boolIndex(m.keys[m.providerIdx].WebSearch)
+			}
+		case phaseCapWebSearch:
+			if m.moveCapCursor(key) {
+				return m, nil
+			}
+			if key.String() == "enter" {
+				m.keys[m.providerIdx].WebSearch = m.capCursor == 1
 				m.phase = phaseKeySource
 				m.keySource = defaultKeySource(m.keys[m.providerIdx].Provider)
 			}
@@ -298,6 +333,43 @@ func defaultKeySource(p Provider) int {
 		return 0 // env
 	}
 	return 1 // literal
+}
+
+// moveCapCursor handles ↑/↓ navigation for the azure capability
+// selects. It reports whether the key was consumed.
+func (m *model) moveCapCursor(key tea.KeyMsg) bool {
+	options := 2
+	if m.phase == phaseCapReasoning {
+		options = len(azureReasoningOptions)
+	}
+	switch key.String() {
+	case "up", "k":
+		m.capCursor = (m.capCursor + options - 1) % options
+		return true
+	case "down", "j":
+		m.capCursor = (m.capCursor + 1) % options
+		return true
+	default:
+		return false
+	}
+}
+
+// boolIndex maps a boolean to a two-option cursor index.
+func boolIndex(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
+}
+
+// reasoningIndex maps a reasoning value back to its select index.
+func reasoningIndex(v string) int {
+	for i, option := range azureReasoningOptions {
+		if option == v {
+			return i
+		}
+	}
+	return 0
 }
 
 func (m model) backStep() step {
@@ -421,6 +493,15 @@ func (m model) viewProviderConfig() string {
 		return m.viewInput("Azure endpoint · "+header, "Azure OpenAI 资源 URL", m.endpointInput)
 	case phaseModel:
 		return m.viewInput("Azure deployment · "+header, "部署名称（就是模型 ID）", m.modelInput)
+	case phaseCapVision:
+		return m.viewCapSelect("Azure 能力 · 图像输入 · "+header,
+			"部署是否接受图像输入（vision）？", []string{"否", "是"}, m.capCursor)
+	case phaseCapReasoning:
+		return m.viewCapSelect("Azure 能力 · 推理 · "+header,
+			"部署的推理控制能力？", []string{"关闭", "始终", "可切换"}, m.capCursor)
+	case phaseCapWebSearch:
+		return m.viewCapSelect("Azure 能力 · 联网搜索 · "+header,
+			"部署是否支持 hosted web search？", []string{"否", "是"}, m.capCursor)
 	case phaseKeySource:
 		return m.viewKeySource(header)
 	case phaseKeyInput:
@@ -428,6 +509,28 @@ func (m model) viewProviderConfig() string {
 			"密钥将以明文写入 ~/.opencraft/config/opencraft.yaml（0600）", m.keyInput)
 	}
 	return ""
+}
+
+// viewCapSelect renders one azure capability choice: an option list
+// navigated with ↑/↓ and confirmed with Enter.
+func (m model) viewCapSelect(title, hint string, options []string, cursor int) string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render(title))
+	b.WriteString("\n\n")
+	b.WriteString(dimStyle.Render(hint))
+	b.WriteString("\n")
+	for i, option := range options {
+		marker := "  "
+		if i == cursor {
+			marker = cursorStyle.Render("▸") + " "
+		}
+		b.WriteString(fmt.Sprintf("%s %s\n", marker, option))
+	}
+	if m.errMsg != "" {
+		b.WriteString("\n" + errStyle.Render(m.errMsg))
+	}
+	b.WriteString("\n" + dimStyle.Render("↑/↓ 或 j/k 选择 · Enter 确认 · Esc 返回"))
+	return b.String()
 }
 
 func (m model) viewInput(title, hint string, input textinput.Model) string {
