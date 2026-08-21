@@ -275,6 +275,13 @@ agents:
         graph: { embed: assets/graphs/assistant.yaml }
         build:
           timeout: 1h
+          # flowcraft's loop guard counts node invocations, and each
+          # tool round in this graph runs compact + llm + tools (3
+          # nodes), so the default 100 ≈ 33 tool rounds — too tight
+          # for real implementation work. 400 ≈ 133 tool rounds; a
+          # genuinely stuck loop still trips the guard well before
+          # the 1h build timeout.
+          max_iterations: 400
     prepare:
       - type: opencraft.prepare
         deps:

@@ -124,6 +124,16 @@ func TestListDirRecursiveAndHidden(t *testing.T) {
 	}
 }
 
+func TestListDirOnFileRejected(t *testing.T) {
+	tool, _ := newTestTool(t)
+	writeTree(t, tool.ws, map[string]string{"a.txt": "hi\n"})
+	if _, err := execute(t, tool.list(), `{"path":"a.txt"}`); err == nil {
+		t.Fatal("list_dir on a file should error")
+	} else if !strings.Contains(err.Error(), "not a directory") {
+		t.Errorf("list_dir file error should mention not a directory: %v", err)
+	}
+}
+
 func TestGrepFixedRegexAndCase(t *testing.T) {
 	tool, _ := newTestTool(t)
 	writeTree(t, tool.ws, map[string]string{

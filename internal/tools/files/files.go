@@ -236,7 +236,9 @@ var _ tool.Tool = (*listDirTool)(nil)
 func (t *listDirTool) Definition() message.ToolDefinition {
 	return message.DefineSchema(
 		ListDirName,
-		"List files and directories under a workspace path. Returns "+
+		"List files and directories under a workspace directory. The "+
+			"path must name a directory; to inspect a file's contents "+
+			"use read_file or grep. Returns "+
 			"JSON: {path, entries:[{path, type, size}], truncated}. "+
 			"Hidden entries and .git are skipped unless include_hidden "+
 			"is true.",
@@ -291,10 +293,19 @@ func (t *listDirTool) Execute(ctx context.Context, arguments string) (string, er
 		maxDepth = 0
 	}
 
+	info, err := t.ws.Stat(ctx, root)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", errdefs.Validationf(
+			"%s: path %q is a file, not a directory", ListDirName, root)
+	}
+
 	var entries []dirEntry
 	count := 0
 	truncated := false
-	err := workspace.Walk(ctx, t.ws, root, func(p string, entry fs.DirEntry) error {
+	err = workspace.Walk(ctx, t.ws, root, func(p string, entry fs.DirEntry) error {
 		name := entry.Name()
 		if entry.IsDir() && name == alwaysSkipDir {
 			return filepath.SkipDir

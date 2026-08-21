@@ -77,6 +77,9 @@ const permissionsPlaceholder = "↑/↓ pick mode · Enter apply · Esc cancel"
 // skillsPlaceholder is the picker hint shown in /skills mode.
 const skillsPlaceholder = "↑/↓ pick skill · Enter insert $name · Esc cancel"
 
+// thinkPlaceholder is the picker hint shown in /think mode.
+const thinkPlaceholder = "↑/↓ pick level · Enter apply · Esc cancel"
+
 // mode is the explicit top-level UI state. Keyboard routing and the
 // status line derive from it instead of scattered boolean flags.
 type mode int
@@ -88,6 +91,7 @@ const (
 	modeResume
 	modePermissions
 	modeSkills
+	modeThink
 	modeTranscript
 	modeKanban
 )
@@ -194,6 +198,16 @@ func (s *skillsState) reset() {
 	s.cursor = 0
 }
 
+// thinkState is live while mode == modeThink: the reasoning effort
+// picker (low | medium | high).
+type thinkState struct {
+	cursor int
+}
+
+func (t *thinkState) reset() {
+	t.cursor = 0
+}
+
 // transcriptState is live while mode == modeTranscript: the full
 // content of every block that was folded on screen, scrollable above
 // the prompt.
@@ -268,6 +282,9 @@ type Model struct {
 
 	// skills is live while mode == modeSkills.
 	skills skillsState
+
+	// think is live while mode == modeThink.
+	think thinkState
 
 	// palette is the inline /-command search while mode == modeIdle.
 	palette paletteState
@@ -438,6 +455,8 @@ func (m *Model) exitMode(prev mode) {
 		m.permissions.reset()
 	case modeSkills:
 		m.skills.reset()
+	case modeThink:
+		m.think.reset()
 	case modeTranscript:
 		m.transcript.scroll = 0
 	case modeKanban:
@@ -463,6 +482,10 @@ func (m *Model) enterMode(next mode) {
 	case modeSkills:
 		m.input.Reset()
 		m.input.Placeholder = skillsPlaceholder
+		m.input.Focus()
+	case modeThink:
+		m.input.Reset()
+		m.input.Placeholder = thinkPlaceholder
 		m.input.Focus()
 	}
 }
@@ -1745,6 +1768,8 @@ func (m *Model) viewportHeight() int {
 		bottom += len(strings.Split(m.permissionsPicker(), "\n"))
 	case modeSkills:
 		bottom += len(strings.Split(m.skillsPicker(), "\n"))
+	case modeThink:
+		bottom += len(strings.Split(m.thinkPicker(), "\n"))
 	case modeAnswering:
 		ev := m.answering.interaction
 		if ev != nil && !m.answering.selOther &&
@@ -1999,6 +2024,8 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handlePermissionsKey(msg)
 	case modeSkills:
 		return m.handleSkillsKey(msg)
+	case modeThink:
+		return m.handleThinkKey(msg)
 	case modeRunning:
 		return m.handleRunningKey(msg)
 	default:
@@ -2357,9 +2384,9 @@ func (m *Model) enterPermissionsMode() tea.Model {
 }
 
 // handleThinkCommand applies /think: an explicit low|medium|high
-// argument sets the level, no argument cycles to the next level. The
-// choice is persisted to the session store and printed into the
-// stream; the composer returns to idle.
+// argument sets the level immediately, no argument opens the
+// reasoning-effort picker (↑/↓ + Enter). The choice is persisted to
+// the session store and printed into the stream.
 func (m *Model) handleThinkCommand() (tea.Model, tea.Cmd) {
 	fields := strings.Fields(m.input.Value())
 	arg := ""
@@ -2368,15 +2395,9 @@ func (m *Model) handleThinkCommand() (tea.Model, tea.Cmd) {
 	}
 	switch arg {
 	case "":
-		// Cycle low -> medium -> high -> low.
-		switch m.thinkLevel {
-		case string(ocsessions.ThinkLow):
-			arg = string(ocsessions.ThinkMedium)
-		case string(ocsessions.ThinkMedium):
-			arg = string(ocsessions.ThinkHigh)
-		default:
-			arg = string(ocsessions.ThinkLow)
-		}
+		// No argument: open the level picker starting at the current
+		// effort instead of cycling.
+		return m.enterThinkMode(), nil
 	case string(ocsessions.ThinkLow),
 		string(ocsessions.ThinkMedium),
 		string(ocsessions.ThinkHigh):
@@ -2385,25 +2406,78 @@ func (m *Model) handleThinkCommand() (tea.Model, tea.Cmd) {
 		m.input.Placeholder = mainPlaceholder
 		m.palette.reset()
 		m.queue(toolErrStyle.Render(
-			"/think: 用法 /think low | medium | high（不带参数循环切换）"))
+			"/think: 用法 /think low | medium | high（不带参数打开选择器）"))
 		return m, m.flushPending()
 	}
-	m.thinkLevel = arg
+	return m.applyThinkLevel(arg)
+}
+
+// thinkLevels is the ordered reasoning-effort options shown by the
+// /think picker.
+var thinkLevels = []ocsessions.ThinkLevel{
+	ocsessions.ThinkLow,
+	ocsessions.ThinkMedium,
+	ocsessions.ThinkHigh,
+}
+
+// thinkLevelIndex returns the picker cursor for a level, defaulting to
+// the medium slot when the level is unknown.
+func thinkLevelIndex(level string) int {
+	for i, l := range thinkLevels {
+		if string(l) == level {
+			return i
+		}
+	}
+	return 1 // medium
+}
+
+// enterThinkMode opens the reasoning-effort picker at the currently
+// active level.
+func (m *Model) enterThinkMode() tea.Model {
+	m.think.cursor = thinkLevelIndex(m.thinkLevel)
+	m.setMode(modeThink)
+	return m
+}
+
+// applyThinkLevel persists the chosen reasoning effort, prints the
+// result into the stream, and returns to idle.
+func (m *Model) applyThinkLevel(level string) (tea.Model, tea.Cmd) {
+	m.thinkLevel = level
 	if m.opts.Sessions == nil {
-		m.queue(toolOKStyle.Render("think: " + arg))
+		m.queue(toolOKStyle.Render("think: " + level))
 	} else if err := m.opts.Sessions.SetThink(
 		m.opts.ContextID,
-		ocsessions.ThinkLevel(arg),
+		ocsessions.ThinkLevel(level),
 	); err != nil {
 		m.queue(toolErrStyle.Render("think: 保存失败: " + err.Error()))
 	} else {
-		m.queue(toolOKStyle.Render("think: " + arg))
+		m.queue(toolOKStyle.Render("think: " + level))
 	}
 	m.input.Reset()
 	m.input.Placeholder = mainPlaceholder
 	m.palette.reset()
+	m.setMode(modeIdle)
 	m.refreshPalette()
 	return m, m.flushPending()
+}
+
+// handleThinkKey drives the reasoning-effort picker.
+func (m *Model) handleThinkKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		m.think.cursor = (m.think.cursor + len(thinkLevels) - 1) %
+			len(thinkLevels)
+	case "down", "j":
+		m.think.cursor = (m.think.cursor + 1) % len(thinkLevels)
+	case "enter":
+		return m.applyThinkLevel(string(thinkLevels[m.think.cursor]))
+	case "esc":
+		m.setMode(modeIdle)
+		return m, nil
+	case "ctrl+c":
+		return m, tea.Quit
+	}
+	return m, nil
 }
 
 // handlePermissionsKey drives the sandbox mode picker. Entering YOLO
@@ -2768,6 +2842,8 @@ func (m *Model) View() string {
 		lines = append(lines, m.permissionsPicker())
 	case modeSkills:
 		lines = append(lines, m.skillsPicker())
+	case modeThink:
+		lines = append(lines, m.thinkPicker())
 	case modeAnswering:
 		ev := m.answering.interaction
 		if ev != nil && !m.answering.selOther &&
@@ -3032,6 +3108,33 @@ func (m *Model) skillsPicker() string {
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
 
+// thinkPicker renders the reasoning-effort selector for /think.
+func (m *Model) thinkPicker() string {
+	rows := []string{reasoningLabelStyle.Render("? Select reasoning effort")}
+	for i, level := range thinkLevels {
+		prefix := "  "
+		if i == m.think.cursor {
+			prefix = "❯ "
+		}
+		line := string(level)
+		switch level {
+		case ocsessions.ThinkLow:
+			line += " — minimal reasoning"
+		case ocsessions.ThinkMedium:
+			line += " — balanced (default)"
+		case ocsessions.ThinkHigh:
+			line += " — maximal reasoning"
+		}
+		if i == m.think.cursor {
+			rows = append(rows, userStyle.Render(prefix+line))
+		} else {
+			rows = append(rows, dimStyle.Render(prefix+line))
+		}
+	}
+	rows = append(rows, dimStyle.Render("  ↑/↓ choose · Enter apply · Esc cancel"))
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+}
+
 // permissionsPicker renders the sandbox mode selector.
 func (m *Model) permissionsPicker() string {
 	if m.permissions.confirm {
@@ -3160,6 +3263,8 @@ func (m *Model) statusLine() string {
 		parts = append(parts, statusTextStyle.Render("permissions"))
 	case modeSkills:
 		parts = append(parts, statusTextStyle.Render("skills"))
+	case modeThink:
+		parts = append(parts, statusTextStyle.Render("think"))
 	case modeTranscript:
 		parts = append(parts, statusTextStyle.Render("transcript"))
 	case modeKanban:

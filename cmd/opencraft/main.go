@@ -48,6 +48,8 @@ func main() {
 		"disable TLS for OTLP (auto-enabled for http:// and loopback endpoints); env OTEL_EXPORTER_OTLP_INSECURE")
 	logFile := flag.String("log-file", os.Getenv("OPENCRAFT_LOG_FILE"),
 		"rotating plain-text log file (default: ~/.opencraft/logs/<mode>.log); env OPENCRAFT_LOG_FILE")
+	yolo := flag.Bool("yolo", false,
+		"start the interactive shell in YOLO permission mode (unconfined: commands run on the host with the full environment and no approval prompts)")
 	flag.Parse()
 
 	// Logs go to ~/.opencraft/logs by default (execd gets its own
@@ -173,6 +175,16 @@ func main() {
 		if err != nil {
 			fatal(1, "opencraft: session store: %v", err)
 		}
+		contextID := ocsessions.NewID()
+		// opencraft --yolo starts the shell already unconfined: the
+		// sandbox resolves the mode per command from this persisted
+		// permission state, so writing it here means the first turn
+		// runs without the approval gate.
+		if *yolo {
+			if err := store.SetMode(contextID, ocsessions.ModeYOLO); err != nil {
+				fatal(1, "opencraft: enable yolo mode: %v", err)
+			}
+		}
 		userDataDir, err := config.UserDataDir()
 		if err != nil {
 			fatal(1, "opencraft: user data dir: %v", err)
@@ -188,7 +200,7 @@ func main() {
 			Skills:  skillsSvc,
 			// Every TUI launch starts a fresh conversation; /resume
 			// switches to an existing session id.
-			ContextID: ocsessions.NewID(),
+			ContextID: contextID,
 			Sessions:  store,
 		}, bridge, broker); err != nil {
 			fatal(1, "opencraft: tui: %v", err)
