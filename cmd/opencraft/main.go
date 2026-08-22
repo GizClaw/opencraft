@@ -25,6 +25,7 @@ import (
 	sessions "github.com/GizClaw/flowcraft/core/runtime/session"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
+	"github.com/GizClaw/opencraft/internal/agents"
 	app "github.com/GizClaw/opencraft/internal/app"
 	"github.com/GizClaw/opencraft/internal/config"
 	"github.com/GizClaw/opencraft/internal/execd"
@@ -193,11 +194,18 @@ func main() {
 		// completion. The runtime builds its own instance from the
 		// deploy document; both share the same settings.
 		skillsSvc := skillsFromDocument(view.Document, workDir, userDataDir)
+		var agentsSvc *agents.Lifecycle
+		if value, ok := rt.Resource("agentlifecycle"); ok {
+			if svc, ok := value.(*agents.Lifecycle); ok {
+				agentsSvc = svc
+			}
+		}
 		if err := tui.Run(rtc, tui.Options{
 			Model:   config.DefaultModel(mgr.UserDir()),
 			Version: app.ServiceVersion,
 			WorkDir: workDir,
 			Skills:  skillsSvc,
+			Agents:  agentsSvc,
 			// Every TUI launch starts a fresh conversation; /resume
 			// switches to an existing session id.
 			ContextID: contextID,

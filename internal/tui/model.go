@@ -2412,6 +2412,65 @@ func (m *Model) handleThinkCommand() (tea.Model, tea.Cmd) {
 	return m.applyThinkLevel(arg)
 }
 
+// handleUnregisterAgentCommand removes a persistent subagent:
+// in-flight delegations drain, the runtime registration and the
+// ~/.opencraft/agents/<name>/ declaration are removed. No argument
+// lists the currently persisted agents and shows usage.
+func (m *Model) handleUnregisterAgentCommand() (tea.Model, tea.Cmd) {
+	fields := strings.Fields(m.input.Value())
+	arg := ""
+	if len(fields) > 1 {
+		arg = strings.TrimSpace(fields[1])
+	}
+	if m.opts.Agents == nil {
+		m.resetInputAfterCommand()
+		m.queue(toolErrStyle.Render("/unregister_agent: agents 未启用"))
+		return m, m.flushPending()
+	}
+	if arg == "" {
+		m.resetInputAfterCommand()
+		msg := "/unregister_agent: 用法 /unregister_agent <name>"
+		if names := m.persistedAgentNames(); len(names) > 0 {
+			msg += "；当前持久化 agent: " + strings.Join(names, "、")
+		}
+		m.queue(dimStyle.Render(msg))
+		return m, m.flushPending()
+	}
+	m.resetInputAfterCommand()
+	if err := m.opts.Agents.Remove(m.ctx, arg); err != nil {
+		m.queue(toolErrStyle.Render("/unregister_agent: " + err.Error()))
+	} else {
+		m.queue(dimStyle.Render("已移除 agent: " + arg))
+	}
+	return m, m.flushPending()
+}
+
+// persistedAgentNames lists the persisted subagents as "name
+// (description)" for /unregister_agent usage.
+func (m *Model) persistedAgentNames() []string {
+	agents := m.opts.Agents
+	if agents == nil {
+		return nil
+	}
+	var names []string
+	for _, summary := range agents.List() {
+		label := summary.Name
+		if summary.Description != "" {
+			label += " (" + summary.Description + ")"
+		}
+		names = append(names, label)
+	}
+	return names
+}
+
+// resetInputAfterCommand clears the composer and closes the command
+// palette after a slash command executes.
+func (m *Model) resetInputAfterCommand() {
+	m.input.Reset()
+	m.input.Placeholder = mainPlaceholder
+	m.palette.reset()
+}
+
 // thinkLevels is the ordered reasoning-effort options shown by the
 // /think picker.
 var thinkLevels = []ocsessions.ThinkLevel{

@@ -21,6 +21,9 @@ var slashHandlers = map[string]func(m *Model) (tea.Model, tea.Cmd){
 	"agents": func(m *Model) (tea.Model, tea.Cmd) {
 		return m.enterKanbanMode()
 	},
+	"unregister_agent": func(m *Model) (tea.Model, tea.Cmd) {
+		return m.handleUnregisterAgentCommand()
+	},
 }
 
 // runCommand executes a slash command by name and returns the model

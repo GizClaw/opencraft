@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"github.com/GizClaw/opencraft/internal/agents"
 	"github.com/GizClaw/opencraft/internal/runtime"
 	"github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/skills"
@@ -31,6 +32,9 @@ type Options struct {
 	// Skills is the discovered skills registry backing /skills. Nil
 	// hides the picker (skills not wired).
 	Skills *skills.Service
+	// Agents is the persistent subagent registry backing
+	// /unregister_agent. Nil hides the command (agents not wired).
+	Agents *agents.Lifecycle
 }
 
 // Run starts the TUI and blocks until it exits.

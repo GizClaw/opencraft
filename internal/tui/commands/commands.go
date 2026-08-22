@@ -35,6 +35,10 @@ var all = []Command{
 		Name: "agents",
 		Desc: "view the subagent delegation board",
 	},
+	{
+		Name: "unregister_agent",
+		Desc: "remove a persistent subagent and its declaration",
+	},
 }
 
 // List returns a copy of every registered command.

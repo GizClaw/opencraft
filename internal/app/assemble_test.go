@@ -8,6 +8,7 @@ import (
 
 	sdkdelegation "github.com/GizClaw/flowcraft/core/delegation"
 
+	"github.com/GizClaw/opencraft/internal/agents"
 	"github.com/GizClaw/opencraft/internal/config"
 	"github.com/GizClaw/opencraft/internal/setup"
 )
@@ -96,6 +97,47 @@ func TestBuildRuntimeAssemblesNewTools(t *testing.T) {
 	}
 	if _, ok := rt.Agent("assistant"); !ok {
 		t.Fatal("assistant agent not deployed as a delegation target")
+	}
+
+	// Persistent subagent wiring: the lifecycle resource builds and is
+	// bound to the runtime, and a created agent immediately becomes a
+	// delegation target (core v0.1.24 dynamic directory).
+	lifecycleValue, ok := rt.Resource("agentlifecycle")
+	if !ok {
+		t.Fatal("agentlifecycle resource missing")
+	}
+	lifecycle, ok := lifecycleValue.(*agents.Lifecycle)
+	if !ok || lifecycle == nil {
+		t.Fatal("agentlifecycle is not a *agents.Lifecycle")
+	}
+	if _, err := lifecycle.Create(context.Background(), agents.AgentSpec{
+		Name:         "researcher",
+		Description:  "Reads and summarizes the codebase",
+		Instructions: "Explore the repository and summarize its architecture.",
+		Tools:        agents.ToolsReadOnly,
+	}); err != nil {
+		t.Fatalf("Create persistent agent: %v", err)
+	}
+	dirValue, ok := rt.Resource("delegate.directory")
+	if !ok {
+		t.Fatal("delegate.directory resource missing")
+	}
+	directory, ok := dirValue.(*sdkdelegation.LocalDirectory)
+	if !ok || directory == nil {
+		t.Fatal("delegate.directory is not a *delegation.LocalDirectory")
+	}
+	targets, err := directory.List(context.Background())
+	if err != nil {
+		t.Fatalf("directory.List: %v", err)
+	}
+	found := false
+	for _, target := range targets {
+		if target.ID == "researcher" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("created agent missing from delegation targets: %+v", targets)
 	}
 }
 

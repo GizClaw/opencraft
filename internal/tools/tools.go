@@ -16,6 +16,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/tool"
 	"github.com/GizClaw/flowcraft/core/workspace"
 
+	"github.com/GizClaw/opencraft/internal/agents"
 	"github.com/GizClaw/opencraft/internal/sessions"
 	skillsvc "github.com/GizClaw/opencraft/internal/skills"
 	"github.com/GizClaw/opencraft/internal/tools/applypatch"
@@ -42,6 +43,7 @@ func Register(r *resource.Registry) error {
 		r.Register(permissionsSourceFactory{}),
 		r.Register(planSourceFactory{}),
 		r.Register(skillsSourceFactory{}),
+		r.Register(agentlifecycleSourceFactory{}),
 		r.Register(compactSourceFactory{}),
 		r.Register(truncate.AssemblyFactory{}),
 	)
@@ -285,6 +287,34 @@ func (skillsSourceFactory) New(_ context.Context, in resource.Input) (any, error
 		return nil, err
 	}
 	return toolList(skillstools.MustNew(svc).Tools()), nil
+}
+
+// agentlifecycleSourceFactory contributes the create_agent /
+// unregister_agent tools over the persistent subagent registry.
+type agentlifecycleSourceFactory struct{}
+
+var _ resource.Factory = agentlifecycleSourceFactory{}
+
+func (agentlifecycleSourceFactory) Spec() resource.Spec {
+	return resource.Spec{
+		Kind: "tool.Source",
+		Impl: "opencraft/agentlifecycle",
+		Deps: []resource.DepSpec{
+			{Name: "agentlifecycle", Type: agents.ResourceKind, Required: true},
+		},
+	}
+}
+
+func (agentlifecycleSourceFactory) New(_ context.Context, in resource.Input) (any, error) {
+	if !sourceEnabled(in) {
+		return toolList{}, nil
+	}
+	lifecycle, err := resourcedep.Required[*agents.Lifecycle](
+		in, "tool source", "agentlifecycle")
+	if err != nil {
+		return nil, err
+	}
+	return toolList(agents.MustNew(lifecycle).Tools()), nil
 }
 
 // toolList adapts a fixed []tool.Tool to tool.Source.

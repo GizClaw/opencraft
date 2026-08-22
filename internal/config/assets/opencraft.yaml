@@ -189,6 +189,19 @@ resources:
     impl: delegation
     deps:
       directory: delegate.directory
+  # Persistent subagent tools (create_agent / unregister_agent): the
+  # registry lives under the user data dir, so subagents survive
+  # restarts and are re-registered on startup.
+  agentlifecycle:
+    kind: opencraft.agentlifecycle
+    impl: local
+    settings:
+      dir: ${env:OPEN_CRAFT_DATA_DIR}/agents
+  tool.agentlifecycle:
+    kind: tool.Source
+    impl: opencraft/agentlifecycle
+    deps:
+      agentlifecycle: agentlifecycle
   tools:
     kind: tool.Assembly
     impl: opencraft
@@ -203,6 +216,7 @@ resources:
       tool.compact: tool.compact
       tool.permissions: tool.permissions
       tool.delegate: tool.delegate
+      tool.agentlifecycle: tool.agentlifecycle
     settings:
       middlewares:
         recover:

@@ -25,6 +25,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/sandbox/bwrap"
 	sandboxlocal "github.com/GizClaw/flowcraft/core/sandbox/local"
 	"github.com/GizClaw/flowcraft/core/sandbox/seatbelt"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/tool"
 	"github.com/GizClaw/flowcraft/core/tool/mcp"
 	"github.com/GizClaw/flowcraft/core/tool/middleware"
@@ -37,7 +38,9 @@ import (
 	"github.com/GizClaw/flowcraft/driver/minimax"
 	"github.com/GizClaw/flowcraft/driver/openai"
 	"github.com/GizClaw/flowcraft/driver/qwen"
+	"go.opentelemetry.io/otel/log"
 
+	"github.com/GizClaw/opencraft/internal/agents"
 	"github.com/GizClaw/opencraft/internal/app/worldstate"
 	"github.com/GizClaw/opencraft/internal/config"
 	opmemory "github.com/GizClaw/opencraft/internal/memory"
@@ -140,6 +143,9 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 		opentools.Register,
 		sandbox.Register,
 		worldstate.Register,
+		func(r *resource.Registry) error {
+			return r.Register(agents.Factory{})
+		},
 		delegationkanban.Register,
 		sdkdelegation.RegisterDirectory,
 		sdkdelegation.RegisterSessionProvider,
@@ -205,5 +211,27 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 	// a two-key source object; reduce it back to the explicit file ref
 	// before the graph engine parses it.
 	normalizeGraphOverride(doc)
-	return builder.Build(ctx, doc)
+	rt, err := builder.Build(ctx, doc)
+	if err != nil {
+		return nil, err
+	}
+	// Install the runtime so create_agent / unregister_agent and the
+	// startup loader can register agents, then re-register every
+	// persisted declaration. Failures never fail startup: a broken or
+	// conflicting declaration must not block the runtime.
+	if value, ok := rt.Resource(agentsResourceName); ok {
+		if lifecycle, ok := value.(*agents.Lifecycle); ok {
+			lifecycle.Bind(rt)
+			for _, failure := range lifecycle.LoadAll(ctx) {
+				telemetry.Warn(ctx, "agents: load declaration failed",
+					log.String("agent", failure.Name),
+					log.String("error", failure.Err.Error()))
+			}
+		}
+	}
+	return rt, nil
 }
+
+// agentsResourceName is the deploy-document resource id of the
+// persistent subagent registry.
+const agentsResourceName = "agentlifecycle"
