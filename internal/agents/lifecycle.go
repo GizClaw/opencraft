@@ -34,29 +34,17 @@ type Settings struct {
 	Dir string `json:"dir"`
 }
 
-// ToolsMode selects the tool surface of a created subagent.
-type ToolsMode string
-
-const (
-	// ToolsAll exposes the full catalog (default): the subagent can
-	// read, edit, and run commands.
-	ToolsAll ToolsMode = "all"
-	// ToolsReadOnly exposes only the read-side tools: no edits, no
-	// commands.
-	ToolsReadOnly ToolsMode = "read_only"
-)
-
 // AgentSpec is the persisted declaration of one subagent. It is the
 // source of truth for the agent: everything needed to rebuild the
 // runtime instance after a restart.
 type AgentSpec struct {
-	Name         string    `json:"name"`
-	Description  string    `json:"description"`
-	Instructions string    `json:"instructions"`
-	Model        string    `json:"model,omitempty"` // "provider/name"; empty = router
-	ThinkLevel   string    `json:"think_level,omitempty"`
-	Tools        ToolsMode `json:"tools,omitempty"` // default all
-	CreatedAt    time.Time `json:"created_at,omitempty"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	// Graph is the complete flowcraft graph definition (JSON or YAML)
+	// the agent runs on, including its system prompt. It is passed as
+	// engine settings.graph verbatim.
+	Graph     string    `json:"graph"`
+	CreatedAt time.Time `json:"created_at,omitempty"`
 }
 
 // Validate checks the user-supplied fields of a spec.
@@ -68,29 +56,23 @@ func (s AgentSpec) Validate() error {
 		return errdefs.Validationf(
 			"agents: description is required (it identifies the agent in delegation targets)")
 	}
-	if strings.TrimSpace(s.Instructions) == "" {
-		return errdefs.Validationf("agents: instructions are required")
-	}
-	if s.Model != "" {
-		provider, name, ok := strings.Cut(s.Model, "/")
-		if !ok || strings.TrimSpace(provider) == "" || strings.TrimSpace(name) == "" {
-			return errdefs.Validationf(
-				"agents: model %q must be \"provider/name\"", s.Model)
-		}
-	}
-	if s.ThinkLevel != "" {
-		switch s.ThinkLevel {
-		case "low", "medium", "high":
-		default:
-			return errdefs.Validationf(
-				"agents: think_level %q must be low | medium | high", s.ThinkLevel)
-		}
-	}
-	switch s.Tools {
-	case "", ToolsAll, ToolsReadOnly:
-	default:
+	if strings.TrimSpace(s.Graph) == "" {
 		return errdefs.Validationf(
-			"agents: tools %q must be all | read_only", s.Tools)
+			"agents: graph definition is required")
+	}
+	if err := validateGraphSyntax(s.Graph); err != nil {
+		return errdefs.Validationf("agents: graph: %v", err)
+	}
+	return nil
+}
+
+// validateGraphSyntax checks that the graph definition parses as
+// JSON/YAML. Structural validation (unique ids, entry presence, node
+// config semantics) happens when the runtime builds the definition.
+func validateGraphSyntax(graph string) error {
+	var probe map[string]any
+	if err := yaml.Unmarshal([]byte(graph), &probe); err != nil {
+		return fmt.Errorf("parse graph definition: %w", err)
 	}
 	return nil
 }
@@ -131,7 +113,6 @@ type registrar interface {
 type Summary struct {
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
-	Tools       ToolsMode `json:"tools,omitempty"`
 	CreatedAt   time.Time `json:"created_at,omitempty"`
 }
 
@@ -189,10 +170,7 @@ func (l *Lifecycle) Create(ctx context.Context, spec AgentSpec) (CreateResult, e
 	if reg == nil {
 		return CreateResult{}, errdefs.NotAvailablef("agents: runtime not ready")
 	}
-	def, err := graphDefinition(spec)
-	if err != nil {
-		return CreateResult{}, err
-	}
+	def := agentDefinition(spec)
 	if _, err := reg.RegisterAgent(
 		ctx, spec.Name, def,
 		runtimecore.WithToolAssembly(toolAssemblyResource),
@@ -273,7 +251,7 @@ func (l *Lifecycle) LoadAll(ctx context.Context) []LoadError {
 			continue
 		}
 		if _, err := reg.RegisterAgent(
-			ctx, spec.Name, mustGraphDefinition(spec),
+			ctx, spec.Name, agentDefinition(spec),
 			runtimecore.WithToolAssembly(toolAssemblyResource),
 		); err != nil {
 			failures = append(failures, LoadError{Name: spec.Name, Err: err})
@@ -294,7 +272,6 @@ func (l *Lifecycle) List() []Summary {
 		out = append(out, Summary{
 			Name:        spec.Name,
 			Description: spec.Description,
-			Tools:       spec.Tools,
 			CreatedAt:   spec.CreatedAt,
 		})
 	}

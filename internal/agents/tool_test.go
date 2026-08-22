@@ -27,7 +27,7 @@ func TestCreateToolDefinitionAndExecute(t *testing.T) {
 	}
 
 	got, err := tool.Tools()[0].Execute(context.Background(),
-		`{"name":"researcher","description":"Summarizes code","instructions":"Explore and summarize.","tools":"read_only"}`)
+		`{"name":"researcher","description":"Summarizes code","graph":"{\"name\":\"g\",\"entry\":\"llm\",\"nodes\":[{\"id\":\"llm\",\"type\":\"inference\",\"config\":{\"system_prompt\":\"SP\"}}],\"edges\":[{\"from\":\"llm\",\"to\":\"__end__\"}]}"}`)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -46,7 +46,7 @@ func TestCreateToolDefinitionAndExecute(t *testing.T) {
 func TestCreateToolRejectsUnknownField(t *testing.T) {
 	tool := testTool(t)
 	if _, err := tool.Tools()[0].Execute(context.Background(),
-		`{"name":"x","description":"d","instructions":"i","bogus":1}`); err == nil {
+		`{"name":"x","description":"d","graph":"{}","bogus":1}`); err == nil {
 		t.Fatal("unknown field accepted")
 	} else if !errdefs.IsValidation(err) {
 		t.Errorf("error = %v, want validation", err)
@@ -57,9 +57,9 @@ func TestRemoveToolExecute(t *testing.T) {
 	tool := testTool(t)
 	lc := tool.lifecycle
 	if _, err := lc.Create(context.Background(), AgentSpec{
-		Name:         "worker",
-		Description:  "desc",
-		Instructions: "do it",
+		Name:        "worker",
+		Description: "desc",
+		Graph:       testGraph,
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}

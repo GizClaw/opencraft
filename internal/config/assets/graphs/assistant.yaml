@@ -28,6 +28,15 @@ nodes:
     config:
       all_tools: true
       tool_pending_key: tool_pending
+      # Undefined-tool recovery: models sometimes call a tool that is
+      # not exposed this round (e.g. a deferred subagent tool) before
+      # tool_search selects it. Instead of failing the turn, replay the
+      # rejected call with a "use tool_search" tool result and loop
+      # back (see the recover_pending edge) so the model can recover.
+      recover_pending_key: recover_pending
+      recover_count_key: recover_count
+      undefined_tool_recovery:
+        enabled: true
       stream: true
       # Think level is a per-turn board input: the TUI injects
       # think_level via agent.Request.Inputs (/think command) and the
@@ -76,5 +85,6 @@ edges:
   - {from: compact, to: llm, condition: "tool_pending == false"}
   - {from: compact, to: tools, condition: "tool_pending == true"}
   - {from: llm, to: tools, condition: "tool_pending == true"}
-  - {from: llm, to: __end__, condition: "tool_pending == false"}
+  - {from: llm, to: compact, condition: "recover_pending == true"}
+  - {from: llm, to: __end__, condition: "tool_pending == false && recover_pending != true"}
   - {from: tools, to: compact}

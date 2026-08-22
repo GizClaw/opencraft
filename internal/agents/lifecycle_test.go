@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sync"
@@ -12,6 +13,11 @@ import (
 	runtimecore "github.com/GizClaw/flowcraft/core/runtime"
 	"sigs.k8s.io/yaml"
 )
+
+// testGraph is a minimal graph definition used across lifecycle
+// tests. The fake registrar does not compile graphs, so any parseable
+// JSON/YAML suffices here.
+const testGraph = `{"name":"sub","entry":"llm","nodes":[{"id":"llm","type":"inference","config":{"system_prompt":"SP","tool_pending_key":"tool_pending"}}],"edges":[{"from":"llm","to":"__end__","condition":"tool_pending == false"}]}`
 
 // fakeRegistrar records registration/removal calls so tests can assert
 // the lifecycle drives the runtime correctly.
@@ -87,10 +93,9 @@ func TestCreateRegistersAndPersists(t *testing.T) {
 	reg := newFakeRegistrar()
 	lc, dir := newTestLifecycle(t, reg)
 	spec := AgentSpec{
-		Name:         "researcher",
-		Description:  "Reads and summarizes the codebase",
-		Instructions: "Explore the repo and summarize the architecture.",
-		Tools:        ToolsReadOnly,
+		Name:        "researcher",
+		Description: "Reads and summarizes the codebase",
+		Graph:       testGraph,
 	}
 	result, err := lc.Create(context.Background(), spec)
 	if err != nil {
@@ -113,6 +118,13 @@ func TestCreateRegistersAndPersists(t *testing.T) {
 	if len(def.Prepare) != 1 || def.Prepare[0].Type != "opencraft.prepare" {
 		t.Errorf("prepare hooks = %+v, want opencraft.prepare", def.Prepare)
 	}
+	var engineSettings map[string]any
+	if err := json.Unmarshal(def.Engine.Settings, &engineSettings); err != nil {
+		t.Fatalf("decode engine settings: %v", err)
+	}
+	if engineSettings["graph"] != testGraph {
+		t.Errorf("engine settings graph = %v, want caller-supplied graph verbatim", engineSettings["graph"])
+	}
 
 	// Persisted declaration round-trips.
 	data, err := os.ReadFile(filepath.Join(dir, "researcher", specFile))
@@ -123,8 +135,7 @@ func TestCreateRegistersAndPersists(t *testing.T) {
 	if err := yaml.Unmarshal(data, &persisted); err != nil {
 		t.Fatalf("decode persisted spec: %v", err)
 	}
-	if persisted.Name != "researcher" || persisted.Instructions != spec.Instructions ||
-		persisted.Tools != ToolsReadOnly {
+	if persisted.Name != "researcher" || persisted.Graph != spec.Graph {
 		t.Errorf("persisted = %+v", persisted)
 	}
 }
@@ -140,9 +151,9 @@ func TestCreateRollsBackOnPersistFailure(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(filepath.Join(dir, "doomed"), 0o700) })
 
 	if _, err := lc.Create(context.Background(), AgentSpec{
-		Name:         "doomed",
-		Description:  "desc",
-		Instructions: "do it",
+		Name:        "doomed",
+		Description: "desc",
+		Graph:       testGraph,
 	}); err == nil {
 		t.Fatal("Create should fail when persistence fails")
 	}
@@ -158,9 +169,9 @@ func TestRemoveUnregistersAndDeletes(t *testing.T) {
 	reg := newFakeRegistrar()
 	lc, dir := newTestLifecycle(t, reg)
 	if _, err := lc.Create(context.Background(), AgentSpec{
-		Name:         "worker",
-		Description:  "desc",
-		Instructions: "do it",
+		Name:        "worker",
+		Description: "desc",
+		Graph:       testGraph,
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -179,9 +190,9 @@ func TestLoadAllRegistersPersisted(t *testing.T) {
 	createReg := newFakeRegistrar()
 	lc, dir := newTestLifecycle(t, createReg)
 	if _, err := lc.Create(context.Background(), AgentSpec{
-		Name:         "alpha",
-		Description:  "first",
-		Instructions: "task alpha",
+		Name:        "alpha",
+		Description: "first",
+		Graph:       testGraph,
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -219,9 +230,9 @@ func TestListSorted(t *testing.T) {
 	lc, _ := newTestLifecycle(t, newFakeRegistrar())
 	for _, name := range []string{"zulu", "alpha"} {
 		if _, err := lc.Create(context.Background(), AgentSpec{
-			Name:         name,
-			Description:  "desc " + name,
-			Instructions: "task",
+			Name:        name,
+			Description: "desc " + name,
+			Graph:       testGraph,
 		}); err != nil {
 			t.Fatalf("Create %s: %v", name, err)
 		}
@@ -234,21 +245,19 @@ func TestListSorted(t *testing.T) {
 
 func TestSpecValidate(t *testing.T) {
 	base := AgentSpec{
-		Name:         "ok-agent-1",
-		Description:  "desc",
-		Instructions: "do it",
+		Name:        "ok-agent-1",
+		Description: "desc",
+		Graph:       testGraph,
 	}
 	if err := base.Validate(); err != nil {
 		t.Fatalf("valid spec rejected: %v", err)
 	}
 	for _, bad := range []AgentSpec{
-		{Name: "Bad", Description: "d", Instructions: "i"},
-		{Name: "bad_name", Description: "d", Instructions: "i"},
-		{Name: "ok", Description: "", Instructions: "i"},
-		{Name: "ok", Description: "d", Instructions: ""},
-		{Name: "ok", Description: "d", Instructions: "i", Model: "noprofile"},
-		{Name: "ok", Description: "d", Instructions: "i", ThinkLevel: "ultra"},
-		{Name: "ok", Description: "d", Instructions: "i", Tools: "write"},
+		{Name: "Bad", Description: "d", Graph: testGraph},
+		{Name: "bad_name", Description: "d", Graph: testGraph},
+		{Name: "ok", Description: "", Graph: testGraph},
+		{Name: "ok", Description: "d", Graph: ""},
+		{Name: "ok", Description: "d", Graph: "{broken"},
 	} {
 		if err := bad.Validate(); err == nil {
 			t.Errorf("spec %+v accepted, want error", bad)

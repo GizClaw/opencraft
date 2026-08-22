@@ -111,10 +111,9 @@ func TestBuildRuntimeAssemblesNewTools(t *testing.T) {
 		t.Fatal("agentlifecycle is not a *agents.Lifecycle")
 	}
 	if _, err := lifecycle.Create(context.Background(), agents.AgentSpec{
-		Name:         "researcher",
-		Description:  "Reads and summarizes the codebase",
-		Instructions: "Explore the repository and summarize its architecture.",
-		Tools:        agents.ToolsReadOnly,
+		Name:        "researcher",
+		Description: "Reads and summarizes the codebase",
+		Graph:       `{"name":"researcher","entry":"llm","nodes":[{"id":"llm","type":"inference","config":{"system_prompt":"Read-only researcher."}}],"edges":[{"from":"llm","to":"__end__"}]}`,
 	}); err != nil {
 		t.Fatalf("Create persistent agent: %v", err)
 	}

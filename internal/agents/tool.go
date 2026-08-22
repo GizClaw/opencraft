@@ -54,33 +54,31 @@ var _ tool.Tool = createTool{}
 func (createTool) Definition() message.ToolDefinition {
 	return message.DefineSchema(
 		CreateName,
-		"Creates a persistent subagent for a focused subtask and makes "+
-			"it available as a delegation target. The subagent runs on "+
-			"the same flowcraft graph engine as the main agent (the "+
-			"compact→llm→tools loop) with your instructions as its "+
-			"system prompt. Workflow: create_agent → delegate to the "+
-			"new name → delegation_status → unregister_agent when done. "+
-			"Only create subagents for genuinely independent work that "+
-			"benefits from its own context or role; each one occupies a "+
-			"session and spends tokens independently, and simple tasks "+
-			"should be done directly. The agent persists under "+
+		"Creates a persistent subagent running on a caller-supplied "+
+			"flowcraft graph definition, and makes it available as a "+
+			"delegation target. graph is the complete GraphDefinition "+
+			"(JSON or YAML): nodes, edges, and the inference node's "+
+			"system_prompt define the agent's behavior. Author the "+
+			"definition with the flowcraft-config skill: if it is not "+
+			"already available, install it first with skill_install "+
+			"flowcraft-config, then follow its graph authoring "+
+			"reference before calling this tool. Workflow: create_agent "+
+			"→ delegate to the new name → delegation_status → "+
+			"unregister_agent when done. Only create subagents for "+
+			"genuinely independent work that benefits from its own "+
+			"context or role; each one occupies a session and spends "+
+			"tokens independently, and simple tasks should be done "+
+			"directly. The agent persists under "+
 			"~/.opencraft/agents/<name>/ and is re-registered on the "+
 			"next start until unregistered.",
 		message.ToolProperty("name", "string",
 			"Agent id: lowercase letters, digits, and hyphens only (required)."),
 		message.ToolProperty("description", "string",
 			"One-sentence capability summary shown in delegation targets (required)."),
-		message.ToolProperty("instructions", "string",
-			"System prompt for the subagent: its role, the concrete task "+
-				"boundary, constraints, and how to report back (required)."),
-		message.ToolProperty("model", "string",
-			"Optional model as \"provider/name\"; empty routes through the router."),
-		message.ToolProperty("think_level", "string",
-			"Optional reasoning effort: low | medium | high (default medium)."),
-		message.ToolProperty("tools", "string",
-			"Optional tool surface: all (read, edit, commands; default) or "+
-				"read_only (read_file, grep, glob, list_dir, web_fetch)."),
-	).Required("name", "description", "instructions").
+		message.ToolProperty("graph", "string",
+			"Complete flowcraft graph definition (JSON or YAML) including "+
+				"the system prompt; see the flowcraft-config skill for the format (required)."),
+	).Required("name", "description", "graph").
 		DisallowAdditionalProperties().Build()
 }
 
@@ -90,23 +88,17 @@ func (t createTool) Execute(
 	ctx context.Context, arguments string,
 ) (string, error) {
 	var args struct {
-		Name         string `json:"name"`
-		Description  string `json:"description"`
-		Instructions string `json:"instructions"`
-		Model        string `json:"model"`
-		ThinkLevel   string `json:"think_level"`
-		Tools        string `json:"tools"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Graph       string `json:"graph"`
 	}
 	if err := strictDecode(arguments, &args); err != nil {
 		return "", err
 	}
 	result, err := t.lifecycle.Create(ctx, AgentSpec{
-		Name:         args.Name,
-		Description:  args.Description,
-		Instructions: args.Instructions,
-		Model:        args.Model,
-		ThinkLevel:   args.ThinkLevel,
-		Tools:        ToolsMode(args.Tools),
+		Name:        args.Name,
+		Description: args.Description,
+		Graph:       args.Graph,
 	})
 	if err != nil {
 		return "", err
