@@ -3,14 +3,14 @@ module github.com/GizClaw/opencraft
 go 1.26.5
 
 require (
-	github.com/GizClaw/flowcraft/core v0.1.23
+	github.com/GizClaw/flowcraft/core v0.1.24
 	github.com/GizClaw/flowcraft/driver/anthropic v0.1.6
-	github.com/GizClaw/flowcraft/driver/azure v0.1.8
+	github.com/GizClaw/flowcraft/driver/azure v0.1.9
 	github.com/GizClaw/flowcraft/driver/bytedance v0.1.9
 	github.com/GizClaw/flowcraft/driver/deepseek v0.1.6
 	github.com/GizClaw/flowcraft/driver/kimi v0.1.6
 	github.com/GizClaw/flowcraft/driver/minimax v0.1.6
-	github.com/GizClaw/flowcraft/driver/openai v0.1.6
+	github.com/GizClaw/flowcraft/driver/openai v0.1.8
 	github.com/GizClaw/flowcraft/driver/qwen v0.1.6
 	github.com/PuerkitoBio/goquery v1.12.0
 	github.com/atotto/clipboard v0.1.4
