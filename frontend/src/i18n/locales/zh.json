@@ -78,6 +78,19 @@
   "tool": {
     "running": "运行中",
     "done": "完成",
-    "error": "失败"
+    "error": "失败",
+    "ran": "运行",
+    "read": "读取",
+    "wrote": "写入",
+    "listed": "列出",
+    "grep": "搜索",
+    "glob": "匹配",
+    "requestPermissions": "请求权限",
+    "updatePlan": "更新计划",
+    "patch": "apply_patch",
+    "ok": "成功",
+    "exit": "退出码",
+    "arguments": "参数",
+    "result": "结果"
   }
 }

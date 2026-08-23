@@ -78,6 +78,19 @@
   "tool": {
     "running": "running",
     "done": "done",
-    "error": "failed"
+    "error": "failed",
+    "ran": "Ran",
+    "read": "Read",
+    "wrote": "Wrote",
+    "listed": "Listed",
+    "grep": "Grep",
+    "glob": "Glob",
+    "requestPermissions": "Request permissions",
+    "updatePlan": "Update plan",
+    "patch": "apply_patch",
+    "ok": "ok",
+    "exit": "exit",
+    "arguments": "arguments",
+    "result": "result"
   }
 }
