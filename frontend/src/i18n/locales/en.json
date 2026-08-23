@@ -10,7 +10,21 @@
     "refresh": "Refresh",
     "noAgents": "No subagents yet",
     "noAgentsHint": "The assistant can create agents with create_agent",
-    "inferenceConfig": "Inference setup"
+    "inferenceConfig": "Inference setup",
+    "settings": "Settings"
+  },
+  "config": {
+    "title": "Settings",
+    "tabUi": "Interface",
+    "tabInference": "Inference",
+    "tabAgents": "Subagents",
+    "uiLanguage": "Interface language",
+    "agentsHint": "Subagents are created by the assistant via the create_agent tool; this page lists and deletes them. Deleting drains in-flight delegations before removing the declaration.",
+    "agentsEmpty": "No subagents",
+    "agentsDelete": "Delete",
+    "agentsDeleteConfirm": "Delete subagent {{name}}? In-flight delegations will be drained and the declaration removed.",
+    "agentsDeleted": "Deleted {{name}}",
+    "inferenceCurrent": "Current default model: {{model}}"
   },
   "chat": {
     "running": "Running",

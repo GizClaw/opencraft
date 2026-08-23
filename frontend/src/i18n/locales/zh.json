@@ -10,7 +10,21 @@
     "refresh": "刷新",
     "noAgents": "暂无子代理",
     "noAgentsHint": "助手可通过 create_agent 创建",
-    "inferenceConfig": "推理配置"
+    "inferenceConfig": "推理配置",
+    "settings": "设置"
+  },
+  "config": {
+    "title": "设置",
+    "tabUi": "界面",
+    "tabInference": "推理",
+    "tabAgents": "子 Agent",
+    "uiLanguage": "界面语言",
+    "agentsHint": "子 Agent 由助手通过 create_agent 工具创建，这里可以查看与删除。删除会先排空进行中的委托再移除其声明。",
+    "agentsEmpty": "暂无子 Agent",
+    "agentsDelete": "删除",
+    "agentsDeleteConfirm": "确定删除子 Agent {{name}}？进行中的委托会被排空，声明文件将被移除。",
+    "agentsDeleted": "已删除 {{name}}",
+    "inferenceCurrent": "当前默认模型：{{model}}"
   },
   "chat": {
     "running": "运行中",

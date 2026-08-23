@@ -55,6 +55,13 @@ type SetupRequest struct {
 	Providers []SetupProvider `json:"providers"`
 }
 
+// ConfigState describes the currently configured inference wiring so
+// the config page can prefill edits instead of starting blank.
+type ConfigState struct {
+	Providers []SetupProvider `json:"providers"` // router priority order
+	Model     string          `json:"model"`     // current default model
+}
+
 // TurnStart identifies one started turn.
 type TurnStart struct {
 	RunID     string `json:"run_id"`

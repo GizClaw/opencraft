@@ -6,6 +6,10 @@ export function CancelTurn(arg1) {
   return window['go']['desktop']['App']['CancelTurn'](arg1);
 }
 
+export function ConfigState() {
+  return window['go']['desktop']['App']['ConfigState']();
+}
+
 export function ConfigStatus() {
   return window['go']['desktop']['App']['ConfigStatus']();
 }
@@ -52,6 +56,10 @@ export function SetSessionMode(arg1) {
 
 export function StartTurn(arg1) {
   return window['go']['desktop']['App']['StartTurn'](arg1);
+}
+
+export function UnregisterAgent(arg1) {
+  return window['go']['desktop']['App']['UnregisterAgent'](arg1);
 }
 
 export function Version() {

@@ -2,8 +2,8 @@ import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { EventsOn } from "../wailsjs/runtime/runtime";
 import { ChatView } from "./components/ChatView";
+import { ConfigPage } from "./components/ConfigPage";
 import { FilePanel } from "./components/FilePanel";
-import { Onboarding } from "./components/Onboarding";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
 import { useStore } from "./lib/store";
@@ -14,7 +14,7 @@ export default function App() {
   const handleEvent = useStore((s) => s.handleEvent);
   const status = useStore((s) => s.status);
   const fatal = useStore((s) => s.fatal);
-  const onboardingOpen = useStore((s) => s.onboardingOpen);
+  const configOpen = useStore((s) => s.configOpen);
   const { t } = useTranslation();
 
   useEffect(() => {
@@ -54,7 +54,7 @@ export default function App() {
         <FilePanel />
       </div>
       <StatusBar />
-      {onboardingOpen && <Onboarding />}
+      {configOpen && <ConfigPage />}
     </div>
   );
 }

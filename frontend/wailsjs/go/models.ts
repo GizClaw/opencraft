@@ -40,6 +40,64 @@ export namespace agents {
 
 export namespace desktop {
 	
+	export class SetupProvider {
+	    id: string;
+	    key: string;
+	    key_env: boolean;
+	    model: string;
+	    endpoint: string;
+	    vision: boolean;
+	    reasoning: string;
+	    web_search: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new SetupProvider(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.key = source["key"];
+	        this.key_env = source["key_env"];
+	        this.model = source["model"];
+	        this.endpoint = source["endpoint"];
+	        this.vision = source["vision"];
+	        this.reasoning = source["reasoning"];
+	        this.web_search = source["web_search"];
+	    }
+	}
+	export class ConfigState {
+	    providers: SetupProvider[];
+	    model: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ConfigState(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.providers = this.convertValues(source["providers"], SetupProvider);
+	        this.model = source["model"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class ConfigStatus {
 	    needed: boolean;
 	    default_model: string;
@@ -140,32 +198,7 @@ export namespace desktop {
 	        this.cancel = source["cancel"];
 	    }
 	}
-	export class SetupProvider {
-	    id: string;
-	    key: string;
-	    key_env: boolean;
-	    model: string;
-	    endpoint: string;
-	    vision: boolean;
-	    reasoning: string;
-	    web_search: boolean;
 	
-	    static createFrom(source: any = {}) {
-	        return new SetupProvider(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.id = source["id"];
-	        this.key = source["key"];
-	        this.key_env = source["key_env"];
-	        this.model = source["model"];
-	        this.endpoint = source["endpoint"];
-	        this.vision = source["vision"];
-	        this.reasoning = source["reasoning"];
-	        this.web_search = source["web_search"];
-	    }
-	}
 	export class SetupRequest {
 	    providers: SetupProvider[];
 	

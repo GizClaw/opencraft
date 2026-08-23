@@ -5,6 +5,8 @@ import {agents} from '../models';
 
 export function CancelTurn(arg1:string):Promise<void>;
 
+export function ConfigState():Promise<desktop.ConfigState>;
+
 export function ConfigStatus():Promise<desktop.ConfigStatus>;
 
 export function ListAgents():Promise<Array<agents.Summary>>;
@@ -28,6 +30,8 @@ export function SessionMode():Promise<string>;
 export function SetSessionMode(arg1:string):Promise<void>;
 
 export function StartTurn(arg1:string):Promise<desktop.TurnStart>;
+
+export function UnregisterAgent(arg1:string):Promise<void>;
 
 export function Version():Promise<string>;
 

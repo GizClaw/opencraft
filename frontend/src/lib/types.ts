@@ -34,6 +34,11 @@ export interface SetupRequest {
   providers: SetupProvider[];
 }
 
+export interface ConfigState {
+  providers: SetupProvider[];
+  model: string;
+}
+
 export interface TurnStart {
   run_id: string;
   context_id: string;

@@ -4,6 +4,7 @@ import * as App from "../../wailsjs/go/desktop/App";
 import type { desktop as gen } from "../../wailsjs/go/models";
 import type {
   AgentSummary,
+  ConfigState,
   ConfigStatus,
   FileNode,
   ProviderView,
@@ -16,6 +17,7 @@ export const api = {
   version: () => App.Version(),
   configStatus: () => App.ConfigStatus() as Promise<ConfigStatus>,
   providers: () => App.Providers() as Promise<ProviderView[]>,
+  configState: () => App.ConfigState() as Promise<ConfigState>,
   saveSetup: (req: SetupRequest) =>
     App.SaveSetup(req as unknown as gen.SetupRequest),
   reload: () => App.Reload(),
@@ -28,6 +30,7 @@ export const api = {
     App.ReplyPrompt(promptID, reply as unknown as gen.ReplyRequest),
   cancelTurn: (runID: string) => App.CancelTurn(runID),
   listAgents: () => App.ListAgents() as Promise<AgentSummary[]>,
+  unregisterAgent: (name: string) => App.UnregisterAgent(name),
   listDir: (dir: string) => App.ListDir(dir) as Promise<FileNode[]>,
   openPath: (path: string) => App.OpenPath(path),
 };

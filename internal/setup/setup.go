@@ -14,6 +14,7 @@
 package setup
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -291,6 +292,133 @@ func (c Config) Write(configDir string) error {
 		return fmt.Errorf("setup: write opencraft.yaml: %w", err)
 	}
 	return nil
+}
+
+// Load reads the user configuration layer back into a Config so the
+// UI can prefill provider/model/key edits instead of starting blank.
+// It only understands the sections setup writes (provider profiles,
+// the Azure provider, and the router targets); unknown resources are
+// ignored. A later Write regenerates the whole layer.
+func Load(configDir string) (Config, error) {
+	data, err := os.ReadFile(filepath.Join(configDir, "opencraft.yaml"))
+	if err != nil {
+		return Config{}, err
+	}
+	var doc struct {
+		Resources map[string]json.RawMessage `json:"resources"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return Config{}, fmt.Errorf("setup: parse user config: %w", err)
+	}
+
+	// Provider declarations: credential profiles (and the Azure
+	// endpoint/deployment/capabilities) live under provider.<id>.
+	type providerSettings struct {
+		Settings struct {
+			Profiles []struct {
+				Secrets struct {
+					APIKey string `json:"api_key"`
+				} `json:"secrets"`
+			} `json:"profiles"`
+			Spec struct {
+				Endpoint string `json:"endpoint"`
+				Models   []struct {
+					Name         string `json:"name"`
+					Capabilities struct {
+						Inputs          []string `json:"inputs"`
+						Reasoning       string   `json:"reasoning"`
+						HostedWebSearch bool     `json:"hosted_web_search"`
+					} `json:"capabilities"`
+				} `json:"models"`
+			} `json:"spec"`
+		} `json:"settings"`
+	}
+	providers := make(map[string]providerSettings, len(doc.Resources))
+	for id, raw := range doc.Resources {
+		if !strings.HasPrefix(id, "provider.") {
+			continue
+		}
+		var res providerSettings
+		if err := yaml.Unmarshal(raw, &res); err != nil {
+			return Config{}, fmt.Errorf("setup: parse %s: %w", id, err)
+		}
+		providers[id] = res
+	}
+
+	// Router targets define provider priority order and model names.
+	var router struct {
+		Settings struct {
+			Generate []struct {
+				Targets []struct {
+					Model struct {
+						ID struct {
+							Provider string `json:"provider"`
+							Name     string `json:"name"`
+						} `json:"id"`
+					} `json:"model"`
+				} `json:"targets"`
+			} `json:"generate"`
+		} `json:"settings"`
+	}
+	if raw, ok := doc.Resources["router"]; ok {
+		if err := yaml.Unmarshal(raw, &router); err != nil {
+			return Config{}, fmt.Errorf("setup: parse router: %w", err)
+		}
+	}
+
+	cfg := Config{}
+	for _, pool := range router.Settings.Generate {
+		for _, target := range pool.Targets {
+			prov, ok := providerByID(target.Model.ID.Provider)
+			if !ok {
+				continue
+			}
+			keyed := KeyedProvider{
+				Provider: prov,
+				Model:    target.Model.ID.Name,
+			}
+			if res, ok := providers["provider."+prov.ID]; ok {
+				if len(res.Settings.Profiles) > 0 {
+					key := res.Settings.Profiles[0].Secrets.APIKey
+					if strings.HasPrefix(key, "${env:") && strings.HasSuffix(key, "}") {
+						keyed.KeySource = KeyEnv
+					} else {
+						keyed.KeySource = KeyLiteral
+						keyed.KeyValue = key
+					}
+				}
+				if prov.Azure {
+					keyed.Endpoint = res.Settings.Spec.Endpoint
+					if len(res.Settings.Spec.Models) > 0 {
+						model := res.Settings.Spec.Models[0]
+						if keyed.Model == "" {
+							keyed.Model = model.Name
+						}
+						caps := model.Capabilities
+						for _, input := range caps.Inputs {
+							if input == "image" {
+								keyed.Vision = true
+							}
+						}
+						keyed.Reasoning = caps.Reasoning
+						keyed.WebSearch = caps.HostedWebSearch
+					}
+				}
+			}
+			cfg.Providers = append(cfg.Providers, keyed)
+		}
+	}
+	return cfg, nil
+}
+
+// providerByID resolves the catalog entry for one provider id.
+func providerByID(id string) (Provider, bool) {
+	for _, p := range Providers {
+		if p.ID == id {
+			return p, true
+		}
+	}
+	return Provider{}, false
 }
 
 // yamlQuote quotes a plain scalar safely (single-quote style).

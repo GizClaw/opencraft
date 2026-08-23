@@ -55,7 +55,7 @@ interface StoreState {
   status: ConfigStatus | null;
   configured: boolean;
   fatal: string | null;
-  onboardingOpen: boolean;
+  configOpen: boolean;
   workspace: string;
   agents: AgentSummary[];
   messages: MessageView[];
@@ -73,8 +73,8 @@ interface StoreState {
   send: (text: string) => Promise<void>;
   replyInteract: (id: string, req: ReplyRequest) => Promise<void>;
   cancelRun: () => Promise<void>;
-  openOnboarding: () => void;
-  closeOnboarding: () => void;
+  openConfig: () => void;
+  closeConfig: () => void;
   newChat: () => void;
   setMode: (mode: string) => Promise<void>;
   refreshAgents: () => Promise<void>;
@@ -201,7 +201,7 @@ export const useStore = create<StoreState>((set, get) => {
     status: null,
     configured: false,
     fatal: null,
-    onboardingOpen: false,
+    configOpen: false,
     workspace: "",
     agents: [],
     messages: [],
@@ -222,7 +222,7 @@ export const useStore = create<StoreState>((set, get) => {
         status,
         workspace,
         configured: !status.needed,
-        onboardingOpen: status.needed,
+        configOpen: status.needed,
         mode,
       });
       void get().refreshAgents();
@@ -234,7 +234,7 @@ export const useStore = create<StoreState>((set, get) => {
           set({
             status: ev.data as ConfigStatus,
             configured: true,
-            onboardingOpen: false,
+            configOpen: false,
             fatal: null,
           });
           void get().refreshAgents();
@@ -243,7 +243,7 @@ export const useStore = create<StoreState>((set, get) => {
           set({
             status: ev.data as ConfigStatus,
             configured: false,
-            onboardingOpen: true,
+            configOpen: true,
           });
           break;
         case "fatal":
@@ -336,8 +336,8 @@ export const useStore = create<StoreState>((set, get) => {
       }
     },
 
-    openOnboarding: () => set({ onboardingOpen: true }),
-    closeOnboarding: () => set({ onboardingOpen: false }),
+    openConfig: () => set({ configOpen: true }),
+    closeConfig: () => set({ configOpen: false }),
 
     newChat: async () => {
       try {

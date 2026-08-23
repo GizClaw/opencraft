@@ -13,6 +13,7 @@ import (
 	coresession "github.com/GizClaw/flowcraft/core/runtime/session"
 
 	app "github.com/GizClaw/opencraft/internal/app"
+	"github.com/GizClaw/opencraft/internal/config"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/setup"
 )
@@ -48,6 +49,30 @@ func (a *App) Providers() []ProviderView {
 		})
 	}
 	return out
+}
+
+// ConfigState returns the configured inference wiring (providers in
+// router priority order with their keys/models/capabilities) plus the
+// current default model, so the config page can edit in place.
+func (a *App) ConfigState() (ConfigState, error) {
+	cfg, err := setup.Load(a.userDir)
+	if err != nil {
+		return ConfigState{}, err
+	}
+	st := ConfigState{Model: config.DefaultModel(a.userDir)}
+	for _, k := range cfg.Providers {
+		st.Providers = append(st.Providers, SetupProvider{
+			ID:        k.Provider.ID,
+			Key:       k.KeyValue,
+			KeyEnv:    k.KeySource == setup.KeyEnv,
+			Model:     k.Model,
+			Endpoint:  k.Endpoint,
+			Vision:    k.Vision,
+			Reasoning: k.Reasoning,
+			WebSearch: k.WebSearch,
+		})
+	}
+	return st, nil
 }
 
 // SaveSetup writes the onboarding result into the user configuration
@@ -229,6 +254,18 @@ func (a *App) ListAgents() []AgentSummary {
 		return nil
 	}
 	return lifecycle.List()
+}
+
+// UnregisterAgent removes a persisted subagent (draining in-flight
+// delegations) and deletes its declaration directory.
+func (a *App) UnregisterAgent(name string) error {
+	a.mu.Lock()
+	lifecycle := a.agents
+	a.mu.Unlock()
+	if lifecycle == nil {
+		return errors.New("agent registry is not available")
+	}
+	return lifecycle.Remove(a.appContext(), name)
 }
 
 // openCommand returns the platform opener for files/directories.
