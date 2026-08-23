@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { ArrowRight, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { api } from "../lib/api";
 import { useStore } from "../lib/store";
 import type { KanbanCard } from "../lib/types";
 
@@ -15,8 +16,19 @@ function elapsed(card: KanbanCard): string {
   return m > 0 ? `${m}m${s % 60}s` : `${s}s`;
 }
 
-function CardView({ card }: { card: KanbanCard }) {
+function CardView({
+  card,
+  onChanged,
+}: {
+  card: KanbanCard;
+  onChanged: () => void;
+}) {
   const { t } = useTranslation();
+  const cancellable =
+    card.status === "pending" ||
+    card.status === "claimed" ||
+    card.status === "suspended";
+  const retryable = card.status === "failed" || card.status === "canceled";
   return (
     <div className="rounded-lg border border-edge bg-panel2 p-2.5 space-y-1">
       <div className="text-sm font-medium break-words leading-snug">
@@ -46,6 +58,30 @@ function CardView({ card }: { card: KanbanCard }) {
       )}
       {elapsed(card) && (
         <div className="text-xs text-dim">{elapsed(card)}</div>
+      )}
+      {(cancellable || retryable) && (
+        <div className="flex gap-2 pt-1">
+          {cancellable && (
+            <button
+              onClick={() =>
+                void api.cancelCard(card.id).then(onChanged)
+              }
+              className="rounded border border-edge px-2 py-0.5 text-xs text-dim hover:text-err"
+            >
+              {t("kanban.cancel")}
+            </button>
+          )}
+          {retryable && (
+            <button
+              onClick={() =>
+                void api.retryCard(card.id).then(onChanged)
+              }
+              className="rounded border border-edge px-2 py-0.5 text-xs text-dim hover:text-accent"
+            >
+              {t("kanban.retry")}
+            </button>
+          )}
+        </div>
       )}
     </div>
   );
@@ -116,7 +152,13 @@ export function KanbanView() {
                   {items.length === 0 ? (
                     <p className="text-xs text-dim">{t("kanban.empty")}</p>
                   ) : (
-                    items.map((c) => <CardView key={c.id} card={c} />)
+                    items.map((c) => (
+                      <CardView
+                        key={c.id}
+                        card={c}
+                        onChanged={() => void loadCards()}
+                      />
+                    ))
                   )}
                 </div>
               );

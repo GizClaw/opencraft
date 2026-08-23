@@ -24,7 +24,7 @@ interface Row {
   webSearch: boolean;
 }
 
-type Tab = "ui" | "inference" | "agents";
+type Tab = "ui" | "inference" | "agents" | "permissions" | "skills";
 
 export function ConfigPage() {
   const configured = useStore((s) => s.configured);
@@ -41,6 +41,9 @@ export function ConfigPage() {
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [rules, setRules] = useState<string[]>([]);
+  const [ruleInput, setRuleInput] = useState("");
+  const [skills, setSkills] = useState<{ name: string; description: string; scope: string; path: string }[]>([]);
 
   useEffect(() => {
     void (async () => {
@@ -72,6 +75,22 @@ export function ConfigPage() {
     })();
     void refreshAgents();
   }, [refreshAgents]);
+
+  useEffect(() => {
+    if (tab !== "permissions") return;
+    void api
+      .permissions()
+      .then(setRules)
+      .catch((err) => setError(String(err)));
+  }, [tab]);
+
+  useEffect(() => {
+    if (tab !== "skills") return;
+    void api
+      .skills()
+      .then(setSkills)
+      .catch((err) => setError(String(err)));
+  }, [tab]);
 
   const byID = useMemo(
     () => new Map(rows.map((r) => [r.provider.id, r])),
@@ -148,6 +167,8 @@ export function ConfigPage() {
     { id: "ui", label: t("config.tabUi") },
     { id: "inference", label: t("config.tabInference") },
     { id: "agents", label: t("config.tabAgents") },
+    { id: "permissions", label: t("config.tabPermissions") },
+    { id: "skills", label: t("config.tabSkills") },
   ];
 
   return (
@@ -450,6 +471,97 @@ export function ConfigPage() {
                     </button>
                   </div>
                 </div>
+              )}
+            </div>
+          )}
+
+          {tab === "permissions" && (
+            <div className="space-y-3">
+              <p className="text-xs text-dim">{t("config.permissionsHint")}</p>
+              {rules.length === 0 ? (
+                <p className="text-sm text-dim">{t("config.permissionsEmpty")}</p>
+              ) : (
+                rules.map((rule) => (
+                  <div
+                    key={rule}
+                    className="flex items-center gap-2 rounded-lg border border-edge bg-panel2 px-3 py-2"
+                  >
+                    <code className="flex-1 text-sm font-mono truncate">
+                      {rule}
+                    </code>
+                    <button
+                      onClick={() =>
+                        void api
+                          .denyPermission(rule)
+                          .then(() => api.permissions())
+                          .then(setRules)
+                          .catch((err) => setError(String(err)))
+                      }
+                      className="text-xs text-dim hover:text-err"
+                    >
+                      {t("config.permissionsRemove")}
+                    </button>
+                  </div>
+                ))
+              )}
+              <div className="flex items-center gap-2 pt-2">
+                <input
+                  value={ruleInput}
+                  onChange={(e) => setRuleInput(e.target.value)}
+                  placeholder={t("config.permissionsPlaceholder")}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && ruleInput.trim()) {
+                      void api
+                        .allowPermission(ruleInput.trim())
+                        .then(() => api.permissions())
+                        .then(setRules)
+                        .then(() => setRuleInput(""))
+                        .catch((err) => setError(String(err)));
+                    }
+                  }}
+                  className="flex-1 rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
+                />
+                <button
+                  onClick={() => {
+                    if (!ruleInput.trim()) return;
+                    void api
+                      .allowPermission(ruleInput.trim())
+                      .then(() => api.permissions())
+                      .then(setRules)
+                      .then(() => setRuleInput(""))
+                      .catch((err) => setError(String(err)));
+                  }}
+                  className="rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90"
+                >
+                  {t("config.permissionsAdd")}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {tab === "skills" && (
+            <div className="space-y-3">
+              <p className="text-xs text-dim">{t("config.skillsHint")}</p>
+              {skills.length === 0 ? (
+                <p className="text-sm text-dim">{t("config.skillsEmpty")}</p>
+              ) : (
+                skills.map((s) => (
+                  <div
+                    key={s.name}
+                    className="rounded-xl border border-edge bg-panel2 p-3"
+                    title={s.path}
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium">{s.name}</span>
+                      <span className="rounded bg-panel border border-edge px-1.5 text-xs text-dim">
+                        {s.scope}
+                      </span>
+                    </div>
+                    {s.description && (
+                      <p className="text-xs text-dim mt-1">{s.description}</p>
+                    )}
+                  </div>
+                ))
               )}
             </div>
           )}

@@ -45,6 +45,7 @@ export interface SessionMeta {
   created_at: string;
   updated_at: string;
   messages: number;
+  total_tokens: number;
 }
 
 export interface HistoryMsg {
@@ -65,6 +66,13 @@ export interface KanbanCard {
   error: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface SkillDTO {
+  name: string;
+  description: string;
+  scope: string;
+  path: string;
 }
 
 export interface TurnStart {

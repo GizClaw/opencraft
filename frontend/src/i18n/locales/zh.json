@@ -4,11 +4,18 @@
     "startupFailed": "启动失败",
     "unknownError": "未知错误"
   },
+  "notify": {
+    "done": "任务完成",
+    "failed": "任务失败",
+    "interact": "需要你的输入"
+  },
   "sidebar": {
     "newChat": "新会话",
     "sessions": "会话",
     "kanban": "看板",
     "justNow": "刚刚",
+    "deleteSession": "删除会话",
+    "deleteSessionConfirm": "删除会话 {{title}}？历史记录将被移除。",
     "subagents": "子代理",
     "refresh": "刷新",
     "noAgents": "暂无子代理",
@@ -25,20 +32,32 @@
     "canceled": "已取消",
     "empty": "暂无委托",
     "error": "错误",
-    "fromTo": "{{producer}} → {{consumer}}"
+    "fromTo": "{{producer}} → {{consumer}}",
+    "cancel": "取消",
+    "retry": "重试"
   },
   "config": {
     "title": "设置",
     "tabUi": "界面",
     "tabInference": "推理",
     "tabAgents": "子 Agent",
+    "tabPermissions": "权限",
+    "tabSkills": "技能",
     "uiLanguage": "界面语言",
     "agentsHint": "子 Agent 由助手通过 create_agent 工具创建，这里可以查看与删除。删除会先排空进行中的委托再移除其声明。",
     "agentsEmpty": "暂无子 Agent",
     "agentsDelete": "删除",
     "agentsDeleteConfirm": "确定删除子 Agent {{name}}？进行中的委托会被排空，声明文件将被移除。",
     "agentsDeleted": "已删除 {{name}}",
-    "inferenceCurrent": "当前默认模型：{{model}}"
+    "inferenceCurrent": "当前默认模型：{{model}}",
+    "permissionsHint": "沙箱允许列表（静态规则 + .opencraft/approvals.yaml 动态批准）",
+    "permissionsEmpty": "暂无规则",
+    "permissionsAdd": "添加规则",
+    "permissionsPlaceholder": "如 git status 或 python main.py",
+    "permissionsRemove": "移除",
+    "skillsHint": "runtime 已发现的技能（工具可通过技能检索使用）",
+    "skillsEmpty": "暂无技能",
+    "skillsRefresh": "刷新"
   },
   "chat": {
     "running": "运行中",
@@ -60,7 +79,11 @@
     "confirmSwitch": "确认切换",
     "cancelled": "已取消",
     "interrupted": "已中断",
-    "failed": "失败"
+    "failed": "失败",
+    "thinkLabel": "思考",
+    "thinkLow": "低",
+    "thinkMedium": "中",
+    "thinkHigh": "高"
   },
   "status": {
     "ready": "就绪",

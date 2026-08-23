@@ -4,11 +4,18 @@
     "startupFailed": "Startup failed",
     "unknownError": "Unknown error"
   },
+  "notify": {
+    "done": "Task finished",
+    "failed": "Task failed",
+    "interact": "Input needed"
+  },
   "sidebar": {
     "newChat": "New chat",
     "sessions": "Sessions",
     "kanban": "Board",
     "justNow": "just now",
+    "deleteSession": "Delete session",
+    "deleteSessionConfirm": "Delete session {{title}}? Its history will be removed.",
     "subagents": "Subagents",
     "refresh": "Refresh",
     "noAgents": "No subagents yet",
@@ -25,20 +32,32 @@
     "canceled": "Cancelled",
     "empty": "No delegations",
     "error": "Error",
-    "fromTo": "{{producer}} → {{consumer}}"
+    "fromTo": "{{producer}} → {{consumer}}",
+    "cancel": "Cancel",
+    "retry": "Retry"
   },
   "config": {
     "title": "Settings",
     "tabUi": "Interface",
     "tabInference": "Inference",
     "tabAgents": "Subagents",
+    "tabPermissions": "Permissions",
+    "tabSkills": "Skills",
     "uiLanguage": "Interface language",
     "agentsHint": "Subagents are created by the assistant via the create_agent tool; this page lists and deletes them. Deleting drains in-flight delegations before removing the declaration.",
     "agentsEmpty": "No subagents",
     "agentsDelete": "Delete",
     "agentsDeleteConfirm": "Delete subagent {{name}}? In-flight delegations will be drained and the declaration removed.",
     "agentsDeleted": "Deleted {{name}}",
-    "inferenceCurrent": "Current default model: {{model}}"
+    "inferenceCurrent": "Current default model: {{model}}",
+    "permissionsHint": "Sandbox allowlist (static rules + dynamic approvals from .opencraft/approvals.yaml)",
+    "permissionsEmpty": "No rules",
+    "permissionsAdd": "Add rule",
+    "permissionsPlaceholder": "e.g. git status or python main.py",
+    "permissionsRemove": "Remove",
+    "skillsHint": "Skills discovered by the runtime (tools can consume them via skill lookup)",
+    "skillsEmpty": "No skills",
+    "skillsRefresh": "Refresh"
   },
   "chat": {
     "running": "Running",
@@ -60,7 +79,11 @@
     "confirmSwitch": "Switch",
     "cancelled": "Cancelled",
     "interrupted": "Interrupted",
-    "failed": "Failed"
+    "failed": "Failed",
+    "thinkLabel": "Thinking",
+    "thinkLow": "Low",
+    "thinkMedium": "Medium",
+    "thinkHigh": "High"
   },
   "status": {
     "ready": "Ready",

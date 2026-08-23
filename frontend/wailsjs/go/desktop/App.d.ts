@@ -3,6 +3,10 @@
 import {desktop} from '../models';
 import {agents} from '../models';
 
+export function AllowPermission(arg1:string):Promise<void>;
+
+export function CancelCard(arg1:string):Promise<boolean>;
+
 export function CancelTurn(arg1:string):Promise<void>;
 
 export function ConfigState():Promise<desktop.ConfigState>;
@@ -13,7 +17,13 @@ export function CurrentSession():Promise<string>;
 
 export function DelegationCards():Promise<Array<desktop.KanbanCard>>;
 
+export function DeleteSession(arg1:string):Promise<void>;
+
+export function DenyPermission(arg1:string):Promise<void>;
+
 export function FileDiff(arg1:string):Promise<string>;
+
+export function GetThink():Promise<string>;
 
 export function ListAgents():Promise<Array<agents.Summary>>;
 
@@ -25,6 +35,8 @@ export function NewChat():Promise<string>;
 
 export function OpenPath(arg1:string):Promise<void>;
 
+export function Permissions():Promise<Array<string>>;
+
 export function Providers():Promise<Array<desktop.ProviderView>>;
 
 export function ReadFile(arg1:string):Promise<string>;
@@ -35,6 +47,8 @@ export function ReplyPrompt(arg1:string,arg2:desktop.ReplyRequest):Promise<boole
 
 export function ResumeSession(arg1:string):Promise<string>;
 
+export function RetryCard(arg1:string):Promise<string>;
+
 export function SaveSetup(arg1:desktop.SetupRequest):Promise<void>;
 
 export function SessionHistory(arg1:string):Promise<Array<desktop.HistoryMsg>>;
@@ -42,6 +56,10 @@ export function SessionHistory(arg1:string):Promise<Array<desktop.HistoryMsg>>;
 export function SessionMode():Promise<string>;
 
 export function SetSessionMode(arg1:string):Promise<void>;
+
+export function SetThink(arg1:string):Promise<void>;
+
+export function Skills():Promise<Array<desktop.SkillDTO>>;
 
 export function StartTurn(arg1:string):Promise<desktop.TurnStart>;
 

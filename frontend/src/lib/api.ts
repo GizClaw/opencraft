@@ -13,6 +13,7 @@ import type {
   ReplyRequest,
   SessionMeta,
   SetupRequest,
+  SkillDTO,
   TurnStart,
 } from "./types";
 
@@ -34,6 +35,15 @@ export const api = {
   delegationCards: () => App.DelegationCards() as Promise<KanbanCard[]>,
   readFile: (path: string) => App.ReadFile(path),
   fileDiff: (path: string) => App.FileDiff(path),
+  getThink: () => App.GetThink(),
+  setThink: (level: string) => App.SetThink(level),
+  deleteSession: (id: string) => App.DeleteSession(id),
+  permissions: () => App.Permissions(),
+  allowPermission: (rule: string) => App.AllowPermission(rule),
+  denyPermission: (rule: string) => App.DenyPermission(rule),
+  skills: () => App.Skills() as Promise<SkillDTO[]>,
+  cancelCard: (id: string) => App.CancelCard(id),
+  retryCard: (id: string) => App.RetryCard(id),
   sessionMode: () => App.SessionMode(),
   setSessionMode: (mode: string) => App.SetSessionMode(mode),
   startTurn: (text: string) => App.StartTurn(text) as Promise<TurnStart>,

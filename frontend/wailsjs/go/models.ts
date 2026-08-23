@@ -274,6 +274,7 @@ export namespace desktop {
 	    // Go type: time
 	    updated_at: any;
 	    messages: number;
+	    total_tokens: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new SessionMeta(source);
@@ -286,6 +287,7 @@ export namespace desktop {
 	        this.created_at = this.convertValues(source["created_at"], null);
 	        this.updated_at = this.convertValues(source["updated_at"], null);
 	        this.messages = source["messages"];
+	        this.total_tokens = source["total_tokens"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -336,6 +338,24 @@ export namespace desktop {
 		    }
 		    return a;
 		}
+	}
+	export class SkillDTO {
+	    name: string;
+	    description: string;
+	    scope: string;
+	    path: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SkillDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.description = source["description"];
+	        this.scope = source["scope"];
+	        this.path = source["path"];
+	    }
 	}
 	export class TurnStart {
 	    run_id: string;

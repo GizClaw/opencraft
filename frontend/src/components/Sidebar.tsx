@@ -4,7 +4,9 @@ import {
   MessageSquare,
   Plus,
   Settings,
+  Trash2,
 } from "lucide-react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "../lib/store";
 
@@ -20,7 +22,9 @@ export function Sidebar() {
   const currentSession = useStore((s) => s.currentSession);
   const resume = useStore((s) => s.resume);
   const openKanban = useStore((s) => s.openKanban);
+  const deleteSession = useStore((s) => s.deleteSession);
   const { t } = useTranslation();
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
 
   const fmtTime = (iso: string) => {
     const d = new Date(iso);
@@ -32,6 +36,9 @@ export function Sidebar() {
     if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`;
     return d.toLocaleDateString();
   };
+
+  const fmtTokens = (n: number) =>
+    n >= 1000 ? `${(n / 1000).toFixed(1)}k` : n > 0 ? String(n) : "";
 
   return (
     <aside className="w-60 shrink-0 border-r border-edge bg-panel flex flex-col min-h-0">
@@ -67,30 +74,72 @@ export function Sidebar() {
           {sessions.length === 0 ? (
             <p className="text-xs text-dim">—</p>
           ) : (
-            <ul className="space-y-1">
-              {sessions.map((s) => (
-                <li key={s.id}>
-                  <button
-                    onClick={() => void resume(s.id)}
-                    className={`w-full flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm ${
-                      s.id === currentSession
-                        ? "bg-accent/15 border border-accent/40"
-                        : "border border-transparent hover:bg-panel2"
-                    }`}
-                    title={s.id}
-                  >
-                    <MessageSquare
-                      size={13}
-                      className="text-dim shrink-0"
-                    />
-                    <span className="flex-1 truncate">{s.title}</span>
-                    <span className="text-xs text-dim shrink-0">
-                      {fmtTime(s.updated_at)}
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
+            <>
+              <ul className="space-y-1">
+                {sessions.map((s) => (
+                  <li key={s.id}>
+                    <div
+                      className={`group flex items-center gap-1 rounded-lg px-1.5 py-1 text-left text-sm ${
+                        s.id === currentSession
+                          ? "bg-accent/15 border border-accent/40"
+                          : "border border-transparent hover:bg-panel2"
+                      }`}
+                      title={s.id}
+                    >
+                      <button
+                        onClick={() => void resume(s.id)}
+                        className="flex flex-1 min-w-0 items-center gap-2"
+                      >
+                        <MessageSquare
+                          size={13}
+                          className="text-dim shrink-0"
+                        />
+                        <span className="flex-1 truncate">{s.title}</span>
+                        <span className="text-xs text-dim shrink-0">
+                          {fmtTokens(s.total_tokens)}
+                        </span>
+                        <span className="text-xs text-dim shrink-0">
+                          {fmtTime(s.updated_at)}
+                        </span>
+                      </button>
+                      <button
+                        onClick={() => setConfirmDelete(s.id)}
+                        className="text-dim opacity-0 group-hover:opacity-100 hover:text-err shrink-0"
+                        title={t("sidebar.deleteSession")}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              {confirmDelete && (
+                <div className="mt-2 rounded-lg border border-err/40 bg-panel2 p-2 text-xs">
+                  <p>
+                    {t("sidebar.deleteSessionConfirm", {
+                      title: sessions.find((s) => s.id === confirmDelete)?.title ?? "",
+                    })}
+                  </p>
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      onClick={() => setConfirmDelete(null)}
+                      className="rounded border border-edge px-2 py-0.5 text-dim hover:text-fg"
+                    >
+                      {t("interact.cancel")}
+                    </button>
+                    <button
+                      onClick={() => {
+                        void deleteSession(confirmDelete);
+                        setConfirmDelete(null);
+                      }}
+                      className="rounded bg-err px-2 py-0.5 text-white hover:opacity-90"
+                    >
+                      {t("sidebar.deleteSession")}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </section>
       </div>

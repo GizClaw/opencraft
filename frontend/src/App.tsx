@@ -1,6 +1,12 @@
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { EventsOn } from "../wailsjs/runtime/runtime";
+import i18n from "./i18n";
+import {
+  EventsOn,
+  InitializeNotifications,
+  RequestNotificationAuthorization,
+  SendNotification,
+} from "../wailsjs/runtime/runtime";
 import { ChatView } from "./components/ChatView";
 import { ConfigPage } from "./components/ConfigPage";
 import { FilePanel } from "./components/FilePanel";
@@ -17,13 +23,59 @@ export default function App() {
   const fatal = useStore((s) => s.fatal);
   const configOpen = useStore((s) => s.configOpen);
   const kanbanOpen = useStore((s) => s.kanbanOpen);
+  const newChat = useStore((s) => s.newChat);
+  const openConfig = useStore((s) => s.openConfig);
+  const openKanban = useStore((s) => s.openKanban);
   const { t } = useTranslation();
 
   useEffect(() => {
     void init();
-    const off = EventsOn("opencraft:ui", (ev: UIEvent) => handleEvent(ev));
+    const off = EventsOn("opencraft:ui", (ev: UIEvent) => {
+      if (ev.type === "interact") {
+        const spec = ev.data as { title?: string };
+        void SendNotification({
+          id: "interact",
+          title: "opencraft",
+          body: spec.title || i18n.t("notify.interact"),
+        });
+      } else if (ev.type === "turn_end") {
+        const data = ev.data as { status: string };
+        const body =
+          data.status === "completed"
+            ? i18n.t("notify.done")
+            : data.status === "failed" || data.status === "aborted"
+              ? i18n.t("notify.failed")
+              : data.status;
+        void SendNotification({ id: "turn-end", title: "opencraft", body });
+      }
+      handleEvent(ev);
+    });
     return off;
   }, [init, handleEvent]);
+
+  useEffect(() => {
+    void InitializeNotifications()
+      .then(() => RequestNotificationAuthorization())
+      .catch(() => {
+        // notifications are best-effort
+      });
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.metaKey && !e.ctrlKey) return;
+      const key = e.key.toLowerCase();
+      if (key === "n") {
+        e.preventDefault();
+        void newChat();
+      } else if (key === ",") {
+        e.preventDefault();
+        openConfig();
+      } else if (key === "k") {
+        e.preventDefault();
+        openKanban();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [newChat, openConfig, openKanban]);
 
   if (fatal) {
     return (

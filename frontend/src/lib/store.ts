@@ -70,6 +70,7 @@ interface StoreState {
   // consecutive ask_user calls); each renders as its own card.
   pendingInteracts: InteractDTO[];
   mode: string;
+  think: string;
   statusText: string;
   lastUsage: UsageDTO | null;
   kanbanOpen: boolean;
@@ -84,7 +85,9 @@ interface StoreState {
   closeConfig: () => void;
   newChat: () => void;
   resume: (id: string) => Promise<void>;
+  deleteSession: (id: string) => Promise<void>;
   setMode: (mode: string) => Promise<void>;
+  setThink: (level: string) => Promise<void>;
   refreshAgents: () => Promise<void>;
   loadSessions: () => Promise<void>;
   loadCards: () => Promise<void>;
@@ -223,24 +226,28 @@ export const useStore = create<StoreState>((set, get) => {
     activeRunID: null,
     pendingInteracts: [],
     mode: "workspace",
+    think: "medium",
     statusText: "",
     lastUsage: null,
     kanbanOpen: false,
     cards: [],
 
     init: async () => {
-      const [status, workspace, mode, currentSession] = await Promise.all([
-        api.configStatus(),
-        api.workspace(),
-        api.sessionMode(),
-        api.currentSession(),
-      ]);
+      const [status, workspace, mode, currentSession, think] =
+        await Promise.all([
+          api.configStatus(),
+          api.workspace(),
+          api.sessionMode(),
+          api.currentSession(),
+          api.getThink(),
+        ]);
       set({
         status,
         workspace,
         configured: !status.needed,
         configOpen: status.needed,
         mode,
+        think,
         currentSession,
       });
       void get().refreshAgents();
@@ -385,6 +392,7 @@ export const useStore = create<StoreState>((set, get) => {
         activeRunID: null,
         pendingInteracts: [],
         mode: "workspace",
+        think: "medium",
       });
       void get().loadSessions();
     },
@@ -392,9 +400,10 @@ export const useStore = create<StoreState>((set, get) => {
     resume: async (id) => {
       try {
         const resumed = await api.resumeSession(id);
-        const [mode, history] = await Promise.all([
+        const [mode, history, think] = await Promise.all([
           api.sessionMode(),
           api.sessionHistory(id),
+          api.getThink(),
         ]);
         const messages: MessageView[] = history.map((h) =>
           h.role === "user"
@@ -422,6 +431,7 @@ export const useStore = create<StoreState>((set, get) => {
         set({
           currentSession: resumed,
           mode,
+          think,
           messages,
           busy: false,
           activeRunID: null,
@@ -436,6 +446,24 @@ export const useStore = create<StoreState>((set, get) => {
       try {
         await api.setSessionMode(mode);
         set({ mode });
+      } catch (err) {
+        set({ statusText: String(err) });
+      }
+    },
+
+    setThink: async (level) => {
+      try {
+        await api.setThink(level);
+        set({ think: level });
+      } catch (err) {
+        set({ statusText: String(err) });
+      }
+    },
+
+    deleteSession: async (id) => {
+      try {
+        await api.deleteSession(id);
+        await get().loadSessions();
       } catch (err) {
         set({ statusText: String(err) });
       }

@@ -43,6 +43,8 @@ export function ChatView() {
   const cancelRun = useStore((s) => s.cancelRun);
   const mode = useStore((s) => s.mode);
   const setMode = useStore((s) => s.setMode);
+  const think = useStore((s) => s.think);
+  const setThink = useStore((s) => s.setThink);
   const [input, setInput] = useState("");
   const [confirmYolo, setConfirmYolo] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -280,6 +282,18 @@ export function ChatView() {
                 {yolo ? <Flame size={12} /> : <ShieldCheck size={12} />}
                 {yolo ? t("chat.yoloMode") : t("chat.workspaceMode")}
               </button>
+              <div className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim">
+                {t("chat.thinkLabel")}
+                <select
+                  value={think}
+                  onChange={(e) => void setThink(e.target.value)}
+                  className="bg-transparent outline-none text-fg"
+                >
+                  <option value="low">{t("chat.thinkLow")}</option>
+                  <option value="medium">{t("chat.thinkMedium")}</option>
+                  <option value="high">{t("chat.thinkHigh")}</option>
+                </select>
+              </div>
               <span className="text-xs text-dim hidden sm:inline">
                 {busy ? t("chat.runningHint") : t("chat.enterHint")}
               </span>
