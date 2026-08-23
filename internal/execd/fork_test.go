@@ -34,7 +34,7 @@ func buildOpencraft(t *testing.T) string {
 			opencraftBinErr = err
 			return
 		}
-		cmd := exec.Command("go", "build", "-o", opencraftBin, "./cmd/opencraft")
+		cmd := exec.Command("go", "build", "-o", opencraftBin, ".")
 		cmd.Dir = root
 		out, err := cmd.CombinedOutput()
 		if err != nil {

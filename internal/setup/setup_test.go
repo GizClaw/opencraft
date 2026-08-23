@@ -187,7 +187,8 @@ func TestUserConfigYAMLAzureCapabilities(t *testing.T) {
 		}
 	}
 
-	// Reasoning "关闭" must not emit a reasoning declaration.
+	// Reasoning left off (the empty option) must not emit a reasoning
+	// declaration.
 	off := envKeyed(t, "deepseek")
 	off.Providers = append(off.Providers, KeyedProvider{
 		Provider:  mustProvider(t, "azure"),

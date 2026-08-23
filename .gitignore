@@ -23,11 +23,24 @@
 # ── Go source ──
 !go.mod
 !go.sum
-!cmd/
-!cmd/**
 !internal/
 !internal/**
 !pkg/
 !pkg/**
 !tools/
 !tools/**
+
+# ── Wails desktop app ──
+!main.go
+!execd_main.go
+!wails.json
+!frontend/
+!frontend/**
+# Node dependencies stay out of the repo; npm install reproduces them.
+frontend/node_modules/
+frontend/node_modules/**
+!build/
+!build/**
+# Generated app bundles stay out of the repo; wails build reproduces them.
+build/bin/
+build/bin/**

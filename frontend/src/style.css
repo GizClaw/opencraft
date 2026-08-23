@@ -1,0 +1,99 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0f1218;
+  --color-panel: #141923;
+  --color-panel2: #1b2230;
+  --color-edge: #262f40;
+  --color-fg: #e6e9ef;
+  --color-dim: #8b93a3;
+  --color-accent: #4f8cff;
+  --color-ok: #34d399;
+  --color-warn: #fbbf24;
+  --color-err: #f87171;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: ui-sans-serif, system-ui, -apple-system, "PingFang SC",
+    "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-edge) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--color-edge);
+  border-radius: 4px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.prose-chat {
+  line-height: 1.65;
+}
+
+.prose-chat p {
+  margin: 0.4em 0;
+}
+
+.prose-chat pre {
+  background: var(--color-panel2);
+  border: 1px solid var(--color-edge);
+  border-radius: 8px;
+  padding: 10px 12px;
+  overflow-x: auto;
+  margin: 0.6em 0;
+  font-size: 12.5px;
+}
+
+.prose-chat code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em;
+}
+
+.prose-chat :not(pre) > code {
+  background: var(--color-panel2);
+  border: 1px solid var(--color-edge);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.prose-chat ul,
+.prose-chat ol {
+  margin: 0.4em 0;
+  padding-left: 1.4em;
+}
+
+.prose-chat blockquote {
+  border-left: 3px solid var(--color-edge);
+  margin: 0.5em 0;
+  padding-left: 0.9em;
+  color: var(--color-dim);
+}
+
+.prose-chat table {
+  border-collapse: collapse;
+  margin: 0.6em 0;
+}
+
+.prose-chat th,
+.prose-chat td {
+  border: 1px solid var(--color-edge);
+  padding: 4px 10px;
+}
