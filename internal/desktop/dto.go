@@ -70,12 +70,21 @@ type SessionMeta struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Messages  int       `json:"messages"`
+	TotalTokens int64   `json:"total_tokens"`
 }
 
 // HistoryMsg is one stored message for the resume view.
 type HistoryMsg struct {
 	Role string `json:"role"`
 	Text string `json:"text"`
+}
+
+// SkillDTO is one discovered skill for the config page.
+type SkillDTO struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Scope       string `json:"scope"`
+	Path        string `json:"path"`
 }
 
 // KanbanCard is the UI snapshot of one delegation board card.

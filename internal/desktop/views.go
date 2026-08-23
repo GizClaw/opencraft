@@ -12,6 +12,8 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/delegation/kanban"
 	"github.com/GizClaw/flowcraft/core/message"
+
+	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 )
 
 // maxViewFileSize caps the file viewer and diff payloads.
@@ -32,11 +34,12 @@ func (a *App) ListSessions() ([]SessionMeta, error) {
 	out := make([]SessionMeta, 0, len(metas))
 	for _, m := range metas {
 		out = append(out, SessionMeta{
-			ID:        m.ID,
-			Title:     m.Title,
-			CreatedAt: m.CreatedAt,
-			UpdatedAt: m.UpdatedAt,
-			Messages:  m.Messages,
+			ID:          m.ID,
+			Title:       m.Title,
+			CreatedAt:   m.CreatedAt,
+			UpdatedAt:   m.UpdatedAt,
+			Messages:    m.Messages,
+			TotalTokens: m.Usage.TotalTokens,
 		})
 	}
 	return out, nil
@@ -80,9 +83,14 @@ func (a *App) ResumeSession(id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	think, err := store.Think(id)
+	if err != nil {
+		think = ocsessions.ThinkMedium
+	}
 	a.mu.Lock()
 	a.conversationID = id
 	a.mode = mode
+	a.think = string(think)
 	a.mu.Unlock()
 	return id, nil
 }

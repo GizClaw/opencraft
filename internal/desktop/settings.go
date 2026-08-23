@@ -1,0 +1,193 @@
+package desktop
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/GizClaw/flowcraft/core/delegation/kanban"
+
+	app "github.com/GizClaw/opencraft/internal/app"
+	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
+	"github.com/GizClaw/opencraft/internal/skills"
+)
+
+// ---- think level ----
+
+// GetThink returns the current conversation's reasoning effort
+// (low/medium/high).
+func (a *App) GetThink() (string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.think, nil
+}
+
+// SetThink switches the conversation's reasoning effort and persists
+// it through the session store.
+func (a *App) SetThink(level string) error {
+	lv := ocsessions.ThinkLevel(level)
+	if !lv.Valid() {
+		return fmt.Errorf("unknown think level %q", level)
+	}
+	a.mu.Lock()
+	a.think = string(lv)
+	contextID := a.conversationID
+	store := a.sessions
+	a.mu.Unlock()
+	if store != nil {
+		return store.SetThink(contextID, lv)
+	}
+	return nil
+}
+
+// ---- sandbox permissions ----
+
+func (a *App) manager() (*app.Manager, error) {
+	a.mu.Lock()
+	ctrl := a.ctrl
+	a.mu.Unlock()
+	if ctrl == nil || ctrl.Runtime() == nil {
+		return nil, errors.New("runtime is not ready")
+	}
+	value, ok := ctrl.Runtime().Resource("execpolicy")
+	if !ok {
+		return nil, errors.New("execpolicy resource is not wired")
+	}
+	mgr, ok := value.(*app.Manager)
+	if !ok {
+		return nil, errors.New("execpolicy resource has an unexpected type")
+	}
+	return mgr, nil
+}
+
+// Permissions returns the current sandbox allowlist rules (static
+// plus dynamically approved commands).
+func (a *App) Permissions() ([]string, error) {
+	mgr, err := a.manager()
+	if err != nil {
+		return nil, err
+	}
+	return mgr.Rules(), nil
+}
+
+// AllowPermission adds one rule to the sandbox allowlist and persists
+// it to the project approvals file.
+func (a *App) AllowPermission(rule string) error {
+	rule = strings.TrimSpace(rule)
+	if rule == "" {
+		return errors.New("rule is required")
+	}
+	mgr, err := a.manager()
+	if err != nil {
+		return err
+	}
+	return mgr.AlwaysAllow(rule)
+}
+
+// DenyPermission removes one rule from the sandbox allowlist.
+func (a *App) DenyPermission(rule string) error {
+	rule = strings.TrimSpace(rule)
+	if rule == "" {
+		return errors.New("rule is required")
+	}
+	mgr, err := a.manager()
+	if err != nil {
+		return err
+	}
+	return mgr.Remove(rule)
+}
+
+// ---- skills ----
+
+// Skills returns the discovered skill registry for the config page.
+func (a *App) Skills() ([]SkillDTO, error) {
+	a.mu.Lock()
+	ctrl := a.ctrl
+	a.mu.Unlock()
+	if ctrl == nil || ctrl.Runtime() == nil {
+		return nil, nil
+	}
+	value, ok := ctrl.Runtime().Resource("skills")
+	if !ok {
+		return nil, nil
+	}
+	svc, ok := value.(*skills.Service)
+	if !ok {
+		return nil, nil
+	}
+	items := svc.List()
+	out := make([]SkillDTO, 0, len(items))
+	for _, s := range items {
+		out = append(out, SkillDTO{
+			Name:        s.Name,
+			Description: s.Description,
+			Scope:       s.Scope,
+			Path:        s.Path,
+		})
+	}
+	return out, nil
+}
+
+// ---- kanban actions ----
+
+func (a *App) board() (*kanban.Board, error) {
+	a.mu.Lock()
+	ctrl := a.ctrl
+	a.mu.Unlock()
+	if ctrl == nil || ctrl.Runtime() == nil {
+		return nil, errors.New("runtime is not ready")
+	}
+	value, ok := ctrl.Runtime().Resource("delegate.backend")
+	if !ok {
+		return nil, errors.New("delegation backend is not wired")
+	}
+	board, ok := value.(*kanban.Board)
+	if !ok {
+		return nil, errors.New("delegation backend has an unexpected type")
+	}
+	return board, nil
+}
+
+// CancelCard cancels one delegation card.
+func (a *App) CancelCard(id string) (bool, error) {
+	board, err := a.board()
+	if err != nil {
+		return false, err
+	}
+	return board.Cancel(id, "cancelled from the desktop board"), nil
+}
+
+// RetryCard resubmits one terminal card's task and returns the new
+// card id.
+func (a *App) RetryCard(id string) (string, error) {
+	board, err := a.board()
+	if err != nil {
+		return "", err
+	}
+	card, ok := board.Card(id)
+	if !ok {
+		return "", fmt.Errorf("card %s not found", id)
+	}
+	if card.Task == nil {
+		return "", errors.New("card has no task to retry")
+	}
+	return board.Submit(a.appContext(), card.Task.Request)
+}
+
+// ---- session deletion ----
+
+// DeleteSession removes one stored conversation. The active
+// conversation cannot be deleted.
+func (a *App) DeleteSession(id string) error {
+	a.mu.Lock()
+	store := a.sessions
+	current := a.conversationID
+	a.mu.Unlock()
+	if store == nil {
+		return errors.New("session store is not available")
+	}
+	if id == current {
+		return errors.New("cannot delete the active conversation")
+	}
+	return store.Remove(id)
+}

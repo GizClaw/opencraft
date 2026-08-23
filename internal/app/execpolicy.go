@@ -147,6 +147,40 @@ func (m *Manager) AlwaysAllow(rule string) error {
 	return m.writeFile(entries)
 }
 
+// Remove deletes a rule from the allowlist and persists the change.
+// It is a no-op when the rule is not present.
+func (m *Manager) Remove(rule string) error {
+	rules := m.Rules()
+	filtered := rules[:0:0]
+	removed := false
+	for _, r := range rules {
+		if r == rule {
+			removed = true
+			continue
+		}
+		filtered = append(filtered, r)
+	}
+	if !removed {
+		return nil
+	}
+	if err := m.allowlist.Set(filtered); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	entries, err := m.readFile()
+	if err != nil {
+		return err
+	}
+	out := entries[:0:0]
+	for _, e := range entries {
+		if e != rule {
+			out = append(out, e)
+		}
+	}
+	return m.writeFile(out)
+}
+
 // NormaliseCommand renders the normalized token list of an ExecRequest
 // as the allowlist rule string ("sh -c" wrappers are unwrapped).
 func NormaliseCommand(req sandbox.ExecRequest) string {

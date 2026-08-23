@@ -304,6 +304,20 @@ func (s *Store) dir(id string) string {
 	return filepath.Join(s.root, id)
 }
 
+// Remove deletes one stored conversation directory (history,
+// permissions, usage). The id must be a generated conversation id;
+// runtime checkpoint state for the same id is left to the session
+// manager and simply becomes unreachable from the UI.
+func (s *Store) Remove(id string) error {
+	if !strings.HasPrefix(id, "s-") {
+		return errdefs.Validationf("sessions: invalid session id %q", id)
+	}
+	if err := os.RemoveAll(s.dir(id)); err != nil {
+		return fmt.Errorf("sessions: remove %s: %w", id, err)
+	}
+	return nil
+}
+
 func (s *Store) nextSeq(historyDir string) (int, error) {
 	files, err := filepath.Glob(filepath.Join(historyDir, "*.json"))
 	if err != nil {

@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -136,7 +137,9 @@ func (a *App) StartTurn(text string) (TurnStart, error) {
 	broker := a.broker
 	contextID := a.conversationID
 	mode := a.mode
+	think := a.think
 	store := a.sessions
+	a.turnUsage = ocsessions.Usage{}
 	a.mu.Unlock()
 	if ctrl == nil || ctrl.Runtime() == nil || broker == nil {
 		return TurnStart{}, errors.New(
@@ -161,6 +164,9 @@ func (a *App) StartTurn(text string) (TurnStart, error) {
 	turn, err := lease.Session().Start(ctx, agent.Request{
 		ContextID: contextID,
 		Message:   message.NewTextMessage(message.RoleUser, text),
+		// Think level rides the board into the graph's
+		// ${board.think_level} inference node reference.
+		Inputs: map[string]any{"think_level": think},
 	}, coresession.SinkSpec{
 		ID:         "desktop",
 		Sink:       agent.StreamSinkFunc(a.bridge.Sink),
@@ -178,7 +184,7 @@ func (a *App) StartTurn(text string) (TurnStart, error) {
 	a.mu.Lock()
 	a.turns[turn.RunID()] = turn
 	a.mu.Unlock()
-	go a.waitTurn(lease, turn)
+	go a.waitTurn(lease, turn, contextID)
 	return TurnStart{RunID: turn.RunID(), ContextID: contextID}, nil
 }
 
@@ -189,6 +195,7 @@ func (a *App) NewChat() (string, error) {
 	a.mu.Lock()
 	a.conversationID = ocsessions.NewID()
 	a.mode = ocsessions.ModeWorkspace
+	a.think = string(ocsessions.ThinkMedium)
 	id := a.conversationID
 	a.mu.Unlock()
 	return id, nil
@@ -280,18 +287,29 @@ func openCommand(path string) *exec.Cmd {
 	}
 }
 
-func (a *App) waitTurn(lease *coresession.Lease, turn *coresession.Turn) {
+func (a *App) waitTurn(
+	lease *coresession.Lease,
+	turn *coresession.Turn,
+	contextID string,
+) {
 	ctx := a.appContext()
 	res, err := turn.Wait(ctx)
 	runID := turn.RunID()
 
 	a.mu.Lock()
 	delete(a.turns, runID)
+	turnUsage := a.turnUsage
+	a.turnUsage = ocsessions.Usage{}
 	if a.broker != nil {
 		a.broker.UnbindTurn(runID)
 	}
+	store := a.sessions
 	a.mu.Unlock()
 	_ = lease.Close()
+
+	if store != nil && turnUsage.TotalTokens > 0 {
+		_ = store.RecordUsage(context.Background(), contextID, turnUsage)
+	}
 
 	end := TurnEnd{RunID: runID, Status: "unknown"}
 	if res != nil {

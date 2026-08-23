@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/runtime/session"
 
 	"github.com/GizClaw/opencraft/internal/agents"
@@ -62,6 +63,12 @@ type App struct {
 	// mode is the sandbox permission mode applied to new turns
 	// (defaults to workspace; yolo disables the sandbox).
 	mode ocsessions.Mode
+	// think is the reasoning effort applied to new turns
+	// (low/medium/high), persisted per conversation.
+	think string
+	// turnUsage accumulates inference usage for the active turn so it
+	// can be recorded into the session store on completion.
+	turnUsage ocsessions.Usage
 }
 
 // New creates the application shell. Runtime assembly is deferred to
@@ -101,6 +108,7 @@ func New(opts Options) (*App, error) {
 		turns:          make(map[string]*session.Turn),
 		conversationID: ocsessions.NewID(),
 		mode:           ocsessions.ModeWorkspace,
+		think:          string(ocsessions.ThinkMedium),
 		otelShutdown: shutdown,
 	}, nil
 }
@@ -156,7 +164,7 @@ func (a *App) rebuild() error {
 	}
 	rt, err := app.BuildRuntime(ctx, view.Document,
 		app.WithConfigBase(mgr.UserDir()),
-		app.WithUsageObserver(a.bridge.Usage))
+		app.WithUsageObserver(a.onUsage))
 	if err != nil {
 		return fmt.Errorf("desktop: assemble runtime: %w", err)
 	}
@@ -219,6 +227,7 @@ func (a *App) closeRuntime() {
 	a.ctrl = nil
 	a.sessions = nil
 	a.turns = make(map[string]*session.Turn)
+	a.turnUsage = ocsessions.Usage{}
 	a.mu.Unlock()
 
 	if broker != nil {
@@ -255,6 +264,27 @@ func (a *App) appContext() context.Context {
 		return a.ctx
 	}
 	return context.Background()
+}
+
+// onUsage forwards one usage report to the bridge and accumulates it
+// for the active turn's session record. It runs on the engine's
+// goroutine and must be non-blocking.
+func (a *App) onUsage(u inference.Usage) {
+	a.bridge.Usage(u)
+	a.mu.Lock()
+	a.turnUsage.TotalTokens += u.TotalTokens
+	a.turnUsage.InputTokens += u.InputTokens
+	a.turnUsage.OutputTokens += u.OutputTokens
+	if u.Output.ReasoningTokens != nil {
+		a.turnUsage.ReasoningTokens += *u.Output.ReasoningTokens
+	}
+	if u.Input.CacheReadTokens != nil {
+		a.turnUsage.CacheReadTokens += *u.Input.CacheReadTokens
+	}
+	if u.Input.CacheWriteTokens != nil {
+		a.turnUsage.CacheWriteTokens += *u.Input.CacheWriteTokens
+	}
+	a.mu.Unlock()
 }
 
 // initTelemetry wires the OTel pipelines (rotating log file under
