@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { EventsOn } from "../wailsjs/runtime/runtime";
 import { ChatView } from "./components/ChatView";
 import { FilePanel } from "./components/FilePanel";
@@ -14,6 +15,7 @@ export default function App() {
   const status = useStore((s) => s.status);
   const fatal = useStore((s) => s.fatal);
   const onboardingOpen = useStore((s) => s.onboardingOpen);
+  const { t } = useTranslation();
 
   useEffect(() => {
     void init();
@@ -25,8 +27,12 @@ export default function App() {
     return (
       <div className="h-full grid place-items-center">
         <div className="max-w-md rounded-xl border border-err/40 bg-panel p-6 text-sm">
-          <h2 className="font-semibold text-err mb-2">启动失败</h2>
-          <p className="text-dim whitespace-pre-wrap break-all">{fatal}</p>
+          <h2 className="font-semibold text-err mb-2">
+            {t("app.startupFailed")}
+          </h2>
+          <p className="text-dim whitespace-pre-wrap break-all">
+            {fatal || t("app.unknownError")}
+          </p>
         </div>
       </div>
     );
@@ -35,7 +41,7 @@ export default function App() {
   if (!status) {
     return (
       <div className="h-full grid place-items-center text-dim text-sm">
-        opencraft 启动中…
+        {t("app.starting")}
       </div>
     );
   }

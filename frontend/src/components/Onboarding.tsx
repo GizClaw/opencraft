@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, Loader2, X } from "lucide-react";
+import { useTranslation } from "react-i18next";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
 import type { ProviderView, SetupProvider } from "../lib/types";
@@ -22,6 +23,7 @@ export function Onboarding() {
   const [order, setOrder] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+  const { t } = useTranslation();
 
   useEffect(() => {
     void api.providers().then((providers) => {
@@ -74,7 +76,7 @@ export function Onboarding() {
   const save = async () => {
     setError("");
     if (selectedRows.length === 0) {
-      setError("至少选择一个 provider");
+      setError(t("setup.selectProvider"));
       return;
     }
     const providers: SetupProvider[] = selectedRows.map((r) => ({
@@ -104,10 +106,9 @@ export function Onboarding() {
       <div className="w-[680px] max-h-[85vh] flex flex-col rounded-2xl border border-edge bg-panel shadow-2xl">
         <div className="flex items-center justify-between px-5 py-4 border-b border-edge">
           <div>
-            <h2 className="text-base font-semibold">推理配置</h2>
+            <h2 className="text-base font-semibold">{t("setup.title")}</h2>
             <p className="text-xs text-dim mt-0.5">
-              勾选你拥有的 provider，按优先级排序；配置写入
-              ~/.opencraft/config/opencraft.yaml
+              {t("setup.subtitle")}
             </p>
           </div>
           {configured && (
@@ -143,7 +144,9 @@ export function Onboarding() {
                       value={row.key}
                       onChange={(e) => update(row.provider.id, { key: e.target.value })}
                       disabled={row.keyEnv}
-                      placeholder={`API Key（或使用 $${row.provider.env_var}）`}
+                      placeholder={t("setup.apiKeyPlaceholder", {
+                        var: row.provider.env_var,
+                      })}
                       className="flex-1 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent disabled:opacity-40"
                     />
                     <label className="flex items-center gap-1.5 text-xs text-dim whitespace-nowrap">
@@ -153,7 +156,7 @@ export function Onboarding() {
                         onChange={(e) => update(row.provider.id, { keyEnv: e.target.checked })}
                         className="accent-[var(--color-accent)]"
                       />
-                      环境变量 ${row.provider.env_var}
+                      {t("setup.envVar", { var: row.provider.env_var })}
                     </label>
                   </div>
                   {row.provider.azure ? (
@@ -162,13 +165,13 @@ export function Onboarding() {
                         <input
                           value={row.endpoint}
                           onChange={(e) => update(row.provider.id, { endpoint: e.target.value })}
-                          placeholder="Endpoint，如 https://xxx.openai.azure.com"
+                          placeholder={t("setup.endpointPlaceholder")}
                           className="flex-1 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
                         />
                         <input
                           value={row.model}
                           onChange={(e) => update(row.provider.id, { model: e.target.value })}
-                          placeholder="Deployment 名称"
+                          placeholder={t("setup.deploymentName")}
                           className="w-48 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
                         />
                       </div>
@@ -180,16 +183,16 @@ export function Onboarding() {
                             onChange={(e) => update(row.provider.id, { vision: e.target.checked })}
                             className="accent-[var(--color-accent)]"
                           />
-                          图像输入
+                          {t("setup.vision")}
                         </label>
                         <label className="flex items-center gap-1.5">
-                          推理
+                          {t("setup.reasoning")}
                           <select
                             value={row.reasoning}
                             onChange={(e) => update(row.provider.id, { reasoning: e.target.value })}
                             className="rounded border border-edge bg-panel px-2 py-1 outline-none"
                           >
-                            <option value="">关闭</option>
+                            <option value="">{t("setup.reasoningOff")}</option>
                             <option value="always">always</option>
                             <option value="toggle">toggle</option>
                           </select>
@@ -201,13 +204,13 @@ export function Onboarding() {
                             onChange={(e) => update(row.provider.id, { webSearch: e.target.checked })}
                             className="accent-[var(--color-accent)]"
                           />
-                          hosted web search
+                          {t("setup.webSearch")}
                         </label>
                       </div>
                     </>
                   ) : (
                     <div className="flex items-center gap-2">
-                      <span className="text-xs text-dim">模型</span>
+                      <span className="text-xs text-dim">{t("setup.model")}</span>
                       <input
                         value={row.model}
                         onChange={(e) => update(row.provider.id, { model: e.target.value })}
@@ -223,7 +226,7 @@ export function Onboarding() {
           {selectedRows.length > 1 && (
             <div className="rounded-xl border border-edge bg-panel2 p-3">
               <div className="text-xs text-dim mb-2">
-                路由优先级（上方优先，失败自动回退）
+                {t("setup.routerPriority")}
               </div>
               <div className="space-y-1.5">
                 {selectedRows.map((row, idx) => (
@@ -263,7 +266,7 @@ export function Onboarding() {
             className="flex items-center gap-1.5 rounded-lg bg-accent px-5 py-2 text-sm text-white hover:opacity-90 disabled:opacity-50"
           >
             {saving && <Loader2 size={14} className="animate-spin" />}
-            保存并应用
+            {t("setup.saveApply")}
           </button>
         </div>
       </div>

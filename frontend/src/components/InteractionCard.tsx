@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { HelpCircle, X } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -10,6 +11,7 @@ export function InteractionCard({ spec }: { spec: InteractDTO }) {
   const [text, setText] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
   const [other, setOther] = useState("");
+  const { t } = useTranslation();
 
   const bodyText = spec.body
     .map((p) => (p.type === "text" ? (p.text ?? "") : ""))
@@ -48,7 +50,7 @@ export function InteractionCard({ spec }: { spec: InteractDTO }) {
     <div className="rounded-xl border border-warn/40 bg-panel2 p-4 my-3">
       <div className="flex items-center gap-2 text-sm font-medium">
         <HelpCircle size={16} className="text-warn" />
-        {spec.title || "需要你的确认"}
+        {spec.title || t("interact.needConfirm")}
       </div>
       {bodyText && (
         <div className="prose-chat text-sm mt-2">
@@ -77,7 +79,7 @@ export function InteractionCard({ spec }: { spec: InteractDTO }) {
             <input
               value={other}
               onChange={(e) => setOther(e.target.value)}
-              placeholder="其他（自定义输入）…"
+              placeholder={t("interact.otherPlaceholder")}
               className="w-full rounded-lg border border-edge bg-panel px-3 py-2 text-sm outline-none focus:border-accent"
             />
           )}
@@ -90,7 +92,7 @@ export function InteractionCard({ spec }: { spec: InteractDTO }) {
           onChange={(e) => setText(e.target.value)}
           rows={3}
           autoFocus
-          placeholder="输入你的回答…"
+          placeholder={t("interact.answerPlaceholder")}
           className="mt-3 w-full rounded-lg border border-edge bg-panel px-3 py-2 text-sm outline-none focus:border-accent resize-y"
         />
       )}
@@ -100,13 +102,13 @@ export function InteractionCard({ spec }: { spec: InteractDTO }) {
           onClick={submit}
           className="rounded-lg bg-accent text-white px-4 py-1.5 text-sm hover:opacity-90"
         >
-          提交
+          {t("interact.submit")}
         </button>
         <button
           onClick={() => void replyInteract({ text: "", cancel: true })}
           className="flex items-center gap-1 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
         >
-          <X size={13} /> 取消
+          <X size={13} /> {t("interact.cancel")}
         </button>
       </div>
     </div>

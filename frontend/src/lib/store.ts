@@ -169,7 +169,7 @@ export const useStore = create<StoreState>((set, get) => {
           });
           break;
         case "fatal":
-          set({ fatal: (ev.data as { error: string }).error ?? "未知错误" });
+          set({ fatal: (ev.data as { error: string }).error ?? "" });
           break;
         case "stream":
           applyStream(ev.data as StreamDelta);
@@ -220,7 +220,7 @@ export const useStore = create<StoreState>((set, get) => {
           },
         ],
         busy: true,
-        statusText: "等待回复…",
+        statusText: "",
       });
       try {
         const start = await api.startTurn(trimmed);

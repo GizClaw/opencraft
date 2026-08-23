@@ -54,7 +54,7 @@ func (a *App) Providers() []ProviderView {
 // layer and rebuilds the runtime.
 func (a *App) SaveSetup(req SetupRequest) error {
 	if len(req.Providers) == 0 {
-		return errors.New("至少选择一个 provider")
+		return errors.New("select at least one provider")
 	}
 	cfg := setup.Config{}
 	for _, p := range req.Providers {
@@ -75,10 +75,13 @@ func (a *App) SaveSetup(req SetupRequest) error {
 		case p.KeyEnv:
 			keyed.KeySource = setup.KeyEnv
 			if os.Getenv(prov.EnvVar) == "" {
-				return fmt.Errorf("环境变量 %s 未设置，无法使用 env 方式存储密钥", prov.EnvVar)
+				return fmt.Errorf(
+					"environment variable %s is not set; cannot use the env key source",
+					prov.EnvVar)
 			}
 		case strings.TrimSpace(p.Key) == "":
-			return fmt.Errorf("provider %s: 需要 API key 或选择环境变量方式", prov.ID)
+			return fmt.Errorf(
+				"provider %s: an API key or the env key source is required", prov.ID)
 		default:
 			keyed.KeyValue = strings.TrimSpace(p.Key)
 		}
@@ -111,10 +114,11 @@ func (a *App) StartTurn(text string) (TurnStart, error) {
 	store := a.sessions
 	a.mu.Unlock()
 	if ctrl == nil || ctrl.Runtime() == nil || broker == nil {
-		return TurnStart{}, errors.New("runtime 未就绪：请先完成推理配置")
+		return TurnStart{}, errors.New(
+			"runtime is not ready: complete the inference setup first")
 	}
 	if strings.TrimSpace(text) == "" {
-		return TurnStart{}, errors.New("消息不能为空")
+		return TurnStart{}, errors.New("message is required")
 	}
 	ctx := a.appContext()
 
@@ -209,7 +213,7 @@ func (a *App) CancelTurn(runID string) error {
 	turn := a.turns[runID]
 	a.mu.Unlock()
 	if turn == nil {
-		return fmt.Errorf("turn %s 不存在", runID)
+		return fmt.Errorf("turn %s not found", runID)
 	}
 	turn.Cancel()
 	return nil

@@ -1,9 +1,11 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { Check, ChevronDown, ChevronRight, Loader2, Wrench, X } from "lucide-react";
 import type { ToolView } from "../lib/store";
 
 export function ToolCard({ tool }: { tool: ToolView }) {
   const [open, setOpen] = useState(false);
+  const { t } = useTranslation();
   const Icon =
     tool.status === "running"
       ? Loader2
@@ -27,7 +29,7 @@ export function ToolCard({ tool }: { tool: ToolView }) {
         <Wrench size={13} className="text-dim" />
         <span className="font-mono text-xs">{tool.name}</span>
         <span className="flex-1" />
-        <span className="text-xs text-dim">{tool.status}</span>
+        <span className="text-xs text-dim">{t(`tool.${tool.status}`)}</span>
         {open ? <ChevronDown size={14} className="text-dim" /> : <ChevronRight size={14} className="text-dim" />}
       </button>
       {open && (

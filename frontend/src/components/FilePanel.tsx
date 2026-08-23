@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   ChevronDown,
   ChevronRight,
@@ -75,6 +76,7 @@ function TreeNode({ node, depth }: { node: FileNode; depth: number }) {
 export function FilePanel() {
   const workspace = useStore((s) => s.workspace);
   const [root, setRoot] = useState<FileNode[]>([]);
+  const { t } = useTranslation();
 
   const load = useCallback(async () => {
     try {
@@ -91,7 +93,9 @@ export function FilePanel() {
   return (
     <aside className="w-72 shrink-0 border-l border-edge bg-panel flex flex-col min-h-0">
       <div className="px-3 py-2 border-b border-edge flex items-center justify-between">
-        <span className="text-xs uppercase tracking-wider text-dim">工作区</span>
+        <span className="text-xs uppercase tracking-wider text-dim">
+          {t("files.workspace")}
+        </span>
         <button onClick={() => void load()} className="text-dim hover:text-fg">
           <RefreshCw size={12} />
         </button>

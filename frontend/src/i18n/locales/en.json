@@ -1,0 +1,69 @@
+{
+  "app": {
+    "starting": "opencraft is starting…",
+    "startupFailed": "Startup failed",
+    "unknownError": "Unknown error"
+  },
+  "sidebar": {
+    "newChat": "New chat",
+    "subagents": "Subagents",
+    "refresh": "Refresh",
+    "noAgents": "No subagents yet",
+    "noAgentsHint": "The assistant can create agents with create_agent",
+    "inferenceConfig": "Inference setup"
+  },
+  "chat": {
+    "running": "Running",
+    "empty": "Start a conversation with opencraft — describe a task and the assistant will drive the tools itself",
+    "emptyUnconfigured": "Finish the inference setup first",
+    "reasonCollapse": "Reasoning",
+    "thinking": "Thinking…",
+    "stop": "Stop",
+    "send": "Send",
+    "runningHint": "Running — stop it from the button on the right",
+    "enterHint": "Enter to send · Shift+Enter for a new line",
+    "placeholder": "Describe a task — Enter to send, Shift+Enter for a new line",
+    "placeholderUnconfigured": "Start chatting after finishing the inference setup",
+    "workspaceMode": "Workspace mode",
+    "yoloMode": "YOLO",
+    "yoloBanner": "YOLO mode: sandbox disabled — commands run directly on the host with no approval prompts",
+    "yoloConfirmTitle": "Switch to YOLO mode?",
+    "yoloConfirmBody": "YOLO disables the sandbox for this conversation: commands run on the host with the full environment, no approval prompts, and file tools can reach any path. It only applies to the current conversation.",
+    "confirmSwitch": "Switch"
+  },
+  "status": {
+    "ready": "Ready",
+    "thinking": "thinking"
+  },
+  "interact": {
+    "needConfirm": "Your input is needed",
+    "otherPlaceholder": "Other (custom input)…",
+    "answerPlaceholder": "Type your answer…",
+    "submit": "Submit",
+    "cancel": "Cancel"
+  },
+  "files": {
+    "workspace": "Workspace"
+  },
+  "setup": {
+    "title": "Inference setup",
+    "subtitle": "Select the providers you have keys for and order them by priority; the config is written to ~/.opencraft/config/opencraft.yaml",
+    "selectProvider": "Select at least one provider",
+    "apiKeyPlaceholder": "API Key (or use ${{var}})",
+    "envVar": "Env var ${{var}}",
+    "endpointPlaceholder": "Endpoint, e.g. https://xxx.openai.azure.com",
+    "deploymentName": "Deployment name",
+    "vision": "Image input",
+    "reasoning": "Reasoning",
+    "reasoningOff": "Off",
+    "webSearch": "hosted web search",
+    "model": "Model",
+    "routerPriority": "Routing priority (top first, automatic fallback on failure)",
+    "saveApply": "Save & apply"
+  },
+  "tool": {
+    "running": "running",
+    "done": "done",
+    "error": "failed"
+  }
+}
