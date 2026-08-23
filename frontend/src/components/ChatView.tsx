@@ -88,18 +88,23 @@ export function ChatView() {
                 </div>
               ) : (
                 <div key={msg.id} className="flex flex-col gap-1">
-                  {msg.reasoning && <Reasoning text={msg.reasoning} />}
-                  {msg.tools.map((tool) => (
-                    <ToolCard key={tool.id} tool={tool} />
-                  ))}
-                  {msg.text && (
-                    <div className="prose-chat text-sm">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {msg.text}
-                      </ReactMarkdown>
-                    </div>
-                  )}
-                  {!msg.text && msg.tools.length === 0 && busy && (
+                  {msg.items.map((item) => {
+                    switch (item.kind) {
+                      case "reasoning":
+                        return <Reasoning key={item.id} text={item.text} />;
+                      case "tool_call":
+                        return <ToolCard key={item.id} tool={item.tool} />;
+                      case "text":
+                        return (
+                          <div key={item.id} className="prose-chat text-sm">
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                              {item.text}
+                            </ReactMarkdown>
+                          </div>
+                        );
+                    }
+                  })}
+                  {msg.items.length === 0 && busy && (
                     <div className="flex items-center gap-2 text-dim text-sm py-1">
                       <Loader2 size={14} className="animate-spin" />
                       {t("chat.thinking")}

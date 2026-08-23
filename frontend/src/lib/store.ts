@@ -18,12 +18,22 @@ export interface ToolView {
   result?: string;
 }
 
+// AssistantItem preserves the stream arrival order of one rendered
+// block (reasoning trace, tool call, or text), so the chat renders
+// output in the exact order the model produced it instead of
+// grouping all reasoning / tools / text together.
+export type AssistantItem =
+  | { kind: "reasoning"; id: string; text: string }
+  | { kind: "tool_call"; id: string; tool: ToolView }
+  | { kind: "text"; id: string; text: string };
+
 export interface MessageView {
   id: string;
   role: "user" | "assistant";
+  // text carries the user message body; assistant messages render
+  // their ordered items instead.
   text: string;
-  reasoning: string;
-  tools: ToolView[];
+  items: AssistantItem[];
 }
 
 let msgSeq = 0;
@@ -76,22 +86,41 @@ export const useStore = create<StoreState>((set, get) => {
   ): { msg: MessageView; messages: MessageView[] } => {
     const last = messages[messages.length - 1];
     if (!last || last.role !== "assistant") {
-      const msg: MessageView = {
-        id: newID("msg"),
-        role: "assistant",
-        text: "",
-        reasoning: "",
-        tools: [],
-      };
-      return { msg, messages: [...messages, msg] };
-    }
+    const msg: MessageView = {
+      id: newID("msg"),
+      role: "assistant",
+      text: "",
+      items: [],
+    };
+    return { msg, messages: [...messages, msg] };
+  }
     // Always copy the message (and its tools) so every stream delta
     // produces a new array reference; otherwise the zustand selector
     // sees the same reference and React bails the re-render, leaving
     // streamed text and tool updates invisible until another state
     // change happens.
-    const msg = { ...last, tools: [...last.tools] };
+    const msg = { ...last, items: [...last.items] };
     return { msg, messages: [...messages.slice(0, -1), msg] };
+  };
+
+  const mergeAppend = (
+    msg: MessageView,
+    kind: "text" | "reasoning",
+    text: string,
+  ) => {
+    const items = msg.items;
+    const lastItem = items[items.length - 1];
+    if (lastItem && lastItem.kind === kind) {
+      msg.items = [
+        ...items.slice(0, -1),
+        { ...lastItem, text: lastItem.text + text },
+      ];
+    } else {
+      msg.items = [
+        ...items,
+        { kind, id: newID("part"), text },
+      ];
+    }
   };
 
   const applyStream = (delta: StreamDelta) => {
@@ -101,35 +130,64 @@ export const useStore = create<StoreState>((set, get) => {
     switch (part.type) {
       case "text": {
         const { msg, messages: next } = lastAssistant(messages);
-        msg.text += part.text ?? "";
+        const text = part.text ?? "";
+        if (text) mergeAppend(msg, "text", text);
         set({ messages: next });
         break;
       }
       case "reasoning": {
         const { msg, messages: next } = lastAssistant(messages);
-        msg.reasoning += part.text ?? "";
+        const text = part.text ?? "";
+        if (text) mergeAppend(msg, "reasoning", text);
         set({ messages: next });
         break;
       }
       case "tool_call": {
         const { msg, messages: next } = lastAssistant(messages);
-        msg.tools.push({
-          id: part.call.id,
-          name: part.call.name,
-          args: normalizeArgs(part.call.arguments),
-          status: "running",
-        });
+        msg.items = [
+          ...msg.items,
+          {
+            kind: "tool_call",
+            id: newID("part"),
+            tool: {
+              id: part.call.id,
+              name: part.call.name,
+              args: normalizeArgs(part.call.arguments),
+              status: "running",
+            },
+          },
+        ];
         set({ messages: next });
         break;
       }
       case "tool_result": {
         const id = part.result.call_id;
-        const { messages: next } = get();
-        for (const m of next) {
-          const tool = m.tools.find((t) => t.id === id);
-          if (tool) {
-            tool.status = part.result.is_error ? "error" : "done";
-            tool.result = part.result.content ?? "";
+        const messages = get().messages;
+        let next = messages;
+        for (let i = 0; i < messages.length; i++) {
+          const m = messages[i];
+          if (m.role !== "assistant") continue;
+          const items = m.items;
+          let changed = false;
+          const updatedItems = items.map((item) => {
+            if (item.kind !== "tool_call" || item.tool.id !== id) return item;
+            changed = true;
+            return {
+              ...item,
+              tool: {
+                ...item.tool,
+                status: part.result.is_error ? ("error" as const) : ("done" as const),
+                result: part.result.content ?? "",
+              },
+            };
+          });
+          if (changed) {
+            const updatedMsg = { ...m, items: updatedItems };
+            next = [
+              ...messages.slice(0, i),
+              updatedMsg,
+              ...messages.slice(i + 1),
+            ];
             break;
           }
         }
@@ -221,8 +279,7 @@ export const useStore = create<StoreState>((set, get) => {
           if (data.error) {
             const { messages } = get();
             const { msg, messages: next } = lastAssistant(messages);
-            msg.text +=
-              msg.text.length > 0 ? `\n\n> ⛔ ${data.error}` : `⛔ ${data.error}`;
+            mergeAppend(msg, "text", `\n\n> ⛔ ${data.error}`);
             set({ messages: next });
           }
           set({ busy: false, activeRunID: null });
@@ -241,8 +298,7 @@ export const useStore = create<StoreState>((set, get) => {
             id: newID("msg"),
             role: "user",
             text: trimmed,
-            reasoning: "",
-            tools: [],
+            items: [],
           },
         ],
         busy: true,
