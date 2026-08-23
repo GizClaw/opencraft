@@ -29,6 +29,18 @@ export interface MessageView {
 let msgSeq = 0;
 const newID = (prefix: string) => `${prefix}-${Date.now()}-${msgSeq++}`;
 
+// normalizeArgs coerces the wire form of tool arguments to a string:
+// arguments is a json.RawMessage, so the frontend receives a parsed
+// object/array rather than text, and rendering it raw crashes React.
+function normalizeArgs(args: unknown): string {
+  if (typeof args === "string") return args;
+  try {
+    return JSON.stringify(args, null, 2);
+  } catch {
+    return String(args);
+  }
+}
+
 interface StoreState {
   status: ConfigStatus | null;
   configured: boolean;
@@ -62,18 +74,24 @@ export const useStore = create<StoreState>((set, get) => {
   const lastAssistant = (
     messages: MessageView[],
   ): { msg: MessageView; messages: MessageView[] } => {
-    let msg = messages[messages.length - 1];
-    if (!msg || msg.role !== "assistant") {
-      msg = {
+    const last = messages[messages.length - 1];
+    if (!last || last.role !== "assistant") {
+      const msg: MessageView = {
         id: newID("msg"),
         role: "assistant",
         text: "",
         reasoning: "",
         tools: [],
       };
-      messages = [...messages, msg];
+      return { msg, messages: [...messages, msg] };
     }
-    return { msg, messages };
+    // Always copy the message (and its tools) so every stream delta
+    // produces a new array reference; otherwise the zustand selector
+    // sees the same reference and React bails the re-render, leaving
+    // streamed text and tool updates invisible until another state
+    // change happens.
+    const msg = { ...last, tools: [...last.tools] };
+    return { msg, messages: [...messages.slice(0, -1), msg] };
   };
 
   const applyStream = (delta: StreamDelta) => {
@@ -98,7 +116,7 @@ export const useStore = create<StoreState>((set, get) => {
         msg.tools.push({
           id: part.call.id,
           name: part.call.name,
-          args: part.call.arguments ?? "",
+          args: normalizeArgs(part.call.arguments),
           status: "running",
         });
         set({ messages: next });
