@@ -1,12 +1,12 @@
 module github.com/GizClaw/opencraft
 
-go 1.26.5
+go 1.25.5
 
 require (
 	github.com/GizClaw/flowcraft/core v0.1.26
 	github.com/GizClaw/flowcraft/driver/anthropic v0.1.6
 	github.com/GizClaw/flowcraft/driver/azure v0.1.9
-	github.com/GizClaw/flowcraft/driver/bytedance v0.1.9
+	github.com/GizClaw/flowcraft/driver/bytedance v0.1.11
 	github.com/GizClaw/flowcraft/driver/deepseek v0.1.6
 	github.com/GizClaw/flowcraft/driver/kimi v0.1.6
 	github.com/GizClaw/flowcraft/driver/minimax v0.1.6
@@ -36,7 +36,6 @@ require (
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.22.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.12.0 // indirect
-	github.com/GizClaw/doubao-speech-go v0.0.0-20260723152315-fe8153366feb // indirect
 	github.com/alecthomas/chroma/v2 v2.20.0 // indirect
 	github.com/andybalholm/cascadia v1.3.3 // indirect
 	github.com/anthropics/anthropic-sdk-go v1.61.0 // indirect
@@ -70,7 +69,6 @@ require (
 	github.com/google/pprof v0.0.0-20260802141513-ef3492d7dac3 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
-	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.7 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
