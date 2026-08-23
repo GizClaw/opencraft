@@ -167,17 +167,29 @@ func (a *App) rebuild() error {
 		return fmt.Errorf("desktop: attach broker: %w", err)
 	}
 
-	userData, err := config.UserDataDir()
-	if err != nil {
-		broker.Close()
-		_ = ctrl.Close()
-		return fmt.Errorf("desktop: user data dir: %w", err)
+	// Prefer the runtime's session store resource: the memory hook
+	// and the sandbox share it, so permissions (YOLO), history, and
+	// the sessions list all read the same data. A private store is
+	// only a fallback for runtimes assembled without the resource.
+	var store *ocsessions.Store
+	if value, ok := rt.Resource("sessions"); ok {
+		if svc, ok := value.(*ocsessions.Store); ok {
+			store = svc
+		}
 	}
-	store, err := ocsessions.New(filepath.Join(userData, "sessions"), 40)
-	if err != nil {
-		broker.Close()
-		_ = ctrl.Close()
-		return fmt.Errorf("desktop: session store: %w", err)
+	if store == nil {
+		userData, err := config.UserDataDir()
+		if err != nil {
+			broker.Close()
+			_ = ctrl.Close()
+			return fmt.Errorf("desktop: user data dir: %w", err)
+		}
+		store, err = ocsessions.New(filepath.Join(userData, "sessions"), 40)
+		if err != nil {
+			broker.Close()
+			_ = ctrl.Close()
+			return fmt.Errorf("desktop: session store: %w", err)
+		}
 	}
 
 	var lifecycle *agents.Lifecycle
