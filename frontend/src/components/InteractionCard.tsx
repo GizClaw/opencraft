@@ -39,7 +39,7 @@ export function InteractionCard({ spec }: { spec: InteractDTO }) {
         : spec.allow_other && other.trim()
           ? other
           : "";
-    void replyInteract({
+    void replyInteract(spec.id, {
       text: finalText,
       option: !spec.multi && selected[0] ? selected[0] : null,
       options: spec.multi ? choices : undefined,
@@ -105,7 +105,7 @@ export function InteractionCard({ spec }: { spec: InteractDTO }) {
           {t("interact.submit")}
         </button>
         <button
-          onClick={() => void replyInteract({ text: "", cancel: true })}
+          onClick={() => void replyInteract(spec.id, { text: "", cancel: true })}
           className="flex items-center gap-1 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
         >
           <X size={13} /> {t("interact.cancel")}

@@ -39,7 +39,9 @@ interface StoreState {
   messages: MessageView[];
   busy: boolean;
   activeRunID: string | null;
-  pendingInteract: InteractDTO | null;
+  // Multiple prompts can be pending at once (parallel branches or
+  // consecutive ask_user calls); each renders as its own card.
+  pendingInteracts: InteractDTO[];
   mode: string;
   statusText: string;
   lastUsage: UsageDTO | null;
@@ -47,7 +49,7 @@ interface StoreState {
   init: () => Promise<void>;
   handleEvent: (ev: UIEvent) => void;
   send: (text: string) => Promise<void>;
-  replyInteract: (req: ReplyRequest) => Promise<void>;
+  replyInteract: (id: string, req: ReplyRequest) => Promise<void>;
   cancelRun: () => Promise<void>;
   openOnboarding: () => void;
   closeOnboarding: () => void;
@@ -129,7 +131,7 @@ export const useStore = create<StoreState>((set, get) => {
     messages: [],
     busy: false,
     activeRunID: null,
-    pendingInteract: null,
+    pendingInteracts: [],
     mode: "workspace",
     statusText: "",
     lastUsage: null,
@@ -181,13 +183,19 @@ export const useStore = create<StoreState>((set, get) => {
           set({ lastUsage: ev.data as UsageDTO });
           break;
         case "interact":
-          set({ pendingInteract: ev.data as InteractDTO });
+          {
+            const spec = ev.data as InteractDTO;
+            const pending = get().pendingInteracts;
+            if (!pending.some((p) => p.id === spec.id)) {
+              set({ pendingInteracts: [...pending, spec] });
+            }
+          }
           break;
         case "resolved": {
           const id = (ev.data as { id: string }).id;
-          if (get().pendingInteract?.id === id) {
-            set({ pendingInteract: null });
-          }
+          set({
+            pendingInteracts: get().pendingInteracts.filter((p) => p.id !== id),
+          });
           break;
         }
         case "turn_end": {
@@ -233,13 +241,13 @@ export const useStore = create<StoreState>((set, get) => {
       }
     },
 
-    replyInteract: async (req) => {
-      const pending = get().pendingInteract;
-      if (!pending) return;
+    replyInteract: async (id, req) => {
       try {
-        await api.replyPrompt(pending.id, req);
+        await api.replyPrompt(id, req);
       } finally {
-        set({ pendingInteract: null });
+        set({
+          pendingInteracts: get().pendingInteracts.filter((p) => p.id !== id),
+        });
       }
     },
 
@@ -266,7 +274,7 @@ export const useStore = create<StoreState>((set, get) => {
       set({
         messages: [],
         activeRunID: null,
-        pendingInteract: null,
+        pendingInteracts: [],
         mode: "workspace",
       });
     },

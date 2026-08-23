@@ -25,7 +25,7 @@ export function ChatView() {
   const messages = useStore((s) => s.messages);
   const busy = useStore((s) => s.busy);
   const configured = useStore((s) => s.configured);
-  const pendingInteract = useStore((s) => s.pendingInteract);
+  const pendingInteracts = useStore((s) => s.pendingInteracts);
   const workspace = useStore((s) => s.workspace);
   const send = useStore((s) => s.send);
   const cancelRun = useStore((s) => s.cancelRun);
@@ -45,7 +45,7 @@ export function ChatView() {
       top: scrollRef.current.scrollHeight,
       behavior: "smooth",
     });
-  }, [messages, pendingInteract]);
+  }, [messages, pendingInteracts]);
 
   const submit = () => {
     if (!input.trim() || busy) return;
@@ -108,7 +108,9 @@ export function ChatView() {
                 </div>
               ),
             )}
-            {pendingInteract && <InteractionCard spec={pendingInteract} />}
+            {pendingInteracts.map((spec) => (
+              <InteractionCard key={spec.id} spec={spec} />
+            ))}
           </div>
         )}
       </div>
