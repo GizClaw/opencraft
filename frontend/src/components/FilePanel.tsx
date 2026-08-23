@@ -159,7 +159,7 @@ export function FilePanel() {
   };
 
   return (
-    <aside className="w-80 shrink-0 border-l border-edge bg-panel flex flex-col min-h-0">
+    <aside className="h-full border-l border-edge bg-panel flex flex-col min-h-0">
       <div className="px-3 py-2 border-b border-edge flex items-center gap-1">
         <button
           onClick={() => setTab("tree")}

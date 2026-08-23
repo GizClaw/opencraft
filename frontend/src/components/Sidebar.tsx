@@ -1,7 +1,9 @@
 import {
   FolderOpen,
+  Download,
   Kanban,
   MessageSquare,
+  Pencil,
   Plus,
   Settings,
   Trash2,
@@ -26,9 +28,13 @@ export function Sidebar() {
   const openKanban = useStore((s) => s.openKanban);
   const deleteSession = useStore((s) => s.deleteSession);
   const conversations = useStore((s) => s.conversations);
+  const flash = useStore((s) => s.flash);
+  const loadSessions = useStore((s) => s.loadSessions);
   const { t } = useTranslation();
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [sessionQuery, setSessionQuery] = useState("");
+  const [renameId, setRenameId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
 
   const fmtTime = (iso: string) => {
     const d = new Date(iso);
@@ -45,7 +51,7 @@ export function Sidebar() {
     n >= 1000 ? `${(n / 1000).toFixed(1)}k` : n > 0 ? String(n) : "";
 
   return (
-    <aside className="w-60 shrink-0 border-r border-edge bg-panel flex flex-col min-h-0">
+    <aside className="h-full border-r border-edge bg-panel flex flex-col min-h-0">
       <div className="px-4 py-3 border-b border-edge">
         <div className="font-semibold tracking-wide">opencraft</div>
       </div>
@@ -108,7 +114,27 @@ export function Sidebar() {
                           size={13}
                           className="text-dim shrink-0"
                         />
-                        <span className="flex-1 truncate">{s.title}</span>
+                        {renameId === s.id ? (
+                          <input
+                            autoFocus
+                            value={renameValue}
+                            onChange={(e) => setRenameValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                void api
+                                  .renameSession(s.id, renameValue)
+                                  .then(loadSessions)
+                                  .then(() => setRenameId(null));
+                              } else if (e.key === "Escape") {
+                                setRenameId(null);
+                              }
+                            }}
+                            onBlur={() => setRenameId(null)}
+                            className="flex-1 min-w-0 rounded border border-accent bg-panel px-1 py-0 text-xs outline-none"
+                          />
+                        ) : (
+                          <span className="flex-1 truncate">{s.title}</span>
+                        )}
                         {conversations[s.id]?.busy && (
                           <Loader2
                             size={12}
@@ -121,6 +147,29 @@ export function Sidebar() {
                         <span className="text-xs text-dim shrink-0">
                           {fmtTime(s.updated_at)}
                         </span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setRenameId(s.id);
+                          setRenameValue(s.title);
+                        }}
+                        className="text-dim opacity-0 group-hover:opacity-100 hover:text-accent shrink-0"
+                        title={t("sidebar.renameSession")}
+                      >
+                        <Pencil size={12} />
+                      </button>
+                      <button
+                        onClick={() =>
+                          void api
+                            .exportSession(s.id)
+                            .then((path) =>
+                              flash(t("sidebar.exportedTo", { path })),
+                            )
+                        }
+                        className="text-dim opacity-0 group-hover:opacity-100 hover:text-ok shrink-0"
+                        title={t("sidebar.exportSession")}
+                      >
+                        <Download size={12} />
                       </button>
                       <button
                         onClick={() => setConfirmDelete(s.id)}

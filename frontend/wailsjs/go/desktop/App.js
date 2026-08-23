@@ -42,6 +42,10 @@ export function DenyPermission(arg1) {
   return window['go']['desktop']['App']['DenyPermission'](arg1);
 }
 
+export function ExportSession(arg1) {
+  return window['go']['desktop']['App']['ExportSession'](arg1);
+}
+
 export function FileDiff(arg1) {
   return window['go']['desktop']['App']['FileDiff'](arg1);
 }
@@ -92,6 +96,10 @@ export function ReadLog(arg1) {
 
 export function Reload() {
   return window['go']['desktop']['App']['Reload']();
+}
+
+export function RenameSession(arg1, arg2) {
+  return window['go']['desktop']['App']['RenameSession'](arg1, arg2);
 }
 
 export function ReplyPrompt(arg1, arg2) {

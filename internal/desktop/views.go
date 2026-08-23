@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -33,16 +34,90 @@ func (a *App) ListSessions() ([]SessionMeta, error) {
 	}
 	out := make([]SessionMeta, 0, len(metas))
 	for _, m := range metas {
-		out = append(out, SessionMeta{
+		meta := SessionMeta{
 			ID:          m.ID,
 			Title:       m.Title,
 			CreatedAt:   m.CreatedAt,
 			UpdatedAt:   m.UpdatedAt,
 			Messages:    m.Messages,
 			TotalTokens: m.Usage.TotalTokens,
-		})
+		}
+		if title := a.sessionTitle(store, m.ID, m.Title); title != "" {
+			meta.Title = title
+		}
+		out = append(out, meta)
 	}
 	return out, nil
+}
+
+// sessionTitle returns the user-renamed title for a conversation,
+// falling back to the generated title.
+func (a *App) sessionTitle(
+	store *ocsessions.Store,
+	id, fallback string,
+) string {
+	var custom string
+	if store.ReadState(id, "title", &custom) == nil &&
+		strings.TrimSpace(custom) != "" {
+		return custom
+	}
+	return fallback
+}
+
+// RenameSession sets a custom display title for one conversation.
+func (a *App) RenameSession(id, title string) error {
+	title = strings.TrimSpace(title)
+	if title == "" {
+		return errors.New("title is required")
+	}
+	a.mu.Lock()
+	store := a.sessions
+	a.mu.Unlock()
+	if store == nil {
+		return errors.New("session store is not available")
+	}
+	return store.WriteState(id, "title", title)
+}
+
+// ExportSession writes one conversation's transcript to
+// <workspace>/.opencraft/exports/<id>.md and returns the path.
+func (a *App) ExportSession(id string) (string, error) {
+	a.mu.Lock()
+	store := a.sessions
+	workDir := a.workDir
+	a.mu.Unlock()
+	if store == nil {
+		return "", errors.New("session store is not available")
+	}
+	msgs, err := store.History(context.Background(), id, 0)
+	if err != nil {
+		return "", err
+	}
+	title := a.sessionTitle(store, id, id)
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s\n\n", title)
+	for _, m := range msgs {
+		var text string
+		for _, p := range m.Content.Parts {
+			if tp, ok := p.(message.TextPart); ok {
+				text += tp.Text
+			}
+		}
+		role := "User"
+		if m.Role == message.RoleAssistant {
+			role = "Assistant"
+		}
+		fmt.Fprintf(&b, "## %s\n\n%s\n\n", role, text)
+	}
+	dir := filepath.Join(workDir, ".opencraft", "exports")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, id+".md")
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 // CurrentSession returns the active conversation id.

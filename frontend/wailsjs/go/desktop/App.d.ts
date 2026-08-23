@@ -23,6 +23,8 @@ export function DeleteSession(arg1:string):Promise<void>;
 
 export function DenyPermission(arg1:string):Promise<void>;
 
+export function ExportSession(arg1:string):Promise<string>;
+
 export function FileDiff(arg1:string):Promise<string>;
 
 export function GetThink():Promise<string>;
@@ -48,6 +50,8 @@ export function ReadFile(arg1:string):Promise<string>;
 export function ReadLog(arg1:number):Promise<string>;
 
 export function Reload():Promise<void>;
+
+export function RenameSession(arg1:string,arg2:string):Promise<void>;
 
 export function ReplyPrompt(arg1:string,arg2:desktop.ReplyRequest):Promise<boolean>;
 

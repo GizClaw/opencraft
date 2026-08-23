@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import i18n from "./i18n";
 import {
@@ -27,6 +27,12 @@ export default function App() {
   const openConfig = useStore((s) => s.openConfig);
   const openKanban = useStore((s) => s.openKanban);
   const { t } = useTranslation();
+  const [sidebarW, setSidebarW] = useState(
+    () => Number(localStorage.getItem("oc.sidebarW")) || 240,
+  );
+  const [fileW, setFileW] = useState(
+    () => Number(localStorage.getItem("oc.fileW")) || 320,
+  );
 
   useEffect(() => {
     void init();
@@ -77,6 +83,33 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [newChat, openConfig, openKanban]);
 
+  const startDrag =
+    (side: "sidebar" | "file") => (e: React.MouseEvent) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = side === "sidebar" ? sidebarW : fileW;
+      const onMove = (ev: MouseEvent) => {
+        const raw =
+          side === "sidebar"
+            ? startW + (ev.clientX - startX)
+            : startW + (startX - ev.clientX);
+        const next = Math.min(480, Math.max(180, raw));
+        if (side === "sidebar") {
+          setSidebarW(next);
+          localStorage.setItem("oc.sidebarW", String(next));
+        } else {
+          setFileW(next);
+          localStorage.setItem("oc.fileW", String(next));
+        }
+      };
+      const onUp = () => {
+        window.removeEventListener("mousemove", onMove);
+        window.removeEventListener("mouseup", onUp);
+      };
+      window.addEventListener("mousemove", onMove);
+      window.addEventListener("mouseup", onUp);
+    };
+
   if (fatal) {
     return (
       <div className="h-full grid place-items-center">
@@ -103,9 +136,21 @@ export default function App() {
   return (
     <div className="h-full flex flex-col">
       <div className="flex-1 flex min-h-0">
-        <Sidebar />
+        <div style={{ width: sidebarW }} className="shrink-0">
+          <Sidebar />
+        </div>
+        <div
+          onMouseDown={startDrag("sidebar")}
+          className="w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-accent/40"
+        />
         <ChatView />
-        <FilePanel />
+        <div
+          onMouseDown={startDrag("file")}
+          className="w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-accent/40"
+        />
+        <div style={{ width: fileW }} className="shrink-0">
+          <FilePanel />
+        </div>
       </div>
       <StatusBar />
       {configOpen && <ConfigPage />}

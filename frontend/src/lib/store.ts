@@ -238,6 +238,7 @@ interface StoreState {
   loadCards: () => Promise<void>;
   openKanban: () => void;
   closeKanban: () => void;
+  flash: (text: string) => void;
 }
 
 export const useStore = create<StoreState>((set, get) => {
@@ -620,5 +621,6 @@ export const useStore = create<StoreState>((set, get) => {
 
     openKanban: () => set({ kanbanOpen: true }),
     closeKanban: () => set({ kanbanOpen: false }),
+    flash: (text) => set({ statusText: text }),
   };
 });
