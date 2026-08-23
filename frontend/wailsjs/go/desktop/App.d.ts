@@ -11,6 +11,8 @@ export function ListAgents():Promise<Array<agents.Summary>>;
 
 export function ListDir(arg1:string):Promise<Array<desktop.FileNode>>;
 
+export function NewChat():Promise<string>;
+
 export function OpenPath(arg1:string):Promise<void>;
 
 export function Providers():Promise<Array<desktop.ProviderView>>;
@@ -20,6 +22,10 @@ export function Reload():Promise<void>;
 export function ReplyPrompt(arg1:string,arg2:desktop.ReplyRequest):Promise<boolean>;
 
 export function SaveSetup(arg1:desktop.SetupRequest):Promise<void>;
+
+export function SessionMode():Promise<string>;
+
+export function SetSessionMode(arg1:string):Promise<void>;
 
 export function StartTurn(arg1:string):Promise<desktop.TurnStart>;
 

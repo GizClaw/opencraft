@@ -40,6 +40,7 @@ interface StoreState {
   busy: boolean;
   activeRunID: string | null;
   pendingInteract: InteractDTO | null;
+  mode: string;
   statusText: string;
   lastUsage: UsageDTO | null;
 
@@ -51,6 +52,7 @@ interface StoreState {
   openOnboarding: () => void;
   closeOnboarding: () => void;
   newChat: () => void;
+  setMode: (mode: string) => Promise<void>;
   refreshAgents: () => Promise<void>;
 }
 
@@ -128,19 +130,22 @@ export const useStore = create<StoreState>((set, get) => {
     busy: false,
     activeRunID: null,
     pendingInteract: null,
+    mode: "workspace",
     statusText: "",
     lastUsage: null,
 
     init: async () => {
-      const [status, workspace] = await Promise.all([
+      const [status, workspace, mode] = await Promise.all([
         api.configStatus(),
         api.workspace(),
+        api.sessionMode(),
       ]);
       set({
         status,
         workspace,
         configured: !status.needed,
         onboardingOpen: status.needed,
+        mode,
       });
       void get().refreshAgents();
     },
@@ -252,8 +257,28 @@ export const useStore = create<StoreState>((set, get) => {
     openOnboarding: () => set({ onboardingOpen: true }),
     closeOnboarding: () => set({ onboardingOpen: false }),
 
-    newChat: () =>
-      set({ messages: [], activeRunID: null, pendingInteract: null }),
+    newChat: async () => {
+      try {
+        await api.newChat();
+      } catch {
+        // a fresh conversation id is best-effort; the UI resets anyway
+      }
+      set({
+        messages: [],
+        activeRunID: null,
+        pendingInteract: null,
+        mode: "workspace",
+      });
+    },
+
+    setMode: async (mode) => {
+      try {
+        await api.setSessionMode(mode);
+        set({ mode });
+      } catch (err) {
+        set({ statusText: String(err) });
+      }
+    },
 
     refreshAgents: async () => {
       try {

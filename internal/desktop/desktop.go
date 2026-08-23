@@ -53,6 +53,15 @@ type App struct {
 	sessions *ocsessions.Store
 	agents   *agents.Lifecycle
 	turns    map[string]*session.Turn
+
+	// conversationID is the stable session context for the current
+	// conversation. Every turn in the conversation reuses it so
+	// history accumulates and the sandbox permission mode applies to
+	// the whole conversation; NewChat mints a fresh one.
+	conversationID string
+	// mode is the sandbox permission mode applied to new turns
+	// (defaults to workspace; yolo disables the sandbox).
+	mode ocsessions.Mode
 }
 
 // New creates the application shell. Runtime assembly is deferred to
@@ -86,10 +95,12 @@ func New(opts Options) (*App, error) {
 		shutdown = nil
 	}
 	return &App{
-		workDir: workDir,
-		userDir: userDir,
-		bridge:  NewBridge(),
-		turns:   make(map[string]*session.Turn),
+		workDir:        workDir,
+		userDir:        userDir,
+		bridge:         NewBridge(),
+		turns:          make(map[string]*session.Turn),
+		conversationID: ocsessions.NewID(),
+		mode:           ocsessions.ModeWorkspace,
 		otelShutdown: shutdown,
 	}, nil
 }

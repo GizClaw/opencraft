@@ -18,6 +18,10 @@ export function ListDir(arg1) {
   return window['go']['desktop']['App']['ListDir'](arg1);
 }
 
+export function NewChat() {
+  return window['go']['desktop']['App']['NewChat']();
+}
+
 export function OpenPath(arg1) {
   return window['go']['desktop']['App']['OpenPath'](arg1);
 }
@@ -36,6 +40,14 @@ export function ReplyPrompt(arg1, arg2) {
 
 export function SaveSetup(arg1) {
   return window['go']['desktop']['App']['SaveSetup'](arg1);
+}
+
+export function SessionMode() {
+  return window['go']['desktop']['App']['SessionMode']();
+}
+
+export function SetSessionMode(arg1) {
+  return window['go']['desktop']['App']['SetSessionMode'](arg1);
 }
 
 export function StartTurn(arg1) {

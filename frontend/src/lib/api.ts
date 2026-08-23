@@ -20,6 +20,9 @@ export const api = {
     App.SaveSetup(req as unknown as gen.SetupRequest),
   reload: () => App.Reload(),
   workspace: () => App.Workspace(),
+  newChat: () => App.NewChat(),
+  sessionMode: () => App.SessionMode(),
+  setSessionMode: (mode: string) => App.SetSessionMode(mode),
   startTurn: (text: string) => App.StartTurn(text) as Promise<TurnStart>,
   replyPrompt: (promptID: string, reply: ReplyRequest) =>
     App.ReplyPrompt(promptID, reply as unknown as gen.ReplyRequest),

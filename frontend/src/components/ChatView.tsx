@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Send, Square } from "lucide-react";
+import { AlertTriangle, Flame, Loader2, Send, ShieldCheck, Square } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useStore } from "../lib/store";
@@ -27,7 +27,10 @@ export function ChatView() {
   const workspace = useStore((s) => s.workspace);
   const send = useStore((s) => s.send);
   const cancelRun = useStore((s) => s.cancelRun);
+  const mode = useStore((s) => s.mode);
+  const setMode = useStore((s) => s.setMode);
   const [input, setInput] = useState("");
+  const [confirmYolo, setConfirmYolo] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -46,6 +49,7 @@ export function ChatView() {
 
   const workspaceName =
     workspace.split(/[\\/]/).filter(Boolean).pop() ?? workspace;
+  const yolo = mode === "yolo";
 
   return (
     <main className="flex-1 min-w-0 flex flex-col min-h-0">
@@ -104,6 +108,12 @@ export function ChatView() {
 
       <div className="shrink-0 px-6 pb-4">
         <div className="max-w-3xl mx-auto rounded-xl border border-edge bg-panel focus-within:border-accent/60 transition-colors">
+          {yolo && (
+            <div className="flex items-center gap-2 rounded-t-xl border-b border-err/40 bg-err/10 px-4 py-1.5 text-xs text-err">
+              <AlertTriangle size={13} />
+              YOLO 模式：沙箱已禁用，命令直接在宿主机执行，无批准提示
+            </div>
+          )}
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -119,9 +129,23 @@ export function ChatView() {
             className="w-full resize-none bg-transparent px-4 pt-3 text-sm outline-none disabled:opacity-50"
           />
           <div className="flex items-center justify-between px-3 pb-2.5">
-            <span className="text-xs text-dim">
-              {busy ? "正在运行，可点击右侧停止" : "opencraft desktop"}
-            </span>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => (yolo ? void setMode("workspace") : setConfirmYolo(true))}
+                className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs transition-colors ${
+                  yolo
+                    ? "border-err/50 bg-err/10 text-err hover:bg-err/20"
+                    : "border-edge text-dim hover:text-fg"
+                }`}
+                title={yolo ? "点击切回工作区模式" : "点击进入 YOLO 模式"}
+              >
+                {yolo ? <Flame size={12} /> : <ShieldCheck size={12} />}
+                {yolo ? "YOLO" : "工作区模式"}
+              </button>
+              <span className="text-xs text-dim hidden sm:inline">
+                {busy ? "正在运行，可点击右侧停止" : "Enter 发送 · Shift+Enter 换行"}
+              </span>
+            </div>
             {busy ? (
               <button
                 onClick={() => void cancelRun()}
@@ -140,6 +164,37 @@ export function ChatView() {
             )}
           </div>
         </div>
+        {confirmYolo && (
+          <div className="fixed inset-0 z-40 grid place-items-center bg-black/60">
+            <div className="w-[420px] rounded-2xl border border-err/40 bg-panel p-5 shadow-2xl">
+              <div className="flex items-center gap-2 text-sm font-semibold text-err">
+                <AlertTriangle size={16} />
+                切换到 YOLO 模式？
+              </div>
+              <p className="mt-3 text-sm text-dim leading-relaxed">
+                YOLO 会禁用当前会话的沙箱：命令以完整环境在宿主机执行、
+                不再请求权限批准、文件工具可访问任意路径。仅对当前对话生效。
+              </p>
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  onClick={() => setConfirmYolo(false)}
+                  className="rounded-lg border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={() => {
+                    setConfirmYolo(false);
+                    void setMode("yolo");
+                  }}
+                  className="rounded-lg bg-err px-4 py-1.5 text-sm text-white hover:opacity-90"
+                >
+                  确认切换
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </main>
   );

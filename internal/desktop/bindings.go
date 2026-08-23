@@ -106,6 +106,9 @@ func (a *App) StartTurn(text string) (TurnStart, error) {
 	a.mu.Lock()
 	ctrl := a.ctrl
 	broker := a.broker
+	contextID := a.conversationID
+	mode := a.mode
+	store := a.sessions
 	a.mu.Unlock()
 	if ctrl == nil || ctrl.Runtime() == nil || broker == nil {
 		return TurnStart{}, errors.New("runtime 未就绪：请先完成推理配置")
@@ -116,7 +119,11 @@ func (a *App) StartTurn(text string) (TurnStart, error) {
 	ctx := a.appContext()
 
 	rt := ctrl.Runtime()
-	contextID := ocsessions.NewID()
+	if mode.IsYOLO() && store != nil {
+		if err := store.SetMode(contextID, mode); err != nil {
+			return TurnStart{}, fmt.Errorf("persist permission mode: %w", err)
+		}
+	}
 	key := coresession.Key{AgentID: "assistant", ContextID: contextID}
 	lease, err := rt.Sessions().Open(ctx, key)
 	if err != nil {
@@ -144,6 +151,50 @@ func (a *App) StartTurn(text string) (TurnStart, error) {
 	a.mu.Unlock()
 	go a.waitTurn(lease, turn)
 	return TurnStart{RunID: turn.RunID(), ContextID: contextID}, nil
+}
+
+// NewChat starts a fresh conversation: a new session context is
+// minted, so subsequent turns keep their own history and permission
+// mode. The conversation resets to workspace mode.
+func (a *App) NewChat() (string, error) {
+	a.mu.Lock()
+	a.conversationID = ocsessions.NewID()
+	a.mode = ocsessions.ModeWorkspace
+	id := a.conversationID
+	a.mu.Unlock()
+	return id, nil
+}
+
+// SessionMode returns the sandbox permission mode of the current
+// conversation ("workspace" or "yolo").
+func (a *App) SessionMode() (string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return string(a.mode), nil
+}
+
+// SetSessionMode switches the conversation's sandbox permission mode.
+// The change is persisted for the conversation and therefore also
+// applies to commands still running in the current turn.
+func (a *App) SetSessionMode(mode string) error {
+	m := ocsessions.Mode(mode)
+	switch m {
+	case ocsessions.ModeWorkspace, ocsessions.ModeYOLO:
+	default:
+		return fmt.Errorf("unknown permission mode %q", mode)
+	}
+	a.mu.Lock()
+	a.mode = m
+	contextID := a.conversationID
+	store := a.sessions
+	a.mu.Unlock()
+	if store == nil {
+		return nil
+	}
+	if err := store.SetMode(contextID, m); err != nil {
+		return fmt.Errorf("persist permission mode: %w", err)
+	}
+	return nil
 }
 
 // ReplyPrompt answers one pending interaction rendered by the UI.
