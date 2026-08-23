@@ -125,6 +125,13 @@ func (a *App) StartTurn(text string) (TurnStart, error) {
 	turn, err := lease.Session().Start(ctx, agent.Request{
 		ContextID: contextID,
 		Message:   message.NewTextMessage(message.RoleUser, text),
+	}, coresession.SinkSpec{
+		ID:         "desktop",
+		Sink:       agent.StreamSinkFunc(a.bridge.Sink),
+		QueueSize:  256,
+		Visibility: coresession.VisibilityRaw,
+		Authority:  coresession.AuthorityObserver,
+		AckMode:    coresession.AckOnDelivery,
 	})
 	if err != nil {
 		_ = lease.Close()
