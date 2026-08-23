@@ -50,6 +50,10 @@ export function FileDiff(arg1) {
   return window['go']['desktop']['App']['FileDiff'](arg1);
 }
 
+export function GetModel() {
+  return window['go']['desktop']['App']['GetModel']();
+}
+
 export function GetThink() {
   return window['go']['desktop']['App']['GetThink']();
 }
@@ -64,6 +68,10 @@ export function ListDir(arg1) {
 
 export function ListSessions() {
   return window['go']['desktop']['App']['ListSessions']();
+}
+
+export function ModelOptions() {
+  return window['go']['desktop']['App']['ModelOptions']();
 }
 
 export function NewChat() {
@@ -124,6 +132,10 @@ export function SessionHistory(arg1) {
 
 export function SessionMode() {
   return window['go']['desktop']['App']['SessionMode']();
+}
+
+export function SetModel(arg1) {
+  return window['go']['desktop']['App']['SetModel'](arg1);
 }
 
 export function SetSessionMode(arg1) {

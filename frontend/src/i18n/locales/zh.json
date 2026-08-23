@@ -93,6 +93,8 @@
     "thinkLow": "低",
     "thinkMedium": "中",
     "thinkHigh": "高",
+    "modelLabel": "模型",
+    "modelAuto": "自动",
     "retry": "重试上一条"
   },
   "status": {

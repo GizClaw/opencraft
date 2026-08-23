@@ -7,6 +7,7 @@ import type {
   HistoryMsg,
   InteractDTO,
   KanbanCard,
+  ModelOption,
   ReplyRequest,
   SessionMeta,
   StreamDelta,
@@ -50,6 +51,7 @@ export interface ConversationState {
   activeRunID: string | null;
   mode: string;
   think: string;
+  model: string;
   pendingInteracts: InteractDTO[];
   lastFailed: boolean;
 }
@@ -75,6 +77,7 @@ const emptyConv = (): ConversationState => ({
   activeRunID: null,
   mode: "workspace",
   think: "medium",
+  model: "",
   pendingInteracts: [],
   lastFailed: false,
 });
@@ -219,6 +222,7 @@ interface StoreState {
   lastUsage: UsageDTO | null;
   kanbanOpen: boolean;
   cards: KanbanCard[];
+  modelOptions: ModelOption[];
 
   init: () => Promise<void>;
   handleEvent: (ev: UIEvent) => void;
@@ -233,6 +237,7 @@ interface StoreState {
   deleteSession: (id: string) => Promise<void>;
   setMode: (mode: string) => Promise<void>;
   setThink: (level: string) => Promise<void>;
+  setModel: (model: string) => Promise<void>;
   refreshAgents: () => Promise<void>;
   loadSessions: () => Promise<void>;
   loadCards: () => Promise<void>;
@@ -298,15 +303,18 @@ export const useStore = create<StoreState>((set, get) => {
     lastUsage: null,
     kanbanOpen: false,
     cards: [],
+    modelOptions: [],
 
     init: async () => {
-      const [status, workspace, mode, currentSession, think] =
+      const [status, workspace, mode, currentSession, think, model, modelOptions] =
         await Promise.all([
           api.configStatus(),
           api.workspace(),
           api.sessionMode(),
           api.currentSession(),
           api.getThink(),
+          api.getModel(),
+          api.modelOptions(),
         ]);
       set({
         status,
@@ -315,8 +323,9 @@ export const useStore = create<StoreState>((set, get) => {
         configOpen: status.needed,
         current: currentSession,
         conversations: {
-          [currentSession]: { ...emptyConv(), mode, think },
+          [currentSession]: { ...emptyConv(), mode, think, model },
         },
+        modelOptions,
       });
       void get().refreshAgents();
       void get().loadSessions();
@@ -343,6 +352,9 @@ export const useStore = create<StoreState>((set, get) => {
             configOpen: false,
             fatal: null,
           });
+          void api.modelOptions().then((modelOptions) =>
+            set({ modelOptions }),
+          );
           void get().refreshAgents();
           break;
         }
@@ -541,10 +553,11 @@ export const useStore = create<StoreState>((set, get) => {
         return;
       }
       try {
-        const [mode, history, think] = await Promise.all([
+        const [mode, history, think, model] = await Promise.all([
           api.sessionMode(),
           api.sessionHistory(id),
           api.getThink(),
+          api.getModel(),
         ]);
         set((state) => ({
           current: id,
@@ -554,6 +567,7 @@ export const useStore = create<StoreState>((set, get) => {
               ...emptyConv(),
               mode,
               think,
+              model,
               messages: historyToMessages(history),
             },
           },
@@ -590,6 +604,15 @@ export const useStore = create<StoreState>((set, get) => {
       try {
         await api.setThink(level);
         updateConv(get().current, { think: level });
+      } catch (err) {
+        set({ statusText: String(err) });
+      }
+    },
+
+    setModel: async (model) => {
+      try {
+        await api.setModel(model);
+        updateConv(get().current, { model });
       } catch (err) {
         set({ statusText: String(err) });
       }

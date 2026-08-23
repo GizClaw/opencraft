@@ -27,6 +27,8 @@ export function ExportSession(arg1:string):Promise<string>;
 
 export function FileDiff(arg1:string):Promise<string>;
 
+export function GetModel():Promise<string>;
+
 export function GetThink():Promise<string>;
 
 export function ListAgents():Promise<Array<agents.Summary>>;
@@ -34,6 +36,8 @@ export function ListAgents():Promise<Array<agents.Summary>>;
 export function ListDir(arg1:string):Promise<Array<desktop.FileNode>>;
 
 export function ListSessions():Promise<Array<desktop.SessionMeta>>;
+
+export function ModelOptions():Promise<Array<desktop.ModelOption>>;
 
 export function NewChat():Promise<string>;
 
@@ -64,6 +68,8 @@ export function SaveSetup(arg1:desktop.SetupRequest):Promise<void>;
 export function SessionHistory(arg1:string):Promise<Array<desktop.HistoryMsg>>;
 
 export function SessionMode():Promise<string>;
+
+export function SetModel(arg1:string):Promise<void>;
 
 export function SetSessionMode(arg1:string):Promise<void>;
 

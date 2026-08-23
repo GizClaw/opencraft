@@ -48,6 +48,9 @@ export function ChatView() {
   const setMode = useStore((s) => s.setMode);
   const think = conv?.think ?? "medium";
   const setThink = useStore((s) => s.setThink);
+  const model = conv?.model ?? "";
+  const setModel = useStore((s) => s.setModel);
+  const modelOptions = useStore((s) => s.modelOptions);
   const lastFailed = conv?.lastFailed ?? false;
   const [input, setInput] = useState("");
   const [confirmYolo, setConfirmYolo] = useState(false);
@@ -303,6 +306,24 @@ export function ChatView() {
                   <option value="high">{t("chat.thinkHigh")}</option>
                 </select>
               </div>
+              {modelOptions.length > 0 && (
+                <div className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim">
+                  {t("chat.modelLabel")}
+                  <select
+                    value={model}
+                    onChange={(e) => void setModel(e.target.value)}
+                    className="bg-transparent outline-none text-fg max-w-40"
+                    title={model}
+                  >
+                    <option value="">{t("chat.modelAuto")}</option>
+                    {modelOptions.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <span className="text-xs text-dim hidden sm:inline">
                 {busy ? t("chat.runningHint") : t("chat.enterHint")}
               </span>

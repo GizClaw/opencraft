@@ -93,6 +93,8 @@
     "thinkLow": "Low",
     "thinkMedium": "Medium",
     "thinkHigh": "High",
+    "modelLabel": "Model",
+    "modelAuto": "Auto",
     "retry": "Retry last"
   },
   "status": {

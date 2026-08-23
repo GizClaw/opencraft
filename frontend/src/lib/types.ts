@@ -39,6 +39,11 @@ export interface ConfigState {
   model: string;
 }
 
+export interface ModelOption {
+  id: string;
+  label: string;
+}
+
 export interface SessionMeta {
   id: string;
   title: string;
