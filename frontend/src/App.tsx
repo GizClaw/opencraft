@@ -4,6 +4,7 @@ import { EventsOn } from "../wailsjs/runtime/runtime";
 import { ChatView } from "./components/ChatView";
 import { ConfigPage } from "./components/ConfigPage";
 import { FilePanel } from "./components/FilePanel";
+import { KanbanView } from "./components/KanbanView";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
 import { useStore } from "./lib/store";
@@ -15,6 +16,7 @@ export default function App() {
   const status = useStore((s) => s.status);
   const fatal = useStore((s) => s.fatal);
   const configOpen = useStore((s) => s.configOpen);
+  const kanbanOpen = useStore((s) => s.kanbanOpen);
   const { t } = useTranslation();
 
   useEffect(() => {
@@ -55,6 +57,7 @@ export default function App() {
       </div>
       <StatusBar />
       {configOpen && <ConfigPage />}
+      {kanbanOpen && <KanbanView />}
     </div>
   );
 }

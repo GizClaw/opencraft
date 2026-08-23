@@ -1,10 +1,13 @@
 import { create } from "zustand";
+import i18n from "../i18n";
 import { api } from "./api";
 import type {
   AgentSummary,
   ConfigStatus,
   InteractDTO,
+  KanbanCard,
   ReplyRequest,
+  SessionMeta,
   StreamDelta,
   UIEvent,
   UsageDTO,
@@ -58,6 +61,8 @@ interface StoreState {
   configOpen: boolean;
   workspace: string;
   agents: AgentSummary[];
+  sessions: SessionMeta[];
+  currentSession: string;
   messages: MessageView[];
   busy: boolean;
   activeRunID: string | null;
@@ -67,6 +72,8 @@ interface StoreState {
   mode: string;
   statusText: string;
   lastUsage: UsageDTO | null;
+  kanbanOpen: boolean;
+  cards: KanbanCard[];
 
   init: () => Promise<void>;
   handleEvent: (ev: UIEvent) => void;
@@ -76,8 +83,13 @@ interface StoreState {
   openConfig: () => void;
   closeConfig: () => void;
   newChat: () => void;
+  resume: (id: string) => Promise<void>;
   setMode: (mode: string) => Promise<void>;
   refreshAgents: () => Promise<void>;
+  loadSessions: () => Promise<void>;
+  loadCards: () => Promise<void>;
+  openKanban: () => void;
+  closeKanban: () => void;
 }
 
 export const useStore = create<StoreState>((set, get) => {
@@ -204,6 +216,8 @@ export const useStore = create<StoreState>((set, get) => {
     configOpen: false,
     workspace: "",
     agents: [],
+    sessions: [],
+    currentSession: "",
     messages: [],
     busy: false,
     activeRunID: null,
@@ -211,12 +225,15 @@ export const useStore = create<StoreState>((set, get) => {
     mode: "workspace",
     statusText: "",
     lastUsage: null,
+    kanbanOpen: false,
+    cards: [],
 
     init: async () => {
-      const [status, workspace, mode] = await Promise.all([
+      const [status, workspace, mode, currentSession] = await Promise.all([
         api.configStatus(),
         api.workspace(),
         api.sessionMode(),
+        api.currentSession(),
       ]);
       set({
         status,
@@ -224,8 +241,10 @@ export const useStore = create<StoreState>((set, get) => {
         configured: !status.needed,
         configOpen: status.needed,
         mode,
+        currentSession,
       });
       void get().refreshAgents();
+      void get().loadSessions();
     },
 
     handleEvent: (ev) => {
@@ -276,13 +295,27 @@ export const useStore = create<StoreState>((set, get) => {
         }
         case "turn_end": {
           const data = ev.data as { error?: string; status: string };
+          const note =
+            data.status === "canceled"
+              ? i18n.t("chat.cancelled")
+              : data.status === "interrupted"
+                ? i18n.t("chat.interrupted")
+                : data.status === "failed" || data.status === "aborted"
+                  ? i18n.t("chat.failed")
+                  : "";
           if (data.error) {
             const { messages } = get();
             const { msg, messages: next } = lastAssistant(messages);
             mergeAppend(msg, "text", `\n\n> ⛔ ${data.error}`);
             set({ messages: next });
+          } else if (note) {
+            const { messages } = get();
+            const { msg, messages: next } = lastAssistant(messages);
+            mergeAppend(msg, "text", `\n\n> ⛔ ${note}`);
+            set({ messages: next });
           }
           set({ busy: false, activeRunID: null });
+          void get().loadSessions();
           break;
         }
       }
@@ -306,7 +339,8 @@ export const useStore = create<StoreState>((set, get) => {
       });
       try {
         const start = await api.startTurn(trimmed);
-        set({ activeRunID: start.run_id });
+        set({ activeRunID: start.run_id, currentSession: start.context_id });
+        void get().loadSessions();
       } catch (err) {
         const { messages } = get();
         const { msg, messages: next } = lastAssistant(messages);
@@ -341,7 +375,8 @@ export const useStore = create<StoreState>((set, get) => {
 
     newChat: async () => {
       try {
-        await api.newChat();
+        const id = await api.newChat();
+        set({ currentSession: id });
       } catch {
         // a fresh conversation id is best-effort; the UI resets anyway
       }
@@ -351,6 +386,50 @@ export const useStore = create<StoreState>((set, get) => {
         pendingInteracts: [],
         mode: "workspace",
       });
+      void get().loadSessions();
+    },
+
+    resume: async (id) => {
+      try {
+        const resumed = await api.resumeSession(id);
+        const [mode, history] = await Promise.all([
+          api.sessionMode(),
+          api.sessionHistory(id),
+        ]);
+        const messages: MessageView[] = history.map((h) =>
+          h.role === "user"
+            ? {
+                id: newID("msg"),
+                role: "user",
+                text: h.text,
+                items: [],
+              }
+            : {
+                id: newID("msg"),
+                role: "assistant",
+                text: "",
+                items: h.text
+                  ? [
+                      {
+                        kind: "text",
+                        id: newID("part"),
+                        text: h.text,
+                      },
+                    ]
+                  : [],
+              },
+        );
+        set({
+          currentSession: resumed,
+          mode,
+          messages,
+          busy: false,
+          activeRunID: null,
+          pendingInteracts: [],
+        });
+      } catch (err) {
+        set({ statusText: String(err) });
+      }
     },
 
     setMode: async (mode) => {
@@ -369,5 +448,24 @@ export const useStore = create<StoreState>((set, get) => {
         // registry read is best-effort
       }
     },
+
+    loadSessions: async () => {
+      try {
+        set({ sessions: await api.listSessions() });
+      } catch {
+        // best-effort
+      }
+    },
+
+    loadCards: async () => {
+      try {
+        set({ cards: await api.delegationCards() });
+      } catch {
+        // best-effort
+      }
+    },
+
+    openKanban: () => set({ kanbanOpen: true }),
+    closeKanban: () => set({ kanbanOpen: false }),
   };
 });

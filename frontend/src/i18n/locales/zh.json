@@ -6,12 +6,26 @@
   },
   "sidebar": {
     "newChat": "新会话",
+    "sessions": "会话",
+    "kanban": "看板",
+    "justNow": "刚刚",
     "subagents": "子代理",
     "refresh": "刷新",
     "noAgents": "暂无子代理",
     "noAgentsHint": "助手可通过 create_agent 创建",
     "inferenceConfig": "推理配置",
     "settings": "设置"
+  },
+  "kanban": {
+    "title": "委托看板",
+    "pending": "待处理",
+    "running": "进行中",
+    "done": "已完成",
+    "failed": "失败",
+    "canceled": "已取消",
+    "empty": "暂无委托",
+    "error": "错误",
+    "fromTo": "{{producer}} → {{consumer}}"
   },
   "config": {
     "title": "设置",
@@ -43,7 +57,10 @@
     "yoloBanner": "YOLO 模式：沙箱已禁用，命令直接在宿主机执行，无批准提示",
     "yoloConfirmTitle": "切换到 YOLO 模式？",
     "yoloConfirmBody": "YOLO 会禁用当前会话的沙箱：命令以完整环境在宿主机执行、不再请求权限批准、文件工具可访问任意路径。仅对当前对话生效。",
-    "confirmSwitch": "确认切换"
+    "confirmSwitch": "确认切换",
+    "cancelled": "已取消",
+    "interrupted": "已中断",
+    "failed": "失败"
   },
   "status": {
     "ready": "就绪",
@@ -57,7 +74,12 @@
     "cancel": "取消"
   },
   "files": {
-    "workspace": "工作区"
+    "workspace": "工作区",
+    "tree": "文件",
+    "view": "查看",
+    "diff": "Diff",
+    "noDiff": "无改动",
+    "noSelection": "在左侧选择文件查看内容"
   },
   "setup": {
     "title": "推理配置",

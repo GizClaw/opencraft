@@ -6,12 +6,26 @@
   },
   "sidebar": {
     "newChat": "New chat",
+    "sessions": "Sessions",
+    "kanban": "Board",
+    "justNow": "just now",
     "subagents": "Subagents",
     "refresh": "Refresh",
     "noAgents": "No subagents yet",
     "noAgentsHint": "The assistant can create agents with create_agent",
     "inferenceConfig": "Inference setup",
     "settings": "Settings"
+  },
+  "kanban": {
+    "title": "Delegation board",
+    "pending": "Pending",
+    "running": "Running",
+    "done": "Done",
+    "failed": "Failed",
+    "canceled": "Cancelled",
+    "empty": "No delegations",
+    "error": "Error",
+    "fromTo": "{{producer}} → {{consumer}}"
   },
   "config": {
     "title": "Settings",
@@ -43,7 +57,10 @@
     "yoloBanner": "YOLO mode: sandbox disabled — commands run directly on the host with no approval prompts",
     "yoloConfirmTitle": "Switch to YOLO mode?",
     "yoloConfirmBody": "YOLO disables the sandbox for this conversation: commands run on the host with the full environment, no approval prompts, and file tools can reach any path. It only applies to the current conversation.",
-    "confirmSwitch": "Switch"
+    "confirmSwitch": "Switch",
+    "cancelled": "Cancelled",
+    "interrupted": "Interrupted",
+    "failed": "Failed"
   },
   "status": {
     "ready": "Ready",
@@ -57,7 +74,12 @@
     "cancel": "Cancel"
   },
   "files": {
-    "workspace": "Workspace"
+    "workspace": "Workspace",
+    "tree": "Files",
+    "view": "View",
+    "diff": "Diff",
+    "noDiff": "No changes",
+    "noSelection": "Select a file on the left to view it"
   },
   "setup": {
     "title": "Inference setup",

@@ -1,9 +1,21 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, Flame, Loader2, Send, ShieldCheck, Square } from "lucide-react";
+import {
+  AlertTriangle,
+  File,
+  Flame,
+  Folder,
+  Loader2,
+  Send,
+  ShieldCheck,
+  Square,
+} from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { useTranslation } from "react-i18next";
+import { OnFileDrop, OnFileDropOff } from "../../wailsjs/runtime/runtime";
+import { api } from "../lib/api";
 import { useStore } from "../lib/store";
+import type { FileNode } from "../lib/types";
 import { InteractionCard } from "./InteractionCard";
 import { ToolCard } from "./ToolCard";
 
@@ -34,6 +46,13 @@ export function ChatView() {
   const [input, setInput] = useState("");
   const [confirmYolo, setConfirmYolo] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const [mention, setMention] = useState<{ open: boolean; query: string }>({
+    open: false,
+    query: "",
+  });
+  const [mentionItems, setMentionItems] = useState<FileNode[]>([]);
+  const mentionLoaded = useRef(false);
   // Stick-to-bottom: while the agent streams, the view follows the
   // latest output with an instant snap. Smooth-scrolling on every
   // delta races when the window is occluded (switching screens) and
@@ -46,6 +65,16 @@ export function ChatView() {
   // WKWebView for the Enter key).
   const composingRef = useRef(false);
   const { t } = useTranslation();
+
+  useEffect(() => {
+    OnFileDrop((_x, _y, paths) => {
+      if (!paths || paths.length === 0) return;
+      setInput((prev) => prev + (prev ? "\n" : "") + paths.join("\n"));
+    }, true);
+    return () => {
+      OnFileDropOff();
+    };
+  }, []);
 
   useEffect(() => {
     if (!stick) return;
@@ -71,6 +100,38 @@ export function ChatView() {
     setInput("");
     void send(text);
   };
+
+  const onInputChange = (value: string) => {
+    setInput(value);
+    const match = value.match(/(?:^|\s)@([\w./-]*)$/);
+    if (match) {
+      setMention({ open: true, query: match[1] });
+      if (!mentionLoaded.current) {
+        mentionLoaded.current = true;
+        void api.listDir(workspace).then(setMentionItems).catch(() => setMentionItems([]));
+      }
+    } else {
+      setMention((m) => (m.open ? { open: false, query: "" } : m));
+    }
+  };
+
+  const insertMention = (node: FileNode) => {
+    const match = input.match(/(?:^|\s)@([\w./-]*)$/);
+    let next: string;
+    if (match) {
+      const at = match.index! + match[0].indexOf("@");
+      next = input.slice(0, at) + node.path;
+    } else {
+      next = input + node.path;
+    }
+    setInput(next + " ");
+    setMention({ open: false, query: "" });
+    inputRef.current?.focus();
+  };
+
+  const filteredMentions = mentionItems.filter((n) =>
+    n.name.toLowerCase().includes(mention.query.toLowerCase()),
+  );
 
   const workspaceName =
     workspace.split(/[\\/]/).filter(Boolean).pop() ?? workspace;
@@ -155,11 +216,16 @@ export function ChatView() {
             </div>
           )}
           <textarea
+            ref={inputRef}
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => onInputChange(e.target.value)}
             onCompositionStart={() => (composingRef.current = true)}
             onCompositionEnd={() => (composingRef.current = false)}
             onKeyDown={(e) => {
+              if (e.key === "Escape" && mention.open) {
+                setMention({ open: false, query: "" });
+                return;
+              }
               if (
                 e.key === "Enter" &&
                 !e.shiftKey &&
@@ -178,6 +244,28 @@ export function ChatView() {
             disabled={!configured}
             className="w-full resize-none bg-transparent px-4 pt-3 text-sm outline-none disabled:opacity-50"
           />
+          {mention.open && (
+            <div className="mx-3 mb-2 max-h-48 overflow-y-auto rounded-lg border border-edge bg-panel2 shadow-xl">
+              {filteredMentions.length === 0 ? (
+                <div className="px-3 py-2 text-xs text-dim">—</div>
+              ) : (
+                filteredMentions.slice(0, 12).map((n) => (
+                  <button
+                    key={n.path}
+                    onClick={() => insertMention(n)}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-panel"
+                  >
+                    {n.is_dir ? (
+                      <Folder size={13} className="text-accent shrink-0" />
+                    ) : (
+                      <File size={13} className="text-dim shrink-0" />
+                    )}
+                    <span className="truncate">{n.name}</span>
+                  </button>
+                ))
+              )}
+            </div>
+          )}
           <div className="flex items-center justify-between px-3 pb-2.5">
             <div className="flex items-center gap-3">
               <button

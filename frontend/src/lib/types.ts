@@ -39,6 +39,34 @@ export interface ConfigState {
   model: string;
 }
 
+export interface SessionMeta {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  messages: number;
+}
+
+export interface HistoryMsg {
+  role: string;
+  text: string;
+}
+
+export interface KanbanCard {
+  id: string;
+  producer: string;
+  consumer: string;
+  status: string;
+  target: string;
+  input: string;
+  output: string;
+  caller: string;
+  depth: number;
+  error: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface TurnStart {
   run_id: string;
   context_id: string;

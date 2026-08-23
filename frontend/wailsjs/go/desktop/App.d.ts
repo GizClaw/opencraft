@@ -9,9 +9,17 @@ export function ConfigState():Promise<desktop.ConfigState>;
 
 export function ConfigStatus():Promise<desktop.ConfigStatus>;
 
+export function CurrentSession():Promise<string>;
+
+export function DelegationCards():Promise<Array<desktop.KanbanCard>>;
+
+export function FileDiff(arg1:string):Promise<string>;
+
 export function ListAgents():Promise<Array<agents.Summary>>;
 
 export function ListDir(arg1:string):Promise<Array<desktop.FileNode>>;
+
+export function ListSessions():Promise<Array<desktop.SessionMeta>>;
 
 export function NewChat():Promise<string>;
 
@@ -19,11 +27,17 @@ export function OpenPath(arg1:string):Promise<void>;
 
 export function Providers():Promise<Array<desktop.ProviderView>>;
 
+export function ReadFile(arg1:string):Promise<string>;
+
 export function Reload():Promise<void>;
 
 export function ReplyPrompt(arg1:string,arg2:desktop.ReplyRequest):Promise<boolean>;
 
+export function ResumeSession(arg1:string):Promise<string>;
+
 export function SaveSetup(arg1:desktop.SetupRequest):Promise<void>;
+
+export function SessionHistory(arg1:string):Promise<Array<desktop.HistoryMsg>>;
 
 export function SessionMode():Promise<string>;
 

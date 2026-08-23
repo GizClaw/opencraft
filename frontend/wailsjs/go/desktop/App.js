@@ -14,12 +14,28 @@ export function ConfigStatus() {
   return window['go']['desktop']['App']['ConfigStatus']();
 }
 
+export function CurrentSession() {
+  return window['go']['desktop']['App']['CurrentSession']();
+}
+
+export function DelegationCards() {
+  return window['go']['desktop']['App']['DelegationCards']();
+}
+
+export function FileDiff(arg1) {
+  return window['go']['desktop']['App']['FileDiff'](arg1);
+}
+
 export function ListAgents() {
   return window['go']['desktop']['App']['ListAgents']();
 }
 
 export function ListDir(arg1) {
   return window['go']['desktop']['App']['ListDir'](arg1);
+}
+
+export function ListSessions() {
+  return window['go']['desktop']['App']['ListSessions']();
 }
 
 export function NewChat() {
@@ -34,6 +50,10 @@ export function Providers() {
   return window['go']['desktop']['App']['Providers']();
 }
 
+export function ReadFile(arg1) {
+  return window['go']['desktop']['App']['ReadFile'](arg1);
+}
+
 export function Reload() {
   return window['go']['desktop']['App']['Reload']();
 }
@@ -42,8 +62,16 @@ export function ReplyPrompt(arg1, arg2) {
   return window['go']['desktop']['App']['ReplyPrompt'](arg1, arg2);
 }
 
+export function ResumeSession(arg1) {
+  return window['go']['desktop']['App']['ResumeSession'](arg1);
+}
+
 export function SaveSetup(arg1) {
   return window['go']['desktop']['App']['SaveSetup'](arg1);
+}
+
+export function SessionHistory(arg1) {
+  return window['go']['desktop']['App']['SessionHistory'](arg1);
 }
 
 export function SessionMode() {
