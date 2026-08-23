@@ -25,6 +25,10 @@
 !go.sum
 !internal/
 !internal/**
+# Runtime state under any package (created by tests running with the
+# package as cwd) stays out of the repo.
+**/.opencraft/
+**/.opencraft/**
 !pkg/
 !pkg/**
 !tools/
