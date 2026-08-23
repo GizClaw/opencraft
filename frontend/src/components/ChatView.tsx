@@ -34,6 +34,13 @@ export function ChatView() {
   const [input, setInput] = useState("");
   const [confirmYolo, setConfirmYolo] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Stick-to-bottom: while the agent streams, the view follows the
+  // latest output with an instant snap. Smooth-scrolling on every
+  // delta races when the window is occluded (switching screens) and
+  // the viewport visibly scrambles until the stream stops, so the
+  // animation is avoided entirely. Scrolling up unpins; scrolling
+  // back to the bottom re-pins.
+  const [stick, setStick] = useState(true);
   // Tracks IME composition so pressing Enter to confirm a candidate
   // never sends the message (isComposing alone is unreliable in
   // WKWebView for the Enter key).
@@ -41,14 +48,25 @@ export function ChatView() {
   const { t } = useTranslation();
 
   useEffect(() => {
-    scrollRef.current?.scrollTo({
-      top: scrollRef.current.scrollHeight,
-      behavior: "smooth",
-    });
-  }, [messages, pendingInteracts]);
+    if (!stick) return;
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages, pendingInteracts, stick]);
+
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === "visible" && stick) {
+        const el = scrollRef.current;
+        if (el) el.scrollTop = el.scrollHeight;
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  }, [stick]);
 
   const submit = () => {
     if (!input.trim() || busy) return;
+    setStick(true);
     const text = input;
     setInput("");
     void send(text);
@@ -70,7 +88,15 @@ export function ChatView() {
         <span className="flex-1" />
       </header>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-4">
+      <div
+        ref={scrollRef}
+        onScroll={() => {
+          const el = scrollRef.current;
+          if (!el) return;
+          setStick(el.scrollHeight - el.scrollTop - el.clientHeight < 80);
+        }}
+        className="flex-1 overflow-y-auto px-6 py-4"
+      >
         {messages.length === 0 ? (
           <div className="h-full grid place-items-center text-dim text-sm">
             {configured
