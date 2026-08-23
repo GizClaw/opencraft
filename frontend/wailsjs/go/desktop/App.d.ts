@@ -9,6 +9,8 @@ export function CancelCard(arg1:string):Promise<boolean>;
 
 export function CancelTurn(arg1:string):Promise<void>;
 
+export function ChooseWorkspace():Promise<string>;
+
 export function ConfigState():Promise<desktop.ConfigState>;
 
 export function ConfigStatus():Promise<desktop.ConfigStatus>;
@@ -35,11 +37,15 @@ export function NewChat():Promise<string>;
 
 export function OpenPath(arg1:string):Promise<void>;
 
+export function OpenWorkspace(arg1:string):Promise<void>;
+
 export function Permissions():Promise<Array<string>>;
 
 export function Providers():Promise<Array<desktop.ProviderView>>;
 
 export function ReadFile(arg1:string):Promise<string>;
+
+export function ReadLog(arg1:number):Promise<string>;
 
 export function Reload():Promise<void>;
 

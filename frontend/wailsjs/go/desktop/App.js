@@ -14,6 +14,10 @@ export function CancelTurn(arg1) {
   return window['go']['desktop']['App']['CancelTurn'](arg1);
 }
 
+export function ChooseWorkspace() {
+  return window['go']['desktop']['App']['ChooseWorkspace']();
+}
+
 export function ConfigState() {
   return window['go']['desktop']['App']['ConfigState']();
 }
@@ -66,6 +70,10 @@ export function OpenPath(arg1) {
   return window['go']['desktop']['App']['OpenPath'](arg1);
 }
 
+export function OpenWorkspace(arg1) {
+  return window['go']['desktop']['App']['OpenWorkspace'](arg1);
+}
+
 export function Permissions() {
   return window['go']['desktop']['App']['Permissions']();
 }
@@ -76,6 +84,10 @@ export function Providers() {
 
 export function ReadFile(arg1) {
   return window['go']['desktop']['App']['ReadFile'](arg1);
+}
+
+export function ReadLog(arg1) {
+  return window['go']['desktop']['App']['ReadLog'](arg1);
 }
 
 export function Reload() {

@@ -2,7 +2,9 @@ package desktop
 
 import (
 	"context"
+	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/event"
@@ -23,6 +25,9 @@ type Bridge struct {
 
 	mu      sync.Mutex
 	pending map[string]chan runtime.Reply
+	// lastRun is the run id of the most recent stream delta; the
+	// usage observer uses it to attribute a generation to its turn.
+	lastRun atomic.Value
 }
 
 // NewBridge creates the frontend bridge.
@@ -50,11 +55,35 @@ func (b *Bridge) Emit(typ string, data any) {
 // dropped: the frontend must render every byte of the stream.
 func (b *Bridge) Sink(
 	ctx context.Context,
-	_ event.Envelope,
+	env event.Envelope,
 	delta agent.StreamDeltaPayload,
 ) error {
-	b.Emit("stream", delta)
+	if !agent.IsStreamDelta(env.Subject) {
+		return nil
+	}
+	runID := streamRunID(env.Subject)
+	b.lastRun.Store(runID)
+	b.Emit("stream", StreamEvent{RunID: runID, Delta: delta})
 	return nil
+}
+
+// LastStreamRun returns the run id of the most recent stream delta.
+func (b *Bridge) LastStreamRun() string {
+	v, _ := b.lastRun.Load().(string)
+	return v
+}
+
+// streamRunID extracts the run id from a run subject
+// ("agent.run.<runID>.stream.<actor>.delta"; "engine.run" is accepted
+// defensively).
+func streamRunID(subject event.Subject) string {
+	parts := strings.Split(string(subject), ".")
+	if len(parts) >= 3 &&
+		parts[1] == "run" &&
+		(parts[0] == "agent" || parts[0] == "engine") {
+		return parts[2]
+	}
+	return ""
 }
 
 // Ask implements runtime.Backend: it registers the prompt for the

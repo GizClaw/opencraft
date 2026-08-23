@@ -24,7 +24,13 @@ interface Row {
   webSearch: boolean;
 }
 
-type Tab = "ui" | "inference" | "agents" | "permissions" | "skills";
+type Tab =
+  | "ui"
+  | "inference"
+  | "agents"
+  | "permissions"
+  | "skills"
+  | "logs";
 
 export function ConfigPage() {
   const configured = useStore((s) => s.configured);
@@ -44,6 +50,7 @@ export function ConfigPage() {
   const [rules, setRules] = useState<string[]>([]);
   const [ruleInput, setRuleInput] = useState("");
   const [skills, setSkills] = useState<{ name: string; description: string; scope: string; path: string }[]>([]);
+  const [logs, setLogs] = useState("");
 
   useEffect(() => {
     void (async () => {
@@ -89,6 +96,14 @@ export function ConfigPage() {
     void api
       .skills()
       .then(setSkills)
+      .catch((err) => setError(String(err)));
+  }, [tab]);
+
+  useEffect(() => {
+    if (tab !== "logs") return;
+    void api
+      .readLog(300)
+      .then(setLogs)
       .catch((err) => setError(String(err)));
   }, [tab]);
 
@@ -169,6 +184,7 @@ export function ConfigPage() {
     { id: "agents", label: t("config.tabAgents") },
     { id: "permissions", label: t("config.tabPermissions") },
     { id: "skills", label: t("config.tabSkills") },
+    { id: "logs", label: t("config.tabLogs") },
   ];
 
   return (
@@ -562,6 +578,32 @@ export function ConfigPage() {
                     )}
                   </div>
                 ))
+              )}
+            </div>
+          )}
+
+          {tab === "logs" && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-dim">{t("config.logsHint")}</p>
+                <button
+                  onClick={() =>
+                    void api
+                      .readLog(300)
+                      .then(setLogs)
+                      .catch((err) => setError(String(err)))
+                  }
+                  className="text-xs text-dim hover:text-fg"
+                >
+                  {t("config.logsRefresh")}
+                </button>
+              </div>
+              {logs ? (
+                <pre className="rounded-xl border border-edge bg-panel2 p-3 text-xs whitespace-pre-wrap break-all font-mono max-h-[55vh] overflow-y-auto">
+                  {logs}
+                </pre>
+              ) : (
+                <p className="text-sm text-dim">{t("config.logsEmpty")}</p>
               )}
             </div>
           )}

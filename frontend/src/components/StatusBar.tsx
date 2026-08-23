@@ -3,7 +3,7 @@ import { useTranslation } from "react-i18next";
 import { useStore } from "../lib/store";
 
 export function StatusBar() {
-  const busy = useStore((s) => s.busy);
+  const busy = useStore((s) => s.conversations[s.current]?.busy ?? false);
   const statusText = useStore((s) => s.statusText);
   const lastUsage = useStore((s) => s.lastUsage);
   const model = useStore((s) => s.status?.default_model) ?? "";

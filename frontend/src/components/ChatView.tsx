@@ -5,6 +5,7 @@ import {
   Flame,
   Folder,
   Loader2,
+  RotateCcw,
   Send,
   ShieldCheck,
   Square,
@@ -34,17 +35,20 @@ function Reasoning({ text }: { text: string }) {
 }
 
 export function ChatView() {
-  const messages = useStore((s) => s.messages);
-  const busy = useStore((s) => s.busy);
+  const conv = useStore((s) => s.conversations[s.current]);
+  const messages = conv?.messages ?? [];
+  const busy = conv?.busy ?? false;
   const configured = useStore((s) => s.configured);
-  const pendingInteracts = useStore((s) => s.pendingInteracts);
+  const pendingInteracts = conv?.pendingInteracts ?? [];
   const workspace = useStore((s) => s.workspace);
   const send = useStore((s) => s.send);
   const cancelRun = useStore((s) => s.cancelRun);
-  const mode = useStore((s) => s.mode);
+  const retryLast = useStore((s) => s.retryLast);
+  const mode = conv?.mode ?? "workspace";
   const setMode = useStore((s) => s.setMode);
-  const think = useStore((s) => s.think);
+  const think = conv?.think ?? "medium";
   const setThink = useStore((s) => s.setThink);
+  const lastFailed = conv?.lastFailed ?? false;
   const [input, setInput] = useState("");
   const [confirmYolo, setConfirmYolo] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -101,6 +105,11 @@ export function ChatView() {
     const text = input;
     setInput("");
     void send(text);
+  };
+
+  const retry = () => {
+    setInput("");
+    void retryLast();
   };
 
   const onInputChange = (value: string) => {
@@ -306,13 +315,23 @@ export function ChatView() {
                 <Square size={13} /> {t("chat.stop")}
               </button>
             ) : (
-              <button
-                onClick={submit}
-                disabled={!input.trim()}
-                className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
-              >
-                <Send size={13} /> {t("chat.send")}
-              </button>
+              <div className="flex items-center gap-2">
+                {lastFailed && (
+                  <button
+                    onClick={retry}
+                    className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-accent"
+                  >
+                    <RotateCcw size={13} /> {t("chat.retry")}
+                  </button>
+                )}
+                <button
+                  onClick={submit}
+                  disabled={!input.trim()}
+                  className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
+                >
+                  <Send size={13} /> {t("chat.send")}
+                </button>
+              </div>
             )}
           </div>
         </div>

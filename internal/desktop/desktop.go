@@ -66,9 +66,13 @@ type App struct {
 	// think is the reasoning effort applied to new turns
 	// (low/medium/high), persisted per conversation.
 	think string
-	// turnUsage accumulates inference usage for the active turn so it
-	// can be recorded into the session store on completion.
-	turnUsage ocsessions.Usage
+	// runConvs maps active run ids to their conversation, so stream
+	// events and usage can be routed with parallel turns.
+	runConvs map[string]string
+	// runUsage accumulates inference usage per conversation while its
+	// turn is active; it is recorded into the session store at turn
+	// end.
+	runUsage map[string]ocsessions.Usage
 }
 
 // New creates the application shell. Runtime assembly is deferred to
@@ -109,6 +113,8 @@ func New(opts Options) (*App, error) {
 		conversationID: ocsessions.NewID(),
 		mode:           ocsessions.ModeWorkspace,
 		think:          string(ocsessions.ThinkMedium),
+		runConvs:       make(map[string]string),
+		runUsage:       make(map[string]ocsessions.Usage),
 		otelShutdown: shutdown,
 	}, nil
 }
@@ -164,6 +170,7 @@ func (a *App) rebuild() error {
 	}
 	rt, err := app.BuildRuntime(ctx, view.Document,
 		app.WithConfigBase(mgr.UserDir()),
+		app.WithWorkBase(a.workDir),
 		app.WithUsageObserver(a.onUsage))
 	if err != nil {
 		return fmt.Errorf("desktop: assemble runtime: %w", err)
@@ -227,7 +234,8 @@ func (a *App) closeRuntime() {
 	a.ctrl = nil
 	a.sessions = nil
 	a.turns = make(map[string]*session.Turn)
-	a.turnUsage = ocsessions.Usage{}
+	a.runConvs = make(map[string]string)
+	a.runUsage = make(map[string]ocsessions.Usage)
 	a.mu.Unlock()
 
 	if broker != nil {
@@ -271,19 +279,27 @@ func (a *App) appContext() context.Context {
 // goroutine and must be non-blocking.
 func (a *App) onUsage(u inference.Usage) {
 	a.bridge.Usage(u)
+	runID := a.bridge.LastStreamRun()
 	a.mu.Lock()
-	a.turnUsage.TotalTokens += u.TotalTokens
-	a.turnUsage.InputTokens += u.InputTokens
-	a.turnUsage.OutputTokens += u.OutputTokens
+	conv := a.runConvs[runID]
+	if conv == "" {
+		a.mu.Unlock()
+		return
+	}
+	acc := a.runUsage[conv]
+	acc.TotalTokens += u.TotalTokens
+	acc.InputTokens += u.InputTokens
+	acc.OutputTokens += u.OutputTokens
 	if u.Output.ReasoningTokens != nil {
-		a.turnUsage.ReasoningTokens += *u.Output.ReasoningTokens
+		acc.ReasoningTokens += *u.Output.ReasoningTokens
 	}
 	if u.Input.CacheReadTokens != nil {
-		a.turnUsage.CacheReadTokens += *u.Input.CacheReadTokens
+		acc.CacheReadTokens += *u.Input.CacheReadTokens
 	}
 	if u.Input.CacheWriteTokens != nil {
-		a.turnUsage.CacheWriteTokens += *u.Input.CacheWriteTokens
+		acc.CacheWriteTokens += *u.Input.CacheWriteTokens
 	}
+	a.runUsage[conv] = acc
 	a.mu.Unlock()
 }
 

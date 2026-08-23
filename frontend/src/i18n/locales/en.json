@@ -16,6 +16,8 @@
     "justNow": "just now",
     "deleteSession": "Delete session",
     "deleteSessionConfirm": "Delete session {{title}}? Its history will be removed.",
+    "searchSessions": "Search sessions…",
+    "switchWorkspace": "Switch workspace",
     "subagents": "Subagents",
     "refresh": "Refresh",
     "noAgents": "No subagents yet",
@@ -57,7 +59,11 @@
     "permissionsRemove": "Remove",
     "skillsHint": "Skills discovered by the runtime (tools can consume them via skill lookup)",
     "skillsEmpty": "No skills",
-    "skillsRefresh": "Refresh"
+    "skillsRefresh": "Refresh",
+    "tabLogs": "Logs",
+    "logsHint": "Application log (~/.opencraft/logs/opencraft.log)",
+    "logsRefresh": "Refresh",
+    "logsEmpty": "No logs"
   },
   "chat": {
     "running": "Running",
@@ -83,7 +89,8 @@
     "thinkLabel": "Thinking",
     "thinkLow": "Low",
     "thinkMedium": "Medium",
-    "thinkHigh": "High"
+    "thinkHigh": "High",
+    "retry": "Retry last"
   },
   "status": {
     "ready": "Ready",

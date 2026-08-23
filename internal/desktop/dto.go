@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/agents"
@@ -26,6 +27,14 @@ type ConfigStatus struct {
 	UserDir      string `json:"user_dir"`
 	Version      string `json:"version"`
 	Agents       int    `json:"agents"`
+}
+
+// StreamEvent carries one stream delta plus the run it belongs to, so
+// the frontend can route output to the right conversation when
+// several turns run in parallel.
+type StreamEvent struct {
+	RunID string                  `json:"run_id"`
+	Delta agent.StreamDeltaPayload `json:"delta"`
 }
 
 // ProviderView is one entry of the onboarding provider catalog.

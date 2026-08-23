@@ -139,7 +139,6 @@ func (a *App) StartTurn(text string) (TurnStart, error) {
 	mode := a.mode
 	think := a.think
 	store := a.sessions
-	a.turnUsage = ocsessions.Usage{}
 	a.mu.Unlock()
 	if ctrl == nil || ctrl.Runtime() == nil || broker == nil {
 		return TurnStart{}, errors.New(
@@ -183,6 +182,7 @@ func (a *App) StartTurn(text string) (TurnStart, error) {
 
 	a.mu.Lock()
 	a.turns[turn.RunID()] = turn
+	a.runConvs[turn.RunID()] = contextID
 	a.mu.Unlock()
 	go a.waitTurn(lease, turn, contextID)
 	return TurnStart{RunID: turn.RunID(), ContextID: contextID}, nil
@@ -298,8 +298,9 @@ func (a *App) waitTurn(
 
 	a.mu.Lock()
 	delete(a.turns, runID)
-	turnUsage := a.turnUsage
-	a.turnUsage = ocsessions.Usage{}
+	delete(a.runConvs, runID)
+	turnUsage := a.runUsage[contextID]
+	delete(a.runUsage, contextID)
 	if a.broker != nil {
 		a.broker.UnbindTurn(runID)
 	}

@@ -3,11 +3,15 @@ package desktop
 import (
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/GizClaw/flowcraft/core/delegation/kanban"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	app "github.com/GizClaw/opencraft/internal/app"
+	"github.com/GizClaw/opencraft/internal/config"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/skills"
 )
@@ -190,4 +194,73 @@ func (a *App) DeleteSession(id string) error {
 		return errors.New("cannot delete the active conversation")
 	}
 	return store.Remove(id)
+}
+
+// ---- workspace ----
+
+// OpenWorkspace switches the workspace root and rebuilds the runtime
+// (config discovery, sandbox root, and the session store all follow).
+func (a *App) OpenWorkspace(dir string) error {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return errors.New("workspace path is required")
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%s is not a directory", dir)
+	}
+	a.mu.Lock()
+	a.workDir = dir
+	a.mu.Unlock()
+	return a.rebuild()
+}
+
+// ChooseWorkspace opens the native folder picker and switches the
+// workspace when the user picks one. An empty result means cancelled.
+func (a *App) ChooseWorkspace() (string, error) {
+	a.mu.Lock()
+	dir := a.workDir
+	ctx := a.ctx
+	a.mu.Unlock()
+	if ctx == nil {
+		return "", errors.New("app context is not ready")
+	}
+	path, err := wailsruntime.OpenDirectoryDialog(
+		ctx, wailsruntime.OpenDialogOptions{
+			Title:            "选择工作区",
+			DefaultDirectory: dir,
+		})
+	if err != nil {
+		return "", err
+	}
+	if path == "" {
+		return "", nil
+	}
+	if err := a.OpenWorkspace(path); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// ReadLog returns the tail of the application log file.
+func (a *App) ReadLog(n int) (string, error) {
+	if n <= 0 {
+		n = 200
+	}
+	dataDir, err := config.UserDataDir()
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(filepath.Join(dataDir, "logs", "opencraft.log"))
+	if err != nil {
+		return "", err
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n"), nil
 }

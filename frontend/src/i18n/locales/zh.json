@@ -16,6 +16,8 @@
     "justNow": "刚刚",
     "deleteSession": "删除会话",
     "deleteSessionConfirm": "删除会话 {{title}}？历史记录将被移除。",
+    "searchSessions": "搜索会话…",
+    "switchWorkspace": "切换工作区",
     "subagents": "子代理",
     "refresh": "刷新",
     "noAgents": "暂无子代理",
@@ -57,7 +59,11 @@
     "permissionsRemove": "移除",
     "skillsHint": "runtime 已发现的技能（工具可通过技能检索使用）",
     "skillsEmpty": "暂无技能",
-    "skillsRefresh": "刷新"
+    "skillsRefresh": "刷新",
+    "tabLogs": "日志",
+    "logsHint": "应用运行日志（~/.opencraft/logs/opencraft.log）",
+    "logsRefresh": "刷新",
+    "logsEmpty": "暂无日志"
   },
   "chat": {
     "running": "运行中",
@@ -83,7 +89,8 @@
     "thinkLabel": "思考",
     "thinkLow": "低",
     "thinkMedium": "中",
-    "thinkHigh": "高"
+    "thinkHigh": "高",
+    "retry": "重试上一条"
   },
   "status": {
     "ready": "就绪",
