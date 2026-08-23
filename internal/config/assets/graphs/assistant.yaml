@@ -38,6 +38,11 @@ nodes:
       undefined_tool_recovery:
         enabled: true
       stream: true
+      # Per-conversation model hint: the UI persists a "provider/name"
+      # choice and injects it via agent.Request.Inputs (board.model).
+      # The board-ref default keeps unset conversations on the default
+      # routing policy; unknown/ambiguous hints fall back the same way.
+      model_hint: ${board.model:}
       # Think level is a per-turn board input: the TUI injects
       # think_level via agent.Request.Inputs (/think command) and the
       # board-ref default keeps non-TUI callers (e.g. `opencraft run`)

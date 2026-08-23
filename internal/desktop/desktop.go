@@ -66,6 +66,10 @@ type App struct {
 	// think is the reasoning effort applied to new turns
 	// (low/medium/high), persisted per conversation.
 	think string
+	// model is the per-conversation model hint applied to new turns
+	// ("provider/name", or "" for the default routing policy),
+	// persisted per conversation.
+	model string
 	// runConvs maps active run ids to their conversation, so stream
 	// events and usage can be routed with parallel turns.
 	runConvs map[string]string
@@ -113,6 +117,7 @@ func New(opts Options) (*App, error) {
 		conversationID: ocsessions.NewID(),
 		mode:           ocsessions.ModeWorkspace,
 		think:          string(ocsessions.ThinkMedium),
+		model:          "",
 		runConvs:       make(map[string]string),
 		runUsage:       make(map[string]ocsessions.Usage),
 		otelShutdown: shutdown,

@@ -72,6 +72,14 @@ type ConfigState struct {
 	Model     string          `json:"model"`     // current default model
 }
 
+// ModelOption is one selectable per-conversation model hint. ID is the
+// "provider/name" value the router's model_hint consumes; Label is the
+// human-facing description.
+type ModelOption struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
 // SessionMeta is one stored conversation for the sessions list.
 type SessionMeta struct {
 	ID        string    `json:"id"`

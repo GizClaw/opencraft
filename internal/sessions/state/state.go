@@ -182,6 +182,7 @@ func (s *Store) migrate() error {
 			think_level TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		);`,
+		`ALTER TABLE session_settings ADD COLUMN model TEXT NOT NULL DEFAULT ''`,
 	}
 	for i, stmt := range migrations {
 		version := i + 1
@@ -550,4 +551,53 @@ func (s *Store) ThinkLevel(ctx context.Context, contextID string) (string, error
 		return "", fmt.Errorf("state: load think level %s: %w", contextID, err)
 	}
 	return level, nil
+}
+
+// SetModel upserts the per-session model hint ("provider/name", or an
+// empty string for the default routing policy) into the
+// session_settings table.
+func (s *Store) SetModel(ctx context.Context, contextID, model string) error {
+	if strings.TrimSpace(contextID) == "" {
+		return errdefs.Validation(
+			errors.New("state: session context_id is required"))
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO session_settings (context_id, think_level, model, updated_at)
+		VALUES (?, '', ?, ?)
+		ON CONFLICT(context_id) DO UPDATE SET
+			model = excluded.model,
+			updated_at = excluded.updated_at
+	`, contextID, model, time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("state: set model %s: %w", contextID, err)
+	}
+	return nil
+}
+
+// Model returns the persisted model hint for a session. A missing row
+// (or a session that never set one) returns "", meaning the default
+// routing policy applies.
+func (s *Store) Model(ctx context.Context, contextID string) (string, error) {
+	var model string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT model FROM session_settings WHERE context_id = ?`,
+		contextID,
+	).Scan(&model)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("state: load model %s: %w", contextID, err)
+	}
+	return model, nil
+}
+
+// RemoveSettings deletes one session's settings row (think level and
+// model hint). Deleting an unknown session is a no-op.
+func (s *Store) RemoveSettings(ctx context.Context, contextID string) error {
+	if _, err := s.db.ExecContext(ctx,
+		`DELETE FROM session_settings WHERE context_id = ?`, contextID); err != nil {
+		return fmt.Errorf("state: remove settings %s: %w", contextID, err)
+	}
+	return nil
 }

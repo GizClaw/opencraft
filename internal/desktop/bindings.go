@@ -76,6 +76,29 @@ func (a *App) ConfigState() (ConfigState, error) {
 	return st, nil
 }
 
+// ModelOptions returns the selectable per-conversation model hints in
+// router priority order: every configured provider's model as
+// "provider/name". The empty option (default routing policy) is implied
+// by the UI and not listed here.
+func (a *App) ModelOptions() ([]ModelOption, error) {
+	cfg, err := setup.Load(a.userDir)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ModelOption, 0, len(cfg.Providers))
+	for _, k := range cfg.Providers {
+		model := strings.TrimSpace(k.Model)
+		if model == "" {
+			continue
+		}
+		out = append(out, ModelOption{
+			ID:    k.Provider.ID + "/" + model,
+			Label: k.Provider.Name + " · " + model,
+		})
+	}
+	return out, nil
+}
+
 // SaveSetup writes the onboarding result into the user configuration
 // layer and rebuilds the runtime.
 func (a *App) SaveSetup(req SetupRequest) error {
@@ -138,6 +161,7 @@ func (a *App) StartTurn(text string) (TurnStart, error) {
 	contextID := a.conversationID
 	mode := a.mode
 	think := a.think
+	model := a.model
 	store := a.sessions
 	a.mu.Unlock()
 	if ctrl == nil || ctrl.Runtime() == nil || broker == nil {
@@ -160,20 +184,33 @@ func (a *App) StartTurn(text string) (TurnStart, error) {
 	if err != nil {
 		return TurnStart{}, fmt.Errorf("open session: %w", err)
 	}
-	turn, err := lease.Session().Start(ctx, agent.Request{
+	// The session runs ephemeral: opencraft owns conversation
+	// durability (its own archive + session.db), so the core session
+	// must not write run checkpoints that nothing can resume (runtime
+	// resume is disabled) and DeleteSession would never clean.
+	turn, err := lease.Session().StartWithOptions(ctx, agent.Request{
 		ContextID: contextID,
 		Message:   message.NewTextMessage(message.RoleUser, text),
 		// Think level rides the board into the graph's
 		// ${board.think_level} inference node reference.
-		Inputs: map[string]any{"think_level": think},
-	}, coresession.SinkSpec{
-		ID:         "desktop",
-		Sink:       agent.StreamSinkFunc(a.bridge.Sink),
-		QueueSize:  256,
-		Visibility: coresession.VisibilityRaw,
-		Authority:  coresession.AuthorityObserver,
-		AckMode:    coresession.AckOnDelivery,
-	})
+		Inputs: map[string]any{
+			"think_level": think,
+			// Model hint rides the board into the graph's
+			// ${board.model} inference node reference; the router
+			// falls back to the default policy when it is empty.
+			"model": model,
+		},
+	},
+		coresession.WithEphemeral(),
+		coresession.WithSinks(coresession.SinkSpec{
+			ID:         "desktop",
+			Sink:       agent.StreamSinkFunc(a.bridge.Sink),
+			QueueSize:  256,
+			Visibility: coresession.VisibilityRaw,
+			Authority:  coresession.AuthorityObserver,
+			AckMode:    coresession.AckOnDelivery,
+		}),
+	)
 	if err != nil {
 		_ = lease.Close()
 		return TurnStart{}, fmt.Errorf("start turn: %w", err)
@@ -196,6 +233,7 @@ func (a *App) NewChat() (string, error) {
 	a.conversationID = ocsessions.NewID()
 	a.mode = ocsessions.ModeWorkspace
 	a.think = string(ocsessions.ThinkMedium)
+	a.model = ""
 	id := a.conversationID
 	a.mu.Unlock()
 	return id, nil

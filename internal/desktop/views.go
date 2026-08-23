@@ -162,10 +162,15 @@ func (a *App) ResumeSession(id string) (string, error) {
 	if err != nil {
 		think = ocsessions.ThinkMedium
 	}
+	model, err := store.Model(id)
+	if err != nil {
+		model = ""
+	}
 	a.mu.Lock()
 	a.conversationID = id
 	a.mode = mode
 	a.think = string(think)
+	a.model = model
 	a.mu.Unlock()
 	return id, nil
 }

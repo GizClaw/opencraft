@@ -1,13 +1,16 @@
 package desktop
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/GizClaw/flowcraft/core/delegation/kanban"
+	coresession "github.com/GizClaw/flowcraft/core/runtime/session"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 
 	app "github.com/GizClaw/opencraft/internal/app"
@@ -40,6 +43,32 @@ func (a *App) SetThink(level string) error {
 	a.mu.Unlock()
 	if store != nil {
 		return store.SetThink(contextID, lv)
+	}
+	return nil
+}
+
+// ---- per-conversation model ----
+
+// GetModel returns the current conversation's model hint
+// ("provider/name", or "" for the default routing policy).
+func (a *App) GetModel() (string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.model, nil
+}
+
+// SetModel switches the conversation's model hint and persists it
+// through the session store. An empty value resets the conversation to
+// the default routing policy.
+func (a *App) SetModel(model string) error {
+	model = strings.TrimSpace(model)
+	a.mu.Lock()
+	a.model = model
+	contextID := a.conversationID
+	store := a.sessions
+	a.mu.Unlock()
+	if store != nil {
+		return store.SetModel(contextID, model)
 	}
 	return nil
 }
@@ -180,11 +209,15 @@ func (a *App) RetryCard(id string) (string, error) {
 
 // ---- session deletion ----
 
-// DeleteSession removes one stored conversation. The active
-// conversation cannot be deleted.
+// DeleteSession removes one conversation end to end: the runtime
+// session manager's durable checkpoint state (history board, parked
+// run, resumable request) is deleted by key, then the session store's
+// directory and settings row are removed. The active conversation
+// cannot be deleted.
 func (a *App) DeleteSession(id string) error {
 	a.mu.Lock()
 	store := a.sessions
+	ctrl := a.ctrl
 	current := a.conversationID
 	a.mu.Unlock()
 	if store == nil {
@@ -192,6 +225,15 @@ func (a *App) DeleteSession(id string) error {
 	}
 	if id == current {
 		return errors.New("cannot delete the active conversation")
+	}
+	ctx := a.appContext()
+	if ctrl != nil && ctrl.Runtime() != nil {
+		key := coresession.Key{AgentID: "assistant", ContextID: id}
+		drainCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		if err := ctrl.Runtime().Sessions().DeleteSession(drainCtx, key); err != nil {
+			return fmt.Errorf("delete runtime session: %w", err)
+		}
 	}
 	return store.Remove(id)
 }
