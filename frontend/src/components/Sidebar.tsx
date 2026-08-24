@@ -4,6 +4,7 @@ import {
   Kanban,
   Loader2,
   MessageSquare,
+  MoreHorizontal,
   Pencil,
   Plus,
   Search,
@@ -57,6 +58,7 @@ export function Sidebar() {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
 
   useEffect(() => {
     void Environment().then((env) => setIsMac(env.platform === "darwin"));
@@ -139,7 +141,7 @@ export function Sidebar() {
   const renderSessionRow = (row: SessionRow) => (
     <li key={row.id}>
       <div
-        className={`group flex items-center gap-1 rounded-lg px-1.5 py-1 text-left text-sm ${
+        className={`group relative flex items-center gap-1 rounded-lg px-1.5 py-1 text-left text-sm ${
           row.id === currentSession
             ? "bg-accent/15 border border-accent/40"
             : "border border-transparent hover:bg-panel2"
@@ -172,41 +174,68 @@ export function Sidebar() {
           {row.running && (
             <Loader2 size={12} className="text-accent animate-spin shrink-0" />
           )}
-          {row.tokens && (
-            <span className="text-xs text-dim shrink-0">{row.tokens}</span>
+        </button>
+        <div className="relative shrink-0">
+          <button
+            onClick={() =>
+              setMenuOpenId(menuOpenId === row.id ? null : row.id)
+            }
+            className="text-dim opacity-0 group-hover:opacity-100 hover:text-fg rounded p-0.5"
+            title={t("sidebar.sessionActions")}
+          >
+            <MoreHorizontal size={14} />
+          </button>
+          {menuOpenId === row.id && (
+            <>
+              <div
+                className="fixed inset-0 z-20"
+                onClick={() => setMenuOpenId(null)}
+              />
+              <div className="absolute right-0 top-6 z-30 min-w-32 rounded-lg border border-edge bg-panel shadow-xl py-1">
+                <button
+                  onClick={() => {
+                    setMenuOpenId(null);
+                    setRenameId(row.id);
+                    setRenameValue(row.meta?.title ?? row.title);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-panel2"
+                >
+                  <Pencil size={12} className="text-dim" />
+                  {t("sidebar.renameSession")}
+                </button>
+                <button
+                  onClick={() => {
+                    setMenuOpenId(null);
+                    void api
+                      .exportSession(row.id)
+                      .then((path) =>
+                        flash(t("sidebar.exportedTo", { path })),
+                      );
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-panel2"
+                >
+                  <Download size={12} className="text-dim" />
+                  {t("sidebar.exportSession")}
+                </button>
+                <button
+                  onClick={() => {
+                    setMenuOpenId(null);
+                    setConfirmDelete(row.id);
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm text-err hover:bg-panel2"
+                >
+                  <Trash2 size={12} className="text-err" />
+                  {t("sidebar.deleteSession")}
+                </button>
+              </div>
+            </>
           )}
-          {row.time && (
-            <span className="text-xs text-dim shrink-0">{row.time}</span>
-          )}
-        </button>
-        <button
-          onClick={() => {
-            setRenameId(row.id);
-            setRenameValue(row.meta?.title ?? row.title);
-          }}
-          className="text-dim opacity-0 group-hover:opacity-100 hover:text-accent shrink-0"
-          title={t("sidebar.renameSession")}
-        >
-          <Pencil size={12} />
-        </button>
-        <button
-          onClick={() =>
-            void api
-              .exportSession(row.id)
-              .then((path) => flash(t("sidebar.exportedTo", { path })))
-          }
-          className="text-dim opacity-0 group-hover:opacity-100 hover:text-ok shrink-0"
-          title={t("sidebar.exportSession")}
-        >
-          <Download size={12} />
-        </button>
-        <button
-          onClick={() => setConfirmDelete(row.id)}
-          className="text-dim opacity-0 group-hover:opacity-100 hover:text-err shrink-0"
-          title={t("sidebar.deleteSession")}
-        >
-          <Trash2 size={12} />
-        </button>
+        </div>
+        {(row.tokens || row.time) && (
+          <div className="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1.5 z-10 hidden group-hover:block whitespace-nowrap rounded-md border border-edge bg-panel2 px-2 py-1 text-[10px] text-dim shadow-lg">
+            {[row.tokens, row.time].filter(Boolean).join(" · ")}
+          </div>
+        )}
       </div>
     </li>
   );
