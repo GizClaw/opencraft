@@ -110,6 +110,9 @@ func (a *App) autoTitle(ctx context.Context, contextID string) {
 	}
 	if err := store.WriteState(contextID, "title", title); err == nil {
 		a.bridge.Emit("session_updated", map[string]string{"id": contextID})
+		telemetry.Info(ctx, "desktop: auto title generated",
+			otellog.String("session", contextID),
+			otellog.String("title", title))
 	} else {
 		telemetry.Warn(ctx, "desktop: auto title write failed",
 			otellog.String("session", contextID),
