@@ -3,8 +3,7 @@ export namespace agents {
 	export class Summary {
 	    name: string;
 	    description: string;
-	    // Go type: time
-	    created_at?: any;
+	    created_at?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new Summary(source);
@@ -14,26 +13,8 @@ export namespace agents {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.name = source["name"];
 	        this.description = source["description"];
-	        this.created_at = this.convertValues(source["created_at"], null);
+	        this.created_at = source["created_at"];
 	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 
 }
@@ -210,10 +191,8 @@ export namespace desktop {
 	    caller?: string;
 	    depth: number;
 	    error?: string;
-	    // Go type: time
-	    created_at: any;
-	    // Go type: time
-	    updated_at: any;
+	    created_at: string;
+	    updated_at: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new KanbanCard(source);
@@ -231,27 +210,9 @@ export namespace desktop {
 	        this.caller = source["caller"];
 	        this.depth = source["depth"];
 	        this.error = source["error"];
-	        this.created_at = this.convertValues(source["created_at"], null);
-	        this.updated_at = this.convertValues(source["updated_at"], null);
+	        this.created_at = source["created_at"];
+	        this.updated_at = source["updated_at"];
 	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 	export class ModelOption {
 	    id: string;
@@ -310,10 +271,8 @@ export namespace desktop {
 	export class SessionMeta {
 	    id: string;
 	    title: string;
-	    // Go type: time
-	    created_at: any;
-	    // Go type: time
-	    updated_at: any;
+	    created_at: string;
+	    updated_at: string;
 	    messages: number;
 	    total_tokens: number;
 	
@@ -325,29 +284,11 @@ export namespace desktop {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
 	        this.title = source["title"];
-	        this.created_at = this.convertValues(source["created_at"], null);
-	        this.updated_at = this.convertValues(source["updated_at"], null);
+	        this.created_at = source["created_at"];
+	        this.updated_at = source["updated_at"];
 	        this.messages = source["messages"];
 	        this.total_tokens = source["total_tokens"];
 	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 	
 	export class SetupRequest {

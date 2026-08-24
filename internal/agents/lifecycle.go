@@ -113,7 +113,7 @@ type registrar interface {
 type Summary struct {
 	Name        string    `json:"name"`
 	Description string    `json:"description"`
-	CreatedAt   time.Time `json:"created_at,omitempty"`
+	CreatedAt   string    `json:"created_at,omitempty"` // RFC3339 UTC
 }
 
 // Lifecycle creates, removes, and loads persistent subagents. The
@@ -272,7 +272,7 @@ func (l *Lifecycle) List() []Summary {
 		out = append(out, Summary{
 			Name:        spec.Name,
 			Description: spec.Description,
-			CreatedAt:   spec.CreatedAt,
+			CreatedAt:   spec.CreatedAt.Format(time.RFC3339),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })

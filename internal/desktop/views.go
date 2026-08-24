@@ -37,8 +37,8 @@ func (a *App) ListSessions() ([]SessionMeta, error) {
 		meta := SessionMeta{
 			ID:          m.ID,
 			Title:       m.Title,
-			CreatedAt:   m.CreatedAt,
-			UpdatedAt:   m.UpdatedAt,
+			CreatedAt:   m.CreatedAt.Format(time.RFC3339),
+			UpdatedAt:   m.UpdatedAt.Format(time.RFC3339),
 			Messages:    m.Messages,
 			TotalTokens: m.Usage.TotalTokens,
 		}
@@ -258,8 +258,8 @@ func (a *App) DelegationCards() ([]KanbanCard, error) {
 			Producer:  c.Producer,
 			Consumer:  c.Consumer,
 			Status:    string(c.Status),
-			CreatedAt: c.CreatedAt,
-			UpdatedAt: c.UpdatedAt,
+			CreatedAt: c.CreatedAt.Format(time.RFC3339),
+			UpdatedAt: c.UpdatedAt.Format(time.RFC3339),
 		}
 		if c.Task != nil {
 			req := c.Task.Request.Request

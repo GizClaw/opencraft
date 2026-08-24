@@ -54,7 +54,7 @@ func saveWorkspaceMeta(root, path string) error {
 		ID:         id,
 		Path:       path,
 		Title:      filepath.Base(path),
-	LastOpened: time.Now().UTC().Format(time.RFC3339),
+		LastOpened: time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	data, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
@@ -120,7 +120,9 @@ func loadWorkspaces(dir string) ([]WorkspaceMeta, error) {
 		out = append(out, meta)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		return out[i].LastOpened > out[j].LastOpened
+		ti, _ := time.Parse(time.RFC3339Nano, out[i].LastOpened)
+		tj, _ := time.Parse(time.RFC3339Nano, out[j].LastOpened)
+		return ti.After(tj)
 	})
 	return out, nil
 }

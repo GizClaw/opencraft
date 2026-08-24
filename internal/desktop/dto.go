@@ -3,7 +3,6 @@ package desktop
 import (
 	"encoding/json"
 	"strings"
-	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/message"
@@ -82,12 +81,12 @@ type ModelOption struct {
 
 // SessionMeta is one stored conversation for the sessions list.
 type SessionMeta struct {
-	ID          string    `json:"id"`
-	Title       string    `json:"title"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-	Messages    int       `json:"messages"`
-	TotalTokens int64     `json:"total_tokens"`
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	CreatedAt   string `json:"created_at"` // RFC3339 UTC
+	UpdatedAt   string `json:"updated_at"` // RFC3339 UTC
+	Messages    int    `json:"messages"`
+	TotalTokens int64  `json:"total_tokens"`
 }
 
 // HistoryMsg is one stored message for the resume view.
@@ -106,18 +105,18 @@ type SkillDTO struct {
 
 // KanbanCard is the UI snapshot of one delegation board card.
 type KanbanCard struct {
-	ID        string    `json:"id"`
-	Producer  string    `json:"producer,omitempty"`
-	Consumer  string    `json:"consumer,omitempty"`
-	Status    string    `json:"status"`
-	Target    string    `json:"target"`
-	Input     string    `json:"input,omitempty"`
-	Output    string    `json:"output,omitempty"`
-	Caller    string    `json:"caller,omitempty"`
-	Depth     int       `json:"depth"`
-	Error     string    `json:"error,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        string `json:"id"`
+	Producer  string `json:"producer,omitempty"`
+	Consumer  string `json:"consumer,omitempty"`
+	Status    string `json:"status"`
+	Target    string `json:"target"`
+	Input     string `json:"input,omitempty"`
+	Output    string `json:"output,omitempty"`
+	Caller    string `json:"caller,omitempty"`
+	Depth     int    `json:"depth"`
+	Error     string `json:"error,omitempty"`
+	CreatedAt string `json:"created_at"` // RFC3339 UTC
+	UpdatedAt string `json:"updated_at"` // RFC3339 UTC
 }
 
 // TurnStart identifies one started turn.
