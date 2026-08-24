@@ -12,6 +12,24 @@ package main
 // they line up with the chat header title. The system title bar stays
 // hidden-but-native (TitleBarHiddenInset), so corners, shadow, and the
 // buttons themselves remain standard macOS chrome.
+// disableScrollElasticity walks a view subtree and turns off rubber-band
+// scrolling on every scroll view it finds. Wails' webview does not
+// expose scrollView through KVC (that crashed with
+// NSUnknownKeyException), so locate the scroll views structurally.
+static void disableScrollElasticity(NSView *view) {
+	if (view == nil) {
+		return;
+	}
+	if ([view isKindOfClass:[NSScrollView class]]) {
+		NSScrollView *sv = (NSScrollView *)view;
+		[sv setVerticalScrollElasticity:NSScrollElasticityNone];
+		[sv setHorizontalScrollElasticity:NSScrollElasticityNone];
+	}
+	for (NSView *sub in [view subviews]) {
+		disableScrollElasticity(sub);
+	}
+}
+
 static void applyOpenCraftWindowStyleInner(void) {
 	NSWindow *w = [[NSApplication sharedApplication] windows].firstObject;
 	if (w == nil) {
@@ -41,11 +59,7 @@ static void applyOpenCraftWindowStyleInner(void) {
 	// two-finger gestures on the trackpad never shake the whole UI.
 	for (NSView *subview in [[w contentView] subviews]) {
 		if ([subview isKindOfClass:[WKWebView class]]) {
-			id sv = [subview valueForKey:@"scrollView"];
-			if (sv != nil) {
-				[sv setVerticalScrollElasticity:NSScrollElasticityNone];
-				[sv setHorizontalScrollElasticity:NSScrollElasticityNone];
-			}
+			disableScrollElasticity(subview);
 		}
 	}
 }
