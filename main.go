@@ -15,7 +15,6 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/mac"
 )
 
 //go:embed all:frontend/dist
@@ -42,13 +41,11 @@ func main() {
 		Height:    900,
 		MinWidth:  1024,
 		MinHeight: 700,
-		// Hidden, inset title bar on macOS: the traffic lights stay
-		// native while the content (including a draggable title strip)
-		// extends to the top of the window, so the app does not look
-		// like a web page in a system frame.
-		Mac: &mac.Options{
-			TitleBar: mac.TitleBarHiddenInset(),
-		},
+		// Frameless on every platform: the window has no system title
+		// bar or native window buttons. The sidebar renders its own
+		// close/minimise/maximise controls and the top strip drags the
+		// window, so the app looks identical on macOS and Linux.
+		Frameless: true,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
