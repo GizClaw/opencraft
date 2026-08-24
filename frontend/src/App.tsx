@@ -37,7 +37,7 @@ export default function App() {
         const spec = ev.data as { title?: string };
         void SendNotification({
           id: "interact",
-          title: "opencraft",
+          title: "OpenCraft",
           body: spec.title || i18n.t("notify.interact"),
         });
       } else if (ev.type === "turn_end") {
@@ -48,7 +48,7 @@ export default function App() {
             : data.status === "failed" || data.status === "aborted"
               ? i18n.t("notify.failed")
               : data.status;
-        void SendNotification({ id: "turn-end", title: "opencraft", body });
+        void SendNotification({ id: "turn-end", title: "OpenCraft", body });
       }
       handleEvent(ev);
     });

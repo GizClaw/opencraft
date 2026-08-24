@@ -1,6 +1,6 @@
 {
   "app": {
-    "starting": "opencraft is starting…",
+    "starting": "OpenCraft is starting…",
     "startupFailed": "Startup failed",
     "unknownError": "Unknown error"
   },
@@ -88,7 +88,7 @@
   },
   "chat": {
     "running": "Running",
-    "empty": "Start a conversation with opencraft — describe a task and the assistant will drive the tools itself",
+    "empty": "Start a conversation with OpenCraft — describe a task and the assistant will drive the tools itself",
     "emptyUnconfigured": "Inference is not configured yet",
     "openSettings": "Open Settings",
     "reasonCollapse": "Reasoning",

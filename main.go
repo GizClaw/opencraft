@@ -37,7 +37,7 @@ func main() {
 	}
 
 	err = wails.Run(&options.App{
-		Title:     "opencraft",
+		Title:     "OpenCraft",
 		Width:     1440,
 		Height:    900,
 		MinWidth:  1024,

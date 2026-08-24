@@ -252,7 +252,7 @@ export function Sidebar() {
         onDoubleClick={() => WindowToggleMaximise()}
       >
         {!isMac && (
-          <div className="font-semibold tracking-wide">opencraft</div>
+          <div className="font-semibold tracking-wide">OpenCraft</div>
         )}
       </div>
 
