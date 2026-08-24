@@ -13,7 +13,9 @@ export function StatusBar() {
     <footer className="h-8 shrink-0 border-t border-edge bg-panel flex items-center gap-3 px-4 text-xs text-dim">
       <span className="flex items-center gap-1.5 min-w-0">
         {busy && <Loader2 size={13} className="animate-spin text-accent" />}
-        <span className="truncate">{statusText || t("status.ready")}</span>
+        <span className="truncate">
+          {statusText || (busy ? t("status.running") : t("status.ready"))}
+        </span>
       </span>
       <span className="flex-1" />
       {lastUsage && (

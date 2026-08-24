@@ -119,6 +119,7 @@
   },
   "status": {
     "ready": "Ready",
+    "running": "Running",
     "thinking": "thinking"
   },
   "interact": {
