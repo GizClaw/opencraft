@@ -12,6 +12,8 @@
   "sidebar": {
     "newChat": "新会话",
     "sessions": "会话",
+    "newSession": "新会话",
+    "moreSessions": "更多会话",
     "kanban": "看板",
     "justNow": "刚刚",
     "deleteSession": "删除会话",
@@ -21,6 +23,9 @@
     "renameSession": "重命名",
     "exportSession": "导出",
     "exportedTo": "已导出: {{path}}",
+    "workspaces": "工作区",
+    "moreWorkspaces": "更多工作区",
+    "removeWorkspace": "从历史中移除",
     "subagents": "子代理",
     "refresh": "刷新",
     "noAgents": "暂无子代理",

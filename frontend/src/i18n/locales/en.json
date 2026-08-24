@@ -12,6 +12,8 @@
   "sidebar": {
     "newChat": "New chat",
     "sessions": "Sessions",
+    "newSession": "New session",
+    "moreSessions": "More sessions",
     "kanban": "Board",
     "justNow": "just now",
     "deleteSession": "Delete session",
@@ -21,6 +23,9 @@
     "renameSession": "Rename",
     "exportSession": "Export",
     "exportedTo": "Exported to {{path}}",
+    "workspaces": "Workspaces",
+    "moreWorkspaces": "More workspaces",
+    "removeWorkspace": "Remove from history",
     "subagents": "Subagents",
     "refresh": "Refresh",
     "noAgents": "No subagents yet",

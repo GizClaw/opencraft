@@ -412,6 +412,43 @@ export namespace desktop {
 	        this.context_id = source["context_id"];
 	    }
 	}
+	export class WorkspaceMeta {
+	    id: string;
+	    path: string;
+	    title: string;
+	    // Go type: time
+	    last_opened: any;
+	
+	    static createFrom(source: any = {}) {
+	        return new WorkspaceMeta(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.path = source["path"];
+	        this.title = source["title"];
+	        this.last_opened = this.convertValues(source["last_opened"], null);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 
 }
 

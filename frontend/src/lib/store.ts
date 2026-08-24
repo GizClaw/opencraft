@@ -13,6 +13,7 @@ import type {
   StreamDelta,
   UIEvent,
   UsageDTO,
+  WorkspaceMeta,
 } from "./types";
 
 export interface ToolView {
@@ -224,6 +225,7 @@ interface StoreState {
   cards: KanbanCard[];
   modelOptions: ModelOption[];
   theme: "dark" | "light";
+  workspaces: WorkspaceMeta[];
 
   init: () => Promise<void>;
   handleEvent: (ev: UIEvent) => void;
@@ -240,6 +242,9 @@ interface StoreState {
   setThink: (level: string) => Promise<void>;
   setModel: (model: string) => Promise<void>;
   setTheme: (theme: "dark" | "light") => void;
+  loadWorkspaces: () => Promise<void>;
+  openWorkspace: (path: string) => Promise<void>;
+  removeWorkspace: (id: string) => Promise<void>;
   refreshAgents: () => Promise<void>;
   loadSessions: () => Promise<void>;
   loadCards: () => Promise<void>;
@@ -307,6 +312,7 @@ export const useStore = create<StoreState>((set, get) => {
     cards: [],
     modelOptions: [],
     theme: "dark",
+    workspaces: [],
 
     init: async () => {
       const saved = window.localStorage.getItem("opencraft.theme");
@@ -338,6 +344,7 @@ export const useStore = create<StoreState>((set, get) => {
         theme,
       });
       void get().refreshAgents();
+      void get().loadWorkspaces();
       void get().loadSessions();
     },
 
@@ -366,6 +373,7 @@ export const useStore = create<StoreState>((set, get) => {
             set({ modelOptions }),
           );
           void get().refreshAgents();
+          void get().loadWorkspaces();
           break;
         }
         case "fatal":
@@ -646,6 +654,33 @@ export const useStore = create<StoreState>((set, get) => {
         set({ sessions: await api.listSessions() });
       } catch {
         // best-effort
+      }
+    },
+
+    loadWorkspaces: async () => {
+      try {
+        set({ workspaces: await api.workspaces() });
+      } catch {
+        // best-effort
+      }
+    },
+
+    openWorkspace: async (path) => {
+      try {
+        await api.openWorkspace(path);
+        // The runtime rebuild emits "ready", which resets the
+        // conversations and refreshes sessions/workspaces.
+      } catch (err) {
+        set({ statusText: String(err) });
+      }
+    },
+
+    removeWorkspace: async (id) => {
+      try {
+        await api.removeWorkspace(id);
+        await get().loadWorkspaces();
+      } catch (err) {
+        set({ statusText: String(err) });
       }
     },
 

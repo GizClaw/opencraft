@@ -20,6 +20,7 @@ import type {
   SetupRequest,
   SkillDTO,
   TurnStart,
+  WorkspaceMeta,
 } from "./types";
 
 export const api = {
@@ -37,6 +38,9 @@ export const api = {
   resumeSession: (id: string) => App.ResumeSession(id),
   sessionHistory: (id: string) =>
     App.SessionHistory(id) as Promise<HistoryMsg[]>,
+  workspaces: () => App.Workspaces() as Promise<WorkspaceMeta[]>,
+  openWorkspace: (path: string) => App.OpenWorkspace(path),
+  removeWorkspace: (id: string) => App.RemoveWorkspace(id),
   delegationCards: () => App.DelegationCards() as Promise<KanbanCard[]>,
   readFile: (path: string) => App.ReadFile(path),
   fileDiff: (path: string) => App.FileDiff(path),

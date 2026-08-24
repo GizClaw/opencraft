@@ -62,6 +62,13 @@ export interface SessionMeta {
   total_tokens: number;
 }
 
+export interface WorkspaceMeta {
+  id: string;
+  path: string;
+  title: string;
+  last_opened: string;
+}
+
 export interface HistoryMsg {
   role: string;
   text: string;

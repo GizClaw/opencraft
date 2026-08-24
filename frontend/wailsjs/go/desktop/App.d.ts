@@ -58,6 +58,8 @@ export function ReadLog(arg1:number):Promise<string>;
 
 export function Reload():Promise<void>;
 
+export function RemoveWorkspace(arg1:string):Promise<void>;
+
 export function RenameSession(arg1:string,arg2:string):Promise<void>;
 
 export function ReplyPrompt(arg1:string,arg2:desktop.ReplyRequest):Promise<boolean>;
@@ -89,3 +91,5 @@ export function UnregisterAgent(arg1:string):Promise<void>;
 export function Version():Promise<string>;
 
 export function Workspace():Promise<string>;
+
+export function Workspaces():Promise<Array<desktop.WorkspaceMeta>>;

@@ -110,6 +110,10 @@ export function Reload() {
   return window['go']['desktop']['App']['Reload']();
 }
 
+export function RemoveWorkspace(arg1) {
+  return window['go']['desktop']['App']['RemoveWorkspace'](arg1);
+}
+
 export function RenameSession(arg1, arg2) {
   return window['go']['desktop']['App']['RenameSession'](arg1, arg2);
 }
@@ -172,4 +176,8 @@ export function Version() {
 
 export function Workspace() {
   return window['go']['desktop']['App']['Workspace']();
+}
+
+export function Workspaces() {
+  return window['go']['desktop']['App']['Workspaces']();
 }
