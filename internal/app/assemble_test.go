@@ -30,9 +30,10 @@ func TestBuildRuntimeAssemblesNewTools(t *testing.T) {
 	// First-run wizard output: DeepSeek keyed, provider wired into the
 	// infer assembly.
 	cfg := config.InferenceConfig{
-		Providers: []config.KeyedProvider{{
-			Provider:  config.Providers[0],
+		Instances: []config.Instance{{
+			Type:      config.Providers[0].ID,
 			KeySource: config.KeyEnv,
+			Enabled:   true,
 		}},
 	}
 	if err := config.WriteInference(userDir, cfg); err != nil {

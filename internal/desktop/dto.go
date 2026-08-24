@@ -46,10 +46,13 @@ type ProviderView struct {
 	Azure        bool   `json:"azure"`
 }
 
-// SetupProvider is one provider selection from the frontend, in
-// router priority order.
-type SetupProvider struct {
-	ID        string `json:"id"`
+// ProviderInstance is one inference instance from the frontend.
+// Enabled instances appear in router priority order; disabled ones are
+// kept so re-enabling needs no re-entry.
+type ProviderInstance struct {
+	Type      string `json:"type"` // catalog type: deepseek | openai | ...
+	Name      string `json:"name"` // display label
+	API       string `json:"api"`  // responses | chat (openai only)
 	Key       string `json:"key"`
 	KeyEnv    bool   `json:"key_env"`
 	Model     string `json:"model"`
@@ -57,18 +60,20 @@ type SetupProvider struct {
 	Vision    bool   `json:"vision"`
 	Reasoning string `json:"reasoning"`
 	WebSearch bool   `json:"web_search"`
+	Enabled   bool   `json:"enabled"`
 }
 
-// SetupRequest is the full provider configuration payload.
-type SetupRequest struct {
-	Providers []SetupProvider `json:"providers"`
+// InferenceRequest is the full inference configuration payload from
+// the settings page.
+type InferenceRequest struct {
+	Instances []ProviderInstance `json:"instances"`
 }
 
 // ConfigState describes the currently configured inference wiring so
 // the config page can prefill edits instead of starting blank.
 type ConfigState struct {
-	Providers []SetupProvider `json:"providers"` // router priority order
-	Model     string          `json:"model"`     // current default model
+	Instances []ProviderInstance `json:"instances"` // enabled first, in router order
+	Model     string             `json:"model"`     // current default model
 }
 
 // ModelOption is one selectable per-conversation model hint. ID is the

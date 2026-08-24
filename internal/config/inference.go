@@ -71,36 +71,46 @@ const (
 	KeyLiteral
 )
 
-// KeyedProvider is one provider the user holds a key for, in priority
-// order (router tries them in order and falls back on failure).
-type KeyedProvider struct {
-	Provider  Provider
-	KeySource KeySource
-	KeyValue  string // literal key (KeyLiteral only)
-	Model     string // Azure: deployment name; empty uses the default
-	Endpoint  string // Azure resource URL
-	// Azure capability declarations (capability-aware routing, core
-	// v0.1.22+). Text output is always emitted for generate
-	// deployments; these knobs declare the optional channels.
-	Vision    bool   // capabilities.inputs: [image]
-	Reasoning string // "" | "always" | "toggle" → capabilities.reasoning
-	WebSearch bool   // capabilities.hosted_web_search: true
+// Instance is one configured inference endpoint: a provider type from
+// the catalog (with an optional base URL override, custom model, and
+// capabilities), its model, capabilities, and key. Several instances
+// may share the same provider type (e.g. two DeepSeek endpoints);
+// enabled instances form the router priority order.
+type Instance struct {
+	Type       string // catalog ID: deepseek | openai | ...
+	Name       string // display label; empty derives "<type>-<n>"
+	API        string // responses | chat (openai / openai-like)
+	Endpoint   string // base URL override; empty uses the driver default
+	Model      string // model name / Azure deployment name
+	Vision     bool   // capabilities.inputs: [image]
+	Reasoning  string // "" | "always" | "toggle" → capabilities.reasoning
+	WebSearch  bool   // capabilities.hosted_web_search: true
+	KeySource  KeySource
+	KeyValue   string // literal key (KeyLiteral only)
+	Enabled    bool
 }
 
 // InferenceConfig is one completed inference configuration: the
-// subset of providers the user has keys for, in router priority order.
+// enabled instances, in router priority order.
 type InferenceConfig struct {
-	Providers []KeyedProvider
+	Instances []Instance
 }
 
-// keyed returns the entry for a provider id, if selected.
-func (c InferenceConfig) keyed(id string) (KeyedProvider, bool) {
-	for _, k := range c.Providers {
-		if k.Provider.ID == id {
-			return k, true
+// Enabled returns the instances that participate in routing, in order.
+func (c InferenceConfig) Enabled() []Instance {
+	var out []Instance
+	for _, in := range c.Instances {
+		if in.Enabled {
+			out = append(out, in)
 		}
 	}
-	return KeyedProvider{}, false
+	return out
+}
+
+// instanceID derives the stable deployment resource id for instance n
+// (1-based): "<type>-<n>", e.g. deepseek-1, openai-like-2.
+func instanceID(instanceType string, n int) string {
+	return fmt.Sprintf("%s-%d", instanceType, n)
 }
 
 // InferenceNeeded reports whether the user configuration directory
@@ -142,17 +152,27 @@ func InferenceNeeded(configDir string) (bool, error) {
 // deployment are per-user), and the router's generate targets (keyed
 // providers in priority order; the router falls back on failure).
 func (c InferenceConfig) InferenceYAML() ([]byte, error) {
-	if len(c.Providers) == 0 {
-		return nil, errors.New("config: at least one provider is required")
+	if len(c.Instances) == 0 {
+		return nil, errors.New("config: at least one enabled instance is required")
 	}
-	for _, k := range c.Providers {
-		if k.Provider.Azure {
-			if strings.TrimSpace(k.Endpoint) == "" {
-				return nil, fmt.Errorf("config: azure endpoint is required")
-			}
-			if strings.TrimSpace(k.Model) == "" {
-				return nil, fmt.Errorf("config: azure deployment is required")
-			}
+	instances := make([]Instance, len(c.Instances))
+	copy(instances, c.Instances)
+	for i := range instances {
+		in := &instances[i]
+		prov, ok := ProviderByID(in.Type)
+		if !ok {
+			return nil, fmt.Errorf("config: unknown provider type %q", in.Type)
+		}
+		if strings.TrimSpace(in.Model) == "" {
+			in.Model = prov.DefaultModel
+		}
+		if strings.TrimSpace(in.Model) == "" {
+			return nil, fmt.Errorf(
+				"config: instance %d (%s): model is required", i+1, in.Type)
+		}
+		if prov.Azure && strings.TrimSpace(in.Endpoint) == "" {
+			return nil, fmt.Errorf(
+				"config: azure instance %d: endpoint is required", i+1)
 		}
 	}
 	var b strings.Builder
@@ -161,91 +181,96 @@ func (c InferenceConfig) InferenceYAML() ([]byte, error) {
 	fmt.Fprintf(&b, "# desktop settings page; last written %s).\n", time.Now().UTC().Format(time.RFC3339))
 	fmt.Fprintf(&b, "#\n")
 	fmt.Fprintf(&b, "# The FIXED inference wiring lives in the binary (embedded\n")
-	fmt.Fprintf(&b, "# inference.yaml): all provider resources, the infer assembly,\n")
-	fmt.Fprintf(&b, "# and the router retry policy. This file carries only the\n")
-	fmt.Fprintf(&b, "# VARIABLE parts: API key profiles, Azure (when configured),\n")
-	fmt.Fprintf(&b, "# and the router's generate targets (keyed providers in\n")
-	fmt.Fprintf(&b, "# priority order; failures fall back to the next target).\n")
+	fmt.Fprintf(&b, "# inference.yaml): the infer assembly and the router retry\n")
+	fmt.Fprintf(&b, "# policy. This file carries the VARIABLE parts: one provider\n")
+	fmt.Fprintf(&b, "# deployment per enabled instance (type + model + endpoint +\n")
+	fmt.Fprintf(&b, "# capabilities + key), the infer dep wiring for those\n")
+	fmt.Fprintf(&b, "# instances, and the router's generate targets in the\n")
+	fmt.Fprintf(&b, "# enabled order (failures fall back to the next target).\n")
 	fmt.Fprintf(&b, "# Resources, deps, and settings merge deeply across layers, so\n")
 	fmt.Fprintf(&b, "# resources not managed here (MCP servers, sandbox policy,\n")
 	fmt.Fprintf(&b, "# custom graphs) are preserved across settings writes.\n")
 	fmt.Fprintf(&b, "version: v1\n")
 	fmt.Fprintf(&b, "resources:\n")
-	for _, k := range c.Providers {
-		if k.Provider.Azure {
-			continue
-		}
-		// Partial provider declaration: the embedded layer already
-		// defines kind/impl/id/spec; only the credential profile is
-		// added here.
-		fmt.Fprintf(&b, "  provider.%s:\n", k.Provider.ID)
-		fmt.Fprintf(&b, "    settings:\n")
-		fmt.Fprintf(&b, "      profiles:\n")
-		// No profile id: the router policy references the implicit
-		// empty profile id, matching the provider driver defaults.
-		fmt.Fprintf(&b, "        - secrets:\n")
-		fmt.Fprintf(&b, "            api_key: %s\n", k.apiKey())
-	}
-	if azure, ok := c.keyed("azure"); ok {
-		// Azure cannot be embedded: its spec requires an endpoint and
-		// a deployment, both per-user. Declare the full resource and
-		// attach it to the (embedded) infer assembly via dep merge.
-		fmt.Fprintf(&b, "  provider.azure:\n")
+	// One provider deployment per instance (disabled instances stay
+	// declared so re-enabling them needs no re-entry); only enabled
+	// instances join the infer deps and the router.
+	var deps []string
+	for i, in := range instances {
+		prov, _ := ProviderByID(in.Type)
+		id := instanceID(in.Type, i+1)
+		fmt.Fprintf(&b, "  provider.%s:\n", id)
 		fmt.Fprintf(&b, "    kind: inference.Provider\n")
-		fmt.Fprintf(&b, "    impl: azure\n")
+		fmt.Fprintf(&b, "    impl: %s\n", prov.Impl)
 		fmt.Fprintf(&b, "    settings:\n")
-		fmt.Fprintf(&b, "      id: azure\n")
+		fmt.Fprintf(&b, "      id: %s\n", id)
 		fmt.Fprintf(&b, "      spec:\n")
-		fmt.Fprintf(&b, "        endpoint: %s\n", yamlQuote(azure.Endpoint))
+		if prov.Azure {
+			fmt.Fprintf(&b, "        endpoint: %s\n", yamlQuote(in.Endpoint))
+		} else if in.Endpoint != "" {
+			fmt.Fprintf(&b, "        base_url: %s\n", yamlQuote(in.Endpoint))
+		}
+		if in.API != "" && prov.Impl == "openai" {
+			fmt.Fprintf(&b, "        api: %s\n", yamlQuote(in.API))
+		}
 		fmt.Fprintf(&b, "        models:\n")
-		fmt.Fprintf(&b, "          - name: %s\n", yamlQuote(azure.Model))
+		fmt.Fprintf(&b, "          - name: %s\n", yamlQuote(in.Model))
 		fmt.Fprintf(&b, "            kind: generate\n")
-		// Capability-aware routing (core v0.1.22+) requires generate
-		// deployments to declare text output; the minimal mandatory
-		// declaration is emitted. Vision / reasoning / hosted web
-		// search are declared when configured.
 		fmt.Fprintf(&b, "            capabilities:\n")
 		fmt.Fprintf(&b, "              outputs: [text]\n")
-		if azure.Vision {
+		if in.Vision {
 			fmt.Fprintf(&b, "              inputs: [image]\n")
 		}
-		if azure.Reasoning != "" {
-			fmt.Fprintf(&b, "              reasoning: %s\n", yamlQuote(azure.Reasoning))
+		if in.Reasoning != "" {
+			fmt.Fprintf(&b, "              reasoning: %s\n", yamlQuote(in.Reasoning))
 		}
-		if azure.WebSearch {
+		if in.WebSearch {
 			fmt.Fprintf(&b, "              hosted_web_search: true\n")
 		}
 		fmt.Fprintf(&b, "      profiles:\n")
 		fmt.Fprintf(&b, "        - secrets:\n")
-		fmt.Fprintf(&b, "            api_key: %s\n", azure.apiKey())
+		fmt.Fprintf(&b, "            api_key: %s\n", instanceAPIKey(in, prov))
+		if in.Enabled {
+			deps = append(deps, id)
+		}
+	}
+	if len(deps) > 0 {
 		fmt.Fprintf(&b, "  infer:\n")
 		fmt.Fprintf(&b, "    deps:\n")
-		fmt.Fprintf(&b, "      provider.azure: provider.azure\n")
+		for _, id := range deps {
+			fmt.Fprintf(&b, "      provider.%s: provider.%s\n", id, id)
+		}
 	}
 	fmt.Fprintf(&b, "  router:\n")
 	fmt.Fprintf(&b, "    settings:\n")
 	fmt.Fprintf(&b, "      generate:\n")
 	fmt.Fprintf(&b, "        - tier: default\n")
 	fmt.Fprintf(&b, "          targets:\n")
-	for _, k := range c.Providers {
-		model := k.Model
-		if model == "" {
-			model = k.Provider.DefaultModel
+	hasEnabled := false
+	for i, in := range instances {
+		if !in.Enabled {
+			continue
 		}
+		hasEnabled = true
 		fmt.Fprintf(&b, "            - model:\n")
 		fmt.Fprintf(&b, "                id:\n")
-		fmt.Fprintf(&b, "                  provider: %s\n", k.Provider.ID)
-		fmt.Fprintf(&b, "                  name: %s\n", yamlQuote(model))
+		fmt.Fprintf(&b, "                  provider: %s\n", instanceID(in.Type, i+1))
+		fmt.Fprintf(&b, "                  name: %s\n", yamlQuote(in.Model))
+	}
+	if !hasEnabled {
+		// Keep the router block parseable (empty targets) so the
+		// document stays valid while the user re-enables instances.
+		fmt.Fprintf(&b, "          targets: []\n")
 	}
 	return []byte(b.String()), nil
 }
 
-// apiKey renders the profile secret value.
-func (k KeyedProvider) apiKey() string {
-	if k.KeySource == KeyEnv {
-		return "${env:" + k.Provider.EnvVar + "}"
+// instanceAPIKey renders the profile secret value for one instance.
+func instanceAPIKey(in Instance, prov Provider) string {
+	if in.KeySource == KeyEnv {
+		return "${env:" + prov.EnvVar + "}"
 	}
-	return yamlQuote(k.KeyValue)
+	return yamlQuote(in.KeyValue)
 }
 
 // WriteInference persists the inference configuration into the user
@@ -284,9 +309,6 @@ func WriteInference(configDir string, cfg InferenceConfig) error {
 // deleted provider. Everything else in the user layer is preserved.
 func managedResourceKeys(cfg InferenceConfig) map[string]bool {
 	keys := map[string]bool{"router": true, "infer": true}
-	for _, k := range cfg.Providers {
-		keys["provider."+k.Provider.ID] = true
-	}
 	return keys
 }
 
@@ -307,16 +329,20 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 		return InferenceConfig{}, fmt.Errorf("config: parse user config: %w", err)
 	}
 
-	// Provider declarations: credential profiles (and the Azure
-	// endpoint/deployment/capabilities) live under provider.<id>.
-	type providerSettings struct {
+	// Provider declarations: one resource per configured instance,
+	// with credential profiles and the deployment spec (endpoint /
+	// base_url, api mode, models + capabilities).
+	type instanceSettings struct {
 		Settings struct {
+			ID       string `json:"id"`
 			Profiles []struct {
 				Secrets struct {
 					APIKey string `json:"api_key"`
 				} `json:"secrets"`
 			} `json:"profiles"`
 			Spec struct {
+				API      string `json:"api"`
+				BaseURL  string `json:"base_url"`
 				Endpoint string `json:"endpoint"`
 				Models   []struct {
 					Name         string `json:"name"`
@@ -329,12 +355,12 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 			} `json:"spec"`
 		} `json:"settings"`
 	}
-	providers := make(map[string]providerSettings, len(doc.Resources))
+	providers := make(map[string]instanceSettings, len(doc.Resources))
 	for id, raw := range doc.Resources {
 		if !strings.HasPrefix(id, "provider.") {
 			continue
 		}
-		var res providerSettings
+		var res instanceSettings
 		if err := yaml.Unmarshal(raw, &res); err != nil {
 			return InferenceConfig{}, fmt.Errorf("config: parse %s: %w", id, err)
 		}
@@ -363,48 +389,104 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 	}
 
 	cfg := InferenceConfig{}
+	type routerTarget struct {
+		provider string
+		model    string
+	}
+	var targets []routerTarget
 	for _, pool := range router.Settings.Generate {
 		for _, target := range pool.Targets {
-			prov, ok := ProviderByID(target.Model.ID.Provider)
-			if !ok {
-				continue
+			targets = append(targets, routerTarget{
+				provider: target.Model.ID.Provider,
+				model:    target.Model.ID.Name,
+			})
+		}
+	}
+
+	// Recover every declared instance (enabled and disabled) from the
+	// provider resources, then mark and order the enabled ones by the
+	// router targets.
+	type parsed struct {
+		id  string
+		in  Instance
+	}
+	var all []parsed
+	for key, raw := range providers {
+		res := raw
+		instID := res.Settings.ID
+		if instID == "" {
+			instID = strings.TrimPrefix(key, "provider.")
+		}
+		instType := instanceTypeFromID(instID)
+		if instType == "" {
+			continue
+		}
+		in := Instance{Type: instType}
+		if len(res.Settings.Profiles) > 0 {
+			k := res.Settings.Profiles[0].Secrets.APIKey
+			if strings.HasPrefix(k, "${env:") && strings.HasSuffix(k, "}") {
+				in.KeySource = KeyEnv
+			} else {
+				in.KeySource = KeyLiteral
+				in.KeyValue = k
 			}
-			keyed := KeyedProvider{
-				Provider: prov,
-				Model:    target.Model.ID.Name,
-			}
-			if res, ok := providers["provider."+prov.ID]; ok {
-				if len(res.Settings.Profiles) > 0 {
-					key := res.Settings.Profiles[0].Secrets.APIKey
-					if strings.HasPrefix(key, "${env:") && strings.HasSuffix(key, "}") {
-						keyed.KeySource = KeyEnv
-					} else {
-						keyed.KeySource = KeyLiteral
-						keyed.KeyValue = key
-					}
+		}
+		spec := res.Settings.Spec
+		in.API = spec.API
+		in.Endpoint = spec.BaseURL
+		if spec.Endpoint != "" {
+			in.Endpoint = spec.Endpoint
+		}
+		if len(spec.Models) > 0 {
+			model := spec.Models[0]
+			in.Model = model.Name
+			for _, input := range model.Capabilities.Inputs {
+				if input == "image" {
+					in.Vision = true
 				}
-				if prov.Azure {
-					keyed.Endpoint = res.Settings.Spec.Endpoint
-					if len(res.Settings.Spec.Models) > 0 {
-						model := res.Settings.Spec.Models[0]
-						if keyed.Model == "" {
-							keyed.Model = model.Name
-						}
-						caps := model.Capabilities
-						for _, input := range caps.Inputs {
-							if input == "image" {
-								keyed.Vision = true
-							}
-						}
-						keyed.Reasoning = caps.Reasoning
-						keyed.WebSearch = caps.HostedWebSearch
-					}
-				}
 			}
-			cfg.Providers = append(cfg.Providers, keyed)
+			in.Reasoning = model.Capabilities.Reasoning
+			in.WebSearch = model.Capabilities.HostedWebSearch
+		}
+		all = append(all, parsed{id: instID, in: in})
+	}
+
+	consumed := make(map[string]bool)
+	for _, t := range targets {
+		for i := range all {
+			if all[i].id == t.provider && !consumed[t.provider] {
+				all[i].in.Enabled = true
+				if t.model != "" {
+					all[i].in.Model = t.model
+				}
+				consumed[t.provider] = true
+				cfg.Instances = append(cfg.Instances, all[i].in)
+				break
+			}
+		}
+	}
+	for _, p := range all {
+		if !consumed[p.id] {
+			cfg.Instances = append(cfg.Instances, p.in)
 		}
 	}
 	return cfg, nil
+}
+
+// instanceTypeFromID maps a provider deployment id back to its catalog
+// type: a bare catalog id (legacy single-provider configs) or a
+// "<type>-<n>" instance id.
+func instanceTypeFromID(id string) string {
+	if _, ok := ProviderByID(id); ok {
+		return id
+	}
+	best := ""
+	for _, p := range Providers {
+		if strings.HasPrefix(id, p.ID+"-") && len(p.ID) > len(best) {
+			best = p.ID
+		}
+	}
+	return best
 }
 
 // mergeUserLayer merges a freshly generated user document over the

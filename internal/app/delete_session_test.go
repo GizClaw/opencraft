@@ -33,9 +33,10 @@ func TestDeleteSessionClosesLiveSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := config.InferenceConfig{
-		Providers: []config.KeyedProvider{{
-			Provider:  config.Providers[0],
+		Instances: []config.Instance{{
+			Type:      config.Providers[0].ID,
 			KeySource: config.KeyEnv,
+			Enabled:   true,
 		}},
 	}
 	if err := config.WriteInference(userDir, cfg); err != nil {

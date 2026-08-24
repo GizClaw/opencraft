@@ -33,9 +33,10 @@ func envKeyed(t *testing.T, ids ...string) InferenceConfig {
 	t.Helper()
 	var cfg InferenceConfig
 	for _, id := range ids {
-		cfg.Providers = append(cfg.Providers, KeyedProvider{
-			Provider:  mustProvider(t, id),
+		cfg.Instances = append(cfg.Instances, Instance{
+			Type:      id,
 			KeySource: KeyEnv,
+			Enabled:   true,
 		})
 	}
 	return cfg
@@ -94,7 +95,8 @@ func TestInferenceYAMLVariableParts(t *testing.T) {
 	}
 	doc := string(data)
 
-	// Only variable parts: key profiles + router generate targets.
+	// One deployment resource per enabled instance, with the key
+	// profile and the model declaration.
 	if !strings.Contains(doc, "api_key: ${env:DEEPSEEK_API_KEY}") {
 		t.Fatalf("deepseek profile missing:\n%s", doc)
 	}
@@ -104,31 +106,29 @@ func TestInferenceYAMLVariableParts(t *testing.T) {
 	if strings.Contains(doc, "api_key: ${env:ANTHROPIC_API_KEY}") {
 		t.Fatalf("unkeyed anthropic must not carry a profile:\n%s", doc)
 	}
-	// The fixed wiring is NOT duplicated in the user layer.
-	for _, name := range []string{"kind: inference.Provider", "kind: inference.Assembly",
-		"kind: inference.Router", "retry:", "fallback_on_retry_exhausted"} {
-		if strings.Contains(doc, name) {
-			t.Fatalf("user layer must not duplicate fixed wiring %q:\n%s", name, doc)
-		}
+	if !strings.Contains(doc, "provider.deepseek-1:") ||
+		!strings.Contains(doc, "provider.openai-2:") {
+		t.Fatalf("instance deployments missing:\n%s", doc)
 	}
-	// Router targets = keyed providers in priority order.
-	idx := strings.Index(doc, "provider: deepseek")
-	idx2 := strings.Index(doc, "provider: openai")
+	// Router targets = enabled instances in priority order.
+	idx := strings.Index(doc, "provider: deepseek-1")
+	idx2 := strings.Index(doc, "provider: openai-2")
 	if idx < 0 || idx2 < 0 || idx > idx2 {
 		t.Fatalf("router priority order wrong:\n%s", doc)
 	}
-	if strings.Contains(doc, "provider: anthropic") {
+	if strings.Contains(doc, "provider: anthropic-1") {
 		t.Fatalf("unkeyed provider must not be a router target:\n%s", doc)
 	}
 }
 
 func TestInferenceYAMLAzure(t *testing.T) {
 	cfg := envKeyed(t, "deepseek")
-	cfg.Providers = append(cfg.Providers, KeyedProvider{
-		Provider:  mustProvider(t, "azure"),
+	cfg.Instances = append(cfg.Instances, Instance{
+		Type:      "azure",
 		KeySource: KeyEnv,
 		Endpoint:  "https://res.openai.azure.com",
 		Model:     "gpt-5.6-sol-deploy",
+		Enabled:   true,
 	})
 	data, err := cfg.InferenceYAML()
 	if err != nil {
@@ -136,14 +136,14 @@ func TestInferenceYAMLAzure(t *testing.T) {
 	}
 	doc := string(data)
 	for _, want := range []string{
-		"provider.azure:",
+		"provider.azure-2:",
 		"endpoint: 'https://res.openai.azure.com'",
 		"name: 'gpt-5.6-sol-deploy'",
 		"kind: generate",
 		"capabilities:",
 		"outputs: [text]",
-		"provider.azure: provider.azure", // infer dep merge
-		"provider: azure",                // router target
+		"provider.azure-2: provider.azure-2", // infer dep merge
+		"provider: azure-2",                  // router target
 	} {
 		if !strings.Contains(doc, want) {
 			t.Fatalf("azure doc missing %q:\n%s", want, doc)
@@ -152,7 +152,7 @@ func TestInferenceYAMLAzure(t *testing.T) {
 
 	// Missing endpoint/model must fail generation.
 	bad := envKeyed(t, "deepseek")
-	bad.Providers = append(bad.Providers, KeyedProvider{Provider: mustProvider(t, "azure")})
+	bad.Instances = append(bad.Instances, Instance{Type: "azure", Enabled: true})
 	if _, err := bad.InferenceYAML(); err == nil {
 		t.Fatal("azure without endpoint must fail")
 	}
@@ -160,14 +160,15 @@ func TestInferenceYAMLAzure(t *testing.T) {
 
 func TestInferenceYAMLAzureCapabilities(t *testing.T) {
 	cfg := envKeyed(t, "deepseek")
-	cfg.Providers = append(cfg.Providers, KeyedProvider{
-		Provider:  mustProvider(t, "azure"),
+	cfg.Instances = append(cfg.Instances, Instance{
+		Type:      "azure",
 		KeySource: KeyEnv,
 		Endpoint:  "https://res.openai.azure.com",
 		Model:     "gpt-5.6-sol-deploy",
 		Vision:    true,
 		Reasoning: "toggle",
 		WebSearch: true,
+		Enabled:   true,
 	})
 	data, err := cfg.InferenceYAML()
 	if err != nil {
@@ -188,11 +189,12 @@ func TestInferenceYAMLAzureCapabilities(t *testing.T) {
 	// Reasoning left off (the empty option) must not emit a reasoning
 	// declaration.
 	off := envKeyed(t, "deepseek")
-	off.Providers = append(off.Providers, KeyedProvider{
-		Provider:  mustProvider(t, "azure"),
+	off.Instances = append(off.Instances, Instance{
+		Type:      "azure",
 		KeySource: KeyEnv,
 		Endpoint:  "https://res.openai.azure.com",
 		Model:     "gpt-5.6-sol-deploy",
+		Enabled:   true,
 	})
 	data, err = off.InferenceYAML()
 	if err != nil {
@@ -204,10 +206,11 @@ func TestInferenceYAMLAzureCapabilities(t *testing.T) {
 }
 
 func TestLiteralKeyQuoted(t *testing.T) {
-	cfg := InferenceConfig{Providers: []KeyedProvider{{
-		Provider:  mustProvider(t, "deepseek"),
+	cfg := InferenceConfig{Instances: []Instance{{
+		Type:      "deepseek",
 		KeySource: KeyLiteral,
 		KeyValue:  "sk-it's-secret",
+		Enabled:   true,
 	}}}
 	data, err := cfg.InferenceYAML()
 	if err != nil {
@@ -237,7 +240,7 @@ func TestWriteAndRoundTrip(t *testing.T) {
 	if err != nil || needed {
 		t.Fatalf("after write: needed=%v err=%v", needed, err)
 	}
-	if got := DefaultModel(dir); got != "deepseek/deepseek-v4-flash" {
+	if got := DefaultModel(dir); got != "deepseek-1/deepseek-v4-flash" {
 		t.Fatalf("DefaultModel = %q", got)
 	}
 
@@ -255,6 +258,9 @@ func TestWriteAndRoundTrip(t *testing.T) {
 	}
 	if _, ok := view.Document.Resources["provider.azure"]; ok {
 		t.Fatal("azure must not be registered unconfigured")
+	}
+	if _, ok := view.Document.Resources["provider.deepseek-1"]; !ok {
+		t.Fatal("provider.deepseek-1 missing from merged view")
 	}
 }
 
@@ -310,10 +316,10 @@ agents:
 	doc := string(data)
 
 	// Managed resources were replaced by the new selection.
-	if strings.Contains(doc, "provider.deepseek") {
+	if strings.Contains(doc, "provider.deepseek:") {
 		t.Fatalf("removed provider still present:\n%s", doc)
 	}
-	if !strings.Contains(doc, "provider: openai") {
+	if !strings.Contains(doc, "provider: openai-1") {
 		t.Fatalf("new provider missing:\n%s", doc)
 	}
 	// Manual resources survived verbatim.
@@ -334,7 +340,7 @@ agents:
 	if _, ok := view.Document.Resources["tool.mcp"]; !ok {
 		t.Fatal("tool.mcp missing from merged view")
 	}
-	if got := DefaultModel(dir); got != "openai/gpt-5.6-sol" {
+	if got := DefaultModel(dir); got != "openai-1/gpt-5.6-sol" {
 		t.Fatalf("DefaultModel = %q, want openai", got)
 	}
 }
@@ -389,7 +395,7 @@ resources:
 	if strings.Contains(doc, "provider.azure") {
 		t.Fatalf("stale azure provider survived a non-azure re-save:\n%s", doc)
 	}
-	if strings.Contains(doc, "infer:") {
-		t.Fatalf("stale infer dep survived a non-azure re-save:\n%s", doc)
+	if !strings.Contains(doc, "provider.deepseek-1: provider.deepseek-1") {
+		t.Fatalf("new instance infer dep missing:\n%s", doc)
 	}
 }

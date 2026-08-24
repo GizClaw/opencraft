@@ -60,16 +60,19 @@ func (a *App) ConfigState() (ConfigState, error) {
 		return ConfigState{}, err
 	}
 	st := ConfigState{Model: config.DefaultModel(a.userDir)}
-	for _, k := range cfg.Providers {
-		st.Providers = append(st.Providers, SetupProvider{
-			ID:        k.Provider.ID,
-			Key:       k.KeyValue,
-			KeyEnv:    k.KeySource == config.KeyEnv,
-			Model:     k.Model,
-			Endpoint:  k.Endpoint,
-			Vision:    k.Vision,
-			Reasoning: k.Reasoning,
-			WebSearch: k.WebSearch,
+	for _, in := range cfg.Instances {
+		st.Instances = append(st.Instances, ProviderInstance{
+			Type:      in.Type,
+			Name:      in.Name,
+			API:       in.API,
+			Key:       in.KeyValue,
+			KeyEnv:    in.KeySource == config.KeyEnv,
+			Model:     in.Model,
+			Endpoint:  in.Endpoint,
+			Vision:    in.Vision,
+			Reasoning: in.Reasoning,
+			WebSearch: in.WebSearch,
+			Enabled:   in.Enabled,
 		})
 	}
 	return st, nil
@@ -84,61 +87,82 @@ func (a *App) ModelOptions() ([]ModelOption, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]ModelOption, 0, len(cfg.Providers))
-	for _, k := range cfg.Providers {
-		model := strings.TrimSpace(k.Model)
+	out := make([]ModelOption, 0, len(cfg.Instances))
+	for i, in := range cfg.Instances {
+		if !in.Enabled {
+			continue
+		}
+		model := strings.TrimSpace(in.Model)
 		if model == "" {
 			continue
 		}
 		out = append(out, ModelOption{
-			ID:    k.Provider.ID + "/" + model,
-			Label: k.Provider.Name + " · " + model,
+			ID:    instanceIDFor(in.Type, i+1) + "/" + model,
+			Label: instanceLabel(in, i+1) + " · " + model,
 		})
 	}
 	return out, nil
 }
 
-// SaveSetup writes the provider selection into the user configuration
-// layer (merging over manual resources) and rebuilds the runtime.
-func (a *App) SaveSetup(req SetupRequest) error {
-	if len(req.Providers) == 0 {
-		return errors.New("select at least one provider")
-	}
+// SaveInstances writes the inference instance configuration into the
+// user configuration layer (merging over manual resources) and
+// rebuilds the runtime.
+func (a *App) SaveInstances(req InferenceRequest) error {
 	cfg := config.InferenceConfig{}
-	for _, p := range req.Providers {
-		prov, ok := providerByID(providerID(p.ID))
+	for _, p := range req.Instances {
+		prov, ok := providerByID(strings.TrimSpace(p.Type))
 		if !ok {
-			return fmt.Errorf("unknown provider %q", p.ID)
+			return fmt.Errorf("unknown provider type %q", p.Type)
 		}
-		keyed := config.KeyedProvider{
-			Provider:  prov,
-			KeySource: config.KeyLiteral,
+		in := config.Instance{
+			Type:      prov.ID,
+			Name:      strings.TrimSpace(p.Name),
+			API:       strings.TrimSpace(p.API),
 			Model:     strings.TrimSpace(p.Model),
 			Endpoint:  strings.TrimSpace(p.Endpoint),
 			Vision:    p.Vision,
 			Reasoning: strings.TrimSpace(p.Reasoning),
 			WebSearch: p.WebSearch,
+			Enabled:   p.Enabled,
+			KeySource: config.KeyLiteral,
 		}
 		switch {
 		case p.KeyEnv:
-			keyed.KeySource = config.KeyEnv
+			in.KeySource = config.KeyEnv
 			if os.Getenv(prov.EnvVar) == "" {
 				return fmt.Errorf(
 					"environment variable %s is not set; cannot use the env key source",
 					prov.EnvVar)
 			}
-		case strings.TrimSpace(p.Key) == "":
+		case strings.TrimSpace(p.Key) == "" && p.Enabled:
 			return fmt.Errorf(
-				"provider %s: an API key or the env key source is required", prov.ID)
+				"instance %s (%s): an API key or the env key source is required",
+				p.Name, prov.ID)
 		default:
-			keyed.KeyValue = strings.TrimSpace(p.Key)
+			in.KeyValue = strings.TrimSpace(p.Key)
 		}
-		cfg.Providers = append(cfg.Providers, keyed)
+		cfg.Instances = append(cfg.Instances, in)
+	}
+	if len(cfg.Enabled()) == 0 {
+		return errors.New("enable at least one instance")
 	}
 	if err := config.WriteInference(a.userDir, cfg); err != nil {
 		return err
 	}
 	return a.rebuild()
+}
+
+// instanceIDFor derives the deployment id for instance n (1-based).
+func instanceIDFor(instanceType string, n int) string {
+	return fmt.Sprintf("%s-%d", instanceType, n)
+}
+
+// instanceLabel returns the display label for one instance.
+func instanceLabel(in config.Instance, n int) string {
+	if in.Name != "" {
+		return in.Name
+	}
+	return instanceIDFor(in.Type, n)
 }
 
 // MCPConfig returns the configured MCP tool servers from the user
