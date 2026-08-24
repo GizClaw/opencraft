@@ -166,6 +166,10 @@ export function StartTurn(arg1) {
   return window['go']['desktop']['App']['StartTurn'](arg1);
 }
 
+export function Startup(arg1) {
+  return window['go']['desktop']['App']['Startup'](arg1);
+}
+
 export function UnregisterAgent(arg1) {
   return window['go']['desktop']['App']['UnregisterAgent'](arg1);
 }

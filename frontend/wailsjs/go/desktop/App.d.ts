@@ -3,6 +3,7 @@
 import {desktop} from '../models';
 import {agents} from '../models';
 import {config} from '../models';
+import {context} from '../models';
 
 export function AllowPermission(arg1:string):Promise<void>;
 
@@ -85,6 +86,8 @@ export function SetThink(arg1:string):Promise<void>;
 export function Skills():Promise<Array<desktop.SkillDTO>>;
 
 export function StartTurn(arg1:string):Promise<desktop.TurnStart>;
+
+export function Startup(arg1:context.Context):Promise<void>;
 
 export function UnregisterAgent(arg1:string):Promise<void>;
 

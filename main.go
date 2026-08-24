@@ -6,6 +6,7 @@
 package main
 
 import (
+	"context"
 	"embed"
 	"log"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/mac"
 )
 
 //go:embed all:frontend/dist
@@ -41,16 +43,22 @@ func main() {
 		Height:    900,
 		MinWidth:  1024,
 		MinHeight: 700,
-		// Frameless on every platform: the window has no system title
-		// bar or native window buttons. The sidebar renders its own
-		// close/minimise/maximise controls and the top strip drags the
-		// window, so the app looks identical on macOS and Linux.
-		Frameless: true,
+		// Hidden, inset title bar on macOS: the system frame (rounded
+		// corners, shadow, traffic lights) stays native while the
+		// content extends to the top; the traffic lights are nudged
+		// into alignment with the chat header by
+		// applyOpenCraftWindowStyle.
+		Mac: &mac.Options{
+			TitleBar: mac.TitleBarHiddenInset(),
+		},
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
 		BackgroundColour: &options.RGBA{R: 15, G: 18, B: 24, A: 1},
-		OnStartup:        app.Startup,
+		OnStartup: func(ctx context.Context) {
+			app.Startup(ctx)
+			applyOpenCraftWindowStyle()
+		},
 		OnShutdown:       app.Shutdown,
 		Bind: []interface{}{
 			app,

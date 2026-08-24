@@ -4,22 +4,16 @@ import {
   Kanban,
   Loader2,
   MessageSquare,
-  Minus,
   Pencil,
   Plus,
   Search,
   Settings,
-  Square,
   Trash2,
   X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-import {
-  Quit,
-  WindowMinimise,
-  WindowToggleMaximise,
-} from "../../wailsjs/runtime/runtime";
+import { Environment, WindowToggleMaximise } from "../../wailsjs/runtime/runtime";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
 import type { SessionMeta } from "../lib/types";
@@ -56,12 +50,17 @@ export function Sidebar() {
   const removeWorkspace = useStore((s) => s.removeWorkspace);
   const { t } = useTranslation();
 
+  const [isMac, setIsMac] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [workspacesOpen, setWorkspacesOpen] = useState(false);
   const [sessionQuery, setSessionQuery] = useState("");
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+
+  useEffect(() => {
+    void Environment().then((env) => setIsMac(env.platform === "darwin"));
+  }, []);
 
   const fmtTime = (iso: string) => {
     const d = new Date(iso);
@@ -242,51 +241,19 @@ export function Sidebar() {
 
   return (
     <aside className="h-full border-r border-edge bg-panel flex flex-col min-h-0">
-      {/* Frameless window controls, drawn identically on every
-          platform: close / minimise / maximise sit vertically centred
-          so they align with the chat header title, and the rest of the
-          strip drags the window (double-click toggles maximise). */}
+      {/* macOS: the native traffic lights float here, so the strip
+          leaves them room and doubles as the window drag area; its
+          height matches the chat header (h-11) so both rows align. */}
       <div
-        className="h-11 shrink-0 border-b border-edge flex items-center px-3 select-none"
+        className={`h-11 shrink-0 border-b border-edge flex items-center select-none ${
+          isMac ? "pl-[78px]" : "px-4"
+        }`}
         style={{ ["--wails-draggable" as string]: "drag" }}
         onDoubleClick={() => WindowToggleMaximise()}
       >
-        <div
-          className="flex items-center gap-2"
-          style={{ ["--wails-draggable" as string]: "no-drag" }}
-        >
-          <button
-            onClick={() => Quit()}
-            className="group relative w-3 h-3 rounded-full bg-[#ff5f57] hover:ring-1 hover:ring-black/20 flex items-center justify-center"
-            title={t("sidebar.windowClose")}
-          >
-            <X
-              size={8}
-              className="opacity-0 group-hover:opacity-100 text-black/60"
-            />
-          </button>
-          <button
-            onClick={() => WindowMinimise()}
-            className="group relative w-3 h-3 rounded-full bg-[#febc2e] hover:ring-1 hover:ring-black/20 flex items-center justify-center"
-            title={t("sidebar.windowMinimise")}
-          >
-            <Minus
-              size={8}
-              className="opacity-0 group-hover:opacity-100 text-black/60"
-            />
-          </button>
-          <button
-            onClick={() => WindowToggleMaximise()}
-            className="group relative w-3 h-3 rounded-full bg-[#28c840] hover:ring-1 hover:ring-black/20 flex items-center justify-center"
-            title={t("sidebar.windowMaximise")}
-          >
-            <Square
-              size={7}
-              className="opacity-0 group-hover:opacity-100 text-black/60"
-            />
-          </button>
-        </div>
-        <span className="flex-1" />
+        {!isMac && (
+          <div className="font-semibold tracking-wide">OpenCraft</div>
+        )}
       </div>
 
       <div className="px-4 pt-3 pb-2 select-none">

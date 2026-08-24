@@ -37,6 +37,7 @@
 # ── Wails desktop app ──
 !main.go
 !execd_main.go
+!mac_window_*.go
 !wails.json
 !frontend/
 !frontend/**
