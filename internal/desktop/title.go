@@ -105,7 +105,7 @@ func (a *App) autoTitle(ctx context.Context, contextID string) {
 			otellog.Int("response_parts", len(response.Message.Content.Parts)),
 			otellog.String("response_text", firstPrefix(response.Message.Content.Text())),
 			otellog.String("finish_reason", string(response.FinishReason)),
-			otellog.Int("output_tokens", response.Usage.OutputTokens))
+			otellog.Int64("output_tokens", response.Usage.OutputTokens))
 		return
 	}
 	const maxTitle = 70
