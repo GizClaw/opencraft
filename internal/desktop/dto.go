@@ -33,7 +33,7 @@ type ConfigStatus struct {
 // the frontend can route output to the right conversation when
 // several turns run in parallel.
 type StreamEvent struct {
-	RunID string                  `json:"run_id"`
+	RunID string                   `json:"run_id"`
 	Delta agent.StreamDeltaPayload `json:"delta"`
 }
 
@@ -82,12 +82,12 @@ type ModelOption struct {
 
 // SessionMeta is one stored conversation for the sessions list.
 type SessionMeta struct {
-	ID        string    `json:"id"`
-	Title     string    `json:"title"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Messages  int       `json:"messages"`
-	TotalTokens int64   `json:"total_tokens"`
+	ID          string    `json:"id"`
+	Title       string    `json:"title"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	Messages    int       `json:"messages"`
+	TotalTokens int64     `json:"total_tokens"`
 }
 
 // HistoryMsg is one stored message for the resume view.
@@ -143,15 +143,15 @@ type ReplyRequest struct {
 
 // InteractDTO is the rendered form of one runtime.Spec.
 type InteractDTO struct {
-	ID         string          `json:"id"`
-	RunID      string          `json:"run_id"`
-	Kind       string          `json:"kind"`
-	Title      string          `json:"title"`
+	ID         string            `json:"id"`
+	RunID      string            `json:"run_id"`
+	Kind       string            `json:"kind"`
+	Title      string            `json:"title"`
 	Body       []json.RawMessage `json:"body"`
-	Options    []OptionDTO     `json:"options"`
-	Multi      bool            `json:"multi"`
-	AllowOther bool            `json:"allow_other"`
-	Source     string          `json:"source"`
+	Options    []OptionDTO       `json:"options"`
+	Multi      bool              `json:"multi"`
+	AllowOther bool              `json:"allow_other"`
+	Source     string            `json:"source"`
 }
 
 // OptionDTO is one selectable choice.
@@ -168,14 +168,14 @@ type StatusDTO struct {
 
 // UsageDTO reports one inference usage report.
 type UsageDTO struct {
-	Model           string `json:"model"`
-	InputTokens     int64  `json:"input_tokens"`
-	OutputTokens    int64  `json:"output_tokens"`
-	TotalTokens     int64  `json:"total_tokens"`
-	CacheReadTokens int64  `json:"cache_read_tokens"`
-	CacheWriteTokens int64 `json:"cache_write_tokens"`
-	ReasoningTokens int64  `json:"reasoning_tokens"`
-	LatencyMs       int64  `json:"latency_ms"`
+	Model            string `json:"model"`
+	InputTokens      int64  `json:"input_tokens"`
+	OutputTokens     int64  `json:"output_tokens"`
+	TotalTokens      int64  `json:"total_tokens"`
+	CacheReadTokens  int64  `json:"cache_read_tokens"`
+	CacheWriteTokens int64  `json:"cache_write_tokens"`
+	ReasoningTokens  int64  `json:"reasoning_tokens"`
+	LatencyMs        int64  `json:"latency_ms"`
 }
 
 // ResolvedDTO notifies the UI that a pending interaction was resolved

@@ -45,7 +45,7 @@ type App struct {
 	workDir string
 	userDir string
 
-	bridge *Bridge
+	bridge       *Bridge
 	otelShutdown func(context.Context) error
 
 	ctrl     *runtime.Controller
@@ -123,7 +123,7 @@ func New(opts Options) (*App, error) {
 		runConvs:       make(map[string]string),
 		runUsage:       make(map[string]ocsessions.Usage),
 		titling:        make(map[string]bool),
-		otelShutdown: shutdown,
+		otelShutdown:   shutdown,
 	}, nil
 }
 
