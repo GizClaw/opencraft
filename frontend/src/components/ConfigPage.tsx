@@ -28,6 +28,7 @@ interface InstanceRow {
   name: string;
   api: string;
   key: string;
+  keySet: boolean;
   keyEnv: boolean;
   model: string;
   endpoint: string;
@@ -108,6 +109,7 @@ export function ConfigPage() {
             name: s.name ?? "",
             api: s.api ?? "",
             key: s.key ?? "",
+            keySet: s.key_set ?? false,
             keyEnv: s.key_env ?? false,
             model: s.model || byType.get(s.type)?.default_model || "",
             endpoint: s.endpoint ?? "",
@@ -243,6 +245,7 @@ export function ConfigPage() {
         name: "",
         api: prov?.api ?? "",
         key: "",
+        keySet: false,
         keyEnv: false,
         model: prov?.default_model ?? "",
         endpoint: "",
@@ -286,6 +289,7 @@ export function ConfigPage() {
       name: r.name,
       api: r.api,
       key: r.key,
+      key_set: r.keySet,
       key_env: r.keyEnv,
       model: r.model,
       endpoint: r.endpoint,
@@ -589,9 +593,13 @@ export function ConfigPage() {
                               update(row.id, { key: e.target.value })
                             }
                             disabled={row.keyEnv}
-                            placeholder={t("setup.apiKeyPlaceholder", {
-                              var: prov?.env_var ?? "",
-                            })}
+                            placeholder={
+                              row.keySet && row.key === ""
+                                ? t("setup.apiKeySet")
+                                : t("setup.apiKeyPlaceholder", {
+                                    var: prov?.env_var ?? "",
+                                  })
+                            }
                             className="flex-1 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent disabled:opacity-40"
                           />
                           <label className="flex items-center gap-1.5 text-xs text-dim whitespace-nowrap">

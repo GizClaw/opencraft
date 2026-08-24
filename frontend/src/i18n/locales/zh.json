@@ -155,6 +155,7 @@
     "subtitle": "勾选你拥有的 provider，按优先级排序；配置写入 ~/.opencraft/config/opencraft.yaml",
     "selectProvider": "至少选择一个 provider",
     "apiKeyPlaceholder": "API Key（或使用 ${{var}}）",
+    "apiKeySet": "已配置 · 留空保持不变",
     "envVar": "环境变量 ${{var}}",
     "endpointPlaceholder": "Endpoint，如 https://xxx.openai.azure.com",
     "deploymentName": "Deployment 名称",

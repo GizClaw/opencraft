@@ -53,6 +53,7 @@ export namespace desktop {
 	    name: string;
 	    api: string;
 	    key: string;
+	    key_set: boolean;
 	    key_env: boolean;
 	    model: string;
 	    endpoint: string;
@@ -71,6 +72,7 @@ export namespace desktop {
 	        this.name = source["name"];
 	        this.api = source["api"];
 	        this.key = source["key"];
+	        this.key_set = source["key_set"];
 	        this.key_env = source["key_env"];
 	        this.model = source["model"];
 	        this.endpoint = source["endpoint"];

@@ -155,6 +155,7 @@
     "subtitle": "Select the providers you have keys for and order them by priority; the config is written to ~/.opencraft/config/opencraft.yaml",
     "selectProvider": "Select at least one provider",
     "apiKeyPlaceholder": "API Key (or use ${{var}})",
+    "apiKeySet": "Configured · leave blank to keep",
     "envVar": "Env var ${{var}}",
     "endpointPlaceholder": "Endpoint, e.g. https://xxx.openai.azure.com",
     "deploymentName": "Deployment name",

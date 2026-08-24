@@ -24,6 +24,7 @@ export interface ProviderInstance {
   name: string;
   api: string;
   key: string;
+  key_set: boolean;
   key_env: boolean;
   model: string;
   endpoint: string;
