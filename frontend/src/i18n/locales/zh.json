@@ -82,6 +82,7 @@
     "usageRangeToday": "今天",
     "usageCacheHitRate": "缓存命中率",
     "usageCacheHitHint": "缓存命中 tokens ÷ 输入 tokens（所选模型 + 时间区间）",
+    "usageTrend": "用量趋势",
     "usageSeriesEmpty": "该模型暂无时间维度用量记录。",
     "agentsHint": "子 Agent 由助手通过 create_agent 工具创建，这里可以查看与删除。删除会先排空进行中的委托再移除其声明。",
     "agentsEmpty": "暂无子 Agent",

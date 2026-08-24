@@ -952,6 +952,11 @@ export function ConfigPage() {
                     }
                     startMs={usageStartMs}
                     endMs={usageEndMs}
+                    rangeLabel={
+                      usageRange === "today"
+                        ? t("config.usageRangeToday")
+                        : usageRange
+                    }
                   />
                 <div className="rounded-xl border border-edge bg-panel2 overflow-x-auto">
                   <table className="w-full text-xs">

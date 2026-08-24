@@ -6,7 +6,7 @@ import type { UsagePoint } from "../lib/types";
 // token stream, hover tooltip, time labels for hour/day buckets.
 
 const W = 680;
-const H = 230;
+const H = 300;
 const ML = 46;
 const MR = 14;
 const MT = 14;
@@ -38,6 +38,52 @@ function niceCeil(v: number): number {
   const frac = v / base;
   const nice = frac <= 1 ? 1 : frac <= 2 ? 2 : frac <= 2.5 ? 2.5 : frac <= 5 ? 5 : 10;
   return nice * base;
+}
+
+// smoothLinePath builds a monotone cubic Hermite (Fritsch–Carlson)
+// spline through the points — the same smooth "monotone" curve
+// Recharts/cc-switch render — instead of a straight polyline.
+function smoothLinePath(xs: number[], ys: number[]): string {
+  const n = xs.length;
+  if (n < 2) return "";
+  if (n === 2) {
+    return `M${xs[0].toFixed(2)} ${ys[0].toFixed(2)} L${xs[1].toFixed(2)} ${ys[1].toFixed(2)}`;
+  }
+  const h: number[] = [];
+  const s: number[] = [];
+  for (let i = 0; i < n - 1; i++) {
+    h[i] = xs[i + 1] - xs[i];
+    s[i] = (ys[i + 1] - ys[i]) / h[i];
+  }
+  // Tangents at each point: centered slopes when the neighbors agree
+  // in sign, zero at local extrema (keeps the curve monotone).
+  const m = new Array<number>(n).fill(0);
+  m[0] = s[0];
+  m[n - 1] = s[n - 2];
+  for (let i = 1; i < n - 1; i++) {
+    m[i] = s[i - 1] * s[i] > 0 ? (s[i - 1] + s[i]) / 2 : 0;
+  }
+  // Fritsch–Carlson limiting prevents overshoot between segments.
+  for (let i = 0; i < n - 1; i++) {
+    if (s[i] === 0) continue;
+    const alpha = m[i] / s[i];
+    const beta = m[i + 1] / s[i];
+    const d = alpha * alpha + beta * beta;
+    if (d > 9) {
+      const scale = 3 / Math.sqrt(d);
+      m[i] *= scale;
+      m[i + 1] *= scale;
+    }
+  }
+  let d = `M${xs[0].toFixed(2)} ${ys[0].toFixed(2)}`;
+  for (let i = 0; i < n - 1; i++) {
+    const c1x = xs[i] + h[i] / 3;
+    const c1y = ys[i] + (m[i] * h[i]) / 3;
+    const c2x = xs[i + 1] - h[i] / 3;
+    const c2y = ys[i + 1] - (m[i + 1] * h[i]) / 3;
+    d += ` C${c1x.toFixed(2)} ${c1y.toFixed(2)},${c2x.toFixed(2)} ${c2y.toFixed(2)},${xs[i + 1].toFixed(2)} ${ys[i + 1].toFixed(2)}`;
+  }
+  return d;
 }
 
 function hourKey(ts: number): string {
@@ -103,6 +149,7 @@ interface UsageChartProps {
   granularity: "hour" | "day";
   startMs: number;
   endMs: number;
+  rangeLabel: string;
 }
 
 export function UsageChart({
@@ -110,6 +157,7 @@ export function UsageChart({
   granularity,
   startMs,
   endMs,
+  rangeLabel,
 }: UsageChartProps) {
   const { t, i18n } = useTranslation();
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
@@ -179,9 +227,15 @@ export function UsageChart({
   if (tickIndices[tickIndices.length - 1] !== n - 1) tickIndices.push(n - 1);
 
   const linePath = (key: (typeof SERIES)[number]["key"]) =>
-    filled
-      .map((p, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(2)} ${y(p[key]).toFixed(2)}`)
-      .join(" ");
+    smoothLinePath(
+      filled.map((_, i) => x(i)),
+      filled.map((p) => y(p[key])),
+    );
+
+  const areaPath = (key: (typeof SERIES)[number]["key"]) => {
+    const baseY = MT + plotH;
+    return `${linePath(key)} L${x(n - 1).toFixed(2)} ${baseY} L${x(0).toFixed(2)} ${baseY} Z`;
+  };
 
   const maxAt = (i: number) =>
     Math.max(
@@ -204,25 +258,33 @@ export function UsageChart({
   const hoverPoint = hover !== null ? filled[hover] : null;
 
   return (
-    <div className="rounded-xl border border-edge bg-panel2 p-3">
-      <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-dim">
-        {SERIES.map((s) => (
-          <span key={s.key} className="flex items-center gap-1.5">
-            <span
-              className="h-2 w-2 rounded-full"
-              style={{ backgroundColor: s.color }}
-            />
-            {t(s.labelKey)}
-          </span>
-        ))}
+    <div className="rounded-xl border border-edge bg-panel2 p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="text-sm font-semibold">{t("config.usageTrend")}</h3>
+        <p className="text-xs text-dim">{rangeLabel}</p>
       </div>
       <div className="relative">
         <svg
           viewBox={`0 0 ${W} ${H}`}
-          className="block h-[220px] w-full cursor-crosshair"
+          className="block h-[300px] w-full cursor-crosshair"
           onMouseMove={onMove}
           onMouseLeave={() => setHoverIdx(null)}
         >
+          <defs>
+            {SERIES.map((s) => (
+              <linearGradient
+                key={s.key}
+                id={`grad-${s.key}`}
+                x1="0"
+                y1="0"
+                x2="0"
+                y2="1"
+              >
+                <stop offset="5%" stopColor={s.color} stopOpacity={0.25} />
+                <stop offset="95%" stopColor={s.color} stopOpacity={0} />
+              </linearGradient>
+            ))}
+          </defs>
           {[0, 1, 2, 3, 4].map((tick) => {
             const ty = MT + (tick * plotH) / 4;
             const value = yMax * (1 - tick / 4);
@@ -264,15 +326,21 @@ export function UsageChart({
             </text>
           ))}
           {SERIES.map((s) => (
-            <path
-              key={s.key}
-              d={linePath(s.key)}
-              fill="none"
-              stroke={s.color}
-              strokeWidth={2}
-              strokeLinejoin="round"
-              strokeLinecap="round"
-            />
+            <g key={s.key}>
+              <path
+                d={areaPath(s.key)}
+                fill={`url(#grad-${s.key})`}
+                stroke="none"
+              />
+              <path
+                d={linePath(s.key)}
+                fill="none"
+                stroke={s.color}
+                strokeWidth={2}
+                strokeLinejoin="round"
+                strokeLinecap="round"
+              />
+            </g>
           ))}
           {n === 1 &&
             SERIES.map((s) => (
@@ -336,6 +404,17 @@ export function UsageChart({
             ))}
           </div>
         )}
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-dim">
+        {SERIES.map((s) => (
+          <span key={s.key} className="flex items-center gap-1.5">
+            <span
+              className="h-2 w-2 rounded-full"
+              style={{ backgroundColor: s.color }}
+            />
+            {t(s.labelKey)}
+          </span>
+        ))}
       </div>
     </div>
   );
