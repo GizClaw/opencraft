@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
@@ -66,6 +66,7 @@ export function ConfigPage() {
   const [ruleInput, setRuleInput] = useState("");
   const [skills, setSkills] = useState<{ name: string; description: string; scope: string; path: string }[]>([]);
   const [logs, setLogs] = useState("");
+  const logsRef = useRef<HTMLPreElement>(null);
   const [mcpRows, setMCPRows] = useState<MCPRow[]>([]);
   const [mcpError, setMCPError] = useState("");
 
@@ -123,6 +124,14 @@ export function ConfigPage() {
       .then(setLogs)
       .catch((err) => setError(String(err)));
   }, [tab]);
+
+  // Pin the log view to the newest lines whenever the content changes
+  // (including the first load when the tab opens).
+  useEffect(() => {
+    if (tab === "logs" && logsRef.current) {
+      logsRef.current.scrollTop = logsRef.current.scrollHeight;
+    }
+  }, [logs, tab]);
 
   useEffect(() => {
     if (tab !== "mcp") return;
@@ -269,7 +278,7 @@ export function ConfigPage() {
 
   return (
     <div className="fixed inset-x-0 bottom-0 top-11 z-50 bg-black/70 grid place-items-center">
-      <div className="w-[720px] max-h-[86vh] flex flex-col rounded-2xl border border-edge bg-panel shadow-2xl">
+      <div className="w-[720px] h-[620px] flex flex-col rounded-2xl border border-edge bg-panel shadow-2xl">
         <div className="flex items-center gap-4 px-5 py-4 border-b border-edge">
           <Settings size={18} className="text-accent" />
           <h2 className="text-base font-semibold">{t("config.title")}</h2>
@@ -796,7 +805,7 @@ export function ConfigPage() {
           )}
 
           {tab === "logs" && (
-            <div className="space-y-3">
+            <div className="h-full flex flex-col gap-3">
               <div className="flex items-center justify-between">
                 <p className="text-xs text-dim">{t("config.logsHint")}</p>
                 <button
@@ -812,7 +821,10 @@ export function ConfigPage() {
                 </button>
               </div>
               {logs ? (
-                <pre className="rounded-xl border border-edge bg-panel2 p-3 text-xs whitespace-pre-wrap break-all font-mono max-h-[55vh] overflow-y-auto">
+                <pre
+                  ref={logsRef}
+                  className="flex-1 min-h-0 rounded-xl border border-edge bg-panel2 p-3 text-xs whitespace-pre-wrap break-all font-mono overflow-y-auto"
+                >
                   {logs}
                 </pre>
               ) : (
