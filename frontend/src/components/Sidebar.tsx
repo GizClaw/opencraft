@@ -78,7 +78,7 @@ export function Sidebar() {
           Open
         </div>
         <div className="font-mono text-base leading-tight text-accent">
-          nCraft&gt;_
+          Craft&gt;_
         </div>
       </div>
 
