@@ -14,6 +14,7 @@ import type {
   KanbanCard,
   InferenceRequest,
   MCPServer,
+  ModelUsageStat,
   ModelOption,
   ProviderView,
   ReplyRequest,
@@ -50,6 +51,7 @@ export const api = {
   getModel: () => App.GetModel(),
   setModel: (model: string) => App.SetModel(model),
   modelOptions: () => App.ModelOptions() as Promise<ModelOption[]>,
+  modelUsage: () => App.ModelUsage() as Promise<ModelUsageStat[]>,
   mcpConfig: () => App.MCPConfig() as Promise<MCPServer[]>,
   saveMCP: (servers: MCPServer[]) =>
     App.SaveMCP(servers as unknown as genConfig.MCPServer[]),

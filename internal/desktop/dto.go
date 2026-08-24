@@ -76,6 +76,20 @@ type ConfigState struct {
 	Model     string             `json:"model"`     // current default model
 }
 
+// ModelUsageStat aggregates one model's usage across all workspaces
+// and sessions.
+type ModelUsageStat struct {
+	Model             string `json:"model"`
+	InputTokens       int64  `json:"input_tokens"`
+	OutputTokens      int64  `json:"output_tokens"`
+	CacheReadTokens   int64  `json:"cache_read_tokens"`
+	ReasoningTokens   int64  `json:"reasoning_tokens"`
+	LatencyMs         int64  `json:"latency_ms"`
+	Workspaces        int    `json:"workspaces"`
+	Sessions          int    `json:"sessions"`
+	UpdatedAt         string `json:"updated_at"`
+}
+
 // ModelOption is one selectable per-conversation model hint. ID is the
 // "provider/name" value the router's model_hint consumes; Label is the
 // human-facing description.

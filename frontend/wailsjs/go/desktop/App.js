@@ -78,6 +78,10 @@ export function ModelOptions() {
   return window['go']['desktop']['App']['ModelOptions']();
 }
 
+export function ModelUsage() {
+  return window['go']['desktop']['App']['ModelUsage']();
+}
+
 export function NewChat() {
   return window['go']['desktop']['App']['NewChat']();
 }

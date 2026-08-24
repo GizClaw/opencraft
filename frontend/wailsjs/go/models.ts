@@ -250,6 +250,34 @@ export namespace desktop {
 	        this.label = source["label"];
 	    }
 	}
+	export class ModelUsageStat {
+	    model: string;
+	    input_tokens: number;
+	    output_tokens: number;
+	    cache_read_tokens: number;
+	    reasoning_tokens: number;
+	    latency_ms: number;
+	    workspaces: number;
+	    sessions: number;
+	    updated_at: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ModelUsageStat(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.model = source["model"];
+	        this.input_tokens = source["input_tokens"];
+	        this.output_tokens = source["output_tokens"];
+	        this.cache_read_tokens = source["cache_read_tokens"];
+	        this.reasoning_tokens = source["reasoning_tokens"];
+	        this.latency_ms = source["latency_ms"];
+	        this.workspaces = source["workspaces"];
+	        this.sessions = source["sessions"];
+	        this.updated_at = source["updated_at"];
+	    }
+	}
 	
 	export class ProviderView {
 	    id: string;

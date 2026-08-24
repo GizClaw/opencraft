@@ -16,6 +16,7 @@ import (
 	app "github.com/GizClaw/opencraft/internal/app"
 	"github.com/GizClaw/opencraft/internal/config"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
+	"github.com/GizClaw/opencraft/internal/usage"
 )
 
 // Version returns the application version.
@@ -99,6 +100,36 @@ func (a *App) ModelOptions() ([]ModelOption, error) {
 		out = append(out, ModelOption{
 			ID:    instanceIDFor(in.Type, i+1) + "/" + model,
 			Label: instanceLabel(in, i+1) + " · " + model,
+		})
+	}
+	return out, nil
+}
+
+// ModelUsage returns per-model token usage across every workspace and
+// session, most used first.
+func (a *App) ModelUsage() ([]ModelUsageStat, error) {
+	a.mu.Lock()
+	store := a.usage
+	a.mu.Unlock()
+	if store == nil {
+		return []ModelUsageStat{}, nil
+	}
+	rows, err := store.Summary(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	out := make([]ModelUsageStat, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, ModelUsageStat{
+			Model:           r.Model,
+			InputTokens:     r.InputTokens,
+			OutputTokens:    r.OutputTokens,
+			CacheReadTokens: r.CacheReadTokens,
+			ReasoningTokens: r.ReasoningTokens,
+			LatencyMs:       r.LatencyMs,
+			Workspaces:      r.Workspaces,
+			Sessions:        r.Sessions,
+			UpdatedAt:       r.UpdatedAt,
 		})
 	}
 	return out, nil
@@ -409,6 +440,21 @@ func (a *App) waitTurn(
 
 	if store != nil && turnUsage.TotalTokens > 0 {
 		_ = store.RecordUsage(context.Background(), contextID, turnUsage)
+	}
+	if a.usage != nil && turnUsage.Model != "" {
+		_ = a.usage.Record(
+			context.Background(),
+			workspaceID(a.workDir),
+			contextID,
+			turnUsage.Model,
+			usage.Usage{
+				InputTokens:     turnUsage.InputTokens,
+				OutputTokens:    turnUsage.OutputTokens,
+				CacheReadTokens: turnUsage.CacheReadTokens,
+				ReasoningTokens: turnUsage.ReasoningTokens,
+				LatencyMs:       turnUsage.LatencyMs,
+			},
+		)
 	}
 	// Best-effort auto title: the model summarizes the conversation
 	// once; failures keep the first-message fallback. Runs off the UI

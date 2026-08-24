@@ -23,6 +23,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/config"
 	"github.com/GizClaw/opencraft/internal/runtime"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
+	"github.com/GizClaw/opencraft/internal/usage"
 )
 
 // Options configures the desktop application.
@@ -51,6 +52,7 @@ type App struct {
 	ctrl     *runtime.Controller
 	broker   *runtime.Broker
 	sessions *ocsessions.Store
+	usage    *usage.Store
 	agents   *agents.Lifecycle
 	turns    map[string]*session.Turn
 
@@ -139,6 +141,12 @@ func (a *App) Startup(ctx context.Context) {
 // Shutdown tears down the runtime when the window closes.
 func (a *App) Shutdown(ctx context.Context) {
 	a.closeRuntime()
+	a.mu.Lock()
+	if a.usage != nil {
+		_ = a.usage.Close()
+		a.usage = nil
+	}
+	a.mu.Unlock()
 	if a.otelShutdown != nil {
 		flushCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
@@ -157,6 +165,17 @@ func (a *App) rebuild() error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// The user-level usage database is workspace-independent and opened
+	// once per app run.
+	a.mu.Lock()
+	if a.usage == nil {
+		if dataDir, err := config.UserDataDir(); err == nil {
+			if store, err := usage.Open(filepath.Join(dataDir, "user.db")); err == nil {
+				a.usage = store
+			}
+		}
+	}
+	a.mu.Unlock()
 	mgr, err := config.Open(config.Options{
 		WorkDir: a.workDir,
 		UserDir: a.userDir,
@@ -294,6 +313,9 @@ func (a *App) onUsage(u inference.Usage) {
 	acc.TotalTokens += u.TotalTokens
 	acc.InputTokens += u.InputTokens
 	acc.OutputTokens += u.OutputTokens
+	if u.Model.ID.Provider != "" && u.Model.ID.Name != "" {
+		acc.Model = u.Model.ID.Provider + "/" + u.Model.ID.Name
+	}
 	if u.Output.ReasoningTokens != nil {
 		acc.ReasoningTokens += *u.Output.ReasoningTokens
 	}

@@ -40,6 +40,7 @@ type Meta struct {
 
 // Usage is the cumulative token usage recorded for one session.
 type Usage struct {
+	Model           string `json:"model,omitempty"`
 	InputTokens      int64 `json:"input_tokens,omitempty"`
 	OutputTokens     int64 `json:"output_tokens,omitempty"`
 	TotalTokens      int64 `json:"total_tokens,omitempty"`

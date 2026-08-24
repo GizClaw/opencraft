@@ -12,7 +12,12 @@ import {
 import { useTranslation } from "react-i18next";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
-import type { MCPServer, ProviderInstance, ProviderView } from "../lib/types";
+import type {
+  MCPServer,
+  ModelUsageStat,
+  ProviderInstance,
+  ProviderView,
+} from "../lib/types";
 
 // InstanceRow is one editable inference instance in the settings page.
 interface InstanceRow {
@@ -34,6 +39,7 @@ type Tab =
   | "ui"
   | "inference"
   | "mcp"
+  | "usage"
   | "agents"
   | "permissions"
   | "skills"
@@ -75,6 +81,8 @@ export function ConfigPage() {
   const logsRef = useRef<HTMLPreElement>(null);
   const [mcpRows, setMCPRows] = useState<MCPRow[]>([]);
   const [mcpError, setMCPError] = useState("");
+  const [usageRows, setUsageRows] = useState<ModelUsageStat[]>([]);
+  const [usageError, setUsageError] = useState("");
 
   useEffect(() => {
     void (async () => {
@@ -161,6 +169,14 @@ export function ConfigPage() {
         ),
       )
       .catch((err) => setMCPError(String(err)));
+  }, [tab]);
+
+  useEffect(() => {
+    if (tab !== "usage") return;
+    void api
+      .modelUsage()
+      .then(setUsageRows)
+      .catch((err) => setUsageError(String(err)));
   }, [tab]);
 
   // enabledRows are the instances that participate in the router, in
@@ -257,6 +273,23 @@ export function ConfigPage() {
     );
   };
 
+  const fmtUsageTokens = (n: number) => {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+    return String(n);
+  };
+
+  const fmtUsageTime = (iso: string) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    const diff = Date.now() - d.getTime();
+    if (diff < 60_000) return "刚刚";
+    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`;
+    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`;
+    return d.toLocaleDateString();
+  };
+
   const saveMCP = async () => {
     setMCPError("");
     const servers: MCPServer[] = mcpRows.map((r) => {
@@ -295,6 +328,7 @@ export function ConfigPage() {
     { id: "ui", label: t("config.tabUi") },
     { id: "inference", label: t("config.tabInference") },
     { id: "mcp", label: t("config.tabMCP") },
+    { id: "usage", label: t("config.tabUsage") },
     { id: "agents", label: t("config.tabAgents") },
     { id: "permissions", label: t("config.tabPermissions") },
     { id: "skills", label: t("config.tabSkills") },
@@ -721,6 +755,90 @@ export function ConfigPage() {
                   <span className="text-xs text-err">{mcpError}</span>
                 )}
               </div>
+            </div>
+          )}
+
+          {tab === "usage" && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-dim">{t("config.usageHint")}</p>
+                <button
+                  onClick={() =>
+                    void api
+                      .modelUsage()
+                      .then(setUsageRows)
+                      .catch((err) => setUsageError(String(err)))
+                  }
+                  className="text-xs text-dim hover:text-fg"
+                >
+                  {t("config.logsRefresh")}
+                </button>
+              </div>
+              {usageError && <p className="text-xs text-err">{usageError}</p>}
+              {usageRows.length === 0 ? (
+                <p className="text-sm text-dim">{t("config.usageEmpty")}</p>
+              ) : (
+                <div className="rounded-xl border border-edge bg-panel2 overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-left text-dim border-b border-edge">
+                        <th className="px-3 py-2 font-medium">
+                          {t("config.usageModel")}
+                        </th>
+                        <th className="px-3 py-2 font-medium text-right">
+                          {t("config.usageInput")}
+                        </th>
+                        <th className="px-3 py-2 font-medium text-right">
+                          {t("config.usageOutput")}
+                        </th>
+                        <th className="px-3 py-2 font-medium text-right">
+                          {t("config.usageCache")}
+                        </th>
+                        <th className="px-3 py-2 font-medium text-right">
+                          {t("config.usageReasoning")}
+                        </th>
+                        <th className="px-3 py-2 font-medium text-right">
+                          {t("config.usageLatency")}
+                        </th>
+                        <th className="px-3 py-2 font-medium text-right">
+                          {t("config.usageSessions")}
+                        </th>
+                        <th className="px-3 py-2 font-medium text-right">
+                          {t("config.usageUpdated")}
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {usageRows.map((r) => (
+                        <tr key={r.model} className="border-b border-edge/50 last:border-0">
+                          <td className="px-3 py-2 font-mono">{r.model}</td>
+                          <td className="px-3 py-2 text-right tabular-nums">
+                            {fmtUsageTokens(r.input_tokens)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums">
+                            {fmtUsageTokens(r.output_tokens)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums">
+                            {fmtUsageTokens(r.cache_read_tokens)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums">
+                            {fmtUsageTokens(r.reasoning_tokens)}
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums">
+                            {fmtUsageTokens(r.latency_ms)}ms
+                          </td>
+                          <td className="px-3 py-2 text-right tabular-nums">
+                            {r.sessions}
+                          </td>
+                          <td className="px-3 py-2 text-right text-dim">
+                            {fmtUsageTime(r.updated_at)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
 

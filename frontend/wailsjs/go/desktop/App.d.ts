@@ -44,6 +44,8 @@ export function MCPConfig():Promise<Array<config.MCPServer>>;
 
 export function ModelOptions():Promise<Array<desktop.ModelOption>>;
 
+export function ModelUsage():Promise<Array<desktop.ModelUsageStat>>;
+
 export function NewChat():Promise<string>;
 
 export function OpenPath(arg1:string):Promise<void>;

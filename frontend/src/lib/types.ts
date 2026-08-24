@@ -42,6 +42,18 @@ export interface ConfigState {
   model: string;
 }
 
+export interface ModelUsageStat {
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  reasoning_tokens: number;
+  latency_ms: number;
+  workspaces: number;
+  sessions: number;
+  updated_at: string;
+}
+
 export interface ModelOption {
   id: string;
   label: string;
