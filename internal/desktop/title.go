@@ -76,7 +76,8 @@ func (a *App) autoTitle(ctx context.Context, contextID string) {
 			otellog.String("session", contextID))
 		return
 	}
-	maxTokens := 16
+	maxTokens := 64
+	reasoning := false
 	response, _, err := router.Generate(ctx, inference.GenerateRequest{
 		Input: inference.GenerateInput{
 			Role: inference.InputRoleUser,
@@ -86,6 +87,10 @@ func (a *App) autoTitle(ctx context.Context, contextID string) {
 				}},
 				Intent: inference.Intent{Text: &inference.TextIntent{
 					MaxOutputTokens: &maxTokens,
+					// Title generation must not spend its budget on
+					// reasoning: a thinking model would burn all tokens
+					// on the trace and return empty text.
+					ReasoningEnabled: &reasoning,
 				}},
 			},
 		},
