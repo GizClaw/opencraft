@@ -43,6 +43,7 @@ body,
   font-family: ui-sans-serif, system-ui, -apple-system, "PingFang SC",
     "Microsoft YaHei", sans-serif;
   font-size: 14px;
+  overscroll-behavior: none;
 }
 
 * {
