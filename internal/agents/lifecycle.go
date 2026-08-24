@@ -111,9 +111,9 @@ type registrar interface {
 
 // Summary is the TUI / delegation-facing view of one persistent agent.
 type Summary struct {
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	CreatedAt   string    `json:"created_at,omitempty"` // RFC3339 UTC
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	CreatedAt   string `json:"created_at,omitempty"` // RFC3339 UTC
 }
 
 // Lifecycle creates, removes, and loads persistent subagents. The

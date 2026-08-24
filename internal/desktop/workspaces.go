@@ -18,10 +18,10 @@ import (
 // WorkspaceMeta describes one previously opened workspace for the
 // sidebar history list.
 type WorkspaceMeta struct {
-	ID         string    `json:"id"`
-	Path       string    `json:"path"`
-	Title      string    `json:"title"`
-	LastOpened string    `json:"last_opened"` // RFC3339 UTC
+	ID         string `json:"id"`
+	Path       string `json:"path"`
+	Title      string `json:"title"`
+	LastOpened string `json:"last_opened"` // RFC3339 UTC
 }
 
 // workspaceHistoryDir returns ~/.opencraft/workspaces, creating it if

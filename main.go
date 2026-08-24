@@ -59,7 +59,7 @@ func main() {
 			app.Startup(ctx)
 			applyOpenCraftWindowStyle()
 		},
-		OnShutdown:       app.Shutdown,
+		OnShutdown: app.Shutdown,
 		Bind: []interface{}{
 			app,
 		},

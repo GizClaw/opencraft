@@ -77,17 +77,17 @@ const (
 // may share the same provider type (e.g. two DeepSeek endpoints);
 // enabled instances form the router priority order.
 type Instance struct {
-	Type       string // catalog ID: deepseek | openai | ...
-	Name       string // display label; empty derives "<type>-<n>"
-	API        string // responses | chat (openai / openai-like)
-	Endpoint   string // base URL override; empty uses the driver default
-	Model      string // model name / Azure deployment name
-	Vision     bool   // capabilities.inputs: [image]
-	Reasoning  string // "" | "always" | "toggle" → capabilities.reasoning
-	WebSearch  bool   // capabilities.hosted_web_search: true
-	KeySource  KeySource
-	KeyValue   string // literal key (KeyLiteral only)
-	Enabled    bool
+	Type      string // catalog ID: deepseek | openai | ...
+	Name      string // display label; empty derives "<type>-<n>"
+	API       string // responses | chat (openai / openai-like)
+	Endpoint  string // base URL override; empty uses the driver default
+	Model     string // model name / Azure deployment name
+	Vision    bool   // capabilities.inputs: [image]
+	Reasoning string // "" | "always" | "toggle" → capabilities.reasoning
+	WebSearch bool   // capabilities.hosted_web_search: true
+	KeySource KeySource
+	KeyValue  string // literal key (KeyLiteral only)
+	Enabled   bool
 }
 
 // InferenceConfig is one completed inference configuration: the
@@ -407,8 +407,8 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 	// provider resources, then mark and order the enabled ones by the
 	// router targets.
 	type parsed struct {
-		id  string
-		in  Instance
+		id string
+		in Instance
 	}
 	var all []parsed
 	for key, raw := range providers {
