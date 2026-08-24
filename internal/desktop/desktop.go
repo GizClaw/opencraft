@@ -221,6 +221,10 @@ func (a *App) rebuild() error {
 	a.agents = lifecycle
 	a.mu.Unlock()
 
+	// Remember this workspace in the history (best-effort) once the
+	// runtime is healthy, so every successful open/switch lands here.
+	a.recordWorkspace(a.workDir)
+
 	a.bridge.Emit("ready", a.status(true))
 	return nil
 }
