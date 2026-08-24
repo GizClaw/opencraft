@@ -122,14 +122,6 @@
     "submit": "提交",
     "cancel": "取消"
   },
-  "files": {
-    "workspace": "工作区",
-    "tree": "文件",
-    "view": "查看",
-    "diff": "Diff",
-    "noDiff": "无改动",
-    "noSelection": "在左侧选择文件查看内容"
-  },
   "setup": {
     "title": "推理配置",
     "subtitle": "勾选你拥有的 provider，按优先级排序；配置写入 ~/.opencraft/config/opencraft.yaml",

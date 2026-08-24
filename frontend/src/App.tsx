@@ -9,7 +9,6 @@ import {
 } from "../wailsjs/runtime/runtime";
 import { ChatView } from "./components/ChatView";
 import { ConfigPage } from "./components/ConfigPage";
-import { FilePanel } from "./components/FilePanel";
 import { KanbanView } from "./components/KanbanView";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
@@ -29,9 +28,6 @@ export default function App() {
   const { t } = useTranslation();
   const [sidebarW, setSidebarW] = useState(
     () => Number(localStorage.getItem("oc.sidebarW")) || 240,
-  );
-  const [fileW, setFileW] = useState(
-    () => Number(localStorage.getItem("oc.fileW")) || 320,
   );
 
   useEffect(() => {
@@ -84,23 +80,15 @@ export default function App() {
   }, [newChat, openConfig, openKanban]);
 
   const startDrag =
-    (side: "sidebar" | "file") => (e: React.MouseEvent) => {
+    () => (e: React.MouseEvent) => {
       e.preventDefault();
       const startX = e.clientX;
-      const startW = side === "sidebar" ? sidebarW : fileW;
+      const startW = sidebarW;
       const onMove = (ev: MouseEvent) => {
-        const raw =
-          side === "sidebar"
-            ? startW + (ev.clientX - startX)
-            : startW + (startX - ev.clientX);
+        const raw = startW + (ev.clientX - startX);
         const next = Math.min(480, Math.max(180, raw));
-        if (side === "sidebar") {
-          setSidebarW(next);
-          localStorage.setItem("oc.sidebarW", String(next));
-        } else {
-          setFileW(next);
-          localStorage.setItem("oc.fileW", String(next));
-        }
+        setSidebarW(next);
+        localStorage.setItem("oc.sidebarW", String(next));
       };
       const onUp = () => {
         window.removeEventListener("mousemove", onMove);
@@ -140,17 +128,10 @@ export default function App() {
           <Sidebar />
         </div>
         <div
-          onMouseDown={startDrag("sidebar")}
+          onMouseDown={startDrag()}
           className="w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-accent/40"
         />
         <ChatView />
-        <div
-          onMouseDown={startDrag("file")}
-          className="w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-accent/40"
-        />
-        <div style={{ width: fileW }} className="shrink-0">
-          <FilePanel />
-        </div>
       </div>
       <StatusBar />
       {configOpen && <ConfigPage />}

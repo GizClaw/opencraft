@@ -122,14 +122,6 @@
     "submit": "Submit",
     "cancel": "Cancel"
   },
-  "files": {
-    "workspace": "Workspace",
-    "tree": "Files",
-    "view": "View",
-    "diff": "Diff",
-    "noDiff": "No changes",
-    "noSelection": "Select a file on the left to view it"
-  },
   "setup": {
     "title": "Inference setup",
     "subtitle": "Select the providers you have keys for and order them by priority; the config is written to ~/.opencraft/config/opencraft.yaml",

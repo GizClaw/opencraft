@@ -236,12 +236,38 @@ export function ChatView() {
 
       <div className="shrink-0 px-6 pb-4">
         <div className="max-w-3xl mx-auto rounded-xl border border-edge bg-panel focus-within:border-accent/60 transition-colors">
-          {yolo && (
-            <div className="flex items-center gap-2 rounded-t-xl border-b border-err/40 bg-err/10 px-4 py-1.5 text-xs text-err">
-              <AlertTriangle size={13} />
-              {t("chat.yoloBanner")}
-            </div>
-          )}
+          <div
+            className={`flex items-center gap-2 rounded-t-xl border-b px-3 py-1.5 text-xs transition-colors ${
+              yolo
+                ? "border-[#d9a83c]/40 bg-[#d9a83c]/10"
+                : "border-transparent"
+            }`}
+          >
+            <button
+              onClick={() =>
+                yolo ? void setMode("workspace") : setConfirmYolo(true)
+              }
+              className={`flex items-center gap-1.5 rounded-md border px-2 py-0.5 transition-colors ${
+                yolo
+                  ? "border-[#d9a83c]/50 bg-[#d9a83c]/15 text-[#e2b341] hover:bg-[#d9a83c]/25"
+                  : "border-edge text-dim hover:text-fg"
+              }`}
+              title={yolo ? t("chat.workspaceMode") : t("chat.yoloMode")}
+            >
+              {yolo ? <Flame size={11} /> : <ShieldCheck size={11} />}
+              {yolo ? t("chat.yoloMode") : t("chat.workspaceMode")}
+            </button>
+            {yolo && (
+              <span className="flex items-center gap-1 text-[#d9a83c]">
+                <AlertTriangle size={12} />
+                {t("chat.yoloBanner")}
+              </span>
+            )}
+            <span className="flex-1" />
+            <span className="text-dim hidden sm:inline">
+              {busy ? t("chat.runningHint") : t("chat.enterHint")}
+            </span>
+          </div>
           <textarea
             ref={inputRef}
             value={input}
@@ -295,18 +321,6 @@ export function ChatView() {
           )}
           <div className="flex items-center justify-between px-3 pb-2.5">
             <div className="flex items-center gap-3">
-              <button
-                onClick={() => (yolo ? void setMode("workspace") : setConfirmYolo(true))}
-                className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs transition-colors ${
-                  yolo
-                    ? "border-err/50 bg-err/10 text-err hover:bg-err/20"
-                    : "border-edge text-dim hover:text-fg"
-                }`}
-                title={yolo ? t("chat.workspaceMode") : t("chat.yoloMode")}
-              >
-                {yolo ? <Flame size={12} /> : <ShieldCheck size={12} />}
-                {yolo ? t("chat.yoloMode") : t("chat.workspaceMode")}
-              </button>
               <div className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim">
                 {t("chat.thinkLabel")}
                 <select
@@ -337,9 +351,6 @@ export function ChatView() {
                   </select>
                 </div>
               )}
-              <span className="text-xs text-dim hidden sm:inline">
-                {busy ? t("chat.runningHint") : t("chat.enterHint")}
-              </span>
             </div>
             {busy ? (
               <button
@@ -371,8 +382,8 @@ export function ChatView() {
         </div>
         {confirmYolo && (
           <div className="fixed inset-0 z-40 grid place-items-center bg-black/60">
-            <div className="w-[420px] rounded-2xl border border-err/40 bg-panel p-5 shadow-2xl">
-              <div className="flex items-center gap-2 text-sm font-semibold text-err">
+            <div className="w-[420px] rounded-2xl border border-[#d9a83c]/40 bg-panel p-5 shadow-2xl">
+              <div className="flex items-center gap-2 text-sm font-semibold text-[#d9a83c]">
                 <AlertTriangle size={16} />
                 {t("chat.yoloConfirmTitle")}
               </div>
