@@ -19,6 +19,7 @@ require (
 	github.com/wailsapp/wails/v2 v2.15.0
 	go.opentelemetry.io/otel/log v0.16.0
 	go.opentelemetry.io/otel/sdk/log v0.16.0
+	go.yaml.in/yaml/v4 v4.0.0-rc.2
 	golang.org/x/net v0.57.0
 	modernc.org/sqlite v1.56.0
 	sigs.k8s.io/yaml v1.4.0
@@ -105,7 +106,6 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.43.0 // indirect
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.9.0 // indirect
-	go.yaml.in/yaml/v4 v4.0.0-rc.2 // indirect
 	golang.org/x/crypto v0.54.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect

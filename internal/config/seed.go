@@ -7,7 +7,7 @@ import (
 
 // EnsureUserConfig ensures the user configuration directory and the
 // sandbox cache exist and returns the config directory. Configuration
-// documents are NOT seeded here anymore: the first-run setup wizard
+// documents are NOT seeded here anymore: the settings page
 // writes the user layer (~/.opencraft/config/opencraft.yaml) so every
 // user-visible setting lives in that single editable document. The
 // default graph and its node sources also stay embedded unless a

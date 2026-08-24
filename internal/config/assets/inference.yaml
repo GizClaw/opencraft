@@ -1,7 +1,7 @@
 # Fixed inference wiring (embedded, not user-editable): provider
 # resources and the infer assembly are registered here so every
-# provider is always available. The first-run setup wizard writes the
-# variable parts into ~/.opencraft/config/opencraft.yaml: credential
+# provider is always available. The settings page writes the variable
+# parts into ~/.opencraft/config/opencraft.yaml: credential
 # profiles for the providers the user has keys for, an optional Azure
 # provider (endpoint + deployment are per-user), and the router's
 # generate targets (only keyed providers, in priority order). Resource
@@ -62,7 +62,7 @@ resources:
   # Router shell: the retry/fallback policy is fixed; the generate
   # targets come from the setup-written user layer (keyed providers in
   # priority order). Without targets the router validates no pools, so
-  # startup is gated behind the setup wizard.
+  # startup is guided by the settings page.
   router:
     kind: inference.Router
     impl: unified

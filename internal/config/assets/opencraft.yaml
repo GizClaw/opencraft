@@ -2,7 +2,7 @@ version: v1
 
 # opencraft internal deploy document (not user-editable). Inference
 # wiring (provider / infer assembly / router) is intentionally NOT
-# here: the first-run setup writes it to ~/.opencraft/config/opencraft.yaml
+# here: the settings page writes it to ~/.opencraft/config/opencraft.yaml
 # and the optional project layer can override it per repo.
 
 resources:

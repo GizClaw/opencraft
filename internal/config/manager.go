@@ -116,9 +116,9 @@ func (m *Manager) Load(ctx context.Context) (*View, error) {
 			BaseDir:  filepath.Dir(m.explicit),
 		})
 	}
-	// The user layer is created by the first-run setup wizard; before
-	// that (or after a reset) it is absent and the embedded base alone
-	// has no inference wiring — main gates startup behind the wizard.
+	// The user layer is written by the settings page; before that (or
+	// after a reset) it is absent and the embedded base alone has no
+	// inference wiring — the UI guides the user to the settings page.
 	if _, err := os.Stat(filepath.Join(m.userDir, "opencraft.yaml")); err == nil {
 		layers = append(layers, deploy.Layer{
 			Priority: 10,

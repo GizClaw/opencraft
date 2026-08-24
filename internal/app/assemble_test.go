@@ -10,7 +10,6 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/agents"
 	"github.com/GizClaw/opencraft/internal/config"
-	"github.com/GizClaw/opencraft/internal/setup"
 )
 
 // TestBuildRuntimeAssemblesNewTools verifies that the embedded deploy
@@ -30,14 +29,14 @@ func TestBuildRuntimeAssemblesNewTools(t *testing.T) {
 	}
 	// First-run wizard output: DeepSeek keyed, provider wired into the
 	// infer assembly.
-	cfg := setup.Config{
-		Providers: []setup.KeyedProvider{{
-			Provider:  setup.Providers[0],
-			KeySource: setup.KeyEnv,
+	cfg := config.InferenceConfig{
+		Providers: []config.KeyedProvider{{
+			Provider:  config.Providers[0],
+			KeySource: config.KeyEnv,
 		}},
 	}
-	if err := cfg.Write(userDir); err != nil {
-		t.Fatalf("write setup config: %v", err)
+	if err := config.WriteInference(userDir, cfg); err != nil {
+		t.Fatalf("write inference config: %v", err)
 	}
 	// Project layer: disable remote execd so the test binary is not
 	// self-forked as an execd child.

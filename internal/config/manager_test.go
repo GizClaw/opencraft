@@ -45,11 +45,10 @@ func TestLoadLayeredDocuments(t *testing.T) {
 }
 
 func TestLoadWithoutUserLayer(t *testing.T) {
-	// Before the first-run wizard there is no user layer: Load must
-	// succeed with the embedded layers alone. The fixed inference
-	// wiring (providers + infer + router retry shell) is embedded, but
-	// the router has no generate targets until setup writes the user
-	// layer.
+	// Before the settings page writes a user layer, Load must succeed
+	// with the embedded layers alone. The fixed inference wiring
+	// (providers + infer + router retry shell) is embedded, but the
+	// router has no generate targets until the user layer declares one.
 	userDir := t.TempDir()
 	workDir := t.TempDir()
 	mgr, err := Open(Options{WorkDir: workDir, UserDir: userDir})

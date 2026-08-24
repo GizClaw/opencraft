@@ -1,19 +1,7 @@
-// Package setup owns opencraft's first-run inference configuration:
-// detecting whether inference wiring exists, generating the user
-// configuration layer (~/.opencraft/config/opencraft.yaml) from wizard
-// choices, and writing it to the user configuration directory. That
-// file is opencraft's single user-editable document going forward.
-//
-// Design: every provider is registered into the infer assembly at setup
-// time (Azure only when the user configures it, since it needs an
-// endpoint and deployment). The user only supplies keys for the
-// providers they have; the router policy lists the keyed providers in
-// priority order with retry fallback, so routing is automatic.
-// The interactive wizard lives in ui.go; generation and detection are
-// pure functions so they are testable without a terminal.
-package setup
+package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,10 +10,19 @@ import (
 	"strings"
 	"time"
 
+	yamlv4 "go.yaml.in/yaml/v4"
 	"sigs.k8s.io/yaml"
 )
 
-// Provider is one supported inference provider in the wizard.
+// Inference wiring lives in the user configuration layer
+// (~/.opencraft/config/opencraft.yaml), edited through the desktop
+// settings page: every provider is registered into the infer assembly
+// (Azure only when the user configures it, since it needs an endpoint
+// and deployment). The user only supplies keys for the providers they
+// have; the router policy lists the keyed providers in priority order
+// with retry fallback, so routing is automatic.
+
+// Provider is one supported inference provider.
 type Provider struct {
 	ID           string // deploy resource id (provider.<id>)
 	Impl         string // driver impl registered in the runtime
@@ -41,7 +38,7 @@ type Provider struct {
 	Azure bool
 }
 
-// Providers is the wizard's provider catalog, ordered by recommendation.
+// Providers is the provider catalog, ordered by recommendation.
 var Providers = []Provider{
 	{ID: "deepseek", Impl: "deepseek", Name: "DeepSeek", DefaultModel: "deepseek-v4-flash", EnvVar: "DEEPSEEK_API_KEY", API: "responses"},
 	{ID: "openai", Impl: "openai", Name: "OpenAI", DefaultModel: "gpt-5.6-sol", EnvVar: "OPENAI_API_KEY", API: "responses"},
@@ -51,6 +48,16 @@ var Providers = []Provider{
 	{ID: "kimi", Impl: "kimi", Name: "Kimi (Moonshot)", DefaultModel: "kimi-k3", EnvVar: "MOONSHOT_API_KEY"},
 	{ID: "minimax", Impl: "minimax", Name: "MiniMax", DefaultModel: "MiniMax-M3", EnvVar: "MINIMAX_API_KEY"},
 	{ID: "qwen", Impl: "qwen", Name: "Qwen (DashScope)", DefaultModel: "qwen3.7-max", EnvVar: "DASHSCOPE_API_KEY"},
+}
+
+// ProviderByID resolves the catalog entry for one provider id.
+func ProviderByID(id string) (Provider, bool) {
+	for _, p := range Providers {
+		if p.ID == id {
+			return p, true
+		}
+	}
+	return Provider{}, false
 }
 
 // KeySource selects how the API key is stored.
@@ -80,14 +87,14 @@ type KeyedProvider struct {
 	WebSearch bool   // capabilities.hosted_web_search: true
 }
 
-// Config is one completed wizard configuration: the subset of
-// providers the user has keys for.
-type Config struct {
+// InferenceConfig is one completed inference configuration: the
+// subset of providers the user has keys for, in router priority order.
+type InferenceConfig struct {
 	Providers []KeyedProvider
 }
 
 // keyed returns the entry for a provider id, if selected.
-func (c Config) keyed(id string) (KeyedProvider, bool) {
+func (c InferenceConfig) keyed(id string) (KeyedProvider, bool) {
 	for _, k := range c.Providers {
 		if k.Provider.ID == id {
 			return k, true
@@ -96,10 +103,10 @@ func (c Config) keyed(id string) (KeyedProvider, bool) {
 	return KeyedProvider{}, false
 }
 
-// Needed reports whether the user configuration directory lacks
-// inference wiring, i.e. the user opencraft.yaml layer does not declare
-// an infer assembly.
-func Needed(configDir string) (bool, error) {
+// InferenceNeeded reports whether the user configuration directory
+// lacks inference wiring, i.e. the user opencraft.yaml layer does not
+// declare a router.
+func InferenceNeeded(configDir string) (bool, error) {
 	data, err := os.ReadFile(filepath.Join(configDir, "opencraft.yaml"))
 	if err != nil {
 		// No user layer: definitely unconfigured.
@@ -112,12 +119,12 @@ func Needed(configDir string) (bool, error) {
 		Resources map[string]any `json:"resources"`
 	}
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		// Unparseable user layer: treat as unconfigured so the wizard
-		// can rewrite the user layer without touching the file.
+		// Unparseable user layer: treat as unconfigured so the
+		// settings page can rewrite it.
 		return true, nil
 	}
 	// The embedded inference layer provides providers + infer + the
-	// router retry shell; the setup-written user layer is what adds the
+	// router retry shell; the user-written layer is what adds the
 	// router's generate targets (and key profiles), so its presence
 	// marks a configured install.
 	if _, ok := doc.Resources["router"]; ok {
@@ -126,7 +133,7 @@ func Needed(configDir string) (bool, error) {
 	return true, nil
 }
 
-// UserConfigYAML renders the generated user configuration layer
+// InferenceYAML renders the user configuration layer
 // (~/.opencraft/config/opencraft.yaml). The FIXED inference wiring —
 // every provider resource, the infer assembly, and the router retry
 // shell — is embedded in the binary (assets/inference.yaml). This
@@ -134,25 +141,24 @@ func Needed(configDir string) (bool, error) {
 // the keyed providers, an optional Azure provider (endpoint +
 // deployment are per-user), and the router's generate targets (keyed
 // providers in priority order; the router falls back on failure).
-func (c Config) UserConfigYAML() ([]byte, error) {
+func (c InferenceConfig) InferenceYAML() ([]byte, error) {
 	if len(c.Providers) == 0 {
-		return nil, errors.New("setup: at least one provider is required")
+		return nil, errors.New("config: at least one provider is required")
 	}
 	for _, k := range c.Providers {
 		if k.Provider.Azure {
 			if strings.TrimSpace(k.Endpoint) == "" {
-				return nil, fmt.Errorf("setup: azure endpoint is required")
+				return nil, fmt.Errorf("config: azure endpoint is required")
 			}
 			if strings.TrimSpace(k.Model) == "" {
-				return nil, fmt.Errorf("setup: azure deployment is required")
+				return nil, fmt.Errorf("config: azure deployment is required")
 			}
 		}
 	}
 	var b strings.Builder
 	fmt.Fprintf(&b, "# opencraft user configuration layer\n")
-	fmt.Fprintf(&b, "# (~/.opencraft/config/opencraft.yaml; generated by first-run setup\n")
-	fmt.Fprintf(&b, "# at %s). Re-run `opencraft setup` to change\n", time.Now().UTC().Format(time.RFC3339))
-	fmt.Fprintf(&b, "# provider / model / key.\n")
+	fmt.Fprintf(&b, "# (~/.opencraft/config/opencraft.yaml; edited through the\n")
+	fmt.Fprintf(&b, "# desktop settings page; last written %s).\n", time.Now().UTC().Format(time.RFC3339))
 	fmt.Fprintf(&b, "#\n")
 	fmt.Fprintf(&b, "# The FIXED inference wiring lives in the binary (embedded\n")
 	fmt.Fprintf(&b, "# inference.yaml): all provider resources, the infer assembly,\n")
@@ -160,42 +166,9 @@ func (c Config) UserConfigYAML() ([]byte, error) {
 	fmt.Fprintf(&b, "# VARIABLE parts: API key profiles, Azure (when configured),\n")
 	fmt.Fprintf(&b, "# and the router's generate targets (keyed providers in\n")
 	fmt.Fprintf(&b, "# priority order; failures fall back to the next target).\n")
-	fmt.Fprintf(&b, "# Resources, deps, and settings merge deeply across layers.\n")
-	fmt.Fprintf(&b, "#\n")
-	fmt.Fprintf(&b, "# To add a key later, add a profiles block under that provider\n")
-	fmt.Fprintf(&b, "# and a target under router.settings.generate, or re-run\n")
-	fmt.Fprintf(&b, "# `opencraft setup`. To change model priority, edit\n")
-	fmt.Fprintf(&b, "# router.settings.generate[].targets order.\n")
-	fmt.Fprintf(&b, "#\n")
-	fmt.Fprintf(&b, "# Examples (uncomment to use):\n")
-	fmt.Fprintf(&b, "# - Attach an external MCP server's tools (lazy-discovered via\n")
-	fmt.Fprintf(&b, "#   tool_search):\n")
-	fmt.Fprintf(&b, "#   resources:\n")
-	fmt.Fprintf(&b, "#     tool.mcp:\n")
-	fmt.Fprintf(&b, "#       kind: tool.Source\n")
-	fmt.Fprintf(&b, "#       impl: mcp\n")
-	fmt.Fprintf(&b, "#       settings:\n")
-	fmt.Fprintf(&b, "#         servers:\n")
-	fmt.Fprintf(&b, "#           - name: my-server\n")
-	fmt.Fprintf(&b, "#             transport: stdio\n")
-	fmt.Fprintf(&b, "#             command: my-mcp-server\n")
-	fmt.Fprintf(&b, "#     tools:\n")
-	fmt.Fprintf(&b, "#       deps:\n")
-	fmt.Fprintf(&b, "#         tool.mcp: tool.mcp\n")
-	fmt.Fprintf(&b, "# - Restrict the sandbox environment:\n")
-	fmt.Fprintf(&b, "#   resources:\n")
-	fmt.Fprintf(&b, "#     box:\n")
-	fmt.Fprintf(&b, "#       settings:\n")
-	fmt.Fprintf(&b, "#         env_policy:\n")
-	fmt.Fprintf(&b, "#           allow: [\"PATH\", \"HOME\", \"GOPROXY\"]\n")
-	fmt.Fprintf(&b, "#           inject:\n")
-	fmt.Fprintf(&b, "#             GOMODCACHE: ${env:OPEN_CRAFT_CACHE}/go/pkg/mod\n")
-	fmt.Fprintf(&b, "# - Use your own graph (file refs resolve under this directory):\n")
-	fmt.Fprintf(&b, "#   agents:\n")
-	fmt.Fprintf(&b, "#     assistant:\n")
-	fmt.Fprintf(&b, "#       engine:\n")
-	fmt.Fprintf(&b, "#         settings:\n")
-	fmt.Fprintf(&b, "#           graph: {file: graphs/my-assistant.yaml}\n")
+	fmt.Fprintf(&b, "# Resources, deps, and settings merge deeply across layers, so\n")
+	fmt.Fprintf(&b, "# resources not managed here (MCP servers, sandbox policy,\n")
+	fmt.Fprintf(&b, "# custom graphs) are preserved across settings writes.\n")
 	fmt.Fprintf(&b, "version: v1\n")
 	fmt.Fprintf(&b, "resources:\n")
 	for _, k := range c.Providers {
@@ -228,10 +201,9 @@ func (c Config) UserConfigYAML() ([]byte, error) {
 		fmt.Fprintf(&b, "          - name: %s\n", yamlQuote(azure.Model))
 		fmt.Fprintf(&b, "            kind: generate\n")
 		// Capability-aware routing (core v0.1.22+) requires generate
-		// deployments to declare text output; setup emits the minimal
-		// mandatory declaration. Vision / reasoning / hosted web
-		// search can be added manually via capabilities until the
-		// wizard grows those knobs.
+		// deployments to declare text output; the minimal mandatory
+		// declaration is emitted. Vision / reasoning / hosted web
+		// search are declared when configured.
 		fmt.Fprintf(&b, "            capabilities:\n")
 		fmt.Fprintf(&b, "              outputs: [text]\n")
 		if azure.Vision {
@@ -276,39 +248,63 @@ func (k KeyedProvider) apiKey() string {
 	return yamlQuote(k.KeyValue)
 }
 
-// Write persists the wizard output into the user configuration
-// directory: opencraft.yaml (the single editable document).
-func (c Config) Write(configDir string) error {
-	userDoc, err := c.UserConfigYAML()
+// WriteInference persists the inference configuration into the user
+// configuration directory (opencraft.yaml), merging over the existing
+// layer so resources the settings page does not manage (MCP servers,
+// sandbox policy, custom graphs) are preserved.
+func WriteInference(configDir string, cfg InferenceConfig) error {
+	fresh, err := cfg.InferenceYAML()
+	if err != nil {
+		return err
+	}
+	merged, err := mergeUserLayer(
+		filepath.Join(configDir, "opencraft.yaml"),
+		fresh,
+		managedResourceKeys(cfg),
+		map[string]bool{},
+	)
 	if err != nil {
 		return err
 	}
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
-		return fmt.Errorf("setup: create config dir: %w", err)
+		return fmt.Errorf("config: create config dir: %w", err)
 	}
 	if err := os.WriteFile(
-		filepath.Join(configDir, "opencraft.yaml"), userDoc, 0o600,
+		filepath.Join(configDir, "opencraft.yaml"), merged, 0o600,
 	); err != nil {
-		return fmt.Errorf("setup: write opencraft.yaml: %w", err)
+		return fmt.Errorf("config: write opencraft.yaml: %w", err)
 	}
 	return nil
 }
 
-// Load reads the user configuration layer back into a Config so the
-// UI can prefill provider/model/key edits instead of starting blank.
-// It only understands the sections setup writes (provider profiles,
-// the Azure provider, and the router targets); unknown resources are
-// ignored. A later Write regenerates the whole layer.
-func Load(configDir string) (Config, error) {
+// managedResourceKeys returns the resources WriteInference owns: every
+// provider declaration, the router, and the infer dep wiring. Infer is
+// managed even when Azure is not selected so a stale dep left by a
+// previous Azure configuration is removed instead of referencing a
+// deleted provider. Everything else in the user layer is preserved.
+func managedResourceKeys(cfg InferenceConfig) map[string]bool {
+	keys := map[string]bool{"router": true, "infer": true}
+	for _, k := range cfg.Providers {
+		keys["provider."+k.Provider.ID] = true
+	}
+	return keys
+}
+
+// LoadInference reads the user configuration layer back into an
+// InferenceConfig so the settings page can prefill provider/model/key
+// edits instead of starting blank. It only understands the sections
+// the settings page writes (provider profiles, the Azure provider, and
+// the router targets); unknown resources are ignored.
+func LoadInference(configDir string) (InferenceConfig, error) {
 	data, err := os.ReadFile(filepath.Join(configDir, "opencraft.yaml"))
 	if err != nil {
-		return Config{}, err
+		return InferenceConfig{}, err
 	}
 	var doc struct {
 		Resources map[string]json.RawMessage `json:"resources"`
 	}
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return Config{}, fmt.Errorf("setup: parse user config: %w", err)
+		return InferenceConfig{}, fmt.Errorf("config: parse user config: %w", err)
 	}
 
 	// Provider declarations: credential profiles (and the Azure
@@ -340,7 +336,7 @@ func Load(configDir string) (Config, error) {
 		}
 		var res providerSettings
 		if err := yaml.Unmarshal(raw, &res); err != nil {
-			return Config{}, fmt.Errorf("setup: parse %s: %w", id, err)
+			return InferenceConfig{}, fmt.Errorf("config: parse %s: %w", id, err)
 		}
 		providers[id] = res
 	}
@@ -362,14 +358,14 @@ func Load(configDir string) (Config, error) {
 	}
 	if raw, ok := doc.Resources["router"]; ok {
 		if err := yaml.Unmarshal(raw, &router); err != nil {
-			return Config{}, fmt.Errorf("setup: parse router: %w", err)
+			return InferenceConfig{}, fmt.Errorf("config: parse router: %w", err)
 		}
 	}
 
-	cfg := Config{}
+	cfg := InferenceConfig{}
 	for _, pool := range router.Settings.Generate {
 		for _, target := range pool.Targets {
-			prov, ok := providerByID(target.Model.ID.Provider)
+			prov, ok := ProviderByID(target.Model.ID.Provider)
 			if !ok {
 				continue
 			}
@@ -411,14 +407,141 @@ func Load(configDir string) (Config, error) {
 	return cfg, nil
 }
 
-// providerByID resolves the catalog entry for one provider id.
-func providerByID(id string) (Provider, bool) {
-	for _, p := range Providers {
-		if p.ID == id {
-			return p, true
+// mergeUserLayer merges a freshly generated user document over the
+// existing user layer, preserving top-level sections and resources the
+// generator does not own. replaceKeys are resources taken verbatim
+// from the fresh document; mergeKeys are resources deep-merged (the
+// fresh document contributes only the keys it sets). Comments are
+// preserved through yaml.Node.
+func mergeUserLayer(
+	path string,
+	fresh []byte,
+	replaceKeys map[string]bool,
+	mergeKeys map[string]bool,
+) ([]byte, error) {
+	oldData, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fresh, nil
+		}
+		return nil, fmt.Errorf("config: read user layer: %w", err)
+	}
+	// Strict parse first: the comment-preserving Node parser is too
+	// lenient to detect a broken user layer, and overwriting one would
+	// silently destroy the user's hand-written config.
+	var probe map[string]any
+	if err := yaml.Unmarshal(oldData, &probe); err != nil {
+		return nil, fmt.Errorf("config: parse existing user layer: %w", err)
+	}
+	var oldNode, newRoot yamlv4.Node
+	if err := yamlv4.Unmarshal(oldData, &oldNode); err != nil {
+		return nil, fmt.Errorf("config: parse existing user layer: %w", err)
+	}
+	if err := yamlv4.Unmarshal(fresh, &newRoot); err != nil {
+		return nil, fmt.Errorf("config: parse generated user layer: %w", err)
+	}
+	if len(oldNode.Content) == 0 || oldNode.Content[0].Kind != yamlv4.MappingNode {
+		return nil, fmt.Errorf(
+			"config: existing user layer is not a YAML mapping (kind %d, %d entries); refusing to overwrite it",
+			func() uint32 {
+				if len(oldNode.Content) > 0 {
+					return uint32(oldNode.Content[0].Kind)
+				}
+				return uint32(0)
+			}(),
+			len(oldNode.Content),
+		)
+	}
+	oldDoc := oldNode.Content[0]
+	newDoc := newRoot.Content[0]
+
+	// Preserve top-level sections the generator does not write (e.g. a
+	// custom agents section).
+	for i := 0; i+1 < len(oldDoc.Content); i += 2 {
+		key := oldDoc.Content[i].Value
+		if key == "resources" {
+			continue
+		}
+		if findMappingKey(newDoc, key) == nil {
+			newDoc.Content = append(newDoc.Content, oldDoc.Content[i], oldDoc.Content[i+1])
 		}
 	}
-	return Provider{}, false
+
+	// Merge resources: generator-owned keys are replaced (or
+	// deep-merged), everything else is preserved.
+	oldRes := findMappingKey(oldDoc, "resources")
+	newRes := findMappingKey(newDoc, "resources")
+	if oldRes != nil && newRes != nil && len(oldRes.Content) > 0 {
+		for i := 0; i+1 < len(oldRes.Content); i += 2 {
+			key := oldRes.Content[i].Value
+			if replaceKeys[key] || strings.HasPrefix(key, "provider.") {
+				continue
+			}
+			if mergeKeys[key] {
+				if freshRes := findMappingKey(newRes, key); freshRes != nil &&
+					freshRes.Content[0] != nil {
+					mergeMapping(oldRes.Content[i+1], freshRes.Content[0])
+					continue
+				}
+			}
+			if findMappingKey(newRes, key) == nil {
+				newRes.Content = append(newRes.Content, oldRes.Content[i], oldRes.Content[i+1])
+			}
+		}
+	}
+
+	var buf bytes.Buffer
+	enc := yamlv4.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&newRoot); err != nil {
+		return nil, fmt.Errorf("config: encode merged user layer: %w", err)
+	}
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// findMappingKey returns the value node for key in a mapping node, or
+// nil when absent.
+func findMappingKey(mapping *yamlv4.Node, key string) *yamlv4.Node {
+	if mapping == nil {
+		return nil
+	}
+	for i := 0; i+1 < len(mapping.Content); i += 2 {
+		if mapping.Content[i].Value == key {
+			return mapping.Content[i+1]
+		}
+	}
+	return nil
+}
+
+// mergeMapping deep-merges src into dst in place: mapping pairs merge
+// recursively, every other value replaces. The src nodes are appended
+// as-is so their comments survive.
+func mergeMapping(dst, src *yamlv4.Node) {
+	if dst == nil || src == nil || dst.Kind != yamlv4.MappingNode || src.Kind != yamlv4.MappingNode {
+		return
+	}
+	for i := 0; i+1 < len(src.Content); i += 2 {
+		srcKey := src.Content[i].Value
+		srcVal := src.Content[i+1]
+		if dstVal := findMappingKey(dst, srcKey); dstVal != nil {
+			if dstVal.Kind == yamlv4.MappingNode && srcVal.Kind == yamlv4.MappingNode {
+				mergeMapping(dstVal, srcVal)
+				continue
+			}
+			// Replace the existing value pair in place.
+			for j := 0; j+1 < len(dst.Content); j += 2 {
+				if dst.Content[j].Value == srcKey {
+					dst.Content[j+1] = srcVal
+					break
+				}
+			}
+			continue
+		}
+		dst.Content = append(dst.Content, src.Content[i], srcVal)
+	}
 }
 
 // yamlQuote quotes a plain scalar safely (single-quote style).

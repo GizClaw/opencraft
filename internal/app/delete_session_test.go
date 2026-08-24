@@ -13,7 +13,6 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/config"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
-	"github.com/GizClaw/opencraft/internal/setup"
 )
 
 // TestDeleteSessionClosesLiveSession verifies the desktop deletion path
@@ -33,14 +32,14 @@ func TestDeleteSessionClosesLiveSession(t *testing.T) {
 	if err := os.MkdirAll(userDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	cfg := setup.Config{
-		Providers: []setup.KeyedProvider{{
-			Provider:  setup.Providers[0],
-			KeySource: setup.KeyEnv,
+	cfg := config.InferenceConfig{
+		Providers: []config.KeyedProvider{{
+			Provider:  config.Providers[0],
+			KeySource: config.KeyEnv,
 		}},
 	}
-	if err := cfg.Write(userDir); err != nil {
-		t.Fatalf("write setup config: %v", err)
+	if err := config.WriteInference(userDir, cfg); err != nil {
+		t.Fatalf("write inference config: %v", err)
 	}
 	projectDir := filepath.Join(work, ".opencraft", "config")
 	if err := os.MkdirAll(projectDir, 0o700); err != nil {

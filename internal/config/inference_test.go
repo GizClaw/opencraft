@@ -1,4 +1,4 @@
-package setup
+package config
 
 import (
 	"context"
@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/GizClaw/opencraft/internal/config"
 )
 
 func writeFile(t *testing.T, dir, name, content string) {
@@ -31,9 +29,9 @@ func mustProvider(t *testing.T, id string) Provider {
 	return Provider{}
 }
 
-func envKeyed(t *testing.T, ids ...string) Config {
+func envKeyed(t *testing.T, ids ...string) InferenceConfig {
 	t.Helper()
-	var cfg Config
+	var cfg InferenceConfig
 	for _, id := range ids {
 		cfg.Providers = append(cfg.Providers, KeyedProvider{
 			Provider:  mustProvider(t, id),
@@ -43,9 +41,9 @@ func envKeyed(t *testing.T, ids ...string) Config {
 	return cfg
 }
 
-func load(t *testing.T, workDir, userDir string) *config.View {
+func load(t *testing.T, workDir, userDir string) *View {
 	t.Helper()
-	mgr, err := config.Open(config.Options{WorkDir: workDir, UserDir: userDir})
+	mgr, err := Open(Options{WorkDir: workDir, UserDir: userDir})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +57,7 @@ func load(t *testing.T, workDir, userDir string) *config.View {
 func TestNeeded(t *testing.T) {
 	dir := t.TempDir()
 
-	needed, err := Needed(dir)
+	needed, err := InferenceNeeded(dir)
 	if err != nil || !needed {
 		t.Fatalf("empty dir: needed=%v err=%v, want true", needed, err)
 	}
@@ -67,30 +65,30 @@ func TestNeeded(t *testing.T) {
 	// A user layer without router targets is unconfigured (the embedded
 	// inference layer provides providers/infer/router shell).
 	writeFile(t, dir, "opencraft.yaml", "resources:\n  box:\n    impl: local\n")
-	needed, err = Needed(dir)
+	needed, err = InferenceNeeded(dir)
 	if err != nil || !needed {
 		t.Fatalf("no router: needed=%v err=%v, want true", needed, err)
 	}
 
-	// A router declaration (setup output) counts as configured.
+	// A router declaration (settings-page output) counts as configured.
 	writeFile(t, dir, "opencraft.yaml",
 		"resources:\n  router:\n    settings:\n      generate:\n")
-	needed, err = Needed(dir)
+	needed, err = InferenceNeeded(dir)
 	if err != nil || needed {
 		t.Fatalf("with router: needed=%v err=%v, want false", needed, err)
 	}
 
 	// Unparseable user layer is treated as unconfigured.
 	writeFile(t, dir, "opencraft.yaml", ":: not yaml [")
-	needed, err = Needed(dir)
+	needed, err = InferenceNeeded(dir)
 	if err != nil || !needed {
 		t.Fatalf("broken yaml: needed=%v err=%v, want true", needed, err)
 	}
 }
 
-func TestUserConfigYAMLVariableParts(t *testing.T) {
+func TestInferenceYAMLVariableParts(t *testing.T) {
 	cfg := envKeyed(t, "deepseek", "openai")
-	data, err := cfg.UserConfigYAML()
+	data, err := cfg.InferenceYAML()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +122,7 @@ func TestUserConfigYAMLVariableParts(t *testing.T) {
 	}
 }
 
-func TestUserConfigYAMLAzure(t *testing.T) {
+func TestInferenceYAMLAzure(t *testing.T) {
 	cfg := envKeyed(t, "deepseek")
 	cfg.Providers = append(cfg.Providers, KeyedProvider{
 		Provider:  mustProvider(t, "azure"),
@@ -132,7 +130,7 @@ func TestUserConfigYAMLAzure(t *testing.T) {
 		Endpoint:  "https://res.openai.azure.com",
 		Model:     "gpt-5.6-sol-deploy",
 	})
-	data, err := cfg.UserConfigYAML()
+	data, err := cfg.InferenceYAML()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,12 +153,12 @@ func TestUserConfigYAMLAzure(t *testing.T) {
 	// Missing endpoint/model must fail generation.
 	bad := envKeyed(t, "deepseek")
 	bad.Providers = append(bad.Providers, KeyedProvider{Provider: mustProvider(t, "azure")})
-	if _, err := bad.UserConfigYAML(); err == nil {
+	if _, err := bad.InferenceYAML(); err == nil {
 		t.Fatal("azure without endpoint must fail")
 	}
 }
 
-func TestUserConfigYAMLAzureCapabilities(t *testing.T) {
+func TestInferenceYAMLAzureCapabilities(t *testing.T) {
 	cfg := envKeyed(t, "deepseek")
 	cfg.Providers = append(cfg.Providers, KeyedProvider{
 		Provider:  mustProvider(t, "azure"),
@@ -171,7 +169,7 @@ func TestUserConfigYAMLAzureCapabilities(t *testing.T) {
 		Reasoning: "toggle",
 		WebSearch: true,
 	})
-	data, err := cfg.UserConfigYAML()
+	data, err := cfg.InferenceYAML()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +194,7 @@ func TestUserConfigYAMLAzureCapabilities(t *testing.T) {
 		Endpoint:  "https://res.openai.azure.com",
 		Model:     "gpt-5.6-sol-deploy",
 	})
-	data, err = off.UserConfigYAML()
+	data, err = off.InferenceYAML()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,12 +204,12 @@ func TestUserConfigYAMLAzureCapabilities(t *testing.T) {
 }
 
 func TestLiteralKeyQuoted(t *testing.T) {
-	cfg := Config{Providers: []KeyedProvider{{
+	cfg := InferenceConfig{Providers: []KeyedProvider{{
 		Provider:  mustProvider(t, "deepseek"),
 		KeySource: KeyLiteral,
 		KeyValue:  "sk-it's-secret",
 	}}}
-	data, err := cfg.UserConfigYAML()
+	data, err := cfg.InferenceYAML()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +221,7 @@ func TestLiteralKeyQuoted(t *testing.T) {
 func TestWriteAndRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	cfg := envKeyed(t, "deepseek")
-	if err := cfg.Write(dir); err != nil {
+	if err := WriteInference(dir, cfg); err != nil {
 		t.Fatal(err)
 	}
 	target := filepath.Join(dir, "opencraft.yaml")
@@ -235,11 +233,11 @@ func TestWriteAndRoundTrip(t *testing.T) {
 		t.Fatalf("opencraft.yaml mode = %o, want 0600", st.Mode().Perm())
 	}
 
-	needed, err := Needed(dir)
+	needed, err := InferenceNeeded(dir)
 	if err != nil || needed {
 		t.Fatalf("after write: needed=%v err=%v", needed, err)
 	}
-	if got := config.DefaultModel(dir); got != "deepseek/deepseek-v4-flash" {
+	if got := DefaultModel(dir); got != "deepseek/deepseek-v4-flash" {
 		t.Fatalf("DefaultModel = %q", got)
 	}
 
@@ -257,5 +255,141 @@ func TestWriteAndRoundTrip(t *testing.T) {
 	}
 	if _, ok := view.Document.Resources["provider.azure"]; ok {
 		t.Fatal("azure must not be registered unconfigured")
+	}
+}
+
+func TestWriteInferencePreservesManualResources(t *testing.T) {
+	dir := t.TempDir()
+	// A user layer that was hand-edited: an MCP source plus a custom
+	// agents section, on top of a previously generated inference block.
+	existing := `version: v1
+resources:
+  router:
+    settings:
+      generate:
+        - tier: default
+          targets:
+            - model:
+                id:
+                  provider: deepseek
+                  name: deepseek-v4-flash
+  provider.deepseek:
+    settings:
+      profiles:
+        - secrets:
+            api_key: ${env:DEEPSEEK_API_KEY}
+  tool.mcp:
+    kind: tool.Source
+    impl: mcp
+    settings:
+      servers:
+        - name: my-server
+          transport: stdio
+          command: my-mcp-server
+  tools:
+    deps:
+      tool.mcp: tool.mcp
+agents:
+  assistant:
+    engine:
+      settings:
+        graph: {file: graphs/my-assistant.yaml}
+`
+	writeFile(t, dir, "opencraft.yaml", existing)
+
+	// Re-save a different inference selection: openai now first,
+	// deepseek removed.
+	cfg := envKeyed(t, "openai")
+	if err := WriteInference(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "opencraft.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+
+	// Managed resources were replaced by the new selection.
+	if strings.Contains(doc, "provider.deepseek") {
+		t.Fatalf("removed provider still present:\n%s", doc)
+	}
+	if !strings.Contains(doc, "provider: openai") {
+		t.Fatalf("new provider missing:\n%s", doc)
+	}
+	// Manual resources survived verbatim.
+	for _, want := range []string{
+		"tool.mcp:",
+		"command: my-mcp-server",
+		"tool.mcp: tool.mcp",
+		"graphs/my-assistant.yaml",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Fatalf("manual resource missing %q:\n%s", want, doc)
+		}
+	}
+
+	// The merged view still carries the manual resources and routes
+	// through the saved selection.
+	view := load(t, t.TempDir(), dir)
+	if _, ok := view.Document.Resources["tool.mcp"]; !ok {
+		t.Fatal("tool.mcp missing from merged view")
+	}
+	if got := DefaultModel(dir); got != "openai/gpt-5.6-sol" {
+		t.Fatalf("DefaultModel = %q, want openai", got)
+	}
+}
+
+func TestWriteInferenceRejectsNonMappingUserLayer(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "opencraft.yaml", "just a scalar\n")
+	cfg := envKeyed(t, "deepseek")
+	if err := WriteInference(dir, cfg); err == nil {
+		t.Fatal("WriteInference over a non-mapping user layer must fail, not silently clobber it")
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "opencraft.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "just a scalar\n" {
+		t.Fatalf("non-mapping user layer was clobbered:\n%s", data)
+	}
+}
+
+func TestWriteInferenceRemovesStaleAzureInferDep(t *testing.T) {
+	dir := t.TempDir()
+	existing := `version: v1
+resources:
+  provider.azure:
+    kind: inference.Provider
+    impl: azure
+    settings:
+      id: azure
+  infer:
+    deps:
+      provider.azure: provider.azure
+  router:
+    settings:
+      generate:
+        - tier: default
+          targets:
+            - model:
+                id:
+                  provider: azure
+                  name: deployment
+`
+	writeFile(t, dir, "opencraft.yaml", existing)
+	if err := WriteInference(dir, envKeyed(t, "deepseek")); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "opencraft.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+	if strings.Contains(doc, "provider.azure") {
+		t.Fatalf("stale azure provider survived a non-azure re-save:\n%s", doc)
+	}
+	if strings.Contains(doc, "infer:") {
+		t.Fatalf("stale infer dep survived a non-azure re-save:\n%s", doc)
 	}
 }
