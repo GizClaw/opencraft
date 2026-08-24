@@ -121,6 +121,10 @@ export function Sidebar() {
     [sessions, sessionQuery],
   );
   const visibleWorkspaces = workspaces.slice(0, 5);
+  const runningOnly = runningIds.filter(
+    (id) => !sessions.some((s) => s.id === id),
+  ).length;
+  const showMoreSessions = sessions.length + runningOnly > 5;
 
   const renameSession = (id: string, title: string) => {
     void api
@@ -291,13 +295,15 @@ export function Sidebar() {
           ) : (
             <ul className="space-y-1">{visibleSessions.map(renderSessionRow)}</ul>
           )}
-          <button
-            onClick={() => setSessionsOpen(true)}
-            className="w-full mt-2 flex items-center gap-2 rounded-lg border border-edge bg-panel2 px-3 py-2 text-sm hover:border-accent/50 transition-colors"
-          >
-            <Search size={14} className="text-dim" />
-            {t("sidebar.moreSessions")}
-          </button>
+          {showMoreSessions && (
+            <button
+              onClick={() => setSessionsOpen(true)}
+              className="w-full mt-2 flex items-center gap-2 rounded-lg border border-edge bg-panel2 px-3 py-2 text-sm hover:border-accent/50 transition-colors"
+            >
+              <Search size={14} className="text-dim" />
+              {t("sidebar.moreSessions")}
+            </button>
+          )}
         </section>
 
         {workspaces.length > 0 && (
@@ -308,13 +314,15 @@ export function Sidebar() {
             <ul className="space-y-1">
               {visibleWorkspaces.map(renderWorkspaceRow)}
             </ul>
-            <button
-              onClick={() => setWorkspacesOpen(true)}
-              className="w-full mt-2 flex items-center gap-2 rounded-lg border border-edge bg-panel2 px-3 py-2 text-sm hover:border-accent/50 transition-colors"
-            >
-              <FolderOpen size={14} className="text-dim" />
-              {t("sidebar.moreWorkspaces")}
-            </button>
+            {workspaces.length > 5 && (
+              <button
+                onClick={() => setWorkspacesOpen(true)}
+                className="w-full mt-2 flex items-center gap-2 rounded-lg border border-edge bg-panel2 px-3 py-2 text-sm hover:border-accent/50 transition-colors"
+              >
+                <FolderOpen size={14} className="text-dim" />
+                {t("sidebar.moreWorkspaces")}
+              </button>
+            )}
           </section>
         )}
       </div>
