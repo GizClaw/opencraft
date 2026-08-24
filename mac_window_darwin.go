@@ -17,11 +17,11 @@ static void applyOpenCraftWindowStyleInner(void) {
 	if (w == nil) {
 		return;
 	}
-	// Traffic lights sit in the title bar, whose coordinates are
-	// flipped relative to the content: increase the origin to raise
-	// them. A small positive offset makes their vertical centre match
-	// the 44px chat header title.
-	const CGFloat dy = 3.0;
+	// The title bar uses flipped coordinates (origin at the top, y
+	// grows downward). Measured default: origin.y = 33 for a 14pt
+	// button, i.e. the centre sits at 40pt, while the 44px chat header
+	// title is centred at 22pt. Pin the buttons at origin.y = 15 so
+	// their centre (22pt) matches the title.
 	NSButton *buttons[] = {
 		[w standardWindowButton:NSWindowCloseButton],
 		[w standardWindowButton:NSWindowMiniaturizeButton],
@@ -33,7 +33,7 @@ static void applyOpenCraftWindowStyleInner(void) {
 			continue;
 		}
 		NSRect frame = [b frame];
-		frame.origin.y += dy;
+		frame.origin.y = 15.0;
 		[b setFrame:frame];
 	}
 }
