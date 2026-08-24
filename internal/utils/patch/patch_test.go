@@ -1,8 +1,7 @@
-package applypatch
+package patch
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/workspace"
@@ -142,19 +141,5 @@ func TestApplyErrors(t *testing.T) {
 	ops, _ = Parse("*** Begin Patch\n*** Delete File: missing.txt\n*** End Patch\n")
 	if _, err := Apply(ctx, ws, ops); err == nil {
 		t.Fatal("expected error deleting missing file")
-	}
-}
-
-func TestToolDefinition(t *testing.T) {
-	tool, err := New(memWorkspace(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	def := tool.Definition()
-	if def.Name != Name || !strings.Contains(def.Description, "Begin Patch") {
-		t.Fatalf("definition = %+v", def)
-	}
-	if !tool.Metadata().MutatesState {
-		t.Fatal("apply_patch must be mutating")
 	}
 }

@@ -1,6 +1,8 @@
-// Package applypatch implements the codex-style apply_patch tool: a
-// minimal line-based patch format applied through sdk/workspace.
-package applypatch
+// Package patch implements the codex-style apply_patch format: a
+// minimal line-based patch engine (parse, workspace apply, host
+// directory apply, diff rendering) shared by the apply_patch tool and
+// skill_modify's partial editing.
+package patch
 
 import (
 	"context"

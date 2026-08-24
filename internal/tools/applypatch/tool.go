@@ -8,6 +8,8 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/tool"
 	"github.com/GizClaw/flowcraft/core/workspace"
+
+	"github.com/GizClaw/opencraft/internal/utils/patch"
 )
 
 // Name is the canonical apply_patch tool name.
@@ -64,11 +66,11 @@ func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
 	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
 		return "", errdefs.Validationf("apply_patch: parse arguments: %v", err)
 	}
-	ops, err := Parse(args.Patch)
+	ops, err := patch.Parse(args.Patch)
 	if err != nil {
 		return "", err
 	}
-	results, err := Apply(ctx, t.ws, ops)
+	results, err := patch.Apply(ctx, t.ws, ops)
 	if err != nil {
 		return "", err
 	}

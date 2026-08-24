@@ -1,7 +1,8 @@
-// Package skills provides the skill_search and skill_read tools over
-// the shared opencraft.skills registry: the model-facing counterpart
-// of the per-turn ranked injection, so the model can browse the full
-// catalog and load full instructions on demand.
+// Package skills provides the skill tools over the shared
+// opencraft.skills registry: the model-facing counterpart of the
+// per-turn ranked injection, so the model can browse the catalog,
+// load full instructions, install new skills, and author its own
+// (skill_create / skill_modify).
 package skills
 
 import (
@@ -24,6 +25,10 @@ const (
 	ReadName = "skill_read"
 	// InstallName is the canonical skill_install tool name.
 	InstallName = "skill_install"
+	// CreateName is the canonical skill_create tool name.
+	CreateName = "skill_create"
+	// ModifyName is the canonical skill_modify tool name.
+	ModifyName = "skill_modify"
 
 	defaultSearchLimit = 10
 )
@@ -56,6 +61,8 @@ func (t *Tool) Tools() []tool.Tool {
 		searchTool{t.svc},
 		readTool{t.svc},
 		installTool{t.svc},
+		createTool{t.svc},
+		modifyTool{t.svc},
 	}
 }
 
@@ -205,6 +212,157 @@ func (t installTool) Execute(
 	}
 	return "Installed skill at " + dst +
 		". The registry reloaded; verify with /skills or skill_search.", nil
+}
+
+type createTool struct{ svc *skills.Service }
+
+var _ tool.Tool = createTool{}
+
+func (createTool) Definition() message.ToolDefinition {
+	return message.DefineSchema(
+		CreateName,
+		"Creates a new skill: writes a validated SKILL.md (frontmatter "+
+			"name + description) into the repo or user skill root and "+
+			"reloads the registry so the skill is usable immediately. "+
+			"The body should be concise, self-contained Markdown "+
+			"instructions an agent can follow without other context.",
+		message.ToolProperty("name", "string",
+			"Skill name: lowercase letters, digits and hyphens only."),
+		message.ToolProperty("description", "string",
+			"One-line description used by skill_search and per-turn ranking."),
+		message.ToolProperty("body", "string",
+			"The Markdown instructions injected when the skill is used."),
+		message.ToolStringMapProperty("files",
+			"Optional supporting files as a relative path -> content map, "+
+				`e.g. {"scripts/run.py": "#!/usr/bin/env python3\n..."} or `+
+				`{"scripts/validator/main.go": "..."}. Directories are created `+
+				"as needed; paths must stay inside the skill directory."),
+		message.ToolArrayProperty("executable",
+			"Relative file paths to make executable (chmod 0755) after writing, "+
+				"e.g. shell or Python entry scripts.",
+			message.Items("string")),
+		message.ToolPropertyWithDefault("scope", "string",
+			`Where to create it: "repo" (default, <workspace>/.agents/skills) or "user" (~/.agents/skills).`, "repo"),
+	).Required("name", "description", "body").Build()
+}
+
+func (createTool) Metadata() tool.ToolMeta {
+	return tool.ToolMeta{MutatesState: true}
+}
+
+func (t createTool) Execute(
+	_ context.Context, arguments string,
+) (string, error) {
+	var args struct {
+		Name        string            `json:"name"`
+		Description string            `json:"description"`
+		Body        string            `json:"body"`
+		Scope       string            `json:"scope"`
+		Files       map[string]string `json:"files"`
+		Executable  []string          `json:"executable"`
+	}
+	if err := strictDecode(
+		arguments, &args, "name", "description", "body", "scope", "files", "executable",
+	); err != nil {
+		return "", err
+	}
+	path, err := t.svc.Create(args.Name, skills.SkillDocument{
+		Description: args.Description,
+		Body:        args.Body,
+		Files:       args.Files,
+		Executable:  args.Executable,
+	}, args.Scope)
+	if err != nil {
+		return "", err
+	}
+	return "Created skill " + args.Name + " at " + path +
+		". The registry reloaded; it is now usable via skill_search.", nil
+}
+
+type modifyTool struct{ svc *skills.Service }
+
+var _ tool.Tool = modifyTool{}
+
+func (modifyTool) Definition() message.ToolDefinition {
+	return message.DefineSchema(
+		ModifyName,
+		"Rewrites the SKILL.md of an existing skill (same name, full "+
+			"new body), optionally updating its description, and "+
+			"reloads the registry so the change takes effect "+
+			"immediately. An empty description keeps the stored one.",
+		message.ToolProperty("name", "string",
+			"The skill name to modify."),
+		message.ToolPropertyWithDefault("description", "string",
+			"New one-line description; empty keeps the current one.", ""),
+		message.ToolProperty("body", "string",
+			"The full new Markdown instructions."),
+		message.ToolStringMapProperty("files",
+			"Optional supporting files to create or overwrite: relative path -> "+
+				"content (e.g. python scripts, Go sources, references). Existing "+
+				"files not listed are kept."),
+		message.ToolArrayProperty("executable",
+			"Relative file paths to make executable (chmod 0755), for new or "+
+				"existing scripts.",
+			message.Items("string")),
+		message.ToolProperty("patch", "string",
+			"Alternative to body/files: a codex-format apply_patch "+
+				"(*** Begin Patch / *** Update File / *** Add File / "+
+				"*** Delete File / *** End Patch) applied to the skill's "+
+				"files, so you can change just a few lines of SKILL.md or "+
+				"one script instead of rewriting the whole skill. Paths are "+
+				"relative to the skill directory."),
+		message.ToolPropertyWithDefault("scope", "string",
+			`Which root the skill lives in: "repo" (default) or "user".`, "repo"),
+	).Required("name").Build()
+}
+
+func (modifyTool) Metadata() tool.ToolMeta {
+	return tool.ToolMeta{MutatesState: true}
+}
+
+func (t modifyTool) Execute(
+	_ context.Context, arguments string,
+) (string, error) {
+	var args struct {
+		Name        string            `json:"name"`
+		Description string            `json:"description"`
+		Body        string            `json:"body"`
+		Scope       string            `json:"scope"`
+		Files       map[string]string `json:"files"`
+		Executable  []string          `json:"executable"`
+		Patch       string            `json:"patch"`
+	}
+	if err := strictDecode(
+		arguments, &args, "name", "description", "body", "scope", "files", "executable", "patch",
+	); err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(args.Patch) != "" {
+		if strings.TrimSpace(args.Body) != "" ||
+			len(args.Files) > 0 || len(args.Executable) > 0 ||
+			strings.TrimSpace(args.Description) != "" {
+			return "", errdefs.Validationf(
+				"skill_modify: use either patch or body/files, not both")
+		}
+		paths, err := t.svc.Patch(args.Name, args.Patch, args.Scope)
+		if err != nil {
+			return "", err
+		}
+		return "Patched skill " + args.Name + ": " +
+			strings.Join(paths, ", ") +
+			". The registry reloaded; the changes are live.", nil
+	}
+	path, err := t.svc.Modify(args.Name, skills.SkillDocument{
+		Description: args.Description,
+		Body:        args.Body,
+		Files:       args.Files,
+		Executable:  args.Executable,
+	}, args.Scope)
+	if err != nil {
+		return "", err
+	}
+	return "Updated skill " + args.Name + " at " + path +
+		". The registry reloaded; skill_read and skill_search now see the new content.", nil
 }
 
 // strictDecode parses tool arguments and rejects unknown fields.

@@ -1,4 +1,4 @@
-package applypatch
+package patch
 
 import (
 	"os"

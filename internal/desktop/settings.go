@@ -161,6 +161,26 @@ func (a *App) Skills() ([]SkillDTO, error) {
 	return out, nil
 }
 
+// DeleteSkill removes one non-builtin skill directory (by its
+// SKILL.md path as listed by Skills) and reloads the registry.
+func (a *App) DeleteSkill(skillPath string) error {
+	a.mu.Lock()
+	ctrl := a.ctrl
+	a.mu.Unlock()
+	if ctrl == nil || ctrl.Runtime() == nil {
+		return errors.New("runtime is not ready")
+	}
+	value, ok := ctrl.Runtime().Resource("skills")
+	if !ok {
+		return errors.New("skills resource is not available")
+	}
+	svc, ok := value.(*skills.Service)
+	if !ok {
+		return errors.New("skills resource is not available")
+	}
+	return svc.Delete(skillPath)
+}
+
 // ---- kanban actions ----
 
 func (a *App) board() (*kanban.Board, error) {

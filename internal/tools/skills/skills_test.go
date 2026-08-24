@@ -78,6 +78,89 @@ func TestSkillSearchTool(t *testing.T) {
 	}
 }
 
+func TestSkillCreateModifyTools(t *testing.T) {
+	svc := newTestService(t)
+	create := createTool{svc}
+	out, err := create.Execute(context.Background(),
+		`{"name":"qa","description":"run the qa checklist","body":"## Steps\n1. Build.\n2. Test.\n","files":{"scripts/run.py":"#!/usr/bin/env python3\nprint('ok')\n"},"executable":["scripts/run.py"]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "qa") {
+		t.Fatalf("create output = %q", out)
+	}
+	meta, body, err := svc.ReadFull("qa")
+	if err != nil {
+		t.Fatalf("created skill not discoverable: %v", err)
+	}
+	if meta.Description != "run the qa checklist" ||
+		!strings.Contains(body, "2. Test.") {
+		t.Fatalf("created skill = %+v / %q", meta, body)
+	}
+	script := filepath.Join(filepath.Dir(meta.Path), "scripts", "run.py")
+	if data, err := os.ReadFile(script); err != nil ||
+		!strings.Contains(string(data), "print('ok')") {
+		t.Fatalf("created script = %q, %v", data, err)
+	}
+	if info, err := os.Stat(script); err != nil || info.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("script not executable: %v", err)
+	}
+
+	modify := modifyTool{svc}
+	out, err = modify.Execute(context.Background(),
+		`{"name":"qa","body":"## Steps\n1. Build.\n2. Test.\n3. Ship.\n","files":{"scripts/run.py":"#!/usr/bin/env python3\nprint('v2')\n"}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "qa") {
+		t.Fatalf("modify output = %q", out)
+	}
+	meta, body, err = svc.ReadFull("qa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta.Description != "run the qa checklist" {
+		t.Fatalf("modify dropped description: %q", meta.Description)
+	}
+	if !strings.Contains(body, "3. Ship.") {
+		t.Fatalf("modified body = %q", body)
+	}
+
+	// Partial patch mode edits just one hunk of SKILL.md.
+	out, err = modify.Execute(context.Background(),
+		`{"name":"qa","patch":"*** Begin Patch\n*** Update File: SKILL.md\n@@\n-3. Ship.\n+3. Ship to prod.\n*** End Patch\n"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "SKILL.md") {
+		t.Fatalf("patch output = %q", out)
+	}
+	_, body, err = svc.ReadFull("qa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(body, "3. Ship to prod.") {
+		t.Fatalf("patched body = %q", body)
+	}
+
+	// patch and body are mutually exclusive.
+	if _, err := modify.Execute(context.Background(),
+		`{"name":"qa","body":"x","patch":"*** Begin Patch\n*** End Patch\n"}`); err == nil {
+		t.Fatal("patch + body must be rejected")
+	}
+
+	// Invalid names are rejected.
+	if _, err := create.Execute(context.Background(),
+		`{"name":"Bad Name","description":"x","body":"y"}`); err == nil {
+		t.Fatal("invalid name must fail")
+	}
+	// Unknown arguments are rejected.
+	if _, err := modify.Execute(context.Background(),
+		`{"name":"qa","body":"x","nope":1}`); err == nil {
+		t.Fatal("unknown argument must fail")
+	}
+}
+
 func TestSkillReadTool(t *testing.T) {
 	tool := readTool{newTestService(t)}
 	out, err := tool.Execute(context.Background(), `{"name": "plan"}`)
