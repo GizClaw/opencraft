@@ -12,10 +12,14 @@ import {
 import { useTranslation } from "react-i18next";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
-import type { MCPServer, ProviderView, SetupProvider } from "../lib/types";
+import type { MCPServer, ProviderInstance, ProviderView } from "../lib/types";
 
-interface Row {
-  provider: ProviderView;
+// InstanceRow is one editable inference instance in the settings page.
+interface InstanceRow {
+  id: string; // frontend key
+  type: string;
+  name: string;
+  api: string;
   key: string;
   keyEnv: boolean;
   model: string;
@@ -23,6 +27,7 @@ interface Row {
   vision: boolean;
   reasoning: string;
   webSearch: boolean;
+  enabled: boolean;
 }
 
 type Tab =
@@ -56,8 +61,9 @@ export function ConfigPage() {
   const lang = i18n.resolvedLanguage?.startsWith("zh") ? "zh" : "en";
 
   const [tab, setTab] = useState<Tab>("inference");
-  const [rows, setRows] = useState<Row[]>([]);
-  const [order, setOrder] = useState<string[]>([]);
+  const [rows, setRows] = useState<InstanceRow[]>([]);
+  const [catalog, setCatalog] = useState<ProviderView[]>([]);
+  const [newType, setNewType] = useState("deepseek");
   const [defaultModel, setDefaultModel] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -77,22 +83,24 @@ export function ConfigPage() {
           api.providers(),
           api.configState(),
         ]);
+        setCatalog(providers);
+        const byType = new Map(providers.map((p) => [p.id, p]));
         setRows(
-          providers.map((p) => {
-            const cur = state.providers.find((s) => s.id === p.id);
-            return {
-              provider: p,
-              key: cur?.key ?? "",
-              keyEnv: cur?.key_env ?? false,
-              model: cur?.model || p.default_model,
-              endpoint: cur?.endpoint ?? "",
-              vision: cur?.vision ?? false,
-              reasoning: cur?.reasoning ?? "",
-              webSearch: cur?.web_search ?? false,
-            };
-          }),
+          (state.instances ?? []).map((s) => ({
+            id: newID(),
+            type: s.type,
+            name: s.name ?? "",
+            api: s.api ?? "",
+            key: s.key ?? "",
+            keyEnv: s.key_env ?? false,
+            model: s.model || byType.get(s.type)?.default_model || "",
+            endpoint: s.endpoint ?? "",
+            vision: s.vision ?? false,
+            reasoning: s.reasoning ?? "",
+            webSearch: s.web_search ?? false,
+            enabled: s.enabled ?? true,
+          })),
         );
-        setOrder(state.providers.map((s) => s.id));
         setDefaultModel(state.model);
       } catch (err) {
         setError(String(err));
@@ -155,46 +163,62 @@ export function ConfigPage() {
       .catch((err) => setMCPError(String(err)));
   }, [tab]);
 
-  const byID = useMemo(
-    () => new Map(rows.map((r) => [r.provider.id, r])),
-    [rows],
-  );
-  const selectedRows = order
-    .map((id) => byID.get(id))
-    .filter((r): r is Row => Boolean(r));
+  // enabledRows are the instances that participate in the router, in
+  // priority order; only they can be reordered.
+  const enabledRows = useMemo(() => rows.filter((r) => r.enabled), [rows]);
 
-  const toggle = (id: string, on: boolean) => {
-    setOrder((prev) =>
-      on ? [...prev.filter((x) => x !== id), id] : prev.filter((x) => x !== id),
-    );
+  const addInstance = (type: string) => {
+    const prov = catalog.find((p) => p.id === type);
+    setRows((prev) => [
+      ...prev,
+      {
+        id: newID(),
+        type,
+        name: "",
+        api: prov?.api ?? "",
+        key: "",
+        keyEnv: false,
+        model: prov?.default_model ?? "",
+        endpoint: "",
+        vision: false,
+        reasoning: "",
+        webSearch: false,
+        enabled: true,
+      },
+    ]);
   };
 
   const move = (idx: number, dir: -1 | 1) => {
     const target = idx + dir;
-    if (target < 0 || target >= selectedRows.length) return;
-    setOrder((prev) => {
+    if (target < 0 || target >= enabledRows.length) return;
+    const a = enabledRows[idx].id;
+    const b = enabledRows[target].id;
+    setRows((prev) => {
       const next = [...prev];
-      const id = prev[idx];
-      next[idx] = prev[target];
-      next[target] = id;
+      const ia = next.findIndex((r) => r.id === a);
+      const ib = next.findIndex((r) => r.id === b);
+      if (ia < 0 || ib < 0) return prev;
+      [next[ia], next[ib]] = [next[ib], next[ia]];
       return next;
     });
   };
 
-  const update = (id: string, patch: Partial<Row>) => {
+  const update = (id: string, patch: Partial<InstanceRow>) => {
     setRows((prev) =>
-      prev.map((r) => (r.provider.id === id ? { ...r, ...patch } : r)),
+      prev.map((r) => (r.id === id ? { ...r, ...patch } : r)),
     );
   };
 
   const save = async () => {
     setError("");
-    if (selectedRows.length === 0) {
+    if (enabledRows.length === 0) {
       setError(t("setup.selectProvider"));
       return;
     }
-    const providers: SetupProvider[] = selectedRows.map((r) => ({
-      id: r.provider.id,
+    const instances: ProviderInstance[] = rows.map((r) => ({
+      type: r.type,
+      name: r.name,
+      api: r.api,
       key: r.key,
       key_env: r.keyEnv,
       model: r.model,
@@ -202,10 +226,11 @@ export function ConfigPage() {
       vision: r.vision,
       reasoning: r.reasoning,
       web_search: r.webSearch,
+      enabled: r.enabled,
     }));
     setSaving(true);
     try {
-      await api.saveSetup({ providers });
+      await api.saveInstances({ instances });
       closeConfig();
     } catch (err) {
       setError(String(err));
@@ -370,161 +395,202 @@ export function ConfigPage() {
                   ? t("config.inferenceCurrent", { model: defaultModel })
                   : t("setup.subtitle")}
               </p>
-              {rows.map((row) => (
-                <div
-                  key={row.provider.id}
-                  className="rounded-xl border border-edge bg-panel2 overflow-hidden"
+              <div className="flex items-center gap-2">
+                <select
+                  value={newType}
+                  onChange={(e) => setNewType(e.target.value)}
+                  className="rounded-lg border border-edge bg-panel px-2 py-1.5 text-sm outline-none"
                 >
-                  <label className="flex items-center gap-2.5 px-4 py-3 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={order.includes(row.provider.id)}
-                      onChange={(e) =>
-                        toggle(row.provider.id, e.target.checked)
-                      }
-                      className="accent-[var(--color-accent)]"
-                    />
-                    <span className="font-medium text-sm">
-                      {row.provider.name}
-                    </span>
-                    <span className="text-xs text-dim">
-                      {row.provider.default_model}
-                    </span>
-                  </label>
-                  {order.includes(row.provider.id) && (
-                    <div className="px-4 pb-3 pt-1 space-y-2">
-                      <div className="flex items-center gap-2">
-                        <input
-                          type="password"
-                          value={row.key}
-                          onChange={(e) =>
-                            update(row.provider.id, { key: e.target.value })
-                          }
-                          disabled={row.keyEnv}
-                          placeholder={t("setup.apiKeyPlaceholder", {
-                            var: row.provider.env_var,
-                          })}
-                          className="flex-1 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent disabled:opacity-40"
-                        />
-                        <label className="flex items-center gap-1.5 text-xs text-dim whitespace-nowrap">
-                          <input
-                            type="checkbox"
-                            checked={row.keyEnv}
-                            onChange={(e) =>
-                              update(row.provider.id, {
-                                keyEnv: e.target.checked,
-                              })
-                            }
-                            className="accent-[var(--color-accent)]"
-                          />
-                          {t("setup.envVar", { var: row.provider.env_var })}
-                        </label>
-                      </div>
-                      {row.provider.azure ? (
-                        <>
-                          <div className="flex gap-2">
-                            <input
-                              value={row.endpoint}
-                              onChange={(e) =>
-                                update(row.provider.id, {
-                                  endpoint: e.target.value,
-                                })
-                              }
-                              placeholder={t("setup.endpointPlaceholder")}
-                              className="flex-1 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
-                            />
-                            <input
-                              value={row.model}
-                              onChange={(e) =>
-                                update(row.provider.id, {
-                                  model: e.target.value,
-                                })
-                              }
-                              placeholder={t("setup.deploymentName")}
-                              className="w-48 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
-                            />
-                          </div>
-                          <div className="flex items-center gap-4 text-xs text-dim">
-                            <label className="flex items-center gap-1.5">
-                              <input
-                                type="checkbox"
-                                checked={row.vision}
-                                onChange={(e) =>
-                                  update(row.provider.id, {
-                                    vision: e.target.checked,
-                                  })
-                                }
-                                className="accent-[var(--color-accent)]"
-                              />
-                              {t("setup.vision")}
-                            </label>
-                            <label className="flex items-center gap-1.5">
-                              {t("setup.reasoning")}
-                              <select
-                                value={row.reasoning}
-                                onChange={(e) =>
-                                  update(row.provider.id, {
-                                    reasoning: e.target.value,
-                                  })
-                                }
-                                className="rounded border border-edge bg-panel px-2 py-1 outline-none"
-                              >
-                                <option value="">
-                                  {t("setup.reasoningOff")}
-                                </option>
-                                <option value="always">always</option>
-                                <option value="toggle">toggle</option>
-                              </select>
-                            </label>
-                            <label className="flex items-center gap-1.5">
-                              <input
-                                type="checkbox"
-                                checked={row.webSearch}
-                                onChange={(e) =>
-                                  update(row.provider.id, {
-                                    webSearch: e.target.checked,
-                                  })
-                                }
-                                className="accent-[var(--color-accent)]"
-                              />
-                              {t("setup.webSearch")}
-                            </label>
-                          </div>
-                        </>
-                      ) : (
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-dim">
-                            {t("setup.model")}
-                          </span>
+                  {catalog.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => addInstance(newType)}
+                  className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
+                >
+                  <Plus size={14} />
+                  {t("config.addInstance")}
+                </button>
+              </div>
+              {rows.length === 0 && (
+                <p className="text-sm text-dim">{t("config.instancesEmpty")}</p>
+              )}
+              {rows.map((row) => {
+                const prov = catalog.find((p) => p.id === row.type);
+                return (
+                  <div
+                    key={row.id}
+                    className={`rounded-xl border overflow-hidden ${
+                      row.enabled
+                        ? "border-edge bg-panel2"
+                        : "border-edge/50 bg-panel2/50"
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 px-4 py-2.5">
+                      <input
+                        type="checkbox"
+                        checked={row.enabled}
+                        onChange={(e) =>
+                          update(row.id, { enabled: e.target.checked })
+                        }
+                        className="accent-[var(--color-accent)]"
+                        title={t("config.instanceEnabled")}
+                      />
+                      <span className="font-medium text-sm shrink-0">
+                        {prov?.name ?? row.type}
+                      </span>
+                      <input
+                        value={row.name}
+                        onChange={(e) =>
+                          update(row.id, { name: e.target.value })
+                        }
+                        placeholder={t("config.instanceName")}
+                        className="flex-1 min-w-0 rounded-lg border border-edge bg-panel px-2 py-1 text-sm outline-none focus:border-accent"
+                      />
+                      <button
+                        onClick={() =>
+                          setRows((prev) =>
+                            prev.filter((r) => r.id !== row.id),
+                          )
+                        }
+                        className="text-dim hover:text-err shrink-0"
+                        title={t("config.removeInstance")}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                    {row.enabled && (
+                      <div className="px-4 pb-3 pt-1 space-y-2">
+                        <div className="flex gap-2">
                           <input
                             value={row.model}
                             onChange={(e) =>
-                              update(row.provider.id, { model: e.target.value })
+                              update(row.id, { model: e.target.value })
                             }
+                            placeholder={t("setup.model")}
+                            className="flex-1 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
+                          />
+                          <input
+                            value={row.endpoint}
+                            onChange={(e) =>
+                              update(row.id, { endpoint: e.target.value })
+                            }
+                            placeholder={t("setup.endpointPlaceholder")}
                             className="w-64 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
                           />
                         </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))}
+                        {row.type === "openai" && (
+                          <div className="flex items-center gap-2 text-xs text-dim">
+                            {t("setup.apiMode")}
+                            <select
+                              value={row.api}
+                              onChange={(e) =>
+                                update(row.id, { api: e.target.value })
+                              }
+                              className="rounded border border-edge bg-panel px-2 py-1 outline-none"
+                            >
+                              <option value="responses">responses</option>
+                              <option value="chat">chat</option>
+                            </select>
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="password"
+                            value={row.key}
+                            onChange={(e) =>
+                              update(row.id, { key: e.target.value })
+                            }
+                            disabled={row.keyEnv}
+                            placeholder={t("setup.apiKeyPlaceholder", {
+                              var: prov?.env_var ?? "",
+                            })}
+                            className="flex-1 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent disabled:opacity-40"
+                          />
+                          <label className="flex items-center gap-1.5 text-xs text-dim whitespace-nowrap">
+                            <input
+                              type="checkbox"
+                              checked={row.keyEnv}
+                              onChange={(e) =>
+                                update(row.id, { keyEnv: e.target.checked })
+                              }
+                              className="accent-[var(--color-accent)]"
+                            />
+                            {t("setup.envVar", { var: prov?.env_var ?? "" })}
+                          </label>
+                        </div>
+                        <div className="flex items-center gap-4 text-xs text-dim">
+                          <label className="flex items-center gap-1.5">
+                            <input
+                              type="checkbox"
+                              checked={row.vision}
+                              onChange={(e) =>
+                                update(row.id, { vision: e.target.checked })
+                              }
+                              className="accent-[var(--color-accent)]"
+                            />
+                            {t("setup.vision")}
+                          </label>
+                          <label className="flex items-center gap-1.5">
+                            {t("setup.reasoning")}
+                            <select
+                              value={row.reasoning}
+                              onChange={(e) =>
+                                update(row.id, {
+                                  reasoning: e.target.value,
+                                })
+                              }
+                              className="rounded border border-edge bg-panel px-2 py-1 outline-none"
+                            >
+                              <option value="">
+                                {t("setup.reasoningOff")}
+                              </option>
+                              <option value="always">always</option>
+                              <option value="toggle">toggle</option>
+                            </select>
+                          </label>
+                          <label className="flex items-center gap-1.5">
+                            <input
+                              type="checkbox"
+                              checked={row.webSearch}
+                              onChange={(e) =>
+                                update(row.id, {
+                                  webSearch: e.target.checked,
+                                })
+                              }
+                              className="accent-[var(--color-accent)]"
+                            />
+                            {t("setup.webSearch")}
+                          </label>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
 
-              {selectedRows.length > 1 && (
+              {enabledRows.length > 1 && (
                 <div className="rounded-xl border border-edge bg-panel2 p-3">
                   <div className="text-xs text-dim mb-2">
                     {t("setup.routerPriority")}
                   </div>
                   <div className="space-y-1.5">
-                    {selectedRows.map((row, idx) => (
+                    {enabledRows.map((row, idx) => (
                       <div
-                        key={row.provider.id}
+                        key={row.id}
                         className="flex items-center gap-2 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm"
                       >
                         <span className="text-xs text-dim w-5">{idx + 1}</span>
-                        <span className="flex-1">{row.provider.name}</span>
+                        <span className="flex-1">
+                          {catalog.find((p) => p.id === row.type)?.name ??
+                            row.type}
+                          {row.name ? ` · ${row.name}` : ""}
+                        </span>
                         <span className="text-xs text-dim truncate">
-                          {row.model || row.provider.default_model}
+                          {row.model}
                         </span>
                         <button
                           onClick={() => move(idx, -1)}
@@ -535,7 +601,7 @@ export function ConfigPage() {
                         </button>
                         <button
                           onClick={() => move(idx, 1)}
-                          disabled={idx === selectedRows.length - 1}
+                          disabled={idx === enabledRows.length - 1}
                           className="text-dim hover:text-fg disabled:opacity-30"
                         >
                           <ArrowDown size={14} />

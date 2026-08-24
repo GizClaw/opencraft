@@ -130,12 +130,12 @@ export function RetryCard(arg1) {
   return window['go']['desktop']['App']['RetryCard'](arg1);
 }
 
-export function SaveMCP(arg1) {
-  return window['go']['desktop']['App']['SaveMCP'](arg1);
+export function SaveInstances(arg1) {
+  return window['go']['desktop']['App']['SaveInstances'](arg1);
 }
 
-export function SaveSetup(arg1) {
-  return window['go']['desktop']['App']['SaveSetup'](arg1);
+export function SaveMCP(arg1) {
+  return window['go']['desktop']['App']['SaveMCP'](arg1);
 }
 
 export function SessionHistory(arg1) {

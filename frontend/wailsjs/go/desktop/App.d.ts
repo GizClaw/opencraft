@@ -70,9 +70,9 @@ export function ResumeSession(arg1:string):Promise<string>;
 
 export function RetryCard(arg1:string):Promise<string>;
 
-export function SaveMCP(arg1:Array<config.MCPServer>):Promise<void>;
+export function SaveInstances(arg1:desktop.InferenceRequest):Promise<void>;
 
-export function SaveSetup(arg1:desktop.SetupRequest):Promise<void>;
+export function SaveMCP(arg1:Array<config.MCPServer>):Promise<void>;
 
 export function SessionHistory(arg1:string):Promise<Array<message.Message>>;
 

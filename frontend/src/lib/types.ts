@@ -19,8 +19,10 @@ export interface ProviderView {
   azure: boolean;
 }
 
-export interface SetupProvider {
-  id: string;
+export interface ProviderInstance {
+  type: string;
+  name: string;
+  api: string;
   key: string;
   key_env: boolean;
   model: string;
@@ -28,14 +30,15 @@ export interface SetupProvider {
   vision: boolean;
   reasoning: string;
   web_search: boolean;
+  enabled: boolean;
 }
 
-export interface SetupRequest {
-  providers: SetupProvider[];
+export interface InferenceRequest {
+  instances: ProviderInstance[];
 }
 
 export interface ConfigState {
-  providers: SetupProvider[];
+  instances: ProviderInstance[];
   model: string;
 }
 
