@@ -626,11 +626,16 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     resume: async (id) => {
-      if (get().conversations[id]) {
-        set({ current: id });
-        return;
-      }
       try {
+        // Switch the backend session context first (conversation id,
+        // mode, think, model all follow the selected session); without
+        // this the mode/think/model reads below return the previous
+        // conversation's values and new turns land in the old session.
+        await api.resumeSession(id);
+        if (get().conversations[id]) {
+          set({ current: id });
+          return;
+        }
         const [mode, history, think, model] = await Promise.all([
           api.sessionMode(),
           api.sessionHistory(id),
