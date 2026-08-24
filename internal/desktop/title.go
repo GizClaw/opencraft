@@ -79,6 +79,15 @@ func (a *App) autoTitle(ctx context.Context, contextID string) {
 	maxTokens := 64
 	reasoning := false
 	response, _, err := router.Generate(ctx, inference.GenerateRequest{
+		// Instruct the model to act as a title generator: without this
+		// it answers the user's first message instead of naming the
+		// conversation.
+		Context: []message.Message{{
+			Role: message.RoleSystem,
+			Content: message.Content{Parts: []message.Part{
+				message.TextPart{Text: titlePrompt},
+			}},
+		}},
 		Input: inference.GenerateInput{
 			Role: inference.InputRoleUser,
 			Content: inference.InputContent{
@@ -138,3 +147,10 @@ func firstPrefix(s string) string {
 	}
 	return string(runes)
 }
+
+// titlePrompt tells the model to emit only a short title for the
+// conversation, in the user message's language.
+const titlePrompt = "You generate concise conversation titles. " +
+	"Given the user's first message below, reply with ONLY a short " +
+	"title of at most 8 words, in the same language as the message. " +
+	"Do not answer the question. No quotes, punctuation, or explanation."
