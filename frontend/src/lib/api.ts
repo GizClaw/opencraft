@@ -10,7 +10,7 @@ import type {
   ConfigState,
   ConfigStatus,
   FileNode,
-  HistoryMsg,
+  HistoryMessage,
   KanbanCard,
   MCPServer,
   ModelOption,
@@ -37,7 +37,7 @@ export const api = {
   currentSession: () => App.CurrentSession(),
   resumeSession: (id: string) => App.ResumeSession(id),
   sessionHistory: (id: string) =>
-    App.SessionHistory(id) as Promise<HistoryMsg[]>,
+    App.SessionHistory(id) as Promise<HistoryMessage[]>,
   workspaces: () => App.Workspaces() as Promise<WorkspaceMeta[]>,
   openWorkspace: (path: string) => App.OpenWorkspace(path),
   removeWorkspace: (id: string) => App.RemoveWorkspace(id),

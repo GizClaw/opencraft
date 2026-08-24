@@ -69,10 +69,27 @@ export interface WorkspaceMeta {
   last_opened: string;
 }
 
-export interface HistoryMsg {
+// HistoryMessage is the wire form of flowcraft's message.Message: the
+// resume view gets the same ordered parts (text, reasoning, tool
+// calls, tool results) the live stream renders.
+export interface HistoryMessage {
   role: string;
-  text: string;
+  content?: {
+    parts?: HistoryPart[];
+  };
 }
+
+export type HistoryPart =
+  | { type: "text"; text?: string }
+  | { type: "reasoning"; text?: string }
+  | {
+      type: "tool_call";
+      call?: { id: string; name: string; arguments?: unknown };
+    }
+  | {
+      type: "tool_result";
+      result?: { call_id: string; content?: string; is_error?: boolean };
+    };
 
 export interface KanbanCard {
   id: string;

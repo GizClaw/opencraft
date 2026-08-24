@@ -89,12 +89,6 @@ type SessionMeta struct {
 	TotalTokens int64  `json:"total_tokens"`
 }
 
-// HistoryMsg is one stored message for the resume view.
-type HistoryMsg struct {
-	Role string `json:"role"`
-	Text string `json:"text"`
-}
-
 // SkillDTO is one discovered skill for the config page.
 type SkillDTO struct {
 	Name        string `json:"name"`

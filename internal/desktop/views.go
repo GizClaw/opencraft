@@ -205,30 +205,17 @@ func (a *App) ResumeSession(id string) (string, error) {
 	return id, nil
 }
 
-// SessionHistory returns the stored messages of one conversation so
-// resuming it can restore the visible transcript.
-func (a *App) SessionHistory(id string) ([]HistoryMsg, error) {
+// SessionHistory returns the stored messages of one conversation as
+// full flowcraft messages, so resuming it restores the same ordered
+// blocks (reasoning, tool calls, results, text) the live stream shows.
+func (a *App) SessionHistory(id string) ([]message.Message, error) {
 	a.mu.Lock()
 	store := a.sessions
 	a.mu.Unlock()
 	if store == nil {
 		return nil, nil
 	}
-	msgs, err := store.History(context.Background(), id, 0)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]HistoryMsg, 0, len(msgs))
-	for _, m := range msgs {
-		var text string
-		for _, p := range m.Content.Parts {
-			if tp, ok := p.(message.TextPart); ok {
-				text += tp.Text
-			}
-		}
-		out = append(out, HistoryMsg{Role: string(m.Role), Text: text})
-	}
-	return out, nil
+	return store.History(context.Background(), id, 0)
 }
 
 // DelegationCards snapshots the delegation kanban board, newest first.

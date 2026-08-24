@@ -3,6 +3,7 @@
 import {desktop} from '../models';
 import {agents} from '../models';
 import {config} from '../models';
+import {message} from '../models';
 import {context} from '../models';
 
 export function AllowPermission(arg1:string):Promise<void>;
@@ -73,7 +74,7 @@ export function SaveMCP(arg1:Array<config.MCPServer>):Promise<void>;
 
 export function SaveSetup(arg1:desktop.SetupRequest):Promise<void>;
 
-export function SessionHistory(arg1:string):Promise<Array<desktop.HistoryMsg>>;
+export function SessionHistory(arg1:string):Promise<Array<message.Message>>;
 
 export function SessionMode():Promise<string>;
 

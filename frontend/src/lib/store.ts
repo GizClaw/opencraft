@@ -4,9 +4,9 @@ import { api } from "./api";
 import type {
   AgentSummary,
   ConfigStatus,
-  HistoryMsg,
   InteractDTO,
   KanbanCard,
+  HistoryMessage,
   ModelOption,
   ReplyRequest,
   SessionMeta,
@@ -83,19 +83,83 @@ const emptyConv = (): ConversationState => ({
   lastFailed: false,
 });
 
-const historyToMessages = (history: HistoryMsg[]): MessageView[] =>
-  history.map((h) =>
-    h.role === "user"
-      ? { id: newID("msg"), role: "user", text: h.text, items: [] }
-      : {
-          id: newID("msg"),
-          role: "assistant",
-          text: "",
-          items: h.text
-            ? [{ kind: "text", id: newID("part"), text: h.text }]
-            : [],
-        },
-  );
+// historyToMessages converts stored flowcraft messages back into the
+// live MessageView shape: user text, then assistant messages with the
+// same ordered blocks (reasoning, tool calls, text) the stream
+// produces; tool results are matched back to their tool call.
+const historyToMessages = (history: HistoryMessage[]): MessageView[] => {
+  const messages: MessageView[] = [];
+  const toolCalls: {
+    item: Extract<AssistantItem, { kind: "tool_call" }>;
+  }[] = [];
+  for (const h of history) {
+    const parts = h.content?.parts ?? [];
+    if (h.role === "user") {
+      const text = parts
+        .filter((p): p is { type: "text"; text?: string } => p.type === "text")
+        .map((p) => p.text ?? "")
+        .join("");
+      messages.push({ id: newID("msg"), role: "user", text, items: [] });
+      continue;
+    }
+    if (h.role === "tool") {
+      for (const p of parts) {
+        if (p.type !== "tool_result" || !p.result) continue;
+        const call = toolCalls.find(
+          (c) => c.item.tool.id === p.result!.call_id,
+        );
+        if (call) {
+          call.item.tool.status = p.result.is_error ? "error" : "done";
+          call.item.tool.result = p.result.content;
+        }
+      }
+      continue;
+    }
+    const msg: MessageView = {
+      id: newID("msg"),
+      role: "assistant",
+      text: "",
+      items: [],
+    };
+    for (const p of parts) {
+      switch (p.type) {
+        case "text":
+          if (p.text) {
+            msg.items.push({ kind: "text", id: newID("part"), text: p.text });
+          }
+          break;
+        case "reasoning":
+          if (p.text) {
+            msg.items.push({
+              kind: "reasoning",
+              id: newID("part"),
+              text: p.text,
+            });
+          }
+          break;
+        case "tool_call": {
+          const call = p.call;
+          if (!call) break;
+          const item: Extract<AssistantItem, { kind: "tool_call" }> = {
+            kind: "tool_call",
+            id: newID("part"),
+            tool: {
+              id: call.id,
+              name: call.name,
+              args: normalizeArgs(call.arguments),
+              status: "running",
+            },
+          };
+          msg.items.push(item);
+          toolCalls.push({ item });
+          break;
+        }
+      }
+    }
+    messages.push(msg);
+  }
+  return messages;
+};
 
 // lastAssistant returns a mutable copy of the last assistant message
 // (creating one when needed) plus a NEW messages array, so every
