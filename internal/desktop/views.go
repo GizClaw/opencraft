@@ -266,8 +266,10 @@ func (a *App) DelegationCards() ([]KanbanCard, error) {
 
 // ReadFile returns a workspace file's content for the viewer panel.
 func (a *App) ReadFile(path string) (string, error) {
-	if strings.TrimSpace(path) == "" {
-		return "", errors.New("path is required")
+	wd := a.snapshotWorkDir()
+	path, err := resolveInWorkspace(wd, path)
+	if err != nil {
+		return "", err
 	}
 	info, err := os.Stat(path)
 	if err != nil {
@@ -291,10 +293,15 @@ func (a *App) ReadFile(path string) (string, error) {
 // file is unmodified). Non-git failures surface their stderr so the UI
 // can show why no diff is available.
 func (a *App) FileDiff(path string) (string, error) {
+	wd := a.snapshotWorkDir()
+	path, err := resolveInWorkspace(wd, path)
+	if err != nil {
+		return "", err
+	}
 	ctx, cancel := context.WithTimeout(a.appContext(), 15*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(
-		ctx, "git", "-C", a.workDir, "diff", "--no-color", "--", path)
+		ctx, "git", "-C", wd, "diff", "--no-color", "--", path)
 	out, err := cmd.Output()
 	if err != nil {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {

@@ -12,8 +12,13 @@ import (
 // panel. Hidden entries and build artifacts (node_modules, .git,
 // dist) are skipped; the frontend lazy-loads children on expand.
 func (a *App) ListDir(dir string) ([]FileNode, error) {
+	wd := a.snapshotWorkDir()
 	if dir == "" {
-		dir = a.workDir
+		dir = wd
+	}
+	dir, err := resolveInWorkspace(wd, dir)
+	if err != nil {
+		return nil, err
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -53,6 +58,11 @@ func (a *App) ListDir(dir string) ([]FileNode, error) {
 // OpenPath opens a file or directory with the system default
 // application.
 func (a *App) OpenPath(path string) error {
+	wd := a.snapshotWorkDir()
+	path, err := resolveInWorkspace(wd, path)
+	if err != nil {
+		return err
+	}
 	cmd := openCommand(path)
 	if err := cmd.Start(); err != nil {
 		return err

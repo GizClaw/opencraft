@@ -71,11 +71,11 @@ func TestSeriesHourAndDay(t *testing.T) {
 	// Directly seed UTC hours around a day boundary: 15:00Z and 16:00Z
 	// are 23:00 and 00:00 the next day in UTC+8.
 	for _, row := range []struct {
-		hour    string
-		input   int64
-		output  int64
-		cache   int64
-		reason  int64
+		hour   string
+		input  int64
+		output int64
+		cache  int64
+		reason int64
 	}{
 		{"2026-01-01T15:00:00Z", 100, 20, 10, 0},
 		{"2026-01-01T17:00:00Z", 50, 10, 0, 5},

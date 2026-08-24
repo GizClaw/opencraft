@@ -98,13 +98,9 @@ func WriteMCP(configDir string, servers []MCPServer) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(configDir, 0o700); err != nil {
-		return fmt.Errorf("config: create config dir: %w", err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(configDir, "opencraft.yaml"), merged, 0o600,
-	); err != nil {
-		return fmt.Errorf("config: write opencraft.yaml: %w", err)
-	}
-	return nil
+	return writeFileAtomic(
+		filepath.Join(configDir, "opencraft.yaml"),
+		merged,
+		0o600,
+	)
 }

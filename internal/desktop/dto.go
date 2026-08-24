@@ -50,10 +50,14 @@ type ProviderView struct {
 // Enabled instances appear in router priority order; disabled ones are
 // kept so re-enabling needs no re-entry.
 type ProviderInstance struct {
-	Type      string `json:"type"` // catalog type: deepseek | openai | ...
-	Name      string `json:"name"` // display label
-	API       string `json:"api"`  // responses | chat (openai only)
+	Type string `json:"type"` // catalog type: deepseek | openai | ...
+	Name string `json:"name"` // display label
+	API  string `json:"api"`  // responses | chat (openai only)
+	// Key carries a new literal key from the settings page; an empty
+	// value means "keep the stored key". The backend never returns the
+	// stored secret through this field.
 	Key       string `json:"key"`
+	KeySet    bool   `json:"key_set"` // config-time: a key is already stored
 	KeyEnv    bool   `json:"key_env"`
 	Model     string `json:"model"`
 	Endpoint  string `json:"endpoint"`
@@ -79,15 +83,15 @@ type ConfigState struct {
 // ModelUsageStat aggregates one model's usage across all workspaces
 // and sessions.
 type ModelUsageStat struct {
-	Model             string `json:"model"`
-	InputTokens       int64  `json:"input_tokens"`
-	OutputTokens      int64  `json:"output_tokens"`
-	CacheReadTokens   int64  `json:"cache_read_tokens"`
-	ReasoningTokens   int64  `json:"reasoning_tokens"`
-	LatencyMs         int64  `json:"latency_ms"`
-	Workspaces        int    `json:"workspaces"`
-	Sessions          int    `json:"sessions"`
-	UpdatedAt         string `json:"updated_at"`
+	Model           string `json:"model"`
+	InputTokens     int64  `json:"input_tokens"`
+	OutputTokens    int64  `json:"output_tokens"`
+	CacheReadTokens int64  `json:"cache_read_tokens"`
+	ReasoningTokens int64  `json:"reasoning_tokens"`
+	LatencyMs       int64  `json:"latency_ms"`
+	Workspaces      int    `json:"workspaces"`
+	Sessions        int    `json:"sessions"`
+	UpdatedAt       string `json:"updated_at"`
 }
 
 // UsagePoint is one time-bucketed usage sample for a model. Time is an

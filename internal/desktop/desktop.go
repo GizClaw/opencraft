@@ -161,6 +161,10 @@ func (a *App) Shutdown(ctx context.Context) {
 func (a *App) rebuild() error {
 	a.closeRuntime()
 
+	a.mu.Lock()
+	wd := a.workDir
+	ud := a.userDir
+	a.mu.Unlock()
 	ctx := a.ctx
 	if ctx == nil {
 		ctx = context.Background()
@@ -177,8 +181,8 @@ func (a *App) rebuild() error {
 	}
 	a.mu.Unlock()
 	mgr, err := config.Open(config.Options{
-		WorkDir: a.workDir,
-		UserDir: a.userDir,
+		WorkDir: wd,
+		UserDir: ud,
 	})
 	if err != nil {
 		return fmt.Errorf("desktop: open config: %w", err)
@@ -189,7 +193,7 @@ func (a *App) rebuild() error {
 	}
 	rt, err := app.BuildRuntime(ctx, view.Document,
 		app.WithConfigBase(mgr.UserDir()),
-		app.WithWorkBase(a.workDir),
+		app.WithWorkBase(wd),
 		app.WithUsageObserver(a.onUsage))
 	if err != nil {
 		return fmt.Errorf("desktop: assemble runtime: %w", err)
@@ -242,7 +246,7 @@ func (a *App) rebuild() error {
 
 	// Remember this workspace in the history (best-effort) once the
 	// runtime is healthy, so every successful open/switch lands here.
-	a.recordWorkspace(a.workDir)
+	a.recordWorkspace(wd)
 
 	a.bridge.Emit("ready", a.status(true))
 	return nil
@@ -273,18 +277,22 @@ func (a *App) closeRuntime() {
 }
 
 func (a *App) status(configured bool) ConfigStatus {
-	st := ConfigStatus{
-		Needed:       !configured,
-		DefaultModel: config.DefaultModel(a.userDir),
-		WorkDir:      a.workDir,
-		UserDir:      a.userDir,
-		Version:      app.ServiceVersion,
-	}
 	a.mu.Lock()
+	wd := a.workDir
+	ud := a.userDir
+	agents := 0
 	if a.agents != nil {
-		st.Agents = len(a.agents.List())
+		agents = len(a.agents.List())
 	}
 	a.mu.Unlock()
+	st := ConfigStatus{
+		Needed:       !configured,
+		DefaultModel: config.DefaultModel(ud),
+		WorkDir:      wd,
+		UserDir:      ud,
+		Version:      app.ServiceVersion,
+		Agents:       agents,
+	}
 	return st
 }
 

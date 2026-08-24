@@ -291,15 +291,61 @@ func WriteInference(configDir string, cfg InferenceConfig) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(configDir, 0o700); err != nil {
-		return fmt.Errorf("config: create config dir: %w", err)
+	return writeFileAtomic(
+		filepath.Join(configDir, "opencraft.yaml"),
+		merged,
+		0o600,
+	)
+}
+
+// MatchStoredKey returns the stored literal key of the existing
+// instance that best matches a request instance whose key is left
+// blank ("leave empty to keep"). Exact fingerprint matches (same type,
+// name, model, endpoint, api) win so reordering or deleting instances
+// never shifts keys onto the wrong row; otherwise the ordinal-th
+// existing instance of the same type is used, so editing a
+// model/endpoint in place keeps its key. claimed tracks old-instance
+// indexes already inherited by an earlier request row, preventing two
+// new rows from stealing the same key. Only literal keys are inherited
+// (env-sourced keys are chosen explicitly via the request).
+func MatchStoredKey(
+	existing []Instance,
+	reqType, reqName, reqModel, reqEndpoint, reqAPI string,
+	ordinal int,
+	claimed map[int]bool,
+) (int, bool) {
+	type typed struct {
+		idx int
+		in  Instance
 	}
-	if err := os.WriteFile(
-		filepath.Join(configDir, "opencraft.yaml"), merged, 0o600,
-	); err != nil {
-		return fmt.Errorf("config: write opencraft.yaml: %w", err)
+	var same []typed
+	for i, in := range existing {
+		if in.Type == reqType {
+			same = append(same, typed{idx: i, in: in})
+		}
 	}
-	return nil
+	matches := func(in Instance) bool {
+		return in.Name == reqName &&
+			in.Model == reqModel &&
+			in.Endpoint == reqEndpoint &&
+			in.API == reqAPI &&
+			in.KeySource == KeyLiteral &&
+			in.KeyValue != ""
+	}
+	for _, t := range same {
+		if !claimed[t.idx] && matches(t.in) {
+			return t.idx, true
+		}
+	}
+	if ordinal >= 1 && ordinal <= len(same) {
+		t := same[ordinal-1]
+		if !claimed[t.idx] &&
+			t.in.KeySource == KeyLiteral &&
+			t.in.KeyValue != "" {
+			return t.idx, true
+		}
+	}
+	return -1, false
 }
 
 // managedResourceKeys returns the resources WriteInference owns: every

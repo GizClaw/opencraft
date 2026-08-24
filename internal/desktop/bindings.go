@@ -63,10 +63,13 @@ func (a *App) ConfigState() (ConfigState, error) {
 	st := ConfigState{Model: config.DefaultModel(a.userDir)}
 	for _, in := range cfg.Instances {
 		st.Instances = append(st.Instances, ProviderInstance{
-			Type:      in.Type,
-			Name:      in.Name,
-			API:       in.API,
-			Key:       in.KeyValue,
+			Type: in.Type,
+			Name: in.Name,
+			API:  in.API,
+			// Never echo the stored secret back to the renderer; the
+			// settings page only learns whether a key exists.
+			KeySet: in.KeySource == config.KeyEnv ||
+				(in.KeySource == config.KeyLiteral && in.KeyValue != ""),
 			KeyEnv:    in.KeySource == config.KeyEnv,
 			Model:     in.Model,
 			Endpoint:  in.Endpoint,
@@ -183,6 +186,12 @@ func (a *App) ModelUsageSeries(
 // user configuration layer (merging over manual resources) and
 // rebuilds the runtime.
 func (a *App) SaveInstances(req InferenceRequest) error {
+	// Existing instances let an empty key ("leave blank to keep")
+	// inherit the stored key instead of forcing a re-entry. A missing
+	// or unparseable config is treated as a fresh install.
+	existing, _ := config.LoadInference(a.userDir)
+	claimed := make(map[int]bool)
+	sameTypeSeen := make(map[string]int)
 	cfg := config.InferenceConfig{}
 	for _, p := range req.Instances {
 		prov, ok := providerByID(strings.TrimSpace(p.Type))
@@ -209,12 +218,31 @@ func (a *App) SaveInstances(req InferenceRequest) error {
 					"environment variable %s is not set; cannot use the env key source",
 					prov.EnvVar)
 			}
-		case strings.TrimSpace(p.Key) == "" && p.Enabled:
-			return fmt.Errorf(
-				"instance %s (%s): an API key or the env key source is required",
-				p.Name, prov.ID)
-		default:
+		case strings.TrimSpace(p.Key) != "":
 			in.KeyValue = strings.TrimSpace(p.Key)
+		case p.Enabled:
+			sameTypeSeen[prov.ID]++
+			idx, ok := config.MatchStoredKey(
+				existing.Instances,
+				prov.ID,
+				strings.TrimSpace(p.Name),
+				strings.TrimSpace(p.Model),
+				strings.TrimSpace(p.Endpoint),
+				strings.TrimSpace(p.API),
+				sameTypeSeen[prov.ID],
+				claimed,
+			)
+			if !ok {
+				return fmt.Errorf(
+					"instance %s (%s): an API key or the env key source is required",
+					p.Name, prov.ID)
+			}
+			claimed[idx] = true
+			in.KeySource = existing.Instances[idx].KeySource
+			in.KeyValue = existing.Instances[idx].KeyValue
+		default:
+			// Disabled instances may be saved without a key; they are
+			// kept so re-enabling needs no re-entry.
 		}
 		cfg.Instances = append(cfg.Instances, in)
 	}
@@ -285,7 +313,7 @@ func (a *App) Reload() error {
 
 // Workspace returns the workspace directory the app operates on.
 func (a *App) Workspace() string {
-	return a.workDir
+	return a.snapshotWorkDir()
 }
 
 // StartTurn starts one assistant turn with the given user message and
@@ -479,16 +507,18 @@ func (a *App) waitTurn(
 		a.broker.UnbindTurn(runID)
 	}
 	store := a.sessions
+	usageStore := a.usage
+	wd := a.workDir
 	a.mu.Unlock()
 	_ = lease.Close()
 
 	if store != nil && turnUsage.TotalTokens > 0 {
 		_ = store.RecordUsage(context.Background(), contextID, turnUsage)
 	}
-	if a.usage != nil && turnUsage.Model != "" {
-		_ = a.usage.Record(
+	if usageStore != nil && turnUsage.Model != "" {
+		_ = usageStore.Record(
 			context.Background(),
-			workspaceID(a.workDir),
+			workspaceID(wd),
 			contextID,
 			turnUsage.Model,
 			usage.Usage{
