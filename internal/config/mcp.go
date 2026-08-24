@@ -47,7 +47,7 @@ func LoadMCP(configDir string) ([]MCPServer, error) {
 	data, err := os.ReadFile(filepath.Join(configDir, "opencraft.yaml"))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil, nil
+			return []MCPServer{}, nil
 		}
 		return nil, err
 	}
@@ -59,7 +59,7 @@ func LoadMCP(configDir string) ([]MCPServer, error) {
 	}
 	raw, ok := doc.Resources["tool.mcp"]
 	if !ok {
-		return nil, nil
+		return []MCPServer{}, nil
 	}
 	var source struct {
 		Settings struct {
@@ -68,6 +68,9 @@ func LoadMCP(configDir string) ([]MCPServer, error) {
 	}
 	if err := yaml.Unmarshal(raw, &source); err != nil {
 		return nil, fmt.Errorf("config: parse tool.mcp: %w", err)
+	}
+	if source.Settings.Servers == nil {
+		return []MCPServer{}, nil
 	}
 	return source.Settings.Servers, nil
 }

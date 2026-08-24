@@ -130,7 +130,7 @@ export function ConfigPage() {
       .mcpConfig()
       .then((servers) =>
         setMCPRows(
-          servers.map((s) => ({
+          (servers ?? []).map((s) => ({
             id: newID(),
             name: s.name,
             transport: s.transport,

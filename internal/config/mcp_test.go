@@ -81,8 +81,8 @@ func TestMCPRoundTripAndCrossPreservation(t *testing.T) {
 
 func TestLoadMCPMissingLayer(t *testing.T) {
 	servers, err := LoadMCP(filepath.Join(t.TempDir(), "nope"))
-	if err != nil || servers != nil {
-		t.Fatalf("LoadMCP(missing) = %+v, %v; want nil, nil", servers, err)
+	if err != nil || servers == nil || len(servers) != 0 {
+		t.Fatalf("LoadMCP(missing) = %+v, %v; want empty slice, nil", servers, err)
 	}
 }
 
