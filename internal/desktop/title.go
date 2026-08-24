@@ -44,7 +44,7 @@ func (a *App) autoTitle(ctx context.Context, contextID string) {
 		strings.TrimSpace(custom) != "" {
 		return
 	}
-	msgs, err := store.History(ctx, contextID, 0)
+	msgs, err := store.History(ctx, contextID, -1)
 	if err != nil {
 		telemetry.Warn(ctx, "desktop: auto title history load failed",
 			otellog.String("session", contextID),

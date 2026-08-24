@@ -91,7 +91,7 @@ func (a *App) ExportSession(id string) (string, error) {
 	if store == nil {
 		return "", errors.New("session store is not available")
 	}
-	msgs, err := store.History(context.Background(), id, 0)
+	msgs, err := store.History(context.Background(), id, -1)
 	if err != nil {
 		return "", err
 	}
@@ -215,7 +215,7 @@ func (a *App) SessionHistory(id string) ([]message.Message, error) {
 	if store == nil {
 		return nil, nil
 	}
-	return store.History(context.Background(), id, 0)
+	return store.History(context.Background(), id, -1)
 }
 
 // DelegationCards snapshots the delegation kanban board, newest first.

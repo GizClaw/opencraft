@@ -184,9 +184,10 @@ func (s *Store) AppendTurn(_ context.Context, id string, msgs []message.Message)
 }
 
 // History returns the most recent n archived messages, oldest first.
-// n <= 0 uses the store window.
+// n < 0 returns every archived message; n == 0 uses the store window
+// (the recent context injected into the model); n > 0 caps at n.
 func (s *Store) History(_ context.Context, id string, n int) ([]message.Message, error) {
-	if n <= 0 {
+	if n == 0 {
 		n = s.window
 	}
 	var all []message.Message
@@ -208,7 +209,7 @@ func (s *Store) History(_ context.Context, id string, n int) ([]message.Message,
 		}
 		all = append(all, turn.Messages...)
 	}
-	if len(all) > n {
+	if n > 0 && len(all) > n {
 		all = all[len(all)-n:]
 	}
 	return all, nil
@@ -230,7 +231,7 @@ func (s *Store) List() ([]Meta, error) {
 			continue
 		}
 		id := e.Name()
-		hist, _ := s.History(context.Background(), id, 0)
+		hist, _ := s.History(context.Background(), id, -1)
 		usage, _ := s.LoadUsage(context.Background(), id)
 		if len(hist) == 0 && usage == (Usage{}) {
 			continue
