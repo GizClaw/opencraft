@@ -80,7 +80,9 @@ func (a *App) RenameSession(id, title string) error {
 }
 
 // ExportSession writes one conversation's transcript to
-// <workspace>/.opencraft/exports/<id>.md and returns the path.
+// <workspace>/.opencraft/exports/<id>.md and returns the path. The
+// markdown preserves the full timeline: reasoning traces, tool calls
+// with their arguments, and tool results alongside the visible text.
 func (a *App) ExportSession(id string) (string, error) {
 	a.mu.Lock()
 	store := a.sessions
@@ -96,18 +98,46 @@ func (a *App) ExportSession(id string) (string, error) {
 	title := a.sessionTitle(store, id, id)
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s\n\n", title)
+	fmt.Fprintf(&b, "_%s %s_\n\n",
+		time.Now().UTC().Format("2006-01-02 15:04 UTC"),
+		"exported conversation",
+	)
 	for _, m := range msgs {
-		var text string
-		for _, p := range m.Content.Parts {
-			if tp, ok := p.(message.TextPart); ok {
-				text += tp.Text
-			}
-		}
 		role := "User"
 		if m.Role == message.RoleAssistant {
 			role = "Assistant"
+		} else if m.Role == message.RoleTool {
+			role = "Tool"
 		}
-		fmt.Fprintf(&b, "## %s\n\n%s\n\n", role, text)
+		fmt.Fprintf(&b, "## %s\n\n", role)
+		for _, part := range m.Content.Parts {
+			switch p := part.(type) {
+			case message.ReasoningPart:
+				if p.Text != "" {
+					fmt.Fprintf(&b, "> %s\n>\n",
+						strings.ReplaceAll(p.Text, "\n", "\n> "))
+				}
+			case message.ToolCallPart:
+				args := strings.TrimSpace(string(p.Call.Arguments))
+				fmt.Fprintf(&b, "**Tool call: `%s`**\n\n", p.Call.Name)
+				if args != "" && args != "{}" {
+					fmt.Fprintf(&b, "```json\n%s\n```\n\n", args)
+				}
+			case message.ToolResultPart:
+				if p.Result.IsError {
+					fmt.Fprintf(&b, "**Tool result (error)**\n\n")
+				} else {
+					fmt.Fprintf(&b, "**Tool result**\n\n")
+				}
+				if strings.TrimSpace(p.Result.Content) != "" {
+					fmt.Fprintf(&b, "```\n%s\n```\n\n", p.Result.Content)
+				}
+			case message.TextPart:
+				if p.Text != "" {
+					fmt.Fprintf(&b, "%s\n\n", p.Text)
+				}
+			}
+		}
 	}
 	dir := filepath.Join(workDir, ".opencraft", "exports")
 	if err := os.MkdirAll(dir, 0o755); err != nil {

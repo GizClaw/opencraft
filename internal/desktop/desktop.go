@@ -2,7 +2,7 @@
 // shell whose Go bindings drive the assembled flowcraft runtime and
 // whose event bridge pushes runtime streams into the frontend. The
 // package replaces the TUI/CLI entrypoints: the binary now starts the
-// window, first-run onboarding lives in the GUI, and the execd child
+// window, configuration lives in the GUI, and the execd child
 // mode is handled by the root main package before Wails starts.
 package desktop
 
@@ -23,7 +23,6 @@ import (
 	"github.com/GizClaw/opencraft/internal/config"
 	"github.com/GizClaw/opencraft/internal/runtime"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
-	"github.com/GizClaw/opencraft/internal/setup"
 )
 
 // Options configures the desktop application.
@@ -77,6 +76,9 @@ type App struct {
 	// turn is active; it is recorded into the session store at turn
 	// end.
 	runUsage map[string]ocsessions.Usage
+	// titling tracks conversations whose auto-title generation is in
+	// flight, so parallel turn endings generate once per conversation.
+	titling map[string]bool
 }
 
 // New creates the application shell. Runtime assembly is deferred to
@@ -120,6 +122,7 @@ func New(opts Options) (*App, error) {
 		model:          "",
 		runConvs:       make(map[string]string),
 		runUsage:       make(map[string]ocsessions.Usage),
+		titling:        make(map[string]bool),
 		otelShutdown: shutdown,
 	}, nil
 }
@@ -144,19 +147,11 @@ func (a *App) Shutdown(ctx context.Context) {
 }
 
 // rebuild loads the user configuration layer and assembles a fresh
-// runtime. When inference wiring is missing it emits the onboarding
-// event instead; SaveSetup writes the config and calls rebuild again.
+// runtime. Inference wiring is not required to start: an unconfigured
+// install builds with the embedded router shell and the UI guides the
+// user to the settings page.
 func (a *App) rebuild() error {
 	a.closeRuntime()
-
-	needed, err := setup.Needed(a.userDir)
-	if err != nil {
-		return fmt.Errorf("desktop: check config: %w", err)
-	}
-	if needed {
-		a.bridge.Emit("onboarding_required", a.status(false))
-		return nil
-	}
 
 	ctx := a.ctx
 	if ctx == nil {

@@ -9,7 +9,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/agents"
-	"github.com/GizClaw/opencraft/internal/setup"
+	"github.com/GizClaw/opencraft/internal/config"
 )
 
 // UIEvent is the envelope pushed to the frontend on the single
@@ -37,7 +37,7 @@ type StreamEvent struct {
 	Delta agent.StreamDeltaPayload `json:"delta"`
 }
 
-// ProviderView is one entry of the onboarding provider catalog.
+// ProviderView is one entry of the provider catalog.
 type ProviderView struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
@@ -60,7 +60,7 @@ type SetupProvider struct {
 	WebSearch bool   `json:"web_search"`
 }
 
-// SetupRequest is the full onboarding payload.
+// SetupRequest is the full provider configuration payload.
 type SetupRequest struct {
 	Providers []SetupProvider `json:"providers"`
 }
@@ -199,13 +199,13 @@ type FileNode struct {
 type AgentSummary = agents.Summary
 
 // providerByID resolves the catalog entry for one provider id.
-func providerByID(id string) (setup.Provider, bool) {
-	for _, p := range setup.Providers {
+func providerByID(id string) (config.Provider, bool) {
+	for _, p := range config.Providers {
 		if p.ID == id {
 			return p, true
 		}
 	}
-	return setup.Provider{}, false
+	return config.Provider{}, false
 }
 
 // marshalParts encodes canonical message parts in their wire form.

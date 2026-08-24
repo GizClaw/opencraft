@@ -16,7 +16,6 @@ import (
 	app "github.com/GizClaw/opencraft/internal/app"
 	"github.com/GizClaw/opencraft/internal/config"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
-	"github.com/GizClaw/opencraft/internal/setup"
 )
 
 // Version returns the application version.
@@ -27,7 +26,7 @@ func (a *App) Version() string {
 // ConfigStatus returns the current configuration state; the frontend
 // pulls it on mount and after every rebuild.
 func (a *App) ConfigStatus() (ConfigStatus, error) {
-	needed, err := setup.Needed(a.userDir)
+	needed, err := config.InferenceNeeded(a.userDir)
 	if err != nil {
 		return ConfigStatus{}, err
 	}
@@ -36,10 +35,10 @@ func (a *App) ConfigStatus() (ConfigStatus, error) {
 	return st, nil
 }
 
-// Providers returns the onboarding provider catalog.
+// Providers returns the provider catalog.
 func (a *App) Providers() []ProviderView {
-	out := make([]ProviderView, 0, len(setup.Providers))
-	for _, p := range setup.Providers {
+	out := make([]ProviderView, 0, len(config.Providers))
+	for _, p := range config.Providers {
 		out = append(out, ProviderView{
 			ID:           p.ID,
 			Name:         p.Name,
@@ -56,7 +55,7 @@ func (a *App) Providers() []ProviderView {
 // router priority order with their keys/models/capabilities) plus the
 // current default model, so the config page can edit in place.
 func (a *App) ConfigState() (ConfigState, error) {
-	cfg, err := setup.Load(a.userDir)
+	cfg, err := config.LoadInference(a.userDir)
 	if err != nil {
 		return ConfigState{}, err
 	}
@@ -65,7 +64,7 @@ func (a *App) ConfigState() (ConfigState, error) {
 		st.Providers = append(st.Providers, SetupProvider{
 			ID:        k.Provider.ID,
 			Key:       k.KeyValue,
-			KeyEnv:    k.KeySource == setup.KeyEnv,
+			KeyEnv:    k.KeySource == config.KeyEnv,
 			Model:     k.Model,
 			Endpoint:  k.Endpoint,
 			Vision:    k.Vision,
@@ -81,7 +80,7 @@ func (a *App) ConfigState() (ConfigState, error) {
 // "provider/name". The empty option (default routing policy) is implied
 // by the UI and not listed here.
 func (a *App) ModelOptions() ([]ModelOption, error) {
-	cfg, err := setup.Load(a.userDir)
+	cfg, err := config.LoadInference(a.userDir)
 	if err != nil {
 		return nil, err
 	}
@@ -99,21 +98,21 @@ func (a *App) ModelOptions() ([]ModelOption, error) {
 	return out, nil
 }
 
-// SaveSetup writes the onboarding result into the user configuration
-// layer and rebuilds the runtime.
+// SaveSetup writes the provider selection into the user configuration
+// layer (merging over manual resources) and rebuilds the runtime.
 func (a *App) SaveSetup(req SetupRequest) error {
 	if len(req.Providers) == 0 {
 		return errors.New("select at least one provider")
 	}
-	cfg := setup.Config{}
+	cfg := config.InferenceConfig{}
 	for _, p := range req.Providers {
 		prov, ok := providerByID(providerID(p.ID))
 		if !ok {
 			return fmt.Errorf("unknown provider %q", p.ID)
 		}
-		keyed := setup.KeyedProvider{
+		keyed := config.KeyedProvider{
 			Provider:  prov,
-			KeySource: setup.KeyLiteral,
+			KeySource: config.KeyLiteral,
 			Model:     strings.TrimSpace(p.Model),
 			Endpoint:  strings.TrimSpace(p.Endpoint),
 			Vision:    p.Vision,
@@ -122,7 +121,7 @@ func (a *App) SaveSetup(req SetupRequest) error {
 		}
 		switch {
 		case p.KeyEnv:
-			keyed.KeySource = setup.KeyEnv
+			keyed.KeySource = config.KeyEnv
 			if os.Getenv(prov.EnvVar) == "" {
 				return fmt.Errorf(
 					"environment variable %s is not set; cannot use the env key source",
@@ -136,7 +135,45 @@ func (a *App) SaveSetup(req SetupRequest) error {
 		}
 		cfg.Providers = append(cfg.Providers, keyed)
 	}
-	if err := cfg.Write(a.userDir); err != nil {
+	if err := config.WriteInference(a.userDir, cfg); err != nil {
+		return err
+	}
+	return a.rebuild()
+}
+
+// MCPConfig returns the configured MCP tool servers from the user
+// configuration layer.
+func (a *App) MCPConfig() ([]config.MCPServer, error) {
+	return config.LoadMCP(a.userDir)
+}
+
+// SaveMCP persists the MCP tool server list into the user
+// configuration layer (merging over manual resources) and rebuilds the
+// runtime.
+func (a *App) SaveMCP(servers []config.MCPServer) error {
+	for i := range servers {
+		srv := &servers[i]
+		srv.Name = strings.TrimSpace(srv.Name)
+		srv.Transport = strings.TrimSpace(srv.Transport)
+		srv.Command = strings.TrimSpace(srv.Command)
+		srv.URL = strings.TrimSpace(srv.URL)
+		switch srv.Transport {
+		case "stdio":
+			if srv.Command == "" {
+				return fmt.Errorf("MCP server %q: command is required for stdio", srv.Name)
+			}
+		case "http":
+			if srv.URL == "" {
+				return fmt.Errorf("MCP server %q: url is required for http", srv.Name)
+			}
+		default:
+			return fmt.Errorf("MCP server %q: transport must be stdio or http", srv.Name)
+		}
+		if srv.Name == "" {
+			return errors.New("MCP server: name is required")
+		}
+	}
+	if err := config.WriteMCP(a.userDir, servers); err != nil {
 		return err
 	}
 	return a.rebuild()
@@ -166,7 +203,7 @@ func (a *App) StartTurn(text string) (TurnStart, error) {
 	a.mu.Unlock()
 	if ctrl == nil || ctrl.Runtime() == nil || broker == nil {
 		return TurnStart{}, errors.New(
-			"runtime is not ready: complete the inference setup first")
+			"runtime is not ready: configure inference in Settings first")
 	}
 	if strings.TrimSpace(text) == "" {
 		return TurnStart{}, errors.New("message is required")
@@ -349,6 +386,10 @@ func (a *App) waitTurn(
 	if store != nil && turnUsage.TotalTokens > 0 {
 		_ = store.RecordUsage(context.Background(), contextID, turnUsage)
 	}
+	// Best-effort auto title: the model summarizes the conversation
+	// once; failures keep the first-message fallback. Runs off the UI
+	// event path so it never blocks stream delivery.
+	go a.autoTitle(context.Background(), contextID)
 
 	end := TurnEnd{RunID: runID, Status: "unknown"}
 	if res != nil {
