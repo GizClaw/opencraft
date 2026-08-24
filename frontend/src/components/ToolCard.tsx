@@ -60,6 +60,24 @@ function summaryOf(tool: ToolView): Summary | null {
       return { verb: "updatePlan", rest: "" };
     case "apply_patch":
       return { verb: "patch", rest: "" };
+    case "skill_create":
+      return { verb: "createdSkill", rest: str(args.name) };
+    case "skill_modify":
+      return { verb: "modifiedSkill", rest: str(args.name) };
+    case "skill_install":
+      return { verb: "installedSkill", rest: str(args.name) || str(args.repo) };
+    case "web_fetch":
+      return { verb: "fetched", rest: str(args.url) };
+    case "ask_user":
+      return { verb: "askUser", rest: str(args.question) };
+    case "skill_search":
+      return { verb: "searchedSkill", rest: str(args.query) };
+    case "skill_read":
+      return { verb: "readSkill", rest: str(args.name) };
+    case "create_agent":
+      return { verb: "createdAgent", rest: str(args.name) };
+    case "unregister_agent":
+      return { verb: "unregisteredAgent", rest: str(args.name) };
     default:
       return null;
   }

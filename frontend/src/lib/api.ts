@@ -75,6 +75,7 @@ export const api = {
   allowPermission: (rule: string) => App.AllowPermission(rule),
   denyPermission: (rule: string) => App.DenyPermission(rule),
   skills: () => App.Skills() as Promise<SkillDTO[]>,
+  deleteSkill: (path: string) => App.DeleteSkill(path),
   cancelCard: (id: string) => App.CancelCard(id),
   retryCard: (id: string) => App.RetryCard(id),
   chooseWorkspace: () => App.ChooseWorkspace(),

@@ -38,6 +38,10 @@ export function DeleteSession(arg1) {
   return window['go']['desktop']['App']['DeleteSession'](arg1);
 }
 
+export function DeleteSkill(arg1) {
+  return window['go']['desktop']['App']['DeleteSkill'](arg1);
+}
+
 export function DenyPermission(arg1) {
   return window['go']['desktop']['App']['DenyPermission'](arg1);
 }

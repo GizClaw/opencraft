@@ -80,6 +80,10 @@ export function ConfigPage() {
   const [rules, setRules] = useState<string[]>([]);
   const [ruleInput, setRuleInput] = useState("");
   const [skills, setSkills] = useState<{ name: string; description: string; scope: string; path: string }[]>([]);
+  const [skillToDelete, setSkillToDelete] = useState<{
+    name: string;
+    path: string;
+  } | null>(null);
   const [logs, setLogs] = useState("");
   const logsRef = useRef<HTMLPreElement>(null);
   const [mcpRows, setMCPRows] = useState<MCPRow[]>([]);
@@ -362,6 +366,18 @@ export function ConfigPage() {
     } catch (err) {
       setError(String(err));
       setConfirmDelete(null);
+    }
+  };
+
+  const deleteSkill = async (path: string) => {
+    setError("");
+    try {
+      await api.deleteSkill(path);
+      setSkills((prev) => prev.filter((s) => s.path !== path));
+      setSkillToDelete(null);
+    } catch (err) {
+      setError(String(err));
+      setSkillToDelete(null);
     }
   };
 
@@ -1159,12 +1175,47 @@ export function ConfigPage() {
                       <span className="rounded bg-panel border border-edge px-1.5 text-xs text-dim">
                         {s.scope}
                       </span>
+                      <span className="flex-1" />
+                      {s.scope !== "builtin" && (
+                        <button
+                          onClick={() =>
+                            setSkillToDelete({ name: s.name, path: s.path })
+                          }
+                          className="flex items-center gap-1 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim hover:text-err hover:border-err/40"
+                        >
+                          <Trash2 size={12} />
+                          {t("config.skillsDelete")}
+                        </button>
+                      )}
                     </div>
                     {s.description && (
                       <p className="text-xs text-dim mt-1">{s.description}</p>
                     )}
                   </div>
                 ))
+              )}
+              {skillToDelete && (
+                <div className="rounded-xl border border-err/40 bg-panel2 p-4">
+                  <p className="text-sm">
+                    {t("config.skillsDeleteConfirm", {
+                      name: skillToDelete.name,
+                    })}
+                  </p>
+                  <div className="mt-3 flex gap-2">
+                    <button
+                      onClick={() => setSkillToDelete(null)}
+                      className="rounded-lg border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg"
+                    >
+                      {t("interact.cancel")}
+                    </button>
+                    <button
+                      onClick={() => void deleteSkill(skillToDelete.path)}
+                      className="rounded-lg bg-err px-4 py-1.5 text-sm text-white hover:opacity-90"
+                    >
+                      {t("config.skillsDelete")}
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           )}

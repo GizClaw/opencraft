@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
+  Archive,
+  ChevronDown,
+  ChevronRight,
   File,
   Flame,
   Folder,
@@ -15,6 +18,7 @@ import remarkGfm from "remark-gfm";
 import { useTranslation } from "react-i18next";
 import { OnFileDrop, OnFileDropOff } from "../../wailsjs/runtime/runtime";
 import { api } from "../lib/api";
+import { COMPACT_SUMMARY_PREFIX } from "../lib/compact";
 import { useStore } from "../lib/store";
 import type { FileNode } from "../lib/types";
 import { InteractionCard } from "./InteractionCard";
@@ -31,6 +35,38 @@ function Reasoning({ text }: { text: string }) {
         {text}
       </div>
     </details>
+  );
+}
+
+// CompactCard renders a compaction summary (a user message marked with
+// COMPACT_SUMMARY_PREFIX) as a tool-style card instead of a chat
+// bubble, so auto-compaction is visible in the transcript.
+function CompactCard({ text }: { text: string }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(true);
+  const body = text.slice(COMPACT_SUMMARY_PREFIX.length).trim();
+  return (
+    <div className="overflow-hidden rounded-lg border border-edge bg-panel2 my-1.5">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-panel2/70"
+      >
+        <Archive size={14} className="shrink-0 text-dim" />
+        <span>{t("tool.compacted")}</span>
+        <span className="flex-1" />
+        <span className="text-xs text-dim">{t("tool.done")}</span>
+        {open ? (
+          <ChevronDown size={14} className="shrink-0 text-dim" />
+        ) : (
+          <ChevronRight size={14} className="shrink-0 text-dim" />
+        )}
+      </button>
+      {open && body && (
+        <div className="max-h-80 overflow-y-auto whitespace-pre-wrap border-t border-edge px-3 py-2 text-xs text-dim">
+          {body}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -200,11 +236,15 @@ export function ChatView() {
           <div className="max-w-3xl mx-auto space-y-4">
             {messages.map((msg) =>
               msg.role === "user" ? (
-                <div key={msg.id} className="flex justify-end">
-                  <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-accent/15 border border-accent/30 px-4 py-2.5 text-sm whitespace-pre-wrap">
-                    {msg.text}
+                msg.text.startsWith(COMPACT_SUMMARY_PREFIX) ? (
+                  <CompactCard key={msg.id} text={msg.text} />
+                ) : (
+                  <div key={msg.id} className="flex justify-end">
+                    <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-accent/15 border border-accent/30 px-4 py-2.5 text-sm whitespace-pre-wrap">
+                      {msg.text}
+                    </div>
                   </div>
-                </div>
+                )
               ) : (
                 <div key={msg.id} className="flex flex-col gap-1">
                   {msg.items.map((item) => {

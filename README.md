@@ -23,7 +23,8 @@ P0 core loop is closed:
 - **Tools** — file group (read_file/write_file/list_dir/grep/glob),
   exec_command (shell), exec_session (PTY/resize/signal/timeout),
   apply_patch, web_fetch, ask_user, update_plan, request_permissions,
-  skill_search/skill_read/skill_install, hidden auto-compaction;
+  skill_search/skill_read/skill_install/skill_create/skill_modify,
+  hidden auto-compaction;
 - **Runtime** — local execd JSON-RPC (stdio + unix socket, self-fork,
   parent death cleanup), project-scoped SQLite session store, buffer-fold
   memory summary, AGENTS.md worldstate, layered config (embedded +

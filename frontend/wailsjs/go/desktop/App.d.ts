@@ -24,6 +24,8 @@ export function DelegationCards():Promise<Array<desktop.KanbanCard>>;
 
 export function DeleteSession(arg1:string):Promise<void>;
 
+export function DeleteSkill(arg1:string):Promise<void>;
+
 export function DenyPermission(arg1:string):Promise<void>;
 
 export function ExportSession(arg1:string):Promise<string>;
