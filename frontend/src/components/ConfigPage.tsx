@@ -231,6 +231,22 @@ export function ConfigPage() {
     };
   }, [tab, usageModel, usageGranularity, usageRange, usageReload]);
 
+  // Cache hit rate for the currently selected model + time range,
+  // derived from the same series the chart renders. cc-switch's formula
+  // (cache_read / fresh_input + cache_write + cache_read) reduces to
+  // cache_read / input for input-inclusive providers (DeepSeek/OpenAI).
+  const cacheHit = useMemo(() => {
+    let input = 0;
+    let read = 0;
+    for (const p of usageSeries) {
+      input += p.input_tokens;
+      read += p.cache_read_tokens;
+    }
+    const rate =
+      input > 0 ? Math.min(100, Math.max(0, (read / input) * 100)) : 0;
+    return { input, read, rate };
+  }, [usageSeries]);
+
   // enabledRows are the instances that participate in the router, in
   // priority order; only they can be reordered.
   const enabledRows = useMemo(() => rows.filter((r) => r.enabled), [rows]);
@@ -897,6 +913,29 @@ export function ConfigPage() {
                     {usageLoading && (
                       <Loader2 size={14} className="animate-spin text-dim" />
                     )}
+                  </div>
+                  <div
+                    className="rounded-xl border border-edge bg-panel2 p-3"
+                    title={t("config.usageCacheHitHint")}
+                  >
+                    <div className="mb-2 flex items-center justify-between text-xs">
+                      <span className="text-dim">
+                        {t("config.usageCacheHitRate")}
+                      </span>
+                      <span className="font-bold text-ok tabular-nums">
+                        {cacheHit.rate.toFixed(1)}%
+                      </span>
+                    </div>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-panel">
+                      <div
+                        className="h-full rounded-full bg-ok transition-all duration-300"
+                        style={{ width: `${cacheHit.rate}%` }}
+                      />
+                    </div>
+                    <div className="mt-1.5 text-[10px] text-dim tabular-nums">
+                      {fmtUsageTokens(cacheHit.read)} /{" "}
+                      {fmtUsageTokens(cacheHit.input)}
+                    </div>
                   </div>
                   <UsageChart points={usageSeries} granularity={usageGranularity} />
                 <div className="rounded-xl border border-edge bg-panel2 overflow-x-auto">
