@@ -308,15 +308,13 @@ export function Sidebar() {
             <ul className="space-y-1">
               {visibleWorkspaces.map(renderWorkspaceRow)}
             </ul>
-            {workspaces.length > 5 && (
-              <button
-                onClick={() => setWorkspacesOpen(true)}
-                className="w-full mt-2 flex items-center gap-2 rounded-lg border border-edge bg-panel2 px-3 py-2 text-sm hover:border-accent/50 transition-colors"
-              >
-                <FolderOpen size={14} className="text-dim" />
-                {t("sidebar.moreWorkspaces")}
-              </button>
-            )}
+            <button
+              onClick={() => setWorkspacesOpen(true)}
+              className="w-full mt-2 flex items-center gap-2 rounded-lg border border-edge bg-panel2 px-3 py-2 text-sm hover:border-accent/50 transition-colors"
+            >
+              <FolderOpen size={14} className="text-dim" />
+              {t("sidebar.moreWorkspaces")}
+            </button>
           </section>
         )}
       </div>
