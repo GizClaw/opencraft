@@ -381,7 +381,7 @@ export function ChatView() {
           </div>
         </div>
         {confirmYolo && (
-          <div className="fixed inset-0 z-40 grid place-items-center bg-black/60">
+          <div className="fixed inset-x-0 bottom-0 top-11 z-40 grid place-items-center bg-black/60">
             <div className="w-[420px] rounded-2xl border border-[#d9a83c]/40 bg-panel p-5 shadow-2xl">
               <div className="flex items-center gap-2 text-sm font-semibold text-[#d9a83c]">
                 <AlertTriangle size={16} />

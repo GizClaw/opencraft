@@ -2,10 +2,12 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import i18n from "./i18n";
 import {
+  Environment,
   EventsOn,
   InitializeNotifications,
   RequestNotificationAuthorization,
   SendNotification,
+  WindowToggleMaximise,
 } from "../wailsjs/runtime/runtime";
 import { ChatView } from "./components/ChatView";
 import { ConfigPage } from "./components/ConfigPage";
@@ -26,6 +28,7 @@ export default function App() {
   const openConfig = useStore((s) => s.openConfig);
   const openKanban = useStore((s) => s.openKanban);
   const { t } = useTranslation();
+  const [platform, setPlatform] = useState("");
   const [sidebarW, setSidebarW] = useState(
     () => Number(localStorage.getItem("oc.sidebarW")) || 240,
   );
@@ -79,6 +82,10 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [newChat, openConfig, openKanban]);
 
+  useEffect(() => {
+    void Environment().then((env) => setPlatform(env.platform));
+  }, []);
+
   const startDrag =
     () => (e: React.MouseEvent) => {
       e.preventDefault();
@@ -123,6 +130,20 @@ export default function App() {
 
   return (
     <div className="h-full flex flex-col">
+      {platform === "darwin" && (
+        <div
+          className="shrink-0 flex items-center pl-[78px] pr-4 select-none"
+          style={{
+            height: 44,
+            ["--wails-draggable" as string]: "drag",
+          }}
+          onDoubleClick={() => WindowToggleMaximise()}
+        >
+          <span className="text-xs font-semibold text-dim tracking-wide uppercase">
+            opencraft
+          </span>
+        </div>
+      )}
       <div className="flex-1 flex min-h-0">
         <div style={{ width: sidebarW }} className="shrink-0">
           <Sidebar />

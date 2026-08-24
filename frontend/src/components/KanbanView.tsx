@@ -127,7 +127,7 @@ export function KanbanView() {
   ];
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 grid place-items-center">
+    <div className="fixed inset-x-0 bottom-0 top-11 z-50 bg-black/70 grid place-items-center">
       <div className="w-[860px] max-w-[92vw] max-h-[86vh] flex flex-col rounded-2xl border border-edge bg-panel shadow-2xl">
         <div className="flex items-center gap-3 px-5 py-4 border-b border-edge">
           <h2 className="text-base font-semibold">{t("kanban.title")}</h2>
