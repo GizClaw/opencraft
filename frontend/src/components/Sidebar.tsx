@@ -9,7 +9,8 @@ import {
   Trash2,
   Loader2,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { Environment, WindowToggleMaximise } from "../../wailsjs/runtime/runtime";
 import { api } from "../lib/api";
 import { useTranslation } from "react-i18next";
 import { useStore } from "../lib/store";
@@ -31,6 +32,7 @@ export function Sidebar() {
   const flash = useStore((s) => s.flash);
   const loadSessions = useStore((s) => s.loadSessions);
   const { t } = useTranslation();
+  const [isMac, setIsMac] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [sessionQuery, setSessionQuery] = useState("");
   const [renameId, setRenameId] = useState<string | null>(null);
@@ -50,10 +52,25 @@ export function Sidebar() {
   const fmtTokens = (n: number) =>
     n >= 1000 ? `${(n / 1000).toFixed(1)}k` : n > 0 ? String(n) : "";
 
+  useEffect(() => {
+    void Environment().then((env) => setIsMac(env.platform === "darwin"));
+  }, []);
+
   return (
     <aside className="h-full border-r border-edge bg-panel flex flex-col min-h-0">
-      <div className="px-4 py-3 border-b border-edge">
-        <div className="font-semibold tracking-wide">opencraft</div>
+      {/* macOS: the native traffic lights float here, so the strip
+          leaves them room and doubles as the window drag area; its
+          height matches the chat header (h-11) so both rows align. */}
+      <div
+        className={`h-11 shrink-0 border-b border-edge flex items-center select-none ${
+          isMac ? "pl-[78px]" : "px-4"
+        }`}
+        style={{ ["--wails-draggable" as string]: "drag" }}
+        onDoubleClick={() => WindowToggleMaximise()}
+      >
+        {!isMac && (
+          <div className="font-semibold tracking-wide">opencraft</div>
+        )}
       </div>
 
       <div className="px-3 pt-3">
