@@ -50,6 +50,19 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("usage: create schema: %w", err)
 	}
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS model_usage_hourly (
+		model        TEXT NOT NULL,
+		hour         TEXT NOT NULL,
+		input_tokens INTEGER NOT NULL DEFAULT 0,
+		output_tokens INTEGER NOT NULL DEFAULT 0,
+		cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+		reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+		latency_ms INTEGER NOT NULL DEFAULT 0,
+		PRIMARY KEY (model, hour)
+	)`); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("usage: create hourly schema: %w", err)
+	}
 	return &Store{db: db}, nil
 }
 
@@ -94,6 +107,26 @@ func (s *Store) Record(
 		time.Now().UTC().Format(time.RFC3339),
 	); err != nil {
 		return fmt.Errorf("usage: record %s: %w", model, err)
+	}
+	hour := time.Now().UTC().Truncate(time.Hour).Format(time.RFC3339)
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO model_usage_hourly (
+			model, hour,
+			input_tokens, output_tokens, cache_read_tokens,
+			reasoning_tokens, latency_ms
+		) VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(model, hour) DO UPDATE SET
+			input_tokens = input_tokens + excluded.input_tokens,
+			output_tokens = output_tokens + excluded.output_tokens,
+			cache_read_tokens = cache_read_tokens + excluded.cache_read_tokens,
+			reasoning_tokens = reasoning_tokens + excluded.reasoning_tokens,
+			latency_ms = latency_ms + excluded.latency_ms
+	`,
+		model, hour,
+		u.InputTokens, u.OutputTokens, u.CacheReadTokens,
+		u.ReasoningTokens, u.LatencyMs,
+	); err != nil {
+		return fmt.Errorf("usage: record hourly %s: %w", model, err)
 	}
 	return nil
 }
@@ -142,6 +175,80 @@ func (s *Store) Summary(ctx context.Context) ([]SummaryRow, error) {
 			return nil, fmt.Errorf("usage: scan summary: %w", err)
 		}
 		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// Granularity selects the time bucket for a usage series.
+type Granularity string
+
+const (
+	GranularityHour Granularity = "hour"
+	GranularityDay  Granularity = "day"
+)
+
+// Point is one time-bucketed usage sample for a model.
+type Point struct {
+	Time            string
+	InputTokens     int64
+	OutputTokens    int64
+	CacheReadTokens int64
+	ReasoningTokens int64
+}
+
+// Series returns one model's usage bucketed by hour or day, oldest
+// first. Hour buckets keep the stored UTC hour string; day buckets are
+// local calendar days computed with utcOffsetMinutes, so boundaries
+// match the viewer's timezone. start and end bound the recorded UTC
+// hours ([start, end)); empty strings leave that side unbounded.
+func (s *Store) Series(
+	ctx context.Context,
+	model string,
+	granularity Granularity,
+	utcOffsetMinutes int,
+	start, end string,
+) ([]Point, error) {
+	bucket := "hour"
+	if granularity == GranularityDay {
+		if utcOffsetMinutes != 0 {
+			bucket = fmt.Sprintf(
+				"substr(datetime(hour, '%+d minutes'), 1, 10)",
+				utcOffsetMinutes,
+			)
+		} else {
+			bucket = "substr(hour, 1, 10)"
+		}
+	}
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
+		SELECT
+			%s,
+			SUM(input_tokens), SUM(output_tokens), SUM(cache_read_tokens),
+			SUM(reasoning_tokens)
+		FROM model_usage_hourly
+		WHERE model = ?
+			AND (? = '' OR hour >= ?)
+			AND (? = '' OR hour < ?)
+		GROUP BY %s
+		ORDER BY %s
+	`, bucket, bucket, bucket), model, start, start, end, end)
+	if err != nil {
+		return nil, fmt.Errorf("usage: series: %w", err)
+	}
+	defer rows.Close()
+	var out []Point
+	for rows.Next() {
+		var p Point
+		if err := rows.Scan(
+			&p.Time,
+			&p.InputTokens, &p.OutputTokens, &p.CacheReadTokens,
+			&p.ReasoningTokens,
+		); err != nil {
+			return nil, fmt.Errorf("usage: scan series: %w", err)
+		}
+		out = append(out, p)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

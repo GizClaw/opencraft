@@ -90,6 +90,17 @@ type ModelUsageStat struct {
 	UpdatedAt         string `json:"updated_at"`
 }
 
+// UsagePoint is one time-bucketed usage sample for a model. Time is an
+// RFC3339 UTC hour for hour granularity, or a local YYYY-MM-DD date for
+// day granularity.
+type UsagePoint struct {
+	Time            string `json:"time"`
+	InputTokens     int64  `json:"input_tokens"`
+	OutputTokens    int64  `json:"output_tokens"`
+	CacheReadTokens int64  `json:"cache_read_tokens"`
+	ReasoningTokens int64  `json:"reasoning_tokens"`
+}
+
 // ModelOption is one selectable per-conversation model hint. ID is the
 // "provider/name" value the router's model_hint consumes; Label is the
 // human-facing description.

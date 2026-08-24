@@ -135,6 +135,50 @@ func (a *App) ModelUsage() ([]ModelUsageStat, error) {
 	return out, nil
 }
 
+// ModelUsageSeries returns one model's usage bucketed by hour or day,
+// oldest first. utcOffsetMinutes places day boundaries in the viewer's
+// local timezone; start and end bound the recorded UTC hours
+// ([start, end), empty means unbounded).
+func (a *App) ModelUsageSeries(
+	model string,
+	granularity string,
+	utcOffsetMinutes int,
+	start, end string,
+) ([]UsagePoint, error) {
+	a.mu.Lock()
+	store := a.usage
+	a.mu.Unlock()
+	if store == nil || model == "" {
+		return []UsagePoint{}, nil
+	}
+	g := usage.GranularityHour
+	if granularity == string(usage.GranularityDay) {
+		g = usage.GranularityDay
+	}
+	rows, err := store.Series(
+		context.Background(),
+		model,
+		g,
+		utcOffsetMinutes,
+		start,
+		end,
+	)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]UsagePoint, 0, len(rows))
+	for _, p := range rows {
+		out = append(out, UsagePoint{
+			Time:            p.Time,
+			InputTokens:     p.InputTokens,
+			OutputTokens:    p.OutputTokens,
+			CacheReadTokens: p.CacheReadTokens,
+			ReasoningTokens: p.ReasoningTokens,
+		})
+	}
+	return out, nil
+}
+
 // SaveInstances writes the inference instance configuration into the
 // user configuration layer (merging over manual resources) and
 // rebuilds the runtime.
