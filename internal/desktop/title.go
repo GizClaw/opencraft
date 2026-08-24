@@ -7,6 +7,8 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/inference/route"
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/telemetry"
+	otellog "go.opentelemetry.io/otel/log"
 )
 
 // autoTitle generates a short conversation title from the first user
@@ -44,6 +46,9 @@ func (a *App) autoTitle(ctx context.Context, contextID string) {
 	}
 	msgs, err := store.History(ctx, contextID, 0)
 	if err != nil {
+		telemetry.Warn(ctx, "desktop: auto title history load failed",
+			otellog.String("session", contextID),
+			otellog.String("error", err.Error()))
 		return
 	}
 	var first string
@@ -54,14 +59,21 @@ func (a *App) autoTitle(ctx context.Context, contextID string) {
 		}
 	}
 	if first == "" {
+		telemetry.Warn(ctx, "desktop: auto title skipped, no user message",
+			otellog.String("session", contextID),
+			otellog.Int("messages", len(msgs)))
 		return
 	}
 	value, ok := ctrl.Runtime().Resource("router")
 	if !ok {
+		telemetry.Warn(ctx, "desktop: auto title skipped, router resource missing",
+			otellog.String("session", contextID))
 		return
 	}
 	router, ok := value.(*route.Router)
 	if !ok || router == nil {
+		telemetry.Warn(ctx, "desktop: auto title skipped, router resource is not a router",
+			otellog.String("session", contextID))
 		return
 	}
 	maxTokens := 16
@@ -79,11 +91,16 @@ func (a *App) autoTitle(ctx context.Context, contextID string) {
 		},
 	})
 	if err != nil {
+		telemetry.Warn(ctx, "desktop: auto title generation failed",
+			otellog.String("session", contextID),
+			otellog.String("error", err.Error()))
 		return
 	}
 	title := strings.TrimSpace(response.Message.Content.Text())
 	title = strings.Join(strings.Fields(title), " ")
 	if title == "" {
+		telemetry.Warn(ctx, "desktop: auto title generation returned empty",
+			otellog.String("session", contextID))
 		return
 	}
 	const maxTitle = 70
@@ -93,5 +110,9 @@ func (a *App) autoTitle(ctx context.Context, contextID string) {
 	}
 	if err := store.WriteState(contextID, "title", title); err == nil {
 		a.bridge.Emit("session_updated", map[string]string{"id": contextID})
+	} else {
+		telemetry.Warn(ctx, "desktop: auto title write failed",
+			otellog.String("session", contextID),
+			otellog.String("error", err.Error()))
 	}
 }

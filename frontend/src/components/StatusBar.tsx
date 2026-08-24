@@ -20,7 +20,10 @@ export function StatusBar() {
       <span className="flex-1" />
       {lastUsage && (
         <span className="tabular-nums whitespace-nowrap">
-          ↑{lastUsage.input_tokens} ↓{lastUsage.output_tokens}
+          ↑{lastUsage.input_tokens}
+          {lastUsage.cache_read_tokens > 0 &&
+            `(${lastUsage.cache_read_tokens})`}
+          {" "}↓{lastUsage.output_tokens}
           {lastUsage.reasoning_tokens > 0 && (
           <> {t("status.thinking")} {lastUsage.reasoning_tokens}</>
           )}

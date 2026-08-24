@@ -73,8 +73,11 @@ export function Sidebar() {
     return d.toLocaleDateString();
   };
 
-  const fmtTokens = (n: number) =>
-    n >= 1000 ? `${(n / 1000).toFixed(1)}k` : n > 0 ? String(n) : "";
+  const fmtTokens = (n: number) => {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(2)}k`;
+    return n > 0 ? String(n) : "";
+  };
 
   // Running conversations always stay visible; stored sessions fill the
   // list up to five entries total.
