@@ -373,6 +373,26 @@ export namespace desktop {
 	        this.context_id = source["context_id"];
 	    }
 	}
+	export class UsagePoint {
+	    time: string;
+	    input_tokens: number;
+	    output_tokens: number;
+	    cache_read_tokens: number;
+	    reasoning_tokens: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new UsagePoint(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.time = source["time"];
+	        this.input_tokens = source["input_tokens"];
+	        this.output_tokens = source["output_tokens"];
+	        this.cache_read_tokens = source["cache_read_tokens"];
+	        this.reasoning_tokens = source["reasoning_tokens"];
+	    }
+	}
 	export class WorkspaceMeta {
 	    id: string;
 	    path: string;

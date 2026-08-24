@@ -46,6 +46,8 @@ export function ModelOptions():Promise<Array<desktop.ModelOption>>;
 
 export function ModelUsage():Promise<Array<desktop.ModelUsageStat>>;
 
+export function ModelUsageSeries(arg1:string,arg2:string,arg3:number,arg4:string,arg5:string):Promise<Array<desktop.UsagePoint>>;
+
 export function NewChat():Promise<string>;
 
 export function OpenPath(arg1:string):Promise<void>;

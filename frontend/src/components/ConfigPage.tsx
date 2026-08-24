@@ -17,7 +17,9 @@ import type {
   ModelUsageStat,
   ProviderInstance,
   ProviderView,
+  UsagePoint,
 } from "../lib/types";
+import { UsageChart } from "./UsageChart";
 
 // InstanceRow is one editable inference instance in the settings page.
 interface InstanceRow {
@@ -83,6 +85,12 @@ export function ConfigPage() {
   const [mcpError, setMCPError] = useState("");
   const [usageRows, setUsageRows] = useState<ModelUsageStat[]>([]);
   const [usageError, setUsageError] = useState("");
+  const [usageModel, setUsageModel] = useState("");
+  const [usageGranularity, setUsageGranularity] = useState<"hour" | "day">("hour");
+  const [usageRange, setUsageRange] = useState<"24h" | "7d" | "30d" | "all">("7d");
+  const [usageSeries, setUsageSeries] = useState<UsagePoint[]>([]);
+  const [usageLoading, setUsageLoading] = useState(false);
+  const [usageReload, setUsageReload] = useState(0);
 
   useEffect(() => {
     void (async () => {
@@ -178,6 +186,48 @@ export function ConfigPage() {
       .then(setUsageRows)
       .catch((err) => setUsageError(String(err)));
   }, [tab]);
+
+  // Default the chart to the most-used model once the summary loads.
+  useEffect(() => {
+    if (!usageModel && usageRows.length > 0) {
+      setUsageModel(usageRows[0].model);
+    }
+  }, [usageRows, usageModel]);
+
+  // Load the selected model's time series whenever the model, bucket,
+  // tab, or an explicit refresh changes.
+  useEffect(() => {
+    if (tab !== "usage" || !usageModel) {
+      setUsageSeries([]);
+      return;
+    }
+    let cancelled = false;
+    setUsageLoading(true);
+    const end = Math.ceil(Date.now() / 3_600_000) * 3_600_000;
+    const hoursByRange = { "24h": 24, "7d": 24 * 7, "30d": 24 * 30 } as const;
+    const start =
+      usageRange === "all" ? "" : new Date(end - hoursByRange[usageRange] * 3_600_000).toISOString();
+    void api
+      .modelUsageSeries(
+        usageModel,
+        usageGranularity,
+        -new Date().getTimezoneOffset(),
+        start,
+        new Date(end).toISOString(),
+      )
+      .then((pts) => {
+        if (!cancelled) setUsageSeries(pts);
+      })
+      .catch((err) => {
+        if (!cancelled) setUsageError(String(err));
+      })
+      .finally(() => {
+        if (!cancelled) setUsageLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tab, usageModel, usageGranularity, usageRange, usageReload]);
 
   // enabledRows are the instances that participate in the router, in
   // priority order; only they can be reordered.
@@ -763,12 +813,13 @@ export function ConfigPage() {
               <div className="flex items-center justify-between">
                 <p className="text-xs text-dim">{t("config.usageHint")}</p>
                 <button
-                  onClick={() =>
+                  onClick={() => {
                     void api
                       .modelUsage()
                       .then(setUsageRows)
-                      .catch((err) => setUsageError(String(err)))
-                  }
+                      .catch((err) => setUsageError(String(err)));
+                    setUsageReload((n) => n + 1);
+                  }}
                   className="text-xs text-dim hover:text-fg"
                 >
                   {t("config.logsRefresh")}
@@ -778,6 +829,68 @@ export function ConfigPage() {
               {usageRows.length === 0 ? (
                 <p className="text-sm text-dim">{t("config.usageEmpty")}</p>
               ) : (
+                <>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      value={usageModel}
+                      onChange={(e) => setUsageModel(e.target.value)}
+                      className="max-w-[340px] rounded-lg border border-edge bg-panel px-2 py-1.5 text-xs font-mono outline-none"
+                      title={t("config.usageModel")}
+                    >
+                      {usageRows.map((r) => (
+                        <option key={r.model} value={r.model}>
+                          {r.model}
+                        </option>
+                      ))}
+                    </select>
+                    {(
+                      [
+                        ["24h", "24h"],
+                        ["7d", "7d"],
+                        ["30d", "30d"],
+                        ["all", t("config.usageRangeAll")],
+                      ] as const
+                    ).map(([value, label]) => (
+                      <button
+                        key={value}
+                        onClick={() => setUsageRange(value)}
+                        className={`rounded-lg border px-2.5 py-1.5 text-xs ${
+                          usageRange === value
+                            ? "border-accent bg-accent/15 text-fg"
+                            : "border-edge text-dim hover:text-fg"
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                    <span className="w-px h-5 bg-edge" />
+                    <div className="flex overflow-hidden rounded-lg border border-edge text-xs">
+                      <button
+                        onClick={() => setUsageGranularity("hour")}
+                        className={`px-3 py-1.5 ${
+                          usageGranularity === "hour"
+                            ? "bg-accent text-white"
+                            : "text-dim hover:text-fg"
+                        }`}
+                      >
+                        {t("config.usageHour")}
+                      </button>
+                      <button
+                        onClick={() => setUsageGranularity("day")}
+                        className={`px-3 py-1.5 ${
+                          usageGranularity === "day"
+                            ? "bg-accent text-white"
+                            : "text-dim hover:text-fg"
+                        }`}
+                      >
+                        {t("config.usageDay")}
+                      </button>
+                    </div>
+                    {usageLoading && (
+                      <Loader2 size={14} className="animate-spin text-dim" />
+                    )}
+                  </div>
+                  <UsageChart points={usageSeries} granularity={usageGranularity} />
                 <div className="rounded-xl border border-edge bg-panel2 overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead>
@@ -838,6 +951,7 @@ export function ConfigPage() {
                     </tbody>
                   </table>
                 </div>
+                </>
               )}
             </div>
           )}

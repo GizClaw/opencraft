@@ -22,6 +22,7 @@ import type {
   ProviderInstance,
   SkillDTO,
   TurnStart,
+  UsagePoint,
   WorkspaceMeta,
 } from "./types";
 
@@ -52,6 +53,20 @@ export const api = {
   setModel: (model: string) => App.SetModel(model),
   modelOptions: () => App.ModelOptions() as Promise<ModelOption[]>,
   modelUsage: () => App.ModelUsage() as Promise<ModelUsageStat[]>,
+  modelUsageSeries: (
+    model: string,
+    granularity: "hour" | "day",
+    utcOffsetMinutes: number,
+    start: string,
+    end: string,
+  ) =>
+    App.ModelUsageSeries(
+      model,
+      granularity,
+      utcOffsetMinutes,
+      start,
+      end,
+    ) as Promise<UsagePoint[]>,
   mcpConfig: () => App.MCPConfig() as Promise<MCPServer[]>,
   saveMCP: (servers: MCPServer[]) =>
     App.SaveMCP(servers as unknown as genConfig.MCPServer[]),

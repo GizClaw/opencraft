@@ -54,6 +54,14 @@ export interface ModelUsageStat {
   updated_at: string;
 }
 
+export interface UsagePoint {
+  time: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  reasoning_tokens: number;
+}
+
 export interface ModelOption {
   id: string;
   label: string;

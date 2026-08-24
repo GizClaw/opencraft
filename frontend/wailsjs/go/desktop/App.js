@@ -82,6 +82,10 @@ export function ModelUsage() {
   return window['go']['desktop']['App']['ModelUsage']();
 }
 
+export function ModelUsageSeries(arg1, arg2, arg3, arg4, arg5) {
+  return window['go']['desktop']['App']['ModelUsageSeries'](arg1, arg2, arg3, arg4, arg5);
+}
+
 export function NewChat() {
   return window['go']['desktop']['App']['NewChat']();
 }
