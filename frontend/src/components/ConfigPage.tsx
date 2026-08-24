@@ -87,9 +87,12 @@ export function ConfigPage() {
   const [usageRows, setUsageRows] = useState<ModelUsageStat[]>([]);
   const [usageError, setUsageError] = useState("");
   const [usageModel, setUsageModel] = useState("");
-  const [usageGranularity, setUsageGranularity] = useState<"hour" | "day">("hour");
-  const [usageRange, setUsageRange] = useState<"24h" | "7d" | "30d" | "all">("7d");
+  const [usageRange, setUsageRange] = useState<
+    "today" | "1d" | "7d" | "14d" | "30d"
+  >("7d");
   const [usageSeries, setUsageSeries] = useState<UsagePoint[]>([]);
+  const [usageStartMs, setUsageStartMs] = useState(0);
+  const [usageEndMs, setUsageEndMs] = useState(0);
   const [usageLoading, setUsageLoading] = useState(false);
   const [usageReload, setUsageReload] = useState(0);
 
@@ -196,8 +199,32 @@ export function ConfigPage() {
     }
   }, [usageRows, usageModel]);
 
-  // Load the selected model's time series whenever the model, bucket,
-  // tab, or an explicit refresh changes.
+  // Resolve the selected preset into a live [start, end) window the
+  // same way cc-switch does: "today" and multi-day presets start at
+  // local midnight, "1d" is the rolling 24h, and the end is always now.
+  const resolveUsageRange = (
+    preset: "today" | "1d" | "7d" | "14d" | "30d",
+  ): { startMs: number; endMs: number } => {
+    const endMs = Date.now();
+    const DAY = 86_400_000;
+    if (preset === "today") {
+      const d = new Date(endMs);
+      d.setHours(0, 0, 0, 0);
+      return { startMs: d.getTime(), endMs };
+    }
+    if (preset === "1d") {
+      return { startMs: endMs - DAY, endMs };
+    }
+    const days = preset === "7d" ? 7 : preset === "14d" ? 14 : 30;
+    const d = new Date(endMs - (days - 1) * DAY);
+    d.setHours(0, 0, 0, 0);
+    return { startMs: d.getTime(), endMs };
+  };
+
+  // Load the selected model's time series whenever the model, range,
+  // tab, or an explicit refresh changes. Granularity follows the range
+  // duration like cc-switch: <= 24h buckets hourly, longer ranges
+  // bucket by local day.
   useEffect(() => {
     if (tab !== "usage" || !usageModel) {
       setUsageSeries([]);
@@ -205,17 +232,18 @@ export function ConfigPage() {
     }
     let cancelled = false;
     setUsageLoading(true);
-    const end = Math.ceil(Date.now() / 3_600_000) * 3_600_000;
-    const hoursByRange = { "24h": 24, "7d": 24 * 7, "30d": 24 * 30 } as const;
-    const start =
-      usageRange === "all" ? "" : new Date(end - hoursByRange[usageRange] * 3_600_000).toISOString();
+    const { startMs, endMs } = resolveUsageRange(usageRange);
+    const granularity: "hour" | "day" =
+      endMs - startMs <= 24 * 3_600_000 ? "hour" : "day";
+    setUsageStartMs(startMs);
+    setUsageEndMs(endMs);
     void api
       .modelUsageSeries(
         usageModel,
-        usageGranularity,
+        granularity,
         -new Date().getTimezoneOffset(),
-        start,
-        new Date(end).toISOString(),
+        new Date(startMs).toISOString(),
+        new Date(endMs).toISOString(),
       )
       .then((pts) => {
         if (!cancelled) setUsageSeries(pts);
@@ -229,7 +257,7 @@ export function ConfigPage() {
     return () => {
       cancelled = true;
     };
-  }, [tab, usageModel, usageGranularity, usageRange, usageReload]);
+  }, [tab, usageModel, usageRange, usageReload]);
 
   // Cache hit rate for the currently selected model + time range,
   // derived from the same series the chart renders. cc-switch's formula
@@ -869,10 +897,11 @@ export function ConfigPage() {
                     </select>
                     {(
                       [
-                        ["24h", "24h"],
+                        ["today", t("config.usageRangeToday")],
+                        ["1d", "1d"],
                         ["7d", "7d"],
+                        ["14d", "14d"],
                         ["30d", "30d"],
-                        ["all", t("config.usageRangeAll")],
                       ] as const
                     ).map(([value, label]) => (
                       <button
@@ -887,29 +916,6 @@ export function ConfigPage() {
                         {label}
                       </button>
                     ))}
-                    <span className="w-px h-5 bg-edge" />
-                    <div className="flex overflow-hidden rounded-lg border border-edge text-xs">
-                      <button
-                        onClick={() => setUsageGranularity("hour")}
-                        className={`px-3 py-1.5 ${
-                          usageGranularity === "hour"
-                            ? "bg-accent text-white"
-                            : "text-dim hover:text-fg"
-                        }`}
-                      >
-                        {t("config.usageHour")}
-                      </button>
-                      <button
-                        onClick={() => setUsageGranularity("day")}
-                        className={`px-3 py-1.5 ${
-                          usageGranularity === "day"
-                            ? "bg-accent text-white"
-                            : "text-dim hover:text-fg"
-                        }`}
-                      >
-                        {t("config.usageDay")}
-                      </button>
-                    </div>
                     {usageLoading && (
                       <Loader2 size={14} className="animate-spin text-dim" />
                     )}
@@ -937,7 +943,16 @@ export function ConfigPage() {
                       {fmtUsageTokens(cacheHit.input)}
                     </div>
                   </div>
-                  <UsageChart points={usageSeries} granularity={usageGranularity} />
+                  <UsageChart
+                    points={usageSeries}
+                    granularity={
+                      usageEndMs - usageStartMs <= 24 * 3_600_000
+                        ? "hour"
+                        : "day"
+                    }
+                    startMs={usageStartMs}
+                    endMs={usageEndMs}
+                  />
                 <div className="rounded-xl border border-edge bg-panel2 overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead>

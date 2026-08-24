@@ -50,9 +50,10 @@ function dayKey(d: Date): string {
   return `${d.getFullYear()}-${m}-${day}`;
 }
 
-function dayStartMs(key: string): number {
-  const [y, m, d] = key.split("-").map(Number);
-  return new Date(y, m - 1, d).getTime();
+function localMidnightMs(ts: number): number {
+  const d = new Date(ts);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
 }
 
 function zeroPoint(time: string): UsagePoint {
@@ -65,28 +66,29 @@ function zeroPoint(time: string): UsagePoint {
   };
 }
 
-// fillUsageSeries inserts zero buckets between the first and last
-// recorded point, so the curve shows the true time dimension instead
-// of connecting distant spikes across idle periods.
+// fillUsageSeries zero-fills the entire [startMs, endMs] window the
+// way cc-switch does: hourly buckets (aligned to whole hours) for
+// short ranges, local-day buckets for longer ones, with zero buckets
+// before the first record and after the last one so the timeline is
+// continuous across the whole selection.
 export function fillUsageSeries(
   points: UsagePoint[],
   granularity: "hour" | "day",
+  startMs: number,
+  endMs: number,
 ): UsagePoint[] {
-  if (points.length < 2) return points;
   const byKey = new Map(points.map((p) => [p.time, p]));
   const out: UsagePoint[] = [];
   if (granularity === "hour") {
-    const first = Date.parse(points[0].time);
-    const last = Date.parse(points[points.length - 1].time);
-    const startMs = Math.floor(first / 3_600_000) * 3_600_000;
-    for (let ts = startMs; ts <= last; ts += 3_600_000) {
+    const first = Math.floor(startMs / 3_600_000) * 3_600_000;
+    for (let ts = first; ts <= endMs; ts += 3_600_000) {
       const key = hourKey(ts);
       out.push(byKey.get(key) ?? zeroPoint(key));
     }
   } else {
-    let d = new Date(dayStartMs(points[0].time));
-    const endMs = dayStartMs(points[points.length - 1].time);
-    while (d.getTime() <= endMs) {
+    let d = new Date(localMidnightMs(startMs));
+    const end = new Date(localMidnightMs(endMs));
+    while (d.getTime() <= end.getTime()) {
       const key = dayKey(d);
       out.push(byKey.get(key) ?? zeroPoint(key));
       d = new Date(d.getTime());
@@ -99,15 +101,22 @@ export function fillUsageSeries(
 interface UsageChartProps {
   points: UsagePoint[];
   granularity: "hour" | "day";
+  startMs: number;
+  endMs: number;
 }
 
-export function UsageChart({ points, granularity }: UsageChartProps) {
+export function UsageChart({
+  points,
+  granularity,
+  startMs,
+  endMs,
+}: UsageChartProps) {
   const { t, i18n } = useTranslation();
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
   const locale = i18n.resolvedLanguage?.startsWith("zh") ? "zh-CN" : "en-US";
   const filled = useMemo(
-    () => fillUsageSeries(points, granularity),
-    [points, granularity],
+    () => fillUsageSeries(points, granularity, startMs, endMs),
+    [points, granularity, startMs, endMs],
   );
 
   const fmtTime = (iso: string, full = false): string => {
@@ -149,7 +158,7 @@ export function UsageChart({ points, granularity }: UsageChartProps) {
     [filled],
   );
 
-  if (filled.length === 0) {
+  if (startMs <= 0 || endMs <= 0 || filled.length === 0) {
     return (
       <div className="grid h-[200px] place-items-center rounded-xl border border-edge bg-panel2 text-sm text-dim">
         {t("config.usageSeriesEmpty")}
