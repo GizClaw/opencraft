@@ -88,6 +88,7 @@
   },
   "chat": {
     "running": "运行中",
+    "newSession": "新会话",
     "empty": "开始与 OpenCraft 对话 — 描述任务即可，助手会自主调用工具",
     "emptyUnconfigured": "推理尚未配置，请打开设置添加模型",
     "openSettings": "打开设置",

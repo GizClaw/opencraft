@@ -88,6 +88,7 @@
   },
   "chat": {
     "running": "Running",
+    "newSession": "New session",
     "empty": "Start a conversation with OpenCraft — describe a task and the assistant will drive the tools itself",
     "emptyUnconfigured": "Inference is not configured yet",
     "openSettings": "Open Settings",

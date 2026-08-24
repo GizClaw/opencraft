@@ -150,13 +150,11 @@ export function ChatView() {
     n.name.toLowerCase().includes(mention.query.toLowerCase()),
   );
 
-  const workspaceName =
-    workspace.split(/[\\/]/).filter(Boolean).pop() ?? workspace;
   const sessionTitle = sessions.find((s) => s.id === current)?.title;
   const headerTitle =
     sessionTitle && sessionTitle !== "(empty)"
       ? sessionTitle
-      : workspaceName;
+      : t("chat.newSession");
   const yolo = mode === "yolo";
 
   return (
