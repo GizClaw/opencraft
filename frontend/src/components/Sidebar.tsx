@@ -73,6 +73,15 @@ export function Sidebar() {
         )}
       </div>
 
+      <div className="px-4 pt-3 pb-2 select-none">
+        <div className="font-mono text-base leading-tight text-fg font-semibold">
+          Open
+        </div>
+        <div className="font-mono text-base leading-tight text-accent">
+          nCraft&gt;_
+        </div>
+      </div>
+
       <div className="px-3 pt-3">
         <button
           onClick={newChat}

@@ -35,7 +35,9 @@ function Reasoning({ text }: { text: string }) {
 }
 
 export function ChatView() {
+  const current = useStore((s) => s.current);
   const conv = useStore((s) => s.conversations[s.current]);
+  const sessions = useStore((s) => s.sessions);
   const messages = conv?.messages ?? [];
   const busy = conv?.busy ?? false;
   const configured = useStore((s) => s.configured);
@@ -150,12 +152,17 @@ export function ChatView() {
 
   const workspaceName =
     workspace.split(/[\\/]/).filter(Boolean).pop() ?? workspace;
+  const sessionTitle = sessions.find((s) => s.id === current)?.title;
+  const headerTitle =
+    sessionTitle && sessionTitle !== "(empty)"
+      ? sessionTitle
+      : workspaceName;
   const yolo = mode === "yolo";
 
   return (
     <main className="flex-1 min-w-0 flex flex-col min-h-0">
       <header className="h-11 shrink-0 border-b border-edge bg-panel flex items-center px-4 gap-2">
-        <span className="text-sm font-medium truncate">{workspaceName}</span>
+        <span className="text-sm font-medium truncate">{headerTitle}</span>
         {busy && (
           <span className="flex items-center gap-1 text-xs text-accent">
             <Loader2 size={12} className="animate-spin" /> {t("chat.running")}

@@ -463,6 +463,9 @@ export const useStore = create<StoreState>((set, get) => {
           void get().loadSessions();
           break;
         }
+        case "session_updated":
+          void get().loadSessions();
+          break;
       }
     },
 

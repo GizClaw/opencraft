@@ -91,5 +91,7 @@ func (a *App) autoTitle(ctx context.Context, contextID string) {
 	if len(runes) > maxTitle {
 		title = string(runes[:maxTitle]) + "…"
 	}
-	_ = store.WriteState(contextID, "title", title)
+	if err := store.WriteState(contextID, "title", title); err == nil {
+		a.bridge.Emit("session_updated", map[string]string{"id": contextID})
+	}
 }
