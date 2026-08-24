@@ -21,7 +21,7 @@ type WorkspaceMeta struct {
 	ID         string    `json:"id"`
 	Path       string    `json:"path"`
 	Title      string    `json:"title"`
-	LastOpened time.Time `json:"last_opened"`
+	LastOpened string    `json:"last_opened"` // RFC3339 UTC
 }
 
 // workspaceHistoryDir returns ~/.opencraft/workspaces, creating it if
@@ -54,7 +54,7 @@ func saveWorkspaceMeta(root, path string) error {
 		ID:         id,
 		Path:       path,
 		Title:      filepath.Base(path),
-		LastOpened: time.Now().UTC(),
+	LastOpened: time.Now().UTC().Format(time.RFC3339),
 	}
 	data, err := json.MarshalIndent(meta, "", "  ")
 	if err != nil {
@@ -120,7 +120,7 @@ func loadWorkspaces(dir string) ([]WorkspaceMeta, error) {
 		out = append(out, meta)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		return out[i].LastOpened.After(out[j].LastOpened)
+		return out[i].LastOpened > out[j].LastOpened
 	})
 	return out, nil
 }
