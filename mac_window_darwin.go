@@ -37,14 +37,15 @@ static void applyOpenCraftWindowStyleInner(void) {
 		NSRect superFrame = [[b superview] convertRect:winFrame fromView:nil];
 		[b setFrame:superFrame];
 	}
-	// Disable the rubber-band bounce and pinch-zoom on the webview so
+	// Disable the rubber-band bounce on the webview's scroll view so
 	// two-finger gestures on the trackpad never shake the whole UI.
 	for (NSView *subview in [[w contentView] subviews]) {
 		if ([subview isKindOfClass:[WKWebView class]]) {
-			NSScrollView *sv = [(WKWebView *)subview scrollView];
-			sv.bounces = NO;
-			sv.allowsMagnification = NO;
-			[(WKWebView *)subview setMagnification:1.0];
+			id sv = [subview valueForKey:@"scrollView"];
+			if (sv != nil) {
+				[sv setVerticalScrollElasticity:NSScrollElasticityNone];
+				[sv setHorizontalScrollElasticity:NSScrollElasticityNone];
+			}
 		}
 	}
 }
