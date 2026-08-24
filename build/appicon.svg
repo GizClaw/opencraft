@@ -1,0 +1,13 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1b2230"/>
+      <stop offset="1" stop-color="#0f1218"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="228" fill="url(#bg)"/>
+  <text x="512" y="452" text-anchor="middle" font-family="Menlo, SF Mono, Consolas, monospace"
+        font-size="216" font-weight="600" fill="#e6e9ef">Open</text>
+  <text x="512" y="742" text-anchor="middle" font-family="Menlo, SF Mono, Consolas, monospace"
+        font-size="216" font-weight="600" fill="#4f8cff">Craft&gt;_</text>
+</svg>
