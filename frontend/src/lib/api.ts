@@ -1,7 +1,10 @@
 // Typed wrappers over the generated Wails bindings. The Go context
 // argument is null from the frontend (Wails injects it server-side).
 import * as App from "../../wailsjs/go/desktop/App";
-import type { desktop as gen } from "../../wailsjs/go/models";
+import type {
+  config as genConfig,
+  desktop as gen,
+} from "../../wailsjs/go/models";
 import type {
   AgentSummary,
   ConfigState,
@@ -9,6 +12,7 @@ import type {
   FileNode,
   HistoryMsg,
   KanbanCard,
+  MCPServer,
   ModelOption,
   ProviderView,
   ReplyRequest,
@@ -41,6 +45,9 @@ export const api = {
   getModel: () => App.GetModel(),
   setModel: (model: string) => App.SetModel(model),
   modelOptions: () => App.ModelOptions() as Promise<ModelOption[]>,
+  mcpConfig: () => App.MCPConfig() as Promise<MCPServer[]>,
+  saveMCP: (servers: MCPServer[]) =>
+    App.SaveMCP(servers as unknown as genConfig.MCPServer[]),
   deleteSession: (id: string) => App.DeleteSession(id),
   permissions: () => App.Permissions(),
   allowPermission: (rule: string) => App.AllowPermission(rule),

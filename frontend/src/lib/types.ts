@@ -44,6 +44,15 @@ export interface ModelOption {
   label: string;
 }
 
+export interface MCPServer {
+  name: string;
+  transport: string;
+  command?: string;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string;
+}
+
 export interface SessionMeta {
   id: string;
   title: string;

@@ -38,6 +38,33 @@ export namespace agents {
 
 }
 
+export namespace config {
+	
+	export class MCPServer {
+	    name: string;
+	    transport: string;
+	    command?: string;
+	    args?: string[];
+	    env?: Record<string, string>;
+	    url?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new MCPServer(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.transport = source["transport"];
+	        this.command = source["command"];
+	        this.args = source["args"];
+	        this.env = source["env"];
+	        this.url = source["url"];
+	    }
+	}
+
+}
+
 export namespace desktop {
 	
 	export class SetupProvider {

@@ -52,6 +52,7 @@ export function ChatView() {
   const setModel = useStore((s) => s.setModel);
   const modelOptions = useStore((s) => s.modelOptions);
   const lastFailed = conv?.lastFailed ?? false;
+  const openConfig = useStore((s) => s.openConfig);
   const [input, setInput] = useState("");
   const [confirmYolo, setConfirmYolo] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -173,10 +174,22 @@ export function ChatView() {
         className="flex-1 overflow-y-auto px-6 py-4"
       >
         {messages.length === 0 ? (
-          <div className="h-full grid place-items-center text-dim text-sm">
-            {configured
-              ? t("chat.empty")
-              : t("chat.emptyUnconfigured")}
+          <div className="h-full grid place-items-center">
+            <div className="text-center space-y-3">
+              <div className="text-dim text-sm">
+                {configured
+                  ? t("chat.empty")
+                  : t("chat.emptyUnconfigured")}
+              </div>
+              {!configured && (
+                <button
+                  onClick={openConfig}
+                  className="rounded-lg border border-edge px-3 py-1.5 text-sm text-fg hover:border-accent/50 transition-colors"
+                >
+                  {t("chat.openSettings")}
+                </button>
+              )}
+            </div>
           </div>
         ) : (
           <div className="max-w-3xl mx-auto space-y-4">

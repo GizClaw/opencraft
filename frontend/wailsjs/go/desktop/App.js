@@ -70,6 +70,10 @@ export function ListSessions() {
   return window['go']['desktop']['App']['ListSessions']();
 }
 
+export function MCPConfig() {
+  return window['go']['desktop']['App']['MCPConfig']();
+}
+
 export function ModelOptions() {
   return window['go']['desktop']['App']['ModelOptions']();
 }
@@ -120,6 +124,10 @@ export function ResumeSession(arg1) {
 
 export function RetryCard(arg1) {
   return window['go']['desktop']['App']['RetryCard'](arg1);
+}
+
+export function SaveMCP(arg1) {
+  return window['go']['desktop']['App']['SaveMCP'](arg1);
 }
 
 export function SaveSetup(arg1) {

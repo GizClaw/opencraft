@@ -13,6 +13,26 @@
   --color-err: #f87171;
 }
 
+:root {
+  color-scheme: dark;
+}
+
+/* Light theme: utilities reference the @theme variables at runtime, so
+   overriding them on one class flips the whole palette. */
+.theme-light {
+  color-scheme: light;
+  --color-bg: #f5f7fa;
+  --color-panel: #ffffff;
+  --color-panel2: #edf1f6;
+  --color-edge: #d8dee8;
+  --color-fg: #1b2330;
+  --color-dim: #5c6777;
+  --color-accent: #2f6fe0;
+  --color-ok: #0f9d6e;
+  --color-warn: #b47d00;
+  --color-err: #d64545;
+}
+
 html,
 body,
 #root {

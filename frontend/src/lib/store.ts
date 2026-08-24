@@ -223,6 +223,7 @@ interface StoreState {
   kanbanOpen: boolean;
   cards: KanbanCard[];
   modelOptions: ModelOption[];
+  theme: "dark" | "light";
 
   init: () => Promise<void>;
   handleEvent: (ev: UIEvent) => void;
@@ -238,6 +239,7 @@ interface StoreState {
   setMode: (mode: string) => Promise<void>;
   setThink: (level: string) => Promise<void>;
   setModel: (model: string) => Promise<void>;
+  setTheme: (theme: "dark" | "light") => void;
   refreshAgents: () => Promise<void>;
   loadSessions: () => Promise<void>;
   loadCards: () => Promise<void>;
@@ -304,8 +306,15 @@ export const useStore = create<StoreState>((set, get) => {
     kanbanOpen: false,
     cards: [],
     modelOptions: [],
+    theme: "dark",
 
     init: async () => {
+      const saved = window.localStorage.getItem("opencraft.theme");
+      const theme = saved === "light" ? "light" : "dark";
+      document.documentElement.classList.toggle(
+        "theme-light",
+        theme === "light",
+      );
       const [status, workspace, mode, currentSession, think, model, modelOptions] =
         await Promise.all([
           api.configStatus(),
@@ -320,12 +329,13 @@ export const useStore = create<StoreState>((set, get) => {
         status,
         workspace,
         configured: !status.needed,
-        configOpen: status.needed,
+        configOpen: false,
         current: currentSession,
         conversations: {
           [currentSession]: { ...emptyConv(), mode, think, model },
         },
         modelOptions,
+        theme,
       });
       void get().refreshAgents();
       void get().loadSessions();
@@ -358,13 +368,6 @@ export const useStore = create<StoreState>((set, get) => {
           void get().refreshAgents();
           break;
         }
-        case "onboarding_required":
-          set({
-            status: ev.data as ConfigStatus,
-            configured: false,
-            configOpen: true,
-          });
-          break;
         case "fatal":
           set({ fatal: (ev.data as { error: string }).error ?? "" });
           break;
@@ -616,6 +619,15 @@ export const useStore = create<StoreState>((set, get) => {
       } catch (err) {
         set({ statusText: String(err) });
       }
+    },
+
+    setTheme: (theme) => {
+      document.documentElement.classList.toggle(
+        "theme-light",
+        theme === "light",
+      );
+      window.localStorage.setItem("opencraft.theme", theme);
+      set({ theme });
     },
 
     refreshAgents: async () => {
