@@ -20,7 +20,7 @@
     "deleteSession": "Delete session",
     "deleteSessionConfirm": "Delete session {{title}}? Its history will be removed.",
     "searchSessions": "Search sessions…",
-    "switchWorkspace": "Switch workspace",
+    "addWorkspace": "Add workspace",
     "renameSession": "Rename",
     "exportSession": "Export",
     "exportedTo": "Exported to {{path}}",

@@ -338,35 +338,41 @@ export function Sidebar() {
           )}
         </section>
 
-        {workspaces.length > 0 && (
-          <section>
-            <h3 className="text-xs uppercase tracking-wider text-dim mb-2">
+        <section>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs uppercase tracking-wider text-dim">
               {t("sidebar.workspaces")}
             </h3>
-            <ul className="space-y-1">
-              {visibleWorkspaces.map(renderWorkspaceRow)}
-            </ul>
-            {workspaces.length > 5 && (
-              <button
-                onClick={() => setWorkspacesOpen(true)}
-                className="w-full mt-2 flex items-center gap-2 rounded-lg border border-edge bg-panel2 px-3 py-2 text-sm hover:border-accent/50 transition-colors"
-              >
-                <FolderOpen size={14} className="text-dim" />
-                {t("sidebar.moreWorkspaces")}
-              </button>
-            )}
-          </section>
-        )}
+            <button
+              onClick={() => void api.chooseWorkspace()}
+              className="text-dim hover:text-fg"
+              title={t("sidebar.addWorkspace")}
+            >
+              <Plus size={13} />
+            </button>
+          </div>
+          {workspaces.length === 0 ? (
+            <p className="text-xs text-dim">—</p>
+          ) : (
+            <>
+              <ul className="space-y-1">
+                {visibleWorkspaces.map(renderWorkspaceRow)}
+              </ul>
+              {workspaces.length > 5 && (
+                <button
+                  onClick={() => setWorkspacesOpen(true)}
+                  className="w-full mt-2 flex items-center gap-2 rounded-lg border border-edge bg-panel2 px-3 py-2 text-sm hover:border-accent/50 transition-colors"
+                >
+                  <FolderOpen size={14} className="text-dim" />
+                  {t("sidebar.moreWorkspaces")}
+                </button>
+              )}
+            </>
+          )}
+        </section>
       </div>
 
       <div className="border-t border-edge p-3 space-y-2">
-        <button
-          onClick={() => void api.chooseWorkspace()}
-          className="flex items-center gap-1.5 text-xs text-dim hover:text-fg"
-        >
-          <FolderOpen size={13} />
-          {t("sidebar.switchWorkspace")}
-        </button>
         <button
           onClick={openConfig}
           className="flex items-center gap-1.5 text-xs text-dim hover:text-fg"

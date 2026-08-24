@@ -20,7 +20,7 @@
     "deleteSession": "删除会话",
     "deleteSessionConfirm": "删除会话 {{title}}？历史记录将被移除。",
     "searchSessions": "搜索会话…",
-    "switchWorkspace": "切换工作区",
+    "addWorkspace": "添加工作区",
     "renameSession": "重命名",
     "exportSession": "导出",
     "exportedTo": "已导出: {{path}}",
