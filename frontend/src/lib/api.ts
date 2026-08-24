@@ -16,6 +16,7 @@ import type {
   MCPServer,
   ModelUsageStat,
   ModelOption,
+  PatchFileDTO,
   ProviderView,
   ReplyRequest,
   SessionMeta,
@@ -76,6 +77,10 @@ export const api = {
   denyPermission: (rule: string) => App.DenyPermission(rule),
   skills: () => App.Skills() as Promise<SkillDTO[]>,
   deleteSkill: (path: string) => App.DeleteSkill(path),
+  renderPatch: (patch: string) =>
+    App.RenderPatch(patch) as Promise<PatchFileDTO[]>,
+  renderSkillPatch: (name: string, scope: string, patch: string) =>
+    App.RenderSkillPatch(name, scope, patch) as Promise<PatchFileDTO[]>,
   cancelCard: (id: string) => App.CancelCard(id),
   retryCard: (id: string) => App.RetryCard(id),
   chooseWorkspace: () => App.ChooseWorkspace(),

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Check,
   ChevronDown,
@@ -7,7 +7,9 @@ import {
   X,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { api } from "../lib/api";
 import type { ToolView } from "../lib/store";
+import type { PatchFileDTO, PatchLineDTO } from "../lib/types";
 
 function parseArgs(tool: ToolView): Record<string, unknown> | null {
   try {
@@ -78,6 +80,8 @@ function summaryOf(tool: ToolView): Summary | null {
       return { verb: "createdAgent", rest: str(args.name) };
     case "unregister_agent":
       return { verb: "unregisteredAgent", rest: str(args.name) };
+    case "tool_search":
+      return { verb: "searchedTools", rest: str(args.query) };
     default:
       return null;
   }
@@ -92,14 +96,23 @@ interface ExecResult {
 function execResult(content: string): ExecResult | null {
   try {
     const v = JSON.parse(content);
-    if (v && typeof v === "object") return v;
+    // Only exec_command / exec_session results carry exit_code; other
+    // tools return JSON objects too (read_file, apply_patch, ...) and
+    // must not be treated as exec output (that rendered "exit code
+    // undefined" in the expanded card).
+    if (v && typeof v === "object" && typeof v.exit_code === "number") {
+      return v;
+    }
   } catch {
     // fall through
   }
   return null;
 }
 
-function resultSummary(tool: ToolView): { text: string; ok: boolean } | null {
+function resultSummary(
+  tool: ToolView,
+  t: (key: string) => string,
+): { text: string; ok: boolean } | null {
   if (tool.result === undefined) return null;
   const exec = execResult(tool.result);
   if (exec && typeof exec.exit_code === "number") {
@@ -112,6 +125,23 @@ function resultSummary(tool: ToolView): { text: string; ok: boolean } | null {
       const v = JSON.parse(tool.result);
       if (v && typeof v.file_path === "string") {
         return { text: `└ ${v.file_path}`, ok: true };
+      }
+    } catch {
+      // fall through
+    }
+  }
+  if (tool.name === "tool_search") {
+    try {
+      const v = JSON.parse(tool.result);
+      if (v && typeof v === "object" && Array.isArray(v.hits)) {
+        const hits = v.hits.length;
+        const selected = Array.isArray(v.selected) ? v.selected.length : 0;
+        return {
+          text: `└ ${hits} ${t("tool.hits")}${
+            selected > 0 ? ` · ${selected} ${t("tool.selected")}` : ""
+          }`,
+          ok: true,
+        };
       }
     } catch {
       // fall through
@@ -176,17 +206,214 @@ function DiffBlock({ patch }: { patch: string }) {
   );
 }
 
+interface DiffHunk {
+  oldStart: number;
+  oldCount: number;
+  newStart: number;
+  newCount: number;
+  lines: PatchLineDTO[];
+}
+
+// groupHunks splits rendered diff lines into contiguous hunks (line
+// numbering restarts after each hunk), so each one renders a git-style
+// "@@ -a,b +c,d @@" header.
+function groupHunks(lines: PatchLineDTO[]): DiffHunk[] {
+  const hunks: DiffHunk[] = [];
+  let cur: DiffHunk | null = null;
+  let prevOld = 0;
+  let prevNew = 0;
+  for (const line of lines) {
+    const oldBreak =
+      line.old_num > 0 && prevOld > 0 && line.old_num !== prevOld + 1;
+    const newBreak =
+      line.new_num > 0 && prevNew > 0 && line.new_num !== prevNew + 1;
+    if (!cur || oldBreak || newBreak) {
+      cur = {
+        oldStart: line.old_num,
+        oldCount: 0,
+        newStart: line.new_num,
+        newCount: 0,
+        lines: [],
+      };
+      hunks.push(cur);
+    }
+    if (line.old_num > 0) {
+      if (!cur.oldStart) cur.oldStart = line.old_num;
+      cur.oldCount++;
+    }
+    if (line.new_num > 0) {
+      if (!cur.newStart) cur.newStart = line.new_num;
+      cur.newCount++;
+    }
+    cur.lines.push(line);
+    prevOld = line.old_num;
+    prevNew = line.new_num;
+  }
+  return hunks;
+}
+
+function hunkHeader(h: DiffHunk): string {
+  const fmt = (start: number, count: number) =>
+    count === 1 ? String(start) : `${start},${count}`;
+  return `@@ -${fmt(h.oldStart, h.oldCount)} +${fmt(h.newStart, h.newCount)} @@`;
+}
+
+function GitDiffLine({ line }: { line: PatchLineDTO }) {
+  const oldCol = line.old_num > 0 ? String(line.old_num).padStart(3) : "   ";
+  const newCol = line.new_num > 0 ? String(line.new_num).padStart(3) : "   ";
+  const marker = line.kind === "add" ? "+" : line.kind === "delete" ? "-" : " ";
+  const cls =
+    line.kind === "add"
+      ? "text-ok"
+      : line.kind === "delete"
+        ? "text-err"
+        : "text-dim";
+  return (
+    <div className={`whitespace-pre ${cls}`}>
+      <span className="text-dim opacity-60 select-none">
+        {oldCol} {newCol}{" "}
+      </span>
+      {marker}
+      {line.text}
+    </div>
+  );
+}
+
+function GitDiffView({ files }: { files: PatchFileDTO[] }) {
+  return (
+    <div className="max-h-80 space-y-3 overflow-y-auto">
+      {files.map((f) => {
+        const hunks = groupHunks(f.lines);
+        return (
+          <div key={f.path}>
+            <div className="font-mono text-xs">
+              <div className="text-err">--- a/{f.path}</div>
+              <div className="text-ok">+++ b/{f.path}</div>
+            </div>
+            {hunks.map((h, i) => (
+              <div key={i} className="mt-1">
+                <div className="font-mono text-xs text-accent">
+                  {hunkHeader(h)}
+                </div>
+                <div className="font-mono text-xs">
+                  {h.lines.map((line, j) => (
+                    <GitDiffLine key={j} line={line} />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// PatchPreview renders the patch argument of apply_patch / skill_modify
+// as a git diff with line numbers, computed server-side against the
+// current file content. Falls back to the raw colored patch while the
+// preview loads or when it fails.
+function PatchPreview({ tool }: { tool: ToolView }) {
+  const args = parseArgs(tool);
+  const patch =
+    args && typeof args.patch === "string" ? args.patch : tool.args;
+  const name = args && typeof args.name === "string" ? args.name : "";
+  const scope = args && typeof args.scope === "string" ? args.scope : "";
+  const [files, setFiles] = useState<PatchFileDTO[] | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    setFiles(null);
+    setFailed(false);
+    const req =
+      tool.name === "apply_patch"
+        ? api.renderPatch(patch)
+        : api.renderSkillPatch(name, scope, patch);
+    void req
+      .then((f) => {
+        if (!cancelled) setFiles(f);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tool.name, patch, name, scope]);
+
+  if (failed || files === null) return <DiffBlock patch={patch} />;
+  return <GitDiffView files={files} />;
+}
+
 function ArgsBlock({ tool }: { tool: ToolView }) {
   const { t } = useTranslation();
   if (tool.name === "apply_patch") {
+    return <PatchPreview tool={tool} />;
+  }
+  if (tool.name === "write_file") {
     const args = parseArgs(tool);
-    const patch =
-      args && typeof args.patch === "string" ? args.patch : tool.args;
-    return <DiffBlock patch={patch} />;
+    const path = args && typeof args.file_path === "string" ? args.file_path : "";
+    const content = args && typeof args.content === "string" ? args.content : "";
+    const lines = content.split("\n").map((text, i) => ({
+      kind: "add" as const,
+      old_num: 0,
+      new_num: i + 1,
+      text,
+    }));
+    return (
+      <GitDiffView
+        files={[
+          {
+            path,
+            action: "add",
+            added: lines.length,
+            removed: 0,
+            lines,
+          },
+        ]}
+      />
+    );
+  }
+  if (tool.name === "skill_modify") {
+    const args = parseArgs(tool);
+    if (args && typeof args.patch === "string") {
+      return <PatchPreview tool={tool} />;
+    }
   }
   if (tool.name === "update_plan") {
     const args = parseArgs(tool);
     if (args) return <PlanBlock args={args} />;
+  }
+  if (tool.name === "tool_search") {
+    const args = parseArgs(tool);
+    if (args) {
+      const query =
+        typeof args.query === "string" ? args.query : "";
+      const select = Array.isArray(args.select)
+        ? args.select.filter((s): s is string => typeof s === "string")
+        : [];
+      return (
+        <div className="space-y-1">
+          <div className="text-xs">
+            <span className="text-dim">{t("tool.query")}: </span>
+            <code className="font-mono">{query}</code>
+          </div>
+          {typeof args.limit === "number" && (
+            <div className="text-xs">
+              <span className="text-dim">{t("tool.limit")}: </span>
+              <code className="font-mono">{args.limit}</code>
+            </div>
+          )}
+          {select.length > 0 && (
+            <div className="text-xs">
+              <span className="text-dim">{t("tool.select")}: </span>
+              <span className="font-mono text-ok">{select.join(", ")}</span>
+            </div>
+          )}
+        </div>
+      );
+    }
   }
   const pretty = (() => {
     const args = parseArgs(tool);
@@ -202,6 +429,56 @@ function ArgsBlock({ tool }: { tool: ToolView }) {
 function ResultBlock({ tool }: { tool: ToolView }) {
   const { t } = useTranslation();
   if (tool.result === undefined) return null;
+  if (tool.name === "tool_search") {
+    try {
+      const v = JSON.parse(tool.result);
+      if (v && typeof v === "object" && Array.isArray(v.hits)) {
+        const selected = Array.isArray(v.selected)
+          ? new Set(v.selected as string[])
+          : new Set<string>();
+        const hits = v.hits as {
+          name?: string;
+          description?: string;
+        }[];
+        if (hits.length === 0) {
+          return (
+            <div className="text-xs text-dim">
+              {t("tool.noHits")}
+            </div>
+          );
+        }
+        return (
+          <div className="space-y-1.5">
+            {hits.map((h) => {
+              const name = h.name ?? "";
+              const isSelected = selected.has(name);
+              return (
+                <div key={name} className="flex items-start gap-2">
+                  <code
+                    className={`shrink-0 font-mono text-xs ${
+                      isSelected ? "text-ok" : "text-fg"
+                    }`}
+                  >
+                    {name}
+                  </code>
+                  {isSelected && (
+                    <Check size={12} className="mt-0.5 shrink-0 text-ok" />
+                  )}
+                  {h.description && (
+                    <span className="min-w-0 flex-1 text-xs text-dim">
+                      {h.description}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        );
+      }
+    } catch {
+      // fall through to the generic JSON block
+    }
+  }
   const exec = execResult(tool.result);
   if (exec) {
     return (
@@ -257,7 +534,7 @@ export function ToolCard({ tool }: { tool: ToolView }) {
   const [open, setOpen] = useState(false);
   const { t } = useTranslation();
   const summary = summaryOf(tool);
-  const summaryLine = resultSummary(tool);
+  const summaryLine = resultSummary(tool, t);
   const running = tool.status === "running";
   const failed = tool.status === "error";
 

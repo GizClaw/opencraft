@@ -130,6 +130,14 @@ export function RenameSession(arg1, arg2) {
   return window['go']['desktop']['App']['RenameSession'](arg1, arg2);
 }
 
+export function RenderPatch(arg1) {
+  return window['go']['desktop']['App']['RenderPatch'](arg1);
+}
+
+export function RenderSkillPatch(arg1, arg2, arg3) {
+  return window['go']['desktop']['App']['RenderSkillPatch'](arg1, arg2, arg3);
+}
+
 export function ReplyPrompt(arg1, arg2) {
   return window['go']['desktop']['App']['ReplyPrompt'](arg1, arg2);
 }

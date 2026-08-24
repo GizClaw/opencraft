@@ -70,6 +70,10 @@ export function RemoveWorkspace(arg1:string):Promise<void>;
 
 export function RenameSession(arg1:string,arg2:string):Promise<void>;
 
+export function RenderPatch(arg1:string):Promise<Array<desktop.PatchFileDTO>>;
+
+export function RenderSkillPatch(arg1:string,arg2:string,arg3:string):Promise<Array<desktop.PatchFileDTO>>;
+
 export function ReplyPrompt(arg1:string,arg2:desktop.ReplyRequest):Promise<boolean>;
 
 export function ResumeSession(arg1:string):Promise<string>;

@@ -63,6 +63,21 @@ export interface UsagePoint {
   reasoning_tokens: number;
 }
 
+export interface PatchLineDTO {
+  kind: "context" | "add" | "delete";
+  old_num: number;
+  new_num: number;
+  text: string;
+}
+
+export interface PatchFileDTO {
+  path: string;
+  action: string;
+  added: number;
+  removed: number;
+  lines: PatchLineDTO[];
+}
+
 export interface ModelOption {
   id: string;
   label: string;
