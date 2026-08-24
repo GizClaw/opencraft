@@ -1,8 +1,11 @@
 package desktop
 
 import (
+	"bytes"
 	"context"
+	_ "embed"
 	"strings"
+	"text/template"
 
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/inference/route"
@@ -10,6 +13,16 @@ import (
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	otellog "go.opentelemetry.io/otel/log"
 )
+
+//go:embed assets/title.gotmpl
+var titleTemplateRaw string
+
+var titleTemplate = template.Must(template.New("title").Parse(titleTemplateRaw))
+
+// titlePromptData feeds the title prompt template.
+type titlePromptData struct {
+	MaxWords int
+}
 
 // autoTitle generates a short conversation title from the first user
 // message once, after a turn finishes, and persists it as the session's
@@ -83,10 +96,8 @@ func (a *App) autoTitle(ctx context.Context, contextID string) {
 		// it answers the user's first message instead of naming the
 		// conversation.
 		Context: []message.Message{{
-			Role: message.RoleSystem,
-			Content: message.Content{Parts: []message.Part{
-				message.TextPart{Text: titlePrompt},
-			}},
+			Role:    message.RoleSystem,
+			Content: titleSystemContent(),
 		}},
 		Input: inference.GenerateInput{
 			Role: inference.InputRoleUser,
@@ -148,9 +159,16 @@ func firstPrefix(s string) string {
 	return string(runes)
 }
 
-// titlePrompt tells the model to emit only a short title for the
-// conversation, in the user message's language.
-const titlePrompt = "You generate concise conversation titles. " +
-	"Given the user's first message below, reply with ONLY a short " +
-	"title of at most 8 words, in the same language as the message. " +
-	"Do not answer the question. No quotes, punctuation, or explanation."
+// titleSystemContent renders the embedded gotmpl title prompt into a
+// system message. Rendering cannot fail for the fixed embedded
+// template; a panic would only surface a programming error, so the
+// result is trusted.
+func titleSystemContent() message.Content {
+	var buf bytes.Buffer
+	if err := titleTemplate.Execute(&buf, titlePromptData{MaxWords: 8}); err != nil {
+		panic(err)
+	}
+	return message.Content{Parts: []message.Part{
+		message.TextPart{Text: buf.String()},
+	}}
+}
