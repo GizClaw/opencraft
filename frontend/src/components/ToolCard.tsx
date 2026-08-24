@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import {
   Check,
   ChevronDown,
@@ -530,7 +530,7 @@ function ResultBlock({ tool }: { tool: ToolView }) {
   );
 }
 
-export function ToolCard({ tool }: { tool: ToolView }) {
+export const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
   const [open, setOpen] = useState(false);
   const { t } = useTranslation();
   const summary = summaryOf(tool);
@@ -598,4 +598,4 @@ export function ToolCard({ tool }: { tool: ToolView }) {
       )}
     </div>
   );
-}
+});

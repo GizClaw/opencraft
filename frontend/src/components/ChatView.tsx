@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   Archive,
@@ -21,6 +21,7 @@ import { api } from "../lib/api";
 import { COMPACT_SUMMARY_PREFIX } from "../lib/compact";
 import { useStore } from "../lib/store";
 import type { FileNode } from "../lib/types";
+import type { MessageView } from "../lib/store";
 import { InteractionCard } from "./InteractionCard";
 import { ToolCard } from "./ToolCard";
 
@@ -37,6 +38,83 @@ function Reasoning({ text }: { text: string }) {
     </details>
   );
 }
+
+// AssistantText renders one assistant text block. While the message is
+// still streaming, markdown parsing is deferred to plain text: parsing
+// the full document on every token delta stalls the main thread and
+// freezes the UI on long outputs. Completed messages render markdown
+// once.
+const AssistantText = memo(function AssistantText({
+  text,
+  streaming,
+}: {
+  text: string;
+  streaming: boolean;
+}) {
+  if (streaming) {
+    return (
+      <div className="prose-chat whitespace-pre-wrap text-sm">{text}</div>
+    );
+  }
+  return (
+    <div className="prose-chat text-sm">
+      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+    </div>
+  );
+});
+
+// MessageRow renders one conversation message. Memoized so stream
+// deltas only re-render the message that changed instead of reparsing
+// every completed message on each token.
+const MessageRow = memo(function MessageRow({
+  msg,
+  busy,
+  streaming,
+}: {
+  msg: MessageView;
+  busy: boolean;
+  streaming: boolean;
+}) {
+  const { t } = useTranslation();
+  if (msg.role === "user") {
+    if (msg.text.startsWith(COMPACT_SUMMARY_PREFIX)) {
+      return <CompactCard text={msg.text} />;
+    }
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[80%] rounded-2xl rounded-br-sm border border-accent/30 bg-accent/15 px-4 py-2.5 text-sm whitespace-pre-wrap">
+          {msg.text}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-1">
+      {msg.items.map((item) => {
+        switch (item.kind) {
+          case "reasoning":
+            return <Reasoning key={item.id} text={item.text} />;
+          case "tool_call":
+            return <ToolCard key={item.id} tool={item.tool} />;
+          case "text":
+            return (
+              <AssistantText
+                key={item.id}
+                text={item.text}
+                streaming={streaming}
+              />
+            );
+        }
+      })}
+      {msg.items.length === 0 && busy && (
+        <div className="flex items-center gap-2 py-1 text-sm text-dim">
+          <Loader2 size={14} className="animate-spin" />
+          {t("chat.thinking")}
+        </div>
+      )}
+    </div>
+  );
+});
 
 // CompactCard renders a compaction summary (a user message marked with
 // COMPACT_SUMMARY_PREFIX) as a tool-style card instead of a chat
@@ -234,44 +312,16 @@ export function ChatView() {
           </div>
         ) : (
           <div className="max-w-3xl mx-auto space-y-4">
-            {messages.map((msg) =>
-              msg.role === "user" ? (
-                msg.text.startsWith(COMPACT_SUMMARY_PREFIX) ? (
-                  <CompactCard key={msg.id} text={msg.text} />
-                ) : (
-                  <div key={msg.id} className="flex justify-end">
-                    <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-accent/15 border border-accent/30 px-4 py-2.5 text-sm whitespace-pre-wrap">
-                      {msg.text}
-                    </div>
-                  </div>
-                )
-              ) : (
-                <div key={msg.id} className="flex flex-col gap-1">
-                  {msg.items.map((item) => {
-                    switch (item.kind) {
-                      case "reasoning":
-                        return <Reasoning key={item.id} text={item.text} />;
-                      case "tool_call":
-                        return <ToolCard key={item.id} tool={item.tool} />;
-                      case "text":
-                        return (
-                          <div key={item.id} className="prose-chat text-sm">
-                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                              {item.text}
-                            </ReactMarkdown>
-                          </div>
-                        );
-                    }
-                  })}
-                  {msg.items.length === 0 && busy && (
-                    <div className="flex items-center gap-2 text-dim text-sm py-1">
-                      <Loader2 size={14} className="animate-spin" />
-                      {t("chat.thinking")}
-                    </div>
-                  )}
-                </div>
-              ),
-            )}
+            {messages.map((msg, i) => (
+              <MessageRow
+                key={msg.id}
+                msg={msg}
+                busy={busy}
+                streaming={
+                  busy && msg.role === "assistant" && i === messages.length - 1
+                }
+              />
+            ))}
             {pendingInteracts.map((spec) => (
               <InteractionCard key={spec.id} spec={spec} />
             ))}
