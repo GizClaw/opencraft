@@ -258,25 +258,14 @@ func (s *Service) Modify(name string, doc SkillDocument, scope string) (string, 
 // the copy replaces the original only when everything succeeded.
 // Returns the changed relative paths.
 func (s *Service) Patch(name, patch, scope string) ([]string, error) {
-	name = strings.TrimSpace(name)
-	if !validName(name) {
-		return nil, fmt.Errorf(
-			"skills: invalid name %q (lowercase letters, digits and hyphens only)", name)
-	}
 	if strings.TrimSpace(patch) == "" {
 		return nil, fmt.Errorf("skills: patch is required")
 	}
-	if scope == "" {
-		scope = ScopeRepo
-	}
-	root, err := s.installDir(scope)
+	dir, err := s.SkillDir(name, scope)
 	if err != nil {
 		return nil, err
 	}
-	dir := filepath.Join(root, name)
-	if _, err := os.Stat(filepath.Join(dir, "SKILL.md")); err != nil {
-		return nil, fmt.Errorf("skills: %q not found in %s scope", name, scope)
-	}
+	root := filepath.Dir(dir)
 	tmp, err := os.MkdirTemp(root, ".skill-patch-*")
 	if err != nil {
 		return nil, err
@@ -308,6 +297,27 @@ func (s *Service) Patch(name, patch, scope string) ([]string, error) {
 		paths = append(paths, r.Path)
 	}
 	return paths, nil
+}
+
+// SkillDir resolves the directory of one existing skill in scope.
+func (s *Service) SkillDir(name, scope string) (string, error) {
+	name = strings.TrimSpace(name)
+	if !validName(name) {
+		return "", fmt.Errorf(
+			"skills: invalid name %q (lowercase letters, digits and hyphens only)", name)
+	}
+	if scope == "" {
+		scope = ScopeRepo
+	}
+	root, err := s.installDir(scope)
+	if err != nil {
+		return "", err
+	}
+	dir := filepath.Join(root, name)
+	if _, err := os.Stat(filepath.Join(dir, "SKILL.md")); err != nil {
+		return "", fmt.Errorf("skills: %q not found in %s scope", name, scope)
+	}
+	return dir, nil
 }
 
 // copyTree copies src into dst preserving directory/file modes and

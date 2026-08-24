@@ -105,6 +105,24 @@ type UsagePoint struct {
 	ReasoningTokens int64  `json:"reasoning_tokens"`
 }
 
+// PatchLineDTO is one rendered diff line with old/new line numbers.
+type PatchLineDTO struct {
+	Kind   string `json:"kind"` // context | add | delete
+	OldNum int    `json:"old_num,omitempty"`
+	NewNum int    `json:"new_num,omitempty"`
+	Text   string `json:"text"`
+}
+
+// PatchFileDTO is one file's rendered diff (git-style, with line
+// numbers computed against the current file content).
+type PatchFileDTO struct {
+	Path    string         `json:"path"`
+	Action  string         `json:"action"` // add | update | delete
+	Added   int            `json:"added"`
+	Removed int            `json:"removed"`
+	Lines   []PatchLineDTO `json:"lines"`
+}
+
 // ModelOption is one selectable per-conversation model hint. ID is the
 // "provider/name" value the router's model_hint consumes; Label is the
 // human-facing description.
