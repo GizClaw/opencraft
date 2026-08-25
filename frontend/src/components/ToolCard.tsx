@@ -78,6 +78,8 @@ function summaryOf(tool: ToolView): Summary | null {
       return { verb: "readSkill", rest: str(args.name) };
     case "create_agent":
       return { verb: "createdAgent", rest: str(args.name) };
+    case "update_agent":
+      return { verb: "updatedAgent", rest: str(args.name) };
     case "unregister_agent":
       return { verb: "unregisteredAgent", rest: str(args.name) };
     case "tool_search":

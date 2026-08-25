@@ -13,6 +13,8 @@ import (
 const (
 	// CreateName is the canonical create_agent tool name.
 	CreateName = "create_agent"
+	// UpdateName is the canonical update_agent tool name.
+	UpdateName = "update_agent"
 	// RemoveName is the canonical unregister_agent tool name.
 	RemoveName = "unregister_agent"
 )
@@ -43,6 +45,7 @@ func MustNew(lifecycle *Lifecycle) *Tool {
 func (t *Tool) Tools() []tool.Tool {
 	return []tool.Tool{
 		createTool{t.lifecycle},
+		updateTool{t.lifecycle},
 		removeTool{t.lifecycle},
 	}
 }
@@ -115,6 +118,69 @@ func (t createTool) Execute(
 	})
 	if err != nil {
 		return "", errdefs.Internalf("%s: encode result: %v", CreateName, err)
+	}
+	return string(payload), nil
+}
+
+type updateTool struct{ lifecycle *Lifecycle }
+
+var _ tool.Tool = updateTool{}
+
+func (updateTool) Definition() message.ToolDefinition {
+	return message.DefineSchema(
+		UpdateName,
+		"Updates an existing persistent subagent created by create_agent: "+
+			"only the provided fields (description, graph) are replaced, "+
+			"and the name is immutable (it identifies the agent; renaming "+
+			"means unregister_agent then create_agent). The live "+
+			"registration is swapped after in-flight delegations drain "+
+			"(bounded by the remove timeout), so delegate calls may fail "+
+			"briefly during the swap, and the "+
+			"~/.opencraft/agents/<name>/agent.yaml declaration is then "+
+			"rewritten. On any failure the previous definition stays in "+
+			"effect; a call that changes nothing is a no-op. Author graph "+
+			"changes with the flowcraft-config skill (install it first "+
+			"with skill_install flowcraft-config if unavailable), then "+
+			"call this tool. Workflow: create_agent → delegate → "+
+			"update_agent to iterate on the definition → unregister_agent "+
+			"when done.",
+		message.ToolProperty("name", "string",
+			"Agent id to update (required)."),
+		message.ToolProperty("description", "string",
+			"New one-sentence capability summary shown in delegation targets (optional; replaces the existing one)."),
+		message.ToolProperty("graph", "string",
+			"New complete flowcraft graph definition (JSON or YAML) including the system prompt (optional; replaces the existing graph)."),
+	).Required("name").DisallowAdditionalProperties().Build()
+}
+
+func (updateTool) Metadata() tool.ToolMeta { return tool.ToolMeta{} }
+
+func (t updateTool) Execute(
+	ctx context.Context, arguments string,
+) (string, error) {
+	var args struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Graph       string `json:"graph"`
+	}
+	if err := strictDecode(arguments, &args); err != nil {
+		return "", err
+	}
+	result, err := t.lifecycle.Update(ctx, args.Name, args.Description, args.Graph)
+	if err != nil {
+		return "", err
+	}
+	payload, err := json.Marshal(map[string]any{
+		"name":         result.Name,
+		"description":  result.Description,
+		"persisted_to": result.PersistedTo,
+		"created_at":   result.CreatedAt,
+		"status":       "updated",
+		"hint": "The updated definition is live; future delegate calls " +
+			"target it.",
+	})
+	if err != nil {
+		return "", errdefs.Internalf("%s: encode result: %v", UpdateName, err)
 	}
 	return string(payload), nil
 }

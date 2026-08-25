@@ -63,7 +63,7 @@ func TestRemoveToolExecute(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	got, err := tool.Tools()[1].Execute(context.Background(),
+	got, err := tool.Tools()[2].Execute(context.Background(),
 		`{"name":"worker"}`)
 	if err != nil {
 		t.Fatalf("Execute remove: %v", err)
@@ -73,5 +73,65 @@ func TestRemoveToolExecute(t *testing.T) {
 	}
 	if len(lc.List()) != 0 {
 		t.Errorf("List after remove = %+v, want empty", lc.List())
+	}
+}
+
+func TestUpdateToolDefinitionAndExecute(t *testing.T) {
+	tool := testTool(t)
+	lc := tool.lifecycle
+	if _, err := lc.Create(context.Background(), AgentSpec{
+		Name:        "worker",
+		Description: "old description",
+		Graph:       testGraph,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	def := tool.Tools()[1].Definition()
+	if def.Name != UpdateName {
+		t.Errorf("tool name = %s, want %s", def.Name, UpdateName)
+	}
+	if !strings.Contains(def.Description, "flowcraft-config") {
+		t.Errorf("description should mention flowcraft-config: %s", def.Description)
+	}
+
+	got, err := tool.Tools()[1].Execute(context.Background(),
+		`{"name":"worker","description":"new description","graph":"{\"name\":\"g2\",\"entry\":\"llm\",\"nodes\":[{\"id\":\"llm\",\"type\":\"inference\",\"config\":{\"system_prompt\":\"SP2\"}}],\"edges\":[{\"from\":\"llm\",\"to\":\"__end__\"}]}"}`)
+	if err != nil {
+		t.Fatalf("Execute update: %v", err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(got), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["name"] != "worker" || result["status"] != "updated" {
+		t.Errorf("result = %v", result)
+	}
+	if result["description"] != "new description" {
+		t.Errorf("result description = %v", result["description"])
+	}
+	list := lc.List()
+	if len(list) != 1 || list[0].Description != "new description" {
+		t.Errorf("List after update = %+v", list)
+	}
+}
+
+func TestUpdateToolRequiresExistingAgent(t *testing.T) {
+	tool := testTool(t)
+	if _, err := tool.Tools()[1].Execute(context.Background(),
+		`{"name":"ghost","description":"desc"}`); err == nil {
+		t.Fatal("update of missing agent succeeded")
+	} else if !errdefs.IsNotFound(err) {
+		t.Errorf("error = %v, want NotFound", err)
+	}
+}
+
+func TestUpdateToolRejectsUnknownField(t *testing.T) {
+	tool := testTool(t)
+	if _, err := tool.Tools()[1].Execute(context.Background(),
+		`{"name":"worker","description":"desc","bogus":1}`); err == nil {
+		t.Fatal("unknown field accepted")
+	} else if !errdefs.IsValidation(err) {
+		t.Errorf("error = %v, want validation", err)
 	}
 }

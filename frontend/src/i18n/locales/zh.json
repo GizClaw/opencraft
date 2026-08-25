@@ -215,6 +215,7 @@
     "searchedSkill": "搜索技能",
     "readSkill": "读取技能",
     "createdAgent": "创建代理",
+    "updatedAgent": "更新代理",
     "unregisteredAgent": "移除代理",
     "compacted": "自动压缩",
     "searchedTools": "搜索工具",

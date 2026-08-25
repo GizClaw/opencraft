@@ -26,6 +26,7 @@ type fakeRegistrar struct {
 	registered    map[string]agent.Definition
 	removed       []string
 	registerErr   error
+	registerFails int
 	unregisterErr error
 }
 
@@ -43,6 +44,10 @@ func (f *fakeRegistrar) RegisterAgent(
 	defer f.mu.Unlock()
 	if f.registerErr != nil {
 		return nil, f.registerErr
+	}
+	if f.registerFails > 0 {
+		f.registerFails--
+		return nil, errdefs.Internalf("agent %q register failed (injected)", name)
 	}
 	if _, ok := f.registered[name]; ok {
 		return nil, errdefs.Conflictf("agent %q already registered", name)
@@ -162,6 +167,233 @@ func TestCreateRollsBackOnPersistFailure(t *testing.T) {
 	}
 	if len(reg.removed) != 1 || reg.removed[0] != "doomed" {
 		t.Errorf("rollback removals = %v, want [doomed]", reg.removed)
+	}
+}
+
+func TestUpdateSwapsRegistrationAndPersists(t *testing.T) {
+	reg := newFakeRegistrar()
+	lc, dir := newTestLifecycle(t, reg)
+	orig := AgentSpec{
+		Name:        "researcher",
+		Description: "old description",
+		Graph:       testGraph,
+	}
+	created, err := lc.Create(context.Background(), orig)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	newDesc := "new description"
+	newGraph := `{"name":"g2","entry":"llm","nodes":[{"id":"llm","type":"inference","config":{"system_prompt":"SP2","tool_pending_key":"tool_pending"}}],"edges":[{"from":"llm","to":"__end__","condition":"tool_pending == false"}]}`
+	result, err := lc.Update(context.Background(), "researcher", newDesc, newGraph)
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if result.Name != "researcher" || result.Description != newDesc {
+		t.Errorf("result = %+v", result)
+	}
+
+	// The runtime registration was swapped (drain first, then the new
+	// definition) and the original created_at is preserved.
+	if len(reg.removed) != 1 || reg.removed[0] != "researcher" {
+		t.Errorf("removals = %v, want [researcher]", reg.removed)
+	}
+	def, ok := reg.definitions()["researcher"]
+	if !ok {
+		t.Fatal("updated agent not registered")
+	}
+	if def.Card.Description != newDesc {
+		t.Errorf("card description = %q, want %q", def.Card.Description, newDesc)
+	}
+	var engineSettings map[string]any
+	if err := json.Unmarshal(def.Engine.Settings, &engineSettings); err != nil {
+		t.Fatalf("decode engine settings: %v", err)
+	}
+	if engineSettings["graph"] != newGraph {
+		t.Errorf("engine settings graph = %v, want new graph verbatim", engineSettings["graph"])
+	}
+
+	// The persisted declaration round-trips the new spec.
+	data, err := os.ReadFile(filepath.Join(dir, "researcher", specFile))
+	if err != nil {
+		t.Fatalf("read persisted spec: %v", err)
+	}
+	var persisted AgentSpec
+	if err := yaml.Unmarshal(data, &persisted); err != nil {
+		t.Fatalf("decode persisted spec: %v", err)
+	}
+	if persisted.Description != newDesc || persisted.Graph != newGraph {
+		t.Errorf("persisted = %+v", persisted)
+	}
+	if !persisted.CreatedAt.Equal(created.CreatedAt) {
+		t.Errorf("created_at changed: %s -> %s", created.CreatedAt, persisted.CreatedAt)
+	}
+}
+
+func TestUpdatePartialFieldKeepsRest(t *testing.T) {
+	reg := newFakeRegistrar()
+	lc, _ := newTestLifecycle(t, reg)
+	if _, err := lc.Create(context.Background(), AgentSpec{
+		Name:        "worker",
+		Description: "old description",
+		Graph:       testGraph,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if _, err := lc.Update(context.Background(), "worker", "new description", ""); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	def, ok := reg.definitions()["worker"]
+	if !ok {
+		t.Fatal("agent not registered")
+	}
+	if def.Card.Description != "new description" {
+		t.Errorf("description = %q, want updated", def.Card.Description)
+	}
+	var engineSettings map[string]any
+	if err := json.Unmarshal(def.Engine.Settings, &engineSettings); err != nil {
+		t.Fatalf("decode engine settings: %v", err)
+	}
+	if engineSettings["graph"] != testGraph {
+		t.Errorf("graph changed unexpectedly: %v", engineSettings["graph"])
+	}
+}
+
+func TestUpdateMissingAgentFails(t *testing.T) {
+	lc, _ := newTestLifecycle(t, newFakeRegistrar())
+	if _, err := lc.Update(context.Background(), "ghost", "desc", testGraph); err == nil {
+		t.Fatal("Update of missing agent succeeded")
+	} else if !errdefs.IsNotFound(err) {
+		t.Errorf("error = %v, want NotFound", err)
+	}
+}
+
+func TestUpdateNothingToUpdateFails(t *testing.T) {
+	reg := newFakeRegistrar()
+	lc, _ := newTestLifecycle(t, reg)
+	if _, err := lc.Create(context.Background(), AgentSpec{
+		Name:        "worker",
+		Description: "desc",
+		Graph:       testGraph,
+	}); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := lc.Update(context.Background(), "worker", "", ""); err == nil {
+		t.Fatal("empty update succeeded")
+	} else if !errdefs.IsValidation(err) {
+		t.Errorf("error = %v, want validation", err)
+	}
+	if len(reg.removed) != 0 {
+		t.Errorf("runtime touched on no-op update: removals = %v", reg.removed)
+	}
+}
+
+func TestUpdateNoChangeIsNoop(t *testing.T) {
+	reg := newFakeRegistrar()
+	lc, _ := newTestLifecycle(t, reg)
+	spec := AgentSpec{
+		Name:        "worker",
+		Description: "desc",
+		Graph:       testGraph,
+	}
+	if _, err := lc.Create(context.Background(), spec); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := lc.Update(context.Background(), "worker", spec.Description, spec.Graph); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if len(reg.removed) != 0 {
+		t.Errorf("no-change update should not drain: removals = %v", reg.removed)
+	}
+	if len(reg.definitions()) != 1 {
+		t.Errorf("registrations = %+v, want untouched", reg.definitions())
+	}
+}
+
+func TestUpdateRegisterFailureRestoresOld(t *testing.T) {
+	reg := newFakeRegistrar()
+	lc, _ := newTestLifecycle(t, reg)
+	orig := AgentSpec{
+		Name:        "worker",
+		Description: "old description",
+		Graph:       testGraph,
+	}
+	if _, err := lc.Create(context.Background(), orig); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// The next RegisterAgent (the swap) fails once; the restore
+	// registration afterwards must succeed and carry the old spec.
+	reg.registerFails = 1
+	if _, err := lc.Update(context.Background(), "worker", "new description", testGraph); err == nil {
+		t.Fatal("Update succeeded despite register failure")
+	}
+	def, ok := reg.definitions()["worker"]
+	if !ok {
+		t.Fatal("old registration not restored")
+	}
+	if def.Card.Description != orig.Description {
+		t.Errorf("restored description = %q, want %q", def.Card.Description, orig.Description)
+	}
+}
+
+func TestUpdateRollsBackOnPersistFailure(t *testing.T) {
+	reg := newFakeRegistrar()
+	lc, dir := newTestLifecycle(t, reg)
+	orig := AgentSpec{
+		Name:        "doomed",
+		Description: "old description",
+		Graph:       testGraph,
+	}
+	if _, err := lc.Create(context.Background(), orig); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	// Make the agent directory unwritable so writeSpec fails after the
+	// runtime swap already happened.
+	if err := os.Chmod(filepath.Join(dir, "doomed"), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Join(dir, "doomed"), 0o700) })
+
+	if _, err := lc.Update(context.Background(), "doomed", "new description", testGraph); err == nil {
+		t.Fatal("Update should fail when persistence fails")
+	}
+	def, ok := reg.definitions()["doomed"]
+	if !ok {
+		t.Fatal("old registration not restored after persist failure")
+	}
+	if def.Card.Description != orig.Description {
+		t.Errorf("restored description = %q, want %q", def.Card.Description, orig.Description)
+	}
+	// The update drained once for the swap and the restore drained the
+	// half-swapped definition before re-registering the old one.
+	if len(reg.removed) != 2 || reg.removed[0] != "doomed" || reg.removed[1] != "doomed" {
+		t.Errorf("removals = %v, want [doomed doomed]", reg.removed)
+	}
+}
+
+func TestUpdateUnregisterFailureAborts(t *testing.T) {
+	reg := newFakeRegistrar()
+	lc, _ := newTestLifecycle(t, reg)
+	orig := AgentSpec{
+		Name:        "worker",
+		Description: "old description",
+		Graph:       testGraph,
+	}
+	if _, err := lc.Create(context.Background(), orig); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	reg.unregisterErr = errdefs.Internalf("drain failed")
+	if _, err := lc.Update(context.Background(), "worker", "new description", testGraph); err == nil {
+		t.Fatal("Update succeeded despite drain failure")
+	}
+	def, ok := reg.definitions()["worker"]
+	if !ok {
+		t.Fatal("agent missing after aborted update")
+	}
+	if def.Card.Description != orig.Description {
+		t.Errorf("description = %q, want original %q", def.Card.Description, orig.Description)
 	}
 }
 

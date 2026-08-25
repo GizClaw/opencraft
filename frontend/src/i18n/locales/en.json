@@ -215,6 +215,7 @@
     "searchedSkill": "Searched skill",
     "readSkill": "Read skill",
     "createdAgent": "Created agent",
+    "updatedAgent": "Updated agent",
     "unregisteredAgent": "Removed agent",
     "compacted": "Auto-compacted",
     "searchedTools": "Searched tools",

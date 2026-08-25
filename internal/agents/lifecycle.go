@@ -1,8 +1,9 @@
 // Package agents owns persistent subagents: create_agent /
-// unregister_agent tools, the runtime wiring that registers them, and
-// the ~/.opencraft/agents/<name>/agent.yaml declarations that survive
-// restarts. A subagent is a flowcraft graph agent with its own system
-// prompt; the caller only supplies the role and instructions.
+// update_agent / unregister_agent tools, the runtime wiring that
+// registers them, and the ~/.opencraft/agents/<name>/agent.yaml
+// declarations that survive restarts. A subagent is a flowcraft graph
+// agent with its own system prompt; the caller only supplies the role
+// and instructions.
 package agents
 
 import (
@@ -193,12 +194,123 @@ func (l *Lifecycle) Create(ctx context.Context, spec AgentSpec) (CreateResult, e
 		}
 		return CreateResult{}, fmt.Errorf("agents: persist %q: %w", spec.Name, err)
 	}
+	return l.resultFor(l.agentDir(spec.Name), spec), nil
+}
+
+// Update applies a partial change to an existing subagent: non-empty
+// description/graph values replace the persisted ones. The name is
+// immutable (renaming means remove + create). The runtime registration
+// is swapped for the new definition after in-flight delegations drain,
+// then the declaration is rewritten; on any failure the old
+// registration and declaration are restored so the two stay
+// consistent. A call that changes nothing is a no-op.
+func (l *Lifecycle) Update(
+	ctx context.Context,
+	name, description, graph string,
+) (CreateResult, error) {
+	if err := validateAgentName(name); err != nil {
+		return CreateResult{}, err
+	}
+	if strings.TrimSpace(description) == "" && strings.TrimSpace(graph) == "" {
+		return CreateResult{}, errdefs.Validationf(
+			"agents: update %q: nothing to update (provide description and/or graph)", name)
+	}
+	reg := l.registrar()
+	if reg == nil {
+		return CreateResult{}, errdefs.NotAvailablef("agents: runtime not ready")
+	}
+
+	dir := l.agentDir(name)
+	old, err := l.readSpec(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return CreateResult{}, errdefs.NotFoundf(
+				"agents: %q is not a persisted agent", name)
+		}
+		return CreateResult{}, fmt.Errorf("agents: read %q declaration: %w", name, err)
+	}
+
+	updated := old
+	if strings.TrimSpace(description) != "" {
+		updated.Description = description
+	}
+	if strings.TrimSpace(graph) != "" {
+		updated.Graph = graph
+	}
+	if updated == old {
+		// No field actually changed: the agent is already current, so
+		// skip the drain/swap/write entirely.
+		return l.resultFor(dir, updated), nil
+	}
+	if err := updated.Validate(); err != nil {
+		return CreateResult{}, err
+	}
+
+	// Swap the live registration: drain in-flight delegations first,
+	// then register the new definition. On failure restore the old one.
+	if err := reg.UnregisterAgent(
+		ctx, name, runtimecore.WithRemoveTimeout(removeTimeout),
+	); err != nil {
+		return CreateResult{}, fmt.Errorf("agents: unregister %q for update: %w", name, err)
+	}
+	if _, err := reg.RegisterAgent(
+		ctx, name, agentDefinition(updated),
+		runtimecore.WithToolAssembly(toolAssemblyResource),
+	); err != nil {
+		l.restoreAfterFailedUpdate(ctx, name, old, err)
+		return CreateResult{}, fmt.Errorf("agents: register updated %q: %w", name, err)
+	}
+	if err := l.writeSpec(updated); err != nil {
+		l.restoreAfterFailedUpdate(ctx, name, old, err)
+		return CreateResult{}, fmt.Errorf("agents: persist updated %q: %w", name, err)
+	}
+	return l.resultFor(dir, updated), nil
+}
+
+// restoreAfterFailedUpdate re-registers the previous declaration after
+// an update failed partway (the new registration or the disk write did
+// not complete). The name may or may not still be registered at this
+// point: if the swap registration failed it is free, and if the disk
+// write failed it holds the new definition. Unregistering first covers
+// both cases (unknown names are an idempotent no-op), so the old
+// declaration can always be re-registered. Restore failures are logged
+// but the primary error is what the caller sees.
+func (l *Lifecycle) restoreAfterFailedUpdate(
+	ctx context.Context,
+	name string,
+	old AgentSpec,
+	updateErr error,
+) {
+	rollbackCtx, cancel := context.WithTimeout(context.Background(), removeTimeout)
+	defer cancel()
+	if err := l.registrar().UnregisterAgent(
+		rollbackCtx, name,
+		runtimecore.WithRemoveTimeout(removeTimeout),
+	); err != nil {
+		telemetry.Error(ctx, "agents: unregister failed definition during restore",
+			log.String("agent", name),
+			log.String("update_error", updateErr.Error()),
+			log.String("restore_error", err.Error()))
+		return
+	}
+	if _, err := l.registrar().RegisterAgent(
+		rollbackCtx, old.Name, agentDefinition(old),
+		runtimecore.WithToolAssembly(toolAssemblyResource),
+	); err != nil {
+		telemetry.Error(ctx, "agents: restore registration after update failure",
+			log.String("agent", name),
+			log.String("update_error", updateErr.Error()),
+			log.String("restore_error", err.Error()))
+	}
+}
+
+func (l *Lifecycle) resultFor(dir string, spec AgentSpec) CreateResult {
 	return CreateResult{
 		Name:        spec.Name,
 		Description: spec.Description,
-		PersistedTo: l.agentDir(spec.Name),
+		PersistedTo: dir,
 		CreatedAt:   spec.CreatedAt,
-	}, nil
+	}
 }
 
 // Remove unregisters the agent (draining in-flight delegations) and
