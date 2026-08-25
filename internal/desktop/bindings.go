@@ -63,9 +63,10 @@ func (a *App) ConfigState() (ConfigState, error) {
 	st := ConfigState{Model: config.DefaultModel(a.userDir)}
 	for _, in := range cfg.Instances {
 		st.Instances = append(st.Instances, ProviderInstance{
-			Type: in.Type,
-			Name: in.Name,
-			API:  in.API,
+			StableID: in.StableID,
+			Type:     in.Type,
+			Name:     in.Name,
+			API:      in.API,
 			// Never echo the stored secret back to the renderer; the
 			// settings page only learns whether a key exists.
 			KeySet: in.KeySource == config.KeyEnv ||
@@ -191,14 +192,21 @@ func (a *App) SaveInstances(req InferenceRequest) error {
 	// or unparseable config is treated as a fresh install.
 	existing, _ := config.LoadInference(a.userDir)
 	claimed := make(map[int]bool)
-	sameTypeSeen := make(map[string]int)
-	cfg := config.InferenceConfig{}
+	type keyedRow struct {
+		idx      int    // position in instances
+		name     string // request display name (error messages)
+		typ      string // catalog id
+		required bool   // enabled rows must end up with a key
+	}
+	var pending []keyedRow
+	instances := make([]config.Instance, 0, len(req.Instances))
 	for _, p := range req.Instances {
 		prov, ok := providerByID(strings.TrimSpace(p.Type))
 		if !ok {
 			return fmt.Errorf("unknown provider type %q", p.Type)
 		}
 		in := config.Instance{
+			StableID:  strings.TrimSpace(p.StableID),
 			Type:      prov.ID,
 			Name:      strings.TrimSpace(p.Name),
 			API:       strings.TrimSpace(p.API),
@@ -209,6 +217,11 @@ func (a *App) SaveInstances(req InferenceRequest) error {
 			WebSearch: p.WebSearch,
 			Enabled:   p.Enabled,
 			KeySource: config.KeyLiteral,
+		}
+		if in.StableID == "" {
+			// A row without an identity is brand new in the settings
+			// page; give it one so the next save matches by id.
+			in.StableID = config.NewStableID()
 		}
 		switch {
 		case p.KeyEnv:
@@ -221,31 +234,62 @@ func (a *App) SaveInstances(req InferenceRequest) error {
 		case strings.TrimSpace(p.Key) != "":
 			in.KeyValue = strings.TrimSpace(p.Key)
 		case p.Enabled:
-			sameTypeSeen[prov.ID]++
-			idx, ok := config.MatchStoredKey(
-				existing.Instances,
-				prov.ID,
-				strings.TrimSpace(p.Name),
-				strings.TrimSpace(p.Model),
-				strings.TrimSpace(p.Endpoint),
-				strings.TrimSpace(p.API),
-				sameTypeSeen[prov.ID],
-				claimed,
-			)
-			if !ok {
-				return fmt.Errorf(
-					"instance %s (%s): an API key or the env key source is required",
-					p.Name, prov.ID)
-			}
-			claimed[idx] = true
-			in.KeySource = existing.Instances[idx].KeySource
-			in.KeyValue = existing.Instances[idx].KeyValue
+			pending = append(pending, keyedRow{
+				idx:      len(instances),
+				name:     p.Name,
+				typ:      prov.ID,
+				required: true,
+			})
+		case strings.TrimSpace(p.StableID) != "":
+			// Disabled rows with a persisted identity keep their stored
+			// key too, so re-enabling needs no re-entry. Unlike enabled
+			// rows, a missing stored key is not an error: the row stays
+			// declared without one.
+			pending = append(pending, keyedRow{
+				idx:  len(instances),
+				name: p.Name,
+				typ:  prov.ID,
+			})
 		default:
 			// Disabled instances may be saved without a key; they are
 			// kept so re-enabling needs no re-entry.
 		}
-		cfg.Instances = append(cfg.Instances, in)
+		instances = append(instances, in)
 	}
+	if len(pending) > 0 {
+		rows := make([]config.KeyRequest, len(pending))
+		for i, r := range pending {
+			rows[i] = config.KeyRequest{
+				StableID: strings.TrimSpace(req.Instances[r.idx].StableID),
+				Type:     r.typ,
+				Name:     strings.TrimSpace(req.Instances[r.idx].Name),
+				Model:    strings.TrimSpace(req.Instances[r.idx].Model),
+				Endpoint: strings.TrimSpace(req.Instances[r.idx].Endpoint),
+				API:      strings.TrimSpace(req.Instances[r.idx].API),
+			}
+		}
+		idxs, ok := config.MatchStoredKeys(existing.Instances, rows, claimed)
+		if !ok {
+			for i, idx := range idxs {
+				if idx >= 0 || !pending[i].required {
+					continue
+				}
+				return fmt.Errorf(
+					"instance %s (%s): an API key or the env key source is required",
+					pending[i].name, pending[i].typ)
+			}
+		}
+		for i, idx := range idxs {
+			if idx < 0 {
+				// Optional row (disabled, no stored key) stays keyless.
+				continue
+			}
+			dst := &instances[pending[i].idx]
+			dst.KeySource = existing.Instances[idx].KeySource
+			dst.KeyValue = existing.Instances[idx].KeyValue
+		}
+	}
+	cfg := config.InferenceConfig{Instances: instances}
 	if len(cfg.Enabled()) == 0 {
 		return errors.New("enable at least one instance")
 	}

@@ -49,6 +49,7 @@ export namespace config {
 export namespace desktop {
 	
 	export class ProviderInstance {
+	    stable_id: string;
 	    type: string;
 	    name: string;
 	    api: string;
@@ -68,6 +69,7 @@ export namespace desktop {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.stable_id = source["stable_id"];
 	        this.type = source["type"];
 	        this.name = source["name"];
 	        this.api = source["api"];

@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -77,6 +78,7 @@ const (
 // may share the same provider type (e.g. two DeepSeek endpoints);
 // enabled instances form the router priority order.
 type Instance struct {
+	StableID  string // stable identity across saves/reorders ("" on legacy configs)
 	Type      string // catalog ID: deepseek | openai | ...
 	Name      string // display label; empty derives "<type>-<n>"
 	API       string // responses | chat (openai / openai-like)
@@ -88,6 +90,19 @@ type Instance struct {
 	KeySource KeySource
 	KeyValue  string // literal key (KeyLiteral only)
 	Enabled   bool
+}
+
+// NewStableID returns a fresh instance identity. It is generated once
+// per new row on save and persisted as stable_id, so later saves can
+// match rows by identity instead of guessing from fingerprints.
+func NewStableID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand is not expected to fail; fall back to a
+		// time-derived id so saving still works.
+		return fmt.Sprintf("inst-%d", time.Now().UnixNano())
+	}
+	return fmt.Sprintf("inst-%x", b)
 }
 
 // InferenceConfig is one completed inference configuration: the
@@ -203,6 +218,9 @@ func (c InferenceConfig) InferenceYAML() ([]byte, error) {
 		fmt.Fprintf(&b, "    kind: inference.Provider\n")
 		fmt.Fprintf(&b, "    impl: %s\n", prov.Impl)
 		fmt.Fprintf(&b, "    settings:\n")
+		if in.StableID != "" {
+			fmt.Fprintf(&b, "      stable_id: %s\n", yamlQuote(in.StableID))
+		}
 		fmt.Fprintf(&b, "      id: %s\n", id)
 		fmt.Fprintf(&b, "      spec:\n")
 		if prov.Azure {
@@ -298,54 +316,116 @@ func WriteInference(configDir string, cfg InferenceConfig) error {
 	)
 }
 
-// MatchStoredKey returns the stored literal key of the existing
-// instance that best matches a request instance whose key is left
-// blank ("leave empty to keep"). Exact fingerprint matches (same type,
-// name, model, endpoint, api) win so reordering or deleting instances
-// never shifts keys onto the wrong row; otherwise the ordinal-th
-// existing instance of the same type is used, so editing a
-// model/endpoint in place keeps its key. claimed tracks old-instance
-// indexes already inherited by an earlier request row, preventing two
-// new rows from stealing the same key. Only literal keys are inherited
-// (env-sourced keys are chosen explicitly via the request).
-func MatchStoredKey(
+// KeyRequest is one request row that needs a stored literal key
+// ("leave empty to keep").
+type KeyRequest struct {
+	StableID string
+	Type     string
+	Name     string
+	Model    string
+	Endpoint string
+	API      string
+}
+
+// MatchStoredKeys assigns stored literal keys to request rows whose key
+// was left blank. Matching runs in three passes so reordering, deleting,
+// and editing never silently swap keys:
+//
+//  1. Exact stable-id matches claim their old instance first, so a row
+//     that was reordered or edited keeps its key no matter how its
+//     fields changed;
+//  2. Exact fingerprint matches (same type, name, model, endpoint, api)
+//     claim their old instance first, across every row, so reordering
+//     or deleting rows keeps each key on the right row (legacy configs
+//     without stable ids);
+//  3. Rows without a stable-id or fingerprint match take the first
+//     unclaimed same-type instance with a literal key, in request
+//     order, so a brand-new row (or one whose identity was lost) still
+//     finds an available key instead of hard-failing.
+//
+// claimed tracks old-instance indexes already inherited, preventing two
+// rows from stealing the same key. Only literal keys are inherited
+// (env-sourced keys are chosen explicitly via the request). The
+// returned slice has one old-instance index per row (-1 when that row
+// could not be matched; ok is false then).
+func MatchStoredKeys(
 	existing []Instance,
-	reqType, reqName, reqModel, reqEndpoint, reqAPI string,
-	ordinal int,
+	rows []KeyRequest,
 	claimed map[int]bool,
-) (int, bool) {
-	type typed struct {
-		idx int
-		in  Instance
+) ([]int, bool) {
+	matches := make([]int, len(rows))
+	done := make([]bool, len(rows))
+	for i := range matches {
+		matches[i] = -1
 	}
-	var same []typed
-	for i, in := range existing {
-		if in.Type == reqType {
-			same = append(same, typed{idx: i, in: in})
+	hasLiteralKey := func(in Instance) bool {
+		return in.KeySource == KeyLiteral && in.KeyValue != ""
+	}
+	sameIdentity := func(row KeyRequest, in Instance) bool {
+		return row.StableID != "" &&
+			in.StableID == row.StableID &&
+			in.Type == row.Type &&
+			hasLiteralKey(in)
+	}
+	fingerprint := func(row KeyRequest, in Instance) bool {
+		return in.Type == row.Type &&
+			in.Name == row.Name &&
+			in.Model == row.Model &&
+			in.Endpoint == row.Endpoint &&
+			in.API == row.API &&
+			hasLiteralKey(in)
+	}
+
+	// Pass 1: exact stable-id matches across all rows.
+	for i, row := range rows {
+		for idx, in := range existing {
+			if claimed[idx] {
+				continue
+			}
+			if sameIdentity(row, in) {
+				claimed[idx] = true
+				matches[i] = idx
+				done[i] = true
+				break
+			}
 		}
 	}
-	matches := func(in Instance) bool {
-		return in.Name == reqName &&
-			in.Model == reqModel &&
-			in.Endpoint == reqEndpoint &&
-			in.API == reqAPI &&
-			in.KeySource == KeyLiteral &&
-			in.KeyValue != ""
-	}
-	for _, t := range same {
-		if !claimed[t.idx] && matches(t.in) {
-			return t.idx, true
+	// Pass 2: exact fingerprints across all rows (legacy configs).
+	for i, row := range rows {
+		if done[i] {
+			continue
+		}
+		for idx, in := range existing {
+			if claimed[idx] {
+				continue
+			}
+			if fingerprint(row, in) {
+				claimed[idx] = true
+				matches[i] = idx
+				done[i] = true
+				break
+			}
 		}
 	}
-	if ordinal >= 1 && ordinal <= len(same) {
-		t := same[ordinal-1]
-		if !claimed[t.idx] &&
-			t.in.KeySource == KeyLiteral &&
-			t.in.KeyValue != "" {
-			return t.idx, true
+	// Pass 3: leftover rows take the first unclaimed same-type key.
+	for i, row := range rows {
+		if done[i] {
+			continue
+		}
+		for idx, in := range existing {
+			if in.Type != row.Type || claimed[idx] || !hasLiteralKey(in) {
+				continue
+			}
+			claimed[idx] = true
+			matches[i] = idx
+			done[i] = true
+			break
+		}
+		if !done[i] {
+			return matches, false
 		}
 	}
-	return -1, false
+	return matches, true
 }
 
 // managedResourceKeys returns the resources WriteInference owns: every
@@ -381,6 +461,7 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 	type instanceSettings struct {
 		Settings struct {
 			ID       string `json:"id"`
+			StableID string `json:"stable_id"`
 			Profiles []struct {
 				Secrets struct {
 					APIKey string `json:"api_key"`
@@ -468,6 +549,7 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 			continue
 		}
 		in := Instance{Type: instType}
+		in.StableID = res.Settings.StableID
 		if len(res.Settings.Profiles) > 0 {
 			k := res.Settings.Profiles[0].Secrets.APIKey
 			if strings.HasPrefix(k, "${env:") && strings.HasSuffix(k, "}") {

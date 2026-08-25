@@ -50,9 +50,10 @@ type ProviderView struct {
 // Enabled instances appear in router priority order; disabled ones are
 // kept so re-enabling needs no re-entry.
 type ProviderInstance struct {
-	Type string `json:"type"` // catalog type: deepseek | openai | ...
-	Name string `json:"name"` // display label
-	API  string `json:"api"`  // responses | chat (openai only)
+	StableID string `json:"stable_id"` // persisted identity; "" on newly added rows
+	Type     string `json:"type"`      // catalog type: deepseek | openai | ...
+	Name     string `json:"name"`      // display label
+	API      string `json:"api"`       // responses | chat (openai only)
 	// Key carries a new literal key from the settings page; an empty
 	// value means "keep the stored key". The backend never returns the
 	// stored secret through this field.

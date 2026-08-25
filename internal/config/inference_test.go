@@ -221,6 +221,39 @@ func TestLiteralKeyQuoted(t *testing.T) {
 	}
 }
 
+func TestInferenceStableIDRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	cfg := InferenceConfig{Instances: []Instance{{
+		StableID:  "inst-0a1b2c3d",
+		Type:      "deepseek",
+		Model:     "deepseek-v4-flash",
+		KeySource: KeyLiteral,
+		KeyValue:  "sk-roundtrip",
+		Enabled:   true,
+	}}}
+	if err := WriteInference(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "opencraft.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "stable_id: 'inst-0a1b2c3d'") {
+		t.Fatalf("stable_id missing from user layer:\n%s", data)
+	}
+
+	got, err := LoadInference(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Instances) != 1 || got.Instances[0].StableID != "inst-0a1b2c3d" {
+		t.Fatalf("round trip lost stable id: %+v", got.Instances)
+	}
+	if got.Instances[0].KeyValue != "sk-roundtrip" {
+		t.Fatalf("round trip lost key: %+v", got.Instances[0])
+	}
+}
+
 func TestWriteAndRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	cfg := envKeyed(t, "deepseek")

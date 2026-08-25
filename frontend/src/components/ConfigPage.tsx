@@ -24,6 +24,7 @@ import { UsageChart } from "./UsageChart";
 // InstanceRow is one editable inference instance in the settings page.
 interface InstanceRow {
   id: string; // frontend key
+  stableId: string; // persisted identity ("" on newly added rows)
   type: string;
   name: string;
   api: string;
@@ -112,6 +113,7 @@ export function ConfigPage() {
         setRows(
           (state.instances ?? []).map((s) => ({
             id: newID(),
+            stableId: s.stable_id ?? "",
             type: s.type,
             name: s.name ?? "",
             api: s.api ?? "",
@@ -289,6 +291,7 @@ export function ConfigPage() {
       ...prev,
       {
         id: newID(),
+        stableId: "",
         type,
         name: "",
         api: prov?.api ?? "",
@@ -333,6 +336,7 @@ export function ConfigPage() {
       return;
     }
     const instances: ProviderInstance[] = rows.map((r) => ({
+      stable_id: r.stableId,
       type: r.type,
       name: r.name,
       api: r.api,

@@ -20,6 +20,7 @@ export interface ProviderView {
 }
 
 export interface ProviderInstance {
+  stable_id: string;
   type: string;
   name: string;
   api: string;
