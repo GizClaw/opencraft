@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
-  Bot,
   Loader2,
   Plus,
   Settings,
@@ -13,7 +12,6 @@ import { useTranslation } from "react-i18next";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
 import type {
-  MCPServer,
   ModelUsageStat,
   ProviderInstance,
   ProviderView,
@@ -42,28 +40,13 @@ interface InstanceRow {
 type Tab =
   | "ui"
   | "inference"
-  | "mcp"
   | "usage"
-  | "agents"
   | "permissions"
-  | "skills"
   | "logs";
-
-interface MCPRow {
-  id: string;
-  name: string;
-  transport: string;
-  command: string;
-  url: string;
-  argsText: string;
-  envText: string;
-}
 
 export function ConfigPage() {
   const configured = useStore((s) => s.configured);
   const closeConfig = useStore((s) => s.closeConfig);
-  const agents = useStore((s) => s.agents);
-  const refreshAgents = useStore((s) => s.refreshAgents);
   const theme = useStore((s) => s.theme);
   const setTheme = useStore((s) => s.setTheme);
   const newID = () => `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -77,18 +60,10 @@ export function ConfigPage() {
   const [defaultModel, setDefaultModel] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [rules, setRules] = useState<string[]>([]);
   const [ruleInput, setRuleInput] = useState("");
-  const [skills, setSkills] = useState<{ name: string; description: string; scope: string; path: string }[]>([]);
-  const [skillToDelete, setSkillToDelete] = useState<{
-    name: string;
-    path: string;
-  } | null>(null);
   const [logs, setLogs] = useState("");
   const logsRef = useRef<HTMLPreElement>(null);
-  const [mcpRows, setMCPRows] = useState<MCPRow[]>([]);
-  const [mcpError, setMCPError] = useState("");
   const [usageRows, setUsageRows] = useState<ModelUsageStat[]>([]);
   const [usageError, setUsageError] = useState("");
   const [usageModel, setUsageModel] = useState("");
@@ -133,22 +108,13 @@ export function ConfigPage() {
         setError(String(err));
       }
     })();
-    void refreshAgents();
-  }, [refreshAgents]);
+  }, []);
 
   useEffect(() => {
     if (tab !== "permissions") return;
     void api
       .permissions()
       .then(setRules)
-      .catch((err) => setError(String(err)));
-  }, [tab]);
-
-  useEffect(() => {
-    if (tab !== "skills") return;
-    void api
-      .skills()
-      .then(setSkills)
       .catch((err) => setError(String(err)));
   }, [tab]);
 
@@ -167,28 +133,6 @@ export function ConfigPage() {
       logsRef.current.scrollTop = logsRef.current.scrollHeight;
     }
   }, [logs, tab]);
-
-  useEffect(() => {
-    if (tab !== "mcp") return;
-    void api
-      .mcpConfig()
-      .then((servers) =>
-        setMCPRows(
-          (servers ?? []).map((s) => ({
-            id: newID(),
-            name: s.name,
-            transport: s.transport,
-            command: s.command ?? "",
-            url: s.url ?? "",
-            argsText: (s.args ?? []).join(", "),
-            envText: Object.entries(s.env ?? {})
-              .map(([k, v]) => `${k}=${v}`)
-              .join("\n"),
-          })),
-        ),
-      )
-      .catch((err) => setMCPError(String(err)));
-  }, [tab]);
 
   useEffect(() => {
     if (tab !== "usage") return;
@@ -361,36 +305,6 @@ export function ConfigPage() {
     }
   };
 
-  const deleteAgent = async (name: string) => {
-    setError("");
-    try {
-      await api.unregisterAgent(name);
-      setConfirmDelete(null);
-      await refreshAgents();
-    } catch (err) {
-      setError(String(err));
-      setConfirmDelete(null);
-    }
-  };
-
-  const deleteSkill = async (path: string) => {
-    setError("");
-    try {
-      await api.deleteSkill(path);
-      setSkills((prev) => prev.filter((s) => s.path !== path));
-      setSkillToDelete(null);
-    } catch (err) {
-      setError(String(err));
-      setSkillToDelete(null);
-    }
-  };
-
-  const updateMCP = (id: string, patch: Partial<MCPRow>) => {
-    setMCPRows((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, ...patch } : r)),
-    );
-  };
-
   const fmtUsageTokens = (n: number) => {
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
     if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
@@ -408,48 +322,11 @@ export function ConfigPage() {
     return d.toLocaleDateString();
   };
 
-  const saveMCP = async () => {
-    setMCPError("");
-    const servers: MCPServer[] = mcpRows.map((r) => {
-      const srv: MCPServer = {
-        name: r.name.trim(),
-        transport: r.transport,
-      };
-      if (r.transport === "http") {
-        srv.url = r.url.trim();
-      } else {
-        srv.command = r.command.trim();
-      }
-      const args = r.argsText
-        .split(",")
-        .map((a) => a.trim())
-        .filter(Boolean);
-      if (args.length > 0) srv.args = args;
-      const env: Record<string, string> = {};
-      for (const line of r.envText.split("\n")) {
-        const eq = line.indexOf("=");
-        if (eq <= 0) continue;
-        env[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
-      }
-      if (Object.keys(env).length > 0) srv.env = env;
-      return srv;
-    });
-    try {
-      await api.saveMCP(servers);
-      setMCPError("");
-    } catch (err) {
-      setMCPError(String(err));
-    }
-  };
-
   const tabs: { id: Tab; label: string }[] = [
     { id: "ui", label: t("config.tabUi") },
     { id: "inference", label: t("config.tabInference") },
-    { id: "mcp", label: t("config.tabMCP") },
     { id: "usage", label: t("config.tabUsage") },
-    { id: "agents", label: t("config.tabAgents") },
     { id: "permissions", label: t("config.tabPermissions") },
-    { id: "skills", label: t("config.tabSkills") },
     { id: "logs", label: t("config.tabLogs") },
   ];
 
@@ -770,116 +647,6 @@ export function ConfigPage() {
             </div>
           )}
 
-          {tab === "mcp" && (
-            <div className="space-y-3">
-              <p className="text-xs text-dim">{t("config.mcpHint")}</p>
-              {mcpRows.length === 0 && (
-                <p className="text-sm text-dim">{t("config.mcpEmpty")}</p>
-              )}
-              <div className="space-y-3">
-                {mcpRows.map((row) => (
-                  <div
-                    key={row.id}
-                    className="rounded-xl border border-edge bg-panel2 p-3 space-y-2"
-                  >
-                    <div className="flex items-center gap-2">
-                      <input
-                        value={row.name}
-                        onChange={(e) => updateMCP(row.id, { name: e.target.value })}
-                        placeholder={t("config.mcpName")}
-                        className="flex-1 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
-                      />
-                      <select
-                        value={row.transport}
-                        onChange={(e) =>
-                          updateMCP(row.id, { transport: e.target.value })
-                        }
-                        className="rounded-lg border border-edge bg-panel px-2 py-1.5 text-sm outline-none"
-                      >
-                        <option value="stdio">stdio</option>
-                        <option value="http">http</option>
-                      </select>
-                      <button
-                        onClick={() =>
-                          setMCPRows((prev) => prev.filter((r) => r.id !== row.id))
-                        }
-                        className="text-dim hover:text-err"
-                        title={t("config.mcpRemove")}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                    {row.transport === "stdio" ? (
-                      <input
-                        value={row.command}
-                        onChange={(e) =>
-                          updateMCP(row.id, { command: e.target.value })
-                        }
-                        placeholder={t("config.mcpCommand")}
-                        className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
-                      />
-                    ) : (
-                      <input
-                        value={row.url}
-                        onChange={(e) => updateMCP(row.id, { url: e.target.value })}
-                        placeholder={t("config.mcpURL")}
-                        className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
-                      />
-                    )}
-                    <input
-                      value={row.argsText}
-                      onChange={(e) =>
-                        updateMCP(row.id, { argsText: e.target.value })
-                      }
-                      placeholder={t("config.mcpArgs")}
-                      className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
-                    />
-                    <textarea
-                      value={row.envText}
-                      onChange={(e) =>
-                        updateMCP(row.id, { envText: e.target.value })
-                      }
-                      placeholder={t("config.mcpEnv")}
-                      rows={2}
-                      className="w-full resize-none rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
-                    />
-                  </div>
-                ))}
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() =>
-                    setMCPRows((prev) => [
-                      ...prev,
-                      {
-                        id: newID(),
-                        name: "",
-                        transport: "stdio",
-                        command: "",
-                        url: "",
-                        argsText: "",
-                        envText: "",
-                      },
-                    ])
-                  }
-                  className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
-                >
-                  <Plus size={14} />
-                  {t("config.mcpAdd")}
-                </button>
-                <button
-                  onClick={() => void saveMCP()}
-                  className="rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90"
-                >
-                  {t("setup.saveApply")}
-                </button>
-                {mcpError && (
-                  <span className="text-xs text-err">{mcpError}</span>
-                )}
-              </div>
-            </div>
-          )}
-
           {tab === "usage" && (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
@@ -1043,61 +810,6 @@ export function ConfigPage() {
             </div>
           )}
 
-          {tab === "agents" && (
-            <div className="space-y-3">
-              <p className="text-xs text-dim">{t("config.agentsHint")}</p>
-              {agents.length === 0 ? (
-                <p className="text-sm text-dim">{t("config.agentsEmpty")}</p>
-              ) : (
-                agents.map((a) => (
-                  <div
-                    key={a.name}
-                    className="flex items-start gap-3 rounded-xl border border-edge bg-panel2 p-3"
-                  >
-                    <Bot
-                      size={16}
-                      className="text-accent mt-0.5 shrink-0"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium">{a.name}</div>
-                      <p className="text-xs text-dim mt-0.5">
-                        {a.description}
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => setConfirmDelete(a.name)}
-                      className="flex items-center gap-1 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim hover:text-err hover:border-err/40"
-                    >
-                      <Trash2 size={12} />
-                      {t("config.agentsDelete")}
-                    </button>
-                  </div>
-                ))
-              )}
-              {confirmDelete && (
-                <div className="rounded-xl border border-err/40 bg-panel2 p-4">
-                  <p className="text-sm">
-                    {t("config.agentsDeleteConfirm", { name: confirmDelete })}
-                  </p>
-                  <div className="mt-3 flex gap-2">
-                    <button
-                      onClick={() => setConfirmDelete(null)}
-                      className="rounded-lg border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg"
-                    >
-                      {t("interact.cancel")}
-                    </button>
-                    <button
-                      onClick={() => void deleteAgent(confirmDelete)}
-                      className="rounded-lg bg-err px-4 py-1.5 text-sm text-white hover:opacity-90"
-                    >
-                      {t("config.agentsDelete")}
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
           {tab === "permissions" && (
             <div className="space-y-3">
               <p className="text-xs text-dim">{t("config.permissionsHint")}</p>
@@ -1159,68 +871,6 @@ export function ConfigPage() {
                   {t("config.permissionsAdd")}
                 </button>
               </div>
-            </div>
-          )}
-
-          {tab === "skills" && (
-            <div className="space-y-3">
-              <p className="text-xs text-dim">{t("config.skillsHint")}</p>
-              {skills.length === 0 ? (
-                <p className="text-sm text-dim">{t("config.skillsEmpty")}</p>
-              ) : (
-                skills.map((s) => (
-                  <div
-                    key={s.name}
-                    className="rounded-xl border border-edge bg-panel2 p-3"
-                    title={s.path}
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium">{s.name}</span>
-                      <span className="rounded bg-panel border border-edge px-1.5 text-xs text-dim">
-                        {s.scope}
-                      </span>
-                      <span className="flex-1" />
-                      {s.scope !== "builtin" && (
-                        <button
-                          onClick={() =>
-                            setSkillToDelete({ name: s.name, path: s.path })
-                          }
-                          className="flex items-center gap-1 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim hover:text-err hover:border-err/40"
-                        >
-                          <Trash2 size={12} />
-                          {t("config.skillsDelete")}
-                        </button>
-                      )}
-                    </div>
-                    {s.description && (
-                      <p className="text-xs text-dim mt-1">{s.description}</p>
-                    )}
-                  </div>
-                ))
-              )}
-              {skillToDelete && (
-                <div className="rounded-xl border border-err/40 bg-panel2 p-4">
-                  <p className="text-sm">
-                    {t("config.skillsDeleteConfirm", {
-                      name: skillToDelete.name,
-                    })}
-                  </p>
-                  <div className="mt-3 flex gap-2">
-                    <button
-                      onClick={() => setSkillToDelete(null)}
-                      className="rounded-lg border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg"
-                    >
-                      {t("interact.cancel")}
-                    </button>
-                    <button
-                      onClick={() => void deleteSkill(skillToDelete.path)}
-                      className="rounded-lg bg-err px-4 py-1.5 text-sm text-white hover:opacity-90"
-                    >
-                      {t("config.skillsDelete")}
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
           )}
 

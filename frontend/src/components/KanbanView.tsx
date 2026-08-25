@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { ArrowRight, X } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
@@ -87,10 +87,12 @@ function CardView({
   );
 }
 
-export function KanbanView() {
+// KanbanSection is the delegation board rendered as a tab inside the
+// tools page (alongside MCP / subagents / skills). It polls the card
+// list while mounted so the board stays fresh.
+export function KanbanSection() {
   const cards = useStore((s) => s.cards);
   const loadCards = useStore((s) => s.loadCards);
-  const closeKanban = useStore((s) => s.closeKanban);
   const { t } = useTranslation();
 
   useEffect(() => {
@@ -127,44 +129,33 @@ export function KanbanView() {
   ];
 
   return (
-    <div className="fixed inset-x-0 bottom-0 top-11 z-50 bg-black/70 grid place-items-center">
-      <div className="w-[860px] max-w-[92vw] max-h-[86vh] flex flex-col rounded-2xl border border-edge bg-panel shadow-2xl">
-        <div className="flex items-center gap-3 px-5 py-4 border-b border-edge">
-          <h2 className="text-base font-semibold">{t("kanban.title")}</h2>
-          <span className="text-xs text-dim">{cards.length}</span>
-          <span className="flex-1" />
-          <button onClick={closeKanban} className="text-dim hover:text-fg">
-            <X size={18} />
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto px-5 py-4">
-          <div className="grid grid-cols-4 gap-3">
-            {columns.map((col) => {
-              const items = cards.filter(col.filter);
-              return (
-                <div key={col.key} className="space-y-2 min-w-0">
-                  <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-dim">
-                    {col.label}
-                    <span className="rounded bg-panel2 border border-edge px-1.5">
-                      {items.length}
-                    </span>
-                  </div>
-                  {items.length === 0 ? (
-                    <p className="text-xs text-dim">{t("kanban.empty")}</p>
-                  ) : (
-                    items.map((c) => (
-                      <CardView
-                        key={c.id}
-                        card={c}
-                        onChanged={() => void loadCards()}
-                      />
-                    ))
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
+    <div className="space-y-3">
+      <p className="text-xs text-dim">{t("kanban.title")}</p>
+      <div className="grid grid-cols-4 gap-3">
+        {columns.map((col) => {
+          const items = cards.filter(col.filter);
+          return (
+            <div key={col.key} className="space-y-2 min-w-0">
+              <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-dim">
+                {col.label}
+                <span className="rounded bg-panel2 border border-edge px-1.5">
+                  {items.length}
+                </span>
+              </div>
+              {items.length === 0 ? (
+                <p className="text-xs text-dim">{t("kanban.empty")}</p>
+              ) : (
+                items.map((c) => (
+                  <CardView
+                    key={c.id}
+                    card={c}
+                    onChanged={() => void loadCards()}
+                  />
+                ))
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

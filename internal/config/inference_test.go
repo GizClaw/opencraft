@@ -238,8 +238,14 @@ func TestInferenceStableIDRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "stable_id: 'inst-0a1b2c3d'") {
-		t.Fatalf("stable_id missing from user layer:\n%s", data)
+	if strings.Contains(string(data), "stable_id") {
+		t.Fatalf("provider settings must not carry a stable_id key (flowcraft rejects it):\n%s", data)
+	}
+	if !strings.Contains(string(data), "id: 'inst-0a1b2c3d'") {
+		t.Fatalf("stable identity must ride in the profile id:\n%s", data)
+	}
+	if !strings.Contains(string(data), "profile: 'inst-0a1b2c3d'") {
+		t.Fatalf("router target must select the stable profile:\n%s", data)
 	}
 
 	got, err := LoadInference(dir)

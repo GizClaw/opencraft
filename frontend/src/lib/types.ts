@@ -93,6 +93,12 @@ export interface MCPServer {
   url?: string;
 }
 
+export interface MCPStatus {
+  name: string;
+  status: "connected" | "connecting" | "error";
+  error?: string;
+}
+
 export interface SessionMeta {
   id: string;
   title: string;

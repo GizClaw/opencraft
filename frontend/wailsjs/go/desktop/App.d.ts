@@ -36,6 +36,8 @@ export function GetModel():Promise<string>;
 
 export function GetThink():Promise<string>;
 
+export function InstallSkill(arg1:string,arg2:string,arg3:string):Promise<string>;
+
 export function ListAgents():Promise<Array<agents.Summary>>;
 
 export function ListDir(arg1:string):Promise<Array<desktop.FileNode>>;
@@ -43,6 +45,8 @@ export function ListDir(arg1:string):Promise<Array<desktop.FileNode>>;
 export function ListSessions():Promise<Array<desktop.SessionMeta>>;
 
 export function MCPConfig():Promise<Array<config.MCPServer>>;
+
+export function MCPStatus():Promise<Array<desktop.MCPStatusDTO>>;
 
 export function ModelOptions():Promise<Array<desktop.ModelOption>>;
 
@@ -99,6 +103,8 @@ export function Skills():Promise<Array<desktop.SkillDTO>>;
 export function StartTurn(arg1:string):Promise<desktop.TurnStart>;
 
 export function Startup(arg1:context.Context):Promise<void>;
+
+export function TestMCP(arg1:config.MCPServer):Promise<void>;
 
 export function UnregisterAgent(arg1:string):Promise<void>;
 

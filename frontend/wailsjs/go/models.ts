@@ -240,6 +240,22 @@ export namespace desktop {
 	        this.updated_at = source["updated_at"];
 	    }
 	}
+	export class MCPStatusDTO {
+	    name: string;
+	    status: string;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new MCPStatusDTO(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.status = source["status"];
+	        this.error = source["error"];
+	    }
+	}
 	export class ModelOption {
 	    id: string;
 	    label: string;

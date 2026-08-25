@@ -15,6 +15,7 @@ import type {
   UsageDTO,
   WorkspaceMeta,
 } from "./types";
+import type { ToolPage } from "../components/ToolsPanel";
 
 export interface ToolView {
   id: string;
@@ -277,6 +278,7 @@ interface StoreState {
   configured: boolean;
   fatal: string | null;
   configOpen: boolean;
+  toolsView: ToolPage | null;
   workspace: string;
   agents: AgentSummary[];
   sessions: SessionMeta[];
@@ -285,7 +287,6 @@ interface StoreState {
   runConvs: Record<string, string>;
   statusText: string;
   lastUsage: UsageDTO | null;
-  kanbanOpen: boolean;
   cards: KanbanCard[];
   modelOptions: ModelOption[];
   theme: "dark" | "light";
@@ -299,6 +300,8 @@ interface StoreState {
   cancelRun: () => Promise<void>;
   openConfig: () => void;
   closeConfig: () => void;
+  openTools: (view: ToolPage) => void;
+  closeTools: () => void;
   newChat: () => Promise<void>;
   resume: (id: string) => Promise<void>;
   deleteSession: (id: string) => Promise<void>;
@@ -312,8 +315,6 @@ interface StoreState {
   refreshAgents: () => Promise<void>;
   loadSessions: () => Promise<void>;
   loadCards: () => Promise<void>;
-  openKanban: () => void;
-  closeKanban: () => void;
   flash: (text: string) => void;
 }
 
@@ -364,6 +365,7 @@ export const useStore = create<StoreState>((set, get) => {
     configured: false,
     fatal: null,
     configOpen: false,
+    toolsView: null,
     workspace: "",
     agents: [],
     sessions: [],
@@ -372,7 +374,6 @@ export const useStore = create<StoreState>((set, get) => {
     runConvs: {},
     statusText: "",
     lastUsage: null,
-    kanbanOpen: false,
     cards: [],
     modelOptions: [],
     theme: "dark",
@@ -400,6 +401,7 @@ export const useStore = create<StoreState>((set, get) => {
         workspace,
         configured: !status.needed,
         configOpen: false,
+        toolsView: null,
         current: currentSession,
         conversations: {
           [currentSession]: { ...emptyConv(), mode, think, model },
@@ -609,11 +611,15 @@ export const useStore = create<StoreState>((set, get) => {
     openConfig: () => set({ configOpen: true }),
     closeConfig: () => set({ configOpen: false }),
 
+    openTools: (view) => set({ toolsView: view, configOpen: false }),
+    closeTools: () => set({ toolsView: null }),
+
     newChat: async () => {
       try {
         const id = await api.newChat();
         set((state) => ({
           current: id,
+          toolsView: null,
           conversations: {
             ...state.conversations,
             [id]: emptyConv(),
@@ -633,7 +639,7 @@ export const useStore = create<StoreState>((set, get) => {
         // conversation's values and new turns land in the old session.
         await api.resumeSession(id);
         if (get().conversations[id]) {
-          set({ current: id });
+          set({ current: id, toolsView: null });
           return;
         }
         const [mode, history, think, model] = await Promise.all([
@@ -644,6 +650,7 @@ export const useStore = create<StoreState>((set, get) => {
         ]);
         set((state) => ({
           current: id,
+          toolsView: null,
           conversations: {
             ...state.conversations,
             [id]: {
@@ -761,8 +768,6 @@ export const useStore = create<StoreState>((set, get) => {
       }
     },
 
-    openKanban: () => set({ kanbanOpen: true }),
-    closeKanban: () => set({ kanbanOpen: false }),
     flash: (text) => set({ statusText: text }),
   };
 });

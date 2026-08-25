@@ -181,6 +181,28 @@ func (a *App) DeleteSkill(skillPath string) error {
 	return svc.Delete(skillPath)
 }
 
+// InstallSkill clones a skill (git URL or local path) into the given
+// scope and reloads the registry so it is usable immediately. subpath
+// optionally selects one skill directory inside the repo (e.g.
+// "skills/flowcraft-config"); empty installs the whole repo.
+func (a *App) InstallSkill(repo, scope, subpath string) (string, error) {
+	a.mu.Lock()
+	ctrl := a.ctrl
+	a.mu.Unlock()
+	if ctrl == nil || ctrl.Runtime() == nil {
+		return "", errors.New("runtime is not ready")
+	}
+	value, ok := ctrl.Runtime().Resource("skills")
+	if !ok {
+		return "", errors.New("skills resource is not available")
+	}
+	svc, ok := value.(*skills.Service)
+	if !ok {
+		return "", errors.New("skills resource is not available")
+	}
+	return svc.Install(repo, scope, subpath)
+}
+
 // ---- kanban actions ----
 
 func (a *App) board() (*kanban.Board, error) {

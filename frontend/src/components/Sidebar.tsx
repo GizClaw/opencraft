@@ -1,4 +1,5 @@
 import {
+  Bot,
   Download,
   FolderOpen,
   Kanban,
@@ -9,6 +10,7 @@ import {
   Plus,
   Search,
   Settings,
+  Sparkles,
   Trash2,
   X,
 } from "lucide-react";
@@ -18,6 +20,8 @@ import { Environment, WindowToggleMaximise } from "../../wailsjs/runtime/runtime
 import { api } from "../lib/api";
 import { useStore } from "../lib/store";
 import type { SessionMeta } from "../lib/types";
+import type { ComponentType } from "react";
+import { MCPLogo } from "./ToolsPanel";
 
 function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
@@ -41,7 +45,9 @@ export function Sidebar() {
   const sessions = useStore((s) => s.sessions);
   const currentSession = useStore((s) => s.current);
   const resume = useStore((s) => s.resume);
-  const openKanban = useStore((s) => s.openKanban);
+  const toolsView = useStore((s) => s.toolsView);
+  const openTools = useStore((s) => s.openTools);
+  const closeTools = useStore((s) => s.closeTools);
   const deleteSession = useStore((s) => s.deleteSession);
   const conversations = useStore((s) => s.conversations);
   const flash = useStore((s) => s.flash);
@@ -59,6 +65,46 @@ export function Sidebar() {
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+
+  const toolButtons: {
+    id: string;
+    label: string;
+    icon: ComponentType<{ className?: string }>;
+    active: boolean;
+    onClick: () => void;
+  }[] = [
+    {
+      id: "mcp",
+      label: t("sidebar.mcp"),
+      icon: MCPLogo,
+      active: toolsView === "mcp",
+      onClick: () => (toolsView === "mcp" ? closeTools() : openTools("mcp")),
+    },
+    {
+      id: "agents",
+      label: t("sidebar.subagents"),
+      icon: Bot,
+      active: toolsView === "agents",
+      onClick: () =>
+        toolsView === "agents" ? closeTools() : openTools("agents"),
+    },
+    {
+      id: "skills",
+      label: t("sidebar.skills"),
+      icon: Sparkles,
+      active: toolsView === "skills",
+      onClick: () =>
+        toolsView === "skills" ? closeTools() : openTools("skills"),
+    },
+    {
+      id: "kanban",
+      label: t("sidebar.kanban"),
+      icon: Kanban,
+      active: toolsView === "kanban",
+      onClick: () =>
+        toolsView === "kanban" ? closeTools() : openTools("kanban"),
+    },
+  ];
 
   useEffect(() => {
     void Environment().then((env) => setIsMac(env.platform === "darwin"));
@@ -307,21 +353,31 @@ export function Sidebar() {
         </button>
       </div>
 
+      <div className="px-3 pt-2 space-y-1">
+        {toolButtons.map((btn) => {
+          const Icon = btn.icon;
+          return (
+            <button
+              key={btn.id}
+              onClick={btn.onClick}
+              className={`w-full flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm text-left transition-colors ${
+                btn.active
+                  ? "bg-accent/15 border border-accent/40"
+                  : "border border-transparent text-dim hover:text-fg hover:bg-panel2"
+              }`}
+            >
+              <Icon className="h-4 w-4 shrink-0 text-accent" />
+              {btn.label}
+            </button>
+          );
+        })}
+      </div>
+
       <div className="flex-1 overflow-y-auto px-3 py-4 space-y-4">
         <section>
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-xs uppercase tracking-wider text-dim">
-              {t("sidebar.sessions")}
-            </h3>
-            <button
-              onClick={openKanban}
-              className="flex items-center gap-1 text-dim hover:text-fg text-xs"
-              title={t("sidebar.kanban")}
-            >
-              <Kanban size={12} />
-              {t("sidebar.kanban")}
-            </button>
-          </div>
+          <h3 className="text-xs uppercase tracking-wider text-dim mb-2">
+            {t("sidebar.sessions")}
+          </h3>
           {visibleSessions.length === 0 ? (
             <p className="text-xs text-dim">—</p>
           ) : (

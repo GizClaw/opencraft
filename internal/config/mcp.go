@@ -27,17 +27,21 @@ type MCPServer struct {
 type mcpLayer struct {
 	Version   string `json:"version"`
 	Resources struct {
-		ToolMCP struct {
-			Kind     string `json:"kind"`
-			Impl     string `json:"impl"`
-			Settings struct {
-				Servers []MCPServer `json:"servers"`
-			} `json:"settings"`
-		} `json:"tool.mcp"`
+		ToolMCP *mcpSourceLayer `json:"tool.mcp,omitempty"`
 		Tools struct {
 			Deps map[string]string `json:"deps"`
 		} `json:"tools"`
 	} `json:"resources"`
+}
+
+// mcpSourceLayer is the tool.mcp resource declaration WriteMCP emits
+// when at least one server is configured.
+type mcpSourceLayer struct {
+	Kind     string `json:"kind"`
+	Impl     string `json:"impl"`
+	Settings struct {
+		Servers []MCPServer `json:"servers"`
+	} `json:"settings"`
 }
 
 // LoadMCP reads the configured MCP servers from the user
@@ -77,14 +81,25 @@ func LoadMCP(configDir string) ([]MCPServer, error) {
 
 // WriteMCP persists the MCP server list into the user configuration
 // layer, merging over it so the inference wiring and other manual
-// resources survive. An empty list keeps an empty source so the tools
-// assembly dep stays consistent; the servers just expose nothing.
+// resources survive. An empty list removes the tool.mcp source and its
+// tools assembly dep entirely, so the merged document never declares an
+// MCP source without servers.
 func WriteMCP(configDir string, servers []MCPServer) error {
 	layer := mcpLayer{Version: "v1"}
-	layer.Resources.ToolMCP.Kind = "tool.Source"
-	layer.Resources.ToolMCP.Impl = "mcp"
-	layer.Resources.ToolMCP.Settings.Servers = servers
-	layer.Resources.Tools.Deps = map[string]string{"tool.mcp": "tool.mcp"}
+	replaceKeys := map[string]bool{"tool.mcp": true}
+	mergeKeys := map[string]bool{}
+	if len(servers) > 0 {
+		src := &mcpSourceLayer{Kind: "tool.Source", Impl: "mcp"}
+		src.Settings.Servers = servers
+		layer.Resources.ToolMCP = src
+		layer.Resources.Tools.Deps = map[string]string{"tool.mcp": "tool.mcp"}
+		mergeKeys["tools"] = true
+	} else {
+		// Replace the user-layer tools deps with an empty mapping so a
+		// stale tool.mcp dependency from a previous save is removed.
+		layer.Resources.Tools.Deps = map[string]string{}
+		replaceKeys["tools"] = true
+	}
 	fresh, err := yaml.Marshal(layer)
 	if err != nil {
 		return fmt.Errorf("config: render mcp layer: %w", err)
@@ -92,8 +107,9 @@ func WriteMCP(configDir string, servers []MCPServer) error {
 	merged, err := mergeUserLayer(
 		filepath.Join(configDir, "opencraft.yaml"),
 		fresh,
-		map[string]bool{"tool.mcp": true},
-		map[string]bool{"tools": true},
+		replaceKeys,
+		mergeKeys,
+		false, // MCP does not own provider resources; preserve them
 	)
 	if err != nil {
 		return err

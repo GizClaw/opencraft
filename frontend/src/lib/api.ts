@@ -14,6 +14,7 @@ import type {
   KanbanCard,
   InferenceRequest,
   MCPServer,
+  MCPStatus,
   ModelUsageStat,
   ModelOption,
   PatchFileDTO,
@@ -71,12 +72,17 @@ export const api = {
   mcpConfig: () => App.MCPConfig() as Promise<MCPServer[]>,
   saveMCP: (servers: MCPServer[]) =>
     App.SaveMCP(servers as unknown as genConfig.MCPServer[]),
+  mcpStatus: () => App.MCPStatus() as Promise<MCPStatus[]>,
+  testMCP: (server: MCPServer) =>
+    App.TestMCP(server as unknown as genConfig.MCPServer),
   deleteSession: (id: string) => App.DeleteSession(id),
   permissions: () => App.Permissions(),
   allowPermission: (rule: string) => App.AllowPermission(rule),
   denyPermission: (rule: string) => App.DenyPermission(rule),
   skills: () => App.Skills() as Promise<SkillDTO[]>,
   deleteSkill: (path: string) => App.DeleteSkill(path),
+  installSkill: (repo: string, scope: string, subpath: string) =>
+    App.InstallSkill(repo, scope, subpath) as Promise<string>,
   renderPatch: (patch: string) =>
     App.RenderPatch(patch) as Promise<PatchFileDTO[]>,
   renderSkillPatch: (name: string, scope: string, patch: string) =>

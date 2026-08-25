@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -65,7 +66,9 @@ func TestMCPRoundTripAndCrossPreservation(t *testing.T) {
 		t.Fatal("tool.mcp missing from merged view")
 	}
 
-	// Clearing the list keeps a consistent (empty) source.
+	// Clearing the list removes the source and its tools dep so the
+	// merged document stays valid (an MCP source without servers is
+	// rejected by the runtime).
 	if err := WriteMCP(dir, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -74,8 +77,83 @@ func TestMCPRoundTripAndCrossPreservation(t *testing.T) {
 		t.Fatalf("LoadMCP after clear = %+v, %v; want empty", got, err)
 	}
 	view = load(t, t.TempDir(), dir)
-	if _, ok := view.Document.Resources["tool.mcp"]; !ok {
-		t.Fatal("tool.mcp missing after clear")
+	if _, ok := view.Document.Resources["tool.mcp"]; ok {
+		t.Fatal("tool.mcp must be absent after clear")
+	}
+}
+
+// TestWriteMCPPreservesProviderResources guards the regression where
+// saving MCP servers dropped every provider.* resource from a
+// hand-written user layer (provider keys belong to the inference
+// writer only).
+func TestWriteMCPPreservesProviderResources(t *testing.T) {
+	dir := t.TempDir()
+	existing := `version: v1
+resources:
+  provider.azure:
+    kind: inference.Provider
+    impl: azure
+    settings:
+      id: azure
+      spec:
+        endpoint: https://example.openai.azure.com
+        models:
+          - name: gpt-5.6-sol
+            kind: generate
+            capabilities:
+              outputs: [text]
+      profiles:
+        - secrets:
+            api_key: ${env:AZURE_OPENAI_API_KEY}
+  infer:
+    deps:
+      provider.azure: provider.azure
+  router:
+    settings:
+      generate:
+        - tier: default
+          targets:
+            - model:
+                id:
+                  provider: azure
+                  name: gpt-5.6-sol
+  box:
+    settings:
+      remote: false
+  execpolicy:
+    settings:
+      allowed_commands: ["git status"]
+agents:
+  reviewer:
+    enabled: true
+`
+	if err := os.WriteFile(filepath.Join(dir, "opencraft.yaml"), []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteMCP(dir, []MCPServer{{
+		Name:      "my-server",
+		Transport: "stdio",
+		Command:   "my-mcp-server",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	merged, err := os.ReadFile(filepath.Join(dir, "opencraft.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"provider.azure",
+		"infer",
+		"router",
+		"tool.mcp",
+		"box",
+		"execpolicy",
+		"agents",
+		"reviewer",
+	} {
+		if !strings.Contains(string(merged), want) {
+			t.Fatalf("merged user layer missing %q:\n%s", want, merged)
+		}
 	}
 }
 

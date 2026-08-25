@@ -9,9 +9,9 @@ import {
 } from "../wailsjs/runtime/runtime";
 import { ChatView } from "./components/ChatView";
 import { ConfigPage } from "./components/ConfigPage";
-import { KanbanView } from "./components/KanbanView";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
+import { ToolsPanel } from "./components/ToolsPanel";
 import { useStore } from "./lib/store";
 import type { UIEvent } from "./lib/types";
 
@@ -21,10 +21,10 @@ export default function App() {
   const status = useStore((s) => s.status);
   const fatal = useStore((s) => s.fatal);
   const configOpen = useStore((s) => s.configOpen);
-  const kanbanOpen = useStore((s) => s.kanbanOpen);
+  const toolsView = useStore((s) => s.toolsView);
   const newChat = useStore((s) => s.newChat);
   const openConfig = useStore((s) => s.openConfig);
-  const openKanban = useStore((s) => s.openKanban);
+  const openTools = useStore((s) => s.openTools);
   const { t } = useTranslation();
   const [sidebarW, setSidebarW] = useState(
     () => Number(localStorage.getItem("oc.sidebarW")) || 240,
@@ -72,12 +72,12 @@ export default function App() {
         openConfig();
       } else if (key === "k") {
         e.preventDefault();
-        openKanban();
+        openTools("kanban");
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [newChat, openConfig, openKanban]);
+  }, [newChat, openConfig, openTools]);
 
   const startDrag =
     () => (e: React.MouseEvent) => {
@@ -131,11 +131,10 @@ export default function App() {
           onMouseDown={startDrag()}
           className="w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-accent/40"
         />
-        <ChatView />
+        {toolsView ? <ToolsPanel /> : <ChatView />}
       </div>
       <StatusBar />
       {configOpen && <ConfigPage />}
-      {kanbanOpen && <KanbanView />}
     </div>
   );
 }

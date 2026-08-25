@@ -8,10 +8,14 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
 	coresession "github.com/GizClaw/flowcraft/core/runtime/session"
+	"github.com/GizClaw/flowcraft/core/tool/mcp"
+	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	app "github.com/GizClaw/opencraft/internal/app"
 	"github.com/GizClaw/opencraft/internal/config"
@@ -323,31 +327,120 @@ func (a *App) MCPConfig() ([]config.MCPServer, error) {
 // runtime.
 func (a *App) SaveMCP(servers []config.MCPServer) error {
 	for i := range servers {
-		srv := &servers[i]
-		srv.Name = strings.TrimSpace(srv.Name)
-		srv.Transport = strings.TrimSpace(srv.Transport)
-		srv.Command = strings.TrimSpace(srv.Command)
-		srv.URL = strings.TrimSpace(srv.URL)
-		switch srv.Transport {
-		case "stdio":
-			if srv.Command == "" {
-				return fmt.Errorf("MCP server %q: command is required for stdio", srv.Name)
-			}
-		case "http":
-			if srv.URL == "" {
-				return fmt.Errorf("MCP server %q: url is required for http", srv.Name)
-			}
-		default:
-			return fmt.Errorf("MCP server %q: transport must be stdio or http", srv.Name)
-		}
-		if srv.Name == "" {
-			return errors.New("MCP server: name is required")
+		if err := validateMCPServer(&servers[i]); err != nil {
+			return err
 		}
 	}
 	if err := config.WriteMCP(a.userDir, servers); err != nil {
 		return err
 	}
 	return a.rebuild()
+}
+
+// validateMCPServer normalizes and validates one MCP server entry the
+// same way the save path does, so TestMCP and SaveMCP agree on what is
+// a well-formed server.
+func validateMCPServer(srv *config.MCPServer) error {
+	srv.Name = strings.TrimSpace(srv.Name)
+	srv.Transport = strings.TrimSpace(srv.Transport)
+	srv.Command = strings.TrimSpace(srv.Command)
+	srv.URL = strings.TrimSpace(srv.URL)
+	switch srv.Transport {
+	case "stdio":
+		if srv.Command == "" {
+			return fmt.Errorf("MCP server %q: command is required for stdio", srv.Name)
+		}
+	case "http":
+		if srv.URL == "" {
+			return fmt.Errorf("MCP server %q: url is required for http", srv.Name)
+		}
+	default:
+		return fmt.Errorf("MCP server %q: transport must be stdio or http", srv.Name)
+	}
+	if srv.Name == "" {
+		return errors.New("MCP server: name is required")
+	}
+	return nil
+}
+
+// mcpTransport builds the MCP transport for one server entry the same
+// way the runtime factory wires stdio/http servers.
+func mcpTransport(server config.MCPServer) (mcpsdk.Transport, error) {
+	switch server.Transport {
+	case "stdio":
+		return mcp.Stdio(server.Command, server.Args, server.Env)
+	case "http":
+		return mcp.StreamableHTTP(server.URL, nil, nil)
+	default:
+		return nil, fmt.Errorf("MCP server %q: transport must be stdio or http", server.Name)
+	}
+}
+
+// TestMCP verifies that one MCP server can connect and expose its
+// tools using a throwaway source, so neither the live runtime nor the
+// saved configuration is touched. It waits up to 15s for the first
+// connection; the returned error is the test result.
+func (a *App) TestMCP(server config.MCPServer) error {
+	if err := validateMCPServer(&server); err != nil {
+		return err
+	}
+	const timeout = 15 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	src := mcp.NewSource(mcp.WithConnectTimeout(timeout))
+	defer func() { _ = src.Close() }()
+	transport, err := mcpTransport(server)
+	if err != nil {
+		return err
+	}
+	if err := src.AddServer(ctx, server.Name, transport); err != nil {
+		return err
+	}
+	return src.WaitReady(ctx, server.Name, timeout)
+}
+
+// MCPStatus probes the live runtime's MCP source and reports each
+// configured server's connection state: connected (tools published),
+// connecting (first attempt or background retry pending), or error
+// (the background loop gave up on it).
+func (a *App) MCPStatus() ([]MCPStatusDTO, error) {
+	servers, err := config.LoadMCP(a.userDir)
+	if err != nil {
+		return nil, err
+	}
+	a.mu.Lock()
+	ctrl := a.ctrl
+	a.mu.Unlock()
+	var src *mcp.Source
+	if ctrl != nil && ctrl.Runtime() != nil {
+		if value, ok := ctrl.Runtime().Resource("tool.mcp"); ok {
+			if s, ok := value.(*mcp.Source); ok {
+				src = s
+			}
+		}
+	}
+	out := make([]MCPStatusDTO, 0, len(servers))
+	for _, srv := range servers {
+		dto := MCPStatusDTO{Name: srv.Name}
+		if src == nil {
+			dto.Status = "connecting" // runtime is being assembled
+		} else {
+			ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+			probeErr := src.WaitReady(ctx, srv.Name, 200*time.Millisecond)
+			cancel()
+			switch {
+			case probeErr == nil:
+				dto.Status = "connected"
+			case errdefs.IsTimeout(probeErr):
+				dto.Status = "connecting"
+			default:
+				dto.Status = "error"
+				dto.Error = probeErr.Error()
+			}
+		}
+		out = append(out, dto)
+	}
+	return out, nil
 }
 
 // Reload rebuilds the runtime from the current configuration.

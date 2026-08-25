@@ -150,6 +150,13 @@ type SkillDTO struct {
 	Path        string `json:"path"`
 }
 
+// MCPStatusDTO is the UI snapshot of one MCP server's connection state.
+type MCPStatusDTO struct {
+	Name   string `json:"name"`
+	Status string `json:"status"` // connected | connecting | error
+	Error  string `json:"error,omitempty"`
+}
+
 // KanbanCard is the UI snapshot of one delegation board card.
 type KanbanCard struct {
 	ID        string `json:"id"`

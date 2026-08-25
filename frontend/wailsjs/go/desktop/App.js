@@ -62,6 +62,10 @@ export function GetThink() {
   return window['go']['desktop']['App']['GetThink']();
 }
 
+export function InstallSkill(arg1, arg2, arg3) {
+  return window['go']['desktop']['App']['InstallSkill'](arg1, arg2, arg3);
+}
+
 export function ListAgents() {
   return window['go']['desktop']['App']['ListAgents']();
 }
@@ -76,6 +80,10 @@ export function ListSessions() {
 
 export function MCPConfig() {
   return window['go']['desktop']['App']['MCPConfig']();
+}
+
+export function MCPStatus() {
+  return window['go']['desktop']['App']['MCPStatus']();
 }
 
 export function ModelOptions() {
@@ -188,6 +196,10 @@ export function StartTurn(arg1) {
 
 export function Startup(arg1) {
   return window['go']['desktop']['App']['Startup'](arg1);
+}
+
+export function TestMCP(arg1) {
+  return window['go']['desktop']['App']['TestMCP'](arg1);
 }
 
 export function UnregisterAgent(arg1) {

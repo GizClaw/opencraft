@@ -93,8 +93,10 @@ type Instance struct {
 }
 
 // NewStableID returns a fresh instance identity. It is generated once
-// per new row on save and persisted as stable_id, so later saves can
-// match rows by identity instead of guessing from fingerprints.
+// per new row on save and persisted as the provider profile id (the
+// only flowcraft-accepted carrier that stays with the instance through
+// reorders and edits), so later saves can match rows by identity
+// instead of guessing from fingerprints.
 func NewStableID() string {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -218,9 +220,6 @@ func (c InferenceConfig) InferenceYAML() ([]byte, error) {
 		fmt.Fprintf(&b, "    kind: inference.Provider\n")
 		fmt.Fprintf(&b, "    impl: %s\n", prov.Impl)
 		fmt.Fprintf(&b, "    settings:\n")
-		if in.StableID != "" {
-			fmt.Fprintf(&b, "      stable_id: %s\n", yamlQuote(in.StableID))
-		}
 		fmt.Fprintf(&b, "      id: %s\n", id)
 		fmt.Fprintf(&b, "      spec:\n")
 		if prov.Azure {
@@ -246,7 +245,17 @@ func (c InferenceConfig) InferenceYAML() ([]byte, error) {
 			fmt.Fprintf(&b, "              hosted_web_search: true\n")
 		}
 		fmt.Fprintf(&b, "      profiles:\n")
-		fmt.Fprintf(&b, "        - secrets:\n")
+		fmt.Fprintf(&b, "        -")
+		if in.StableID != "" {
+			// The stable identity rides in the profile id: it is the
+			// only provider-resource field flowcraft's strict settings
+			// decode accepts that stays with the instance through
+			// reorders and edits.
+			fmt.Fprintf(&b, " id: %s\n", yamlQuote(in.StableID))
+			fmt.Fprintf(&b, "          secrets:\n")
+		} else {
+			fmt.Fprintf(&b, "\n          secrets:\n")
+		}
 		fmt.Fprintf(&b, "            api_key: %s\n", instanceAPIKey(in, prov))
 		if in.Enabled {
 			deps = append(deps, id)
@@ -274,6 +283,9 @@ func (c InferenceConfig) InferenceYAML() ([]byte, error) {
 		fmt.Fprintf(&b, "                id:\n")
 		fmt.Fprintf(&b, "                  provider: %s\n", instanceID(in.Type, i+1))
 		fmt.Fprintf(&b, "                  name: %s\n", yamlQuote(in.Model))
+		if in.StableID != "" {
+			fmt.Fprintf(&b, "                profile: %s\n", yamlQuote(in.StableID))
+		}
 	}
 	if !hasEnabled {
 		// Keep the router block parseable (empty targets) so the
@@ -305,6 +317,7 @@ func WriteInference(configDir string, cfg InferenceConfig) error {
 		fresh,
 		managedResourceKeys(cfg),
 		map[string]bool{},
+		true, // inference owns every provider.* resource
 	)
 	if err != nil {
 		return err
@@ -463,6 +476,7 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 			ID       string `json:"id"`
 			StableID string `json:"stable_id"`
 			Profiles []struct {
+				ID      string `json:"id"`
 				Secrets struct {
 					APIKey string `json:"api_key"`
 				} `json:"secrets"`
@@ -549,8 +563,13 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 			continue
 		}
 		in := Instance{Type: instType}
+		// The stable identity lives in the profile id (legacy configs
+		// carried it in settings.stable_id, which flowcraft rejects).
 		in.StableID = res.Settings.StableID
 		if len(res.Settings.Profiles) > 0 {
+			if pid := res.Settings.Profiles[0].ID; pid != "" {
+				in.StableID = pid
+			}
 			k := res.Settings.Profiles[0].Secrets.APIKey
 			if strings.HasPrefix(k, "${env:") && strings.HasSuffix(k, "}") {
 				in.KeySource = KeyEnv
@@ -628,6 +647,7 @@ func mergeUserLayer(
 	fresh []byte,
 	replaceKeys map[string]bool,
 	mergeKeys map[string]bool,
+	dropProviderKeys bool,
 ) ([]byte, error) {
 	oldData, err := os.ReadFile(path)
 	if err != nil {
@@ -684,7 +704,8 @@ func mergeUserLayer(
 	if oldRes != nil && newRes != nil && len(oldRes.Content) > 0 {
 		for i := 0; i+1 < len(oldRes.Content); i += 2 {
 			key := oldRes.Content[i].Value
-			if replaceKeys[key] || strings.HasPrefix(key, "provider.") {
+			if replaceKeys[key] ||
+				(dropProviderKeys && strings.HasPrefix(key, "provider.")) {
 				continue
 			}
 			if mergeKeys[key] {
