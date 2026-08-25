@@ -3,7 +3,7 @@ module github.com/GizClaw/opencraft
 go 1.25.5
 
 require (
-	github.com/GizClaw/flowcraft/core v0.1.31
+	github.com/GizClaw/flowcraft/core v0.1.32
 	github.com/GizClaw/flowcraft/driver/anthropic v0.1.6
 	github.com/GizClaw/flowcraft/driver/azure v0.1.9
 	github.com/GizClaw/flowcraft/driver/bytedance v0.1.11
