@@ -58,6 +58,8 @@ export function ModelUsageSeries(arg1:string,arg2:string,arg3:number,arg4:string
 
 export function NewChat():Promise<string>;
 
+export function OpenExternal(arg1:string):Promise<void>;
+
 export function OpenPath(arg1:string):Promise<void>;
 
 export function OpenWorkspace(arg1:string):Promise<void>;

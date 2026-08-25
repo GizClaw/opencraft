@@ -1,11 +1,14 @@
 package desktop
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // ListDir returns one level of directory entries for the workspace
@@ -69,6 +72,18 @@ func (a *App) OpenPath(path string) error {
 	}
 	// Detach so the launcher process does not linger as a zombie.
 	_ = cmd.Process.Release()
+	return nil
+}
+
+// OpenExternal opens a URL in the system default browser. Only
+// http(s) URLs are accepted; anything else is rejected so a binding
+// argument can never be abused as a local file scheme.
+func (a *App) OpenExternal(url string) error {
+	if !strings.HasPrefix(url, "https://") &&
+		!strings.HasPrefix(url, "http://") {
+		return fmt.Errorf("open external: only http(s) URLs are allowed")
+	}
+	wailsruntime.BrowserOpenURL(a.appContext(), url)
 	return nil
 }
 

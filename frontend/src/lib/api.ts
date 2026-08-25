@@ -105,4 +105,5 @@ export const api = {
     App.ConversationDelegationCards(contextID) as Promise<KanbanCard[]>,
   listDir: (dir: string) => App.ListDir(dir) as Promise<FileNode[]>,
   openPath: (path: string) => App.OpenPath(path),
+  openExternal: (url: string) => App.OpenExternal(url),
 };

@@ -106,6 +106,10 @@ export function NewChat() {
   return window['go']['desktop']['App']['NewChat']();
 }
 
+export function OpenExternal(arg1) {
+  return window['go']['desktop']['App']['OpenExternal'](arg1);
+}
+
 export function OpenPath(arg1) {
   return window['go']['desktop']['App']['OpenPath'](arg1);
 }

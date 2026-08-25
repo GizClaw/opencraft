@@ -2,7 +2,10 @@ import { useEffect, useState } from 'react';
 import type { ComponentType } from 'react';
 import {
   Bot,
+  ChevronDown,
+  ChevronRight,
   Download,
+  ExternalLink,
   Kanban,
   Loader2,
   Plug,
@@ -16,6 +19,11 @@ import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import { useStore } from '../lib/store';
 import type { MCPServer, MCPStatus } from '../lib/types';
+import { MCP_CATALOG, SKILL_CATALOG } from '../lib/catalog';
+import type { MCPCatalogEntry, SkillCatalogEntry } from '../lib/catalog';
+import { GitHubSearch } from './GitHubSearch';
+import type { GitHubRepo } from './GitHubSearch';
+import { probeMCPServerLaunch } from './GitHubSearch';
 import { KanbanSection } from './KanbanView';
 
 export type ToolPage = 'mcp' | 'agents' | 'skills' | 'kanban';
@@ -61,6 +69,7 @@ interface MCPRow {
   url: string;
   argsText: string;
   envText: string;
+  source?: string; // repo url when the row came from GitHub search
 }
 
 const newMCPID = () =>
@@ -80,6 +89,8 @@ export function MCPSection() {
     ok: boolean;
     msg: string;
   } | null>(null);
+  const [discoverOpen, setDiscoverOpen] = useState(false);
+  const [addingRepo, setAddingRepo] = useState(false);
 
   useEffect(() => {
     void api
@@ -224,9 +235,105 @@ export function MCPSection() {
     );
   };
 
+  const addCatalogMCP = (entry: MCPCatalogEntry) => {
+    setMCPRows((prev) => [
+      ...prev,
+      {
+        id: newMCPID(),
+        name: entry.name,
+        transport: entry.transport,
+        command: entry.command,
+        url: entry.url ?? '',
+        argsText: entry.args.join(', '),
+        envText: '',
+      },
+    ]);
+  };
+
+  const addGitHubMCP = async (repo: GitHubRepo) => {
+    setAddingRepo(true);
+    let command = '';
+    let args: string[] = [];
+    try {
+      const probe = await probeMCPServerLaunch(repo.full_name);
+      command = probe.command;
+      args = probe.args;
+    } catch {
+      // keep the row empty; the user fills the command from the README
+    } finally {
+      setAddingRepo(false);
+    }
+    setMCPRows((prev) => [
+      ...prev,
+      {
+        id: newMCPID(),
+        name: repo.full_name.split('/')[1] ?? repo.full_name,
+        transport: 'stdio',
+        command,
+        url: '',
+        argsText: args.join(', '),
+        envText: '',
+        source: repo.html_url,
+      },
+    ]);
+  };
+
   return (
     <div className="space-y-3">
       <p className="text-xs text-dim">{t('config.mcpHint')}</p>
+      <div className="rounded-xl border border-edge bg-panel2">
+        <button
+          onClick={() => setDiscoverOpen((v) => !v)}
+          className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-panel2/70"
+        >
+          <Sparkles size={14} className="text-accent shrink-0" />
+          <span className="flex-1">{t('config.mcpDiscover')}</span>
+          {discoverOpen ? (
+            <ChevronDown size={14} className="text-dim" />
+          ) : (
+            <ChevronRight size={14} className="text-dim" />
+          )}
+        </button>
+        {discoverOpen && (
+          <div className="border-t border-edge px-3 py-2 space-y-1">
+            <p className="text-xs text-dim pb-1">
+              {t('config.mcpDiscoverHint')}
+            </p>
+            {MCP_CATALOG.map((entry) => (
+              <div
+                key={entry.name}
+                className="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-panel"
+              >
+                <span className="text-sm min-w-0 truncate">{entry.name}</span>
+                <span className="flex-1 text-xs text-dim min-w-0 truncate">
+                  {entry.description}
+                </span>
+                <code className="text-[10px] text-dim shrink-0 hidden sm:inline">
+                  {entry.command} {entry.args.join(' ')}
+                </code>
+                <button
+                  onClick={() => addCatalogMCP(entry)}
+                  className="shrink-0 rounded-md border border-accent/40 px-2 py-0.5 text-xs text-accent hover:bg-accent/10"
+                >
+                  {t('config.mcpAdd')}
+                </button>
+              </div>
+            ))}
+            <div className="border-t border-edge/60 pt-2 mt-1">
+              <GitHubSearch
+                topic="mcp-server"
+                placeholder={t('config.mcpSearchPlaceholder')}
+                actionLabel={t('config.mcpAdd')}
+                onPick={(repo) => void addGitHubMCP(repo)}
+                busy={addingRepo}
+              />
+              <p className="text-[11px] text-dim">
+                {t('config.mcpSearchHint')}
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
       {mcpRows.length === 0 && (
         <p className="text-sm text-dim">{t('config.mcpEmpty')}</p>
       )}
@@ -241,8 +348,18 @@ export function MCPSection() {
                 value={row.name}
                 onChange={(e) => updateMCP(row.id, { name: e.target.value })}
                 placeholder={t('config.mcpName')}
+                title={row.source ?? ''}
                 className="flex-1 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
               />
+              {row.source && (
+                <button
+                  onClick={() => void api.openExternal(row.source!)}
+                  className="text-dim hover:text-fg"
+                  title={t('config.mcpOpenRepo')}
+                >
+                  <ExternalLink size={13} />
+                </button>
+              )}
               <select
                 value={row.transport}
                 onChange={(e) =>
@@ -462,6 +579,7 @@ export function SkillsSection() {
   const [scope, setScope] = useState('user');
   const [subpath, setSubpath] = useState('');
   const [installing, setInstalling] = useState(false);
+  const [discoverOpen, setDiscoverOpen] = useState(false);
 
   useEffect(() => {
     void reloadSkills();
@@ -499,6 +617,38 @@ export function SkillsSection() {
       setRepo('');
       setSubpath('');
       setImportOpen(false);
+      await reloadSkills();
+      flash(t('config.skillsImported', { path }));
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const installCatalogSkill = async (entry: SkillCatalogEntry) => {
+    setInstalling(true);
+    setError('');
+    try {
+      const path = await api.installSkill(
+        entry.repo,
+        entry.scope,
+        entry.subpath,
+      );
+      await reloadSkills();
+      flash(t('config.skillsImported', { path }));
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const installGitHubSkill = async (repo: GitHubRepo) => {
+    setInstalling(true);
+    setError('');
+    try {
+      const path = await api.installSkill(repo.clone_url, 'user', '');
       await reloadSkills();
       flash(t('config.skillsImported', { path }));
     } catch (err) {
@@ -573,6 +723,56 @@ export function SkillsSection() {
           </div>
         </div>
       )}
+      <div className="rounded-xl border border-edge bg-panel2">
+        <button
+          onClick={() => setDiscoverOpen((v) => !v)}
+          className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-panel2/70"
+        >
+          <Sparkles size={14} className="text-accent shrink-0" />
+          <span className="flex-1">{t('config.skillsDiscover')}</span>
+          {discoverOpen ? (
+            <ChevronDown size={14} className="text-dim" />
+          ) : (
+            <ChevronRight size={14} className="text-dim" />
+          )}
+        </button>
+        {discoverOpen && (
+          <div className="border-t border-edge px-3 py-2 space-y-1">
+            <p className="text-xs text-dim pb-1">
+              {t('config.skillsDiscoverHint')}
+            </p>
+            {SKILL_CATALOG.map((entry) => (
+              <div
+                key={entry.name}
+                className="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-panel"
+              >
+                <span className="text-sm min-w-0 truncate">{entry.name}</span>
+                <span className="flex-1 text-xs text-dim min-w-0 truncate">
+                  {entry.description}
+                </span>
+                <button
+                  onClick={() => void installCatalogSkill(entry)}
+                  disabled={installing}
+                  className="shrink-0 rounded-md border border-accent/40 px-2 py-0.5 text-xs text-accent hover:bg-accent/10 disabled:opacity-40"
+                >
+                  {installing
+                    ? t('config.skillsInstalling')
+                    : t('config.skillsInstall')}
+                </button>
+              </div>
+            ))}
+            <div className="border-t border-edge/60 pt-2 mt-1">
+              <GitHubSearch
+                topic="codex-skill"
+                placeholder={t('config.skillsSearchPlaceholder')}
+                actionLabel={t('config.skillsInstall')}
+                onPick={installGitHubSkill}
+                busy={installing}
+              />
+            </div>
+          </div>
+        )}
+      </div>
       {error && <p className="text-xs text-err">{error}</p>}
       {skills.length === 0 ? (
         <p className="text-sm text-dim">{t('config.skillsEmpty')}</p>
