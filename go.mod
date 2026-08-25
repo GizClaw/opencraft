@@ -3,7 +3,7 @@ module github.com/GizClaw/opencraft
 go 1.25.5
 
 require (
-	github.com/GizClaw/flowcraft/core v0.1.28
+	github.com/GizClaw/flowcraft/core v0.1.31
 	github.com/GizClaw/flowcraft/driver/anthropic v0.1.6
 	github.com/GizClaw/flowcraft/driver/azure v0.1.9
 	github.com/GizClaw/flowcraft/driver/bytedance v0.1.11
@@ -15,6 +15,7 @@ require (
 	github.com/PuerkitoBio/goquery v1.12.0
 	github.com/go-shiori/go-readability v0.0.0-20251205110129-5db1dc9836f0
 	github.com/microcosm-cc/bluemonday v1.0.27
+	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/rs/xid v1.6.0
 	github.com/wailsapp/wails/v2 v2.15.0
 	go.opentelemetry.io/otel/log v0.16.0
@@ -68,7 +69,6 @@ require (
 	github.com/leaanthony/u v1.1.1 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
-	github.com/modelcontextprotocol/go-sdk v1.7.0 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/openai/openai-go/v3 v3.50.0 // indirect
 	github.com/pb33f/ordered-map/v2 v2.3.1 // indirect

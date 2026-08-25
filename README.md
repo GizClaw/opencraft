@@ -1,7 +1,7 @@
 # opencraft
 
 A Go coding agent built on [flowcraft](https://github.com/GizClaw/flowcraft)
-(`core v0.1.28`), delivered as a macOS/Linux desktop workbench (Wails v2 +
+(`core v0.1.31`), delivered as a macOS/Linux desktop workbench (Wails v2 +
 React). The agent reads/writes/edits files, runs shell commands with PTY,
 approves permissions, persists and resumes sessions — driven by an LLM
 through flowcraft's config-driven graph engine.
@@ -75,7 +75,7 @@ scope.
 
 ## Version facts
 
-Pinned flowcraft modules (see `go.mod`): `core v0.1.28`, `driver/*`
+Pinned flowcraft modules (see `go.mod`): `core v0.1.31`, `driver/*`
 v0.1.6–v0.1.11 (8 providers: openai v0.1.8, anthropic v0.1.6, azure
 v0.1.9, bytedance v0.1.11, deepseek v0.1.6, kimi v0.1.6, minimax
 v0.1.6, qwen v0.1.6). The upstream `sdk/sdkx v0.5.x` release naming is
