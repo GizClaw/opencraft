@@ -543,6 +543,13 @@ func (a *App) NewChat() (string, error) {
 	a.think = string(ocsessions.ThinkMedium)
 	a.model = ""
 	id := a.conversationID
+	// Register the id in the in-memory conversation index so
+	// ResumeSession accepts it before its first turn persists history
+	// (store.List only surfaces sessions with history or usage).
+	if a.convRuns == nil {
+		a.convRuns = make(map[string]map[string]bool)
+	}
+	a.convRuns[id] = make(map[string]bool)
 	a.mu.Unlock()
 	return id, nil
 }

@@ -65,7 +65,9 @@
     "detailUpdated": "更新",
     "detailInput": "输入",
     "detailOutput": "输出",
-    "error": "错误"
+    "error": "错误",
+    "stream": "实时活动",
+    "reasoning": "推理"
   },
   "config": {
     "title": "设置",

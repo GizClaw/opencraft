@@ -182,7 +182,13 @@ func (a *App) ResumeSession(id string) (string, error) {
 			break
 		}
 	}
-	if !found {
+	// A conversation minted by NewChat is valid even before its first
+	// turn persists history/usage to the store; the in-memory index
+	// knows it (and any conversation with live or past runs).
+	a.mu.Lock()
+	_, known := a.convRuns[id]
+	a.mu.Unlock()
+	if !found && !known {
 		return "", fmt.Errorf("session %s not found", id)
 	}
 	mode, err := store.Mode(id)

@@ -1,6 +1,6 @@
-import { create } from "zustand";
-import i18n from "../i18n";
-import { api } from "./api";
+import { create } from 'zustand';
+import i18n from '../i18n';
+import { api } from './api';
 import type {
   AgentSummary,
   ConfigStatus,
@@ -14,14 +14,14 @@ import type {
   UIEvent,
   UsageDTO,
   WorkspaceMeta,
-} from "./types";
-import type { ToolPage } from "../components/ToolsPanel";
+} from './types';
+import type { ToolPage } from '../components/ToolsPanel';
 
 export interface ToolView {
   id: string;
   name: string;
   args: string;
-  status: "running" | "done" | "error";
+  status: 'running' | 'done' | 'error';
   result?: string;
 }
 
@@ -30,13 +30,13 @@ export interface ToolView {
 // output in the exact order the model produced it instead of
 // grouping all reasoning / tools / text together.
 export type AssistantItem =
-  | { kind: "reasoning"; id: string; text: string }
-  | { kind: "tool_call"; id: string; tool: ToolView }
-  | { kind: "text"; id: string; text: string };
+  | { kind: 'reasoning'; id: string; text: string }
+  | { kind: 'tool_call'; id: string; tool: ToolView }
+  | { kind: 'text'; id: string; text: string };
 
 export interface MessageView {
   id: string;
-  role: "user" | "assistant";
+  role: 'user' | 'assistant';
   // text carries the user message body; assistant messages render
   // their ordered items instead.
   text: string;
@@ -65,7 +65,7 @@ const newID = (prefix: string) => `${prefix}-${Date.now()}-${msgSeq++}`;
 // arguments is a json.RawMessage, so the frontend receives a parsed
 // object/array rather than text, and rendering it raw crashes React.
 function normalizeArgs(args: unknown): string {
-  if (typeof args === "string") return args;
+  if (typeof args === 'string') return args;
   try {
     return JSON.stringify(args, null, 2);
   } catch {
@@ -77,9 +77,9 @@ const emptyConv = (): ConversationState => ({
   messages: [],
   busy: false,
   activeRunID: null,
-  mode: "workspace",
-  think: "medium",
-  model: "",
+  mode: 'workspace',
+  think: 'medium',
+  model: '',
   pendingInteracts: [],
   lastFailed: false,
 });
@@ -91,64 +91,64 @@ const emptyConv = (): ConversationState => ({
 const historyToMessages = (history: HistoryMessage[]): MessageView[] => {
   const messages: MessageView[] = [];
   const toolCalls: {
-    item: Extract<AssistantItem, { kind: "tool_call" }>;
+    item: Extract<AssistantItem, { kind: 'tool_call' }>;
   }[] = [];
   for (const h of history) {
     const parts = h.content?.parts ?? [];
-    if (h.role === "user") {
+    if (h.role === 'user') {
       const text = parts
-        .filter((p): p is { type: "text"; text?: string } => p.type === "text")
-        .map((p) => p.text ?? "")
-        .join("");
-      messages.push({ id: newID("msg"), role: "user", text, items: [] });
+        .filter((p): p is { type: 'text'; text?: string } => p.type === 'text')
+        .map((p) => p.text ?? '')
+        .join('');
+      messages.push({ id: newID('msg'), role: 'user', text, items: [] });
       continue;
     }
-    if (h.role === "tool") {
+    if (h.role === 'tool') {
       for (const p of parts) {
-        if (p.type !== "tool_result" || !p.result) continue;
+        if (p.type !== 'tool_result' || !p.result) continue;
         const call = toolCalls.find(
           (c) => c.item.tool.id === p.result!.call_id,
         );
         if (call) {
-          call.item.tool.status = p.result.is_error ? "error" : "done";
+          call.item.tool.status = p.result.is_error ? 'error' : 'done';
           call.item.tool.result = p.result.content;
         }
       }
       continue;
     }
     const msg: MessageView = {
-      id: newID("msg"),
-      role: "assistant",
-      text: "",
+      id: newID('msg'),
+      role: 'assistant',
+      text: '',
       items: [],
     };
     for (const p of parts) {
       switch (p.type) {
-        case "text":
+        case 'text':
           if (p.text) {
-            msg.items.push({ kind: "text", id: newID("part"), text: p.text });
+            msg.items.push({ kind: 'text', id: newID('part'), text: p.text });
           }
           break;
-        case "reasoning":
+        case 'reasoning':
           if (p.text) {
             msg.items.push({
-              kind: "reasoning",
-              id: newID("part"),
+              kind: 'reasoning',
+              id: newID('part'),
               text: p.text,
             });
           }
           break;
-        case "tool_call": {
+        case 'tool_call': {
           const call = p.call;
           if (!call) break;
-          const item: Extract<AssistantItem, { kind: "tool_call" }> = {
-            kind: "tool_call",
-            id: newID("part"),
+          const item: Extract<AssistantItem, { kind: 'tool_call' }> = {
+            kind: 'tool_call',
+            id: newID('part'),
             tool: {
               id: call.id,
               name: call.name,
               args: normalizeArgs(call.arguments),
-              status: "running",
+              status: 'running',
             },
           };
           msg.items.push(item);
@@ -165,15 +165,16 @@ const historyToMessages = (history: HistoryMessage[]): MessageView[] => {
 // lastAssistant returns a mutable copy of the last assistant message
 // (creating one when needed) plus a NEW messages array, so every
 // stream delta produces fresh references and React re-renders.
-function lastAssistant(
-  messages: MessageView[],
-): { msg: MessageView; messages: MessageView[] } {
+function lastAssistant(messages: MessageView[]): {
+  msg: MessageView;
+  messages: MessageView[];
+} {
   const last = messages[messages.length - 1];
-  if (!last || last.role !== "assistant") {
+  if (!last || last.role !== 'assistant') {
     const msg: MessageView = {
-      id: newID("msg"),
-      role: "assistant",
-      text: "",
+      id: newID('msg'),
+      role: 'assistant',
+      text: '',
       items: [],
     };
     return { msg, messages: [...messages, msg] };
@@ -184,7 +185,7 @@ function lastAssistant(
 
 function mergeAppend(
   msg: MessageView,
-  kind: "text" | "reasoning",
+  kind: 'text' | 'reasoning',
   text: string,
 ) {
   const items = msg.items;
@@ -195,65 +196,68 @@ function mergeAppend(
       { ...lastItem, text: lastItem.text + text },
     ];
   } else {
-    msg.items = [...items, { kind, id: newID("part"), text }];
+    msg.items = [...items, { kind, id: newID('part'), text }];
   }
 }
 
 // applyStream folds one stream delta into a message list and returns
 // the new list (immutable).
-function applyStream(messages: MessageView[], delta: StreamDelta): MessageView[] {
-  if (delta.type !== "part" || !delta.part) return messages;
+function applyStream(
+  messages: MessageView[],
+  delta: StreamDelta,
+): MessageView[] {
+  if (delta.type !== 'part' || !delta.part) return messages;
   const part = delta.part;
   switch (part.type) {
-    case "text": {
-      const text = part.text ?? "";
+    case 'text': {
+      const text = part.text ?? '';
       if (!text) return messages;
       const { msg, messages: next } = lastAssistant(messages);
-      mergeAppend(msg, "text", text);
+      mergeAppend(msg, 'text', text);
       return next;
     }
-    case "reasoning": {
-      const text = part.text ?? "";
+    case 'reasoning': {
+      const text = part.text ?? '';
       if (!text) return messages;
       const { msg, messages: next } = lastAssistant(messages);
-      mergeAppend(msg, "reasoning", text);
+      mergeAppend(msg, 'reasoning', text);
       return next;
     }
-    case "tool_call": {
+    case 'tool_call': {
       const { msg, messages: next } = lastAssistant(messages);
       msg.items = [
         ...msg.items,
         {
-          kind: "tool_call",
-          id: newID("part"),
+          kind: 'tool_call',
+          id: newID('part'),
           tool: {
             id: part.call.id,
             name: part.call.name,
             args: normalizeArgs(part.call.arguments),
-            status: "running",
+            status: 'running',
           },
         },
       ];
       return next;
     }
-    case "tool_result": {
+    case 'tool_result': {
       const id = part.result.call_id;
       let next = messages;
       for (let i = 0; i < messages.length; i++) {
         const m = messages[i];
-        if (m.role !== "assistant") continue;
+        if (m.role !== 'assistant') continue;
         let changed = false;
         const updatedItems = m.items.map((item) => {
-          if (item.kind !== "tool_call" || item.tool.id !== id) return item;
+          if (item.kind !== 'tool_call' || item.tool.id !== id) return item;
           changed = true;
           return {
             ...item,
             tool: {
               ...item.tool,
               status: part.result.is_error
-                ? ("error" as const)
-                : ("done" as const),
-              result: part.result.content ?? "",
+                ? ('error' as const)
+                : ('done' as const),
+              result: part.result.content ?? '',
             },
           };
         });
@@ -285,13 +289,20 @@ interface StoreState {
   current: string;
   conversations: Record<string, ConversationState>;
   runConvs: Record<string, string>;
+  // subagentStreams folds live stream deltas of delegated subagent
+  // runs (keyed by run id) for the SubagentSidebar; they never render
+  // into a chat conversation. subagentStreamAt tracks the last delta
+  // timestamp so stale runs can be pruned once their kanban card is
+  // gone.
+  subagentStreams: Record<string, MessageView[]>;
+  subagentStreamAt: Record<string, number>;
   statusText: string;
   lastUsage: UsageDTO | null;
   cards: KanbanCard[];
   subagentCards: KanbanCard[];
   subagentPanelOpen: boolean;
   modelOptions: ModelOption[];
-  theme: "dark" | "light";
+  theme: 'dark' | 'light';
   workspaces: WorkspaceMeta[];
 
   init: () => Promise<void>;
@@ -310,7 +321,7 @@ interface StoreState {
   setMode: (mode: string) => Promise<void>;
   setThink: (level: string) => Promise<void>;
   setModel: (model: string) => Promise<void>;
-  setTheme: (theme: "dark" | "light") => void;
+  setTheme: (theme: 'dark' | 'light') => void;
   loadWorkspaces: () => Promise<void>;
   openWorkspace: (path: string) => Promise<void>;
   removeWorkspace: (id: string) => Promise<void>;
@@ -358,7 +369,7 @@ export const useStore = create<StoreState>((set, get) => {
       const conv = get().conversations[convID];
       if (conv) {
         const { msg, messages: next } = lastAssistant(conv.messages);
-        mergeAppend(msg, "text", `⛔ ${String(err)}`);
+        mergeAppend(msg, 'text', `⛔ ${String(err)}`);
         updateConv(convID, { messages: next, busy: false });
       }
     }
@@ -370,38 +381,47 @@ export const useStore = create<StoreState>((set, get) => {
     fatal: null,
     configOpen: false,
     toolsView: null,
-    workspace: "",
+    workspace: '',
     agents: [],
     sessions: [],
-    current: "",
+    current: '',
     conversations: {},
     runConvs: {},
-    statusText: "",
+    subagentStreams: {},
+    subagentStreamAt: {},
+    statusText: '',
     lastUsage: null,
     cards: [],
     subagentCards: [],
     subagentPanelOpen: true,
     modelOptions: [],
-    theme: "dark",
+    theme: 'dark',
     workspaces: [],
 
     init: async () => {
-      const saved = window.localStorage.getItem("opencraft.theme");
-      const theme = saved === "light" ? "light" : "dark";
+      const saved = window.localStorage.getItem('opencraft.theme');
+      const theme = saved === 'light' ? 'light' : 'dark';
       document.documentElement.classList.toggle(
-        "theme-light",
-        theme === "light",
+        'theme-light',
+        theme === 'light',
       );
-      const [status, workspace, mode, currentSession, think, model, modelOptions] =
-        await Promise.all([
-          api.configStatus(),
-          api.workspace(),
-          api.sessionMode(),
-          api.currentSession(),
-          api.getThink(),
-          api.getModel(),
-          api.modelOptions(),
-        ]);
+      const [
+        status,
+        workspace,
+        mode,
+        currentSession,
+        think,
+        model,
+        modelOptions,
+      ] = await Promise.all([
+        api.configStatus(),
+        api.workspace(),
+        api.sessionMode(),
+        api.currentSession(),
+        api.getThink(),
+        api.getModel(),
+        api.modelOptions(),
+      ]);
       set({
         status,
         workspace,
@@ -422,7 +442,7 @@ export const useStore = create<StoreState>((set, get) => {
 
     handleEvent: (ev) => {
       switch (ev.type) {
-        case "ready": {
+        case 'ready': {
           const data = ev.data as ConfigStatus;
           if (data.work_dir !== get().workspace) {
             // Workspace switched: start fresh in the new workspace.
@@ -432,6 +452,8 @@ export const useStore = create<StoreState>((set, get) => {
                 [get().current]: emptyConv(),
               },
               runConvs: {},
+              subagentStreams: {},
+              subagentStreamAt: {},
             });
             void get().loadSessions();
           }
@@ -441,37 +463,56 @@ export const useStore = create<StoreState>((set, get) => {
             configOpen: false,
             fatal: null,
           });
-          void api.modelOptions().then((modelOptions) =>
-            set({ modelOptions }),
-          );
+          void api.modelOptions().then((modelOptions) => set({ modelOptions }));
           void get().refreshAgents();
           void get().loadWorkspaces();
           break;
         }
-        case "fatal":
-          set({ fatal: (ev.data as { error: string }).error ?? "" });
+        case 'fatal':
+          set({ fatal: (ev.data as { error: string }).error ?? '' });
           break;
-        case "stream": {
+        case 'stream': {
           const data = ev.data as { run_id?: string; delta: StreamDelta };
-          const convID =
-            (data.run_id && get().runConvs[data.run_id]) || get().current;
-          const conv = get().conversations[convID];
-          if (!conv) break;
-          updateConv(convID, {
-            messages: applyStream(conv.messages, data.delta),
-          });
+          if (!data.run_id) break;
+          const convID = get().runConvs[data.run_id];
+          if (convID) {
+            // Main turn: fold into its own conversation.
+            const conv = get().conversations[convID];
+            if (conv) {
+              updateConv(convID, {
+                messages: applyStream(conv.messages, data.delta),
+              });
+            }
+            break;
+          }
+          // Delegated subagent run (inherited observer sink): fold
+          // into the sidebar stream, never into a chat.
+          const runID = data.run_id;
+          set((state) => ({
+            subagentStreams: {
+              ...state.subagentStreams,
+              [runID]: applyStream(
+                state.subagentStreams[runID] ?? [],
+                data.delta,
+              ),
+            },
+            subagentStreamAt: {
+              ...state.subagentStreamAt,
+              [runID]: Date.now(),
+            },
+          }));
           break;
         }
-        case "status":
+        case 'status':
           set({ statusText: (ev.data as { text: string }).text });
           break;
-        case "usage":
+        case 'usage':
           set({ lastUsage: ev.data as UsageDTO });
           break;
-        case "interact": {
+        case 'interact': {
           const spec = ev.data as InteractDTO;
-          const convID =
-            (spec.run_id && get().runConvs[spec.run_id]) || get().current;
+          const convID = spec.run_id ? get().runConvs[spec.run_id] : undefined;
+          if (!convID) break;
           const conv = get().conversations[convID];
           if (!conv) break;
           if (!conv.pendingInteracts.some((p) => p.id === spec.id)) {
@@ -481,7 +522,7 @@ export const useStore = create<StoreState>((set, get) => {
           }
           break;
         }
-        case "resolved": {
+        case 'resolved': {
           const id = (ev.data as { id: string }).id;
           for (const [convID, conv] of Object.entries(get().conversations)) {
             if (conv.pendingInteracts.some((p) => p.id === id)) {
@@ -495,37 +536,39 @@ export const useStore = create<StoreState>((set, get) => {
           }
           break;
         }
-        case "turn_end": {
+        case 'turn_end': {
           const data = ev.data as {
             run_id?: string;
             status: string;
             error?: string;
           };
-          const convID =
-            (data.run_id && get().runConvs[data.run_id]) || get().current;
+          // Unknown-run terminations (subagent turns) must not clear a
+          // conversation's busy state; only main turns are tracked.
+          const convID = data.run_id ? get().runConvs[data.run_id] : undefined;
+          if (!convID) break;
           const conv = get().conversations[convID];
           if (!conv) break;
           const failed =
-            data.status === "failed" ||
-            data.status === "aborted" ||
-            data.status === "canceled" ||
-            data.status === "interrupted";
+            data.status === 'failed' ||
+            data.status === 'aborted' ||
+            data.status === 'canceled' ||
+            data.status === 'interrupted';
           let messages = conv.messages;
           const note = failed
-            ? data.status === "canceled"
-              ? i18n.t("chat.cancelled")
-              : data.status === "interrupted"
-                ? i18n.t("chat.interrupted")
-                : i18n.t("chat.failed")
-            : "";
+            ? data.status === 'canceled'
+              ? i18n.t('chat.cancelled')
+              : data.status === 'interrupted'
+                ? i18n.t('chat.interrupted')
+                : i18n.t('chat.failed')
+            : '';
           if (data.error || (failed && note)) {
             const { msg, messages: next } = lastAssistant(messages);
-            mergeAppend(msg, "text", `\n\n> ⛔ ${data.error || note}`);
+            mergeAppend(msg, 'text', `\n\n> ⛔ ${data.error || note}`);
             messages = next;
           }
           set((state) => {
             const runConvs = { ...state.runConvs };
-            delete runConvs[data.run_id ?? ""];
+            delete runConvs[data.run_id ?? ''];
             return {
               runConvs,
               conversations: {
@@ -543,7 +586,7 @@ export const useStore = create<StoreState>((set, get) => {
           void get().loadSessions();
           break;
         }
-        case "session_updated":
+        case 'session_updated':
           void get().loadSessions();
           break;
       }
@@ -557,8 +600,8 @@ export const useStore = create<StoreState>((set, get) => {
       const messages = [
         ...conv.messages,
         {
-          id: newID("msg"),
-          role: "user" as const,
+          id: newID('msg'),
+          role: 'user' as const,
           text: trimmed,
           items: [],
         },
@@ -572,7 +615,7 @@ export const useStore = create<StoreState>((set, get) => {
       if (!conv || conv.busy) return;
       let lastUserIdx = -1;
       for (let i = conv.messages.length - 1; i >= 0; i--) {
-        if (conv.messages[i].role === "user") {
+        if (conv.messages[i].role === 'user') {
           lastUserIdx = i;
           break;
         }
@@ -626,6 +669,8 @@ export const useStore = create<StoreState>((set, get) => {
         set((state) => ({
           current: id,
           toolsView: null,
+          subagentStreams: {},
+          subagentStreamAt: {},
           conversations: {
             ...state.conversations,
             [id]: emptyConv(),
@@ -716,10 +761,10 @@ export const useStore = create<StoreState>((set, get) => {
 
     setTheme: (theme) => {
       document.documentElement.classList.toggle(
-        "theme-light",
-        theme === "light",
+        'theme-light',
+        theme === 'light',
       );
-      window.localStorage.setItem("opencraft.theme", theme);
+      window.localStorage.setItem('opencraft.theme', theme);
       set({ theme });
     },
 
@@ -785,7 +830,29 @@ export const useStore = create<StoreState>((set, get) => {
           const open =
             state.subagentPanelOpen ||
             (cards.length > 0 && state.subagentCards.length === 0);
-          return { subagentCards: cards, subagentPanelOpen: open };
+          // Prune sidebar streams whose run is no longer on any card
+          // and has been silent for a while (claim lag is seconds).
+          const cardRuns = new Set(
+            cards.map((c) => c.run_id).filter(Boolean) as string[],
+          );
+          const now = Date.now();
+          const subagentStreams = { ...state.subagentStreams };
+          const subagentStreamAt = { ...state.subagentStreamAt };
+          for (const runID of Object.keys(subagentStreams)) {
+            if (
+              !cardRuns.has(runID) &&
+              now - (subagentStreamAt[runID] ?? 0) > 60_000
+            ) {
+              delete subagentStreams[runID];
+              delete subagentStreamAt[runID];
+            }
+          }
+          return {
+            subagentCards: cards,
+            subagentPanelOpen: open,
+            subagentStreams,
+            subagentStreamAt,
+          };
         });
       } catch {
         // best-effort; the sidebar polls again shortly

@@ -65,7 +65,9 @@
     "detailUpdated": "Updated",
     "detailInput": "Input",
     "detailOutput": "Output",
-    "error": "Error"
+    "error": "Error",
+    "stream": "Live activity",
+    "reasoning": "Reasoning"
   },
   "config": {
     "title": "Settings",
