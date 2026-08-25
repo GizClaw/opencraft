@@ -1,12 +1,16 @@
 package skills
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
+
+	"github.com/GizClaw/flowcraft/core/errdefs"
 )
 
 // Install scopes for the skill_install tool.
@@ -56,7 +60,9 @@ func (s *Service) Install(repo, scope, subpath string) (string, error) {
 		return "", err
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
-	cmd := exec.Command(git, "clone", "--depth", "1", repo, tmp)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, git, "clone", "--depth", "1", repo, tmp)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("skills: git clone %q: %w: %s",
 			repo, err, strings.TrimSpace(string(out)))
@@ -64,6 +70,9 @@ func (s *Service) Install(repo, scope, subpath string) (string, error) {
 	src := tmp
 	if subpath != "" {
 		src = filepath.Join(tmp, filepath.FromSlash(subpath))
+		if err := ensureInside(tmp, src); err != nil {
+			return "", err
+		}
 		if _, err := os.Stat(src); err != nil {
 			return "", fmt.Errorf("skills: %q not found in repo %q", subpath, repo)
 		}
@@ -77,6 +86,35 @@ func (s *Service) Install(repo, scope, subpath string) (string, error) {
 	}
 	s.Reload()
 	return dst, nil
+}
+
+// ensureInside verifies that child resolves inside parent — both
+// lexically (filepath.Rel) and through symlinks (EvalSymlinks) — so a
+// repo-supplied subpath cannot escape the clone directory via ".." or a
+// symlink before it is moved into the skill root.
+func ensureInside(parent, child string) error {
+	contained := func(base, target string) bool {
+		rel, err := filepath.Rel(base, target)
+		return err == nil && rel != ".." &&
+			!strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	}
+	if !contained(parent, child) {
+		return errdefs.Validationf(
+			"skills: subpath %q escapes the clone directory", child)
+	}
+	parentReal, err := filepath.EvalSymlinks(parent)
+	if err != nil {
+		parentReal = parent
+	}
+	childReal, err := filepath.EvalSymlinks(child)
+	if err != nil {
+		childReal = filepath.Clean(child)
+	}
+	if !contained(parentReal, childReal) {
+		return errdefs.Validationf(
+			"skills: subpath %q resolves outside the clone directory", child)
+	}
+	return nil
 }
 
 // installDir resolves the target scope to an absolute skill root.

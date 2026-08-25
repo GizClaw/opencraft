@@ -471,3 +471,51 @@ func TestInstallSubpathFromRepo(t *testing.T) {
 		t.Fatal("subpath-installed skill not in registry")
 	}
 }
+
+func TestInstallSubpathTraversalRejected(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "SKILL.md"), []byte(
+		"---\nname: traversalskill\ndescription: traversal test\n---\n\nbody\n"),
+		0o644); err != nil {
+		t.Fatal(err)
+	}
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = src
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	git("init", "-b", "main")
+	git("add", ".")
+	git("commit", "-m", "init")
+
+	workBase := t.TempDir()
+	svc := NewService(Options{WorkBase: workBase, Enabled: true})
+	for _, subpath := range []string{
+		"..",
+		"../escape",
+		"../../escape",
+		"/etc",
+	} {
+		if _, err := svc.Install(src, ScopeRepo, subpath); err == nil {
+			t.Fatalf("Install(subpath=%q) accepted a traversal", subpath)
+		}
+	}
+	// A repo symlink pointing outside the clone must also be rejected.
+	if err := os.Symlink(workBase, filepath.Join(src, "evil")); err != nil {
+		t.Fatal(err)
+	}
+	git("add", "evil")
+	git("commit", "-m", "add symlink")
+	if _, err := svc.Install(src, ScopeRepo, "evil"); err == nil {
+		t.Fatal("Install(subpath=symlink-outside) accepted")
+	}
+}

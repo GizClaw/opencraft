@@ -2,6 +2,7 @@ package sessions
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -51,6 +52,54 @@ func TestHistoryWindow(t *testing.T) {
 	hist, _ := store.History(context.Background(), id, 3)
 	if len(hist) != 3 {
 		t.Fatalf("windowed history = %d, want 3", len(hist))
+	}
+}
+
+func TestRemoveRejectsTraversalID(t *testing.T) {
+	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(t.TempDir(), "victim")
+	if err := os.MkdirAll(victim, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(victim, "keep.txt"),
+		[]byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Crafted ids must be rejected before any filesystem access, even
+	// when enough ".." segments would otherwise resolve outside root.
+	for _, id := range []string{
+		"s-../victim",
+		"s-../../../../" + filepath.Base(victim),
+		"../" + filepath.Base(victim),
+		"not-a-session",
+	} {
+		if err := store.Remove(id); err == nil {
+			t.Fatalf("Remove(%q) accepted", id)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(victim, "keep.txt")); err != nil {
+		t.Fatalf("victim directory was touched: %v", err)
+	}
+
+	// A valid generated id still removes its own directory.
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendTurn(context.Background(), id, []message.Message{
+		message.NewTextMessage(message.RoleUser, "x"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Remove(id); err != nil {
+		t.Fatalf("Remove(valid id): %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(store.root, id)); !os.IsNotExist(err) {
+		t.Fatalf("valid session dir still exists: %v", err)
 	}
 }
 

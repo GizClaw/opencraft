@@ -312,7 +312,7 @@ func (s *Store) dir(id string) string {
 // state for the same id is removed by the session manager's
 // DeleteSession (the desktop wires both together).
 func (s *Store) Remove(id string) error {
-	if !strings.HasPrefix(id, "s-") {
+	if !validID(id) {
 		return errdefs.Validationf("sessions: invalid session id %q", id)
 	}
 	if err := os.RemoveAll(s.dir(id)); err != nil {
@@ -322,6 +322,17 @@ func (s *Store) Remove(id string) error {
 		return fmt.Errorf("sessions: remove settings %s: %w", id, err)
 	}
 	return nil
+}
+
+// validID reports whether id is a safe conversation id: it must carry
+// the "s-" prefix and contain no path separators, so
+// filepath.Join(s.root, id) can never resolve outside s.root even
+// through Clean (crafted ids like "s-../../../../tmp/x" are rejected).
+func validID(id string) bool {
+	if id == "" || !strings.HasPrefix(id, "s-") {
+		return false
+	}
+	return !strings.ContainsAny(id, `/\`)
 }
 
 func (s *Store) nextSeq(historyDir string) (int, error) {
