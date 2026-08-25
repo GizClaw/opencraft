@@ -169,7 +169,7 @@ type KanbanCard struct {
 	Caller      string `json:"caller,omitempty"`
 	Depth       int    `json:"depth"`
 	Error       string `json:"error,omitempty"`
-	RunID       string `json:"run_id,omitempty"`       // subagent run id
+	RunID       string `json:"run_id,omitempty"`        // subagent run id
 	ParentRunID string `json:"parent_run_id,omitempty"` // caller run id
 	CallID      string `json:"call_id,omitempty"`       // delegate tool call id
 	CreatedAt   string `json:"created_at"`              // RFC3339 UTC

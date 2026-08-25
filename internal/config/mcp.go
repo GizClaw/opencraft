@@ -28,7 +28,7 @@ type mcpLayer struct {
 	Version   string `json:"version"`
 	Resources struct {
 		ToolMCP *mcpSourceLayer `json:"tool.mcp,omitempty"`
-		Tools struct {
+		Tools   struct {
 			Deps map[string]string `json:"deps"`
 		} `json:"tools"`
 	} `json:"resources"`

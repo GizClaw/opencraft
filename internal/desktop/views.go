@@ -277,13 +277,13 @@ func (a *App) delegationCards(
 			}
 		}
 		card := KanbanCard{
-			ID:          c.ID,
-			Producer:    c.Producer,
-			Consumer:    c.Consumer,
-			Status:      string(c.Status),
-			RunID:       c.RunID,
-			CreatedAt:   c.CreatedAt.Format(time.RFC3339),
-			UpdatedAt:   c.UpdatedAt.Format(time.RFC3339),
+			ID:        c.ID,
+			Producer:  c.Producer,
+			Consumer:  c.Consumer,
+			Status:    string(c.Status),
+			RunID:     c.RunID,
+			CreatedAt: c.CreatedAt.Format(time.RFC3339),
+			UpdatedAt: c.UpdatedAt.Format(time.RFC3339),
 		}
 		if c.Task != nil {
 			req := c.Task.Request.Request
