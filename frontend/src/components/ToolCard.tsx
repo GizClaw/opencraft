@@ -298,31 +298,31 @@ function groupHunks(lines: PatchLineDTO[]): DiffHunk[] {
   let prevOld = 0;
   let prevNew = 0;
   for (const line of lines) {
-    const oldBreak =
-      line.old_num > 0 && prevOld > 0 && line.old_num !== prevOld + 1;
-    const newBreak =
-      line.new_num > 0 && prevNew > 0 && line.new_num !== prevNew + 1;
+    const oldNum = line.old_num ?? 0;
+    const newNum = line.new_num ?? 0;
+    const oldBreak = oldNum > 0 && prevOld > 0 && oldNum !== prevOld + 1;
+    const newBreak = newNum > 0 && prevNew > 0 && newNum !== prevNew + 1;
     if (!cur || oldBreak || newBreak) {
       cur = {
-        oldStart: line.old_num,
+        oldStart: oldNum,
         oldCount: 0,
-        newStart: line.new_num,
+        newStart: newNum,
         newCount: 0,
         lines: [],
       };
       hunks.push(cur);
     }
-    if (line.old_num > 0) {
-      if (!cur.oldStart) cur.oldStart = line.old_num;
+    if (oldNum > 0) {
+      if (!cur.oldStart) cur.oldStart = oldNum;
       cur.oldCount++;
     }
-    if (line.new_num > 0) {
-      if (!cur.newStart) cur.newStart = line.new_num;
+    if (newNum > 0) {
+      if (!cur.newStart) cur.newStart = newNum;
       cur.newCount++;
     }
     cur.lines.push(line);
-    prevOld = line.old_num;
-    prevNew = line.new_num;
+    prevOld = oldNum;
+    prevNew = newNum;
   }
   return hunks;
 }
@@ -334,8 +334,10 @@ function hunkHeader(h: DiffHunk): string {
 }
 
 function GitDiffLine({ line }: { line: PatchLineDTO }) {
-  const oldCol = line.old_num > 0 ? String(line.old_num).padStart(3) : '   ';
-  const newCol = line.new_num > 0 ? String(line.new_num).padStart(3) : '   ';
+  const oldCol =
+    (line.old_num ?? 0) > 0 ? String(line.old_num).padStart(3) : '   ';
+  const newCol =
+    (line.new_num ?? 0) > 0 ? String(line.new_num).padStart(3) : '   ';
   const marker = line.kind === 'add' ? '+' : line.kind === 'delete' ? '-' : ' ';
   const cls =
     line.kind === 'add'

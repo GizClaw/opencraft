@@ -181,6 +181,12 @@ export function ChatView() {
     open: false,
     query: '',
   });
+
+  // Reset the @ mention file cache when the workspace changes so the
+  // picker lists the new workspace's files.
+  useEffect(() => {
+    mentionLoaded.current = false;
+  }, [workspace]);
   const [mentionItems, setMentionItems] = useState<FileNode[]>([]);
   const mentionLoaded = useRef(false);
   // Stick-to-bottom: while the agent streams, the view follows the

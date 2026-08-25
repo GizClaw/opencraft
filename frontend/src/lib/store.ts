@@ -346,6 +346,25 @@ export const useStore = create<StoreState>((set, get) => {
       };
     });
 
+  // ensureConversation returns the conversation, creating a busy shell
+  // when it is unknown (a live turn resumed after a frontend reload
+  // routes by conversation_id). Returns undefined only when the id is
+  // empty.
+  const ensureConversation = (convID: string | undefined) => {
+    if (!convID) return undefined;
+    let conv = get().conversations[convID];
+    if (!conv) {
+      set((state) => ({
+        conversations: {
+          ...state.conversations,
+          [convID]: { ...emptyConv(), busy: true },
+        },
+      }));
+      conv = get().conversations[convID];
+    }
+    return conv;
+  };
+
   const beginTurn = async (
     convID: string,
     text: string,
@@ -405,64 +424,72 @@ export const useStore = create<StoreState>((set, get) => {
         'theme-light',
         theme === 'light',
       );
-      const [
-        status,
-        workspace,
-        mode,
-        currentSession,
-        think,
-        model,
-        modelOptions,
-      ] = await Promise.all([
-        api.configStatus(),
-        api.workspace(),
-        api.sessionMode(),
-        api.currentSession(),
-        api.getThink(),
-        api.getModel(),
-        api.modelOptions(),
-      ]);
-      set({
-        status,
-        workspace,
-        configured: !status.needed,
-        configOpen: false,
-        toolsView: null,
-        current: currentSession,
-        conversations: {
-          [currentSession]: { ...emptyConv(), mode, think, model },
-        },
-        modelOptions,
-        theme,
-      });
-      void get().refreshAgents();
-      void get().loadWorkspaces();
-      void get().loadSessions();
+      try {
+        const [
+          status,
+          workspace,
+          mode,
+          currentSession,
+          think,
+          model,
+          modelOptions,
+        ] = await Promise.all([
+          api.configStatus(),
+          api.workspace(),
+          api.sessionMode(),
+          api.currentSession(),
+          api.getThink(),
+          api.getModel(),
+          api.modelOptions(),
+        ]);
+        set({
+          status,
+          workspace,
+          configured: !status.needed,
+          configOpen: false,
+          toolsView: null,
+          current: currentSession,
+          conversations: {
+            [currentSession]: { ...emptyConv(), mode, think, model },
+          },
+          modelOptions,
+          theme,
+        });
+        void get().refreshAgents();
+        void get().loadWorkspaces();
+        void get().loadSessions();
+      } catch (err) {
+        // A failed init must not strand the UI on the loading screen
+        // forever; surface it as a fatal error with a retry path.
+        set({ fatal: String(err) });
+      }
     },
 
     handleEvent: (ev) => {
       switch (ev.type) {
         case 'ready': {
           const data = ev.data as ConfigStatus;
-          if (data.work_dir !== get().workspace) {
+          const workChanged = data.work_dir !== get().workspace;
+          if (workChanged) {
             // Workspace switched: start fresh in the new workspace.
             set({
               workspace: data.work_dir,
-              conversations: {
-                [get().current]: emptyConv(),
-              },
+              conversations: {},
               runConvs: {},
               subagentStreams: {},
               subagentStreamAt: {},
             });
             void get().loadSessions();
+            // Mint a fresh backend conversation so the app-level
+            // conversationID follows the new workspace.
+            void get().newChat();
           }
-          set({
+          set((state) => ({
             status: data,
-            configured: true,
-            configOpen: false,
+            configured: !data.needed,
+            configOpen: workChanged ? false : state.configOpen,
             fatal: null,
-          });
+          }));
           void api.modelOptions().then((modelOptions) => set({ modelOptions }));
           void get().refreshAgents();
           void get().loadWorkspaces();
@@ -472,12 +499,16 @@ export const useStore = create<StoreState>((set, get) => {
           set({ fatal: (ev.data as { error: string }).error ?? '' });
           break;
         case 'stream': {
-          const data = ev.data as { run_id?: string; delta: StreamDelta };
+          const data = ev.data as {
+            run_id?: string;
+            conversation_id?: string;
+            delta: StreamDelta;
+          };
           if (!data.run_id) break;
-          const convID = get().runConvs[data.run_id];
+          const convID = get().runConvs[data.run_id] || data.conversation_id;
           if (convID) {
             // Main turn: fold into its own conversation.
-            const conv = get().conversations[convID];
+            const conv = ensureConversation(convID);
             if (conv) {
               updateConv(convID, {
                 messages: applyStream(conv.messages, data.delta),
@@ -511,9 +542,11 @@ export const useStore = create<StoreState>((set, get) => {
           break;
         case 'interact': {
           const spec = ev.data as InteractDTO;
-          const convID = spec.run_id ? get().runConvs[spec.run_id] : undefined;
+          const convID =
+            (spec.run_id && get().runConvs[spec.run_id]) ||
+            spec.conversation_id;
           if (!convID) break;
-          const conv = get().conversations[convID];
+          const conv = ensureConversation(convID);
           if (!conv) break;
           if (!conv.pendingInteracts.some((p) => p.id === spec.id)) {
             updateConv(convID, {
@@ -539,14 +572,17 @@ export const useStore = create<StoreState>((set, get) => {
         case 'turn_end': {
           const data = ev.data as {
             run_id?: string;
+            conversation_id?: string;
             status: string;
             error?: string;
           };
           // Unknown-run terminations (subagent turns) must not clear a
           // conversation's busy state; only main turns are tracked.
-          const convID = data.run_id ? get().runConvs[data.run_id] : undefined;
+          const convID =
+            (data.run_id && get().runConvs[data.run_id]) ||
+            data.conversation_id;
           if (!convID) break;
-          const conv = get().conversations[convID];
+          const conv = ensureConversation(convID);
           if (!conv) break;
           const failed =
             data.status === 'failed' ||
@@ -632,16 +668,19 @@ export const useStore = create<StoreState>((set, get) => {
     replyInteract: async (id, req) => {
       try {
         await api.replyPrompt(id, req);
-      } finally {
-        for (const [convID, conv] of Object.entries(get().conversations)) {
-          if (conv.pendingInteracts.some((p) => p.id === id)) {
-            updateConv(convID, {
-              pendingInteracts: conv.pendingInteracts.filter(
-                (p) => p.id !== id,
-              ),
-            });
-            break;
-          }
+      } catch (err) {
+        // Keep the card on failure: the backend prompt is still
+        // pending, so removing it would make the interaction
+        // unreachable.
+        set({ statusText: String(err) });
+        return;
+      }
+      for (const [convID, conv] of Object.entries(get().conversations)) {
+        if (conv.pendingInteracts.some((p) => p.id === id)) {
+          updateConv(convID, {
+            pendingInteracts: conv.pendingInteracts.filter((p) => p.id !== id),
+          });
+          break;
         }
       }
     },
@@ -726,6 +765,11 @@ export const useStore = create<StoreState>((set, get) => {
           delete conversations[id];
           return { conversations };
         });
+        if (get().current === id) {
+          // The active conversation is gone: switch to a fresh one so
+          // the chat never points at a deleted session.
+          await get().newChat();
+        }
         await get().loadSessions();
       } catch (err) {
         set({ statusText: String(err) });
@@ -830,6 +874,17 @@ export const useStore = create<StoreState>((set, get) => {
           const open =
             state.subagentPanelOpen ||
             (cards.length > 0 && state.subagentCards.length === 0);
+          // Skip re-render when nothing changed (2s polling otherwise
+          // sets a fresh array every tick).
+          const same =
+            state.subagentCards.length === cards.length &&
+            cards.every(
+              (c, i) =>
+                state.subagentCards[i]?.id === c.id &&
+                state.subagentCards[i]?.status === c.status &&
+                state.subagentCards[i]?.updated_at === c.updated_at,
+            );
+          if (same && state.subagentPanelOpen === open) return state;
           // Prune sidebar streams whose run is no longer on any card
           // and has been silent for a while (claim lag is seconds).
           const cardRuns = new Set(

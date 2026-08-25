@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from './i18n';
 import {
@@ -34,6 +34,10 @@ export default function App() {
   const [sidebarW, setSidebarW] = useState(
     () => Number(localStorage.getItem('oc.sidebarW')) || 240,
   );
+  // Cleanup for an in-flight sidebar drag when the tree changes
+  // mid-drag, so the window listeners never leak past the component.
+  const dragCleanup = useRef<(() => void) | null>(null);
+  useEffect(() => () => dragCleanup.current?.(), []);
 
   useEffect(() => {
     void init();
@@ -104,6 +108,11 @@ export default function App() {
       localStorage.setItem('oc.sidebarW', String(next));
     };
     const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      dragCleanup.current = null;
+    };
+    dragCleanup.current = () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };

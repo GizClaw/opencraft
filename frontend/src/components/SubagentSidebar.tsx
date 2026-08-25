@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { memo, useState } from 'react';
 import {
   Activity,
   ArrowRight,
@@ -68,7 +68,11 @@ function StreamItem({ item }: { item: AssistantItem }) {
 
 // StreamView renders the live stream of one subagent run: every
 // assistant item in arrival order.
-function StreamView({ stream }: { stream: MessageView[] }) {
+const StreamView = memo(function StreamView({
+  stream,
+}: {
+  stream: MessageView[];
+}) {
   const { t } = useTranslation();
   const items = stream.flatMap((m) => m.items);
   if (items.length === 0) return null;
@@ -83,7 +87,7 @@ function StreamView({ stream }: { stream: MessageView[] }) {
       ))}
     </div>
   );
-}
+});
 
 function elapsed(card: KanbanCard): string {
   const start = new Date(card.created_at).getTime();
@@ -141,7 +145,7 @@ function statusMeta(
 // visually distinct from the neutral ToolCard: rounded-xl with a colored
 // left status bar, Bot icon and status pill, and a monospace detail
 // grid when expanded.
-function SubagentCard({
+const SubagentCard = memo(function SubagentCard({
   card,
   stream,
 }: {
@@ -249,7 +253,7 @@ function SubagentCard({
       </div>
     </div>
   );
-}
+});
 
 function DetailRow({
   label,

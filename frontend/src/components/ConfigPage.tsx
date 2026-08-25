@@ -310,7 +310,7 @@ export function ConfigPage() {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return '';
     const diff = Date.now() - d.getTime();
-    if (diff < 60_000) return '刚刚';
+    if (diff < 60_000) return t('sidebar.justNow');
     if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`;
     if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`;
     return d.toLocaleDateString();

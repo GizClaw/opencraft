@@ -66,8 +66,8 @@ export interface UsagePoint {
 
 export interface PatchLineDTO {
   kind: 'context' | 'add' | 'delete';
-  old_num: number;
-  new_num: number;
+  old_num?: number;
+  new_num?: number;
   text: string;
 }
 
@@ -188,6 +188,7 @@ export interface InteractOption {
 export interface InteractDTO {
   id: string;
   run_id: string;
+  conversation_id?: string;
   kind: string;
   title: string;
   body: StreamPart[];
@@ -238,7 +239,7 @@ export interface AgentSummary {
 export interface ToolCallWire {
   id: string;
   name: string;
-  arguments: string;
+  arguments: unknown;
 }
 
 export interface ToolResultWire {
