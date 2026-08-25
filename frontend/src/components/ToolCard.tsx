@@ -1,20 +1,14 @@
-import { memo, useEffect, useState } from "react";
-import {
-  Check,
-  ChevronDown,
-  ChevronRight,
-  Loader2,
-  X,
-} from "lucide-react";
-import { useTranslation } from "react-i18next";
-import { api } from "../lib/api";
-import type { ToolView } from "../lib/store";
-import type { PatchFileDTO, PatchLineDTO } from "../lib/types";
+import { memo, useEffect, useState } from 'react';
+import { Check, ChevronDown, ChevronRight, Loader2, X } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { api } from '../lib/api';
+import type { ToolView } from '../lib/store';
+import type { PatchFileDTO, PatchLineDTO } from '../lib/types';
 
 function parseArgs(tool: ToolView): Record<string, unknown> | null {
   try {
     const v = JSON.parse(tool.args);
-    return v && typeof v === "object" ? v : null;
+    return v && typeof v === 'object' ? v : null;
   } catch {
     return null;
   }
@@ -28,62 +22,62 @@ interface Summary {
 function summaryOf(tool: ToolView): Summary | null {
   const args = parseArgs(tool);
   if (!args) return null;
-  const str = (v: unknown): string => (typeof v === "string" ? v : "");
+  const str = (v: unknown): string => (typeof v === 'string' ? v : '');
   switch (tool.name) {
-    case "exec_command":
-    case "exec_session":
+    case 'exec_command':
+    case 'exec_session':
       return {
-        verb: "ran",
+        verb: 'ran',
         rest:
           str(args.command) ||
-          (Array.isArray(args.argv) ? args.argv.join(" ") : ""),
+          (Array.isArray(args.argv) ? args.argv.join(' ') : ''),
       };
-    case "read_file":
-      return { verb: "read", rest: str(args.file_path) };
-    case "write_file":
-      return { verb: "wrote", rest: str(args.file_path) };
-    case "list_dir":
-      return { verb: "listed", rest: str(args.path) || "." };
-    case "grep": {
+    case 'read_file':
+      return { verb: 'read', rest: str(args.file_path) };
+    case 'write_file':
+      return { verb: 'wrote', rest: str(args.file_path) };
+    case 'list_dir':
+      return { verb: 'listed', rest: str(args.path) || '.' };
+    case 'grep': {
       const parts = [str(args.pattern)];
       if (str(args.path)) parts.push(`in ${args.path}`);
-      return { verb: "grep", rest: parts.join(" ") };
+      return { verb: 'grep', rest: parts.join(' ') };
     }
-    case "glob":
-      return { verb: "glob", rest: str(args.pattern) };
-    case "request_permissions":
+    case 'glob':
+      return { verb: 'glob', rest: str(args.pattern) };
+    case 'request_permissions':
       return {
-        verb: "requestPermissions",
+        verb: 'requestPermissions',
         rest: Array.isArray(args.permissions)
           ? String(args.permissions.length)
-          : "",
+          : '',
       };
-    case "update_plan":
-      return { verb: "updatePlan", rest: "" };
-    case "apply_patch":
-      return { verb: "patch", rest: "" };
-    case "skill_create":
-      return { verb: "createdSkill", rest: str(args.name) };
-    case "skill_modify":
-      return { verb: "modifiedSkill", rest: str(args.name) };
-    case "skill_install":
-      return { verb: "installedSkill", rest: str(args.name) || str(args.repo) };
-    case "web_fetch":
-      return { verb: "fetched", rest: str(args.url) };
-    case "ask_user":
-      return { verb: "askUser", rest: str(args.question) };
-    case "skill_search":
-      return { verb: "searchedSkill", rest: str(args.query) };
-    case "skill_read":
-      return { verb: "readSkill", rest: str(args.name) };
-    case "create_agent":
-      return { verb: "createdAgent", rest: str(args.name) };
-    case "update_agent":
-      return { verb: "updatedAgent", rest: str(args.name) };
-    case "unregister_agent":
-      return { verb: "unregisteredAgent", rest: str(args.name) };
-    case "tool_search":
-      return { verb: "searchedTools", rest: str(args.query) };
+    case 'update_plan':
+      return { verb: 'updatePlan', rest: '' };
+    case 'apply_patch':
+      return { verb: 'patch', rest: '' };
+    case 'skill_create':
+      return { verb: 'createdSkill', rest: str(args.name) };
+    case 'skill_modify':
+      return { verb: 'modifiedSkill', rest: str(args.name) };
+    case 'skill_install':
+      return { verb: 'installedSkill', rest: str(args.name) || str(args.repo) };
+    case 'web_fetch':
+      return { verb: 'fetched', rest: str(args.url) };
+    case 'ask_user':
+      return { verb: 'askUser', rest: str(args.question) };
+    case 'skill_search':
+      return { verb: 'searchedSkill', rest: str(args.query) };
+    case 'skill_read':
+      return { verb: 'readSkill', rest: str(args.name) };
+    case 'create_agent':
+      return { verb: 'createdAgent', rest: str(args.name) };
+    case 'update_agent':
+      return { verb: 'updatedAgent', rest: str(args.name) };
+    case 'unregister_agent':
+      return { verb: 'unregisteredAgent', rest: str(args.name) };
+    case 'tool_search':
+      return { verb: 'searchedTools', rest: str(args.query) };
     default:
       return null;
   }
@@ -102,7 +96,7 @@ function execResult(content: string): ExecResult | null {
     // tools return JSON objects too (read_file, apply_patch, ...) and
     // must not be treated as exec output (that rendered "exit code
     // undefined" in the expanded card).
-    if (v && typeof v === "object" && typeof v.exit_code === "number") {
+    if (v && typeof v === 'object' && typeof v.exit_code === 'number') {
       return v;
     }
   } catch {
@@ -117,30 +111,30 @@ function resultSummary(
 ): { text: string; ok: boolean } | null {
   if (tool.result === undefined) return null;
   const exec = execResult(tool.result);
-  if (exec && typeof exec.exit_code === "number") {
+  if (exec && typeof exec.exit_code === 'number') {
     return exec.exit_code === 0
-      ? { text: "└ ok", ok: true }
+      ? { text: '└ ok', ok: true }
       : { text: `└ exit ${exec.exit_code}`, ok: false };
   }
-  if (tool.name === "read_file") {
+  if (tool.name === 'read_file') {
     try {
       const v = JSON.parse(tool.result);
-      if (v && typeof v.file_path === "string") {
+      if (v && typeof v.file_path === 'string') {
         return { text: `└ ${v.file_path}`, ok: true };
       }
     } catch {
       // fall through
     }
   }
-  if (tool.name === "tool_search") {
+  if (tool.name === 'tool_search') {
     try {
       const v = JSON.parse(tool.result);
-      if (v && typeof v === "object" && Array.isArray(v.hits)) {
+      if (v && typeof v === 'object' && Array.isArray(v.hits)) {
         const hits = v.hits.length;
         const selected = Array.isArray(v.selected) ? v.selected.length : 0;
         return {
-          text: `└ ${hits} ${t("tool.hits")}${
-            selected > 0 ? ` · ${selected} ${t("tool.selected")}` : ""
+          text: `└ ${hits} ${t('tool.hits')}${
+            selected > 0 ? ` · ${selected} ${t('tool.selected')}` : ''
           }`,
           ok: true,
         };
@@ -149,7 +143,7 @@ function resultSummary(
       // fall through
     }
   }
-  if (tool.status === "error") return { text: "└ failed", ok: false };
+  if (tool.status === 'error') return { text: '└ failed', ok: false };
   return null;
 }
 
@@ -161,19 +155,19 @@ function PlanBlock({ args }: { args: Record<string, unknown> }) {
   return (
     <div className="space-y-1">
       {plan.map((item, idx) => {
-        const status = item.status ?? "";
+        const status = item.status ?? '';
         const marker =
-          status === "completed"
-            ? "[x]"
-            : status === "in_progress"
-              ? "[~]"
-              : "[ ]";
+          status === 'completed'
+            ? '[x]'
+            : status === 'in_progress'
+              ? '[~]'
+              : '[ ]';
         const color =
-          status === "completed"
-            ? "text-ok"
-            : status === "in_progress"
-              ? "text-accent"
-              : "text-dim";
+          status === 'completed'
+            ? 'text-ok'
+            : status === 'in_progress'
+              ? 'text-accent'
+              : 'text-dim';
         return (
           <div key={idx} className={`text-xs font-mono ${color}`}>
             <span className="mr-1">{marker}</span>
@@ -182,7 +176,7 @@ function PlanBlock({ args }: { args: Record<string, unknown> }) {
           </div>
         );
       })}
-      {typeof args.explanation === "string" && args.explanation && (
+      {typeof args.explanation === 'string' && args.explanation && (
         <div className="text-xs text-dim">Explanation: {args.explanation}</div>
       )}
     </div>
@@ -190,14 +184,14 @@ function PlanBlock({ args }: { args: Record<string, unknown> }) {
 }
 
 function DiffBlock({ patch }: { patch: string }) {
-  const lines = patch.split("\n");
+  const lines = patch.split('\n');
   return (
     <pre className="text-xs overflow-x-auto whitespace-pre-wrap break-all font-mono max-h-80 overflow-y-auto">
       {lines.map((line, idx) => {
-        let cls = "text-dim";
-        if (line.startsWith("+")) cls = "text-ok";
-        else if (line.startsWith("-")) cls = "text-err";
-        else if (line.startsWith("@@")) cls = "text-accent";
+        let cls = 'text-dim';
+        if (line.startsWith('+')) cls = 'text-ok';
+        else if (line.startsWith('-')) cls = 'text-err';
+        else if (line.startsWith('@@')) cls = 'text-accent';
         return (
           <div key={idx} className={cls}>
             {line}
@@ -261,19 +255,19 @@ function hunkHeader(h: DiffHunk): string {
 }
 
 function GitDiffLine({ line }: { line: PatchLineDTO }) {
-  const oldCol = line.old_num > 0 ? String(line.old_num).padStart(3) : "   ";
-  const newCol = line.new_num > 0 ? String(line.new_num).padStart(3) : "   ";
-  const marker = line.kind === "add" ? "+" : line.kind === "delete" ? "-" : " ";
+  const oldCol = line.old_num > 0 ? String(line.old_num).padStart(3) : '   ';
+  const newCol = line.new_num > 0 ? String(line.new_num).padStart(3) : '   ';
+  const marker = line.kind === 'add' ? '+' : line.kind === 'delete' ? '-' : ' ';
   const cls =
-    line.kind === "add"
-      ? "text-ok"
-      : line.kind === "delete"
-        ? "text-err"
-        : "text-dim";
+    line.kind === 'add'
+      ? 'text-ok'
+      : line.kind === 'delete'
+        ? 'text-err'
+        : 'text-dim';
   return (
     <div className={`whitespace-pre ${cls}`}>
       <span className="text-dim opacity-60 select-none">
-        {oldCol} {newCol}{" "}
+        {oldCol} {newCol}{' '}
       </span>
       {marker}
       {line.text}
@@ -317,10 +311,9 @@ function GitDiffView({ files }: { files: PatchFileDTO[] }) {
 // preview loads or when it fails.
 function PatchPreview({ tool }: { tool: ToolView }) {
   const args = parseArgs(tool);
-  const patch =
-    args && typeof args.patch === "string" ? args.patch : tool.args;
-  const name = args && typeof args.name === "string" ? args.name : "";
-  const scope = args && typeof args.scope === "string" ? args.scope : "";
+  const patch = args && typeof args.patch === 'string' ? args.patch : tool.args;
+  const name = args && typeof args.name === 'string' ? args.name : '';
+  const scope = args && typeof args.scope === 'string' ? args.scope : '';
   const [files, setFiles] = useState<PatchFileDTO[] | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -329,7 +322,7 @@ function PatchPreview({ tool }: { tool: ToolView }) {
     setFiles(null);
     setFailed(false);
     const req =
-      tool.name === "apply_patch"
+      tool.name === 'apply_patch'
         ? api.renderPatch(patch)
         : api.renderSkillPatch(name, scope, patch);
     void req
@@ -350,15 +343,17 @@ function PatchPreview({ tool }: { tool: ToolView }) {
 
 function ArgsBlock({ tool }: { tool: ToolView }) {
   const { t } = useTranslation();
-  if (tool.name === "apply_patch") {
+  if (tool.name === 'apply_patch') {
     return <PatchPreview tool={tool} />;
   }
-  if (tool.name === "write_file") {
+  if (tool.name === 'write_file') {
     const args = parseArgs(tool);
-    const path = args && typeof args.file_path === "string" ? args.file_path : "";
-    const content = args && typeof args.content === "string" ? args.content : "";
-    const lines = content.split("\n").map((text, i) => ({
-      kind: "add" as const,
+    const path =
+      args && typeof args.file_path === 'string' ? args.file_path : '';
+    const content =
+      args && typeof args.content === 'string' ? args.content : '';
+    const lines = content.split('\n').map((text, i) => ({
+      kind: 'add' as const,
       old_num: 0,
       new_num: i + 1,
       text,
@@ -368,7 +363,7 @@ function ArgsBlock({ tool }: { tool: ToolView }) {
         files={[
           {
             path,
-            action: "add",
+            action: 'add',
             added: lines.length,
             removed: 0,
             lines,
@@ -377,40 +372,39 @@ function ArgsBlock({ tool }: { tool: ToolView }) {
       />
     );
   }
-  if (tool.name === "skill_modify") {
+  if (tool.name === 'skill_modify') {
     const args = parseArgs(tool);
-    if (args && typeof args.patch === "string") {
+    if (args && typeof args.patch === 'string') {
       return <PatchPreview tool={tool} />;
     }
   }
-  if (tool.name === "update_plan") {
+  if (tool.name === 'update_plan') {
     const args = parseArgs(tool);
     if (args) return <PlanBlock args={args} />;
   }
-  if (tool.name === "tool_search") {
+  if (tool.name === 'tool_search') {
     const args = parseArgs(tool);
     if (args) {
-      const query =
-        typeof args.query === "string" ? args.query : "";
+      const query = typeof args.query === 'string' ? args.query : '';
       const select = Array.isArray(args.select)
-        ? args.select.filter((s): s is string => typeof s === "string")
+        ? args.select.filter((s): s is string => typeof s === 'string')
         : [];
       return (
         <div className="space-y-1">
           <div className="text-xs">
-            <span className="text-dim">{t("tool.query")}: </span>
+            <span className="text-dim">{t('tool.query')}: </span>
             <code className="font-mono">{query}</code>
           </div>
-          {typeof args.limit === "number" && (
+          {typeof args.limit === 'number' && (
             <div className="text-xs">
-              <span className="text-dim">{t("tool.limit")}: </span>
+              <span className="text-dim">{t('tool.limit')}: </span>
               <code className="font-mono">{args.limit}</code>
             </div>
           )}
           {select.length > 0 && (
             <div className="text-xs">
-              <span className="text-dim">{t("tool.select")}: </span>
-              <span className="font-mono text-ok">{select.join(", ")}</span>
+              <span className="text-dim">{t('tool.select')}: </span>
+              <span className="font-mono text-ok">{select.join(', ')}</span>
             </div>
           )}
         </div>
@@ -431,10 +425,10 @@ function ArgsBlock({ tool }: { tool: ToolView }) {
 function ResultBlock({ tool }: { tool: ToolView }) {
   const { t } = useTranslation();
   if (tool.result === undefined) return null;
-  if (tool.name === "tool_search") {
+  if (tool.name === 'tool_search') {
     try {
       const v = JSON.parse(tool.result);
-      if (v && typeof v === "object" && Array.isArray(v.hits)) {
+      if (v && typeof v === 'object' && Array.isArray(v.hits)) {
         const selected = Array.isArray(v.selected)
           ? new Set(v.selected as string[])
           : new Set<string>();
@@ -443,22 +437,18 @@ function ResultBlock({ tool }: { tool: ToolView }) {
           description?: string;
         }[];
         if (hits.length === 0) {
-          return (
-            <div className="text-xs text-dim">
-              {t("tool.noHits")}
-            </div>
-          );
+          return <div className="text-xs text-dim">{t('tool.noHits')}</div>;
         }
         return (
           <div className="space-y-1.5">
             {hits.map((h) => {
-              const name = h.name ?? "";
+              const name = h.name ?? '';
               const isSelected = selected.has(name);
               return (
                 <div key={name} className="flex items-start gap-2">
                   <code
                     className={`shrink-0 font-mono text-xs ${
-                      isSelected ? "text-ok" : "text-fg"
+                      isSelected ? 'text-ok' : 'text-fg'
                     }`}
                   >
                     {name}
@@ -485,32 +475,32 @@ function ResultBlock({ tool }: { tool: ToolView }) {
   if (exec) {
     return (
       <div className="space-y-1">
-        {typeof exec.stderr === "string" && exec.stderr && (
+        {typeof exec.stderr === 'string' && exec.stderr && (
           <pre className="text-xs text-err whitespace-pre-wrap break-all font-mono max-h-48 overflow-y-auto">
             {exec.stderr}
           </pre>
         )}
-        {typeof exec.stdout === "string" && exec.stdout && (
+        {typeof exec.stdout === 'string' && exec.stdout && (
           <pre className="text-xs text-dim whitespace-pre-wrap break-all font-mono max-h-48 overflow-y-auto">
             {exec.stdout}
           </pre>
         )}
         <div
           className={`text-xs font-mono ${
-            exec.exit_code === 0 ? "text-ok" : "text-err"
+            exec.exit_code === 0 ? 'text-ok' : 'text-err'
           }`}
         >
           {exec.exit_code === 0
-            ? `└ ${t("tool.ok")}`
-            : `└ ${t("tool.exit")} ${exec.exit_code}`}
+            ? `└ ${t('tool.ok')}`
+            : `└ ${t('tool.exit')} ${exec.exit_code}`}
         </div>
       </div>
     );
   }
-  if (tool.name === "read_file") {
+  if (tool.name === 'read_file') {
     try {
       const v = JSON.parse(tool.result);
-      if (v && typeof v.content === "string") {
+      if (v && typeof v.content === 'string') {
         return (
           <pre className="text-xs text-fg whitespace-pre-wrap break-all font-mono max-h-64 overflow-y-auto">
             {v.content}
@@ -524,7 +514,7 @@ function ResultBlock({ tool }: { tool: ToolView }) {
   return (
     <pre
       className={`text-xs whitespace-pre-wrap break-all font-mono max-h-64 overflow-y-auto ${
-        tool.status === "error" ? "text-err" : "text-dim"
+        tool.status === 'error' ? 'text-err' : 'text-dim'
       }`}
     >
       {tool.result}
@@ -537,13 +527,13 @@ export const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
   const { t } = useTranslation();
   const summary = summaryOf(tool);
   const summaryLine = resultSummary(tool, t);
-  const running = tool.status === "running";
-  const failed = tool.status === "error";
+  const running = tool.status === 'running';
+  const failed = tool.status === 'error';
 
   return (
     <div
       className={`rounded-lg border overflow-hidden my-1.5 ${
-        failed ? "border-err/40 bg-err/5" : "border-edge bg-panel2"
+        failed ? 'border-err/40 bg-err/5' : 'border-edge bg-panel2'
       }`}
     >
       <button
@@ -559,7 +549,7 @@ export const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
         )}
         {summary ? (
           <span className="truncate min-w-0">
-            <span className="text-dim">{t(`tool.${summary.verb}`)}</span>{" "}
+            <span className="text-dim">{t(`tool.${summary.verb}`)}</span>{' '}
             <code className="font-mono text-xs break-all">
               {summary.rest || tool.name}
             </code>
@@ -580,7 +570,7 @@ export const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
       {!open && summaryLine && (
         <div
           className={`px-3 pb-2 text-xs font-mono ${
-            summaryLine.ok ? "text-ok" : "text-err"
+            summaryLine.ok ? 'text-ok' : 'text-err'
           }`}
         >
           {summaryLine.text}
@@ -588,11 +578,11 @@ export const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
       )}
       {open && (
         <div className="border-t border-edge px-3 py-2 space-y-2">
-          <div className="text-xs text-dim">{t("tool.arguments")}:</div>
+          <div className="text-xs text-dim">{t('tool.arguments')}:</div>
           <ArgsBlock tool={tool} />
           {tool.result !== undefined && (
             <>
-              <div className="text-xs text-dim pt-1">{t("tool.result")}:</div>
+              <div className="text-xs text-dim pt-1">{t('tool.result')}:</div>
               <ResultBlock tool={tool} />
             </>
           )}

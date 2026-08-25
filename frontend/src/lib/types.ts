@@ -65,7 +65,7 @@ export interface UsagePoint {
 }
 
 export interface PatchLineDTO {
-  kind: "context" | "add" | "delete";
+  kind: 'context' | 'add' | 'delete';
   old_num: number;
   new_num: number;
   text: string;
@@ -95,7 +95,7 @@ export interface MCPServer {
 
 export interface MCPStatus {
   name: string;
-  status: "connected" | "connecting" | "error";
+  status: 'connected' | 'connecting' | 'error';
   error?: string;
 }
 
@@ -126,14 +126,14 @@ export interface HistoryMessage {
 }
 
 export type HistoryPart =
-  | { type: "text"; text?: string }
-  | { type: "reasoning"; text?: string }
+  | { type: 'text'; text?: string }
+  | { type: 'reasoning'; text?: string }
   | {
-      type: "tool_call";
+      type: 'tool_call';
       call?: { id: string; name: string; arguments?: unknown };
     }
   | {
-      type: "tool_result";
+      type: 'tool_result';
       result?: { call_id: string; content?: string; is_error?: boolean };
     };
 
@@ -248,21 +248,21 @@ export interface ToolResultWire {
 }
 
 export type StreamPart =
-  | { type: "text"; text: string }
-  | { type: "reasoning"; text?: string; signature?: string; id?: string }
-  | { type: "tool_call"; call: ToolCallWire }
-  | { type: "tool_result"; result: ToolResultWire }
-  | { type: "file"; uri?: string; name?: string; media_type?: string }
-  | { type: "image"; source?: unknown }
-  | { type: "data"; media_type?: string; value?: unknown };
+  | { type: 'text'; text: string }
+  | { type: 'reasoning'; text?: string; signature?: string; id?: string }
+  | { type: 'tool_call'; call: ToolCallWire }
+  | { type: 'tool_result'; result: ToolResultWire }
+  | { type: 'file'; uri?: string; name?: string; media_type?: string }
+  | { type: 'image'; source?: unknown }
+  | { type: 'data'; media_type?: string; value?: unknown };
 
 export interface StreamDelta {
   type:
-    | "part"
-    | "finish"
-    | "provider_outputs"
-    | "parallel_branch_accept"
-    | "parallel_branch_cancel"
+    | 'part'
+    | 'finish'
+    | 'provider_outputs'
+    | 'parallel_branch_accept'
+    | 'parallel_branch_cancel'
     | string;
   part?: StreamPart;
   finish_reason?: string;

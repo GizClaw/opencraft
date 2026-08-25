@@ -5,4 +5,4 @@
 // lifecycle hooks filter it out of persistence. The chat renders such
 // messages as a compact card instead of a plain user bubble.
 export const COMPACT_SUMMARY_PREFIX =
-  "Another language model started to solve this problem and produced a summary of its thinking process.";
+  'Another language model started to solve this problem and produced a summary of its thinking process.';

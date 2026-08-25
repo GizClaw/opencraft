@@ -1,10 +1,10 @@
 // Typed wrappers over the generated Wails bindings. The Go context
 // argument is null from the frontend (Wails injects it server-side).
-import * as App from "../../wailsjs/go/desktop/App";
+import * as App from '../../wailsjs/go/desktop/App';
 import type {
   config as genConfig,
   desktop as gen,
-} from "../../wailsjs/go/models";
+} from '../../wailsjs/go/models';
 import type {
   AgentSummary,
   ConfigState,
@@ -26,7 +26,7 @@ import type {
   TurnStart,
   UsagePoint,
   WorkspaceMeta,
-} from "./types";
+} from './types';
 
 export const api = {
   version: () => App.Version(),
@@ -57,7 +57,7 @@ export const api = {
   modelUsage: () => App.ModelUsage() as Promise<ModelUsageStat[]>,
   modelUsageSeries: (
     model: string,
-    granularity: "hour" | "day",
+    granularity: 'hour' | 'day',
     utcOffsetMinutes: number,
     start: string,
     end: string,

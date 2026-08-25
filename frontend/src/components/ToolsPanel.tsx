@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import type { ComponentType } from "react";
+import { useEffect, useState } from 'react';
+import type { ComponentType } from 'react';
 import {
   Bot,
   Download,
@@ -11,14 +11,14 @@ import {
   Trash2,
   X,
   Zap,
-} from "lucide-react";
-import { useTranslation } from "react-i18next";
-import { api } from "../lib/api";
-import { useStore } from "../lib/store";
-import type { MCPServer, MCPStatus } from "../lib/types";
-import { KanbanSection } from "./KanbanView";
+} from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { api } from '../lib/api';
+import { useStore } from '../lib/store';
+import type { MCPServer, MCPStatus } from '../lib/types';
+import { KanbanSection } from './KanbanView';
 
-export type ToolPage = "mcp" | "agents" | "skills" | "kanban";
+export type ToolPage = 'mcp' | 'agents' | 'skills' | 'kanban';
 
 // MCPLogo renders the official Model Context Protocol mark (cropped from
 // the modelcontextprotocol.io brand logo) as inline SVG so it inherits
@@ -71,7 +71,7 @@ const newMCPID = () =>
 export function MCPSection() {
   const { t } = useTranslation();
   const [mcpRows, setMCPRows] = useState<MCPRow[]>([]);
-  const [mcpError, setMCPError] = useState("");
+  const [mcpError, setMCPError] = useState('');
   const [saving, setSaving] = useState(false);
   const [statuses, setStatuses] = useState<Record<string, MCPStatus>>({});
   const [testing, setTesting] = useState<string | null>(null);
@@ -90,12 +90,12 @@ export function MCPSection() {
             id: newMCPID(),
             name: s.name,
             transport: s.transport,
-            command: s.command ?? "",
-            url: s.url ?? "",
-            argsText: (s.args ?? []).join(", "),
+            command: s.command ?? '',
+            url: s.url ?? '',
+            argsText: (s.args ?? []).join(', '),
             envText: Object.entries(s.env ?? {})
               .map(([k, v]) => `${k}=${v}`)
-              .join("\n"),
+              .join('\n'),
           })),
         ),
       )
@@ -134,19 +134,19 @@ export function MCPSection() {
       name: r.name.trim(),
       transport: r.transport,
     };
-    if (r.transport === "http") {
+    if (r.transport === 'http') {
       srv.url = r.url.trim();
     } else {
       srv.command = r.command.trim();
     }
     const args = r.argsText
-      .split(",")
+      .split(',')
       .map((a) => a.trim())
       .filter(Boolean);
     if (args.length > 0) srv.args = args;
     const env: Record<string, string> = {};
-    for (const line of r.envText.split("\n")) {
-      const eq = line.indexOf("=");
+    for (const line of r.envText.split('\n')) {
+      const eq = line.indexOf('=');
       if (eq <= 0) continue;
       env[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
     }
@@ -155,12 +155,12 @@ export function MCPSection() {
   };
 
   const saveMCP = async () => {
-    setMCPError("");
+    setMCPError('');
     setSaving(true);
     const servers: MCPServer[] = mcpRows.map(rowToServer);
     try {
       await api.saveMCP(servers);
-      setMCPError("");
+      setMCPError('');
       void api
         .mcpStatus()
         .then((list) => {
@@ -181,7 +181,7 @@ export function MCPSection() {
     setTestResult(null);
     try {
       await api.testMCP(rowToServer(row));
-      setTestResult({ id: row.id, ok: true, msg: "" });
+      setTestResult({ id: row.id, ok: true, msg: '' });
     } catch (err) {
       setTestResult({ id: row.id, ok: false, msg: String(err) });
     } finally {
@@ -193,23 +193,23 @@ export function MCPSection() {
     const st = statuses[row.name.trim()];
     if (!st) return null;
     const base =
-      "flex items-center gap-1.5 rounded px-1.5 py-0.5 text-[10px] whitespace-nowrap";
-    if (st.status === "connected") {
+      'flex items-center gap-1.5 rounded px-1.5 py-0.5 text-[10px] whitespace-nowrap';
+    if (st.status === 'connected') {
       return (
         <span className={`${base} text-ok border border-ok/30 bg-ok/10`}>
           <span className="h-1.5 w-1.5 rounded-full bg-ok" />
-          {t("config.mcpStatusConnected")}
+          {t('config.mcpStatusConnected')}
         </span>
       );
     }
-    if (st.status === "connecting") {
+    if (st.status === 'connecting') {
       return (
         <span
           className={`${base} text-dim border border-edge bg-panel`}
-          title={t("config.mcpStatusConnectingHint")}
+          title={t('config.mcpStatusConnectingHint')}
         >
           <Loader2 size={10} className="animate-spin" />
-          {t("config.mcpStatusConnecting")}
+          {t('config.mcpStatusConnecting')}
         </span>
       );
     }
@@ -219,16 +219,16 @@ export function MCPSection() {
         title={st.error}
       >
         <span className="h-1.5 w-1.5 rounded-full bg-err" />
-        {t("config.mcpStatusError")}
+        {t('config.mcpStatusError')}
       </span>
     );
   };
 
   return (
     <div className="space-y-3">
-      <p className="text-xs text-dim">{t("config.mcpHint")}</p>
+      <p className="text-xs text-dim">{t('config.mcpHint')}</p>
       {mcpRows.length === 0 && (
-        <p className="text-sm text-dim">{t("config.mcpEmpty")}</p>
+        <p className="text-sm text-dim">{t('config.mcpEmpty')}</p>
       )}
       <div className="space-y-3">
         {mcpRows.map((row) => (
@@ -240,7 +240,7 @@ export function MCPSection() {
               <input
                 value={row.name}
                 onChange={(e) => updateMCP(row.id, { name: e.target.value })}
-                placeholder={t("config.mcpName")}
+                placeholder={t('config.mcpName')}
                 className="flex-1 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
               />
               <select
@@ -259,38 +259,36 @@ export function MCPSection() {
                   setMCPRows((prev) => prev.filter((r) => r.id !== row.id))
                 }
                 className="text-dim hover:text-err"
-                title={t("config.mcpRemove")}
+                title={t('config.mcpRemove')}
               >
                 <Trash2 size={14} />
               </button>
             </div>
-            {row.transport === "stdio" ? (
+            {row.transport === 'stdio' ? (
               <input
                 value={row.command}
-                onChange={(e) =>
-                  updateMCP(row.id, { command: e.target.value })
-                }
-                placeholder={t("config.mcpCommand")}
+                onChange={(e) => updateMCP(row.id, { command: e.target.value })}
+                placeholder={t('config.mcpCommand')}
                 className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
               />
             ) : (
               <input
                 value={row.url}
                 onChange={(e) => updateMCP(row.id, { url: e.target.value })}
-                placeholder={t("config.mcpURL")}
+                placeholder={t('config.mcpURL')}
                 className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
               />
             )}
             <input
               value={row.argsText}
               onChange={(e) => updateMCP(row.id, { argsText: e.target.value })}
-              placeholder={t("config.mcpArgs")}
+              placeholder={t('config.mcpArgs')}
               className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
             />
             <textarea
               value={row.envText}
               onChange={(e) => updateMCP(row.id, { envText: e.target.value })}
-              placeholder={t("config.mcpEnv")}
+              placeholder={t('config.mcpEnv')}
               rows={2}
               className="w-full resize-none rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
             />
@@ -300,7 +298,7 @@ export function MCPSection() {
                 disabled={
                   testing === row.id ||
                   !row.name.trim() ||
-                  (row.transport === "stdio"
+                  (row.transport === 'stdio'
                     ? !row.command.trim()
                     : !row.url.trim())
                 }
@@ -312,18 +310,18 @@ export function MCPSection() {
                   <Zap size={12} />
                 )}
                 {testing === row.id
-                  ? t("config.mcpTesting")
-                  : t("config.mcpTest")}
+                  ? t('config.mcpTesting')
+                  : t('config.mcpTest')}
               </button>
               {testResult?.id === row.id && (
                 <span
                   className={`text-xs break-all ${
-                    testResult.ok ? "text-ok" : "text-err"
+                    testResult.ok ? 'text-ok' : 'text-err'
                   }`}
                 >
                   {testResult.ok
-                    ? t("config.mcpTestSuccess")
-                    : t("config.mcpTestFailed", { error: testResult.msg })}
+                    ? t('config.mcpTestSuccess')
+                    : t('config.mcpTestFailed', { error: testResult.msg })}
                 </span>
               )}
             </div>
@@ -337,26 +335,26 @@ export function MCPSection() {
               ...prev,
               {
                 id: newMCPID(),
-                name: "",
-                transport: "stdio",
-                command: "",
-                url: "",
-                argsText: "",
-                envText: "",
+                name: '',
+                transport: 'stdio',
+                command: '',
+                url: '',
+                argsText: '',
+                envText: '',
               },
             ])
           }
           className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
         >
           <Plug size={14} />
-          {t("config.mcpAdd")}
+          {t('config.mcpAdd')}
         </button>
         <button
           onClick={() => void saveMCP()}
           disabled={saving}
           className="rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-50"
         >
-          {t("setup.saveApply")}
+          {t('setup.saveApply')}
         </button>
         {mcpError && <span className="text-xs text-err">{mcpError}</span>}
       </div>
@@ -371,14 +369,14 @@ export function AgentsSection() {
   const refreshAgents = useStore((s) => s.refreshAgents);
   const { t } = useTranslation();
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState('');
 
   useEffect(() => {
     void refreshAgents();
   }, [refreshAgents]);
 
   const deleteAgent = async (name: string) => {
-    setError("");
+    setError('');
     try {
       await api.unregisterAgent(name);
       setConfirmDelete(null);
@@ -391,10 +389,10 @@ export function AgentsSection() {
 
   return (
     <div className="space-y-3">
-      <p className="text-xs text-dim">{t("config.agentsHint")}</p>
+      <p className="text-xs text-dim">{t('config.agentsHint')}</p>
       {error && <p className="text-xs text-err">{error}</p>}
       {agents.length === 0 ? (
-        <p className="text-sm text-dim">{t("config.agentsEmpty")}</p>
+        <p className="text-sm text-dim">{t('config.agentsEmpty')}</p>
       ) : (
         agents.map((a) => (
           <div
@@ -411,7 +409,7 @@ export function AgentsSection() {
               className="flex items-center gap-1 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim hover:text-err hover:border-err/40"
             >
               <Trash2 size={12} />
-              {t("config.agentsDelete")}
+              {t('config.agentsDelete')}
             </button>
           </div>
         ))
@@ -419,20 +417,20 @@ export function AgentsSection() {
       {confirmDelete && (
         <div className="rounded-xl border border-err/40 bg-panel2 p-4">
           <p className="text-sm">
-            {t("config.agentsDeleteConfirm", { name: confirmDelete })}
+            {t('config.agentsDeleteConfirm', { name: confirmDelete })}
           </p>
           <div className="mt-3 flex gap-2">
             <button
               onClick={() => setConfirmDelete(null)}
               className="rounded-lg border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg"
             >
-              {t("interact.cancel")}
+              {t('interact.cancel')}
             </button>
             <button
               onClick={() => void deleteAgent(confirmDelete)}
               className="rounded-lg bg-err px-4 py-1.5 text-sm text-white hover:opacity-90"
             >
-              {t("config.agentsDelete")}
+              {t('config.agentsDelete')}
             </button>
           </div>
         </div>
@@ -458,11 +456,11 @@ export function SkillsSection() {
     name: string;
     path: string;
   } | null>(null);
-  const [error, setError] = useState("");
+  const [error, setError] = useState('');
   const [importOpen, setImportOpen] = useState(false);
-  const [repo, setRepo] = useState("");
-  const [scope, setScope] = useState("user");
-  const [subpath, setSubpath] = useState("");
+  const [repo, setRepo] = useState('');
+  const [scope, setScope] = useState('user');
+  const [subpath, setSubpath] = useState('');
   const [installing, setInstalling] = useState(false);
 
   useEffect(() => {
@@ -470,7 +468,7 @@ export function SkillsSection() {
   }, []);
 
   const reloadSkills = () => {
-    setError("");
+    setError('');
     return api
       .skills()
       .then(setSkills)
@@ -478,7 +476,7 @@ export function SkillsSection() {
   };
 
   const deleteSkill = async (path: string) => {
-    setError("");
+    setError('');
     try {
       await api.deleteSkill(path);
       setSkills((prev) => prev.filter((s) => s.path !== path));
@@ -491,18 +489,18 @@ export function SkillsSection() {
 
   const installSkill = async () => {
     if (!repo.trim()) {
-      setError(t("config.skillsImportRepoRequired"));
+      setError(t('config.skillsImportRepoRequired'));
       return;
     }
     setInstalling(true);
-    setError("");
+    setError('');
     try {
       const path = await api.installSkill(repo.trim(), scope, subpath.trim());
-      setRepo("");
-      setSubpath("");
+      setRepo('');
+      setSubpath('');
       setImportOpen(false);
       await reloadSkills();
-      flash(t("config.skillsImported", { path }));
+      flash(t('config.skillsImported', { path }));
     } catch (err) {
       setError(String(err));
     } finally {
@@ -513,47 +511,47 @@ export function SkillsSection() {
   return (
     <div className="space-y-3">
       <div className="flex items-start justify-between gap-3">
-        <p className="text-xs text-dim">{t("config.skillsHint")}</p>
+        <p className="text-xs text-dim">{t('config.skillsHint')}</p>
         <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={() => setImportOpen((v) => !v)}
             className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
           >
             <Download size={14} />
-            {t("config.skillsImport")}
+            {t('config.skillsImport')}
           </button>
           <button
             onClick={() => void reloadSkills()}
             className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
           >
             <RotateCw size={14} />
-            {t("config.skillsRefresh")}
+            {t('config.skillsRefresh')}
           </button>
         </div>
       </div>
       {importOpen && (
         <div className="rounded-xl border border-edge bg-panel2 p-3 space-y-2">
-          <p className="text-xs text-dim">{t("config.skillsImportHint")}</p>
+          <p className="text-xs text-dim">{t('config.skillsImportHint')}</p>
           <input
             value={repo}
             onChange={(e) => setRepo(e.target.value)}
-            placeholder={t("config.skillsImportRepo")}
+            placeholder={t('config.skillsImportRepo')}
             className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
           />
           <div className="flex gap-2">
             <select
               value={scope}
               onChange={(e) => setScope(e.target.value)}
-              title={t("config.skillsImportScope")}
+              title={t('config.skillsImportScope')}
               className="rounded-lg border border-edge bg-panel px-2 py-1.5 text-sm outline-none"
             >
-              <option value="user">{t("config.skillsImportScopeUser")}</option>
-              <option value="repo">{t("config.skillsImportScopeRepo")}</option>
+              <option value="user">{t('config.skillsImportScopeUser')}</option>
+              <option value="repo">{t('config.skillsImportScopeRepo')}</option>
             </select>
             <input
               value={subpath}
               onChange={(e) => setSubpath(e.target.value)}
-              placeholder={t("config.skillsImportSubpath")}
+              placeholder={t('config.skillsImportSubpath')}
               className="flex-1 min-w-0 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
             />
           </div>
@@ -564,20 +562,20 @@ export function SkillsSection() {
               className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-50"
             >
               {installing && <Loader2 size={14} className="animate-spin" />}
-              {t("config.skillsImportRun")}
+              {t('config.skillsImportRun')}
             </button>
             <button
               onClick={() => setImportOpen(false)}
               className="rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
             >
-              {t("interact.cancel")}
+              {t('interact.cancel')}
             </button>
           </div>
         </div>
       )}
       {error && <p className="text-xs text-err">{error}</p>}
       {skills.length === 0 ? (
-        <p className="text-sm text-dim">{t("config.skillsEmpty")}</p>
+        <p className="text-sm text-dim">{t('config.skillsEmpty')}</p>
       ) : (
         skills.map((s) => (
           <div
@@ -592,7 +590,7 @@ export function SkillsSection() {
                 {s.scope}
               </span>
               <span className="flex-1" />
-              {s.scope !== "builtin" && (
+              {s.scope !== 'builtin' && (
                 <button
                   onClick={() =>
                     setSkillToDelete({ name: s.name, path: s.path })
@@ -600,7 +598,7 @@ export function SkillsSection() {
                   className="flex items-center gap-1 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim hover:text-err hover:border-err/40"
                 >
                   <Trash2 size={12} />
-                  {t("config.skillsDelete")}
+                  {t('config.skillsDelete')}
                 </button>
               )}
             </div>
@@ -613,7 +611,7 @@ export function SkillsSection() {
       {skillToDelete && (
         <div className="rounded-xl border border-err/40 bg-panel2 p-4">
           <p className="text-sm">
-            {t("config.skillsDeleteConfirm", {
+            {t('config.skillsDeleteConfirm', {
               name: skillToDelete.name,
             })}
           </p>
@@ -622,13 +620,13 @@ export function SkillsSection() {
               onClick={() => setSkillToDelete(null)}
               className="rounded-lg border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg"
             >
-              {t("interact.cancel")}
+              {t('interact.cancel')}
             </button>
             <button
               onClick={() => void deleteSkill(skillToDelete.path)}
               className="rounded-lg bg-err px-4 py-1.5 text-sm text-white hover:opacity-90"
             >
-              {t("config.skillsDelete")}
+              {t('config.skillsDelete')}
             </button>
           </div>
         </div>
@@ -642,10 +640,10 @@ const VIEW_META: {
   icon: ComponentType<{ className?: string }>;
   label: (t: (k: string) => string) => string;
 }[] = [
-  { id: "mcp", icon: MCPLogo, label: (t) => t("config.tabMCP") },
-  { id: "agents", icon: Bot, label: (t) => t("config.tabAgents") },
-  { id: "skills", icon: Sparkles, label: (t) => t("config.tabSkills") },
-  { id: "kanban", icon: Kanban, label: (t) => t("kanban.title") },
+  { id: 'mcp', icon: MCPLogo, label: (t) => t('config.tabMCP') },
+  { id: 'agents', icon: Bot, label: (t) => t('config.tabAgents') },
+  { id: 'skills', icon: Sparkles, label: (t) => t('config.tabSkills') },
+  { id: 'kanban', icon: Kanban, label: (t) => t('kanban.title') },
 ];
 
 // ToolsPanel is the right-side page shown when one of the sidebar tool
@@ -666,23 +664,21 @@ export function ToolsPanel() {
     <main className="flex-1 min-w-0 h-full flex flex-col min-h-0 bg-panel">
       <header className="h-11 shrink-0 border-b border-edge flex items-center gap-3 px-4 select-none">
         <HeaderIcon className="h-4 w-4 shrink-0 text-accent" />
-        <h2 className="text-sm font-semibold">
-          {meta?.label(t)}
-        </h2>
+        <h2 className="text-sm font-semibold">{meta?.label(t)}</h2>
         <span className="flex-1" />
         <button
           onClick={closeTools}
           className="text-dim hover:text-fg"
-          title={t("tools.close")}
+          title={t('tools.close')}
         >
           <X size={18} />
         </button>
       </header>
       <div className="flex-1 overflow-y-auto px-5 py-4">
-        {view === "mcp" && <MCPSection />}
-        {view === "agents" && <AgentsSection />}
-        {view === "skills" && <SkillsSection />}
-        {view === "kanban" && <KanbanSection />}
+        {view === 'mcp' && <MCPSection />}
+        {view === 'agents' && <AgentsSection />}
+        {view === 'skills' && <SkillsSection />}
+        {view === 'kanban' && <KanbanSection />}
       </div>
     </main>
   );

@@ -1,15 +1,15 @@
-import { useEffect } from "react";
-import { ArrowRight } from "lucide-react";
-import { useTranslation } from "react-i18next";
-import { api } from "../lib/api";
-import { useStore } from "../lib/store";
-import type { KanbanCard } from "../lib/types";
+import { useEffect } from 'react';
+import { ArrowRight } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { api } from '../lib/api';
+import { useStore } from '../lib/store';
+import type { KanbanCard } from '../lib/types';
 
 function elapsed(card: KanbanCard): string {
   const start = new Date(card.created_at).getTime();
   const end = new Date(card.updated_at).getTime();
   if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
-    return "";
+    return '';
   }
   const s = Math.floor((end - start) / 1000);
   const m = Math.floor(s / 60);
@@ -25,10 +25,10 @@ function CardView({
 }) {
   const { t } = useTranslation();
   const cancellable =
-    card.status === "pending" ||
-    card.status === "claimed" ||
-    card.status === "suspended";
-  const retryable = card.status === "failed" || card.status === "canceled";
+    card.status === 'pending' ||
+    card.status === 'claimed' ||
+    card.status === 'suspended';
+  const retryable = card.status === 'failed' || card.status === 'canceled';
   return (
     <div className="rounded-lg border border-edge bg-panel2 p-2.5 space-y-1">
       <div className="text-sm font-medium break-words leading-snug">
@@ -53,32 +53,26 @@ function CardView({
       )}
       {card.error && (
         <p className="text-xs text-err line-clamp-3 whitespace-pre-wrap break-words">
-          {t("kanban.error")}: {card.error}
+          {t('kanban.error')}: {card.error}
         </p>
       )}
-      {elapsed(card) && (
-        <div className="text-xs text-dim">{elapsed(card)}</div>
-      )}
+      {elapsed(card) && <div className="text-xs text-dim">{elapsed(card)}</div>}
       {(cancellable || retryable) && (
         <div className="flex gap-2 pt-1">
           {cancellable && (
             <button
-              onClick={() =>
-                void api.cancelCard(card.id).then(onChanged)
-              }
+              onClick={() => void api.cancelCard(card.id).then(onChanged)}
               className="rounded border border-edge px-2 py-0.5 text-xs text-dim hover:text-err"
             >
-              {t("kanban.cancel")}
+              {t('kanban.cancel')}
             </button>
           )}
           {retryable && (
             <button
-              onClick={() =>
-                void api.retryCard(card.id).then(onChanged)
-              }
+              onClick={() => void api.retryCard(card.id).then(onChanged)}
               className="rounded border border-edge px-2 py-0.5 text-xs text-dim hover:text-accent"
             >
-              {t("kanban.retry")}
+              {t('kanban.retry')}
             </button>
           )}
         </div>
@@ -107,30 +101,30 @@ export function KanbanSection() {
     filter: (c: KanbanCard) => boolean;
   }[] = [
     {
-      key: "pending",
-      label: t("kanban.pending"),
-      filter: (c) => c.status === "pending",
+      key: 'pending',
+      label: t('kanban.pending'),
+      filter: (c) => c.status === 'pending',
     },
     {
-      key: "running",
-      label: t("kanban.running"),
-      filter: (c) => c.status === "claimed" || c.status === "suspended",
+      key: 'running',
+      label: t('kanban.running'),
+      filter: (c) => c.status === 'claimed' || c.status === 'suspended',
     },
     {
-      key: "done",
-      label: t("kanban.done"),
-      filter: (c) => c.status === "done",
+      key: 'done',
+      label: t('kanban.done'),
+      filter: (c) => c.status === 'done',
     },
     {
-      key: "failed",
-      label: t("kanban.failed"),
-      filter: (c) => c.status === "failed" || c.status === "canceled",
+      key: 'failed',
+      label: t('kanban.failed'),
+      filter: (c) => c.status === 'failed' || c.status === 'canceled',
     },
   ];
 
   return (
     <div className="space-y-3">
-      <p className="text-xs text-dim">{t("kanban.title")}</p>
+      <p className="text-xs text-dim">{t('kanban.title')}</p>
       <div className="grid grid-cols-4 gap-3">
         {columns.map((col) => {
           const items = cards.filter(col.filter);
@@ -143,7 +137,7 @@ export function KanbanSection() {
                 </span>
               </div>
               {items.length === 0 ? (
-                <p className="text-xs text-dim">{t("kanban.empty")}</p>
+                <p className="text-xs text-dim">{t('kanban.empty')}</p>
               ) : (
                 items.map((c) => (
                   <CardView

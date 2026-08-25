@@ -1,20 +1,20 @@
-import { useEffect, useState } from "react";
-import { useTranslation } from "react-i18next";
-import i18n from "./i18n";
+import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import i18n from './i18n';
 import {
   EventsOn,
   InitializeNotifications,
   RequestNotificationAuthorization,
   SendNotification,
-} from "../wailsjs/runtime/runtime";
-import { ChatView } from "./components/ChatView";
-import { ConfigPage } from "./components/ConfigPage";
-import { Sidebar } from "./components/Sidebar";
-import { StatusBar } from "./components/StatusBar";
-import { SubagentSidebar } from "./components/SubagentSidebar";
-import { ToolsPanel } from "./components/ToolsPanel";
-import { useStore } from "./lib/store";
-import type { UIEvent } from "./lib/types";
+} from '../wailsjs/runtime/runtime';
+import { ChatView } from './components/ChatView';
+import { ConfigPage } from './components/ConfigPage';
+import { Sidebar } from './components/Sidebar';
+import { StatusBar } from './components/StatusBar';
+import { SubagentSidebar } from './components/SubagentSidebar';
+import { ToolsPanel } from './components/ToolsPanel';
+import { useStore } from './lib/store';
+import type { UIEvent } from './lib/types';
 
 export default function App() {
   const init = useStore((s) => s.init);
@@ -32,28 +32,28 @@ export default function App() {
   const openTools = useStore((s) => s.openTools);
   const { t } = useTranslation();
   const [sidebarW, setSidebarW] = useState(
-    () => Number(localStorage.getItem("oc.sidebarW")) || 240,
+    () => Number(localStorage.getItem('oc.sidebarW')) || 240,
   );
 
   useEffect(() => {
     void init();
-    const off = EventsOn("opencraft:ui", (ev: UIEvent) => {
-      if (ev.type === "interact") {
+    const off = EventsOn('opencraft:ui', (ev: UIEvent) => {
+      if (ev.type === 'interact') {
         const spec = ev.data as { title?: string };
         void SendNotification({
-          id: "interact",
-          title: "OpenCraft",
-          body: spec.title || i18n.t("notify.interact"),
+          id: 'interact',
+          title: 'OpenCraft',
+          body: spec.title || i18n.t('notify.interact'),
         });
-      } else if (ev.type === "turn_end") {
+      } else if (ev.type === 'turn_end') {
         const data = ev.data as { status: string };
         const body =
-          data.status === "completed"
-            ? i18n.t("notify.done")
-            : data.status === "failed" || data.status === "aborted"
-              ? i18n.t("notify.failed")
+          data.status === 'completed'
+            ? i18n.t('notify.done')
+            : data.status === 'failed' || data.status === 'aborted'
+              ? i18n.t('notify.failed')
               : data.status;
-        void SendNotification({ id: "turn-end", title: "OpenCraft", body });
+        void SendNotification({ id: 'turn-end', title: 'OpenCraft', body });
       }
       handleEvent(ev);
     });
@@ -69,19 +69,19 @@ export default function App() {
     const onKey = (e: KeyboardEvent) => {
       if (!e.metaKey && !e.ctrlKey) return;
       const key = e.key.toLowerCase();
-      if (key === "n") {
+      if (key === 'n') {
         e.preventDefault();
         void newChat();
-      } else if (key === ",") {
+      } else if (key === ',') {
         e.preventDefault();
         openConfig();
-      } else if (key === "k") {
+      } else if (key === 'k') {
         e.preventDefault();
-        openTools("kanban");
+        openTools('kanban');
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, [newChat, openConfig, openTools]);
 
   // Keep the current conversation's delegation list fresh; the right
@@ -93,34 +93,33 @@ export default function App() {
     return () => clearInterval(timer);
   }, [status, current, loadSubagentCards]);
 
-  const startDrag =
-    () => (e: React.MouseEvent) => {
-      e.preventDefault();
-      const startX = e.clientX;
-      const startW = sidebarW;
-      const onMove = (ev: MouseEvent) => {
-        const raw = startW + (ev.clientX - startX);
-        const next = Math.min(480, Math.max(180, raw));
-        setSidebarW(next);
-        localStorage.setItem("oc.sidebarW", String(next));
-      };
-      const onUp = () => {
-        window.removeEventListener("mousemove", onMove);
-        window.removeEventListener("mouseup", onUp);
-      };
-      window.addEventListener("mousemove", onMove);
-      window.addEventListener("mouseup", onUp);
+  const startDrag = () => (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = sidebarW;
+    const onMove = (ev: MouseEvent) => {
+      const raw = startW + (ev.clientX - startX);
+      const next = Math.min(480, Math.max(180, raw));
+      setSidebarW(next);
+      localStorage.setItem('oc.sidebarW', String(next));
     };
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  };
 
   if (fatal) {
     return (
       <div className="h-full grid place-items-center">
         <div className="max-w-md rounded-xl border border-err/40 bg-panel p-6 text-sm">
           <h2 className="font-semibold text-err mb-2">
-            {t("app.startupFailed")}
+            {t('app.startupFailed')}
           </h2>
           <p className="text-dim whitespace-pre-wrap break-all">
-            {fatal || t("app.unknownError")}
+            {fatal || t('app.unknownError')}
           </p>
         </div>
       </div>
@@ -130,7 +129,7 @@ export default function App() {
   if (!status) {
     return (
       <div className="h-full grid place-items-center text-dim text-sm">
-        {t("app.starting")}
+        {t('app.starting')}
       </div>
     );
   }

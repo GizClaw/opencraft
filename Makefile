@@ -1,9 +1,17 @@
-.PHONY: all fmt lint test build-linux
+.PHONY: all fmt fmt-check lint test build-linux
 
 all: fmt lint test
 
 fmt:
 	go fmt ./...
+	npm --prefix frontend run format
+
+# fmt-check verifies formatting without writing, for CI.
+fmt-check:
+	@files="$$(gofmt -l .)"; if [ -n "$$files" ]; then \
+		echo "gofmt required on:"; echo "$$files"; exit 1; \
+	fi
+	npm --prefix frontend run format:check
 
 lint:
 	golangci-lint run ./...

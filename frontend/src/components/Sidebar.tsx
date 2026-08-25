@@ -13,15 +13,18 @@ import {
   Sparkles,
   Trash2,
   X,
-} from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { Environment, WindowToggleMaximise } from "../../wailsjs/runtime/runtime";
-import { api } from "../lib/api";
-import { useStore } from "../lib/store";
-import type { SessionMeta } from "../lib/types";
-import type { ComponentType } from "react";
-import { MCPLogo } from "./ToolsPanel";
+} from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import {
+  Environment,
+  WindowToggleMaximise,
+} from '../../wailsjs/runtime/runtime';
+import { api } from '../lib/api';
+import { useStore } from '../lib/store';
+import type { SessionMeta } from '../lib/types';
+import type { ComponentType } from 'react';
+import { MCPLogo } from './ToolsPanel';
 
 function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
@@ -60,10 +63,10 @@ export function Sidebar() {
   const [isMac, setIsMac] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [workspacesOpen, setWorkspacesOpen] = useState(false);
-  const [sessionQuery, setSessionQuery] = useState("");
+  const [sessionQuery, setSessionQuery] = useState('');
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [renameId, setRenameId] = useState<string | null>(null);
-  const [renameValue, setRenameValue] = useState("");
+  const [renameValue, setRenameValue] = useState('');
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
 
   const toolButtons: {
@@ -74,48 +77,48 @@ export function Sidebar() {
     onClick: () => void;
   }[] = [
     {
-      id: "mcp",
-      label: t("sidebar.mcp"),
+      id: 'mcp',
+      label: t('sidebar.mcp'),
       icon: MCPLogo,
-      active: toolsView === "mcp",
-      onClick: () => (toolsView === "mcp" ? closeTools() : openTools("mcp")),
+      active: toolsView === 'mcp',
+      onClick: () => (toolsView === 'mcp' ? closeTools() : openTools('mcp')),
     },
     {
-      id: "agents",
-      label: t("sidebar.subagents"),
+      id: 'agents',
+      label: t('sidebar.subagents'),
       icon: Bot,
-      active: toolsView === "agents",
+      active: toolsView === 'agents',
       onClick: () =>
-        toolsView === "agents" ? closeTools() : openTools("agents"),
+        toolsView === 'agents' ? closeTools() : openTools('agents'),
     },
     {
-      id: "skills",
-      label: t("sidebar.skills"),
+      id: 'skills',
+      label: t('sidebar.skills'),
       icon: Sparkles,
-      active: toolsView === "skills",
+      active: toolsView === 'skills',
       onClick: () =>
-        toolsView === "skills" ? closeTools() : openTools("skills"),
+        toolsView === 'skills' ? closeTools() : openTools('skills'),
     },
     {
-      id: "kanban",
-      label: t("sidebar.kanban"),
+      id: 'kanban',
+      label: t('sidebar.kanban'),
       icon: Kanban,
-      active: toolsView === "kanban",
+      active: toolsView === 'kanban',
       onClick: () =>
-        toolsView === "kanban" ? closeTools() : openTools("kanban"),
+        toolsView === 'kanban' ? closeTools() : openTools('kanban'),
     },
   ];
 
   useEffect(() => {
-    void Environment().then((env) => setIsMac(env.platform === "darwin"));
+    void Environment().then((env) => setIsMac(env.platform === 'darwin'));
   }, []);
 
   const fmtTime = (iso: string) => {
     const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return "";
+    if (Number.isNaN(d.getTime())) return '';
     const now = Date.now();
     const diff = now - d.getTime();
-    if (diff < 60_000) return "刚刚";
+    if (diff < 60_000) return '刚刚';
     if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`;
     if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`;
     return d.toLocaleDateString();
@@ -124,7 +127,7 @@ export function Sidebar() {
   const fmtTokens = (n: number) => {
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
     if (n >= 1_000) return `${(n / 1_000).toFixed(2)}k`;
-    return n > 0 ? String(n) : "";
+    return n > 0 ? String(n) : '';
   };
 
   // Running conversations always stay visible; stored sessions fill the
@@ -141,10 +144,13 @@ export function Sidebar() {
       const meta = sessions.find((s) => s.id === id);
       return {
         id,
-        title: meta?.title && meta.title !== "(empty)" ? meta.title : t("sidebar.newSession"),
+        title:
+          meta?.title && meta.title !== '(empty)'
+            ? meta.title
+            : t('sidebar.newSession'),
         running: true,
-        tokens: meta ? fmtTokens(meta.total_tokens) : "",
-        time: meta ? fmtTime(meta.updated_at) : "",
+        tokens: meta ? fmtTokens(meta.total_tokens) : '',
+        time: meta ? fmtTime(meta.updated_at) : '',
         meta,
       };
     });
@@ -189,8 +195,8 @@ export function Sidebar() {
       <div
         className={`group relative flex items-center gap-1 rounded-lg px-1.5 py-1 text-left text-sm ${
           row.id === currentSession
-            ? "bg-accent/15 border border-accent/40"
-            : "border border-transparent hover:bg-panel2"
+            ? 'bg-accent/15 border border-accent/40'
+            : 'border border-transparent hover:bg-panel2'
         }`}
         title={row.id}
       >
@@ -205,9 +211,9 @@ export function Sidebar() {
               value={renameValue}
               onChange={(e) => setRenameValue(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter") {
+                if (e.key === 'Enter') {
                   renameSession(row.id, renameValue);
-                } else if (e.key === "Escape") {
+                } else if (e.key === 'Escape') {
                   setRenameId(null);
                 }
               }}
@@ -223,11 +229,9 @@ export function Sidebar() {
         </button>
         <div className="relative shrink-0">
           <button
-            onClick={() =>
-              setMenuOpenId(menuOpenId === row.id ? null : row.id)
-            }
+            onClick={() => setMenuOpenId(menuOpenId === row.id ? null : row.id)}
             className="text-dim opacity-0 group-hover:opacity-100 hover:text-fg rounded p-0.5"
-            title={t("sidebar.sessionActions")}
+            title={t('sidebar.sessionActions')}
           >
             <MoreHorizontal size={14} />
           </button>
@@ -247,21 +251,19 @@ export function Sidebar() {
                   className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-panel2"
                 >
                   <Pencil size={12} className="text-dim" />
-                  {t("sidebar.renameSession")}
+                  {t('sidebar.renameSession')}
                 </button>
                 <button
                   onClick={() => {
                     setMenuOpenId(null);
                     void api
                       .exportSession(row.id)
-                      .then((path) =>
-                        flash(t("sidebar.exportedTo", { path })),
-                      );
+                      .then((path) => flash(t('sidebar.exportedTo', { path })));
                   }}
                   className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-panel2"
                 >
                   <Download size={12} className="text-dim" />
-                  {t("sidebar.exportSession")}
+                  {t('sidebar.exportSession')}
                 </button>
                 <button
                   onClick={() => {
@@ -271,7 +273,7 @@ export function Sidebar() {
                   className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm text-err hover:bg-panel2"
                 >
                   <Trash2 size={12} className="text-err" />
-                  {t("sidebar.deleteSession")}
+                  {t('sidebar.deleteSession')}
                 </button>
               </div>
             </>
@@ -279,22 +281,26 @@ export function Sidebar() {
         </div>
         {(row.tokens || row.time) && (
           <div className="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1.5 z-10 hidden group-hover:block whitespace-nowrap rounded-md border border-edge bg-panel2 px-2 py-1 text-[10px] text-dim shadow-lg">
-            {[row.tokens, row.time].filter(Boolean).join(" · ")}
+            {[row.tokens, row.time].filter(Boolean).join(' · ')}
           </div>
         )}
       </div>
     </li>
   );
 
-  const renderWorkspaceRow = (w: { id: string; title: string; path: string }) => {
+  const renderWorkspaceRow = (w: {
+    id: string;
+    title: string;
+    path: string;
+  }) => {
     const active = w.path === workspace;
     return (
       <li key={w.id}>
         <div
           className={`group flex items-center gap-1 rounded-lg px-1.5 py-1 text-left text-sm ${
             active
-              ? "bg-accent/15 border border-accent/40"
-              : "border border-transparent hover:bg-panel2"
+              ? 'bg-accent/15 border border-accent/40'
+              : 'border border-transparent hover:bg-panel2'
           }`}
           title={w.path}
         >
@@ -308,7 +314,7 @@ export function Sidebar() {
           <button
             onClick={() => void removeWorkspace(w.id)}
             className="text-dim opacity-0 group-hover:opacity-100 hover:text-err shrink-0"
-            title={t("sidebar.removeWorkspace")}
+            title={t('sidebar.removeWorkspace')}
           >
             <Trash2 size={12} />
           </button>
@@ -324,14 +330,12 @@ export function Sidebar() {
           height matches the chat header (h-11) so both rows align. */}
       <div
         className={`h-11 shrink-0 border-b border-edge flex items-center select-none ${
-          isMac ? "pl-[78px]" : "px-4"
+          isMac ? 'pl-[78px]' : 'px-4'
         }`}
-        style={{ ["--wails-draggable" as string]: "drag" }}
+        style={{ ['--wails-draggable' as string]: 'drag' }}
         onDoubleClick={() => WindowToggleMaximise()}
       >
-        {!isMac && (
-          <div className="font-semibold tracking-wide">OpenCraft</div>
-        )}
+        {!isMac && <div className="font-semibold tracking-wide">OpenCraft</div>}
       </div>
 
       <div className="px-4 pt-3 pb-2 select-none">
@@ -349,7 +353,7 @@ export function Sidebar() {
           className="w-full flex items-center gap-2 rounded-lg border border-edge bg-panel2 px-3 py-2 text-sm hover:border-accent/50 transition-colors"
         >
           <Plus size={15} className="text-accent" />
-          {t("sidebar.newChat")}
+          {t('sidebar.newChat')}
         </button>
       </div>
 
@@ -362,8 +366,8 @@ export function Sidebar() {
               onClick={btn.onClick}
               className={`w-full flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm text-left transition-colors ${
                 btn.active
-                  ? "bg-accent/15 border border-accent/40"
-                  : "border border-transparent text-dim hover:text-fg hover:bg-panel2"
+                  ? 'bg-accent/15 border border-accent/40'
+                  : 'border border-transparent text-dim hover:text-fg hover:bg-panel2'
               }`}
             >
               <Icon className="h-4 w-4 shrink-0 text-accent" />
@@ -376,12 +380,14 @@ export function Sidebar() {
       <div className="flex-1 overflow-y-auto px-3 py-4 space-y-4">
         <section>
           <h3 className="text-xs uppercase tracking-wider text-dim mb-2">
-            {t("sidebar.sessions")}
+            {t('sidebar.sessions')}
           </h3>
           {visibleSessions.length === 0 ? (
             <p className="text-xs text-dim">—</p>
           ) : (
-            <ul className="space-y-1">{visibleSessions.map(renderSessionRow)}</ul>
+            <ul className="space-y-1">
+              {visibleSessions.map(renderSessionRow)}
+            </ul>
           )}
           {showMoreSessions && (
             <button
@@ -389,7 +395,7 @@ export function Sidebar() {
               className="w-full mt-2 flex items-center gap-2 rounded-lg border border-edge bg-panel2 px-3 py-2 text-sm hover:border-accent/50 transition-colors"
             >
               <Search size={14} className="text-dim" />
-              {t("sidebar.moreSessions")}
+              {t('sidebar.moreSessions')}
             </button>
           )}
         </section>
@@ -397,12 +403,12 @@ export function Sidebar() {
         <section>
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-xs uppercase tracking-wider text-dim">
-              {t("sidebar.workspaces")}
+              {t('sidebar.workspaces')}
             </h3>
             <button
               onClick={() => void api.chooseWorkspace()}
               className="text-dim hover:text-fg"
-              title={t("sidebar.addWorkspace")}
+              title={t('sidebar.addWorkspace')}
             >
               <Plus size={13} />
             </button>
@@ -420,7 +426,7 @@ export function Sidebar() {
                   className="w-full mt-2 flex items-center gap-2 rounded-lg border border-edge bg-panel2 px-3 py-2 text-sm hover:border-accent/50 transition-colors"
                 >
                   <FolderOpen size={14} className="text-dim" />
-                  {t("sidebar.moreWorkspaces")}
+                  {t('sidebar.moreWorkspaces')}
                 </button>
               )}
             </>
@@ -434,15 +440,15 @@ export function Sidebar() {
           className="flex items-center gap-1.5 text-xs text-dim hover:text-fg"
         >
           <Settings size={13} />
-          {t("sidebar.settings")}
+          {t('sidebar.settings')}
         </button>
       </div>
 
       {confirmDelete && (
         <div className="mt-2 mx-3 rounded-lg border border-err/40 bg-panel2 p-2 text-xs">
           <p>
-            {t("sidebar.deleteSessionConfirm", {
-              title: sessions.find((s) => s.id === confirmDelete)?.title ?? "",
+            {t('sidebar.deleteSessionConfirm', {
+              title: sessions.find((s) => s.id === confirmDelete)?.title ?? '',
             })}
           </p>
           <div className="mt-2 flex gap-2">
@@ -450,7 +456,7 @@ export function Sidebar() {
               onClick={() => setConfirmDelete(null)}
               className="rounded border border-edge px-2 py-0.5 text-dim hover:text-fg"
             >
-              {t("interact.cancel")}
+              {t('interact.cancel')}
             </button>
             <button
               onClick={() => {
@@ -459,7 +465,7 @@ export function Sidebar() {
               }}
               className="rounded bg-err px-2 py-0.5 text-white hover:opacity-90"
             >
-              {t("sidebar.deleteSession")}
+              {t('sidebar.deleteSession')}
             </button>
           </div>
         </div>
@@ -480,7 +486,7 @@ export function Sidebar() {
                 autoFocus
                 value={sessionQuery}
                 onChange={(e) => setSessionQuery(e.target.value)}
-                placeholder={t("sidebar.searchSessions")}
+                placeholder={t('sidebar.searchSessions')}
                 className="flex-1 min-w-0 bg-transparent outline-none text-sm"
               />
               <button
@@ -523,7 +529,7 @@ export function Sidebar() {
           >
             <div className="flex items-center justify-between px-4 py-3 border-b border-edge">
               <h3 className="text-sm font-semibold">
-                {t("sidebar.workspaces")}
+                {t('sidebar.workspaces')}
               </h3>
               <button
                 onClick={() => setWorkspacesOpen(false)}
@@ -536,7 +542,9 @@ export function Sidebar() {
               {workspaces.length === 0 ? (
                 <p className="text-xs text-dim p-3">—</p>
               ) : (
-                <ul className="space-y-1">{workspaces.map(renderWorkspaceRow)}</ul>
+                <ul className="space-y-1">
+                  {workspaces.map(renderWorkspaceRow)}
+                </ul>
               )}
             </div>
           </div>

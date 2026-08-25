@@ -1,6 +1,6 @@
-import { useMemo, useState } from "react";
-import { useTranslation } from "react-i18next";
-import type { UsagePoint } from "../lib/types";
+import { useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import type { UsagePoint } from '../lib/types';
 
 // Self-contained SVG trend chart (no chart library): one line per
 // token stream, hover tooltip, time labels for hour/day buckets.
@@ -13,14 +13,27 @@ const MT = 14;
 const MB = 30;
 
 const SERIES: {
-  key: "input_tokens" | "output_tokens" | "cache_read_tokens" | "reasoning_tokens";
+  key:
+    'input_tokens' | 'output_tokens' | 'cache_read_tokens' | 'reasoning_tokens';
   labelKey: string;
   color: string;
 }[] = [
-  { key: "input_tokens", labelKey: "config.usageInput", color: "var(--color-accent)" },
-  { key: "output_tokens", labelKey: "config.usageOutput", color: "var(--color-ok)" },
-  { key: "cache_read_tokens", labelKey: "config.usageCache", color: "#a855f7" },
-  { key: "reasoning_tokens", labelKey: "config.usageReasoning", color: "var(--color-warn)" },
+  {
+    key: 'input_tokens',
+    labelKey: 'config.usageInput',
+    color: 'var(--color-accent)',
+  },
+  {
+    key: 'output_tokens',
+    labelKey: 'config.usageOutput',
+    color: 'var(--color-ok)',
+  },
+  { key: 'cache_read_tokens', labelKey: 'config.usageCache', color: '#a855f7' },
+  {
+    key: 'reasoning_tokens',
+    labelKey: 'config.usageReasoning',
+    color: 'var(--color-warn)',
+  },
 ];
 
 function fmtTokens(n: number): string {
@@ -36,7 +49,8 @@ function niceCeil(v: number): number {
   const exp = Math.floor(Math.log10(v));
   const base = Math.pow(10, exp);
   const frac = v / base;
-  const nice = frac <= 1 ? 1 : frac <= 2 ? 2 : frac <= 2.5 ? 2.5 : frac <= 5 ? 5 : 10;
+  const nice =
+    frac <= 1 ? 1 : frac <= 2 ? 2 : frac <= 2.5 ? 2.5 : frac <= 5 ? 5 : 10;
   return nice * base;
 }
 
@@ -45,7 +59,7 @@ function niceCeil(v: number): number {
 // Recharts/cc-switch render — instead of a straight polyline.
 function smoothLinePath(xs: number[], ys: number[]): string {
   const n = xs.length;
-  if (n < 2) return "";
+  if (n < 2) return '';
   if (n === 2) {
     return `M${xs[0].toFixed(2)} ${ys[0].toFixed(2)} L${xs[1].toFixed(2)} ${ys[1].toFixed(2)}`;
   }
@@ -91,8 +105,8 @@ function hourKey(ts: number): string {
 }
 
 function dayKey(d: Date): string {
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
   return `${d.getFullYear()}-${m}-${day}`;
 }
 
@@ -119,13 +133,13 @@ function zeroPoint(time: string): UsagePoint {
 // continuous across the whole selection.
 export function fillUsageSeries(
   points: UsagePoint[],
-  granularity: "hour" | "day",
+  granularity: 'hour' | 'day',
   startMs: number,
   endMs: number,
 ): UsagePoint[] {
   const byKey = new Map(points.map((p) => [p.time, p]));
   const out: UsagePoint[] = [];
-  if (granularity === "hour") {
+  if (granularity === 'hour') {
     const first = Math.floor(startMs / 3_600_000) * 3_600_000;
     for (let ts = first; ts <= endMs; ts += 3_600_000) {
       const key = hourKey(ts);
@@ -146,7 +160,7 @@ export function fillUsageSeries(
 
 interface UsageChartProps {
   points: UsagePoint[];
-  granularity: "hour" | "day";
+  granularity: 'hour' | 'day';
   startMs: number;
   endMs: number;
   rangeLabel: string;
@@ -161,30 +175,30 @@ export function UsageChart({
 }: UsageChartProps) {
   const { t, i18n } = useTranslation();
   const [hoverIdx, setHoverIdx] = useState<number | null>(null);
-  const locale = i18n.resolvedLanguage?.startsWith("zh") ? "zh-CN" : "en-US";
+  const locale = i18n.resolvedLanguage?.startsWith('zh') ? 'zh-CN' : 'en-US';
   const filled = useMemo(
     () => fillUsageSeries(points, granularity, startMs, endMs),
     [points, granularity, startMs, endMs],
   );
 
   const fmtTime = (iso: string, full = false): string => {
-    if (granularity === "day") {
+    if (granularity === 'day') {
       const d = new Date(`${iso}T00:00:00`);
       if (Number.isNaN(d.getTime())) return iso;
       return d.toLocaleDateString(
         locale,
         full
-          ? { year: "numeric", month: "2-digit", day: "2-digit" }
-          : { month: "2-digit", day: "2-digit" },
+          ? { year: 'numeric', month: '2-digit', day: '2-digit' }
+          : { month: '2-digit', day: '2-digit' },
       );
     }
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return iso;
     return d.toLocaleString(locale, {
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
       hour12: false,
     });
   };
@@ -209,7 +223,7 @@ export function UsageChart({
   if (startMs <= 0 || endMs <= 0 || filled.length === 0) {
     return (
       <div className="grid h-[200px] place-items-center rounded-xl border border-edge bg-panel2 text-sm text-dim">
-        {t("config.usageSeriesEmpty")}
+        {t('config.usageSeriesEmpty')}
       </div>
     );
   }
@@ -226,13 +240,13 @@ export function UsageChart({
   for (let i = 0; i < n; i += step) tickIndices.push(i);
   if (tickIndices[tickIndices.length - 1] !== n - 1) tickIndices.push(n - 1);
 
-  const linePath = (key: (typeof SERIES)[number]["key"]) =>
+  const linePath = (key: (typeof SERIES)[number]['key']) =>
     smoothLinePath(
       filled.map((_, i) => x(i)),
       filled.map((p) => y(p[key])),
     );
 
-  const areaPath = (key: (typeof SERIES)[number]["key"]) => {
+  const areaPath = (key: (typeof SERIES)[number]['key']) => {
     const baseY = MT + plotH;
     return `${linePath(key)} L${x(n - 1).toFixed(2)} ${baseY} L${x(0).toFixed(2)} ${baseY} Z`;
   };
@@ -248,19 +262,21 @@ export function UsageChart({
   const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
     if (rect.width === 0) return;
-    const ratio = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    const ratio = Math.min(
+      1,
+      Math.max(0, (e.clientX - rect.left) / rect.width),
+    );
     const idx = Math.round(ratio * (n - 1));
     setHoverIdx(idx);
   };
 
-  const hover =
-    hoverIdx !== null && hoverIdx < filled.length ? hoverIdx : null;
+  const hover = hoverIdx !== null && hoverIdx < filled.length ? hoverIdx : null;
   const hoverPoint = hover !== null ? filled[hover] : null;
 
   return (
     <div className="rounded-xl border border-edge bg-panel2 p-4">
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-semibold">{t("config.usageTrend")}</h3>
+        <h3 className="text-sm font-semibold">{t('config.usageTrend')}</h3>
         <p className="text-xs text-dim">{rangeLabel}</p>
       </div>
       <div className="relative">
@@ -297,7 +313,7 @@ export function UsageChart({
                   y2={ty}
                   stroke="var(--color-edge)"
                   strokeOpacity={0.6}
-                  strokeDasharray={tick === 0 ? undefined : "3 3"}
+                  strokeDasharray={tick === 0 ? undefined : '3 3'}
                 />
                 <text
                   x={ML - 8}
@@ -316,9 +332,7 @@ export function UsageChart({
               key={i}
               x={x(i)}
               y={H - MB + 16}
-              textAnchor={
-                i === 0 ? "start" : i === n - 1 ? "end" : "middle"
-              }
+              textAnchor={i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle'}
               fontSize={10.5}
               fill="var(--color-dim)"
             >

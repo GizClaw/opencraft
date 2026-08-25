@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDown,
   ArrowUp,
@@ -7,17 +7,17 @@ import {
   Settings,
   Trash2,
   X,
-} from "lucide-react";
-import { useTranslation } from "react-i18next";
-import { api } from "../lib/api";
-import { useStore } from "../lib/store";
+} from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { api } from '../lib/api';
+import { useStore } from '../lib/store';
 import type {
   ModelUsageStat,
   ProviderInstance,
   ProviderView,
   UsagePoint,
-} from "../lib/types";
-import { UsageChart } from "./UsageChart";
+} from '../lib/types';
+import { UsageChart } from './UsageChart';
 
 // InstanceRow is one editable inference instance in the settings page.
 interface InstanceRow {
@@ -37,39 +37,35 @@ interface InstanceRow {
   enabled: boolean;
 }
 
-type Tab =
-  | "ui"
-  | "inference"
-  | "usage"
-  | "permissions"
-  | "logs";
+type Tab = 'ui' | 'inference' | 'usage' | 'permissions' | 'logs';
 
 export function ConfigPage() {
   const configured = useStore((s) => s.configured);
   const closeConfig = useStore((s) => s.closeConfig);
   const theme = useStore((s) => s.theme);
   const setTheme = useStore((s) => s.setTheme);
-  const newID = () => `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const newID = () =>
+    `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const { t, i18n } = useTranslation();
-  const lang = i18n.resolvedLanguage?.startsWith("zh") ? "zh" : "en";
+  const lang = i18n.resolvedLanguage?.startsWith('zh') ? 'zh' : 'en';
 
-  const [tab, setTab] = useState<Tab>("inference");
+  const [tab, setTab] = useState<Tab>('inference');
   const [rows, setRows] = useState<InstanceRow[]>([]);
   const [catalog, setCatalog] = useState<ProviderView[]>([]);
-  const [newType, setNewType] = useState("deepseek");
-  const [defaultModel, setDefaultModel] = useState("");
-  const [error, setError] = useState("");
+  const [newType, setNewType] = useState('deepseek');
+  const [defaultModel, setDefaultModel] = useState('');
+  const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
   const [rules, setRules] = useState<string[]>([]);
-  const [ruleInput, setRuleInput] = useState("");
-  const [logs, setLogs] = useState("");
+  const [ruleInput, setRuleInput] = useState('');
+  const [logs, setLogs] = useState('');
   const logsRef = useRef<HTMLPreElement>(null);
   const [usageRows, setUsageRows] = useState<ModelUsageStat[]>([]);
-  const [usageError, setUsageError] = useState("");
-  const [usageModel, setUsageModel] = useState("");
+  const [usageError, setUsageError] = useState('');
+  const [usageModel, setUsageModel] = useState('');
   const [usageRange, setUsageRange] = useState<
-    "today" | "1d" | "7d" | "14d" | "30d"
-  >("7d");
+    'today' | '1d' | '7d' | '14d' | '30d'
+  >('7d');
   const [usageSeries, setUsageSeries] = useState<UsagePoint[]>([]);
   const [usageStartMs, setUsageStartMs] = useState(0);
   const [usageEndMs, setUsageEndMs] = useState(0);
@@ -88,17 +84,17 @@ export function ConfigPage() {
         setRows(
           (state.instances ?? []).map((s) => ({
             id: newID(),
-            stableId: s.stable_id ?? "",
+            stableId: s.stable_id ?? '',
             type: s.type,
-            name: s.name ?? "",
-            api: s.api ?? "",
-            key: s.key ?? "",
+            name: s.name ?? '',
+            api: s.api ?? '',
+            key: s.key ?? '',
             keySet: s.key_set ?? false,
             keyEnv: s.key_env ?? false,
-            model: s.model || byType.get(s.type)?.default_model || "",
-            endpoint: s.endpoint ?? "",
+            model: s.model || byType.get(s.type)?.default_model || '',
+            endpoint: s.endpoint ?? '',
             vision: s.vision ?? false,
-            reasoning: s.reasoning ?? "",
+            reasoning: s.reasoning ?? '',
             webSearch: s.web_search ?? false,
             enabled: s.enabled ?? true,
           })),
@@ -111,7 +107,7 @@ export function ConfigPage() {
   }, []);
 
   useEffect(() => {
-    if (tab !== "permissions") return;
+    if (tab !== 'permissions') return;
     void api
       .permissions()
       .then(setRules)
@@ -119,7 +115,7 @@ export function ConfigPage() {
   }, [tab]);
 
   useEffect(() => {
-    if (tab !== "logs") return;
+    if (tab !== 'logs') return;
     void api
       .readLog(300)
       .then(setLogs)
@@ -129,13 +125,13 @@ export function ConfigPage() {
   // Pin the log view to the newest lines whenever the content changes
   // (including the first load when the tab opens).
   useEffect(() => {
-    if (tab === "logs" && logsRef.current) {
+    if (tab === 'logs' && logsRef.current) {
       logsRef.current.scrollTop = logsRef.current.scrollHeight;
     }
   }, [logs, tab]);
 
   useEffect(() => {
-    if (tab !== "usage") return;
+    if (tab !== 'usage') return;
     void api
       .modelUsage()
       .then(setUsageRows)
@@ -153,19 +149,19 @@ export function ConfigPage() {
   // same way cc-switch does: "today" and multi-day presets start at
   // local midnight, "1d" is the rolling 24h, and the end is always now.
   const resolveUsageRange = (
-    preset: "today" | "1d" | "7d" | "14d" | "30d",
+    preset: 'today' | '1d' | '7d' | '14d' | '30d',
   ): { startMs: number; endMs: number } => {
     const endMs = Date.now();
     const DAY = 86_400_000;
-    if (preset === "today") {
+    if (preset === 'today') {
       const d = new Date(endMs);
       d.setHours(0, 0, 0, 0);
       return { startMs: d.getTime(), endMs };
     }
-    if (preset === "1d") {
+    if (preset === '1d') {
       return { startMs: endMs - DAY, endMs };
     }
-    const days = preset === "7d" ? 7 : preset === "14d" ? 14 : 30;
+    const days = preset === '7d' ? 7 : preset === '14d' ? 14 : 30;
     const d = new Date(endMs - (days - 1) * DAY);
     d.setHours(0, 0, 0, 0);
     return { startMs: d.getTime(), endMs };
@@ -176,15 +172,15 @@ export function ConfigPage() {
   // duration like cc-switch: <= 24h buckets hourly, longer ranges
   // bucket by local day.
   useEffect(() => {
-    if (tab !== "usage" || !usageModel) {
+    if (tab !== 'usage' || !usageModel) {
       setUsageSeries([]);
       return;
     }
     let cancelled = false;
     setUsageLoading(true);
     const { startMs, endMs } = resolveUsageRange(usageRange);
-    const granularity: "hour" | "day" =
-      endMs - startMs <= 24 * 3_600_000 ? "hour" : "day";
+    const granularity: 'hour' | 'day' =
+      endMs - startMs <= 24 * 3_600_000 ? 'hour' : 'day';
     setUsageStartMs(startMs);
     setUsageEndMs(endMs);
     void api
@@ -235,17 +231,17 @@ export function ConfigPage() {
       ...prev,
       {
         id: newID(),
-        stableId: "",
+        stableId: '',
         type,
-        name: "",
-        api: prov?.api ?? "",
-        key: "",
+        name: '',
+        api: prov?.api ?? '',
+        key: '',
         keySet: false,
         keyEnv: false,
-        model: prov?.default_model ?? "",
-        endpoint: "",
+        model: prov?.default_model ?? '',
+        endpoint: '',
         vision: false,
-        reasoning: "",
+        reasoning: '',
         webSearch: false,
         enabled: true,
       },
@@ -268,15 +264,13 @@ export function ConfigPage() {
   };
 
   const update = (id: string, patch: Partial<InstanceRow>) => {
-    setRows((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, ...patch } : r)),
-    );
+    setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   };
 
   const save = async () => {
-    setError("");
+    setError('');
     if (enabledRows.length === 0) {
-      setError(t("setup.selectProvider"));
+      setError(t('setup.selectProvider'));
       return;
     }
     const instances: ProviderInstance[] = rows.map((r) => ({
@@ -312,22 +306,22 @@ export function ConfigPage() {
   };
 
   const fmtUsageTime = (iso: string) => {
-    if (!iso) return "";
+    if (!iso) return '';
     const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return "";
+    if (Number.isNaN(d.getTime())) return '';
     const diff = Date.now() - d.getTime();
-    if (diff < 60_000) return "刚刚";
+    if (diff < 60_000) return '刚刚';
     if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`;
     if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`;
     return d.toLocaleDateString();
   };
 
   const tabs: { id: Tab; label: string }[] = [
-    { id: "ui", label: t("config.tabUi") },
-    { id: "inference", label: t("config.tabInference") },
-    { id: "usage", label: t("config.tabUsage") },
-    { id: "permissions", label: t("config.tabPermissions") },
-    { id: "logs", label: t("config.tabLogs") },
+    { id: 'ui', label: t('config.tabUi') },
+    { id: 'inference', label: t('config.tabInference') },
+    { id: 'usage', label: t('config.tabUsage') },
+    { id: 'permissions', label: t('config.tabPermissions') },
+    { id: 'logs', label: t('config.tabLogs') },
   ];
 
   return (
@@ -335,19 +329,19 @@ export function ConfigPage() {
       <div className="w-[720px] h-[620px] flex flex-col rounded-2xl border border-edge bg-panel shadow-2xl">
         <div className="flex items-center gap-4 px-5 py-4 border-b border-edge">
           <Settings size={18} className="text-accent" />
-          <h2 className="text-base font-semibold">{t("config.title")}</h2>
+          <h2 className="text-base font-semibold">{t('config.title')}</h2>
           <div className="flex rounded-lg border border-edge overflow-hidden text-sm ml-2">
             {tabs.map((tb) => (
               <button
                 key={tb.id}
                 onClick={() => {
                   setTab(tb.id);
-                  setError("");
+                  setError('');
                 }}
                 className={`px-3 py-1 ${
                   tab === tb.id
-                    ? "bg-accent text-white"
-                    : "text-dim hover:text-fg"
+                    ? 'bg-accent text-white'
+                    : 'text-dim hover:text-fg'
                 }`}
               >
                 {tb.label}
@@ -356,73 +350,70 @@ export function ConfigPage() {
           </div>
           <span className="flex-1" />
           {configured && (
-            <button
-              onClick={closeConfig}
-              className="text-dim hover:text-fg"
-            >
+            <button onClick={closeConfig} className="text-dim hover:text-fg">
               <X size={18} />
             </button>
           )}
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
-          {tab === "ui" && (
+          {tab === 'ui' && (
             <div>
-              <div className="text-sm mb-3">{t("config.uiLanguage")}</div>
+              <div className="text-sm mb-3">{t('config.uiLanguage')}</div>
               <div className="flex rounded-lg border border-edge overflow-hidden w-fit text-sm">
                 <button
-                  onClick={() => void i18n.changeLanguage("zh")}
+                  onClick={() => void i18n.changeLanguage('zh')}
                   className={`px-3 py-1.5 ${
-                    lang === "zh"
-                      ? "bg-accent text-white"
-                      : "text-dim hover:text-fg"
+                    lang === 'zh'
+                      ? 'bg-accent text-white'
+                      : 'text-dim hover:text-fg'
                   }`}
                 >
                   中文
                 </button>
                 <button
-                  onClick={() => void i18n.changeLanguage("en")}
+                  onClick={() => void i18n.changeLanguage('en')}
                   className={`px-3 py-1.5 ${
-                    lang === "en"
-                      ? "bg-accent text-white"
-                      : "text-dim hover:text-fg"
+                    lang === 'en'
+                      ? 'bg-accent text-white'
+                      : 'text-dim hover:text-fg'
                   }`}
                 >
                   English
                 </button>
               </div>
-              <div className="text-sm mb-3 mt-5">{t("config.uiTheme")}</div>
+              <div className="text-sm mb-3 mt-5">{t('config.uiTheme')}</div>
               <div className="flex rounded-lg border border-edge overflow-hidden w-fit text-sm">
                 <button
-                  onClick={() => setTheme("dark")}
+                  onClick={() => setTheme('dark')}
                   className={`px-3 py-1.5 ${
-                    theme === "dark"
-                      ? "bg-accent text-white"
-                      : "text-dim hover:text-fg"
+                    theme === 'dark'
+                      ? 'bg-accent text-white'
+                      : 'text-dim hover:text-fg'
                   }`}
                 >
-                  {t("config.uiThemeDark")}
+                  {t('config.uiThemeDark')}
                 </button>
                 <button
-                  onClick={() => setTheme("light")}
+                  onClick={() => setTheme('light')}
                   className={`px-3 py-1.5 ${
-                    theme === "light"
-                      ? "bg-accent text-white"
-                      : "text-dim hover:text-fg"
+                    theme === 'light'
+                      ? 'bg-accent text-white'
+                      : 'text-dim hover:text-fg'
                   }`}
                 >
-                  {t("config.uiThemeLight")}
+                  {t('config.uiThemeLight')}
                 </button>
               </div>
             </div>
           )}
 
-          {tab === "inference" && (
+          {tab === 'inference' && (
             <div className="space-y-3">
               <p className="text-xs text-dim">
                 {defaultModel
-                  ? t("config.inferenceCurrent", { model: defaultModel })
-                  : t("setup.subtitle")}
+                  ? t('config.inferenceCurrent', { model: defaultModel })
+                  : t('setup.subtitle')}
               </p>
               <div className="flex items-center gap-2">
                 <select
@@ -441,11 +432,11 @@ export function ConfigPage() {
                   className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
                 >
                   <Plus size={14} />
-                  {t("config.addInstance")}
+                  {t('config.addInstance')}
                 </button>
               </div>
               {rows.length === 0 && (
-                <p className="text-sm text-dim">{t("config.instancesEmpty")}</p>
+                <p className="text-sm text-dim">{t('config.instancesEmpty')}</p>
               )}
               {rows.map((row) => {
                 const prov = catalog.find((p) => p.id === row.type);
@@ -454,8 +445,8 @@ export function ConfigPage() {
                     key={row.id}
                     className={`rounded-xl border overflow-hidden ${
                       row.enabled
-                        ? "border-edge bg-panel2"
-                        : "border-edge/50 bg-panel2/50"
+                        ? 'border-edge bg-panel2'
+                        : 'border-edge/50 bg-panel2/50'
                     }`}
                   >
                     <div className="flex items-center gap-2.5 px-4 py-2.5">
@@ -466,7 +457,7 @@ export function ConfigPage() {
                           update(row.id, { enabled: e.target.checked })
                         }
                         className="accent-[var(--color-accent)]"
-                        title={t("config.instanceEnabled")}
+                        title={t('config.instanceEnabled')}
                       />
                       <span className="font-medium text-sm shrink-0">
                         {prov?.name ?? row.type}
@@ -476,17 +467,15 @@ export function ConfigPage() {
                         onChange={(e) =>
                           update(row.id, { name: e.target.value })
                         }
-                        placeholder={t("config.instanceName")}
+                        placeholder={t('config.instanceName')}
                         className="flex-1 min-w-0 rounded-lg border border-edge bg-panel px-2 py-1 text-sm outline-none focus:border-accent"
                       />
                       <button
                         onClick={() =>
-                          setRows((prev) =>
-                            prev.filter((r) => r.id !== row.id),
-                          )
+                          setRows((prev) => prev.filter((r) => r.id !== row.id))
                         }
                         className="text-dim hover:text-err shrink-0"
-                        title={t("config.removeInstance")}
+                        title={t('config.removeInstance')}
                       >
                         <Trash2 size={14} />
                       </button>
@@ -499,7 +488,7 @@ export function ConfigPage() {
                             onChange={(e) =>
                               update(row.id, { model: e.target.value })
                             }
-                            placeholder={t("setup.model")}
+                            placeholder={t('setup.model')}
                             className="flex-1 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
                           />
                           <input
@@ -507,13 +496,13 @@ export function ConfigPage() {
                             onChange={(e) =>
                               update(row.id, { endpoint: e.target.value })
                             }
-                            placeholder={t("setup.endpointPlaceholder")}
+                            placeholder={t('setup.endpointPlaceholder')}
                             className="w-64 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
                           />
                         </div>
-                        {row.type === "openai" && (
+                        {row.type === 'openai' && (
                           <div className="flex items-center gap-2 text-xs text-dim">
-                            {t("setup.apiMode")}
+                            {t('setup.apiMode')}
                             <select
                               value={row.api}
                               onChange={(e) =>
@@ -535,10 +524,10 @@ export function ConfigPage() {
                             }
                             disabled={row.keyEnv}
                             placeholder={
-                              row.keySet && row.key === ""
-                                ? t("setup.apiKeySet")
-                                : t("setup.apiKeyPlaceholder", {
-                                    var: prov?.env_var ?? "",
+                              row.keySet && row.key === ''
+                                ? t('setup.apiKeySet')
+                                : t('setup.apiKeyPlaceholder', {
+                                    var: prov?.env_var ?? '',
                                   })
                             }
                             className="flex-1 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent disabled:opacity-40"
@@ -552,7 +541,7 @@ export function ConfigPage() {
                               }
                               className="accent-[var(--color-accent)]"
                             />
-                            {t("setup.envVar", { var: prov?.env_var ?? "" })}
+                            {t('setup.envVar', { var: prov?.env_var ?? '' })}
                           </label>
                         </div>
                         <div className="flex items-center gap-4 text-xs text-dim">
@@ -565,10 +554,10 @@ export function ConfigPage() {
                               }
                               className="accent-[var(--color-accent)]"
                             />
-                            {t("setup.vision")}
+                            {t('setup.vision')}
                           </label>
                           <label className="flex items-center gap-1.5">
-                            {t("setup.reasoning")}
+                            {t('setup.reasoning')}
                             <select
                               value={row.reasoning}
                               onChange={(e) =>
@@ -579,7 +568,7 @@ export function ConfigPage() {
                               className="rounded border border-edge bg-panel px-2 py-1 outline-none"
                             >
                               <option value="">
-                                {t("setup.reasoningOff")}
+                                {t('setup.reasoningOff')}
                               </option>
                               <option value="always">always</option>
                               <option value="toggle">toggle</option>
@@ -596,7 +585,7 @@ export function ConfigPage() {
                               }
                               className="accent-[var(--color-accent)]"
                             />
-                            {t("setup.webSearch")}
+                            {t('setup.webSearch')}
                           </label>
                         </div>
                       </div>
@@ -608,7 +597,7 @@ export function ConfigPage() {
               {enabledRows.length > 1 && (
                 <div className="rounded-xl border border-edge bg-panel2 p-3">
                   <div className="text-xs text-dim mb-2">
-                    {t("setup.routerPriority")}
+                    {t('setup.routerPriority')}
                   </div>
                   <div className="space-y-1.5">
                     {enabledRows.map((row, idx) => (
@@ -620,7 +609,7 @@ export function ConfigPage() {
                         <span className="flex-1">
                           {catalog.find((p) => p.id === row.type)?.name ??
                             row.type}
-                          {row.name ? ` · ${row.name}` : ""}
+                          {row.name ? ` · ${row.name}` : ''}
                         </span>
                         <span className="text-xs text-dim truncate">
                           {row.model}
@@ -647,10 +636,10 @@ export function ConfigPage() {
             </div>
           )}
 
-          {tab === "usage" && (
+          {tab === 'usage' && (
             <div className="space-y-3">
               <div className="flex items-center justify-between">
-                <p className="text-xs text-dim">{t("config.usageHint")}</p>
+                <p className="text-xs text-dim">{t('config.usageHint')}</p>
                 <button
                   onClick={() => {
                     void api
@@ -661,12 +650,12 @@ export function ConfigPage() {
                   }}
                   className="text-xs text-dim hover:text-fg"
                 >
-                  {t("config.logsRefresh")}
+                  {t('config.logsRefresh')}
                 </button>
               </div>
               {usageError && <p className="text-xs text-err">{usageError}</p>}
               {usageRows.length === 0 ? (
-                <p className="text-sm text-dim">{t("config.usageEmpty")}</p>
+                <p className="text-sm text-dim">{t('config.usageEmpty')}</p>
               ) : (
                 <>
                   <div className="flex flex-wrap items-center gap-2">
@@ -674,7 +663,7 @@ export function ConfigPage() {
                       value={usageModel}
                       onChange={(e) => setUsageModel(e.target.value)}
                       className="max-w-[340px] rounded-lg border border-edge bg-panel px-2 py-1.5 text-xs font-mono outline-none"
-                      title={t("config.usageModel")}
+                      title={t('config.usageModel')}
                     >
                       {usageRows.map((r) => (
                         <option key={r.model} value={r.model}>
@@ -684,11 +673,11 @@ export function ConfigPage() {
                     </select>
                     {(
                       [
-                        ["today", t("config.usageRangeToday")],
-                        ["1d", "1d"],
-                        ["7d", "7d"],
-                        ["14d", "14d"],
-                        ["30d", "30d"],
+                        ['today', t('config.usageRangeToday')],
+                        ['1d', '1d'],
+                        ['7d', '7d'],
+                        ['14d', '14d'],
+                        ['30d', '30d'],
                       ] as const
                     ).map(([value, label]) => (
                       <button
@@ -696,8 +685,8 @@ export function ConfigPage() {
                         onClick={() => setUsageRange(value)}
                         className={`rounded-lg border px-2.5 py-1.5 text-xs ${
                           usageRange === value
-                            ? "border-accent bg-accent/15 text-fg"
-                            : "border-edge text-dim hover:text-fg"
+                            ? 'border-accent bg-accent/15 text-fg'
+                            : 'border-edge text-dim hover:text-fg'
                         }`}
                       >
                         {label}
@@ -709,11 +698,11 @@ export function ConfigPage() {
                   </div>
                   <div
                     className="rounded-xl border border-edge bg-panel2 p-3"
-                    title={t("config.usageCacheHitHint")}
+                    title={t('config.usageCacheHitHint')}
                   >
                     <div className="mb-2 flex items-center justify-between text-xs">
                       <span className="text-dim">
-                        {t("config.usageCacheHitRate")}
+                        {t('config.usageCacheHitRate')}
                       </span>
                       <span className="font-bold text-ok tabular-nums">
                         {cacheHit.rate.toFixed(1)}%
@@ -726,7 +715,7 @@ export function ConfigPage() {
                       />
                     </div>
                     <div className="mt-1.5 text-[10px] text-dim tabular-nums">
-                      {fmtUsageTokens(cacheHit.read)} /{" "}
+                      {fmtUsageTokens(cacheHit.read)} /{' '}
                       {fmtUsageTokens(cacheHit.input)}
                     </div>
                   </div>
@@ -734,87 +723,92 @@ export function ConfigPage() {
                     points={usageSeries}
                     granularity={
                       usageEndMs - usageStartMs <= 24 * 3_600_000
-                        ? "hour"
-                        : "day"
+                        ? 'hour'
+                        : 'day'
                     }
                     startMs={usageStartMs}
                     endMs={usageEndMs}
                     rangeLabel={
-                      usageRange === "today"
-                        ? t("config.usageRangeToday")
+                      usageRange === 'today'
+                        ? t('config.usageRangeToday')
                         : usageRange
                     }
                   />
-                <div className="rounded-xl border border-edge bg-panel2 overflow-x-auto">
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="text-left text-dim border-b border-edge">
-                        <th className="px-3 py-2 font-medium">
-                          {t("config.usageModel")}
-                        </th>
-                        <th className="px-3 py-2 font-medium text-right">
-                          {t("config.usageInput")}
-                        </th>
-                        <th className="px-3 py-2 font-medium text-right">
-                          {t("config.usageOutput")}
-                        </th>
-                        <th className="px-3 py-2 font-medium text-right">
-                          {t("config.usageCache")}
-                        </th>
-                        <th className="px-3 py-2 font-medium text-right">
-                          {t("config.usageReasoning")}
-                        </th>
-                        <th className="px-3 py-2 font-medium text-right">
-                          {t("config.usageLatency")}
-                        </th>
-                        <th className="px-3 py-2 font-medium text-right">
-                          {t("config.usageSessions")}
-                        </th>
-                        <th className="px-3 py-2 font-medium text-right">
-                          {t("config.usageUpdated")}
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {usageRows.map((r) => (
-                        <tr key={r.model} className="border-b border-edge/50 last:border-0">
-                          <td className="px-3 py-2 font-mono">{r.model}</td>
-                          <td className="px-3 py-2 text-right tabular-nums">
-                            {fmtUsageTokens(r.input_tokens)}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums">
-                            {fmtUsageTokens(r.output_tokens)}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums">
-                            {fmtUsageTokens(r.cache_read_tokens)}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums">
-                            {fmtUsageTokens(r.reasoning_tokens)}
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums">
-                            {fmtUsageTokens(r.latency_ms)}ms
-                          </td>
-                          <td className="px-3 py-2 text-right tabular-nums">
-                            {r.sessions}
-                          </td>
-                          <td className="px-3 py-2 text-right text-dim">
-                            {fmtUsageTime(r.updated_at)}
-                          </td>
+                  <div className="rounded-xl border border-edge bg-panel2 overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-left text-dim border-b border-edge">
+                          <th className="px-3 py-2 font-medium">
+                            {t('config.usageModel')}
+                          </th>
+                          <th className="px-3 py-2 font-medium text-right">
+                            {t('config.usageInput')}
+                          </th>
+                          <th className="px-3 py-2 font-medium text-right">
+                            {t('config.usageOutput')}
+                          </th>
+                          <th className="px-3 py-2 font-medium text-right">
+                            {t('config.usageCache')}
+                          </th>
+                          <th className="px-3 py-2 font-medium text-right">
+                            {t('config.usageReasoning')}
+                          </th>
+                          <th className="px-3 py-2 font-medium text-right">
+                            {t('config.usageLatency')}
+                          </th>
+                          <th className="px-3 py-2 font-medium text-right">
+                            {t('config.usageSessions')}
+                          </th>
+                          <th className="px-3 py-2 font-medium text-right">
+                            {t('config.usageUpdated')}
+                          </th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody>
+                        {usageRows.map((r) => (
+                          <tr
+                            key={r.model}
+                            className="border-b border-edge/50 last:border-0"
+                          >
+                            <td className="px-3 py-2 font-mono">{r.model}</td>
+                            <td className="px-3 py-2 text-right tabular-nums">
+                              {fmtUsageTokens(r.input_tokens)}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums">
+                              {fmtUsageTokens(r.output_tokens)}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums">
+                              {fmtUsageTokens(r.cache_read_tokens)}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums">
+                              {fmtUsageTokens(r.reasoning_tokens)}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums">
+                              {fmtUsageTokens(r.latency_ms)}ms
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums">
+                              {r.sessions}
+                            </td>
+                            <td className="px-3 py-2 text-right text-dim">
+                              {fmtUsageTime(r.updated_at)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </>
               )}
             </div>
           )}
 
-          {tab === "permissions" && (
+          {tab === 'permissions' && (
             <div className="space-y-3">
-              <p className="text-xs text-dim">{t("config.permissionsHint")}</p>
+              <p className="text-xs text-dim">{t('config.permissionsHint')}</p>
               {rules.length === 0 ? (
-                <p className="text-sm text-dim">{t("config.permissionsEmpty")}</p>
+                <p className="text-sm text-dim">
+                  {t('config.permissionsEmpty')}
+                </p>
               ) : (
                 rules.map((rule) => (
                   <div
@@ -834,7 +828,7 @@ export function ConfigPage() {
                       }
                       className="text-xs text-dim hover:text-err"
                     >
-                      {t("config.permissionsRemove")}
+                      {t('config.permissionsRemove')}
                     </button>
                   </div>
                 ))
@@ -843,14 +837,14 @@ export function ConfigPage() {
                 <input
                   value={ruleInput}
                   onChange={(e) => setRuleInput(e.target.value)}
-                  placeholder={t("config.permissionsPlaceholder")}
+                  placeholder={t('config.permissionsPlaceholder')}
                   onKeyDown={(e) => {
-                    if (e.key === "Enter" && ruleInput.trim()) {
+                    if (e.key === 'Enter' && ruleInput.trim()) {
                       void api
                         .allowPermission(ruleInput.trim())
                         .then(() => api.permissions())
                         .then(setRules)
-                        .then(() => setRuleInput(""))
+                        .then(() => setRuleInput(''))
                         .catch((err) => setError(String(err)));
                     }
                   }}
@@ -863,21 +857,21 @@ export function ConfigPage() {
                       .allowPermission(ruleInput.trim())
                       .then(() => api.permissions())
                       .then(setRules)
-                      .then(() => setRuleInput(""))
+                      .then(() => setRuleInput(''))
                       .catch((err) => setError(String(err)));
                   }}
                   className="rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90"
                 >
-                  {t("config.permissionsAdd")}
+                  {t('config.permissionsAdd')}
                 </button>
               </div>
             </div>
           )}
 
-          {tab === "logs" && (
+          {tab === 'logs' && (
             <div className="h-full flex flex-col gap-3">
               <div className="flex items-center justify-between">
-                <p className="text-xs text-dim">{t("config.logsHint")}</p>
+                <p className="text-xs text-dim">{t('config.logsHint')}</p>
                 <button
                   onClick={() =>
                     void api
@@ -887,7 +881,7 @@ export function ConfigPage() {
                   }
                   className="text-xs text-dim hover:text-fg"
                 >
-                  {t("config.logsRefresh")}
+                  {t('config.logsRefresh')}
                 </button>
               </div>
               {logs ? (
@@ -898,7 +892,7 @@ export function ConfigPage() {
                   {logs}
                 </pre>
               ) : (
-                <p className="text-sm text-dim">{t("config.logsEmpty")}</p>
+                <p className="text-sm text-dim">{t('config.logsEmpty')}</p>
               )}
             </div>
           )}
@@ -907,14 +901,14 @@ export function ConfigPage() {
         <div className="px-5 py-4 border-t border-edge flex items-center gap-3">
           {error && <span className="text-xs text-err flex-1">{error}</span>}
           <span className="flex-1" />
-          {tab === "inference" && (
+          {tab === 'inference' && (
             <button
               onClick={() => void save()}
               disabled={saving}
               className="flex items-center gap-1.5 rounded-lg bg-accent px-5 py-2 text-sm text-white hover:opacity-90 disabled:opacity-50"
             >
               {saving && <Loader2 size={14} className="animate-spin" />}
-              {t("setup.saveApply")}
+              {t('setup.saveApply')}
             </button>
           )}
         </div>
