@@ -289,12 +289,35 @@ func (s *Server) read(
 	if p.MaxBytes != nil {
 		maxBytes = *p.MaxBytes
 	}
-	out, err := entry.proc.Read(ctx, afterSeq, maxBytes)
-	if err != nil {
-		if errors.Is(err, sandbox.ErrSequenceGap) {
-			return nil, &RPCError{Code: ErrInvalid, Message: "sequence gap; restart from cursor 0"}
+	// WaitMs turns an empty read into a bounded wait for output (or
+	// process exit) instead of returning immediately, so a client's
+	// Wait loop does not busy-poll the RPC channel.
+	waitMs := 0
+	if p.WaitMs != nil {
+		waitMs = *p.WaitMs
+	}
+	var deadline time.Time
+	if waitMs > 0 {
+		deadline = time.Now().Add(time.Duration(waitMs) * time.Millisecond)
+	}
+	var out sandbox.SessionOutput
+	for {
+		var err error
+		out, err = entry.proc.Read(ctx, afterSeq, maxBytes)
+		if err != nil {
+			if errors.Is(err, sandbox.ErrSequenceGap) {
+				return nil, &RPCError{Code: ErrInvalid, Message: "sequence gap; restart from cursor 0"}
+			}
+			return nil, internal(err)
 		}
-		return nil, internal(err)
+		if len(out.Chunks) > 0 || out.EOF || waitMs <= 0 || !time.Now().Before(deadline) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return nil, internal(ctx.Err())
+		case <-time.After(15 * time.Millisecond):
+		}
 	}
 	chunks := make([]OutputChunk, 0, len(out.Chunks))
 	for _, ch := range out.Chunks {

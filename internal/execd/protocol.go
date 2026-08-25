@@ -132,15 +132,12 @@ type OutputChunk struct {
 
 // ReadResponse is the result of process/read.
 type ReadResponse struct {
-	Chunks        []OutputChunk `json:"chunks"`
-	NextSeq       int64         `json:"nextSeq"`
-	EOF           bool          `json:"eof"`
-	Exited        bool          `json:"exited"`
-	ExitCode      *int32        `json:"exitCode,omitempty"`
-	Closed        bool          `json:"closed"`
-	Failure       *string       `json:"failure,omitempty"`
-	Reason        string        `json:"reason,omitempty"`
-	SandboxDenied bool          `json:"sandboxDenied"`
+	Chunks   []OutputChunk `json:"chunks"`
+	NextSeq  int64         `json:"nextSeq"`
+	EOF      bool          `json:"eof"`
+	Exited   bool          `json:"exited"`
+	ExitCode *int32        `json:"exitCode,omitempty"`
+	Reason   string        `json:"reason,omitempty"`
 }
 
 // WriteParams writes to a process stdin. WriteID makes retries idempotent.

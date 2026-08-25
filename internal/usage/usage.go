@@ -87,7 +87,13 @@ func (s *Store) Record(
 	if model == "" || sessionID == "" {
 		return nil
 	}
-	if _, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("usage: begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO model_usage (
 			workspace_id, session_id, model,
 			input_tokens, output_tokens, cache_read_tokens,
@@ -109,7 +115,7 @@ func (s *Store) Record(
 		return fmt.Errorf("usage: record %s: %w", model, err)
 	}
 	hour := time.Now().UTC().Truncate(time.Hour).Format(time.RFC3339)
-	if _, err := s.db.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO model_usage_hourly (
 			model, hour,
 			input_tokens, output_tokens, cache_read_tokens,
@@ -127,6 +133,9 @@ func (s *Store) Record(
 		u.ReasoningTokens, u.LatencyMs,
 	); err != nil {
 		return fmt.Errorf("usage: record hourly %s: %w", model, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("usage: commit: %w", err)
 	}
 	return nil
 }

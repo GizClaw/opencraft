@@ -144,6 +144,9 @@ func (c *Client) call(
 	_, err = c.conn.Write(append(reqRaw, '\n'))
 	c.mu.Unlock()
 	if err != nil {
+		c.mu.Lock()
+		delete(c.pending, id)
+		c.mu.Unlock()
 		return err
 	}
 

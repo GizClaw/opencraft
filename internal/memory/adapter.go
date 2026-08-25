@@ -4,6 +4,7 @@ package memory
 
 import (
 	"context"
+	"sync"
 
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/opencraft/internal/memory/summary"
@@ -12,12 +13,19 @@ import (
 
 // sqliteTurnStore adapts *state.Store to summary.TurnStore.
 type sqliteTurnStore struct {
-	s *state.Store
+	mu sync.Mutex
+	s  *state.Store
 }
 
 func (a *sqliteTurnStore) AppendMessages(
 	ctx context.Context, conversationID, turnID string, msgs []message.Message,
 ) error {
+	// NextSeq + the item appends must be one critical section: two
+	// concurrent commits could otherwise read the same MAX(seq)+1 and
+	// collide on the stable id / index space.
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
 	// NextSeq is a single indexed MAX(seq) lookup instead of loading every
 	// item just to size the append: appends stay O(1) as the conversation
 	// grows instead of degrading to O(n) per turn.

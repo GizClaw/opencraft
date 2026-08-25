@@ -156,32 +156,7 @@ func (s *remoteSession) Read(
 	if err != nil {
 		return sandbox.SessionOutput{}, err
 	}
-	chunks := make([]sandbox.OutputChunk, 0, len(resp.Chunks))
-	for _, ch := range resp.Chunks {
-		chunks = append(chunks, sandbox.OutputChunk{
-			Seq:    ch.Seq,
-			Stream: sandboxStream(ch.Stream),
-			Data:   ch.Data,
-		})
-	}
-	out := sandbox.SessionOutput{NextSeq: resp.NextSeq, Chunks: chunks, EOF: resp.EOF}
-	s.mu.Lock()
-	if resp.Exited && !s.exited {
-		s.exited = true
-		exit := sandbox.SessionExit{
-			Code:   0,
-			Reason: sandbox.SessionExited,
-		}
-		if resp.ExitCode != nil {
-			exit.Code = int(*resp.ExitCode)
-		}
-		if resp.Reason != "" {
-			exit.Reason = sessionReason(resp.Reason)
-		}
-		s.exit = &exit
-	}
-	s.mu.Unlock()
-	return out, nil
+	return s.foldRead(resp)
 }
 
 func (s *remoteSession) Write(ctx context.Context, data []byte) error {
@@ -220,6 +195,7 @@ func (s *remoteSession) Terminate(ctx context.Context) error {
 }
 
 func (s *remoteSession) Wait(ctx context.Context) (sandbox.SessionExit, error) {
+	waitMs := 100
 	for {
 		s.mu.Lock()
 		exited, exit := s.exited, s.exit
@@ -233,7 +209,7 @@ func (s *remoteSession) Wait(ctx context.Context) (sandbox.SessionExit, error) {
 				Code: 0, Reason: sandbox.SessionExited,
 			}, nil
 		}
-		out, err := s.Read(ctx, after, 1)
+		out, err := s.readWait(ctx, after, 1, waitMs)
 		if err != nil {
 			return sandbox.SessionExit{}, err
 		}
@@ -241,6 +217,58 @@ func (s *remoteSession) Wait(ctx context.Context) (sandbox.SessionExit, error) {
 		s.lastSeq = out.NextSeq
 		s.mu.Unlock()
 	}
+}
+
+// readWait is Read with a server-side wait: when no output is buffered
+// the execd child blocks up to waitMs before answering, so a Wait loop
+// parks in the RPC instead of hammering the socket.
+func (s *remoteSession) readWait(
+	ctx context.Context,
+	afterSeq int64,
+	maxBytes int,
+	waitMs int,
+) (sandbox.SessionOutput, error) {
+	resp, err := s.client.Read(ctx, ReadParams{
+		ProcessID: s.id,
+		AfterSeq:  &afterSeq,
+		MaxBytes:  &maxBytes,
+		WaitMs:    &waitMs,
+	})
+	if err != nil {
+		return sandbox.SessionOutput{}, err
+	}
+	return s.foldRead(resp)
+}
+
+// foldRead converts a wire response into a sandbox.SessionOutput and
+// folds the exit state onto the session.
+func (s *remoteSession) foldRead(resp *ReadResponse) (sandbox.SessionOutput, error) {
+	chunks := make([]sandbox.OutputChunk, 0, len(resp.Chunks))
+	for _, ch := range resp.Chunks {
+		chunks = append(chunks, sandbox.OutputChunk{
+			Seq:    ch.Seq,
+			Stream: sandboxStream(ch.Stream),
+			Data:   ch.Data,
+		})
+	}
+	out := sandbox.SessionOutput{NextSeq: resp.NextSeq, Chunks: chunks, EOF: resp.EOF}
+	s.mu.Lock()
+	if resp.Exited && !s.exited {
+		s.exited = true
+		exit := sandbox.SessionExit{
+			Code:   0,
+			Reason: sandbox.SessionExited,
+		}
+		if resp.ExitCode != nil {
+			exit.Code = int(*resp.ExitCode)
+		}
+		if resp.Reason != "" {
+			exit.Reason = sessionReason(resp.Reason)
+		}
+		s.exit = &exit
+	}
+	s.mu.Unlock()
+	return out, nil
 }
 
 // Watch is not implemented on the client yet; output remains pullable

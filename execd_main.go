@@ -60,7 +60,11 @@ func runExecServer() {
 		_ = runner.Close()
 		return
 	}
+	// Create the socket user-only from the start: chmod after Listen
+	// leaves a window where the file is world-visible per the umask.
+	mask := syscall.Umask(0o077)
 	listener, err := net.Listen("unix", *listen)
+	syscall.Umask(mask)
 	if err != nil {
 		execdFatal(1, "opencraft execd: listen: %v", err)
 	}
