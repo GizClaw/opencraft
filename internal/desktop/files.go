@@ -67,6 +67,8 @@ func (a *App) OpenPath(path string) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	// Detach so the launcher process does not linger as a zombie.
+	_ = cmd.Process.Release()
 	return nil
 }
 

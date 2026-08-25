@@ -195,7 +195,7 @@ func (a *App) ResumeSession(id string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	think, err := store.Think(id)
+	think, err := store.Think(a.appContext(), id)
 	if err != nil {
 		think = ocsessions.ThinkMedium
 	}

@@ -1,6 +1,9 @@
 package sessions
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestThinkDefaultAndRoundTrip(t *testing.T) {
 	store, err := New(t.TempDir(), 40)
@@ -9,13 +12,13 @@ func TestThinkDefaultAndRoundTrip(t *testing.T) {
 	}
 	defer store.Close()
 
-	if level, err := store.Think("s-missing"); err != nil || level != ThinkMedium {
+	if level, err := store.Think(context.Background(), "s-missing"); err != nil || level != ThinkMedium {
 		t.Errorf("Think(missing) = %q, %v; want medium, nil", level, err)
 	}
-	if err := store.SetThink("s-x", ThinkHigh); err != nil {
+	if err := store.SetThink(context.Background(), "s-x", ThinkHigh); err != nil {
 		t.Fatal(err)
 	}
-	if level, err := store.Think("s-x"); err != nil || level != ThinkHigh {
+	if level, err := store.Think(context.Background(), "s-x"); err != nil || level != ThinkHigh {
 		t.Errorf("Think(s-x) = %q, %v; want high, nil", level, err)
 	}
 }
@@ -26,7 +29,7 @@ func TestSetThinkRejectsInvalid(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	if err := store.SetThink("s-x", ThinkLevel("max")); err == nil {
+	if err := store.SetThink(context.Background(), "s-x", ThinkLevel("max")); err == nil {
 		t.Fatal("SetThink(max) should fail")
 	}
 }

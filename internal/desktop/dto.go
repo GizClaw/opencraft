@@ -32,8 +32,9 @@ type ConfigStatus struct {
 // the frontend can route output to the right conversation when
 // several turns run in parallel.
 type StreamEvent struct {
-	RunID string                   `json:"run_id"`
-	Delta agent.StreamDeltaPayload `json:"delta"`
+	RunID          string                   `json:"run_id"`
+	ConversationID string                   `json:"conversation_id,omitempty"`
+	Delta          agent.StreamDeltaPayload `json:"delta"`
 }
 
 // ProviderView is one entry of the provider catalog.
@@ -184,9 +185,10 @@ type TurnStart struct {
 
 // TurnEnd reports a turn's terminal state.
 type TurnEnd struct {
-	RunID  string `json:"run_id"`
-	Status string `json:"status"`
-	Error  string `json:"error,omitempty"`
+	RunID          string `json:"run_id"`
+	ConversationID string `json:"conversation_id,omitempty"`
+	Status         string `json:"status"`
+	Error          string `json:"error,omitempty"`
 }
 
 // ReplyRequest is a user answer to one interaction.
@@ -199,15 +201,16 @@ type ReplyRequest struct {
 
 // InteractDTO is the rendered form of one runtime.Spec.
 type InteractDTO struct {
-	ID         string            `json:"id"`
-	RunID      string            `json:"run_id"`
-	Kind       string            `json:"kind"`
-	Title      string            `json:"title"`
-	Body       []json.RawMessage `json:"body"`
-	Options    []OptionDTO       `json:"options"`
-	Multi      bool              `json:"multi"`
-	AllowOther bool              `json:"allow_other"`
-	Source     string            `json:"source"`
+	ID             string            `json:"id"`
+	RunID          string            `json:"run_id"`
+	ConversationID string            `json:"conversation_id,omitempty"`
+	Kind           string            `json:"kind"`
+	Title          string            `json:"title"`
+	Body           []json.RawMessage `json:"body"`
+	Options        []OptionDTO       `json:"options"`
+	Multi          bool              `json:"multi"`
+	AllowOther     bool              `json:"allow_other"`
+	Source         string            `json:"source"`
 }
 
 // OptionDTO is one selectable choice.

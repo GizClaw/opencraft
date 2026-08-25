@@ -42,7 +42,7 @@ func (a *App) SetThink(level string) error {
 	store := a.sessions
 	a.mu.Unlock()
 	if store != nil {
-		return store.SetThink(contextID, lv)
+		return store.SetThink(a.appContext(), contextID, lv)
 	}
 	return nil
 }

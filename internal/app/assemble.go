@@ -59,8 +59,9 @@ type Options struct {
 	// working directory (where opencraft was invoked).
 	WorkBase string
 	// usageObserver receives every reported inference usage (including
-	// the model actually invoked). Nil disables observation.
-	usageObserver func(inference.Usage)
+	// the model actually invoked), with the run context so callers can
+	// attribute usage to the owning turn. Nil disables observation.
+	usageObserver func(context.Context, inference.Usage)
 }
 
 type Option func(*Options)
@@ -77,7 +78,7 @@ func WithWorkBase(dir string) Option {
 
 // WithUsageObserver installs a usage-report observer. The callback runs
 // on the engine's goroutine and must be non-blocking.
-func WithUsageObserver(fn func(inference.Usage)) Option {
+func WithUsageObserver(fn func(context.Context, inference.Usage)) Option {
 	return func(o *Options) { o.usageObserver = fn }
 }
 
@@ -188,7 +189,7 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 					if err := host.ReportUsage(ctx, usage); err != nil {
 						return err
 					}
-					observer(usage)
+					observer(ctx, usage)
 					return nil
 				}
 			}

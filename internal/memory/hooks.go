@@ -147,7 +147,8 @@ func renderConversation(msgs []message.Message) []message.Message {
 // shapes the current turn's context; cross-turn continuity stays with
 // the memory assembly.
 func isSummaryMessage(m message.Message) bool {
-	return strings.HasPrefix(m.Content.Text(), compact.SummaryPrefix+"\n")
+	return m.Role == message.RoleUser &&
+		strings.HasPrefix(m.Content.Text(), compact.SummaryPrefix+"\n")
 }
 
 // sectionCount reads the world node's prepend count off the board. The

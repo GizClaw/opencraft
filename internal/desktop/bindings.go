@@ -652,8 +652,8 @@ func (a *App) waitTurn(
 	a.mu.Lock()
 	delete(a.turns, runID)
 	delete(a.runConvs, runID)
-	turnUsage := a.runUsage[contextID]
-	delete(a.runUsage, contextID)
+	turnUsage := a.runUsage[runID]
+	delete(a.runUsage, runID)
 	if a.broker != nil {
 		a.broker.UnbindTurn(runID)
 	}
@@ -684,9 +684,13 @@ func (a *App) waitTurn(
 	// Best-effort auto title: the model summarizes the conversation
 	// once; failures keep the first-message fallback. Runs off the UI
 	// event path so it never blocks stream delivery.
-	go a.autoTitle(context.Background(), contextID)
+	go a.autoTitle(a.appContext(), contextID)
 
-	end := TurnEnd{RunID: runID, Status: "unknown"}
+	end := TurnEnd{
+		RunID:          runID,
+		ConversationID: contextID,
+		Status:         "unknown",
+	}
 	if res != nil {
 		end.Status = string(res.Status)
 		if res.Err != nil {

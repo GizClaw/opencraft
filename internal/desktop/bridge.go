@@ -25,6 +25,7 @@ type Bridge struct {
 
 	mu      sync.Mutex
 	pending map[string]chan runtime.Reply
+	runConv func(runID string) string
 	// lastRun is the run id of the most recent stream delta; the
 	// usage observer uses it to attribute a generation to its turn.
 	lastRun atomic.Value
@@ -39,6 +40,27 @@ func NewBridge() *Bridge {
 // emission. It is set during Startup, before the broker attaches.
 func (b *Bridge) SetContext(ctx context.Context) {
 	b.ctx = ctx
+}
+
+// SetRunConvResolver installs the run-id → conversation resolver so
+// stream/interact events can carry the owning conversation (empty for
+// delegated subagent runs, whose events must not surface in the chat).
+func (b *Bridge) SetRunConvResolver(fn func(runID string) string) {
+	b.mu.Lock()
+	b.runConv = fn
+	b.mu.Unlock()
+}
+
+// conversationOf resolves the owning conversation of a run, or "" when
+// unknown (e.g. a delegated subagent run).
+func (b *Bridge) conversationOf(runID string) string {
+	b.mu.Lock()
+	fn := b.runConv
+	b.mu.Unlock()
+	if fn == nil || runID == "" {
+		return ""
+	}
+	return fn(runID)
 }
 
 // Emit pushes one UI event to the frontend. Events emitted before the
@@ -63,7 +85,11 @@ func (b *Bridge) Sink(
 	}
 	runID := streamRunID(env.Subject)
 	b.lastRun.Store(runID)
-	b.Emit("stream", StreamEvent{RunID: runID, Delta: delta})
+	b.Emit("stream", StreamEvent{
+		RunID:          runID,
+		ConversationID: b.conversationOf(runID),
+		Delta:          delta,
+	})
 	return nil
 }
 
@@ -105,15 +131,16 @@ func (b *Bridge) Ask(ctx context.Context, spec runtime.Spec) (runtime.Reply, err
 		opts = append(opts, OptionDTO{Label: o.Label, Value: o.Value})
 	}
 	b.Emit("interact", InteractDTO{
-		ID:         spec.ID,
-		RunID:      spec.RunID,
-		Kind:       string(spec.Kind),
-		Title:      spec.Title,
-		Body:       body,
-		Options:    opts,
-		Multi:      spec.Multi,
-		AllowOther: spec.AllowOther,
-		Source:     spec.Source,
+		ID:             spec.ID,
+		RunID:          spec.RunID,
+		ConversationID: b.conversationOf(spec.RunID),
+		Kind:           string(spec.Kind),
+		Title:          spec.Title,
+		Body:           body,
+		Options:        opts,
+		Multi:          spec.Multi,
+		AllowOther:     spec.AllowOther,
+		Source:         spec.Source,
 	})
 
 	select {

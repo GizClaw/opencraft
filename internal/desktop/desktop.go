@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/runtime/session"
 
@@ -139,6 +140,14 @@ func New(opts Options) (*App, error) {
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
 	a.bridge.SetContext(ctx)
+	// Route stream/interact events to their owning conversation so a
+	// frontend reload can recover mid-run routing; delegated subagent
+	// runs resolve to "" and stay out of the chat.
+	a.bridge.SetRunConvResolver(func(runID string) string {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		return a.runConvs[runID]
+	})
 	if err := a.rebuild(); err != nil {
 		a.bridge.Emit("fatal", map[string]any{"error": err.Error()})
 	}
@@ -313,18 +322,26 @@ func (a *App) appContext() context.Context {
 }
 
 // onUsage forwards one usage report to the bridge and accumulates it
-// for the active turn's session record. It runs on the engine's
-// goroutine and must be non-blocking.
-func (a *App) onUsage(u inference.Usage) {
+// for the owning run's session record. It runs on the engine's
+// goroutine and must be non-blocking. Attribution uses the run id from
+// the report context (parallel turns each carry their own RunInfo);
+// the bridge's last-stream-run fallback covers reports without one.
+func (a *App) onUsage(ctx context.Context, u inference.Usage) {
 	a.bridge.Usage(u)
-	runID := a.bridge.LastStreamRun()
+	runID := ""
+	if info, ok := agent.RunInfoFromContext(ctx); ok {
+		runID = info.RunID
+	}
+	if runID == "" {
+		runID = a.bridge.LastStreamRun()
+	}
 	a.mu.Lock()
 	conv := a.runConvs[runID]
 	if conv == "" {
 		a.mu.Unlock()
 		return
 	}
-	acc := a.runUsage[conv]
+	acc := a.runUsage[runID]
 	acc.TotalTokens += u.TotalTokens
 	acc.InputTokens += u.InputTokens
 	acc.OutputTokens += u.OutputTokens
@@ -340,7 +357,7 @@ func (a *App) onUsage(u inference.Usage) {
 	if u.Input.CacheWriteTokens != nil {
 		acc.CacheWriteTokens += *u.Input.CacheWriteTokens
 	}
-	a.runUsage[conv] = acc
+	a.runUsage[runID] = acc
 	a.mu.Unlock()
 }
 
