@@ -32,15 +32,18 @@ func (s *Service) permissionsSection(contextID string) (Section, error) {
 		prefixes = s.prefixes.Rules()
 	}
 	yolo := false
+	readOnly := false
 	if s.sessionStore != nil {
 		if mode, err := s.sessionStore.Mode(contextID); err == nil {
 			yolo = mode.IsYOLO()
+			readOnly = mode.IsReadOnly()
 		}
 	}
 	text, err := render(permissionsTmpl, permissionsData{
 		Profile:          s.opts.PermissionProfile,
 		ApprovedPrefixes: strings.Join(prefixes, ", "),
 		YOLO:             yolo,
+		ReadOnly:         readOnly,
 	})
 	if err != nil {
 		return Section{}, err

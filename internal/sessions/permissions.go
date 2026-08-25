@@ -15,6 +15,10 @@ const (
 	// ModeWorkspace confines commands and files to the workspace and
 	// asks the user before running unlisted commands (the default).
 	ModeWorkspace Mode = "workspace"
+	// ModeReadOnly keeps the workspace root read-only for every command
+	// (OS-enforced by the seatbelt/bwrap backend); known read-only
+	// commands run without approval, everything else asks the user.
+	ModeReadOnly Mode = "read-only"
 	// ModeYOLO disables the sandbox for the session: commands run on
 	// the host with the full environment, no approval prompts, and
 	// file tools may reach any path.
@@ -23,6 +27,9 @@ const (
 
 // IsYOLO reports whether m is the unconfined mode.
 func (m Mode) IsYOLO() bool { return m == ModeYOLO }
+
+// IsReadOnly reports whether m keeps the workspace root read-only.
+func (m Mode) IsReadOnly() bool { return m == ModeReadOnly }
 
 // modeFile is the on-disk shape of <session>/permissions.yaml.
 type modeFile struct {
@@ -35,7 +42,7 @@ const modeVersion = "v1"
 // SetMode persists the sandbox mode for the session.
 func (s *Store) SetMode(id string, mode Mode) error {
 	switch mode {
-	case ModeWorkspace, ModeYOLO:
+	case ModeWorkspace, ModeReadOnly, ModeYOLO:
 	default:
 		return errdefs.Validationf(
 			"sessions: unknown permission mode %q", mode)
@@ -86,7 +93,7 @@ func (s *Store) Mode(id string) (Mode, error) {
 		return ModeWorkspace, err
 	}
 	switch f.Mode {
-	case ModeWorkspace, ModeYOLO:
+	case ModeWorkspace, ModeReadOnly, ModeYOLO:
 		return f.Mode, nil
 	default:
 		return ModeWorkspace, nil

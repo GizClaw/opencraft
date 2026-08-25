@@ -56,6 +56,52 @@ func TestNewMergesStaticAndFileRules(t *testing.T) {
 	}
 }
 
+func TestApproveAutoAllowsReadOnlySafeCommand(t *testing.T) {
+	m, err := New(nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// No host in ctx: the read-only branch must decide before the
+	// AskUser path, otherwise this call would fail closed.
+	dec, err := m.Approve(context.Background(), sandbox.ApprovalRequest{
+		Exec: sandbox.ExecRequest{
+			Command: "git",
+			Args:    []string{"status", "--porcelain"},
+			Opts:    sandbox.ExecOptions{Write: sandbox.WriteReadOnly},
+		},
+		Reason: "command not in sandbox allowlist",
+	})
+	if err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if dec != sandbox.Allow {
+		t.Fatalf("read-only safe command decision = %v, want Allow", dec)
+	}
+}
+
+func TestApproveReadOnlyUnsafeStillFailsClosed(t *testing.T) {
+	m, err := New(nil, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Without a host the unsafe command must fail closed (Deny +
+	// error), never auto-allow.
+	dec, err := m.Approve(context.Background(), sandbox.ApprovalRequest{
+		Exec: sandbox.ExecRequest{
+			Command: "rm",
+			Args:    []string{"-rf", "."},
+			Opts:    sandbox.ExecOptions{Write: sandbox.WriteReadOnly},
+		},
+		Reason: "command not in sandbox allowlist",
+	})
+	if err == nil {
+		t.Fatal("Approve without host must fail closed for unsafe commands")
+	}
+	if dec != sandbox.Deny {
+		t.Fatalf("unsafe read-only command decision = %v, want Deny", dec)
+	}
+}
+
 func TestAlwaysAllowPersists(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "approvals.yaml")

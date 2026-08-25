@@ -166,6 +166,37 @@ func TestPermissionsSectionShowsYOLOForSession(t *testing.T) {
 	}
 }
 
+func TestPermissionsSectionShowsReadOnlyForSession(t *testing.T) {
+	store, err := ocsessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := New(Options{WorkBase: t.TempDir()})
+	svc.SetSessions(store)
+
+	sec, err := svc.permissionsSection(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains(sec.Text, "read-only") {
+		t.Fatalf("workspace session must not show read-only: %q", sec.Text)
+	}
+	if err := store.SetMode(id, ocsessions.ModeReadOnly); err != nil {
+		t.Fatal(err)
+	}
+	sec2, err := svc.permissionsSection(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(sec2.Text, "read-only") {
+		t.Fatalf("read-only session must show the marker: %q", sec2.Text)
+	}
+}
+
 type stubMemory struct {
 	items []corememory.ContextItem
 }

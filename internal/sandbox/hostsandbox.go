@@ -75,7 +75,18 @@ func (h *HostSandbox) Start(
 	ctx context.Context,
 	spec coresandbox.SessionSpec,
 ) (coresandbox.Session, error) {
-	return h.pick(ctx).Start(ctx, spec)
+	if h.Unconfined(ctx) {
+		return h.unconfined.Start(ctx, spec)
+	}
+	// Read-only mode narrows the per-call write policy before the
+	// approval gate and the OS backend see it: the runner root is
+	// dropped from the writable set for this command (explicit
+	// writable paths like the cache stay writable). The approver sees
+	// the same Opts, so it can auto-allow known read-only commands.
+	if isReadOnly(ctx, h.sessions) {
+		spec.Opts.Write = coresandbox.WriteReadOnly
+	}
+	return h.confined.Start(ctx, spec)
 }
 
 func (h *HostSandbox) List(
@@ -106,6 +117,24 @@ func isYOLO(ctx context.Context, store *sessions.Store) bool {
 	}
 	mode, err := store.Mode(sessionID)
 	return err == nil && mode.IsYOLO()
+}
+
+// isReadOnly resolves the current session's read-only flag from the
+// execution context, mirroring isYOLO. Sessions without a persisted
+// mode run workspace-write and return false.
+func isReadOnly(ctx context.Context, store *sessions.Store) bool {
+	if store == nil {
+		return false
+	}
+	sessionID := ""
+	if info, ok := agent.RunInfoFromContext(ctx); ok {
+		sessionID = info.ConversationID
+	}
+	if sessionID == "" {
+		return false
+	}
+	mode, err := store.Mode(sessionID)
+	return err == nil && mode.IsReadOnly()
 }
 
 // noopCloseRunner delegates everything but Close, which is owned by

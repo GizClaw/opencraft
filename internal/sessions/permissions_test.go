@@ -38,6 +38,27 @@ func TestSessionModePersists(t *testing.T) {
 	}
 }
 
+func TestSessionModeReadOnlyPersists(t *testing.T) {
+	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetMode(id, ModeReadOnly); err != nil {
+		t.Fatal(err)
+	}
+	mode, err := store.Mode(id)
+	if err != nil || mode != ModeReadOnly {
+		t.Fatalf("mode after set = %q, %v; want read-only", mode, err)
+	}
+	if !mode.IsReadOnly() || mode.IsYOLO() {
+		t.Fatalf("IsReadOnly/IsYOLO for %q = %v/%v", mode, mode.IsReadOnly(), mode.IsYOLO())
+	}
+}
+
 func TestSessionModeIsolatedPerSession(t *testing.T) {
 	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {

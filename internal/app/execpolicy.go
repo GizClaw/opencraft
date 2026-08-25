@@ -84,6 +84,15 @@ func (m *Manager) Approve(
 	ctx context.Context,
 	req sandbox.ApprovalRequest,
 ) (sandbox.Decision, error) {
+	// Read-only mode: a known safe read-only command runs without
+	// prompting. The classifier is a tripwire — the OS backend already
+	// denies any write outside the explicit writable paths, so a false
+	// positive here only lets a read attempt through. Anything not
+	// proven read-only falls through to the human approver below.
+	if req.Exec.Opts.Write == sandbox.WriteReadOnly &&
+		sandbox.ClassifySafeReadOnly(req.Exec) {
+		return sandbox.Allow, nil
+	}
 	command := NormaliseCommand(req.Exec)
 	host, ok := agent.HostFromContext(ctx)
 	if !ok {

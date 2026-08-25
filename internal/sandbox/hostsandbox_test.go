@@ -57,6 +57,31 @@ func (r *recordRunner) count() int {
 	return r.used
 }
 
+// captureOptsRunner records the ExecOptions each confined Start
+// receives so tests can assert the per-call write policy injection.
+type captureOptsRunner struct {
+	got []coresandbox.ExecOptions
+}
+
+func (r *captureOptsRunner) Close() error { return nil }
+
+func (r *captureOptsRunner) Capabilities() coresandbox.Capabilities {
+	return coresandbox.Capabilities{}
+}
+
+func (r *captureOptsRunner) Start(
+	_ context.Context, spec coresandbox.SessionSpec,
+) (coresandbox.Session, error) {
+	r.got = append(r.got, spec.Opts)
+	return nil, nil
+}
+
+func (r *captureOptsRunner) List(context.Context) ([]coresandbox.SessionInfo, error) {
+	return nil, nil
+}
+
+func (r *captureOptsRunner) Terminate(context.Context, string) error { return nil }
+
 func newTestStore(t *testing.T) *sessions.Store {
 	t.Helper()
 	store, err := sessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
@@ -64,6 +89,70 @@ func newTestStore(t *testing.T) *sessions.Store {
 		t.Fatal(err)
 	}
 	return store
+}
+
+func TestHostSandboxInjectsReadOnlyWritePolicy(t *testing.T) {
+	confined := &captureOptsRunner{}
+	unconfined := &recordRunner{}
+	store := newTestStore(t)
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetMode(id, sessions.ModeReadOnly); err != nil {
+		t.Fatal(err)
+	}
+	hs := &HostSandbox{
+		sessions:   store,
+		confined:   confined,
+		unconfined: unconfined,
+	}
+
+	if _, err := hs.Start(
+		sessionCtx(id), coresandbox.SessionSpec{ID: "ro"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(confined.got) != 1 {
+		t.Fatalf("confined Start calls = %d, want 1", len(confined.got))
+	}
+	if confined.got[0].Write != coresandbox.WriteReadOnly {
+		t.Fatalf("read-only session write policy = %v, want WriteReadOnly",
+			confined.got[0].Write)
+	}
+	if unconfined.count() != 0 {
+		t.Fatal("read-only session must not use the unconfined runner")
+	}
+
+	// Workspace mode keeps the zero-value (runner construction-time)
+	// boundary, and yolo still routes to the unconfined runner.
+	wsID, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hs.Start(
+		sessionCtx(wsID), coresandbox.SessionSpec{ID: "ws"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if confined.got[1].Write != coresandbox.WriteWorkspace {
+		t.Fatalf("workspace session write policy = %v, want WriteWorkspace",
+			confined.got[1].Write)
+	}
+	if err := store.SetMode(wsID, sessions.ModeYOLO); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := hs.Start(
+		sessionCtx(wsID), coresandbox.SessionSpec{ID: "yolo"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(confined.got) != 2 {
+		t.Fatal("yolo session must not reach the confined runner")
+	}
+	if unconfined.count() != 1 {
+		t.Fatalf("yolo session unconfined Start calls = %d, want 1", unconfined.count())
+	}
 }
 
 func TestHostSandboxSwitchesBySessionMode(t *testing.T) {

@@ -548,7 +548,7 @@ func (a *App) NewChat() (string, error) {
 }
 
 // SessionMode returns the sandbox permission mode of the current
-// conversation ("workspace" or "yolo").
+// conversation ("workspace", "read-only", or "yolo").
 func (a *App) SessionMode() (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -561,7 +561,7 @@ func (a *App) SessionMode() (string, error) {
 func (a *App) SetSessionMode(mode string) error {
 	m := ocsessions.Mode(mode)
 	switch m {
-	case ocsessions.ModeWorkspace, ocsessions.ModeYOLO:
+	case ocsessions.ModeWorkspace, ocsessions.ModeReadOnly, ocsessions.ModeYOLO:
 	default:
 		return fmt.Errorf("unknown permission mode %q", mode)
 	}

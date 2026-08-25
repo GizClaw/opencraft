@@ -18,6 +18,7 @@ type permissionsData struct {
 	Profile          string
 	ApprovedPrefixes string
 	YOLO             bool
+	ReadOnly         bool
 }
 
 type environmentData struct {

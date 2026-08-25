@@ -8,6 +8,7 @@ import {
   File,
   Flame,
   Folder,
+  Lock,
   Loader2,
   RotateCcw,
   Send,
@@ -175,6 +176,7 @@ export function ChatView() {
   const openConfig = useStore((s) => s.openConfig);
   const [input, setInput] = useState("");
   const [confirmYolo, setConfirmYolo] = useState(false);
+  const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const [mention, setMention] = useState<{ open: boolean; query: string }>({
@@ -274,6 +276,7 @@ export function ChatView() {
       ? sessionTitle
       : t("chat.newSession");
   const yolo = mode === "yolo";
+  const readOnly = mode === "read-only";
 
   return (
     <main className="flex-1 min-w-0 flex flex-col min-h-0">
@@ -356,20 +359,88 @@ export function ChatView() {
                 : "border-transparent"
             }`}
           >
-            <button
-              onClick={() =>
-                yolo ? void setMode("workspace") : setConfirmYolo(true)
-              }
-              className={`flex items-center gap-1.5 rounded-md border px-2 py-0.5 transition-colors ${
-                yolo
-                  ? "border-[#d9a83c]/50 bg-[#d9a83c]/15 text-[#e2b341] hover:bg-[#d9a83c]/25"
-                  : "border-edge text-dim hover:text-fg"
-              }`}
-              title={yolo ? t("chat.workspaceMode") : t("chat.yoloMode")}
-            >
-              {yolo ? <Flame size={11} /> : <ShieldCheck size={11} />}
-              {yolo ? t("chat.yoloMode") : t("chat.workspaceMode")}
-            </button>
+            <div className="relative">
+              <button
+                onClick={() => setModeMenuOpen((v) => !v)}
+                className={`flex items-center gap-1.5 rounded-md border px-2 py-0.5 transition-colors ${
+                  yolo
+                    ? "border-[#d9a83c]/50 bg-[#d9a83c]/15 text-[#e2b341] hover:bg-[#d9a83c]/25"
+                    : readOnly
+                      ? "border-accent/40 bg-accent/10 text-accent hover:bg-accent/20"
+                      : "border-edge text-dim hover:text-fg"
+                }`}
+                title={t("chat.sandboxMode")}
+              >
+                {yolo ? (
+                  <Flame size={11} />
+                ) : readOnly ? (
+                  <Lock size={11} />
+                ) : (
+                  <ShieldCheck size={11} />
+                )}
+                {yolo
+                  ? t("chat.yoloMode")
+                  : readOnly
+                    ? t("chat.readOnlyMode")
+                    : t("chat.workspaceMode")}
+                <ChevronDown size={11} />
+              </button>
+              {modeMenuOpen && (
+                <>
+                  <div
+                    className="fixed inset-0 z-30"
+                    onClick={() => setModeMenuOpen(false)}
+                  />
+                  <div className="absolute left-0 top-full z-40 mt-1 w-44 rounded-lg border border-edge bg-panel p-1 shadow-xl">
+                    <button
+                      onClick={() => {
+                        setModeMenuOpen(false);
+                        void setMode("read-only");
+                      }}
+                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs ${
+                        readOnly
+                          ? "bg-accent/10 text-accent"
+                          : "text-dim hover:bg-panel2 hover:text-fg"
+                      }`}
+                    >
+                      <Lock size={12} /> {t("chat.readOnlyMode")}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setModeMenuOpen(false);
+                        void setMode("workspace");
+                      }}
+                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs ${
+                        !readOnly && !yolo
+                          ? "bg-accent/10 text-accent"
+                          : "text-dim hover:bg-panel2 hover:text-fg"
+                      }`}
+                    >
+                      <ShieldCheck size={12} /> {t("chat.workspaceMode")}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setModeMenuOpen(false);
+                        setConfirmYolo(true);
+                      }}
+                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs ${
+                        yolo
+                          ? "bg-[#d9a83c]/15 text-[#e2b341]"
+                          : "text-dim hover:bg-panel2 hover:text-fg"
+                      }`}
+                    >
+                      <Flame size={12} /> {t("chat.yoloMode")}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+            {readOnly && (
+              <span className="flex items-center gap-1 text-accent">
+                <Lock size={12} />
+                {t("chat.readOnlyBanner")}
+              </span>
+            )}
             {yolo && (
               <span className="flex items-center gap-1 text-[#d9a83c]">
                 <AlertTriangle size={12} />

@@ -2,6 +2,11 @@ Permission profile: {{.Profile}}
 {{if .YOLO}}Sandbox mode: yolo — commands run unconfined with the full host
 environment and no approval prompts; file tools may reach any path.
 {{end}}
+{{if .ReadOnly}}Sandbox mode: read-only — the workspace root is not writable
+(OS-enforced; writes outside the explicit writable paths fail). Known
+read-only commands (ls, cat, grep, git status/diff/log, ...) run without
+approval; every other command asks the user.
+{{end}}
 {{if .ApprovedPrefixes}}Approved command prefixes: {{.ApprovedPrefixes}}
 {{end}}Commands outside the approved allowlist ask the user for approval
 (allow once / always allow / deny; "always allow" rules are persisted to
