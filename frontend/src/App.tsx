@@ -11,6 +11,7 @@ import { ChatView } from "./components/ChatView";
 import { ConfigPage } from "./components/ConfigPage";
 import { Sidebar } from "./components/Sidebar";
 import { StatusBar } from "./components/StatusBar";
+import { SubagentSidebar } from "./components/SubagentSidebar";
 import { ToolsPanel } from "./components/ToolsPanel";
 import { useStore } from "./lib/store";
 import type { UIEvent } from "./lib/types";
@@ -22,6 +23,10 @@ export default function App() {
   const fatal = useStore((s) => s.fatal);
   const configOpen = useStore((s) => s.configOpen);
   const toolsView = useStore((s) => s.toolsView);
+  const current = useStore((s) => s.current);
+  const subagentCards = useStore((s) => s.subagentCards);
+  const subagentPanelOpen = useStore((s) => s.subagentPanelOpen);
+  const loadSubagentCards = useStore((s) => s.loadSubagentCards);
   const newChat = useStore((s) => s.newChat);
   const openConfig = useStore((s) => s.openConfig);
   const openTools = useStore((s) => s.openTools);
@@ -79,6 +84,15 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [newChat, openConfig, openTools]);
 
+  // Keep the current conversation's delegation list fresh; the right
+  // sidebar appears as soon as the conversation spawns a subagent.
+  useEffect(() => {
+    if (!status) return;
+    void loadSubagentCards();
+    const timer = setInterval(() => void loadSubagentCards(), 2000);
+    return () => clearInterval(timer);
+  }, [status, current, loadSubagentCards]);
+
   const startDrag =
     () => (e: React.MouseEvent) => {
       e.preventDefault();
@@ -131,7 +145,16 @@ export default function App() {
           onMouseDown={startDrag()}
           className="w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-accent/40"
         />
-        {toolsView ? <ToolsPanel /> : <ChatView />}
+        {toolsView ? (
+          <ToolsPanel />
+        ) : (
+          <>
+            <ChatView />
+            {subagentPanelOpen && subagentCards.length > 0 && (
+              <SubagentSidebar />
+            )}
+          </>
+        )}
       </div>
       <StatusBar />
       {configOpen && <ConfigPage />}

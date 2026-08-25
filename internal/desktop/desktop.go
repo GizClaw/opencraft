@@ -74,6 +74,11 @@ type App struct {
 	// runConvs maps active run ids to their conversation, so stream
 	// events and usage can be routed with parallel turns.
 	runConvs map[string]string
+	// convRuns retains every run id minted per conversation for the
+	// app lifetime, so delegation cards (which persist the caller run
+	// id) can be attributed back to the conversation that spawned them
+	// even after the calling turn ended.
+	convRuns map[string]map[string]bool
 	// runUsage accumulates inference usage per conversation while its
 	// turn is active; it is recorded into the session store at turn
 	// end.
@@ -123,6 +128,7 @@ func New(opts Options) (*App, error) {
 		think:          string(ocsessions.ThinkMedium),
 		model:          "",
 		runConvs:       make(map[string]string),
+		convRuns:       make(map[string]map[string]bool),
 		runUsage:       make(map[string]ocsessions.Usage),
 		titling:        make(map[string]bool),
 		otelShutdown:   shutdown,
@@ -262,6 +268,7 @@ func (a *App) closeRuntime() {
 	a.sessions = nil
 	a.turns = make(map[string]*session.Turn)
 	a.runConvs = make(map[string]string)
+	a.convRuns = make(map[string]map[string]bool)
 	a.runUsage = make(map[string]ocsessions.Usage)
 	a.mu.Unlock()
 

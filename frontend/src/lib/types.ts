@@ -148,6 +148,9 @@ export interface KanbanCard {
   caller: string;
   depth: number;
   error: string;
+  run_id?: string;
+  parent_run_id?: string;
+  call_id?: string;
   created_at: string;
   updated_at: string;
 }

@@ -52,6 +52,21 @@
   "tools": {
     "close": "关闭"
   },
+  "subagent": {
+    "title": "子代理",
+    "toggle": "显示/隐藏子代理面板",
+    "close": "关闭面板",
+    "detailTarget": "目标",
+    "detailCaller": "调用者",
+    "detailRun": "运行 ID",
+    "detailParent": "父运行",
+    "detailCall": "工具调用",
+    "detailCreated": "创建",
+    "detailUpdated": "更新",
+    "detailInput": "输入",
+    "detailOutput": "输出",
+    "error": "错误"
+  },
   "config": {
     "title": "设置",
     "tabUi": "界面",

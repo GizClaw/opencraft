@@ -26,6 +26,10 @@ export function ConfigStatus() {
   return window['go']['desktop']['App']['ConfigStatus']();
 }
 
+export function ConversationDelegationCards(arg1) {
+  return window['go']['desktop']['App']['ConversationDelegationCards'](arg1);
+}
+
 export function CurrentSession() {
   return window['go']['desktop']['App']['CurrentSession']();
 }

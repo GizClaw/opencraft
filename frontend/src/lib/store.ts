@@ -288,6 +288,8 @@ interface StoreState {
   statusText: string;
   lastUsage: UsageDTO | null;
   cards: KanbanCard[];
+  subagentCards: KanbanCard[];
+  subagentPanelOpen: boolean;
   modelOptions: ModelOption[];
   theme: "dark" | "light";
   workspaces: WorkspaceMeta[];
@@ -315,6 +317,8 @@ interface StoreState {
   refreshAgents: () => Promise<void>;
   loadSessions: () => Promise<void>;
   loadCards: () => Promise<void>;
+  loadSubagentCards: () => Promise<void>;
+  toggleSubagentPanel: () => void;
   flash: (text: string) => void;
 }
 
@@ -375,6 +379,8 @@ export const useStore = create<StoreState>((set, get) => {
     statusText: "",
     lastUsage: null,
     cards: [],
+    subagentCards: [],
+    subagentPanelOpen: true,
     modelOptions: [],
     theme: "dark",
     workspaces: [],
@@ -767,6 +773,27 @@ export const useStore = create<StoreState>((set, get) => {
         // best-effort
       }
     },
+
+    loadSubagentCards: async () => {
+      const convID = get().current;
+      if (!convID) return;
+      try {
+        const cards = await api.conversationDelegationCards(convID);
+        set((state) => {
+          // Auto-show the panel when the conversation starts spawning
+          // subagents; a manual close sticks while cards are present.
+          const open =
+            state.subagentPanelOpen ||
+            (cards.length > 0 && state.subagentCards.length === 0);
+          return { subagentCards: cards, subagentPanelOpen: open };
+        });
+      } catch {
+        // best-effort; the sidebar polls again shortly
+      }
+    },
+
+    toggleSubagentPanel: () =>
+      set((state) => ({ subagentPanelOpen: !state.subagentPanelOpen })),
 
     flash: (text) => set({ statusText: text }),
   };

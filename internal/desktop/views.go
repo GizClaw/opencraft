@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/delegation"
 	"github.com/GizClaw/flowcraft/core/delegation/kanban"
 	"github.com/GizClaw/flowcraft/core/message"
 
@@ -220,6 +221,29 @@ func (a *App) SessionHistory(id string) ([]message.Message, error) {
 
 // DelegationCards snapshots the delegation kanban board, newest first.
 func (a *App) DelegationCards() ([]KanbanCard, error) {
+	return a.delegationCards(kanban.Filter{}, nil)
+}
+
+// ConversationDelegationCards snapshots the delegation board entries
+// whose caller run belongs to one conversation. The caller run id is
+// persisted on each card (async and sync), so a conversation can show
+// the subagents it spawned even after the calling turn ended.
+func (a *App) ConversationDelegationCards(contextID string) ([]KanbanCard, error) {
+	a.mu.Lock()
+	runs := a.convRuns[contextID]
+	a.mu.Unlock()
+	if len(runs) == 0 {
+		return []KanbanCard{}, nil
+	}
+	return a.delegationCards(kanban.Filter{}, runs)
+}
+
+// delegationCards maps board cards to DTOs, optionally filtered to the
+// caller runs of one conversation. A nil run set returns every card.
+func (a *App) delegationCards(
+	filter kanban.Filter,
+	runs map[string]bool,
+) ([]KanbanCard, error) {
 	a.mu.Lock()
 	ctrl := a.ctrl
 	a.mu.Unlock()
@@ -234,19 +258,32 @@ func (a *App) DelegationCards() ([]KanbanCard, error) {
 	if !ok {
 		return nil, nil
 	}
-	cards := board.Query(kanban.Filter{})
+	cards := board.Query(filter)
 	sort.SliceStable(cards, func(i, j int) bool {
 		return cards[i].CreatedAt.After(cards[j].CreatedAt)
 	})
 	out := make([]KanbanCard, 0, len(cards))
 	for _, c := range cards {
+		if c.Task == nil {
+			continue
+		}
+		if runs != nil {
+			parent := c.Task.Request.ParentRunID
+			if parent == "" {
+				parent = c.Task.Request.Request.Metadata[delegation.ParentRunMetadataKey]
+			}
+			if !runs[parent] {
+				continue
+			}
+		}
 		card := KanbanCard{
-			ID:        c.ID,
-			Producer:  c.Producer,
-			Consumer:  c.Consumer,
-			Status:    string(c.Status),
-			CreatedAt: c.CreatedAt.Format(time.RFC3339),
-			UpdatedAt: c.UpdatedAt.Format(time.RFC3339),
+			ID:          c.ID,
+			Producer:    c.Producer,
+			Consumer:    c.Consumer,
+			Status:      string(c.Status),
+			RunID:       c.RunID,
+			CreatedAt:   c.CreatedAt.Format(time.RFC3339),
+			UpdatedAt:   c.UpdatedAt.Format(time.RFC3339),
 		}
 		if c.Task != nil {
 			req := c.Task.Request.Request
@@ -254,6 +291,14 @@ func (a *App) DelegationCards() ([]KanbanCard, error) {
 			card.Input = truncateDisplay(req.Input, 200)
 			card.Caller = c.Task.Request.Caller
 			card.Depth = c.Task.Request.Depth
+			card.ParentRunID = c.Task.Request.ParentRunID
+			card.CallID = c.Task.Request.CallID
+			if card.ParentRunID == "" {
+				card.ParentRunID = req.Metadata[delegation.ParentRunMetadataKey]
+			}
+			if card.CallID == "" {
+				card.CallID = req.Metadata[delegation.CallIDMetadataKey]
+			}
 		}
 		if c.Result != nil {
 			card.Output = truncateDisplay(c.Result.Response.Output, 400)

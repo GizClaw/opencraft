@@ -18,6 +18,8 @@ export function ConfigState():Promise<desktop.ConfigState>;
 
 export function ConfigStatus():Promise<desktop.ConfigStatus>;
 
+export function ConversationDelegationCards(arg1:string):Promise<Array<desktop.KanbanCard>>;
+
 export function CurrentSession():Promise<string>;
 
 export function DelegationCards():Promise<Array<desktop.KanbanCard>>;

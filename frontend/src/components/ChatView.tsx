@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   Archive,
+  Bot,
   ChevronDown,
   ChevronRight,
   File,
@@ -159,6 +160,9 @@ export function ChatView() {
   const workspace = useStore((s) => s.workspace);
   const send = useStore((s) => s.send);
   const cancelRun = useStore((s) => s.cancelRun);
+  const subagentCards = useStore((s) => s.subagentCards);
+  const subagentPanelOpen = useStore((s) => s.subagentPanelOpen);
+  const toggleSubagentPanel = useStore((s) => s.toggleSubagentPanel);
   const retryLast = useStore((s) => s.retryLast);
   const mode = conv?.mode ?? "workspace";
   const setMode = useStore((s) => s.setMode);
@@ -281,6 +285,20 @@ export function ChatView() {
           </span>
         )}
         <span className="flex-1" />
+        {subagentCards.length > 0 && (
+          <button
+            onClick={toggleSubagentPanel}
+            className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs transition-colors ${
+              subagentPanelOpen
+                ? "border-violet-400/40 bg-violet-400/10 text-violet-400"
+                : "border-edge text-dim hover:text-fg"
+            }`}
+            title={t("subagent.toggle")}
+          >
+            <Bot size={13} />
+            {subagentCards.length}
+          </button>
+        )}
       </header>
 
       <div

@@ -159,18 +159,21 @@ type MCPStatusDTO struct {
 
 // KanbanCard is the UI snapshot of one delegation board card.
 type KanbanCard struct {
-	ID        string `json:"id"`
-	Producer  string `json:"producer,omitempty"`
-	Consumer  string `json:"consumer,omitempty"`
-	Status    string `json:"status"`
-	Target    string `json:"target"`
-	Input     string `json:"input,omitempty"`
-	Output    string `json:"output,omitempty"`
-	Caller    string `json:"caller,omitempty"`
-	Depth     int    `json:"depth"`
-	Error     string `json:"error,omitempty"`
-	CreatedAt string `json:"created_at"` // RFC3339 UTC
-	UpdatedAt string `json:"updated_at"` // RFC3339 UTC
+	ID          string `json:"id"`
+	Producer    string `json:"producer,omitempty"`
+	Consumer    string `json:"consumer,omitempty"`
+	Status      string `json:"status"`
+	Target      string `json:"target"`
+	Input       string `json:"input,omitempty"`
+	Output      string `json:"output,omitempty"`
+	Caller      string `json:"caller,omitempty"`
+	Depth       int    `json:"depth"`
+	Error       string `json:"error,omitempty"`
+	RunID       string `json:"run_id,omitempty"`       // subagent run id
+	ParentRunID string `json:"parent_run_id,omitempty"` // caller run id
+	CallID      string `json:"call_id,omitempty"`       // delegate tool call id
+	CreatedAt   string `json:"created_at"`              // RFC3339 UTC
+	UpdatedAt   string `json:"updated_at"`              // RFC3339 UTC
 }
 
 // TurnStart identifies one started turn.

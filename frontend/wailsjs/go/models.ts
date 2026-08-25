@@ -217,6 +217,9 @@ export namespace desktop {
 	    caller?: string;
 	    depth: number;
 	    error?: string;
+	    run_id?: string;
+	    parent_run_id?: string;
+	    call_id?: string;
 	    created_at: string;
 	    updated_at: string;
 	
@@ -236,6 +239,9 @@ export namespace desktop {
 	        this.caller = source["caller"];
 	        this.depth = source["depth"];
 	        this.error = source["error"];
+	        this.run_id = source["run_id"];
+	        this.parent_run_id = source["parent_run_id"];
+	        this.call_id = source["call_id"];
 	        this.created_at = source["created_at"];
 	        this.updated_at = source["updated_at"];
 	    }

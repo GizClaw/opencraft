@@ -521,6 +521,13 @@ func (a *App) StartTurn(text string) (TurnStart, error) {
 	a.mu.Lock()
 	a.turns[turn.RunID()] = turn
 	a.runConvs[turn.RunID()] = contextID
+	if a.convRuns == nil {
+		a.convRuns = make(map[string]map[string]bool)
+	}
+	if a.convRuns[contextID] == nil {
+		a.convRuns[contextID] = make(map[string]bool)
+	}
+	a.convRuns[contextID][turn.RunID()] = true
 	a.mu.Unlock()
 	go a.waitTurn(lease, turn, contextID)
 	return TurnStart{RunID: turn.RunID(), ContextID: contextID}, nil
