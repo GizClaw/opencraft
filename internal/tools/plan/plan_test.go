@@ -155,9 +155,6 @@ func TestUpdatePlanValidation(t *testing.T) {
 		{"empty step", `{"plan":[{"step":"  ","status":"pending"}]}`},
 		{"missing status", `{"plan":[{"step":"x"}]}`},
 		{"bad status", `{"plan":[{"step":"x","status":"done"}]}`},
-		{"two in progress", `{"plan":[
-			{"step":"a","status":"in_progress"},
-			{"step":"b","status":"in_progress"}]}`},
 		{"unknown top field", `{"plan":[{"step":"x","status":"pending"}],"nope":1}`},
 		{"unknown item field", `{"plan":[{"step":"x","status":"pending","nope":1}]}`},
 	}
@@ -181,6 +178,38 @@ func TestUpdatePlanValidation(t *testing.T) {
 	latest, ok := store.Latest("default", "default")
 	if !ok || latest.Items[0].Step != "keep" {
 		t.Errorf("plan was clobbered: %+v", latest)
+	}
+}
+
+// TestPlanAllowsMultipleInProgress mirrors codex-rs: parallel work can
+// keep several steps in_progress at once; the tool must accept and
+// persist the snapshot.
+func TestPlanAllowsMultipleInProgress(t *testing.T) {
+	store := NewStore(newSessionsStore(t))
+	tool := MustNew(store).Tools()[0]
+	ctx := sessionCtx("assistant", "sess-1")
+
+	args := `{"explanation":"three parallel reviews","plan":[
+		{"step":"review agents","status":"in_progress"},
+		{"step":"review app","status":"in_progress"},
+		{"step":"review config","status":"in_progress"}]}`
+	if _, err := tool.Execute(ctx, args); err != nil {
+		t.Fatalf("update with three in_progress steps: %v", err)
+	}
+	latest, ok := store.Latest("assistant", "sess-1")
+	if !ok {
+		t.Fatal("plan not persisted")
+	}
+	if latest.Explanation != "three parallel reviews" {
+		t.Fatalf("explanation = %q", latest.Explanation)
+	}
+	if len(latest.Items) != 3 {
+		t.Fatalf("items = %d, want 3", len(latest.Items))
+	}
+	for i, item := range latest.Items {
+		if item.Status != StatusInProgress {
+			t.Fatalf("item %d status = %q, want in_progress", i, item.Status)
+		}
 	}
 }
 

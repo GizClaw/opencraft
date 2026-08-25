@@ -1,8 +1,10 @@
 // Package plan provides the update_plan tool plus a store that
 // survives restarts. The tool follows codex-rs semantics: every call
 // submits a full checklist snapshot (optional explanation + list of
-// steps with statuses), at most one step may be in_progress. The
-// latest snapshot is persisted per session by the session store
+// steps with statuses). Multiple steps may be in_progress at the same
+// time (e.g. parallel subagent work), mirroring codex-rs, which only
+// guides "at most one" in prose and never rejects a plan with several.
+// The latest snapshot is persisted per session by the session store
 // (WriteState/ReadState); this package only owns the plan semantics.
 package plan
 
@@ -133,15 +135,14 @@ func KeyFromContext(ctx context.Context) (agentID, sessionID string) {
 	return agentID, sessionID
 }
 
-// validate enforces the update_plan contract: plan is required, each
-// item needs a step and a valid status, and at most one step may be
-// in_progress.
+// validate enforces the update_plan contract: plan is required and
+// each item needs a step and a valid status. Multiple in_progress
+// steps are allowed (parallel work), matching codex-rs.
 func validate(args UpdatePlanArgs) error {
 	if len(args.Plan) == 0 {
 		return errdefs.Validationf(
 			"%s: plan is required", UpdatePlanName)
 	}
-	inProgress := 0
 	for i, item := range args.Plan {
 		if strings.TrimSpace(item.Step) == "" {
 			return errdefs.Validationf(
@@ -155,13 +156,6 @@ func validate(args UpdatePlanArgs) error {
 					"pending, in_progress, completed",
 				UpdatePlanName, i)
 		}
-		if item.Status == StatusInProgress {
-			inProgress++
-		}
-	}
-	if inProgress > 1 {
-		return errdefs.Validationf(
-			"%s: at most one step can be in_progress", UpdatePlanName)
 	}
 	return nil
 }
@@ -263,8 +257,9 @@ func (updatePlanTool) Definition() message.ToolDefinition {
 		UpdatePlanName,
 		"Updates the task plan.\n"+
 			"Provide an optional explanation and a list of plan items, "+
-			"each with a step and status.\n"+
-			"At most one step can be in_progress at a time.",
+			"each with a step and status (pending, in_progress, "+
+			"completed). Steps may be marked in_progress in parallel "+
+			"when work runs concurrently.",
 		message.ToolProperty("explanation", "string",
 			"Optional explanation of the plan change."),
 		message.ToolArrayProperty("plan", "The list of steps", planItemSchema),
