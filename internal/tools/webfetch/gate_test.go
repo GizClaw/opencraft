@@ -2,6 +2,7 @@ package webfetch
 
 import (
 	"context"
+	"net"
 	"path/filepath"
 	"testing"
 
@@ -11,6 +12,12 @@ import (
 )
 
 func TestDomainGateAllowDeny(t *testing.T) {
+	orig := lookupHost
+	lookupHost = func(_ context.Context, host string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("8.8.8.8")}, nil
+	}
+	t.Cleanup(func() { lookupHost = orig })
+
 	gate := DomainGate(sandbox.WebFetchPolicy{
 		AllowHosts: []string{"example.com", "*.openai.com"},
 		DenyHosts:  []string{"bad.example.com"},

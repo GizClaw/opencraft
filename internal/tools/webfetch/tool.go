@@ -187,7 +187,7 @@ func checkPublicHost(ctx context.Context, host string) error {
 	}
 	dctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	ips, err := net.DefaultResolver.LookupIP(dctx, "ip", host)
+	ips, err := lookupHost(dctx, host)
 	if err != nil {
 		return errdefs.Validationf("web_fetch: resolve %q: %v", host, err)
 	}
@@ -199,6 +199,12 @@ func checkPublicHost(ctx context.Context, host string) error {
 		}
 	}
 	return nil
+}
+
+// lookupHost resolves a hostname to IPs for the SSRF guard. It is a
+// variable so tests can stub DNS resolution and stay hermetic.
+var lookupHost = func(ctx context.Context, host string) ([]net.IP, error) {
+	return net.DefaultResolver.LookupIP(ctx, "ip", host)
 }
 
 func blockedIP(ip net.IP) bool {

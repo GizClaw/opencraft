@@ -56,6 +56,12 @@ jobs:
         with:
           version: v2.12.2
 
+      # Sandbox tests (app/sandbox/execd) build a bwrap-backed runtime.
+      - name: Install sandbox dependency (bubblewrap)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+
       - name: Build
         run: go build ./...
 
