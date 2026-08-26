@@ -22,6 +22,10 @@ export function ChooseWorkspace() {
   return window['go']['desktop']['App']['ChooseWorkspace']();
 }
 
+export function ClearCaches() {
+  return window['go']['desktop']['App']['ClearCaches']();
+}
+
 export function ConfigState() {
   return window['go']['desktop']['App']['ConfigState']();
 }
@@ -52,6 +56,14 @@ export function DeleteSkill(arg1) {
 
 export function DenyPermission(arg1) {
   return window['go']['desktop']['App']['DenyPermission'](arg1);
+}
+
+export function Diagnostics() {
+  return window['go']['desktop']['App']['Diagnostics']();
+}
+
+export function EvaluateCommandPolicy(arg1) {
+  return window['go']['desktop']['App']['EvaluateCommandPolicy'](arg1);
 }
 
 export function ExportSession(arg1) {
@@ -176,6 +188,10 @@ export function ResumeSession(arg1) {
 
 export function RetryCard(arg1) {
   return window['go']['desktop']['App']['RetryCard'](arg1);
+}
+
+export function RunSandboxProbe() {
+  return window['go']['desktop']['App']['RunSandboxProbe']();
 }
 
 export function SaveInstances(arg1) {

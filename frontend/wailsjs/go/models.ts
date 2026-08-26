@@ -188,6 +188,20 @@ export namespace desktop {
 	        this.created_at = source["created_at"];
 	    }
 	}
+	export class CacheClearResult {
+	    dirs: string[];
+	    bytes: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new CacheClearResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.dirs = source["dirs"];
+	        this.bytes = source["bytes"];
+	    }
+	}
 	export class ProviderInstance {
 	    stable_id: string;
 	    type: string;
@@ -276,6 +290,52 @@ export namespace desktop {
 	        this.user_dir = source["user_dir"];
 	        this.version = source["version"];
 	        this.agents = source["agents"];
+	    }
+	}
+	export class DiagnosticsReport {
+	    version: string;
+	    go_version: string;
+	    node_version: string;
+	    git_version: string;
+	    platform: string;
+	    arch: string;
+	    work_dir: string;
+	    user_dir: string;
+	    config_valid: boolean;
+	    config_error?: string;
+	    inference_configured: boolean;
+	    git_repo: boolean;
+	    git_branch?: string;
+	    session_count: number;
+	    active_runs: number;
+	    sandbox_backend: string;
+	    sandbox_available: boolean;
+	    usage_total_tokens: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new DiagnosticsReport(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.version = source["version"];
+	        this.go_version = source["go_version"];
+	        this.node_version = source["node_version"];
+	        this.git_version = source["git_version"];
+	        this.platform = source["platform"];
+	        this.arch = source["arch"];
+	        this.work_dir = source["work_dir"];
+	        this.user_dir = source["user_dir"];
+	        this.config_valid = source["config_valid"];
+	        this.config_error = source["config_error"];
+	        this.inference_configured = source["inference_configured"];
+	        this.git_repo = source["git_repo"];
+	        this.git_branch = source["git_branch"];
+	        this.session_count = source["session_count"];
+	        this.active_runs = source["active_runs"];
+	        this.sandbox_backend = source["sandbox_backend"];
+	        this.sandbox_available = source["sandbox_available"];
+	        this.usage_total_tokens = source["usage_total_tokens"];
 	    }
 	}
 	export class FileNode {
@@ -504,6 +564,22 @@ export namespace desktop {
 		}
 	}
 	
+	export class PolicyDecision {
+	    command: string;
+	    allowed: boolean;
+	    rules: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new PolicyDecision(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.command = source["command"];
+	        this.allowed = source["allowed"];
+	        this.rules = source["rules"];
+	    }
+	}
 	
 	export class ProviderView {
 	    id: string;
@@ -543,6 +619,22 @@ export namespace desktop {
 	        this.option = source["option"];
 	        this.options = source["options"];
 	        this.cancel = source["cancel"];
+	    }
+	}
+	export class SandboxProbeResult {
+	    ok: boolean;
+	    output?: string;
+	    error?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new SandboxProbeResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ok = source["ok"];
+	        this.output = source["output"];
+	        this.error = source["error"];
 	    }
 	}
 	export class SearchFileHit {

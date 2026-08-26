@@ -12,10 +12,14 @@ import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import { useStore } from '../lib/store';
 import type {
+  CacheClearResult,
+  DiagnosticsReport,
   MemorySettings,
   ModelUsageStat,
+  PolicyDecision,
   ProviderInstance,
   ProviderView,
+  SandboxProbeResult,
   UsagePoint,
 } from '../lib/types';
 import { UsageChart } from './UsageChart';
@@ -38,7 +42,14 @@ interface InstanceRow {
   enabled: boolean;
 }
 
-type Tab = 'ui' | 'inference' | 'usage' | 'memory' | 'permissions' | 'logs';
+type Tab =
+  | 'ui'
+  | 'inference'
+  | 'usage'
+  | 'memory'
+  | 'permissions'
+  | 'logs'
+  | 'diagnostics';
 
 export function ConfigPage() {
   const configured = useStore((s) => s.configured);
@@ -66,6 +77,12 @@ export function ConfigPage() {
     replay_full_history: false,
   });
   const [memorySaving, setMemorySaving] = useState(false);
+  const [diag, setDiag] = useState<DiagnosticsReport | null>(null);
+  const [probe, setProbe] = useState<SandboxProbeResult | null>(null);
+  const [policyInput, setPolicyInput] = useState('');
+  const [policy, setPolicy] = useState<PolicyDecision | null>(null);
+  const [cacheResult, setCacheResult] = useState<CacheClearResult | null>(null);
+  const [diagBusy, setDiagBusy] = useState(false);
   const [logs, setLogs] = useState('');
   const logsRef = useRef<HTMLPreElement>(null);
   const [usageRows, setUsageRows] = useState<ModelUsageStat[]>([]);
@@ -129,6 +146,48 @@ export function ConfigPage() {
       .then(setMemory)
       .catch((err) => setError(String(err)));
   }, [tab]);
+
+  useEffect(() => {
+    if (tab !== 'diagnostics') return;
+    void api
+      .diagnostics()
+      .then(setDiag)
+      .catch((err) => setError(String(err)));
+  }, [tab]);
+
+  const runProbe = async () => {
+    setDiagBusy(true);
+    try {
+      setProbe(await api.runSandboxProbe());
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setDiagBusy(false);
+    }
+  };
+
+  const checkPolicy = async () => {
+    if (!policyInput.trim()) return;
+    setDiagBusy(true);
+    try {
+      setPolicy(await api.evaluateCommandPolicy(policyInput.trim()));
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setDiagBusy(false);
+    }
+  };
+
+  const clearCaches = async () => {
+    setDiagBusy(true);
+    try {
+      setCacheResult(await api.clearCaches());
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setDiagBusy(false);
+    }
+  };
 
   const saveMemory = async () => {
     setMemorySaving(true);
@@ -351,6 +410,7 @@ export function ConfigPage() {
     { id: 'memory', label: t('config.tabMemory') },
     { id: 'permissions', label: t('config.tabPermissions') },
     { id: 'logs', label: t('config.tabLogs') },
+    { id: 'diagnostics', label: t('config.tabDiagnostics') },
   ];
 
   return (
@@ -1010,6 +1070,190 @@ export function ConfigPage() {
               ) : (
                 <p className="text-sm text-dim">{t('config.logsEmpty')}</p>
               )}
+            </div>
+          )}
+
+          {tab === 'diagnostics' && (
+            <div className="space-y-4">
+              <p className="text-xs text-dim">{t('config.diagHint')}</p>
+              {diag && (
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div className="rounded-lg border border-edge bg-panel2 px-3 py-2">
+                    <span className="text-xs text-dim">
+                      {t('config.diagVersion')}
+                    </span>
+                    <p className="font-mono">{diag.version}</p>
+                  </div>
+                  <div className="rounded-lg border border-edge bg-panel2 px-3 py-2">
+                    <span className="text-xs text-dim">
+                      {t('config.diagPlatform')}
+                    </span>
+                    <p className="font-mono">
+                      {diag.platform}/{diag.arch}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-edge bg-panel2 px-3 py-2">
+                    <span className="text-xs text-dim">
+                      {t('config.diagRuntime')}
+                    </span>
+                    <p className="font-mono">
+                      go {diag.go_version}
+                      {diag.node_version ? ` · node ${diag.node_version}` : ''}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-edge bg-panel2 px-3 py-2">
+                    <span className="text-xs text-dim">
+                      {t('config.diagSandbox')}
+                    </span>
+                    <p
+                      className={`font-mono ${
+                        diag.sandbox_available ? 'text-ok' : 'text-err'
+                      }`}
+                    >
+                      {diag.sandbox_backend}
+                      {diag.sandbox_available ? ' ✓' : ' ✗'}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-edge bg-panel2 px-3 py-2">
+                    <span className="text-xs text-dim">
+                      {t('config.diagConfig')}
+                    </span>
+                    <p
+                      className={`font-mono ${
+                        diag.config_valid ? 'text-ok' : 'text-err'
+                      }`}
+                    >
+                      {diag.config_valid
+                        ? t('config.diagOk')
+                        : diag.config_error || t('config.diagBroken')}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-edge bg-panel2 px-3 py-2">
+                    <span className="text-xs text-dim">
+                      {t('config.diagInference')}
+                    </span>
+                    <p
+                      className={`font-mono ${
+                        diag.inference_configured ? 'text-ok' : 'text-warn'
+                      }`}
+                    >
+                      {diag.inference_configured
+                        ? t('config.diagConfigured')
+                        : t('config.diagMissing')}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-edge bg-panel2 px-3 py-2">
+                    <span className="text-xs text-dim">
+                      {t('config.diagGit')}
+                    </span>
+                    <p className="font-mono">
+                      {diag.git_repo
+                        ? diag.git_branch || '(repo)'
+                        : t('config.diagNoRepo')}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-edge bg-panel2 px-3 py-2">
+                    <span className="text-xs text-dim">
+                      {t('config.diagSessions')}
+                    </span>
+                    <p className="font-mono">
+                      {diag.session_count} · {diag.active_runs}{' '}
+                      {t('config.diagActiveRuns')}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-edge bg-panel2 px-3 py-2 col-span-2">
+                    <span className="text-xs text-dim">
+                      {t('config.diagPaths')}
+                    </span>
+                    <p className="font-mono text-xs break-all mt-1">
+                      {diag.work_dir}
+                      <br />
+                      {diag.user_dir}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  onClick={() => void runProbe()}
+                  disabled={diagBusy}
+                  className="rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
+                >
+                  {t('config.diagProbe')}
+                </button>
+                <button
+                  onClick={() => void clearCaches()}
+                  disabled={diagBusy}
+                  className="rounded-lg border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg disabled:opacity-40"
+                >
+                  {t('config.diagClearCache')}
+                </button>
+                <button
+                  onClick={() => void api.reload()}
+                  className="rounded-lg border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg"
+                >
+                  {t('config.diagReload')}
+                </button>
+              </div>
+              {probe && (
+                <div
+                  className={`rounded-lg border px-3 py-2 text-xs ${
+                    probe.ok ? 'border-ok/40 text-ok' : 'border-err/40 text-err'
+                  }`}
+                >
+                  {probe.ok
+                    ? t('config.diagProbeOk')
+                    : t('config.diagProbeFail')}
+                  {probe.output && (
+                    <pre className="mt-1 font-mono">{probe.output}</pre>
+                  )}
+                  {probe.error && (
+                    <pre className="mt-1 font-mono">{probe.error}</pre>
+                  )}
+                </div>
+              )}
+              {cacheResult && (
+                <p className="text-xs text-dim">
+                  {t('config.diagCacheDone', {
+                    bytes: cacheResult.bytes,
+                    dirs: cacheResult.dirs.length,
+                  })}
+                </p>
+              )}
+
+              <div className="space-y-2 pt-1">
+                <p className="text-xs text-dim">{t('config.diagPolicy')}</p>
+                <div className="flex items-center gap-2">
+                  <input
+                    value={policyInput}
+                    onChange={(e) => setPolicyInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') void checkPolicy();
+                    }}
+                    placeholder={t('config.diagPolicyPlaceholder')}
+                    className="flex-1 rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
+                  />
+                  <button
+                    onClick={() => void checkPolicy()}
+                    disabled={diagBusy}
+                    className="rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
+                  >
+                    {t('config.diagPolicyCheck')}
+                  </button>
+                </div>
+                {policy && (
+                  <p
+                    className={`text-sm ${
+                      policy.allowed ? 'text-ok' : 'text-warn'
+                    }`}
+                  >
+                    {policy.allowed
+                      ? t('config.diagPolicyAllowed')
+                      : t('config.diagPolicyAsk')}
+                  </p>
+                )}
+              </div>
             </div>
           )}
         </div>

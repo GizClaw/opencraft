@@ -245,6 +245,44 @@ export interface MemorySettings {
   replay_full_history: boolean;
 }
 
+export interface DiagnosticsReport {
+  version: string;
+  go_version: string;
+  node_version: string;
+  git_version: string;
+  platform: string;
+  arch: string;
+  work_dir: string;
+  user_dir: string;
+  config_valid: boolean;
+  config_error?: string;
+  inference_configured: boolean;
+  git_repo: boolean;
+  git_branch?: string;
+  session_count: number;
+  active_runs: number;
+  sandbox_backend: string;
+  sandbox_available: boolean;
+  usage_total_tokens: number;
+}
+
+export interface SandboxProbeResult {
+  ok: boolean;
+  output?: string;
+  error?: string;
+}
+
+export interface PolicyDecision {
+  command: string;
+  allowed: boolean;
+  rules: string[];
+}
+
+export interface CacheClearResult {
+  dirs: string[];
+  bytes: number;
+}
+
 export interface AgentSummary {
   name: string;
   description: string;

@@ -17,6 +17,8 @@ export function CancelTurn(arg1:string):Promise<void>;
 
 export function ChooseWorkspace():Promise<string>;
 
+export function ClearCaches():Promise<desktop.CacheClearResult>;
+
 export function ConfigState():Promise<desktop.ConfigState>;
 
 export function ConfigStatus():Promise<desktop.ConfigStatus>;
@@ -32,6 +34,10 @@ export function DeleteSession(arg1:string):Promise<void>;
 export function DeleteSkill(arg1:string):Promise<void>;
 
 export function DenyPermission(arg1:string):Promise<void>;
+
+export function Diagnostics():Promise<desktop.DiagnosticsReport>;
+
+export function EvaluateCommandPolicy(arg1:string):Promise<desktop.PolicyDecision>;
 
 export function ExportSession(arg1:string):Promise<string>;
 
@@ -94,6 +100,8 @@ export function ReplyPrompt(arg1:string,arg2:desktop.ReplyRequest):Promise<boole
 export function ResumeSession(arg1:string):Promise<string>;
 
 export function RetryCard(arg1:string):Promise<string>;
+
+export function RunSandboxProbe():Promise<desktop.SandboxProbeResult>;
 
 export function SaveInstances(arg1:desktop.InferenceRequest):Promise<void>;
 
