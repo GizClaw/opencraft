@@ -7,6 +7,8 @@ import type {
 } from '../../wailsjs/go/models';
 import type {
   AgentSummary,
+  AgentDetail,
+  AgentUpdateResult,
   ConfigState,
   ConfigStatus,
   FileNode,
@@ -72,6 +74,14 @@ export const api = {
   mcpConfig: () => App.MCPConfig() as Promise<MCPServer[]>,
   saveMCP: (servers: MCPServer[]) =>
     App.SaveMCP(servers as unknown as genConfig.MCPServer[]),
+  agentDetail: (name: string) =>
+    App.AgentDetail(name) as unknown as Promise<AgentDetail>,
+  updateAgent: (name: string, description: string, graph: string) =>
+    App.UpdateAgent(
+      name,
+      description,
+      graph,
+    ) as unknown as Promise<AgentUpdateResult>,
   mcpStatus: () => App.MCPStatus() as Promise<MCPStatus[]>,
   testMCP: (server: MCPServer) =>
     App.TestMCP(server as unknown as genConfig.MCPServer),

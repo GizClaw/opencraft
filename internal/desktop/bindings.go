@@ -16,8 +16,10 @@ import (
 	coresession "github.com/GizClaw/flowcraft/core/runtime/session"
 	"github.com/GizClaw/flowcraft/core/tool/mcp"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"sigs.k8s.io/yaml"
 
 	app "github.com/GizClaw/opencraft/internal/app"
+	"github.com/GizClaw/opencraft/internal/agents"
 	"github.com/GizClaw/opencraft/internal/config"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/usage"
@@ -614,6 +616,46 @@ func (a *App) ListAgents() []AgentSummary {
 		return nil
 	}
 	return lifecycle.List()
+}
+
+// AgentDetail returns one persisted subagent's declaration with its
+// graph definition parsed for the visual editor.
+func (a *App) AgentDetail(name string) (AgentDetail, error) {
+	a.mu.Lock()
+	lifecycle := a.agents
+	a.mu.Unlock()
+	if lifecycle == nil {
+		return AgentDetail{}, errors.New("agent registry is not available")
+	}
+	spec, err := lifecycle.Detail(a.appContext(), name)
+	if err != nil {
+		return AgentDetail{}, err
+	}
+	var g Graph
+	if err := yaml.Unmarshal([]byte(spec.Graph), &g); err != nil {
+		return AgentDetail{}, fmt.Errorf("parse subagent graph: %w", err)
+	}
+	return AgentDetail{
+		Name:        spec.Name,
+		Description: spec.Description,
+		Graph:       g,
+		CreatedAt:   spec.CreatedAt.Format(time.RFC3339),
+	}, nil
+}
+
+// UpdateAgent updates one persisted subagent's description and/or
+// graph definition. The runtime registration is swapped after
+// in-flight delegations drain; the name is immutable.
+func (a *App) UpdateAgent(
+	name, description, graph string,
+) (agents.CreateResult, error) {
+	a.mu.Lock()
+	lifecycle := a.agents
+	a.mu.Unlock()
+	if lifecycle == nil {
+		return agents.CreateResult{}, errors.New("agent registry is not available")
+	}
+	return lifecycle.Update(a.appContext(), name, description, graph)
 }
 
 // UnregisterAgent removes a persisted subagent (draining in-flight

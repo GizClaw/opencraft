@@ -186,3 +186,60 @@ func TestAppendSkipsEmpty(t *testing.T) {
 		t.Errorf("empty turn should not be archived: %+v", hist)
 	}
 }
+
+func TestAllIDMethodsRejectTraversal(t *testing.T) {
+	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(t.TempDir(), "victim")
+	if err := os.MkdirAll(victim, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(victim, "keep.txt"), []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Crafted ids must be rejected before any filesystem access by
+	// every method that resolves id against the store root.
+	bad := "s-../victim"
+	if err := store.AppendTurn(context.Background(), bad, []message.Message{
+		message.NewTextMessage(message.RoleUser, "x"),
+	}); err == nil {
+		t.Error("AppendTurn accepted traversal id")
+	}
+	if _, err := store.History(context.Background(), bad, -1); err == nil {
+		t.Error("History accepted traversal id")
+	}
+	if _, err := store.LoadUsage(context.Background(), bad); err == nil {
+		t.Error("LoadUsage accepted traversal id")
+	}
+	if err := store.RecordUsage(context.Background(), bad, Usage{TotalTokens: 1}); err == nil {
+		t.Error("RecordUsage accepted traversal id")
+	}
+	if err := store.WriteState(bad, "title", "x"); err == nil {
+		t.Error("WriteState accepted traversal id")
+	}
+	if err := store.ReadState(bad, "title", new(string)); err == nil {
+		t.Error("ReadState accepted traversal id")
+	}
+	if _, err := os.Stat(filepath.Join(victim, "keep.txt")); err != nil {
+		t.Fatalf("victim directory was touched: %v", err)
+	}
+
+	// Valid generated ids still work through the same methods.
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendTurn(context.Background(), id, []message.Message{
+		message.NewTextMessage(message.RoleUser, "x"),
+	}); err != nil {
+		t.Fatalf("AppendTurn valid id: %v", err)
+	}
+	if err := store.RecordUsage(context.Background(), id, Usage{TotalTokens: 1}); err != nil {
+		t.Fatalf("RecordUsage valid id: %v", err)
+	}
+	if err := store.WriteState(id, "title", "hi"); err != nil {
+		t.Fatalf("WriteState valid id: %v", err)
+	}
+}

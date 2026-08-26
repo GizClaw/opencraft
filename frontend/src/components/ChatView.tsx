@@ -196,6 +196,12 @@ export function ChatView() {
   // animation is avoided entirely. Scrolling up unpins; scrolling
   // back to the bottom re-pins.
   const [stick, setStick] = useState(true);
+  // The ref is the source of truth for the pin decision inside the
+  // scroll effect. Stream deltas and wheel events can land in the same
+  // commit, and the effect must never snap with a stale "pinned" value
+  // captured from an earlier render — that race is what made the view
+  // jump back to the bottom right after the user scrolled away.
+  const stickRef = useRef(true);
   // Tracks IME composition so pressing Enter to confirm a candidate
   // never sends the message (isComposing alone is unreliable in
   // WKWebView for the Enter key).
@@ -213,24 +219,25 @@ export function ChatView() {
   }, []);
 
   useEffect(() => {
-    if (!stick) return;
+    if (!stickRef.current) return;
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, pendingInteracts, stick]);
 
   useEffect(() => {
     const onVisibility = () => {
-      if (document.visibilityState === 'visible' && stick) {
+      if (document.visibilityState === 'visible' && stickRef.current) {
         const el = scrollRef.current;
         if (el) el.scrollTop = el.scrollHeight;
       }
     };
     document.addEventListener('visibilitychange', onVisibility);
     return () => document.removeEventListener('visibilitychange', onVisibility);
-  }, [stick]);
+  }, []);
 
   const submit = () => {
     if (!input.trim() || busy) return;
+    stickRef.current = true;
     setStick(true);
     const text = input;
     setInput('');
@@ -316,7 +323,9 @@ export function ChatView() {
         onScroll={() => {
           const el = scrollRef.current;
           if (!el) return;
-          setStick(el.scrollHeight - el.scrollTop - el.clientHeight < 80);
+          const pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+          stickRef.current = pinned;
+          setStick(pinned);
         }}
         className="flex-1 overflow-y-auto px-6 py-4"
       >
@@ -452,10 +461,6 @@ export function ChatView() {
                 {t('chat.yoloBanner')}
               </span>
             )}
-            <span className="flex-1" />
-            <span className="text-dim hidden sm:inline">
-              {busy ? t('chat.runningHint') : t('chat.enterHint')}
-            </span>
           </div>
           <textarea
             ref={inputRef}
@@ -543,32 +548,37 @@ export function ChatView() {
                 </div>
               )}
             </div>
-            {busy ? (
-              <button
-                onClick={() => void cancelRun()}
-                className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-err hover:bg-panel2"
-              >
-                <Square size={13} /> {t('chat.stop')}
-              </button>
-            ) : (
-              <div className="flex items-center gap-2">
-                {lastFailed && (
-                  <button
-                    onClick={retry}
-                    className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-accent"
-                  >
-                    <RotateCcw size={13} /> {t('chat.retry')}
-                  </button>
-                )}
+            <div className="flex items-center gap-2">
+              <span className="text-dim hidden sm:inline text-xs">
+                {busy ? t('chat.runningHint') : t('chat.enterHint')}
+              </span>
+              {busy ? (
                 <button
-                  onClick={submit}
-                  disabled={!input.trim()}
-                  className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
+                  onClick={() => void cancelRun()}
+                  className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-err hover:bg-panel2"
                 >
-                  <Send size={13} /> {t('chat.send')}
+                  <Square size={13} /> {t('chat.stop')}
                 </button>
-              </div>
-            )}
+              ) : (
+                <>
+                  {lastFailed && (
+                    <button
+                      onClick={retry}
+                      className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-accent"
+                    >
+                      <RotateCcw size={13} /> {t('chat.retry')}
+                    </button>
+                  )}
+                  <button
+                    onClick={submit}
+                    disabled={!input.trim()}
+                    className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
+                  >
+                    <Send size={13} /> {t('chat.send')}
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         </div>
         {confirmYolo && (

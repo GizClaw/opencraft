@@ -52,7 +52,7 @@ func TestUpdatePlanReplacesSnapshot(t *testing.T) {
 		t.Fatalf("expected 1 tool, got %d", len(tools))
 	}
 
-	out, err := tools[0].Execute(sessionCtx("assistant", "sess-1"),
+	out, err := tools[0].Execute(sessionCtx("assistant", "s-1"),
 		`{"explanation":"kick off","plan":[
 			{"step":"Inspect behavior","status":"in_progress"},
 			{"step":"Patch failing path","status":"pending"},
@@ -63,7 +63,7 @@ func TestUpdatePlanReplacesSnapshot(t *testing.T) {
 	if out != "Plan updated" {
 		t.Errorf("result = %q, want %q", out, "Plan updated")
 	}
-	latest, ok := store.Latest("assistant", "sess-1")
+	latest, ok := store.Latest("assistant", "s-1")
 	if !ok {
 		t.Fatal("no plan stored")
 	}
@@ -75,11 +75,11 @@ func TestUpdatePlanReplacesSnapshot(t *testing.T) {
 	}
 
 	// A second call fully replaces the previous snapshot.
-	if _, err := tools[0].Execute(sessionCtx("assistant", "sess-1"),
+	if _, err := tools[0].Execute(sessionCtx("assistant", "s-1"),
 		`{"plan":[{"step":"Verify","status":"in_progress"}]}`); err != nil {
 		t.Fatalf("update_plan replace: %v", err)
 	}
-	latest, _ = store.Latest("assistant", "sess-1")
+	latest, _ = store.Latest("assistant", "s-1")
 	if latest.Explanation != "" || len(latest.Items) != 1 ||
 		latest.Items[0].Step != "Verify" {
 		t.Errorf("replaced plan = %+v", latest)
@@ -93,9 +93,9 @@ func TestPlanIsolatedByAgentAndSession(t *testing.T) {
 	for _, tc := range []struct {
 		agentID, sessionID, step string
 	}{
-		{"assistant", "sess-1", "a1s1"},
-		{"assistant", "sess-2", "a1s2"},
-		{"reviewer", "sess-1", "a2s1"},
+		{"assistant", "s-1", "a1s1"},
+		{"assistant", "s-2", "a1s2"},
+		{"reviewer", "s-1", "a2s1"},
 	} {
 		if _, err := tool.Execute(sessionCtx(tc.agentID, tc.sessionID),
 			`{"plan":[{"step":"`+tc.step+`","status":"in_progress"}]}`); err != nil {
@@ -106,13 +106,13 @@ func TestPlanIsolatedByAgentAndSession(t *testing.T) {
 	for _, tc := range []struct {
 		agentID, sessionID, want string
 	}{
-		{"assistant", "sess-1", "a1s1"},
-		{"assistant", "sess-2", "a1s2"},
-		{"reviewer", "sess-1", "a2s1"},
+		{"assistant", "s-1", "a1s1"},
+		{"assistant", "s-2", "a1s2"},
+		{"reviewer", "s-1", "a2s1"},
 		// A different agent in the same session must not see the plan.
-		{"reviewer", "sess-2", ""},
+		{"reviewer", "s-2", ""},
 		// The same agent in a different session must not see it either.
-		{"assistant", "sess-3", ""},
+		{"assistant", "s-3", ""},
 	} {
 		got, ok := store.Latest(tc.agentID, tc.sessionID)
 		if tc.want == "" {
@@ -130,12 +130,12 @@ func TestPlanIsolatedByAgentAndSession(t *testing.T) {
 
 func TestKeyFromContext(t *testing.T) {
 	agentID, sessionID := KeyFromContext(
-		sessionCtx("assistant", "sess-1"))
-	if agentID != "assistant" || sessionID != "sess-1" {
+		sessionCtx("assistant", "s-1"))
+	if agentID != "assistant" || sessionID != "s-1" {
 		t.Errorf("KeyFromContext = %q/%q", agentID, sessionID)
 	}
 	agentID, sessionID = KeyFromContext(context.Background())
-	if agentID != "default" || sessionID != "default" {
+	if agentID != "default" || sessionID != sessions.DefaultSessionID {
 		t.Errorf("KeyFromContext background = %q/%q", agentID, sessionID)
 	}
 }
@@ -175,7 +175,7 @@ func TestUpdatePlanValidation(t *testing.T) {
 		`{"plan":[{"step":"bad","status":"nope"}]}`); err == nil {
 		t.Fatal("expected validation error")
 	}
-	latest, ok := store.Latest("default", "default")
+	latest, ok := store.Latest("default", sessions.DefaultSessionID)
 	if !ok || latest.Items[0].Step != "keep" {
 		t.Errorf("plan was clobbered: %+v", latest)
 	}
@@ -187,7 +187,7 @@ func TestUpdatePlanValidation(t *testing.T) {
 func TestPlanAllowsMultipleInProgress(t *testing.T) {
 	store := NewStore(newSessionsStore(t))
 	tool := MustNew(store).Tools()[0]
-	ctx := sessionCtx("assistant", "sess-1")
+	ctx := sessionCtx("assistant", "s-1")
 
 	args := `{"explanation":"three parallel reviews","plan":[
 		{"step":"review agents","status":"in_progress"},
@@ -196,7 +196,7 @@ func TestPlanAllowsMultipleInProgress(t *testing.T) {
 	if _, err := tool.Execute(ctx, args); err != nil {
 		t.Fatalf("update with three in_progress steps: %v", err)
 	}
-	latest, ok := store.Latest("assistant", "sess-1")
+	latest, ok := store.Latest("assistant", "s-1")
 	if !ok {
 		t.Fatal("plan not persisted")
 	}
@@ -216,7 +216,7 @@ func TestPlanAllowsMultipleInProgress(t *testing.T) {
 func TestPlanPersistsAcrossStores(t *testing.T) {
 	root := t.TempDir()
 	store := NewStore(mustSessions(t, root))
-	if _, err := store.Update("assistant", "sess-1", UpdatePlanArgs{
+	if _, err := store.Update("assistant", "s-1", UpdatePlanArgs{
 		Explanation: strptr("persist me"),
 		Plan: []PlanItem{
 			{Step: "Implement", Status: StatusInProgress},
@@ -227,7 +227,7 @@ func TestPlanPersistsAcrossStores(t *testing.T) {
 	}
 
 	// The plan lands under <root>/<session>/plans.json, keyed by agent.
-	want := filepath.Join(root, "sess-1", "plans.json")
+	want := filepath.Join(root, "s-1", "plans.json")
 	if _, err := os.Stat(want); err != nil {
 		t.Fatalf("plan file %s: %v", want, err)
 	}
@@ -245,7 +245,7 @@ func TestPlanPersistsAcrossStores(t *testing.T) {
 
 	// A fresh plan store over the same session root must see the plan.
 	reopened := NewStore(mustSessions(t, root))
-	got, ok := reopened.Latest("assistant", "sess-1")
+	got, ok := reopened.Latest("assistant", "s-1")
 	if !ok {
 		t.Fatal("persisted plan not found")
 	}
@@ -258,19 +258,19 @@ func TestPlanPersistsAcrossStores(t *testing.T) {
 func TestPlansFileKeyedByAgent(t *testing.T) {
 	root := t.TempDir()
 	store := NewStore(mustSessions(t, root))
-	if _, err := store.Update("assistant", "sess-1", UpdatePlanArgs{
+	if _, err := store.Update("assistant", "s-1", UpdatePlanArgs{
 		Plan: []PlanItem{{Step: "agent a", Status: StatusInProgress}},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Update("reviewer", "sess-1", UpdatePlanArgs{
+	if _, err := store.Update("reviewer", "s-1", UpdatePlanArgs{
 		Plan: []PlanItem{{Step: "agent b", Status: StatusPending}},
 	}); err != nil {
 		t.Fatal(err)
 	}
 
 	// One file per session, both agent entries present.
-	data, err := os.ReadFile(filepath.Join(root, "sess-1", "plans.json"))
+	data, err := os.ReadFile(filepath.Join(root, "s-1", "plans.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,8 +284,8 @@ func TestPlansFileKeyedByAgent(t *testing.T) {
 
 	// A fresh store sees both entries, still isolated per agent.
 	reopened := NewStore(mustSessions(t, root))
-	gotA, okA := reopened.Latest("assistant", "sess-1")
-	gotB, okB := reopened.Latest("reviewer", "sess-1")
+	gotA, okA := reopened.Latest("assistant", "s-1")
+	gotB, okB := reopened.Latest("reviewer", "s-1")
 	if !okA || gotA.Items[0].Step != "agent a" ||
 		!okB || gotB.Items[0].Step != "agent b" {
 		t.Errorf("reopened plans = %+v / %+v", gotA, gotB)
@@ -295,7 +295,7 @@ func TestPlansFileKeyedByAgent(t *testing.T) {
 func TestUpdateDoesNotClobberOtherAgent(t *testing.T) {
 	root := t.TempDir()
 	first := NewStore(mustSessions(t, root))
-	if _, err := first.Update("assistant", "sess-1", UpdatePlanArgs{
+	if _, err := first.Update("assistant", "s-1", UpdatePlanArgs{
 		Plan: []PlanItem{{Step: "keep me", Status: StatusInProgress}},
 	}); err != nil {
 		t.Fatal(err)
@@ -303,13 +303,13 @@ func TestUpdateDoesNotClobberOtherAgent(t *testing.T) {
 	// A second store over the same root updates another agent in the
 	// same session: the first agent's plan must survive the rewrite.
 	second := NewStore(mustSessions(t, root))
-	if _, err := second.Update("reviewer", "sess-1", UpdatePlanArgs{
+	if _, err := second.Update("reviewer", "s-1", UpdatePlanArgs{
 		Plan: []PlanItem{{Step: "new agent", Status: StatusPending}},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	reopened := NewStore(mustSessions(t, root))
-	got, ok := reopened.Latest("assistant", "sess-1")
+	got, ok := reopened.Latest("assistant", "s-1")
 	if !ok || got.Items[0].Step != "keep me" {
 		t.Errorf("assistant plan clobbered: %+v", got)
 	}
@@ -317,7 +317,7 @@ func TestUpdateDoesNotClobberOtherAgent(t *testing.T) {
 
 func TestEmptySessionHasNoPlan(t *testing.T) {
 	store := NewStore(newSessionsStore(t))
-	if _, ok := store.Latest("assistant", "sess-1"); ok {
+	if _, ok := store.Latest("assistant", "s-1"); ok {
 		t.Fatal("session without a plan file must not report one")
 	}
 }

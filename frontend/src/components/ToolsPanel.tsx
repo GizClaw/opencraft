@@ -12,6 +12,7 @@ import {
   RotateCw,
   Sparkles,
   Trash2,
+  Workflow,
   X,
   Zap,
 } from 'lucide-react';
@@ -25,6 +26,7 @@ import { GitHubSearch } from './GitHubSearch';
 import type { GitHubRepo } from './GitHubSearch';
 import { probeMCPServerLaunch } from './GitHubSearch';
 import { KanbanSection } from './KanbanView';
+import { AgentGraphEditor } from './GraphView';
 
 export type ToolPage = 'mcp' | 'agents' | 'skills' | 'kanban';
 
@@ -481,7 +483,7 @@ export function MCPSection() {
 
 // AgentsSection lists registered subagents (created by the assistant
 // through create_agent) and lets the user delete them.
-export function AgentsSection() {
+export function AgentsSection({ onEdit }: { onEdit: (name: string) => void }) {
   const agents = useStore((s) => s.agents);
   const refreshAgents = useStore((s) => s.refreshAgents);
   const { t } = useTranslation();
@@ -504,39 +506,92 @@ export function AgentsSection() {
     }
   };
 
+  const fmtWhen = (iso: string) => {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    const diff = Date.now() - d.getTime();
+    if (diff < 60_000) return t('sidebar.justNow');
+    if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`;
+    if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`;
+    return d.toLocaleDateString();
+  };
+
   return (
     <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <h3 className="text-sm font-semibold">{t('sidebar.subagents')}</h3>
+        <span className="rounded border border-edge bg-panel2 px-1.5 py-0.5 text-xs text-dim tabular-nums">
+          {agents.length}
+        </span>
+      </div>
       <p className="text-xs text-dim">{t('config.agentsHint')}</p>
       {error && <p className="text-xs text-err">{error}</p>}
       {agents.length === 0 ? (
-        <p className="text-sm text-dim">{t('config.agentsEmpty')}</p>
+        <div className="grid place-items-center rounded-xl border border-dashed border-edge bg-panel2/50 py-10 text-sm text-dim">
+          {t('config.agentsEmpty')}
+        </div>
       ) : (
-        agents.map((a) => (
-          <div
-            key={a.name}
-            className="flex items-start gap-3 rounded-xl border border-edge bg-panel2 p-3"
-          >
-            <Bot size={16} className="text-accent mt-0.5 shrink-0" />
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium">{a.name}</div>
-              <p className="text-xs text-dim mt-0.5">{a.description}</p>
-            </div>
-            <button
-              onClick={() => setConfirmDelete(a.name)}
-              className="flex items-center gap-1 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim hover:text-err hover:border-err/40"
+        <ul className="space-y-2">
+          {agents.map((a) => (
+            <li
+              key={a.name}
+              onClick={() => onEdit(a.name)}
+              className="group flex cursor-pointer items-center gap-3 rounded-xl border border-edge bg-panel2 p-3 transition-colors hover:border-accent/40"
             >
-              <Trash2 size={12} />
-              {t('config.agentsDelete')}
-            </button>
-          </div>
-        ))
+              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-accent/20 bg-accent/10">
+                <Bot size={16} className="text-accent" />
+              </span>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-baseline gap-2">
+                  <span className="truncate text-sm font-medium">{a.name}</span>
+                  {a.created_at && (
+                    <span className="shrink-0 text-[10px] text-dim tabular-nums">
+                      {fmtWhen(a.created_at)}
+                    </span>
+                  )}
+                </div>
+                {a.description ? (
+                  <p className="mt-0.5 line-clamp-2 text-xs text-dim">
+                    {a.description}
+                  </p>
+                ) : (
+                  <p className="mt-0.5 text-xs italic text-dim/60">
+                    {t('config.agentsNoDesc')}
+                  </p>
+                )}
+              </div>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onEdit(a.name);
+                  }}
+                  className="flex items-center gap-1 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim hover:border-accent/40 hover:text-accent"
+                >
+                  <Workflow size={12} />
+                  {t('config.agentsEditGraph')}
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setConfirmDelete(a.name);
+                  }}
+                  className="flex items-center gap-1 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim hover:border-err/40 hover:text-err"
+                >
+                  <Trash2 size={12} />
+                  {t('config.agentsDelete')}
+                </button>
+              </div>
+            </li>
+          ))}
+        </ul>
       )}
       {confirmDelete && (
-        <div className="rounded-xl border border-err/40 bg-panel2 p-4">
+        <div className="rounded-xl border border-err/40 bg-err/5 p-4">
           <p className="text-sm">
             {t('config.agentsDeleteConfirm', { name: confirmDelete })}
           </p>
-          <div className="mt-3 flex gap-2">
+          <div className="mt-3 flex justify-end gap-2">
             <button
               onClick={() => setConfirmDelete(null)}
               className="rounded-lg border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg"
@@ -545,8 +600,9 @@ export function AgentsSection() {
             </button>
             <button
               onClick={() => void deleteAgent(confirmDelete)}
-              className="rounded-lg bg-err px-4 py-1.5 text-sm text-white hover:opacity-90"
+              className="flex items-center gap-1.5 rounded-lg bg-err px-4 py-1.5 text-sm text-white hover:opacity-90"
             >
+              <Trash2 size={13} />
               {t('config.agentsDelete')}
             </button>
           </div>
@@ -853,7 +909,9 @@ const VIEW_META: {
 export function ToolsPanel() {
   const view = useStore((s) => s.toolsView);
   const closeTools = useStore((s) => s.closeTools);
+  const refreshAgents = useStore((s) => s.refreshAgents);
   const { t } = useTranslation();
+  const [editingAgent, setEditingAgent] = useState<string | null>(null);
 
   if (!view) return null;
 
@@ -874,11 +932,27 @@ export function ToolsPanel() {
           <X size={18} />
         </button>
       </header>
-      <div className="flex-1 overflow-y-auto px-5 py-4">
-        {view === 'mcp' && <MCPSection />}
-        {view === 'agents' && <AgentsSection />}
-        {view === 'skills' && <SkillsSection />}
-        {view === 'kanban' && <KanbanSection />}
+      <div
+        className={
+          view === 'agents' && editingAgent
+            ? 'min-h-0 flex-1 p-4'
+            : 'flex-1 overflow-y-auto px-5 py-4'
+        }
+      >
+        {view === 'agents' && editingAgent ? (
+          <AgentGraphEditor
+            agentName={editingAgent}
+            onClose={() => setEditingAgent(null)}
+            onSaved={() => void refreshAgents()}
+          />
+        ) : (
+          <>
+            {view === 'mcp' && <MCPSection />}
+            {view === 'agents' && <AgentsSection onEdit={setEditingAgent} />}
+            {view === 'skills' && <SkillsSection />}
+            {view === 'kanban' && <KanbanSection />}
+          </>
+        )}
       </div>
     </main>
   );

@@ -234,6 +234,39 @@ export interface AgentSummary {
   created_at?: string;
 }
 
+export interface GraphNodeDTO {
+  id: string;
+  type: string;
+  config?: Record<string, unknown>;
+}
+
+export interface GraphEdgeDTO {
+  from: string;
+  to: string;
+  condition?: string;
+}
+
+export interface GraphDTO {
+  name: string;
+  entry: string;
+  nodes: GraphNodeDTO[];
+  edges: GraphEdgeDTO[];
+}
+
+export interface AgentDetail {
+  name: string;
+  description: string;
+  graph: GraphDTO;
+  created_at?: string;
+}
+
+export interface AgentUpdateResult {
+  name: string;
+  description: string;
+  persisted_to: string;
+  created_at: string;
+}
+
 // ---- stream protocol ----
 
 export interface ToolCallWire {

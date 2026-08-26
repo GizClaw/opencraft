@@ -120,7 +120,7 @@ func (s *Store) Latest(agentID, sessionID string) (Plan, bool) {
 // KeyFromContext returns the agent + conversation ids of the running
 // session from the execution context (flowcraft injects RunInfo into
 // the context during graph execution). Tools invoked outside a session
-// fall back to shared "default" keys.
+// fall back to a shared DefaultSessionID key.
 func KeyFromContext(ctx context.Context) (agentID, sessionID string) {
 	if info, ok := agent.RunInfoFromContext(ctx); ok {
 		agentID = info.AgentID
@@ -130,7 +130,7 @@ func KeyFromContext(ctx context.Context) (agentID, sessionID string) {
 		agentID = "default"
 	}
 	if sessionID == "" {
-		sessionID = "default"
+		sessionID = sessions.DefaultSessionID
 	}
 	return agentID, sessionID
 }

@@ -222,6 +222,9 @@ func (a *App) ResumeSession(id string) (string, error) {
 // full flowcraft messages, so resuming it restores the same ordered
 // blocks (reasoning, tool calls, results, text) the live stream shows.
 func (a *App) SessionHistory(id string) ([]message.Message, error) {
+	if !ocsessions.ValidID(id) {
+		return nil, fmt.Errorf("invalid session id %q", id)
+	}
 	a.mu.Lock()
 	store := a.sessions
 	a.mu.Unlock()

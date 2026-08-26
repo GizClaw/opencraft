@@ -47,3 +47,30 @@ func TestReadStateMissing(t *testing.T) {
 		t.Fatalf("missing read = %v, want os.ErrNotExist", err)
 	}
 }
+
+func TestStateNameRejected(t *testing.T) {
+	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"", ".", "..", "../evil", "a/b"} {
+		if err := store.WriteState(id, name, "x"); err == nil {
+			t.Errorf("WriteState accepted state name %q", name)
+		}
+		if err := store.ReadState(id, name, new(string)); err == nil {
+			t.Errorf("ReadState accepted state name %q", name)
+		}
+	}
+	// A valid name still round-trips.
+	if err := store.WriteState(id, "plans", "ok"); err != nil {
+		t.Fatalf("WriteState valid name: %v", err)
+	}
+	var got string
+	if err := store.ReadState(id, "plans", &got); err != nil || got != "ok" {
+		t.Fatalf("read back = %q, %v", got, err)
+	}
+}

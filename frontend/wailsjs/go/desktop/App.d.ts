@@ -6,6 +6,8 @@ import {config} from '../models';
 import {message} from '../models';
 import {context} from '../models';
 
+export function AgentDetail(arg1:string):Promise<desktop.AgentDetail>;
+
 export function AllowPermission(arg1:string):Promise<void>;
 
 export function CancelCard(arg1:string):Promise<boolean>;
@@ -111,6 +113,8 @@ export function Startup(arg1:context.Context):Promise<void>;
 export function TestMCP(arg1:config.MCPServer):Promise<void>;
 
 export function UnregisterAgent(arg1:string):Promise<void>;
+
+export function UpdateAgent(arg1:string,arg2:string,arg3:string):Promise<agents.CreateResult>;
 
 export function Version():Promise<string>;
 

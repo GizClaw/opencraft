@@ -1,10 +1,11 @@
-import { memo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 import {
   Activity,
   ArrowRight,
   Bot,
   ChevronDown,
   ChevronRight,
+  Clock,
   Wrench,
   X,
 } from 'lucide-react';
@@ -143,8 +144,8 @@ function statusMeta(
 
 // SubagentCard renders one delegation as a violet-accented card that is
 // visually distinct from the neutral ToolCard: rounded-xl with a colored
-// left status bar, Bot icon and status pill, and a monospace detail
-// grid when expanded.
+// left status bar, Bot icon, status pill, elapsed time, and a
+// label/value detail grid when expanded.
 const SubagentCard = memo(function SubagentCard({
   card,
   stream,
@@ -165,13 +166,28 @@ const SubagentCard = memo(function SubagentCard({
         >
           <Bot size={14} className="text-violet-400 shrink-0" />
           <span className="flex-1 min-w-0">
-            <span className="block truncate font-medium">
-              {card.consumer || card.target}
-            </span>
-            <span className="block truncate text-xs text-dim mt-0.5">
-              {card.target}
+            <span className="block truncate font-medium">{card.target}</span>
+            <span className="flex items-center gap-1 truncate text-xs text-dim mt-0.5">
+              {card.producer && (
+                <span className="truncate">{card.producer}</span>
+              )}
+              {card.producer && card.consumer && (
+                <ArrowRight size={10} className="shrink-0" />
+              )}
+              {card.consumer && (
+                <span className="truncate">{card.consumer}</span>
+              )}
+              {card.depth > 0 && (
+                <span className="shrink-0">· d{card.depth}</span>
+              )}
             </span>
           </span>
+          {elapsed(card) && (
+            <span className="flex items-center gap-1 text-[10px] text-dim shrink-0 tabular-nums">
+              <Clock size={10} />
+              {elapsed(card)}
+            </span>
+          )}
           <span
             className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] border shrink-0 ${meta.pill}`}
           >
@@ -191,15 +207,7 @@ const SubagentCard = memo(function SubagentCard({
         {open && (
           <div className="px-3 pb-3 space-y-2">
             <StreamView stream={stream ?? []} />
-            <div className="flex items-center gap-1.5 text-xs text-dim">
-              <span>{card.producer || '?'}</span>
-              <ArrowRight size={10} />
-              <span>{card.consumer}</span>
-              {card.depth > 0 && (
-                <span className="text-dim">· d{card.depth}</span>
-              )}
-            </div>
-            <div className="rounded-lg border border-edge bg-panel/80 p-2 font-mono text-[11px] space-y-1">
+            <dl className="divide-y divide-edge/60 rounded-lg border border-edge bg-panel/80 overflow-hidden">
               <DetailRow
                 label={t('subagent.detailTarget')}
                 value={card.target}
@@ -247,7 +255,7 @@ const SubagentCard = memo(function SubagentCard({
                   error
                 />
               )}
-            </div>
+            </dl>
           </div>
         )}
       </div>
@@ -268,27 +276,118 @@ function DetailRow({
 }) {
   if (!value) return null;
   return (
-    <div>
-      <div className={`text-dim ${error ? 'text-err' : ''}`}>{label}</div>
-      <div
-        className={`text-fg break-all whitespace-pre-wrap ${
-          block ? 'max-h-40 overflow-y-auto' : 'truncate'
-        } ${error ? 'text-err' : ''}`}
+    <div className="grid grid-cols-[92px_1fr] gap-2 px-2.5 py-1.5 text-xs">
+      <dt className={`truncate ${error ? 'text-err' : 'text-dim'}`}>{label}</dt>
+      <dd
+        className={`min-w-0 break-all ${error ? 'text-err' : 'text-fg'} ${
+          block
+            ? 'max-h-40 overflow-y-auto whitespace-pre-wrap'
+            : 'truncate whitespace-pre-wrap'
+        }`}
       >
         {value}
-      </div>
+      </dd>
+    </div>
+  );
+}
+
+// TreeNode is one delegation node plus its delegated children. The
+// kanban board stores cards flat; parent_run_id links each subagent
+// run to the caller run that delegated it, which restores the graph
+// of nested delegations for visualization.
+type TreeNode = {
+  card: KanbanCard;
+  children: TreeNode[];
+};
+
+// buildForest turns the flat, newest-first card list into a forest of
+// delegation trees. A card whose parent run is not itself on the board
+// (the main conversation run) becomes a root; children are ordered by
+// creation time so the delegation order reads top to bottom.
+function buildForest(cards: KanbanCard[]): TreeNode[] {
+  const byRun = new Map<string, KanbanCard>();
+  for (const c of cards) {
+    if (c.run_id) byRun.set(c.run_id, c);
+  }
+  const childLists = new Map<string, KanbanCard[]>();
+  const roots: KanbanCard[] = [];
+  for (const c of cards) {
+    const parent = c.parent_run_id ? byRun.get(c.parent_run_id) : undefined;
+    if (parent) {
+      const list = childLists.get(parent.run_id!) ?? [];
+      list.push(c);
+      childLists.set(parent.run_id!, list);
+    } else {
+      roots.push(c);
+    }
+  }
+  // visited guards against a malformed cycle in the parent links.
+  const visited = new Set<string>();
+  const build = (card: KanbanCard): TreeNode => {
+    const runID = card.run_id ?? '';
+    const children = (childLists.get(runID) ?? [])
+      .filter((c) => {
+        const id = c.run_id ?? '';
+        if (!id || visited.has(id)) return false;
+        visited.add(id);
+        return true;
+      })
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .map(build);
+    return { card, children };
+  };
+  return roots.map(build);
+}
+
+// SubagentNode renders one delegation node with its children nested
+// beneath it, connected by an L-shaped branch line.
+function SubagentNode({
+  node,
+  streams,
+  depth,
+}: {
+  node: TreeNode;
+  streams: Record<string, MessageView[]>;
+  depth: number;
+}) {
+  return (
+    <div className={depth > 0 ? 'relative ml-4 pl-3' : ''}>
+      {depth > 0 && (
+        <>
+          <span className="absolute left-0 top-0 h-full w-px bg-violet-400/15" />
+          <span className="absolute left-0 top-3 h-3 w-3 rounded-bl-lg border-b border-l border-violet-400/15" />
+        </>
+      )}
+      <SubagentCard
+        card={node.card}
+        stream={node.card.run_id ? streams[node.card.run_id] : undefined}
+      />
+      {node.children.length > 0 && (
+        <div className="mt-2 space-y-2">
+          {node.children.map((child) => (
+            <SubagentNode
+              key={child.card.id}
+              node={child}
+              streams={streams}
+              depth={depth + 1}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
 // SubagentSidebar is the right-hand panel inside the chat area. It
 // appears while the current conversation has delegation cards and
-// lists the subagent runs with expandable details.
+// lists the subagent runs as a delegation tree: a delegated subagent
+// that spawns further subagents nests beneath its parent card.
 export function SubagentSidebar() {
   const cards = useStore((s) => s.subagentCards);
   const streams = useStore((s) => s.subagentStreams);
   const togglePanel = useStore((s) => s.toggleSubagentPanel);
   const { t } = useTranslation();
+  const forest = useMemo(() => buildForest(cards), [cards]);
 
   return (
     <aside className="w-72 shrink-0 h-full border-l border-edge bg-panel flex flex-col min-h-0">
@@ -308,11 +407,12 @@ export function SubagentSidebar() {
         </button>
       </header>
       <div className="flex-1 overflow-y-auto p-2.5 space-y-2">
-        {cards.map((card) => (
-          <SubagentCard
-            key={card.id}
-            card={card}
-            stream={card.run_id ? streams[card.run_id] : undefined}
+        {forest.map((node) => (
+          <SubagentNode
+            key={node.card.id}
+            node={node}
+            streams={streams}
+            depth={0}
           />
         ))}
       </div>

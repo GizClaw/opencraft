@@ -267,6 +267,26 @@ func (l *Lifecycle) Update(
 	return l.resultFor(dir, updated), nil
 }
 
+// Detail returns the persisted declaration of one subagent, including
+// its graph definition, so hosts can visualize and edit the live
+// definition without re-parsing the list.
+func (l *Lifecycle) Detail(ctx context.Context, name string) (AgentSpec, error) {
+	if err := validateAgentName(name); err != nil {
+		return AgentSpec{}, err
+	}
+	dir := l.agentDir(name)
+	spec, err := l.readSpec(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return AgentSpec{}, errdefs.NotFoundf(
+				"agents: %q is not a persisted agent", name)
+		}
+		return AgentSpec{}, fmt.Errorf("agents: read %q declaration: %w",
+			name, err)
+	}
+	return spec, nil
+}
+
 // restoreAfterFailedUpdate re-registers the previous declaration after
 // an update failed partway (the new registration or the disk write did
 // not complete). The name may or may not still be registered at this

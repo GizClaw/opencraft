@@ -113,7 +113,7 @@ func (s stubPrefixProvider) Rules() []string { return []string(s) }
 func TestPermissionsSectionShowsLiveRules(t *testing.T) {
 	svc := New(Options{WorkBase: t.TempDir()})
 	svc.SetPrefixProvider(stubPrefixProvider{"go test", "npm install"})
-	sec, err := svc.permissionsSection("c1")
+	sec, err := svc.permissionsSection("s-c1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +126,7 @@ func TestPermissionsSectionShowsLiveRules(t *testing.T) {
 
 	// Without a provider the approved-prefix line is omitted entirely.
 	plain := New(Options{WorkBase: t.TempDir()})
-	sec2, err := plain.permissionsSection("c1")
+	sec2, err := plain.permissionsSection("s-c1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestMemorySectionsIncludeSummariesAndRaw(t *testing.T) {
 			}},
 		},
 	}}
-	got := svc.memorySections(context.Background(), "c1")
+	got := svc.memorySections(context.Background(), "s-c1")
 	if len(got) != 2 {
 		t.Fatalf("sections = %+v, want summary + raw", got)
 	}
@@ -252,7 +252,7 @@ func TestMemorySectionsMapToolRoleToUser(t *testing.T) {
 			}},
 		},
 	}}
-	got := svc.memorySections(context.Background(), "c1")
+	got := svc.memorySections(context.Background(), "s-c1")
 	if len(got) != 1 {
 		t.Fatalf("sections = %+v, want one raw section", got)
 	}
@@ -280,7 +280,7 @@ func TestRenderToBoardInjectsMemorySectionsNoHistory(t *testing.T) {
 	}}
 	board := agent.NewBoard()
 	if err := svc.RenderToBoard(
-		context.Background(), "assistant", "c1", "latest user turn", nil, board,
+		context.Background(), "assistant", "s-c1", "latest user turn", nil, board,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +311,7 @@ func TestRenderToBoardInjectsMemorySectionsNoHistory(t *testing.T) {
 func TestRenderToBoardInjectsLatestPlan(t *testing.T) {
 	sess := newSessionStore(t)
 	store := plan.NewStore(sess)
-	if _, err := store.Update("assistant", "c1", plan.UpdatePlanArgs{
+	if _, err := store.Update("assistant", "s-c1", plan.UpdatePlanArgs{
 		Explanation: strptr("fix the bug"),
 		Plan: []plan.PlanItem{
 			{Step: "inspect", Status: plan.StatusInProgress},
@@ -324,7 +324,7 @@ func TestRenderToBoardInjectsLatestPlan(t *testing.T) {
 	svc.SetSessions(sess)
 	board := agent.NewBoard()
 	if err := svc.RenderToBoard(
-		context.Background(), "assistant", "c1", "", nil, board,
+		context.Background(), "assistant", "s-c1", "", nil, board,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -354,7 +354,7 @@ func TestRenderToBoardInjectsLatestPlan(t *testing.T) {
 	empty.SetSessions(newSessionStore(t))
 	board2 := agent.NewBoard()
 	if err := empty.RenderToBoard(
-		context.Background(), "assistant", "c2", "", nil, board2,
+		context.Background(), "assistant", "s-c2", "", nil, board2,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -373,7 +373,7 @@ func TestRenderToBoardInjectsLatestPlan(t *testing.T) {
 	done := New(Options{WorkBase: t.TempDir()})
 	doneSess := newSessionStore(t)
 	doneStore := plan.NewStore(doneSess)
-	if _, err := doneStore.Update("assistant", "c3", plan.UpdatePlanArgs{
+	if _, err := doneStore.Update("assistant", "s-c3", plan.UpdatePlanArgs{
 		Plan: []plan.PlanItem{
 			{Step: "inspect", Status: plan.StatusCompleted},
 			{Step: "implement", Status: plan.StatusCompleted},
@@ -384,7 +384,7 @@ func TestRenderToBoardInjectsLatestPlan(t *testing.T) {
 	done.SetSessions(doneSess)
 	board3 := agent.NewBoard()
 	if err := done.RenderToBoard(
-		context.Background(), "assistant", "c3", "", nil, board3,
+		context.Background(), "assistant", "s-c3", "", nil, board3,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -427,7 +427,7 @@ func TestRenderToBoardInjectsRankedSkills(t *testing.T) {
 
 	board := agent.NewBoard()
 	if err := ws.RenderToBoard(
-		context.Background(), "assistant", "c1", "please review the docs", nil, board,
+		context.Background(), "assistant", "s-c1", "please review the docs", nil, board,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -459,7 +459,7 @@ func TestRenderToBoardSkipsSkillsWhenNoMatch(t *testing.T) {
 
 	board := agent.NewBoard()
 	if err := ws.RenderToBoard(
-		context.Background(), "assistant", "c1", "zzzzqqqq nothing relevant", nil, board,
+		context.Background(), "assistant", "s-c1", "zzzzqqqq nothing relevant", nil, board,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -479,7 +479,7 @@ func TestRenderToBoardMentionInjectsFullText(t *testing.T) {
 
 	board := agent.NewBoard()
 	if err := ws.RenderToBoard(
-		context.Background(), "assistant", "c1", "use $review now", nil, board,
+		context.Background(), "assistant", "s-c1", "use $review now", nil, board,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -515,7 +515,7 @@ func TestMentionStagesSkillToCache(t *testing.T) {
 
 	board := agent.NewBoard()
 	if err := ws.RenderToBoard(
-		context.Background(), "assistant", "c1", "use $review", nil, board,
+		context.Background(), "assistant", "s-c1", "use $review", nil, board,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -528,7 +528,7 @@ func TestMentionStagesSkillToCache(t *testing.T) {
 	if full == nil || !contains(full.Text, "staged copy for execution") {
 		t.Fatalf("mention must stage the skill: %+v", full)
 	}
-	staged := filepath.Join(userDir, "cache", "staged", "c1",
+	staged := filepath.Join(userDir, "cache", "staged", "s-c1",
 		"review", "scripts", "run.sh")
 	if _, err := os.Stat(staged); err != nil {
 		t.Fatalf("staged script missing: %v", err)
@@ -545,7 +545,7 @@ func TestModelRequestedActivation(t *testing.T) {
 	// hook persists the request.
 	obs := &activateObserver{svc: svc, store: sess}
 	obs.OnRunEnd(context.Background(),
-		agent.Identity{AgentID: "assistant", ConversationID: "c1"},
+		agent.Identity{AgentID: "assistant", ConversationID: "s-c1"},
 		&agent.Result{
 			Status: agent.StatusCompleted,
 			Messages: []message.Message{
@@ -560,7 +560,7 @@ func TestModelRequestedActivation(t *testing.T) {
 
 	board := agent.NewBoard()
 	if err := ws.RenderToBoard(
-		context.Background(), "assistant", "c1", "go ahead", nil, board,
+		context.Background(), "assistant", "s-c1", "go ahead", nil, board,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -578,7 +578,7 @@ func TestModelRequestedActivation(t *testing.T) {
 	// consume-on-read: the next turn injects nothing.
 	board2 := agent.NewBoard()
 	if err := ws.RenderToBoard(
-		context.Background(), "assistant", "c1", "again", nil, board2,
+		context.Background(), "assistant", "s-c1", "again", nil, board2,
 	); err != nil {
 		t.Fatal(err)
 	}

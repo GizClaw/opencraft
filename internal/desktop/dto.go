@@ -257,6 +257,38 @@ type FileNode struct {
 // AgentSummary is the persisted subagent list entry.
 type AgentSummary = agents.Summary
 
+// GraphNode is the UI snapshot of one subagent graph node. Config is
+// kept as raw JSON so the editor round-trips node-type-specific knobs.
+type GraphNode struct {
+	ID     string          `json:"id"`
+	Type   string          `json:"type"`
+	Config json.RawMessage `json:"config,omitempty"`
+}
+
+// GraphEdge is one directed transition in a subagent graph.
+type GraphEdge struct {
+	From      string `json:"from"`
+	To        string `json:"to"`
+	Condition string `json:"condition,omitempty"`
+}
+
+// Graph is the parsed flowcraft graph definition of one subagent.
+type Graph struct {
+	Name  string      `json:"name"`
+	Entry string      `json:"entry"`
+	Nodes []GraphNode `json:"nodes"`
+	Edges []GraphEdge `json:"edges"`
+}
+
+// AgentDetail is the editable view of one persisted subagent: its
+// identity plus the parsed graph definition it runs on.
+type AgentDetail struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Graph       Graph  `json:"graph"`
+	CreatedAt   string `json:"created_at,omitempty"`
+}
+
 // providerByID resolves the catalog entry for one provider id.
 func providerByID(id string) (config.Provider, bool) {
 	for _, p := range config.Providers {

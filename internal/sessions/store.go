@@ -117,10 +117,18 @@ func NewID() string {
 	return "s-" + hex.EncodeToString(b[:])
 }
 
+// DefaultSessionID is the stable session key used by tools that run
+// outside any conversation (no RunInfo in the execution context), e.g.
+// update_plan's shared plan. It is a valid session id, so it can be
+// passed to every Store method that resolves id against the store
+// root.
+const DefaultSessionID = "s-default"
+
 // Create makes a fresh conversation and returns its id.
 func (s *Store) Create() (string, error) {
 	id := NewID()
 	dir := s.dir(id)
+	// session ids are always valid here (freshly generated).
 	if err := os.MkdirAll(filepath.Join(dir, "history"), 0o755); err != nil {
 		return "", err
 	}
@@ -133,6 +141,9 @@ func (s *Store) Create() (string, error) {
 // structured tool parts lets /resume replay the live rendering path
 // instead of parsing flattened text.
 func (s *Store) AppendTurn(_ context.Context, id string, msgs []message.Message) error {
+	if err := requireID(id); err != nil {
+		return err
+	}
 	dir := s.dir(id)
 	historyDir := filepath.Join(dir, "history")
 	if err := os.MkdirAll(historyDir, 0o755); err != nil {
@@ -188,6 +199,9 @@ func (s *Store) AppendTurn(_ context.Context, id string, msgs []message.Message)
 // n < 0 returns every archived message; n == 0 uses the store window
 // (the recent context injected into the model); n > 0 caps at n.
 func (s *Store) History(_ context.Context, id string, n int) ([]message.Message, error) {
+	if err := requireID(id); err != nil {
+		return nil, err
+	}
 	if n == 0 {
 		n = s.window
 	}
@@ -273,6 +287,9 @@ func (s *Store) List() ([]Meta, error) {
 
 // LoadUsage returns the cumulative token usage recorded for a session.
 func (s *Store) LoadUsage(_ context.Context, id string) (Usage, error) {
+	if err := requireID(id); err != nil {
+		return Usage{}, err
+	}
 	var usage Usage
 	data, err := os.ReadFile(filepath.Join(s.dir(id), "meta.json"))
 	if err != nil {
@@ -290,6 +307,9 @@ func (s *Store) LoadUsage(_ context.Context, id string) (Usage, error) {
 // RecordUsage persists the cumulative token usage for a session. The
 // caller supplies the full session totals; it is written atomically.
 func (s *Store) RecordUsage(_ context.Context, id string, usage Usage) error {
+	if err := requireID(id); err != nil {
+		return err
+	}
 	data, err := json.MarshalIndent(usage, "", "  ")
 	if err != nil {
 		return err
@@ -312,8 +332,8 @@ func (s *Store) dir(id string) string {
 // state for the same id is removed by the session manager's
 // DeleteSession (the desktop wires both together).
 func (s *Store) Remove(id string) error {
-	if !ValidID(id) {
-		return errdefs.Validationf("sessions: invalid session id %q", id)
+	if err := requireID(id); err != nil {
+		return err
 	}
 	if err := os.RemoveAll(s.dir(id)); err != nil {
 		return fmt.Errorf("sessions: remove %s: %w", id, err)
@@ -324,12 +344,23 @@ func (s *Store) Remove(id string) error {
 	return nil
 }
 
+// requireID validates a caller-supplied session id before it becomes a
+// filesystem path. Every Store method that resolves id against the
+// store root checks it here, so no binding can bypass validation by
+// calling a lower-level method directly.
+func requireID(id string) error {
+	if !ValidID(id) {
+		return errdefs.Validationf("sessions: invalid session id %q", id)
+	}
+	return nil
+}
+
 // ValidID reports whether id is a safe conversation id: it must carry
 // the "s-" prefix and contain no path separators, so
 // filepath.Join(s.root, id) can never resolve outside s.root even
 // through Clean (crafted ids like "s-../../../../tmp/x" are rejected).
-// Bindings that turn a session id into a filesystem path (Remove,
-// RenameSession, ExportSession) must check it.
+// Store methods that resolve id against the store root enforce this via
+// requireID; bindings may also check it up front for a clearer error.
 func ValidID(id string) bool {
 	if id == "" || !strings.HasPrefix(id, "s-") {
 		return false
