@@ -283,7 +283,7 @@ func TestFollowSymlinks(t *testing.T) {
 
 func TestBuiltinEmbedded(t *testing.T) {
 	svc := NewService(Options{WorkBase: t.TempDir(), Enabled: true})
-	for _, name := range []string{"plan", "code-review", "skill-creator"} {
+	for _, name := range []string{"plan", "skill-creator"} {
 		sk, ok := svc.ByName(name)
 		if !ok {
 			t.Fatalf("builtin %s missing", name)
@@ -295,6 +295,20 @@ func TestBuiltinEmbedded(t *testing.T) {
 		if err != nil || !strings.Contains(body, "#") {
 			t.Fatalf("builtin %s body: %q, %v", name, body, err)
 		}
+	}
+	// code-review ships as a builtin but can be shadowed by a user- or
+	// repo-scope install of the same name; it must still be
+	// discoverable and readable either way.
+	sk, ok := svc.ByName("code-review")
+	if !ok {
+		t.Fatal("code-review missing (builtin or user scope)")
+	}
+	if sk.Scope == "builtin" && !strings.HasPrefix(sk.Path, "builtin://") {
+		t.Fatalf("builtin code-review metadata = %+v", sk)
+	}
+	_, body, err := svc.ReadFull("code-review")
+	if err != nil || strings.TrimSpace(body) == "" {
+		t.Fatalf("code-review body empty: %q, %v", body, err)
 	}
 }
 
@@ -517,5 +531,24 @@ func TestInstallSubpathTraversalRejected(t *testing.T) {
 	git("commit", "-m", "add symlink")
 	if _, err := svc.Install(src, ScopeRepo, "evil"); err == nil {
 		t.Fatal("Install(subpath=symlink-outside) accepted")
+	}
+}
+
+func TestInstallRepoFlagRejected(t *testing.T) {
+	workBase := t.TempDir()
+	svc := NewService(Options{WorkBase: workBase, Enabled: true})
+	for _, repo := range []string{
+		"-c",
+		"--template=/tmp",
+		"--bare",
+		"-c core.sshCommand=echo pwn",
+	} {
+		if _, err := svc.Install(repo, ScopeRepo, ""); err == nil {
+			t.Fatalf("Install(repo=%q) accepted a flag-like repo", repo)
+		}
+	}
+	// The flag guard must not break normal path/URL installs.
+	if _, err := svc.Install("/definitely/not/a/repo", ScopeRepo, ""); err == nil {
+		t.Fatal("non-existent repo path should fail later, not on the flag guard")
 	}
 }

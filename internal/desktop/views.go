@@ -71,6 +71,9 @@ func (a *App) RenameSession(id, title string) error {
 	if title == "" {
 		return errors.New("title is required")
 	}
+	if !ocsessions.ValidID(id) {
+		return fmt.Errorf("invalid session id %q", id)
+	}
 	a.mu.Lock()
 	store := a.sessions
 	a.mu.Unlock()
@@ -85,6 +88,9 @@ func (a *App) RenameSession(id, title string) error {
 // markdown preserves the full timeline: reasoning traces, tool calls
 // with their arguments, and tool results alongside the visible text.
 func (a *App) ExportSession(id string) (string, error) {
+	if !ocsessions.ValidID(id) {
+		return "", fmt.Errorf("invalid session id %q", id)
+	}
 	a.mu.Lock()
 	store := a.sessions
 	workDir := a.workDir

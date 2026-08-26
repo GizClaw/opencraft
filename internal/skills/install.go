@@ -29,6 +29,10 @@ func (s *Service) Install(repo, scope, subpath string) (string, error) {
 	if strings.TrimSpace(repo) == "" {
 		return "", fmt.Errorf("skills: install repo is required")
 	}
+	if strings.HasPrefix(repo, "-") {
+		return "", errdefs.Validationf(
+			"skills: install repo must not start with '-'")
+	}
 	if scope == "" {
 		scope = ScopeUser
 	}
@@ -62,7 +66,11 @@ func (s *Service) Install(repo, scope, subpath string) (string, error) {
 	defer func() { _ = os.RemoveAll(tmp) }()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, git, "clone", "--depth", "1", repo, tmp)
+	// "--" ends option parsing so a repo that merely starts with "-"
+	// (already rejected) or looks like a path can never be consumed as
+	// a git option by a future caller.
+	cmd := exec.CommandContext(
+		ctx, git, "clone", "--depth", "1", "--", repo, tmp)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("skills: git clone %q: %w: %s",
 			repo, err, strings.TrimSpace(string(out)))

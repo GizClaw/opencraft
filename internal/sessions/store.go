@@ -312,7 +312,7 @@ func (s *Store) dir(id string) string {
 // state for the same id is removed by the session manager's
 // DeleteSession (the desktop wires both together).
 func (s *Store) Remove(id string) error {
-	if !validID(id) {
+	if !ValidID(id) {
 		return errdefs.Validationf("sessions: invalid session id %q", id)
 	}
 	if err := os.RemoveAll(s.dir(id)); err != nil {
@@ -324,11 +324,13 @@ func (s *Store) Remove(id string) error {
 	return nil
 }
 
-// validID reports whether id is a safe conversation id: it must carry
+// ValidID reports whether id is a safe conversation id: it must carry
 // the "s-" prefix and contain no path separators, so
 // filepath.Join(s.root, id) can never resolve outside s.root even
 // through Clean (crafted ids like "s-../../../../tmp/x" are rejected).
-func validID(id string) bool {
+// Bindings that turn a session id into a filesystem path (Remove,
+// RenameSession, ExportSession) must check it.
+func ValidID(id string) bool {
 	if id == "" || !strings.HasPrefix(id, "s-") {
 		return false
 	}
