@@ -170,7 +170,7 @@ func (s *Store) Summary(ctx context.Context) ([]SummaryRow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("usage: summary: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []SummaryRow
 	for rows.Next() {
 		var r SummaryRow
@@ -246,7 +246,7 @@ func (s *Store) Series(
 	if err != nil {
 		return nil, fmt.Errorf("usage: series: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []Point
 	for rows.Next() {
 		var p Point

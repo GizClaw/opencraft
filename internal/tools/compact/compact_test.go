@@ -41,9 +41,9 @@ func TestExecuteCondensesAndPersistsArtifact(t *testing.T) {
 				t.Errorf("condense request missing system instruction: %+v",
 					req.Context)
 			}
-			if !strings.Contains(req.Input.Content.Content.Text(), "m1") {
+			if !strings.Contains(req.Input.Content.Text(), "m1") {
 				t.Errorf("condense input missing conversation: %q",
-					req.Input.Content.Content.Text())
+					req.Input.Content.Text())
 			}
 			return inference.GenerateResponse{
 				Message: message.NewTextMessage(message.RoleAssistant, "S1"),

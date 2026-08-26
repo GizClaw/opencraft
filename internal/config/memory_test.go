@@ -53,8 +53,7 @@ func TestWriteMemoryPreservesOtherResources(t *testing.T) {
 	if err := WriteMemory(dir, MemorySettings{MaxRawMessages: 18}); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(filepath.Join(dir, "opencraft.yaml"))
-	if err != nil {
+	if _, err := os.ReadFile(filepath.Join(dir, "opencraft.yaml")); err != nil {
 		t.Fatal(err)
 	}
 	if err := WriteMCP(dir, []MCPServer{
@@ -62,7 +61,7 @@ func TestWriteMemoryPreservesOtherResources(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	data, err = os.ReadFile(filepath.Join(dir, "opencraft.yaml"))
+	data, err := os.ReadFile(filepath.Join(dir, "opencraft.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}

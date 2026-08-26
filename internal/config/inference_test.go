@@ -18,17 +18,6 @@ func writeFile(t *testing.T, dir, name, content string) {
 	}
 }
 
-func mustProvider(t *testing.T, id string) Provider {
-	t.Helper()
-	for _, p := range Providers {
-		if p.ID == id {
-			return p
-		}
-	}
-	t.Fatalf("provider %q not in catalog", id)
-	return Provider{}
-}
-
 func envKeyed(t *testing.T, ids ...string) InferenceConfig {
 	t.Helper()
 	var cfg InferenceConfig

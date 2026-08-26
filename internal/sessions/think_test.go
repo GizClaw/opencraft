@@ -10,7 +10,7 @@ func TestThinkDefaultAndRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	if level, err := store.Think(context.Background(), "s-missing"); err != nil || level != ThinkMedium {
 		t.Errorf("Think(missing) = %q, %v; want medium, nil", level, err)
@@ -28,7 +28,7 @@ func TestSetThinkRejectsInvalid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	if err := store.SetThink(context.Background(), "s-x", ThinkLevel("max")); err == nil {
 		t.Fatal("SetThink(max) should fail")
 	}

@@ -21,12 +21,15 @@ import (
 	"go.opentelemetry.io/otel/sdk/log"
 )
 
-const (
-	// ServiceName and ServiceVersion identify opencraft in exported
-	// telemetry (service.name / service.version resource attributes).
-	ServiceName    = "opencraft"
-	ServiceVersion = "0.1.0"
-)
+// ServiceName identifies opencraft in exported telemetry
+// (service.name resource attribute).
+const ServiceName = "opencraft"
+
+// ServiceVersion identifies opencraft in exported telemetry
+// (service.version resource attribute) and in the UI. Release builds
+// override it via
+// `-ldflags "-X github.com/GizClaw/opencraft/internal/app.ServiceVersion=v..."`.
+var ServiceVersion = "0.1.0"
 
 // TelemetryOptions configures the telemetry pipelines. All fields are
 // optional; a zero TelemetryOptions installs a working no-op setup

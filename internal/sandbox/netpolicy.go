@@ -123,7 +123,7 @@ func buildExecNet(s ExecNetSettings) (corenet.NetPolicy, error) {
 		Proxy:      s.Proxy,
 	}
 	for i, r := range s.Rules {
-		action := corenet.NetAllow
+		var action corenet.NetAction
 		switch strings.ToLower(strings.TrimSpace(r.Action)) {
 		case "allow":
 			action = corenet.NetAllow

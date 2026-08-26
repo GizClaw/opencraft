@@ -63,7 +63,7 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 		return fmt.Errorf("skills: create temp file: %w", err)
 	}
 	tmpName := tmp.Name()
-	defer os.Remove(tmpName) // no-op after a successful rename
+	defer func() { _ = os.Remove(tmpName) }() // no-op after a successful rename
 	if err := tmp.Chmod(perm); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("skills: chmod temp file: %w", err)
@@ -193,7 +193,7 @@ func (s *Service) Create(name string, doc SkillDocument, scope string) (string, 
 	if err != nil {
 		return "", err
 	}
-	defer os.RemoveAll(tmp)
+	defer func() { _ = os.RemoveAll(tmp) }()
 	if err := writeFileAtomic(filepath.Join(tmp, "SKILL.md"), data, 0o644); err != nil {
 		return "", err
 	}
@@ -270,7 +270,7 @@ func (s *Service) Patch(name, patch, scope string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(tmp)
+	defer func() { _ = os.RemoveAll(tmp) }()
 	if err := copyTree(dir, tmp); err != nil {
 		return nil, fmt.Errorf("skills: stage skill for patch: %w", err)
 	}

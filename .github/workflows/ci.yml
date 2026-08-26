@@ -94,7 +94,9 @@ jobs:
       - name: Build desktop binary
         run: |
           export PATH="$PATH:$(go env GOPATH)/bin"
-          wails build -platform linux/amd64
+          # Ubuntu 24.04 ships webkit2gtk-4.1; the webkit2_41 tag switches
+          # wails to the 4.1 pkg-config/API (4.0 is the default).
+          wails build -platform linux/amd64 -tags webkit2_41
 
   desktop-macos:
     name: desktop build (macos)

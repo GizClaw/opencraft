@@ -58,7 +58,7 @@ func TestObserverFiresSubagentHooks(t *testing.T) {
 	if !ok {
 		t.Fatalf("factory returned %T, want *Observer", value)
 	}
-	defer obs.Close()
+	defer func() { _ = obs.Close() }()
 
 	card := kanban.CardEvent{
 		Version:  kanban.PayloadVersion,

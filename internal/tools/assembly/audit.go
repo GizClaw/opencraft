@@ -89,7 +89,7 @@ func (s *fileAuditSink) Record(_ context.Context, rec toolmiddleware.AuditRecord
 		slog.Error("opencraft audit: open log", "path", s.path, "error", err)
 		return
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if _, err := f.Write(data); err != nil {
 		slog.Error("opencraft audit: write record", "path", s.path, "error", err)
 	}

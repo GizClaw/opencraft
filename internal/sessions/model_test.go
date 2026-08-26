@@ -7,7 +7,7 @@ func TestModelDefaultAndRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	if model, err := store.Model("s-missing"); err != nil || model != "" {
 		t.Errorf("Model(missing) = %q, %v; want \"\", nil", model, err)
@@ -31,7 +31,7 @@ func TestSetModelRejectsInvalidID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	if err := store.SetModel("not-a-session", "openai/gpt-5.6-sol"); err == nil {
 		t.Fatal("SetModel with invalid id should fail")
 	}

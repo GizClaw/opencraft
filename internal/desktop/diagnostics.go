@@ -132,7 +132,7 @@ func (a *App) RunSandboxProbe() SandboxProbeResult {
 	if err != nil {
 		return SandboxProbeResult{Error: err.Error()}
 	}
-	defer runner.Close()
+	defer func() { _ = runner.Close() }()
 	sess, err := runner.Start(ctx, coresandbox.SessionSpec{
 		ID:   "diagnostics-probe",
 		Argv: []string{"echo", "opencraft-sandbox-ok"},
@@ -140,7 +140,7 @@ func (a *App) RunSandboxProbe() SandboxProbeResult {
 	if err != nil {
 		return SandboxProbeResult{Error: err.Error()}
 	}
-	defer sess.Close()
+	defer func() { _ = sess.Close() }()
 	out, readErr := sess.Read(ctx, 0, 64*1024)
 	var output strings.Builder
 	if readErr == nil {

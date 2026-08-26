@@ -112,9 +112,10 @@ func (a *App) ExportSession(id string) (string, error) {
 	)
 	for _, m := range msgs {
 		role := "User"
-		if m.Role == message.RoleAssistant {
+		switch m.Role {
+		case message.RoleAssistant:
 			role = "Assistant"
-		} else if m.Role == message.RoleTool {
+		case message.RoleTool:
 			role = "Tool"
 		}
 		fmt.Fprintf(&b, "## %s\n\n", role)

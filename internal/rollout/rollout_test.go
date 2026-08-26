@@ -29,7 +29,7 @@ func TestRecorderAppendsAndContinuesSeq(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rec2.Close()
+	defer func() { _ = rec2.Close() }()
 	if err := rec2.Record(Event{Type: TypeTurnStarted, RunID: "r2"}); err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestRecorderConcurrentWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer rec.Close()
+	defer func() { _ = rec.Close() }()
 	var wg sync.WaitGroup
 	for i := 0; i < 20; i++ {
 		wg.Add(1)

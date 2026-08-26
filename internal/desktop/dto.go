@@ -2,7 +2,6 @@ package desktop
 
 import (
 	"encoding/json"
-	"strings"
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/message"
@@ -321,5 +320,3 @@ func marshalParts(parts []message.Part) []json.RawMessage {
 	}
 	return out
 }
-
-func providerID(pid string) string { return strings.TrimSpace(pid) }

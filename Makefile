@@ -23,4 +23,4 @@ test:
 # build-linux produces the desktop binary for Linux (requires the
 # GTK/WebKit development packages; see .github/workflows/ci.yml).
 build-linux:
-	wails build -platform linux/amd64
+	wails build -platform linux/amd64 -tags webkit2_41

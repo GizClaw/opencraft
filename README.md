@@ -51,6 +51,18 @@ Requires Go 1.25.5+ and Node 22 (frontend). macOS arm64 (seatbelt) and
 Linux (bwrap) sandboxing are supported; Windows is explicitly out of
 scope.
 
+## Releasing
+
+Tag a release and push it; the [release workflow](.github/workflows/release.yml)
+builds the macOS app bundle and the Linux binary, injects the version into the
+binary via `-ldflags`, and publishes a GitHub Release with notes taken from
+[CHANGELOG.md](CHANGELOG.md):
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
 ## Layout
 
 - `main.go` — Wails desktop entry; `execd_main.go` — internal sandbox

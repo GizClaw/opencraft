@@ -11,7 +11,7 @@ func TestRecordAndSummary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	ctx := context.Background()
 
 	// Same model across two workspaces and several sessions.
@@ -65,7 +65,7 @@ func TestSeriesHourAndDay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	ctx := context.Background()
 
 	// Directly seed UTC hours around a day boundary: 15:00Z and 16:00Z
