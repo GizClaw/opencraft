@@ -289,6 +289,16 @@ type AgentDetail struct {
 	CreatedAt   string `json:"created_at,omitempty"`
 }
 
+// AgentUpdateResult reports one persisted subagent update. Timestamps
+// are RFC3339 strings so the Wails binding surface never exposes
+// time.Time (which its model generator cannot type).
+type AgentUpdateResult struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	PersistedTo string `json:"persisted_to"`
+	CreatedAt   string `json:"created_at"`
+}
+
 // providerByID resolves the catalog entry for one provider id.
 func providerByID(id string) (config.Provider, bool) {
 	for _, p := range config.Providers {

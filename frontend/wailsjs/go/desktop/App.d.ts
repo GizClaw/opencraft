@@ -114,7 +114,7 @@ export function TestMCP(arg1:config.MCPServer):Promise<void>;
 
 export function UnregisterAgent(arg1:string):Promise<void>;
 
-export function UpdateAgent(arg1:string,arg2:string,arg3:string):Promise<agents.CreateResult>;
+export function UpdateAgent(arg1:string,arg2:string,arg3:string):Promise<desktop.AgentUpdateResult>;
 
 export function Version():Promise<string>;
 

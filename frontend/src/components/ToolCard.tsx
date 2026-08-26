@@ -334,63 +334,104 @@ function hunkHeader(h: DiffHunk): string {
 }
 
 function GitDiffLine({ line }: { line: PatchLineDTO }) {
-  const oldCol =
-    (line.old_num ?? 0) > 0 ? String(line.old_num).padStart(3) : '   ';
-  const newCol =
-    (line.new_num ?? 0) > 0 ? String(line.new_num).padStart(3) : '   ';
+  const oldCol = (line.old_num ?? 0) > 0 ? String(line.old_num) : '';
+  const newCol = (line.new_num ?? 0) > 0 ? String(line.new_num) : '';
   const marker = line.kind === 'add' ? '+' : line.kind === 'delete' ? '-' : ' ';
-  const cls =
-    line.kind === 'add'
-      ? 'text-ok'
-      : line.kind === 'delete'
-        ? 'text-err'
-        : 'text-dim';
+  const isAdd = line.kind === 'add';
+  const isDel = line.kind === 'delete';
+  const numBg = isAdd ? 'bg-ok/15' : isDel ? 'bg-err/15' : 'bg-panel2/50';
+  const lineBg = isAdd ? 'bg-ok/10' : isDel ? 'bg-err/10' : '';
+  const markerCls = isAdd ? 'text-ok' : isDel ? 'text-err' : 'text-dim';
   return (
-    <div className={`whitespace-pre ${cls}`}>
-      <span className="text-dim opacity-60 select-none">
-        {oldCol} {newCol}{' '}
+    <div
+      className={`grid grid-cols-[4rem_4rem_minmax(0,1fr)] font-mono text-xs leading-5 ${lineBg}`}
+    >
+      <div
+        className={`select-none px-2 text-right text-dim tabular-nums ${numBg}`}
+      >
+        {oldCol}
+      </div>
+      <div
+        className={`select-none px-2 text-right text-dim tabular-nums ${numBg}`}
+      >
+        {newCol}
+      </div>
+      <div className="whitespace-pre px-2 text-fg">
+        <span className={`select-none ${markerCls}`}>{marker}</span>
+        {line.text}
+      </div>
+    </div>
+  );
+}
+
+function FileHeader({
+  file,
+  open,
+  onToggle,
+}: {
+  file: PatchFileDTO;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-edge bg-panel px-2 py-1.5">
+      <button
+        onClick={onToggle}
+        className="text-dim hover:text-fg"
+        title={open ? 'Collapse' : 'Expand'}
+      >
+        {open ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+      </button>
+      <span className="min-w-0 truncate font-mono text-xs text-fg">
+        {file.path}
       </span>
-      {marker}
-      {line.text}
+      <span className="flex-1" />
+      <span className="text-[10px] text-ok tabular-nums">+{file.added}</span>
+      <span className="text-[10px] text-err tabular-nums">−{file.removed}</span>
+    </div>
+  );
+}
+
+function FileDiff({ file }: { file: PatchFileDTO }) {
+  const [open, setOpen] = useState(true);
+  const hunks = groupHunks(file.lines);
+  return (
+    <div className="border-b border-edge last:border-b-0">
+      <FileHeader file={file} open={open} onToggle={() => setOpen((v) => !v)} />
+      {open &&
+        hunks.map((h, i) => (
+          <div key={i}>
+            <div className="select-none bg-panel2/60 px-3 py-0.5 text-center font-mono text-[10px] text-accent">
+              {hunkHeader(h)}
+            </div>
+            {h.lines.map((line, j) => (
+              <GitDiffLine key={j} line={line} />
+            ))}
+          </div>
+        ))}
     </div>
   );
 }
 
 function GitDiffView({ files }: { files: PatchFileDTO[] }) {
   return (
-    <div className="max-h-80 space-y-3 overflow-y-auto">
-      {files.map((f) => {
-        const hunks = groupHunks(f.lines);
-        return (
-          <div key={f.path}>
-            <div className="font-mono text-xs">
-              <div className="text-err">--- a/{f.path}</div>
-              <div className="text-ok">+++ b/{f.path}</div>
-            </div>
-            {hunks.map((h, i) => (
-              <div key={i} className="mt-1">
-                <div className="font-mono text-xs text-accent">
-                  {hunkHeader(h)}
-                </div>
-                <div className="font-mono text-xs">
-                  {h.lines.map((line, j) => (
-                    <GitDiffLine key={j} line={line} />
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        );
-      })}
+    <div className="max-h-80 overflow-y-auto rounded-lg border border-edge bg-panel/60">
+      {files.map((f) => (
+        <FileDiff key={f.path} file={f} />
+      ))}
     </div>
   );
 }
 
-// PatchPreview renders the patch argument of apply_patch / skill_modify
-// as a git diff with line numbers, computed server-side against the
-// current file content. Falls back to the raw colored patch while the
+// usePatchFiles renders the patch argument of apply_patch /
+// skill_modify as a git diff against the current file content,
+// computed server-side. Falls back to the raw colored patch while the
 // preview loads or when it fails.
-function PatchPreview({ tool }: { tool: ToolView }) {
+function usePatchFiles(tool: ToolView): {
+  files: PatchFileDTO[] | null;
+  failed: boolean;
+  patch: string;
+} {
   const args = parseArgs(tool);
   const patch = args && typeof args.patch === 'string' ? args.patch : tool.args;
   const name = args && typeof args.name === 'string' ? args.name : '';
@@ -418,9 +459,49 @@ function PatchPreview({ tool }: { tool: ToolView }) {
     };
   }, [tool.name, patch, name, scope]);
 
+  return { files, failed, patch };
+}
+
+function PatchPreview({ tool }: { tool: ToolView }) {
+  const { files, failed, patch } = usePatchFiles(tool);
   if (failed || files === null) return <DiffBlock patch={patch} />;
   return <GitDiffView files={files} />;
 }
+
+// ApplyPatchView renders the apply_patch diff directly in the chat
+// stream, without the generic tool card wrapper around it.
+export const ApplyPatchView = memo(function ApplyPatchView({
+  tool,
+}: {
+  tool: ToolView;
+}) {
+  const { t } = useTranslation();
+  const { files, failed, patch } = usePatchFiles(tool);
+  return (
+    <div className="my-1.5 space-y-1">
+      {failed || files === null ? (
+        <DiffBlock patch={patch} />
+      ) : (
+        <GitDiffView files={files} />
+      )}
+      {tool.result !== undefined && (
+        <div
+          className={`whitespace-pre-wrap break-all font-mono text-xs ${
+            tool.status === 'error' ? 'text-err' : 'text-ok'
+          }`}
+        >
+          {tool.result}
+        </div>
+      )}
+      {tool.status === 'running' && (
+        <div className="flex items-center gap-1.5 text-xs text-dim">
+          <Loader2 size={12} className="animate-spin" />
+          {t('tool.running')}
+        </div>
+      )}
+    </div>
+  );
+});
 
 function ArgsBlock({ tool }: { tool: ToolView }) {
   const { t } = useTranslation();

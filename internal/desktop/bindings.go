@@ -19,7 +19,6 @@ import (
 	"sigs.k8s.io/yaml"
 
 	app "github.com/GizClaw/opencraft/internal/app"
-	"github.com/GizClaw/opencraft/internal/agents"
 	"github.com/GizClaw/opencraft/internal/config"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/usage"
@@ -648,14 +647,23 @@ func (a *App) AgentDetail(name string) (AgentDetail, error) {
 // in-flight delegations drain; the name is immutable.
 func (a *App) UpdateAgent(
 	name, description, graph string,
-) (agents.CreateResult, error) {
+) (AgentUpdateResult, error) {
 	a.mu.Lock()
 	lifecycle := a.agents
 	a.mu.Unlock()
 	if lifecycle == nil {
-		return agents.CreateResult{}, errors.New("agent registry is not available")
+		return AgentUpdateResult{}, errors.New("agent registry is not available")
 	}
-	return lifecycle.Update(a.appContext(), name, description, graph)
+	res, err := lifecycle.Update(a.appContext(), name, description, graph)
+	if err != nil {
+		return AgentUpdateResult{}, err
+	}
+	return AgentUpdateResult{
+		Name:        res.Name,
+		Description: res.Description,
+		PersistedTo: res.PersistedTo,
+		CreatedAt:   res.CreatedAt.Format(time.RFC3339),
+	}, nil
 }
 
 // UnregisterAgent removes a persisted subagent (draining in-flight

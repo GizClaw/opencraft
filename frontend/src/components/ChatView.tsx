@@ -25,7 +25,7 @@ import { useStore } from '../lib/store';
 import type { FileNode } from '../lib/types';
 import type { MessageView } from '../lib/store';
 import { InteractionCard } from './InteractionCard';
-import { ToolCard } from './ToolCard';
+import { ApplyPatchView, ToolCard } from './ToolCard';
 
 function Reasoning({ text }: { text: string }) {
   const { t } = useTranslation();
@@ -95,7 +95,11 @@ const MessageRow = memo(function MessageRow({
           case 'reasoning':
             return <Reasoning key={item.id} text={item.text} />;
           case 'tool_call':
-            return <ToolCard key={item.id} tool={item.tool} />;
+            return item.tool.name === 'apply_patch' ? (
+              <ApplyPatchView key={item.id} tool={item.tool} />
+            ) : (
+              <ToolCard key={item.id} tool={item.tool} />
+            );
           case 'text':
             return (
               <AssistantText
