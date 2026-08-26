@@ -17,6 +17,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/workspace"
 
 	"github.com/GizClaw/opencraft/internal/agents"
+	ocsandbox "github.com/GizClaw/opencraft/internal/sandbox"
 	"github.com/GizClaw/opencraft/internal/sessions"
 	skillsvc "github.com/GizClaw/opencraft/internal/skills"
 	"github.com/GizClaw/opencraft/internal/tools/applypatch"
@@ -147,14 +148,34 @@ type webfetchSourceFactory struct{}
 var _ resource.Factory = webfetchSourceFactory{}
 
 func (webfetchSourceFactory) Spec() resource.Spec {
-	return resource.Spec{Kind: "tool.Source", Impl: "opencraft/webfetch"}
+	return resource.Spec{
+		Kind: "tool.Source",
+		Impl: "opencraft/webfetch",
+		Deps: []resource.DepSpec{
+			{Name: "netpolicy", Type: ocsandbox.NetPolicyResourceKind, Required: false},
+			{Name: "sessions", Type: sessions.ResourceKind, Required: false},
+		},
+	}
 }
 
 func (webfetchSourceFactory) New(_ context.Context, in resource.Input) (any, error) {
 	if !sourceEnabled(in) {
 		return toolList{}, nil
 	}
-	return toolList{webfetch.New()}, nil
+	t := webfetch.New()
+	if dep, ok := in.Dep("netpolicy"); ok {
+		if pol, ok := dep.(ocsandbox.Policy); ok {
+			gate := webfetch.DomainGate(pol.WebFetch)
+			if dep, ok := in.Dep("sessions"); ok {
+				store, isStore := dep.(*sessions.Store)
+				if isStore && store != nil {
+					gate = webfetch.YOLOBypassGate(store, gate)
+				}
+			}
+			t.SetGate(gate)
+		}
+	}
+	return toolList{t}, nil
 }
 
 // askuserSourceFactory contributes the ask_user tool. It needs no

@@ -19,6 +19,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/sandbox/bwrap"
 	sandboxlocal "github.com/GizClaw/flowcraft/core/sandbox/local"
 	"github.com/GizClaw/flowcraft/core/sandbox/seatbelt"
+	corenet "github.com/GizClaw/flowcraft/core/utils/net"
 
 	"github.com/GizClaw/opencraft/internal/execd"
 	"github.com/GizClaw/opencraft/internal/sessions"
@@ -51,7 +52,7 @@ type HostSandbox struct {
 // Unconfined reports whether the session in ctx runs unconfined
 // (YOLO mode). It also satisfies execd's per-request resolver.
 func (h *HostSandbox) Unconfined(ctx context.Context) bool {
-	return isYOLO(ctx, h.sessions)
+	return IsYOLO(ctx, h.sessions)
 }
 
 func (h *HostSandbox) pick(ctx context.Context) coresandbox.Runner {
@@ -101,10 +102,12 @@ func (h *HostSandbox) Terminate(ctx context.Context, id string) error {
 
 var _ coresandbox.Runner = (*HostSandbox)(nil)
 
-// isYOLO resolves the current session's permission mode from the
+// IsYOLO resolves the current session's permission mode from the
 // execution context (flowcraft injects RunInfo during graph
-// execution). Sessions without a persisted mode run confined.
-func isYOLO(ctx context.Context, store *sessions.Store) bool {
+// execution). Sessions without a persisted mode run confined. Exported
+// so tool-level policies (e.g. the web_fetch gate) apply the same
+// mode semantics.
+func IsYOLO(ctx context.Context, store *sessions.Store) bool {
 	if store == nil {
 		return false
 	}
@@ -120,7 +123,7 @@ func isYOLO(ctx context.Context, store *sessions.Store) bool {
 }
 
 // isReadOnly resolves the current session's read-only flag from the
-// execution context, mirroring isYOLO. Sessions without a persisted
+// execution context, mirroring IsYOLO. Sessions without a persisted
 // mode run workspace-write and return false.
 func isReadOnly(ctx context.Context, store *sessions.Store) bool {
 	if store == nil {
@@ -180,6 +183,7 @@ func (HostSandboxFactory) Spec() resource.Spec {
 		Deps: []resource.DepSpec{
 			{Name: "execpolicy", Type: "opencraft.execpolicy", Required: true},
 			{Name: "sessions", Type: sessions.ResourceKind, Required: true},
+			{Name: "netpolicy", Type: NetPolicyResourceKind, Required: false},
 		},
 	}
 }
@@ -208,6 +212,15 @@ func (HostSandboxFactory) New(
 	if err != nil {
 		return nil, err
 	}
+	// The configured exec network posture becomes the runner default:
+	// WithDefaults pins Net onto every call, so deny-all / allow-list /
+	// proxy apply to all sandboxed commands without touching each tool.
+	var execNet corenet.NetPolicy
+	if dep, ok := in.Dep("netpolicy"); ok {
+		if pol, ok := dep.(Policy); ok {
+			execNet = pol.Exec
+		}
+	}
 
 	// The OS-level backend: platform sandbox locally, or the execd
 	// child remotely (the child picks its own unconfined runner when a
@@ -228,7 +241,7 @@ func (HostSandboxFactory) New(
 			return nil, err
 		}
 		remote.SetModeFunc(func(ctx context.Context) bool {
-			return isYOLO(ctx, store)
+			return IsYOLO(ctx, store)
 		})
 		backend = remote
 	} else {
@@ -251,6 +264,7 @@ func (HostSandboxFactory) New(
 	confined := coresandbox.WithApproval(
 		coresandbox.WithDefaults(backend, coresandbox.ExecOptions{
 			Env: s.Env(),
+			Net: execNet,
 		}),
 		approver.Approve, approver.Allowlist())
 

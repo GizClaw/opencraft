@@ -34,7 +34,7 @@ type HostWorkspace struct {
 }
 
 func (w *HostWorkspace) pick(ctx context.Context) workspace.Workspace {
-	if isYOLO(ctx, w.sessions) {
+	if IsYOLO(ctx, w.sessions) {
 		return w.host
 	}
 	if len(w.readonly) > 0 {

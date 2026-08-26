@@ -10,6 +10,7 @@ import (
 // mode-aware HostSandbox runner and the HostWorkspace — to r.
 func Register(r *resource.Registry) error {
 	return errors.Join(
+		registerNetPolicy(r),
 		r.Register(HostSandboxFactory{}),
 		r.Register(HostWorkspaceFactory{}),
 	)

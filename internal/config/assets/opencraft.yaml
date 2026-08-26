@@ -124,12 +124,28 @@ resources:
       # Staged skill copies live under the cache dir, which the exec
       # sandbox may write; file tools only need read access to it.
       readonly_roots: ["${env:OPEN_CRAFT_DATA_DIR}/cache"]
+  # Network posture: exec sandbox mode (default = host networking) and
+  # the web_fetch domain gate. exec.mode accepts default | deny-all |
+  # allow-list | proxy; web_fetch.allow_private=false keeps the SSRF
+  # guard on (private/loopback/link-local destinations are blocked).
+  netpolicy:
+    kind: opencraft.netpolicy
+    impl: local
+    settings:
+      exec:
+        mode: default
+        allow_hosts: []
+      web_fetch:
+        allow_hosts: []
+        deny_hosts: []
+        allow_private: false
   box:
     kind: sandbox.Runner
     impl: opencraft
     deps:
       execpolicy: execpolicy
       sessions: sessions
+      netpolicy: netpolicy
     settings:
       root: ${env:OPEN_CRAFT_WORKDIR}
       writable_paths: ["${env:OPEN_CRAFT_CACHE}"]
