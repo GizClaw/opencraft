@@ -232,6 +232,30 @@ resources:
           max_chars: 8000
           dir: ${env:OPEN_CRAFT_WORKDIR}/.opencraft/cache/tools
           work_dir: ${env:OPEN_CRAFT_WORKDIR}
+        # Hard ceiling on any single tool result that may reach the
+        # model context. Truncate then turns oversized-but-bounded
+        # outputs into a persisted head+tail excerpt; together they keep
+        # the loop's MainChannel bounded even for pathological outputs.
+        result_limit:
+          max_chars: 32768
+        # Best-effort secret stripping from tool results before the
+        # model sees them. The same rules always apply to the audit
+        # trail below, even when this middleware is disabled.
+        redact:
+          enabled: true
+          rules:
+            - pattern: 'sk-(?:[A-Za-z0-9]{16,})'
+            - pattern: 'AKIA[0-9A-Z]{16}'
+            - pattern: 'gh[pousr]_[A-Za-z0-9]{20,}'
+            - pattern: 'xox[baprs]-[A-Za-z0-9-]{10,}'
+            - pattern: '(?i)bearer\s+[A-Za-z0-9._~+/=-]{16,}'
+            - pattern: '(?i)api[_-]?key\s*[:=]\s*[A-Za-z0-9_-]{8,}'
+            - pattern: '-----BEGIN [A-Z0-9 ]+-----[\s\S]*?-----END [A-Z0-9 ]+-----'
+        # Append-only tool-call audit trail: one JSONL record per call
+        # with redacted copies of arguments and results.
+        audit:
+          enabled: true
+          dir: ${env:OPEN_CRAFT_WORKDIR}/.opencraft/audit
       dynamic:
         default: deferred
         exposures:

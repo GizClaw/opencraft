@@ -21,13 +21,13 @@ import (
 	skillsvc "github.com/GizClaw/opencraft/internal/skills"
 	"github.com/GizClaw/opencraft/internal/tools/applypatch"
 	"github.com/GizClaw/opencraft/internal/tools/askuser"
+	"github.com/GizClaw/opencraft/internal/tools/assembly"
 	"github.com/GizClaw/opencraft/internal/tools/compact"
 	"github.com/GizClaw/opencraft/internal/tools/exec"
 	"github.com/GizClaw/opencraft/internal/tools/files"
 	"github.com/GizClaw/opencraft/internal/tools/permissions"
 	"github.com/GizClaw/opencraft/internal/tools/plan"
 	skillstools "github.com/GizClaw/opencraft/internal/tools/skills"
-	"github.com/GizClaw/opencraft/internal/tools/truncate"
 	"github.com/GizClaw/opencraft/internal/tools/webfetch"
 	"github.com/GizClaw/opencraft/internal/utils/resourcedep"
 )
@@ -45,7 +45,7 @@ func Register(r *resource.Registry) error {
 		r.Register(skillsSourceFactory{}),
 		r.Register(agentlifecycleSourceFactory{}),
 		r.Register(compactSourceFactory{}),
-		r.Register(truncate.AssemblyFactory{}),
+		r.Register(assembly.AssemblyFactory{}),
 	)
 }
 

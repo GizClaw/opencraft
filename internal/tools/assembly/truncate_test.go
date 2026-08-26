@@ -1,4 +1,4 @@
-package truncate
+package assembly
 
 import (
 	"context"
@@ -10,10 +10,10 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 )
 
-func TestMiddlewarePersistsFullOutputAndTruncates(t *testing.T) {
+func TestTruncateMiddlewarePersistsFullOutputAndTruncates(t *testing.T) {
 	work := t.TempDir()
 	dir := filepath.Join(work, ".opencraft", "cache", "tools")
-	mw := Middleware(Settings{
+	mw := truncateMiddleware(TruncateSettings{
 		Enabled:  true,
 		MaxChars: 200,
 		Dir:      dir,
@@ -46,8 +46,8 @@ func TestMiddlewarePersistsFullOutputAndTruncates(t *testing.T) {
 	}
 }
 
-func TestMiddlewarePassesSmallResultsThrough(t *testing.T) {
-	mw := Middleware(Settings{
+func TestTruncateMiddlewarePassesSmallResultsThrough(t *testing.T) {
+	mw := truncateMiddleware(TruncateSettings{
 		Enabled:  true,
 		MaxChars: 100,
 		Dir:      t.TempDir(),
@@ -61,17 +61,17 @@ func TestMiddlewarePassesSmallResultsThrough(t *testing.T) {
 	}
 }
 
-func TestMiddlewareDisabled(t *testing.T) {
-	if mw := Middleware(Settings{Enabled: false, MaxChars: 10, Dir: t.TempDir()}); mw != nil {
+func TestTruncateMiddlewareDisabled(t *testing.T) {
+	if mw := truncateMiddleware(TruncateSettings{Enabled: false, MaxChars: 10, Dir: t.TempDir()}); mw != nil {
 		t.Fatal("disabled middleware must be nil")
 	}
-	if mw := Middleware(Settings{Enabled: true, MaxChars: 0, Dir: t.TempDir()}); mw != nil {
+	if mw := truncateMiddleware(TruncateSettings{Enabled: true, MaxChars: 0, Dir: t.TempDir()}); mw != nil {
 		t.Fatal("misconfigured middleware must be nil")
 	}
 }
 
-func TestMiddlewareSkipsErrors(t *testing.T) {
-	mw := Middleware(Settings{Enabled: true, MaxChars: 5, Dir: t.TempDir()})
+func TestTruncateMiddlewareSkipsErrors(t *testing.T) {
+	mw := truncateMiddleware(TruncateSettings{Enabled: true, MaxChars: 5, Dir: t.TempDir()})
 	next := func(context.Context, message.ToolCall) message.ToolResult {
 		return message.ToolResult{
 			CallID:  "call-1",

@@ -1,8 +1,8 @@
-// Package truncate caps oversized tool results: the full output is
+// TruncateSettings caps oversized tool results: the full output is
 // persisted under <workdir>/.opencraft/cache/tools/<call_id>.output and
 // the in-context content is replaced with a head+tail excerpt plus a
 // pointer to the file, so the model can read the rest on demand.
-package truncate
+package assembly
 
 import (
 	"context"
@@ -14,8 +14,9 @@ import (
 	"github.com/GizClaw/flowcraft/core/tool"
 )
 
-// Settings configures the truncation middleware. Zero values disable it.
-type Settings struct {
+// TruncateSettings configures the truncation middleware. Zero values
+// disable it.
+type TruncateSettings struct {
 	// Enabled turns truncation on.
 	Enabled bool `json:"enabled,omitempty"`
 	// MaxChars is the in-context cap measured in Unicode code points.
@@ -27,10 +28,10 @@ type Settings struct {
 	WorkDir string `json:"work_dir,omitempty"`
 }
 
-// Middleware returns a tool.Middleware that persists full outputs and
-// truncates oversized results. A nil middleware is returned when the
-// feature is disabled or misconfigured, so callers can skip it.
-func Middleware(cfg Settings) tool.Middleware {
+// truncateMiddleware persists full outputs and truncates oversized
+// results. A nil middleware is returned when the feature is disabled
+// or misconfigured, so callers can skip it.
+func truncateMiddleware(cfg TruncateSettings) tool.Middleware {
 	if !cfg.Enabled || cfg.MaxChars <= 0 || cfg.Dir == "" {
 		return nil
 	}
