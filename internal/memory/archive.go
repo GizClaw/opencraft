@@ -7,6 +7,8 @@ import (
 	"github.com/GizClaw/flowcraft/core/agent"
 	corememory "github.com/GizClaw/flowcraft/core/memory"
 	"github.com/GizClaw/flowcraft/core/resource"
+	"github.com/GizClaw/flowcraft/core/telemetry"
+	otellog "go.opentelemetry.io/otel/log"
 
 	"github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/utils/resourcedep"
@@ -110,10 +112,15 @@ func (o *archiveObserver) OnRunEnd(ctx context.Context, id agent.Identity, res *
 	if len(raw) <= 1 {
 		return
 	}
-	_ = o.sink.CommitTurn(ctx, corememory.Turn{
+	if err := o.sink.CommitTurn(ctx, corememory.Turn{
 		Scope:          o.settings.scopeFor(id),
 		ConversationID: id.ConversationID,
 		IdempotencyKey: res.RunID,
 		Messages:       renderConversation(raw),
-	})
+	}); err != nil {
+		telemetry.Error(ctx, "memory: archive commit failed",
+			otellog.String("conversation", id.ConversationID),
+			otellog.String("run", res.RunID),
+			otellog.String("error", err.Error()))
+	}
 }

@@ -277,7 +277,16 @@ func (a *App) DeleteSession(id string) error {
 			return fmt.Errorf("delete runtime session: %w", err)
 		}
 	}
-	return store.Remove(id)
+	if err := store.Remove(id); err != nil {
+		return err
+	}
+	a.mu.Lock()
+	if rec := a.rollouts[id]; rec != nil {
+		_ = rec.Close()
+		delete(a.rollouts, id)
+	}
+	a.mu.Unlock()
+	return nil
 }
 
 // ---- workspace ----
@@ -298,6 +307,7 @@ func (a *App) OpenWorkspace(dir string) error {
 	}
 	a.mu.Lock()
 	a.workDir = dir
+	a.closeRollouts()
 	a.mu.Unlock()
 	return a.rebuild()
 }

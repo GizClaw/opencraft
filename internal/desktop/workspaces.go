@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +12,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/GizClaw/flowcraft/core/telemetry"
+	otellog "go.opentelemetry.io/otel/log"
 
 	"github.com/GizClaw/opencraft/internal/config"
 )
@@ -79,7 +83,12 @@ func (a *App) recordWorkspace(path string) {
 	if err != nil {
 		return
 	}
-	_ = saveWorkspaceMeta(dir, path)
+	if err := saveWorkspaceMeta(dir, path); err != nil {
+		telemetry.Warn(context.Background(),
+			"desktop: save workspace history failed",
+			otellog.String("path", path),
+			otellog.String("error", err.Error()))
+	}
 }
 
 // Workspaces returns the previously opened workspaces, most recently

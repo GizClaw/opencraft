@@ -6,6 +6,8 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/resource"
+	"github.com/GizClaw/flowcraft/core/telemetry"
+	otellog "go.opentelemetry.io/otel/log"
 
 	"github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/skills"
@@ -66,7 +68,7 @@ type activateObserver struct {
 
 var _ agent.Observer = (*activateObserver)(nil)
 
-func (o *activateObserver) OnRunEnd(_ context.Context, id agent.Identity, res *agent.Result) {
+func (o *activateObserver) OnRunEnd(ctx context.Context, id agent.Identity, res *agent.Result) {
 	if res == nil || res.Status != agent.StatusCompleted {
 		return
 	}
@@ -91,7 +93,12 @@ func (o *activateObserver) OnRunEnd(_ context.Context, id agent.Identity, res *a
 		byAgent = map[string][]string{}
 	}
 	byAgent[id.AgentID] = append(byAgent[id.AgentID], names...)
-	_ = o.store.WriteState(id.ConversationID, activationsStateKey, byAgent)
+	if err := o.store.WriteState(id.ConversationID, activationsStateKey, byAgent); err != nil {
+		telemetry.Warn(ctx, "worldstate: persist skill activations failed",
+			otellog.String("conversation", id.ConversationID),
+			otellog.String("agent", id.AgentID),
+			otellog.String("error", err.Error()))
+	}
 }
 
 // consumeActivations reads and clears the model-requested skill names

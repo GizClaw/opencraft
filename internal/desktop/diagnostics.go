@@ -15,9 +15,11 @@ import (
 	coresandbox "github.com/GizClaw/flowcraft/core/sandbox"
 	"sigs.k8s.io/yaml"
 
+	"github.com/GizClaw/flowcraft/core/telemetry"
 	app "github.com/GizClaw/opencraft/internal/app"
 	"github.com/GizClaw/opencraft/internal/config"
 	ocsandbox "github.com/GizClaw/opencraft/internal/sandbox"
+	otellog "go.opentelemetry.io/otel/log"
 )
 
 // DiagnosticsReport is the environment/health summary shown on the
@@ -210,7 +212,11 @@ func (a *App) ClearCaches() (CacheClearResult, error) {
 	var bytes int64
 	for _, dir := range dirs {
 		bytes += dirSize(dir)
-		_ = os.RemoveAll(dir)
+		if err := os.RemoveAll(dir); err != nil {
+			telemetry.Warn(a.appContext(), "diagnostics: clear cache failed",
+				otellog.String("dir", dir),
+				otellog.String("error", err.Error()))
+		}
 	}
 	return CacheClearResult{Dirs: dirs, Bytes: bytes}, nil
 }

@@ -230,6 +230,15 @@ func (s *Store) History(_ context.Context, id string, n int) ([]message.Message,
 	return all, nil
 }
 
+// RolloutPath returns the JSONL rollout path for one conversation.
+// The file is append-only event stream owned by the rollout recorder.
+func (s *Store) RolloutPath(id string) (string, error) {
+	if err := requireID(id); err != nil {
+		return "", err
+	}
+	return filepath.Join(s.dir(id), "rollout.jsonl"), nil
+}
+
 // List returns metadata for every conversation in the store, newest
 // first.
 func (s *Store) List() ([]Meta, error) {

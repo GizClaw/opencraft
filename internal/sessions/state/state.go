@@ -18,6 +18,8 @@ import (
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/telemetry"
+	otellog "go.opentelemetry.io/otel/log"
 	_ "modernc.org/sqlite" // registers the "sqlite" driver.
 )
 
@@ -388,12 +390,50 @@ func (s *Store) ListSummaryNodes(ctx context.Context, threadID string) ([]Summar
 			&summary, &createdAt, &updatedAt, &metadata); err != nil {
 			return nil, fmt.Errorf("state: scan summary node: %w", err)
 		}
-		_ = json.Unmarshal([]byte(parents), &n.ParentIDs)
-		_ = json.Unmarshal([]byte(sources), &n.SourceIDs)
-		_ = json.Unmarshal([]byte(metadata), &n.Metadata)
-		_ = json.Unmarshal([]byte(summary), &n.Content)
-		n.CreatedAt, _ = time.Parse(time.RFC3339, createdAt)
-		n.UpdatedAt, _ = time.Parse(time.RFC3339, updatedAt)
+		if err := json.Unmarshal([]byte(parents), &n.ParentIDs); err != nil {
+			telemetry.Warn(ctx, "state: decode summary node field",
+				otellog.String("thread", threadID),
+				otellog.String("node", n.ID),
+				otellog.String("field", "parent_ids"),
+				otellog.String("error", err.Error()))
+		}
+		if err := json.Unmarshal([]byte(sources), &n.SourceIDs); err != nil {
+			telemetry.Warn(ctx, "state: decode summary node field",
+				otellog.String("thread", threadID),
+				otellog.String("node", n.ID),
+				otellog.String("field", "source_ids"),
+				otellog.String("error", err.Error()))
+		}
+		if err := json.Unmarshal([]byte(metadata), &n.Metadata); err != nil {
+			telemetry.Warn(ctx, "state: decode summary node field",
+				otellog.String("thread", threadID),
+				otellog.String("node", n.ID),
+				otellog.String("field", "metadata"),
+				otellog.String("error", err.Error()))
+		}
+		if err := json.Unmarshal([]byte(summary), &n.Content); err != nil {
+			telemetry.Warn(ctx, "state: decode summary node field",
+				otellog.String("thread", threadID),
+				otellog.String("node", n.ID),
+				otellog.String("field", "summary"),
+				otellog.String("error", err.Error()))
+		}
+		if t, err := time.Parse(time.RFC3339, createdAt); err != nil {
+			telemetry.Warn(ctx, "state: parse summary node created_at",
+				otellog.String("thread", threadID),
+				otellog.String("node", n.ID),
+				otellog.String("error", err.Error()))
+		} else {
+			n.CreatedAt = t
+		}
+		if t, err := time.Parse(time.RFC3339, updatedAt); err != nil {
+			telemetry.Warn(ctx, "state: parse summary node updated_at",
+				otellog.String("thread", threadID),
+				otellog.String("node", n.ID),
+				otellog.String("error", err.Error()))
+		} else {
+			n.UpdatedAt = t
+		}
 		nodes = append(nodes, n)
 	}
 	return nodes, rows.Err()

@@ -20,6 +20,7 @@ import (
 
 	app "github.com/GizClaw/opencraft/internal/app"
 	"github.com/GizClaw/opencraft/internal/config"
+	"github.com/GizClaw/opencraft/internal/rollout"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/undo"
 	"github.com/GizClaw/opencraft/internal/usage"
@@ -557,6 +558,12 @@ func (a *App) StartTurn(text string) (TurnStart, error) {
 	a.convRuns[contextID][turn.RunID()] = true
 	a.mu.Unlock()
 	go a.waitTurn(lease, turn, contextID)
+	a.recordRollout(a.appContext(), a.rolloutFor(a.appContext(), contextID),
+		rollout.Event{
+			Type:           rollout.TypeTurnStarted,
+			ConversationID: contextID,
+			RunID:          turn.RunID(),
+		}, "turn started")
 	return TurnStart{RunID: turn.RunID(), ContextID: contextID}, nil
 }
 
@@ -788,6 +795,11 @@ func (a *App) waitTurn(
 	if err != nil && end.Error == "" {
 		end.Error = err.Error()
 	}
+	typ := rollout.TypeTurnCompleted
+	if end.Status == "failed" || end.Error != "" {
+		typ = rollout.TypeTurnFailed
+	}
+	a.recordTurnEnd(a.appContext(), contextID, runID, typ, end.Status, end.Error, turnUsage)
 	a.bridge.Emit("turn_end", end)
 }
 

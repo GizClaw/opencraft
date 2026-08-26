@@ -235,8 +235,9 @@ func (s *Service) skillsSections(
 			Role: "system",
 			Text: skills.RenderSection(list),
 		})
+		// Never log the user's message text: reqText can contain
+		// anything the user typed. Only metadata is emitted.
 		attrs := []log.KeyValue{
-			log.String("query", truncateLog(reqText, 200)),
 			log.Int("count", len(list)),
 		}
 		for i, sc := range scored {
@@ -320,13 +321,6 @@ func (s *Service) stageSkill(sk skills.SkillMetadata, contextID string) string {
 		return ""
 	}
 	return root
-}
-
-func truncateLog(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "…"
 }
 
 // mergeSkillLists keeps mentioned skills first (mention order), then

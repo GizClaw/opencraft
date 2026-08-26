@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/agents"
 	app "github.com/GizClaw/opencraft/internal/app"
 	"github.com/GizClaw/opencraft/internal/config"
+	"github.com/GizClaw/opencraft/internal/rollout"
 	"github.com/GizClaw/opencraft/internal/runtime"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/undo"
@@ -92,6 +94,17 @@ type App struct {
 	// preTurnSnap holds each running turn's pre-state so waitTurn can
 	// pair it with the post-state and record an undo entry.
 	preTurnSnap map[string][]undo.FileState
+	// rollouts maps conversation ids to their JSONL event recorder.
+	rollouts map[string]*rollout.Recorder
+	// rolloutBufs buffer streamed text/reasoning per run until the
+	// finish delta, so assistant items are recorded whole.
+	rolloutBufs map[string]*rolloutBuffer
+}
+
+// rolloutBuffer accumulates one run's streamed assistant parts.
+type rolloutBuffer struct {
+	text      strings.Builder
+	reasoning strings.Builder
 }
 
 // New creates the application shell. Runtime assembly is deferred to
@@ -139,6 +152,8 @@ func New(opts Options) (*App, error) {
 		titling:        make(map[string]bool),
 		preTurnSnap:    make(map[string][]undo.FileState),
 		undo:           undo.New(workDir),
+		rollouts:       make(map[string]*rollout.Recorder),
+		rolloutBufs:    make(map[string]*rolloutBuffer),
 		otelShutdown:   shutdown,
 	}, nil
 }
@@ -155,6 +170,7 @@ func (a *App) Startup(ctx context.Context) {
 		defer a.mu.Unlock()
 		return a.runConvs[runID]
 	})
+	a.bridge.SetRollout(a.onStreamRollout)
 	if err := a.rebuild(); err != nil {
 		a.bridge.Emit("fatal", map[string]any{"error": err.Error()})
 	}
@@ -162,6 +178,7 @@ func (a *App) Startup(ctx context.Context) {
 
 // Shutdown tears down the runtime when the window closes.
 func (a *App) Shutdown(ctx context.Context) {
+	a.closeRollouts()
 	a.closeRuntime()
 	a.mu.Lock()
 	if a.usage != nil {

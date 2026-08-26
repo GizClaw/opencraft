@@ -126,9 +126,7 @@ func (a *App) autoTitle(ctx context.Context, contextID string) {
 	if title == "" {
 		telemetry.Warn(ctx, "desktop: auto title generation returned empty",
 			otellog.String("session", contextID),
-			otellog.String("first", firstPrefix(first)),
 			otellog.Int("response_parts", len(response.Message.Content.Parts)),
-			otellog.String("response_text", firstPrefix(response.Message.Content.Text())),
 			otellog.String("finish_reason", string(response.FinishReason)),
 			otellog.Int64("output_tokens", response.Usage.OutputTokens))
 		return
@@ -142,21 +140,12 @@ func (a *App) autoTitle(ctx context.Context, contextID string) {
 		a.bridge.Emit("session_updated", map[string]string{"id": contextID})
 		telemetry.Info(ctx, "desktop: auto title generated",
 			otellog.String("session", contextID),
-			otellog.String("title", title))
+			otellog.Int("title_chars", len(title)))
 	} else {
 		telemetry.Warn(ctx, "desktop: auto title write failed",
 			otellog.String("session", contextID),
 			otellog.String("error", err.Error()))
 	}
-}
-
-// firstPrefix returns up to 120 runes of s for diagnostics.
-func firstPrefix(s string) string {
-	runes := []rune(strings.TrimSpace(s))
-	if len(runes) > 120 {
-		return string(runes[:120]) + "…"
-	}
-	return string(runes)
 }
 
 // titleSystemContent renders the embedded gotmpl title prompt into a

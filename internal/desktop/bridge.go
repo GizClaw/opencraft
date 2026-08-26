@@ -29,6 +29,9 @@ type Bridge struct {
 	// lastRun is the run id of the most recent stream delta; the
 	// usage observer uses it to attribute a generation to its turn.
 	lastRun atomic.Value
+	// rollout is the optional stream event hook: the desktop records
+	// item events into the conversation's JSONL rollout (best-effort).
+	rollout func(ctx context.Context, runID string, delta agent.StreamDeltaPayload)
 }
 
 // NewBridge creates the frontend bridge.
@@ -48,6 +51,13 @@ func (b *Bridge) SetContext(ctx context.Context) {
 func (b *Bridge) SetRunConvResolver(fn func(runID string) string) {
 	b.mu.Lock()
 	b.runConv = fn
+	b.mu.Unlock()
+}
+
+// SetRollout installs the stream event recorder hook.
+func (b *Bridge) SetRollout(fn func(context.Context, string, agent.StreamDeltaPayload)) {
+	b.mu.Lock()
+	b.rollout = fn
 	b.mu.Unlock()
 }
 
@@ -90,6 +100,12 @@ func (b *Bridge) Sink(
 		ConversationID: b.conversationOf(runID),
 		Delta:          delta,
 	})
+	b.mu.Lock()
+	fn := b.rollout
+	b.mu.Unlock()
+	if fn != nil {
+		fn(ctx, runID, delta)
+	}
 	return nil
 }
 
