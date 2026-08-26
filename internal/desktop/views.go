@@ -15,6 +15,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/delegation/kanban"
 	"github.com/GizClaw/flowcraft/core/message"
 
+	"github.com/GizClaw/opencraft/internal/hooks"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 )
 
@@ -215,6 +216,11 @@ func (a *App) ResumeSession(id string) (string, error) {
 	a.think = string(think)
 	a.model = model
 	a.mu.Unlock()
+	a.fireHooks(a.appContext(), hooks.EventSessionStart, map[string]any{
+		"event":           hooks.EventSessionStart,
+		"source":          "resume",
+		"conversation_id": id,
+	})
 	return id, nil
 }
 

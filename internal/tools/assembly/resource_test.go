@@ -3,6 +3,7 @@ package assembly
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,8 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/tool"
+
+	"github.com/GizClaw/opencraft/internal/hooks"
 )
 
 const testSecret = "sk-1234567890abcdef"
@@ -253,5 +256,46 @@ func TestAssemblyRejectsInvalidMiddlewareSettings(t *testing.T) {
 				t.Fatal("factory must reject invalid middleware settings")
 			}
 		})
+	}
+}
+
+func TestAssemblyFiresToolHooks(t *testing.T) {
+	dir := t.TempDir()
+	hookOut := filepath.Join(dir, "hook.out")
+	cfg := fmt.Sprintf(`{
+		"hooks": {
+			"PreToolUse":  [{"matcher": "*", "hooks": [{"command": "echo pre >> %s"}]}],
+			"PostToolUse": [{"hooks": [{"command": "echo post >> %s"}]}]
+		}
+	}`, hookOut, hookOut)
+	path := filepath.Join(dir, "hooks.json")
+	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mgr, err := hooks.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f := AssemblyFactory{}
+	value, err := f.New(context.Background(), resource.Input{
+		Settings: []byte(`{"middlewares": {}}`),
+		Deps: map[string]any{
+			"tool":  stubSource{t: probeTool("ok")},
+			"hooks": mgr,
+		},
+	})
+	if err != nil {
+		t.Fatalf("assembly factory: %v", err)
+	}
+	asm := value.(*tool.Assembly)
+	runProbe(asm)
+
+	data, err := os.ReadFile(hookOut)
+	if err != nil {
+		t.Fatalf("hooks did not run: %v", err)
+	}
+	if !strings.Contains(string(data), "pre") || !strings.Contains(string(data), "post") {
+		t.Fatalf("hook output = %q, want pre and post", data)
 	}
 }

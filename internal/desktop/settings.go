@@ -15,6 +15,7 @@ import (
 
 	app "github.com/GizClaw/opencraft/internal/app"
 	"github.com/GizClaw/opencraft/internal/config"
+	"github.com/GizClaw/opencraft/internal/hooks"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/skills"
 )
@@ -280,6 +281,11 @@ func (a *App) DeleteSession(id string) error {
 	if err := store.Remove(id); err != nil {
 		return err
 	}
+	a.fireHooks(a.appContext(), hooks.EventSessionEnd, map[string]any{
+		"event":           hooks.EventSessionEnd,
+		"reason":          "delete",
+		"conversation_id": id,
+	})
 	a.mu.Lock()
 	if rec := a.rollouts[id]; rec != nil {
 		_ = rec.Close()
@@ -307,8 +313,14 @@ func (a *App) OpenWorkspace(dir string) error {
 	}
 	a.mu.Lock()
 	a.workDir = dir
+	previous := a.conversationID
 	a.closeRollouts()
 	a.mu.Unlock()
+	a.fireHooks(a.appContext(), hooks.EventSessionEnd, map[string]any{
+		"event":           hooks.EventSessionEnd,
+		"reason":          "workspace_switch",
+		"conversation_id": previous,
+	})
 	return a.rebuild()
 }
 

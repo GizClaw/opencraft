@@ -44,6 +44,8 @@ resources:
   execpolicy:
     kind: opencraft.execpolicy
     impl: manager
+    deps:
+      hooks: hooks
     settings:
       # Commands not in this list (or in approvals_path) ask the user
       # before running. Rules are token prefixes; "*" matches any
@@ -139,6 +141,24 @@ resources:
         allow_hosts: []
         deny_hosts: []
         allow_private: false
+  # External lifecycle hooks: command hooks from
+  # ~/.opencraft/config/hooks.json fire on PreToolUse / PostToolUse /
+  # UserPromptSubmit / PermissionRequest / TurnEnd. Each command
+  # receives one JSON event object on stdin; failures are logged and
+  # never block the agent loop.
+  hooks:
+    kind: opencraft.hooks
+    impl: local
+    settings:
+      path: ${env:OPEN_CRAFT_DATA_DIR}/config/hooks.json
+  # Subagent hook observer: subscribes to delegation kanban events and
+  # fires SubagentStart / SubagentStop hooks.
+  hooks.observer:
+    kind: opencraft.hooks.observer
+    impl: local
+    deps:
+      events: events
+      hooks: hooks
   box:
     kind: sandbox.Runner
     impl: opencraft
@@ -229,6 +249,7 @@ resources:
     kind: tool.Assembly
     impl: opencraft
     deps:
+      hooks: hooks
       tool: tool.exec
       tool.applypatch: tool.applypatch
       tool.webfetch: tool.webfetch

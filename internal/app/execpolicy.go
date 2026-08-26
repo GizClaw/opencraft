@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/GizClaw/opencraft/internal/app/worldstate"
+	"github.com/GizClaw/opencraft/internal/hooks"
 	"github.com/GizClaw/opencraft/internal/runtime"
 	"github.com/GizClaw/opencraft/internal/tools/permissions"
 )
@@ -42,6 +43,7 @@ type Manager struct {
 	allowlist *sandbox.Allowlist
 	path      string
 	mu        sync.Mutex
+	hooks     *hooks.Manager
 }
 
 // New loads static rules plus the project approvals file (when it
@@ -77,6 +79,14 @@ func (m *Manager) Rules() []string {
 	return m.allowlist.Rules()
 }
 
+// SetHooks wires the external lifecycle hooks fired on permission
+// requests (non-blocking; nil disables).
+func (m *Manager) SetHooks(h *hooks.Manager) {
+	m.mu.Lock()
+	m.hooks = h
+	m.mu.Unlock()
+}
+
 // Approve implements sandbox.ApprovalFunc: it asks the user through
 // the core prompt protocol and grows the allowlist when the user
 // chooses to always allow the command. Ask failures are fail-closed.
@@ -94,6 +104,17 @@ func (m *Manager) Approve(
 		return sandbox.Allow, nil
 	}
 	command := NormaliseCommand(req.Exec)
+	m.mu.Lock()
+	hookMgr := m.hooks
+	m.mu.Unlock()
+	if hookMgr != nil {
+		hookMgr.Fire(ctx, hooks.EventPermissionRequest, map[string]any{
+			"event":   hooks.EventPermissionRequest,
+			"tool":    "exec_command",
+			"command": command,
+			"reason":  req.Reason,
+		})
+	}
 	host, ok := agent.HostFromContext(ctx)
 	if !ok {
 		return sandbox.Deny, errdefs.NotAvailablef(
@@ -276,6 +297,9 @@ func (execPolicyResource) Spec() resource.Spec {
 	return resource.Spec{
 		Kind: "opencraft.execpolicy",
 		Impl: "manager",
+		Deps: []resource.DepSpec{{
+			Name: "hooks", Type: hooks.ResourceKind, Required: false,
+		}},
 	}
 }
 
@@ -289,7 +313,16 @@ func (execPolicyResource) New(
 		return nil, errdefs.Validationf(
 			"opencraft execpolicy: decode settings: %v", err)
 	}
-	return New(settings.AllowedCommands, settings.ApprovalsPath)
+	mgr, err := New(settings.AllowedCommands, settings.ApprovalsPath)
+	if err != nil {
+		return nil, err
+	}
+	if dep, ok := in.Dep("hooks"); ok {
+		if hookMgr, ok := dep.(*hooks.Manager); ok {
+			mgr.SetHooks(hookMgr)
+		}
+	}
+	return mgr, nil
 }
 
 var _ permissions.Policy = (*Manager)(nil)

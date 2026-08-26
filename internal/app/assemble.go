@@ -43,6 +43,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/agents"
 	"github.com/GizClaw/opencraft/internal/app/worldstate"
 	"github.com/GizClaw/opencraft/internal/config"
+	"github.com/GizClaw/opencraft/internal/hooks"
 	opmemory "github.com/GizClaw/opencraft/internal/memory"
 	"github.com/GizClaw/opencraft/internal/sandbox"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
@@ -163,6 +164,8 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 		}
 	}
 	reg.MustRegister(execPolicyResource{})
+	reg.MustRegister(hooks.Factory{})
+	reg.MustRegister(hooks.ObserverFactory{})
 
 	builder := runtimecore.NewBuilder(reg)
 	if err := builder.WithLoader(loader); err != nil {

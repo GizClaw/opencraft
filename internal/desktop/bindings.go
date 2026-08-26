@@ -20,6 +20,7 @@ import (
 
 	app "github.com/GizClaw/opencraft/internal/app"
 	"github.com/GizClaw/opencraft/internal/config"
+	"github.com/GizClaw/opencraft/internal/hooks"
 	"github.com/GizClaw/opencraft/internal/rollout"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/undo"
@@ -507,6 +508,11 @@ func (a *App) StartTurn(text string) (TurnStart, error) {
 	// untracked, captured before the turn runs. Non-git workspaces
 	// yield an empty snapshot and undo stays unavailable.
 	before := gitSnapshot(ctx, a.snapshotWorkDir())
+	a.fireHooks(ctx, hooks.EventUserPromptSubmit, map[string]any{
+		"event":           hooks.EventUserPromptSubmit,
+		"conversation_id": contextID,
+		"prompt":          text,
+	})
 	key := coresession.Key{AgentID: "assistant", ContextID: contextID}
 	lease, err := rt.Sessions().Open(ctx, key)
 	if err != nil {
@@ -800,6 +806,19 @@ func (a *App) waitTurn(
 		typ = rollout.TypeTurnFailed
 	}
 	a.recordTurnEnd(a.appContext(), contextID, runID, typ, end.Status, end.Error, turnUsage)
+	a.fireHooks(a.appContext(), hooks.EventTurnEnd, map[string]any{
+		"event":           hooks.EventTurnEnd,
+		"conversation_id": contextID,
+		"run_id":          runID,
+		"status":          end.Status,
+		"error":           end.Error,
+		"usage": map[string]int64{
+			"input_tokens":     turnUsage.InputTokens,
+			"output_tokens":    turnUsage.OutputTokens,
+			"total_tokens":     turnUsage.TotalTokens,
+			"reasoning_tokens": turnUsage.ReasoningTokens,
+		},
+	})
 	a.bridge.Emit("turn_end", end)
 }
 
