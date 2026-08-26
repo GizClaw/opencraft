@@ -10,10 +10,13 @@ import {
   Folder,
   Lock,
   Loader2,
+  Redo2,
   RotateCcw,
   Send,
   ShieldCheck,
+  Sparkles,
   Square,
+  Undo2,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -22,7 +25,7 @@ import { OnFileDrop, OnFileDropOff } from '../../wailsjs/runtime/runtime';
 import { api } from '../lib/api';
 import { COMPACT_SUMMARY_PREFIX } from '../lib/compact';
 import { useStore } from '../lib/store';
-import type { FileNode } from '../lib/types';
+import type { SkillDTO, UndoState } from '../lib/types';
 import type { MessageView } from '../lib/store';
 import { InteractionCard } from './InteractionCard';
 import { ApplyPatchView, ToolCard } from './ToolCard';
@@ -160,7 +163,6 @@ export function ChatView() {
   const busy = conv?.busy ?? false;
   const configured = useStore((s) => s.configured);
   const pendingInteracts = conv?.pendingInteracts ?? [];
-  const workspace = useStore((s) => s.workspace);
   const send = useStore((s) => s.send);
   const cancelRun = useStore((s) => s.cancelRun);
   const subagentCards = useStore((s) => s.subagentCards);
@@ -179,20 +181,35 @@ export function ChatView() {
   const [input, setInput] = useState('');
   const [confirmYolo, setConfirmYolo] = useState(false);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
+  const [undoAvail, setUndoAvail] = useState<UndoState>({
+    can_undo: false,
+    can_redo: false,
+  });
+  const [undoNotice, setUndoNotice] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const [mention, setMention] = useState<{ open: boolean; query: string }>({
-    open: false,
-    query: '',
-  });
-
-  // Reset the @ mention file cache when the workspace changes so the
-  // picker lists the new workspace's files.
-  useEffect(() => {
-    mentionLoaded.current = false;
-  }, [workspace]);
-  const [mentionItems, setMentionItems] = useState<FileNode[]>([]);
-  const mentionLoaded = useRef(false);
+  const highlightRef = useRef<HTMLDivElement>(null);
+  // Inline mention picker: "@query" searches workspace files,
+  // "$query" completes skill names. Arrow keys move, Enter inserts,
+  // Escape closes.
+  type MentionKind = 'file' | 'skill';
+  interface MentionItem {
+    key: string;
+    label: string;
+    sub: string;
+    isDir?: boolean;
+    trigger: '@' | '$';
+    insert: string;
+  }
+  const [mention, setMention] = useState<{
+    kind: MentionKind;
+    query: string;
+    items: MentionItem[];
+    active: number | null;
+  } | null>(null);
+  const fileSearchSeq = useRef(0);
+  const fileSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const skillsCache = useRef<SkillDTO[] | null>(null);
   // Stick-to-bottom: while the agent streams, the view follows the
   // latest output with an instant snap. Smooth-scrolling on every
   // delta races when the window is occluded (switching screens) and
@@ -228,6 +245,34 @@ export function ChatView() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, pendingInteracts, stick]);
 
+  // Refresh undo/redo availability when a turn finishes or the
+  // conversation switches (captures happen on turn end).
+  useEffect(() => {
+    if (busy) return;
+    void api
+      .undoState()
+      .then(setUndoAvail)
+      .catch(() => {});
+  }, [busy, current]);
+
+  const runUndo = async (redo: boolean) => {
+    try {
+      const files = redo ? await api.redoChange() : await api.undoChange();
+      setUndoNotice(
+        redo
+          ? t('chat.redoDone', { count: files.length })
+          : t('chat.undoDone', { count: files.length }),
+      );
+      void api
+        .undoState()
+        .then(setUndoAvail)
+        .catch(() => {});
+    } catch {
+      setUndoNotice(redo ? t('chat.redoEmpty') : t('chat.undoEmpty'));
+    }
+    window.setTimeout(() => setUndoNotice(''), 3000);
+  };
+
   useEffect(() => {
     const onVisibility = () => {
       if (document.visibilityState === 'visible' && stickRef.current) {
@@ -255,38 +300,133 @@ export function ChatView() {
 
   const onInputChange = (value: string) => {
     setInput(value);
-    const match = value.match(/(?:^|\s)@([\w./-]*)$/);
-    if (match) {
-      setMention({ open: true, query: match[1] });
-      if (!mentionLoaded.current) {
-        mentionLoaded.current = true;
+    const fileMatch = value.match(/(?:^|\s)@([\w./-]*)$/);
+    const skillMatch = value.match(/(?:^|\s)\$([a-z0-9-]*)$/i);
+    if (fileMatch) {
+      const query = fileMatch[1];
+      setMention((m) =>
+        m && m.kind === 'file'
+          ? { ...m, query }
+          : { kind: 'file', query, items: [], active: null },
+      );
+      if (fileSearchTimer.current) clearTimeout(fileSearchTimer.current);
+      fileSearchTimer.current = setTimeout(() => {
+        const seq = ++fileSearchSeq.current;
         void api
-          .listDir(workspace)
-          .then(setMentionItems)
-          .catch(() => setMentionItems([]));
+          .searchFiles(query)
+          .then((hits) => {
+            if (seq !== fileSearchSeq.current) return;
+            const list = Array.isArray(hits) ? hits : [];
+            setMention((m) =>
+              m && m.kind === 'file'
+                ? {
+                    ...m,
+                    items: list.map((h) => ({
+                      key: h.path,
+                      label: h.path,
+                      sub: '',
+                      isDir: h.is_dir,
+                      trigger: '@' as const,
+                      insert: '@' + h.path,
+                    })),
+                  }
+                : m,
+            );
+          })
+          .catch(() => {
+            if (seq === fileSearchSeq.current) {
+              setMention((m) =>
+                m && m.kind === 'file' ? { ...m, items: [] } : m,
+              );
+            }
+          });
+      }, 120);
+    } else if (skillMatch) {
+      const query = skillMatch[1];
+      setMention((m) =>
+        m && m.kind === 'skill'
+          ? { ...m, query }
+          : { kind: 'skill', query, items: [], active: null },
+      );
+      const apply = (skills: SkillDTO[]) => {
+        const q = query.toLowerCase();
+        setMention((m) =>
+          m && m.kind === 'skill'
+            ? {
+                ...m,
+                items: skills
+                  .filter((s) => s.name.toLowerCase().includes(q))
+                  .map((s) => ({
+                    key: s.name,
+                    label: s.name,
+                    sub: s.description,
+                    trigger: '$' as const,
+                    insert: '$' + s.name,
+                  })),
+              }
+            : m,
+        );
+      };
+      if (skillsCache.current) {
+        apply(skillsCache.current);
+      } else {
+        void api
+          .skills()
+          .then((skills) => {
+            skillsCache.current = skills;
+            apply(skills);
+          })
+          .catch(() => {
+            skillsCache.current = [];
+            setMention((m) =>
+              m && m.kind === 'skill' ? { ...m, items: [] } : m,
+            );
+          });
       }
     } else {
-      setMention((m) => (m.open ? { open: false, query: '' } : m));
+      setMention(null);
     }
   };
 
-  const insertMention = (node: FileNode) => {
-    const match = input.match(/(?:^|\s)@([\w./-]*)$/);
+  const insertMention = (item: MentionItem) => {
+    const re =
+      item.trigger === '@'
+        ? /(?:^|\s)@([\w./-]*)$/
+        : /(?:^|\s)\$([a-z0-9-]*)$/i;
+    const match = input.match(re);
     let next: string;
     if (match) {
-      const at = match.index! + match[0].indexOf('@');
-      next = input.slice(0, at) + node.path;
+      const at = match.index! + match[0].indexOf(item.trigger);
+      next = input.slice(0, at) + item.insert;
     } else {
-      next = input + node.path;
+      next = input + item.insert;
     }
     setInput(next + ' ');
-    setMention({ open: false, query: '' });
+    setMention(null);
     inputRef.current?.focus();
   };
 
-  const filteredMentions = mentionItems.filter((n) =>
-    n.name.toLowerCase().includes(mention.query.toLowerCase()),
-  );
+  // renderHighlightedInput colors @/$ mention tokens in the composer
+  // mirror layer; the textarea itself renders transparent text so the
+  // highlight shows through while selection stays native.
+  const renderHighlightedInput = (text: string) => {
+    const nodes: React.ReactNode[] = [];
+    const re = /@[\w./-]+|\$[a-z0-9-]+/gi;
+    let last = 0;
+    let m: RegExpExecArray | null;
+    let key = 0;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > last) nodes.push(text.slice(last, m.index));
+      nodes.push(
+        <span key={key++} className="text-accent">
+          {m[0]}
+        </span>,
+      );
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) nodes.push(text.slice(last));
+    return nodes;
+  };
 
   const sessionTitle = sessions.find((s) => s.id === current)?.title;
   const headerTitle =
@@ -306,6 +446,25 @@ export function ChatView() {
           </span>
         )}
         <span className="flex-1" />
+        {undoNotice && (
+          <span className="mr-1 text-xs text-dim">{undoNotice}</span>
+        )}
+        <button
+          onClick={() => void runUndo(false)}
+          disabled={!undoAvail.can_undo}
+          title={t('chat.undo')}
+          className="rounded-lg border border-edge p-1.5 text-dim transition-colors hover:text-fg disabled:opacity-40"
+        >
+          <Undo2 size={13} />
+        </button>
+        <button
+          onClick={() => void runUndo(true)}
+          disabled={!undoAvail.can_redo}
+          title={t('chat.redo')}
+          className="ml-1 rounded-lg border border-edge p-1.5 text-dim transition-colors hover:text-fg disabled:opacity-40"
+        >
+          <Redo2 size={13} />
+        </button>
         {subagentCards.length > 0 && (
           <button
             onClick={toggleSubagentPanel}
@@ -466,54 +625,124 @@ export function ChatView() {
               </span>
             )}
           </div>
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={(e) => onInputChange(e.target.value)}
-            onCompositionStart={() => (composingRef.current = true)}
-            onCompositionEnd={() => (composingRef.current = false)}
-            onKeyDown={(e) => {
-              if (e.key === 'Escape' && mention.open) {
-                setMention({ open: false, query: '' });
-                return;
+          <div className="relative">
+            <div
+              ref={highlightRef}
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-4 pt-3 text-sm text-fg"
+            >
+              {renderHighlightedInput(input)}
+            </div>
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={(e) => onInputChange(e.target.value)}
+              onCompositionStart={() => (composingRef.current = true)}
+              onCompositionEnd={() => (composingRef.current = false)}
+              onScroll={() => {
+                if (highlightRef.current) {
+                  highlightRef.current.scrollTop =
+                    inputRef.current?.scrollTop ?? 0;
+                }
+              }}
+              onKeyDown={(e) => {
+                if (mention && e.key === 'Escape') {
+                  setMention(null);
+                  return;
+                }
+                if (
+                  mention &&
+                  mention.items.length > 0 &&
+                  (e.key === 'ArrowDown' || e.key === 'ArrowUp')
+                ) {
+                  e.preventDefault();
+                  const delta = e.key === 'ArrowDown' ? 1 : -1;
+                  setMention((m) =>
+                    m
+                      ? {
+                          ...m,
+                          active:
+                            m.active == null
+                              ? delta === 1
+                                ? 0
+                                : m.items.length - 1
+                              : (m.active + delta + m.items.length) %
+                                m.items.length,
+                        }
+                      : m,
+                  );
+                  return;
+                }
+                if (mention && e.key === 'Enter' && !e.shiftKey) {
+                  const item = mention.items[mention.active ?? 0];
+                  if (item) {
+                    e.preventDefault();
+                    insertMention(item);
+                    return;
+                  }
+                }
+                if (mention && e.key === 'Enter') {
+                  e.preventDefault();
+                  return;
+                }
+                if (
+                  e.key === 'Enter' &&
+                  !e.shiftKey &&
+                  !e.nativeEvent.isComposing &&
+                  !composingRef.current &&
+                  e.keyCode !== 229
+                ) {
+                  e.preventDefault();
+                  submit();
+                }
+              }}
+              rows={3}
+              placeholder={
+                configured
+                  ? t('chat.placeholder')
+                  : t('chat.placeholderUnconfigured')
               }
-              if (
-                e.key === 'Enter' &&
-                !e.shiftKey &&
-                !e.nativeEvent.isComposing &&
-                !composingRef.current &&
-                e.keyCode !== 229
-              ) {
-                e.preventDefault();
-                submit();
-              }
-            }}
-            rows={3}
-            placeholder={
-              configured
-                ? t('chat.placeholder')
-                : t('chat.placeholderUnconfigured')
-            }
-            disabled={!configured}
-            className="w-full resize-none bg-transparent px-4 pt-3 text-sm outline-none disabled:opacity-50"
-          />
-          {mention.open && (
+              disabled={!configured}
+              className="relative w-full resize-none bg-transparent px-4 pt-3 text-sm text-transparent caret-fg outline-none disabled:opacity-50"
+            />
+          </div>
+          {mention && (
             <div className="mx-3 mb-2 max-h-48 overflow-y-auto rounded-lg border border-edge bg-panel2 shadow-xl">
-              {filteredMentions.length === 0 ? (
-                <div className="px-3 py-2 text-xs text-dim">—</div>
+              {mention.items.length === 0 ? (
+                <div className="px-3 py-2 text-xs text-dim">
+                  {mention.query
+                    ? t('chat.mentionNoMatch')
+                    : mention.kind === 'file'
+                      ? t('chat.mentionSearchHint')
+                      : t('chat.mentionSkillHint')}
+                </div>
               ) : (
-                filteredMentions.slice(0, 12).map((n) => (
+                mention.items.slice(0, 12).map((n, i) => (
                   <button
-                    key={n.path}
+                    key={n.key}
                     onClick={() => insertMention(n)}
-                    className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-panel"
+                    onMouseEnter={() =>
+                      setMention((m) => (m ? { ...m, active: i } : m))
+                    }
+                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm ${
+                      i === mention.active
+                        ? 'bg-accent/15 text-accent'
+                        : 'hover:bg-panel'
+                    }`}
                   >
-                    {n.is_dir ? (
-                      <Folder size={13} className="text-accent shrink-0" />
+                    {n.trigger === '@' ? (
+                      n.isDir ? (
+                        <Folder size={13} className="text-accent shrink-0" />
+                      ) : (
+                        <File size={13} className="text-dim shrink-0" />
+                      )
                     ) : (
-                      <File size={13} className="text-dim shrink-0" />
+                      <Sparkles size={13} className="text-accent shrink-0" />
                     )}
-                    <span className="truncate">{n.name}</span>
+                    <span className="shrink-0">{n.label}</span>
+                    {n.sub && (
+                      <span className="truncate text-xs text-dim">{n.sub}</span>
+                    )}
                   </button>
                 ))
               )}

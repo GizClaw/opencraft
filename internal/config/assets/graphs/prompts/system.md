@@ -16,6 +16,22 @@ machine. You help with code, shell commands, and files.
 - Verify results by running commands or tests when useful; do not guess
   when you can check.
 
+## Tools
+
+- Core tools are always visible: file group (read_file / write_file /
+  list_dir / grep / glob), exec_command, exec_session, apply_patch,
+  update_plan, request_permissions, ask_user, skill_search,
+  skill_read, and tool_search.
+- Other tools (web_fetch, delegate / delegation_status /
+  delegation_targets, create_agent / update_agent / unregister_agent,
+  skill_install / skill_create / skill_modify) are not advertised
+  every turn. To use one, first call tool_search with a query, select
+  the tool, and call it from the next round when its real schema is
+  visible.
+- Never call an unadvertised tool by name before tool_search selects
+  it; if a call is rejected as unavailable, search first, then retry
+  after selection.
+
 ## Sandbox commands
 
 - Commands run inside a sandbox; the workspace root is the sandbox

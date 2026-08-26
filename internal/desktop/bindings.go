@@ -21,6 +21,7 @@ import (
 	app "github.com/GizClaw/opencraft/internal/app"
 	"github.com/GizClaw/opencraft/internal/config"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
+	"github.com/GizClaw/opencraft/internal/undo"
 	"github.com/GizClaw/opencraft/internal/usage"
 )
 
@@ -142,6 +143,26 @@ func (a *App) ModelUsage() ([]ModelUsageStat, error) {
 		})
 	}
 	return out, nil
+}
+
+// MemoryConfig returns the effective memory settings (embedded
+// defaults overlaid with the user layer).
+func (a *App) MemoryConfig() (config.MemorySettings, error) {
+	return config.LoadMemory(a.userDir)
+}
+
+// SaveMemory persists the memory settings into the user configuration
+// layer and rebuilds the runtime.
+func (a *App) SaveMemory(settings config.MemorySettings) error {
+	if settings.MaxRawMessages < 0 ||
+		settings.PreserveRecent < 0 ||
+		settings.MaxSummaryBytes < 0 {
+		return errors.New("memory: settings must not be negative")
+	}
+	if err := config.WriteMemory(a.userDir, settings); err != nil {
+		return err
+	}
+	return a.rebuild()
 }
 
 // ModelUsageSeries returns one model's usage bucketed by hour or day,
@@ -481,6 +502,10 @@ func (a *App) StartTurn(text string) (TurnStart, error) {
 			return TurnStart{}, fmt.Errorf("persist permission mode: %w", err)
 		}
 	}
+	// Pre-turn snapshot for undo: files git reports as changed or
+	// untracked, captured before the turn runs. Non-git workspaces
+	// yield an empty snapshot and undo stays unavailable.
+	before := gitSnapshot(ctx, a.snapshotWorkDir())
 	key := coresession.Key{AgentID: "assistant", ContextID: contextID}
 	lease, err := rt.Sessions().Open(ctx, key)
 	if err != nil {
@@ -521,6 +546,7 @@ func (a *App) StartTurn(text string) (TurnStart, error) {
 
 	a.mu.Lock()
 	a.turns[turn.RunID()] = turn
+	a.preTurnSnap[turn.RunID()] = before
 	a.runConvs[turn.RunID()] = contextID
 	if a.convRuns == nil {
 		a.convRuns = make(map[string]map[string]bool)
@@ -710,9 +736,21 @@ func (a *App) waitTurn(
 	store := a.sessions
 	usageStore := a.usage
 	wd := a.workDir
+	undoStore := a.undo
+	before, hadBefore := a.preTurnSnap[runID]
+	delete(a.preTurnSnap, runID)
 	a.mu.Unlock()
 	_ = lease.Close()
 
+	// Post-turn capture: pair the pre-state with the state left after
+	// the turn and record an undo entry (identical pairs are dropped by
+	// the store). The UI refreshes its undo/redo buttons via the event.
+	if undoStore != nil && hadBefore && len(before) > 0 {
+		after := gitSnapshot(ctx, wd)
+		if _, err := undoStore.Capture(ctx, contextID, before, after); err == nil {
+			a.emitUndoState(contextID)
+		}
+	}
 	if store != nil && turnUsage.TotalTokens > 0 {
 		_ = store.RecordUsage(context.Background(), contextID, turnUsage)
 	}
@@ -751,4 +789,68 @@ func (a *App) waitTurn(
 		end.Error = err.Error()
 	}
 	a.bridge.Emit("turn_end", end)
+}
+
+// UndoChange reverts the latest captured turn's file changes for the
+// current conversation and returns the restored paths.
+func (a *App) UndoChange() ([]string, error) {
+	a.mu.Lock()
+	st := a.undo
+	id := a.conversationID
+	a.mu.Unlock()
+	if st == nil {
+		return nil, errors.New("undo is unavailable")
+	}
+	files, err := st.Undo(a.appContext(), id)
+	if err != nil {
+		return nil, err
+	}
+	a.emitUndoState(id)
+	return files, nil
+}
+
+// RedoChange re-applies the latest undone turn's changes for the
+// current conversation and returns the restored paths.
+func (a *App) RedoChange() ([]string, error) {
+	a.mu.Lock()
+	st := a.undo
+	id := a.conversationID
+	a.mu.Unlock()
+	if st == nil {
+		return nil, errors.New("undo is unavailable")
+	}
+	files, err := st.Redo(a.appContext(), id)
+	if err != nil {
+		return nil, err
+	}
+	a.emitUndoState(id)
+	return files, nil
+}
+
+// UndoState reports whether undo/redo have anything to apply for the
+// current conversation.
+func (a *App) UndoState() (undo.State, error) {
+	a.mu.Lock()
+	st := a.undo
+	id := a.conversationID
+	a.mu.Unlock()
+	if st == nil {
+		return undo.State{}, nil
+	}
+	return st.Available(a.appContext(), id)
+}
+
+// emitUndoState pushes the current undo availability to the UI.
+func (a *App) emitUndoState(contextID string) {
+	a.mu.Lock()
+	st := a.undo
+	a.mu.Unlock()
+	if st == nil || a.bridge == nil {
+		return
+	}
+	state, err := st.Available(a.appContext(), contextID)
+	if err != nil {
+		return
+	}
+	a.bridge.Emit("undo_state", state)
 }

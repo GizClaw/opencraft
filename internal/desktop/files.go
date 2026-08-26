@@ -58,6 +58,77 @@ func (a *App) ListDir(dir string) ([]FileNode, error) {
 	return out, nil
 }
 
+// SearchFileHit is one workspace path matched by the @ mention search.
+// Path is workspace-relative with forward slashes, so the model can
+// resolve it against the worldstate workspace root.
+type SearchFileHit struct {
+	Path  string `json:"path"`
+	IsDir bool   `json:"is_dir"`
+}
+
+const (
+	defaultFileSearchLimit = 50
+	maxFileSearchVisits    = 20000
+)
+
+// SearchFiles returns workspace-relative paths matching query
+// (case-insensitive substring on the relative path). The walk is
+// bounded, does not follow symlinked directories, and skips hidden
+// entries plus build artifacts; directories are included so the picker
+// can show folders too.
+func (a *App) SearchFiles(query string, limit int) ([]SearchFileHit, error) {
+	wd := a.snapshotWorkDir()
+	if strings.TrimSpace(query) == "" {
+		return []SearchFileHit{}, nil
+	}
+	if limit <= 0 || limit > 500 {
+		limit = defaultFileSearchLimit
+	}
+	q := strings.ToLower(query)
+	hits := make([]SearchFileHit, 0, limit)
+	visits := 0
+	_ = filepath.WalkDir(wd, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || path == wd {
+			return nil
+		}
+		visits++
+		if visits > maxFileSearchVisits {
+			return fs.SkipAll
+		}
+		name := d.Name()
+		if strings.HasPrefix(name, ".") {
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() && skipDirEntry(name) {
+			return fs.SkipDir
+		}
+		rel, err := filepath.Rel(wd, path)
+		if err != nil {
+			return nil
+		}
+		if strings.Contains(strings.ToLower(filepath.ToSlash(rel)), q) {
+			hits = append(hits, SearchFileHit{
+				Path:  filepath.ToSlash(rel),
+				IsDir: d.IsDir(),
+			})
+			if len(hits) >= limit {
+				return fs.SkipAll
+			}
+		}
+		return nil
+	})
+	sort.Slice(hits, func(i, j int) bool {
+		if hits[i].IsDir != hits[j].IsDir {
+			return hits[i].IsDir
+		}
+		return strings.ToLower(hits[i].Path) < strings.ToLower(hits[j].Path)
+	})
+	return hits, nil
+}
+
 // OpenPath opens a file or directory with the system default
 // application.
 func (a *App) OpenPath(path string) error {

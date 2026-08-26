@@ -45,10 +45,11 @@ type TurnStore interface {
 // ContextProvider (inject), so memory is wired through hooks and
 // configuration rather than called ad hoc.
 type Assembly struct {
-	store    TurnStore
-	policy   Policy
-	generate generateFunc // nil => buffer fold only
-	now      func() time.Time
+	store             TurnStore
+	policy            Policy
+	generate          generateFunc // nil => buffer fold only
+	now               func() time.Time
+	replayFullHistory bool
 }
 
 // generateFunc is the unary generation entry used for LLM condensation.
@@ -85,6 +86,14 @@ func WithRouter(router *route.Router) AssemblyOption {
 	}
 }
 
+// WithReplayFullHistory switches the context view from "folded summary +
+// bounded raw window" to "full history replay". Folding is then left to
+// the graph's budget-driven compact node; Context returns every stored
+// message (respecting an explicit request budget when one is set).
+func WithReplayFullHistory(enabled bool) AssemblyOption {
+	return func(a *Assembly) { a.replayFullHistory = enabled }
+}
+
 // withGenerate wires a custom generation entry; tests use it to avoid
 // provider I/O while exercising the condensation path.
 func withGenerate(fn generateFunc) AssemblyOption {
@@ -109,6 +118,11 @@ func NewAssembly(store TurnStore, opts ...AssemblyOption) *Assembly {
 }
 
 var _ memory.Assembly = (*Assembly)(nil)
+
+// ReplayFullHistory reports whether the assembly is in full-replay mode.
+// The worldstate uses it to decide between memory sections and the
+// board-level history replay channel.
+func (a *Assembly) ReplayFullHistory() bool { return a.replayFullHistory }
 
 // CommitTurn implements memory.TurnSink: persists canonical messages and
 // folds the buffer when the raw window is exceeded. It is the hook entry
@@ -346,6 +360,9 @@ func (a *Assembly) Context(ctx context.Context, req memory.ContextRequest) (memo
 	if err := req.Validate(); err != nil {
 		return memory.ContextResult{}, err
 	}
+	if a.replayFullHistory {
+		return a.replayContext(ctx, req)
+	}
 	nodes, err := a.store.ListSummaryNodes(ctx, req.ConversationID)
 	if err != nil {
 		return memory.ContextResult{}, memory.NewError(memory.KindInternal, "context", err)
@@ -448,6 +465,58 @@ func (a *Assembly) Context(ctx context.Context, req memory.ContextRequest) (memo
 		Items:      items,
 		TokenCount: 0,
 		Truncated:  truncated || len(appended) < rawCount,
+	}, nil
+}
+
+// replayContext returns every stored message as a raw context item in
+// chronological order, skipping summary nodes entirely. A caller that
+// sets a budget still gets it honored; the opencraft worldstate passes
+// an empty budget in replay mode so the graph compact node owns the
+// fold decision.
+func (a *Assembly) replayContext(
+	ctx context.Context,
+	req memory.ContextRequest,
+) (memory.ContextResult, error) {
+	total, err := a.store.CountMessages(ctx, req.ConversationID)
+	if err != nil {
+		return memory.ContextResult{}, memory.NewError(memory.KindInternal, "context", err)
+	}
+	if total == 0 {
+		return memory.ContextResult{}, nil
+	}
+	msgs, err := a.store.LoadMessagesRange(ctx, req.ConversationID, 0, total-1)
+	if err != nil {
+		return memory.ContextResult{}, memory.NewError(memory.KindInternal, "context", err)
+	}
+	items := make([]memory.ContextItem, 0, len(msgs))
+	totalChars := 0
+	truncated := false
+	for i, msg := range msgs {
+		text := msg.Content.Text()
+		if text == "" {
+			continue
+		}
+		if !fitsBudget(req.Budget, len(items), totalChars, len(text)) {
+			truncated = true
+			break
+		}
+		id := stableMessageID(req.ConversationID, i, msg)
+		items = append(items, memory.ContextItem{
+			ID:          id,
+			Kind:        memory.ContextRawMessage,
+			SourceClass: memory.ContextSourceRecent,
+			Content:     msg.Content.Clone(),
+			Score:       1,
+			Sources:     []memory.SourceRef{{Kind: memory.SourceMessage, ID: id}},
+			MessageRole: msg.Role,
+			Sequence:    uint64(i),
+		})
+		totalChars += len(text)
+	}
+	return memory.ContextResult{
+		Items:      items,
+		TokenCount: 0,
+		Truncated:  truncated,
 	}, nil
 }
 

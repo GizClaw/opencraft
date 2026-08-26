@@ -689,3 +689,55 @@ func TestAssemblyContextLoadsOnlyRawWindow(t *testing.T) {
 		t.Fatalf("items = %d, want 6 raw messages", len(res.Items))
 	}
 }
+
+func TestAssemblyReplayFullHistoryContext(t *testing.T) {
+	ctx := context.Background()
+	store := &fakeTurnStore{msgs: map[string][]message.Message{}}
+	a := NewAssembly(store, WithReplayFullHistory(true))
+	if !a.ReplayFullHistory() {
+		t.Fatal("ReplayFullHistory must be true when configured")
+	}
+	store.msgs["s-1"] = []message.Message{
+		message.NewTextMessage(message.RoleUser, "hello"),
+		message.NewTextMessage(message.RoleAssistant, "hi there"),
+		message.NewTextMessage(message.RoleTool, "tool output"),
+	}
+
+	res, err := a.Context(ctx, memory.ContextRequest{
+		Scope:          memory.Scope{RuntimeID: "rt"},
+		ConversationID: "s-1",
+		Budget:         memory.Budget{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Items) != 3 {
+		t.Fatalf("replay items = %d, want all 3 messages", len(res.Items))
+	}
+	wantRoles := []message.Role{
+		message.RoleUser, message.RoleAssistant, message.RoleTool,
+	}
+	for i, want := range wantRoles {
+		item := res.Items[i]
+		if item.Kind != memory.ContextRawMessage {
+			t.Fatalf("item %d kind = %v, want raw message", i, item.Kind)
+		}
+		if item.MessageRole != want {
+			t.Fatalf("item %d role = %q, want %q", i, item.MessageRole, want)
+		}
+	}
+
+	// An explicit budget is still honored.
+	bounded, err := a.Context(ctx, memory.ContextRequest{
+		Scope:          memory.Scope{RuntimeID: "rt"},
+		ConversationID: "s-1",
+		Budget:         memory.Budget{MaxItems: 2},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bounded.Items) != 2 || !bounded.Truncated {
+		t.Fatalf("bounded replay = %d items, truncated=%v; want 2/true",
+			len(bounded.Items), bounded.Truncated)
+	}
+}

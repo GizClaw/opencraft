@@ -17,15 +17,18 @@ import type {
   InferenceRequest,
   MCPServer,
   MCPStatus,
+  MemorySettings,
   ModelUsageStat,
   ModelOption,
   PatchFileDTO,
   ProviderView,
   ReplyRequest,
+  SearchFileHit,
   SessionMeta,
   ProviderInstance,
   SkillDTO,
   TurnStart,
+  UndoState,
   UsagePoint,
   WorkspaceMeta,
 } from './types';
@@ -97,6 +100,12 @@ export const api = {
     App.RenderPatch(patch) as Promise<PatchFileDTO[]>,
   renderSkillPatch: (name: string, scope: string, patch: string) =>
     App.RenderSkillPatch(name, scope, patch) as Promise<PatchFileDTO[]>,
+  undoChange: () => App.UndoChange() as Promise<string[]>,
+  redoChange: () => App.RedoChange() as Promise<string[]>,
+  undoState: () => App.UndoState() as Promise<UndoState>,
+  memoryConfig: () => App.MemoryConfig() as Promise<MemorySettings>,
+  saveMemory: (s: MemorySettings) =>
+    App.SaveMemory(s as unknown as genConfig.MemorySettings) as Promise<void>,
   cancelCard: (id: string) => App.CancelCard(id),
   retryCard: (id: string) => App.RetryCard(id),
   chooseWorkspace: () => App.ChooseWorkspace(),
@@ -114,6 +123,21 @@ export const api = {
   conversationDelegationCards: (contextID: string) =>
     App.ConversationDelegationCards(contextID) as Promise<KanbanCard[]>,
   listDir: (dir: string) => App.ListDir(dir) as Promise<FileNode[]>,
+  // Fall back to a root-level listing when the running binary predates
+  // the SearchFiles binding, so "@" never breaks into a blank popup.
+  searchFiles: async (query: string, limit?: number) => {
+    const cap = limit ?? 50;
+    if (typeof App.SearchFiles !== 'function') {
+      const wd = await App.Workspace();
+      const nodes = await App.ListDir(wd);
+      const q = query.toLowerCase();
+      return nodes
+        .filter((n) => n.name.toLowerCase().includes(q))
+        .slice(0, cap)
+        .map((n) => ({ path: n.name, is_dir: n.is_dir }));
+    }
+    return App.SearchFiles(query, cap) as Promise<SearchFileHit[]>;
+  },
   openPath: (path: string) => App.OpenPath(path),
   openExternal: (url: string) => App.OpenExternal(url),
 };

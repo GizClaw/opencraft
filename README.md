@@ -24,7 +24,8 @@ P0 core loop is closed:
   exec_command (shell), exec_session (PTY/resize/signal/timeout),
   apply_patch, web_fetch, ask_user, update_plan, request_permissions,
   skill_search/skill_read/skill_install/skill_create/skill_modify,
-  hidden auto-compaction;
+  hidden auto-compaction; result protection middleware chain (truncate
+  cache + 32k hard cap + secret redaction + JSONL audit trail);
 - **Runtime** — local execd JSON-RPC (stdio + unix socket, self-fork,
   parent death cleanup), project-scoped SQLite session store, buffer-fold
   memory summary, AGENTS.md worldstate, layered config (embedded +
@@ -66,8 +67,9 @@ scope.
 - `internal/skills` — skill discovery
 - `internal/memory` — buffer-fold memory summary + session archive
 - `internal/sandbox` — seatbelt/bwrap sandbox
-- `internal/tools` — tool source factories (applypatch/askuser/exec/
-  execsession/files/plan/requestpermissions/webfetch)
+- `internal/tools` — tool source factories plus the middleware assembly
+  (applypatch/askuser/assembly/exec/files/plan/requestpermissions/
+  webfetch)
 - `internal/usage` — user-level usage database (`~/.opencraft/user.db`)
 - `internal/utils` — resourcedep + ported extract/httpkit helpers
 - `frontend/` — React/TypeScript UI (chat, sessions, settings, usage)

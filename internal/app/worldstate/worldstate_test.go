@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/agent"
@@ -208,6 +209,13 @@ func (m stubMemory) Context(
 	return corememory.ContextResult{Items: m.items}, nil
 }
 
+// replayMemory is a stubMemory that advertises full-replay mode.
+type replayMemory struct {
+	stubMemory
+}
+
+func (replayMemory) ReplayFullHistory() bool { return true }
+
 func TestMemorySectionsIncludeSummariesAndRaw(t *testing.T) {
 	svc := New(Options{WorkBase: t.TempDir()})
 	svc.memory = stubMemory{items: []corememory.ContextItem{
@@ -300,11 +308,72 @@ func TestRenderToBoardInjectsMemorySectionsNoHistory(t *testing.T) {
 			t.Fatalf("history section must not be injected (memory is the single source): %+v", sections[i])
 		}
 	}
+	assertSystemFirst(t, sections)
 	if summary == nil || !contains(summary.Text, "folded summary") {
 		t.Fatalf("missing summary section in %+v", sections)
 	}
 	if rawMsg == nil || rawMsg.Role != string(message.RoleUser) || !contains(rawMsg.Text, "latest user turn") {
 		t.Fatalf("missing raw section with role in %+v", sections)
+	}
+}
+
+func TestRenderToBoardReplayFullHistory(t *testing.T) {
+	svc := New(Options{WorkBase: t.TempDir()})
+	svc.memory = replayMemory{stubMemory: stubMemory{items: []corememory.ContextItem{
+		{
+			Kind:        corememory.ContextRawMessage,
+			MessageRole: message.RoleUser,
+			Content: message.Content{Parts: []message.Part{
+				message.TextPart{Text: "early user turn"},
+			}},
+		},
+		{
+			Kind:        corememory.ContextRawMessage,
+			MessageRole: message.RoleAssistant,
+			Content: message.Content{Parts: []message.Part{
+				message.TextPart{Text: "early assistant turn"},
+			}},
+		},
+	}}}
+
+	board := agent.NewBoard()
+	if err := svc.RenderToBoard(
+		context.Background(), "assistant", "s-c1", "current turn", nil, board,
+	); err != nil {
+		t.Fatal(err)
+	}
+	history := board.GetVarString("world.history")
+	for _, want := range []string{"early user turn", "early assistant turn"} {
+		if !strings.Contains(history, want) {
+			t.Fatalf("world.history missing %q: %s", want, history)
+		}
+	}
+
+	raw := board.GetVarString("world.sections")
+	var sections []Section
+	if err := json.Unmarshal([]byte(raw), &sections); err != nil {
+		t.Fatalf("sections = %q: %v", raw, err)
+	}
+	for _, sec := range sections {
+		if sec.ID == "memory_raw" || sec.ID == "memory_summary" {
+			t.Fatalf("replay mode must not inject memory sections: %+v", sections)
+		}
+	}
+}
+
+// assertSystemFirst fails when a user-role section precedes a
+// system-role section: the world block must read as system context
+// first, user-side instructions last.
+func assertSystemFirst(t *testing.T, sections []Section) {
+	t.Helper()
+	seenUser := false
+	for _, sec := range sections {
+		if sec.Role == "user" {
+			seenUser = true
+		} else if sec.Role == "system" && seenUser {
+			t.Fatalf("system section %q follows user sections: %+v",
+				sec.ID, sections)
+		}
 	}
 }
 

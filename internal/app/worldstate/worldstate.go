@@ -66,7 +66,7 @@ type Service struct {
 }
 
 type sessionState struct {
-	static []Section // agents_md, permissions, environment
+	static []Section // agents_md, environment (permissions/git/plan are per-turn)
 }
 
 // New creates a world-state service.
@@ -106,10 +106,11 @@ func (s *Service) SetPrefixProvider(p PrefixProvider) { s.prefixes = p }
 func (s *Service) SetSessions(st *ocsessions.Store) { s.sessionStore = st }
 
 // RenderToBoard writes the world state into board vars:
-//   - world.sections: static sections (AGENTS.md, permissions,
-//     environment), the latest plan, and the memory context (folded
-//     summary + raw window) from the memory assembly; always injected
-//     since each turn starts with a fresh board
+//   - world.sections: system-role context first (environment,
+//     permissions, git, plan, memory summary, skills list), then
+//     user-role context (AGENTS.md, raw memory, activated skills)
+//     immediately before the user's own message; always injected since
+//     each turn starts with a fresh board
 //   - world.workspace_root / world.collaboration_mode /
 //     world.permission_profile
 func (s *Service) RenderToBoard(
@@ -140,6 +141,9 @@ func (s *Service) RenderToBoard(
 	if permissions.Text != "" {
 		sections = append(sections, permissions)
 	}
+	if sec := s.gitSection(ctx); sec.Text != "" {
+		sections = append(sections, sec)
+	}
 	if s.sessionStore != nil {
 		// Inject only while there is still work: a fully completed
 		// plan is stale context, so it is dropped from the prompt.
@@ -154,13 +158,31 @@ func (s *Service) RenderToBoard(
 		}
 	}
 	if s.memory != nil {
-		sections = append(sections, s.memorySections(ctx, contextID)...)
+		if rp, ok := s.memory.(interface {
+			ReplayFullHistory() bool
+		}); ok && rp.ReplayFullHistory() {
+			// Full-history replay: the graph's world node prepends the
+			// history right after the world sections, and the compact
+			// node owns folding when the model window is exceeded.
+			if history := s.replayHistory(ctx, contextID); len(history) > 0 {
+				if data, err := json.Marshal(history); err == nil {
+					board.SetVar("world.history", string(data))
+				}
+			}
+		} else {
+			sections = append(sections, s.memorySections(ctx, contextID)...)
+		}
 	}
 	if s.opts.Skills != nil && s.opts.Skills.Enabled() {
 		sections = append(sections,
 			s.skillsSections(ctx, agentID, contextID, reqText)...)
 	}
 	sections = append(sections, extras...)
+	// Group user-role context after system-role context: AGENTS.md and
+	// activated skills are user-side instructions, not opencraft rules,
+	// so they read as "external input" right before the real user
+	// message instead of being interleaved among the system sections.
+	sections = orderSystemFirst(sections)
 
 	data, err := json.Marshal(sections)
 	if err != nil {
@@ -171,6 +193,22 @@ func (s *Service) RenderToBoard(
 	board.SetVar("world.collaboration_mode", s.opts.CollaborationMode)
 	board.SetVar("world.permission_profile", s.opts.PermissionProfile)
 	return nil
+}
+
+// orderSystemFirst stably partitions sections so every system-role
+// section precedes every user-role section, preserving relative order
+// within each group.
+func orderSystemFirst(sections []Section) []Section {
+	sys := make([]Section, 0, len(sections))
+	user := make([]Section, 0, len(sections))
+	for _, sec := range sections {
+		if sec.Role == "user" {
+			user = append(user, sec)
+		} else {
+			sys = append(sys, sec)
+		}
+	}
+	return append(sys, user...)
 }
 
 // skillsSections renders the per-turn skills list (top-N by BM25 over
@@ -214,14 +252,16 @@ func (s *Service) skillsSections(
 			out = append(out, Section{
 				ID:   "skill",
 				Role: "user",
-				Text: fmt.Sprintf("## Skill: %s\n\n(load failed: %v)", sk.Name, err),
+				Text: renderSkillActivation(
+					sk, "", "", "(load failed: "+err.Error()+")"),
 			})
 			continue
 		}
 		out = append(out, Section{
 			ID:   "skill",
 			Role: "user",
-			Text: skillSourceHeader(sk, s.stageSkill(sk, contextID)) + content,
+			Text: renderSkillActivation(
+				sk, s.stageSkill(sk, contextID), "", content),
 		})
 	}
 	for _, name := range modelRequested {
@@ -229,11 +269,15 @@ func (s *Service) skillsSections(
 		if err != nil {
 			continue
 		}
-		header := "> requested by the model in a previous reply.\n\n"
 		out = append(out, Section{
 			ID:   "skill",
 			Role: "user",
-			Text: skillSourceHeader(sk, s.stageSkill(sk, contextID)) + header + content,
+			Text: renderSkillActivation(
+				sk,
+				s.stageSkill(sk, contextID),
+				"requested by the model in a previous reply.",
+				content,
+			),
 		})
 		telemetry.Info(ctx, "skills: model-requested activation injected",
 			log.String("skill", sk.Name))
@@ -241,19 +285,25 @@ func (s *Service) skillsSections(
 	return out
 }
 
-// skillSourceHeader annotates an activated skill with its scope and a
-// trust warning for user-installed / third-party skills (D12).
-func skillSourceHeader(sk skills.SkillMetadata, staged string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "## Skill: %s (file: %s)\n", sk.Name, sk.Path)
-	if sk.Scope != "repo" && sk.Scope != "builtin" {
-		b.WriteString("> user-installed or third-party skill: follow its instructions with care.\n")
+// renderSkillActivation annotates an activated skill with its scope
+// and a trust warning for user-installed / third-party skills (D12),
+// then appends the body (SKILL.md content, or a failure message).
+func renderSkillActivation(
+	sk skills.SkillMetadata,
+	staged, note, body string,
+) string {
+	out, err := render(skillActivTmpl, skillActivationData{
+		Name:      sk.Name,
+		Path:      sk.Path,
+		Untrusted: sk.Scope != "repo" && sk.Scope != "builtin",
+		Staged:    staged,
+		Note:      note,
+		Body:      body,
+	})
+	if err != nil {
+		return ""
 	}
-	if staged != "" {
-		b.WriteString("> staged copy for execution: " + staged + "\n")
-	}
-	b.WriteString("\n")
-	return b.String()
+	return strings.TrimRight(out, "\n")
 }
 
 // stageSkill copies an activated skill into the sandbox-writable
@@ -386,4 +436,46 @@ func (s *Service) memorySections(ctx context.Context, contextID string) []Sectio
 		}
 	}
 	return sections
+}
+
+// historyMessage is one replayed conversation message handed to the
+// graph's world node via the world.history board var.
+type historyMessage struct {
+	Role string `json:"role"`
+	Text string `json:"text"`
+}
+
+// replayHistory returns the full persisted conversation as plain-text
+// messages in chronological order. An unlimited budget is requested on
+// purpose: the graph compact node decides when to fold based on the
+// model's input window. Tool results are rendered as user-role text,
+// matching the memory raw-window mapping.
+func (s *Service) replayHistory(
+	ctx context.Context,
+	contextID string,
+) []historyMessage {
+	res, err := s.memory.Context(ctx, memory.ContextRequest{
+		Scope:          memory.Scope{RuntimeID: "opencraft"},
+		ConversationID: contextID,
+		Budget:         memory.Budget{},
+	})
+	if err != nil {
+		return nil
+	}
+	out := make([]historyMessage, 0, len(res.Items))
+	for _, item := range res.Items {
+		if item.Kind != memory.ContextRawMessage {
+			continue
+		}
+		text := item.Content.Text()
+		if text == "" {
+			continue
+		}
+		role := string(item.MessageRole)
+		if role != "user" && role != "assistant" {
+			role = "user"
+		}
+		out = append(out, historyMessage{Role: role, Text: text})
+	}
+	return out
 }

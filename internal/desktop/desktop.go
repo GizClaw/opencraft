@@ -24,6 +24,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/config"
 	"github.com/GizClaw/opencraft/internal/runtime"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
+	"github.com/GizClaw/opencraft/internal/undo"
 	"github.com/GizClaw/opencraft/internal/usage"
 )
 
@@ -55,6 +56,7 @@ type App struct {
 	sessions *ocsessions.Store
 	usage    *usage.Store
 	agents   *agents.Lifecycle
+	undo     *undo.Store
 	turns    map[string]*session.Turn
 
 	// conversationID is the stable session context for the current
@@ -87,6 +89,9 @@ type App struct {
 	// titling tracks conversations whose auto-title generation is in
 	// flight, so parallel turn endings generate once per conversation.
 	titling map[string]bool
+	// preTurnSnap holds each running turn's pre-state so waitTurn can
+	// pair it with the post-state and record an undo entry.
+	preTurnSnap map[string][]undo.FileState
 }
 
 // New creates the application shell. Runtime assembly is deferred to
@@ -132,6 +137,8 @@ func New(opts Options) (*App, error) {
 		convRuns:       make(map[string]map[string]bool),
 		runUsage:       make(map[string]ocsessions.Usage),
 		titling:        make(map[string]bool),
+		preTurnSnap:    make(map[string][]undo.FileState),
+		undo:           undo.New(workDir),
 		otelShutdown:   shutdown,
 	}, nil
 }

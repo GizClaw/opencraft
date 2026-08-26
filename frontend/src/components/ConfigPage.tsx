@@ -12,6 +12,7 @@ import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import { useStore } from '../lib/store';
 import type {
+  MemorySettings,
   ModelUsageStat,
   ProviderInstance,
   ProviderView,
@@ -37,7 +38,7 @@ interface InstanceRow {
   enabled: boolean;
 }
 
-type Tab = 'ui' | 'inference' | 'usage' | 'permissions' | 'logs';
+type Tab = 'ui' | 'inference' | 'usage' | 'memory' | 'permissions' | 'logs';
 
 export function ConfigPage() {
   const configured = useStore((s) => s.configured);
@@ -58,6 +59,13 @@ export function ConfigPage() {
   const [saving, setSaving] = useState(false);
   const [rules, setRules] = useState<string[]>([]);
   const [ruleInput, setRuleInput] = useState('');
+  const [memory, setMemory] = useState<MemorySettings>({
+    max_raw_messages: 36,
+    preserve_recent: 4,
+    max_summary_bytes: 4096,
+    replay_full_history: false,
+  });
+  const [memorySaving, setMemorySaving] = useState(false);
   const [logs, setLogs] = useState('');
   const logsRef = useRef<HTMLPreElement>(null);
   const [usageRows, setUsageRows] = useState<ModelUsageStat[]>([]);
@@ -113,6 +121,26 @@ export function ConfigPage() {
       .then(setRules)
       .catch((err) => setError(String(err)));
   }, [tab]);
+
+  useEffect(() => {
+    if (tab !== 'memory') return;
+    void api
+      .memoryConfig()
+      .then(setMemory)
+      .catch((err) => setError(String(err)));
+  }, [tab]);
+
+  const saveMemory = async () => {
+    setMemorySaving(true);
+    try {
+      await api.saveMemory(memory);
+      setError('');
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setMemorySaving(false);
+    }
+  };
 
   useEffect(() => {
     if (tab !== 'logs') return;
@@ -320,6 +348,7 @@ export function ConfigPage() {
     { id: 'ui', label: t('config.tabUi') },
     { id: 'inference', label: t('config.tabInference') },
     { id: 'usage', label: t('config.tabUsage') },
+    { id: 'memory', label: t('config.tabMemory') },
     { id: 'permissions', label: t('config.tabPermissions') },
     { id: 'logs', label: t('config.tabLogs') },
   ];
@@ -799,6 +828,93 @@ export function ConfigPage() {
                   </div>
                 </>
               )}
+            </div>
+          )}
+
+          {tab === 'memory' && (
+            <div className="space-y-4">
+              <p className="text-xs text-dim">{t('config.memoryHint')}</p>
+              <div className="grid grid-cols-3 gap-3">
+                <label className="space-y-1.5">
+                  <span className="text-xs text-dim">
+                    {t('config.memoryRawWindow')}
+                  </span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={memory.max_raw_messages}
+                    onChange={(e) =>
+                      setMemory((m) => ({
+                        ...m,
+                        max_raw_messages: Number(e.target.value) || 0,
+                      }))
+                    }
+                    className="w-full rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
+                  />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-xs text-dim">
+                    {t('config.memoryPreserveRecent')}
+                  </span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={memory.preserve_recent}
+                    onChange={(e) =>
+                      setMemory((m) => ({
+                        ...m,
+                        preserve_recent: Number(e.target.value) || 0,
+                      }))
+                    }
+                    className="w-full rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
+                  />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-xs text-dim">
+                    {t('config.memorySummaryBytes')}
+                  </span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1024}
+                    value={memory.max_summary_bytes}
+                    onChange={(e) =>
+                      setMemory((m) => ({
+                        ...m,
+                        max_summary_bytes: Number(e.target.value) || 0,
+                      }))
+                    }
+                    className="w-full rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
+                  />
+                </label>
+              </div>
+              <label className="flex items-center gap-2 rounded-lg border border-edge bg-panel2 px-3 py-2.5">
+                <input
+                  type="checkbox"
+                  checked={memory.replay_full_history}
+                  onChange={(e) =>
+                    setMemory((m) => ({
+                      ...m,
+                      replay_full_history: e.target.checked,
+                    }))
+                  }
+                  className="accent-accent"
+                />
+                <div className="flex-1">
+                  <span className="text-sm">{t('config.memoryReplay')}</span>
+                  <p className="text-xs text-dim">
+                    {t('config.memoryReplayHint')}
+                  </p>
+                </div>
+              </label>
+              <button
+                onClick={() => void saveMemory()}
+                disabled={memorySaving}
+                className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
+              >
+                {memorySaving && <Loader2 size={14} className="animate-spin" />}
+                {t('setup.saveApply')}
+              </button>
             </div>
           )}
 

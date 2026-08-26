@@ -1,0 +1,10 @@
+## Git state
+{{ if .Branch }}branch: {{ .Branch }}
+{{ end }}{{ if .Status }}status:
+{{ .Status }}
+{{ end }}{{ if .DiffStat }}diffstat:
+{{ .DiffStat }}
+{{ end }}{{ if .Diff }}diff:
+{{ .Diff }}
+{{ end }}{{ if .DiffHint }}note: {{ .DiffHint }}
+{{ end }}

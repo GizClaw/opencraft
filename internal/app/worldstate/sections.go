@@ -65,28 +65,29 @@ func (s *Service) environmentSection() (Section, error) {
 // renderPlanSection formats the latest plan for the world state as a
 // checklist so the model sees its TODO list with statuses.
 func renderPlanSection(p plan.Plan) string {
-	var b strings.Builder
-	b.WriteString("Current plan:\n")
+	items := make([]planItemData, 0, len(p.Items))
 	for _, item := range p.Items {
+		marker := "[ ]"
 		switch item.Status {
 		case plan.StatusCompleted:
-			b.WriteString("- [x] ")
+			marker = "[x]"
 		case plan.StatusInProgress:
-			b.WriteString("- [~] ")
-		default:
-			b.WriteString("- [ ] ")
+			marker = "[~]"
 		}
-		b.WriteString(item.Step)
-		b.WriteString(" (")
-		b.WriteString(item.Status)
-		b.WriteString(")\n")
+		items = append(items, planItemData{
+			Step:   item.Step,
+			Marker: marker,
+			Status: item.Status,
+		})
 	}
-	if p.Explanation != "" {
-		b.WriteString("Explanation: ")
-		b.WriteString(p.Explanation)
-		b.WriteString("\n")
+	out, err := render(planTmpl, planData{
+		Items:       items,
+		Explanation: p.Explanation,
+	})
+	if err != nil {
+		return ""
 	}
-	return strings.TrimRight(b.String(), "\n")
+	return strings.TrimRight(out, "\n")
 }
 
 // discoverAgents collects AGENTS.md from the project root down to the

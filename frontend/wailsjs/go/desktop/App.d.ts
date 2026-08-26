@@ -5,6 +5,7 @@ import {agents} from '../models';
 import {config} from '../models';
 import {message} from '../models';
 import {context} from '../models';
+import {undo} from '../models';
 
 export function AgentDetail(arg1:string):Promise<desktop.AgentDetail>;
 
@@ -52,6 +53,8 @@ export function MCPConfig():Promise<Array<config.MCPServer>>;
 
 export function MCPStatus():Promise<Array<desktop.MCPStatusDTO>>;
 
+export function MemoryConfig():Promise<config.MemorySettings>;
+
 export function ModelOptions():Promise<Array<desktop.ModelOption>>;
 
 export function ModelUsage():Promise<Array<desktop.ModelUsageStat>>;
@@ -74,6 +77,8 @@ export function ReadFile(arg1:string):Promise<string>;
 
 export function ReadLog(arg1:number):Promise<string>;
 
+export function RedoChange():Promise<Array<string>>;
+
 export function Reload():Promise<void>;
 
 export function RemoveWorkspace(arg1:string):Promise<void>;
@@ -94,6 +99,10 @@ export function SaveInstances(arg1:desktop.InferenceRequest):Promise<void>;
 
 export function SaveMCP(arg1:Array<config.MCPServer>):Promise<void>;
 
+export function SaveMemory(arg1:config.MemorySettings):Promise<void>;
+
+export function SearchFiles(arg1:string,arg2:number):Promise<Array<desktop.SearchFileHit>>;
+
 export function SessionHistory(arg1:string):Promise<Array<message.Message>>;
 
 export function SessionMode():Promise<string>;
@@ -111,6 +120,10 @@ export function StartTurn(arg1:string):Promise<desktop.TurnStart>;
 export function Startup(arg1:context.Context):Promise<void>;
 
 export function TestMCP(arg1:config.MCPServer):Promise<void>;
+
+export function UndoChange():Promise<Array<string>>;
+
+export function UndoState():Promise<undo.State>;
 
 export function UnregisterAgent(arg1:string):Promise<void>;
 

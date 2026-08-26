@@ -94,6 +94,10 @@ export function MCPStatus() {
   return window['go']['desktop']['App']['MCPStatus']();
 }
 
+export function MemoryConfig() {
+  return window['go']['desktop']['App']['MemoryConfig']();
+}
+
 export function ModelOptions() {
   return window['go']['desktop']['App']['ModelOptions']();
 }
@@ -138,6 +142,10 @@ export function ReadLog(arg1) {
   return window['go']['desktop']['App']['ReadLog'](arg1);
 }
 
+export function RedoChange() {
+  return window['go']['desktop']['App']['RedoChange']();
+}
+
 export function Reload() {
   return window['go']['desktop']['App']['Reload']();
 }
@@ -178,6 +186,14 @@ export function SaveMCP(arg1) {
   return window['go']['desktop']['App']['SaveMCP'](arg1);
 }
 
+export function SaveMemory(arg1) {
+  return window['go']['desktop']['App']['SaveMemory'](arg1);
+}
+
+export function SearchFiles(arg1, arg2) {
+  return window['go']['desktop']['App']['SearchFiles'](arg1, arg2);
+}
+
 export function SessionHistory(arg1) {
   return window['go']['desktop']['App']['SessionHistory'](arg1);
 }
@@ -212,6 +228,14 @@ export function Startup(arg1) {
 
 export function TestMCP(arg1) {
   return window['go']['desktop']['App']['TestMCP'](arg1);
+}
+
+export function UndoChange() {
+  return window['go']['desktop']['App']['UndoChange']();
+}
+
+export function UndoState() {
+  return window['go']['desktop']['App']['UndoState']();
 }
 
 export function UnregisterAgent(arg1) {

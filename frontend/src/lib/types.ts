@@ -228,6 +228,23 @@ export interface FileNode {
   children?: FileNode[];
 }
 
+export interface SearchFileHit {
+  path: string;
+  is_dir: boolean;
+}
+
+export interface UndoState {
+  can_undo: boolean;
+  can_redo: boolean;
+}
+
+export interface MemorySettings {
+  max_raw_messages: number;
+  preserve_recent: number;
+  max_summary_bytes: number;
+  replay_full_history: boolean;
+}
+
 export interface AgentSummary {
   name: string;
   description: string;

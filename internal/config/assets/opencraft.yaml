@@ -30,6 +30,13 @@ resources:
       max_raw_messages: 36
       preserve_recent: 4
       max_summary_bytes: 4096
+      # Experimental: replay the full conversation history instead of
+      # injecting the folded summary + raw window. Folding is then owned
+      # by the graph compact node, which folds only when estimated usage
+      # exceeds the model's input window. Requires reliable model window
+      # metadata from the router (azure 未声明窗口元数据，开启前请确认);
+      # keep false for bounded per-turn cost.
+      replay_full_history: false
   # Sandbox exec policy: static allowed_commands plus the project
   # approvals file merge into one allowlist. The sandbox runner, the
   # worldstate permissions section, and request_permissions all depend
@@ -277,6 +284,14 @@ resources:
           # them. skill_install stays deferred (mutating, heavier).
           skill_search: always
           skill_read: always
+          # Search-discoverable layers (everything not listed falls to
+          # the default: deferred, which covers the delegate family,
+          # agent lifecycle, and skill authoring tools):
+          # - direct: hidden until recently used or selected via
+          #   tool_search, then visible for recent_window rounds.
+          # - deferred: hidden until tool_search selects it, then
+          #   visible for selected_retention rounds.
+          web_fetch: direct
           # Internal machinery: callable by exact name (the compact
           # graph node), never offered to the model.
           compact: hidden

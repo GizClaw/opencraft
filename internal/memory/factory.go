@@ -50,9 +50,10 @@ func (Factory) Spec() resource.Spec {
 }
 
 type policySettings struct {
-	MaxRawMessages  int `json:"max_raw_messages,omitempty"`
-	PreserveRecent  int `json:"preserve_recent,omitempty"`
-	MaxSummaryBytes int `json:"max_summary_bytes,omitempty"`
+	MaxRawMessages    int  `json:"max_raw_messages,omitempty"`
+	PreserveRecent    int  `json:"preserve_recent,omitempty"`
+	MaxSummaryBytes   int  `json:"max_summary_bytes,omitempty"`
+	ReplayFullHistory bool `json:"replay_full_history,omitempty"`
 }
 
 // New builds the summary Assembly over the SQLite adapter.
@@ -77,6 +78,7 @@ func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 			PreserveRecent:  policy.PreserveRecent,
 			MaxSummaryBytes: policy.MaxSummaryBytes,
 		}),
+		summary.WithReplayFullHistory(policy.ReplayFullHistory),
 	}
 	if dep, ok := in.Dep("router"); ok {
 		if router, ok := dep.(*route.Router); ok {

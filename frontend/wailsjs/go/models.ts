@@ -43,6 +43,24 @@ export namespace config {
 	        this.url = source["url"];
 	    }
 	}
+	export class MemorySettings {
+	    max_raw_messages: number;
+	    preserve_recent: number;
+	    max_summary_bytes: number;
+	    replay_full_history: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new MemorySettings(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.max_raw_messages = source["max_raw_messages"];
+	        this.preserve_recent = source["preserve_recent"];
+	        this.max_summary_bytes = source["max_summary_bytes"];
+	        this.replay_full_history = source["replay_full_history"];
+	    }
+	}
 
 }
 
@@ -527,6 +545,20 @@ export namespace desktop {
 	        this.cancel = source["cancel"];
 	    }
 	}
+	export class SearchFileHit {
+	    path: string;
+	    is_dir: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new SearchFileHit(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.is_dir = source["is_dir"];
+	    }
+	}
 	export class SessionMeta {
 	    id: string;
 	    title: string;
@@ -667,6 +699,25 @@ export namespace message {
 		    }
 		    return a;
 		}
+	}
+
+}
+
+export namespace undo {
+	
+	export class State {
+	    can_undo: boolean;
+	    can_redo: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new State(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.can_undo = source["can_undo"];
+	        this.can_redo = source["can_redo"];
+	    }
 	}
 
 }
