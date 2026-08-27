@@ -205,7 +205,11 @@ export function Sidebar() {
           onClick={() => void resume(row.id)}
           className="flex flex-1 min-w-0 items-center gap-2"
         >
-          <MessageSquare size={13} className="text-dim shrink-0" />
+          {row.running ? (
+            <Loader2 size={13} className="text-accent animate-spin shrink-0" />
+          ) : (
+            <MessageSquare size={13} className="text-dim shrink-0" />
+          )}
           {renameId === row.id ? (
             <input
               autoFocus
@@ -223,9 +227,6 @@ export function Sidebar() {
             />
           ) : (
             <span className="flex-1 truncate">{row.title}</span>
-          )}
-          {row.running && (
-            <Loader2 size={12} className="text-accent animate-spin shrink-0" />
           )}
         </button>
         <div className="relative shrink-0">
