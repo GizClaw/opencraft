@@ -113,7 +113,7 @@
     "diagReload": "重载运行时",
     "diagProbeOk": "沙箱自检通过",
     "diagProbeFail": "沙箱自检失败",
-    "diagCacheDone": "已清理 {{dirs}} 个缓存目录，释放 {{bytes}} 字节",
+    "diagCacheDone": "已清理 {{dirs}} 个缓存目录，释放 {{bytes}}",
     "diagPolicy": "检查命令是否可免审批执行：",
     "diagPolicyPlaceholder": "例如 npm install",
     "diagPolicyCheck": "检查",

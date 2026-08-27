@@ -472,6 +472,13 @@ export function ConfigPage() {
     return String(n);
   };
 
+  const fmtBytes = (n: number) => {
+    if (n >= 1 << 30) return `${(n / (1 << 30)).toFixed(2)} GB`;
+    if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(1)} MB`;
+    if (n >= 1 << 10) return `${(n / (1 << 10)).toFixed(0)} KB`;
+    return `${n} B`;
+  };
+
   const fmtUsageTime = (iso: string) => {
     if (!iso) return '';
     const d = new Date(iso);
@@ -1476,7 +1483,7 @@ export function ConfigPage() {
               {cacheResult && (
                 <p className="text-xs text-dim">
                   {t('config.diagCacheDone', {
-                    bytes: cacheResult.bytes,
+                    bytes: fmtBytes(cacheResult.bytes),
                     dirs: cacheResult.dirs.length,
                   })}
                 </p>

@@ -113,7 +113,7 @@
     "diagReload": "Reload runtime",
     "diagProbeOk": "Sandbox probe passed",
     "diagProbeFail": "Sandbox probe failed",
-    "diagCacheDone": "Removed {{dirs}} cache dir(s), freed {{bytes}} bytes",
+    "diagCacheDone": "Removed {{dirs}} cache dir(s), freed {{bytes}}",
     "diagPolicy": "Check whether a command would run without approval:",
     "diagPolicyPlaceholder": "e.g. npm install",
     "diagPolicyCheck": "Check",
