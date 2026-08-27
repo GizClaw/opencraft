@@ -311,7 +311,7 @@ interface StoreState {
   subagentCards: KanbanCard[];
   subagentPanelOpen: boolean;
   modelOptions: ModelOption[];
-  theme: 'dark' | 'light';
+  theme: 'dark' | 'light' | 'auto';
   workspaces: WorkspaceMeta[];
   toasts: ToastItem[];
   sessionsLoading: boolean;
@@ -333,7 +333,7 @@ interface StoreState {
   setMode: (mode: string) => Promise<void>;
   setThink: (level: string) => Promise<void>;
   setModel: (model: string) => Promise<void>;
-  setTheme: (theme: 'dark' | 'light') => void;
+  setTheme: (theme: 'dark' | 'light' | 'auto') => void;
   loadWorkspaces: () => Promise<void>;
   openWorkspace: (path: string) => Promise<void>;
   removeWorkspace: (id: string) => Promise<void>;
@@ -345,6 +345,31 @@ interface StoreState {
   flash: (text: string) => void;
   toast: (text: string) => void;
   dismissToast: (id: number) => void;
+}
+
+let themeMedia: MediaQueryList | null = null;
+let themeMediaHandler: (() => void) | null = null;
+
+// applyTheme resolves dark/light/auto (auto follows the OS preference)
+// and keeps a media-query listener alive while auto is selected.
+function applyTheme(theme: 'dark' | 'light' | 'auto') {
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  const resolved = theme === 'auto' ? (mq.matches ? 'dark' : 'light') : theme;
+  document.documentElement.classList.toggle(
+    'theme-light',
+    resolved === 'light',
+  );
+  if (theme === 'auto') {
+    if (themeMedia === mq) return;
+    themeMedia?.removeEventListener('change', themeMediaHandler!);
+    themeMedia = mq;
+    themeMediaHandler = () => applyTheme('auto');
+    mq.addEventListener('change', themeMediaHandler);
+  } else {
+    themeMedia?.removeEventListener('change', themeMediaHandler!);
+    themeMedia = null;
+    themeMediaHandler = null;
+  }
 }
 
 export const useStore = create<StoreState>((set, get) => {
@@ -441,11 +466,9 @@ export const useStore = create<StoreState>((set, get) => {
 
     init: async () => {
       const saved = window.localStorage.getItem('opencraft.theme');
-      const theme = saved === 'light' ? 'light' : 'dark';
-      document.documentElement.classList.toggle(
-        'theme-light',
-        theme === 'light',
-      );
+      const theme = saved === 'light' || saved === 'auto' ? saved : 'dark';
+      applyTheme(theme);
+      set({ theme });
       try {
         const [
           status,
@@ -841,10 +864,7 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     setTheme: (theme) => {
-      document.documentElement.classList.toggle(
-        'theme-light',
-        theme === 'light',
-      );
+      applyTheme(theme);
       window.localStorage.setItem('opencraft.theme', theme);
       set({ theme });
     },

@@ -10,6 +10,7 @@ import {
   Database,
   Languages,
   Loader2,
+  Monitor,
   Moon,
   Palette,
   Plus,
@@ -604,6 +605,17 @@ export function ConfigPage() {
                     >
                       <Sun size={13} />
                       {t('config.uiThemeLight')}
+                    </button>
+                    <button
+                      onClick={() => setTheme('auto')}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
+                        theme === 'auto'
+                          ? 'bg-accent text-white'
+                          : 'text-dim hover:bg-panel hover:text-fg'
+                      }`}
+                    >
+                      <Monitor size={13} />
+                      {t('config.uiThemeAuto')}
                     </button>
                   </div>
                 </div>
