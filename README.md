@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="build/appicon.png" alt="opencraft" width="128">
+</p>
+
 # opencraft
 
 A Go coding agent built on [flowcraft](https://github.com/GizClaw/flowcraft)
