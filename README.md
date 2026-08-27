@@ -50,14 +50,24 @@ keep everything inside a macOS/Linux desktop app (Wails v2 + React).
 
 ## Installation
 
-Download the latest package from the
+**Homebrew (macOS):**
+
+```sh
+brew tap GizClaw/opencraft https://github.com/GizClaw/opencraft.git
+brew install --cask opencraft
+```
+
+Or download the latest package from the
 [Releases](https://github.com/GizClaw/opencraft/releases) page:
 
-- `opencraft-<version>-macos-arm64.zip` — macOS (Apple Silicon)
+- `opencraft-<version>-macos-universal.dmg` — macOS (Apple Silicon + Intel)
 - `opencraft-<version>-linux-amd64.tar.gz` — Linux (x86_64)
 
 Windows is explicitly out of scope. Release binaries are built from tagged
-commits by the [release workflow](.github/workflows/release.yml).
+commits by the [release workflow](.github/workflows/release.yml); the
+Homebrew cask lives in this repository under [`Casks/`](Casks/). The macOS
+app is not yet notarized, so Gatekeeper may ask you to allow it on first
+launch (System Settings → Privacy & Security → Open Anyway).
 
 ## Build from source
 

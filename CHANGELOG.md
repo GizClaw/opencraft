@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Homebrew cask (`Casks/opencraft.rb`) and a universal (arm64 + amd64) macOS
+  dmg for releases.
 - Release infrastructure: GitHub Actions release workflow (tag `v*`) that
   builds and publishes the macOS app bundle and the Linux binary with the
   version injected via `-ldflags`.

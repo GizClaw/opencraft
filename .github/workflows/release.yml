@@ -34,26 +34,32 @@ jobs:
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
 
-      - name: Build macOS app
+      - name: Build macOS universal app
         env:
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
         run: |
           export PATH="$PATH:$(go env GOPATH)/bin"
-          wails build -platform darwin/arm64 -clean \
+          jq --arg v "${TAG#v}" '.info.productVersion = $v' wails.json > wails.json.tmp
+          mv wails.json.tmp wails.json
+          # lipo merges the arm64 + amd64 builds into one universal app.
+          wails build -platform darwin/arm64,darwin/amd64 -clean \
             -ldflags "-s -w -X github.com/GizClaw/opencraft/internal/app.ServiceVersion=${TAG#v}"
 
-      - name: Package app bundle
+      - name: Package dmg
         env:
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
         run: |
           app="$(find build/bin -maxdepth 1 -name '*.app' | head -1)"
-          ditto -c -k --sequesterRsrc --keepParent "$app" \
-            "opencraft-${TAG#v}-macos-arm64.zip"
+          # Keep the bundle name stable for the cask regardless of the
+          # wails output filename.
+          mv "$app" build/bin/OpenCraft.app
+          hdiutil create -volname OpenCraft -srcfolder build/bin/OpenCraft.app \
+            -ov -format UDZO "opencraft-${TAG#v}-macos-universal.dmg"
 
       - uses: actions/upload-artifact@v6
         with:
-          name: macos-arm64
-          path: opencraft-*-macos-arm64.zip
+          name: macos-universal
+          path: opencraft-*-macos-universal.dmg
           if-no-files-found: error
 
   linux:
@@ -126,5 +132,12 @@ jobs:
           if [ ! -s /tmp/release-notes.md ]; then
             echo "## ${TAG}" > /tmp/release-notes.md
           fi
+          {
+            echo ""
+            echo "## Checksums"
+            for f in artifacts/opencraft-*; do
+              echo "- \`$(basename "$f")\`: \`$(sha256sum "$f" | awk '{print $1}')\`"
+            done
+          } >> /tmp/release-notes.md
           gh release create "$TAG" artifacts/opencraft-* \
             --title "$TAG" --notes-file /tmp/release-notes.md
