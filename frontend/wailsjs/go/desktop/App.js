@@ -186,10 +186,6 @@ export function ResumeSession(arg1) {
   return window['go']['desktop']['App']['ResumeSession'](arg1);
 }
 
-export function RetryCard(arg1) {
-  return window['go']['desktop']['App']['RetryCard'](arg1);
-}
-
 export function RunSandboxProbe() {
   return window['go']['desktop']['App']['RunSandboxProbe']();
 }

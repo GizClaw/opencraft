@@ -44,8 +44,7 @@
     "canceled": "Cancelled",
     "empty": "No delegations",
     "error": "Error",
-    "cancel": "Cancel",
-    "retry": "Retry"
+    "cancel": "Cancel"
   },
   "tools": {
     "close": "Close"

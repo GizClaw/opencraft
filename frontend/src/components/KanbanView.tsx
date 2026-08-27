@@ -1,13 +1,5 @@
 import { useEffect } from 'react';
-import {
-  ArrowRight,
-  Check,
-  Clock,
-  Kanban,
-  Loader2,
-  RotateCcw,
-  X,
-} from 'lucide-react';
+import { ArrowRight, Check, Clock, Kanban, Loader2, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import { useStore } from '../lib/store';
@@ -36,7 +28,6 @@ function CardView({
     card.status === 'pending' ||
     card.status === 'claimed' ||
     card.status === 'suspended';
-  const retryable = card.status === 'failed' || card.status === 'canceled';
   const running = card.status === 'claimed' || card.status === 'suspended';
   const done = card.status === 'done';
   const failed = card.status === 'failed' || card.status === 'canceled';
@@ -94,28 +85,16 @@ function CardView({
           {elapsed(card)}
         </div>
       )}
-      {(cancellable || retryable) && (
+      {cancellable && (
         <div className="flex gap-2 pt-1">
-          {cancellable && (
-            <button
-              onClick={() => void api.cancelCard(card.id).then(onChanged)}
-              className="flex items-center gap-1 rounded border border-edge px-2 py-0.5 text-xs text-dim hover:text-err"
-              aria-label={t('kanban.cancel')}
-            >
-              <X size={11} />
-              {t('kanban.cancel')}
-            </button>
-          )}
-          {retryable && (
-            <button
-              onClick={() => void api.retryCard(card.id).then(onChanged)}
-              className="flex items-center gap-1 rounded border border-edge px-2 py-0.5 text-xs text-dim hover:text-accent"
-              aria-label={t('kanban.retry')}
-            >
-              <RotateCcw size={11} />
-              {t('kanban.retry')}
-            </button>
-          )}
+          <button
+            onClick={() => void api.cancelCard(card.id).then(onChanged)}
+            className="flex items-center gap-1 rounded border border-edge px-2 py-0.5 text-xs text-dim hover:text-err"
+            aria-label={t('kanban.cancel')}
+          >
+            <X size={11} />
+            {t('kanban.cancel')}
+          </button>
         </div>
       )}
     </div>
