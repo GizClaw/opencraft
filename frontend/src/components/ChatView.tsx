@@ -402,6 +402,15 @@ export function ChatView() {
     }
   };
 
+  // Grow the composer with the content up to a max height; shrink back
+  // when the text is cleared.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 208)}px`;
+  }, [input]);
+
   const insertMention = (item: MentionItem) => {
     const re =
       item.trigger === '@'
@@ -737,7 +746,7 @@ export function ChatView() {
                   : t('chat.placeholderUnconfigured')
               }
               disabled={!configured}
-              className="relative w-full resize-none bg-transparent px-4 pt-3 text-sm text-transparent caret-fg outline-none disabled:opacity-50"
+              className="relative max-h-52 w-full resize-none overflow-y-auto bg-transparent px-4 pt-3 text-sm text-transparent caret-fg outline-none disabled:opacity-50"
             />
           </div>
           {mention && (
@@ -832,9 +841,11 @@ export function ChatView() {
                 <button
                   onClick={submit}
                   disabled={!input.trim()}
-                  className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
+                  title={t('chat.send')}
+                  aria-label={t('chat.send')}
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent text-white transition-opacity hover:opacity-90 disabled:opacity-40"
                 >
-                  <Send size={13} /> {t('chat.send')}
+                  <Send size={15} />
                 </button>
               )}
             </div>
