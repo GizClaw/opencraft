@@ -340,7 +340,9 @@
     "ok": "ok",
     "exit": "exit",
     "arguments": "arguments",
-    "result": "result"
+    "result": "result",
+    "copyResult": "Copy",
+    "lines": "lines"
   },
   "graph": {
     "editing": "Editing {{name}}'s run graph",

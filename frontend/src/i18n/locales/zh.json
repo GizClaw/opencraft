@@ -340,7 +340,9 @@
     "ok": "成功",
     "exit": "退出码",
     "arguments": "参数",
-    "result": "结果"
+    "result": "结果",
+    "copyResult": "复制",
+    "lines": "行"
   },
   "graph": {
     "editing": "编辑 {{name}} 的运行图",
