@@ -29,6 +29,12 @@ type Options struct {
 	// UserDir overrides the global user configuration directory
 	// (defaults to ~/.opencraft/config).
 	UserDir string
+	// SkipProjectLayer suppresses the discovered project layer
+	// (<workdir>/.opencraft/config/opencraft.yaml). Desktop passes it
+	// for workspaces the user has not explicitly trusted, so opening a
+	// third-party repo can never silently override hooks, sandbox
+	// policy, or the graph.
+	SkipProjectLayer bool
 	// Explicit adds an on-disk deploy document as a layer above the
 	// embedded base (the -config flag). It may be partial: resources it
 	// does not name keep the embedded defaults, and anything it names
@@ -41,10 +47,11 @@ type Options struct {
 // Manager owns layered configuration loading: the embedded base, the
 // user layer, and the optional project layer.
 type Manager struct {
-	workDir    string
-	userDir    string
-	projectDir string
-	explicit   string
+	workDir     string
+	userDir     string
+	projectDir  string
+	explicit    string
+	skipProject bool
 }
 
 // Open creates a Manager for workDir, discovering the project layer.
@@ -63,10 +70,11 @@ func Open(opts Options) (*Manager, error) {
 	}
 	projectDir, _ := ProjectConfigDir(workDir)
 	return &Manager{
-		workDir:    workDir,
-		userDir:    userDir,
-		projectDir: projectDir,
-		explicit:   opts.Explicit,
+		workDir:     workDir,
+		userDir:     userDir,
+		projectDir:  projectDir,
+		explicit:    opts.Explicit,
+		skipProject: opts.SkipProjectLayer,
 	}, nil
 }
 
@@ -127,7 +135,7 @@ func (m *Manager) Load(ctx context.Context) (*View, error) {
 			BaseDir:  m.userDir,
 		})
 	}
-	if m.projectDir != "" {
+	if m.projectDir != "" && !m.skipProject {
 		layers = append(layers, deploy.Layer{
 			Priority: 20,
 			Name:     string(LayerProject),

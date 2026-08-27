@@ -59,6 +59,10 @@ type SkillLoadOutcome struct {
 	Errors []SkillError
 	Index  *search.Index
 	Roots  []string
+	// ScanRoots lists every candidate root that was walked (whether or
+	// not it contained a skill). Discovery and reads use it to keep
+	// symlinks from escaping the configured skill roots.
+	ScanRoots []string
 }
 
 // Options configures a Service.
@@ -88,9 +92,10 @@ type Service struct {
 
 // snapshot is one immutable discovery result.
 type snapshot struct {
-	outcome SkillLoadOutcome
-	byPath  map[string]SkillMetadata
-	roots   []string
+	outcome   SkillLoadOutcome
+	byPath    map[string]SkillMetadata
+	roots     []string
+	scanRoots []string
 }
 
 // NewService discovers skills and builds the shared index. A disabled
@@ -129,9 +134,10 @@ func (s *Service) reload() {
 	}
 	outcome.Index = search.NewIndex(docs)
 	s.snapshot.Store(&snapshot{
-		outcome: outcome,
-		byPath:  byPath,
-		roots:   outcome.Roots,
+		outcome:   outcome,
+		byPath:    byPath,
+		roots:     outcome.Roots,
+		scanRoots: cleanedRoots(outcome.ScanRoots),
 	})
 }
 
@@ -297,7 +303,16 @@ func (s *Service) ReadFull(name string) (SkillMetadata, string, error) {
 		}
 		return sk, strings.TrimSpace(body), nil
 	}
-	data, err := os.ReadFile(sk.Path)
+	snap := s.snapshot.Load()
+	resolved, err := filepath.EvalSymlinks(sk.Path)
+	if err != nil {
+		return SkillMetadata{}, "", fmt.Errorf("skills: resolve %s: %w", sk.Path, err)
+	}
+	if !insideAnyRoot(resolved, snap.scanRoots) {
+		return SkillMetadata{}, "", fmt.Errorf(
+			"skills: %q resolves outside the configured skill roots", sk.Path)
+	}
+	data, err := os.ReadFile(resolved)
 	if err != nil {
 		return SkillMetadata{}, "", fmt.Errorf("skills: read %s: %w", sk.Path, err)
 	}
@@ -327,14 +342,48 @@ func Discover(
 	ws workspace.Workspace,
 	extraRoots []string,
 ) SkillLoadOutcome {
+	scans := buildScanRoots(workBase, userDir, extraRoots)
+	c := collector{
+		workBase:  workBase,
+		ws:        ws,
+		seen:      map[string]bool{},
+		foundRoot: map[string]bool{},
+		roots:     cleanedRoots(scanRootPaths(scans)),
+	}
+	for _, scan := range scans {
+		c.scanRoot(scan.path, scan.depth, scan.scope)
+	}
+	out := SkillLoadOutcome{
+		Skills:    c.skills,
+		Errors:    c.errors,
+		ScanRoots: scanRootPaths(scans),
+	}
+	sort.Slice(out.Skills, func(i, j int) bool {
+		if out.Skills[i].Name != out.Skills[j].Name {
+			return out.Skills[i].Name < out.Skills[j].Name
+		}
+		return out.Skills[i].Path < out.Skills[j].Path
+	})
+	for _, scan := range scans {
+		root := scan.path
+		if c.foundRoot[filepath.Clean(root)] {
+			out.Roots = append(out.Roots, root)
+		}
+	}
+	return out
+}
+
+// scanRoot is one configured skill scan root with its scope priority.
+type scanRoot struct {
+	path  string
+	depth int
+	scope string
+}
+
+func buildScanRoots(workBase, userDir string, extraRoots []string) []scanRoot {
 	// Scope priority for duplicate names (D3): repo levels rank
 	// root -> cwd (cwd highest), then user dirs, then extra roots.
 	// Depth is that priority; ByName picks the highest.
-	type scanRoot struct {
-		path  string
-		depth int
-		scope string
-	}
 	var scans []scanRoot
 	for i, dir := range repoLevels(workBase) {
 		scans = append(scans, scanRoot{
@@ -358,33 +407,47 @@ func Discover(
 	for _, root := range extraRoots {
 		scans = append(scans, scanRoot{path: root, scope: "user"})
 	}
+	return scans
+}
 
-	c := collector{
-		workBase:  workBase,
-		ws:        ws,
-		seen:      map[string]bool{},
-		foundRoot: map[string]bool{},
-	}
-	for _, scan := range scans {
-		c.scanRoot(scan.path, scan.depth, scan.scope)
-	}
-	out := SkillLoadOutcome{
-		Skills: c.skills,
-		Errors: c.errors,
-	}
-	sort.Slice(out.Skills, func(i, j int) bool {
-		if out.Skills[i].Name != out.Skills[j].Name {
-			return out.Skills[i].Name < out.Skills[j].Name
-		}
-		return out.Skills[i].Path < out.Skills[j].Path
-	})
-	for _, scan := range scans {
-		root := scan.path
-		if c.foundRoot[filepath.Clean(root)] {
-			out.Roots = append(out.Roots, root)
-		}
+func scanRootPaths(scans []scanRoot) []string {
+	out := make([]string, 0, len(scans))
+	for _, s := range scans {
+		out = append(out, s.path)
 	}
 	return out
+}
+
+// cleanedRoots returns the absolute, symlink-resolved form of each
+// root, so containment checks compare canonical paths (macOS /var is a
+// symlink to /private/var, for example).
+func cleanedRoots(roots []string) []string {
+	out := make([]string, 0, len(roots))
+	for _, r := range roots {
+		abs, err := filepath.Abs(r)
+		if err != nil {
+			continue
+		}
+		clean := filepath.Clean(abs)
+		if resolved, err := filepath.EvalSymlinks(clean); err == nil {
+			clean = resolved
+		}
+		out = append(out, clean)
+	}
+	return out
+}
+
+// insideAnyRoot reports whether resolved stays inside one of roots,
+// both lexically and through symlinks (callers resolve first).
+func insideAnyRoot(resolved string, roots []string) bool {
+	clean := filepath.Clean(resolved)
+	for _, root := range roots {
+		if clean == root ||
+			strings.HasPrefix(clean, root+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 // repoLevels returns the directories from the repo root down to
@@ -426,6 +489,7 @@ type collector struct {
 	ws        workspace.Workspace
 	seen      map[string]bool
 	foundRoot map[string]bool
+	roots     []string // cleaned scan roots for symlink containment
 	skills    []SkillMetadata
 	errors    []SkillError
 }
@@ -449,19 +513,34 @@ func (c *collector) scanRoot(root string, depth int, scope string) {
 			if strings.HasPrefix(name, ".") {
 				continue
 			}
-			info, err := entry.Info() // follows symlinks (D2)
-			if err != nil {
-				continue
-			}
 			full := filepath.Join(dir, name)
-			if entry.Type()&fs.ModeSymlink != 0 {
-				// DirEntry.Info reports the link itself; stat the
-				// target to follow symlinks (D2).
-				if target, err := os.Stat(full); err == nil {
-					info = target
-				} else {
+			isLink := entry.Type()&fs.ModeSymlink != 0
+			var resolved string
+			if isLink {
+				// Resolve once and verify the target stays inside the
+				// configured skill roots: a repo-supplied symlink must
+				// never redirect discovery (or skill_read) outside them.
+				target, err := filepath.EvalSymlinks(full)
+				if err != nil {
+					c.errors = append(c.errors, SkillError{
+						Path: full, Message: "resolve symlink: " + err.Error(),
+					})
 					continue
 				}
+				if !insideAnyRoot(target, c.roots) {
+					c.errors = append(c.errors, SkillError{
+						Path:    full,
+						Message: "symlink escapes the configured skill roots",
+					})
+					continue
+				}
+				resolved = target
+			} else {
+				resolved = full
+			}
+			info, err := os.Stat(resolved)
+			if err != nil {
+				continue
 			}
 			if info.IsDir() {
 				queue = append(queue, full)
@@ -474,7 +553,7 @@ func (c *collector) scanRoot(root string, depth int, scope string) {
 			if c.seen[clean] {
 				continue
 			}
-			res, err := ParseFile(full)
+			res, err := ParseFile(resolved)
 			if err != nil {
 				c.errors = append(c.errors, SkillError{Path: full, Message: err.Error()})
 				continue

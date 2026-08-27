@@ -28,6 +28,7 @@ import type { MessageView } from '../lib/store';
 import { InteractionCard } from './InteractionCard';
 import { ApplyPatchView, ToolCard } from './ToolCard';
 import { LiveMarkdown, looksLikeMarkdown, Markdown } from './Markdown';
+import { ProjectTrustBanner } from './ProjectTrustBanner';
 
 function Reasoning({ text }: { text: string }) {
   const { t } = useTranslation();
@@ -509,6 +510,8 @@ export function ChatView() {
           </button>
         )}
       </header>
+
+      <ProjectTrustBanner />
 
       <div
         ref={scrollRef}

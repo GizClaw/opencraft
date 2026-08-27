@@ -256,7 +256,10 @@ func TestDisabledList(t *testing.T) {
 
 func TestFollowSymlinks(t *testing.T) {
 	root := t.TempDir()
-	real := filepath.Join(t.TempDir(), "linked")
+	userDir := t.TempDir()
+	// The symlink target lives inside another configured scan root
+	// (the user skill dir), so following it stays in-bounds.
+	real := filepath.Join(userDir, "skills", "linked")
 	if err := os.MkdirAll(real, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +272,7 @@ func TestFollowSymlinks(t *testing.T) {
 	if err := os.Symlink(real, filepath.Join(scan, "linked")); err != nil {
 		t.Skipf("symlink unsupported: %v", err)
 	}
-	svc := NewService(Options{WorkBase: root, Enabled: true})
+	svc := NewService(Options{WorkBase: root, UserDir: userDir, Enabled: true})
 	found := false
 	for _, sk := range svc.List() {
 		if sk.Name == "linked-skill" {
@@ -278,6 +281,48 @@ func TestFollowSymlinks(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("symlinked skill must be discovered: %+v", svc.List())
+	}
+	_, body, err := svc.ReadFull("linked-skill")
+	if err != nil || !strings.Contains(body, "Instructions") {
+		t.Fatalf("ReadFull(linked-skill) = %q, %v", body, err)
+	}
+}
+
+func TestSymlinkEscapeRejected(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "outside")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeSkill(t, outside, "leak",
+		"name: leak\ndescription: must not be reachable\n")
+	scan := filepath.Join(root, ".agents", "skills")
+	if err := os.MkdirAll(scan, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A file symlink pointing at an out-of-root SKILL.md.
+	if err := os.Symlink(filepath.Join(outside, "leak", "SKILL.md"),
+		filepath.Join(scan, "SKILL.md")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	// A directory symlink pointing at an out-of-root skill tree.
+	if err := os.Symlink(filepath.Join(outside, "leak"),
+		filepath.Join(scan, "leak-dir")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	out := Discover(root, "", nil, nil)
+	for _, sk := range out.Skills {
+		if sk.Name == "leak" {
+			t.Fatalf("escaping symlink skill discovered: %+v", out.Skills)
+		}
+	}
+	if len(out.Errors) == 0 {
+		t.Fatal("escaping symlinks must be recorded as errors")
+	}
+	svc := NewService(Options{WorkBase: root, Enabled: true})
+	if _, _, err := svc.ReadFull("leak"); err == nil {
+		t.Fatal("ReadFull must not resolve an escaping skill")
 	}
 }
 

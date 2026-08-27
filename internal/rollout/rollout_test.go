@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestRecorderAppendsAndContinuesSeq(t *testing.T) {
@@ -69,6 +70,63 @@ func TestRecorderConcurrentWrites(t *testing.T) {
 	wg.Wait()
 	if lines := readLines(t, rec.Path()); len(lines) != 20 {
 		t.Fatalf("lines = %d, want 20", len(lines))
+	}
+}
+
+func TestRecorderRotatesAtCap(t *testing.T) {
+	old := maxRolloutMB
+	maxRolloutMB = 1
+	t.Cleanup(func() { maxRolloutMB = old })
+
+	path := filepath.Join(t.TempDir(), "s-1", "rollout.jsonl")
+	rec, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// ~40 KB per event keeps the record count low while crossing the
+	// 1 MiB rotation threshold.
+	for i := 0; i < 30; i++ {
+		ev := Event{
+			Type:      TypeItemToolCall,
+			Tool:      "exec_command",
+			Arguments: json.RawMessage(`"` + strings.Repeat("x", 40<<10) + `"`),
+		}
+		if err := rec.Record(ev); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := rec.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	lines := readLines(t, path)
+	if len(lines) == 0 {
+		t.Fatal("live rollout empty after rotation")
+	}
+	// Sequences stay unique and increasing across the rotation.
+	var last int64 = -1
+	for _, line := range lines {
+		var ev Event
+		if err := json.Unmarshal([]byte(line), &ev); err != nil {
+			t.Fatal(err)
+		}
+		if ev.Seq <= last {
+			t.Fatalf("seq not increasing: %d after %d", ev.Seq, last)
+		}
+		last = ev.Seq
+	}
+	// lumberjack keeps one timestamped backup; removal can lag behind
+	// rotation, so poll briefly.
+	deadline := time.Now().Add(2 * time.Second)
+	pattern := filepath.Join(filepath.Dir(path),
+		strings.TrimSuffix(filepath.Base(path), ".jsonl")+"-*.jsonl")
+	backups, err := filepath.Glob(pattern)
+	for len(backups) == 0 && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+		backups, err = filepath.Glob(pattern)
+	}
+	if err != nil || len(backups) == 0 {
+		t.Fatalf("no rotated backup found: %v", err)
 	}
 }
 

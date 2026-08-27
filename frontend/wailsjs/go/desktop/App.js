@@ -142,6 +142,10 @@ export function Permissions() {
   return window['go']['desktop']['App']['Permissions']();
 }
 
+export function ProjectConfigStatus() {
+  return window['go']['desktop']['App']['ProjectConfigStatus']();
+}
+
 export function Providers() {
   return window['go']['desktop']['App']['Providers']();
 }
@@ -216,6 +220,10 @@ export function SessionMode() {
 
 export function SetModel(arg1) {
   return window['go']['desktop']['App']['SetModel'](arg1);
+}
+
+export function SetProjectTrust(arg1, arg2) {
+  return window['go']['desktop']['App']['SetProjectTrust'](arg1, arg2);
 }
 
 export function SetSessionMode(arg1) {

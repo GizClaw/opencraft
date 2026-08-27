@@ -6,8 +6,10 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/inference/route"
@@ -286,6 +288,42 @@ func TestExecuteDownloadFailure(t *testing.T) {
 	_, err = tool.Execute(context.Background(), `{"prompt":"x"}`)
 	if err == nil || !strings.Contains(err.Error(), "provider returned") {
 		t.Fatalf("error = %v, want download failure", err)
+	}
+}
+
+func TestExecuteRejectsOversizedContentLength(t *testing.T) {
+	ws, err := workspace.NewLocalWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(
+		w http.ResponseWriter, r *http.Request,
+	) {
+		w.Header().Set("Content-Length",
+			strconv.FormatInt(maxDownloadBytes+1, 10))
+		_, _ = w.Write([]byte("x"))
+	}))
+	defer srv.Close()
+
+	tool := &Tool{
+		ws:     ws,
+		client: &http.Client{Timeout: 5 * time.Second},
+		generate: func(
+			_ context.Context, _ inference.GenerateRequest,
+		) (inference.GenerateResponse, route.Trace, error) {
+			return inference.GenerateResponse{
+				Message: message.Message{
+					Role: message.RoleAssistant,
+					Content: message.Content{
+						Parts: []message.Part{videoPart(t, srv.URL)},
+					},
+				},
+			}, route.Trace{}, nil
+		},
+	}
+	_, err = tool.Execute(context.Background(), `{"prompt":"x"}`)
+	if err == nil || !strings.Contains(err.Error(), "exceeds the") {
+		t.Fatalf("Execute error = %v, want size-cap rejection", err)
 	}
 }
 

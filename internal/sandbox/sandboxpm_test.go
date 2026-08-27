@@ -19,9 +19,27 @@ func TestSandboxRunnerEmptyPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = runner.Close() }()
-	want := coresandbox.EnvPolicy{}
-	if !reflect.DeepEqual(policy, want) {
-		t.Errorf("empty policy = %+v, want zero-value EnvPolicy", policy)
+	// A deployment without env_policy gets the curated default
+	// allowlist, never wholesale environment inheritance.
+	if len(policy.Allow) == 0 {
+		t.Fatalf("empty policy = %+v, want a default allowlist", policy)
+	}
+	allow := map[string]bool{}
+	for _, name := range policy.Allow {
+		allow[name] = true
+	}
+	for _, want := range []string{"PATH", "HOME", "OPEN_CRAFT_CACHE"} {
+		if !allow[want] {
+			t.Errorf("default allowlist missing %q: %v", want, policy.Allow)
+		}
+	}
+	for _, secret := range []string{"OPENAI_API_KEY", "ANTHROPIC_API_KEY"} {
+		if allow[secret] {
+			t.Errorf("default allowlist must not expose %q", secret)
+		}
+	}
+	if !reflect.DeepEqual(policy, DefaultEnvPolicy()) {
+		t.Errorf("empty policy = %+v, want DefaultEnvPolicy()", policy)
 	}
 }
 

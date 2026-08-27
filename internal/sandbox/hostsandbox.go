@@ -162,7 +162,10 @@ type HostSandboxSettings struct {
 // EnvPolicy applied to every confined spawn.
 func (s HostSandboxSettings) Env() coresandbox.EnvPolicy {
 	if s.EnvPolicy == nil {
-		return coresandbox.EnvPolicy{}
+		// No explicit policy: sandboxed commands get the curated
+		// allowlist instead of the parent environment wholesale, so
+		// provider keys never leak into project code by default.
+		return DefaultEnvPolicy()
 	}
 	return coresandbox.EnvPolicy{
 		Allow:  s.EnvPolicy.Allow,

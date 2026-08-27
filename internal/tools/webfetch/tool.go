@@ -2,8 +2,12 @@ package webfetch
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net"
+	"net/http"
 	"net/url"
 	"strings"
 	"time"
@@ -25,6 +29,15 @@ const Name = "web_fetch"
 type Tool struct {
 	extractor extract.Extractor
 	gate      func(context.Context, string) error
+	// allowPrivate, when non-nil, is consulted per request to decide
+	// whether private/loopback/link-local destinations are permitted
+	// (YOLO sessions opt in). Nil means always blocked.
+	allowPrivate func(context.Context) bool
+	// client is the hardened HTTP client used when a gate is wired: it
+	// re-validates every redirect target and pins DNS to the resolved
+	// addresses so the SSRF guard cannot be bypassed with a redirect
+	// or a DNS rebinding between validation and dial.
+	client *http.Client
 }
 
 // New creates the web_fetch tool.
@@ -35,6 +48,23 @@ func New() *Tool {
 // SetGate installs the domain policy gate (nil disables it).
 func (t *Tool) SetGate(gate func(context.Context, string) error) {
 	t.gate = gate
+	t.rebuildClient()
+}
+
+// SetAllowPrivate installs the per-request resolver that permits
+// private destinations. It is consulted only when a gate is wired;
+// nil (the default) keeps private destinations blocked.
+func (t *Tool) SetAllowPrivate(fn func(context.Context) bool) {
+	t.allowPrivate = fn
+	t.rebuildClient()
+}
+
+func (t *Tool) rebuildClient() {
+	if t.gate != nil {
+		t.client = hardenedClient(t.gate, t.allowPrivate)
+	} else {
+		t.client = nil
+	}
 }
 
 // Definition implements tool.Tool.
@@ -95,6 +125,9 @@ func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
 	if strings.EqualFold(args.Format, "markdown") {
 		opts = append(opts, extract.WithFormat(extract.FormatMarkdown))
 	}
+	if t.client != nil {
+		opts = append(opts, extract.WithHTTPClient(t.client))
+	}
 
 	content, err := t.extractor.Extract(ctx, args.URL, opts...)
 	if err != nil {
@@ -113,6 +146,170 @@ func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
 		return "", errdefs.Internalf("web_fetch: encode result: %v", err)
 	}
 	return string(payload), nil
+}
+
+// maxRedirects bounds redirect chains followed by the hardened client.
+const maxRedirects = 10
+
+// hardenedClient builds an http.Client whose transport validates the
+// destination host on every connection and whose redirect policy
+// re-runs the gate for each hop. DNS is resolved once per dial and the
+// connection targets the exact validated addresses, closing the
+// redirect and DNS-rebinding bypasses of a check that only runs on the
+// original URL.
+func hardenedClient(
+	gate func(context.Context, string) error,
+	allowPrivate func(context.Context) bool,
+) *http.Client {
+	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+	tr := &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		DialContext:           pinnedDial(gate, allowPrivate, dialer),
+		DialTLSContext:        pinnedTLSDial(gate, allowPrivate, dialer),
+		MaxIdleConns:          10,
+		MaxIdleConnsPerHost:   4,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+	}
+	return &http.Client{
+		Transport: tr,
+		Timeout:   30 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= maxRedirects {
+				return fmt.Errorf(
+					"web_fetch: stopped after %d redirects", maxRedirects)
+			}
+			if gate != nil {
+				if err := gate(req.Context(), req.URL.Hostname()); err != nil {
+					return err
+				}
+			}
+			return nil
+		},
+	}
+}
+
+// pinnedDial resolves addr once, validates the resolved addresses
+// against the SSRF guard, and dials those exact addresses. The gate is
+// consulted for the host lists as well, so allow/deny rules keep
+// working even when the host is not a private literal.
+func pinnedDial(
+	gate func(context.Context, string) error,
+	allowPrivate func(context.Context) bool,
+	dialer *net.Dialer,
+) func(context.Context, string, string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("web_fetch: parse dial address %q: %w", addr, err)
+		}
+		if gate != nil {
+			if err := gate(ctx, host); err != nil {
+				return nil, err
+			}
+		}
+		ips, err := validatedAddresses(ctx, host, allowPrivate != nil && allowPrivate(ctx))
+		if err != nil {
+			return nil, err
+		}
+		return dialIPs(ctx, dialer, network, ips, port)
+	}
+}
+
+// pinnedTLSDial is pinnedDial plus the TLS handshake against the
+// hostname, so SNI/certificate validation still uses the original
+// host while the connection itself targets the validated address.
+func pinnedTLSDial(
+	gate func(context.Context, string) error,
+	allowPrivate func(context.Context) bool,
+	dialer *net.Dialer,
+) func(context.Context, string, string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return nil, fmt.Errorf("web_fetch: parse dial address %q: %w", addr, err)
+		}
+		if gate != nil {
+			if err := gate(ctx, host); err != nil {
+				return nil, err
+			}
+		}
+		ips, err := validatedAddresses(ctx, host, allowPrivate != nil && allowPrivate(ctx))
+		if err != nil {
+			return nil, err
+		}
+		conn, err := dialIPs(ctx, dialer, network, ips, port)
+		if err != nil {
+			return nil, err
+		}
+		tconn := tls.Client(conn, &tls.Config{
+			ServerName: host,
+			MinVersion: tls.VersionTLS12,
+		})
+		if err := tconn.HandshakeContext(ctx); err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("web_fetch: TLS handshake with %s: %w", host, err)
+		}
+		return tconn, nil
+	}
+}
+
+// validatedAddresses resolves host (or returns the literal IP) and
+// rejects any resolved address in private/loopback/link-local space.
+// The caller dials exactly these addresses, so the check and the
+// connection share one resolution.
+func validatedAddresses(
+	ctx context.Context, host string, allowPrivate bool,
+) ([]net.IP, error) {
+	if ip := net.ParseIP(host); ip != nil {
+		if !allowPrivate && blockedIP(ip) {
+			return nil, errdefs.Validationf(
+				"web_fetch: private address %q is blocked by the SSRF guard", host)
+		}
+		return []net.IP{ip}, nil
+	}
+	ips, err := lookupHost(ctx, host)
+	if err != nil {
+		return nil, errdefs.Validationf("web_fetch: resolve %q: %v", host, err)
+	}
+	if len(ips) == 0 {
+		return nil, errdefs.Validationf("web_fetch: no addresses for %q", host)
+	}
+	if !allowPrivate {
+		for _, ip := range ips {
+			if blockedIP(ip) {
+				return nil, errdefs.Validationf(
+					"web_fetch: host %q resolves to private address %s (blocked by the SSRF guard)",
+					host, ip)
+			}
+		}
+	}
+	return ips, nil
+}
+
+// dialIPs tries each validated address in order and returns the first
+// successful connection.
+func dialIPs(
+	ctx context.Context,
+	dialer *net.Dialer,
+	network string,
+	ips []net.IP,
+	port string,
+) (net.Conn, error) {
+	var lastErr error
+	for _, ip := range ips {
+		conn, err := dialer.DialContext(
+			ctx, network, net.JoinHostPort(ip.String(), port))
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return nil, fmt.Errorf("web_fetch: dial %s: %w", ips, lastErr)
+	}
+	return nil, errors.New("web_fetch: no reachable address")
 }
 
 // DomainGate builds the URL host gate from the configured policy:

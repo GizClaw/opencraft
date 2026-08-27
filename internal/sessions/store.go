@@ -15,6 +15,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
@@ -58,6 +59,26 @@ type Store struct {
 	root   string
 	window int
 	db     *state.Store
+
+	// mu guards seqCache (per-session next-turn sequence numbers).
+	// The cache avoids globbing the whole history directory on every
+	// append; it is seeded once per session from the existing files.
+	mu       sync.Mutex
+	seqCache map[string]int
+}
+
+// sessionMeta is the per-session index document (meta.json). It embeds
+// the token usage (legacy meta.json files are plain Usage JSON, which
+// still unmarshals) and adds the counters and timestamps that let the
+// resume list and title generation avoid re-reading every history
+// file.
+type sessionMeta struct {
+	Usage
+	TurnCount    int       `json:"turn_count,omitempty"`
+	MessageCount int       `json:"message_count,omitempty"`
+	Title        string    `json:"title,omitempty"`
+	CreatedAt    time.Time `json:"created_at,omitempty"`
+	UpdatedAt    time.Time `json:"updated_at,omitempty"`
 }
 
 // New creates a Store rooted at root. The window is the number of
@@ -69,14 +90,22 @@ func New(root string, window int) (*Store, error) {
 	if window <= 0 {
 		window = 40
 	}
-	if err := os.MkdirAll(root, 0o755); err != nil {
+	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, err
 	}
+	// Tighten an existing looser directory (older builds used 0755):
+	// session archives hold file contents and tool output.
+	_ = os.Chmod(root, 0o700)
 	db, err := state.Open(filepath.Join(root, "session.db"))
 	if err != nil {
 		return nil, err
 	}
-	return &Store{root: root, window: window, db: db}, nil
+	return &Store{
+		root:     root,
+		window:   window,
+		db:       db,
+		seqCache: make(map[string]int),
+	}, nil
 }
 
 // State returns the SQLite store backing this session store (the
@@ -129,9 +158,11 @@ func (s *Store) Create() (string, error) {
 	id := NewID()
 	dir := s.dir(id)
 	// session ids are always valid here (freshly generated).
-	if err := os.MkdirAll(filepath.Join(dir, "history"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, "history"), 0o700); err != nil {
 		return "", err
 	}
+	_ = os.Chmod(dir, 0o700)
+	_ = os.Chmod(filepath.Join(dir, "history"), 0o700)
 	return id, nil
 }
 
@@ -146,10 +177,11 @@ func (s *Store) AppendTurn(_ context.Context, id string, msgs []message.Message)
 	}
 	dir := s.dir(id)
 	historyDir := filepath.Join(dir, "history")
-	if err := os.MkdirAll(historyDir, 0o755); err != nil {
+	if err := os.MkdirAll(historyDir, 0o700); err != nil {
 		return err
 	}
-	seq, err := s.nextSeq(historyDir)
+	_ = os.Chmod(historyDir, 0o700)
+	seq, err := s.nextSeq(id, historyDir)
 	if err != nil {
 		return err
 	}
@@ -178,21 +210,47 @@ func (s *Store) AppendTurn(_ context.Context, id string, msgs []message.Message)
 	if len(archived) == 0 {
 		return nil
 	}
+	now := time.Now().UTC()
 	file := struct {
 		Seq      int               `json:"seq"`
 		At       time.Time         `json:"at"`
 		Messages []message.Message `json:"messages"`
-	}{Seq: seq, At: time.Now().UTC(), Messages: archived}
+	}{Seq: seq, At: now, Messages: archived}
 	data, err := json.MarshalIndent(file, "", "  ")
 	if err != nil {
 		return err
 	}
 	path := filepath.Join(historyDir, fmt.Sprintf("%06d.json", seq))
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+
+	// Keep the meta index in sync: title (first user message), message
+	// and turn counts, and timestamps. This is what makes List() and
+	// auto-title O(1) instead of re-reading the whole archive.
+	meta, err := s.loadMeta(id)
+	if err != nil {
+		return err
+	}
+	meta.TurnCount++
+	meta.MessageCount += len(archived)
+	if meta.Title == "" {
+		for _, m := range archived {
+			if m.Role == message.RoleUser {
+				meta.Title = firstLine(m.Content.Text())
+				break
+			}
+		}
+	}
+	if meta.CreatedAt.IsZero() {
+		meta.CreatedAt = now
+	}
+	meta.UpdatedAt = now
+	return s.writeMeta(id, meta)
 }
 
 // History returns the most recent n archived messages, oldest first.
@@ -205,13 +263,20 @@ func (s *Store) History(_ context.Context, id string, n int) ([]message.Message,
 	if n == 0 {
 		n = s.window
 	}
-	var all []message.Message
 	files, err := filepath.Glob(filepath.Join(s.dir(id), "history", "*.json"))
 	if err != nil {
 		return nil, err
 	}
 	sort.Strings(files)
-	for _, path := range files {
+	// The bounded window only reads the newest files that can supply n
+	// messages; a full history (n < 0) still reads everything.
+	limit := n
+	if limit < 0 {
+		limit = int(^uint(0) >> 1)
+	}
+	var all []message.Message
+	for i := len(files) - 1; i >= 0 && len(all) < limit; i-- {
+		path := files[i]
 		data, err := os.ReadFile(path)
 		if err != nil {
 			continue
@@ -222,7 +287,7 @@ func (s *Store) History(_ context.Context, id string, n int) ([]message.Message,
 		if json.Unmarshal(data, &turn) != nil {
 			continue
 		}
-		all = append(all, turn.Messages...)
+		all = append(turn.Messages, all...)
 	}
 	if n > 0 && len(all) > n {
 		all = all[len(all)-n:]
@@ -257,32 +322,40 @@ func (s *Store) List() ([]Meta, error) {
 			continue
 		}
 		id := e.Name()
-		hist, _ := s.History(context.Background(), id, -1)
-		usage, _ := s.LoadUsage(context.Background(), id)
-		if len(hist) == 0 && usage == (Usage{}) {
+		meta, err := s.loadMeta(id)
+		if err != nil {
 			continue
 		}
-		info, _ := e.Info()
+		if meta.TurnCount == 0 && meta.Usage == (Usage{}) {
+			// Archive written before the meta index existed (or an
+			// empty session): bounded fallback scan.
+			if lm, ok := s.legacyMeta(id); ok {
+				meta = lm
+			} else {
+				continue
+			}
+		}
 		m := Meta{
-			ID:       id,
-			Messages: len(hist),
-			Usage:    usage,
+			ID:    id,
+			Title: meta.Title,
+			Usage: meta.Usage,
 		}
-		if info != nil {
-			m.CreatedAt = info.ModTime()
-			m.UpdatedAt = info.ModTime()
+		m.Messages = meta.MessageCount
+		if m.Messages == 0 {
+			m.Messages = meta.TurnCount
 		}
-		// Prefer the archived turn timestamps over the directory mtime:
-		// the directory is touched on every append, so its mtime drifts
-		// from the actual message times.
-		if times := s.turnTimes(id); len(times) > 0 {
-			m.CreatedAt = times[0]
-			m.UpdatedAt = times[len(times)-1]
+		if !meta.CreatedAt.IsZero() {
+			m.CreatedAt = meta.CreatedAt
 		}
-		// Title: first user message.
-		for _, h := range hist {
-			if h.Role == message.RoleUser && m.Title == "" {
-				m.Title = firstLine(h.Content.Text())
+		if !meta.UpdatedAt.IsZero() {
+			m.UpdatedAt = meta.UpdatedAt
+		}
+		if info, err := e.Info(); err == nil {
+			if m.CreatedAt.IsZero() {
+				m.CreatedAt = info.ModTime()
+			}
+			if m.UpdatedAt.IsZero() {
+				m.UpdatedAt = info.ModTime()
 			}
 		}
 		if m.Title == "" {
@@ -296,23 +369,153 @@ func (s *Store) List() ([]Meta, error) {
 	return out, nil
 }
 
+// Title returns the archived conversation title (the first user
+// message's first line) using the meta index, falling back to a
+// bounded scan for pre-index archives.
+func (s *Store) Title(id string) (string, error) {
+	if err := requireID(id); err != nil {
+		return "", err
+	}
+	meta, err := s.loadMeta(id)
+	if err != nil {
+		return "", err
+	}
+	if meta.Title != "" {
+		return meta.Title, nil
+	}
+	if lm, ok := s.legacyMeta(id); ok && lm.Title != "" {
+		return lm.Title, nil
+	}
+	return "", nil
+}
+
+// FirstUserMessage returns the archived first non-empty user message
+// text. It reads only the oldest turn files (bounded), so auto-title
+// generation never pays for the full archive of a long session.
+func (s *Store) FirstUserMessage(id string) (string, error) {
+	if err := requireID(id); err != nil {
+		return "", err
+	}
+	files, err := filepath.Glob(filepath.Join(s.dir(id), "history", "*.json"))
+	if err != nil {
+		return "", err
+	}
+	sort.Strings(files)
+	for i := 0; i < len(files) && i < 10; i++ {
+		data, err := os.ReadFile(files[i])
+		if err != nil {
+			continue
+		}
+		var turn struct {
+			Messages []message.Message `json:"messages"`
+		}
+		if json.Unmarshal(data, &turn) != nil {
+			continue
+		}
+		for _, m := range turn.Messages {
+			if m.Role != message.RoleUser {
+				continue
+			}
+			if text := strings.TrimSpace(m.Content.Text()); text != "" {
+				return text, nil
+			}
+		}
+	}
+	return "", nil
+}
+
+// legacyMeta derives session metadata for archives that predate the
+// meta index: turn count from the file list plus title and timestamps
+// from the first and last turn files. ok is false when the session has
+// no archived turns.
+func (s *Store) legacyMeta(id string) (sessionMeta, bool) {
+	files, err := filepath.Glob(filepath.Join(s.dir(id), "history", "*.json"))
+	if err != nil || len(files) == 0 {
+		return sessionMeta{}, false
+	}
+	sort.Strings(files)
+	var meta sessionMeta
+	meta.TurnCount = len(files)
+	meta.MessageCount = len(files)
+	for i := 0; i < len(files) && i < 5; i++ {
+		var turn struct {
+			At       time.Time         `json:"at"`
+			Messages []message.Message `json:"messages"`
+		}
+		data, err := os.ReadFile(files[i])
+		if err != nil {
+			continue
+		}
+		if json.Unmarshal(data, &turn) != nil {
+			continue
+		}
+		if meta.CreatedAt.IsZero() && !turn.At.IsZero() {
+			meta.CreatedAt = turn.At
+		}
+		for _, m := range turn.Messages {
+			if m.Role == message.RoleUser && meta.Title == "" {
+				meta.Title = firstLine(m.Content.Text())
+			}
+		}
+	}
+	if data, err := os.ReadFile(files[len(files)-1]); err == nil {
+		var turn struct {
+			At time.Time `json:"at"`
+		}
+		if json.Unmarshal(data, &turn) == nil {
+			meta.UpdatedAt = turn.At
+		}
+	}
+	return meta, true
+}
+
+// loadMeta reads the per-session index document. A missing file is a
+// zero document (legacy archives start empty).
+func (s *Store) loadMeta(id string) (sessionMeta, error) {
+	var meta sessionMeta
+	data, err := os.ReadFile(filepath.Join(s.dir(id), "meta.json"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return meta, nil
+		}
+		return meta, err
+	}
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return meta, err
+	}
+	return meta, nil
+}
+
+// writeMeta persists the per-session index document atomically with
+// owner-only permissions.
+func (s *Store) writeMeta(id string, meta sessionMeta) error {
+	data, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return err
+	}
+	dir := s.dir(id)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return err
+	}
+	_ = os.Chmod(dir, 0o700)
+	path := filepath.Join(dir, "meta.json")
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
 // LoadUsage returns the cumulative token usage recorded for a session.
 func (s *Store) LoadUsage(_ context.Context, id string) (Usage, error) {
 	if err := requireID(id); err != nil {
 		return Usage{}, err
 	}
-	var usage Usage
-	data, err := os.ReadFile(filepath.Join(s.dir(id), "meta.json"))
+	meta, err := s.loadMeta(id)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return usage, nil
-		}
-		return usage, err
+		return Usage{}, err
 	}
-	if err := json.Unmarshal(data, &usage); err != nil {
-		return usage, err
-	}
-	return usage, nil
+	return meta.Usage, nil
 }
 
 // RecordUsage persists the cumulative token usage for a session. The
@@ -321,16 +524,12 @@ func (s *Store) RecordUsage(_ context.Context, id string, usage Usage) error {
 	if err := requireID(id); err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(usage, "", "  ")
+	meta, err := s.loadMeta(id)
 	if err != nil {
 		return err
 	}
-	path := filepath.Join(s.dir(id), "meta.json")
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	meta.Usage = usage
+	return s.writeMeta(id, meta)
 }
 
 func (s *Store) dir(id string) string {
@@ -346,6 +545,9 @@ func (s *Store) Remove(id string) error {
 	if err := requireID(id); err != nil {
 		return err
 	}
+	s.mu.Lock()
+	delete(s.seqCache, id)
+	s.mu.Unlock()
 	if err := os.RemoveAll(s.dir(id)); err != nil {
 		return fmt.Errorf("sessions: remove %s: %w", id, err)
 	}
@@ -379,14 +581,33 @@ func ValidID(id string) bool {
 	return !strings.ContainsAny(id, `/\`)
 }
 
-func (s *Store) nextSeq(historyDir string) (int, error) {
+// nextSeq returns the next turn sequence for one session. The value is
+// cached in memory after the first scan, so a long-lived session never
+// globs its growing history directory on every append.
+func (s *Store) nextSeq(id, historyDir string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if next, ok := s.seqCache[id]; ok {
+		s.seqCache[id] = next + 1
+		return next, nil
+	}
+	max, err := scanSeq(historyDir)
+	if err != nil {
+		return 0, err
+	}
+	s.seqCache[id] = max + 2
+	return max + 1, nil
+}
+
+// scanSeq derives the next sequence from the largest archived file
+// name rather than the file count: the archive is append-only today,
+// but a count-based seq would collide after any future cleanup or
+// compaction.
+func scanSeq(historyDir string) (int, error) {
 	files, err := filepath.Glob(filepath.Join(historyDir, "*.json"))
 	if err != nil {
 		return 0, err
 	}
-	// Derive the next sequence from the largest file name rather than the
-	// file count: the archive is append-only today, but a count-based seq
-	// would collide after any future cleanup or compaction.
 	max := 0
 	for _, path := range files {
 		n, err := strconv.Atoi(strings.TrimSuffix(filepath.Base(path), ".json"))
@@ -397,33 +618,7 @@ func (s *Store) nextSeq(historyDir string) (int, error) {
 			max = n
 		}
 	}
-	return max + 1, nil
-}
-
-// turnTimes returns the archived turn timestamps in seq order. Turns
-// written before the "at" field existed (zero time) are skipped so old
-// archives fall back to the directory mtime in List.
-func (s *Store) turnTimes(id string) []time.Time {
-	files, err := filepath.Glob(filepath.Join(s.dir(id), "history", "*.json"))
-	if err != nil {
-		return nil
-	}
-	sort.Strings(files)
-	var out []time.Time
-	for _, path := range files {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		var turn struct {
-			At time.Time `json:"at"`
-		}
-		if json.Unmarshal(data, &turn) != nil || turn.At.IsZero() {
-			continue
-		}
-		out = append(out, turn.At)
-	}
-	return out
+	return max, nil
 }
 
 func firstLine(s string) string {

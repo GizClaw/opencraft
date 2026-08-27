@@ -219,10 +219,15 @@ func (a *App) rebuild() error {
 		}
 	}
 	a.mu.Unlock()
-	mgr, err := config.Open(config.Options{
-		WorkDir: wd,
-		UserDir: ud,
-	})
+	// A discovered project layer is applied only for trusted
+	// workspaces. Without the trust gate a third-party repo could
+	// silently override hooks (host command execution), sandbox
+	// policy, or the execution graph on open.
+	opts := config.Options{WorkDir: wd, UserDir: ud}
+	if _, present := config.ProjectConfigDir(wd); present && !a.isProjectTrusted(wd) {
+		opts.SkipProjectLayer = true
+	}
+	mgr, err := config.Open(opts)
 	if err != nil {
 		return fmt.Errorf("desktop: open config: %w", err)
 	}

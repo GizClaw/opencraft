@@ -149,11 +149,17 @@ func (s *Service) installDir(scope string) (string, error) {
 // SKILL.md below it (collection repo). Returns the valid skill names.
 func validateTree(root string) ([]string, error) {
 	if res, err := ParseFile(filepath.Join(root, "SKILL.md")); err == nil {
+		if err := ensureNoEscapingSkillSymlink(root, filepath.Join(root, "SKILL.md")); err != nil {
+			return nil, err
+		}
 		return []string{res.Metadata.Name}, nil
 	}
 	var names []string
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() || d.Name() != "SKILL.md" {
+			return err
+		}
+		if err := ensureNoEscapingSkillSymlink(root, path); err != nil {
 			return err
 		}
 		if res, err := ParseFile(path); err == nil {
@@ -166,4 +172,35 @@ func validateTree(root string) ([]string, error) {
 			"skills: cloned repo contains no valid SKILL.md (frontmatter needs name + description)")
 	}
 	return names, err
+}
+
+// ensureNoEscapingSkillSymlink rejects a SKILL.md whose symlink target
+// resolves outside the skill tree, so an installed repo can never make
+// skill_read (or discovery) follow a link to an arbitrary host path.
+func ensureNoEscapingSkillSymlink(root, path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return nil
+	}
+	target, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return fmt.Errorf("skills: resolve %s: %w", path, err)
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return err
+	}
+	rootAbs = filepath.Clean(rootAbs)
+	if resolved, err := filepath.EvalSymlinks(rootAbs); err == nil {
+		rootAbs = resolved
+	}
+	if target != rootAbs &&
+		!strings.HasPrefix(target, rootAbs+string(filepath.Separator)) {
+		return fmt.Errorf(
+			"skills: SKILL.md symlink %q escapes the skill tree", path)
+	}
+	return nil
 }
