@@ -3,8 +3,10 @@ import {
   AlertTriangle,
   Archive,
   Bot,
+  Check,
   ChevronDown,
   ChevronRight,
+  Copy,
   File,
   Flame,
   Folder,
@@ -16,7 +18,9 @@ import {
   ShieldCheck,
   Sparkles,
   Square,
+  Terminal,
   Undo2,
+  X,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { OnFileDrop, OnFileDropOff } from '../../wailsjs/runtime/runtime';
@@ -24,9 +28,9 @@ import { api } from '../lib/api';
 import { COMPACT_SUMMARY_PREFIX } from '../lib/compact';
 import { useStore } from '../lib/store';
 import type { SkillDTO, UndoState } from '../lib/types';
-import type { MessageView } from '../lib/store';
+import type { AssistantItem, MessageView } from '../lib/store';
 import { InteractionCard } from './InteractionCard';
-import { ApplyPatchView, ToolCard } from './ToolCard';
+import { ApplyPatchView, ToolCard, WriteView } from './ToolCard';
 import { LiveMarkdown, looksLikeMarkdown, Markdown } from './Markdown';
 import { ProjectTrustBanner } from './ProjectTrustBanner';
 
@@ -41,6 +45,101 @@ function Reasoning({ text }: { text: string }) {
         {text}
       </div>
     </details>
+  );
+}
+
+type ToolCallItem = Extract<AssistantItem, { kind: 'tool_call' }>;
+
+// Tools rendered as always-visible full blocks are never folded into a
+// consecutive-run group: their content matters in place (patch diffs,
+// written file contents), not hidden behind a "Ran N tools" summary.
+const nonGroupedTools = new Set(['apply_patch', 'write_file']);
+
+// groupToolCalls merges consecutive tool calls into groups so a burst
+// of tool executions renders as one collapsible block instead of a
+// stack of cards. Non-tool items are passed through unchanged.
+function groupToolCalls(
+  items: AssistantItem[],
+): (AssistantItem | ToolCallItem[])[] {
+  const out: (AssistantItem | ToolCallItem[])[] = [];
+  let cur: ToolCallItem[] | null = null;
+  for (const item of items) {
+    if (item.kind === 'tool_call' && !nonGroupedTools.has(item.tool.name)) {
+      if (!cur) cur = [];
+      cur.push(item);
+    } else {
+      if (cur) {
+        out.push(cur);
+        cur = null;
+      }
+      out.push(item);
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+const isCommandTool = (name: string) =>
+  name === 'exec_command' || name === 'exec_session';
+
+// ToolGroupView renders a burst of consecutive tool calls as one
+// collapsible block ("Ran 4 commands"), defaulting to collapsed; the
+// individual tool cards appear once expanded.
+function ToolGroupView({ tools }: { tools: ToolCallItem[] }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const allCommands = tools.every((ti) => isCommandTool(ti.tool.name));
+  const running = tools.some((ti) => ti.tool.status === 'running');
+  const failed = tools.some((ti) => ti.tool.status === 'error');
+  const done = tools.filter((ti) => ti.tool.status === 'done').length;
+  const label = allCommands
+    ? t('chat.ranCommands', { count: tools.length })
+    : t('chat.ranTools', { count: tools.length });
+
+  return (
+    <div className="my-1.5">
+      <button
+        onClick={() => setOpen(!open)}
+        className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+          failed
+            ? 'border-err/40 bg-err/5'
+            : running
+              ? 'border-accent/40 bg-panel2'
+              : 'border-edge bg-panel2'
+        } hover:bg-panel2/70`}
+      >
+        {running ? (
+          <Loader2 size={14} className="animate-spin shrink-0 text-accent" />
+        ) : failed ? (
+          <X size={14} className="shrink-0 text-err" />
+        ) : (
+          <Check size={14} className="shrink-0 text-ok" />
+        )}
+        {allCommands ? (
+          <Terminal size={14} className="shrink-0 text-accent" />
+        ) : (
+          <Bot size={14} className="shrink-0 text-accent" />
+        )}
+        <span className="min-w-0 flex-1 truncate text-sm text-fg">{label}</span>
+        {running && (
+          <span className="shrink-0 text-xs text-dim tabular-nums">
+            {done}/{tools.length}
+          </span>
+        )}
+        {open ? (
+          <ChevronDown size={14} className="shrink-0 text-dim" />
+        ) : (
+          <ChevronRight size={14} className="shrink-0 text-dim" />
+        )}
+      </button>
+      {open && (
+        <div className="mt-1 space-y-1.5">
+          {tools.map((item) => (
+            <ToolCard key={item.id} tool={item.tool} />
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -76,12 +175,15 @@ const MessageRow = memo(function MessageRow({
   msg,
   busy,
   streaming,
+  isTurnLast,
 }: {
   msg: MessageView;
   busy: boolean;
   streaming: boolean;
+  isTurnLast: boolean;
 }) {
   const { t } = useTranslation();
+  const [copied, setCopied] = useState(false);
   if (msg.role === 'user') {
     if (msg.text.startsWith(COMPACT_SUMMARY_PREFIX)) {
       return <CompactCard text={msg.text} />;
@@ -94,28 +196,76 @@ const MessageRow = memo(function MessageRow({
       </div>
     );
   }
+  const finalText = msg.items
+    .filter(
+      (it): it is Extract<AssistantItem, { kind: 'text' }> =>
+        it.kind === 'text',
+    )
+    .map((it) => it.text)
+    .join('\n')
+    .trim();
+  const copyable = isTurnLast && !streaming && finalText.length > 0;
+  const copyFinal = async () => {
+    if (!finalText) return;
+    try {
+      await navigator.clipboard.writeText(finalText);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard unavailable
+    }
+  };
   return (
     <div className="flex flex-col gap-1">
-      {msg.items.map((item) => {
-        switch (item.kind) {
-          case 'reasoning':
-            return <Reasoning key={item.id} text={item.text} />;
-          case 'tool_call':
-            return item.tool.name === 'apply_patch' ? (
-              <ApplyPatchView key={item.id} tool={item.tool} />
+      {groupToolCalls(msg.items).map((group, gi) => {
+        if (Array.isArray(group)) {
+          return group.length === 1 ? (
+            group[0].tool.name === 'apply_patch' ? (
+              <ApplyPatchView key={group[0].id} tool={group[0].tool} />
+            ) : group[0].tool.name === 'write_file' ? (
+              <WriteView key={group[0].id} tool={group[0].tool} />
             ) : (
-              <ToolCard key={item.id} tool={item.tool} />
+              <ToolCard key={group[0].id} tool={group[0].tool} />
+            )
+          ) : (
+            <ToolGroupView key={`group-${gi}`} tools={group} />
+          );
+        }
+        switch (group.kind) {
+          case 'reasoning':
+            return <Reasoning key={group.id} text={group.text} />;
+          case 'tool_call':
+            // Non-grouped tools (apply_patch / write_file) arrive here
+            // as standalone items.
+            return group.tool.name === 'apply_patch' ? (
+              <ApplyPatchView key={group.id} tool={group.tool} />
+            ) : group.tool.name === 'write_file' ? (
+              <WriteView key={group.id} tool={group.tool} />
+            ) : (
+              <ToolCard key={group.id} tool={group.tool} />
             );
           case 'text':
             return (
               <AssistantText
-                key={item.id}
-                text={item.text}
+                key={group.id}
+                text={group.text}
                 streaming={streaming}
               />
             );
         }
       })}
+      {copyable && (
+        <div className="flex justify-end">
+          <button
+            onClick={() => void copyFinal()}
+            className="flex items-center gap-1 rounded border border-edge px-1.5 py-0.5 text-[10px] text-dim hover:text-fg"
+            aria-label={t('chat.copyOutput')}
+          >
+            {copied ? <Check size={11} /> : <Copy size={11} />}
+            {copied ? t('chat.copied') : t('chat.copyOutput')}
+          </button>
+        </div>
+      )}
       {msg.items.length === 0 && busy && (
         <div className="flex items-center gap-2 py-1 text-sm text-dim">
           <Loader2 size={14} className="animate-spin" />
@@ -547,6 +697,11 @@ export function ChatView() {
                 key={msg.id}
                 msg={msg}
                 busy={busy}
+                isTurnLast={
+                  msg.role === 'assistant' &&
+                  (i === messages.length - 1 ||
+                    messages[i + 1]?.role === 'user')
+                }
                 streaming={
                   busy && msg.role === 'assistant' && i === messages.length - 1
                 }
