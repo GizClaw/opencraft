@@ -27,7 +27,7 @@ import type { SkillDTO, UndoState } from '../lib/types';
 import type { MessageView } from '../lib/store';
 import { InteractionCard } from './InteractionCard';
 import { ApplyPatchView, ToolCard } from './ToolCard';
-import { Markdown } from './Markdown';
+import { LiveMarkdown, looksLikeMarkdown, Markdown } from './Markdown';
 
 function Reasoning({ text }: { text: string }) {
   const { t } = useTranslation();
@@ -56,6 +56,9 @@ const AssistantText = memo(function AssistantText({
   streaming: boolean;
 }) {
   if (streaming) {
+    if (looksLikeMarkdown(text)) {
+      return <LiveMarkdown text={text} />;
+    }
     return <div className="prose-chat whitespace-pre-wrap text-sm">{text}</div>;
   }
   return (
