@@ -290,7 +290,7 @@ func (t *Tool) download(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, errdefs.Internalf("%s: download: %v", Name, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return nil, errdefs.Internalf(
 			"%s: download: provider returned %s", Name, resp.Status)
