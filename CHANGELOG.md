@@ -22,9 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - 2026-08-27
 
-First release of the opencraft desktop workbench: a Go coding agent built on
-flowcraft core v0.1.32, delivered as a macOS/Linux desktop app (Wails v2 +
-React).
+First release of the opencraft desktop workbench: a local-first workflow
+runner built on flowcraft core v0.1.32, delivered as a macOS/Linux desktop
+app (Wails v2 + React).
 
 ### Added
 

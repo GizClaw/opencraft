@@ -5,7 +5,7 @@
 <h1 align="center">opencraft</h1>
 
 <p align="center">
-  A local-first coding agent desktop workbench built on
+  A local-first workflow workbench built on
   <a href="https://github.com/GizClaw/flowcraft">flowcraft</a>.
 </p>
 
@@ -19,11 +19,14 @@
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey" alt="Platforms: macOS / Linux">
 </p>
 
-opencraft is a Go coding agent that reads and edits files, runs shell
-commands with approval, and persists and resumes sessions — all inside a
-macOS/Linux desktop workbench (Wails v2 + React). It is driven by an LLM
-through flowcraft's config-driven graph engine, with a local execd sandbox,
-SQLite session store, and per-project approval policy.
+opencraft is a local-first workflow workbench: an LLM-driven agent runs your
+tasks on your machine — reading and editing files, executing shell commands
+with approval, coordinating subagents, and persisting and resuming sessions.
+Built on flowcraft's config-driven graph engine, it orchestrates any local
+workflow, with coding as one of the workflows it runs rather than its only
+purpose. A local execd sandbox, SQLite session store, and per-project approval
+policy keep everything running inside a macOS/Linux desktop app (Wails v2 +
+React).
 
 ## Features
 
