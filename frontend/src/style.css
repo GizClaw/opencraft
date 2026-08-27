@@ -68,6 +68,14 @@ body,
   border-radius: 4px;
 }
 
+/* Text inputs: the composer already signals focus via its container's
+   focus-within border, and the caret is the visible indicator; a second
+   ring on the bare textarea reads as a stray highlight. */
+input:focus-visible,
+textarea:focus-visible {
+  outline: none;
+}
+
 *::-webkit-scrollbar {
   width: 8px;
   height: 8px;
