@@ -689,7 +689,9 @@ func (a *App) ListAgents() []AgentSummary {
 	lifecycle := a.agents
 	a.mu.Unlock()
 	if lifecycle == nil {
-		return nil
+		// Runtime not ready yet (startup) or agents unavailable: return
+		// an empty list, never null (the UI iterates the result).
+		return []AgentSummary{}
 	}
 	return lifecycle.List()
 }

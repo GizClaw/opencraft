@@ -395,7 +395,7 @@ func (l *Lifecycle) LoadAll(ctx context.Context) []LoadError {
 
 // List returns every persisted agent, sorted by name.
 func (l *Lifecycle) List() []Summary {
-	var out []Summary
+	out := []Summary{}
 	for _, dir := range l.scanDirs() {
 		spec, err := l.readSpec(dir)
 		if err != nil {

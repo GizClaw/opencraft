@@ -814,7 +814,7 @@ export const useStore = create<StoreState>((set, get) => {
 
     refreshAgents: async () => {
       try {
-        set({ agents: await api.listAgents() });
+        set({ agents: (await api.listAgents()) ?? [] });
       } catch {
         // best-effort
       }
