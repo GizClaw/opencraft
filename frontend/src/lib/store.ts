@@ -51,11 +51,19 @@ export interface ConversationState {
   messages: MessageView[];
   busy: boolean;
   activeRunID: string | null;
+  // stage is the current activity for the running-turn header:
+  // "reasoning" | "tool:<name>" | "text" | "".
+  stage: string;
   mode: string;
   think: string;
   model: string;
   pendingInteracts: InteractDTO[];
   lastFailed: boolean;
+}
+
+export interface ToastItem {
+  id: number;
+  text: string;
 }
 
 let msgSeq = 0;
@@ -77,6 +85,7 @@ const emptyConv = (): ConversationState => ({
   messages: [],
   busy: false,
   activeRunID: null,
+  stage: '',
   mode: 'workspace',
   think: 'medium',
   model: '',
@@ -302,8 +311,10 @@ interface StoreState {
   subagentCards: KanbanCard[];
   subagentPanelOpen: boolean;
   modelOptions: ModelOption[];
-  theme: 'dark' | 'light';
+  theme: 'dark' | 'light' | 'auto';
   workspaces: WorkspaceMeta[];
+  toasts: ToastItem[];
+  sessionsLoading: boolean;
 
   init: () => Promise<void>;
   handleEvent: (ev: UIEvent) => void;
@@ -322,7 +333,7 @@ interface StoreState {
   setMode: (mode: string) => Promise<void>;
   setThink: (level: string) => Promise<void>;
   setModel: (model: string) => Promise<void>;
-  setTheme: (theme: 'dark' | 'light') => void;
+  setTheme: (theme: 'dark' | 'light' | 'auto') => void;
   loadWorkspaces: () => Promise<void>;
   openWorkspace: (path: string) => Promise<void>;
   removeWorkspace: (id: string) => Promise<void>;
@@ -332,9 +343,37 @@ interface StoreState {
   loadSubagentCards: () => Promise<void>;
   toggleSubagentPanel: () => void;
   flash: (text: string) => void;
+  toast: (text: string) => void;
+  dismissToast: (id: number) => void;
+}
+
+let themeMedia: MediaQueryList | null = null;
+let themeMediaHandler: (() => void) | null = null;
+
+// applyTheme resolves dark/light/auto (auto follows the OS preference)
+// and keeps a media-query listener alive while auto is selected.
+function applyTheme(theme: 'dark' | 'light' | 'auto') {
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  const resolved = theme === 'auto' ? (mq.matches ? 'dark' : 'light') : theme;
+  document.documentElement.classList.toggle(
+    'theme-light',
+    resolved === 'light',
+  );
+  if (theme === 'auto') {
+    if (themeMedia === mq) return;
+    themeMedia?.removeEventListener('change', themeMediaHandler!);
+    themeMedia = mq;
+    themeMediaHandler = () => applyTheme('auto');
+    mq.addEventListener('change', themeMediaHandler);
+  } else {
+    themeMedia?.removeEventListener('change', themeMediaHandler!);
+    themeMedia = null;
+    themeMediaHandler = null;
+  }
 }
 
 export const useStore = create<StoreState>((set, get) => {
+  let toastSeq = 0;
   const updateConv = (id: string, patch: Partial<ConversationState>) =>
     set((state) => {
       const conv = state.conversations[id];
@@ -371,7 +410,12 @@ export const useStore = create<StoreState>((set, get) => {
     text: string,
     messages: MessageView[],
   ) => {
-    updateConv(convID, { messages, busy: true, lastFailed: false });
+    updateConv(convID, {
+      messages,
+      busy: true,
+      lastFailed: false,
+      stage: '',
+    });
     try {
       const start = await api.startTurn(text);
       set((state) => ({
@@ -417,14 +461,14 @@ export const useStore = create<StoreState>((set, get) => {
     modelOptions: [],
     theme: 'dark',
     workspaces: [],
+    toasts: [],
+    sessionsLoading: false,
 
     init: async () => {
       const saved = window.localStorage.getItem('opencraft.theme');
-      const theme = saved === 'light' ? 'light' : 'dark';
-      document.documentElement.classList.toggle(
-        'theme-light',
-        theme === 'light',
-      );
+      const theme = saved === 'light' || saved === 'auto' ? saved : 'dark';
+      applyTheme(theme);
+      set({ theme });
       try {
         const [
           status,
@@ -511,8 +555,18 @@ export const useStore = create<StoreState>((set, get) => {
             // Main turn: fold into its own conversation.
             const conv = ensureConversation(convID);
             if (conv) {
+              const part = data.delta?.part;
+              const stage =
+                part?.type === 'reasoning'
+                  ? 'reasoning'
+                  : part?.type === 'tool_call'
+                    ? `tool:${part.call.name}`
+                    : part?.type === 'text'
+                      ? 'text'
+                      : '';
               updateConv(convID, {
                 messages: applyStream(conv.messages, data.delta),
+                stage,
               });
             }
             break;
@@ -615,6 +669,7 @@ export const useStore = create<StoreState>((set, get) => {
                   messages,
                   busy: false,
                   activeRunID: null,
+                  stage: '',
                   lastFailed: failed,
                 },
               },
@@ -809,10 +864,7 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     setTheme: (theme) => {
-      document.documentElement.classList.toggle(
-        'theme-light',
-        theme === 'light',
-      );
+      applyTheme(theme);
       window.localStorage.setItem('opencraft.theme', theme);
       set({ theme });
     },
@@ -826,10 +878,13 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     loadSessions: async () => {
+      set({ sessionsLoading: true });
       try {
         set({ sessions: (await api.listSessions()) ?? [] });
       } catch {
         // best-effort
+      } finally {
+        set({ sessionsLoading: false });
       }
     },
 
@@ -922,6 +977,19 @@ export const useStore = create<StoreState>((set, get) => {
     toggleSubagentPanel: () =>
       set((state) => ({ subagentPanelOpen: !state.subagentPanelOpen })),
 
-    flash: (text) => set({ statusText: text }),
+    flash: (text) => get().toast(text),
+    toast: (text) => {
+      const id = ++toastSeq;
+      set((state) => ({ toasts: [...state.toasts, { id, text }] }));
+      setTimeout(() => {
+        set((state) => ({
+          toasts: state.toasts.filter((t) => t.id !== id),
+        }));
+      }, 3500);
+    },
+    dismissToast: (id) =>
+      set((state) => ({
+        toasts: state.toasts.filter((t) => t.id !== id),
+      })),
   };
 });

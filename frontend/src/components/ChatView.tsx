@@ -18,8 +18,6 @@ import {
   Square,
   Undo2,
 } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { useTranslation } from 'react-i18next';
 import { OnFileDrop, OnFileDropOff } from '../../wailsjs/runtime/runtime';
 import { api } from '../lib/api';
@@ -29,6 +27,7 @@ import type { SkillDTO, UndoState } from '../lib/types';
 import type { MessageView } from '../lib/store';
 import { InteractionCard } from './InteractionCard';
 import { ApplyPatchView, ToolCard } from './ToolCard';
+import { LiveMarkdown, looksLikeMarkdown, Markdown } from './Markdown';
 
 function Reasoning({ text }: { text: string }) {
   const { t } = useTranslation();
@@ -57,11 +56,14 @@ const AssistantText = memo(function AssistantText({
   streaming: boolean;
 }) {
   if (streaming) {
+    if (looksLikeMarkdown(text)) {
+      return <LiveMarkdown text={text} />;
+    }
     return <div className="prose-chat whitespace-pre-wrap text-sm">{text}</div>;
   }
   return (
     <div className="prose-chat text-sm">
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+      <Markdown text={text} />
     </div>
   );
 });
@@ -174,6 +176,7 @@ export function ChatView() {
   const mode = conv?.mode ?? 'workspace';
   const setMode = useStore((s) => s.setMode);
   const think = conv?.think ?? 'medium';
+  const stage = conv?.stage ?? '';
   const setThink = useStore((s) => s.setThink);
   const model = conv?.model ?? '';
   const setModel = useStore((s) => s.setModel);
@@ -236,6 +239,12 @@ export function ChatView() {
   // WKWebView for the Enter key).
   const composingRef = useRef(false);
   const { t } = useTranslation();
+  const stageLabel =
+    stage === 'reasoning'
+      ? t('chat.stageReasoning')
+      : stage.startsWith('tool:')
+        ? t('chat.stageTool', { tool: stage.slice(5) })
+        : t('chat.running');
 
   useEffect(() => {
     OnFileDrop((_x, _y, paths) => {
@@ -396,6 +405,15 @@ export function ChatView() {
     }
   };
 
+  // Grow the composer with the content up to a max height; shrink back
+  // when the text is cleared.
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, 208)}px`;
+  }, [input]);
+
   const insertMention = (item: MentionItem) => {
     const re =
       item.trigger === '@'
@@ -450,7 +468,7 @@ export function ChatView() {
         <span className="text-sm font-medium truncate">{headerTitle}</span>
         {busy && (
           <span className="flex items-center gap-1 text-xs text-accent">
-            <Loader2 size={12} className="animate-spin" /> {t('chat.running')}
+            <Loader2 size={12} className="animate-spin" /> {stageLabel}
           </span>
         )}
         <span className="flex-1" />
@@ -461,6 +479,7 @@ export function ChatView() {
           onClick={() => void runUndo(false)}
           disabled={!undoAvail.can_undo}
           title={t('chat.undo')}
+          aria-label={t('chat.undo')}
           className="rounded-lg border border-edge p-1.5 text-dim transition-colors hover:text-fg disabled:opacity-40"
         >
           <Undo2 size={13} />
@@ -469,6 +488,7 @@ export function ChatView() {
           onClick={() => void runUndo(true)}
           disabled={!undoAvail.can_redo}
           title={t('chat.redo')}
+          aria-label={t('chat.redo')}
           className="ml-1 rounded-lg border border-edge p-1.5 text-dim transition-colors hover:text-fg disabled:opacity-40"
         >
           <Redo2 size={13} />
@@ -478,10 +498,11 @@ export function ChatView() {
             onClick={toggleSubagentPanel}
             className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs transition-colors ${
               subagentPanelOpen
-                ? 'border-violet-400/40 bg-violet-400/10 text-violet-400'
+                ? 'border-subagent/40 bg-subagent/10 text-subagent'
                 : 'border-edge text-dim hover:text-fg'
             }`}
             title={t('subagent.toggle')}
+            aria-label={t('subagent.toggle')}
           >
             <Bot size={13} />
             {subagentCards.length}
@@ -517,7 +538,7 @@ export function ChatView() {
             </div>
           </div>
         ) : (
-          <div className="max-w-3xl mx-auto space-y-4">
+          <div className="max-w-4xl mx-auto space-y-4">
             {messages.map((msg, i) => (
               <MessageRow
                 key={msg.id}
@@ -555,12 +576,10 @@ export function ChatView() {
       </div>
 
       <div className="shrink-0 px-6 pb-4">
-        <div className="max-w-3xl mx-auto rounded-xl border border-edge bg-panel focus-within:border-accent/60 transition-colors">
+        <div className="max-w-4xl mx-auto rounded-xl border border-edge bg-panel focus-within:border-accent/60 transition-colors">
           <div
             className={`flex items-center gap-2 rounded-t-xl border-b px-3 py-1.5 text-xs transition-colors ${
-              yolo
-                ? 'border-[#d9a83c]/40 bg-[#d9a83c]/10'
-                : 'border-transparent'
+              yolo ? 'border-yolo/40 bg-yolo/10' : 'border-transparent'
             }`}
           >
             <div className="relative">
@@ -568,7 +587,7 @@ export function ChatView() {
                 onClick={() => setModeMenuOpen((v) => !v)}
                 className={`flex items-center gap-1.5 rounded-md border px-2 py-0.5 transition-colors ${
                   yolo
-                    ? 'border-[#d9a83c]/50 bg-[#d9a83c]/15 text-[#e2b341] hover:bg-[#d9a83c]/25'
+                    ? 'border-yolo/50 bg-yolo/15 text-yolo hover:bg-yolo/25'
                     : readOnly
                       ? 'border-accent/40 bg-accent/10 text-accent hover:bg-accent/20'
                       : 'border-edge text-dim hover:text-fg'
@@ -629,7 +648,7 @@ export function ChatView() {
                       }}
                       className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs ${
                         yolo
-                          ? 'bg-[#d9a83c]/15 text-[#e2b341]'
+                          ? 'bg-yolo/15 text-yolo'
                           : 'text-dim hover:bg-panel2 hover:text-fg'
                       }`}
                     >
@@ -646,7 +665,7 @@ export function ChatView() {
               </span>
             )}
             {yolo && (
-              <span className="flex items-center gap-1 text-[#d9a83c]">
+              <span className="flex items-center gap-1 text-yolo">
                 <AlertTriangle size={12} />
                 {t('chat.yoloBanner')}
               </span>
@@ -730,7 +749,7 @@ export function ChatView() {
                   : t('chat.placeholderUnconfigured')
               }
               disabled={!configured}
-              className="relative w-full resize-none bg-transparent px-4 pt-3 text-sm text-transparent caret-fg outline-none disabled:opacity-50"
+              className="relative max-h-52 w-full resize-none overflow-y-auto bg-transparent px-4 pt-3 text-sm text-transparent caret-fg outline-none disabled:opacity-50"
             />
           </div>
           {mention && (
@@ -835,8 +854,8 @@ export function ChatView() {
         </div>
         {confirmYolo && (
           <div className="fixed inset-x-0 bottom-0 top-11 z-40 grid place-items-center bg-black/60">
-            <div className="w-[420px] rounded-2xl border border-[#d9a83c]/40 bg-panel p-5 shadow-2xl">
-              <div className="flex items-center gap-2 text-sm font-semibold text-[#d9a83c]">
+            <div className="w-[420px] rounded-2xl border border-yolo/40 bg-panel p-5 shadow-2xl">
+              <div className="flex items-center gap-2 text-sm font-semibold text-yolo">
                 <AlertTriangle size={16} />
                 {t('chat.yoloConfirmTitle')}
               </div>

@@ -807,6 +807,8 @@ export function AgentGraphEditor({
   >(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [confirmClose, setConfirmClose] = useState(false);
   const [rawDraft, setRawDraft] = useState('');
   const [rawTouched, setRawTouched] = useState(false);
   const [edgeCondition, setEdgeCondition] = useState('');
@@ -820,6 +822,7 @@ export function AgentGraphEditor({
       setDescription(detail.description);
       setSelected(null);
       setError('');
+      setDirty(false);
     } catch (err) {
       setError(String(err));
     }
@@ -925,7 +928,20 @@ export function AgentGraphEditor({
   }, [structureKey]);
 
   const onNodesChange = (changes: NodeChange<RFNode<GraphNodeData>>[]) =>
-    setRfNodes((nds) => applyNodeChanges(changes, nds));
+    setRfNodes((nds) => {
+      if (
+        changes.some(
+          (c) =>
+            c.type === 'position' ||
+            c.type === 'dimensions' ||
+            c.type === 'add' ||
+            c.type === 'remove',
+        )
+      ) {
+        setDirty(true);
+      }
+      return applyNodeChanges(changes, nds);
+    });
 
   const selectNode = (id: string) => {
     const node = graph?.nodes.find((n) => n.id === id);
@@ -944,6 +960,7 @@ export function AgentGraphEditor({
 
   const updateNodeField = (nodeID: string, path: string[], value: unknown) => {
     if (!graph) return;
+    setDirty(true);
     setGraph({
       ...graph,
       nodes: graph.nodes.map((n) =>
@@ -964,6 +981,7 @@ export function AgentGraphEditor({
   const updateEdgeCondition = (condition: string) => {
     if (!graph || selected?.kind !== 'edge') return;
     setEdgeCondition(condition);
+    setDirty(true);
     setGraph({
       ...graph,
       edges: graph.edges.map((e) =>
@@ -994,6 +1012,7 @@ export function AgentGraphEditor({
       );
       onSaved();
       setSaved(true);
+      setDirty(false);
       await load();
     } catch (err) {
       setError(String(err));
@@ -1021,11 +1040,26 @@ export function AgentGraphEditor({
           {t('graph.editing', { name: agentName })}
         </h3>
         {saved && <span className="text-xs text-ok">{t('graph.saved')}</span>}
+        {dirty && (
+          <span className="text-xs text-warn">{t('graph.unsaved')}</span>
+        )}
         <span className="flex-1" />
         <button
-          onClick={onClose}
+          onClick={() => {
+            if (dirty && !confirmClose) {
+              setConfirmClose(true);
+              setTimeout(() => setConfirmClose(false), 3000);
+              return;
+            }
+            onClose();
+          }}
           className="text-dim hover:text-fg"
-          title={t('graph.back')}
+          title={
+            dirty && !confirmClose ? t('graph.unsavedClose') : t('graph.back')
+          }
+          aria-label={
+            dirty && !confirmClose ? t('graph.unsavedClose') : t('graph.back')
+          }
         >
           <X size={16} />
         </button>
@@ -1034,7 +1068,10 @@ export function AgentGraphEditor({
         {t('graph.description')}
         <input
           value={description}
-          onChange={(e) => setDescription(e.target.value)}
+          onChange={(e) => {
+            setDescription(e.target.value);
+            setDirty(true);
+          }}
           className="rounded-lg border border-edge bg-panel2 px-2.5 py-1.5 text-xs text-fg outline-none focus:border-accent/60"
         />
       </label>

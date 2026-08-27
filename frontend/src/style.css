@@ -11,6 +11,8 @@
   --color-ok: #34d399;
   --color-warn: #fbbf24;
   --color-err: #f87171;
+  --color-yolo: #d9a83c;
+  --color-subagent: #a78bfa;
 }
 
 :root {
@@ -31,6 +33,8 @@
   --color-ok: #0f9d6e;
   --color-warn: #b47d00;
   --color-err: #d64545;
+  --color-yolo: #b47d00;
+  --color-subagent: #7c3aed;
 }
 
 html,
@@ -56,6 +60,22 @@ body,
   scrollbar-color: var(--color-edge) transparent;
 }
 
+/* Keyboard focus must stay visible even where outlines are removed
+   (Tailwind preflight + custom outline-none utilities). */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Text inputs: the composer already signals focus via its container's
+   focus-within border, and the caret is the visible indicator; a second
+   ring on the bare textarea reads as a stray highlight. */
+input:focus-visible,
+textarea:focus-visible {
+  outline: none;
+}
+
 *::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -71,51 +91,269 @@ body,
 }
 
 .prose-chat {
-  line-height: 1.65;
+  line-height: 1.7;
+  color: var(--color-fg);
 }
 
 .prose-chat p {
-  margin: 0.4em 0;
+  margin: 0.55em 0;
+}
+
+.prose-chat h1,
+.prose-chat h2,
+.prose-chat h3,
+.prose-chat h4,
+.prose-chat h5,
+.prose-chat h6 {
+  font-weight: 600;
+  line-height: 1.35;
+  margin: 1.1em 0 0.45em;
+  color: var(--color-fg);
+}
+.prose-chat h1 {
+  font-size: 1.35em;
+}
+.prose-chat h2 {
+  font-size: 1.2em;
+  border-bottom: 1px solid var(--color-edge);
+  padding-bottom: 0.25em;
+}
+.prose-chat h3 {
+  font-size: 1.08em;
+}
+.prose-chat h4 {
+  font-size: 1em;
+}
+.prose-chat h5,
+.prose-chat h6 {
+  font-size: 0.92em;
+  color: var(--color-dim);
+}
+.prose-chat h1:first-child,
+.prose-chat h2:first-child,
+.prose-chat h3:first-child,
+.prose-chat h4:first-child,
+.prose-chat h5:first-child,
+.prose-chat h6:first-child {
+  margin-top: 0;
+}
+
+.prose-chat code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+.prose-chat :not(pre) > code {
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 25%, transparent);
+  border-radius: 5px;
+  padding: 1px 6px;
+  color: var(--color-accent);
 }
 
 .prose-chat pre {
   background: var(--color-panel2);
   border: 1px solid var(--color-edge);
-  border-radius: 8px;
-  padding: 10px 12px;
+  border-radius: 10px;
+  padding: 12px 14px;
   overflow-x: auto;
-  margin: 0.6em 0;
+  margin: 0.7em 0;
   font-size: 12.5px;
 }
 
-.prose-chat code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.92em;
+.prose-chat pre code {
+  font-size: inherit;
 }
 
-.prose-chat :not(pre) > code {
-  background: var(--color-panel2);
-  border: 1px solid var(--color-edge);
-  border-radius: 4px;
-  padding: 1px 5px;
+.prose-chat a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+.prose-chat a:hover {
+  text-decoration: underline;
+}
+
+.prose-chat strong {
+  color: var(--color-fg);
+  font-weight: 600;
 }
 
 .prose-chat ul,
 .prose-chat ol {
-  margin: 0.4em 0;
-  padding-left: 1.4em;
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+.prose-chat ul {
+  list-style: disc;
+}
+.prose-chat ul ul {
+  list-style: circle;
+}
+.prose-chat ol {
+  list-style: decimal;
+}
+.prose-chat li {
+  margin: 0.25em 0;
+}
+.prose-chat li > ul,
+.prose-chat li > ol {
+  margin: 0.2em 0;
+}
+
+/* GFM task lists */
+.prose-chat li:has(> input[type='checkbox']) {
+  list-style: none;
+  margin-left: -1.2em;
+}
+.prose-chat input[type='checkbox'] {
+  accent-color: var(--color-accent);
+  margin-right: 0.45em;
 }
 
 .prose-chat blockquote {
-  border-left: 3px solid var(--color-edge);
-  margin: 0.5em 0;
-  padding-left: 0.9em;
+  border-left: 3px solid var(--color-accent);
+  margin: 0.6em 0;
+  padding: 0.15em 0 0.15em 1em;
   color: var(--color-dim);
+  background: color-mix(in srgb, var(--color-accent) 6%, transparent);
+  border-radius: 0 8px 8px 0;
 }
 
 .prose-chat table {
   border-collapse: collapse;
-  margin: 0.6em 0;
+  margin: 0.7em 0;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.prose-chat table th,
+.prose-chat table td {
+  border: 1px solid var(--color-edge);
+  padding: 6px 12px;
+}
+
+.prose-chat table th {
+  background: var(--color-panel2);
+  font-weight: 600;
+  text-align: left;
+}
+
+.prose-chat tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--color-panel2) 45%, transparent);
+}
+
+.prose-chat hr {
+  border: none;
+  border-top: 1px solid var(--color-edge);
+  margin: 1.2em 0;
+}
+
+.codeblock {
+  position: relative;
+}
+
+.codeblock:hover .codeblock-copy {
+  opacity: 1;
+}
+
+.codeblock-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--color-edge);
+  border-radius: 6px;
+  background: var(--color-panel);
+  color: var(--color-dim);
+  font-size: 11px;
+}
+
+.codeblock-copy:hover {
+  color: var(--color-fg);
+}
+
+/* Syntax highlighting (rehype-highlight / highlight.js) mapped onto
+   the app theme so both dark and light palettes stay consistent. */
+.hljs {
+  color: var(--color-fg);
+  background: transparent;
+}
+.hljs-comment,
+.hljs-quote {
+  color: var(--color-dim);
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-literal {
+  color: #c792ea;
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-addition {
+  color: #c3e88d;
+}
+.hljs-number,
+.hljs-symbol,
+.hljs-deletion {
+  color: #f78c6c;
+}
+.hljs-title,
+.hljs-function .hljs-title,
+.hljs-section {
+  color: #82aaff;
+}
+.hljs-attr,
+.hljs-attribute,
+.hljs-params {
+  color: #ffcb6b;
+}
+.hljs-built_in,
+.hljs-type,
+.hljs-class .hljs-title {
+  color: #89ddff;
+}
+.hljs-meta,
+.hljs-variable,
+.hljs-template-variable {
+  color: var(--color-dim);
+}
+
+.theme-light .hljs-keyword,
+.theme-light .hljs-selector-tag,
+.theme-light .hljs-literal {
+  color: #8250df;
+}
+.theme-light .hljs-string,
+.theme-light .hljs-regexp,
+.theme-light .hljs-addition {
+  color: #0a7d33;
+}
+.theme-light .hljs-number,
+.theme-light .hljs-symbol,
+.theme-light .hljs-deletion {
+  color: #b35900;
+}
+.theme-light .hljs-title,
+.theme-light .hljs-function .hljs-title,
+.theme-light .hljs-section {
+  color: #0550ae;
+}
+.theme-light .hljs-attr,
+.theme-light .hljs-attribute,
+.theme-light .hljs-params {
+  color: #9a6700;
+}
+.theme-light .hljs-built_in,
+.theme-light .hljs-type,
+.theme-light .hljs-class .hljs-title {
+  color: #0550ae;
 }
 
 .prose-chat th,

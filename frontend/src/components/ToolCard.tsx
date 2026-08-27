@@ -121,11 +121,23 @@ function resultSummary(
   t: (key: string) => string,
 ): { text: string; ok: boolean } | null {
   if (tool.result === undefined) return null;
+  const execTail = (text: string): string => {
+    const lines = text.trimEnd().split('\n');
+    const last = lines[lines.length - 1]?.trim() ?? '';
+    return last.length > 120 ? `${last.slice(0, 120)}…` : last;
+  };
   const exec = execResult(tool.result);
   if (exec && typeof exec.exit_code === 'number') {
-    return exec.exit_code === 0
-      ? { text: '└ ok', ok: true }
-      : { text: `└ exit ${exec.exit_code}`, ok: false };
+    if (exec.exit_code === 0) {
+      const tail = execTail(exec.stdout ?? '');
+      return tail
+        ? { text: `└ ${t('tool.ok')} · ${tail}`, ok: true }
+        : { text: `└ ${t('tool.ok')}`, ok: true };
+    }
+    const tail = execTail(exec.stderr ?? exec.stdout ?? '');
+    return tail
+      ? { text: `└ ${t('tool.exit')} ${exec.exit_code} · ${tail}`, ok: false }
+      : { text: `└ ${t('tool.exit')} ${exec.exit_code}`, ok: false };
   }
   if (tool.name === 'read_file') {
     try {
@@ -686,6 +698,7 @@ function ResultBlock({ tool }: { tool: ToolView }) {
 
 export const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
   const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const { t } = useTranslation();
   // update_plan renders as a to-do list, not a generic tool item.
   if (tool.name === 'update_plan') {
@@ -698,11 +711,38 @@ export const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
   const summaryLine = resultSummary(tool, t);
   const running = tool.status === 'running';
   const failed = tool.status === 'error';
+  // Live tools stay expanded while running so the progress is visible.
+  const liveTools = [
+    'exec_command',
+    'exec_session',
+    'web_fetch',
+    'generate_image',
+    'generate_video',
+    'apply_patch',
+  ];
+  useEffect(() => {
+    if (running && liveTools.includes(tool.name)) setOpen(true);
+  }, [running, tool.name]);
+
+  const copyResult = async () => {
+    if (tool.result === undefined) return;
+    try {
+      await navigator.clipboard.writeText(tool.result);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard unavailable
+    }
+  };
 
   return (
     <div
       className={`rounded-lg border overflow-hidden my-1.5 ${
-        failed ? 'border-err/40 bg-err/5' : 'border-edge bg-panel2'
+        running
+          ? 'border-accent/40 bg-panel2'
+          : failed
+            ? 'border-err/40 bg-err/5'
+            : 'border-edge bg-panel2'
       }`}
     >
       <button
@@ -751,7 +791,22 @@ export const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
           <ArgsBlock tool={tool} />
           {tool.result !== undefined && (
             <>
-              <div className="text-xs text-dim pt-1">{t('tool.result')}:</div>
+              <div className="flex items-center justify-between pt-1">
+                <div className="text-xs text-dim">{t('tool.result')}:</div>
+                <div className="flex items-center gap-2 text-[10px] text-dim">
+                  <span className="tabular-nums">
+                    {tool.result.split('\n').length} {t('tool.lines')}
+                  </span>
+                  <button
+                    onClick={() => void copyResult()}
+                    className="flex items-center gap-1 rounded border border-edge px-1.5 py-0.5 text-dim hover:text-fg"
+                    aria-label={t('tool.copyResult')}
+                  >
+                    {copied ? <Check size={11} /> : <ClipboardList size={11} />}
+                    {t('tool.copyResult')}
+                  </button>
+                </div>
+              </div>
               <ResultBlock tool={tool} />
             </>
           )}

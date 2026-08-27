@@ -1,15 +1,34 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowDown,
+  ArrowDownToLine,
   ArrowUp,
+  ArrowUpFromLine,
+  BarChart3,
+  Brain,
+  Cpu,
+  Database,
+  Languages,
   Loader2,
+  Monitor,
+  Moon,
+  Palette,
   Plus,
+  RefreshCw,
+  ScrollText,
   Settings,
+  ShieldCheck,
+  ShieldPlus,
+  Stethoscope,
+  Sun,
+  Terminal,
   Trash2,
   X,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
+import { LogViewer } from './LogViewer';
 import { useStore } from '../lib/store';
 import type {
   CacheClearResult,
@@ -58,6 +77,7 @@ type Tab =
 export function ConfigPage() {
   const configured = useStore((s) => s.configured);
   const closeConfig = useStore((s) => s.closeConfig);
+  const toast = useStore((s) => s.toast);
   const theme = useStore((s) => s.theme);
   const setTheme = useStore((s) => s.setTheme);
   const newID = () =>
@@ -87,8 +107,6 @@ export function ConfigPage() {
   const [policy, setPolicy] = useState<PolicyDecision | null>(null);
   const [cacheResult, setCacheResult] = useState<CacheClearResult | null>(null);
   const [diagBusy, setDiagBusy] = useState(false);
-  const [logs, setLogs] = useState('');
-  const logsRef = useRef<HTMLPreElement>(null);
   const [usageRows, setUsageRows] = useState<ModelUsageStat[]>([]);
   const [usageError, setUsageError] = useState('');
   const [usageModel, setUsageModel] = useState('');
@@ -100,6 +118,17 @@ export function ConfigPage() {
   const [usageEndMs, setUsageEndMs] = useState(0);
   const [usageLoading, setUsageLoading] = useState(false);
   const [usageReload, setUsageReload] = useState(0);
+  const usageTotals = useMemo(() => {
+    const t0 = { input: 0, output: 0, cache: 0, reasoning: 0, sessions: 0 };
+    for (const r of usageRows) {
+      t0.input += r.input_tokens;
+      t0.output += r.output_tokens;
+      t0.cache += r.cache_read_tokens;
+      t0.reasoning += r.reasoning_tokens;
+      t0.sessions += r.sessions;
+    }
+    return t0;
+  }, [usageRows]);
 
   useEffect(() => {
     void (async () => {
@@ -219,22 +248,6 @@ export function ConfigPage() {
       setMemorySaving(false);
     }
   };
-
-  useEffect(() => {
-    if (tab !== 'logs') return;
-    void api
-      .readLog(300)
-      .then(setLogs)
-      .catch((err) => setError(String(err)));
-  }, [tab]);
-
-  // Pin the log view to the newest lines whenever the content changes
-  // (including the first load when the tab opens).
-  useEffect(() => {
-    if (tab === 'logs' && logsRef.current) {
-      logsRef.current.scrollTop = logsRef.current.scrollHeight;
-    }
-  }, [logs, tab]);
 
   useEffect(() => {
     if (tab !== 'usage') return;
@@ -444,6 +457,7 @@ export function ConfigPage() {
     setSaving(true);
     try {
       await api.saveInstances({ instances });
+      toast(t('config.saved'));
       closeConfig();
     } catch (err) {
       setError(String(err));
@@ -458,6 +472,13 @@ export function ConfigPage() {
     return String(n);
   };
 
+  const fmtBytes = (n: number) => {
+    if (n >= 1 << 30) return `${(n / (1 << 30)).toFixed(2)} GB`;
+    if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(1)} MB`;
+    if (n >= 1 << 10) return `${(n / (1 << 10)).toFixed(0)} KB`;
+    return `${n} B`;
+  };
+
   const fmtUsageTime = (iso: string) => {
     if (!iso) return '';
     const d = new Date(iso);
@@ -469,14 +490,14 @@ export function ConfigPage() {
     return d.toLocaleDateString();
   };
 
-  const tabs: { id: Tab; label: string }[] = [
-    { id: 'ui', label: t('config.tabUi') },
-    { id: 'inference', label: t('config.tabInference') },
-    { id: 'usage', label: t('config.tabUsage') },
-    { id: 'memory', label: t('config.tabMemory') },
-    { id: 'permissions', label: t('config.tabPermissions') },
-    { id: 'logs', label: t('config.tabLogs') },
-    { id: 'diagnostics', label: t('config.tabDiagnostics') },
+  const tabs: { id: Tab; label: string; icon: LucideIcon }[] = [
+    { id: 'ui', label: t('config.tabUi'), icon: Palette },
+    { id: 'inference', label: t('config.tabInference'), icon: Cpu },
+    { id: 'usage', label: t('config.tabUsage'), icon: BarChart3 },
+    { id: 'memory', label: t('config.tabMemory'), icon: Database },
+    { id: 'permissions', label: t('config.tabPermissions'), icon: ShieldCheck },
+    { id: 'logs', label: t('config.tabLogs'), icon: ScrollText },
+    { id: 'diagnostics', label: t('config.tabDiagnostics'), icon: Stethoscope },
   ];
 
   return (
@@ -485,80 +506,137 @@ export function ConfigPage() {
         <div className="flex items-center gap-4 px-5 py-4 border-b border-edge">
           <Settings size={18} className="text-accent" />
           <h2 className="text-base font-semibold">{t('config.title')}</h2>
-          <div className="flex rounded-lg border border-edge overflow-hidden text-sm ml-2">
-            {tabs.map((tb) => (
-              <button
-                key={tb.id}
-                onClick={() => {
-                  setTab(tb.id);
-                  setError('');
-                }}
-                className={`px-3 py-1 ${
-                  tab === tb.id
-                    ? 'bg-accent text-white'
-                    : 'text-dim hover:text-fg'
-                }`}
-              >
-                {tb.label}
-              </button>
-            ))}
-          </div>
           <span className="flex-1" />
           {configured && (
-            <button onClick={closeConfig} className="text-dim hover:text-fg">
+            <button
+              onClick={closeConfig}
+              className="text-dim hover:text-fg"
+              aria-label={t('tools.close')}
+            >
               <X size={18} />
             </button>
           )}
         </div>
 
+        <div
+          className="flex items-end gap-1 overflow-x-auto border-b border-edge px-4"
+          role="tablist"
+        >
+          {tabs.map((tb) => {
+            const Icon = tb.icon;
+            const active = tab === tb.id;
+            return (
+              <button
+                key={tb.id}
+                role="tab"
+                aria-selected={active}
+                onClick={() => {
+                  setTab(tb.id);
+                  setError('');
+                }}
+                className={`relative flex shrink-0 items-center gap-1.5 rounded-t-lg px-3 py-2 text-sm transition-colors ${
+                  active
+                    ? 'bg-accent/10 text-accent'
+                    : 'text-dim hover:bg-panel2 hover:text-fg'
+                }`}
+              >
+                <Icon size={14} />
+                {tb.label}
+                <span
+                  className={`absolute inset-x-1 -bottom-px h-0.5 rounded-full bg-accent transition-opacity ${
+                    active ? 'opacity-100' : 'opacity-0'
+                  }`}
+                />
+              </button>
+            );
+          })}
+        </div>
+
         <div className="flex-1 overflow-y-auto px-5 py-4">
           {tab === 'ui' && (
-            <div>
-              <div className="text-sm mb-3">{t('config.uiLanguage')}</div>
-              <div className="flex rounded-lg border border-edge overflow-hidden w-fit text-sm">
-                <button
-                  onClick={() => void i18n.changeLanguage('zh')}
-                  className={`px-3 py-1.5 ${
-                    lang === 'zh'
-                      ? 'bg-accent text-white'
-                      : 'text-dim hover:text-fg'
-                  }`}
-                >
-                  中文
-                </button>
-                <button
-                  onClick={() => void i18n.changeLanguage('en')}
-                  className={`px-3 py-1.5 ${
-                    lang === 'en'
-                      ? 'bg-accent text-white'
-                      : 'text-dim hover:text-fg'
-                  }`}
-                >
-                  English
-                </button>
+            <div className="space-y-3">
+              <div className="rounded-xl border border-edge bg-panel2 p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      <Languages size={15} className="text-accent" />
+                      {t('config.uiLanguage')}
+                    </div>
+                    <p className="mt-1 text-xs text-dim">
+                      {t('config.uiLanguageHint')}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 overflow-hidden rounded-lg border border-edge text-sm">
+                    <button
+                      onClick={() => void i18n.changeLanguage('zh')}
+                      className={`px-3 py-1.5 transition-colors ${
+                        lang === 'zh'
+                          ? 'bg-accent text-white'
+                          : 'text-dim hover:bg-panel hover:text-fg'
+                      }`}
+                    >
+                      中文
+                    </button>
+                    <button
+                      onClick={() => void i18n.changeLanguage('en')}
+                      className={`px-3 py-1.5 transition-colors ${
+                        lang === 'en'
+                          ? 'bg-accent text-white'
+                          : 'text-dim hover:bg-panel hover:text-fg'
+                      }`}
+                    >
+                      English
+                    </button>
+                  </div>
+                </div>
               </div>
-              <div className="text-sm mb-3 mt-5">{t('config.uiTheme')}</div>
-              <div className="flex rounded-lg border border-edge overflow-hidden w-fit text-sm">
-                <button
-                  onClick={() => setTheme('dark')}
-                  className={`px-3 py-1.5 ${
-                    theme === 'dark'
-                      ? 'bg-accent text-white'
-                      : 'text-dim hover:text-fg'
-                  }`}
-                >
-                  {t('config.uiThemeDark')}
-                </button>
-                <button
-                  onClick={() => setTheme('light')}
-                  className={`px-3 py-1.5 ${
-                    theme === 'light'
-                      ? 'bg-accent text-white'
-                      : 'text-dim hover:text-fg'
-                  }`}
-                >
-                  {t('config.uiThemeLight')}
-                </button>
+              <div className="rounded-xl border border-edge bg-panel2 p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      <Palette size={15} className="text-accent" />
+                      {t('config.uiTheme')}
+                    </div>
+                    <p className="mt-1 text-xs text-dim">
+                      {t('config.uiThemeHint')}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 overflow-hidden rounded-lg border border-edge text-sm">
+                    <button
+                      onClick={() => setTheme('dark')}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
+                        theme === 'dark'
+                          ? 'bg-accent text-white'
+                          : 'text-dim hover:bg-panel hover:text-fg'
+                      }`}
+                    >
+                      <Moon size={13} />
+                      {t('config.uiThemeDark')}
+                    </button>
+                    <button
+                      onClick={() => setTheme('light')}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
+                        theme === 'light'
+                          ? 'bg-accent text-white'
+                          : 'text-dim hover:bg-panel hover:text-fg'
+                      }`}
+                    >
+                      <Sun size={13} />
+                      {t('config.uiThemeLight')}
+                    </button>
+                    <button
+                      onClick={() => setTheme('auto')}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
+                        theme === 'auto'
+                          ? 'bg-accent text-white'
+                          : 'text-dim hover:bg-panel hover:text-fg'
+                      }`}
+                    >
+                      <Monitor size={13} />
+                      {t('config.uiThemeAuto')}
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -639,87 +717,10 @@ export function ConfigPage() {
                       <div className="px-4 pb-3 pt-1 space-y-2">
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
-                            <span className="text-xs text-dim">
-                              {t('setup.models')}
+                            <span className="text-xs font-medium text-dim">
+                              {t('config.inferenceBase')}
                             </span>
-                            <button
-                              onClick={() => addModel(row.id)}
-                              className="flex items-center gap-1 text-xs text-dim hover:text-fg"
-                            >
-                              <Plus size={12} />
-                              {t('config.addModel')}
-                            </button>
                           </div>
-                          {row.models.map((m, mi) => (
-                            <div
-                              key={mi}
-                              className="flex flex-wrap items-center gap-2"
-                            >
-                              <input
-                                value={m.name}
-                                onChange={(e) =>
-                                  updateModel(row.id, mi, {
-                                    name: e.target.value,
-                                  })
-                                }
-                                placeholder={t('setup.model')}
-                                className="flex-1 min-w-36 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
-                              />
-                              <label className="flex items-center gap-1.5 text-xs text-dim whitespace-nowrap">
-                                <input
-                                  type="checkbox"
-                                  checked={m.vision}
-                                  onChange={(e) =>
-                                    updateModel(row.id, mi, {
-                                      vision: e.target.checked,
-                                    })
-                                  }
-                                  className="accent-[var(--color-accent)]"
-                                />
-                                {t('setup.vision')}
-                              </label>
-                              <label className="flex items-center gap-1.5 text-xs text-dim whitespace-nowrap">
-                                {t('setup.reasoning')}
-                                <select
-                                  value={m.reasoning}
-                                  onChange={(e) =>
-                                    updateModel(row.id, mi, {
-                                      reasoning: e.target.value,
-                                    })
-                                  }
-                                  className="rounded border border-edge bg-panel px-2 py-1 outline-none"
-                                >
-                                  <option value="">
-                                    {t('setup.reasoningOff')}
-                                  </option>
-                                  <option value="always">always</option>
-                                  <option value="toggle">toggle</option>
-                                </select>
-                              </label>
-                              <label className="flex items-center gap-1.5 text-xs text-dim whitespace-nowrap">
-                                <input
-                                  type="checkbox"
-                                  checked={m.webSearch}
-                                  onChange={(e) =>
-                                    updateModel(row.id, mi, {
-                                      webSearch: e.target.checked,
-                                    })
-                                  }
-                                  className="accent-[var(--color-accent)]"
-                                />
-                                {t('setup.webSearch')}
-                              </label>
-                              <button
-                                onClick={() => removeModel(row.id, mi)}
-                                className="text-dim hover:text-err shrink-0"
-                                title={t('config.removeModel')}
-                              >
-                                <X size={14} />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                        <div>
                           <input
                             value={row.endpoint}
                             onChange={(e) =>
@@ -728,8 +729,6 @@ export function ConfigPage() {
                             placeholder={t('setup.endpointPlaceholder')}
                             className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
                           />
-                        </div>
-                        {row.type === 'openai' && (
                           <div className="flex items-center gap-2 text-xs text-dim">
                             {t('setup.apiMode')}
                             <select
@@ -743,35 +742,127 @@ export function ConfigPage() {
                               <option value="chat">chat</option>
                             </select>
                           </div>
-                        )}
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="password"
-                            value={row.key}
-                            onChange={(e) =>
-                              update(row.id, { key: e.target.value })
-                            }
-                            disabled={row.keyEnv}
-                            placeholder={
-                              row.keySet && row.key === ''
-                                ? t('setup.apiKeySet')
-                                : t('setup.apiKeyPlaceholder', {
-                                    var: prov?.env_var ?? '',
-                                  })
-                            }
-                            className="flex-1 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent disabled:opacity-40"
-                          />
-                          <label className="flex items-center gap-1.5 text-xs text-dim whitespace-nowrap">
+                        </div>
+                        <div className="space-y-2 pt-1">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-medium text-dim">
+                              {t('setup.models')}
+                            </span>
+                            <button
+                              onClick={() => addModel(row.id)}
+                              className="flex items-center gap-1 text-xs text-dim hover:text-fg"
+                            >
+                              <Plus size={12} />
+                              {t('config.addModel')}
+                            </button>
+                          </div>
+                          {row.models.map((m, mi) => (
+                            <div
+                              key={mi}
+                              className="space-y-2 rounded-lg border border-edge bg-panel p-2.5"
+                            >
+                              <div className="flex items-center gap-2">
+                                <input
+                                  value={m.name}
+                                  onChange={(e) =>
+                                    updateModel(row.id, mi, {
+                                      name: e.target.value,
+                                    })
+                                  }
+                                  placeholder={t('setup.model')}
+                                  className="flex-1 min-w-36 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
+                                />
+                                <button
+                                  onClick={() => removeModel(row.id, mi)}
+                                  className="shrink-0 text-dim hover:text-err"
+                                  title={t('config.removeModel')}
+                                  aria-label={t('config.removeModel')}
+                                >
+                                  <X size={14} />
+                                </button>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-dim">
+                                <label className="flex items-center gap-1.5 whitespace-nowrap">
+                                  <input
+                                    type="checkbox"
+                                    checked={m.vision}
+                                    onChange={(e) =>
+                                      updateModel(row.id, mi, {
+                                        vision: e.target.checked,
+                                      })
+                                    }
+                                    className="accent-[var(--color-accent)]"
+                                  />
+                                  {t('setup.vision')}
+                                </label>
+                                <label className="flex items-center gap-1.5 whitespace-nowrap">
+                                  {t('setup.reasoning')}
+                                  <select
+                                    value={m.reasoning}
+                                    onChange={(e) =>
+                                      updateModel(row.id, mi, {
+                                        reasoning: e.target.value,
+                                      })
+                                    }
+                                    className="rounded border border-edge bg-panel px-2 py-1 outline-none"
+                                  >
+                                    <option value="">
+                                      {t('setup.reasoningOff')}
+                                    </option>
+                                    <option value="always">always</option>
+                                    <option value="toggle">toggle</option>
+                                  </select>
+                                </label>
+                                <label className="flex items-center gap-1.5 whitespace-nowrap">
+                                  <input
+                                    type="checkbox"
+                                    checked={m.webSearch}
+                                    onChange={(e) =>
+                                      updateModel(row.id, mi, {
+                                        webSearch: e.target.checked,
+                                      })
+                                    }
+                                    className="accent-[var(--color-accent)]"
+                                  />
+                                  {t('setup.webSearch')}
+                                </label>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="space-y-2 pt-1">
+                          <span className="text-xs font-medium text-dim">
+                            {t('config.inferenceKey')}
+                          </span>
+                          <div className="flex items-center gap-2">
                             <input
-                              type="checkbox"
-                              checked={row.keyEnv}
+                              type="password"
+                              value={row.key}
                               onChange={(e) =>
-                                update(row.id, { keyEnv: e.target.checked })
+                                update(row.id, { key: e.target.value })
                               }
-                              className="accent-[var(--color-accent)]"
+                              disabled={row.keyEnv}
+                              placeholder={
+                                row.keySet && row.key === ''
+                                  ? t('setup.apiKeySet')
+                                  : t('setup.apiKeyPlaceholder', {
+                                      var: prov?.env_var ?? '',
+                                    })
+                              }
+                              className="flex-1 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent disabled:opacity-40"
                             />
-                            {t('setup.envVar', { var: prov?.env_var ?? '' })}
-                          </label>
+                            <label className="flex items-center gap-1.5 text-xs text-dim whitespace-nowrap">
+                              <input
+                                type="checkbox"
+                                checked={row.keyEnv}
+                                onChange={(e) =>
+                                  update(row.id, { keyEnv: e.target.checked })
+                                }
+                                className="accent-[var(--color-accent)]"
+                              />
+                              {t('setup.envVar', { var: prov?.env_var ?? '' })}
+                            </label>
+                          </div>
                         </div>
                       </div>
                     )}
@@ -806,6 +897,8 @@ export function ConfigPage() {
                           onClick={() => move(idx, -1)}
                           disabled={idx === 0}
                           className="text-dim hover:text-fg disabled:opacity-30"
+                          title={t('config.moveUp')}
+                          aria-label={t('config.moveUp')}
                         >
                           <ArrowUp size={14} />
                         </button>
@@ -813,6 +906,8 @@ export function ConfigPage() {
                           onClick={() => move(idx, 1)}
                           disabled={idx === enabledRows.length - 1}
                           className="text-dim hover:text-fg disabled:opacity-30"
+                          title={t('config.moveDown')}
+                          aria-label={t('config.moveDown')}
                         >
                           <ArrowDown size={14} />
                         </button>
@@ -836,12 +931,68 @@ export function ConfigPage() {
                       .catch((err) => setUsageError(String(err)));
                     setUsageReload((n) => n + 1);
                   }}
-                  className="text-xs text-dim hover:text-fg"
+                  disabled={usageLoading}
+                  className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1.5 text-xs text-dim transition-colors hover:text-fg disabled:opacity-50"
+                  aria-label={t('config.logsRefresh')}
                 >
+                  {usageLoading ? (
+                    <Loader2 size={13} className="animate-spin" />
+                  ) : (
+                    <RefreshCw size={13} />
+                  )}
                   {t('config.logsRefresh')}
                 </button>
               </div>
               {usageError && <p className="text-xs text-err">{usageError}</p>}
+              {usageLoading && usageRows.length === 0 ? (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {[0, 1, 2, 3].map((i) => (
+                    <div
+                      key={i}
+                      className="h-[72px] animate-pulse rounded-xl bg-panel2"
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <div className="rounded-xl border border-edge bg-panel2 p-3">
+                    <div className="flex items-center gap-1.5 text-xs text-dim">
+                      <ArrowDownToLine size={13} className="text-accent" />
+                      {t('config.usageInput')}
+                    </div>
+                    <p className="mt-1.5 text-lg font-semibold tabular-nums text-accent">
+                      {fmtUsageTokens(usageTotals.input)}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-edge bg-panel2 p-3">
+                    <div className="flex items-center gap-1.5 text-xs text-dim">
+                      <ArrowUpFromLine size={13} className="text-ok" />
+                      {t('config.usageOutput')}
+                    </div>
+                    <p className="mt-1.5 text-lg font-semibold tabular-nums text-ok">
+                      {fmtUsageTokens(usageTotals.output)}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-edge bg-panel2 p-3">
+                    <div className="flex items-center gap-1.5 text-xs text-dim">
+                      <Database size={13} className="text-subagent" />
+                      {t('config.usageCache')}
+                    </div>
+                    <p className="mt-1.5 text-lg font-semibold tabular-nums text-subagent">
+                      {fmtUsageTokens(usageTotals.cache)}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-edge bg-panel2 p-3">
+                    <div className="flex items-center gap-1.5 text-xs text-dim">
+                      <Brain size={13} className="text-warn" />
+                      {t('config.usageReasoning')}
+                    </div>
+                    <p className="mt-1.5 text-lg font-semibold tabular-nums text-warn">
+                      {fmtUsageTokens(usageTotals.reasoning)}
+                    </p>
+                  </div>
+                </div>
+              )}
               {usageRows.length === 0 ? (
                 <p className="text-sm text-dim">{t('config.usageEmpty')}</p>
               ) : (
@@ -956,22 +1107,36 @@ export function ConfigPage() {
                         {usageRows.map((r) => (
                           <tr
                             key={r.model}
-                            className="border-b border-edge/50 last:border-0"
+                            className="border-b border-edge/50 last:border-0 hover:bg-panel2"
                           >
-                            <td className="px-3 py-2 font-mono">{r.model}</td>
+                            <td className="px-3 py-2 font-mono text-fg">
+                              {r.model}
+                            </td>
                             <td className="px-3 py-2 text-right tabular-nums">
                               {fmtUsageTokens(r.input_tokens)}
                             </td>
                             <td className="px-3 py-2 text-right tabular-nums">
                               {fmtUsageTokens(r.output_tokens)}
                             </td>
-                            <td className="px-3 py-2 text-right tabular-nums">
+                            <td
+                              className={`px-3 py-2 text-right tabular-nums ${
+                                r.cache_read_tokens === 0 ? 'text-dim/60' : ''
+                              }`}
+                            >
                               {fmtUsageTokens(r.cache_read_tokens)}
                             </td>
-                            <td className="px-3 py-2 text-right tabular-nums">
+                            <td
+                              className={`px-3 py-2 text-right tabular-nums ${
+                                r.reasoning_tokens === 0 ? 'text-dim/60' : ''
+                              }`}
+                            >
                               {fmtUsageTokens(r.reasoning_tokens)}
                             </td>
-                            <td className="px-3 py-2 text-right tabular-nums">
+                            <td
+                              className={`px-3 py-2 text-right tabular-nums ${
+                                r.latency_ms === 0 ? 'text-dim/60' : ''
+                              }`}
+                            >
                               {fmtUsageTokens(r.latency_ms)}ms
                             </td>
                             <td className="px-3 py-2 text-right tabular-nums">
@@ -996,7 +1161,9 @@ export function ConfigPage() {
               <div className="grid grid-cols-3 gap-3">
                 <label className="space-y-1.5">
                   <span className="text-xs text-dim">
-                    {t('config.memoryRawWindow')}
+                    <span title="max_raw_messages">
+                      {t('config.memoryRawWindow')}
+                    </span>
                   </span>
                   <input
                     type="number"
@@ -1013,7 +1180,9 @@ export function ConfigPage() {
                 </label>
                 <label className="space-y-1.5">
                   <span className="text-xs text-dim">
-                    {t('config.memoryPreserveRecent')}
+                    <span title="preserve_recent">
+                      {t('config.memoryPreserveRecent')}
+                    </span>
                   </span>
                   <input
                     type="number"
@@ -1030,7 +1199,9 @@ export function ConfigPage() {
                 </label>
                 <label className="space-y-1.5">
                   <span className="text-xs text-dim">
-                    {t('config.memorySummaryBytes')}
+                    <span title="max_summary_bytes">
+                      {t('config.memorySummaryBytes')}
+                    </span>
                   </span>
                   <input
                     type="number"
@@ -1078,37 +1249,58 @@ export function ConfigPage() {
           )}
 
           {tab === 'permissions' && (
-            <div className="space-y-3">
+            <div className="space-y-4">
               <p className="text-xs text-dim">{t('config.permissionsHint')}</p>
+              <div className="flex items-center gap-2 text-xs text-dim">
+                <ShieldCheck size={14} className="text-ok" />
+                {t('config.permissionsCount', { count: rules.length })}
+              </div>
               {rules.length === 0 ? (
-                <p className="text-sm text-dim">
-                  {t('config.permissionsEmpty')}
-                </p>
+                <div className="rounded-xl border border-dashed border-edge px-6 py-10 text-center">
+                  <ShieldCheck size={28} className="mx-auto mb-2 text-dim/60" />
+                  <p className="text-sm text-dim">
+                    {t('config.permissionsEmpty')}
+                  </p>
+                  <p className="mt-1 text-xs text-dim/70">
+                    {t('config.permissionsEmptyHint')}
+                  </p>
+                </div>
               ) : (
-                rules.map((rule) => (
-                  <div
-                    key={rule}
-                    className="flex items-center gap-2 rounded-lg border border-edge bg-panel2 px-3 py-2"
-                  >
-                    <code className="flex-1 text-sm font-mono truncate">
-                      {rule}
-                    </code>
-                    <button
-                      onClick={() =>
-                        void api
-                          .denyPermission(rule)
-                          .then(() => api.permissions())
-                          .then(setRules)
-                          .catch((err) => setError(String(err)))
-                      }
-                      className="text-xs text-dim hover:text-err"
+                <div className="overflow-hidden rounded-xl border border-edge bg-panel">
+                  {rules.map((rule, i) => (
+                    <div
+                      key={rule}
+                      className={`group flex items-center gap-2 px-3 py-2 hover:bg-panel2 ${
+                        i > 0 ? 'border-t border-edge/60' : ''
+                      }`}
                     >
-                      {t('config.permissionsRemove')}
-                    </button>
-                  </div>
-                ))
+                      <Terminal size={14} className="shrink-0 text-dim" />
+                      <code className="flex-1 truncate font-mono text-sm text-fg">
+                        {rule}
+                      </code>
+                      <button
+                        onClick={() =>
+                          void api
+                            .denyPermission(rule)
+                            .then(() => api.permissions())
+                            .then(setRules)
+                            .then(() =>
+                              toast(t('config.permissionsRemoved', { rule })),
+                            )
+                            .catch((err) => setError(String(err)))
+                        }
+                        title={t('config.permissionsRemove')}
+                        aria-label={t('config.permissionsRemove')}
+                        className="shrink-0 rounded p-1 text-dim opacity-0 transition-opacity hover:text-err group-hover:opacity-100"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
               )}
-              <div className="flex items-center gap-2 pt-2">
+              <div className="flex items-center gap-2 rounded-xl border border-edge bg-panel2 p-2">
+                <ShieldPlus size={15} className="ml-1 shrink-0 text-dim" />
                 <input
                   value={ruleInput}
                   onChange={(e) => setRuleInput(e.target.value)}
@@ -1119,11 +1311,15 @@ export function ConfigPage() {
                         .allowPermission(ruleInput.trim())
                         .then(() => api.permissions())
                         .then(setRules)
-                        .then(() => setRuleInput(''))
+                        .then(() => {
+                          const rule = ruleInput.trim();
+                          setRuleInput('');
+                          toast(t('config.permissionsAdded', { rule }));
+                        })
                         .catch((err) => setError(String(err)));
                     }
                   }}
-                  className="flex-1 rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
+                  className="flex-1 bg-transparent px-2 py-1 text-sm outline-none placeholder:text-dim/60"
                 />
                 <button
                   onClick={() => {
@@ -1132,10 +1328,15 @@ export function ConfigPage() {
                       .allowPermission(ruleInput.trim())
                       .then(() => api.permissions())
                       .then(setRules)
-                      .then(() => setRuleInput(''))
+                      .then(() => {
+                        const rule = ruleInput.trim();
+                        setRuleInput('');
+                        toast(t('config.permissionsAdded', { rule }));
+                      })
                       .catch((err) => setError(String(err)));
                   }}
-                  className="rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90"
+                  className="rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
+                  disabled={!ruleInput.trim()}
                 >
                   {t('config.permissionsAdd')}
                 </button>
@@ -1145,30 +1346,8 @@ export function ConfigPage() {
 
           {tab === 'logs' && (
             <div className="h-full flex flex-col gap-3">
-              <div className="flex items-center justify-between">
-                <p className="text-xs text-dim">{t('config.logsHint')}</p>
-                <button
-                  onClick={() =>
-                    void api
-                      .readLog(300)
-                      .then(setLogs)
-                      .catch((err) => setError(String(err)))
-                  }
-                  className="text-xs text-dim hover:text-fg"
-                >
-                  {t('config.logsRefresh')}
-                </button>
-              </div>
-              {logs ? (
-                <pre
-                  ref={logsRef}
-                  className="flex-1 min-h-0 rounded-xl border border-edge bg-panel2 p-3 text-xs whitespace-pre-wrap break-all font-mono overflow-y-auto"
-                >
-                  {logs}
-                </pre>
-              ) : (
-                <p className="text-sm text-dim">{t('config.logsEmpty')}</p>
-              )}
+              <p className="text-xs text-dim">{t('config.logsHint')}</p>
+              <LogViewer fetchLogs={() => api.readLog(300)} />
             </div>
           )}
 
@@ -1315,7 +1494,7 @@ export function ConfigPage() {
               {cacheResult && (
                 <p className="text-xs text-dim">
                   {t('config.diagCacheDone', {
-                    bytes: cacheResult.bytes,
+                    bytes: fmtBytes(cacheResult.bytes),
                     dirs: cacheResult.dirs.length,
                   })}
                 </p>
