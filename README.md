@@ -6,6 +6,8 @@ React). The agent reads/writes/edits files, runs shell commands with PTY,
 approves permissions, persists and resumes sessions — driven by an LLM
 through flowcraft's config-driven graph engine.
 
+[![CI](https://github.com/GizClaw/opencraft/actions/workflows/ci.yml/badge.svg)](https://github.com/GizClaw/opencraft/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 ## Status
 
 P0 core loop is closed:
@@ -31,6 +33,15 @@ P0 core loop is closed:
   memory summary, AGENTS.md worldstate, layered config (embedded +
   `~/.opencraft/config/` + project `.opencraft/config/`), seatbelt/bwrap
   sandbox with project `.opencraft/approvals.yaml` approvals.
+- **Workflow** — git context injected into the worldstate (branch, status,
+  diffstat, bounded diff), turn-level undo/redo with UI rollback,
+  append-only JSONL session rollout stream, external lifecycle hooks
+  (Pre/PostToolUse, UserPromptSubmit, PermissionRequest, TurnEnd, session
+  and subagent events), and a diagnostics tab (env report, sandbox probe,
+  policy check);
+- **Network policy** — configurable exec sandbox netpolicy (default /
+  deny-all / allow-list / proxy) and a web_fetch SSRF gate that blocks
+  private, loopback, and link-local destinations by default.
 
 See `docs/02-codex-gaps.md` for the full gap baseline against codex-rs.
 
@@ -79,13 +90,16 @@ git push origin v0.1.0
 - `internal/skills` — skill discovery
 - `internal/memory` — buffer-fold memory summary + session archive
 - `internal/sandbox` — seatbelt/bwrap sandbox
+- `internal/hooks` — external lifecycle hooks
+- `internal/rollout` — JSONL session event stream
+- `internal/undo` — turn-level file rollback
 - `internal/tools` — tool source factories plus the middleware assembly
   (applypatch/askuser/assembly/exec/files/plan/requestpermissions/
   webfetch)
 - `internal/usage` — user-level usage database (`~/.opencraft/user.db`)
 - `internal/utils` — resourcedep + ported extract/httpkit helpers
 - `frontend/` — React/TypeScript UI (chat, sessions, settings, usage)
-- `docs/` — design docs, codex-rs gap analysis, code review reports
+- `docs/` — design docs, codex-rs gap analysis, skills and delegation plans
 
 ## Version facts
 
@@ -94,3 +108,7 @@ v0.1.6–v0.1.11 (8 providers: openai v0.1.8, anthropic v0.1.6, azure
 v0.1.9, bytedance v0.1.11, deepseek v0.1.6, kimi v0.1.6, minimax
 v0.1.6, qwen v0.1.6). The upstream `sdk/sdkx v0.5.x` release naming is
 obsolete; current module scheme is `core` / `driver/*`.
+
+## License
+
+Released under the [MIT License](LICENSE).
