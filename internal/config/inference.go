@@ -116,6 +116,52 @@ func (in Instance) DeploymentID(n int) string {
 	return fmt.Sprintf("%s-%d", in.Type, n)
 }
 
+// ModelReasoning reports whether the model selected by hint
+// ("<deployment-id>/<name>", empty = first enabled instance's first
+// model) declares a reasoning capability. Drivers reject
+// reasoning_effort / reasoning_enabled knobs for models without one, so
+// callers must only send the knob when this returns true.
+func (c InferenceConfig) ModelReasoning(hint string) bool {
+	prov, name, ok := strings.Cut(hint, "/")
+	var target Instance
+	var targetName string
+	found := false
+	if !ok || strings.TrimSpace(prov) == "" || strings.TrimSpace(name) == "" {
+		// No hint: the default policy target is the first enabled
+		// instance's first model.
+		for _, in := range c.Instances {
+			if !in.Enabled || len(in.Models) == 0 {
+				continue
+			}
+			target = in
+			targetName = in.Models[0].Name
+			found = true
+			break
+		}
+	} else {
+		for i, in := range c.Instances {
+			if !in.Enabled {
+				continue
+			}
+			if in.DeploymentID(i+1) == prov {
+				target = in
+				targetName = name
+				found = true
+				break
+			}
+		}
+	}
+	if !found {
+		return false
+	}
+	for _, m := range target.Models {
+		if m.Name == targetName && m.Reasoning != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // ModelNames returns the non-empty model names in declaration order.
 func (in Instance) ModelNames() []string {
 	var names []string

@@ -19,12 +19,13 @@ type UIEvent struct {
 
 // ConfigStatus describes the application configuration state.
 type ConfigStatus struct {
-	Needed       bool   `json:"needed"`
-	DefaultModel string `json:"default_model"`
-	WorkDir      string `json:"work_dir"`
-	UserDir      string `json:"user_dir"`
-	Version      string `json:"version"`
-	Agents       int    `json:"agents"`
+	Needed           bool   `json:"needed"`
+	DefaultModel     string `json:"default_model"`
+	DefaultReasoning bool   `json:"default_reasoning"`
+	WorkDir          string `json:"work_dir"`
+	UserDir          string `json:"user_dir"`
+	Version          string `json:"version"`
+	Agents           int    `json:"agents"`
 }
 
 // StreamEvent carries one stream delta plus the run it belongs to, so
@@ -134,8 +135,9 @@ type PatchFileDTO struct {
 // "provider/name" value the router's model_hint consumes; Label is the
 // human-facing description.
 type ModelOption struct {
-	ID    string `json:"id"`
-	Label string `json:"label"`
+	ID        string `json:"id"`
+	Label     string `json:"label"`
+	Reasoning bool   `json:"reasoning"`
 }
 
 // SessionMeta is one stored conversation for the sessions list.

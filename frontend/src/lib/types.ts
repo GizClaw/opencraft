@@ -4,6 +4,7 @@
 export interface ConfigStatus {
   needed: boolean;
   default_model: string;
+  default_reasoning: boolean;
   work_dir: string;
   user_dir: string;
   version: string;
@@ -86,6 +87,7 @@ export interface PatchFileDTO {
 export interface ModelOption {
   id: string;
   label: string;
+  reasoning: boolean;
 }
 
 export interface MCPServer {
