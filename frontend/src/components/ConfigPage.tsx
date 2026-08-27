@@ -647,87 +647,10 @@ export function ConfigPage() {
                       <div className="px-4 pb-3 pt-1 space-y-2">
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
-                            <span className="text-xs text-dim">
-                              {t('setup.models')}
+                            <span className="text-xs font-medium text-dim">
+                              {t('config.inferenceBase')}
                             </span>
-                            <button
-                              onClick={() => addModel(row.id)}
-                              className="flex items-center gap-1 text-xs text-dim hover:text-fg"
-                            >
-                              <Plus size={12} />
-                              {t('config.addModel')}
-                            </button>
                           </div>
-                          {row.models.map((m, mi) => (
-                            <div
-                              key={mi}
-                              className="flex flex-wrap items-center gap-2"
-                            >
-                              <input
-                                value={m.name}
-                                onChange={(e) =>
-                                  updateModel(row.id, mi, {
-                                    name: e.target.value,
-                                  })
-                                }
-                                placeholder={t('setup.model')}
-                                className="flex-1 min-w-36 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
-                              />
-                              <label className="flex items-center gap-1.5 text-xs text-dim whitespace-nowrap">
-                                <input
-                                  type="checkbox"
-                                  checked={m.vision}
-                                  onChange={(e) =>
-                                    updateModel(row.id, mi, {
-                                      vision: e.target.checked,
-                                    })
-                                  }
-                                  className="accent-[var(--color-accent)]"
-                                />
-                                {t('setup.vision')}
-                              </label>
-                              <label className="flex items-center gap-1.5 text-xs text-dim whitespace-nowrap">
-                                {t('setup.reasoning')}
-                                <select
-                                  value={m.reasoning}
-                                  onChange={(e) =>
-                                    updateModel(row.id, mi, {
-                                      reasoning: e.target.value,
-                                    })
-                                  }
-                                  className="rounded border border-edge bg-panel px-2 py-1 outline-none"
-                                >
-                                  <option value="">
-                                    {t('setup.reasoningOff')}
-                                  </option>
-                                  <option value="always">always</option>
-                                  <option value="toggle">toggle</option>
-                                </select>
-                              </label>
-                              <label className="flex items-center gap-1.5 text-xs text-dim whitespace-nowrap">
-                                <input
-                                  type="checkbox"
-                                  checked={m.webSearch}
-                                  onChange={(e) =>
-                                    updateModel(row.id, mi, {
-                                      webSearch: e.target.checked,
-                                    })
-                                  }
-                                  className="accent-[var(--color-accent)]"
-                                />
-                                {t('setup.webSearch')}
-                              </label>
-                              <button
-                                onClick={() => removeModel(row.id, mi)}
-                                className="text-dim hover:text-err shrink-0"
-                                title={t('config.removeModel')}
-                              >
-                                <X size={14} />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                        <div>
                           <input
                             value={row.endpoint}
                             onChange={(e) =>
@@ -736,8 +659,6 @@ export function ConfigPage() {
                             placeholder={t('setup.endpointPlaceholder')}
                             className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
                           />
-                        </div>
-                        {row.type === 'openai' && (
                           <div className="flex items-center gap-2 text-xs text-dim">
                             {t('setup.apiMode')}
                             <select
@@ -751,35 +672,127 @@ export function ConfigPage() {
                               <option value="chat">chat</option>
                             </select>
                           </div>
-                        )}
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="password"
-                            value={row.key}
-                            onChange={(e) =>
-                              update(row.id, { key: e.target.value })
-                            }
-                            disabled={row.keyEnv}
-                            placeholder={
-                              row.keySet && row.key === ''
-                                ? t('setup.apiKeySet')
-                                : t('setup.apiKeyPlaceholder', {
-                                    var: prov?.env_var ?? '',
-                                  })
-                            }
-                            className="flex-1 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent disabled:opacity-40"
-                          />
-                          <label className="flex items-center gap-1.5 text-xs text-dim whitespace-nowrap">
+                        </div>
+                        <div className="space-y-2 pt-1">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-medium text-dim">
+                              {t('setup.models')}
+                            </span>
+                            <button
+                              onClick={() => addModel(row.id)}
+                              className="flex items-center gap-1 text-xs text-dim hover:text-fg"
+                            >
+                              <Plus size={12} />
+                              {t('config.addModel')}
+                            </button>
+                          </div>
+                          {row.models.map((m, mi) => (
+                            <div
+                              key={mi}
+                              className="space-y-2 rounded-lg border border-edge bg-panel p-2.5"
+                            >
+                              <div className="flex items-center gap-2">
+                                <input
+                                  value={m.name}
+                                  onChange={(e) =>
+                                    updateModel(row.id, mi, {
+                                      name: e.target.value,
+                                    })
+                                  }
+                                  placeholder={t('setup.model')}
+                                  className="flex-1 min-w-36 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
+                                />
+                                <button
+                                  onClick={() => removeModel(row.id, mi)}
+                                  className="shrink-0 text-dim hover:text-err"
+                                  title={t('config.removeModel')}
+                                  aria-label={t('config.removeModel')}
+                                >
+                                  <X size={14} />
+                                </button>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-dim">
+                                <label className="flex items-center gap-1.5 whitespace-nowrap">
+                                  <input
+                                    type="checkbox"
+                                    checked={m.vision}
+                                    onChange={(e) =>
+                                      updateModel(row.id, mi, {
+                                        vision: e.target.checked,
+                                      })
+                                    }
+                                    className="accent-[var(--color-accent)]"
+                                  />
+                                  {t('setup.vision')}
+                                </label>
+                                <label className="flex items-center gap-1.5 whitespace-nowrap">
+                                  {t('setup.reasoning')}
+                                  <select
+                                    value={m.reasoning}
+                                    onChange={(e) =>
+                                      updateModel(row.id, mi, {
+                                        reasoning: e.target.value,
+                                      })
+                                    }
+                                    className="rounded border border-edge bg-panel px-2 py-1 outline-none"
+                                  >
+                                    <option value="">
+                                      {t('setup.reasoningOff')}
+                                    </option>
+                                    <option value="always">always</option>
+                                    <option value="toggle">toggle</option>
+                                  </select>
+                                </label>
+                                <label className="flex items-center gap-1.5 whitespace-nowrap">
+                                  <input
+                                    type="checkbox"
+                                    checked={m.webSearch}
+                                    onChange={(e) =>
+                                      updateModel(row.id, mi, {
+                                        webSearch: e.target.checked,
+                                      })
+                                    }
+                                    className="accent-[var(--color-accent)]"
+                                  />
+                                  {t('setup.webSearch')}
+                                </label>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="space-y-2 pt-1">
+                          <span className="text-xs font-medium text-dim">
+                            {t('config.inferenceKey')}
+                          </span>
+                          <div className="flex items-center gap-2">
                             <input
-                              type="checkbox"
-                              checked={row.keyEnv}
+                              type="password"
+                              value={row.key}
                               onChange={(e) =>
-                                update(row.id, { keyEnv: e.target.checked })
+                                update(row.id, { key: e.target.value })
                               }
-                              className="accent-[var(--color-accent)]"
+                              disabled={row.keyEnv}
+                              placeholder={
+                                row.keySet && row.key === ''
+                                  ? t('setup.apiKeySet')
+                                  : t('setup.apiKeyPlaceholder', {
+                                      var: prov?.env_var ?? '',
+                                    })
+                              }
+                              className="flex-1 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent disabled:opacity-40"
                             />
-                            {t('setup.envVar', { var: prov?.env_var ?? '' })}
-                          </label>
+                            <label className="flex items-center gap-1.5 text-xs text-dim whitespace-nowrap">
+                              <input
+                                type="checkbox"
+                                checked={row.keyEnv}
+                                onChange={(e) =>
+                                  update(row.id, { keyEnv: e.target.checked })
+                                }
+                                className="accent-[var(--color-accent)]"
+                              />
+                              {t('setup.envVar', { var: prov?.env_var ?? '' })}
+                            </label>
+                          </div>
                         </div>
                       </div>
                     )}
@@ -814,6 +827,8 @@ export function ConfigPage() {
                           onClick={() => move(idx, -1)}
                           disabled={idx === 0}
                           className="text-dim hover:text-fg disabled:opacity-30"
+                          title={t('config.moveUp')}
+                          aria-label={t('config.moveUp')}
                         >
                           <ArrowUp size={14} />
                         </button>
@@ -821,6 +836,8 @@ export function ConfigPage() {
                           onClick={() => move(idx, 1)}
                           disabled={idx === enabledRows.length - 1}
                           className="text-dim hover:text-fg disabled:opacity-30"
+                          title={t('config.moveDown')}
+                          aria-label={t('config.moveDown')}
                         >
                           <ArrowDown size={14} />
                         </button>
