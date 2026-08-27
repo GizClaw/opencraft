@@ -116,7 +116,7 @@ func TestInferenceYAMLAzure(t *testing.T) {
 		Type:      "azure",
 		KeySource: KeyEnv,
 		Endpoint:  "https://res.openai.azure.com",
-		Model:     "gpt-5.6-sol-deploy",
+		Models:    []Model{{Name: "gpt-5.6-sol-deploy"}},
 		Enabled:   true,
 	})
 	data, err := cfg.InferenceYAML()
@@ -153,11 +153,13 @@ func TestInferenceYAMLAzureCapabilities(t *testing.T) {
 		Type:      "azure",
 		KeySource: KeyEnv,
 		Endpoint:  "https://res.openai.azure.com",
-		Model:     "gpt-5.6-sol-deploy",
-		Vision:    true,
-		Reasoning: "toggle",
-		WebSearch: true,
-		Enabled:   true,
+		Models: []Model{{
+			Name:      "gpt-5.6-sol-deploy",
+			Vision:    true,
+			Reasoning: "toggle",
+			WebSearch: true,
+		}},
+		Enabled: true,
 	})
 	data, err := cfg.InferenceYAML()
 	if err != nil {
@@ -182,7 +184,7 @@ func TestInferenceYAMLAzureCapabilities(t *testing.T) {
 		Type:      "azure",
 		KeySource: KeyEnv,
 		Endpoint:  "https://res.openai.azure.com",
-		Model:     "gpt-5.6-sol-deploy",
+		Models:    []Model{{Name: "gpt-5.6-sol-deploy"}},
 		Enabled:   true,
 	})
 	data, err = off.InferenceYAML()
@@ -191,6 +193,109 @@ func TestInferenceYAMLAzureCapabilities(t *testing.T) {
 	}
 	if strings.Contains(string(data), "reasoning:") {
 		t.Fatalf("default azure must not declare reasoning:\n%s", data)
+	}
+}
+
+func TestInferenceYAMLMultipleModels(t *testing.T) {
+	cfg := InferenceConfig{Instances: []Instance{{
+		StableID:  "inst-aaa",
+		Type:      "deepseek",
+		KeySource: KeyEnv,
+		Models: []Model{
+			{Name: "deepseek-v4-flash", WebSearch: true},
+			{Name: "deepseek-v4-pro", Vision: true, Reasoning: "always"},
+		},
+		Enabled: true,
+	}}}
+	data, err := cfg.InferenceYAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+	for _, want := range []string{
+		"provider.deepseek-inst-aaa:", // stable resource id
+		"name: 'deepseek-v4-flash'",
+		"hosted_web_search: true",
+		"name: 'deepseek-v4-pro'",
+		"reasoning: 'always'",
+		"inputs: [image]",
+		"provider: deepseek-inst-aaa", // router targets use the same id
+	} {
+		if !strings.Contains(doc, want) {
+			t.Fatalf("multi-model doc missing %q:\n%s", want, doc)
+		}
+	}
+	if got := strings.Count(doc, "- model:"); got != 2 {
+		t.Fatalf("router must declare one target per model, got %d:\n%s", got, doc)
+	}
+
+	// Round trip: both models and their capabilities survive.
+	dir := t.TempDir()
+	if err := WriteInference(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadInference(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Instances) != 1 {
+		t.Fatalf("round trip instances = %d, want 1", len(got.Instances))
+	}
+	in := got.Instances[0]
+	if in.DeploymentID(1) != "deepseek-inst-aaa" {
+		t.Fatalf("round trip deployment id = %q", in.DeploymentID(1))
+	}
+	if len(in.Models) != 2 {
+		t.Fatalf("round trip models = %+v, want 2", in.Models)
+	}
+	if in.Models[0].Name != "deepseek-v4-flash" || !in.Models[0].WebSearch {
+		t.Fatalf("model 0 = %+v", in.Models[0])
+	}
+	if in.Models[1].Name != "deepseek-v4-pro" ||
+		!in.Models[1].Vision || in.Models[1].Reasoning != "always" {
+		t.Fatalf("model 1 = %+v", in.Models[1])
+	}
+}
+
+func TestInferenceYAMLModelNormalization(t *testing.T) {
+	// Empty names fall back to the provider default.
+	cfg := InferenceConfig{Instances: []Instance{{
+		Type: "deepseek", KeySource: KeyEnv, Models: []Model{{Name: ""}}, Enabled: true,
+	}}}
+	data, err := cfg.InferenceYAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "name: 'deepseek-v4-flash'") {
+		t.Fatalf("empty model must default to the provider model:\n%s", data)
+	}
+
+	// Duplicate model names are rejected (flowcraft freezes per-provider
+	// models by name).
+	dup := InferenceConfig{Instances: []Instance{{
+		Type: "deepseek", KeySource: KeyEnv,
+		Models:  []Model{{Name: "deepseek-v4-flash"}, {Name: " deepseek-v4-flash "}},
+		Enabled: true,
+	}}}
+	if _, err := dup.InferenceYAML(); err == nil {
+		t.Fatal("duplicate model names must fail generation")
+	}
+}
+
+func TestDeploymentIDStableAcrossReorders(t *testing.T) {
+	a := Instance{StableID: "inst-a", Type: "deepseek"}
+	b := Instance{StableID: "inst-b", Type: "deepseek"}
+	if a.DeploymentID(1) != "deepseek-inst-a" || b.DeploymentID(1) != "deepseek-inst-b" {
+		t.Fatalf("stable ids must not depend on position: %q %q",
+			a.DeploymentID(1), b.DeploymentID(1))
+	}
+	if a.DeploymentID(9) != "deepseek-inst-a" {
+		t.Fatalf("position must not leak into stable ids: %q", a.DeploymentID(9))
+	}
+	// Legacy rows without a stable id keep the positional form.
+	legacy := Instance{Type: "deepseek"}
+	if legacy.DeploymentID(3) != "deepseek-3" {
+		t.Fatalf("legacy deployment id = %q, want deepseek-3", legacy.DeploymentID(3))
 	}
 }
 
@@ -215,7 +320,7 @@ func TestInferenceStableIDRoundTrip(t *testing.T) {
 	cfg := InferenceConfig{Instances: []Instance{{
 		StableID:  "inst-0a1b2c3d",
 		Type:      "deepseek",
-		Model:     "deepseek-v4-flash",
+		Models:    []Model{{Name: "deepseek-v4-flash"}},
 		KeySource: KeyLiteral,
 		KeyValue:  "sk-roundtrip",
 		Enabled:   true,
@@ -289,6 +394,30 @@ func TestWriteAndRoundTrip(t *testing.T) {
 	}
 	if _, ok := view.Document.Resources["provider.deepseek-1"]; !ok {
 		t.Fatal("provider.deepseek-1 missing from merged view")
+	}
+}
+
+func TestWriteInferenceMultipleModelsLoads(t *testing.T) {
+	dir := t.TempDir()
+	cfg := InferenceConfig{Instances: []Instance{{
+		StableID:  "inst-aaa",
+		Type:      "deepseek",
+		KeySource: KeyEnv,
+		Models: []Model{
+			{Name: "deepseek-v4-flash", WebSearch: true},
+			{Name: "deepseek-v4-pro", Vision: true, Reasoning: "always"},
+		},
+		Enabled: true,
+	}}}
+	if err := WriteInference(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	// The merged config view (strict resource decode) must accept one
+	// provider with two models and two router targets sharing the
+	// stable profile.
+	view := load(t, t.TempDir(), dir)
+	if _, ok := view.Document.Resources["provider.deepseek-inst-aaa"]; !ok {
+		t.Fatal("stable provider resource missing from merged view")
 	}
 }
 

@@ -79,13 +79,10 @@ func (a *App) ConfigState() (ConfigState, error) {
 			// settings page only learns whether a key exists.
 			KeySet: in.KeySource == config.KeyEnv ||
 				(in.KeySource == config.KeyLiteral && in.KeyValue != ""),
-			KeyEnv:    in.KeySource == config.KeyEnv,
-			Model:     in.Model,
-			Endpoint:  in.Endpoint,
-			Vision:    in.Vision,
-			Reasoning: in.Reasoning,
-			WebSearch: in.WebSearch,
-			Enabled:   in.Enabled,
+			KeyEnv:   in.KeySource == config.KeyEnv,
+			Models:   modelViews(in.Models),
+			Endpoint: in.Endpoint,
+			Enabled:  in.Enabled,
 		})
 	}
 	return st, nil
@@ -105,14 +102,16 @@ func (a *App) ModelOptions() ([]ModelOption, error) {
 		if !in.Enabled {
 			continue
 		}
-		model := strings.TrimSpace(in.Model)
-		if model == "" {
-			continue
+		for _, m := range in.Models {
+			model := strings.TrimSpace(m.Name)
+			if model == "" {
+				continue
+			}
+			out = append(out, ModelOption{
+				ID:    in.DeploymentID(i+1) + "/" + model,
+				Label: instanceLabel(in, i+1) + " · " + model,
+			})
 		}
-		out = append(out, ModelOption{
-			ID:    instanceIDFor(in.Type, i+1) + "/" + model,
-			Label: instanceLabel(in, i+1) + " · " + model,
-		})
 	}
 	return out, nil
 }
@@ -238,11 +237,8 @@ func (a *App) SaveInstances(req InferenceRequest) error {
 			Type:      prov.ID,
 			Name:      strings.TrimSpace(p.Name),
 			API:       strings.TrimSpace(p.API),
-			Model:     strings.TrimSpace(p.Model),
+			Models:    configModels(p.Models),
 			Endpoint:  strings.TrimSpace(p.Endpoint),
-			Vision:    p.Vision,
-			Reasoning: strings.TrimSpace(p.Reasoning),
-			WebSearch: p.WebSearch,
 			Enabled:   p.Enabled,
 			KeySource: config.KeyLiteral,
 		}
@@ -291,7 +287,7 @@ func (a *App) SaveInstances(req InferenceRequest) error {
 				StableID: strings.TrimSpace(req.Instances[r.idx].StableID),
 				Type:     r.typ,
 				Name:     strings.TrimSpace(req.Instances[r.idx].Name),
-				Model:    strings.TrimSpace(req.Instances[r.idx].Model),
+				Models:   requestModelNames(req.Instances[r.idx].Models),
 				Endpoint: strings.TrimSpace(req.Instances[r.idx].Endpoint),
 				API:      strings.TrimSpace(req.Instances[r.idx].API),
 			}
@@ -327,7 +323,9 @@ func (a *App) SaveInstances(req InferenceRequest) error {
 	return a.rebuild()
 }
 
-// instanceIDFor derives the deployment id for instance n (1-based).
+// instanceIDFor derives the positional display id for instance n
+// (1-based). It is cosmetic only — routing ids come from
+// Instance.DeploymentID and are stable.
 func instanceIDFor(instanceType string, n int) string {
 	return fmt.Sprintf("%s-%d", instanceType, n)
 }
@@ -338,6 +336,46 @@ func instanceLabel(in config.Instance, n int) string {
 		return in.Name
 	}
 	return instanceIDFor(in.Type, n)
+}
+
+// modelViews renders config models for the settings page.
+func modelViews(models []config.Model) []ModelView {
+	out := make([]ModelView, 0, len(models))
+	for _, m := range models {
+		out = append(out, ModelView{
+			Name:      m.Name,
+			Vision:    m.Vision,
+			Reasoning: m.Reasoning,
+			WebSearch: m.WebSearch,
+		})
+	}
+	return out
+}
+
+// configModels converts the settings-page model rows into config models.
+func configModels(views []ModelView) []config.Model {
+	out := make([]config.Model, 0, len(views))
+	for _, v := range views {
+		out = append(out, config.Model{
+			Name:      strings.TrimSpace(v.Name),
+			Vision:    v.Vision,
+			Reasoning: strings.TrimSpace(v.Reasoning),
+			WebSearch: v.WebSearch,
+		})
+	}
+	return out
+}
+
+// requestModelNames extracts the non-empty model names of a request row
+// for stored-key fingerprinting.
+func requestModelNames(views []ModelView) []string {
+	var names []string
+	for _, v := range views {
+		if name := strings.TrimSpace(v.Name); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // MCPConfig returns the configured MCP tool servers from the user

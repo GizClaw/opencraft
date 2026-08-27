@@ -46,6 +46,15 @@ type ProviderView struct {
 	Azure        bool   `json:"azure"`
 }
 
+// ModelView is one model exposed by an inference instance, with its own
+// capabilities (vision/reasoning/web-search differ between models).
+type ModelView struct {
+	Name      string `json:"name"`
+	Vision    bool   `json:"vision"`
+	Reasoning string `json:"reasoning"`
+	WebSearch bool   `json:"web_search"`
+}
+
 // ProviderInstance is one inference instance from the frontend.
 // Enabled instances appear in router priority order; disabled ones are
 // kept so re-enabling needs no re-entry.
@@ -57,15 +66,12 @@ type ProviderInstance struct {
 	// Key carries a new literal key from the settings page; an empty
 	// value means "keep the stored key". The backend never returns the
 	// stored secret through this field.
-	Key       string `json:"key"`
-	KeySet    bool   `json:"key_set"` // config-time: a key is already stored
-	KeyEnv    bool   `json:"key_env"`
-	Model     string `json:"model"`
-	Endpoint  string `json:"endpoint"`
-	Vision    bool   `json:"vision"`
-	Reasoning string `json:"reasoning"`
-	WebSearch bool   `json:"web_search"`
-	Enabled   bool   `json:"enabled"`
+	Key      string      `json:"key"`
+	KeySet   bool        `json:"key_set"` // config-time: a key is already stored
+	KeyEnv   bool        `json:"key_env"`
+	Models   []ModelView `json:"models"`
+	Endpoint string      `json:"endpoint"`
+	Enabled  bool        `json:"enabled"`
 }
 
 // InferenceRequest is the full inference configuration payload from
