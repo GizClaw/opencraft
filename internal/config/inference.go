@@ -781,7 +781,14 @@ func mergeUserLayer(
 	if err := yamlv4.Unmarshal(fresh, &newRoot); err != nil {
 		return nil, fmt.Errorf("config: parse generated user layer: %w", err)
 	}
-	if len(oldNode.Content) == 0 || oldNode.Content[0].Kind != yamlv4.MappingNode {
+	if len(oldNode.Content) == 0 {
+		// An empty user layer (e.g. a file created with `touch`) has no
+		// data to preserve: treat it like a missing layer and write the
+		// fresh document, so first-time configuration cannot be blocked
+		// by an empty file.
+		return fresh, nil
+	}
+	if oldNode.Content[0].Kind != yamlv4.MappingNode {
 		return nil, fmt.Errorf(
 			"config: existing user layer is not a YAML mapping (kind %d, %d entries); refusing to overwrite it",
 			func() uint32 {
