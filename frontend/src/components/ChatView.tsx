@@ -165,6 +165,7 @@ export function ChatView() {
   const pendingInteracts = conv?.pendingInteracts ?? [];
   const send = useStore((s) => s.send);
   const cancelRun = useStore((s) => s.cancelRun);
+  const clearLastFailed = useStore((s) => s.clearLastFailed);
   const subagentCards = useStore((s) => s.subagentCards);
   const subagentPanelOpen = useStore((s) => s.subagentPanelOpen);
   const toggleSubagentPanel = useStore((s) => s.toggleSubagentPanel);
@@ -523,6 +524,25 @@ export function ChatView() {
             {pendingInteracts.map((spec) => (
               <InteractionCard key={spec.id} spec={spec} />
             ))}
+            {lastFailed && !busy && (
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-err/40 bg-err/10 px-4 py-3 text-sm">
+                <span className="text-dim">{t('chat.lastFailed')}</span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={retry}
+                    className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-dim hover:text-accent"
+                  >
+                    <RotateCcw size={13} /> {t('chat.retry')}
+                  </button>
+                  <button
+                    onClick={clearLastFailed}
+                    className="rounded-lg px-3 py-1.5 text-dim hover:text-fg"
+                  >
+                    {t('chat.dismiss')}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -793,23 +813,13 @@ export function ChatView() {
                   <Square size={13} /> {t('chat.stop')}
                 </button>
               ) : (
-                <>
-                  {lastFailed && (
-                    <button
-                      onClick={retry}
-                      className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-accent"
-                    >
-                      <RotateCcw size={13} /> {t('chat.retry')}
-                    </button>
-                  )}
-                  <button
-                    onClick={submit}
-                    disabled={!input.trim()}
-                    className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
-                  >
-                    <Send size={13} /> {t('chat.send')}
-                  </button>
-                </>
+                <button
+                  onClick={submit}
+                  disabled={!input.trim()}
+                  className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
+                >
+                  <Send size={13} /> {t('chat.send')}
+                </button>
               )}
             </div>
           </div>

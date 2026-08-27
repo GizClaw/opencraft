@@ -227,6 +227,8 @@
     "interrupted": "Interrupted",
     "failed": "Failed",
     "thinkLabel": "Thinking",
+    "lastFailed": "Last reply failed",
+    "dismiss": "Dismiss",
     "thinkLow": "Low",
     "thinkMedium": "Medium",
     "thinkHigh": "High",

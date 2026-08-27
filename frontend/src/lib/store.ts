@@ -309,6 +309,7 @@ interface StoreState {
   handleEvent: (ev: UIEvent) => void;
   send: (text: string) => Promise<void>;
   retryLast: () => Promise<void>;
+  clearLastFailed: () => void;
   replyInteract: (id: string, req: ReplyRequest) => Promise<void>;
   cancelRun: () => Promise<void>;
   openConfig: () => void;
@@ -663,6 +664,10 @@ export const useStore = create<StoreState>((set, get) => {
         text,
         conv.messages.slice(0, lastUserIdx + 1),
       );
+    },
+
+    clearLastFailed: () => {
+      updateConv(get().current, { lastFailed: false });
     },
 
     replyInteract: async (id, req) => {
