@@ -99,8 +99,6 @@ export function ReplyPrompt(arg1:string,arg2:desktop.ReplyRequest):Promise<boole
 
 export function ResumeSession(arg1:string):Promise<string>;
 
-export function RetryCard(arg1:string):Promise<string>;
-
 export function RunSandboxProbe():Promise<desktop.SandboxProbeResult>;
 
 export function SaveInstances(arg1:desktop.InferenceRequest):Promise<void>;

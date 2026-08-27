@@ -233,23 +233,6 @@ func (a *App) CancelCard(id string) (bool, error) {
 	return board.Cancel(id, "cancelled from the desktop board"), nil
 }
 
-// RetryCard resubmits one terminal card's task and returns the new
-// card id.
-func (a *App) RetryCard(id string) (string, error) {
-	board, err := a.board()
-	if err != nil {
-		return "", err
-	}
-	card, ok := board.Card(id)
-	if !ok {
-		return "", fmt.Errorf("card %s not found", id)
-	}
-	if card.Task == nil {
-		return "", errors.New("card has no task to retry")
-	}
-	return board.Submit(a.appContext(), card.Task.Request)
-}
-
 // ---- session deletion ----
 
 // DeleteSession removes one conversation end to end: the runtime

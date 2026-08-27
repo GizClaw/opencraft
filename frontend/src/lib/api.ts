@@ -116,7 +116,6 @@ export const api = {
     App.EvaluateCommandPolicy(command) as Promise<PolicyDecision>,
   clearCaches: () => App.ClearCaches() as Promise<CacheClearResult>,
   cancelCard: (id: string) => App.CancelCard(id),
-  retryCard: (id: string) => App.RetryCard(id),
   chooseWorkspace: () => App.ChooseWorkspace(),
   readLog: (n: number) => App.ReadLog(n),
   renameSession: (id: string, title: string) => App.RenameSession(id, title),
