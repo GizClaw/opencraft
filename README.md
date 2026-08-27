@@ -74,33 +74,6 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-## Layout
-
-- `main.go` — Wails desktop entry; `execd_main.go` — internal sandbox
-  child mode (`opencraft execd`)
-- `internal/desktop` — app shell, Go bindings, settings / workspaces /
-  sessions / usage / agents views
-- `internal/app` — runtime assembly, exec policy, sandbox pm, worldstate
-- `internal/config` — layered config (embed template + user + project
-  merge), inference instances, MCP servers
-- `internal/execd` — local exec server (JSON-RPC over stdio/unix socket)
-- `internal/sessions` — project session store (SQLite `session.db` +
-  per-session JSON history/usage/permissions/plans)
-- `internal/agents` — subagent lifecycle and delegation
-- `internal/skills` — skill discovery
-- `internal/memory` — buffer-fold memory summary + session archive
-- `internal/sandbox` — seatbelt/bwrap sandbox
-- `internal/hooks` — external lifecycle hooks
-- `internal/rollout` — JSONL session event stream
-- `internal/undo` — turn-level file rollback
-- `internal/tools` — tool source factories plus the middleware assembly
-  (applypatch/askuser/assembly/exec/files/plan/requestpermissions/
-  webfetch)
-- `internal/usage` — user-level usage database (`~/.opencraft/user.db`)
-- `internal/utils` — resourcedep + ported extract/httpkit helpers
-- `frontend/` — React/TypeScript UI (chat, sessions, settings, usage)
-- `docs/` — design docs, codex-rs gap analysis, skills and delegation plans
-
 ## Version facts
 
 Pinned flowcraft modules (see `go.mod`): `core v0.1.32`, `driver/*`
