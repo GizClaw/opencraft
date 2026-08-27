@@ -518,24 +518,35 @@ export function ConfigPage() {
           )}
         </div>
 
-        <div className="flex items-center gap-1 overflow-x-auto border-b border-edge px-4">
+        <div
+          className="flex items-end gap-1 overflow-x-auto border-b border-edge px-4"
+          role="tablist"
+        >
           {tabs.map((tb) => {
             const Icon = tb.icon;
+            const active = tab === tb.id;
             return (
               <button
                 key={tb.id}
+                role="tab"
+                aria-selected={active}
                 onClick={() => {
                   setTab(tb.id);
                   setError('');
                 }}
-                className={`flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition-colors ${
-                  tab === tb.id
-                    ? 'bg-accent/15 text-accent'
+                className={`relative flex shrink-0 items-center gap-1.5 rounded-t-lg px-3 py-2 text-sm transition-colors ${
+                  active
+                    ? 'bg-accent/10 text-accent'
                     : 'text-dim hover:bg-panel2 hover:text-fg'
                 }`}
               >
                 <Icon size={14} />
                 {tb.label}
+                <span
+                  className={`absolute inset-x-1 -bottom-px h-0.5 rounded-full bg-accent transition-opacity ${
+                    active ? 'opacity-100' : 'opacity-0'
+                  }`}
+                />
               </button>
             );
           })}
