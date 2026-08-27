@@ -54,6 +54,7 @@
     "title": "Subagents",
     "toggle": "Toggle subagent panel",
     "close": "Close panel",
+    "collapseAll": "Collapse all",
     "detailTarget": "Target",
     "detailCaller": "Caller",
     "detailRun": "Run ID",
