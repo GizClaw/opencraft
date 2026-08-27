@@ -199,7 +199,16 @@
     "tabLogs": "日志",
     "logsHint": "应用运行日志（~/.opencraft/logs/opencraft.log）",
     "logsRefresh": "刷新",
-    "logsEmpty": "暂无日志"
+    "logsEmpty": "暂无日志",
+    "logsAll": "全部",
+    "logsInfo": "信息",
+    "logsWarn": "警告",
+    "logsError": "错误",
+    "logsDebug": "调试",
+    "logsFollow": "跟随滚动",
+    "logsAuto": "自动刷新",
+    "logsCopy": "复制",
+    "logsLines": "{{count}} 行"
   },
   "chat": {
     "running": "运行中",

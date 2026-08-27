@@ -199,7 +199,16 @@
     "tabLogs": "Logs",
     "logsHint": "Application log (~/.opencraft/logs/opencraft.log)",
     "logsRefresh": "Refresh",
-    "logsEmpty": "No logs"
+    "logsEmpty": "No logs",
+    "logsAll": "All",
+    "logsInfo": "Info",
+    "logsWarn": "Warn",
+    "logsError": "Error",
+    "logsDebug": "Debug",
+    "logsFollow": "Follow",
+    "logsAuto": "Auto refresh",
+    "logsCopy": "Copy",
+    "logsLines": "{{count}} lines"
   },
   "chat": {
     "running": "Running",

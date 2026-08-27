@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowDown,
   ArrowUp,
@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
+import { LogViewer } from './LogViewer';
 import { useStore } from '../lib/store';
 import type {
   CacheClearResult,
@@ -88,8 +89,6 @@ export function ConfigPage() {
   const [policy, setPolicy] = useState<PolicyDecision | null>(null);
   const [cacheResult, setCacheResult] = useState<CacheClearResult | null>(null);
   const [diagBusy, setDiagBusy] = useState(false);
-  const [logs, setLogs] = useState('');
-  const logsRef = useRef<HTMLPreElement>(null);
   const [usageRows, setUsageRows] = useState<ModelUsageStat[]>([]);
   const [usageError, setUsageError] = useState('');
   const [usageModel, setUsageModel] = useState('');
@@ -220,22 +219,6 @@ export function ConfigPage() {
       setMemorySaving(false);
     }
   };
-
-  useEffect(() => {
-    if (tab !== 'logs') return;
-    void api
-      .readLog(300)
-      .then(setLogs)
-      .catch((err) => setError(String(err)));
-  }, [tab]);
-
-  // Pin the log view to the newest lines whenever the content changes
-  // (including the first load when the tab opens).
-  useEffect(() => {
-    if (tab === 'logs' && logsRef.current) {
-      logsRef.current.scrollTop = logsRef.current.scrollHeight;
-    }
-  }, [logs, tab]);
 
   useEffect(() => {
     if (tab !== 'usage') return;
@@ -1157,30 +1140,8 @@ export function ConfigPage() {
 
           {tab === 'logs' && (
             <div className="h-full flex flex-col gap-3">
-              <div className="flex items-center justify-between">
-                <p className="text-xs text-dim">{t('config.logsHint')}</p>
-                <button
-                  onClick={() =>
-                    void api
-                      .readLog(300)
-                      .then(setLogs)
-                      .catch((err) => setError(String(err)))
-                  }
-                  className="text-xs text-dim hover:text-fg"
-                >
-                  {t('config.logsRefresh')}
-                </button>
-              </div>
-              {logs ? (
-                <pre
-                  ref={logsRef}
-                  className="flex-1 min-h-0 rounded-xl border border-edge bg-panel2 p-3 text-xs whitespace-pre-wrap break-all font-mono overflow-y-auto"
-                >
-                  {logs}
-                </pre>
-              ) : (
-                <p className="text-sm text-dim">{t('config.logsEmpty')}</p>
-              )}
+              <p className="text-xs text-dim">{t('config.logsHint')}</p>
+              <LogViewer fetchLogs={() => api.readLog(300)} />
             </div>
           )}
 
