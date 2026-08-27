@@ -200,6 +200,24 @@ resources:
     impl: opencraft/files
     deps:
       hostworkspace: hostws
+  # Text-to-image generation: routes an image-output request through the
+  # inference router, which selects an image-capable model from the
+  # user's generate targets; generated files land under generated/.
+  tool.imagegen:
+    kind: tool.Source
+    impl: opencraft/imagegen
+    deps:
+      router: router
+      hostworkspace: hostws
+  # Text-to-video generation: routes a video-output request through the
+  # inference router (MiniMax Hailuo / ByteDance Seedance), downloads
+  # the finished artifact, and persists it under generated/.
+  tool.videogen:
+    kind: tool.Source
+    impl: opencraft/videogen
+    deps:
+      router: router
+      hostworkspace: hostws
   tool.plan:
     kind: tool.Source
     impl: opencraft/plan
@@ -255,6 +273,8 @@ resources:
       tool.webfetch: tool.webfetch
       tool.askuser: tool.askuser
       tool.files: tool.files
+      tool.imagegen: tool.imagegen
+      tool.videogen: tool.videogen
       tool.plan: tool.plan
       tool.skills: tool.skills
       tool.compact: tool.compact

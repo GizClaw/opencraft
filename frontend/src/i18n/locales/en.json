@@ -288,6 +288,8 @@
     "modifiedSkill": "Modified skill",
     "installedSkill": "Installed skill",
     "fetched": "Fetched",
+    "generatedImage": "Generated image",
+    "generatedVideo": "Generated video",
     "askUser": "Asked user",
     "searchedSkill": "Searched skill",
     "readSkill": "Read skill",
