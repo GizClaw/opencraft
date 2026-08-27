@@ -195,6 +195,37 @@ func TestArchiveObserverSkipsCompletedTurn(t *testing.T) {
 	}
 }
 
+// TestArchiveObserverSkipsEphemeralContext verifies that an interrupted
+// delegated subagent run (fresh "ctx-" ContextID) is not archived: the
+// session store only accepts "s-" conversation ids, so the observer
+// mirrors the committer's guard for ephemeral contexts.
+func TestArchiveObserverSkipsEphemeralContext(t *testing.T) {
+	obs, store, sink := newArchiveObserver(t)
+	ctx := context.Background()
+	id := agent.Identity{RunID: "run-1", AgentID: "assistant", ConversationID: "ctx-abc"}
+	req := &agent.Request{
+		ContextID: "ctx-abc",
+		Message:   message.NewTextMessage(message.RoleUser, "做个子任务"),
+	}
+	obs.OnRunStart(ctx, id, req)
+	obs.OnRunEnd(ctx, id, &agent.Result{
+		RunID:  "run-1",
+		Status: agent.StatusCanceled,
+		Messages: []message.Message{{
+			Role:    message.RoleAssistant,
+			Content: message.Content{Parts: []message.Part{message.TextPart{Text: "partial"}}},
+		}},
+	})
+
+	hist, err := store.History(ctx, "ctx-abc", 0)
+	if err == nil {
+		t.Fatalf("session store must reject non-s- ids, got history %v", hist)
+	}
+	if sink.count() != 0 {
+		t.Errorf("memory sink turns = %d, want 0 for ephemeral context", sink.count())
+	}
+}
+
 func TestArchiveObserverSkipsRefereeAcceptedTurn(t *testing.T) {
 	obs, store, sink := newArchiveObserver(t)
 	ctx := context.Background()

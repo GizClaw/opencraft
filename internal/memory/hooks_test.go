@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -134,6 +135,60 @@ func TestCommitHookSkipsEmptyResult(t *testing.T) {
 	}
 	if sink.count() != 0 {
 		t.Fatalf("memory sink turns = %d, want 0", sink.count())
+	}
+}
+
+// TestCommitHookSkipsEphemeralContext verifies that a completed
+// delegated subagent run (fresh "ctx-" ContextID, no persisted
+// conversation) is not archived and does not fail the run: the session
+// store only accepts "s-" conversation ids, so the committer must skip
+// ephemeral contexts instead of returning "sessions: invalid session id".
+func TestCommitHookSkipsEphemeralContext(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "sessions")
+	store, err := sessions.New(root, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sink := &stubSink{}
+
+	value, err := (commitHookFactory{}).New(context.Background(), resource.Input{
+		Settings: []byte(`{}`),
+		Deps: map[string]any{
+			"memory":   sink,
+			"sessions": store,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	committer := value.(agent.CommitterFunc)
+	ctx := context.Background()
+	id := agent.Identity{RunID: "run-1", AgentID: "assistant", ConversationID: "ctx-abc"}
+
+	err = committer(ctx, id, &agent.Request{
+		ContextID: "ctx-abc",
+		Message:   message.NewTextMessage(message.RoleUser, "做个子任务"),
+	}, &agent.Result{
+		RunID:  "run-1",
+		Status: agent.StatusCompleted,
+		Messages: []message.Message{
+			message.NewTextMessage(message.RoleAssistant, "子任务完成"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("commit of ephemeral context must not fail: %v", err)
+	}
+	if sink.count() != 0 {
+		t.Fatalf("memory sink turns = %d, want 0 for ephemeral context", sink.count())
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.IsDir() && strings.HasPrefix(e.Name(), "ctx-") {
+			t.Fatalf("ephemeral context was archived: found dir %s", e.Name())
+		}
 	}
 }
 
