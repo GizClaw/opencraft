@@ -8,6 +8,7 @@ import {
   Database,
   Loader2,
   Plus,
+  RefreshCw,
   Settings,
   ShieldCheck,
   ShieldPlus,
@@ -843,8 +844,15 @@ export function ConfigPage() {
                       .catch((err) => setUsageError(String(err)));
                     setUsageReload((n) => n + 1);
                   }}
-                  className="text-xs text-dim hover:text-fg"
+                  disabled={usageLoading}
+                  className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1.5 text-xs text-dim transition-colors hover:text-fg disabled:opacity-50"
+                  aria-label={t('config.logsRefresh')}
                 >
+                  {usageLoading ? (
+                    <Loader2 size={13} className="animate-spin" />
+                  ) : (
+                    <RefreshCw size={13} />
+                  )}
                   {t('config.logsRefresh')}
                 </button>
               </div>
