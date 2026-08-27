@@ -95,6 +95,14 @@ func (o *archiveObserver) OnRunEnd(ctx context.Context, id agent.Identity, res *
 		return
 	}
 
+	// Delegated subagent contexts are ephemeral ("ctx-" ids minted per
+	// delegation) and never archived: the session store only accepts
+	// "s-" conversation ids. Mirror the committer's guard so both paths
+	// agree on what gets persisted.
+	if !sessions.ValidID(id.ConversationID) {
+		return
+	}
+
 	// Like the committer, archive the full conversation the turn
 	// actually exchanged (request + assistant/tool messages, excluding
 	// the world-state context sections) so an interrupted turn keeps

@@ -56,6 +56,14 @@ func (commitHookFactory) New(_ context.Context, in resource.Input) (any, error) 
 		if len(res.Messages) == 0 {
 			return nil
 		}
+		// Delegated subagent runs are ephemeral: flowcraft mints a fresh
+		// "ctx-" ContextID per delegation and never persists them, while
+		// the project session store only archives "s-" conversations.
+		// Skipping here keeps a completed subagent run from failing at
+		// commit time with "sessions: invalid session id".
+		if !sessions.ValidID(req.ContextID) {
+			return nil
+		}
 		// The conversation is everything the turn actually exchanged:
 		// the user request, every assistant reply (including tool-call
 		// rounds), and the tool results — but never the world-state
