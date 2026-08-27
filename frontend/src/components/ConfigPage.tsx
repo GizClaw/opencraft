@@ -1002,7 +1002,9 @@ export function ConfigPage() {
               <div className="grid grid-cols-3 gap-3">
                 <label className="space-y-1.5">
                   <span className="text-xs text-dim">
-                    {t('config.memoryRawWindow')}
+                    <span title="max_raw_messages">
+                      {t('config.memoryRawWindow')}
+                    </span>
                   </span>
                   <input
                     type="number"
@@ -1019,7 +1021,9 @@ export function ConfigPage() {
                 </label>
                 <label className="space-y-1.5">
                   <span className="text-xs text-dim">
-                    {t('config.memoryPreserveRecent')}
+                    <span title="preserve_recent">
+                      {t('config.memoryPreserveRecent')}
+                    </span>
                   </span>
                   <input
                     type="number"
@@ -1036,7 +1040,9 @@ export function ConfigPage() {
                 </label>
                 <label className="space-y-1.5">
                   <span className="text-xs text-dim">
-                    {t('config.memorySummaryBytes')}
+                    <span title="max_summary_bytes">
+                      {t('config.memorySummaryBytes')}
+                    </span>
                   </span>
                   <input
                     type="number"
