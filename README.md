@@ -78,11 +78,8 @@ inference instances, router policy, and MCP servers.
 
 ## Documentation
 
-- [Architecture](docs/01-architecture.md) — overall design and data flow
-- [Gap analysis vs codex-rs](docs/02-codex-gaps.md) — feature baseline and roadmap
-- [Skills](docs/03-skills.md) — skill discovery and execution
-- [Delegation](docs/04-delegation-flowcraft.md) — subagent lifecycle design
-- [Changelog](CHANGELOG.md) — release history
+Design notes and the codex-rs gap analysis live in [`docs/`](docs/), and
+release history is tracked in [CHANGELOG.md](CHANGELOG.md).
 
 ## Contributing
 
