@@ -39,20 +39,20 @@ func TestExecuteSavesGeneratedImage(t *testing.T) {
 		) (inference.GenerateResponse, route.Trace, error) {
 			gotRequest = req
 			return inference.GenerateResponse{
-					Message: message.Message{
-						Role: message.RoleAssistant,
-						Content: message.Content{
-							Parts: []message.Part{fakeImagePart()},
-						},
+				Message: message.Message{
+					Role: message.RoleAssistant,
+					Content: message.Content{
+						Parts: []message.Part{fakeImagePart()},
 					},
-				}, route.Trace{
-					Executed: inference.ModelRef{
-						ID: inference.ModelID{
-							Provider: "openai",
-							Name:     "gpt-image-2",
-						},
+				},
+			}, route.Trace{
+				Executed: inference.ModelRef{
+					ID: inference.ModelID{
+						Provider: "openai",
+						Name:     "gpt-image-2",
 					},
-				}, nil
+				},
+			}, nil
 		},
 	}
 

@@ -49,20 +49,20 @@ func TestExecuteDownloadsAndSavesVideo(t *testing.T) {
 		) (inference.GenerateResponse, route.Trace, error) {
 			gotRequest = req
 			return inference.GenerateResponse{
-					Message: message.Message{
-						Role: message.RoleAssistant,
-						Content: message.Content{
-							Parts: []message.Part{videoPart(t, srv.URL)},
-						},
+				Message: message.Message{
+					Role: message.RoleAssistant,
+					Content: message.Content{
+						Parts: []message.Part{videoPart(t, srv.URL)},
 					},
-				}, route.Trace{
-					Executed: inference.ModelRef{
-						ID: inference.ModelID{
-							Provider: "bytedance",
-							Name:     "doubao-seedance-2-0",
-						},
+				},
+			}, route.Trace{
+				Executed: inference.ModelRef{
+					ID: inference.ModelID{
+						Provider: "bytedance",
+						Name:     "doubao-seedance-2-0",
 					},
-				}, nil
+				},
+			}, nil
 		},
 	}
 

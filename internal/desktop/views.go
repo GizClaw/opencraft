@@ -28,7 +28,7 @@ func (a *App) ListSessions() ([]SessionMeta, error) {
 	store := a.sessions
 	a.mu.Unlock()
 	if store == nil {
-		return nil, nil
+		return []SessionMeta{}, nil
 	}
 	metas, err := store.List()
 	if err != nil {
@@ -236,7 +236,7 @@ func (a *App) SessionHistory(id string) ([]message.Message, error) {
 	store := a.sessions
 	a.mu.Unlock()
 	if store == nil {
-		return nil, nil
+		return []message.Message{}, nil
 	}
 	return store.History(context.Background(), id, -1)
 }
@@ -270,15 +270,15 @@ func (a *App) delegationCards(
 	ctrl := a.ctrl
 	a.mu.Unlock()
 	if ctrl == nil || ctrl.Runtime() == nil {
-		return nil, nil
+		return []KanbanCard{}, nil
 	}
 	value, ok := ctrl.Runtime().Resource("delegate.backend")
 	if !ok {
-		return nil, nil
+		return []KanbanCard{}, nil
 	}
 	board, ok := value.(*kanban.Board)
 	if !ok {
-		return nil, nil
+		return []KanbanCard{}, nil
 	}
 	cards := board.Query(filter)
 	sort.SliceStable(cards, func(i, j int) bool {

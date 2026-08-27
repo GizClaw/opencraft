@@ -245,7 +245,9 @@ func (s *Store) List() ([]Meta, error) {
 	entries, err := os.ReadDir(s.root)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil
+			// First launch: no session directory yet means an empty
+			// list, not null (the desktop UI iterates the result).
+			return []Meta{}, nil
 		}
 		return nil, err
 	}
