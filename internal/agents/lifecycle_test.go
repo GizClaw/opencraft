@@ -496,3 +496,17 @@ func TestSpecValidate(t *testing.T) {
 		}
 	}
 }
+
+// TestListEmptyReturnsNonNil verifies the agents list is never null:
+// the desktop UI iterates the result directly (agents.length).
+func TestListEmptyReturnsNonNil(t *testing.T) {
+	reg := newFakeRegistrar()
+	lc, _ := newTestLifecycle(t, reg)
+	got := lc.List()
+	if got == nil {
+		t.Fatal("List returned nil; want empty non-nil slice")
+	}
+	if len(got) != 0 {
+		t.Fatalf("List = %d entries, want 0", len(got))
+	}
+}
