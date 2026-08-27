@@ -100,6 +100,21 @@ jobs:
           hdiutil create -volname OpenCraft -srcfolder build/bin/OpenCraft.app \
             -ov -format UDZO "opencraft-${TAG#v}-macos-universal.dmg"
 
+      - name: Sign dmg (Developer ID)
+        if: ${{ env.APPLE_CERTIFICATE != '' && env.APPLE_CERTIFICATE_PASSWORD != '' && env.KEYCHAIN_PASSWORD != '' }}
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+        run: |
+          identity="$(security find-identity -v -p codesigning build.keychain \
+            | awk '/Developer ID Application/ {print $2; exit}')"
+          if [ -z "$identity" ]; then
+            echo "::error::No Developer ID Application identity found in the imported certificate"
+            exit 1
+          fi
+          dmg="opencraft-${TAG#v}-macos-universal.dmg"
+          codesign --force --timestamp --sign "$identity" "$dmg"
+          codesign --verify --verbose=2 "$dmg"
+
       - name: Notarize and staple dmg
         if: ${{ (env.APPLE_API_PRIVATE_KEY != '' && env.APPLE_API_KEY != '' && env.APPLE_API_ISSUER != '') || (env.APPLE_ID != '' && env.APPLE_APP_SPECIFIC_PASSWORD != '' && env.APPLE_TEAM_ID != '') }}
         env:
