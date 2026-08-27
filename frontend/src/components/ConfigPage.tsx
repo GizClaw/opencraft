@@ -8,7 +8,9 @@ import {
   Brain,
   Cpu,
   Database,
+  Languages,
   Loader2,
+  Moon,
   Palette,
   Plus,
   RefreshCw,
@@ -17,6 +19,7 @@ import {
   ShieldCheck,
   ShieldPlus,
   Stethoscope,
+  Sun,
   Terminal,
   Trash2,
   X,
@@ -532,52 +535,78 @@ export function ConfigPage() {
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
           {tab === 'ui' && (
-            <div>
-              <div className="text-sm mb-3">{t('config.uiLanguage')}</div>
-              <div className="flex rounded-lg border border-edge overflow-hidden w-fit text-sm">
-                <button
-                  onClick={() => void i18n.changeLanguage('zh')}
-                  className={`px-3 py-1.5 ${
-                    lang === 'zh'
-                      ? 'bg-accent text-white'
-                      : 'text-dim hover:text-fg'
-                  }`}
-                >
-                  中文
-                </button>
-                <button
-                  onClick={() => void i18n.changeLanguage('en')}
-                  className={`px-3 py-1.5 ${
-                    lang === 'en'
-                      ? 'bg-accent text-white'
-                      : 'text-dim hover:text-fg'
-                  }`}
-                >
-                  English
-                </button>
+            <div className="space-y-3">
+              <div className="rounded-xl border border-edge bg-panel2 p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      <Languages size={15} className="text-accent" />
+                      {t('config.uiLanguage')}
+                    </div>
+                    <p className="mt-1 text-xs text-dim">
+                      {t('config.uiLanguageHint')}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 overflow-hidden rounded-lg border border-edge text-sm">
+                    <button
+                      onClick={() => void i18n.changeLanguage('zh')}
+                      className={`px-3 py-1.5 transition-colors ${
+                        lang === 'zh'
+                          ? 'bg-accent text-white'
+                          : 'text-dim hover:bg-panel hover:text-fg'
+                      }`}
+                    >
+                      中文
+                    </button>
+                    <button
+                      onClick={() => void i18n.changeLanguage('en')}
+                      className={`px-3 py-1.5 transition-colors ${
+                        lang === 'en'
+                          ? 'bg-accent text-white'
+                          : 'text-dim hover:bg-panel hover:text-fg'
+                      }`}
+                    >
+                      English
+                    </button>
+                  </div>
+                </div>
               </div>
-              <div className="text-sm mb-3 mt-5">{t('config.uiTheme')}</div>
-              <div className="flex rounded-lg border border-edge overflow-hidden w-fit text-sm">
-                <button
-                  onClick={() => setTheme('dark')}
-                  className={`px-3 py-1.5 ${
-                    theme === 'dark'
-                      ? 'bg-accent text-white'
-                      : 'text-dim hover:text-fg'
-                  }`}
-                >
-                  {t('config.uiThemeDark')}
-                </button>
-                <button
-                  onClick={() => setTheme('light')}
-                  className={`px-3 py-1.5 ${
-                    theme === 'light'
-                      ? 'bg-accent text-white'
-                      : 'text-dim hover:text-fg'
-                  }`}
-                >
-                  {t('config.uiThemeLight')}
-                </button>
+              <div className="rounded-xl border border-edge bg-panel2 p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2 text-sm font-medium">
+                      <Palette size={15} className="text-accent" />
+                      {t('config.uiTheme')}
+                    </div>
+                    <p className="mt-1 text-xs text-dim">
+                      {t('config.uiThemeHint')}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 overflow-hidden rounded-lg border border-edge text-sm">
+                    <button
+                      onClick={() => setTheme('dark')}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
+                        theme === 'dark'
+                          ? 'bg-accent text-white'
+                          : 'text-dim hover:bg-panel hover:text-fg'
+                      }`}
+                    >
+                      <Moon size={13} />
+                      {t('config.uiThemeDark')}
+                    </button>
+                    <button
+                      onClick={() => setTheme('light')}
+                      className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
+                        theme === 'light'
+                          ? 'bg-accent text-white'
+                          : 'text-dim hover:bg-panel hover:text-fg'
+                      }`}
+                    >
+                      <Sun size={13} />
+                      {t('config.uiThemeLight')}
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
           )}

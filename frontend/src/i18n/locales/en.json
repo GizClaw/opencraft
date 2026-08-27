@@ -81,6 +81,8 @@
     "tabDiagnostics": "Diagnostics",
     "uiLanguage": "Interface language",
     "uiTheme": "Theme",
+    "uiThemeHint": "Dark keeps the terminal look; Light is better for bright environments.",
+    "uiLanguageHint": "Interface language (saved locally).",
     "uiThemeDark": "Dark",
     "uiThemeLight": "Light",
     "memoryHint": "Tune how conversation history enters the model context. Full history replay is experimental and relies on model window metadata from the router (Azure does not declare it yet).",

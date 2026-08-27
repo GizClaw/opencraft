@@ -81,6 +81,8 @@
     "tabDiagnostics": "诊断",
     "uiLanguage": "界面语言",
     "uiTheme": "主题",
+    "uiThemeHint": "深色延续终端风格；明亮环境建议使用浅色。",
+    "uiLanguageHint": "界面语言（保存在本地）。",
     "uiThemeDark": "深色",
     "uiThemeLight": "浅色",
     "memoryHint": "控制对话历史如何进入模型上下文。全量历史重放为实验性，依赖路由器的模型窗口元数据（azure 暂未声明）。",
