@@ -227,6 +227,8 @@
     "interrupted": "已中断",
     "failed": "失败",
     "thinkLabel": "思考",
+    "lastFailed": "上一条回复失败",
+    "dismiss": "忽略",
     "thinkLow": "低",
     "thinkMedium": "中",
     "thinkHigh": "高",
