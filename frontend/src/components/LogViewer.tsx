@@ -19,19 +19,23 @@ function parseLog(raw: string): LogEntry[] {
       continue;
     }
     const [, ts, level, rest] = m;
-    const attrAt = rest.search(/\s[\w.-]+="/);
-    if (attrAt < 0) {
-      out.push({ ts, level, message: rest.trim(), attrs: [] });
-      continue;
+    const tokens = rest.split(/\s+/).filter(Boolean);
+    const messageParts: string[] = [];
+    let i = 0;
+    for (; i < tokens.length; i++) {
+      if (/^[\w.-]+=/.test(tokens[i])) break;
+      messageParts.push(tokens[i]);
     }
-    const message = rest.slice(0, attrAt).trim();
+    const message = messageParts.join(' ');
     const attrs: LogEntry['attrs'] = [];
-    const re = /([\w.-]+)=("(?:[^"]*)"|(?:\S+))/g;
+    // Values may be quoted and contain escaped quotes or spaces
+    // (e.g. error.message="graph \"node\": failed").
+    const re = /([\w.-]+)=("(?:[^"\\]|\\.)*"|(?:\S+))/g;
     let am: RegExpExecArray | null;
-    while ((am = re.exec(rest.slice(attrAt + 1))) !== null) {
+    while ((am = re.exec(tokens.slice(i).join(' '))) !== null) {
       attrs.push({
         key: am[1],
-        value: am[2].replace(/^"|"$/g, ''),
+        value: am[2].replace(/^"|"$/g, '').replace(/\\(.)/g, '$1'),
       });
     }
     out.push({ ts, level, message, attrs });
