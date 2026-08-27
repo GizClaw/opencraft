@@ -5,7 +5,7 @@
 <h1 align="center">opencraft</h1>
 
 <p align="center">
-  A local-first workflow workbench built on
+  A local-first work partner built on
   <a href="https://github.com/GizClaw/flowcraft">flowcraft</a>.
 </p>
 
@@ -19,13 +19,12 @@
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey" alt="Platforms: macOS / Linux">
 </p>
 
-opencraft is a coding agent that runs locally — and it doesn't stop there.
-Built on flowcraft's config-driven graph engine, it orchestrates any local
-workflow: reading and editing files, executing shell commands with approval,
-coordinating subagents, and persisting and resuming sessions. Coding is one
-of the workflows it runs, not its only purpose. A local execd sandbox,
-SQLite session store, and per-project approval policy keep everything inside
-a macOS/Linux desktop app (Wails v2 + React).
+opencraft is a work partner that runs on your machine: it reads and edits
+files, executes shell commands with approval, coordinates subagents, and
+persists and resumes sessions. Built on flowcraft's config-driven graph
+engine, it helps with coding and beyond — orchestrating any local workflow.
+A local execd sandbox, SQLite session store, and per-project approval policy
+keep everything inside a macOS/Linux desktop app (Wails v2 + React).
 
 ## Features
 
