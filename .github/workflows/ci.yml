@@ -68,13 +68,15 @@ jobs:
       - name: Test (race)
         # bwrap needs a user namespace, but the Ubuntu 24.04 runner
         # blocks unprivileged userns (apparmor_restrict_unprivileged_userns).
-        # Running the tests as root keeps the real bwrap sandbox path
-        # exercised in CI without skipping coverage.
+        # Running as root keeps the real bwrap sandbox path exercised.
+        # The two rollback tests below rely on permission-denied writes,
+        # which root bypasses, so they run as the regular user instead.
         run: |
           sudo -E env "PATH=$PATH" "HOME=$HOME" \
             "GOPATH=$(go env GOPATH)" \
             "GOMODCACHE=$(go env GOMODCACHE)" "GOCACHE=$(go env GOCACHE)" \
-            go test -race ./...
+            go test -race -skip 'Test(Create|Update)RollsBackOnPersistFailure$' ./...
+          go test -race -run 'Test(Create|Update)RollsBackOnPersistFailure$' ./internal/agents
 
       - name: Modules tidy
         run: go mod tidy -diff
