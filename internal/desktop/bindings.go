@@ -108,8 +108,9 @@ func (a *App) ModelOptions() ([]ModelOption, error) {
 				continue
 			}
 			out = append(out, ModelOption{
-				ID:    in.DeploymentID(i+1) + "/" + model,
-				Label: instanceLabel(in, i+1) + " · " + model,
+				ID:        in.DeploymentID(i+1) + "/" + model,
+				Label:     instanceLabel(in, i+1) + " · " + model,
+				Reasoning: m.Reasoning != "",
 			})
 		}
 	}

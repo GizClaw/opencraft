@@ -325,13 +325,18 @@ func (a *App) status(configured bool) ConfigStatus {
 		agents = len(a.agents.List())
 	}
 	a.mu.Unlock()
+	defaultReasoning := false
+	if cfg, err := config.LoadInference(ud); err == nil {
+		defaultReasoning = cfg.ModelReasoning("")
+	}
 	st := ConfigStatus{
-		Needed:       !configured,
-		DefaultModel: config.DefaultModel(ud),
-		WorkDir:      wd,
-		UserDir:      ud,
-		Version:      app.ServiceVersion,
-		Agents:       agents,
+		Needed:           !configured,
+		DefaultModel:     config.DefaultModel(ud),
+		DefaultReasoning: defaultReasoning,
+		WorkDir:          wd,
+		UserDir:          ud,
+		Version:          app.ServiceVersion,
+		Agents:           agents,
 	}
 	return st
 }
