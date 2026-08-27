@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Assistant system prompt persona updated to a work partner — helping with
+  coding and any local workflow, matching the README positioning.
 - Linux desktop builds now target webkit2gtk-4.1 (`-tags webkit2_41`), matching
   the Ubuntu 24.04 CI runner.
 - Cleaned up all `golangci-lint` findings (errcheck/ineffassign/staticcheck/
