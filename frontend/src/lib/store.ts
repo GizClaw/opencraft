@@ -822,7 +822,7 @@ export const useStore = create<StoreState>((set, get) => {
 
     loadSessions: async () => {
       try {
-        set({ sessions: await api.listSessions() });
+        set({ sessions: (await api.listSessions()) ?? [] });
       } catch {
         // best-effort
       }
@@ -830,7 +830,7 @@ export const useStore = create<StoreState>((set, get) => {
 
     loadWorkspaces: async () => {
       try {
-        set({ workspaces: await api.workspaces() });
+        set({ workspaces: (await api.workspaces()) ?? [] });
       } catch {
         // best-effort
       }
@@ -857,7 +857,7 @@ export const useStore = create<StoreState>((set, get) => {
 
     loadCards: async () => {
       try {
-        set({ cards: await api.delegationCards() });
+        set({ cards: (await api.delegationCards()) ?? [] });
       } catch {
         // best-effort
       }
@@ -867,7 +867,7 @@ export const useStore = create<StoreState>((set, get) => {
       const convID = get().current;
       if (!convID) return;
       try {
-        const cards = await api.conversationDelegationCards(convID);
+        const cards = (await api.conversationDelegationCards(convID)) ?? [];
         set((state) => {
           // Auto-show the panel when the conversation starts spawning
           // subagents; a manual close sticks while cards are present.

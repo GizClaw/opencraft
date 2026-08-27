@@ -540,6 +540,12 @@ func managedResourceKeys(cfg InferenceConfig) map[string]bool {
 func LoadInference(configDir string) (InferenceConfig, error) {
 	data, err := os.ReadFile(filepath.Join(configDir, "opencraft.yaml"))
 	if err != nil {
+		// First launch: no user layer yet means no configured
+		// instances, not a startup failure. The UI drives the
+		// "inference not configured" guide from InferenceNeeded.
+		if errors.Is(err, os.ErrNotExist) {
+			return InferenceConfig{}, nil
+		}
 		return InferenceConfig{}, err
 	}
 	var doc struct {

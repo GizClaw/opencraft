@@ -556,3 +556,18 @@ resources:
 		t.Fatalf("new instance infer dep missing:\n%s", doc)
 	}
 }
+
+// TestLoadInferenceMissingConfig verifies first launch with no user
+// configuration layer does not fail: LoadInference must return an empty
+// config (no instances), so the desktop init flow can proceed to the
+// "inference not configured" guide.
+func TestLoadInferenceMissingConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := LoadInference(dir)
+	if err != nil {
+		t.Fatalf("LoadInference(missing config) = %v, want nil", err)
+	}
+	if len(cfg.Instances) != 0 {
+		t.Fatalf("LoadInference(missing config) instances = %d, want 0", len(cfg.Instances))
+	}
+}

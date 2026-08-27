@@ -243,3 +243,28 @@ func TestAllIDMethodsRejectTraversal(t *testing.T) {
 		t.Fatalf("WriteState valid id: %v", err)
 	}
 }
+
+// TestListEmptyWhenRootMissing verifies List returns an empty non-nil
+// slice when the session directory does not exist, so the desktop UI
+// never receives a JSON null for the session list.
+func TestListEmptyWhenRootMissing(t *testing.T) {
+	dir := t.TempDir()
+	store, err := New(filepath.Join(dir, "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	if err := os.RemoveAll(store.root); err != nil {
+		t.Fatal(err)
+	}
+	metas, err := store.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if metas == nil {
+		t.Fatal("List returned nil; want empty non-nil slice")
+	}
+	if len(metas) != 0 {
+		t.Fatalf("List = %d entries, want 0", len(metas))
+	}
+}

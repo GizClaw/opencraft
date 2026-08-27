@@ -139,15 +139,15 @@ func (a *App) Skills() ([]SkillDTO, error) {
 	ctrl := a.ctrl
 	a.mu.Unlock()
 	if ctrl == nil || ctrl.Runtime() == nil {
-		return nil, nil
+		return []SkillDTO{}, nil
 	}
 	value, ok := ctrl.Runtime().Resource("skills")
 	if !ok {
-		return nil, nil
+		return []SkillDTO{}, nil
 	}
 	svc, ok := value.(*skills.Service)
 	if !ok {
-		return nil, nil
+		return []SkillDTO{}, nil
 	}
 	items := svc.List()
 	out := make([]SkillDTO, 0, len(items))
