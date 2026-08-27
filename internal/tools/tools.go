@@ -174,6 +174,14 @@ func (webfetchSourceFactory) New(_ context.Context, in resource.Input) (any, err
 				store, isStore := dep.(*sessions.Store)
 				if isStore && store != nil {
 					gate = webfetch.YOLOBypassGate(store, gate)
+					// YOLO sessions disable the sandbox by definition:
+					// their web_fetch should not be re-gated at the
+					// network layer, so private destinations stay
+					// reachable for them too.
+					t.SetAllowPrivate(func(ctx context.Context) bool {
+						return pol.WebFetch.AllowPrivate ||
+							ocsandbox.IsYOLO(ctx, store)
+					})
 				}
 			}
 			t.SetGate(gate)

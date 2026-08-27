@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -65,5 +66,60 @@ func TestWorkspaceIDValidation(t *testing.T) {
 	}
 	if !isWorkspaceID("0123456789abcdef0123456789abcdef") {
 		t.Fatal("hex id must be accepted")
+	}
+}
+
+func TestProjectTrustRoundTrip(t *testing.T) {
+	repo := filepath.Join(t.TempDir(), "repo")
+	if err := writeProjectTrust(repo, true); err != nil {
+		t.Fatal(err)
+	}
+	app, err := New(Options{UserDir: filepath.Join(t.TempDir(), "config")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !app.isProjectTrusted(repo) {
+		t.Fatal("trusted workspace must report trusted")
+	}
+	if err := writeProjectTrust(repo, false); err != nil {
+		t.Fatal(err)
+	}
+	if app.isProjectTrusted(repo) {
+		t.Fatal("untrusted workspace must report untrusted")
+	}
+	// Untouched workspaces default to untrusted.
+	other := filepath.Join(t.TempDir(), "other")
+	if app.isProjectTrusted(other) {
+		t.Fatal("unknown workspace must default to untrusted")
+	}
+}
+
+func TestProjectConfigStatus(t *testing.T) {
+	workDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(workDir, ".opencraft", "config"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(workDir, ".opencraft", "config", "opencraft.yaml"),
+		[]byte("version: v1\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app, err := New(Options{
+		WorkDir: workDir,
+		UserDir: filepath.Join(t.TempDir(), "config"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := app.ProjectConfigStatus()
+	if !st.Present || st.Trusted || st.Path == "" {
+		t.Fatalf("status = %+v, want present+untrusted", st)
+	}
+	if err := writeProjectTrust(workDir, true); err != nil {
+		t.Fatal(err)
+	}
+	st = app.ProjectConfigStatus()
+	if !st.Trusted {
+		t.Fatalf("status after trust = %+v, want trusted", st)
 	}
 }

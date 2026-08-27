@@ -30,6 +30,7 @@ import type {
   SearchFileHit,
   SessionMeta,
   ProviderInstance,
+  ProjectConfigStatus,
   SkillDTO,
   TurnStart,
   UndoState,
@@ -46,6 +47,10 @@ export const api = {
     App.SaveInstances(req as unknown as gen.InferenceRequest),
   reload: () => App.Reload(),
   workspace: () => App.Workspace(),
+  projectConfigStatus: () =>
+    App.ProjectConfigStatus() as Promise<ProjectConfigStatus>,
+  setProjectTrust: (path: string, trusted: boolean) =>
+    App.SetProjectTrust(path, trusted),
   newChat: () => App.NewChat(),
   listSessions: () => App.ListSessions() as Promise<SessionMeta[]>,
   currentSession: () => App.CurrentSession(),

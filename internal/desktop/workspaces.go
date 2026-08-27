@@ -19,6 +19,24 @@ import (
 	"github.com/GizClaw/opencraft/internal/config"
 )
 
+// ProjectConfigStatus describes whether the current workspace carries a
+// project configuration layer and whether the user has trusted it.
+// Untrusted project layers are skipped by the config loader, so a
+// third-party repo cannot silently override hooks, sandbox policy, or
+// the execution graph.
+type ProjectConfigStatus struct {
+	Present bool   `json:"present"`
+	Trusted bool   `json:"trusted"`
+	Path    string `json:"path,omitempty"`
+}
+
+const trustFileName = "trust.json"
+
+type projectTrustRecord struct {
+	Trusted   bool   `json:"trusted"`
+	UpdatedAt string `json:"updated_at,omitempty"`
+}
+
 // WorkspaceMeta describes one previously opened workspace for the
 // sidebar history list.
 type WorkspaceMeta struct {
@@ -148,6 +166,114 @@ func (a *App) RemoveWorkspace(id string) error {
 		return err
 	}
 	return removeWorkspaceMeta(dir, id)
+}
+
+// ProjectConfigStatus reports whether a project configuration layer
+// exists for the current workspace and whether the user has trusted it.
+func (a *App) ProjectConfigStatus() ProjectConfigStatus {
+	wd := a.snapshotWorkDir()
+	dir, present := config.ProjectConfigDir(wd)
+	if !present {
+		return ProjectConfigStatus{}
+	}
+	return ProjectConfigStatus{
+		Present: true,
+		Trusted: a.isProjectTrusted(wd),
+		Path:    dir,
+	}
+}
+
+// SetProjectTrust persists the trust decision for one workspace and
+// rebuilds the runtime when it applies to the current workspace, so an
+// accepted project layer takes effect immediately.
+func (a *App) SetProjectTrust(dir string, trusted bool) error {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return errors.New("workspace path is required")
+	}
+	info, err := os.Stat(dir)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%s is not a directory", dir)
+	}
+	if err := writeProjectTrust(dir, trusted); err != nil {
+		return err
+	}
+	wd := a.snapshotWorkDir()
+	if filepath.Clean(wd) == filepath.Clean(dir) {
+		if err := a.rebuild(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// isProjectTrusted reads the persisted trust flag for one workspace
+// path. Absent or unparsable records default to untrusted.
+func (a *App) isProjectTrusted(path string) bool {
+	p, err := projectTrustPath(path)
+	if err != nil {
+		return false
+	}
+	data, err := os.ReadFile(p)
+	if err != nil {
+		return false
+	}
+	var rec projectTrustRecord
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return false
+	}
+	return rec.Trusted
+}
+
+// projectTrustPath resolves the trust record for a workspace path.
+func projectTrustPath(path string) (string, error) {
+	dir, err := workspaceHistoryDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, workspaceID(path), trustFileName), nil
+}
+
+// writeProjectTrust persists the trust record atomically under the
+// per-workspace history entry (0700).
+func writeProjectTrust(path string, trusted bool) error {
+	dir, err := workspaceHistoryDir()
+	if err != nil {
+		return err
+	}
+	entry := filepath.Join(dir, workspaceID(path))
+	if err := os.MkdirAll(entry, 0o700); err != nil {
+		return err
+	}
+	rec := projectTrustRecord{
+		Trusted:   trusted,
+		UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	data, err := json.MarshalIndent(rec, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(entry, ".trust-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, filepath.Join(entry, trustFileName))
 }
 
 func removeWorkspaceMeta(dir, id string) error {

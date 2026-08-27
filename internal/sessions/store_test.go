@@ -2,6 +2,7 @@ package sessions
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -35,6 +36,111 @@ func TestAppendAndHistory(t *testing.T) {
 		hist[0].Content.Text() != "你好" ||
 		hist[1].Content.Text() != "你好！" {
 		t.Errorf("history = %+v", hist)
+	}
+}
+
+func TestSessionFilePermissions(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "sessions")
+	store, err := New(root, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendTurn(context.Background(), id, []message.Message{
+		message.NewTextMessage(message.RoleUser, "hi"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(root, id, "history", "000001.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("history file mode = %o, want 600", info.Mode().Perm())
+	}
+	dir, err := os.Stat(filepath.Join(root, id))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dir.Mode().Perm() != 0o700 {
+		t.Errorf("session dir mode = %o, want 700", dir.Mode().Perm())
+	}
+	rootInfo, err := os.Stat(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rootInfo.Mode().Perm() != 0o700 {
+		t.Errorf("sessions root mode = %o, want 700", rootInfo.Mode().Perm())
+	}
+}
+
+func TestMetaIndexSurvivesUsageRecord(t *testing.T) {
+	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	id, _ := store.Create()
+	if err := store.AppendTurn(context.Background(), id, []message.Message{
+		message.NewTextMessage(message.RoleUser, "first"),
+		message.NewTextMessage(message.RoleAssistant, "second"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordUsage(context.Background(), id, Usage{TotalTokens: 42}); err != nil {
+		t.Fatal(err)
+	}
+	list, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Messages != 2 || list[0].Usage.TotalTokens != 42 {
+		t.Fatalf("list = %+v, want 2 messages with recorded usage", list)
+	}
+	if list[0].Title != "first" {
+		t.Errorf("title = %q, want first", list[0].Title)
+	}
+	title, err := store.Title(id)
+	if err != nil || title != "first" {
+		t.Errorf("Title = %q, %v", title, err)
+	}
+	first, err := store.FirstUserMessage(id)
+	if err != nil || first != "first" {
+		t.Errorf("FirstUserMessage = %q, %v", first, err)
+	}
+}
+
+func TestListLegacyArchiveWithoutMeta(t *testing.T) {
+	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	id, _ := store.Create()
+	// Simulate a pre-index archive: write turn files but no meta.json.
+	historyDir := filepath.Join(store.root, id, "history")
+	for i := 1; i <= 3; i++ {
+		data := `{"seq":` + string(rune('0'+i)) +
+			`,"at":"2024-01-01T00:00:00Z","messages":[{"role":"user","content":{"parts":[{"type":"text","text":"legacy msg"}]}}]}`
+		if err := os.WriteFile(
+			filepath.Join(historyDir, fmt.Sprintf("%06d.json", i)),
+			[]byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Messages != 3 {
+		t.Fatalf("legacy list = %+v, want 3 turns listed", list)
+	}
+	if list[0].Title != "legacy msg" {
+		t.Errorf("legacy title = %q", list[0].Title)
 	}
 }
 

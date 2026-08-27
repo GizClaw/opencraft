@@ -59,24 +59,19 @@ func (a *App) autoTitle(ctx context.Context, contextID string) {
 		strings.TrimSpace(custom) != "" {
 		return
 	}
-	msgs, err := store.History(ctx, contextID, -1)
+	// Only the first user message is needed; reading the full archive
+	// would make every turn end O(session length).
+	first, err := store.FirstUserMessage(contextID)
 	if err != nil {
 		telemetry.Warn(ctx, "desktop: auto title history load failed",
 			otellog.String("session", contextID),
 			otellog.String("error", err.Error()))
 		return
 	}
-	var first string
-	for _, m := range msgs {
-		if m.Role == message.RoleUser {
-			first = strings.TrimSpace(m.Content.Text())
-			break
-		}
-	}
+	first = strings.TrimSpace(first)
 	if first == "" {
 		telemetry.Warn(ctx, "desktop: auto title skipped, no user message",
-			otellog.String("session", contextID),
-			otellog.Int("messages", len(msgs)))
+			otellog.String("session", contextID))
 		return
 	}
 	value, ok := ctrl.Runtime().Resource("router")

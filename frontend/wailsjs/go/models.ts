@@ -615,6 +615,22 @@ export namespace desktop {
 	        this.rules = source["rules"];
 	    }
 	}
+	export class ProjectConfigStatus {
+	    present: boolean;
+	    trusted: boolean;
+	    path?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ProjectConfigStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.present = source["present"];
+	        this.trusted = source["trusted"];
+	        this.path = source["path"];
+	    }
+	}
 	
 	export class ProviderView {
 	    id: string;

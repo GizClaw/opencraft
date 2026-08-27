@@ -72,7 +72,7 @@ func (s *Store) SetMode(id string, mode Mode) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(tmpName, 0o644); err != nil {
+	if err := os.Chmod(tmpName, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmpName, path)

@@ -77,6 +77,8 @@ export function OpenWorkspace(arg1:string):Promise<void>;
 
 export function Permissions():Promise<Array<string>>;
 
+export function ProjectConfigStatus():Promise<desktop.ProjectConfigStatus>;
+
 export function Providers():Promise<Array<desktop.ProviderView>>;
 
 export function ReadFile(arg1:string):Promise<string>;
@@ -114,6 +116,8 @@ export function SessionHistory(arg1:string):Promise<Array<message.Message>>;
 export function SessionMode():Promise<string>;
 
 export function SetModel(arg1:string):Promise<void>;
+
+export function SetProjectTrust(arg1:string,arg2:boolean):Promise<void>;
 
 export function SetSessionMode(arg1:string):Promise<void>;
 

@@ -170,10 +170,11 @@ resources:
       root: ${env:OPEN_CRAFT_WORKDIR}
       writable_paths: ["${env:OPEN_CRAFT_CACHE}"]
       remote: true
-      # Sandbox environment defaults to inheriting the external
-      # environment wholesale. Projects that need to restrict
-      # visibility or redirect caches declare env_policy in their
-      # config layer (see ~/.opencraft/config/opencraft.yaml examples).
+      # Sandbox environment defaults to a curated allowlist (PATH,
+      # HOME, locale, toolchain, OPEN_CRAFT_* paths, ...), NOT the
+      # parent environment wholesale, so provider API keys never leak
+      # into sandboxed project code. Projects that need more declare
+      # env_policy in their config layer.
 
   # ------------------------------------------------------------------
   # Tool containers: each tool.Source is one tool group; tools
@@ -192,6 +193,12 @@ resources:
   tool.webfetch:
     kind: tool.Source
     impl: opencraft/webfetch
+    deps:
+      # The domain gate (allow/deny lists + private-IP SSRF guard) is
+      # installed only when the netpolicy dependency is wired; the
+      # sessions dep lets YOLO sessions keep their "no sandbox" semantics.
+      netpolicy: netpolicy
+      sessions: sessions
   tool.askuser:
     kind: tool.Source
     impl: opencraft/askuser

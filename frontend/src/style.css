@@ -361,3 +361,48 @@ textarea:focus-visible {
   border: 1px solid var(--color-edge);
   padding: 4px 10px;
 }
+
+.project-trust-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--color-edge);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  font-size: 12px;
+}
+
+.project-trust-banner .project-trust-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.project-trust-banner .project-trust-copy span {
+  color: var(--color-dim);
+}
+
+.project-trust-banner .project-trust-error {
+  color: var(--color-err);
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-trust-banner button {
+  border: 1px solid var(--color-accent);
+  border-radius: 6px;
+  padding: 4px 12px;
+  background: var(--color-accent);
+  color: var(--color-bg);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.project-trust-banner button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

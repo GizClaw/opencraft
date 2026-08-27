@@ -31,6 +31,36 @@ type SandboxPolicy struct {
 	EnvPolicy     *EnvPolicyConfig `json:"env_policy,omitempty"`
 }
 
+// defaultEnvAllow is the minimal environment surface sandboxed
+// commands inherit when a deployment declares no env_policy. Provider
+// API keys and other secrets in the parent environment are NOT on the
+// list, so sandboxed (possibly untrusted) project code cannot read
+// them from env. Projects that need more can declare env_policy in
+// their config layer.
+var defaultEnvAllow = []string{
+	"PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TMP",
+	"TERM", "PWD", "HOSTNAME",
+	"LANG", "LC_ALL", "LC_CTYPE", "LC_MESSAGES", "LC_TIME",
+	"LC_NUMERIC", "LC_COLLATE", "LC_MONETARY",
+	"EDITOR", "VISUAL", "NO_COLOR", "COLORTERM",
+	"OPEN_CRAFT_WORKDIR", "OPEN_CRAFT_CACHE", "OPEN_CRAFT_DATA_DIR",
+	"GOPATH", "GOROOT", "GOMODCACHE", "GOCACHE", "GOTOOLCHAIN",
+	"GOENV", "GOPROXY", "GOSUMDB", "GOFLAGS", "CGO_ENABLED", "CC", "CXX",
+	"NODE_ENV",
+	"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+	"http_proxy", "https_proxy", "no_proxy",
+	"SSH_AUTH_SOCK",
+}
+
+// DefaultEnvPolicy returns the environment policy applied when a
+// deployment declares none: a curated allowlist instead of wholesale
+// inheritance. It replaces nil Allow (inherit everything) with a
+// bounded set, closing the "sandboxed command reads the parent's API
+// keys" gap for the default configuration.
+func DefaultEnvPolicy() coresandbox.EnvPolicy {
+	return coresandbox.EnvPolicy{Allow: append([]string(nil), defaultEnvAllow...)}
+}
+
 // SandboxPolicy converts HostSandboxSettings into the policy handed to
 // the execd child.
 func (s HostSandboxSettings) SandboxPolicy() SandboxPolicy {
@@ -72,6 +102,8 @@ func SandboxRunner(
 			Allow:  pol.EnvPolicy.Allow,
 			Inject: pol.EnvPolicy.Inject,
 		}
+	} else {
+		policy = DefaultEnvPolicy()
 	}
 	writable := append([]string{cacheDir}, pol.WritablePaths...)
 	writable = dedupeStrings(writable)

@@ -3,10 +3,14 @@ package webfetch
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/GizClaw/opencraft/internal/sandbox"
 )
 
 func TestToolExtractsArticle(t *testing.T) {
@@ -111,5 +115,84 @@ func TestToolDefinition(t *testing.T) {
 	}
 	if tool.Metadata().MutatesState {
 		t.Fatal("web_fetch must be read-only")
+	}
+}
+
+func TestToolGateBlocksPrivateHost(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("server must not be reached: private host blocked by the gate")
+	}))
+	defer srv.Close()
+
+	tool := New()
+	tool.SetGate(DomainGate(sandbox.WebFetchPolicy{}))
+	_, err := tool.Execute(context.Background(), `{"url":"`+srv.URL+`"}`)
+	if err == nil || !strings.Contains(err.Error(), "private address") {
+		t.Fatalf("Execute(loopback) error = %v, want private-address rejection", err)
+	}
+}
+
+func TestToolRedirectRevalidatesHost(t *testing.T) {
+	blocked := "169.254.169.254"
+	gate := func(_ context.Context, host string) error {
+		if host == blocked {
+			return errors.New("blocked by test gate")
+		}
+		return nil
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://"+blocked+"/latest/meta-data/", http.StatusFound)
+	}))
+	defer srv.Close()
+
+	tool := New()
+	tool.SetGate(gate)
+	// The initial server is loopback (httptest); allow private hosts so
+	// the request reaches it, and rely on the redirect re-validation to
+	// block the hostile hop.
+	tool.SetAllowPrivate(func(context.Context) bool { return true })
+	_, err := tool.Execute(context.Background(), `{"url":"`+srv.URL+`"}`)
+	if err == nil || !strings.Contains(err.Error(), "blocked by test gate") {
+		t.Fatalf("Execute(redirect) error = %v, want redirect re-validation failure", err)
+	}
+}
+
+func TestToolDialResolvesOnceAndBlocksPrivate(t *testing.T) {
+	orig := lookupHost
+	lookupHost = func(_ context.Context, host string) ([]net.IP, error) {
+		if host == "example.test" {
+			return []net.IP{net.ParseIP("127.0.0.1")}, nil
+		}
+		return nil, errors.New("unexpected host " + host)
+	}
+	t.Cleanup(func() { lookupHost = orig })
+
+	tool := New()
+	tool.SetGate(DomainGate(sandbox.WebFetchPolicy{}))
+	_, err := tool.Execute(context.Background(), `{"url":"http://example.test/"}`)
+	if err == nil || !strings.Contains(err.Error(), "private address") {
+		t.Fatalf("Execute(dns) error = %v, want private-address rejection", err)
+	}
+}
+
+func TestHardenedClientRedirectPolicy(t *testing.T) {
+	gate := func(_ context.Context, host string) error {
+		if host == "blocked.example" {
+			return errors.New("redirect denied")
+		}
+		return nil
+	}
+	client := hardenedClient(gate, nil)
+	via := make([]*http.Request, 1)
+	req, err := http.NewRequest("GET", "http://blocked.example/x", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.CheckRedirect(req, via); err == nil ||
+		!strings.Contains(err.Error(), "redirect denied") {
+		t.Fatalf("CheckRedirect = %v, want denial", err)
+	}
+	if err := client.CheckRedirect(req, make([]*http.Request, maxRedirects)); err == nil {
+		t.Fatal("CheckRedirect must stop at the redirect limit")
 	}
 }

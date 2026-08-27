@@ -95,3 +95,30 @@ func TestLoadProjectLayerOverridesSandbox(t *testing.T) {
 		t.Fatal("project dir not discovered")
 	}
 }
+
+func TestLoadProjectLayerSkippedWhenNotTrusted(t *testing.T) {
+	userDir := t.TempDir()
+	workDir := t.TempDir()
+	writeConfig(t, userDir, "opencraft.yaml", "# user layer (empty for now)\n")
+	writeConfig(t, filepath.Join(workDir, ".opencraft", "config"), "opencraft.yaml",
+		"resources:\n  box:\n    impl: local\n")
+
+	mgr, err := Open(Options{
+		WorkDir:          workDir,
+		UserDir:          userDir,
+		SkipProjectLayer: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := mgr.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := view.Document.Resources["box"].Impl; got == "local" {
+		t.Fatalf("box impl = %q; untrusted project layer must be skipped", got)
+	}
+	if got := view.Document.Resources["box"].Impl; got != "opencraft" {
+		t.Fatalf("box impl = %q, want embedded opencraft default", got)
+	}
+}

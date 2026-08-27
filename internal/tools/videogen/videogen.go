@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -40,8 +41,12 @@ const OutDir = "generated"
 // must happen before provider URLs expire.
 const defaultTimeout = 20 * time.Minute
 
-// maxDownloadBytes caps the downloaded video size (2 GiB).
-const maxDownloadBytes = 2 << 30
+// maxDownloadBytes caps the downloaded video size (1 GiB). Artifacts
+// beyond it are refused before they can exhaust memory.
+const maxDownloadBytes = 1 << 30
+
+// maxDownloadRedirects bounds provider-issued download redirects.
+const maxDownloadRedirects = 10
 
 // generateFunc is the generation entry; production wires the router,
 // tests inject a fake.
@@ -66,8 +71,22 @@ func New(router *route.Router, ws workspace.Workspace) (*Tool, error) {
 			"generate_video: workspace is required")
 	}
 	t := &Tool{
-		ws:     ws,
-		client: &http.Client{},
+		ws: ws,
+		client: &http.Client{
+			Timeout: defaultTimeout,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if len(via) >= maxDownloadRedirects {
+					return fmt.Errorf(
+						"%s: download: stopped after %d redirects",
+						Name, maxDownloadRedirects)
+				}
+				if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
+					return fmt.Errorf(
+						"%s: download: non-http(s) redirect %q", Name, req.URL)
+				}
+				return nil
+			},
+		},
 	}
 	if router != nil {
 		t.generate = func(
@@ -278,9 +297,11 @@ func (t *Tool) saveVideos(
 	return paths, nil
 }
 
-// download fetches the provider-issued video URL into memory. The
-// artifact is bounded by maxDownloadBytes to keep a misbehaving or
-// compromised provider from exhausting memory.
+// download fetches the provider-issued video URL into a temp file (so
+// a slow or oversized stream never pins the whole artifact in memory)
+// and returns the bytes for the workspace write. The artifact is
+// bounded by maxDownloadBytes, and an oversized declared
+// Content-Length is rejected up front.
 func (t *Tool) download(ctx context.Context, url string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -295,14 +316,39 @@ func (t *Tool) download(ctx context.Context, url string) ([]byte, error) {
 		return nil, errdefs.Internalf(
 			"%s: download: provider returned %s", Name, resp.Status)
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxDownloadBytes))
+	if resp.ContentLength > maxDownloadBytes {
+		return nil, errdefs.Internalf(
+			"%s: download: artifact is %d bytes, exceeds the %d byte cap",
+			Name, resp.ContentLength, maxDownloadBytes)
+	}
+	tmp, err := os.CreateTemp("", "opencraft-video-*")
 	if err != nil {
 		return nil, errdefs.Internalf("%s: download: %v", Name, err)
 	}
-	if len(data) >= maxDownloadBytes {
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+	n, err := io.Copy(tmp, io.LimitReader(resp.Body, maxDownloadBytes+1))
+	if err != nil {
+		_ = tmp.Close()
+		return nil, errdefs.Internalf("%s: download: %v", Name, err)
+	}
+	if n > maxDownloadBytes {
+		_ = tmp.Close()
 		return nil, errdefs.Internalf(
 			"%s: download: artifact exceeds the %d byte cap",
 			Name, maxDownloadBytes)
+	}
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		_ = tmp.Close()
+		return nil, errdefs.Internalf("%s: download: %v", Name, err)
+	}
+	data, err := io.ReadAll(tmp)
+	closeErr := tmp.Close()
+	if err != nil {
+		return nil, errdefs.Internalf("%s: download: %v", Name, err)
+	}
+	if closeErr != nil {
+		return nil, errdefs.Internalf("%s: download: %v", Name, closeErr)
 	}
 	return data, nil
 }
