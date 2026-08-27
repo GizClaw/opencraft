@@ -54,6 +54,7 @@
     "title": "子代理",
     "toggle": "显示/隐藏子代理面板",
     "close": "关闭面板",
+    "collapseAll": "全部折叠",
     "detailTarget": "目标",
     "detailCaller": "调用者",
     "detailRun": "运行 ID",

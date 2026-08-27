@@ -1,11 +1,11 @@
-import { memo, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
-  ArrowRight,
   Bot,
   ChevronDown,
   ChevronRight,
   Clock,
+  Minimize2,
   Wrench,
   X,
 } from 'lucide-react';
@@ -41,7 +41,7 @@ function StreamItem({ item }: { item: AssistantItem }) {
             className="flex items-center gap-1.5 font-mono text-xs"
             title={item.tool.args}
           >
-            <Wrench size={11} className="text-violet-300 shrink-0" />
+            <Wrench size={11} className="text-dim shrink-0" />
             <span className="text-fg truncate">{item.tool.name}</span>
             {item.tool.status === 'running' ? (
               <span className="text-accent animate-pulse shrink-0">…</span>
@@ -78,8 +78,8 @@ const StreamView = memo(function StreamView({
   const items = stream.flatMap((m) => m.items);
   if (items.length === 0) return null;
   return (
-    <div className="rounded-lg border border-subagent/20 bg-subagent/5 p-2 space-y-1.5">
-      <div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-subagent/80">
+    <div className="rounded-lg border border-edge bg-panel2 p-2 space-y-1.5">
+      <div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-dim">
         <Activity size={10} />
         {t('subagent.stream')}
       </div>
@@ -149,113 +149,85 @@ function statusMeta(
 const SubagentCard = memo(function SubagentCard({
   card,
   stream,
+  collapseKey,
 }: {
   card: KanbanCard;
   stream?: MessageView[];
+  collapseKey: number;
 }) {
   const [open, setOpen] = useState(false);
   const { t } = useTranslation();
   const meta = statusMeta(card.status, t);
+  const running = card.status === 'claimed' || card.status === 'suspended';
+  const failed = card.status === 'failed' || card.status === 'canceled';
+  const wasRunning = useRef(running);
+  // Running cards stay expanded so progress is visible; they collapse
+  // automatically once the run finishes.
+  useEffect(() => {
+    if (running) {
+      setOpen(true);
+    } else if (wasRunning.current) {
+      setOpen(false);
+    }
+    wasRunning.current = running;
+  }, [running]);
+  // "Collapse all" from the panel header.
+  useEffect(() => {
+    if (collapseKey > 0) setOpen(false);
+  }, [collapseKey]);
 
   return (
-    <div className="rounded-xl border border-edge overflow-hidden bg-subagent/5">
+    <div className="overflow-hidden rounded-xl border border-edge bg-panel2">
       <div className={`border-l-2 ${meta.bar}`}>
         <button
           onClick={() => setOpen(!open)}
-          className="w-full flex items-center gap-2 px-2.5 py-2 text-left text-sm hover:bg-subagent/10 transition-colors"
+          className="flex w-full items-center gap-2 px-2.5 py-2 text-left text-sm transition-colors hover:bg-panel"
         >
-          <Bot size={14} className="text-subagent shrink-0" />
-          <span className="flex-1 min-w-0">
-            <span className="block truncate font-medium">{card.target}</span>
-            <span className="flex items-center gap-1 truncate text-xs text-dim mt-0.5">
-              {card.producer && (
-                <span className="truncate">{card.producer}</span>
-              )}
-              {card.producer && card.consumer && (
-                <ArrowRight size={10} className="shrink-0" />
-              )}
-              {card.consumer && (
-                <span className="truncate">{card.consumer}</span>
-              )}
-              {card.depth > 0 && (
-                <span className="shrink-0">· d{card.depth}</span>
-              )}
-            </span>
+          <span
+            className={`h-2 w-2 shrink-0 rounded-full ${
+              running
+                ? 'animate-pulse bg-accent'
+                : card.status === 'done'
+                  ? 'bg-ok'
+                  : card.status === 'failed' || card.status === 'canceled'
+                    ? 'bg-err'
+                    : 'bg-dim/50'
+            }`}
+          />
+          <span className="min-w-0 flex-1 truncate font-medium">
+            {card.target}
           </span>
           {elapsed(card) && (
-            <span className="flex items-center gap-1 text-[10px] text-dim shrink-0 tabular-nums">
+            <span className="flex shrink-0 items-center gap-1 text-[10px] text-dim tabular-nums">
               <Clock size={10} />
               {elapsed(card)}
             </span>
           )}
-          <span
-            className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] border shrink-0 ${meta.pill}`}
-          >
-            {meta.spin ? (
-              <span className="h-1.5 w-1.5 rounded-full bg-accent animate-pulse" />
-            ) : (
-              <span className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />
-            )}
-            {meta.label}
-          </span>
+          {failed && (
+            <span
+              className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] ${meta.pill}`}
+            >
+              {meta.label}
+            </span>
+          )}
           {open ? (
-            <ChevronDown size={14} className="text-dim shrink-0" />
+            <ChevronDown size={14} className="shrink-0 text-dim" />
           ) : (
-            <ChevronRight size={14} className="text-dim shrink-0" />
+            <ChevronRight size={14} className="shrink-0 text-dim" />
           )}
         </button>
         {open && (
-          <div className="px-3 pb-3 space-y-2">
+          <div className="space-y-2 px-3 pb-3">
             <StreamView stream={stream ?? []} />
-            <dl className="divide-y divide-edge/60 rounded-lg border border-edge bg-panel/80 overflow-hidden">
-              <DetailRow
-                label={t('subagent.detailTarget')}
-                value={card.target}
-              />
-              <DetailRow
-                label={t('subagent.detailCaller')}
-                value={card.caller}
-              />
-              <DetailRow label={t('subagent.detailRun')} value={card.run_id} />
-              <DetailRow
-                label={t('subagent.detailParent')}
-                value={card.parent_run_id}
-              />
-              <DetailRow
-                label={t('subagent.detailCall')}
-                value={card.call_id}
-              />
-              <DetailRow
-                label={t('subagent.detailCreated')}
-                value={card.created_at}
-              />
-              <DetailRow
-                label={t('subagent.detailUpdated')}
-                value={card.updated_at}
-              />
-              {card.input && (
-                <DetailRow
-                  label={t('subagent.detailInput')}
-                  value={card.input}
-                  block
-                />
-              )}
-              {card.output && (
-                <DetailRow
-                  label={t('subagent.detailOutput')}
-                  value={card.output}
-                  block
-                />
-              )}
-              {card.error && (
-                <DetailRow
-                  label={t('subagent.error')}
-                  value={card.error}
-                  block
-                  error
-                />
-              )}
-            </dl>
+            {card.input && (
+              <Block label={t('subagent.detailInput')} value={card.input} />
+            )}
+            {card.output && (
+              <Block label={t('subagent.detailOutput')} value={card.output} />
+            )}
+            {card.error && (
+              <Block label={t('subagent.error')} value={card.error} error />
+            )}
           </div>
         )}
       </div>
@@ -263,30 +235,30 @@ const SubagentCard = memo(function SubagentCard({
   );
 });
 
-function DetailRow({
+function Block({
   label,
   value,
-  block,
   error,
 }: {
   label: string;
   value?: string;
-  block?: boolean;
   error?: boolean;
 }) {
   if (!value) return null;
   return (
-    <div className="grid grid-cols-[92px_1fr] gap-2 px-2.5 py-1.5 text-xs">
-      <dt className={`truncate ${error ? 'text-err' : 'text-dim'}`}>{label}</dt>
-      <dd
-        className={`min-w-0 break-all ${error ? 'text-err' : 'text-fg'} ${
-          block
-            ? 'max-h-40 overflow-y-auto whitespace-pre-wrap'
-            : 'truncate whitespace-pre-wrap'
+    <div className="space-y-1">
+      <div
+        className={`text-[10px] uppercase tracking-wide ${error ? 'text-err' : 'text-dim'}`}
+      >
+        {label}
+      </div>
+      <pre
+        className={`max-h-40 overflow-y-auto whitespace-pre-wrap break-all rounded-lg border border-edge bg-panel/80 p-2 text-xs ${
+          error ? 'text-err' : 'text-fg'
         }`}
       >
         {value}
-      </dd>
+      </pre>
     </div>
   );
 }
@@ -345,22 +317,21 @@ function SubagentNode({
   node,
   streams,
   depth,
+  collapseKey,
 }: {
   node: TreeNode;
   streams: Record<string, MessageView[]>;
   depth: number;
+  collapseKey: number;
 }) {
   return (
-    <div className={depth > 0 ? 'relative ml-4 pl-3' : ''}>
-      {depth > 0 && (
-        <>
-          <span className="absolute left-0 top-0 h-full w-px bg-subagent/15" />
-          <span className="absolute left-0 top-3 h-3 w-3 rounded-bl-lg border-b border-l border-subagent/15" />
-        </>
-      )}
+    <div
+      className={depth > 0 ? 'ml-3 space-y-2 border-l border-edge/60 pl-3' : ''}
+    >
       <SubagentCard
         card={node.card}
         stream={node.card.run_id ? streams[node.card.run_id] : undefined}
+        collapseKey={collapseKey}
       />
       {node.children.length > 0 && (
         <div className="mt-2 space-y-2">
@@ -370,6 +341,7 @@ function SubagentNode({
               node={child}
               streams={streams}
               depth={depth + 1}
+              collapseKey={collapseKey}
             />
           ))}
         </div>
@@ -388,16 +360,31 @@ export function SubagentSidebar() {
   const togglePanel = useStore((s) => s.toggleSubagentPanel);
   const { t } = useTranslation();
   const forest = useMemo(() => buildForest(cards), [cards]);
+  const [collapseKey, setCollapseKey] = useState(0);
+  const hasRunning = cards.some(
+    (c) => c.status === 'claimed' || c.status === 'suspended',
+  );
 
   return (
-    <aside className="w-72 shrink-0 h-full border-l border-edge bg-panel flex flex-col min-h-0">
-      <header className="h-11 shrink-0 border-b border-edge flex items-center gap-2 px-3 select-none">
+    <aside className="flex h-full min-h-0 w-72 shrink-0 flex-col border-l border-edge bg-panel">
+      <header className="flex h-11 shrink-0 select-none items-center gap-2 border-b border-edge px-3">
         <Bot size={14} className="text-subagent" />
         <span className="text-sm font-semibold">{t('subagent.title')}</span>
+        {hasRunning && (
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
+        )}
         <span className="rounded bg-subagent/10 border border-subagent/30 px-1.5 text-xs text-subagent">
           {cards.length}
         </span>
         <span className="flex-1" />
+        <button
+          onClick={() => setCollapseKey((n) => n + 1)}
+          className="text-dim hover:text-fg"
+          title={t('subagent.collapseAll')}
+          aria-label={t('subagent.collapseAll')}
+        >
+          <Minimize2 size={14} />
+        </button>
         <button
           onClick={togglePanel}
           className="text-dim hover:text-fg"
@@ -406,13 +393,14 @@ export function SubagentSidebar() {
           <X size={16} />
         </button>
       </header>
-      <div className="flex-1 overflow-y-auto p-2.5 space-y-2">
+      <div className="flex-1 space-y-2 overflow-y-auto p-2.5">
         {forest.map((node) => (
           <SubagentNode
             key={node.card.id}
             node={node}
             streams={streams}
             depth={0}
+            collapseKey={collapseKey}
           />
         ))}
       </div>
