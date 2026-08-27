@@ -71,6 +71,10 @@ function summaryOf(tool: ToolView): Summary | null {
       return { verb: 'installedSkill', rest: str(args.name) || str(args.repo) };
     case 'web_fetch':
       return { verb: 'fetched', rest: str(args.url) };
+    case 'generate_image':
+      return { verb: 'generatedImage', rest: str(args.prompt) };
+    case 'generate_video':
+      return { verb: 'generatedVideo', rest: str(args.prompt) };
     case 'ask_user':
       return { verb: 'askUser', rest: str(args.question) };
     case 'skill_search':

@@ -26,9 +26,11 @@ import (
 	"github.com/GizClaw/opencraft/internal/tools/compact"
 	"github.com/GizClaw/opencraft/internal/tools/exec"
 	"github.com/GizClaw/opencraft/internal/tools/files"
+	"github.com/GizClaw/opencraft/internal/tools/imagegen"
 	"github.com/GizClaw/opencraft/internal/tools/permissions"
 	"github.com/GizClaw/opencraft/internal/tools/plan"
 	skillstools "github.com/GizClaw/opencraft/internal/tools/skills"
+	"github.com/GizClaw/opencraft/internal/tools/videogen"
 	"github.com/GizClaw/opencraft/internal/tools/webfetch"
 	"github.com/GizClaw/opencraft/internal/utils/resourcedep"
 )
@@ -41,6 +43,8 @@ func Register(r *resource.Registry) error {
 		r.Register(webfetchSourceFactory{}),
 		r.Register(askuserSourceFactory{}),
 		r.Register(filesSourceFactory{}),
+		r.Register(imagegenSourceFactory{}),
+		r.Register(videogenSourceFactory{}),
 		r.Register(permissionsSourceFactory{}),
 		r.Register(planSourceFactory{}),
 		r.Register(skillsSourceFactory{}),
@@ -220,6 +224,76 @@ func (filesSourceFactory) New(_ context.Context, in resource.Input) (any, error)
 		return nil, err
 	}
 	return toolList(files.MustNew(ws).Tools()), nil
+}
+
+// imagegenSourceFactory contributes the generate_image tool. It needs
+// the router (image-capable model selection/fallback) and the host
+// workspace (generated files land under generated/).
+type imagegenSourceFactory struct{}
+
+var _ resource.Factory = imagegenSourceFactory{}
+
+func (imagegenSourceFactory) Spec() resource.Spec {
+	return resource.Spec{
+		Kind: "tool.Source",
+		Impl: "opencraft/imagegen",
+		Deps: []resource.DepSpec{
+			{Name: "router", Type: "inference.Router", Required: true},
+			{Name: "hostworkspace", Type: "opencraft.hostworkspace", Required: true},
+		},
+	}
+}
+
+func (imagegenSourceFactory) New(_ context.Context, in resource.Input) (any, error) {
+	if !sourceEnabled(in) {
+		return toolList{}, nil
+	}
+	router, err := resourcedep.Required[*route.Router](
+		in, "imagegen tool", "router")
+	if err != nil {
+		return nil, err
+	}
+	ws, err := resourcedep.Required[workspace.Workspace](
+		in, "imagegen tool", "hostworkspace")
+	if err != nil {
+		return nil, err
+	}
+	return toolList{imagegen.MustNew(router, ws)}, nil
+}
+
+// videogenSourceFactory contributes the generate_video tool. It needs
+// the router (video-capable model selection/fallback) and the host
+// workspace (generated files land under generated/).
+type videogenSourceFactory struct{}
+
+var _ resource.Factory = videogenSourceFactory{}
+
+func (videogenSourceFactory) Spec() resource.Spec {
+	return resource.Spec{
+		Kind: "tool.Source",
+		Impl: "opencraft/videogen",
+		Deps: []resource.DepSpec{
+			{Name: "router", Type: "inference.Router", Required: true},
+			{Name: "hostworkspace", Type: "opencraft.hostworkspace", Required: true},
+		},
+	}
+}
+
+func (videogenSourceFactory) New(_ context.Context, in resource.Input) (any, error) {
+	if !sourceEnabled(in) {
+		return toolList{}, nil
+	}
+	router, err := resourcedep.Required[*route.Router](
+		in, "videogen tool", "router")
+	if err != nil {
+		return nil, err
+	}
+	ws, err := resourcedep.Required[workspace.Workspace](
+		in, "videogen tool", "hostworkspace")
+	if err != nil {
+		return nil, err
+	}
+	return toolList{videogen.MustNew(router, ws)}, nil
 }
 
 // permissionsSourceFactory contributes the request_permissions tool

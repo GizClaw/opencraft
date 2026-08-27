@@ -288,6 +288,8 @@
     "modifiedSkill": "修改技能",
     "installedSkill": "安装技能",
     "fetched": "抓取",
+    "generatedImage": "生成图片",
+    "generatedVideo": "生成视频",
     "askUser": "询问用户",
     "searchedSkill": "搜索技能",
     "readSkill": "读取技能",
