@@ -7,6 +7,8 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/GizClaw/opencraft/internal/config"
+
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/inference/route"
 	"github.com/GizClaw/flowcraft/core/message"
@@ -90,7 +92,16 @@ func (a *App) autoTitle(ctx context.Context, contextID string) {
 		return
 	}
 	maxTokens := 64
-	reasoning := false
+	textIntent := &inference.TextIntent{MaxOutputTokens: &maxTokens}
+	if cfg, err := config.LoadInference(a.userDir); err == nil &&
+		cfg.ModelReasoning("") {
+		// Title generation must not spend its budget on reasoning: a
+		// thinking model would burn all tokens on the trace and return
+		// empty text. Only sent when the model supports thinking
+		// control (drivers reject the knob otherwise).
+		reasoning := false
+		textIntent.ReasoningEnabled = &reasoning
+	}
 	response, _, err := router.Generate(ctx, inference.GenerateRequest{
 		// Instruct the model to act as a title generator: without this
 		// it answers the user's first message instead of naming the
@@ -105,13 +116,7 @@ func (a *App) autoTitle(ctx context.Context, contextID string) {
 				Content: message.Content{Parts: []message.Part{
 					message.TextPart{Text: first},
 				}},
-				Intent: inference.Intent{Text: &inference.TextIntent{
-					MaxOutputTokens: &maxTokens,
-					// Title generation must not spend its budget on
-					// reasoning: a thinking model would burn all tokens
-					// on the trace and return empty text.
-					ReasoningEnabled: &reasoning,
-				}},
+				Intent: inference.Intent{Text: textIntent},
 			},
 		},
 	})
