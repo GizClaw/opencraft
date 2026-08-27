@@ -105,23 +105,29 @@ jobs:
         env:
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
         run: |
+          set -o pipefail
           dmg="opencraft-${TAG#v}-macos-universal.dmg"
+          xcrun notarytool --version
           if [ -n "$APPLE_API_PRIVATE_KEY" ] && [ -n "$APPLE_API_KEY" ] && [ -n "$APPLE_API_ISSUER" ]; then
             printf '%s\n' "$APPLE_API_PRIVATE_KEY" > /tmp/AuthKey.p8
-            out="$(xcrun notarytool submit "$dmg" --key /tmp/AuthKey.p8 \
-              --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --wait 2>&1)"
+            chmod 600 /tmp/AuthKey.p8
+            echo "AuthKey.p8: $(wc -c < /tmp/AuthKey.p8) bytes, first line: $(head -1 /tmp/AuthKey.p8)"
+            xcrun notarytool submit "$dmg" --key /tmp/AuthKey.p8 \
+              --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --wait \
+              2>&1 | tee /tmp/notary.log
+            status=${PIPESTATUS[0]}
           else
-            out="$(xcrun notarytool submit "$dmg" --apple-id "$APPLE_ID" \
+            xcrun notarytool submit "$dmg" --apple-id "$APPLE_ID" \
               --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-              --team-id "$APPLE_TEAM_ID" --wait 2>&1)"
+              --team-id "$APPLE_TEAM_ID" --wait \
+              2>&1 | tee /tmp/notary.log
+            status=${PIPESTATUS[0]}
           fi
-          status=$?
-          printf '%s\n' "$out"
           if [ $status -ne 0 ]; then
-            echo "::error::notarization failed"
+            echo "::error::notarization failed (exit ${status})"
             exit 1
           fi
-          sub_id="$(printf '%s\n' "$out" | sed -n 's/.*id: \([0-9a-fA-F-]\{36\}\).*/\1/p' | head -1)"
+          sub_id="$(sed -n 's/.*id: \([0-9a-fA-F-]\{36\}\).*/\1/p' /tmp/notary.log | head -1)"
           xcrun stapler staple "$dmg"
           {
             echo "## macOS verification (${TAG#v})"
