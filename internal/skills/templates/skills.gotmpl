@@ -1,0 +1,4 @@
+## Skills
+Skills relevant to this turn. To use one, search with skill_search and load its full instructions with skill_read. The user can also activate a skill by mentioning $name.
+{{ range . }}- {{ .Name }}: {{ .Description }} (file: {{ .Path }})
+{{ end }}

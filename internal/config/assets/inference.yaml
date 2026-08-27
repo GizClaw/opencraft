@@ -1,0 +1,75 @@
+# Fixed inference wiring (embedded, not user-editable): provider
+# resources and the infer assembly are registered here so every
+# provider is always available. The settings page writes the variable
+# parts into ~/.opencraft/config/opencraft.yaml: credential
+# profiles for the providers the user has keys for, an optional Azure
+# provider (endpoint + deployment are per-user), and the router's
+# generate targets (only keyed providers, in priority order). Resource
+# settings merge deeply across layers, so the user layer only touches
+# the fields it declares.
+version: v1
+resources:
+  provider.deepseek:
+    kind: inference.Provider
+    impl: deepseek
+    settings:
+      id: deepseek
+      spec:
+        api: responses
+  provider.openai:
+    kind: inference.Provider
+    impl: openai
+    settings:
+      id: openai
+      spec:
+        api: responses
+  provider.anthropic:
+    kind: inference.Provider
+    impl: anthropic
+    settings:
+      id: anthropic
+  provider.bytedance:
+    kind: inference.Provider
+    impl: bytedance
+    settings:
+      id: bytedance
+  provider.kimi:
+    kind: inference.Provider
+    impl: kimi
+    settings:
+      id: kimi
+  provider.minimax:
+    kind: inference.Provider
+    impl: minimax
+    settings:
+      id: minimax
+  provider.qwen:
+    kind: inference.Provider
+    impl: qwen
+    settings:
+      id: qwen
+  infer:
+    kind: inference.Assembly
+    impl: unified
+    deps:
+      provider.deepseek: provider.deepseek
+      provider.openai: provider.openai
+      provider.anthropic: provider.anthropic
+      provider.bytedance: provider.bytedance
+      provider.kimi: provider.kimi
+      provider.minimax: provider.minimax
+      provider.qwen: provider.qwen
+  # Router shell: the retry/fallback policy is fixed; the generate
+  # targets come from the setup-written user layer (keyed providers in
+  # priority order). Without targets the router validates no pools, so
+  # startup is guided by the settings page.
+  router:
+    kind: inference.Router
+    impl: unified
+    deps:
+      target: infer
+    settings:
+      retry:
+        generate:
+          max_attempts: 2
+          fallback_on_retry_exhausted: true

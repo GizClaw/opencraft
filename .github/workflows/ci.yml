@@ -1,0 +1,140 @@
+name: ci
+
+on:
+  push:
+    branches: [dev, main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: fmt · lint · build · test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # The desktop binary embeds frontend/dist, so the frontend must be
+      # built before any Go compile step on a fresh checkout.
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      - name: Build frontend assets
+        run: npm run build --prefix frontend
+
+      - name: Format (gofmt)
+        run: |
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            echo "gofmt required on:"
+            echo "$files"
+            exit 1
+          fi
+
+      - name: Vet (go vet)
+        run: go vet ./...
+
+      - name: Lint (golangci-lint)
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+
+      # Sandbox tests (app/sandbox/execd) build a bwrap-backed runtime.
+      - name: Install sandbox dependency (bubblewrap)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test (race)
+        # bwrap needs a user namespace, but the Ubuntu 24.04 runner
+        # blocks unprivileged userns (apparmor_restrict_unprivileged_userns).
+        # Running as root keeps the real bwrap sandbox path exercised.
+        # The two rollback tests below rely on permission-denied writes,
+        # which root bypasses, so they run as the regular user instead.
+        run: |
+          sudo -E env "PATH=$PATH" "HOME=$HOME" \
+            "GOPATH=$(go env GOPATH)" \
+            "GOMODCACHE=$(go env GOMODCACHE)" "GOCACHE=$(go env GOCACHE)" \
+            go test -race -skip 'Test(Create|Update)RollsBackOnPersistFailure$' ./...
+          go test -race -run 'Test(Create|Update)RollsBackOnPersistFailure$' ./internal/agents
+
+      - name: Modules tidy
+        run: go mod tidy -diff
+
+  desktop-linux:
+    name: desktop build (linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Wails Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev
+
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+
+      - name: Build desktop binary
+        run: |
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          # Ubuntu 24.04 ships webkit2gtk-4.1; the webkit2_41 tag switches
+          # wails to the 4.1 pkg-config/API (4.0 is the default).
+          wails build -platform linux/amd64 -tags webkit2_41
+
+  desktop-macos:
+    name: desktop build (macos)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+
+      - name: Build desktop binary
+        run: |
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          wails build -platform darwin/arm64

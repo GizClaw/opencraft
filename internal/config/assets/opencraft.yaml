@@ -1,0 +1,418 @@
+version: v1
+
+# opencraft internal deploy document (not user-editable). Inference
+# wiring (provider / infer assembly / router) is intentionally NOT
+# here: the settings page writes it to ~/.opencraft/config/opencraft.yaml
+# and the optional project layer can override it per repo.
+
+resources:
+  # ------------------------------------------------------------------
+  # Runtime foundations: event bus, memory, session store
+  # ------------------------------------------------------------------
+  events:
+    kind: event.Bus
+    impl: memory
+  mem:
+    kind: memory
+    impl: summary
+    deps:
+      sessions: sessions
+      # LLM condensation routes through the inference router so it uses
+      # the same user-editable routing policy as agent turns.
+      router: router
+    settings:
+      # Raw window (max_raw_messages + preserve_recent) is the single
+      # source of recent conversation context: the worldstate hook
+      # injects the folded summary plus this raw window, and the session
+      # archive is no longer injected into the model (it is a durability
+      # store for resume/usage). 40 keeps recency parity with the older
+      # session history window.
+      max_raw_messages: 36
+      preserve_recent: 4
+      max_summary_bytes: 4096
+      # Experimental: replay the full conversation history instead of
+      # injecting the folded summary + raw window. Folding is then owned
+      # by the graph compact node, which folds only when estimated usage
+      # exceeds the model's input window. Requires reliable model window
+      # metadata from the router (azure 未声明窗口元数据，开启前请确认);
+      # keep false for bounded per-turn cost.
+      replay_full_history: false
+  # Sandbox exec policy: static allowed_commands plus the project
+  # approvals file merge into one allowlist. The sandbox runner, the
+  # worldstate permissions section, and request_permissions all depend
+  # on this resource.
+  execpolicy:
+    kind: opencraft.execpolicy
+    impl: manager
+    deps:
+      hooks: hooks
+    settings:
+      # Commands not in this list (or in approvals_path) ask the user
+      # before running. Rules are token prefixes; "*" matches any
+      # remaining arguments.
+      allowed_commands: []
+      # Path of the project approvals file (env-expanded); commands
+      # approved via "Always allow" / request_permissions land here.
+      approvals_path: ${env:OPEN_CRAFT_WORKDIR}/.opencraft/config/approvals.yaml
+  # Project-scoped session store: per-session JSON (history, usage,
+  # permissions, plans) under .opencraft/sessions/<id>/, plus the
+  # SQLite session.db it opens at <root>/session.db (conversation
+  # state tables + agent checkpoints).
+  sessions:
+    kind: session.Store
+    impl: opencraft
+    settings:
+      root: ${env:OPEN_CRAFT_WORKDIR}/.opencraft/sessions
+      window: 40
+
+  # ------------------------------------------------------------------
+  # Delegation: deployed agents are delegate targets; the model may
+  # assign work to them via the delegate / delegation_status tools.
+  # ------------------------------------------------------------------
+  delegate.backend:
+    kind: delegation.AsyncBackend
+    impl: kanban-memory
+    deps:
+      event_bus: events
+  delegate.directory:
+    kind: delegation.Directory
+    impl: local
+  delegate:
+    kind: delegation.Service
+    impl: local
+    deps:
+      backend: delegate.backend
+      directory: delegate.directory
+    settings:
+      max_concurrency: 4
+      max_depth: 8
+
+  # ------------------------------------------------------------------
+  # Workspace and sandbox (box.settings.remote selects local/remote exec)
+  # ------------------------------------------------------------------
+  ws:
+    kind: workspace.Workspace
+    impl: local
+    settings:
+      root: ${env:OPEN_CRAFT_WORKDIR}
+  # Shared skills registry: one discovery pass per process lifetime.
+  # The worldstate prepare hook (per-turn top-5 injection + $mention
+  # full-text activation) and tool.skills both consume it.
+  skills:
+    kind: opencraft.skills
+    impl: local
+    deps:
+      workspace: ws
+    settings:
+      enabled: true
+      work_dir: ${env:OPEN_CRAFT_WORKDIR}
+      user_dir: ${env:OPEN_CRAFT_DATA_DIR}
+      top_n: 5
+      min_score: 0
+  # Mode-aware workspace for the file tools: in workspace mode it
+  # delegates to a LocalWorkspace rooted at settings.root; in yolo mode
+  # it allows any host path. The mode is the session's persisted
+  # permission state (switched with /permissions).
+  hostws:
+    kind: opencraft.hostworkspace
+    impl: local
+    deps:
+      sessions: sessions
+      # Contributes discovered skill roots to the workspace-mode
+      # read-only allowlist (read_file on references/assets).
+      skills: skills
+    settings:
+      root: ${env:OPEN_CRAFT_WORKDIR}
+      # Staged skill copies live under the cache dir, which the exec
+      # sandbox may write; file tools only need read access to it.
+      readonly_roots: ["${env:OPEN_CRAFT_DATA_DIR}/cache"]
+  # Network posture: exec sandbox mode (default = host networking) and
+  # the web_fetch domain gate. exec.mode accepts default | deny-all |
+  # allow-list | proxy; web_fetch.allow_private=false keeps the SSRF
+  # guard on (private/loopback/link-local destinations are blocked).
+  netpolicy:
+    kind: opencraft.netpolicy
+    impl: local
+    settings:
+      exec:
+        mode: default
+        allow_hosts: []
+      web_fetch:
+        allow_hosts: []
+        deny_hosts: []
+        allow_private: false
+  # External lifecycle hooks: command hooks from
+  # ~/.opencraft/config/hooks.json fire on PreToolUse / PostToolUse /
+  # UserPromptSubmit / PermissionRequest / TurnEnd. Each command
+  # receives one JSON event object on stdin; failures are logged and
+  # never block the agent loop.
+  hooks:
+    kind: opencraft.hooks
+    impl: local
+    settings:
+      path: ${env:OPEN_CRAFT_DATA_DIR}/config/hooks.json
+  # Subagent hook observer: subscribes to delegation kanban events and
+  # fires SubagentStart / SubagentStop hooks.
+  hooks.observer:
+    kind: opencraft.hooks.observer
+    impl: local
+    deps:
+      events: events
+      hooks: hooks
+  box:
+    kind: sandbox.Runner
+    impl: opencraft
+    deps:
+      execpolicy: execpolicy
+      sessions: sessions
+      netpolicy: netpolicy
+    settings:
+      root: ${env:OPEN_CRAFT_WORKDIR}
+      writable_paths: ["${env:OPEN_CRAFT_CACHE}"]
+      remote: true
+      # Sandbox environment defaults to inheriting the external
+      # environment wholesale. Projects that need to restrict
+      # visibility or redirect caches declare env_policy in their
+      # config layer (see ~/.opencraft/config/opencraft.yaml examples).
+
+  # ------------------------------------------------------------------
+  # Tool containers: each tool.Source is one tool group; tools
+  # aggregates them through many deps
+  # ------------------------------------------------------------------
+  tool.exec:
+    kind: tool.Source
+    impl: opencraft/exec
+    deps:
+      sandbox: box
+  tool.applypatch:
+    kind: tool.Source
+    impl: opencraft/applypatch
+    deps:
+      hostworkspace: hostws
+  tool.webfetch:
+    kind: tool.Source
+    impl: opencraft/webfetch
+  tool.askuser:
+    kind: tool.Source
+    impl: opencraft/askuser
+  tool.files:
+    kind: tool.Source
+    impl: opencraft/files
+    deps:
+      hostworkspace: hostws
+  tool.plan:
+    kind: tool.Source
+    impl: opencraft/plan
+    deps:
+      sessions: sessions
+  tool.skills:
+    kind: tool.Source
+    impl: opencraft/skills
+    deps:
+      skills: skills
+  # Internal conversation compaction: folds the loop's older rounds into
+  # a summary (router condensation) and persists the artifact per
+  # conversation via the session store.
+  tool.compact:
+    kind: tool.Source
+    impl: opencraft/compact
+    deps:
+      router: router
+      sessions: sessions
+  tool.permissions:
+    kind: tool.Source
+    impl: opencraft/permissions
+    deps:
+      execpolicy: execpolicy
+  # Subagent delegation tools (delegate / delegation_status /
+  # delegation_targets): target discovery resolves the per-generation
+  # delegation directory at call time.
+  tool.delegate:
+    kind: tool.Source
+    impl: delegation
+    deps:
+      directory: delegate.directory
+  # Persistent subagent tools (create_agent / unregister_agent): the
+  # registry lives under the user data dir, so subagents survive
+  # restarts and are re-registered on startup.
+  agentlifecycle:
+    kind: opencraft.agentlifecycle
+    impl: local
+    settings:
+      dir: ${env:OPEN_CRAFT_DATA_DIR}/agents
+  tool.agentlifecycle:
+    kind: tool.Source
+    impl: opencraft/agentlifecycle
+    deps:
+      agentlifecycle: agentlifecycle
+  tools:
+    kind: tool.Assembly
+    impl: opencraft
+    deps:
+      hooks: hooks
+      tool: tool.exec
+      tool.applypatch: tool.applypatch
+      tool.webfetch: tool.webfetch
+      tool.askuser: tool.askuser
+      tool.files: tool.files
+      tool.plan: tool.plan
+      tool.skills: tool.skills
+      tool.compact: tool.compact
+      tool.permissions: tool.permissions
+      tool.delegate: tool.delegate
+      tool.agentlifecycle: tool.agentlifecycle
+    settings:
+      middlewares:
+        recover:
+          enabled: true
+        timeout:
+          default: 5m
+        # Oversized tool outputs are persisted in full under
+        # .opencraft/cache/tools/<call_id>.output and truncated in
+        # context, keeping the loop's MainChannel from growing unbounded
+        # on a single tool result.
+        truncate:
+          enabled: true
+          max_chars: 8000
+          dir: ${env:OPEN_CRAFT_WORKDIR}/.opencraft/cache/tools
+          work_dir: ${env:OPEN_CRAFT_WORKDIR}
+        # Hard ceiling on any single tool result that may reach the
+        # model context. Truncate then turns oversized-but-bounded
+        # outputs into a persisted head+tail excerpt; together they keep
+        # the loop's MainChannel bounded even for pathological outputs.
+        result_limit:
+          max_chars: 32768
+        # Best-effort secret stripping from tool results before the
+        # model sees them. The same rules always apply to the audit
+        # trail below, even when this middleware is disabled.
+        redact:
+          enabled: true
+          rules:
+            - pattern: 'sk-(?:[A-Za-z0-9]{16,})'
+            - pattern: 'AKIA[0-9A-Z]{16}'
+            - pattern: 'gh[pousr]_[A-Za-z0-9]{20,}'
+            - pattern: 'xox[baprs]-[A-Za-z0-9-]{10,}'
+            - pattern: '(?i)bearer\s+[A-Za-z0-9._~+/=-]{16,}'
+            - pattern: '(?i)api[_-]?key\s*[:=]\s*[A-Za-z0-9_-]{8,}'
+            - pattern: '-----BEGIN [A-Z0-9 ]+-----[\s\S]*?-----END [A-Z0-9 ]+-----'
+        # Append-only tool-call audit trail: one JSONL record per call
+        # with redacted copies of arguments and results.
+        audit:
+          enabled: true
+          dir: ${env:OPEN_CRAFT_WORKDIR}/.opencraft/audit
+      dynamic:
+        default: deferred
+        exposures:
+          tool_search: always
+          exec_command: always
+          exec_session: always
+          apply_patch: always
+          ask_user: always
+          read_file: always
+          write_file: always
+          list_dir: always
+          grep: always
+          glob: always
+          update_plan: always
+          request_permissions: always
+          # Skill tools are advertised in the per-turn skills section,
+          # so the model must be able to call them immediately; the
+          # tool_search select/next-round dance is too fragile for
+          # them. skill_install stays deferred (mutating, heavier).
+          skill_search: always
+          skill_read: always
+          # Search-discoverable layers (everything not listed falls to
+          # the default: deferred, which covers the delegate family,
+          # agent lifecycle, and skill authoring tools):
+          # - direct: hidden until recently used or selected via
+          #   tool_search, then visible for recent_window rounds.
+          # - deferred: hidden until tool_search selects it, then
+          #   visible for selected_retention rounds.
+          web_fetch: direct
+          # Internal machinery: callable by exact name (the compact
+          # graph node), never offered to the model.
+          compact: hidden
+
+  # ------------------------------------------------------------------
+  # Script runtime
+  # ------------------------------------------------------------------
+  js:
+    kind: agent.ScriptRuntime
+    impl: js
+    settings:
+      pool_size: 2
+
+agents:
+  assistant:
+    card:
+      name: opencraft
+      description: opencraft coding agent
+    engine:
+      kind: agent.Engine
+      impl: graph
+      deps:
+        inference: infer
+        router: router
+        tools: tools
+        workspace: ws
+        sandbox: box
+        script_runtime: js
+      settings:
+        # The default graph ships embedded (graph + node scripts +
+        # system prompt all resolve from the binary). To use your own,
+        # override this reference in the user or project layer, e.g.
+        # graph: { file: graphs/my-assistant.yaml }.
+        graph: { embed: assets/graphs/assistant.yaml }
+        build:
+          timeout: 1h
+          # flowcraft's loop guard counts node invocations, and each
+          # tool round in this graph runs compact + llm + tools (3
+          # nodes), so the default 100 ≈ 33 tool rounds — too tight
+          # for real implementation work. 400 ≈ 133 tool rounds; a
+          # genuinely stuck loop still trips the guard well before
+          # the 1h build timeout.
+          max_iterations: 400
+    prepare:
+      - type: opencraft.prepare
+        deps:
+          memory: mem
+          workspace: ws
+          execpolicy: execpolicy
+          sessions: sessions
+          skills: skills
+        settings:
+          work_dir: ${env:OPEN_CRAFT_WORKDIR}
+          user_dir: ${env:OPEN_CRAFT_DATA_DIR}
+          collaboration_mode: default
+          permission_profile: workspace
+    commit:
+      - type: opencraft.commit
+        deps:
+          memory: mem
+          sessions: sessions
+    observe:
+      # Archives turns that did not complete (Ctrl+C / Esc / engine
+      # errors) so /resume keeps the interrupted conversation context.
+      - type: opencraft.archive
+        deps:
+          memory: mem
+          sessions: sessions
+      # Detects $name mentions in the model's replies and injects the
+      # full SKILL.md on the next turn (codex-style implicit
+      # invocation).
+      - type: opencraft.skillactivate
+        deps:
+          skills: skills
+          sessions: sessions
+
+runtime:
+  event_bus: events
+  # The session store owns the project's session.db and serves as the
+  # agent checkpoint store (one SQLite connection, one schema owner).
+  checkpoint_store: sessions
+  sessions:
+    idle_timeout: 10m
+    resume: false
+  dynamic_catalog:
+    tools:
+      assistant: tools

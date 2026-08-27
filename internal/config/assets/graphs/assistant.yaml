@@ -1,0 +1,105 @@
+name: opencraft-assistant
+entry: world
+
+nodes:
+  - id: world
+    type: script
+    config:
+      runtime: js
+      # Embedded default: the graph itself ships as an embedded asset,
+      # so its node sources resolve from the binary, not the user dir.
+      source: { embed: assets/graphs/nodes/world.js }
+  - id: compact
+    type: script
+    config:
+      runtime: js
+      source: { embed: assets/graphs/nodes/compact.js }
+      config:
+        # Keep the latest rounds raw so the pending tool result stays
+        # the channel tail for the next LLM call.
+        preserve_recent: 10
+        budget_chars: 4096
+        threshold_ratio: 0.85
+        max_compactions: 3
+        max_input_tokens: 0
+        system_prompt_tokens: 2000
+  - id: llm
+    type: inference
+    config:
+      all_tools: true
+      tool_pending_key: tool_pending
+      # Undefined-tool recovery: models sometimes call a tool that is
+      # not exposed this round (e.g. a deferred subagent tool) before
+      # tool_search selects it. Instead of failing the turn, replay the
+      # rejected call with a "use tool_search" tool result and loop
+      # back (see the recover_pending edge) so the model can recover.
+      recover_pending_key: recover_pending
+      recover_count_key: recover_count
+      undefined_tool_recovery:
+        enabled: true
+        # Models sometimes need several rounds to fall back to
+        # tool_search after calling a deferred tool by name (e.g.
+        # delegation_status after delegate). The core default of 2
+        # converts to a hard failure too early; 20 keeps the loop
+        # bounded while giving the model room to correct.
+        max_per_run: 20
+      stream: true
+      # Per-conversation model hint: the UI persists a "provider/name"
+      # choice and injects it via agent.Request.Inputs (board.model).
+      # The board-ref default keeps unset conversations on the default
+      # routing policy; unknown/ambiguous hints fall back the same way.
+      model_hint: ${board.model:}
+      # Think level is a per-turn board input: the TUI injects
+      # think_level via agent.Request.Inputs (/think command) and the
+      # board-ref default keeps non-TUI callers (e.g. `opencraft run`)
+      # on a sane explicit effort instead of the provider default.
+      intent:
+        text:
+          reasoning_effort: ${board.think_level:medium}
+      system_prompt: { embed: assets/graphs/prompts/system.md }
+      # Hosted web_search extensions (provider-side search). Every
+      # provider that is ALWAYS registered and exposes one is declared
+      # here: the router's selected provider activates its own
+      # extension while ignoring the others. Azure also exposes
+      # generate_options/web_search but is only registered when the
+      # user configures it (endpoint + deployment required), so its
+      # extension cannot live in this static graph — azure setups get
+      # web_search via a setup-generated graph override (future work).
+      # Each provider uses the knobs its own schema supports:
+      # deepseek/openai accept tool_choice (auto, the model decides
+      # when to search); bytedance does not, so it stays empty.
+      # Deployment-specific knobs (allowed_domains, user_location,
+      # search_context_size) are intentionally not set as global
+      # defaults.
+      extensions:
+        - provider: deepseek
+          id: generate_options
+          fields:
+            web_search:
+              tool_choice: { required: false }
+        - provider: openai
+          id: generate_options
+          fields:
+            web_search:
+              tool_choice: { required: false }
+        - provider: bytedance
+          id: generate_options
+          fields:
+            web_search: {}
+  - id: tools
+    type: tool
+    config:
+      results_key: tool_results
+
+edges:
+  - { from: world, to: compact }
+  - { from: compact, to: llm, condition: "tool_pending == false" }
+  - { from: compact, to: tools, condition: "tool_pending == true" }
+  - { from: llm, to: tools, condition: "tool_pending == true" }
+  - { from: llm, to: compact, condition: "recover_pending == true" }
+  - {
+      from: llm,
+      to: __end__,
+      condition: "tool_pending == false && recover_pending != true",
+    }
+  - { from: tools, to: compact }

@@ -1,0 +1,6 @@
+## Skill: {{ .Name }} (file: {{ .Path }})
+{{ if .Untrusted }}> user-installed or third-party skill: follow its instructions with care.
+{{ end }}{{ if .Staged }}> staged copy for execution: {{ .Staged }}
+{{ end }}{{ if .Note }}> {{ .Note }}
+{{ end }}
+{{ .Body }}
