@@ -95,6 +95,8 @@ export function MCPSection() {
   } | null>(null);
   const [discoverOpen, setDiscoverOpen] = useState(false);
   const [addingRepo, setAddingRepo] = useState(false);
+  const [mcpLoading, setMCPLoading] = useState(true);
+  const toast = useStore((s) => s.toast);
 
   useEffect(() => {
     void api
@@ -114,7 +116,8 @@ export function MCPSection() {
           })),
         ),
       )
-      .catch((err) => setMCPError(String(err)));
+      .catch((err) => setMCPError(String(err)))
+      .finally(() => setMCPLoading(false));
     let cancelled = false;
     const refreshStatus = () => {
       void api
@@ -176,6 +179,7 @@ export function MCPSection() {
     try {
       await api.saveMCP(servers);
       setMCPError('');
+      toast(t('config.mcpSaved'));
       void api
         .mcpStatus()
         .then((list) => {
@@ -285,6 +289,10 @@ export function MCPSection() {
   return (
     <div className="space-y-3">
       <p className="text-xs text-dim">{t('config.mcpHint')}</p>
+      <div className="flex items-center gap-2 text-xs text-dim">
+        <Plug size={13} className="text-accent" />
+        {t('config.mcpCount', { count: mcpRows.length })}
+      </div>
       <div className="rounded-xl border border-edge bg-panel2">
         <button
           onClick={() => setDiscoverOpen((v) => !v)}
@@ -338,9 +346,18 @@ export function MCPSection() {
           </div>
         )}
       </div>
-      {mcpRows.length === 0 && (
+      {mcpLoading && mcpRows.length === 0 ? (
+        <div className="space-y-3">
+          {[0, 1].map((i) => (
+            <div
+              key={i}
+              className="h-28 animate-pulse rounded-xl border border-edge bg-panel2"
+            />
+          ))}
+        </div>
+      ) : mcpRows.length === 0 ? (
         <p className="text-sm text-dim">{t('config.mcpEmpty')}</p>
-      )}
+      ) : null}
       <div className="space-y-3">
         {mcpRows.map((row) => (
           <div
@@ -348,6 +365,7 @@ export function MCPSection() {
             className="rounded-xl border border-edge bg-panel2 p-3 space-y-2"
           >
             <div className="flex items-center gap-2">
+              <Plug size={13} className="text-accent shrink-0" />
               <input
                 value={row.name}
                 onChange={(e) => updateMCP(row.id, { name: e.target.value })}
@@ -381,39 +399,63 @@ export function MCPSection() {
                 }
                 className="text-dim hover:text-err"
                 title={t('config.mcpRemove')}
+                aria-label={t('config.mcpRemove')}
               >
                 <Trash2 size={14} />
               </button>
             </div>
-            {row.transport === 'stdio' ? (
-              <input
-                value={row.command}
-                onChange={(e) => updateMCP(row.id, { command: e.target.value })}
-                placeholder={t('config.mcpCommand')}
-                className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
-              />
-            ) : (
-              <input
-                value={row.url}
-                onChange={(e) => updateMCP(row.id, { url: e.target.value })}
-                placeholder={t('config.mcpURL')}
-                className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
-              />
-            )}
-            <input
-              value={row.argsText}
-              onChange={(e) => updateMCP(row.id, { argsText: e.target.value })}
-              placeholder={t('config.mcpArgs')}
-              className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
-            />
-            <textarea
-              value={row.envText}
-              onChange={(e) => updateMCP(row.id, { envText: e.target.value })}
-              placeholder={t('config.mcpEnv')}
-              rows={2}
-              className="w-full resize-none rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
-            />
-            <div className="flex items-center gap-2">
+            <div className="space-y-2">
+              <div>
+                <div className="mb-1 text-[11px] text-dim">
+                  {t('config.mcpCommandLabel')}
+                </div>
+                {row.transport === 'stdio' ? (
+                  <input
+                    value={row.command}
+                    onChange={(e) =>
+                      updateMCP(row.id, { command: e.target.value })
+                    }
+                    placeholder={t('config.mcpCommand')}
+                    className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
+                  />
+                ) : (
+                  <input
+                    value={row.url}
+                    onChange={(e) => updateMCP(row.id, { url: e.target.value })}
+                    placeholder={t('config.mcpURL')}
+                    className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
+                  />
+                )}
+              </div>
+              <div>
+                <div className="mb-1 text-[11px] text-dim">
+                  {t('config.mcpArgsLabel')}
+                </div>
+                <input
+                  value={row.argsText}
+                  onChange={(e) =>
+                    updateMCP(row.id, { argsText: e.target.value })
+                  }
+                  placeholder={t('config.mcpArgs')}
+                  className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
+                />
+              </div>
+              <div>
+                <div className="mb-1 text-[11px] text-dim">
+                  {t('config.mcpEnvLabel')}
+                </div>
+                <textarea
+                  value={row.envText}
+                  onChange={(e) =>
+                    updateMCP(row.id, { envText: e.target.value })
+                  }
+                  placeholder={t('config.mcpEnv')}
+                  rows={2}
+                  className="w-full resize-none rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-2 border-t border-edge/60 pt-2">
               <button
                 onClick={() => void testRow(row)}
                 disabled={
@@ -436,9 +478,12 @@ export function MCPSection() {
               </button>
               {testResult?.id === row.id && (
                 <span
-                  className={`text-xs break-all ${
-                    testResult.ok ? 'text-ok' : 'text-err'
+                  className={`max-w-[60%] truncate rounded-lg border px-2 py-1 text-xs ${
+                    testResult.ok
+                      ? 'border-ok/30 bg-ok/10 text-ok'
+                      : 'border-err/30 bg-err/10 text-err'
                   }`}
+                  title={testResult.msg || undefined}
                 >
                   {testResult.ok
                     ? t('config.mcpTestSuccess')
