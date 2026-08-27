@@ -4,18 +4,24 @@ import {
   ArrowDownToLine,
   ArrowUp,
   ArrowUpFromLine,
+  BarChart3,
   Brain,
+  Cpu,
   Database,
   Loader2,
+  Palette,
   Plus,
   RefreshCw,
+  ScrollText,
   Settings,
   ShieldCheck,
   ShieldPlus,
+  Stethoscope,
   Terminal,
   Trash2,
   X,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import { LogViewer } from './LogViewer';
@@ -473,14 +479,14 @@ export function ConfigPage() {
     return d.toLocaleDateString();
   };
 
-  const tabs: { id: Tab; label: string }[] = [
-    { id: 'ui', label: t('config.tabUi') },
-    { id: 'inference', label: t('config.tabInference') },
-    { id: 'usage', label: t('config.tabUsage') },
-    { id: 'memory', label: t('config.tabMemory') },
-    { id: 'permissions', label: t('config.tabPermissions') },
-    { id: 'logs', label: t('config.tabLogs') },
-    { id: 'diagnostics', label: t('config.tabDiagnostics') },
+  const tabs: { id: Tab; label: string; icon: LucideIcon }[] = [
+    { id: 'ui', label: t('config.tabUi'), icon: Palette },
+    { id: 'inference', label: t('config.tabInference'), icon: Cpu },
+    { id: 'usage', label: t('config.tabUsage'), icon: BarChart3 },
+    { id: 'memory', label: t('config.tabMemory'), icon: Database },
+    { id: 'permissions', label: t('config.tabPermissions'), icon: ShieldCheck },
+    { id: 'logs', label: t('config.tabLogs'), icon: ScrollText },
+    { id: 'diagnostics', label: t('config.tabDiagnostics'), icon: Stethoscope },
   ];
 
   return (
@@ -489,24 +495,6 @@ export function ConfigPage() {
         <div className="flex items-center gap-4 px-5 py-4 border-b border-edge">
           <Settings size={18} className="text-accent" />
           <h2 className="text-base font-semibold">{t('config.title')}</h2>
-          <div className="flex rounded-lg border border-edge overflow-hidden text-sm ml-2">
-            {tabs.map((tb) => (
-              <button
-                key={tb.id}
-                onClick={() => {
-                  setTab(tb.id);
-                  setError('');
-                }}
-                className={`px-3 py-1 ${
-                  tab === tb.id
-                    ? 'bg-accent text-white'
-                    : 'text-dim hover:text-fg'
-                }`}
-              >
-                {tb.label}
-              </button>
-            ))}
-          </div>
           <span className="flex-1" />
           {configured && (
             <button
@@ -517,6 +505,29 @@ export function ConfigPage() {
               <X size={18} />
             </button>
           )}
+        </div>
+
+        <div className="flex items-center gap-1 overflow-x-auto border-b border-edge px-4">
+          {tabs.map((tb) => {
+            const Icon = tb.icon;
+            return (
+              <button
+                key={tb.id}
+                onClick={() => {
+                  setTab(tb.id);
+                  setError('');
+                }}
+                className={`flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition-colors ${
+                  tab === tb.id
+                    ? 'bg-accent/15 text-accent'
+                    : 'text-dim hover:bg-panel2 hover:text-fg'
+                }`}
+              >
+                <Icon size={14} />
+                {tb.label}
+              </button>
+            );
+          })}
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4">
