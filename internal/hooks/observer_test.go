@@ -18,12 +18,16 @@ func waitForFile(t *testing.T, path string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if _, err := os.Stat(path); err == nil {
+		// The hook writes with `cat > file`, so the file exists (created
+		// by shell redirection) before its content lands. Wait for
+		// actual content, not just existence, to avoid a read race.
+		if data, err := os.ReadFile(path); err == nil &&
+			len(strings.TrimSpace(string(data))) > 0 {
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("file %s was never written", path)
+	t.Fatalf("file %s never received content", path)
 }
 
 func TestObserverFiresSubagentHooks(t *testing.T) {
