@@ -535,7 +535,7 @@ export function ChatView() {
             </div>
           </div>
         ) : (
-          <div className="max-w-3xl mx-auto space-y-4">
+          <div className="max-w-4xl mx-auto space-y-4">
             {messages.map((msg, i) => (
               <MessageRow
                 key={msg.id}
@@ -573,7 +573,7 @@ export function ChatView() {
       </div>
 
       <div className="shrink-0 px-6 pb-4">
-        <div className="max-w-3xl mx-auto rounded-xl border border-edge bg-panel focus-within:border-accent/60 transition-colors">
+        <div className="max-w-4xl mx-auto rounded-xl border border-edge bg-panel focus-within:border-accent/60 transition-colors">
           <div
             className={`flex items-center gap-2 rounded-t-xl border-b px-3 py-1.5 text-xs transition-colors ${
               yolo ? 'border-yolo/40 bg-yolo/10' : 'border-transparent'
@@ -841,11 +841,9 @@ export function ChatView() {
                 <button
                   onClick={submit}
                   disabled={!input.trim()}
-                  title={t('chat.send')}
-                  aria-label={t('chat.send')}
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent text-white transition-opacity hover:opacity-90 disabled:opacity-40"
+                  className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
                 >
-                  <Send size={15} />
+                  <Send size={13} /> {t('chat.send')}
                 </button>
               )}
             </div>
