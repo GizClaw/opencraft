@@ -19,14 +19,13 @@
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey" alt="Platforms: macOS / Linux">
 </p>
 
-opencraft is a local-first workflow workbench: an LLM-driven agent runs your
-tasks on your machine — reading and editing files, executing shell commands
-with approval, coordinating subagents, and persisting and resuming sessions.
+opencraft is a coding agent that runs locally — and it doesn't stop there.
 Built on flowcraft's config-driven graph engine, it orchestrates any local
-workflow, with coding as one of the workflows it runs rather than its only
-purpose. A local execd sandbox, SQLite session store, and per-project approval
-policy keep everything running inside a macOS/Linux desktop app (Wails v2 +
-React).
+workflow: reading and editing files, executing shell commands with approval,
+coordinating subagents, and persisting and resuming sessions. Coding is one
+of the workflows it runs, not its only purpose. A local execd sandbox,
+SQLite session store, and per-project approval policy keep everything inside
+a macOS/Linux desktop app (Wails v2 + React).
 
 ## Features
 
