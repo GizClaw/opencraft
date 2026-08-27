@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -72,24 +73,58 @@ const (
 	KeyLiteral
 )
 
+// Model is one model served by an inference instance, with its own
+// capabilities. A single instance may expose several models (e.g. two
+// DeepSeek models sharing one endpoint/key); the capabilities are
+// per-model because vision/reasoning/web-search support differs
+// between models.
+type Model struct {
+	Name      string // model name / Azure deployment name
+	Vision    bool   // capabilities.inputs: [image]
+	Reasoning string // "" | "always" | "toggle" → capabilities.reasoning
+	WebSearch bool   // capabilities.hosted_web_search: true
+}
+
 // Instance is one configured inference endpoint: a provider type from
-// the catalog (with an optional base URL override, custom model, and
-// capabilities), its model, capabilities, and key. Several instances
-// may share the same provider type (e.g. two DeepSeek endpoints);
-// enabled instances form the router priority order.
+// the catalog (an optional base URL override), the models it serves,
+// and its key. Several instances may share the same provider type
+// (e.g. two DeepSeek endpoints); enabled instances form the router
+// priority order.
 type Instance struct {
 	StableID  string // stable identity across saves/reorders ("" on legacy configs)
 	Type      string // catalog ID: deepseek | openai | ...
 	Name      string // display label; empty derives "<type>-<n>"
 	API       string // responses | chat (openai / openai-like)
 	Endpoint  string // base URL override; empty uses the driver default
-	Model     string // model name / Azure deployment name
-	Vision    bool   // capabilities.inputs: [image]
-	Reasoning string // "" | "always" | "toggle" → capabilities.reasoning
-	WebSearch bool   // capabilities.hosted_web_search: true
+	Models    []Model
 	KeySource KeySource
 	KeyValue  string // literal key (KeyLiteral only)
 	Enabled   bool
+}
+
+// DeploymentID returns the provider resource id for this instance.
+// Rows saved through the settings page carry a stable identity, so the
+// id ("<type>-<stableID>", e.g. "deepseek-inst-0a1b2c3d") survives
+// reorders, edits, and deletions and the router's per-conversation
+// model hints stay valid across config changes. Legacy rows without a
+// stable identity fall back to the positional "<type>-<n>" form.
+// n is the 1-based position of the instance in the config.
+func (in Instance) DeploymentID(n int) string {
+	if in.StableID != "" {
+		return in.Type + "-" + in.StableID
+	}
+	return fmt.Sprintf("%s-%d", in.Type, n)
+}
+
+// ModelNames returns the non-empty model names in declaration order.
+func (in Instance) ModelNames() []string {
+	var names []string
+	for _, m := range in.Models {
+		if name := strings.TrimSpace(m.Name); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // NewStableID returns a fresh instance identity. It is generated once
@@ -122,12 +157,6 @@ func (c InferenceConfig) Enabled() []Instance {
 		}
 	}
 	return out
-}
-
-// instanceID derives the stable deployment resource id for instance n
-// (1-based): "<type>-<n>", e.g. deepseek-1, openai-like-2.
-func instanceID(instanceType string, n int) string {
-	return fmt.Sprintf("%s-%d", instanceType, n)
 }
 
 // InferenceNeeded reports whether the user configuration directory
@@ -180,12 +209,8 @@ func (c InferenceConfig) InferenceYAML() ([]byte, error) {
 		if !ok {
 			return nil, fmt.Errorf("config: unknown provider type %q", in.Type)
 		}
-		if strings.TrimSpace(in.Model) == "" {
-			in.Model = prov.DefaultModel
-		}
-		if strings.TrimSpace(in.Model) == "" {
-			return nil, fmt.Errorf(
-				"config: instance %d (%s): model is required", i+1, in.Type)
+		if err := normalizeModels(in, prov, i+1); err != nil {
+			return nil, err
 		}
 		if prov.Azure && strings.TrimSpace(in.Endpoint) == "" {
 			return nil, fmt.Errorf(
@@ -200,7 +225,7 @@ func (c InferenceConfig) InferenceYAML() ([]byte, error) {
 	fmt.Fprintf(&b, "# The FIXED inference wiring lives in the binary (embedded\n")
 	fmt.Fprintf(&b, "# inference.yaml): the infer assembly and the router retry\n")
 	fmt.Fprintf(&b, "# policy. This file carries the VARIABLE parts: one provider\n")
-	fmt.Fprintf(&b, "# deployment per enabled instance (type + model + endpoint +\n")
+	fmt.Fprintf(&b, "# deployment per enabled instance (type + models + endpoint +\n")
 	fmt.Fprintf(&b, "# capabilities + key), the infer dep wiring for those\n")
 	fmt.Fprintf(&b, "# instances, and the router's generate targets in the\n")
 	fmt.Fprintf(&b, "# enabled order (failures fall back to the next target).\n")
@@ -215,7 +240,7 @@ func (c InferenceConfig) InferenceYAML() ([]byte, error) {
 	var deps []string
 	for i, in := range instances {
 		prov, _ := ProviderByID(in.Type)
-		id := instanceID(in.Type, i+1)
+		id := in.DeploymentID(i + 1)
 		fmt.Fprintf(&b, "  provider.%s:\n", id)
 		fmt.Fprintf(&b, "    kind: inference.Provider\n")
 		fmt.Fprintf(&b, "    impl: %s\n", prov.Impl)
@@ -231,18 +256,20 @@ func (c InferenceConfig) InferenceYAML() ([]byte, error) {
 			fmt.Fprintf(&b, "        api: %s\n", yamlQuote(in.API))
 		}
 		fmt.Fprintf(&b, "        models:\n")
-		fmt.Fprintf(&b, "          - name: %s\n", yamlQuote(in.Model))
-		fmt.Fprintf(&b, "            kind: generate\n")
-		fmt.Fprintf(&b, "            capabilities:\n")
-		fmt.Fprintf(&b, "              outputs: [text]\n")
-		if in.Vision {
-			fmt.Fprintf(&b, "              inputs: [image]\n")
-		}
-		if in.Reasoning != "" {
-			fmt.Fprintf(&b, "              reasoning: %s\n", yamlQuote(in.Reasoning))
-		}
-		if in.WebSearch {
-			fmt.Fprintf(&b, "              hosted_web_search: true\n")
+		for _, m := range in.Models {
+			fmt.Fprintf(&b, "          - name: %s\n", yamlQuote(m.Name))
+			fmt.Fprintf(&b, "            kind: generate\n")
+			fmt.Fprintf(&b, "            capabilities:\n")
+			fmt.Fprintf(&b, "              outputs: [text]\n")
+			if m.Vision {
+				fmt.Fprintf(&b, "              inputs: [image]\n")
+			}
+			if m.Reasoning != "" {
+				fmt.Fprintf(&b, "              reasoning: %s\n", yamlQuote(m.Reasoning))
+			}
+			if m.WebSearch {
+				fmt.Fprintf(&b, "              hosted_web_search: true\n")
+			}
 		}
 		fmt.Fprintf(&b, "      profiles:\n")
 		fmt.Fprintf(&b, "        -")
@@ -278,13 +305,15 @@ func (c InferenceConfig) InferenceYAML() ([]byte, error) {
 		if !in.Enabled {
 			continue
 		}
-		hasEnabled = true
-		fmt.Fprintf(&b, "            - model:\n")
-		fmt.Fprintf(&b, "                id:\n")
-		fmt.Fprintf(&b, "                  provider: %s\n", instanceID(in.Type, i+1))
-		fmt.Fprintf(&b, "                  name: %s\n", yamlQuote(in.Model))
-		if in.StableID != "" {
-			fmt.Fprintf(&b, "                profile: %s\n", yamlQuote(in.StableID))
+		for _, m := range in.Models {
+			hasEnabled = true
+			fmt.Fprintf(&b, "            - model:\n")
+			fmt.Fprintf(&b, "                id:\n")
+			fmt.Fprintf(&b, "                  provider: %s\n", in.DeploymentID(i+1))
+			fmt.Fprintf(&b, "                  name: %s\n", yamlQuote(m.Name))
+			if in.StableID != "" {
+				fmt.Fprintf(&b, "                profile: %s\n", yamlQuote(in.StableID))
+			}
 		}
 	}
 	if !hasEnabled {
@@ -293,6 +322,38 @@ func (c InferenceConfig) InferenceYAML() ([]byte, error) {
 		fmt.Fprintf(&b, "          targets: []\n")
 	}
 	return []byte(b.String()), nil
+}
+
+// normalizeModels trims model names, fills empty ones with the
+// provider's default model, rejects duplicates, and guarantees every
+// instance declares at least one model. Empty names (the settings page
+// prefill) and a fully empty list fall back to the provider default so
+// the setup flow needs no explicit model entry; providers without a
+// default (Azure) require an explicit name.
+func normalizeModels(in *Instance, prov Provider, n int) error {
+	if len(in.Models) == 0 {
+		in.Models = []Model{{Name: prov.DefaultModel}}
+	}
+	models := make([]Model, 0, len(in.Models))
+	seen := make(map[string]bool, len(in.Models))
+	for _, m := range in.Models {
+		m.Name = strings.TrimSpace(m.Name)
+		if m.Name == "" {
+			m.Name = prov.DefaultModel
+		}
+		if m.Name == "" {
+			return fmt.Errorf(
+				"config: instance %d (%s): model name is required", n, in.Type)
+		}
+		if seen[m.Name] {
+			return fmt.Errorf(
+				"config: instance %d (%s): duplicate model %q", n, in.Type, m.Name)
+		}
+		seen[m.Name] = true
+		models = append(models, m)
+	}
+	in.Models = models
+	return nil
 }
 
 // instanceAPIKey renders the profile secret value for one instance.
@@ -335,7 +396,7 @@ type KeyRequest struct {
 	StableID string
 	Type     string
 	Name     string
-	Model    string
+	Models   []string
 	Endpoint string
 	API      string
 }
@@ -347,7 +408,8 @@ type KeyRequest struct {
 //  1. Exact stable-id matches claim their old instance first, so a row
 //     that was reordered or edited keeps its key no matter how its
 //     fields changed;
-//  2. Exact fingerprint matches (same type, name, model, endpoint, api)
+//  2. Exact fingerprint matches (same type, name, model set, endpoint,
+//     api)
 //     claim their old instance first, across every row, so reordering
 //     or deleting rows keeps each key on the right row (legacy configs
 //     without stable ids);
@@ -383,7 +445,7 @@ func MatchStoredKeys(
 	fingerprint := func(row KeyRequest, in Instance) bool {
 		return in.Type == row.Type &&
 			in.Name == row.Name &&
-			in.Model == row.Model &&
+			sameModelSet(row.Models, in.ModelNames()) &&
 			in.Endpoint == row.Endpoint &&
 			in.API == row.API &&
 			hasLiteralKey(in)
@@ -439,6 +501,25 @@ func MatchStoredKeys(
 		}
 	}
 	return matches, true
+}
+
+// sameModelSet reports whether two model-name sets are equal
+// (order-insensitive), used by the key fingerprint so editing the order
+// of an instance's models does not lose its stored key.
+func sameModelSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	aa := append([]string(nil), a...)
+	bb := append([]string(nil), b...)
+	sort.Strings(aa)
+	sort.Strings(bb)
+	for i := range aa {
+		if aa[i] != bb[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // managedResourceKeys returns the resources WriteInference owns: every
@@ -545,14 +626,20 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 	}
 
 	// Recover every declared instance (enabled and disabled) from the
-	// provider resources, then mark and order the enabled ones by the
-	// router targets.
+	// provider resources in deterministic order, then mark and order
+	// the enabled ones by the router targets.
 	type parsed struct {
 		id string
 		in Instance
 	}
+	providerKeys := make([]string, 0, len(providers))
+	for key := range providers {
+		providerKeys = append(providerKeys, key)
+	}
+	sort.Strings(providerKeys)
 	var all []parsed
-	for key, raw := range providers {
+	for _, key := range providerKeys {
+		raw := providers[key]
 		res := raw
 		instID := res.Settings.ID
 		if instID == "" {
@@ -584,16 +671,15 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 		if spec.Endpoint != "" {
 			in.Endpoint = spec.Endpoint
 		}
-		if len(spec.Models) > 0 {
-			model := spec.Models[0]
-			in.Model = model.Name
+		for _, model := range spec.Models {
+			m := Model{Name: model.Name, Reasoning: model.Capabilities.Reasoning}
 			for _, input := range model.Capabilities.Inputs {
 				if input == "image" {
-					in.Vision = true
+					m.Vision = true
 				}
 			}
-			in.Reasoning = model.Capabilities.Reasoning
-			in.WebSearch = model.Capabilities.HostedWebSearch
+			m.WebSearch = model.Capabilities.HostedWebSearch
+			in.Models = append(in.Models, m)
 		}
 		all = append(all, parsed{id: instID, in: in})
 	}
@@ -604,7 +690,11 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 			if all[i].id == t.provider && !consumed[t.provider] {
 				all[i].in.Enabled = true
 				if t.model != "" {
-					all[i].in.Model = t.model
+					// The router names the served models; spec models
+					// carry the capabilities. Merge so a hand-written
+					// target that is not declared in the spec is still
+					// round-tripped back to the settings page.
+					all[i].in.addModel(t.model)
 				}
 				consumed[t.provider] = true
 				cfg.Instances = append(cfg.Instances, all[i].in)
@@ -620,9 +710,24 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 	return cfg, nil
 }
 
+// addModel appends a model name to the instance unless it is already
+// declared, preserving the declared order.
+func (in *Instance) addModel(name string) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+	for _, m := range in.Models {
+		if strings.TrimSpace(m.Name) == name {
+			return
+		}
+	}
+	in.Models = append(in.Models, Model{Name: name})
+}
+
 // instanceTypeFromID maps a provider deployment id back to its catalog
-// type: a bare catalog id (legacy single-provider configs) or a
-// "<type>-<n>" instance id.
+// type: a bare catalog id (legacy single-provider configs), a
+// "<type>-<n>" instance id, or the stable "<type>-<stableID>" form.
 func instanceTypeFromID(id string) string {
 	if _, ok := ProviderByID(id); ok {
 		return id

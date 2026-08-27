@@ -162,6 +162,8 @@
     "agentsDeleted": "Deleted {{name}}",
     "inferenceCurrent": "Current default model: {{model}}",
     "addInstance": "Add instance",
+    "addModel": "Add model",
+    "removeModel": "Remove model",
     "instanceName": "Label (optional)",
     "instanceEnabled": "Enable for routing",
     "removeInstance": "Remove instance",
@@ -267,6 +269,7 @@
     "reasoningOff": "Off",
     "webSearch": "hosted web search",
     "model": "Model",
+    "models": "Models",
     "apiMode": "API mode",
     "routerPriority": "Routing priority (top first, automatic fallback on failure)",
     "saveApply": "Save & apply"

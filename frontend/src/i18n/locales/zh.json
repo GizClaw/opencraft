@@ -162,6 +162,8 @@
     "agentsDeleted": "已删除 {{name}}",
     "inferenceCurrent": "当前默认模型：{{model}}",
     "addInstance": "添加实例",
+    "addModel": "添加模型",
+    "removeModel": "删除模型",
     "instanceName": "名称（可选）",
     "instanceEnabled": "启用路由",
     "removeInstance": "移除实例",
@@ -267,6 +269,7 @@
     "reasoningOff": "关闭",
     "webSearch": "hosted web search",
     "model": "模型",
+    "models": "模型",
     "apiMode": "API 模式",
     "routerPriority": "路由优先级（上方优先，失败自动回退）",
     "saveApply": "保存并应用"

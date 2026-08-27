@@ -25,6 +25,13 @@ import type {
 import { UsageChart } from './UsageChart';
 
 // InstanceRow is one editable inference instance in the settings page.
+interface RowModel {
+  name: string;
+  vision: boolean;
+  reasoning: string;
+  webSearch: boolean;
+}
+
 interface InstanceRow {
   id: string; // frontend key
   stableId: string; // persisted identity ("" on newly added rows)
@@ -34,11 +41,8 @@ interface InstanceRow {
   key: string;
   keySet: boolean;
   keyEnv: boolean;
-  model: string;
+  models: RowModel[];
   endpoint: string;
-  vision: boolean;
-  reasoning: string;
-  webSearch: boolean;
   enabled: boolean;
 }
 
@@ -107,22 +111,37 @@ export function ConfigPage() {
         setCatalog(providers);
         const byType = new Map(providers.map((p) => [p.id, p]));
         setRows(
-          (state.instances ?? []).map((s) => ({
-            id: newID(),
-            stableId: s.stable_id ?? '',
-            type: s.type,
-            name: s.name ?? '',
-            api: s.api ?? '',
-            key: s.key ?? '',
-            keySet: s.key_set ?? false,
-            keyEnv: s.key_env ?? false,
-            model: s.model || byType.get(s.type)?.default_model || '',
-            endpoint: s.endpoint ?? '',
-            vision: s.vision ?? false,
-            reasoning: s.reasoning ?? '',
-            webSearch: s.web_search ?? false,
-            enabled: s.enabled ?? true,
-          })),
+          (state.instances ?? []).map((s) => {
+            const models = (s.models ?? []).map((m) => ({
+              name: m.name ?? '',
+              vision: m.vision ?? false,
+              reasoning: m.reasoning ?? '',
+              webSearch: m.web_search ?? false,
+            }));
+            return {
+              id: newID(),
+              stableId: s.stable_id ?? '',
+              type: s.type,
+              name: s.name ?? '',
+              api: s.api ?? '',
+              key: s.key ?? '',
+              keySet: s.key_set ?? false,
+              keyEnv: s.key_env ?? false,
+              models:
+                models.length > 0
+                  ? models
+                  : [
+                      {
+                        name: byType.get(s.type)?.default_model ?? '',
+                        vision: false,
+                        reasoning: '',
+                        webSearch: false,
+                      },
+                    ],
+              endpoint: s.endpoint ?? '',
+              enabled: s.enabled ?? true,
+            };
+          }),
         );
         setDefaultModel(state.model);
       } catch (err) {
@@ -325,11 +344,15 @@ export function ConfigPage() {
         key: '',
         keySet: false,
         keyEnv: false,
-        model: prov?.default_model ?? '',
+        models: [
+          {
+            name: prov?.default_model ?? '',
+            vision: false,
+            reasoning: '',
+            webSearch: false,
+          },
+        ],
         endpoint: '',
-        vision: false,
-        reasoning: '',
-        webSearch: false,
         enabled: true,
       },
     ]);
@@ -354,6 +377,47 @@ export function ConfigPage() {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   };
 
+  const updateModel = (id: string, idx: number, patch: Partial<RowModel>) => {
+    setRows((prev) =>
+      prev.map((r) =>
+        r.id === id
+          ? {
+              ...r,
+              models: r.models.map((m, i) =>
+                i === idx ? { ...m, ...patch } : m,
+              ),
+            }
+          : r,
+      ),
+    );
+  };
+
+  const addModel = (id: string) => {
+    setRows((prev) =>
+      prev.map((r) =>
+        r.id === id
+          ? {
+              ...r,
+              models: [
+                ...r.models,
+                { name: '', vision: false, reasoning: '', webSearch: false },
+              ],
+            }
+          : r,
+      ),
+    );
+  };
+
+  const removeModel = (id: string, idx: number) => {
+    setRows((prev) =>
+      prev.map((r) =>
+        r.id === id
+          ? { ...r, models: r.models.filter((_, i) => i !== idx) }
+          : r,
+      ),
+    );
+  };
+
   const save = async () => {
     setError('');
     if (enabledRows.length === 0) {
@@ -368,11 +432,13 @@ export function ConfigPage() {
       key: r.key,
       key_set: r.keySet,
       key_env: r.keyEnv,
-      model: r.model,
+      models: r.models.map((m) => ({
+        name: m.name,
+        vision: m.vision,
+        reasoning: m.reasoning,
+        web_search: m.webSearch,
+      })),
       endpoint: r.endpoint,
-      vision: r.vision,
-      reasoning: r.reasoning,
-      web_search: r.webSearch,
       enabled: r.enabled,
     }));
     setSaving(true);
@@ -571,22 +637,96 @@ export function ConfigPage() {
                     </div>
                     {row.enabled && (
                       <div className="px-4 pb-3 pt-1 space-y-2">
-                        <div className="flex gap-2">
-                          <input
-                            value={row.model}
-                            onChange={(e) =>
-                              update(row.id, { model: e.target.value })
-                            }
-                            placeholder={t('setup.model')}
-                            className="flex-1 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
-                          />
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-dim">
+                              {t('setup.models')}
+                            </span>
+                            <button
+                              onClick={() => addModel(row.id)}
+                              className="flex items-center gap-1 text-xs text-dim hover:text-fg"
+                            >
+                              <Plus size={12} />
+                              {t('config.addModel')}
+                            </button>
+                          </div>
+                          {row.models.map((m, mi) => (
+                            <div
+                              key={mi}
+                              className="flex flex-wrap items-center gap-2"
+                            >
+                              <input
+                                value={m.name}
+                                onChange={(e) =>
+                                  updateModel(row.id, mi, {
+                                    name: e.target.value,
+                                  })
+                                }
+                                placeholder={t('setup.model')}
+                                className="flex-1 min-w-36 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
+                              />
+                              <label className="flex items-center gap-1.5 text-xs text-dim whitespace-nowrap">
+                                <input
+                                  type="checkbox"
+                                  checked={m.vision}
+                                  onChange={(e) =>
+                                    updateModel(row.id, mi, {
+                                      vision: e.target.checked,
+                                    })
+                                  }
+                                  className="accent-[var(--color-accent)]"
+                                />
+                                {t('setup.vision')}
+                              </label>
+                              <label className="flex items-center gap-1.5 text-xs text-dim whitespace-nowrap">
+                                {t('setup.reasoning')}
+                                <select
+                                  value={m.reasoning}
+                                  onChange={(e) =>
+                                    updateModel(row.id, mi, {
+                                      reasoning: e.target.value,
+                                    })
+                                  }
+                                  className="rounded border border-edge bg-panel px-2 py-1 outline-none"
+                                >
+                                  <option value="">
+                                    {t('setup.reasoningOff')}
+                                  </option>
+                                  <option value="always">always</option>
+                                  <option value="toggle">toggle</option>
+                                </select>
+                              </label>
+                              <label className="flex items-center gap-1.5 text-xs text-dim whitespace-nowrap">
+                                <input
+                                  type="checkbox"
+                                  checked={m.webSearch}
+                                  onChange={(e) =>
+                                    updateModel(row.id, mi, {
+                                      webSearch: e.target.checked,
+                                    })
+                                  }
+                                  className="accent-[var(--color-accent)]"
+                                />
+                                {t('setup.webSearch')}
+                              </label>
+                              <button
+                                onClick={() => removeModel(row.id, mi)}
+                                className="text-dim hover:text-err shrink-0"
+                                title={t('config.removeModel')}
+                              >
+                                <X size={14} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                        <div>
                           <input
                             value={row.endpoint}
                             onChange={(e) =>
                               update(row.id, { endpoint: e.target.value })
                             }
                             placeholder={t('setup.endpointPlaceholder')}
-                            className="w-64 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
+                            className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
                           />
                         </div>
                         {row.type === 'openai' && (
@@ -633,50 +773,6 @@ export function ConfigPage() {
                             {t('setup.envVar', { var: prov?.env_var ?? '' })}
                           </label>
                         </div>
-                        <div className="flex items-center gap-4 text-xs text-dim">
-                          <label className="flex items-center gap-1.5">
-                            <input
-                              type="checkbox"
-                              checked={row.vision}
-                              onChange={(e) =>
-                                update(row.id, { vision: e.target.checked })
-                              }
-                              className="accent-[var(--color-accent)]"
-                            />
-                            {t('setup.vision')}
-                          </label>
-                          <label className="flex items-center gap-1.5">
-                            {t('setup.reasoning')}
-                            <select
-                              value={row.reasoning}
-                              onChange={(e) =>
-                                update(row.id, {
-                                  reasoning: e.target.value,
-                                })
-                              }
-                              className="rounded border border-edge bg-panel px-2 py-1 outline-none"
-                            >
-                              <option value="">
-                                {t('setup.reasoningOff')}
-                              </option>
-                              <option value="always">always</option>
-                              <option value="toggle">toggle</option>
-                            </select>
-                          </label>
-                          <label className="flex items-center gap-1.5">
-                            <input
-                              type="checkbox"
-                              checked={row.webSearch}
-                              onChange={(e) =>
-                                update(row.id, {
-                                  webSearch: e.target.checked,
-                                })
-                              }
-                              className="accent-[var(--color-accent)]"
-                            />
-                            {t('setup.webSearch')}
-                          </label>
-                        </div>
                       </div>
                     )}
                   </div>
@@ -701,7 +797,10 @@ export function ConfigPage() {
                           {row.name ? ` · ${row.name}` : ''}
                         </span>
                         <span className="text-xs text-dim truncate">
-                          {row.model}
+                          {row.models
+                            .map((m) => m.name)
+                            .filter(Boolean)
+                            .join(', ')}
                         </span>
                         <button
                           onClick={() => move(idx, -1)}

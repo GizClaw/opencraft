@@ -19,6 +19,13 @@ export interface ProviderView {
   azure: boolean;
 }
 
+export interface ModelInstance {
+  name: string;
+  vision: boolean;
+  reasoning: string;
+  web_search: boolean;
+}
+
 export interface ProviderInstance {
   stable_id: string;
   type: string;
@@ -27,11 +34,8 @@ export interface ProviderInstance {
   key: string;
   key_set: boolean;
   key_env: boolean;
-  model: string;
+  models: ModelInstance[];
   endpoint: string;
-  vision: boolean;
-  reasoning: string;
-  web_search: boolean;
   enabled: boolean;
 }
 
