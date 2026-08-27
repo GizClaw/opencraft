@@ -28,7 +28,11 @@ const SERIES: {
     labelKey: 'config.usageOutput',
     color: 'var(--color-ok)',
   },
-  { key: 'cache_read_tokens', labelKey: 'config.usageCache', color: '#a855f7' },
+  {
+    key: 'cache_read_tokens',
+    labelKey: 'config.usageCache',
+    color: 'var(--color-subagent)',
+  },
   {
     key: 'reasoning_tokens',
     labelKey: 'config.usageReasoning',

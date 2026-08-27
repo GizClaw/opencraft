@@ -1,7 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   ArrowDown,
+  ArrowDownToLine,
   ArrowUp,
+  ArrowUpFromLine,
+  Brain,
+  Database,
   Loader2,
   Plus,
   Settings,
@@ -103,6 +107,17 @@ export function ConfigPage() {
   const [usageEndMs, setUsageEndMs] = useState(0);
   const [usageLoading, setUsageLoading] = useState(false);
   const [usageReload, setUsageReload] = useState(0);
+  const usageTotals = useMemo(() => {
+    const t0 = { input: 0, output: 0, cache: 0, reasoning: 0, sessions: 0 };
+    for (const r of usageRows) {
+      t0.input += r.input_tokens;
+      t0.output += r.output_tokens;
+      t0.cache += r.cache_read_tokens;
+      t0.reasoning += r.reasoning_tokens;
+      t0.sessions += r.sessions;
+    }
+    return t0;
+  }, [usageRows]);
 
   useEffect(() => {
     void (async () => {
@@ -834,6 +849,55 @@ export function ConfigPage() {
                 </button>
               </div>
               {usageError && <p className="text-xs text-err">{usageError}</p>}
+              {usageLoading && usageRows.length === 0 ? (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  {[0, 1, 2, 3].map((i) => (
+                    <div
+                      key={i}
+                      className="h-[72px] animate-pulse rounded-xl bg-panel2"
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <div className="rounded-xl border border-edge bg-panel2 p-3">
+                    <div className="flex items-center gap-1.5 text-xs text-dim">
+                      <ArrowDownToLine size={13} className="text-accent" />
+                      {t('config.usageInput')}
+                    </div>
+                    <p className="mt-1.5 text-lg font-semibold tabular-nums text-accent">
+                      {fmtUsageTokens(usageTotals.input)}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-edge bg-panel2 p-3">
+                    <div className="flex items-center gap-1.5 text-xs text-dim">
+                      <ArrowUpFromLine size={13} className="text-ok" />
+                      {t('config.usageOutput')}
+                    </div>
+                    <p className="mt-1.5 text-lg font-semibold tabular-nums text-ok">
+                      {fmtUsageTokens(usageTotals.output)}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-edge bg-panel2 p-3">
+                    <div className="flex items-center gap-1.5 text-xs text-dim">
+                      <Database size={13} className="text-subagent" />
+                      {t('config.usageCache')}
+                    </div>
+                    <p className="mt-1.5 text-lg font-semibold tabular-nums text-subagent">
+                      {fmtUsageTokens(usageTotals.cache)}
+                    </p>
+                  </div>
+                  <div className="rounded-xl border border-edge bg-panel2 p-3">
+                    <div className="flex items-center gap-1.5 text-xs text-dim">
+                      <Brain size={13} className="text-warn" />
+                      {t('config.usageReasoning')}
+                    </div>
+                    <p className="mt-1.5 text-lg font-semibold tabular-nums text-warn">
+                      {fmtUsageTokens(usageTotals.reasoning)}
+                    </p>
+                  </div>
+                </div>
+              )}
               {usageRows.length === 0 ? (
                 <p className="text-sm text-dim">{t('config.usageEmpty')}</p>
               ) : (
@@ -948,22 +1012,36 @@ export function ConfigPage() {
                         {usageRows.map((r) => (
                           <tr
                             key={r.model}
-                            className="border-b border-edge/50 last:border-0"
+                            className="border-b border-edge/50 last:border-0 hover:bg-panel2"
                           >
-                            <td className="px-3 py-2 font-mono">{r.model}</td>
+                            <td className="px-3 py-2 font-mono text-fg">
+                              {r.model}
+                            </td>
                             <td className="px-3 py-2 text-right tabular-nums">
                               {fmtUsageTokens(r.input_tokens)}
                             </td>
                             <td className="px-3 py-2 text-right tabular-nums">
                               {fmtUsageTokens(r.output_tokens)}
                             </td>
-                            <td className="px-3 py-2 text-right tabular-nums">
+                            <td
+                              className={`px-3 py-2 text-right tabular-nums ${
+                                r.cache_read_tokens === 0 ? 'text-dim/60' : ''
+                              }`}
+                            >
                               {fmtUsageTokens(r.cache_read_tokens)}
                             </td>
-                            <td className="px-3 py-2 text-right tabular-nums">
+                            <td
+                              className={`px-3 py-2 text-right tabular-nums ${
+                                r.reasoning_tokens === 0 ? 'text-dim/60' : ''
+                              }`}
+                            >
                               {fmtUsageTokens(r.reasoning_tokens)}
                             </td>
-                            <td className="px-3 py-2 text-right tabular-nums">
+                            <td
+                              className={`px-3 py-2 text-right tabular-nums ${
+                                r.latency_ms === 0 ? 'text-dim/60' : ''
+                              }`}
+                            >
                               {fmtUsageTokens(r.latency_ms)}ms
                             </td>
                             <td className="px-3 py-2 text-right tabular-nums">
