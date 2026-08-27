@@ -17,6 +17,16 @@ jobs:
   macos:
     name: package (macos)
     runs-on: macos-latest
+    # Apple signing/notarization secrets: mapped to job env so the
+    # guarded steps below can check their presence (the secrets context
+    # is not available in step-level `if` conditions).
+    env:
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@v6
 
@@ -34,26 +44,71 @@ jobs:
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
 
-      - name: Build macOS app
+      - name: Build macOS universal app
         env:
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
         run: |
           export PATH="$PATH:$(go env GOPATH)/bin"
-          wails build -platform darwin/arm64 -clean \
+          jq --arg v "${TAG#v}" '.info.productVersion = $v' wails.json > wails.json.tmp
+          mv wails.json.tmp wails.json
+          # lipo merges the arm64 + amd64 builds into one universal app.
+          wails build -platform darwin/arm64,darwin/amd64 -clean \
             -ldflags "-s -w -X github.com/GizClaw/opencraft/internal/app.ServiceVersion=${TAG#v}"
 
-      - name: Package app bundle
+      - name: Prepare app bundle
+        run: |
+          app="$(find build/bin -maxdepth 1 -name '*.app' | head -1)"
+          # Keep the bundle name stable for the cask regardless of the
+          # wails output filename.
+          mv "$app" build/bin/OpenCraft.app
+
+      # Code signing and notarization are optional: they activate only
+      # when the Apple secrets are configured (see the README for how to
+      # create the Developer ID certificate and secrets).
+      - name: Sign macOS app (Developer ID)
+        if: ${{ env.APPLE_CERTIFICATE != '' && env.APPLE_CERTIFICATE_PASSWORD != '' && env.KEYCHAIN_PASSWORD != '' && env.APPLE_TEAM_ID != '' }}
+        run: |
+          echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/dev-id.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security import /tmp/dev-id.p12 -k build.keychain \
+            -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          identity="$(security find-identity -v -p codesigning build.keychain \
+            | awk '/Developer ID Application/ {print $2; exit}')"
+          if [ -z "$identity" ]; then
+            echo "::error::No Developer ID Application identity found in the imported certificate"
+            exit 1
+          fi
+          codesign --force --options runtime --timestamp \
+            --sign "$identity" build/bin/OpenCraft.app
+          codesign --verify --deep --strict build/bin/OpenCraft.app
+
+      - name: Package dmg
         env:
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
         run: |
-          app="$(find build/bin -maxdepth 1 -name '*.app' | head -1)"
-          ditto -c -k --sequesterRsrc --keepParent "$app" \
-            "opencraft-${TAG#v}-macos-arm64.zip"
+          hdiutil create -volname OpenCraft -srcfolder build/bin/OpenCraft.app \
+            -ov -format UDZO "opencraft-${TAG#v}-macos-universal.dmg"
+
+      - name: Notarize and staple dmg
+        if: ${{ env.APPLE_ID != '' && env.APPLE_APP_SPECIFIC_PASSWORD != '' && env.APPLE_TEAM_ID != '' }}
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+        run: |
+          dmg="opencraft-${TAG#v}-macos-universal.dmg"
+          xcrun notarytool submit "$dmg" --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple "$dmg"
+          xcrun stapler validate "$dmg"
 
       - uses: actions/upload-artifact@v6
         with:
-          name: macos-arm64
-          path: opencraft-*-macos-arm64.zip
+          name: macos-universal
+          path: opencraft-*-macos-universal.dmg
           if-no-files-found: error
 
   linux:
@@ -126,5 +181,12 @@ jobs:
           if [ ! -s /tmp/release-notes.md ]; then
             echo "## ${TAG}" > /tmp/release-notes.md
           fi
+          {
+            echo ""
+            echo "## Checksums"
+            for f in artifacts/opencraft-*; do
+              echo "- \`$(basename "$f")\`: \`$(sha256sum "$f" | awk '{print $1}')\`"
+            done
+          } >> /tmp/release-notes.md
           gh release create "$TAG" artifacts/opencraft-* \
             --title "$TAG" --notes-file /tmp/release-notes.md

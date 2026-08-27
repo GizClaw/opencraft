@@ -50,6 +50,11 @@ frontend/dist/**
 frontend/package.json.md5
 !build/
 !build/**
+# Homebrew cask and maintenance scripts live in the repo too.
+!Casks/
+!Casks/**
+!scripts/
+!scripts/**
 # Generated app bundles stay out of the repo; wails build reproduces them.
 build/bin/
 build/bin/**

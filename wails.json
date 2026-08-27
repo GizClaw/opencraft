@@ -8,5 +8,11 @@
   "frontend:dev:serverUrl": "auto",
   "author": {
     "name": "haivivi"
+  },
+  "info": {
+    "productName": "OpenCraft",
+    "productVersion": "0.1.0",
+    "copyright": "Copyright (c) 2026 GizClaw",
+    "comments": "A local-first work partner built on flowcraft"
   }
 }
