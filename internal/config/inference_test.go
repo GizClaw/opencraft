@@ -600,3 +600,45 @@ func TestWriteInferenceRefusesNonMappingLayer(t *testing.T) {
 		t.Fatal("WriteInference over a scalar layer must refuse")
 	}
 }
+
+func TestModelReasoning(t *testing.T) {
+	cfg := InferenceConfig{Instances: []Instance{
+		{StableID: "a", Type: "deepseek", Enabled: true, Models: []Model{
+			{Name: "m1", Reasoning: "toggle"},
+			{Name: "m0"}, // no reasoning capability
+		}},
+		{StableID: "b", Type: "openai", Enabled: true, Models: []Model{
+			{Name: "gpt", Reasoning: "always"},
+		}},
+		{StableID: "c", Type: "qwen", Enabled: false, Models: []Model{
+			{Name: "q", Reasoning: "always"},
+		}},
+	}}
+	if !cfg.ModelReasoning("deepseek-a/m1") {
+		t.Error("deepseek-a/m1 declares toggle, want true")
+	}
+	if cfg.ModelReasoning("deepseek-a/m0") {
+		t.Error("deepseek-a/m0 has no reasoning capability, want false")
+	}
+	if !cfg.ModelReasoning("openai-b/gpt") {
+		t.Error("openai-b/gpt declares always, want true")
+	}
+	if cfg.ModelReasoning("qwen-c/q") {
+		t.Error("qwen-c is disabled, want false")
+	}
+	if cfg.ModelReasoning("unknown/x") {
+		t.Error("unknown model, want false")
+	}
+	// Empty hint resolves to the default target (first enabled
+	// instance, first model): deepseek-a/m1 with toggle.
+	if !cfg.ModelReasoning("") {
+		t.Error("empty hint should resolve to deepseek-a/m1 (toggle)")
+	}
+
+	plain := InferenceConfig{Instances: []Instance{
+		{StableID: "a", Type: "deepseek", Enabled: true, Models: []Model{{Name: "m"}}},
+	}}
+	if plain.ModelReasoning("") {
+		t.Error("default target without reasoning capability, want false")
+	}
+}

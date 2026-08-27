@@ -108,8 +108,9 @@ func (a *App) ModelOptions() ([]ModelOption, error) {
 				continue
 			}
 			out = append(out, ModelOption{
-				ID:    in.DeploymentID(i+1) + "/" + model,
-				Label: instanceLabel(in, i+1) + " · " + model,
+				ID:        in.DeploymentID(i+1) + "/" + model,
+				Label:     instanceLabel(in, i+1) + " · " + model,
+				Reasoning: m.Reasoning != "",
 			})
 		}
 	}
@@ -533,6 +534,14 @@ func (a *App) StartTurn(text string) (TurnStart, error) {
 	}
 	if strings.TrimSpace(text) == "" {
 		return TurnStart{}, errors.New("message is required")
+	}
+	// Only send a reasoning knob when the effective model declares a
+	// reasoning capability: drivers reject reasoning_effort for models
+	// without one. The think level stays the per-session default
+	// (medium) for capable models and is dropped for the rest.
+	if cfg, err := config.LoadInference(a.userDir); err == nil &&
+		!cfg.ModelReasoning(model) {
+		think = ""
 	}
 	ctx := a.appContext()
 

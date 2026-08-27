@@ -49,13 +49,14 @@ nodes:
       # The board-ref default keeps unset conversations on the default
       # routing policy; unknown/ambiguous hints fall back the same way.
       model_hint: ${board.model:}
-      # Think level is a per-turn board input: the TUI injects
-      # think_level via agent.Request.Inputs (/think command) and the
-      # board-ref default keeps non-TUI callers (e.g. `opencraft run`)
-      # on a sane explicit effort instead of the provider default.
+      # Think level is a per-turn board input: the desktop injects
+      # think_level via agent.Request.Inputs, resolving "" for models
+      # without a reasoning capability (drivers reject the knob for
+      # them). The empty default keeps non-desktop callers from sending
+      # a knob the model may not support.
       intent:
         text:
-          reasoning_effort: ${board.think_level:medium}
+          reasoning_effort: ${board.think_level:}
       system_prompt: { embed: assets/graphs/prompts/system.md }
       # Hosted web_search extensions (provider-side search). Every
       # provider that is ALWAYS registered and exposes one is declared

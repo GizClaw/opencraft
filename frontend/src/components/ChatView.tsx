@@ -162,6 +162,7 @@ export function ChatView() {
   const messages = conv?.messages ?? [];
   const busy = conv?.busy ?? false;
   const configured = useStore((s) => s.configured);
+  const status = useStore((s) => s.status);
   const pendingInteracts = conv?.pendingInteracts ?? [];
   const send = useStore((s) => s.send);
   const cancelRun = useStore((s) => s.cancelRun);
@@ -177,6 +178,12 @@ export function ChatView() {
   const model = conv?.model ?? '';
   const setModel = useStore((s) => s.setModel);
   const modelOptions = useStore((s) => s.modelOptions);
+  // The think picker is only meaningful when the effective model
+  // (explicit per-conversation hint, or the default router target when
+  // empty) declares a reasoning capability.
+  const thinkSupported = model
+    ? (modelOptions.find((o) => o.id === model)?.reasoning ?? false)
+    : (status?.default_reasoning ?? false);
   const lastFailed = conv?.lastFailed ?? false;
   const openConfig = useStore((s) => s.openConfig);
   const [input, setInput] = useState('');
@@ -770,18 +777,20 @@ export function ChatView() {
           )}
           <div className="flex items-center justify-between px-3 pb-2.5">
             <div className="flex items-center gap-3">
-              <div className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim">
-                {t('chat.thinkLabel')}
-                <select
-                  value={think}
-                  onChange={(e) => void setThink(e.target.value)}
-                  className="bg-transparent outline-none text-fg"
-                >
-                  <option value="low">{t('chat.thinkLow')}</option>
-                  <option value="medium">{t('chat.thinkMedium')}</option>
-                  <option value="high">{t('chat.thinkHigh')}</option>
-                </select>
-              </div>
+              {thinkSupported && (
+                <div className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim">
+                  {t('chat.thinkLabel')}
+                  <select
+                    value={think}
+                    onChange={(e) => void setThink(e.target.value)}
+                    className="bg-transparent outline-none text-fg"
+                  >
+                    <option value="low">{t('chat.thinkLow')}</option>
+                    <option value="medium">{t('chat.thinkMedium')}</option>
+                    <option value="high">{t('chat.thinkHigh')}</option>
+                  </select>
+                </div>
+              )}
               {modelOptions.length > 0 && (
                 <div className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim">
                   {t('chat.modelLabel')}

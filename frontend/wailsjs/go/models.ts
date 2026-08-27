@@ -303,6 +303,7 @@ export namespace desktop {
 	export class ConfigStatus {
 	    needed: boolean;
 	    default_model: string;
+	    default_reasoning: boolean;
 	    work_dir: string;
 	    user_dir: string;
 	    version: string;
@@ -316,6 +317,7 @@ export namespace desktop {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.needed = source["needed"];
 	        this.default_model = source["default_model"];
+	        this.default_reasoning = source["default_reasoning"];
 	        this.work_dir = source["work_dir"];
 	        this.user_dir = source["user_dir"];
 	        this.version = source["version"];
@@ -498,6 +500,7 @@ export namespace desktop {
 	export class ModelOption {
 	    id: string;
 	    label: string;
+	    reasoning: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new ModelOption(source);
@@ -507,6 +510,7 @@ export namespace desktop {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
 	        this.label = source["label"];
+	        this.reasoning = source["reasoning"];
 	    }
 	}
 	export class ModelUsageStat {
