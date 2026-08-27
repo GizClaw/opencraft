@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import type { ComponentType } from 'react';
 import {
   Bot,
@@ -26,7 +26,9 @@ import { GitHubSearch } from './GitHubSearch';
 import type { GitHubRepo } from './GitHubSearch';
 import { probeMCPServerLaunch } from './GitHubSearch';
 import { KanbanSection } from './KanbanView';
-import { AgentGraphEditor } from './GraphView';
+const AgentGraphEditor = lazy(() =>
+  import('./GraphView').then((m) => ({ default: m.AgentGraphEditor })),
+);
 
 export type ToolPage = 'mcp' | 'agents' | 'skills' | 'kanban';
 
@@ -940,11 +942,19 @@ export function ToolsPanel() {
         }
       >
         {view === 'agents' && editingAgent ? (
-          <AgentGraphEditor
-            agentName={editingAgent}
-            onClose={() => setEditingAgent(null)}
-            onSaved={() => void refreshAgents()}
-          />
+          <Suspense
+            fallback={
+              <div className="grid h-full place-items-center text-dim text-sm">
+                {t('app.starting')}
+              </div>
+            }
+          >
+            <AgentGraphEditor
+              agentName={editingAgent}
+              onClose={() => setEditingAgent(null)}
+              onSaved={() => void refreshAgents()}
+            />
+          </Suspense>
         ) : (
           <>
             {view === 'mcp' && <MCPSection />}

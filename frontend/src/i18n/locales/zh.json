@@ -69,6 +69,7 @@
   },
   "config": {
     "title": "设置",
+    "saved": "设置已保存",
     "tabUi": "界面",
     "tabInference": "推理",
     "tabMCP": "MCP",
@@ -202,6 +203,8 @@
   },
   "chat": {
     "running": "运行中",
+    "stageReasoning": "思考中…",
+    "stageTool": "正在使用 {{tool}}…",
     "newSession": "新会话",
     "empty": "开始与 OpenCraft 对话 — 描述任务即可，助手会自主调用工具",
     "emptyUnconfigured": "推理尚未配置，请打开设置添加模型",
@@ -318,6 +321,8 @@
     "editing": "编辑 {{name}} 的运行图",
     "description": "描述",
     "saved": "已保存",
+    "unsaved": "有未保存的修改",
+    "unsavedClose": "有未保存的修改，再次点击离开",
     "back": "返回列表",
     "selectHint": "点击节点或连线进行编辑",
     "zoomIn": "放大",

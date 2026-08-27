@@ -11,6 +11,8 @@
   --color-ok: #34d399;
   --color-warn: #fbbf24;
   --color-err: #f87171;
+  --color-yolo: #d9a83c;
+  --color-subagent: #a78bfa;
 }
 
 :root {
@@ -31,6 +33,8 @@
   --color-ok: #0f9d6e;
   --color-warn: #b47d00;
   --color-err: #d64545;
+  --color-yolo: #b47d00;
+  --color-subagent: #7c3aed;
 }
 
 html,
@@ -54,6 +58,14 @@ body,
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--color-edge) transparent;
+}
+
+/* Keyboard focus must stay visible even where outlines are removed
+   (Tailwind preflight + custom outline-none utilities). */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 *::-webkit-scrollbar {
@@ -116,6 +128,47 @@ body,
 .prose-chat table {
   border-collapse: collapse;
   margin: 0.6em 0;
+}
+
+.prose-chat table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.prose-chat table th,
+.prose-chat table td {
+  border: 1px solid var(--color-edge);
+  padding: 4px 10px;
+}
+
+.codeblock {
+  position: relative;
+}
+
+.codeblock:hover .codeblock-copy {
+  opacity: 1;
+}
+
+.codeblock-copy {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--color-edge);
+  border-radius: 6px;
+  background: var(--color-panel);
+  color: var(--color-dim);
+  font-size: 11px;
+}
+
+.codeblock-copy:hover {
+  color: var(--color-fg);
 }
 
 .prose-chat th,

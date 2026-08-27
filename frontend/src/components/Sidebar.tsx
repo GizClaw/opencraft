@@ -46,6 +46,7 @@ export function Sidebar() {
   const newChat = useStore((s) => s.newChat);
   const openConfig = useStore((s) => s.openConfig);
   const sessions = useStore((s) => s.sessions);
+  const sessionsLoading = useStore((s) => s.sessionsLoading);
   const currentSession = useStore((s) => s.current);
   const resume = useStore((s) => s.resume);
   const toolsView = useStore((s) => s.toolsView);
@@ -232,6 +233,7 @@ export function Sidebar() {
             onClick={() => setMenuOpenId(menuOpenId === row.id ? null : row.id)}
             className="text-dim opacity-0 group-hover:opacity-100 hover:text-fg rounded p-0.5"
             title={t('sidebar.sessionActions')}
+            aria-label={t('sidebar.sessionActions')}
           >
             <MoreHorizontal size={14} />
           </button>
@@ -315,6 +317,7 @@ export function Sidebar() {
             onClick={() => void removeWorkspace(w.id)}
             className="text-dim opacity-0 group-hover:opacity-100 hover:text-err shrink-0"
             title={t('sidebar.removeWorkspace')}
+            aria-label={t('sidebar.removeWorkspace')}
           >
             <Trash2 size={12} />
           </button>
@@ -409,6 +412,7 @@ export function Sidebar() {
               onClick={() => void api.chooseWorkspace()}
               className="text-dim hover:text-fg"
               title={t('sidebar.addWorkspace')}
+              aria-label={t('sidebar.addWorkspace')}
             >
               <Plus size={13} />
             </button>
@@ -498,7 +502,18 @@ export function Sidebar() {
             </div>
             <div className="flex-1 overflow-y-auto p-2">
               {filteredSessions.length === 0 ? (
-                <p className="text-xs text-dim p-3">—</p>
+                sessionsLoading ? (
+                  <div className="space-y-2 p-2">
+                    {[0, 1, 2].map((i) => (
+                      <div
+                        key={i}
+                        className="h-8 animate-pulse rounded-lg bg-panel2"
+                      />
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-dim p-3">—</p>
+                )
               ) : (
                 <ul className="space-y-1">
                   {filteredSessions.map((s) =>

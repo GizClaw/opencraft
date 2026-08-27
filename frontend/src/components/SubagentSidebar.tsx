@@ -78,8 +78,8 @@ const StreamView = memo(function StreamView({
   const items = stream.flatMap((m) => m.items);
   if (items.length === 0) return null;
   return (
-    <div className="rounded-lg border border-violet-400/20 bg-violet-400/5 p-2 space-y-1.5">
-      <div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-violet-400/80">
+    <div className="rounded-lg border border-subagent/20 bg-subagent/5 p-2 space-y-1.5">
+      <div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-subagent/80">
         <Activity size={10} />
         {t('subagent.stream')}
       </div>
@@ -158,13 +158,13 @@ const SubagentCard = memo(function SubagentCard({
   const meta = statusMeta(card.status, t);
 
   return (
-    <div className="rounded-xl border border-edge overflow-hidden bg-violet-400/5">
+    <div className="rounded-xl border border-edge overflow-hidden bg-subagent/5">
       <div className={`border-l-2 ${meta.bar}`}>
         <button
           onClick={() => setOpen(!open)}
-          className="w-full flex items-center gap-2 px-2.5 py-2 text-left text-sm hover:bg-violet-400/10 transition-colors"
+          className="w-full flex items-center gap-2 px-2.5 py-2 text-left text-sm hover:bg-subagent/10 transition-colors"
         >
-          <Bot size={14} className="text-violet-400 shrink-0" />
+          <Bot size={14} className="text-subagent shrink-0" />
           <span className="flex-1 min-w-0">
             <span className="block truncate font-medium">{card.target}</span>
             <span className="flex items-center gap-1 truncate text-xs text-dim mt-0.5">
@@ -354,8 +354,8 @@ function SubagentNode({
     <div className={depth > 0 ? 'relative ml-4 pl-3' : ''}>
       {depth > 0 && (
         <>
-          <span className="absolute left-0 top-0 h-full w-px bg-violet-400/15" />
-          <span className="absolute left-0 top-3 h-3 w-3 rounded-bl-lg border-b border-l border-violet-400/15" />
+          <span className="absolute left-0 top-0 h-full w-px bg-subagent/15" />
+          <span className="absolute left-0 top-3 h-3 w-3 rounded-bl-lg border-b border-l border-subagent/15" />
         </>
       )}
       <SubagentCard
@@ -392,9 +392,9 @@ export function SubagentSidebar() {
   return (
     <aside className="w-72 shrink-0 h-full border-l border-edge bg-panel flex flex-col min-h-0">
       <header className="h-11 shrink-0 border-b border-edge flex items-center gap-2 px-3 select-none">
-        <Bot size={14} className="text-violet-400" />
+        <Bot size={14} className="text-subagent" />
         <span className="text-sm font-semibold">{t('subagent.title')}</span>
-        <span className="rounded bg-violet-400/10 border border-violet-400/30 px-1.5 text-xs text-violet-400">
+        <span className="rounded bg-subagent/10 border border-subagent/30 px-1.5 text-xs text-subagent">
           {cards.length}
         </span>
         <span className="flex-1" />

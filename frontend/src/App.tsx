@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from './i18n';
 import {
@@ -8,13 +8,19 @@ import {
   SendNotification,
 } from '../wailsjs/runtime/runtime';
 import { ChatView } from './components/ChatView';
-import { ConfigPage } from './components/ConfigPage';
 import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
 import { SubagentSidebar } from './components/SubagentSidebar';
-import { ToolsPanel } from './components/ToolsPanel';
+import { Toaster } from './components/Toaster';
 import { useStore } from './lib/store';
 import type { UIEvent } from './lib/types';
+
+const ConfigPage = lazy(() =>
+  import('./components/ConfigPage').then((m) => ({ default: m.ConfigPage })),
+);
+const ToolsPanel = lazy(() =>
+  import('./components/ToolsPanel').then((m) => ({ default: m.ToolsPanel })),
+);
 
 export default function App() {
   const init = useStore((s) => s.init);
@@ -154,7 +160,15 @@ export default function App() {
           className="w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-accent/40"
         />
         {toolsView ? (
-          <ToolsPanel />
+          <Suspense
+            fallback={
+              <div className="flex-1 grid place-items-center text-dim text-sm">
+                {t('app.starting')}
+              </div>
+            }
+          >
+            <ToolsPanel />
+          </Suspense>
         ) : (
           <>
             <ChatView />
@@ -165,7 +179,12 @@ export default function App() {
         )}
       </div>
       <StatusBar />
-      {configOpen && <ConfigPage />}
+      {configOpen && (
+        <Suspense fallback={null}>
+          <ConfigPage />
+        </Suspense>
+      )}
+      <Toaster />
     </div>
   );
 }

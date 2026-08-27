@@ -58,6 +58,7 @@ type Tab =
 export function ConfigPage() {
   const configured = useStore((s) => s.configured);
   const closeConfig = useStore((s) => s.closeConfig);
+  const toast = useStore((s) => s.toast);
   const theme = useStore((s) => s.theme);
   const setTheme = useStore((s) => s.setTheme);
   const newID = () =>
@@ -444,6 +445,7 @@ export function ConfigPage() {
     setSaving(true);
     try {
       await api.saveInstances({ instances });
+      toast(t('config.saved'));
       closeConfig();
     } catch (err) {
       setError(String(err));
@@ -505,7 +507,11 @@ export function ConfigPage() {
           </div>
           <span className="flex-1" />
           {configured && (
-            <button onClick={closeConfig} className="text-dim hover:text-fg">
+            <button
+              onClick={closeConfig}
+              className="text-dim hover:text-fg"
+              aria-label={t('tools.close')}
+            >
               <X size={18} />
             </button>
           )}

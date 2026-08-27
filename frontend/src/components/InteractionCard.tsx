@@ -1,8 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { HelpCircle, X } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { Markdown } from './Markdown';
 import { useStore } from '../lib/store';
 import type { InteractDTO } from '../lib/types';
 
@@ -54,7 +53,7 @@ export function InteractionCard({ spec }: { spec: InteractDTO }) {
       </div>
       {bodyText && (
         <div className="prose-chat text-sm mt-2">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{bodyText}</ReactMarkdown>
+          <Markdown text={bodyText} />
         </div>
       )}
 

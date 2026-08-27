@@ -69,6 +69,7 @@
   },
   "config": {
     "title": "Settings",
+    "saved": "Settings saved",
     "tabUi": "Interface",
     "tabInference": "Inference",
     "tabMCP": "MCP",
@@ -202,6 +203,8 @@
   },
   "chat": {
     "running": "Running",
+    "stageReasoning": "Thinking…",
+    "stageTool": "Using {{tool}}…",
     "newSession": "New session",
     "empty": "Start a conversation with OpenCraft — describe a task and the assistant will drive the tools itself",
     "emptyUnconfigured": "Inference is not configured yet",
@@ -318,6 +321,8 @@
     "editing": "Editing {{name}}'s run graph",
     "description": "Description",
     "saved": "Saved",
+    "unsaved": "Unsaved changes",
+    "unsavedClose": "Unsaved changes — click again to leave",
     "back": "Back to list",
     "selectHint": "Select a node or edge to edit",
     "zoomIn": "Zoom in",
