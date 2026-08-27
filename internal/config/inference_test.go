@@ -571,3 +571,32 @@ func TestLoadInferenceMissingConfig(t *testing.T) {
 		t.Fatalf("LoadInference(missing config) instances = %d, want 0", len(cfg.Instances))
 	}
 }
+
+// TestWriteInferenceOverwritesEmptyUserLayer verifies first-time setup
+// is not blocked by an empty opencraft.yaml (e.g. created with touch):
+// an empty layer has no data to preserve and is replaced by the fresh
+// document.
+func TestWriteInferenceOverwritesEmptyUserLayer(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "opencraft.yaml", "")
+	if err := WriteInference(dir, envKeyed(t, "deepseek")); err != nil {
+		t.Fatalf("WriteInference over empty layer: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "opencraft.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "resources:") {
+		t.Fatalf("user layer not written:\n%s", data)
+	}
+}
+
+// TestWriteInferenceRefusesNonMappingLayer keeps the guard for a
+// non-empty scalar layer that would otherwise destroy user data.
+func TestWriteInferenceRefusesNonMappingLayer(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "opencraft.yaml", "just some text\n")
+	if err := WriteInference(dir, envKeyed(t, "deepseek")); err == nil {
+		t.Fatal("WriteInference over a scalar layer must refuse")
+	}
+}
