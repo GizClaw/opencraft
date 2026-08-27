@@ -17,6 +17,16 @@ jobs:
   macos:
     name: package (macos)
     runs-on: macos-latest
+    # Apple signing/notarization secrets: mapped to job env so the
+    # guarded steps below can check their presence (the secrets context
+    # is not available in step-level `if` conditions).
+    env:
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
     steps:
       - uses: actions/checkout@v6
 
@@ -56,11 +66,7 @@ jobs:
       # when the Apple secrets are configured (see the README for how to
       # create the Developer ID certificate and secrets).
       - name: Sign macOS app (Developer ID)
-        if: ${{ secrets.APPLE_CERTIFICATE != '' && secrets.APPLE_CERTIFICATE_PASSWORD != '' && secrets.KEYCHAIN_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' }}
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        if: ${{ env.APPLE_CERTIFICATE != '' && env.APPLE_CERTIFICATE_PASSWORD != '' && env.KEYCHAIN_PASSWORD != '' && env.APPLE_TEAM_ID != '' }}
         run: |
           echo "$APPLE_CERTIFICATE" | base64 --decode > /tmp/dev-id.p12
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
@@ -88,12 +94,9 @@ jobs:
             -ov -format UDZO "opencraft-${TAG#v}-macos-universal.dmg"
 
       - name: Notarize and staple dmg
-        if: ${{ secrets.APPLE_ID != '' && secrets.APPLE_APP_SPECIFIC_PASSWORD != '' && secrets.APPLE_TEAM_ID != '' }}
+        if: ${{ env.APPLE_ID != '' && env.APPLE_APP_SPECIFIC_PASSWORD != '' && env.APPLE_TEAM_ID != '' }}
         env:
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: |
           dmg="opencraft-${TAG#v}-macos-universal.dmg"
           xcrun notarytool submit "$dmg" --apple-id "$APPLE_ID" \
