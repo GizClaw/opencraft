@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Optional macOS code signing and notarization in the release workflow
+  (activates automatically when the Apple secrets are configured).
 - Homebrew cask (`Casks/opencraft.rb`) and a universal (arm64 + amd64) macOS
   dmg for releases.
 - Release infrastructure: GitHub Actions release workflow (tag `v*`) that
