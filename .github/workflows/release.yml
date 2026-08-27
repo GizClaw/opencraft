@@ -111,7 +111,12 @@ jobs:
           if [ -n "$APPLE_API_PRIVATE_KEY" ] && [ -n "$APPLE_API_KEY" ] && [ -n "$APPLE_API_ISSUER" ]; then
             printf '%s\n' "$APPLE_API_PRIVATE_KEY" > /tmp/AuthKey.p8
             chmod 600 /tmp/AuthKey.p8
-            echo "AuthKey.p8: $(wc -c < /tmp/AuthKey.p8) bytes, first line: $(head -1 /tmp/AuthKey.p8)"
+            first_line="$(head -1 /tmp/AuthKey.p8)"
+            echo "AuthKey.p8: $(wc -c < /tmp/AuthKey.p8) bytes"
+            if ! printf '%s\n' "$first_line" | grep -q -- "-----BEGIN PRIVATE KEY-----"; then
+              echo "::error::APPLE_API_PRIVATE_KEY is not a raw PEM .p8 (expected to start with '-----BEGIN PRIVATE KEY-----', got '${first_line:0:40}'). Re-paste the full AuthKey.p8 file contents (including the BEGIN/END lines) into the secret."
+              exit 1
+            fi
             xcrun notarytool submit "$dmg" --key /tmp/AuthKey.p8 \
               --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER" --wait \
               2>&1 | tee /tmp/notary.log
