@@ -5,6 +5,9 @@ import {
   Loader2,
   Plus,
   Settings,
+  ShieldCheck,
+  ShieldPlus,
+  Terminal,
   Trash2,
   X,
 } from 'lucide-react';
@@ -1073,37 +1076,58 @@ export function ConfigPage() {
           )}
 
           {tab === 'permissions' && (
-            <div className="space-y-3">
+            <div className="space-y-4">
               <p className="text-xs text-dim">{t('config.permissionsHint')}</p>
+              <div className="flex items-center gap-2 text-xs text-dim">
+                <ShieldCheck size={14} className="text-ok" />
+                {t('config.permissionsCount', { count: rules.length })}
+              </div>
               {rules.length === 0 ? (
-                <p className="text-sm text-dim">
-                  {t('config.permissionsEmpty')}
-                </p>
+                <div className="rounded-xl border border-dashed border-edge px-6 py-10 text-center">
+                  <ShieldCheck size={28} className="mx-auto mb-2 text-dim/60" />
+                  <p className="text-sm text-dim">
+                    {t('config.permissionsEmpty')}
+                  </p>
+                  <p className="mt-1 text-xs text-dim/70">
+                    {t('config.permissionsEmptyHint')}
+                  </p>
+                </div>
               ) : (
-                rules.map((rule) => (
-                  <div
-                    key={rule}
-                    className="flex items-center gap-2 rounded-lg border border-edge bg-panel2 px-3 py-2"
-                  >
-                    <code className="flex-1 text-sm font-mono truncate">
-                      {rule}
-                    </code>
-                    <button
-                      onClick={() =>
-                        void api
-                          .denyPermission(rule)
-                          .then(() => api.permissions())
-                          .then(setRules)
-                          .catch((err) => setError(String(err)))
-                      }
-                      className="text-xs text-dim hover:text-err"
+                <div className="overflow-hidden rounded-xl border border-edge bg-panel">
+                  {rules.map((rule, i) => (
+                    <div
+                      key={rule}
+                      className={`group flex items-center gap-2 px-3 py-2 hover:bg-panel2 ${
+                        i > 0 ? 'border-t border-edge/60' : ''
+                      }`}
                     >
-                      {t('config.permissionsRemove')}
-                    </button>
-                  </div>
-                ))
+                      <Terminal size={14} className="shrink-0 text-dim" />
+                      <code className="flex-1 truncate font-mono text-sm text-fg">
+                        {rule}
+                      </code>
+                      <button
+                        onClick={() =>
+                          void api
+                            .denyPermission(rule)
+                            .then(() => api.permissions())
+                            .then(setRules)
+                            .then(() =>
+                              toast(t('config.permissionsRemoved', { rule })),
+                            )
+                            .catch((err) => setError(String(err)))
+                        }
+                        title={t('config.permissionsRemove')}
+                        aria-label={t('config.permissionsRemove')}
+                        className="shrink-0 rounded p-1 text-dim opacity-0 transition-opacity hover:text-err group-hover:opacity-100"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
               )}
-              <div className="flex items-center gap-2 pt-2">
+              <div className="flex items-center gap-2 rounded-xl border border-edge bg-panel2 p-2">
+                <ShieldPlus size={15} className="ml-1 shrink-0 text-dim" />
                 <input
                   value={ruleInput}
                   onChange={(e) => setRuleInput(e.target.value)}
@@ -1114,11 +1138,15 @@ export function ConfigPage() {
                         .allowPermission(ruleInput.trim())
                         .then(() => api.permissions())
                         .then(setRules)
-                        .then(() => setRuleInput(''))
+                        .then(() => {
+                          const rule = ruleInput.trim();
+                          setRuleInput('');
+                          toast(t('config.permissionsAdded', { rule }));
+                        })
                         .catch((err) => setError(String(err)));
                     }
                   }}
-                  className="flex-1 rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
+                  className="flex-1 bg-transparent px-2 py-1 text-sm outline-none placeholder:text-dim/60"
                 />
                 <button
                   onClick={() => {
@@ -1127,10 +1155,15 @@ export function ConfigPage() {
                       .allowPermission(ruleInput.trim())
                       .then(() => api.permissions())
                       .then(setRules)
-                      .then(() => setRuleInput(''))
+                      .then(() => {
+                        const rule = ruleInput.trim();
+                        setRuleInput('');
+                        toast(t('config.permissionsAdded', { rule }));
+                      })
                       .catch((err) => setError(String(err)));
                   }}
-                  className="rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90"
+                  className="rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
+                  disabled={!ruleInput.trim()}
                 >
                   {t('config.permissionsAdd')}
                 </button>
