@@ -78,8 +78,7 @@ inference instances, router policy, and MCP servers.
 
 ## Documentation
 
-Design notes and the codex-rs gap analysis live in [`docs/`](docs/), and
-release history is tracked in [CHANGELOG.md](CHANGELOG.md).
+Release history is tracked in [CHANGELOG.md](CHANGELOG.md).
 
 ## Contributing
 
