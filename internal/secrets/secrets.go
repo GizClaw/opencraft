@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/secret"
@@ -62,9 +63,9 @@ type Settings struct {
 
 // backend abstracts the OS credential storage.
 type backend interface {
-	Get(name string) (value string, found bool, err error)
-	Set(name, value string) error
-	Delete(name string) error
+	Get(ctx context.Context, name string) (value string, found bool, err error)
+	Set(ctx context.Context, name, value string) error
+	Delete(ctx context.Context, name string) error
 	Available() bool
 }
 
@@ -98,11 +99,11 @@ func NewStore(dir, service string) (Store, error) {
 }
 
 // Lookup implements resource.SecretStore.
-func (s Store) Lookup(_ context.Context, name string) (string, bool, error) {
+func (s Store) Lookup(ctx context.Context, name string) (string, bool, error) {
 	if s.backend == nil {
 		return "", false, errors.New("opencraft secrets: store is unavailable")
 	}
-	return s.backend.Get(name)
+	return s.backend.Get(ctx, name)
 }
 
 // DefaultSecretStore implements resource.SecretStore.
@@ -118,19 +119,19 @@ func (s Store) Available() bool {
 }
 
 // Set stores one secret; Delete removes it.
-func (s Store) Set(name, value string) error {
+func (s Store) Set(ctx context.Context, name, value string) error {
 	if s.backend == nil {
 		return errors.New("opencraft secrets: store is unavailable")
 	}
-	return s.backend.Set(name, value)
+	return s.backend.Set(ctx, name, value)
 }
 
 // Delete removes one secret. A missing item is not an error.
-func (s Store) Delete(name string) error {
+func (s Store) Delete(ctx context.Context, name string) error {
 	if s.backend == nil {
 		return errors.New("opencraft secrets: store is unavailable")
 	}
-	return s.backend.Delete(name)
+	return s.backend.Delete(ctx, name)
 }
 
 // factory builds the secret.Store/keychain resource.
@@ -198,27 +199,27 @@ func (m *Manager) Available() bool {
 }
 
 // Get returns one secret.
-func (m *Manager) Get(account string) (string, bool, error) {
+func (m *Manager) Get(ctx context.Context, account string) (string, bool, error) {
 	if m == nil {
 		return "", false, errors.New("opencraft secrets: manager is unavailable")
 	}
-	return m.store.Lookup(context.Background(), account)
+	return m.store.Lookup(ctx, account)
 }
 
 // Set stores one secret.
-func (m *Manager) Set(account, value string) error {
+func (m *Manager) Set(ctx context.Context, account, value string) error {
 	if m == nil {
 		return errors.New("opencraft secrets: manager is unavailable")
 	}
-	return m.store.Set(account, value)
+	return m.store.Set(ctx, account, value)
 }
 
 // Delete removes one secret.
-func (m *Manager) Delete(account string) error {
+func (m *Manager) Delete(ctx context.Context, account string) error {
 	if m == nil {
 		return errors.New("opencraft secrets: manager is unavailable")
 	}
-	return m.store.Delete(account)
+	return m.store.Delete(ctx, account)
 }
 
 // AccountFor returns the credential account for one inference
@@ -232,13 +233,19 @@ func AccountFor(deploymentID string) string {
 // The service is the Keychain service; the name is the account.
 type keychainBackend struct{ service string }
 
+// securityTimeout bounds every security(1) invocation so a locked
+// keychain or an unexpected interactive prompt can never hang the app.
+const securityTimeout = 10 * time.Second
+
 func (k *keychainBackend) Available() bool {
 	_, err := exec.LookPath("security")
 	return err == nil
 }
 
-func (k *keychainBackend) Get(name string) (string, bool, error) {
-	out, err := exec.Command(
+func (k *keychainBackend) Get(ctx context.Context, name string) (string, bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, securityTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(ctx,
 		"security", "find-generic-password",
 		"-a", name, "-s", k.service, "-w").Output()
 	if err != nil {
@@ -249,11 +256,16 @@ func (k *keychainBackend) Get(name string) (string, bool, error) {
 	return strings.TrimRight(string(out), "\r\n"), true, nil
 }
 
-func (k *keychainBackend) Set(name, value string) error {
-	cmd := exec.Command(
+func (k *keychainBackend) Set(ctx context.Context, name, value string) error {
+	ctx, cancel := context.WithTimeout(ctx, securityTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx,
 		"security", "add-generic-password",
 		"-a", name, "-s", k.service, "-U", "-w")
-	cmd.Stdin = strings.NewReader(value)
+	// security(1) reads the password interactively as two lines (value
+	// + retype) even when -w has no argument; feed both so it never
+	// falls back to a /dev/tty prompt (which would hang a GUI process).
+	cmd.Stdin = strings.NewReader(value + "\n" + value + "\n")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("opencraft secrets: keychain add %q: %v: %s",
 			name, err, strings.TrimSpace(string(out)))
@@ -261,8 +273,10 @@ func (k *keychainBackend) Set(name, value string) error {
 	return nil
 }
 
-func (k *keychainBackend) Delete(name string) error {
-	if out, err := exec.Command(
+func (k *keychainBackend) Delete(ctx context.Context, name string) error {
+	ctx, cancel := context.WithTimeout(ctx, securityTimeout)
+	defer cancel()
+	if out, err := exec.CommandContext(ctx,
 		"security", "delete-generic-password",
 		"-a", name, "-s", k.service).CombinedOutput(); err != nil {
 		return fmt.Errorf("opencraft secrets: keychain delete %q: %v: %s",
@@ -283,7 +297,7 @@ func (f *fileBackend) path(name string) string {
 	return filepath.Join(f.dir, hex.EncodeToString(sum[:]))
 }
 
-func (f *fileBackend) Get(name string) (string, bool, error) {
+func (f *fileBackend) Get(_ context.Context, name string) (string, bool, error) {
 	raw, err := os.ReadFile(f.path(name))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -295,14 +309,14 @@ func (f *fileBackend) Get(name string) (string, bool, error) {
 	return strings.TrimRight(string(raw), "\r\n"), true, nil
 }
 
-func (f *fileBackend) Set(name, value string) error {
+func (f *fileBackend) Set(_ context.Context, name, value string) error {
 	if err := os.WriteFile(f.path(name), []byte(value), 0o600); err != nil {
 		return fmt.Errorf("opencraft secrets: write %q: %w", name, err)
 	}
 	return nil
 }
 
-func (f *fileBackend) Delete(name string) error {
+func (f *fileBackend) Delete(_ context.Context, name string) error {
 	if err := os.Remove(f.path(name)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("opencraft secrets: delete %q: %w", name, err)
 	}

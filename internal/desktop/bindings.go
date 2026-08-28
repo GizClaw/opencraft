@@ -276,7 +276,11 @@ func (a *App) saveInference(req InferenceRequest) error {
 			// literal 0600 config so the settings page stays usable.
 			if a.secrets != nil && a.secrets.Available() {
 				account := secrets.AccountFor(in.DeploymentID(len(instances) + 1))
-				storeErr := a.secrets.Set(account, key)
+				ctx := a.ctx
+				if ctx == nil {
+					ctx = context.Background()
+				}
+				storeErr := a.secrets.Set(ctx, account, key)
 				if storeErr == nil {
 					in.KeySource = config.KeyKeychain
 					in.KeyValue = account

@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -18,6 +19,10 @@ func (a *App) migrateInferenceKeys() {
 	if a.secrets == nil || !a.secrets.Available() {
 		return
 	}
+	ctx := a.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	cfg, err := config.LoadInference(a.userDir)
 	if err != nil {
 		return
@@ -29,7 +34,7 @@ func (a *App) migrateInferenceKeys() {
 			continue
 		}
 		account := secrets.AccountFor(in.DeploymentID(i + 1))
-		if err := a.secrets.Set(account, in.KeyValue); err != nil {
+		if err := a.secrets.Set(ctx, account, in.KeyValue); err != nil {
 			fmt.Fprintf(os.Stderr,
 				"opencraft: key migration for %q failed, keeping literal key: %v\n",
 				in.DeploymentID(i+1), err)
@@ -37,7 +42,7 @@ func (a *App) migrateInferenceKeys() {
 		}
 		// Read back before dropping the literal so a failed write can
 		// never strand the credential.
-		got, found, err := a.secrets.Get(account)
+		got, found, err := a.secrets.Get(ctx, account)
 		if err != nil || !found || got != in.KeyValue {
 			fmt.Fprintf(os.Stderr,
 				"opencraft: key migration verification for %q failed, keeping literal key\n",
