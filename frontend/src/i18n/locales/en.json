@@ -99,6 +99,7 @@
     "pluginsChooseFolder": "Choose folder…",
     "pluginsUninstall": "Uninstall",
     "pluginsUninstallConfirm": "Uninstall?",
+    "pluginsCommands": "Plugin commands",
     "pluginLoadError": "Plugin load failed",
     "pluginsEnable": "Enable",
     "pluginsDisable": "Disable",

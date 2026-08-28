@@ -2,16 +2,20 @@ import { create } from 'zustand';
 import { api } from '../lib/api';
 import { evaluatePlugin, sortByOrder } from './host';
 import type {
+  CommandContribution,
   PluginContributions,
   PluginSummary,
   SettingsPanelContribution,
   SidebarEntryContribution,
+  StatusBarContribution,
 } from './types';
 
 interface PluginState {
   plugins: PluginSummary[];
   panels: SettingsPanelContribution[];
   entries: SidebarEntryContribution[];
+  commands: CommandContribution[];
+  statusBar: StatusBarContribution[];
   errors: Record<string, string>;
   loading: boolean;
   load: () => Promise<void>;
@@ -22,6 +26,8 @@ export const usePluginStore = create<PluginState>((set, get) => ({
   plugins: [],
   panels: [],
   entries: [],
+  commands: [],
+  statusBar: [],
   errors: {},
   loading: false,
 
@@ -31,6 +37,8 @@ export const usePluginStore = create<PluginState>((set, get) => ({
       const plugins = (await api.pluginList()) ?? [];
       const panels: SettingsPanelContribution[] = [];
       const entries: SidebarEntryContribution[] = [];
+      const commands: CommandContribution[] = [];
+      const statusBar: StatusBarContribution[] = [];
       const errors: Record<string, string> = {};
       for (const p of plugins) {
         if (p.error) {
@@ -43,13 +51,17 @@ export const usePluginStore = create<PluginState>((set, get) => ({
           const c = evaluatePlugin(p.id, src, p.permissions);
           panels.push(...(c.settingsPanels ?? []));
           entries.push(...(c.sidebarEntries ?? []));
+          commands.push(...(c.commands ?? []));
+          statusBar.push(...(c.statusBar ?? []));
         } catch (err) {
           errors[p.id] = String(err);
         }
       }
       panels.sort(sortByOrder);
       entries.sort(sortByOrder);
-      set({ plugins, panels, entries, errors });
+      commands.sort(sortByOrder);
+      statusBar.sort(sortByOrder);
+      set({ plugins, panels, entries, commands, statusBar, errors });
     } catch (err) {
       set({ errors: { _host: String(err) } });
     } finally {

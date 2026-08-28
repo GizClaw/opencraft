@@ -50,7 +50,9 @@ type Options struct {
 type App struct {
 	ctx context.Context
 
-	mu      sync.Mutex
+	mu sync.Mutex
+	// kvMu serializes plugin KV state file updates.
+	kvMu    sync.Mutex
 	workDir string
 	userDir string
 	// pluginDir is the frontend plugin root (<dataDir>/plugins); set by

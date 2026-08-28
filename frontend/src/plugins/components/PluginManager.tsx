@@ -12,6 +12,7 @@ export function PluginManager() {
   const { t } = useTranslation();
   const plugins = usePluginStore((s) => s.plugins);
   const panels = usePluginStore((s) => s.panels);
+  const commands = usePluginStore((s) => s.commands);
   const errors = usePluginStore((s) => s.errors);
   const loading = usePluginStore((s) => s.loading);
   const load = usePluginStore((s) => s.load);
@@ -130,6 +131,25 @@ export function PluginManager() {
               <panel.Component />
             </section>
           ))}
+        </div>
+      )}
+
+      {commands.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <h3 className="text-xs font-semibold text-dim">
+            {t('config.pluginsCommands')}
+          </h3>
+          <div className="flex flex-wrap gap-2">
+            {commands.map((cmd) => (
+              <button
+                key={cmd.id}
+                onClick={() => cmd.run()}
+                className="rounded-lg border border-edge bg-panel2 px-2.5 py-1.5 text-xs hover:border-accent/50"
+              >
+                {cmd.title}
+              </button>
+            ))}
+          </div>
         </div>
       )}
 

@@ -63,9 +63,13 @@ var pluginIDRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 // plugin may declare. Unknown permissions reject the plugin
 // (fail-closed).
 var allowedPluginPermissions = map[string]bool{
-	"secrets:auth":     true,
-	"auth:device":      true,
-	"inference:upsert": true,
+	"secrets:auth":         true,
+	"auth:device":          true,
+	"inference:upsert":     true,
+	"storage:kv":           true,
+	"events:subscribe":     true,
+	"commands:register":    true,
+	"statusbar:contribute": true,
 }
 
 // pluginStateFile records explicit enable/disable choices. A plugin
@@ -255,6 +259,7 @@ func (a *App) PluginUninstall(id string) error {
 	if err := os.RemoveAll(filepath.Join(root, id)); err != nil {
 		return fmt.Errorf("plugins: remove %q: %w", id, err)
 	}
+	a.removePluginKVData(id)
 	state, err := readPluginState(root)
 	if err != nil {
 		return err

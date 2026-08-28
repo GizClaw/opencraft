@@ -99,6 +99,7 @@
     "pluginsChooseFolder": "选择文件夹…",
     "pluginsUninstall": "卸载",
     "pluginsUninstallConfirm": "确认卸载？",
+    "pluginsCommands": "插件命令",
     "pluginLoadError": "插件加载失败",
     "pluginsEnable": "启用",
     "pluginsDisable": "停用",

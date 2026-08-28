@@ -37,7 +37,7 @@ import type {
   UsagePoint,
   WorkspaceMeta,
 } from './types';
-import type { PluginSummary } from '../plugins/types';
+import type { PluginKVEntry, PluginSummary } from '../plugins/types';
 
 export const api = {
   version: () => App.Version(),
@@ -131,6 +131,14 @@ export const api = {
     App.PluginSetEnabled(id, enabled),
   pluginUninstall: (id: string) => App.PluginUninstall(id),
   pickFolder: (title: string) => App.PickFolder(title) as Promise<string>,
+  pluginKVGet: (id: string, key: string) =>
+    App.PluginKVGet(id, key) as Promise<PluginKVEntry>,
+  pluginKVList: (id: string) =>
+    App.PluginKVList(id) as Promise<PluginKVEntry[]>,
+  pluginKVSet: (id: string, key: string, value: string) =>
+    App.PluginKVSet(id, key, value),
+  pluginKVDelete: (id: string, key: string) =>
+    App.PluginKVDelete(id, key),
   secretExists: (scope: string, name: string) =>
     App.SecretExists(scope, name) as Promise<boolean>,
   secretDelete: (scope: string, name: string) =>

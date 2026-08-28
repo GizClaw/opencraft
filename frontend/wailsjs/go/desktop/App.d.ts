@@ -83,6 +83,14 @@ export function PluginBundle(arg1:string):Promise<string>;
 
 export function PluginInstall(arg1:string):Promise<desktop.PluginSummary>;
 
+export function PluginKVDelete(arg1:string,arg2:string):Promise<void>;
+
+export function PluginKVGet(arg1:string,arg2:string):Promise<desktop.PluginKVEntry>;
+
+export function PluginKVList(arg1:string):Promise<Array<desktop.PluginKVEntry>>;
+
+export function PluginKVSet(arg1:string,arg2:string,arg3:string):Promise<void>;
+
 export function PluginList():Promise<Array<desktop.PluginSummary>>;
 
 export function PluginSetEnabled(arg1:string,arg2:boolean):Promise<void>;

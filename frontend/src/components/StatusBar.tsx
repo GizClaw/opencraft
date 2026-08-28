@@ -1,6 +1,7 @@
 import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '../lib/store';
+import { PluginStatusItems } from '../plugins/components/PluginStatusItems';
 
 export function StatusBar() {
   const busy = useStore((s) => s.conversations[s.current]?.busy ?? false);
@@ -33,6 +34,7 @@ export function StatusBar() {
           · {lastUsage.latency_ms}ms
         </span>
       )}
+      <PluginStatusItems />
       {model && (
         <span className="rounded bg-panel2 border border-edge px-2 py-0.5 whitespace-nowrap">
           {model}

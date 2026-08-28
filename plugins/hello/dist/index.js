@@ -4,17 +4,62 @@
 // points through ctx.contribute.
 (function (ctx) {
   var React = ctx.React;
+  var storage = ctx.capabilities.storage;
+  var ui = ctx.capabilities.ui;
+
+  function readCounter(setValue) {
+    storage.get('counter').then(function (v) {
+      setValue(v === null ? '0' : v);
+    });
+  }
+
+  function incrementCounter() {
+    return storage
+      .get('counter')
+      .then(function (v) {
+        var n = String((parseInt(v || '0', 10) || 0) + 1);
+        return storage.set('counter', n).then(function () {
+          return n;
+        });
+      })
+      .then(function (n) {
+        ui.flash('Hello counter: ' + n);
+        return n;
+      });
+  }
 
   function HelloPanel() {
+    var state = React.useState('…');
+    var value = state[0];
+    var setValue = state[1];
+    React.useEffect(function () {
+      readCounter(setValue);
+    }, []);
+
     return React.createElement(
       'div',
-      { className: 'text-sm text-fg' },
-      'Hello from the hello plugin!',
+      { className: 'flex flex-col gap-2 text-sm text-fg' },
+      React.createElement('p', null, 'Counter: ', value),
       React.createElement(
-        'p',
-        { className: 'mt-1 text-xs text-dim' },
-        'This panel is contributed via the settingsPanels contribution point.'
+        'button',
+        {
+          onClick: function () {
+            incrementCounter().then(function () {
+              readCounter(setValue);
+            });
+          },
+          className: 'w-fit rounded-md bg-accent px-2 py-1 text-xs text-white hover:opacity-90',
+        },
+        'Increment (capabilities.storage)'
       )
+    );
+  }
+
+  function StatusLabel() {
+    return React.createElement(
+      'span',
+      { className: 'text-dim' },
+      'Hello'
     );
   }
 
@@ -28,9 +73,22 @@
         title: 'Hello',
         order: 10,
         onClick: function () {
-          ctx.ui.flash('Hello from the hello plugin!');
+          ui.flash('Hello from the hello plugin!');
         },
       },
+    ],
+    commands: [
+      {
+        id: 'hello-increment',
+        title: 'Hello: increment counter',
+        order: 10,
+        run: function () {
+          incrementCounter();
+        },
+      },
+    ],
+    statusBar: [
+      { id: 'hello-status', order: 10, Component: StatusLabel },
     ],
   });
 })(ctx);

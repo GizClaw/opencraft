@@ -154,6 +154,22 @@ export function PluginInstall(arg1) {
   return window['go']['desktop']['App']['PluginInstall'](arg1);
 }
 
+export function PluginKVDelete(arg1, arg2) {
+  return window['go']['desktop']['App']['PluginKVDelete'](arg1, arg2);
+}
+
+export function PluginKVGet(arg1, arg2) {
+  return window['go']['desktop']['App']['PluginKVGet'](arg1, arg2);
+}
+
+export function PluginKVList(arg1) {
+  return window['go']['desktop']['App']['PluginKVList'](arg1);
+}
+
+export function PluginKVSet(arg1, arg2, arg3) {
+  return window['go']['desktop']['App']['PluginKVSet'](arg1, arg2, arg3);
+}
+
 export function PluginList() {
   return window['go']['desktop']['App']['PluginList']();
 }
