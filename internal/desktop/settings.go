@@ -358,6 +358,34 @@ func (a *App) PickFolder(title string) (string, error) {
 		})
 }
 
+// PickFile opens the native file picker with an optional extension
+// filter (e.g. "*.zip").
+func (a *App) PickFile(title, pattern string) (string, error) {
+	a.mu.Lock()
+	dir := a.workDir
+	ctx := a.ctx
+	a.mu.Unlock()
+	if ctx == nil {
+		return "", errors.New("app context is not ready")
+	}
+	if title == "" {
+		title = "选择文件"
+	}
+	var filters []wailsruntime.FileFilter
+	if pattern != "" {
+		filters = []wailsruntime.FileFilter{{
+			DisplayName: pattern,
+			Pattern:     pattern,
+		}}
+	}
+	return wailsruntime.OpenFileDialog(
+		ctx, wailsruntime.OpenDialogOptions{
+			Title:            title,
+			DefaultDirectory: dir,
+			Filters:          filters,
+		})
+}
+
 // ReadLog returns the tail of the application log file.
 func (a *App) ReadLog(n int) (string, error) {
 	if n <= 0 {

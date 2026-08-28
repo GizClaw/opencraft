@@ -47,6 +47,16 @@ func (a *App) PluginInstall(src string) (plugins.PluginSummary, error) {
 	return a.plugins.Install(src)
 }
 
+// PluginInstallZip installs a plugin from a zip package (a release
+// artifact). The archive is extracted safely and installed through the
+// normal Install path.
+func (a *App) PluginInstallZip(zipPath string) (plugins.PluginSummary, error) {
+	if a.plugins == nil {
+		return plugins.PluginSummary{}, errors.New("plugin store is not ready")
+	}
+	return a.plugins.InstallZip(zipPath)
+}
+
 // PluginUninstall removes a plugin and its KV data.
 func (a *App) PluginUninstall(id string) error {
 	if a.plugins == nil {
