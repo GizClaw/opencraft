@@ -4,15 +4,22 @@
 //
 // One 0600 file per secret under a 0700 directory backs the store on
 // every platform (the Linux approach): no keychain ACLs, no native
-// authorization prompts, no cgo. The resource impl id stays "keychain"
-// and configs keep ${secret:keychain.<name>} references so existing
-// user documents do not need rewriting. Deployments that need a richer
-// backend (vault, 1Password, Secret Service) can register their own
-// secret.Store impl without touching opencraft core.
+// authorization prompts, no cgo. Secrets are encrypted at rest with
+// AES-256-GCM under a machine-local 32-byte key stored next to them as
+// .key (0600). Pre-encryption plaintext files stay readable and are
+// rewritten encrypted on the next Set. The resource impl id stays
+// "keychain" and configs keep ${secret:keychain.<name>} references so
+// existing user documents do not need rewriting. Deployments that need
+// a richer backend (vault, 1Password, Secret Service) can register
+// their own secret.Store impl without touching opencraft core.
 package secrets
 
 import (
+	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -29,6 +36,17 @@ import (
 // predates the file-only backend; it is kept so already-written
 // ${secret:keychain.<name>} references keep resolving.
 const ResourceImpl = "keychain"
+
+// encMagic prefixes every sealed secret file so Get can distinguish
+// ciphertext from legacy plaintext.
+var encMagic = []byte("ocenc1:")
+
+const (
+	// encKeyLen is the AES-256 key size in bytes.
+	encKeyLen = 32
+	// encKeyFile is the machine-local key file inside the store dir.
+	encKeyFile = ".key"
+)
 
 // DefaultService is the (retained) service name used for app
 // credentials (inference keys today; SSO gateway tokens later). The
@@ -70,11 +88,13 @@ type backend interface {
 	Available() bool
 }
 
-// NewStore opens the 0600-file backend rooted at dir. service is
-// retained for call-site compatibility but not used by the file
-// backend. The returned store is usable even when the directory cannot
-// be created: Lookup then reports an error, and Available reports false
-// so callers can fall back to literal config storage.
+// NewStore opens the 0600-file backend rooted at dir, creating the
+// store directory (0700) and the AES key file (.key, 0600) on first
+// use. service is retained for call-site compatibility but not used by
+// the file backend. The returned store is usable even when the
+// directory or key cannot be created: Lookup then reports an error,
+// and Available reports false so callers can fall back to literal
+// config storage.
 func NewStore(dir, service string) (Store, error) {
 	_ = service // file backend; kept for call-site compatibility.
 	if strings.TrimSpace(dir) == "" {
@@ -85,7 +105,11 @@ func NewStore(dir, service string) (Store, error) {
 		return Store{}, fmt.Errorf(
 			"opencraft secrets: create store dir: %w", err)
 	}
-	return Store{backend: &fileBackend{dir: dir}}, nil
+	key, err := loadOrCreateKey(dir)
+	if err != nil {
+		return Store{}, err
+	}
+	return Store{backend: &fileBackend{dir: dir, key: key}}, nil
 }
 
 // Lookup implements resource.SecretStore.
@@ -172,14 +196,19 @@ func NewManager(dir, service string) *Manager {
 	return &Manager{store: store}
 }
 
-// NewFileManager returns a manager backed by 0600 files under dir. It
-// bypasses NewStore's directory setup and exists for tests and
-// headless deployments that want deterministic file storage.
+// NewFileManager returns a manager backed by encrypted 0600 files
+// under dir (creating the directory and key on first use). It exists
+// for tests and headless deployments that want deterministic file
+// storage. An unusable directory or key yields an unavailable manager.
 func NewFileManager(dir string) *Manager {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return &Manager{}
 	}
-	return &Manager{store: Store{backend: &fileBackend{dir: dir}}}
+	key, err := loadOrCreateKey(dir)
+	if err != nil {
+		return &Manager{}
+	}
+	return &Manager{store: Store{backend: &fileBackend{dir: dir, key: key}}}
 }
 
 // Available reports whether the underlying backend is usable.
@@ -220,8 +249,14 @@ func AccountFor(deploymentID string) string {
 
 // fileBackend stores one 0600 file per secret under a 0700 directory.
 // File names are sha256 hashes of the account so arbitrary names can
-// never escape the directory.
-type fileBackend struct{ dir string }
+// never escape the directory. With a key present every file is sealed
+// with AES-256-GCM (magic + random nonce + ciphertext+tag); a nil key
+// keeps the legacy plaintext behavior so tests and pre-encryption
+// stores keep working.
+type fileBackend struct {
+	dir string
+	key []byte
+}
 
 func (f *fileBackend) Available() bool { return f != nil && f.dir != "" }
 
@@ -239,11 +274,25 @@ func (f *fileBackend) Get(_ context.Context, name string) (string, bool, error) 
 		return "", false, fmt.Errorf(
 			"opencraft secrets: read %q: %w", name, err)
 	}
+	if bytes.HasPrefix(raw, encMagic) {
+		plain, err := f.decrypt(raw)
+		if err != nil {
+			return "", false, fmt.Errorf(
+				"opencraft secrets: read %q: %w", name, err)
+		}
+		return strings.TrimRight(string(plain), "\r\n"), true, nil
+	}
+	// Legacy plaintext (written before encryption): readable, and the
+	// next Set rewrites it sealed.
 	return strings.TrimRight(string(raw), "\r\n"), true, nil
 }
 
 func (f *fileBackend) Set(_ context.Context, name, value string) error {
-	if err := os.WriteFile(f.path(name), []byte(value), 0o600); err != nil {
+	data, err := f.seal([]byte(value))
+	if err != nil {
+		return fmt.Errorf("opencraft secrets: encrypt %q: %w", name, err)
+	}
+	if err := os.WriteFile(f.path(name), data, 0o600); err != nil {
 		return fmt.Errorf("opencraft secrets: write %q: %w", name, err)
 	}
 	return nil
@@ -254,4 +303,115 @@ func (f *fileBackend) Delete(_ context.Context, name string) error {
 		return fmt.Errorf("opencraft secrets: delete %q: %w", name, err)
 	}
 	return nil
+}
+
+// seal encrypts value with AES-256-GCM under f.key. A nil key keeps
+// the legacy plaintext format (tests and pre-encryption stores).
+func (f *fileBackend) seal(value []byte) ([]byte, error) {
+	if len(f.key) == 0 {
+		return value, nil
+	}
+	gcm, err := newGCM(f.key)
+	if err != nil {
+		return nil, err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
+	sealed := gcm.Seal(nil, nonce, value, nil)
+	out := make([]byte, 0, len(encMagic)+len(nonce)+len(sealed))
+	out = append(out, encMagic...)
+	out = append(out, nonce...)
+	out = append(out, sealed...)
+	return out, nil
+}
+
+// decrypt reverses seal. Files without the magic prefix are legacy
+// plaintext and are not routed here.
+func (f *fileBackend) decrypt(raw []byte) ([]byte, error) {
+	if len(f.key) == 0 {
+		return nil, errors.New("opencraft secrets: no encryption key")
+	}
+	body := raw[len(encMagic):]
+	gcm, err := newGCM(f.key)
+	if err != nil {
+		return nil, err
+	}
+	if len(body) < gcm.NonceSize() {
+		return nil, errors.New("opencraft secrets: truncated sealed secret")
+	}
+	nonce, sealed := body[:gcm.NonceSize()], body[gcm.NonceSize():]
+	plain, err := gcm.Open(nil, nonce, sealed, nil)
+	if err != nil {
+		return nil, fmt.Errorf("opencraft secrets: decrypt: %w", err)
+	}
+	return plain, nil
+}
+
+func newGCM(key []byte) (cipher.AEAD, error) {
+	if len(key) != encKeyLen {
+		return nil, fmt.Errorf(
+			"opencraft secrets: key must be %d bytes, got %d",
+			encKeyLen, len(key))
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	return cipher.NewGCM(block)
+}
+
+// loadOrCreateKey reads the store's 32-byte AES key, creating it with
+// 0600 permissions on first use. Concurrent first runs race on O_EXCL;
+// the loser reads the winner's key.
+func loadOrCreateKey(dir string) ([]byte, error) {
+	path := filepath.Join(dir, encKeyFile)
+	raw, err := os.ReadFile(path)
+	if err == nil {
+		return decodeKey(raw)
+	}
+	if !os.IsNotExist(err) {
+		return nil, err
+	}
+	key := make([]byte, encKeyLen)
+	if _, err := rand.Read(key); err != nil {
+		return nil, err
+	}
+	fd, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		if os.IsExist(err) {
+			raw, rerr := os.ReadFile(path)
+			if rerr != nil {
+				return nil, rerr
+			}
+			return decodeKey(raw)
+		}
+		return nil, err
+	}
+	defer func() { _ = fd.Close() }()
+	if err := fd.Chmod(0o600); err != nil {
+		return nil, err
+	}
+	if _, err := fd.Write([]byte(hex.EncodeToString(key) + "\n")); err != nil {
+		return nil, err
+	}
+	if err := fd.Sync(); err != nil {
+		return nil, err
+	}
+	return key, nil
+}
+
+func decodeKey(raw []byte) ([]byte, error) {
+	key, err := hex.DecodeString(strings.TrimSpace(string(raw)))
+	if err != nil {
+		return nil, fmt.Errorf(
+			"opencraft secrets: decode key file: %w", err)
+	}
+	if len(key) != encKeyLen {
+		return nil, fmt.Errorf(
+			"opencraft secrets: key file must hold %d bytes, got %d",
+			encKeyLen, len(key))
+	}
+	return key, nil
 }

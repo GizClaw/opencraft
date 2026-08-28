@@ -143,7 +143,9 @@ func New(opts Options) (*App, error) {
 	shutdown, err := initTelemetry()
 	if err != nil {
 		// Telemetry is best-effort for the desktop app: a failed
-		// pipeline must not block the window.
+		// pipeline must not block the window. The failure itself
+		// cannot go through telemetry (it is what failed), so it is
+		// reported on stderr instead.
 		fmt.Fprintf(os.Stderr, "opencraft: telemetry: %v\n", err)
 		shutdown = nil
 	}

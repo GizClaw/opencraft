@@ -10,7 +10,8 @@ resources:
   # ${secret:keychain.<name>} scheme used by migrated inference keys
   # (and future SSO gateway tokens). The impl id "keychain" is kept so
   # existing config references keep resolving; storage is one 0600 file
-  # per secret under <dataDir>/keyring on every platform.
+  # per secret under <dataDir>/keyring on every platform, sealed at
+  # rest with AES-256-GCM under a machine-local key (<dir>/.key, 0600).
   secret.keychain:
     kind: secret.Store
     impl: keychain
