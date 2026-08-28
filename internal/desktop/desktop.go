@@ -192,6 +192,32 @@ func New(opts Options) (*App, error) {
 		},
 	}, sec)
 	a.cap.SetEnv([]string{"OPENCRAFT_VERSION=" + app.ServiceVersion})
+	a.cap.SetInferenceHandler(pluginruntime.InferenceHandler{
+		Upsert: func(pluginID string, profile pluginruntime.InferenceProfile) error {
+			if err := a.upsertInferenceProfile(pluginID, profile); err != nil {
+				return err
+			}
+			if err := a.rebuild(); err != nil {
+				return err
+			}
+			if a.bridge != nil {
+				a.bridge.Emit("inference_changed", map[string]any{})
+			}
+			return nil
+		},
+		Remove: func(_, id string) error {
+			if err := a.removeInferenceProfile(id); err != nil {
+				return err
+			}
+			if err := a.rebuild(); err != nil {
+				return err
+			}
+			if a.bridge != nil {
+				a.bridge.Emit("inference_changed", map[string]any{})
+			}
+			return nil
+		},
+	})
 	return a, nil
 }
 

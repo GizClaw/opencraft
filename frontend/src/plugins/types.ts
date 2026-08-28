@@ -94,16 +94,6 @@ export interface SecretsService {
   delete: (name: string) => Promise<void>;
 }
 
-// inference is injected with "inference:upsert": wire the completed
-// auth session into the inference config.
-export interface InferenceService {
-  upsertGatewayProfile: (
-    providerID: string,
-    displayName?: string,
-  ) => Promise<void>;
-  removeGatewayProfile: (providerID: string) => Promise<void>;
-}
-
 /** add() registers one contribution and returns its disposer. */
 export interface Registrar<T> {
   add: (contribution: T) => () => void;
@@ -116,7 +106,6 @@ export type PluginServiceKey =
   // permission-gated
   | 'storage'
   | 'secrets'
-  | 'inference'
   // contribution points (always available)
   | 'settingsPanels'
   | 'sidebarEntries'
@@ -149,7 +138,6 @@ declare module '@cordisjs/core' {
     ui: UIService;
     storage: KVService;
     secrets: SecretsService;
-    inference: InferenceService;
     settingsPanels: Registrar<SettingsPanelContribution>;
     sidebarEntries: Registrar<SidebarEntryContribution>;
     commands: Registrar<CommandContribution>;
@@ -160,6 +148,11 @@ declare module '@cordisjs/core' {
      * only routes by method name and never interprets the semantics.
      */
     invoke: (method: string, params?: unknown) => Promise<unknown>;
+    /**
+     * The host's current language (e.g. "zh" / "en"). Plugins ship
+     * their own dictionaries and render through this live value.
+     */
+    i18n: { locale: string };
   }
 
   interface Events {

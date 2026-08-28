@@ -148,10 +148,6 @@ export const api = {
     App.SecretExists(scope, name) as Promise<boolean>,
   secretDelete: (scope: string, name: string) =>
     App.SecretDelete(scope, name),
-  upsertGatewayProfile: (providerID: string, displayName: string) =>
-    App.UpsertGatewayProfile(providerID, displayName),
-  removeGatewayProfile: (providerID: string) =>
-    App.RemoveGatewayProfile(providerID),
   readLog: (n: number) => App.ReadLog(n),
   renameSession: (id: string, title: string) => App.RenameSession(id, title),
   exportSession: (id: string) => App.ExportSession(id),

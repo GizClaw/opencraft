@@ -2,9 +2,11 @@ package runtime
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -40,6 +42,10 @@ func helperPlugin() {
 		case "auth.fail":
 			write(fmt.Sprintf(
 				`{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"boom"}}`, req.ID))
+		case "lifecycle.cleanup":
+			fmt.Fprintln(os.Stderr, "CLEANUP_CALLED")
+			write(fmt.Sprintf(
+				`{"jsonrpc":"2.0","id":%s,"result":{}}`, req.ID))
 		}
 	}
 }
@@ -182,5 +188,26 @@ func TestStopShutsDownProcess(t *testing.T) {
 	m.mu.Unlock()
 	if running {
 		t.Fatal("process still registered after Stop")
+	}
+}
+
+func TestCleanupNotifiesPlugin(t *testing.T) {
+	m, _ := newTestManager(t)
+	var log bytes.Buffer
+	m.SetLogger(io.Writer(&log))
+	if _, err := m.Invoke(context.Background(), "test-plugin", "auth.poll", nil); err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	if err := m.Cleanup("test-plugin"); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	if !strings.Contains(log.String(), "CLEANUP_CALLED") {
+		t.Fatalf("plugin cleanup callback not invoked; stderr=%q", log.String())
+	}
+	m.mu.Lock()
+	_, running := m.procs["test-plugin"]
+	m.mu.Unlock()
+	if running {
+		t.Fatal("process still registered after Cleanup")
 	}
 }

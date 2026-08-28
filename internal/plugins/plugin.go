@@ -33,7 +33,6 @@ func ValidateID(id string) error {
 // may declare. Unknown permissions reject the plugin (fail-closed).
 var AllowedPermissions = map[string]bool{
 	"secrets:auth":         true,
-	"inference:upsert":     true,
 	"storage:kv":           true,
 	"events:subscribe":     true,
 	"commands:register":    true,

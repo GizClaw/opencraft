@@ -48,8 +48,9 @@ func TestFileBackendNameCannotEscape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 4 {
-		t.Fatalf("store dir has %d entries, want 4", len(entries))
+	if len(entries) != 5 {
+		// 4 secret files + accounts.json index.
+		t.Fatalf("store dir has %d entries, want 5", len(entries))
 	}
 }
 
@@ -145,6 +146,41 @@ func TestManagerSetGetDelete(t *testing.T) {
 	}
 	if _, found, _ := m.Get(context.Background(), "inference/deepseek-inst-a"); found {
 		t.Fatal("secret still present after Delete")
+	}
+}
+
+func TestDeletePrefix(t *testing.T) {
+	b := &fileBackend{dir: t.TempDir()}
+	ctx := context.Background()
+	for _, acc := range []string{
+		"auth/sso-haivivi/token",
+		"auth/sso-haivivi/meta",
+		"auth/other/token",
+		"inference/x",
+	} {
+		if err := b.Set(ctx, acc, "v"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := b.DeletePrefix(ctx, "auth/sso-haivivi/"); err != nil {
+		t.Fatal(err)
+	}
+	for _, acc := range []string{"auth/sso-haivivi/token", "auth/sso-haivivi/meta"} {
+		if _, found, err := b.Get(ctx, acc); err != nil || found {
+			t.Fatalf("%q still present after prefix delete", acc)
+		}
+	}
+	for _, acc := range []string{"auth/other/token", "inference/x"} {
+		if _, found, err := b.Get(ctx, acc); err != nil || !found {
+			t.Fatalf("%q unexpectedly removed", acc)
+		}
+	}
+	// Deleted accounts are gone from the index too.
+	list := b.readAccounts()
+	for _, n := range list {
+		if n == "auth/sso-haivivi/token" {
+			t.Fatal("deleted account still indexed")
+		}
 	}
 }
 

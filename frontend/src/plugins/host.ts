@@ -1,12 +1,12 @@
 import * as React from 'react';
 import { Context } from '@cordisjs/core';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
+import i18n from '../i18n';
 import { api } from '../lib/api';
 import { useStore as useMainStore } from '../lib/store';
 import type { UIEvent } from '../lib/types';
 import type {
   CommandContribution,
-  InferenceService,
   KVService,
   PluginModule,
   PluginServiceKey,
@@ -23,7 +23,6 @@ import type {
 const PERMISSION_GATED: Partial<Record<PluginServiceKey, string>> = {
   storage: 'storage:kv',
   secrets: 'secrets:auth',
-  inference: 'inference:upsert',
 };
 
 // Services that are always provided, no permission needed.
@@ -108,14 +107,6 @@ function makeSecretsService(): SecretsService {
   };
 }
 
-function makeInferenceService(): InferenceService {
-  return {
-    upsertGatewayProfile: (providerID, displayName) =>
-      api.upsertGatewayProfile(providerID, displayName ?? ''),
-    removeGatewayProfile: (providerID) => api.removeGatewayProfile(providerID),
-  };
-}
-
 // Contribution registrars are provided as traced services: when a
 // plugin calls ctx.settingsPanels.add(...), `this.ctx` inside the
 // method is the caller's scoped context, so the contribution is tied
@@ -168,11 +159,18 @@ function provideServices(ctx: Context, c: ContributionState) {
       };
     },
   });
+  // i18n exposes the host's current language so plugins can render
+  // their own translated strings; reading ctx.i18n.locale always
+  // returns the live value.
+  ctx.accessor('i18n', {
+    get: function () {
+      return { locale: i18n.language };
+    },
+  });
   // Permission-gated services must be declared in inject; unpermitted
   // ones are isolated from the plugin branch (see activatePlugin).
   ctx.provide('storage', makeKVService());
   ctx.provide('secrets', makeSecretsService());
-  ctx.provide('inference', makeInferenceService());
 }
 
 /**

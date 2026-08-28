@@ -22,6 +22,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -85,6 +86,7 @@ type backend interface {
 	Get(ctx context.Context, name string) (value string, found bool, err error)
 	Set(ctx context.Context, name, value string) error
 	Delete(ctx context.Context, name string) error
+	DeletePrefix(ctx context.Context, prefix string) error
 	Available() bool
 }
 
@@ -146,6 +148,14 @@ func (s Store) Delete(ctx context.Context, name string) error {
 		return errors.New("opencraft secrets: store is unavailable")
 	}
 	return s.backend.Delete(ctx, name)
+}
+
+// DeletePrefix removes every secret whose account starts with prefix.
+func (s Store) DeletePrefix(ctx context.Context, prefix string) error {
+	if s.backend == nil {
+		return errors.New("opencraft secrets: store is unavailable")
+	}
+	return s.backend.DeletePrefix(ctx, prefix)
 }
 
 // factory builds the secret.Store/keychain resource.
@@ -240,6 +250,15 @@ func (m *Manager) Delete(ctx context.Context, account string) error {
 	return m.store.Delete(ctx, account)
 }
 
+// DeletePrefix removes every secret whose account starts with prefix
+// (used when a plugin is uninstalled).
+func (m *Manager) DeletePrefix(ctx context.Context, prefix string) error {
+	if m == nil {
+		return errors.New("opencraft secrets: manager is unavailable")
+	}
+	return m.store.DeletePrefix(ctx, prefix)
+}
+
 // AccountFor returns the credential account for one inference
 // deployment id ("inference/deepseek-inst-abc"). Names are dot-free so
 // they stay addressable as ${secret:keychain.<name>} references.
@@ -258,11 +277,56 @@ type fileBackend struct {
 	key []byte
 }
 
+// accountsFile tracks every account name so prefix deletion can find
+// files (filenames are sha256 hashes and cannot be enumerated).
+const accountsFile = "accounts.json"
+
 func (f *fileBackend) Available() bool { return f != nil && f.dir != "" }
 
 func (f *fileBackend) path(name string) string {
 	sum := sha256.Sum256([]byte(name))
 	return filepath.Join(f.dir, hex.EncodeToString(sum[:]))
+}
+
+func (f *fileBackend) readAccounts() []string {
+	raw, err := os.ReadFile(filepath.Join(f.dir, accountsFile))
+	if err != nil {
+		return nil
+	}
+	var list []string
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return nil
+	}
+	return list
+}
+
+func (f *fileBackend) writeAccounts(list []string) error {
+	raw, err := json.Marshal(list)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(f.dir, accountsFile), raw, 0o600)
+}
+
+func (f *fileBackend) addAccount(name string) {
+	list := f.readAccounts()
+	for _, n := range list {
+		if n == name {
+			return
+		}
+	}
+	_ = f.writeAccounts(append(list, name))
+}
+
+func (f *fileBackend) removeAccount(name string) {
+	list := f.readAccounts()
+	kept := list[:0]
+	for _, n := range list {
+		if n != name {
+			kept = append(kept, n)
+		}
+	}
+	_ = f.writeAccounts(kept)
 }
 
 func (f *fileBackend) Get(_ context.Context, name string) (string, bool, error) {
@@ -295,6 +359,7 @@ func (f *fileBackend) Set(_ context.Context, name, value string) error {
 	if err := os.WriteFile(f.path(name), data, 0o600); err != nil {
 		return fmt.Errorf("opencraft secrets: write %q: %w", name, err)
 	}
+	f.addAccount(name)
 	return nil
 }
 
@@ -302,7 +367,23 @@ func (f *fileBackend) Delete(_ context.Context, name string) error {
 	if err := os.Remove(f.path(name)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("opencraft secrets: delete %q: %w", name, err)
 	}
+	f.removeAccount(name)
 	return nil
+}
+
+func (f *fileBackend) DeletePrefix(_ context.Context, prefix string) error {
+	list := f.readAccounts()
+	kept := make([]string, 0, len(list))
+	for _, name := range list {
+		if strings.HasPrefix(name, prefix) {
+			if err := os.Remove(f.path(name)); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("opencraft secrets: delete %q: %w", name, err)
+			}
+			continue
+		}
+		kept = append(kept, name)
+	}
+	return f.writeAccounts(kept)
 }
 
 // seal encrypts value with AES-256-GCM under f.key. A nil key keeps

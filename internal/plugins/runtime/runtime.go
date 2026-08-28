@@ -43,6 +43,36 @@ type Capability struct {
 	Hosts []string `json:"hosts,omitempty"`
 }
 
+// InferenceProfile is a plugin-submitted inference provider profile.
+// The host validates and writes it but does not interpret its domain
+// meaning (gateway, session, ...).
+type InferenceProfile struct {
+	ID       string         `json:"id"`
+	Type     string         `json:"type"`
+	Name     string         `json:"name"`
+	API      string         `json:"api"`
+	Endpoint string         `json:"endpoint"`
+	Models   []ProfileModel `json:"models"`
+	KeyRef   string         `json:"key_ref"`
+}
+
+// ProfileModel is one model in an inference profile with its opencraft
+// capabilities.
+type ProfileModel struct {
+	Name      string `json:"name"`
+	Vision    bool   `json:"vision"`
+	Reasoning string `json:"reasoning"`
+	WebSearch bool   `json:"web_search"`
+}
+
+// InferenceHandler is the host-side write path for inference profiles.
+type InferenceHandler struct {
+	// Upsert writes (or replaces) one provider profile.
+	Upsert func(pluginID string, profile InferenceProfile) error
+	// Remove deletes one provider deployment by id.
+	Remove func(pluginID, id string) error
+}
+
 // SecretStore is the minimal credential surface exposed to plugins as
 // the secret.* primitives. Values never cross the JS boundary.
 type SecretStore interface {
@@ -66,11 +96,12 @@ type Loader interface {
 // Manager owns the subprocess plugins. Processes are started lazily on
 // first Invoke and stopped via Stop / Shutdown.
 type Manager struct {
-	loader  Loader
-	root    string
-	secrets SecretStore
-	openURL func(url string)
-	log     io.Writer
+	loader    Loader
+	root      string
+	secrets   SecretStore
+	openURL   func(url string)
+	log       io.Writer
+	inference InferenceHandler
 
 	handshakeTimeout time.Duration
 	callTimeout      time.Duration
@@ -103,6 +134,11 @@ func (m *Manager) SetLogger(w io.Writer) {
 	}
 }
 
+// SetInferenceHandler wires the inference profile write path.
+func (m *Manager) SetInferenceHandler(h InferenceHandler) {
+	m.inference = h
+}
+
 // SetEnv adds extra environment variables for plugin processes
 // (testing helpers, locale overrides, ...).
 func (m *Manager) SetEnv(env []string) {
@@ -130,6 +166,24 @@ func (m *Manager) Stop(id string) {
 	if ok {
 		p.stop()
 	}
+}
+
+// Cleanup asks a running capability plugin to clean up its own
+// resources (inference profile, secrets) via lifecycle.cleanup, then
+// stops it. Best-effort: a plugin without a running process or without
+// cleanup support leaves the host fallback to remove leftovers.
+func (m *Manager) Cleanup(id string) error {
+	m.mu.Lock()
+	p, ok := m.procs[id]
+	m.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err := p.call(ctx, "lifecycle.cleanup", map[string]any{})
+	m.Stop(id)
+	return err
 }
 
 // Shutdown stops every running plugin process.
@@ -473,12 +527,46 @@ func (m *Manager) handlePrimitive(p *process, req rpcRequest) (any, error) {
 		return m.handleSecret(p, req)
 	case "open.url":
 		return m.handleOpenURL(p, req)
+	case "inference.upsert":
+		return m.handleInferenceUpsert(p, req)
+	case "inference.remove":
+		return m.handleInferenceRemove(p, req)
 	case "emit.event":
 		// Reserved: forward to the host event bus once wired.
 		return map[string]any{}, nil
 	default:
 		return nil, fmt.Errorf("runtime: unknown primitive %q", req.Method)
 	}
+}
+
+func (m *Manager) handleInferenceUpsert(p *process, req rpcRequest) (any, error) {
+	var profile InferenceProfile
+	if err := json.Unmarshal(req.Params, &profile); err != nil {
+		return nil, fmt.Errorf("runtime: inference.upsert args: %w", err)
+	}
+	if profile.ID != p.id {
+		return nil, fmt.Errorf("runtime: profile id %q outside plugin %q", profile.ID, p.id)
+	}
+	if m.inference.Upsert == nil {
+		return nil, errors.New("runtime: inference upsert handler unavailable")
+	}
+	return map[string]any{}, m.inference.Upsert(p.id, profile)
+}
+
+func (m *Manager) handleInferenceRemove(p *process, req rpcRequest) (any, error) {
+	var args struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(req.Params, &args); err != nil {
+		return nil, fmt.Errorf("runtime: inference.remove args: %w", err)
+	}
+	if args.ID != p.id {
+		return nil, fmt.Errorf("runtime: remove id %q outside plugin %q", args.ID, p.id)
+	}
+	if m.inference.Remove == nil {
+		return nil, errors.New("runtime: inference remove handler unavailable")
+	}
+	return map[string]any{}, m.inference.Remove(p.id, args.ID)
 }
 
 func (m *Manager) handleSecret(p *process, req rpcRequest) (any, error) {

@@ -52,12 +52,29 @@ func (a *App) PluginUninstall(id string) error {
 	if a.plugins == nil {
 		return errors.New("plugin store is not ready")
 	}
+	// Ask the capability plugin to clean up its own resources first
+	// (inference profile, secrets): the plugin knows what it wrote.
+	if a.cap != nil {
+		a.cap.Cleanup(id)
+	}
+	// Host fallback: a plugin may not implement cleanup or may have
+	// written resources earlier; remove lingering inference config and
+	// secrets defensively so nothing survives the uninstall.
+	if err := a.removeInferenceProfile(id); err == nil {
+		_ = a.rebuild()
+		if a.bridge != nil {
+			a.bridge.Emit("inference_changed", map[string]any{})
+		}
+	}
+	if a.secrets != nil {
+		_ = a.secrets.DeletePrefix(a.appContext(), "auth/"+id+"/")
+	}
+	a.kv.RemoveAll(id)
 	if err := a.plugins.Uninstall(id); err != nil {
 		return err
 	}
 	if a.cap != nil {
 		a.cap.Stop(id)
 	}
-	a.kv.RemoveAll(id)
 	return nil
 }
