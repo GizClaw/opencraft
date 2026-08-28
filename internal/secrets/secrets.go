@@ -389,7 +389,7 @@ func loadOrCreateKey(dir string) ([]byte, error) {
 		}
 		return nil, err
 	}
-	defer fd.Close()
+	defer func() { _ = fd.Close() }()
 	if err := fd.Chmod(0o600); err != nil {
 		return nil, err
 	}
