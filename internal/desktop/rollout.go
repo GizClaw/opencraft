@@ -40,22 +40,33 @@ func (a *App) rolloutFor(
 	conversationID string,
 ) *rollout.Recorder {
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	if rec, ok := a.rollouts[conversationID]; ok {
+		a.mu.Unlock()
 		return rec
 	}
-	if a.sessions == nil {
+	store := a.sessions
+	a.mu.Unlock()
+	if store == nil {
 		return nil
 	}
-	path, err := a.sessions.RolloutPath(conversationID)
+	path, err := store.RolloutPath(conversationID)
 	if err != nil {
 		return nil
 	}
+	// Open outside a.mu: file I/O under the global lock would stall
+	// every binding (and every streamed event) on a slow disk.
 	rec, err := rollout.Open(path)
 	if err != nil {
 		return nil
 	}
+	a.mu.Lock()
+	if existing, ok := a.rollouts[conversationID]; ok {
+		a.mu.Unlock()
+		_ = rec.Close()
+		return existing
+	}
 	a.rollouts[conversationID] = rec
+	a.mu.Unlock()
 	a.recordRollout(ctx, rec, rollout.Event{
 		Type:           rollout.TypeThreadStarted,
 		ConversationID: conversationID,
