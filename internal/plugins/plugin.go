@@ -9,8 +9,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	goruntime "runtime"
 	"sort"
 	"strings"
 
@@ -259,6 +261,10 @@ func (s *Store) Install(src string) (PluginSummary, error) {
 			return PluginSummary{}, fmt.Errorf(
 				"plugins: make capability binary executable: %w", err)
 		}
+		if err := signAdHoc(bin); err != nil {
+			_ = os.RemoveAll(dst)
+			return PluginSummary{}, err
+		}
 	}
 	sum := PluginSummary{
 		ID:          m.ID,
@@ -275,6 +281,23 @@ func (s *Store) Install(src string) (PluginSummary, error) {
 		sum.Entries = append(sum.Entries, e.ID)
 	}
 	return sum, nil
+}
+
+// signAdHoc ad-hoc codesigns a capability binary on macOS. An unsigned
+// Mach-O binary under ~/.opencraft is killed by the system's security
+// machinery (SIGKILL on exec); ad-hoc signing marks it as locally
+// trusted. No-op on other platforms.
+func signAdHoc(path string) error {
+	if goruntime.GOOS != "darwin" {
+		return nil
+	}
+	if _, err := exec.LookPath("codesign"); err != nil {
+		return fmt.Errorf("plugins: codesign unavailable: %w", err)
+	}
+	if out, err := exec.Command("codesign", "-s", "-", path).CombinedOutput(); err != nil {
+		return fmt.Errorf("plugins: ad-hoc sign %q: %w: %s", path, err, out)
+	}
+	return nil
 }
 
 // Uninstall removes an installed plugin and its enable state. Plugin

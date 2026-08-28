@@ -197,25 +197,21 @@ func New(opts Options) (*App, error) {
 			if err := a.upsertInferenceProfile(pluginID, profile); err != nil {
 				return err
 			}
-			if err := a.rebuild(); err != nil {
-				return err
-			}
+			// Notify before rebuild so the settings page reflects the
+			// config change even if the rebuild fails.
 			if a.bridge != nil {
 				a.bridge.Emit("inference_changed", map[string]any{})
 			}
-			return nil
+			return a.rebuild()
 		},
 		Remove: func(_, id string) error {
 			if err := a.removeInferenceProfile(id); err != nil {
 				return err
 			}
-			if err := a.rebuild(); err != nil {
-				return err
-			}
 			if a.bridge != nil {
 				a.bridge.Emit("inference_changed", map[string]any{})
 			}
-			return nil
+			return a.rebuild()
 		},
 	})
 	return a, nil
