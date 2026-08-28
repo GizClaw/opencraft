@@ -14,7 +14,7 @@ func writeTestZip(t *testing.T, entries map[string]string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	zw := zip.NewWriter(f)
 	for name, content := range entries {
 		w, err := zw.Create(name)

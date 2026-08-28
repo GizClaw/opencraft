@@ -25,13 +25,13 @@ func (s *Store) InstallZip(zipPath string) (PluginSummary, error) {
 	if err != nil {
 		return PluginSummary{}, fmt.Errorf("plugins: open zip: %w", err)
 	}
-	defer zr.Close()
+	defer func() { _ = zr.Close() }()
 
 	tmp, err := os.MkdirTemp("", "oc-plugin-*")
 	if err != nil {
 		return PluginSummary{}, fmt.Errorf("plugins: temp dir: %w", err)
 	}
-	defer os.RemoveAll(tmp)
+	defer func() { _ = os.RemoveAll(tmp) }()
 
 	var total int64
 	manifestDir := ""
