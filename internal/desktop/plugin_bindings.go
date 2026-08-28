@@ -55,7 +55,8 @@ func (a *App) PluginUninstall(id string) error {
 	// Ask the capability plugin to clean up its own resources first
 	// (inference profile, secrets): the plugin knows what it wrote.
 	if a.cap != nil {
-		a.cap.Cleanup(id)
+		// Best-effort: the host fallback below still removes leftovers.
+		_ = a.cap.Cleanup(id)
 	}
 	// Host fallback: a plugin may not implement cleanup or may have
 	// written resources earlier; remove lingering inference config and
