@@ -443,6 +443,29 @@ func WriteInference(configDir string, cfg InferenceConfig) error {
 	)
 }
 
+// RemoveInferenceConfig drops every inference-managed resource
+// (router, infer and each provider.*) from the user layer, returning
+// the install to the unconfigured state. Non-inference resources are
+// preserved. Used when the last provider is removed (e.g. SSO logout).
+func RemoveInferenceConfig(configDir string) error {
+	fresh := []byte("version: v1\nresources: {}\n")
+	merged, err := mergeUserLayer(
+		filepath.Join(configDir, "opencraft.yaml"),
+		fresh,
+		managedResourceKeys(InferenceConfig{}),
+		map[string]bool{},
+		true, // inference owns every provider.* resource
+	)
+	if err != nil {
+		return err
+	}
+	return writeFileAtomic(
+		filepath.Join(configDir, "opencraft.yaml"),
+		merged,
+		0o600,
+	)
+}
+
 // KeyRequest is one request row that needs a stored literal key
 // ("leave empty to keep").
 type KeyRequest struct {

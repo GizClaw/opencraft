@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ArrowDown,
   ArrowDownToLine,
@@ -14,6 +14,7 @@ import {
   Moon,
   Palette,
   Plus,
+  Puzzle,
   RefreshCw,
   ScrollText,
   Settings,
@@ -39,9 +40,13 @@ import type {
   ProviderInstance,
   ProviderView,
   SandboxProbeResult,
+  UIEvent,
   UsagePoint,
 } from '../lib/types';
 import { UsageChart } from './UsageChart';
+import { PluginManager } from '../plugins/components/PluginManager';
+import { PluginPanels } from '../plugins/components/PluginPanels';
+import { EventsOn } from '../../wailsjs/runtime/runtime';
 
 // InstanceRow is one editable inference instance in the settings page.
 interface RowModel {
@@ -73,7 +78,8 @@ type Tab =
   | 'memory'
   | 'permissions'
   | 'logs'
-  | 'diagnostics';
+  | 'diagnostics'
+  | 'plugins';
 
 export function ConfigPage() {
   const configured = useStore((s) => s.configured);
@@ -86,7 +92,7 @@ export function ConfigPage() {
   const { t, i18n } = useTranslation();
   const lang = i18n.resolvedLanguage?.startsWith('zh') ? 'zh' : 'en';
 
-  const [tab, setTab] = useState<Tab>('inference');
+  const [tab, setTab] = useState<Tab>('ui');
   const [rows, setRows] = useState<InstanceRow[]>([]);
   const [catalog, setCatalog] = useState<ProviderView[]>([]);
   const [newType, setNewType] = useState('deepseek');
@@ -131,55 +137,66 @@ export function ConfigPage() {
     return t0;
   }, [usageRows]);
 
-  useEffect(() => {
-    void (async () => {
-      try {
-        const [providers, state] = await Promise.all([
-          api.providers(),
-          api.configState(),
-        ]);
-        setCatalog(providers);
-        const byType = new Map(providers.map((p) => [p.id, p]));
-        setRows(
-          (state.instances ?? []).map((s) => {
-            const models = (s.models ?? []).map((m) => ({
-              name: m.name ?? '',
-              vision: m.vision ?? false,
-              reasoning: m.reasoning ?? '',
-              webSearch: m.web_search ?? false,
-            }));
-            return {
-              id: newID(),
-              stableId: s.stable_id ?? '',
-              type: s.type,
-              name: s.name ?? '',
-              api: s.api ?? '',
-              key: s.key ?? '',
-              keySet: s.key_set ?? false,
-              keyEnv: s.key_env ?? false,
-              keyKeychain: s.key_keychain ?? false,
-              models:
-                models.length > 0
-                  ? models
-                  : [
-                      {
-                        name: byType.get(s.type)?.default_model ?? '',
-                        vision: false,
-                        reasoning: '',
-                        webSearch: false,
-                      },
-                    ],
-              endpoint: s.endpoint ?? '',
-              enabled: s.enabled ?? true,
-            };
-          }),
-        );
-        setDefaultModel(state.model);
-      } catch (err) {
-        setError(String(err));
-      }
-    })();
+  const loadInference = useCallback(async () => {
+    try {
+      const [providers, state] = await Promise.all([
+        api.providers(),
+        api.configState(),
+      ]);
+      setCatalog(providers);
+      const byType = new Map(providers.map((p) => [p.id, p]));
+      setRows(
+        (state.instances ?? []).map((s) => {
+          const models = (s.models ?? []).map((m) => ({
+            name: m.name ?? '',
+            vision: m.vision ?? false,
+            reasoning: m.reasoning ?? '',
+            webSearch: m.web_search ?? false,
+          }));
+          return {
+            id: newID(),
+            stableId: s.stable_id ?? '',
+            type: s.type,
+            name: s.name ?? '',
+            api: s.api ?? '',
+            key: s.key ?? '',
+            keySet: s.key_set ?? false,
+            keyEnv: s.key_env ?? false,
+            keyKeychain: s.key_keychain ?? false,
+            models:
+              models.length > 0
+                ? models
+                : [
+                    {
+                      name: byType.get(s.type)?.default_model ?? '',
+                      vision: false,
+                      reasoning: '',
+                      webSearch: false,
+                    },
+                  ],
+            endpoint: s.endpoint ?? '',
+            enabled: s.enabled ?? true,
+          };
+        }),
+      );
+      setDefaultModel(state.model);
+    } catch (err) {
+      setError(String(err));
+    }
   }, []);
+
+  useEffect(() => {
+    void loadInference();
+  }, [loadInference]);
+
+  // Refresh the inference config when a plugin upserts/removes a
+  // gateway profile (e.g. after SSO login/logout).
+  useEffect(() => {
+    const off = EventsOn('opencraft:ui', (ev: UIEvent) => {
+      if (ev.type === 'inference_changed') void loadInference();
+    });
+    return off;
+  }, [loadInference]);
 
   useEffect(() => {
     if (tab !== 'permissions') return;
@@ -434,6 +451,33 @@ export function ConfigPage() {
     );
   };
 
+  // moveInstance reorders the router priority: enabled instances form
+  // the generate targets in row order, so moving a row up/down changes
+  // which model is tried first (and the fallback order).
+  const moveInstance = (id: string, dir: -1 | 1) => {
+    setRows((prev) => {
+      const i = prev.findIndex((r) => r.id === id);
+      const j = i + dir;
+      if (i < 0 || j < 0 || j >= prev.length) return prev;
+      const next = [...prev];
+      [next[i], next[j]] = [next[j], next[i]];
+      return next;
+    });
+  };
+
+  const moveModel = (id: string, idx: number, dir: -1 | 1) => {
+    setRows((prev) =>
+      prev.map((r) => {
+        if (r.id !== id) return r;
+        const j = idx + dir;
+        if (j < 0 || j >= r.models.length) return r;
+        const models = [...r.models];
+        [models[idx], models[j]] = [models[j], models[idx]];
+        return { ...r, models };
+      }),
+    );
+  };
+
   const save = async () => {
     setError('');
     if (enabledRows.length === 0) {
@@ -501,6 +545,7 @@ export function ConfigPage() {
     { id: 'permissions', label: t('config.tabPermissions'), icon: ShieldCheck },
     { id: 'logs', label: t('config.tabLogs'), icon: ScrollText },
     { id: 'diagnostics', label: t('config.tabDiagnostics'), icon: Stethoscope },
+    { id: 'plugins', label: t('config.tabPlugins'), icon: Puzzle },
   ];
 
   return (
@@ -558,6 +603,7 @@ export function ConfigPage() {
         <div className="flex-1 overflow-y-auto px-5 py-4">
           {tab === 'ui' && (
             <div className="space-y-3">
+              <PluginPanels tab="ui" />
               <div className="rounded-xl border border-edge bg-panel2 p-4">
                 <div className="flex items-start justify-between gap-4">
                   <div>
@@ -674,7 +720,7 @@ export function ConfigPage() {
               {rows.length === 0 && (
                 <p className="text-sm text-dim">{t('config.instancesEmpty')}</p>
               )}
-              {rows.map((row) => {
+              {rows.map((row, ri) => {
                 const prov = catalog.find((p) => p.id === row.type);
                 return (
                   <div
@@ -706,6 +752,24 @@ export function ConfigPage() {
                         placeholder={t('config.instanceName')}
                         className="flex-1 min-w-0 rounded-lg border border-edge bg-panel px-2 py-1 text-sm outline-none focus:border-accent"
                       />
+                      <button
+                        onClick={() => moveInstance(row.id, -1)}
+                        disabled={ri === 0}
+                        className="text-dim hover:text-fg disabled:opacity-30 shrink-0"
+                        title={t('config.moveUp')}
+                        aria-label={t('config.moveUp')}
+                      >
+                        <ArrowUp size={14} />
+                      </button>
+                      <button
+                        onClick={() => moveInstance(row.id, 1)}
+                        disabled={ri === rows.length - 1}
+                        className="text-dim hover:text-fg disabled:opacity-30 shrink-0"
+                        title={t('config.moveDown')}
+                        aria-label={t('config.moveDown')}
+                      >
+                        <ArrowDown size={14} />
+                      </button>
                       <button
                         onClick={() =>
                           setRows((prev) => prev.filter((r) => r.id !== row.id))
@@ -775,6 +839,24 @@ export function ConfigPage() {
                                   placeholder={t('setup.model')}
                                   className="flex-1 min-w-36 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
                                 />
+                                <button
+                                  onClick={() => moveModel(row.id, mi, -1)}
+                                  disabled={mi === 0}
+                                  className="shrink-0 text-dim hover:text-fg disabled:opacity-30"
+                                  title={t('config.moveUp')}
+                                  aria-label={t('config.moveUp')}
+                                >
+                                  <ArrowUp size={13} />
+                                </button>
+                                <button
+                                  onClick={() => moveModel(row.id, mi, 1)}
+                                  disabled={mi === row.models.length - 1}
+                                  className="shrink-0 text-dim hover:text-fg disabled:opacity-30"
+                                  title={t('config.moveDown')}
+                                  aria-label={t('config.moveDown')}
+                                >
+                                  <ArrowDown size={13} />
+                                </button>
                                 <button
                                   onClick={() => removeModel(row.id, mi)}
                                   className="shrink-0 text-dim hover:text-err"
@@ -849,10 +931,10 @@ export function ConfigPage() {
                                 row.keyKeychain && row.key === ''
                                   ? t('config.keychainStored')
                                   : row.keySet && row.key === ''
-                                  ? t('setup.apiKeySet')
-                                  : t('setup.apiKeyPlaceholder', {
-                                      var: prov?.env_var ?? '',
-                                    })
+                                    ? t('setup.apiKeySet')
+                                    : t('setup.apiKeyPlaceholder', {
+                                        var: prov?.env_var ?? '',
+                                      })
                               }
                               className="flex-1 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent disabled:opacity-40"
                             />
@@ -1537,6 +1619,12 @@ export function ConfigPage() {
                   </p>
                 )}
               </div>
+            </div>
+          )}
+
+          {tab === 'plugins' && (
+            <div className="space-y-4">
+              <PluginManager />
             </div>
           )}
         </div>

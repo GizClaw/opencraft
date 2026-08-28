@@ -337,6 +337,27 @@ func (a *App) ChooseWorkspace() (string, error) {
 	return path, nil
 }
 
+// PickFolder opens the native directory picker without switching the
+// workspace (unlike ChooseWorkspace). Used by plugin install and other
+// path-selection UIs.
+func (a *App) PickFolder(title string) (string, error) {
+	a.mu.Lock()
+	dir := a.workDir
+	ctx := a.ctx
+	a.mu.Unlock()
+	if ctx == nil {
+		return "", errors.New("app context is not ready")
+	}
+	if title == "" {
+		title = "选择文件夹"
+	}
+	return wailsruntime.OpenDirectoryDialog(
+		ctx, wailsruntime.OpenDialogOptions{
+			Title:            title,
+			DefaultDirectory: dir,
+		})
+}
+
 // ReadLog returns the tail of the application log file.
 func (a *App) ReadLog(n int) (string, error) {
 	if n <= 0 {

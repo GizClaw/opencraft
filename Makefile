@@ -1,4 +1,4 @@
-.PHONY: all fmt fmt-check lint test build-linux
+.PHONY: all fmt fmt-check lint test gen-bindings build-linux
 
 all: fmt lint test
 
@@ -16,6 +16,12 @@ fmt-check:
 lint:
 	golangci-lint run ./...
 	staticcheck ./...
+
+# gen-bindings regenerates the wails TS bindings (frontend/wailsjs).
+# Required before a frontend-only build on a fresh checkout, since the
+# generated files are not committed.
+gen-bindings:
+	wails generate module
 
 test:
 	go test ./...

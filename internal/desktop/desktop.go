@@ -23,12 +23,15 @@ import (
 	"github.com/GizClaw/opencraft/internal/agents"
 	app "github.com/GizClaw/opencraft/internal/app"
 	"github.com/GizClaw/opencraft/internal/config"
+	"github.com/GizClaw/opencraft/internal/plugins"
+	pluginruntime "github.com/GizClaw/opencraft/internal/plugins/runtime"
 	"github.com/GizClaw/opencraft/internal/rollout"
 	"github.com/GizClaw/opencraft/internal/runtime"
 	"github.com/GizClaw/opencraft/internal/secrets"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/undo"
 	"github.com/GizClaw/opencraft/internal/usage"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // Options configures the desktop application.
@@ -53,6 +56,15 @@ type App struct {
 	mu      sync.Mutex
 	workDir string
 	userDir string
+	// pluginDir is the frontend plugin root (<dataDir>/plugins); set by
+	// New and overridable in tests.
+	pluginDir string
+	// plugins / kv / auth are the plugin subsystem entry points.
+	plugins *plugins.Store
+	kv      *plugins.KVStore
+	// cap hosts subprocess capability plugins (e.g. the SSO auth
+	// protocol). Lazily started on first PluginInvoke.
+	cap *pluginruntime.Manager
 
 	bridge       *Bridge
 	otelShutdown func(context.Context) error
@@ -140,6 +152,7 @@ func New(opts Options) (*App, error) {
 		dataDir, _ = config.UserDataDir()
 	}
 	sec := secrets.NewManager(filepath.Join(dataDir, "keyring"), secrets.DefaultService)
+	pluginDir := filepath.Join(dataDir, "plugins")
 	shutdown, err := initTelemetry()
 	if err != nil {
 		// Telemetry is best-effort for the desktop app: a failed
@@ -149,9 +162,12 @@ func New(opts Options) (*App, error) {
 		fmt.Fprintf(os.Stderr, "opencraft: telemetry: %v\n", err)
 		shutdown = nil
 	}
-	return &App{
+	a := &App{
 		workDir:        workDir,
 		userDir:        userDir,
+		pluginDir:      pluginDir,
+		plugins:        plugins.NewStore(pluginDir),
+		kv:             plugins.NewKVStore(pluginDir),
 		bridge:         NewBridge(),
 		turns:          make(map[string]*session.Turn),
 		conversationID: ocsessions.NewID(),
@@ -168,13 +184,50 @@ func New(opts Options) (*App, error) {
 		rollouts:       make(map[string]*rollout.Recorder),
 		rolloutBufs:    make(map[string]*rolloutBuffer),
 		otelShutdown:   shutdown,
-	}, nil
+	}
+	a.cap = pluginruntime.NewManager(pluginDir, pluginruntime.DefaultLoader{
+		Root: pluginDir,
+		CapabilityFunc: func(id string) (pluginruntime.Capability, bool, error) {
+			return a.plugins.Capability(id)
+		},
+	}, sec)
+	a.cap.SetEnv([]string{"OPENCRAFT_VERSION=" + app.ServiceVersion})
+	a.cap.SetInferenceHandler(pluginruntime.InferenceHandler{
+		Upsert: func(pluginID string, profile pluginruntime.InferenceProfile) error {
+			if err := a.upsertInferenceProfile(pluginID, profile); err != nil {
+				return err
+			}
+			// Notify before rebuild so the settings page reflects the
+			// config change even if the rebuild fails.
+			if a.bridge != nil {
+				a.bridge.Emit("inference_changed", map[string]any{})
+			}
+			return a.rebuild()
+		},
+		Remove: func(_, id string) error {
+			if err := a.removeInferenceProfile(id); err != nil {
+				return err
+			}
+			if a.bridge != nil {
+				a.bridge.Emit("inference_changed", map[string]any{})
+			}
+			return a.rebuild()
+		},
+	})
+	return a, nil
 }
 
 // Startup is called by Wails once the window context exists.
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
 	a.bridge.SetContext(ctx)
+	if a.cap != nil {
+		a.cap.SetOpenURL(func(url string) {
+			if a.ctx != nil {
+				wailsruntime.BrowserOpenURL(a.ctx, url)
+			}
+		})
+	}
 	// Route stream/interact events to their owning conversation so a
 	// frontend reload can recover mid-run routing; delegated subagent
 	// runs resolve to "" and stay out of the chat.

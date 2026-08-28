@@ -25,6 +25,7 @@ import { useStore } from '../lib/store';
 import type { SessionMeta } from '../lib/types';
 import type { ComponentType } from 'react';
 import { MCPLogo } from './ToolsPanel';
+import { PluginEntries } from '../plugins/components/PluginEntries';
 
 function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
@@ -507,6 +508,8 @@ export function Sidebar() {
             </>
           )}
         </section>
+
+        <PluginEntries />
       </div>
 
       <div className="border-t border-edge p-3 space-y-2">

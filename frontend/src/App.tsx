@@ -13,6 +13,7 @@ import { StatusBar } from './components/StatusBar';
 import { SubagentSidebar } from './components/SubagentSidebar';
 import { Toaster } from './components/Toaster';
 import { useStore } from './lib/store';
+import { usePluginStore } from './plugins/store';
 import type { UIEvent } from './lib/types';
 
 const ConfigPage = lazy(() =>
@@ -47,6 +48,9 @@ export default function App() {
 
   useEffect(() => {
     void init();
+    // Load installed plugins once the shell mounts; the plugin host
+    // registers its settings panels and sidebar entries afterwards.
+    void usePluginStore.getState().load();
     const off = EventsOn('opencraft:ui', (ev: UIEvent) => {
       if (ev.type === 'interact') {
         const spec = ev.data as { title?: string };
