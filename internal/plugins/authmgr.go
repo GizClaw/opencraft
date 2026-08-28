@@ -109,7 +109,9 @@ type AuthBeginResult struct {
 	VerificationURIComplete string    `json:"verification_uri_complete"`
 	UserCode                string    `json:"user_code"`
 	IntervalSec             int       `json:"interval_sec"`
-	ExpiresAt               time.Time `json:"expires_at"`
+	// ExpiresAt is RFC3339 UTC; wails' model generator cannot type
+	// time.Time (see desktop/dto.go for the same convention).
+	ExpiresAt string `json:"expires_at"`
 }
 
 // AuthPollResult is one redeem outcome.
@@ -125,7 +127,7 @@ type AuthPollResult struct {
 type AuthStatusResult struct {
 	Status       string    `json:"status"` // signed_out | authenticated | expired
 	User         *AuthUser `json:"user,omitempty"`
-	ExpiresAt    time.Time `json:"expires_at,omitempty"`
+	ExpiresAt    string    `json:"expires_at,omitempty"` // RFC3339 UTC
 	DefaultModel string    `json:"default_model,omitempty"`
 	ModelCount   int       `json:"model_count,omitempty"`
 }
@@ -190,7 +192,7 @@ func (s *AuthService) Begin(ctx context.Context, provider, clientID string) (Aut
 		VerificationURIComplete: begin.VerificationURIComplete,
 		UserCode:                begin.UserCode,
 		IntervalSec:             int(begin.Interval.Seconds()),
-		ExpiresAt:               begin.ExpiresAt,
+		ExpiresAt:               formatExpiry(begin.ExpiresAt),
 	}, nil
 }
 
@@ -333,10 +335,18 @@ func (s *AuthService) Status(provider string) (AuthStatusResult, error) {
 	return AuthStatusResult{
 		Status:       status,
 		User:         &meta.User,
-		ExpiresAt:    meta.ExpiresAt,
+		ExpiresAt:    formatExpiry(meta.ExpiresAt),
 		DefaultModel: meta.DefaultModel,
 		ModelCount:   len(meta.Models),
 	}, nil
+}
+
+// formatExpiry renders a time as RFC3339 UTC, or "" for the zero value.
+func formatExpiry(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 // Me refreshes the signed-in user profile and updates the stored meta.
