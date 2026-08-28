@@ -315,6 +315,73 @@ func TestLiteralKeyQuoted(t *testing.T) {
 	}
 }
 
+func TestKeychainKeyRenderedAsSecretRef(t *testing.T) {
+	cfg := InferenceConfig{Instances: []Instance{{
+		StableID:  "inst-0a1b2c3d",
+		Type:      "deepseek",
+		KeySource: KeyKeychain,
+		KeyValue:  "inference/deepseek-inst-0a1b2c3d",
+		Enabled:   true,
+	}}}
+	data, err := cfg.InferenceYAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data),
+		"api_key: ${secret:keychain.inference/deepseek-inst-0a1b2c3d}") {
+		t.Fatalf("keychain key not rendered as secret ref:\n%s", data)
+	}
+	// The plaintext must never appear in the config.
+	if strings.Contains(string(data), "sk-") {
+		t.Fatalf("config leaked a secret:\n%s", data)
+	}
+}
+
+func TestKeychainKeyRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	cfg := InferenceConfig{Instances: []Instance{{
+		StableID:  "inst-0a1b2c3d",
+		Type:      "deepseek",
+		Models:    []Model{{Name: "deepseek-v4-flash"}},
+		KeySource: KeyKeychain,
+		KeyValue:  "inference/deepseek-inst-0a1b2c3d",
+		Enabled:   true,
+	}}}
+	if err := WriteInference(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadInference(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Instances) != 1 {
+		t.Fatalf("instances = %d, want 1", len(got.Instances))
+	}
+	in := got.Instances[0]
+	if in.KeySource != KeyKeychain || in.KeyValue != "inference/deepseek-inst-0a1b2c3d" {
+		t.Fatalf("round trip = (%v, %q), want KeyKeychain + account",
+			in.KeySource, in.KeyValue)
+	}
+}
+
+func TestMatchStoredKeysInheritsKeychainRefs(t *testing.T) {
+	existing := []Instance{{
+		StableID:  "inst-a",
+		Type:      "deepseek",
+		KeySource: KeyKeychain,
+		KeyValue:  "inference/deepseek-inst-a",
+	}}
+	rows := []KeyRequest{{
+		StableID: "inst-a",
+		Type:     "deepseek",
+		Models:   []string{"deepseek-v4-flash"},
+	}}
+	idxs, ok := MatchStoredKeys(existing, rows, map[int]bool{})
+	if !ok || len(idxs) != 1 || idxs[0] != 0 {
+		t.Fatalf("MatchStoredKeys = (%v, %v), want stable-id match", idxs, ok)
+	}
+}
+
 func TestInferenceStableIDRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	cfg := InferenceConfig{Instances: []Instance{{

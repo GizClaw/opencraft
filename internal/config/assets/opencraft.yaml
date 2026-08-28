@@ -6,6 +6,19 @@ version: v1
 # and the optional project layer can override it per repo.
 
 resources:
+  # Credential storage: the keychain-backed secret store feeds the
+  # ${secret:keychain.<name>} scheme used by migrated inference keys
+  # (and future SSO gateway tokens). macOS stores Generic Password
+  # items in the login Keychain; Linux falls back to 0600 files under
+  # <dataDir>/keyring.
+  secret.keychain:
+    kind: secret.Store
+    impl: keychain
+    settings:
+      id: keychain
+      default: true
+      dir: ${env:OPEN_CRAFT_DATA_DIR}/keyring
+
   # ------------------------------------------------------------------
   # Runtime foundations: event bus, memory, session store
   # ------------------------------------------------------------------

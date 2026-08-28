@@ -25,6 +25,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/config"
 	"github.com/GizClaw/opencraft/internal/rollout"
 	"github.com/GizClaw/opencraft/internal/runtime"
+	"github.com/GizClaw/opencraft/internal/secrets"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/undo"
 	"github.com/GizClaw/opencraft/internal/usage"
@@ -39,6 +40,9 @@ type Options struct {
 	WorkDir string
 	// UserDir overrides ~/.opencraft/config (tests).
 	UserDir string
+	// DataDir overrides the user data root ~/.opencraft (tests); the
+	// credential store lives under <dataDir>/keyring on Linux.
+	DataDir string
 }
 
 // App is the Wails-bound application root. Exported methods on App
@@ -59,6 +63,7 @@ type App struct {
 	usage    *usage.Store
 	agents   *agents.Lifecycle
 	undo     *undo.Store
+	secrets  *secrets.Manager
 	turns    map[string]*session.Turn
 
 	// conversationID is the stable session context for the current
@@ -130,6 +135,11 @@ func New(opts Options) (*App, error) {
 	if _, err := config.EnsureUserConfig(); err != nil {
 		return nil, fmt.Errorf("desktop: seed config: %w", err)
 	}
+	dataDir := opts.DataDir
+	if dataDir == "" {
+		dataDir, _ = config.UserDataDir()
+	}
+	sec := secrets.NewManager(filepath.Join(dataDir, "keyring"), secrets.DefaultService)
 	shutdown, err := initTelemetry()
 	if err != nil {
 		// Telemetry is best-effort for the desktop app: a failed
@@ -152,6 +162,7 @@ func New(opts Options) (*App, error) {
 		titling:        make(map[string]bool),
 		preTurnSnap:    make(map[string][]undo.FileState),
 		undo:           undo.New(workDir),
+		secrets:        sec,
 		rollouts:       make(map[string]*rollout.Recorder),
 		rolloutBufs:    make(map[string]*rolloutBuffer),
 		otelShutdown:   shutdown,
@@ -162,6 +173,10 @@ func New(opts Options) (*App, error) {
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
 	a.bridge.SetContext(ctx)
+	// Move literal keys out of opencraft.yaml into the credential
+	// store before the runtime is assembled, so the rebuilt providers
+	// resolve ${secret:...} references from day one.
+	a.migrateInferenceKeys()
 	// Route stream/interact events to their owning conversation so a
 	// frontend reload can recover mid-run routing; delegated subagent
 	// runs resolve to "" and stay out of the chat.

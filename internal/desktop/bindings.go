@@ -22,6 +22,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/config"
 	"github.com/GizClaw/opencraft/internal/hooks"
 	"github.com/GizClaw/opencraft/internal/rollout"
+	"github.com/GizClaw/opencraft/internal/secrets"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/undo"
 	"github.com/GizClaw/opencraft/internal/usage"
@@ -78,11 +79,13 @@ func (a *App) ConfigState() (ConfigState, error) {
 			// Never echo the stored secret back to the renderer; the
 			// settings page only learns whether a key exists.
 			KeySet: in.KeySource == config.KeyEnv ||
-				(in.KeySource == config.KeyLiteral && in.KeyValue != ""),
-			KeyEnv:   in.KeySource == config.KeyEnv,
-			Models:   modelViews(in.Models),
-			Endpoint: in.Endpoint,
-			Enabled:  in.Enabled,
+				(in.KeySource == config.KeyLiteral && in.KeyValue != "") ||
+				(in.KeySource == config.KeyKeychain && in.KeyValue != ""),
+			KeyEnv:      in.KeySource == config.KeyEnv,
+			KeyKeychain: in.KeySource == config.KeyKeychain,
+			Models:      modelViews(in.Models),
+			Endpoint:    in.Endpoint,
+			Enabled:     in.Enabled,
 		})
 	}
 	return st, nil
@@ -215,6 +218,15 @@ func (a *App) ModelUsageSeries(
 // user configuration layer (merging over manual resources) and
 // rebuilds the runtime.
 func (a *App) SaveInstances(req InferenceRequest) error {
+	if err := a.saveInference(req); err != nil {
+		return err
+	}
+	return a.rebuild()
+}
+
+// saveInference validates and persists the inference configuration
+// without rebuilding the runtime (SaveInstances adds the rebuild).
+func (a *App) saveInference(req InferenceRequest) error {
 	// Existing instances let an empty key ("leave blank to keep")
 	// inherit the stored key instead of forcing a re-entry. A missing
 	// or unparseable config is treated as a fresh install.
@@ -257,7 +269,23 @@ func (a *App) SaveInstances(req InferenceRequest) error {
 					prov.EnvVar)
 			}
 		case strings.TrimSpace(p.Key) != "":
-			in.KeyValue = strings.TrimSpace(p.Key)
+			key := strings.TrimSpace(p.Key)
+			// New keys go into the OS credential store when it is
+			// available; the config keeps only a ${secret:...}
+			// reference. A failed store write falls back to the
+			// literal 0600 config so the settings page stays usable.
+			if a.secrets != nil && a.secrets.Available() {
+				account := secrets.AccountFor(in.DeploymentID(len(instances) + 1))
+				storeErr := a.secrets.Set(account, key)
+				if storeErr == nil {
+					in.KeySource = config.KeyKeychain
+					in.KeyValue = account
+					break
+				}
+				fmt.Fprintf(os.Stderr,
+					"opencraft: credential store write failed, falling back to config literal: %v\n", storeErr)
+			}
+			in.KeyValue = key
 		case p.Enabled:
 			pending = append(pending, keyedRow{
 				idx:      len(instances),
@@ -321,7 +349,7 @@ func (a *App) SaveInstances(req InferenceRequest) error {
 	if err := config.WriteInference(a.userDir, cfg); err != nil {
 		return err
 	}
-	return a.rebuild()
+	return nil
 }
 
 // instanceIDFor derives the positional display id for instance n
