@@ -529,6 +529,12 @@ export const useStore = create<StoreState>((set, get) => {
             // conversationID follows the new workspace.
             void get().newChat();
           }
+          // Reload the session list on every ready event, not only
+          // when the workspace changed: a backend that finishes
+          // assembling after the frontend already ran its initial
+          // load would otherwise leave the list empty until the first
+          // turn triggers a refresh.
+          void get().loadSessions();
           set((state) => ({
             status: data,
             configured: !data.needed,

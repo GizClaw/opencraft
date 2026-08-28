@@ -98,7 +98,7 @@ func TestSaveInferenceInheritsKeychainRef(t *testing.T) {
 	}
 }
 
-func TestMigrateInferenceKeysMovesLiterals(t *testing.T) {
+func TestReconcileInferenceKeysMovesLiterals(t *testing.T) {
 	dir := t.TempDir()
 	cfg := config.InferenceConfig{Instances: []config.Instance{{
 		StableID:  "inst-a",
@@ -112,7 +112,7 @@ func TestMigrateInferenceKeysMovesLiterals(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := fileManagerApp(t, dir)
-	a.migrateInferenceKeys()
+	a.reconcileInferenceKeys()
 
 	got, err := config.LoadInference(dir)
 	if err != nil {
@@ -135,7 +135,7 @@ func TestMigrateInferenceKeysMovesLiterals(t *testing.T) {
 	}
 }
 
-func TestMigrateInferenceKeysSkipsWhenUnavailable(t *testing.T) {
+func TestReconcileInferenceKeysSkipsWhenUnavailable(t *testing.T) {
 	dir := t.TempDir()
 	cfg := config.InferenceConfig{Instances: []config.Instance{{
 		StableID:  "inst-a",
@@ -150,7 +150,7 @@ func TestMigrateInferenceKeysSkipsWhenUnavailable(t *testing.T) {
 	}
 	// No secrets manager: migration must be a no-op, not a crash.
 	a := &App{userDir: dir}
-	a.migrateInferenceKeys()
+	a.reconcileInferenceKeys()
 
 	got, err := config.LoadInference(dir)
 	if err != nil {
@@ -159,5 +159,32 @@ func TestMigrateInferenceKeysSkipsWhenUnavailable(t *testing.T) {
 	if got.Instances[0].KeySource != config.KeyLiteral ||
 		got.Instances[0].KeyValue != "sk-keep" {
 		t.Fatalf("config changed without a store: %+v", got.Instances[0])
+	}
+}
+
+func TestReconcileInferenceKeysClearsDanglingRef(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.InferenceConfig{Instances: []config.Instance{{
+		StableID:  "inst-a",
+		Type:      "deepseek",
+		Models:    []config.Model{{Name: "deepseek-v4-flash"}},
+		KeySource: config.KeyKeychain,
+		KeyValue:  "inference/deepseek-inst-0000000000000000",
+		Enabled:   true,
+	}}}
+	if err := config.WriteInference(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	a := fileManagerApp(t, dir)
+	a.reconcileInferenceKeys()
+
+	got, err := config.LoadInference(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := got.Instances[0]
+	if in.KeySource != config.KeyLiteral || in.KeyValue != "" {
+		t.Fatalf("dangling ref not cleared: KeySource=%v KeyValue=%q",
+			in.KeySource, in.KeyValue)
 	}
 }

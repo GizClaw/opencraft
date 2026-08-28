@@ -173,10 +173,6 @@ func New(opts Options) (*App, error) {
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
 	a.bridge.SetContext(ctx)
-	// Move literal keys out of opencraft.yaml into the credential
-	// store before the runtime is assembled, so the rebuilt providers
-	// resolve ${secret:...} references from day one.
-	a.migrateInferenceKeys()
 	// Route stream/interact events to their owning conversation so a
 	// frontend reload can recover mid-run routing; delegated subagent
 	// runs resolve to "" and stay out of the chat.
@@ -189,6 +185,13 @@ func (a *App) Startup(ctx context.Context) {
 	if err := a.rebuild(); err != nil {
 		a.bridge.Emit("fatal", map[string]any{"error": err.Error()})
 	}
+	// Reconcile inference keys with the credential store: migrate
+	// literals into the store and clear dangling references. This runs
+	// after the runtime is assembled and off the startup path, so a
+	// slow or unavailable credential store can never delay the session
+	// list or block the first turn; config changes take effect on the
+	// next rebuild/start.
+	go a.reconcileInferenceKeys()
 }
 
 // Shutdown tears down the runtime when the window closes.

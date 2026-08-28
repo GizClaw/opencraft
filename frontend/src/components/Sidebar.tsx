@@ -56,6 +56,7 @@ export function Sidebar() {
   const conversations = useStore((s) => s.conversations);
   const flash = useStore((s) => s.flash);
   const loadSessions = useStore((s) => s.loadSessions);
+  const loadWorkspaces = useStore((s) => s.loadWorkspaces);
   const workspaces = useStore((s) => s.workspaces);
   const openWorkspace = useStore((s) => s.openWorkspace);
   const removeWorkspace = useStore((s) => s.removeWorkspace);
@@ -69,6 +70,9 @@ export function Sidebar() {
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const [workspaceInputOpen, setWorkspaceInputOpen] = useState(false);
+  const [workspacePath, setWorkspacePath] = useState('');
+  const [workspaceError, setWorkspaceError] = useState('');
 
   const toolButtons: {
     id: string;
@@ -113,6 +117,35 @@ export function Sidebar() {
   useEffect(() => {
     void Environment().then((env) => setIsMac(env.platform === 'darwin'));
   }, []);
+
+  // The native folder picker can fail or never return in some
+  // environments (e.g. wails dev running the bare binary). When it
+  // errors, fall back to a typed path so adding a workspace always
+  // works.
+  const handleAddWorkspace = async () => {
+    let path = '';
+    try {
+      path = (await api.chooseWorkspace()) ?? '';
+    } catch (err) {
+      setWorkspaceError(String(err));
+      setWorkspaceInputOpen(true);
+      return;
+    }
+    if (!path) return; // cancelled
+    setWorkspaceError('');
+    await openWorkspace(path);
+    await loadWorkspaces();
+  };
+
+  const handleOpenPath = async () => {
+    const path = workspacePath.trim();
+    if (!path) return;
+    setWorkspaceInputOpen(false);
+    setWorkspaceError('');
+    setWorkspacePath('');
+    await openWorkspace(path);
+    await loadWorkspaces();
+  };
 
   const fmtTime = (iso: string) => {
     const d = new Date(iso);
@@ -410,7 +443,7 @@ export function Sidebar() {
               {t('sidebar.workspaces')}
             </h3>
             <button
-              onClick={() => void api.chooseWorkspace()}
+              onClick={() => void handleAddWorkspace()}
               className="text-dim hover:text-fg"
               title={t('sidebar.addWorkspace')}
               aria-label={t('sidebar.addWorkspace')}
@@ -418,6 +451,43 @@ export function Sidebar() {
               <Plus size={13} />
             </button>
           </div>
+          {workspaceInputOpen && (
+            <div className="mb-2 flex flex-col gap-1.5 rounded-lg border border-edge bg-panel2 p-2">
+              {workspaceError && (
+                <p className="text-[11px] text-red-400 break-words">
+                  {workspaceError}
+                </p>
+              )}
+              <p className="text-[11px] text-dim">
+                {t('sidebar.pickerFallback')}
+              </p>
+              <input
+                value={workspacePath}
+                onChange={(e) => setWorkspacePath(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void handleOpenPath();
+                  if (e.key === 'Escape') setWorkspaceInputOpen(false);
+                }}
+                placeholder="/path/to/workspace"
+                className="w-full rounded-md border border-edge bg-panel px-2 py-1 text-xs text-fg outline-none focus:border-accent"
+                autoFocus
+              />
+              <div className="flex gap-2">
+                <button
+                  onClick={() => void handleOpenPath()}
+                  className="rounded-md bg-accent px-2 py-1 text-xs text-white hover:opacity-90"
+                >
+                  {t('sidebar.open')}
+                </button>
+                <button
+                  onClick={() => setWorkspaceInputOpen(false)}
+                  className="rounded-md px-2 py-1 text-xs text-dim hover:text-fg"
+                >
+                  {t('sidebar.cancel')}
+                </button>
+              </div>
+            </div>
+          )}
           {workspaces.length === 0 ? (
             <p className="text-xs text-dim">—</p>
           ) : (

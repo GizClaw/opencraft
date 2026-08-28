@@ -1,14 +1,14 @@
 // Package secrets implements opencraft's credential store for
-// flowcraft's declarative secret.Store resources (impl "keychain"),
-// plus the app-side manager used by the settings page and the
-// literal-key migration.
+// flowcraft's declarative secret.Store resources, plus the app-side
+// manager used by the settings page and the literal-key migration.
 //
-// Backends are chosen per platform with zero cgo/build dependencies:
-// macOS stores Generic Password items in the login Keychain through
-// security(1); Linux stores one 0600 file per secret under a 0700
-// directory. Deployments that need a richer backend (vault, 1Password,
-// Secret Service) can register their own secret.Store impl without
-// touching opencraft core.
+// One 0600 file per secret under a 0700 directory backs the store on
+// every platform (the Linux approach): no keychain ACLs, no native
+// authorization prompts, no cgo. The resource impl id stays "keychain"
+// and configs keep ${secret:keychain.<name>} references so existing
+// user documents do not need rewriting. Deployments that need a richer
+// backend (vault, 1Password, Secret Service) can register their own
+// secret.Store impl without touching opencraft core.
 package secrets
 
 import (
@@ -18,25 +18,26 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"time"
 
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/secret"
 )
 
-// ResourceImpl is the deploy impl id of this secret store.
+// ResourceImpl is the deploy impl id of this secret store. The id
+// predates the file-only backend; it is kept so already-written
+// ${secret:keychain.<name>} references keep resolving.
 const ResourceImpl = "keychain"
 
-// DefaultService is the Keychain service name used for app credentials
-// (inference keys today; SSO gateway tokens later).
+// DefaultService is the (retained) service name used for app
+// credentials (inference keys today; SSO gateway tokens later). The
+// file backend ignores it; it exists for config compatibility with the
+// earlier Keychain backend.
 const DefaultService = "opencraft"
 
-// Store is the built secret.Store value: a native credential backend
-// plus the deployment flags (id / default) carried from settings.
+// Store is the built secret.Store value: a credential backend plus the
+// deployment flags (id / default) carried from settings.
 // It implements resource.SecretStore for flowcraft's lazy resolution
 // and exposes Set/Delete for the app-side manager.
 type Store struct {
@@ -55,9 +56,9 @@ type Settings struct {
 	// ${secret:NAME} references.
 	Default bool `json:"default,omitempty"`
 	// Service overrides the Keychain service name (default "opencraft").
+	// Ignored by the file backend; kept for config compatibility.
 	Service string `json:"service,omitempty"`
-	// Dir is the Linux file-backend directory (0700). Required on
-	// Linux; unused on macOS.
+	// Dir is the credential store directory (0700). Required.
 	Dir string `json:"dir,omitempty"`
 }
 
@@ -69,33 +70,22 @@ type backend interface {
 	Available() bool
 }
 
-// NewStore opens the native backend for the given service and (Linux)
-// file directory. The returned store is usable even when the backend is
-// unavailable: Lookup then reports an error, and Available reports
-// false so callers can fall back to literal config storage.
+// NewStore opens the 0600-file backend rooted at dir. service is
+// retained for call-site compatibility but not used by the file
+// backend. The returned store is usable even when the directory cannot
+// be created: Lookup then reports an error, and Available reports false
+// so callers can fall back to literal config storage.
 func NewStore(dir, service string) (Store, error) {
-	if service == "" {
-		service = DefaultService
+	_ = service // file backend; kept for call-site compatibility.
+	if strings.TrimSpace(dir) == "" {
+		return Store{}, errors.New(
+			"opencraft secrets: file backend requires settings.dir")
 	}
-	var b backend
-	switch runtime.GOOS {
-	case "darwin":
-		b = &keychainBackend{service: service}
-	case "linux":
-		if strings.TrimSpace(dir) == "" {
-			return Store{}, errors.New(
-				"opencraft secrets: file backend requires settings.dir")
-		}
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return Store{}, fmt.Errorf(
-				"opencraft secrets: create store dir: %w", err)
-		}
-		b = &fileBackend{dir: dir}
-	default:
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return Store{}, fmt.Errorf(
-			"opencraft secrets: no backend for GOOS %q", runtime.GOOS)
+			"opencraft secrets: create store dir: %w", err)
 	}
-	return Store{backend: b}, nil
+	return Store{backend: &fileBackend{dir: dir}}, nil
 }
 
 // Lookup implements resource.SecretStore.
@@ -169,8 +159,8 @@ type Manager struct {
 	store Store
 }
 
-// NewManager returns a manager rooted at dir (Linux file backend) and
-// service (macOS Keychain).
+// NewManager returns a manager rooted at dir (the 0600-file backend).
+// service is retained for call-site compatibility.
 func NewManager(dir, service string) *Manager {
 	store, err := NewStore(dir, service)
 	if err != nil {
@@ -182,10 +172,9 @@ func NewManager(dir, service string) *Manager {
 	return &Manager{store: store}
 }
 
-// NewFileManager returns a manager backed by 0600 files under dir,
-// bypassing platform auto-detection. It exists for tests and for
-// headless Linux deployments that want deterministic file storage
-// regardless of a running Secret Service.
+// NewFileManager returns a manager backed by 0600 files under dir. It
+// bypasses NewStore's directory setup and exists for tests and
+// headless deployments that want deterministic file storage.
 func NewFileManager(dir string) *Manager {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return &Manager{}
@@ -227,62 +216,6 @@ func (m *Manager) Delete(ctx context.Context, account string) error {
 // they stay addressable as ${secret:keychain.<name>} references.
 func AccountFor(deploymentID string) string {
 	return "inference/" + deploymentID
-}
-
-// keychainBackend stores Generic Password items through security(1).
-// The service is the Keychain service; the name is the account.
-type keychainBackend struct{ service string }
-
-// securityTimeout bounds every security(1) invocation so a locked
-// keychain or an unexpected interactive prompt can never hang the app.
-const securityTimeout = 10 * time.Second
-
-func (k *keychainBackend) Available() bool {
-	_, err := exec.LookPath("security")
-	return err == nil
-}
-
-func (k *keychainBackend) Get(ctx context.Context, name string) (string, bool, error) {
-	ctx, cancel := context.WithTimeout(ctx, securityTimeout)
-	defer cancel()
-	out, err := exec.CommandContext(ctx,
-		"security", "find-generic-password",
-		"-a", name, "-s", k.service, "-w").Output()
-	if err != nil {
-		// security(1) exits non-zero when the item is missing; the
-		// credential contract surfaces that as not-found.
-		return "", false, nil
-	}
-	return strings.TrimRight(string(out), "\r\n"), true, nil
-}
-
-func (k *keychainBackend) Set(ctx context.Context, name, value string) error {
-	ctx, cancel := context.WithTimeout(ctx, securityTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx,
-		"security", "add-generic-password",
-		"-a", name, "-s", k.service, "-U", "-w")
-	// security(1) reads the password interactively as two lines (value
-	// + retype) even when -w has no argument; feed both so it never
-	// falls back to a /dev/tty prompt (which would hang a GUI process).
-	cmd.Stdin = strings.NewReader(value + "\n" + value + "\n")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("opencraft secrets: keychain add %q: %v: %s",
-			name, err, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
-func (k *keychainBackend) Delete(ctx context.Context, name string) error {
-	ctx, cancel := context.WithTimeout(ctx, securityTimeout)
-	defer cancel()
-	if out, err := exec.CommandContext(ctx,
-		"security", "delete-generic-password",
-		"-a", name, "-s", k.service).CombinedOutput(); err != nil {
-		return fmt.Errorf("opencraft secrets: keychain delete %q: %v: %s",
-			name, err, strings.TrimSpace(string(out)))
-	}
-	return nil
 }
 
 // fileBackend stores one 0600 file per secret under a 0700 directory.

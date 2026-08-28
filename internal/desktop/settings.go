@@ -297,8 +297,10 @@ func (a *App) OpenWorkspace(dir string) error {
 	a.mu.Lock()
 	a.workDir = dir
 	previous := a.conversationID
-	a.closeRollouts()
 	a.mu.Unlock()
+	// closeRollouts takes a.mu itself; calling it while holding the
+	// lock would self-deadlock (sync.Mutex is not reentrant).
+	a.closeRollouts()
 	a.fireHooks(a.appContext(), hooks.EventSessionEnd, map[string]any{
 		"event":           hooks.EventSessionEnd,
 		"reason":          "workspace_switch",
