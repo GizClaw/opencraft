@@ -71,7 +71,7 @@ type ProviderInstance struct {
 	KeySet bool   `json:"key_set"` // config-time: a key is already stored
 	KeyEnv bool   `json:"key_env"`
 	// KeyKeychain reports that the key lives in the OS credential
-	// store (macOS Keychain / Linux 0600 files) rather than the config.
+	// store (0600 files) rather than the config.
 	KeyKeychain bool        `json:"key_keychain"`
 	Models      []ModelView `json:"models"`
 	Endpoint    string      `json:"endpoint"`

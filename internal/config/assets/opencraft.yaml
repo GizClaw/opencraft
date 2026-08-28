@@ -6,11 +6,11 @@ version: v1
 # and the optional project layer can override it per repo.
 
 resources:
-  # Credential storage: the keychain-backed secret store feeds the
+  # Credential storage: the file-backed secret store feeds the
   # ${secret:keychain.<name>} scheme used by migrated inference keys
-  # (and future SSO gateway tokens). macOS stores Generic Password
-  # items in the login Keychain; Linux falls back to 0600 files under
-  # <dataDir>/keyring.
+  # (and future SSO gateway tokens). The impl id "keychain" is kept so
+  # existing config references keep resolving; storage is one 0600 file
+  # per secret under <dataDir>/keyring on every platform.
   secret.keychain:
     kind: secret.Store
     impl: keychain

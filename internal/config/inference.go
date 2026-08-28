@@ -71,9 +71,9 @@ const (
 	KeyEnv KeySource = iota
 	// KeyLiteral stores the key verbatim in opencraft.yaml (0600).
 	KeyLiteral
-	// KeyKeychain stores the key in the OS credential store (macOS
-	// Keychain / Linux 0600 files) and keeps only a ${secret:keychain.<name>}
-	// reference in opencraft.yaml.
+	// KeyKeychain stores the key in the OS credential store (0600
+	// files) and keeps only a ${secret:keychain.<name>} reference in
+	// opencraft.yaml.
 	KeyKeychain
 )
 
@@ -102,7 +102,7 @@ type Instance struct {
 	Endpoint  string // base URL override; empty uses the driver default
 	Models    []Model
 	KeySource KeySource
-	KeyValue  string // literal key (KeyLiteral) or keychain account (KeyKeychain)
+	KeyValue  string // literal key (KeyLiteral) or store account (KeyKeychain)
 	Enabled   bool
 }
 
@@ -472,7 +472,7 @@ type KeyRequest struct {
 //     finds an available key instead of hard-failing.
 //
 // claimed tracks old-instance indexes already inherited, preventing two
-// rows from stealing the same key. Only literal and keychain-sourced
+// rows from stealing the same key. Only literal and store-sourced
 // keys are inherited (env-sourced keys are chosen explicitly via the
 // request). The returned slice has one old-instance index per row (-1
 // when that row could not be matched; ok is false then).
