@@ -14,6 +14,7 @@ import {
   Moon,
   Palette,
   Plus,
+  Puzzle,
   RefreshCw,
   ScrollText,
   Settings,
@@ -42,6 +43,7 @@ import type {
   UsagePoint,
 } from '../lib/types';
 import { UsageChart } from './UsageChart';
+import { PluginManager } from '../plugins/components/PluginManager';
 
 // InstanceRow is one editable inference instance in the settings page.
 interface RowModel {
@@ -73,7 +75,8 @@ type Tab =
   | 'memory'
   | 'permissions'
   | 'logs'
-  | 'diagnostics';
+  | 'diagnostics'
+  | 'plugins';
 
 export function ConfigPage() {
   const configured = useStore((s) => s.configured);
@@ -501,6 +504,7 @@ export function ConfigPage() {
     { id: 'permissions', label: t('config.tabPermissions'), icon: ShieldCheck },
     { id: 'logs', label: t('config.tabLogs'), icon: ScrollText },
     { id: 'diagnostics', label: t('config.tabDiagnostics'), icon: Stethoscope },
+    { id: 'plugins', label: t('config.tabPlugins'), icon: Puzzle },
   ];
 
   return (
@@ -1537,6 +1541,12 @@ export function ConfigPage() {
                   </p>
                 )}
               </div>
+            </div>
+          )}
+
+          {tab === 'plugins' && (
+            <div className="space-y-4">
+              <PluginManager />
             </div>
           )}
         </div>

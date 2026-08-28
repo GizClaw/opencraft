@@ -77,6 +77,12 @@ export function OpenWorkspace(arg1:string):Promise<void>;
 
 export function Permissions():Promise<Array<string>>;
 
+export function PluginBundle(arg1:string):Promise<string>;
+
+export function PluginList():Promise<Array<desktop.PluginSummary>>;
+
+export function PluginSetEnabled(arg1:string,arg2:boolean):Promise<void>;
+
 export function ProjectConfigStatus():Promise<desktop.ProjectConfigStatus>;
 
 export function Providers():Promise<Array<desktop.ProviderView>>;

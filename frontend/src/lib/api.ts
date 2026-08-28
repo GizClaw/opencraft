@@ -37,6 +37,7 @@ import type {
   UsagePoint,
   WorkspaceMeta,
 } from './types';
+import type { PluginSummary } from '../plugins/types';
 
 export const api = {
   version: () => App.Version(),
@@ -122,6 +123,10 @@ export const api = {
   clearCaches: () => App.ClearCaches() as Promise<CacheClearResult>,
   cancelCard: (id: string) => App.CancelCard(id),
   chooseWorkspace: () => App.ChooseWorkspace(),
+  pluginList: () => App.PluginList() as Promise<PluginSummary[]>,
+  pluginBundle: (id: string) => App.PluginBundle(id) as Promise<string>,
+  pluginSetEnabled: (id: string, enabled: boolean) =>
+    App.PluginSetEnabled(id, enabled),
   readLog: (n: number) => App.ReadLog(n),
   renameSession: (id: string, title: string) => App.RenameSession(id, title),
   exportSession: (id: string) => App.ExportSession(id),

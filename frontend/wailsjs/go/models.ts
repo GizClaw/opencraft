@@ -601,6 +601,34 @@ export namespace desktop {
 		}
 	}
 	
+	export class PluginSummary {
+	    id: string;
+	    name: string;
+	    version: string;
+	    entry: string;
+	    permissions: string[];
+	    enabled: boolean;
+	    error?: string;
+	    panels?: string[];
+	    entries?: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new PluginSummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.version = source["version"];
+	        this.entry = source["entry"];
+	        this.permissions = source["permissions"];
+	        this.enabled = source["enabled"];
+	        this.error = source["error"];
+	        this.panels = source["panels"];
+	        this.entries = source["entries"];
+	    }
+	}
 	export class PolicyDecision {
 	    command: string;
 	    allowed: boolean;
@@ -866,4 +894,3 @@ export namespace undo {
 	}
 
 }
-

@@ -1,0 +1,16 @@
+{
+  "id": "hello",
+  "name": "Hello Plugin",
+  "version": "0.1.0",
+  "minHostVersion": "0.1.0",
+  "entry": "dist/index.js",
+  "permissions": [],
+  "contributes": {
+    "settingsPanels": [
+      { "id": "hello-panel", "title": "Hello", "order": 10 }
+    ],
+    "sidebarEntries": [
+      { "id": "hello-entry", "title": "Hello", "order": 10 }
+    ]
+  }
+}

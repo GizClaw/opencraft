@@ -48,6 +48,9 @@ frontend/node_modules/**
 frontend/dist/
 frontend/dist/**
 frontend/package.json.md5
+# Frontend plugins ship in the repo as reference implementations.
+!plugins/
+!plugins/**
 !build/
 !build/**
 # Homebrew cask and maintenance scripts live in the repo too.

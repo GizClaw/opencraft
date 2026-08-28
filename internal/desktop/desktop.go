@@ -53,6 +53,9 @@ type App struct {
 	mu      sync.Mutex
 	workDir string
 	userDir string
+	// pluginDir is the frontend plugin root (<dataDir>/plugins); set by
+	// New and overridable in tests.
+	pluginDir string
 
 	bridge       *Bridge
 	otelShutdown func(context.Context) error
@@ -152,6 +155,7 @@ func New(opts Options) (*App, error) {
 	return &App{
 		workDir:        workDir,
 		userDir:        userDir,
+		pluginDir:      filepath.Join(dataDir, "plugins"),
 		bridge:         NewBridge(),
 		turns:          make(map[string]*session.Turn),
 		conversationID: ocsessions.NewID(),

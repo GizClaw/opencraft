@@ -142,6 +142,18 @@ export function Permissions() {
   return window['go']['desktop']['App']['Permissions']();
 }
 
+export function PluginBundle(arg1) {
+  return window['go']['desktop']['App']['PluginBundle'](arg1);
+}
+
+export function PluginList() {
+  return window['go']['desktop']['App']['PluginList']();
+}
+
+export function PluginSetEnabled(arg1, arg2) {
+  return window['go']['desktop']['App']['PluginSetEnabled'](arg1, arg2);
+}
+
 export function ProjectConfigStatus() {
   return window['go']['desktop']['App']['ProjectConfigStatus']();
 }
