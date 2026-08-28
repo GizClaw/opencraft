@@ -104,11 +104,11 @@ func DecodeMeta(raw string) (SessionMeta, error) {
 // AuthBeginResult is what the frontend may see after creating an
 // authorization: public URLs and timing only.
 type AuthBeginResult struct {
-	Provider                string    `json:"provider"`
-	VerificationURI         string    `json:"verification_uri"`
-	VerificationURIComplete string    `json:"verification_uri_complete"`
-	UserCode                string    `json:"user_code"`
-	IntervalSec             int       `json:"interval_sec"`
+	Provider                string `json:"provider"`
+	VerificationURI         string `json:"verification_uri"`
+	VerificationURIComplete string `json:"verification_uri_complete"`
+	UserCode                string `json:"user_code"`
+	IntervalSec             int    `json:"interval_sec"`
 	// ExpiresAt is RFC3339 UTC; wails' model generator cannot type
 	// time.Time (see desktop/dto.go for the same convention).
 	ExpiresAt string `json:"expires_at"`
