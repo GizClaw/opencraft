@@ -6,9 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -193,13 +193,17 @@ func TestStopShutsDownProcess(t *testing.T) {
 
 func TestCleanupNotifiesPlugin(t *testing.T) {
 	m, _ := newTestManager(t)
-	var log bytes.Buffer
-	m.SetLogger(io.Writer(&log))
+	log := &lockedBuffer{}
+	m.SetLogger(log)
 	if _, err := m.Invoke(context.Background(), "test-plugin", "auth.poll", nil); err != nil {
 		t.Fatalf("invoke: %v", err)
 	}
 	if err := m.Cleanup("test-plugin"); err != nil {
 		t.Fatalf("cleanup: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for !strings.Contains(log.String(), "CLEANUP_CALLED") && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
 	}
 	if !strings.Contains(log.String(), "CLEANUP_CALLED") {
 		t.Fatalf("plugin cleanup callback not invoked; stderr=%q", log.String())
@@ -210,4 +214,22 @@ func TestCleanupNotifiesPlugin(t *testing.T) {
 	if running {
 		t.Fatal("process still registered after Cleanup")
 	}
+}
+
+// lockedBuffer is a concurrency-safe writer for the stderr forwarder.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
 }
