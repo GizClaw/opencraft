@@ -62,9 +62,9 @@ func (AssemblyFactory) Spec() resource.Spec {
 // audit middleware (outermost of the transforms) records the final
 // content the model actually sees. Redact sits innermost so the
 // persisted truncate cache never carries secrets either.
-func (AssemblyFactory) New(_ context.Context, in resource.Input) (any, error) {
+func (AssemblyFactory) New(ctx context.Context, in resource.Input) (any, error) {
 	settings, err := resource.DecodeTyped[AssemblySettings](
-		in.Settings, resource.ExpandEnv())
+		ctx, in.Settings)
 	if err != nil {
 		return nil, errdefs.Validationf(
 			"tool middleware: decode assembly settings: %v", err)

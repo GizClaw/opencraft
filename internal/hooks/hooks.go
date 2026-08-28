@@ -86,9 +86,9 @@ func (Factory) Spec() resource.Spec {
 
 // New implements resource.Factory. A missing hooks.json yields an empty
 // (no-op) manager, not an error.
-func (Factory) New(_ context.Context, in resource.Input) (any, error) {
+func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 	settings, err := resource.DecodeTyped[Settings](
-		in.Settings, resource.ExpandEnv())
+		ctx, in.Settings)
 	if err != nil {
 		return nil, errdefs.Validationf(
 			"opencraft hooks: decode settings: %v", err)

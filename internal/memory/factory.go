@@ -68,7 +68,7 @@ func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 		return nil, errdefs.Validationf(
 			"memory: sessions dep is not *sessions.Store")
 	}
-	policy, err := resource.DecodeTyped[policySettings](in.Settings)
+	policy, err := resource.DecodeTyped[policySettings](ctx, in.Settings)
 	if err != nil {
 		return nil, err
 	}

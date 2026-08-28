@@ -34,7 +34,7 @@ func (archiveObserverFactory) Spec() resource.Spec {
 	}
 }
 
-func (archiveObserverFactory) New(_ context.Context, in resource.Input) (any, error) {
+func (archiveObserverFactory) New(ctx context.Context, in resource.Input) (any, error) {
 	sink, err := resourcedep.Required[corememory.TurnSink](in, "archive", "memory")
 	if err != nil {
 		return nil, err
@@ -43,7 +43,7 @@ func (archiveObserverFactory) New(_ context.Context, in resource.Input) (any, er
 	if err != nil {
 		return nil, err
 	}
-	settings, err := resource.DecodeTyped[commitSettings](in.Settings)
+	settings, err := resource.DecodeTyped[commitSettings](ctx, in.Settings)
 	if err != nil {
 		return nil, err
 	}

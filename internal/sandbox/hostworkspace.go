@@ -387,11 +387,11 @@ func (HostWorkspaceFactory) Spec() resource.Spec {
 }
 
 func (HostWorkspaceFactory) New(
-	_ context.Context,
+	ctx context.Context,
 	in resource.Input,
 ) (any, error) {
 	settings, err := resource.DecodeTyped[HostWorkspaceSettings](
-		in.Settings, resource.ExpandEnv())
+		ctx, in.Settings)
 	if err != nil {
 		return nil, errdefs.Validationf(
 			"opencraft hostworkspace: decode settings: %v", err)

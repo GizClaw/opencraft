@@ -10,7 +10,7 @@ import (
 // Model returns the persisted per-session model hint for the
 // conversation ("provider/name"), or "" when the session has no stored
 // choice and the default routing policy applies. The value is consumed
-// by the graph's ${board.model} inference node reference, so it must
+// by the graph's ${board:model} inference node reference, so it must
 // stay in the same "provider/name" shape the router hint expects.
 func (s *Store) Model(id string) (string, error) {
 	if s == nil || s.db == nil {

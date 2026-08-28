@@ -48,7 +48,7 @@ nodes:
       # choice and injects it via agent.Request.Inputs (board.model).
       # The board-ref default keeps unset conversations on the default
       # routing policy; unknown/ambiguous hints fall back the same way.
-      model_hint: ${board.model:}
+      model_hint: ${board:model:}
       # Think level is a per-turn board input: the desktop injects
       # think_level via agent.Request.Inputs, resolving "" for models
       # without a reasoning capability (drivers reject the knob for
@@ -56,7 +56,7 @@ nodes:
       # a knob the model may not support.
       intent:
         text:
-          reasoning_effort: ${board.think_level:}
+          reasoning_effort: ${board:think_level:}
       system_prompt: { embed: assets/graphs/prompts/system.md }
       # Hosted web_search extensions (provider-side search). Every
       # provider that is ALWAYS registered and exposes one is declared
