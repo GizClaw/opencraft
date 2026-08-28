@@ -184,3 +184,34 @@ func TestStoreUninstallRemoves(t *testing.T) {
 		t.Fatal("uninstalling a non-installed plugin should fail")
 	}
 }
+
+func TestInstallMakesCapabilityExecutable(t *testing.T) {
+	srcRoot := t.TempDir()
+	writePlugin(t, srcRoot, "cap", map[string]any{
+		"id": "cap", "name": "Cap", "version": "1.0.0",
+		"entry":      "dist/index.js",
+		"capability": map[string]any{"binary": "bin/auth", "protocol": 1},
+	}, "export function apply() {}")
+	bin := filepath.Join(srcRoot, "cap", "bin", "auth")
+	if err := os.MkdirAll(filepath.Dir(bin), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\necho hi\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	root := t.TempDir()
+	store := NewStore(root)
+	if _, err := store.Install(filepath.Join(srcRoot, "cap")); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(root, "cap", "bin", "auth"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// copyDir writes everything 0600; Install must restore the exec bit
+	// for the declared capability binary.
+	if info.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("capability binary is not executable after install: %v", info.Mode())
+	}
+}

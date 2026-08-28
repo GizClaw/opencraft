@@ -251,6 +251,16 @@ func (s *Store) Install(src string) (PluginSummary, error) {
 		_ = os.RemoveAll(dst)
 		return PluginSummary{}, fmt.Errorf("plugins: install: %w", err)
 	}
+	// Ensure the capability binary is executable regardless of how the
+	// source was copied (permissions are not always preserved).
+	if m.Capability != nil {
+		bin := filepath.Join(dst, m.Capability.Binary)
+		if err := os.Chmod(bin, 0o755); err != nil {
+			_ = os.RemoveAll(dst)
+			return PluginSummary{}, fmt.Errorf(
+				"plugins: make capability binary executable: %w", err)
+		}
+	}
 	sum := PluginSummary{
 		ID:          m.ID,
 		Name:        m.Name,
