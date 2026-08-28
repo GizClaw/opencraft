@@ -262,6 +262,30 @@ func TestAuthServiceBeginKeepsDeviceCodeInMemory(t *testing.T) {
 	}
 }
 
+func TestMapPlatform(t *testing.T) {
+	cases := map[string]string{
+		"darwin":  "macos",
+		"linux":   "linux",
+		"windows": "windows",
+		"freebsd": "freebsd",
+	}
+	for in, want := range cases {
+		if got := mapPlatform(in); got != want {
+			t.Errorf("mapPlatform(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestDetectDeviceInfo(t *testing.T) {
+	platform, osVersion := detectDeviceInfo()
+	if platform == "" {
+		t.Fatal("detectDeviceInfo: platform is empty")
+	}
+	if osVersion == "" {
+		t.Fatal("detectDeviceInfo: os version is empty")
+	}
+}
+
 func TestAuthServicePollOkStoresTokenAndMeta(t *testing.T) {
 	sec := &memorySecrets{}
 	f := &fakeProvider{

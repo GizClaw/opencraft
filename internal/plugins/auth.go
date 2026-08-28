@@ -13,9 +13,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -142,20 +145,89 @@ type haiviviGateway struct {
 	client     *http.Client
 	clientID   string
 	platform   string
+	osVersion  string
 	appVersion string
 }
 
 var _ AuthProvider = (*haiviviGateway)(nil)
 
+// Device identity is probed once per process (cheap, and the gateway
+// expects the real machine identity rather than the Go GOOS constant).
+var (
+	deviceInfoOnce  sync.Once
+	devicePlatform  string
+	deviceOSVersion string
+)
+
 // NewHaiviviProvider builds the haivivi gateway adapter.
 func NewHaiviviProvider(baseURL, clientID, appVersion string) AuthProvider {
+	platform, osVersion := detectDeviceInfo()
 	return &haiviviGateway{
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		client:     &http.Client{Timeout: 20 * time.Second},
 		clientID:   clientID,
-		platform:   runtime.GOOS,
+		platform:   platform,
+		osVersion:  osVersion,
 		appVersion: appVersion,
 	}
+}
+
+func detectDeviceInfo() (platform, osVersion string) {
+	deviceInfoOnce.Do(func() {
+		goos := runtime.GOOS
+		devicePlatform = mapPlatform(goos)
+		deviceOSVersion = detectOSVersion(goos)
+	})
+	return devicePlatform, deviceOSVersion
+}
+
+// mapPlatform maps runtime.GOOS onto the gateway's platform vocabulary
+// ("macos" per docs/client-applications.md, not Go's "darwin").
+func mapPlatform(goos string) string {
+	switch goos {
+	case "darwin":
+		return "macos"
+	case "linux":
+		return "linux"
+	case "windows":
+		return "windows"
+	default:
+		return goos
+	}
+}
+
+// detectOSVersion returns the real operating system version, falling
+// back to the kernel release and finally the GOOS name. Best-effort:
+// a missing value must not block device authorization.
+func detectOSVersion(goos string) string {
+	switch goos {
+	case "darwin":
+		if out, err := exec.Command("sw_vers", "-productVersion").Output(); err == nil {
+			if v := strings.TrimSpace(string(out)); v != "" {
+				return v
+			}
+		}
+	case "linux":
+		if raw, err := os.ReadFile("/etc/os-release"); err == nil {
+			for _, line := range strings.Split(string(raw), "\n") {
+				if v, ok := strings.CutPrefix(line, "PRETTY_NAME="); ok {
+					if s := strings.Trim(strings.TrimSpace(v), `"`); s != "" {
+						return s
+					}
+				}
+			}
+		}
+	case "windows":
+		if v := os.Getenv("OS"); v != "" {
+			return v
+		}
+	}
+	if out, err := exec.Command("uname", "-r").Output(); err == nil {
+		if v := strings.TrimSpace(string(out)); v != "" {
+			return v
+		}
+	}
+	return goos
 }
 
 func (g *haiviviGateway) Begin(ctx context.Context, req DeviceBeginRequest) (DeviceBeginResult, error) {
@@ -168,7 +240,7 @@ func (g *haiviviGateway) Begin(ctx context.Context, req DeviceBeginRequest) (Dev
 		"platform":           g.platform,
 		"device_name":        req.DeviceName,
 		"app_version":        req.AppVersion,
-		"os_version":         g.platform,
+		"os_version":         g.osVersion,
 		"device_fingerprint": req.DeviceFingerprint,
 	}
 	if len(req.Scope) > 0 {
