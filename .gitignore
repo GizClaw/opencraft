@@ -55,7 +55,8 @@ frontend/wailsjs/
 frontend/wailsjs/**
 # Frontend plugins ship in the repo as reference implementations.
 !plugins/
-!plugins/**
+!plugins/hello/
+!plugins/hello/**
 !build/
 !build/**
 # Homebrew cask and maintenance scripts live in the repo too.
