@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/GizClaw/opencraft/internal/config"
@@ -10,29 +11,27 @@ import (
 
 func TestGatewayProfileUpsertAndRemove(t *testing.T) {
 	a := fileManagerApp(t, t.TempDir())
-	a.auth = &plugins.AuthService{
-		Sessions: plugins.NewSessionManager(),
-		Secrets:  a.secrets,
+	meta := map[string]any{
+		"base_url":      "https://ai.haivivi.cn/v1",
+		"default_model": "deepseek-flash",
+		"models":        []string{"deepseek-flash", "deepseek-vision"},
+		"client_name":   "Haivivi Work",
+		"user":          map[string]any{"name": "Richard"},
 	}
-	meta := plugins.SessionMeta{
-		BaseURL:      "https://ai.haivivi.cn/v1",
-		DefaultModel: "deepseek-flash",
-		Models:       []string{"deepseek-flash", "deepseek-vision"},
-		ClientName:   "Haivivi Work",
-		User:         plugins.AuthUser{Name: "Richard"},
-	}
-	raw, err := plugins.EncodeMeta(meta)
+	raw, err := json.Marshal(meta)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.secrets.Set(context.Background(), plugins.MetaAccount("haivivi"), raw); err != nil {
+	account := plugins.SecretAccount("auth", "sso-haivivi/meta")
+	if err := a.secrets.Set(context.Background(), account, string(raw)); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.secrets.Set(context.Background(), plugins.TokenAccount("haivivi"), "aig_x"); err != nil {
+	if err := a.secrets.Set(
+		context.Background(), plugins.TokenAccount("sso-haivivi"), "aig_x"); err != nil {
 		t.Fatal(err)
 	}
 
-	if err := a.upsertGatewayProfile("haivivi", ""); err != nil {
+	if err := a.upsertGatewayProfile("sso-haivivi", ""); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 	cfg, err := config.LoadInference(a.userDir)
@@ -43,14 +42,14 @@ func TestGatewayProfileUpsertAndRemove(t *testing.T) {
 		t.Fatalf("instances = %+v", cfg.Instances)
 	}
 	in := cfg.Instances[0]
-	if in.StableID != "haivivi" || in.Type != "openai" || in.API != "responses" ||
+	if in.StableID != "sso-haivivi" || in.Type != "openai" || in.API != "responses" ||
 		in.Endpoint != "https://ai.haivivi.cn/v1" ||
 		in.KeySource != config.KeyKeychain ||
-		in.KeyValue != plugins.TokenAccount("haivivi") ||
+		in.KeyValue != plugins.TokenAccount("sso-haivivi") ||
 		len(in.Models) != 2 || !in.Enabled {
 		t.Fatalf("gateway instance = %+v", in)
 	}
-	if err := a.removeGatewayProfile("haivivi"); err != nil {
+	if err := a.removeGatewayProfile("sso-haivivi"); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
 	cfg, _ = config.LoadInference(a.userDir)

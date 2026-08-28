@@ -38,10 +38,6 @@ import type {
   WorkspaceMeta,
 } from './types';
 import type {
-  AuthBeginResult,
-  AuthPollResult,
-  AuthStatusResult,
-  AuthUser,
   PluginKVEntry,
   PluginSummary,
 } from '../plugins/types';
@@ -137,6 +133,8 @@ export const api = {
   pluginSetEnabled: (id: string, enabled: boolean) =>
     App.PluginSetEnabled(id, enabled),
   pluginUninstall: (id: string) => App.PluginUninstall(id),
+  pluginInvoke: (id: string, method: string, args: string) =>
+    App.PluginInvoke(id, method, args) as Promise<string>,
   pickFolder: (title: string) => App.PickFolder(title) as Promise<string>,
   pluginKVGet: (id: string, key: string) =>
     App.PluginKVGet(id, key) as Promise<PluginKVEntry>,
@@ -150,17 +148,6 @@ export const api = {
     App.SecretExists(scope, name) as Promise<boolean>,
   secretDelete: (scope: string, name: string) =>
     App.SecretDelete(scope, name),
-  authBegin: (provider: string, clientID: string) =>
-    App.AuthBegin(provider, clientID) as Promise<AuthBeginResult>,
-  authPoll: (provider: string) =>
-    App.AuthPoll(provider) as Promise<AuthPollResult>,
-  authRotate: (provider: string) => App.AuthRotate(provider),
-  authRevoke: (provider: string) => App.AuthRevoke(provider),
-  authStatus: (provider: string) =>
-    App.AuthStatus(provider) as Promise<AuthStatusResult>,
-  authMe: (provider: string) => App.AuthMe(provider) as Promise<AuthUser>,
-  authModels: (provider: string) =>
-    App.AuthModels(provider) as Promise<string[]>,
   upsertGatewayProfile: (providerID: string, displayName: string) =>
     App.UpsertGatewayProfile(providerID, displayName),
   removeGatewayProfile: (providerID: string) =>

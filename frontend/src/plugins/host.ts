@@ -5,7 +5,6 @@ import { api } from '../lib/api';
 import { useStore as useMainStore } from '../lib/store';
 import type { UIEvent } from '../lib/types';
 import type {
-  AuthService,
   CommandContribution,
   InferenceService,
   KVService,
@@ -24,7 +23,6 @@ import type {
 const PERMISSION_GATED: Partial<Record<PluginServiceKey, string>> = {
   storage: 'storage:kv',
   secrets: 'secrets:auth',
-  auth: 'auth:device',
   inference: 'inference:upsert',
 };
 
@@ -110,18 +108,6 @@ function makeSecretsService(): SecretsService {
   };
 }
 
-function makeAuthService(): AuthService {
-  return {
-    begin: (provider, clientID) => api.authBegin(provider, clientID ?? ''),
-    poll: (provider) => api.authPoll(provider),
-    rotate: (provider) => api.authRotate(provider),
-    revoke: (provider) => api.authRevoke(provider),
-    status: (provider) => api.authStatus(provider),
-    me: (provider) => api.authMe(provider),
-    models: (provider) => api.authModels(provider),
-  };
-}
-
 function makeInferenceService(): InferenceService {
   return {
     upsertGatewayProfile: (providerID, displayName) =>
@@ -167,11 +153,25 @@ function provideServices(ctx: Context, c: ContributionState) {
   ctx.provide('sidebarEntries', makeRegistrar(c.sidebarEntries), true);
   ctx.provide('commands', makeRegistrar(c.commands), true);
   ctx.provide('statusBar', makeRegistrar(c.statusBar), true);
+  // invoke routes to this plugin's capability subprocess. It is an
+  // accessor so the calling plugin's id is captured on access.
+  ctx.accessor('invoke', {
+    get: function (this: Context) {
+      const id = (this.config as { id?: string } | undefined)?.id ?? '';
+      return async (method: string, params?: unknown) => {
+        const raw = await api.pluginInvoke(
+          id,
+          method,
+          JSON.stringify(params ?? {}),
+        );
+        return raw ? JSON.parse(raw) : undefined;
+      };
+    },
+  });
   // Permission-gated services must be declared in inject; unpermitted
   // ones are isolated from the plugin branch (see activatePlugin).
   ctx.provide('storage', makeKVService());
   ctx.provide('secrets', makeSecretsService());
-  ctx.provide('auth', makeAuthService());
   ctx.provide('inference', makeInferenceService());
 }
 

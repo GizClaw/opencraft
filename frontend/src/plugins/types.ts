@@ -30,37 +30,6 @@ export interface PluginKVEntry {
   value: string;
 }
 
-export interface AuthUser {
-  name: string;
-  email: string;
-  department: string;
-}
-
-export interface AuthBeginResult {
-  provider: string;
-  verification_uri: string;
-  verification_uri_complete: string;
-  user_code: string;
-  interval_sec: number;
-  expires_at: string;
-}
-
-export interface AuthPollResult {
-  status: string;
-  message?: string;
-  retry_after_sec?: number;
-  user?: AuthUser;
-  default_model?: string;
-}
-
-export interface AuthStatusResult {
-  status: string;
-  user?: AuthUser;
-  expires_at?: string;
-  default_model?: string;
-  model_count?: number;
-}
-
 export interface PluginSummary {
   id: string;
   name: string;
@@ -123,18 +92,6 @@ export interface SecretsService {
   delete: (name: string) => Promise<void>;
 }
 
-// auth is injected with "auth:device": device-authorization primitives.
-// device_code and tokens stay Go-side.
-export interface AuthService {
-  begin: (provider: string, clientID?: string) => Promise<AuthBeginResult>;
-  poll: (provider: string) => Promise<AuthPollResult>;
-  rotate: (provider: string) => Promise<void>;
-  revoke: (provider: string) => Promise<void>;
-  status: (provider: string) => Promise<AuthStatusResult>;
-  me: (provider: string) => Promise<AuthUser>;
-  models: (provider: string) => Promise<string[]>;
-}
-
 // inference is injected with "inference:upsert": wire the completed
 // auth session into the inference config.
 export interface InferenceService {
@@ -157,7 +114,6 @@ export type PluginServiceKey =
   // permission-gated
   | 'storage'
   | 'secrets'
-  | 'auth'
   | 'inference'
   // contribution points (always available)
   | 'settingsPanels'
@@ -191,12 +147,17 @@ declare module '@cordisjs/core' {
     ui: UIService;
     storage: KVService;
     secrets: SecretsService;
-    auth: AuthService;
     inference: InferenceService;
     settingsPanels: Registrar<SettingsPanelContribution>;
     sidebarEntries: Registrar<SidebarEntryContribution>;
     commands: Registrar<CommandContribution>;
     statusBar: Registrar<StatusBarContribution>;
+    /**
+     * Invokes a method on this plugin's capability subprocess (if the
+     * manifest declares one). params and the result are JSON; the host
+     * only routes by method name and never interprets the semantics.
+     */
+    invoke: (method: string, params?: unknown) => Promise<unknown>;
   }
 
   interface Events {

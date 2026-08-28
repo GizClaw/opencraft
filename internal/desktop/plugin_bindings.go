@@ -30,7 +30,13 @@ func (a *App) PluginSetEnabled(id string, enabled bool) error {
 	if a.plugins == nil {
 		return errors.New("plugin store is not ready")
 	}
-	return a.plugins.SetEnabled(id, enabled)
+	if err := a.plugins.SetEnabled(id, enabled); err != nil {
+		return err
+	}
+	if !enabled && a.cap != nil {
+		a.cap.Stop(id)
+	}
+	return nil
 }
 
 // PluginInstall copies a plugin folder into the plugin root.
@@ -48,6 +54,9 @@ func (a *App) PluginUninstall(id string) error {
 	}
 	if err := a.plugins.Uninstall(id); err != nil {
 		return err
+	}
+	if a.cap != nil {
+		a.cap.Stop(id)
 	}
 	a.kv.RemoveAll(id)
 	return nil

@@ -27,10 +27,4 @@ func TestSecretAccounts(t *testing.T) {
 	if got := TokenAccount("haivivi"); got != "auth/haivivi/token" {
 		t.Fatalf("TokenAccount = %q", got)
 	}
-	if got := MetaAccount("haivivi"); got != "auth/haivivi/meta" {
-		t.Fatalf("MetaAccount = %q", got)
-	}
-	if got := FingerprintAccount("haivivi"); got != "auth/haivivi/device-fingerprint" {
-		t.Fatalf("FingerprintAccount = %q", got)
-	}
 }

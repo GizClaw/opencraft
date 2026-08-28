@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/GizClaw/opencraft/internal/plugins/runtime"
 )
 
 // idRe constrains plugin/provider ids: lowercase start, then lowercase
@@ -31,7 +33,6 @@ func ValidateID(id string) error {
 // may declare. Unknown permissions reject the plugin (fail-closed).
 var AllowedPermissions = map[string]bool{
 	"secrets:auth":         true,
-	"auth:device":          true,
 	"inference:upsert":     true,
 	"storage:kv":           true,
 	"events:subscribe":     true,
@@ -82,6 +83,9 @@ type manifest struct {
 			Order int    `json:"order"`
 		} `json:"sidebarEntries"`
 	} `json:"contributes"`
+	// Capability declares an optional subprocess runtime for the
+	// plugin (see internal/plugins/runtime).
+	Capability *runtime.Capability `json:"capability,omitempty"`
 }
 
 // pluginStateFile records explicit enable/disable choices. A plugin
@@ -175,6 +179,19 @@ func (s *Store) Bundle(id string) (string, error) {
 		return "", fmt.Errorf("plugins: read bundle: %w", err)
 	}
 	return string(data), nil
+}
+
+// Capability returns the declared subprocess runtime for an installed
+// plugin, if any.
+func (s *Store) Capability(id string) (runtime.Capability, bool, error) {
+	m, err := s.readManifest(id)
+	if err != nil {
+		return runtime.Capability{}, false, err
+	}
+	if m.Capability == nil {
+		return runtime.Capability{}, false, nil
+	}
+	return *m.Capability, true, nil
 }
 
 // SetEnabled toggles a plugin's enabled state. The plugin must be
@@ -322,7 +339,32 @@ func parseManifest(id string, raw []byte) (*manifest, error) {
 		}
 		seenEntries[e.ID] = true
 	}
+	if err := validateCapability(m.Capability); err != nil {
+		return nil, fmt.Errorf("plugins: %w", err)
+	}
 	return &m, nil
+}
+
+// validateCapability checks a declared subprocess runtime: the binary
+// must be a relative path inside the plugin directory and the protocol
+// version must be positive.
+func validateCapability(cap *runtime.Capability) error {
+	if cap == nil {
+		return nil
+	}
+	if cap.Binary == "" {
+		return fmt.Errorf("capability.binary is required")
+	}
+	bin := filepath.Clean(cap.Binary)
+	if filepath.IsAbs(bin) ||
+		bin == ".." ||
+		strings.HasPrefix(bin, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("capability.binary escapes plugin dir: %q", cap.Binary)
+	}
+	if cap.Protocol <= 0 {
+		return fmt.Errorf("capability.protocol must be positive")
+	}
+	return nil
 }
 
 // copyDir copies one plugin source tree, skipping dotfiles (".DS_Store",

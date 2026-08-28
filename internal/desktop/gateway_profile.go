@@ -1,11 +1,13 @@
 package desktop
 
-// Gateway profile bindings: turn a completed auth session into a
-// configured inference provider. The provider is openai-compatible and
-// points at the gateway base URL with the auth-scoped token reference,
-// so the plaintext never enters the config.
+// Gateway profile bindings: turn a completed SSO session into a
+// configured inference provider. The session metadata is read from the
+// secret store (written by the capability plugin), never from the
+// frontend; the provider points at the gateway base URL with the
+// auth-scoped token reference, so the plaintext never enters the config.
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -14,9 +16,9 @@ import (
 )
 
 // UpsertGatewayProfile writes (or replaces) the gateway provider for
-// providerID from the stored auth meta, then rebuilds the runtime. The
-// provider identity is the auth provider id (e.g. "haivivi"), so the
-// plugin does not need to pass models or endpoints.
+// providerID (the SSO plugin id, e.g. "sso-haivivi") from the stored
+// session meta, then rebuilds the runtime. The plugin does not need to
+// pass models or endpoints.
 func (a *App) UpsertGatewayProfile(providerID, displayName string) error {
 	if err := a.upsertGatewayProfile(providerID, displayName); err != nil {
 		return err
@@ -39,16 +41,25 @@ func (a *App) upsertGatewayProfile(providerID, displayName string) error {
 	if err := plugins.ValidateID(providerID); err != nil {
 		return fmt.Errorf("auth: %w", err)
 	}
-	svc, err := a.authService()
+	if a.secrets == nil {
+		return errors.New("opencraft secrets: store is unavailable")
+	}
+	raw, found, err := a.secrets.Get(
+		a.appContext(), plugins.SecretAccount("auth", providerID+"/meta"))
 	if err != nil {
 		return err
 	}
-	meta, ok, err := svc.ReadMeta(providerID)
-	if err != nil {
-		return err
-	}
-	if !ok {
+	if !found {
 		return fmt.Errorf("auth: provider %q is not authenticated", providerID)
+	}
+	var meta struct {
+		BaseURL      string   `json:"base_url"`
+		DefaultModel string   `json:"default_model"`
+		Models       []string `json:"models"`
+		ClientName   string   `json:"client_name"`
+	}
+	if err := json.Unmarshal([]byte(raw), &meta); err != nil {
+		return fmt.Errorf("auth: decode session meta: %w", err)
 	}
 	if len(meta.Models) == 0 {
 		return fmt.Errorf("auth: provider %q has no models", providerID)
@@ -61,7 +72,7 @@ func (a *App) upsertGatewayProfile(providerID, displayName string) error {
 	}
 	baseURL := meta.BaseURL
 	if baseURL == "" {
-		baseURL = plugins.DefaultGatewayBaseURL + "/v1"
+		return fmt.Errorf("auth: provider %q meta has no base_url", providerID)
 	}
 	models := make([]config.Model, 0, len(meta.Models))
 	for _, name := range meta.Models {

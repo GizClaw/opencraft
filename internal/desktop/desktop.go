@@ -24,6 +24,7 @@ import (
 	app "github.com/GizClaw/opencraft/internal/app"
 	"github.com/GizClaw/opencraft/internal/config"
 	"github.com/GizClaw/opencraft/internal/plugins"
+	pluginruntime "github.com/GizClaw/opencraft/internal/plugins/runtime"
 	"github.com/GizClaw/opencraft/internal/rollout"
 	"github.com/GizClaw/opencraft/internal/runtime"
 	"github.com/GizClaw/opencraft/internal/secrets"
@@ -61,7 +62,9 @@ type App struct {
 	// plugins / kv / auth are the plugin subsystem entry points.
 	plugins *plugins.Store
 	kv      *plugins.KVStore
-	auth    *plugins.AuthService
+	// cap hosts subprocess capability plugins (e.g. the SSO auth
+	// protocol). Lazily started on first PluginInvoke.
+	cap *pluginruntime.Manager
 
 	bridge       *Bridge
 	otelShutdown func(context.Context) error
@@ -159,26 +162,12 @@ func New(opts Options) (*App, error) {
 		fmt.Fprintf(os.Stderr, "opencraft: telemetry: %v\n", err)
 		shutdown = nil
 	}
-	return &App{
-		workDir:   workDir,
-		userDir:   userDir,
-		pluginDir: pluginDir,
-		plugins:   plugins.NewStore(pluginDir),
-		kv:        plugins.NewKVStore(pluginDir),
-		auth: &plugins.AuthService{
-			Sessions:   plugins.NewSessionManager(),
-			Secrets:    sec,
-			AppVersion: app.ServiceVersion,
-			Provider: func(name string) (plugins.AuthProvider, error) {
-				if name != "haivivi" {
-					return nil, fmt.Errorf("auth: unknown provider %q", name)
-				}
-				return plugins.NewHaiviviProvider(
-					plugins.DefaultGatewayBaseURL,
-					plugins.DefaultClientID,
-					app.ServiceVersion), nil
-			},
-		},
+	a := &App{
+		workDir:        workDir,
+		userDir:        userDir,
+		pluginDir:      pluginDir,
+		plugins:        plugins.NewStore(pluginDir),
+		kv:             plugins.NewKVStore(pluginDir),
 		bridge:         NewBridge(),
 		turns:          make(map[string]*session.Turn),
 		conversationID: ocsessions.NewID(),
@@ -195,19 +184,27 @@ func New(opts Options) (*App, error) {
 		rollouts:       make(map[string]*rollout.Recorder),
 		rolloutBufs:    make(map[string]*rolloutBuffer),
 		otelShutdown:   shutdown,
-	}, nil
+	}
+	a.cap = pluginruntime.NewManager(pluginDir, pluginruntime.DefaultLoader{
+		Root: pluginDir,
+		CapabilityFunc: func(id string) (pluginruntime.Capability, bool, error) {
+			return a.plugins.Capability(id)
+		},
+	}, sec)
+	a.cap.SetEnv([]string{"OPENCRAFT_VERSION=" + app.ServiceVersion})
+	return a, nil
 }
 
 // Startup is called by Wails once the window context exists.
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
 	a.bridge.SetContext(ctx)
-	if a.auth != nil {
-		a.auth.OpenURL = func(url string) {
+	if a.cap != nil {
+		a.cap.SetOpenURL(func(url string) {
 			if a.ctx != nil {
 				wailsruntime.BrowserOpenURL(a.ctx, url)
 			}
-		}
+		})
 	}
 	// Route stream/interact events to their owning conversation so a
 	// frontend reload can recover mid-run routing; delegated subagent

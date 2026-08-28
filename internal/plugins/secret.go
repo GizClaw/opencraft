@@ -36,18 +36,7 @@ func SecretAccount(scope, name string) string {
 	return scope + "/" + name
 }
 
-// FingerprintAccount is the secret account for a provider's device
-// fingerprint.
-func FingerprintAccount(provider string) string {
-	return SecretAccount("auth", provider+"/device-fingerprint")
-}
-
 // TokenAccount is the secret account for a provider's aig_ token.
 func TokenAccount(provider string) string {
 	return SecretAccount("auth", provider+"/token")
-}
-
-// MetaAccount is the secret account for a provider's session metadata.
-func MetaAccount(provider string) string {
-	return SecretAccount("auth", provider+"/meta")
 }
