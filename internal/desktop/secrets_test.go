@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,7 +41,7 @@ func TestSaveInferenceStoresNewKeyInCredentialStore(t *testing.T) {
 		t.Fatalf("KeySource = %v, KeyValue = %q, want KeyKeychain + account",
 			in.KeySource, in.KeyValue)
 	}
-	got, found, err := a.secrets.Get(in.KeyValue)
+	got, found, err := a.secrets.Get(context.Background(), in.KeyValue)
 	if err != nil || !found || got != "sk-new" {
 		t.Fatalf("store Get = (%q, %v, %v), want sk-new", got, found, err)
 	}
@@ -92,7 +93,7 @@ func TestSaveInferenceInheritsKeychainRef(t *testing.T) {
 		t.Fatalf("inherited = (%v, %q), want keychain ref %q",
 			cfg.Instances[0].KeySource, cfg.Instances[0].KeyValue, account)
 	}
-	if got, found, _ := a.secrets.Get(account); !found || got != "sk-first" {
+	if got, found, _ := a.secrets.Get(context.Background(), account); !found || got != "sk-first" {
 		t.Fatalf("store value = (%q, %v), want sk-first", got, found)
 	}
 }
@@ -121,7 +122,7 @@ func TestMigrateInferenceKeysMovesLiterals(t *testing.T) {
 	if in.KeySource != config.KeyKeychain {
 		t.Fatalf("KeySource = %v, want KeyKeychain after migration", in.KeySource)
 	}
-	value, found, err := a.secrets.Get(in.KeyValue)
+	value, found, err := a.secrets.Get(context.Background(), in.KeyValue)
 	if err != nil || !found || value != "sk-old" {
 		t.Fatalf("store Get = (%q, %v, %v), want sk-old", value, found, err)
 	}

@@ -12,20 +12,20 @@ import (
 
 func TestFileBackendRoundTrip(t *testing.T) {
 	b := &fileBackend{dir: t.TempDir()}
-	if err := b.Set("account-a", "value-a"); err != nil {
+	if err := b.Set(context.Background(), "account-a", "value-a"); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
-	got, found, err := b.Get("account-a")
+	got, found, err := b.Get(context.Background(), "account-a")
 	if err != nil || !found || got != "value-a" {
 		t.Fatalf("Get = (%q, %v, %v), want value-a", got, found, err)
 	}
-	if _, found, err := b.Get("missing"); err != nil || found {
+	if _, found, err := b.Get(context.Background(), "missing"); err != nil || found {
 		t.Fatalf("Get(missing) = (%v, %v), want not found", found, err)
 	}
-	if err := b.Delete("account-a"); err != nil {
+	if err := b.Delete(context.Background(), "account-a"); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}
-	if _, found, err := b.Get("account-a"); err != nil || found {
+	if _, found, err := b.Get(context.Background(), "account-a"); err != nil || found {
 		t.Fatalf("Get after Delete = (%v, %v), want not found", found, err)
 	}
 }
@@ -36,10 +36,10 @@ func TestFileBackendNameCannotEscape(t *testing.T) {
 	// Names with separators and traversal attempts must stay inside the
 	// store directory (file names are sha256 hashes).
 	for _, name := range []string{"../outside", "a/b", `a\b`, ".."} {
-		if err := b.Set(name, "v"); err != nil {
+		if err := b.Set(context.Background(), name, "v"); err != nil {
 			t.Fatalf("Set(%q): %v", name, err)
 		}
-		got, found, err := b.Get(name)
+		got, found, err := b.Get(context.Background(), name)
 		if err != nil || !found || got != "v" {
 			t.Fatalf("Get(%q) = (%q, %v, %v)", name, got, found, err)
 		}
@@ -55,7 +55,7 @@ func TestFileBackendNameCannotEscape(t *testing.T) {
 
 func TestStoreLookupAndFlags(t *testing.T) {
 	b := &fileBackend{dir: t.TempDir()}
-	if err := b.Set("x", "secret-x"); err != nil {
+	if err := b.Set(context.Background(), "x", "secret-x"); err != nil {
 		t.Fatal(err)
 	}
 	s := Store{backend: b, id: "keychain", def: true}
@@ -133,17 +133,17 @@ func TestManagerSetGetDelete(t *testing.T) {
 	if !m.Available() {
 		t.Fatal("manager should be available")
 	}
-	if err := m.Set("inference/deepseek-inst-a", "sk-x"); err != nil {
+	if err := m.Set(context.Background(), "inference/deepseek-inst-a", "sk-x"); err != nil {
 		t.Fatal(err)
 	}
-	got, found, err := m.Get("inference/deepseek-inst-a")
+	got, found, err := m.Get(context.Background(), "inference/deepseek-inst-a")
 	if err != nil || !found || got != "sk-x" {
 		t.Fatalf("Get = (%q, %v, %v)", got, found, err)
 	}
-	if err := m.Delete("inference/deepseek-inst-a"); err != nil {
+	if err := m.Delete(context.Background(), "inference/deepseek-inst-a"); err != nil {
 		t.Fatal(err)
 	}
-	if _, found, _ := m.Get("inference/deepseek-inst-a"); found {
+	if _, found, _ := m.Get(context.Background(), "inference/deepseek-inst-a"); found {
 		t.Fatal("secret still present after Delete")
 	}
 }
