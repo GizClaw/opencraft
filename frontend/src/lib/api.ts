@@ -131,6 +131,10 @@ export const api = {
     App.PluginSetEnabled(id, enabled),
   pluginUninstall: (id: string) => App.PluginUninstall(id),
   pickFolder: (title: string) => App.PickFolder(title) as Promise<string>,
+  secretExists: (scope: string, name: string) =>
+    App.SecretExists(scope, name) as Promise<boolean>,
+  secretDelete: (scope: string, name: string) =>
+    App.SecretDelete(scope, name),
   readLog: (n: number) => App.ReadLog(n),
   renameSession: (id: string, title: string) => App.RenameSession(id, title),
   exportSession: (id: string) => App.ExportSession(id),

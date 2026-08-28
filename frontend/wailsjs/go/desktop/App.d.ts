@@ -123,6 +123,10 @@ export function SaveMemory(arg1:config.MemorySettings):Promise<void>;
 
 export function SearchFiles(arg1:string,arg2:number):Promise<Array<desktop.SearchFileHit>>;
 
+export function SecretDelete(arg1:string,arg2:string):Promise<void>;
+
+export function SecretExists(arg1:string,arg2:string):Promise<boolean>;
+
 export function SessionHistory(arg1:string):Promise<Array<message.Message>>;
 
 export function SessionMode():Promise<string>;

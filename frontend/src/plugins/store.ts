@@ -40,7 +40,7 @@ export const usePluginStore = create<PluginState>((set, get) => ({
         if (!p.enabled) continue;
         try {
           const src = await api.pluginBundle(p.id);
-          const c = evaluatePlugin(p.id, src);
+          const c = evaluatePlugin(p.id, src, p.permissions);
           panels.push(...(c.settingsPanels ?? []));
           entries.push(...(c.sidebarEntries ?? []));
         } catch (err) {

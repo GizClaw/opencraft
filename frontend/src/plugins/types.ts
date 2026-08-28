@@ -44,4 +44,11 @@ export interface PluginCtx {
   ui: {
     flash: (text: string) => void;
   };
+  // secrets is injected only when the plugin declares the
+  // "secrets:auth" permission. It is bound to the "auth" scope: the
+  // plugin can check existence and delete, never read the value.
+  secrets?: {
+    has: (name: string) => Promise<boolean>;
+    delete: (name: string) => Promise<void>;
+  };
 }

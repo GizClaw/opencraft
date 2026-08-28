@@ -234,6 +234,14 @@ export function SearchFiles(arg1, arg2) {
   return window['go']['desktop']['App']['SearchFiles'](arg1, arg2);
 }
 
+export function SecretDelete(arg1, arg2) {
+  return window['go']['desktop']['App']['SecretDelete'](arg1, arg2);
+}
+
+export function SecretExists(arg1, arg2) {
+  return window['go']['desktop']['App']['SecretExists'](arg1, arg2);
+}
+
 export function SessionHistory(arg1) {
   return window['go']['desktop']['App']['SessionHistory'](arg1);
 }
