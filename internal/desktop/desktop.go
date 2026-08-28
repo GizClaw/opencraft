@@ -227,16 +227,27 @@ func (a *App) rebuild() error {
 		ctx = context.Background()
 	}
 	// The user-level usage database is workspace-independent and opened
-	// once per app run.
+	// once per app run. Open it outside a.mu: sqlite open executes a
+	// PRAGMA that can block on a stale database lock, and holding the
+	// app-wide mutex across that would freeze every binding.
 	a.mu.Lock()
-	if a.usage == nil {
+	usageStore := a.usage
+	a.mu.Unlock()
+	if usageStore == nil {
 		if dataDir, err := config.UserDataDir(); err == nil {
 			if store, err := usage.Open(filepath.Join(dataDir, "user.db")); err == nil {
-				a.usage = store
+				a.mu.Lock()
+				if a.usage == nil {
+					a.usage = store
+					store = nil
+				}
+				a.mu.Unlock()
+				if store != nil {
+					_ = store.Close()
+				}
 			}
 		}
 	}
-	a.mu.Unlock()
 	// A discovered project layer is applied only for trusted
 	// workspaces. Without the trust gate a third-party repo could
 	// silently override hooks (host command execution), sandbox
@@ -343,11 +354,14 @@ func (a *App) status(configured bool) ConfigStatus {
 	a.mu.Lock()
 	wd := a.workDir
 	ud := a.userDir
-	agents := 0
-	if a.agents != nil {
-		agents = len(a.agents.List())
-	}
+	lifecycle := a.agents
 	a.mu.Unlock()
+	agents := 0
+	if lifecycle != nil {
+		// List scans the agent registry directories on disk; do it
+		// outside the app-wide lock.
+		agents = len(lifecycle.List())
+	}
 	defaultReasoning := false
 	if cfg, err := config.LoadInference(ud); err == nil {
 		defaultReasoning = cfg.ModelReasoning("")

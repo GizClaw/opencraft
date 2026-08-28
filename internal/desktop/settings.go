@@ -270,11 +270,12 @@ func (a *App) DeleteSession(id string) error {
 		"conversation_id": id,
 	})
 	a.mu.Lock()
-	if rec := a.rollouts[id]; rec != nil {
-		_ = rec.Close()
-		delete(a.rollouts, id)
-	}
+	rec := a.rollouts[id]
+	delete(a.rollouts, id)
 	a.mu.Unlock()
+	if rec != nil {
+		_ = rec.Close()
+	}
 	return nil
 }
 
