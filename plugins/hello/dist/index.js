@@ -1,11 +1,18 @@
-// Hello plugin bundle for the OpenCraft plugin host (Phase 0).
-// The host evaluates this file as `new Function('ctx', src)`; plugins
-// build components with ctx.React and declare their contribution
-// points through ctx.contribute.
-(function (ctx) {
-  var React = ctx.React;
-  var storage = ctx.capabilities.storage;
-  var ui = ctx.capabilities.ui;
+// Hello plugin for the OpenCraft plugin host.
+//
+// The protocol IS Cordis: the host loads this ES module, assembles it
+// into a Cordis plugin ({ name, inject, apply }) and mounts it with
+// ctx.plugin(). Plugins register through the injected services and
+// the context primitives (ctx.on / ctx.effect / contribution
+// registrars); everything is reversible and torn down with the
+// plugin's scope.
+export const name = 'hello';
+export const inject = ['storage', 'react'];
+
+export function apply(ctx) {
+  var React = ctx.react;
+  var storage = ctx.storage;
+  var ui = ctx.ui;
 
   function readCounter(setValue) {
     storage.get('counter').then(function (v) {
@@ -48,47 +55,51 @@
               readCounter(setValue);
             });
           },
-          className: 'w-fit rounded-md bg-accent px-2 py-1 text-xs text-white hover:opacity-90',
+          className:
+            'w-fit rounded-md bg-accent px-2 py-1 text-xs text-white hover:opacity-90',
         },
-        'Increment (capabilities.storage)'
+        'Increment (ctx.storage)'
       )
     );
   }
 
   function StatusLabel() {
-    return React.createElement(
-      'span',
-      { className: 'text-dim' },
-      'Hello'
-    );
+    return React.createElement('span', { className: 'text-dim' }, 'Hello');
   }
 
-  ctx.contribute({
-    settingsPanels: [
-      { id: 'hello-panel', title: 'Hello', order: 10, Component: HelloPanel },
-    ],
-    sidebarEntries: [
-      {
-        id: 'hello-entry',
-        title: 'Hello',
-        order: 10,
-        onClick: function () {
-          ui.flash('Hello from the hello plugin!');
-        },
-      },
-    ],
-    commands: [
-      {
-        id: 'hello-increment',
-        title: 'Hello: increment counter',
-        order: 10,
-        run: function () {
-          incrementCounter();
-        },
-      },
-    ],
-    statusBar: [
-      { id: 'hello-status', order: 10, Component: StatusLabel },
-    ],
+  // Contribution registrars are services: add() returns a disposer
+  // tied to this plugin's scope (removed automatically on disable).
+  ctx.settingsPanels.add({
+    id: 'hello-panel',
+    title: 'Hello',
+    order: 10,
+    Component: HelloPanel,
   });
-})(ctx);
+  ctx.sidebarEntries.add({
+    id: 'hello-entry',
+    title: 'Hello',
+    order: 10,
+    onClick: function () {
+      ui.flash('Hello from the hello plugin!');
+    },
+  });
+  ctx.commands.add({
+    id: 'hello-increment',
+    title: 'Hello: increment counter',
+    order: 10,
+    run: function () {
+      incrementCounter();
+    },
+  });
+  ctx.statusBar.add({
+    id: 'hello-status',
+    order: 10,
+    Component: StatusLabel,
+  });
+
+  // ctx.on is the Cordis event primitive; subscriptions are removed
+  // with the plugin scope. Host UI events are forwarded by the host.
+  ctx.on('turn_end', function () {
+    // Host UI events flow through the shared Cordis event bus.
+  });
+}

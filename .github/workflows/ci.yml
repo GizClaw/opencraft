@@ -36,6 +36,14 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --prefix frontend
 
+      # frontend/wailsjs is generated, not committed; regenerate it
+      # before compiling the frontend.
+      - name: Generate Wails bindings
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          wails generate module
+
       - name: Build frontend assets
         run: npm run build --prefix frontend
 

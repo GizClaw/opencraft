@@ -1,9 +1,14 @@
 import { create } from 'zustand';
 import { api } from '../lib/api';
-import { evaluatePlugin, sortByOrder } from './host';
+import {
+  activatePlugin,
+  getContributions,
+  resetHost,
+  sortByOrder,
+  startHost,
+} from './host';
 import type {
   CommandContribution,
-  PluginContributions,
   PluginSummary,
   SettingsPanelContribution,
   SidebarEntryContribution,
@@ -35,6 +40,10 @@ export const usePluginStore = create<PluginState>((set, get) => ({
     set({ loading: true });
     try {
       const plugins = (await api.pluginList()) ?? [];
+      // A fresh Cordis app per load cycle: previous plugin scopes are
+      // disposed (their effects run in reverse order) and contributions
+      // are collected anew.
+      await resetHost();
       const panels: SettingsPanelContribution[] = [];
       const entries: SidebarEntryContribution[] = [];
       const commands: CommandContribution[] = [];
@@ -48,15 +57,17 @@ export const usePluginStore = create<PluginState>((set, get) => ({
         if (!p.enabled) continue;
         try {
           const src = await api.pluginBundle(p.id);
-          const c = evaluatePlugin(p.id, src, p.permissions);
-          panels.push(...(c.settingsPanels ?? []));
-          entries.push(...(c.sidebarEntries ?? []));
-          commands.push(...(c.commands ?? []));
-          statusBar.push(...(c.statusBar ?? []));
+          await activatePlugin(p.id, src, p.permissions);
         } catch (err) {
           errors[p.id] = String(err);
         }
       }
+      await startHost();
+      const c = getContributions();
+      panels.push(...c.settingsPanels);
+      entries.push(...c.sidebarEntries);
+      commands.push(...c.commands);
+      statusBar.push(...c.statusBar);
       panels.sort(sortByOrder);
       entries.sort(sortByOrder);
       commands.sort(sortByOrder);
@@ -74,5 +85,3 @@ export const usePluginStore = create<PluginState>((set, get) => ({
     await get().load();
   },
 }));
-
-export type { PluginContributions };

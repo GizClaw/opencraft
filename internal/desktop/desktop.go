@@ -23,12 +23,14 @@ import (
 	"github.com/GizClaw/opencraft/internal/agents"
 	app "github.com/GizClaw/opencraft/internal/app"
 	"github.com/GizClaw/opencraft/internal/config"
+	"github.com/GizClaw/opencraft/internal/plugins"
 	"github.com/GizClaw/opencraft/internal/rollout"
 	"github.com/GizClaw/opencraft/internal/runtime"
 	"github.com/GizClaw/opencraft/internal/secrets"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/undo"
 	"github.com/GizClaw/opencraft/internal/usage"
+	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // Options configures the desktop application.
@@ -50,14 +52,16 @@ type Options struct {
 type App struct {
 	ctx context.Context
 
-	mu sync.Mutex
-	// kvMu serializes plugin KV state file updates.
-	kvMu    sync.Mutex
+	mu      sync.Mutex
 	workDir string
 	userDir string
 	// pluginDir is the frontend plugin root (<dataDir>/plugins); set by
 	// New and overridable in tests.
 	pluginDir string
+	// plugins / kv / auth are the plugin subsystem entry points.
+	plugins *plugins.Store
+	kv      *plugins.KVStore
+	auth    *plugins.AuthService
 
 	bridge       *Bridge
 	otelShutdown func(context.Context) error
@@ -145,6 +149,7 @@ func New(opts Options) (*App, error) {
 		dataDir, _ = config.UserDataDir()
 	}
 	sec := secrets.NewManager(filepath.Join(dataDir, "keyring"), secrets.DefaultService)
+	pluginDir := filepath.Join(dataDir, "plugins")
 	shutdown, err := initTelemetry()
 	if err != nil {
 		// Telemetry is best-effort for the desktop app: a failed
@@ -155,9 +160,25 @@ func New(opts Options) (*App, error) {
 		shutdown = nil
 	}
 	return &App{
-		workDir:        workDir,
-		userDir:        userDir,
-		pluginDir:      filepath.Join(dataDir, "plugins"),
+		workDir:   workDir,
+		userDir:   userDir,
+		pluginDir: pluginDir,
+		plugins:   plugins.NewStore(pluginDir),
+		kv:        plugins.NewKVStore(pluginDir),
+		auth: &plugins.AuthService{
+			Sessions:   plugins.NewSessionManager(),
+			Secrets:    sec,
+			AppVersion: app.ServiceVersion,
+			Provider: func(name string) (plugins.AuthProvider, error) {
+				if name != "haivivi" {
+					return nil, fmt.Errorf("auth: unknown provider %q", name)
+				}
+				return plugins.NewHaiviviProvider(
+					plugins.DefaultGatewayBaseURL,
+					plugins.DefaultClientID,
+					app.ServiceVersion), nil
+			},
+		},
 		bridge:         NewBridge(),
 		turns:          make(map[string]*session.Turn),
 		conversationID: ocsessions.NewID(),
@@ -181,6 +202,13 @@ func New(opts Options) (*App, error) {
 func (a *App) Startup(ctx context.Context) {
 	a.ctx = ctx
 	a.bridge.SetContext(ctx)
+	if a.auth != nil {
+		a.auth.OpenURL = func(url string) {
+			if a.ctx != nil {
+				wailsruntime.BrowserOpenURL(a.ctx, url)
+			}
+		}
+	}
 	// Route stream/interact events to their owning conversation so a
 	// frontend reload can recover mid-run routing; delegated subagent
 	// runs resolve to "" and stay out of the chat.

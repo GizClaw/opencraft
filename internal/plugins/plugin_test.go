@@ -1,4 +1,4 @@
-package desktop
+package plugins
 
 import (
 	"encoding/json"
@@ -28,12 +28,7 @@ func writePlugin(t *testing.T, root, id string, m map[string]any, bundle string)
 	}
 }
 
-func pluginApp(t *testing.T, root string) *App {
-	t.Helper()
-	return &App{pluginDir: root}
-}
-
-func TestPluginListScansAndValidates(t *testing.T) {
+func TestStoreListScansAndValidates(t *testing.T) {
 	root := t.TempDir()
 	writePlugin(t, root, "hello", map[string]any{
 		"id": "hello", "name": "Hello", "version": "0.1.0",
@@ -52,92 +47,83 @@ func TestPluginListScansAndValidates(t *testing.T) {
 		"id": "mismatch", "name": "Bad", "version": "0.1.0",
 		"entry": "dist/index.js", "permissions": []string{},
 	}, "")
-	// A non-plugin directory (no plugin.json) is skipped silently.
 	if err := os.MkdirAll(filepath.Join(root, "not-a-plugin"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 
-	a := pluginApp(t, root)
-	list, err := a.PluginList()
+	s := NewStore(root)
+	list, err := s.List()
 	if err != nil {
-		t.Fatalf("PluginList: %v", err)
+		t.Fatalf("List: %v", err)
 	}
 	if len(list) != 3 {
-		t.Fatalf("PluginList returned %d plugins, want 3: %+v", len(list), list)
+		t.Fatalf("List returned %d plugins, want 3: %+v", len(list), list)
 	}
 	byID := map[string]PluginSummary{}
 	for _, p := range list {
 		byID[p.ID] = p
 	}
 	if h := byID["hello"]; !h.Enabled || h.Error != "" || len(h.Panels) != 1 || h.Panels[0] != "hello-panel" {
-		t.Fatalf("hello plugin summary = %+v", h)
+		t.Fatalf("hello summary = %+v", h)
 	}
 	if b := byID["bad-perm"]; b.Error == "" {
-		t.Fatal("bad-perm should be rejected (unknown permission)")
+		t.Fatal("bad-perm should be rejected")
 	}
 	if b := byID["bad-id"]; b.Error == "" {
-		t.Fatal("bad-id should be rejected (manifest id mismatch)")
+		t.Fatal("bad-id should be rejected")
 	}
 }
 
-func TestPluginBundleValidatesPath(t *testing.T) {
+func TestStoreBundleValidatesPath(t *testing.T) {
 	root := t.TempDir()
 	writePlugin(t, root, "hello", map[string]any{
 		"id": "hello", "name": "Hello", "version": "0.1.0",
 		"entry": "dist/index.js", "permissions": []string{},
 	}, "console.log('hello')")
-	a := pluginApp(t, root)
-	src, err := a.PluginBundle("hello")
-	if err != nil {
-		t.Fatalf("PluginBundle: %v", err)
+	s := NewStore(root)
+	src, err := s.Bundle("hello")
+	if err != nil || src != "console.log('hello')" {
+		t.Fatalf("Bundle = (%q, %v)", src, err)
 	}
-	if src != "console.log('hello')" {
-		t.Fatalf("bundle = %q", src)
-	}
-
-	// Traversal must be rejected.
 	writePlugin(t, root, "evil", map[string]any{
 		"id": "evil", "name": "Evil", "version": "0.1.0",
 		"entry": "../outside.js", "permissions": []string{},
 	}, "")
-	if _, err := a.PluginBundle("evil"); err == nil {
-		t.Fatal("PluginBundle with escaping entry should fail")
+	if _, err := s.Bundle("evil"); err == nil {
+		t.Fatal("escaping entry should fail")
 	}
-	if _, err := a.PluginBundle("../hello"); err == nil {
-		t.Fatal("PluginBundle with invalid id should fail")
+	if _, err := s.Bundle("../hello"); err == nil {
+		t.Fatal("invalid id should fail")
 	}
 }
 
-func TestPluginSetEnabledTogglesState(t *testing.T) {
+func TestStoreSetEnabledTogglesState(t *testing.T) {
 	root := t.TempDir()
 	writePlugin(t, root, "hello", map[string]any{
 		"id": "hello", "name": "Hello", "version": "0.1.0",
 		"entry": "dist/index.js", "permissions": []string{},
 	}, "")
-	a := pluginApp(t, root)
-	if err := a.PluginSetEnabled("hello", false); err != nil {
-		t.Fatalf("disable: %v", err)
-	}
-	list, err := a.PluginList()
-	if err != nil {
+	s := NewStore(root)
+	if err := s.SetEnabled("hello", false); err != nil {
 		t.Fatal(err)
 	}
+	list, _ := s.List()
 	if len(list) != 1 || list[0].Enabled {
 		t.Fatalf("plugin should be disabled: %+v", list)
 	}
-	if err := a.PluginSetEnabled("hello", true); err != nil {
-		t.Fatalf("enable: %v", err)
+	if err := s.SetEnabled("hello", true); err != nil {
+		t.Fatal(err)
 	}
-	list, _ = a.PluginList()
+	list, _ = s.List()
 	if !list[0].Enabled {
 		t.Fatal("plugin should be enabled again")
 	}
-	if err := a.PluginSetEnabled("missing", true); err == nil {
+	if err := s.SetEnabled("missing", true); err == nil {
 		t.Fatal("enabling a non-installed plugin should fail")
 	}
 }
 
-func TestPluginInstallCopiesAndValidates(t *testing.T) {
+func TestStoreInstallCopiesAndValidates(t *testing.T) {
 	root := t.TempDir()
 	srcRoot := t.TempDir()
 	writePlugin(t, srcRoot, "installed", map[string]any{
@@ -149,58 +135,52 @@ func TestPluginInstallCopiesAndValidates(t *testing.T) {
 			},
 		},
 	}, "console.log('installed')")
-	// The source directory name must not matter: rename it away from
-	// the manifest id before installing.
 	src := filepath.Join(srcRoot, "unrelated-dir-name")
 	if err := os.Rename(filepath.Join(srcRoot, "installed"), src); err != nil {
 		t.Fatal(err)
 	}
-	a := pluginApp(t, root)
-	sum, err := a.PluginInstall(src)
+	s := NewStore(root)
+	sum, err := s.Install(src)
 	if err != nil {
-		t.Fatalf("PluginInstall: %v", err)
+		t.Fatalf("Install: %v", err)
 	}
 	if sum.ID != "installed" || !sum.Enabled || len(sum.Entries) != 1 {
 		t.Fatalf("installed summary = %+v", sum)
 	}
-	if _, err := a.PluginBundle("installed"); err != nil {
+	if _, err := s.Bundle("installed"); err != nil {
 		t.Fatalf("bundle after install: %v", err)
 	}
-	if _, err := a.PluginInstall(src); err == nil {
+	if _, err := s.Install(src); err == nil {
 		t.Fatal("reinstalling an existing plugin should fail")
 	}
-
 	bad := t.TempDir()
 	writePlugin(t, bad, "x", map[string]any{
 		"id": "bad", "name": "Bad", "version": "0.1.0",
 		"entry": "dist/index.js", "permissions": []string{"nope:perm"},
 	}, "")
-	if _, err := a.PluginInstall(filepath.Join(bad, "x")); err == nil {
+	if _, err := s.Install(filepath.Join(bad, "x")); err == nil {
 		t.Fatal("installing a plugin with unknown permissions should fail")
 	}
 }
 
-func TestPluginUninstallRemoves(t *testing.T) {
+func TestStoreUninstallRemoves(t *testing.T) {
 	root := t.TempDir()
 	writePlugin(t, root, "hello", map[string]any{
 		"id": "hello", "name": "Hello", "version": "0.1.0",
 		"entry": "dist/index.js", "permissions": []string{},
 	}, "")
-	a := pluginApp(t, root)
-	if err := a.PluginSetEnabled("hello", false); err != nil {
+	s := NewStore(root)
+	if err := s.SetEnabled("hello", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.PluginUninstall("hello"); err != nil {
-		t.Fatalf("PluginUninstall: %v", err)
+	if err := s.Uninstall("hello"); err != nil {
+		t.Fatalf("Uninstall: %v", err)
 	}
-	list, err := a.PluginList()
-	if err != nil {
-		t.Fatal(err)
-	}
+	list, _ := s.List()
 	if len(list) != 0 {
 		t.Fatalf("plugins after uninstall = %+v", list)
 	}
-	if err := a.PluginUninstall("missing"); err == nil {
+	if err := s.Uninstall("missing"); err == nil {
 		t.Fatal("uninstalling a non-installed plugin should fail")
 	}
 }
