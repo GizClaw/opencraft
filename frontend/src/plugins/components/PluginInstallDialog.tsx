@@ -1,13 +1,11 @@
-import { FolderOpen, Loader2, X } from 'lucide-react';
+import { FileArchive, FolderOpen, Loader2, X } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../../lib/api';
 import { usePluginStore } from '../store';
 
 // PluginInstallDialog installs a plugin from a local directory
-// containing plugin.json, either typed directly or picked with the
-// native folder dialog (PickFolder, which never switches the
-// workspace).
+// containing plugin.json or from a zip package (release artifact).
 export function PluginInstallDialog({ onClose }: { onClose: () => void }) {
   const { t } = useTranslation();
   const load = usePluginStore((s) => s.load);
@@ -27,13 +25,29 @@ export function PluginInstallDialog({ onClose }: { onClose: () => void }) {
     }
   };
 
+  const pickZip = async () => {
+    try {
+      const file = await api.pickFile(t('config.pluginsInstallTitle'), '*.zip');
+      if (file) {
+        setPath(file);
+        setError('');
+      }
+    } catch (err) {
+      setError(String(err));
+    }
+  };
+
   const install = async () => {
     const p = path.trim();
     if (!p || busy) return;
     setBusy(true);
     setError('');
     try {
-      await api.pluginInstall(p);
+      if (p.toLowerCase().endsWith('.zip')) {
+        await api.pluginInstallZip(p);
+      } else {
+        await api.pluginInstall(p);
+      }
       await load();
       onClose();
     } catch (err) {
@@ -53,7 +67,9 @@ export function PluginInstallDialog({ onClose }: { onClose: () => void }) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-edge px-4 py-3">
-          <h3 className="text-sm font-semibold">{t('config.pluginsInstall')}</h3>
+          <h3 className="text-sm font-semibold">
+            {t('config.pluginsInstall')}
+          </h3>
           <button onClick={onClose} className="text-dim hover:text-fg">
             <X size={16} />
           </button>
@@ -78,10 +94,15 @@ export function PluginInstallDialog({ onClose }: { onClose: () => void }) {
               <FolderOpen size={12} />
               {t('config.pluginsChooseFolder')}
             </button>
+            <button
+              onClick={() => void pickZip()}
+              className="flex items-center gap-1.5 rounded-lg border border-edge bg-panel2 px-2.5 py-1.5 text-xs text-dim hover:text-fg"
+            >
+              <FileArchive size={12} />
+              {t('config.pluginsChooseZip')}
+            </button>
           </div>
-          {error && (
-            <p className="text-[11px] text-err break-words">{error}</p>
-          )}
+          {error && <p className="text-[11px] text-err break-words">{error}</p>}
           <div className="flex justify-end gap-2">
             <button
               onClick={onClose}

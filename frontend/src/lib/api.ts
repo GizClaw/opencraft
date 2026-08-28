@@ -37,10 +37,7 @@ import type {
   UsagePoint,
   WorkspaceMeta,
 } from './types';
-import type {
-  PluginKVEntry,
-  PluginSummary,
-} from '../plugins/types';
+import type { PluginKVEntry, PluginSummary } from '../plugins/types';
 
 export const api = {
   version: () => App.Version(),
@@ -130,24 +127,26 @@ export const api = {
   pluginBundle: (id: string) => App.PluginBundle(id) as Promise<string>,
   pluginInstall: (dir: string) =>
     App.PluginInstall(dir) as Promise<PluginSummary>,
+  pluginInstallZip: (zip: string) =>
+    App.PluginInstallZip(zip) as Promise<PluginSummary>,
   pluginSetEnabled: (id: string, enabled: boolean) =>
     App.PluginSetEnabled(id, enabled),
   pluginUninstall: (id: string) => App.PluginUninstall(id),
   pluginInvoke: (id: string, method: string, args: string) =>
     App.PluginInvoke(id, method, args) as Promise<string>,
   pickFolder: (title: string) => App.PickFolder(title) as Promise<string>,
+  pickFile: (title: string, pattern: string) =>
+    App.PickFile(title, pattern) as Promise<string>,
   pluginKVGet: (id: string, key: string) =>
     App.PluginKVGet(id, key) as Promise<PluginKVEntry>,
   pluginKVList: (id: string) =>
     App.PluginKVList(id) as Promise<PluginKVEntry[]>,
   pluginKVSet: (id: string, key: string, value: string) =>
     App.PluginKVSet(id, key, value),
-  pluginKVDelete: (id: string, key: string) =>
-    App.PluginKVDelete(id, key),
+  pluginKVDelete: (id: string, key: string) => App.PluginKVDelete(id, key),
   secretExists: (scope: string, name: string) =>
     App.SecretExists(scope, name) as Promise<boolean>,
-  secretDelete: (scope: string, name: string) =>
-    App.SecretDelete(scope, name),
+  secretDelete: (scope: string, name: string) => App.SecretDelete(scope, name),
   readLog: (n: number) => App.ReadLog(n),
   renameSession: (id: string, title: string) => App.RenameSession(id, title),
   exportSession: (id: string) => App.ExportSession(id),

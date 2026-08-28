@@ -78,7 +78,9 @@ func (commitHookFactory) New(ctx context.Context, in resource.Input) (any, error
 		if err := store.AppendTurn(ctx, req.ContextID, raw); err != nil {
 			return err
 		}
-		return sink.CommitTurn(ctx, corememory.Turn{
+		// Persisting a committed turn must survive a concurrent cancel
+		// (e.g. the user interrupted right as the turn settled).
+		return sink.CommitTurn(context.WithoutCancel(ctx), corememory.Turn{
 			Scope:          settings.scopeFor(id),
 			ConversationID: req.ContextID,
 			IdempotencyKey: res.RunID,

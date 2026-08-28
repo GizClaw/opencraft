@@ -120,7 +120,12 @@ func (o *archiveObserver) OnRunEnd(ctx context.Context, id agent.Identity, res *
 	if len(raw) <= 1 {
 		return
 	}
-	if err := o.sink.CommitTurn(ctx, corememory.Turn{
+	// The run context is cancelled for interrupted/canceled turns; the
+	// memory commit must still persist the partial output so the next
+	// turn's context keeps the interrupted content. WithoutCancel keeps
+	// the derived values but detaches the cancellation.
+	persistCtx := context.WithoutCancel(ctx)
+	if err := o.sink.CommitTurn(persistCtx, corememory.Turn{
 		Scope:          o.settings.scopeFor(id),
 		ConversationID: id.ConversationID,
 		IdempotencyKey: res.RunID,

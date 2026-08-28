@@ -294,7 +294,15 @@ func signAdHoc(path string) error {
 	if _, err := exec.LookPath("codesign"); err != nil {
 		return fmt.Errorf("plugins: codesign unavailable: %w", err)
 	}
+	// Already signed (e.g. from a packaged release): leave it.
+	if _, err := exec.Command("codesign", "--verify", "-q", path).CombinedOutput(); err == nil {
+		return nil
+	}
 	if out, err := exec.Command("codesign", "-s", "-", path).CombinedOutput(); err != nil {
+		// "is already signed" is not a real failure for a re-sign.
+		if strings.Contains(string(out), "already signed") {
+			return nil
+		}
 		return fmt.Errorf("plugins: ad-hoc sign %q: %w: %s", path, err, out)
 	}
 	return nil
