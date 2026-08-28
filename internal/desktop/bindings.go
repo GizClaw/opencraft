@@ -573,11 +573,11 @@ func (a *App) StartTurn(text string) (TurnStart, error) {
 		ContextID: contextID,
 		Message:   message.NewTextMessage(message.RoleUser, text),
 		// Think level rides the board into the graph's
-		// ${board.think_level} inference node reference.
+		// ${board:think_level} inference node reference.
 		Inputs: map[string]any{
 			"think_level": think,
 			// Model hint rides the board into the graph's
-			// ${board.model} inference node reference; the router
+			// ${board:model} inference node reference; the router
 			// falls back to the default policy when it is empty.
 			"model": model,
 		},

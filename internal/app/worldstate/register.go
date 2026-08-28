@@ -61,7 +61,7 @@ type prepareSettings struct {
 	MemoryMaxChars    int    `json:"memory_max_chars,omitempty"`
 }
 
-func (prepareFactory) New(_ context.Context, in resource.Input) (any, error) {
+func (prepareFactory) New(ctx context.Context, in resource.Input) (any, error) {
 	mem, err := resourcedep.Required[memory.ContextProvider](in, "worldstate", "memory")
 	if err != nil {
 		return nil, err
@@ -71,7 +71,7 @@ func (prepareFactory) New(_ context.Context, in resource.Input) (any, error) {
 		return nil, err
 	}
 	settings, err := resource.DecodeTyped[prepareSettings](
-		in.Settings, resource.ExpandEnv())
+		ctx, in.Settings)
 	if err != nil {
 		return nil, err
 	}

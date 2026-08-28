@@ -196,7 +196,7 @@ func (HostSandboxFactory) New(
 	in resource.Input,
 ) (any, error) {
 	s, err := resource.DecodeTyped[HostSandboxSettings](
-		in.Settings, resource.ExpandEnv())
+		ctx, in.Settings)
 	if err != nil {
 		return nil, errdefs.Validationf(
 			"opencraft sandbox: decode settings: %v", err)

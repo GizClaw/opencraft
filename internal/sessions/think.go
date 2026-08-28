@@ -8,7 +8,7 @@ import (
 
 // ThinkLevel is the per-session model reasoning effort. It mirrors
 // flowcraft's inference.ReasoningEffort enum; the graph's
-// ${board.think_level} reference consumes it verbatim.
+// ${board:think_level} reference consumes it verbatim.
 type ThinkLevel string
 
 const (

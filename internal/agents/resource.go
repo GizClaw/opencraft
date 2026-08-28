@@ -24,8 +24,8 @@ func (Factory) Spec() resource.Spec {
 }
 
 // New creates the lifecycle rooted at settings.dir.
-func (f Factory) New(_ context.Context, in resource.Input) (any, error) {
-	settings, err := resource.DecodeTyped[Settings](in.Settings, resource.ExpandEnv())
+func (f Factory) New(ctx context.Context, in resource.Input) (any, error) {
+	settings, err := resource.DecodeTyped[Settings](ctx, in.Settings)
 	if err != nil {
 		return nil, errdefs.Validationf(
 			"opencraft agentlifecycle: decode settings: %v", err)

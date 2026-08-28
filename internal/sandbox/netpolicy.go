@@ -74,9 +74,9 @@ func (NetPolicyFactory) Spec() resource.Spec {
 // New implements resource.Factory. Absent sections keep safe defaults:
 // exec stays NetDefault (host networking, the historical behavior) and
 // web_fetch keeps the SSRF guard enabled.
-func (NetPolicyFactory) New(_ context.Context, in resource.Input) (any, error) {
+func (NetPolicyFactory) New(ctx context.Context, in resource.Input) (any, error) {
 	settings, err := resource.DecodeTyped[NetPolicySettings](
-		in.Settings, resource.ExpandEnv())
+		ctx, in.Settings)
 	if err != nil {
 		return nil, errdefs.Validationf(
 			"opencraft netpolicy: decode settings: %v", err)

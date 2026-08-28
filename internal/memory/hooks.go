@@ -37,7 +37,7 @@ type commitSettings struct {
 	AgentID   string `json:"agent_id,omitempty"`
 }
 
-func (commitHookFactory) New(_ context.Context, in resource.Input) (any, error) {
+func (commitHookFactory) New(ctx context.Context, in resource.Input) (any, error) {
 	sink, err := resourcedep.Required[corememory.TurnSink](in, "memory", "memory")
 	if err != nil {
 		return nil, err
@@ -46,7 +46,7 @@ func (commitHookFactory) New(_ context.Context, in resource.Input) (any, error) 
 	if err != nil {
 		return nil, err
 	}
-	settings, err := resource.DecodeTyped[commitSettings](in.Settings)
+	settings, err := resource.DecodeTyped[commitSettings](ctx, in.Settings)
 	if err != nil {
 		return nil, err
 	}

@@ -53,7 +53,7 @@ type Settings struct {
 // New builds the shared skills service.
 func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 	settings, err := resource.DecodeTyped[Settings](
-		in.Settings, resource.ExpandEnv())
+		ctx, in.Settings)
 	if err != nil {
 		return nil, errdefs.Validationf("opencraft skills: decode settings: %v", err)
 	}

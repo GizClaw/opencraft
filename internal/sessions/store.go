@@ -649,8 +649,8 @@ type settings struct {
 }
 
 // New implements resource.Factory.
-func (Factory) New(_ context.Context, in resource.Input) (any, error) {
-	s, err := resource.DecodeTyped[settings](in.Settings, resource.ExpandEnv())
+func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
+	s, err := resource.DecodeTyped[settings](ctx, in.Settings)
 	if err != nil {
 		return nil, errdefs.Validationf("session store: %v", err)
 	}

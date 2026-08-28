@@ -304,11 +304,11 @@ func (execPolicyResource) Spec() resource.Spec {
 }
 
 func (execPolicyResource) New(
-	_ context.Context,
+	ctx context.Context,
 	in resource.Input,
 ) (any, error) {
 	settings, err := resource.DecodeTyped[execPolicySettings](
-		in.Settings, resource.ExpandEnv())
+		ctx, in.Settings)
 	if err != nil {
 		return nil, errdefs.Validationf(
 			"opencraft execpolicy: decode settings: %v", err)
