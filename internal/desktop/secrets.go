@@ -2,9 +2,10 @@ package desktop
 
 import (
 	"context"
-	"fmt"
-	"os"
 	"strings"
+
+	"github.com/GizClaw/flowcraft/core/telemetry"
+	otellog "go.opentelemetry.io/otel/log"
 
 	"github.com/GizClaw/opencraft/internal/config"
 	"github.com/GizClaw/opencraft/internal/secrets"
@@ -35,41 +36,42 @@ func (a *App) reconcileInferenceKeys() {
 		return
 	}
 	changed := false
+	migrated := 0
 	for i := range cfg.Instances {
 		in := &cfg.Instances[i]
 		switch {
 		case in.KeySource == config.KeyLiteral && strings.TrimSpace(in.KeyValue) != "":
 			account := secrets.AccountFor(in.DeploymentID(i + 1))
 			if err := a.secrets.Set(ctx, account, in.KeyValue); err != nil {
-				fmt.Fprintf(os.Stderr,
-					"opencraft: key migration for %q failed, keeping literal key: %v\n",
-					in.DeploymentID(i+1), err)
+				telemetry.Error(ctx, "opencraft: key migration failed, keeping literal key",
+					otellog.String("deployment", in.DeploymentID(i+1)),
+					otellog.String("error", err.Error()))
 				continue
 			}
 			// Read back before dropping the literal so a failed write
 			// can never strand the credential.
 			got, found, err := a.secrets.Get(ctx, account)
 			if err != nil || !found || got != in.KeyValue {
-				fmt.Fprintf(os.Stderr,
-					"opencraft: key migration verification for %q failed, keeping literal key\n",
-					in.DeploymentID(i+1))
+				telemetry.Error(ctx, "opencraft: key migration verification failed, keeping literal key",
+					otellog.String("deployment", in.DeploymentID(i+1)),
+					otellog.String("error", errText(err)))
 				continue
 			}
 			in.KeySource = config.KeyKeychain
 			in.KeyValue = account
 			changed = true
+			migrated++
 		case in.KeySource == config.KeyKeychain && strings.TrimSpace(in.KeyValue) != "":
 			account := in.KeyValue
 			_, found, err := a.secrets.Get(ctx, account)
 			switch {
 			case err != nil:
-				fmt.Fprintf(os.Stderr,
-					"opencraft: credential store lookup for %q failed: %v\n",
-					account, err)
+				telemetry.Error(ctx, "opencraft: credential store lookup failed",
+					otellog.String("account", account),
+					otellog.String("error", err.Error()))
 			case !found:
-				fmt.Fprintf(os.Stderr,
-					"opencraft: credential entry for %q is missing; please re-enter the key in Settings\n",
-					account)
+				telemetry.Warn(ctx, "opencraft: credential entry missing; please re-enter the key in Settings",
+					otellog.String("account", account))
 				// Clear the key so the settings page flags the row and
 				// the router stops failing with "secret not found".
 				in.KeySource = config.KeyLiteral
@@ -81,8 +83,20 @@ func (a *App) reconcileInferenceKeys() {
 	if !changed {
 		return
 	}
-	if err := config.WriteInference(a.userDir, cfg); err != nil {
-		fmt.Fprintf(os.Stderr,
-			"opencraft: key migration config write failed: %v\n", err)
+	if migrated > 0 {
+		telemetry.Info(ctx, "opencraft: migrated inference keys to credential store",
+			otellog.Int("count", migrated))
 	}
+	if err := config.WriteInference(a.userDir, cfg); err != nil {
+		telemetry.Error(ctx, "opencraft: key migration config write failed",
+			otellog.String("error", err.Error()))
+	}
+}
+
+// errText renders a possibly-nil error for telemetry attributes.
+func errText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
 }

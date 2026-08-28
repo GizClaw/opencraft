@@ -14,8 +14,10 @@ import (
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
 	coresession "github.com/GizClaw/flowcraft/core/runtime/session"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/tool/mcp"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	otellog "go.opentelemetry.io/otel/log"
 	"sigs.k8s.io/yaml"
 
 	app "github.com/GizClaw/opencraft/internal/app"
@@ -286,8 +288,9 @@ func (a *App) saveInference(req InferenceRequest) error {
 					in.KeyValue = account
 					break
 				}
-				fmt.Fprintf(os.Stderr,
-					"opencraft: credential store write failed, falling back to config literal: %v\n", storeErr)
+				telemetry.Warn(ctx,
+					"opencraft: credential store write failed, falling back to config literal",
+					otellog.String("error", storeErr.Error()))
 			}
 			in.KeyValue = key
 		case p.Enabled:
