@@ -67,12 +67,15 @@ type ProviderInstance struct {
 	// Key carries a new literal key from the settings page; an empty
 	// value means "keep the stored key". The backend never returns the
 	// stored secret through this field.
-	Key      string      `json:"key"`
-	KeySet   bool        `json:"key_set"` // config-time: a key is already stored
-	KeyEnv   bool        `json:"key_env"`
-	Models   []ModelView `json:"models"`
-	Endpoint string      `json:"endpoint"`
-	Enabled  bool        `json:"enabled"`
+	Key    string `json:"key"`
+	KeySet bool   `json:"key_set"` // config-time: a key is already stored
+	KeyEnv bool   `json:"key_env"`
+	// KeyKeychain reports that the key lives in the OS credential
+	// store (macOS Keychain / Linux 0600 files) rather than the config.
+	KeyKeychain bool        `json:"key_keychain"`
+	Models      []ModelView `json:"models"`
+	Endpoint    string      `json:"endpoint"`
+	Enabled     bool        `json:"enabled"`
 }
 
 // InferenceRequest is the full inference configuration payload from

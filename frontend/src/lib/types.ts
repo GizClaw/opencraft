@@ -35,6 +35,7 @@ export interface ProviderInstance {
   key: string;
   key_set: boolean;
   key_env: boolean;
+  key_keychain?: boolean;
   models: ModelInstance[];
   endpoint: string;
   enabled: boolean;

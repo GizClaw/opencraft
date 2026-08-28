@@ -60,6 +60,7 @@ interface InstanceRow {
   key: string;
   keySet: boolean;
   keyEnv: boolean;
+  keyKeychain: boolean;
   models: RowModel[];
   endpoint: string;
   enabled: boolean;
@@ -156,6 +157,7 @@ export function ConfigPage() {
               key: s.key ?? '',
               keySet: s.key_set ?? false,
               keyEnv: s.key_env ?? false,
+              keyKeychain: s.key_keychain ?? false,
               models:
                 models.length > 0
                   ? models
@@ -357,6 +359,7 @@ export function ConfigPage() {
         key: '',
         keySet: false,
         keyEnv: false,
+        keyKeychain: false,
         models: [
           {
             name: prov?.default_model ?? '',
@@ -843,7 +846,9 @@ export function ConfigPage() {
                               }
                               disabled={row.keyEnv}
                               placeholder={
-                                row.keySet && row.key === ''
+                                row.keyKeychain && row.key === ''
+                                  ? t('config.keychainStored')
+                                  : row.keySet && row.key === ''
                                   ? t('setup.apiKeySet')
                                   : t('setup.apiKeyPlaceholder', {
                                       var: prov?.env_var ?? '',

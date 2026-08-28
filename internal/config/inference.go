@@ -71,6 +71,10 @@ const (
 	KeyEnv KeySource = iota
 	// KeyLiteral stores the key verbatim in opencraft.yaml (0600).
 	KeyLiteral
+	// KeyKeychain stores the key in the OS credential store (macOS
+	// Keychain / Linux 0600 files) and keeps only a ${secret:keychain.<name>}
+	// reference in opencraft.yaml.
+	KeyKeychain
 )
 
 // Model is one model served by an inference instance, with its own
@@ -98,7 +102,7 @@ type Instance struct {
 	Endpoint  string // base URL override; empty uses the driver default
 	Models    []Model
 	KeySource KeySource
-	KeyValue  string // literal key (KeyLiteral only)
+	KeyValue  string // literal key (KeyLiteral) or keychain account (KeyKeychain)
 	Enabled   bool
 }
 
@@ -407,6 +411,9 @@ func instanceAPIKey(in Instance, prov Provider) string {
 	if in.KeySource == KeyEnv {
 		return "${env:" + prov.EnvVar + "}"
 	}
+	if in.KeySource == KeyKeychain {
+		return "${secret:keychain." + in.KeyValue + "}"
+	}
 	return yamlQuote(in.KeyValue)
 }
 
@@ -460,15 +467,15 @@ type KeyRequest struct {
 //     or deleting rows keeps each key on the right row (legacy configs
 //     without stable ids);
 //  3. Rows without a stable-id or fingerprint match take the first
-//     unclaimed same-type instance with a literal key, in request
+//     unclaimed same-type instance with a stored key, in request
 //     order, so a brand-new row (or one whose identity was lost) still
 //     finds an available key instead of hard-failing.
 //
 // claimed tracks old-instance indexes already inherited, preventing two
-// rows from stealing the same key. Only literal keys are inherited
-// (env-sourced keys are chosen explicitly via the request). The
-// returned slice has one old-instance index per row (-1 when that row
-// could not be matched; ok is false then).
+// rows from stealing the same key. Only literal and keychain-sourced
+// keys are inherited (env-sourced keys are chosen explicitly via the
+// request). The returned slice has one old-instance index per row (-1
+// when that row could not be matched; ok is false then).
 func MatchStoredKeys(
 	existing []Instance,
 	rows []KeyRequest,
@@ -479,14 +486,17 @@ func MatchStoredKeys(
 	for i := range matches {
 		matches[i] = -1
 	}
-	hasLiteralKey := func(in Instance) bool {
-		return in.KeySource == KeyLiteral && in.KeyValue != ""
+	hasStoredKey := func(in Instance) bool {
+		if in.KeyValue == "" {
+			return false
+		}
+		return in.KeySource == KeyLiteral || in.KeySource == KeyKeychain
 	}
 	sameIdentity := func(row KeyRequest, in Instance) bool {
 		return row.StableID != "" &&
 			in.StableID == row.StableID &&
 			in.Type == row.Type &&
-			hasLiteralKey(in)
+			hasStoredKey(in)
 	}
 	fingerprint := func(row KeyRequest, in Instance) bool {
 		return in.Type == row.Type &&
@@ -494,7 +504,7 @@ func MatchStoredKeys(
 			sameModelSet(row.Models, in.ModelNames()) &&
 			in.Endpoint == row.Endpoint &&
 			in.API == row.API &&
-			hasLiteralKey(in)
+			hasStoredKey(in)
 	}
 
 	// Pass 1: exact stable-id matches across all rows.
@@ -534,7 +544,7 @@ func MatchStoredKeys(
 			continue
 		}
 		for idx, in := range existing {
-			if in.Type != row.Type || claimed[idx] || !hasLiteralKey(in) {
+			if in.Type != row.Type || claimed[idx] || !hasStoredKey(in) {
 				continue
 			}
 			claimed[idx] = true
@@ -712,6 +722,10 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 			k := res.Settings.Profiles[0].Secrets.APIKey
 			if strings.HasPrefix(k, "${env:") && strings.HasSuffix(k, "}") {
 				in.KeySource = KeyEnv
+			} else if strings.HasPrefix(k, "${secret:keychain.") && strings.HasSuffix(k, "}") {
+				in.KeySource = KeyKeychain
+				in.KeyValue = strings.TrimSuffix(
+					strings.TrimPrefix(k, "${secret:keychain."), "}")
 			} else {
 				in.KeySource = KeyLiteral
 				in.KeyValue = k

@@ -228,6 +228,7 @@ export namespace desktop {
 	    key: string;
 	    key_set: boolean;
 	    key_env: boolean;
+	    key_keychain: boolean;
 	    models: ModelView[];
 	    endpoint: string;
 	    enabled: boolean;
@@ -245,6 +246,7 @@ export namespace desktop {
 	        this.key = source["key"];
 	        this.key_set = source["key_set"];
 	        this.key_env = source["key_env"];
+	        this.key_keychain = source["key_keychain"];
 	        this.models = this.convertValues(source["models"], ModelView);
 	        this.endpoint = source["endpoint"];
 	        this.enabled = source["enabled"];
@@ -864,4 +866,3 @@ export namespace undo {
 	}
 
 }
-

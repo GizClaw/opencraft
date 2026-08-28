@@ -25,6 +25,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/sandbox/bwrap"
 	sandboxlocal "github.com/GizClaw/flowcraft/core/sandbox/local"
 	"github.com/GizClaw/flowcraft/core/sandbox/seatbelt"
+	"github.com/GizClaw/flowcraft/core/secret"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/tool"
 	"github.com/GizClaw/flowcraft/core/tool/mcp"
@@ -46,6 +47,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/hooks"
 	opmemory "github.com/GizClaw/opencraft/internal/memory"
 	"github.com/GizClaw/opencraft/internal/sandbox"
+	"github.com/GizClaw/opencraft/internal/secrets"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/skills"
 	opentools "github.com/GizClaw/opencraft/internal/tools"
@@ -125,6 +127,7 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 		tool.Register,
 		middleware.Register,
 		mcp.Register,
+		secret.Register,
 		inference.Register,
 		route.Register,
 		scriptrt.Register,
@@ -144,6 +147,7 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 		skills.Register,
 		opentools.Register,
 		sandbox.Register,
+		secrets.Register,
 		worldstate.Register,
 		func(r *resource.Registry) error {
 			return r.Register(agents.Factory{})
