@@ -18,11 +18,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/secret"
@@ -227,62 +225,6 @@ func (m *Manager) Delete(ctx context.Context, account string) error {
 // they stay addressable as ${secret:keychain.<name>} references.
 func AccountFor(deploymentID string) string {
 	return "inference/" + deploymentID
-}
-
-// keychainBackend stores Generic Password items through security(1).
-// The service is the Keychain service; the name is the account.
-type keychainBackend struct{ service string }
-
-// securityTimeout bounds every security(1) invocation so a locked
-// keychain or an unexpected interactive prompt can never hang the app.
-const securityTimeout = 10 * time.Second
-
-func (k *keychainBackend) Available() bool {
-	_, err := exec.LookPath("security")
-	return err == nil
-}
-
-func (k *keychainBackend) Get(ctx context.Context, name string) (string, bool, error) {
-	ctx, cancel := context.WithTimeout(ctx, securityTimeout)
-	defer cancel()
-	out, err := exec.CommandContext(ctx,
-		"security", "find-generic-password",
-		"-a", name, "-s", k.service, "-w").Output()
-	if err != nil {
-		// security(1) exits non-zero when the item is missing; the
-		// credential contract surfaces that as not-found.
-		return "", false, nil
-	}
-	return strings.TrimRight(string(out), "\r\n"), true, nil
-}
-
-func (k *keychainBackend) Set(ctx context.Context, name, value string) error {
-	ctx, cancel := context.WithTimeout(ctx, securityTimeout)
-	defer cancel()
-	cmd := exec.CommandContext(ctx,
-		"security", "add-generic-password",
-		"-a", name, "-s", k.service, "-U", "-w")
-	// security(1) reads the password interactively as two lines (value
-	// + retype) even when -w has no argument; feed both so it never
-	// falls back to a /dev/tty prompt (which would hang a GUI process).
-	cmd.Stdin = strings.NewReader(value + "\n" + value + "\n")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("opencraft secrets: keychain add %q: %v: %s",
-			name, err, strings.TrimSpace(string(out)))
-	}
-	return nil
-}
-
-func (k *keychainBackend) Delete(ctx context.Context, name string) error {
-	ctx, cancel := context.WithTimeout(ctx, securityTimeout)
-	defer cancel()
-	if out, err := exec.CommandContext(ctx,
-		"security", "delete-generic-password",
-		"-a", name, "-s", k.service).CombinedOutput(); err != nil {
-		return fmt.Errorf("opencraft secrets: keychain delete %q: %v: %s",
-			name, err, strings.TrimSpace(string(out)))
-	}
-	return nil
 }
 
 // fileBackend stores one 0600 file per secret under a 0700 directory.

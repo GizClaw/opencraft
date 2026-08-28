@@ -17,8 +17,8 @@ func TestKeychainBackendSmoke(t *testing.T) {
 	if os.Getenv("OPEN_CRAFT_KEYCHAIN_SMOKE") == "" {
 		t.Skip("set OPEN_CRAFT_KEYCHAIN_SMOKE to run against the real Keychain")
 	}
-	k := &keychainBackend{service: "opencraft-smoke-" + time.Now().Format("150405")}
-	acct := "smoke-acct"
+	k := &keychainBackend{service: "opencraft"}
+	acct := "inference/openai-inst-" + time.Now().Format("150405")
 	defer func() { _ = k.Delete(context.Background(), acct) }()
 	if err := k.Set(context.Background(), acct, "sk-smoke"); err != nil {
 		t.Fatalf("Set: %v", err)
