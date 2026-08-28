@@ -93,12 +93,31 @@ jobs:
             --sign "$identity" build/bin/OpenCraft.app
           codesign --verify --deep --strict build/bin/OpenCraft.app
 
+      - name: Install create-dmg
+        run: |
+          HOMEBREW_NO_AUTO_UPDATE=1 brew install create-dmg
+
       - name: Package dmg
         env:
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
         run: |
-          hdiutil create -volname OpenCraft -srcfolder build/bin/OpenCraft.app \
-            -ov -format UDZO "opencraft-${TAG#v}-macos-universal.dmg"
+          rm -rf dmg-staging
+          mkdir -p dmg-staging
+          cp -R build/bin/OpenCraft.app dmg-staging/
+          # Standard "drag to Applications" layout: branded background,
+          # /Applications drop link, and Finder-generated .DS_Store.
+          create-dmg \
+            --volname "OpenCraft" \
+            --background "build/dmg-background.png" \
+            --window-pos 200 120 \
+            --window-size 800 400 \
+            --icon-size 128 \
+            --icon "OpenCraft.app" 186 136 \
+            --app-drop-link 580 136 \
+            --hide-extension "OpenCraft.app" \
+            --overwrite \
+            "opencraft-${TAG#v}-macos-universal.dmg" \
+            dmg-staging
 
       - name: Sign dmg (Developer ID)
         if: ${{ env.APPLE_CERTIFICATE != '' && env.APPLE_CERTIFICATE_PASSWORD != '' && env.KEYCHAIN_PASSWORD != '' }}
