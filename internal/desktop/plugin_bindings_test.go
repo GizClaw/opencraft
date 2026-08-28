@@ -136,3 +136,71 @@ func TestPluginSetEnabledTogglesState(t *testing.T) {
 		t.Fatal("enabling a non-installed plugin should fail")
 	}
 }
+
+func TestPluginInstallCopiesAndValidates(t *testing.T) {
+	root := t.TempDir()
+	srcRoot := t.TempDir()
+	writePlugin(t, srcRoot, "installed", map[string]any{
+		"id": "installed", "name": "Installed", "version": "0.2.0",
+		"entry": "dist/index.js", "permissions": []string{},
+		"contributes": map[string]any{
+			"sidebarEntries": []any{
+				map[string]any{"id": "inst-entry", "title": "Inst", "order": 1},
+			},
+		},
+	}, "console.log('installed')")
+	// The source directory name must not matter: rename it away from
+	// the manifest id before installing.
+	src := filepath.Join(srcRoot, "unrelated-dir-name")
+	if err := os.Rename(filepath.Join(srcRoot, "installed"), src); err != nil {
+		t.Fatal(err)
+	}
+	a := pluginApp(t, root)
+	sum, err := a.PluginInstall(src)
+	if err != nil {
+		t.Fatalf("PluginInstall: %v", err)
+	}
+	if sum.ID != "installed" || !sum.Enabled || len(sum.Entries) != 1 {
+		t.Fatalf("installed summary = %+v", sum)
+	}
+	if _, err := a.PluginBundle("installed"); err != nil {
+		t.Fatalf("bundle after install: %v", err)
+	}
+	if _, err := a.PluginInstall(src); err == nil {
+		t.Fatal("reinstalling an existing plugin should fail")
+	}
+
+	bad := t.TempDir()
+	writePlugin(t, bad, "x", map[string]any{
+		"id": "bad", "name": "Bad", "version": "0.1.0",
+		"entry": "dist/index.js", "permissions": []string{"nope:perm"},
+	}, "")
+	if _, err := a.PluginInstall(filepath.Join(bad, "x")); err == nil {
+		t.Fatal("installing a plugin with unknown permissions should fail")
+	}
+}
+
+func TestPluginUninstallRemoves(t *testing.T) {
+	root := t.TempDir()
+	writePlugin(t, root, "hello", map[string]any{
+		"id": "hello", "name": "Hello", "version": "0.1.0",
+		"entry": "dist/index.js", "permissions": []string{},
+	}, "")
+	a := pluginApp(t, root)
+	if err := a.PluginSetEnabled("hello", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.PluginUninstall("hello"); err != nil {
+		t.Fatalf("PluginUninstall: %v", err)
+	}
+	list, err := a.PluginList()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 0 {
+		t.Fatalf("plugins after uninstall = %+v", list)
+	}
+	if err := a.PluginUninstall("missing"); err == nil {
+		t.Fatal("uninstalling a non-installed plugin should fail")
+	}
+}

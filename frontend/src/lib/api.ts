@@ -125,8 +125,12 @@ export const api = {
   chooseWorkspace: () => App.ChooseWorkspace(),
   pluginList: () => App.PluginList() as Promise<PluginSummary[]>,
   pluginBundle: (id: string) => App.PluginBundle(id) as Promise<string>,
+  pluginInstall: (dir: string) =>
+    App.PluginInstall(dir) as Promise<PluginSummary>,
   pluginSetEnabled: (id: string, enabled: boolean) =>
     App.PluginSetEnabled(id, enabled),
+  pluginUninstall: (id: string) => App.PluginUninstall(id),
+  pickFolder: (title: string) => App.PickFolder(title) as Promise<string>,
   readLog: (n: number) => App.ReadLog(n),
   renameSession: (id: string, title: string) => App.RenameSession(id, title),
   exportSession: (id: string) => App.ExportSession(id),

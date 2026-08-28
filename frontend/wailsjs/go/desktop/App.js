@@ -142,8 +142,16 @@ export function Permissions() {
   return window['go']['desktop']['App']['Permissions']();
 }
 
+export function PickFolder(arg1) {
+  return window['go']['desktop']['App']['PickFolder'](arg1);
+}
+
 export function PluginBundle(arg1) {
   return window['go']['desktop']['App']['PluginBundle'](arg1);
+}
+
+export function PluginInstall(arg1) {
+  return window['go']['desktop']['App']['PluginInstall'](arg1);
 }
 
 export function PluginList() {
@@ -152,6 +160,10 @@ export function PluginList() {
 
 export function PluginSetEnabled(arg1, arg2) {
   return window['go']['desktop']['App']['PluginSetEnabled'](arg1, arg2);
+}
+
+export function PluginUninstall(arg1) {
+  return window['go']['desktop']['App']['PluginUninstall'](arg1);
 }
 
 export function ProjectConfigStatus() {

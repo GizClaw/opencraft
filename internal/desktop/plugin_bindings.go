@@ -177,6 +177,92 @@ func (a *App) PluginSetEnabled(id string, enabled bool) error {
 	return writePluginState(root, state)
 }
 
+// PluginInstall copies a plugin folder (containing plugin.json) into
+// the plugin root. The installed id comes from the manifest, so the
+// source directory name is irrelevant. Reinstalling an existing plugin
+// is rejected; uninstall it first.
+func (a *App) PluginInstall(src string) (PluginSummary, error) {
+	root, err := a.pluginRoot()
+	if err != nil {
+		return PluginSummary{}, err
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return PluginSummary{}, fmt.Errorf("plugins: create dir: %w", err)
+	}
+	info, err := os.Stat(src)
+	if err != nil {
+		return PluginSummary{}, fmt.Errorf("plugins: source: %w", err)
+	}
+	if !info.IsDir() {
+		return PluginSummary{}, fmt.Errorf(
+			"plugins: source %q is not a directory", src)
+	}
+	raw, err := os.ReadFile(filepath.Join(src, "plugin.json"))
+	if err != nil {
+		return PluginSummary{}, fmt.Errorf(
+			"plugins: read source manifest: %w", err)
+	}
+	// The manifest carries the id; probe it so the directory name does
+	// not need to match.
+	var probe struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return PluginSummary{}, fmt.Errorf("plugins: decode manifest: %w", err)
+	}
+	m, err := parsePluginManifest(probe.ID, raw)
+	if err != nil {
+		return PluginSummary{}, err
+	}
+	dst := filepath.Join(root, m.ID)
+	if _, err := os.Stat(dst); err == nil {
+		return PluginSummary{}, fmt.Errorf(
+			"plugins: %q is already installed", m.ID)
+	} else if !os.IsNotExist(err) {
+		return PluginSummary{}, fmt.Errorf(
+			"plugins: check destination: %w", err)
+	}
+	if err := copyPluginDir(src, dst); err != nil {
+		_ = os.RemoveAll(dst)
+		return PluginSummary{}, fmt.Errorf("plugins: install: %w", err)
+	}
+	sum := PluginSummary{
+		ID:          m.ID,
+		Name:        m.Name,
+		Version:     m.Version,
+		Entry:       m.Entry,
+		Permissions: m.Permissions,
+		Enabled:     true,
+	}
+	for _, p := range m.Contributes.SettingsPanels {
+		sum.Panels = append(sum.Panels, p.ID)
+	}
+	for _, e := range m.Contributes.SidebarEntries {
+		sum.Entries = append(sum.Entries, e.ID)
+	}
+	return sum, nil
+}
+
+// PluginUninstall removes an installed plugin and its enable state.
+func (a *App) PluginUninstall(id string) error {
+	root, err := a.pluginRoot()
+	if err != nil {
+		return err
+	}
+	if _, err := a.readManifest(root, id); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(filepath.Join(root, id)); err != nil {
+		return fmt.Errorf("plugins: remove %q: %w", id, err)
+	}
+	state, err := readPluginState(root)
+	if err != nil {
+		return err
+	}
+	delete(state, id)
+	return writePluginState(root, state)
+}
+
 func (a *App) pluginRoot() (string, error) {
 	if a.pluginDir != "" {
 		return a.pluginDir, nil
@@ -246,6 +332,39 @@ func parsePluginManifest(id string, raw []byte) (*pluginManifest, error) {
 		seenEntries[e.ID] = true
 	}
 	return &m, nil
+}
+
+// copyPluginDir copies one plugin source tree into the plugin root,
+// skipping dotfiles (".DS_Store", ".git", ...). Files are 0600 and
+// directories 0700 like the rest of the app state.
+func copyPluginDir(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return os.MkdirAll(dst, 0o700)
+		}
+		if strings.HasPrefix(filepath.Base(rel), ".") {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, 0o700)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0o600)
+	})
 }
 
 func readPluginState(root string) (map[string]bool, error) {

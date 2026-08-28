@@ -1,6 +1,9 @@
-import { Puzzle, RefreshCw } from 'lucide-react';
+import { Download, Puzzle, RefreshCw } from 'lucide-react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { api } from '../../lib/api';
 import { usePluginStore } from '../store';
+import { PluginInstallDialog } from './PluginInstallDialog';
 
 // PluginManager is the "插件" settings tab: installed plugins with
 // enable/disable toggles, per-plugin load errors, and the panels each
@@ -13,18 +16,41 @@ export function PluginManager() {
   const loading = usePluginStore((s) => s.loading);
   const load = usePluginStore((s) => s.load);
   const setEnabled = usePluginStore((s) => s.setEnabled);
+  const [installOpen, setInstallOpen] = useState(false);
+  const [confirmUninstallId, setConfirmUninstallId] = useState<string | null>(
+    null,
+  );
+
+  const uninstall = async (id: string) => {
+    setConfirmUninstallId(null);
+    try {
+      await api.pluginUninstall(id);
+      await load();
+    } catch (err) {
+      console.error('plugin uninstall failed', err);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold">{t('config.tabPlugins')}</h2>
-        <button
-          onClick={() => void load()}
-          className="flex items-center gap-1.5 rounded-lg border border-edge bg-panel2 px-2.5 py-1 text-xs text-dim hover:text-fg"
-        >
-          <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
-          {t('config.pluginsRefresh')}
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => void load()}
+            className="flex items-center gap-1.5 rounded-lg border border-edge bg-panel2 px-2.5 py-1 text-xs text-dim hover:text-fg"
+          >
+            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+            {t('config.pluginsRefresh')}
+          </button>
+          <button
+            onClick={() => setInstallOpen(true)}
+            className="flex items-center gap-1.5 rounded-lg bg-accent px-2.5 py-1 text-xs text-white hover:opacity-90"
+          >
+            <Download size={12} />
+            {t('config.pluginsInstall')}
+          </button>
+        </div>
       </div>
 
       {errors._host && (
@@ -62,6 +88,20 @@ export function PluginManager() {
                   ? t('config.pluginsDisable')
                   : t('config.pluginsEnable')}
               </button>
+              <button
+                onClick={() => {
+                  if (confirmUninstallId === p.id) {
+                    void uninstall(p.id);
+                  } else {
+                    setConfirmUninstallId(p.id);
+                  }
+                }}
+                className="rounded-md px-2 py-1 text-xs text-dim hover:text-err"
+              >
+                {confirmUninstallId === p.id
+                  ? t('config.pluginsUninstallConfirm')
+                  : t('config.pluginsUninstall')}
+              </button>
             </div>
             {p.error && (
               <p className="mt-2 text-[11px] text-err break-words">
@@ -91,6 +131,10 @@ export function PluginManager() {
             </section>
           ))}
         </div>
+      )}
+
+      {installOpen && (
+        <PluginInstallDialog onClose={() => setInstallOpen(false)} />
       )}
     </div>
   );

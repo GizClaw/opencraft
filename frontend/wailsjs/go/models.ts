@@ -894,3 +894,4 @@ export namespace undo {
 	}
 
 }
+
