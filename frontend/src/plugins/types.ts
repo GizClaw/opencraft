@@ -46,6 +46,8 @@ export interface SettingsPanelContribution {
   id: string;
   title: string;
   order: number;
+  /** Settings tab to render in; defaults to "plugins". */
+  tab?: string;
   Component: ComponentType;
 }
 

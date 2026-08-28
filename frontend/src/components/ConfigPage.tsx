@@ -44,6 +44,7 @@ import type {
 } from '../lib/types';
 import { UsageChart } from './UsageChart';
 import { PluginManager } from '../plugins/components/PluginManager';
+import { PluginPanels } from '../plugins/components/PluginPanels';
 
 // InstanceRow is one editable inference instance in the settings page.
 interface RowModel {
@@ -562,6 +563,7 @@ export function ConfigPage() {
         <div className="flex-1 overflow-y-auto px-5 py-4">
           {tab === 'ui' && (
             <div className="space-y-3">
+              <PluginPanels tab="ui" />
               <div className="rounded-xl border border-edge bg-panel2 p-4">
                 <div className="flex items-start justify-between gap-4">
                   <div>
@@ -853,10 +855,10 @@ export function ConfigPage() {
                                 row.keyKeychain && row.key === ''
                                   ? t('config.keychainStored')
                                   : row.keySet && row.key === ''
-                                  ? t('setup.apiKeySet')
-                                  : t('setup.apiKeyPlaceholder', {
-                                      var: prov?.env_var ?? '',
-                                    })
+                                    ? t('setup.apiKeySet')
+                                    : t('setup.apiKeyPlaceholder', {
+                                        var: prov?.env_var ?? '',
+                                      })
                               }
                               className="flex-1 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent disabled:opacity-40"
                             />
