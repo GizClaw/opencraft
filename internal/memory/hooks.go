@@ -75,7 +75,9 @@ func (commitHookFactory) New(ctx context.Context, in resource.Input) (any, error
 		// The project session store keeps the original parts (so
 		// /resume re-renders tool activity like the live stream); the
 		// memory raw window gets the text-bearing rendering.
-		if err := store.AppendTurn(ctx, req.ContextID, raw); err != nil {
+		if err := store.AppendTurnWithRunID(
+			ctx, req.ContextID, res.RunID, raw,
+		); err != nil {
 			return err
 		}
 		// Persisting a committed turn must survive a concurrent cancel

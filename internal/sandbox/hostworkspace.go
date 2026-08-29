@@ -357,10 +357,12 @@ func (w *hostWorkspace) Stat(
 
 var _ workspace.Workspace = (*hostWorkspace)(nil)
 
-// HostWorkspaceSettings configures the confined LocalWorkspace the
-// HostWorkspace resource delegates to in workspace mode.
+// HostWorkspaceSettings configures the workspace-mode view of the
+// HostWorkspace resource. The confined root is derived from the
+// workspace dependency (ws); Root is a legacy override kept for
+// backward compatibility and must resolve to the same directory.
 type HostWorkspaceSettings struct {
-	Root string `json:"root"`
+	Root string `json:"root,omitempty"`
 	// ReadonlyRoots are absolute host paths readable (never writable)
 	// in workspace mode. Discovered skill roots are appended by the
 	// factory from the optional skills dep.
@@ -379,9 +381,21 @@ func (HostWorkspaceFactory) Spec() resource.Spec {
 		Impl: "local",
 		Deps: []resource.DepSpec{
 			{Name: "sessions", Type: sessions.ResourceKind, Required: true},
+			// The confined backend: one shared LocalWorkspace (the ws
+			// resource) so engine/system reads and tool writes land on
+			// the same underlying workspace. A single observer wrapped
+			// around it therefore sees every workspace-API write.
+			{Name: "workspace", Type: "workspace.Workspace", Required: true},
 			// Optional: contributes discovered skill roots to the
 			// workspace-mode read-only allowlist.
 			{Name: "skills", Type: skills.ResourceKind, Required: false},
+			// Optional: the shared artifact sink. Without it YOLO-mode
+			// writes are still allowed but not reported.
+			{
+				Name:     "observer",
+				Type:     ArtifactObserverResourceKind,
+				Required: false,
+			},
 		},
 	}
 }
@@ -396,18 +410,33 @@ func (HostWorkspaceFactory) New(
 		return nil, errdefs.Validationf(
 			"opencraft hostworkspace: decode settings: %v", err)
 	}
-	if settings.Root == "" {
-		return nil, errdefs.Validationf(
-			"opencraft hostworkspace: settings.root is required")
-	}
 	store, err := resourcedep.Required[*sessions.Store](
 		in, "opencraft hostworkspace", "sessions")
 	if err != nil {
 		return nil, err
 	}
-	confined, err := workspace.NewLocalWorkspace(settings.Root)
+	// Reuse the deployment's shared workspace (ws) as the confined
+	// backend instead of building a second LocalWorkspace over the same
+	// root, and derive the host/YOLO resolution root from it so both
+	// views always point at the same directory.
+	confined, err := resourcedep.Required[workspace.Workspace](
+		in, "opencraft hostworkspace", "workspace")
 	if err != nil {
 		return nil, err
+	}
+	root := workspaceDepRoot(confined)
+	if root == "" {
+		return nil, errdefs.Validationf(
+			"opencraft hostworkspace: workspace dependency must expose a root")
+	}
+	if settings.Root != "" {
+		if legacy := canonicalRoot(settings.Root); legacy != root {
+			return nil, errdefs.Validationf(
+				"opencraft hostworkspace: settings.root %q resolves to %q, "+
+					"which does not match the workspace dependency root %q; "+
+					"remove the override and let hostws derive it from ws",
+				settings.Root, legacy, root)
+		}
 	}
 	readonly := append([]string(nil), settings.ReadonlyRoots...)
 	if dep, ok := in.Dep("skills"); ok {
@@ -415,13 +444,45 @@ func (HostWorkspaceFactory) New(
 			readonly = append(readonly, svc.Roots()...)
 		}
 	}
+	obs := &ArtifactObserver{}
+	if dep, ok := in.Dep("observer"); ok {
+		if o, ok := dep.(*ArtifactObserver); ok {
+			obs = o
+		}
+	}
 	return &HostWorkspace{
 		sessions: store,
 		confined: confined,
-		host:     &hostWorkspace{root: settings.Root},
-		root:     settings.Root,
+		host:     &observingWorkspace{inner: &hostWorkspace{root: root}, obs: obs},
+		root:     root,
 		readonly: dedupePaths(readonly),
 	}, nil
+}
+
+// workspaceDepRoot returns the absolute root of a workspace dependency
+// when the implementation exposes it (the local workspace does, and
+// decorators must forward it).
+func workspaceDepRoot(ws workspace.Workspace) string {
+	type rooter interface{ Root() string }
+	if r, ok := ws.(rooter); ok {
+		return r.Root()
+	}
+	return ""
+}
+
+// canonicalRoot normalizes a configured path the same way the local
+// workspace normalizes its root (absolute + symlink-resolved), so a
+// legacy settings.root override can be compared with the dependency's
+// root.
+func canonicalRoot(path string) string {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return filepath.Clean(path)
+	}
+	if real, err := filepath.EvalSymlinks(abs); err == nil {
+		return filepath.Clean(real)
+	}
+	return filepath.Clean(abs)
 }
 
 func dedupePaths(paths []string) []string {

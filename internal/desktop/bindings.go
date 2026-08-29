@@ -718,6 +718,10 @@ func (a *App) StartTurn(msg message.Message) (TurnStart, error) {
 	// untracked, captured before the turn runs. Non-git workspaces
 	// yield an empty snapshot and undo stays unavailable.
 	before := gitSnapshot(ctx, a.snapshotWorkDir())
+	// Pre-turn manifest for artifact reconciliation: a git-free list of
+	// workspace files (path → size/mtime) captured before the turn, so
+	// waitTurn can find exec-produced documents afterwards.
+	manifest, _ := manifestSnapshot(ctx, a.snapshotWorkDir())
 	a.fireHooks(ctx, hooks.EventUserPromptSubmit, map[string]any{
 		"event":           hooks.EventUserPromptSubmit,
 		"conversation_id": contextID,
@@ -764,6 +768,7 @@ func (a *App) StartTurn(msg message.Message) (TurnStart, error) {
 	a.mu.Lock()
 	a.turns[turn.RunID()] = turn
 	a.preTurnSnap[turn.RunID()] = before
+	a.preTurnManifest[turn.RunID()] = manifest
 	a.runConvs[turn.RunID()] = contextID
 	if a.convRuns == nil {
 		a.convRuns = make(map[string]map[string]bool)
@@ -964,6 +969,8 @@ func (a *App) waitTurn(
 	undoStore := a.undo
 	before, hadBefore := a.preTurnSnap[runID]
 	delete(a.preTurnSnap, runID)
+	manifest, hadManifest := a.preTurnManifest[runID]
+	delete(a.preTurnManifest, runID)
 	a.mu.Unlock()
 	_ = lease.Close()
 
@@ -1020,6 +1027,29 @@ func (a *App) waitTurn(
 		after := gitSnapshot(ctx, wd)
 		if _, err := undoStore.Capture(ctx, contextID, before, after); err == nil {
 			a.emitUndoState(contextID)
+		}
+	}
+	// Post-turn manifest reconciliation: scan the workspace again and
+	// merge document files that exec created or modified (workspace-API
+	// writes were already observed live) into the archived turn.
+	// Git-free, so non-git workspaces get the same coverage.
+	if hadManifest && manifest != nil {
+		if after, err := manifestSnapshot(ctx, wd); err == nil {
+			docs := diffDocumentArtifacts(manifest, after)
+			if len(docs) > 0 && store != nil {
+				if merged, err := store.AppendTurnArtifacts(
+					contextID, runID, docs,
+				); err == nil && len(merged) > 0 {
+					// The turn archive is now authoritative; push the
+					// reconciled list so the frontend's last-turn strip
+					// shows exec-produced documents too.
+					a.bridge.Emit("artifact_sync", map[string]any{
+						"conversation_id": contextID,
+						"run_id":          runID,
+						"artifacts":       merged,
+					})
+				}
+			}
 		}
 	}
 	// Best-effort auto title: the model summarizes the conversation

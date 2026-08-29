@@ -111,7 +111,9 @@ func (o *archiveObserver) OnRunEnd(ctx context.Context, id agent.Identity, res *
 	if len(raw) == 0 {
 		return
 	}
-	if err := o.store.AppendTurn(ctx, id.ConversationID, raw); err != nil {
+	if err := o.store.AppendTurnWithRunID(
+		ctx, id.ConversationID, id.RunID, raw,
+	); err != nil {
 		return
 	}
 	// Memory folding needs at least one produced message; a turn that

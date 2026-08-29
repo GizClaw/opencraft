@@ -259,6 +259,43 @@ func (s *Store) AppendItem(ctx context.Context, item Item) error {
 	return nil
 }
 
+// AppendItems inserts many items in one transaction, so a turn's
+// memory append is a single commit instead of one INSERT per message.
+// This keeps the commit hook (which runs synchronously before turn
+// completion) bounded even for turns with many tool rounds.
+func (s *Store) AppendItems(ctx context.Context, items []Item) error {
+	if len(items) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("state: begin items tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	stmt, err := tx.PrepareContext(ctx, `INSERT INTO items(
+		id, thread_id, turn_id, seq, item_type, role, payload, created_at
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+	if err != nil {
+		return fmt.Errorf("state: prepare items insert: %w", err)
+	}
+	defer func() { _ = stmt.Close() }()
+	for _, item := range items {
+		payload, err := json.Marshal(item.Payload)
+		if err != nil {
+			return fmt.Errorf("state: item payload: %w", err)
+		}
+		if _, err := stmt.ExecContext(
+			ctx,
+			item.ID, item.ThreadID, item.TurnID, item.Seq, item.ItemType,
+			item.Role, string(payload),
+			item.CreatedAt.UTC().Format(time.RFC3339),
+		); err != nil {
+			return fmt.Errorf("state: append item: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
 // LoadItems returns all items of a thread ordered by seq.
 func (s *Store) LoadItems(ctx context.Context, threadID string) ([]Item, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT id, thread_id, turn_id, seq,

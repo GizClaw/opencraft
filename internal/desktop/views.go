@@ -241,6 +241,35 @@ func (a *App) SessionHistory(id string) ([]message.Message, error) {
 	return store.History(context.Background(), id, -1)
 }
 
+// SessionTurns returns every archived turn of one conversation with
+// its produced artifacts, so resuming renders one artifact strip per
+// turn instead of a single current-turn list.
+func (a *App) SessionTurns(id string) ([]SessionTurnDTO, error) {
+	if !ocsessions.ValidID(id) {
+		return nil, fmt.Errorf("invalid session id %q", id)
+	}
+	a.mu.Lock()
+	store := a.sessions
+	a.mu.Unlock()
+	if store == nil {
+		return []SessionTurnDTO{}, nil
+	}
+	turns, err := store.Turns(context.Background(), id)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SessionTurnDTO, 0, len(turns))
+	for _, t := range turns {
+		out = append(out, SessionTurnDTO{
+			Seq:       t.Seq,
+			At:        t.At.Format(time.RFC3339),
+			Messages:  t.Messages,
+			Artifacts: t.Artifacts,
+		})
+	}
+	return out, nil
+}
+
 // DelegationCards snapshots the delegation kanban board, newest first.
 func (a *App) DelegationCards() ([]KanbanCard, error) {
 	return a.delegationCards(kanban.Filter{}, nil)

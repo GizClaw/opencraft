@@ -12,6 +12,7 @@ import type {
   ModelOption,
   ReplyRequest,
   SessionMeta,
+  SessionTurn,
   StreamDelta,
   StreamPart,
   TurnMessage,
@@ -56,6 +57,11 @@ export interface MessageView {
 // conversations can run in parallel.
 export interface ConversationState {
   messages: MessageView[];
+  // turnArtifacts keeps one entry per turn (start = index of the
+  // turn's first message in messages), each with the files that turn
+  // produced. Live turns fill in via "artifact" events; resumed
+  // sessions rebuild the list from the per-turn archive.
+  turnArtifacts: TurnArtifacts[];
   busy: boolean;
   activeRunID: string | null;
   // stage is the current activity for the running-turn header:
@@ -75,6 +81,8 @@ export interface ToastItem {
 
 let msgSeq = 0;
 const newID = (prefix: string) => `${prefix}-${Date.now()}-${msgSeq++}`;
+let turnSeq = 0;
+const newTurnID = () => `live-${++turnSeq}`;
 
 // normalizeArgs coerces the wire form of tool arguments to a string:
 // arguments is a json.RawMessage, so the frontend receives a parsed
@@ -90,6 +98,7 @@ function normalizeArgs(args: unknown): string {
 
 const emptyConv = (): ConversationState => ({
   messages: [],
+  turnArtifacts: [],
   busy: false,
   activeRunID: null,
   stage: '',
@@ -99,6 +108,24 @@ const emptyConv = (): ConversationState => ({
   pendingInteracts: [],
   lastFailed: false,
 });
+
+// TurnDoc is one file produced by the current turn, reported by the
+// backend's workspace observer ("artifact" UI event).
+export interface TurnDoc {
+  path: string;
+  bytes: number;
+}
+
+// TurnArtifacts is one turn's produced files plus the index of its
+// first message in the flattened transcript.
+export interface TurnArtifacts {
+  id: string;
+  start: number;
+  docs: TurnDoc[];
+  // runID is set once the live turn starts, so post-turn artifact
+  // reconciliation ("artifact_sync") can target exactly this turn.
+  runID?: string;
+}
 
 // attachmentPart lowers one staged attachment into the message wire
 // form: images/audio/video become URL-sourced media parts (the backend
@@ -256,6 +283,30 @@ const historyToMessages = (history: HistoryMessage[]): MessageView[] => {
   return messages;
 };
 
+// historyTurnsToState rebuilds the transcript and per-turn artifact
+// groups from the archived per-turn records, so resuming renders one
+// artifact strip under each turn's messages.
+function historyTurnsToState(turns: SessionTurn[]): {
+  messages: MessageView[];
+  turnArtifacts: TurnArtifacts[];
+} {
+  const messages: MessageView[] = [];
+  const turnArtifacts: TurnArtifacts[] = [];
+  for (const turn of turns) {
+    const start = messages.length;
+    messages.push(...historyToMessages(turn.messages));
+    turnArtifacts.push({
+      id: `h-${turn.seq}`,
+      start,
+      docs: (turn.artifacts ?? []).map((a) => ({
+        path: a.path,
+        bytes: a.bytes ?? 0,
+      })),
+    });
+  }
+  return { messages, turnArtifacts };
+}
+
 // lastAssistant returns a mutable copy of the last assistant message
 // (creating one when needed) plus a NEW messages array, so every
 // stream delta produces fresh references and React re-renders.
@@ -293,6 +344,15 @@ function mergeAppend(
   } else {
     msg.items = [...items, { kind, id: newID('part'), text }];
   }
+}
+
+// mergeTurnDoc appends a produced file, or refreshes its byte count in
+// place when the same path is written again.
+function mergeTurnDoc(docs: TurnDoc[], path: string, bytes: number): TurnDoc[] {
+  const idx = docs.findIndex((d) => d.path === path);
+  const entry: TurnDoc = { path, bytes };
+  if (idx < 0) return [...docs, entry];
+  return [...docs.slice(0, idx), entry, ...docs.slice(idx + 1)];
 }
 
 // applyStream folds one stream delta into a message list and returns
@@ -497,8 +557,17 @@ export const useStore = create<StoreState>((set, get) => {
     messages: MessageView[],
     attachments: AttachmentView[] = [],
   ) => {
+    const conv = get().conversations[convID];
+    // Keep completed turns' strips; trim anything that started at or
+    // beyond the (possibly retried) transcript, then open a new live
+    // turn entry at the user message just appended.
+    const turnArtifacts = [
+      ...conv.turnArtifacts.filter((t) => t.start < messages.length),
+      { id: newTurnID(), start: messages.length - 1, docs: [] },
+    ];
     updateConv(convID, {
       messages,
+      turnArtifacts,
       busy: true,
       lastFailed: false,
       stage: '',
@@ -511,6 +580,16 @@ export const useStore = create<StoreState>((set, get) => {
       }
       const wire: TurnMessage = { role: 'user', content: { parts } };
       const start = await api.startTurn(wire);
+      const list = get().conversations[convID].turnArtifacts;
+      const liveIdx = list.length - 1;
+      const turnArtifacts =
+        liveIdx >= 0
+          ? [
+              ...list.slice(0, liveIdx),
+              { ...list[liveIdx], runID: start.run_id },
+              ...list.slice(liveIdx + 1),
+            ]
+          : list;
       set((state) => ({
         runConvs: { ...state.runConvs, [start.run_id]: convID },
         conversations: {
@@ -518,6 +597,7 @@ export const useStore = create<StoreState>((set, get) => {
           [convID]: {
             ...state.conversations[convID],
             activeRunID: start.run_id,
+            turnArtifacts,
           },
         },
       }));
@@ -667,6 +747,14 @@ export const useStore = create<StoreState>((set, get) => {
                 messages: applyStream(conv.messages, data.delta),
                 stage,
               });
+              // The finish delta arrives as soon as generation ends —
+              // well before the backend runs its commit hooks and emits
+              // turn_end. Clear the running state here so a slow commit
+              // (SQLite writes, memory fold) never leaves the UI stuck;
+              // turn_end still settles failures/status afterwards.
+              if (data.delta?.type === 'finish') {
+                updateConv(convID, { busy: false, stage: '' });
+              }
             }
             break;
           }
@@ -721,6 +809,58 @@ export const useStore = create<StoreState>((set, get) => {
               break;
             }
           }
+          break;
+        }
+        case 'artifact': {
+          const data = ev.data as {
+            conversation_id?: string;
+            path?: string;
+            bytes?: number;
+          };
+          const convID = data.conversation_id;
+          if (!convID || !data.path) break;
+          const conv = ensureConversation(convID);
+          if (!conv) break;
+          const list = conv.turnArtifacts;
+          if (list.length === 0) break;
+          const idx = list.length - 1;
+          const docs = mergeTurnDoc(list[idx].docs, data.path, data.bytes ?? 0);
+          updateConv(convID, {
+            turnArtifacts: [
+              ...list.slice(0, idx),
+              { ...list[idx], docs },
+              ...list.slice(idx + 1),
+            ],
+          });
+          break;
+        }
+        case 'artifact_sync': {
+          // Post-turn reconciliation: the backend merged exec-produced
+          // documents into the turn archive; replace that turn's docs
+          // with the authoritative list.
+          const data = ev.data as {
+            conversation_id?: string;
+            run_id?: string;
+            artifacts?: { path: string; bytes?: number }[];
+          };
+          const convID = data.conversation_id;
+          if (!convID || !Array.isArray(data.artifacts)) break;
+          const conv = ensureConversation(convID);
+          if (!conv) break;
+          const list = conv.turnArtifacts;
+          const idx = list.findIndex((t) => t.runID && t.runID === data.run_id);
+          if (idx < 0) break;
+          const docs = data.artifacts.map((a) => ({
+            path: a.path,
+            bytes: a.bytes ?? 0,
+          }));
+          updateConv(convID, {
+            turnArtifacts: [
+              ...list.slice(0, idx),
+              { ...list[idx], docs },
+              ...list.slice(idx + 1),
+            ],
+          });
           break;
         }
         case 'turn_end': {
@@ -915,12 +1055,13 @@ export const useStore = create<StoreState>((set, get) => {
           set({ current: id, toolsView: null });
           return;
         }
-        const [mode, history, think, model] = await Promise.all([
+        const [mode, turns, think, model] = await Promise.all([
           api.sessionMode(),
-          api.sessionHistory(id),
+          api.sessionTurns(id),
           api.getThink(),
           api.getModel(),
         ]);
+        const { messages, turnArtifacts } = historyTurnsToState(turns);
         set((state) => ({
           current: id,
           toolsView: null,
@@ -931,7 +1072,8 @@ export const useStore = create<StoreState>((set, get) => {
               mode,
               think,
               model,
-              messages: historyToMessages(history),
+              messages,
+              turnArtifacts,
             },
           },
         }));

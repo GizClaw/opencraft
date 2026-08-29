@@ -308,7 +308,9 @@
     "redoEmpty": "没有可重做的改动",
     "mentionSearchHint": "输入以搜索工作区文件…",
     "mentionNoMatch": "无匹配结果",
-    "mentionSkillHint": "输入以筛选技能…"
+    "mentionSkillHint": "输入以筛选技能…",
+    "turnArtifacts": "本回合产出",
+    "openArtifact": "打开 {{path}}"
   },
   "status": {
     "ready": "就绪",

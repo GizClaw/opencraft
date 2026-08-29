@@ -33,11 +33,12 @@ func (a *sqliteTurnStore) AppendMessages(
 	if err != nil {
 		return err
 	}
+	items := make([]state.Item, 0, len(msgs))
 	for i, msg := range msgs {
 		if msg.Content.Text() == "" {
 			continue
 		}
-		item := state.Item{
+		items = append(items, state.Item{
 			ID:        conversationID + ":" + turnID + ":" + itoa(int(seq)+i),
 			ThreadID:  conversationID,
 			TurnID:    turnID,
@@ -46,13 +47,10 @@ func (a *sqliteTurnStore) AppendMessages(
 			Role:      string(msg.Role),
 			Payload:   map[string]any{"text": msg.Content.Text()},
 			CreatedAt: timeNow(),
-		}
-		if err := a.s.AppendItem(ctx, item); err != nil {
-			return err
-		}
+		})
 		seq++
 	}
-	return nil
+	return a.s.AppendItems(ctx, items)
 }
 
 func (a *sqliteTurnStore) LoadMessages(
