@@ -215,6 +215,7 @@ export interface TurnStart {
 
 export interface TurnEnd {
   run_id: string;
+  conversation_id?: string;
   status: string;
   error?: string;
 }

@@ -12,7 +12,7 @@ import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
 import { SubagentSidebar } from './components/SubagentSidebar';
 import { Toaster } from './components/Toaster';
-import { useStore } from './lib/store';
+import { useStore, type AssistantItem } from './lib/store';
 import { usePluginStore } from './plugins/store';
 import type { UIEvent } from './lib/types';
 
@@ -22,6 +22,72 @@ const ConfigPage = lazy(() =>
 const ToolsPanel = lazy(() =>
   import('./components/ToolsPanel').then((m) => ({ default: m.ToolsPanel })),
 );
+
+// Notification copy limits: macOS banners truncate long text, so the
+// turn-end notification keeps the session title and the agent's final
+// output short enough to read at a glance.
+const maxNotifyTitle = 80;
+const maxNotifySnippet = 160;
+
+function truncate(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return `${text.slice(0, max)}…`;
+}
+
+// turnEndNotification builds the macOS notification for one finished
+// turn: the title is the session title and the body is the status plus
+// the agent's latest text output (truncated), so the banner says more
+// than just "task finished".
+function turnEndNotification(data: {
+  run_id?: string;
+  conversation_id?: string;
+  status: string;
+}) {
+  const state = useStore.getState();
+  const convID =
+    (data.run_id && state.runConvs[data.run_id]) || data.conversation_id;
+  const statusText =
+    data.status === 'completed'
+      ? i18n.t('notify.done')
+      : data.status === 'failed' || data.status === 'aborted'
+        ? i18n.t('notify.failed')
+        : data.status;
+
+  // Session title: prefer the persisted/renamed title, fall back to
+  // the conversation's first user message (the backend's auto-title
+  // rule) and finally to the app name.
+  let title = '';
+  if (convID) {
+    title =
+      state.sessions.find((s) => s.id === convID)?.title ??
+      state.conversations[convID]?.messages.find((m) => m.role === 'user')
+        ?.text ??
+      '';
+  }
+  title = truncate(title.trim(), maxNotifyTitle) || 'OpenCraft';
+
+  // Latest agent output: the last assistant message accumulates every
+  // text delta of the turn, so joining its text items yields the full
+  // final answer.
+  let snippet = '';
+  if (convID) {
+    const messages = state.conversations[convID]?.messages ?? [];
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.role !== 'assistant') continue;
+      snippet = m.items
+        .filter((it): it is AssistantItem & { kind: 'text' } => it.kind === 'text')
+        .map((it) => it.text)
+        .join('')
+        .trim();
+      break;
+    }
+  }
+  const body = snippet
+    ? `${statusText}\n${truncate(snippet, maxNotifySnippet)}`
+    : statusText;
+  return { title, body };
+}
 
 export default function App() {
   const init = useStore((s) => s.init);
@@ -60,14 +126,13 @@ export default function App() {
           body: spec.title || i18n.t('notify.interact'),
         });
       } else if (ev.type === 'turn_end') {
-        const data = ev.data as { status: string };
-        const body =
-          data.status === 'completed'
-            ? i18n.t('notify.done')
-            : data.status === 'failed' || data.status === 'aborted'
-              ? i18n.t('notify.failed')
-              : data.status;
-        void SendNotification({ id: 'turn-end', title: 'OpenCraft', body });
+        const data = ev.data as {
+          run_id?: string;
+          conversation_id?: string;
+          status: string;
+        };
+        const { title, body } = turnEndNotification(data);
+        void SendNotification({ id: 'turn-end', title, body });
       }
       handleEvent(ev);
     });
