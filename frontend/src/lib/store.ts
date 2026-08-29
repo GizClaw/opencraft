@@ -780,6 +780,20 @@ export const useStore = create<StoreState>((set, get) => {
         case 'session_updated':
           void get().loadSessions();
           break;
+        case 'managed_restored': {
+          // The settings save rolled plugin-owned provider edits back
+          // to the stored config; surface the reminder so the silent
+          // restore is visible.
+          const ids = ((ev.data as { ids?: string[] }).ids ?? []).filter(
+            (id) => id,
+          );
+          if (ids.length > 0) {
+            get().toast(
+              i18n.t('config.managedRestored', { plugins: ids.join(', ') }),
+            );
+          }
+          break;
+        }
       }
     },
 

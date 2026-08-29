@@ -56,13 +56,18 @@ type InferenceProfile struct {
 	KeyRef   string         `json:"key_ref"`
 }
 
-// ProfileModel is one model in an inference profile with its opencraft
-// capabilities.
+// ProfileModel is one model in an inference profile. New plugins
+// declare capabilities as canonical content-kind lists (inputs/
+// outputs); the legacy vision shortcut remains for older plugins and
+// the host normalizes it (image input + text output).
 type ProfileModel struct {
-	Name      string `json:"name"`
-	Vision    bool   `json:"vision"`
-	Reasoning string `json:"reasoning"`
-	WebSearch bool   `json:"web_search"`
+	Name      string   `json:"name"`
+	Inputs    []string `json:"inputs,omitempty"`
+	Outputs   []string `json:"outputs,omitempty"`
+	Reasoning string   `json:"reasoning,omitempty"`
+	WebSearch bool     `json:"web_search,omitempty"`
+	Endpoint  string   `json:"endpoint,omitempty"`
+	Vision    bool     `json:"vision,omitempty"`
 }
 
 // InferenceHandler is the host-side write path for inference profiles.

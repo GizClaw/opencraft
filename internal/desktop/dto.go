@@ -39,21 +39,26 @@ type StreamEvent struct {
 
 // ProviderView is one entry of the provider catalog.
 type ProviderView struct {
-	ID           string `json:"id"`
-	Name         string `json:"name"`
-	DefaultModel string `json:"default_model"`
-	EnvVar       string `json:"env_var"`
-	API          string `json:"api"`
-	Azure        bool   `json:"azure"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	DefaultModel  string `json:"default_model"`
+	EnvVar        string `json:"env_var"`
+	API           string `json:"api"`
+	Azure         bool   `json:"azure"`
+	ModelEndpoint bool   `json:"model_endpoint"`
 }
 
-// ModelView is one model exposed by an inference instance, with its own
-// capabilities (vision/reasoning/web-search differ between models).
+// ModelView is one model exposed by an inference instance. Capabilities
+// are expressed as canonical content kinds so no modal (text/image/
+// audio/video generation, multimodal input) is lost across the
+// frontend boundary.
 type ModelView struct {
-	Name      string `json:"name"`
-	Vision    bool   `json:"vision"`
-	Reasoning string `json:"reasoning"`
-	WebSearch bool   `json:"web_search"`
+	Name      string   `json:"name"`
+	Inputs    []string `json:"inputs"`
+	Outputs   []string `json:"outputs"`
+	Reasoning string   `json:"reasoning"`
+	WebSearch bool     `json:"web_search"`
+	Endpoint  string   `json:"endpoint"`
 }
 
 // ProviderInstance is one inference instance from the frontend.
@@ -76,6 +81,10 @@ type ProviderInstance struct {
 	Models      []ModelView `json:"models"`
 	Endpoint    string      `json:"endpoint"`
 	Enabled     bool        `json:"enabled"`
+	// Managed marks a deployment owned by a capability plugin: the
+	// settings page locks its content and the save path restores any
+	// edit/removal instead of applying it.
+	Managed bool `json:"managed"`
 }
 
 // InferenceRequest is the full inference configuration payload from

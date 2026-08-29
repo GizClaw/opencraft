@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/GizClaw/flowcraft/core/inference"
+	"github.com/GizClaw/flowcraft/core/message"
 )
 
 func writeFile(t *testing.T, dir, name, content string) {
@@ -128,7 +131,7 @@ func TestInferenceYAMLAzure(t *testing.T) {
 		"provider.azure-2:",
 		"endpoint: 'https://res.openai.azure.com'",
 		"name: 'gpt-5.6-sol-deploy'",
-		"kind: generate",
+		"kind: 'generate'",
 		"capabilities:",
 		"outputs: [text]",
 		"provider.azure-2: provider.azure-2", // infer dep merge
@@ -154,10 +157,13 @@ func TestInferenceYAMLAzureCapabilities(t *testing.T) {
 		KeySource: KeyEnv,
 		Endpoint:  "https://res.openai.azure.com",
 		Models: []Model{{
-			Name:      "gpt-5.6-sol-deploy",
-			Vision:    true,
-			Reasoning: "toggle",
-			WebSearch: true,
+			Name: "gpt-5.6-sol-deploy",
+			Capabilities: inference.ModelCapabilities{
+				Inputs:          []message.PartKind{message.PartImage},
+				Outputs:         []message.PartKind{message.PartText},
+				Reasoning:       inference.ReasoningToggle,
+				HostedWebSearch: true,
+			},
 		}},
 		Enabled: true,
 	})
@@ -202,8 +208,15 @@ func TestInferenceYAMLMultipleModels(t *testing.T) {
 		Type:      "deepseek",
 		KeySource: KeyEnv,
 		Models: []Model{
-			{Name: "deepseek-v4-flash", WebSearch: true},
-			{Name: "deepseek-v4-pro", Vision: true, Reasoning: "always"},
+			{Name: "deepseek-v4-flash",
+				Capabilities: inference.ModelCapabilities{
+					HostedWebSearch: true,
+				}},
+			{Name: "deepseek-v4-pro",
+				Capabilities: inference.ModelCapabilities{
+					Inputs:    []message.PartKind{message.PartImage},
+					Reasoning: inference.ReasoningAlways,
+				}},
 		},
 		Enabled: true,
 	}}}
@@ -248,12 +261,206 @@ func TestInferenceYAMLMultipleModels(t *testing.T) {
 	if len(in.Models) != 2 {
 		t.Fatalf("round trip models = %+v, want 2", in.Models)
 	}
-	if in.Models[0].Name != "deepseek-v4-flash" || !in.Models[0].WebSearch {
+	if in.Models[0].Name != "deepseek-v4-flash" ||
+		!in.Models[0].Capabilities.HostedWebSearch {
 		t.Fatalf("model 0 = %+v", in.Models[0])
 	}
 	if in.Models[1].Name != "deepseek-v4-pro" ||
-		!in.Models[1].Vision || in.Models[1].Reasoning != "always" {
+		len(in.Models[1].Capabilities.Inputs) != 1 ||
+		in.Models[1].Capabilities.Inputs[0] != message.PartImage ||
+		in.Models[1].Capabilities.Reasoning != inference.ReasoningAlways {
 		t.Fatalf("model 1 = %+v", in.Models[1])
+	}
+}
+
+func TestInferenceYAMLGenerationKinds(t *testing.T) {
+	cfg := InferenceConfig{Instances: []Instance{{
+		StableID:  "inst-aaa",
+		Type:      "bytedance",
+		KeySource: KeyEnv,
+		Models: []Model{
+			{Name: "text-model"},
+			{Name: "img-model", Capabilities: inference.ModelCapabilities{
+				Inputs:  []message.PartKind{message.PartText},
+				Outputs: []message.PartKind{message.PartImage},
+			}},
+			{Name: "vid-model", Capabilities: inference.ModelCapabilities{
+				Inputs:  []message.PartKind{message.PartText, message.PartImage},
+				Outputs: []message.PartKind{message.PartVideo},
+			}},
+		},
+		Enabled: true,
+	}}}
+	data, err := cfg.InferenceYAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+	for _, want := range []string{
+		"name: 'text-model'",
+		"kind: 'generate'",
+		"outputs: [text]",
+		"inputs: [text]",
+		"name: 'img-model'",
+		"kind: 'image'",
+		"outputs: [image]",
+		"inputs: [text]",
+		"name: 'vid-model'",
+		"kind: 'video'",
+		"outputs: [video]",
+		"inputs: [text, image]",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Fatalf("generation kinds doc missing %q:\n%s", want, doc)
+		}
+	}
+}
+
+func TestInferenceYAMLByTedanceEndpoints(t *testing.T) {
+	cfg := InferenceConfig{Instances: []Instance{{
+		StableID:  "inst-aaa",
+		Type:      "bytedance",
+		KeySource: KeyEnv,
+		Models: []Model{
+			{Name: "doubao-seedance-1-6-pro", Endpoint: "ep-20260801-abc",
+				Capabilities: inference.ModelCapabilities{
+					Inputs:  []message.PartKind{message.PartText},
+					Outputs: []message.PartKind{message.PartVideo},
+				}},
+			{Name: "doubao-seed-2-0-lite-260428"},
+		},
+		Enabled: true,
+	}}}
+	data, err := cfg.InferenceYAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+	for _, want := range []string{
+		"endpoints:",
+		"'doubao-seedance-1-6-pro': 'ep-20260801-abc'",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Fatalf("bytedance endpoints doc missing %q:\n%s", want, doc)
+		}
+	}
+
+	// Round trip: the endpoint rides per model and the unbound model
+	// stays unbound.
+	dir := t.TempDir()
+	if err := WriteInference(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadInference(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	models := got.Instances[0].Models
+	if len(models) != 2 || models[0].Endpoint != "ep-20260801-abc" ||
+		models[1].Endpoint != "" {
+		t.Fatalf("bytedance endpoints round trip = %+v", models)
+	}
+}
+
+func TestInferenceYAMLDeepseekResponsesDerived(t *testing.T) {
+	// Responses mode must emit api + per-model responses: true so the
+	// deepseek driver accepts declared models.
+	cfg := InferenceConfig{Instances: []Instance{{
+		StableID:  "inst-aaa",
+		Type:      "deepseek",
+		KeySource: KeyEnv,
+		API:       "responses",
+		Models:    []Model{{Name: "deepseek-v4-flash"}},
+		Enabled:   true,
+	}}}
+	data, err := cfg.InferenceYAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+	for _, want := range []string{"api: 'responses'", "responses: true"} {
+		if !strings.Contains(doc, want) {
+			t.Fatalf("deepseek responses doc missing %q:\n%s", want, doc)
+		}
+	}
+
+	// Chat mode must not derive the responses flag.
+	chat := cfg
+	chat.Instances = []Instance{{
+		StableID: "inst-aaa", Type: "deepseek", KeySource: KeyEnv,
+		API: "chat", Models: []Model{{Name: "deepseek-v4-flash"}}, Enabled: true,
+	}}
+	data, err = chat.InferenceYAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "responses:") {
+		t.Fatalf("chat mode must not declare responses:\n%s", data)
+	}
+}
+
+func TestLoadInferencePrefersImplOverResourceID(t *testing.T) {
+	// The live SSO deployment predates its provider-type migration:
+	// the resource id still says openai while impl is deepseek. The
+	// parser must trust impl so a later settings save does not regress
+	// the driver back to openai.
+	dir := t.TempDir()
+	writeFile(t, dir, "opencraft.yaml", `
+resources:
+  provider.openai-sso-haivivi:
+    kind: inference.Provider
+    impl: deepseek
+    settings:
+      id: openai-sso-haivivi
+      spec:
+        api: responses
+        models:
+          - name: deepseek-v4-flash
+            kind: generate
+            capabilities:
+              outputs: [text]
+            responses: true
+      profiles:
+        - id: sso-haivivi
+          secrets:
+            api_key: ${secret:keychain.auth/sso-haivivi/token}
+  router:
+    settings:
+      generate:
+        - tier: default
+          targets:
+            - model:
+                id:
+                  provider: openai-sso-haivivi
+                  name: deepseek-v4-flash
+                profile: sso-haivivi
+`)
+	cfg, err := LoadInference(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Instances) != 1 {
+		t.Fatalf("instances = %+v", cfg.Instances)
+	}
+	in := cfg.Instances[0]
+	if in.Type != "deepseek" {
+		t.Fatalf("type = %q, want deepseek (from impl)", in.Type)
+	}
+	if len(in.Models) != 1 || !in.Models[0].Responses {
+		t.Fatalf("models = %+v, want responses: true parsed", in.Models)
+	}
+	// A settings save must keep impl deepseek and the responses flag.
+	if err := WriteInference(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := os.ReadFile(filepath.Join(dir, "opencraft.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"impl: deepseek", "api: 'responses'", "responses: true"} {
+		if !strings.Contains(string(doc), want) {
+			t.Fatalf("rewritten config missing %q:\n%s", want, doc)
+		}
 	}
 }
 
@@ -471,8 +678,15 @@ func TestWriteInferenceMultipleModelsLoads(t *testing.T) {
 		Type:      "deepseek",
 		KeySource: KeyEnv,
 		Models: []Model{
-			{Name: "deepseek-v4-flash", WebSearch: true},
-			{Name: "deepseek-v4-pro", Vision: true, Reasoning: "always"},
+			{Name: "deepseek-v4-flash",
+				Capabilities: inference.ModelCapabilities{
+					HostedWebSearch: true,
+				}},
+			{Name: "deepseek-v4-pro",
+				Capabilities: inference.ModelCapabilities{
+					Inputs:    []message.PartKind{message.PartImage},
+					Reasoning: inference.ReasoningAlways,
+				}},
 		},
 		Enabled: true,
 	}}}
@@ -671,14 +885,14 @@ func TestWriteInferenceRefusesNonMappingLayer(t *testing.T) {
 func TestModelReasoning(t *testing.T) {
 	cfg := InferenceConfig{Instances: []Instance{
 		{StableID: "a", Type: "deepseek", Enabled: true, Models: []Model{
-			{Name: "m1", Reasoning: "toggle"},
+			{Name: "m1", Capabilities: inference.ModelCapabilities{Reasoning: inference.ReasoningToggle}},
 			{Name: "m0"}, // no reasoning capability
 		}},
 		{StableID: "b", Type: "openai", Enabled: true, Models: []Model{
-			{Name: "gpt", Reasoning: "always"},
+			{Name: "gpt", Capabilities: inference.ModelCapabilities{Reasoning: inference.ReasoningAlways}},
 		}},
 		{StableID: "c", Type: "qwen", Enabled: false, Models: []Model{
-			{Name: "q", Reasoning: "always"},
+			{Name: "q", Capabilities: inference.ModelCapabilities{Reasoning: inference.ReasoningAlways}},
 		}},
 	}}
 	if !cfg.ModelReasoning("deepseek-a/m1") {
