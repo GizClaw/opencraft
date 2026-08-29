@@ -304,7 +304,7 @@ func (s *Store) SaveAttachment(id, kind, srcPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer src.Close()
+	defer func() { _ = src.Close() }()
 	dir := filepath.Join(s.dir(id), kind)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err

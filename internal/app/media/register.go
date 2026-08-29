@@ -234,9 +234,7 @@ func localPath(raw string) (string, bool) {
 	if path == "" {
 		return "", false
 	}
-	if strings.HasPrefix(path, "file://") {
-		path = strings.TrimPrefix(path, "file://")
-	}
+	path = strings.TrimPrefix(path, "file://")
 	if strings.HasPrefix(path, "http://") ||
 		strings.HasPrefix(path, "https://") ||
 		strings.HasPrefix(path, "data:") {
