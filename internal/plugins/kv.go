@@ -124,12 +124,10 @@ func (s *KVStore) path(pluginID string) (string, error) {
 	if err := ValidateID(pluginID); err != nil {
 		return "", err
 	}
-	if _, err := os.Stat(filepath.Join(s.root, pluginID, "plugin.json")); err != nil {
-		if os.IsNotExist(err) {
-			return "", fmt.Errorf("plugins: plugin %q is not installed", pluginID)
-		}
-		return "", err
-	}
+	// KV data is namespaced by plugin id under .data/<id>/ and is
+	// independent of where the plugin lives (user-installed or app-
+	// bundled builtin), so no registry existence check is performed
+	// here; ValidateID already bounds the id.
 	dir := filepath.Join(s.root, ".data", pluginID)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("plugins: create kv dir: %w", err)

@@ -59,9 +59,11 @@ type PluginSummary struct {
 	Entry       string   `json:"entry"`
 	Permissions []string `json:"permissions"`
 	Enabled     bool     `json:"enabled"`
-	Error       string   `json:"error,omitempty"`
-	Panels      []string `json:"panels,omitempty"`
-	Entries     []string `json:"entries,omitempty"`
+	// Builtin marks an app-bundled read-only plugin (see Store).
+	Builtin bool     `json:"builtin,omitempty"`
+	Error   string   `json:"error,omitempty"`
+	Panels  []string `json:"panels,omitempty"`
+	Entries []string `json:"entries,omitempty"`
 }
 
 // manifest mirrors plugins/<id>/plugin.json.
@@ -93,15 +95,19 @@ type manifest struct {
 // without an entry is enabled by default (installed == enabled).
 const pluginStateFile = "state.json"
 
-// Store is the on-disk plugin registry rooted at a directory (usually
-// <dataDir>/plugins).
+// Store is the plugin registry: a writable user root (usually
+// <dataDir>/plugins) plus an optional read-only builtin root
+// (app-bundled plugins, see runtime.BuiltinPluginRoot). User plugins
+// shadow builtins with the same id; builtins are always present, can be
+// disabled but never uninstalled.
 type Store struct {
-	root string
+	root    string
+	builtin string
 }
 
 // NewStore returns a registry rooted at root.
 func NewStore(root string) *Store {
-	return &Store{root: root}
+	return &Store{root: root, builtin: runtime.BuiltinPluginRoot()}
 }
 
 // List returns every installed plugin with its manifest metadata and
@@ -111,13 +117,32 @@ func (s *Store) List() ([]PluginSummary, error) {
 	if err := os.MkdirAll(s.root, 0o700); err != nil {
 		return nil, fmt.Errorf("plugins: create dir: %w", err)
 	}
-	entries, err := os.ReadDir(s.root)
-	if err != nil {
-		return nil, fmt.Errorf("plugins: read dir: %w", err)
-	}
 	state, err := s.readState()
 	if err != nil {
 		return nil, err
+	}
+	seen := map[string]bool{}
+	out := s.scanDir(s.root, state, false, seen)
+	if s.builtin != "" {
+		out = append(out, s.scanDir(s.builtin, state, true, seen)...)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// scanDir lists the plugins of one root directory. user state is shared
+// (builtin enable/disable choices persist in the user root's state
+// file). ids already in seen are skipped so the user root wins over the
+// builtin root; every listed id is recorded in seen.
+func (s *Store) scanDir(
+	root string,
+	state map[string]bool,
+	builtin bool,
+	seen map[string]bool,
+) []PluginSummary {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
 	}
 	out := []PluginSummary{}
 	for _, entry := range entries {
@@ -125,13 +150,16 @@ func (s *Store) List() ([]PluginSummary, error) {
 			continue
 		}
 		id := entry.Name()
-		sum := PluginSummary{ID: id}
+		if seen[id] {
+			continue
+		}
+		sum := PluginSummary{ID: id, Builtin: builtin}
 		if enabled, ok := state[id]; ok {
 			sum.Enabled = enabled
 		} else {
 			sum.Enabled = true
 		}
-		raw, err := os.ReadFile(filepath.Join(s.root, id, "plugin.json"))
+		raw, err := os.ReadFile(filepath.Join(root, id, "plugin.json"))
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue // directory without a manifest is not a plugin
@@ -157,14 +185,18 @@ func (s *Store) List() ([]PluginSummary, error) {
 			sum.Entries = append(sum.Entries, e.ID)
 		}
 		out = append(out, sum)
+		seen[id] = true
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out, nil
+	return out
 }
 
 // Bundle returns the plugin entry bundle source, validated so the path
 // can never escape the plugin directory.
 func (s *Store) Bundle(id string) (string, error) {
+	dir, _, err := s.pluginDir(id)
+	if err != nil {
+		return "", err
+	}
 	m, err := s.readManifest(id)
 	if err != nil {
 		return "", err
@@ -175,7 +207,7 @@ func (s *Store) Bundle(id string) (string, error) {
 		strings.HasPrefix(entry, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("plugins: entry escapes plugin dir: %q", m.Entry)
 	}
-	data, err := os.ReadFile(filepath.Join(s.root, id, entry))
+	data, err := os.ReadFile(filepath.Join(dir, entry))
 	if err != nil {
 		return "", fmt.Errorf("plugins: read bundle: %w", err)
 	}
@@ -311,8 +343,14 @@ func signAdHoc(path string) error {
 // Uninstall removes an installed plugin and its enable state. Plugin
 // data (KV) is removed by the caller via KVStore.RemoveAll.
 func (s *Store) Uninstall(id string) error {
-	if _, err := s.readManifest(id); err != nil {
+	_, builtin, err := s.pluginDir(id)
+	if err != nil {
 		return err
+	}
+	if builtin {
+		return fmt.Errorf(
+			"plugins: %q is a builtin plugin and cannot be uninstalled; disable it instead",
+			id)
 	}
 	if err := os.RemoveAll(filepath.Join(s.root, id)); err != nil {
 		return fmt.Errorf("plugins: remove %q: %w", id, err)
@@ -326,17 +364,35 @@ func (s *Store) Uninstall(id string) error {
 }
 
 func (s *Store) readManifest(id string) (*manifest, error) {
-	if err := ValidateID(id); err != nil {
+	dir, _, err := s.pluginDir(id)
+	if err != nil {
 		return nil, err
 	}
-	raw, err := os.ReadFile(filepath.Join(s.root, id, "plugin.json"))
+	raw, err := os.ReadFile(filepath.Join(dir, "plugin.json"))
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("plugins: plugin %q is not installed", id)
-		}
 		return nil, fmt.Errorf("plugins: read manifest: %w", err)
 	}
 	return parseManifest(id, raw)
+}
+
+// pluginDir resolves the directory holding an installed plugin: the
+// user root wins, otherwise the builtin root. builtin reports whether
+// the plugin lives in the read-only bundled root.
+func (s *Store) pluginDir(id string) (string, bool, error) {
+	if err := ValidateID(id); err != nil {
+		return "", false, err
+	}
+	user := filepath.Join(s.root, id, "plugin.json")
+	if _, err := os.Stat(user); err == nil {
+		return filepath.Join(s.root, id), false, nil
+	}
+	if s.builtin != "" {
+		builtin := filepath.Join(s.builtin, id, "plugin.json")
+		if _, err := os.Stat(builtin); err == nil {
+			return filepath.Join(s.builtin, id), true, nil
+		}
+	}
+	return "", false, fmt.Errorf("plugins: plugin %q is not installed", id)
 }
 
 func parseManifest(id string, raw []byte) (*manifest, error) {

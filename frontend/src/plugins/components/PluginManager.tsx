@@ -72,6 +72,14 @@ export function PluginManager() {
                 <p className="text-sm text-fg truncate">
                   {p.name}{' '}
                   <span className="text-xs text-dim">v{p.version}</span>
+                  {p.builtin && (
+                    <span
+                      className="ml-1 rounded bg-panel px-1.5 py-0.5 text-[10px] text-dim"
+                      title={t('config.pluginsBuiltinHint')}
+                    >
+                      {t('config.pluginsBuiltin')}
+                    </span>
+                  )}
                 </p>
                 <p className="text-[11px] text-dim truncate">{p.id}</p>
               </div>
@@ -87,20 +95,22 @@ export function PluginManager() {
                   ? t('config.pluginsDisable')
                   : t('config.pluginsEnable')}
               </button>
-              <button
-                onClick={() => {
-                  if (confirmUninstallId === p.id) {
-                    void uninstall(p.id);
-                  } else {
-                    setConfirmUninstallId(p.id);
-                  }
-                }}
-                className="rounded-md px-2 py-1 text-xs text-dim hover:text-err"
-              >
-                {confirmUninstallId === p.id
-                  ? t('config.pluginsUninstallConfirm')
-                  : t('config.pluginsUninstall')}
-              </button>
+              {!p.builtin && (
+                <button
+                  onClick={() => {
+                    if (confirmUninstallId === p.id) {
+                      void uninstall(p.id);
+                    } else {
+                      setConfirmUninstallId(p.id);
+                    }
+                  }}
+                  className="rounded-md px-2 py-1 text-xs text-dim hover:text-err"
+                >
+                  {confirmUninstallId === p.id
+                    ? t('config.pluginsUninstallConfirm')
+                    : t('config.pluginsUninstall')}
+                </button>
+              )}
             </div>
             {p.error && (
               <p className="mt-2 text-[11px] text-err break-words">{p.error}</p>

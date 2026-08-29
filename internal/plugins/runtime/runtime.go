@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -667,6 +668,13 @@ func (l DefaultLoader) BinaryPath(id string, cap Capability) (string, error) {
 		return "", fmt.Errorf("runtime: capability binary escapes plugin dir: %q", cap.Binary)
 	}
 	path := filepath.Join(l.Root, id, bin)
+	if _, err := os.Stat(path); err != nil {
+		// Not in the user plugin dir: fall back to the read-only
+		// builtin (app-bundled) plugin directory.
+		if root := BuiltinPluginRoot(); root != "" {
+			path = filepath.Join(root, id, bin)
+		}
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		return "", fmt.Errorf("runtime: capability binary %q: %w", bin, err)
@@ -675,4 +683,29 @@ func (l DefaultLoader) BinaryPath(id string, cap Capability) (string, error) {
 		return "", fmt.Errorf("runtime: capability binary %q is a directory", bin)
 	}
 	return path, nil
+}
+
+// BuiltinPluginRoot returns the read-only, app-bundled plugin
+// directory next to the running executable, or "" when absent (dev
+// runs, platforms without a bundled layout). The bundle layout is
+// platform-specific: macOS apps ship plugins under
+// Contents/Resources/plugins; other platforms keep a plugins/
+// directory next to the binary.
+func BuiltinPluginRoot() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	exeDir := filepath.Dir(exe)
+	var root string
+	if goruntime.GOOS == "darwin" {
+		root = filepath.Join(exeDir, "..", "Resources", "plugins")
+	} else {
+		root = filepath.Join(exeDir, "plugins")
+	}
+	root = filepath.Clean(root)
+	if info, err := os.Stat(root); err == nil && info.IsDir() {
+		return root
+	}
+	return ""
 }

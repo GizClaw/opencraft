@@ -100,6 +100,8 @@
     "pluginsChooseZip": "Choose zip…",
     "pluginsUninstall": "Uninstall",
     "pluginsUninstallConfirm": "Uninstall?",
+    "pluginsBuiltin": "Built-in",
+    "pluginsBuiltinHint": "Built-in plugins ship with the app; they cannot be uninstalled, only disabled",
     "pluginsCommands": "Plugin commands",
     "pluginLoadError": "Plugin load failed",
     "pluginsEnable": "Enable",

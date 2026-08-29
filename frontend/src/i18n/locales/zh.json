@@ -100,6 +100,8 @@
     "pluginsChooseZip": "选择 zip…",
     "pluginsUninstall": "卸载",
     "pluginsUninstallConfirm": "确认卸载？",
+    "pluginsBuiltin": "内置",
+    "pluginsBuiltinHint": "内置插件随应用分发，不可卸载，可停用",
     "pluginsCommands": "插件命令",
     "pluginLoadError": "插件加载失败",
     "pluginsEnable": "启用",
