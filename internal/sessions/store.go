@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -153,6 +154,11 @@ func NewID() string {
 // root.
 const DefaultSessionID = "s-default"
 
+// maxAttachmentBytes caps one user attachment copied into the session
+// (media previews and file attachments). 10 MiB covers typical
+// screenshots / photos while keeping session directories bounded.
+const maxAttachmentBytes = 10 << 20
+
 // Create makes a fresh conversation and returns its id.
 func (s *Store) Create() (string, error) {
 	id := NewID()
@@ -166,11 +172,11 @@ func (s *Store) Create() (string, error) {
 	return id, nil
 }
 
-// AppendTurn persists one turn. Text, reasoning, tool call, and tool
-// result parts are archived; images/audio/data are dropped so the
-// archive stays a compact conversation transcript. Keeping the
-// structured tool parts lets /resume replay the live rendering path
-// instead of parsing flattened text.
+// AppendTurn persists one turn. Text, reasoning, tool call, tool
+// result, and media (image/audio/video/file) parts are archived;
+// media sources are kept in URL form (attachments live in this
+// session's media/ and files/ directories), so the archive stays a
+// compact transcript while /resume can still re-render attachments.
 func (s *Store) AppendTurn(_ context.Context, id string, msgs []message.Message) error {
 	if err := requireID(id); err != nil {
 		return err
@@ -197,6 +203,16 @@ func (s *Store) AppendTurn(_ context.Context, id string, msgs []message.Message)
 			case message.ToolCallPart:
 				parts = append(parts, part)
 			case message.ToolResultPart:
+				parts = append(parts, part)
+			case message.ImagePart:
+				parts = append(parts, part)
+			case message.AudioPart:
+				parts = append(parts, part)
+			case message.VideoPart:
+				parts = append(parts, part)
+			case message.FilePart:
+				parts = append(parts, part)
+			case message.DataPart:
 				parts = append(parts, part)
 			}
 		}
@@ -241,7 +257,13 @@ func (s *Store) AppendTurn(_ context.Context, id string, msgs []message.Message)
 	if meta.Title == "" {
 		for _, m := range archived {
 			if m.Role == message.RoleUser {
-				meta.Title = firstLine(m.Content.Text())
+				title := firstLine(m.Content.Text())
+				if title == "" && len(m.Content.Parts) > 0 {
+					// Media-only first message: still give the resume
+					// list a name instead of an empty title.
+					title = "[attachment]"
+				}
+				meta.Title = title
 				break
 			}
 		}
@@ -251,6 +273,60 @@ func (s *Store) AppendTurn(_ context.Context, id string, msgs []message.Message)
 	}
 	meta.UpdatedAt = now
 	return s.writeMeta(id, meta)
+}
+
+// SaveAttachment copies one user attachment into the session's media
+// or files directory and returns the stored absolute path. opencraft
+// currently copies only images into "media" (resume rendering needs
+// the bytes); audio/video/file attachments keep their original paths.
+// The copy keeps the source extension so media type detection survives
+// the rename; the name carries a random suffix so repeated uploads of
+// the same file never collide.
+func (s *Store) SaveAttachment(id, kind, srcPath string) (string, error) {
+	if err := requireID(id); err != nil {
+		return "", err
+	}
+	if kind != "media" && kind != "files" {
+		return "", errdefs.Validationf("sessions: unknown attachment kind %q", kind)
+	}
+	info, err := os.Stat(srcPath)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", errdefs.Validationf("sessions: attachment is not a regular file")
+	}
+	if info.Size() > maxAttachmentBytes {
+		return "", errdefs.Validationf(
+			"sessions: attachment too large (%d bytes)", info.Size())
+	}
+	src, err := os.Open(srcPath)
+	if err != nil {
+		return "", err
+	}
+	defer src.Close()
+	dir := filepath.Join(s.dir(id), kind)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	var suffix [4]byte
+	_, _ = rand.Read(suffix[:])
+	name := fmt.Sprintf("%d-%x%s", time.Now().UnixNano(), suffix[:], filepath.Ext(srcPath))
+	dst := filepath.Join(dir, name)
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return "", err
+	}
+	if _, err := io.Copy(out, src); err != nil {
+		_ = out.Close()
+		_ = os.Remove(dst)
+		return "", err
+	}
+	if err := out.Close(); err != nil {
+		_ = os.Remove(dst)
+		return "", err
+	}
+	return dst, nil
 }
 
 // History returns the most recent n archived messages, oldest first.

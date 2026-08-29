@@ -121,6 +121,21 @@ func extractConversation(req *agent.Request, res *agent.Result) []message.Messag
 		channel := res.LastBoard.Channel(agent.MainChannel)
 		if n, ok := sectionCount(res.LastBoard); ok && n >= 0 && n <= len(channel) {
 			msgs = channel[n:]
+			// The model-facing board carries the user's turn message
+			// with inline media (the opencraft.media prepare hook
+			// inlined URL sources before the LLM). The archive keeps
+			// the URL form from the original request so attachments
+			// stay compact and re-renderable on resume. The user
+			// message sits right after the world sections and the
+			// replayed history messages.
+			if h, ok := historyCount(res.LastBoard); ok && h >= 0 && h < len(msgs) &&
+				msgs[h].Role == message.RoleUser {
+				restored := make([]message.Message, 0, len(msgs))
+				restored = append(restored, msgs[:h]...)
+				restored = append(restored, req.Message)
+				restored = append(restored, msgs[h+1:]...)
+				msgs = restored
+			}
 		}
 	}
 	if len(msgs) == 0 {
@@ -170,6 +185,30 @@ func sectionCount(board *agent.Board) (int, bool) {
 		return 0, false
 	}
 	v, ok := board.GetVar(worldSectionsCountVar)
+	if !ok {
+		return 0, false
+	}
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	case float64:
+		return int(n), true
+	case float32:
+		return int(n), true
+	}
+	return 0, false
+}
+
+// historyCount reads the world node's replayed-history count off the
+// board. The user's turn message sits at world.sections.count +
+// world.history.count on the MainChannel.
+func historyCount(board *agent.Board) (int, bool) {
+	if board == nil {
+		return 0, false
+	}
+	v, ok := board.GetVar("world.history.count")
 	if !ok {
 		return 0, false
 	}

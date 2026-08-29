@@ -209,6 +209,18 @@ type ReplyRequest struct {
 	Cancel  bool     `json:"cancel"`
 }
 
+// AttachmentDTO is one local attachment the frontend previews (input
+// composer) or a resumed session renders. DataURL carries the image
+// bytes as a data: URI (WKWebView cannot load file:// directly); file
+// attachments return metadata only.
+type AttachmentDTO struct {
+	Name      string `json:"name"`
+	Path      string `json:"path"`
+	Size      int64  `json:"size"`
+	MediaType string `json:"media_type,omitempty"`
+	DataURL   string `json:"data_url,omitempty"`
+}
+
 // InteractDTO is the rendered form of one runtime.Spec.
 type InteractDTO struct {
 	ID             string            `json:"id"`

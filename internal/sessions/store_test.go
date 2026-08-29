@@ -2,13 +2,109 @@ package sessions
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/message/media"
 )
+
+// TestSaveAttachment verifies URL-sourced attachments land in the
+// session's media/files directories with the source extension.
+func TestSaveAttachment(t *testing.T) {
+	store, err := New(t.TempDir(), 40)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	id, err := store.Create()
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	src := filepath.Join(t.TempDir(), "photo.png")
+	if err := os.WriteFile(src, []byte("fake-png"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	dst, err := store.SaveAttachment(id, "media", src)
+	if err != nil {
+		t.Fatalf("SaveAttachment: %v", err)
+	}
+	rel, err := filepath.Rel(store.dir(id), dst)
+	if err != nil || !strings.HasPrefix(rel, "media"+string(filepath.Separator)) {
+		t.Fatalf("stored path %q not under session media dir", dst)
+	}
+	if !strings.HasSuffix(dst, ".png") {
+		t.Errorf("stored name lost extension: %q", dst)
+	}
+	data, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatalf("read stored attachment: %v", err)
+	}
+	if string(data) != "fake-png" {
+		t.Errorf("stored content = %q, want source bytes", data)
+	}
+	if _, err := store.SaveAttachment(id, "other", src); err == nil {
+		t.Error("SaveAttachment accepted unknown kind")
+	}
+	if _, err := store.SaveAttachment(id, "files", filepath.Join(t.TempDir(), "missing")); err == nil {
+		t.Error("SaveAttachment accepted missing source")
+	}
+}
+
+// TestAppendTurnKeepsMediaURL verifies multimodal user parts survive
+// the archive in URL form (the session persists the stored path, not
+// the inline bytes), so /resume can re-render attachments.
+func TestAppendTurnKeepsMediaURL(t *testing.T) {
+	store, err := New(t.TempDir(), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const stored = "/Users/test/Workspace/proj/.opencraft/sessions/s-abc/media/1234-photo.png"
+	var imgSource media.ImageSource
+	if err := json.Unmarshal(
+		[]byte(`{"kind":"url","url":`+strconv.Quote(stored)+`,"media_type":"image/png"}`),
+		&imgSource,
+	); err != nil {
+		t.Fatalf("build image source: %v", err)
+	}
+	msgs := []message.Message{{
+		Role: message.RoleUser,
+		Content: message.Content{Parts: []message.Part{
+			message.TextPart{Text: "look"},
+			message.ImagePart{Source: imgSource},
+			message.FilePart{URI: "/Users/test/notes.txt", MediaType: "text/plain", Name: "notes.txt"},
+		}},
+	}}
+	if err := store.AppendTurn(context.Background(), id, msgs); err != nil {
+		t.Fatalf("AppendTurn: %v", err)
+	}
+	hist, err := store.History(context.Background(), id, -1)
+	if err != nil {
+		t.Fatalf("History: %v", err)
+	}
+	if len(hist) != 1 || len(hist[0].Content.Parts) != 3 {
+		t.Fatalf("history = %+v, want 1 message with 3 parts", hist)
+	}
+	img, ok := hist[0].Content.Parts[1].(message.ImagePart)
+	if !ok {
+		t.Fatalf("part 1 is %T, want ImagePart", hist[0].Content.Parts[1])
+	}
+	if img.Source.Kind() != media.SourceURL || img.Source.URL() != stored {
+		t.Errorf("image source = %s %q, want url %q", img.Source.Kind(), img.Source.URL(), stored)
+	}
+	file, ok := hist[0].Content.Parts[2].(message.FilePart)
+	if !ok || file.URI != "/Users/test/notes.txt" {
+		t.Errorf("file part = %+v", hist[0].Content.Parts[2])
+	}
+}
 
 func TestAppendAndHistory(t *testing.T) {
 	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)

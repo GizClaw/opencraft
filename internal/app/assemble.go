@@ -42,6 +42,7 @@ import (
 	"go.opentelemetry.io/otel/log"
 
 	"github.com/GizClaw/opencraft/internal/agents"
+	opmedia "github.com/GizClaw/opencraft/internal/app/media"
 	"github.com/GizClaw/opencraft/internal/app/worldstate"
 	"github.com/GizClaw/opencraft/internal/config"
 	"github.com/GizClaw/opencraft/internal/hooks"
@@ -144,6 +145,7 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 		qwen.Register,
 		opmemory.Register,
 		ocsessions.Register,
+		opmedia.Register,
 		skills.Register,
 		opentools.Register,
 		sandbox.Register,

@@ -302,7 +302,7 @@ func TestAssemblyCondensesFullSummary(t *testing.T) {
 	) (inference.GenerateResponse, error) {
 		calls++
 		if req.Input.Role != inference.InputRoleUser {
-			t.Fatalf("input role = %q", req.Input.Role)
+			t.Errorf("input role = %q", req.Input.Role)
 		}
 		return inference.GenerateResponse{
 			Message:      message.NewTextMessage(message.RoleAssistant, "CONDENSED"),
@@ -333,6 +333,7 @@ func TestAssemblyCondensesFullSummary(t *testing.T) {
 		if err := a.CommitTurn(ctx, turn); err != nil {
 			t.Fatal(err)
 		}
+		a.condenseWG.Wait()
 	}
 	if calls != 1 {
 		t.Fatalf("condense calls = %d, want 1", calls)
@@ -398,6 +399,7 @@ func TestAssemblyCondenseMergesPreviousSummary(t *testing.T) {
 		if err := a.CommitTurn(ctx, turn); err != nil {
 			t.Fatal(err)
 		}
+		a.condenseWG.Wait()
 	}
 	if len(prompts) < 2 {
 		t.Fatalf("condense calls = %d, want >= 2", len(prompts))
@@ -444,6 +446,7 @@ func TestAssemblyCondenseFailureFallsBackToBuffer(t *testing.T) {
 		if err := a.CommitTurn(ctx, turn); err != nil {
 			t.Fatal(err)
 		}
+		a.condenseWG.Wait()
 	}
 	if calls != 2 {
 		t.Fatalf("condense calls = %d, want 2 (one per window advance)", calls)
@@ -545,6 +548,7 @@ func TestAssemblyCondenseCapsOutputToBudget(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	a.condenseWG.Wait()
 	if len(store.nodes) != 1 {
 		t.Fatalf("nodes = %d, want 1", len(store.nodes))
 	}

@@ -3,14 +3,18 @@ import i18n from '../i18n';
 import { api } from './api';
 import type {
   AgentSummary,
+  AttachmentView,
   ConfigStatus,
   InteractDTO,
   KanbanCard,
+  HistoryPart,
   HistoryMessage,
   ModelOption,
   ReplyRequest,
   SessionMeta,
   StreamDelta,
+  StreamPart,
+  TurnMessage,
   UIEvent,
   UsageDTO,
   WorkspaceMeta,
@@ -41,6 +45,9 @@ export interface MessageView {
   // their ordered items instead.
   text: string;
   items: AssistantItem[];
+  // attachments renders user message media: images above the text,
+  // other files in a collapsed list below it.
+  attachments: AttachmentView[];
 }
 
 // ConversationState is the live UI state of one conversation. Each
@@ -93,6 +100,77 @@ const emptyConv = (): ConversationState => ({
   lastFailed: false,
 });
 
+// attachmentPart lowers one staged attachment into the message wire
+// form: images/audio/video become URL-sourced media parts (the backend
+// persists them and the prepare hook inlines the bytes), anything else
+// becomes a file part.
+function attachmentPart(a: AttachmentView): StreamPart {
+  if (a.kind === 'image') {
+    return {
+      type: 'image',
+      source: { kind: 'url', url: a.path, media_type: a.media_type },
+    };
+  }
+  if (a.kind === 'audio') {
+    return {
+      type: 'audio',
+      source: { kind: 'url', url: a.path, media_type: a.media_type },
+    };
+  }
+  if (a.kind === 'video') {
+    return {
+      type: 'video',
+      source: { kind: 'url', url: a.path, media_type: a.media_type },
+    };
+  }
+  return { type: 'file', uri: a.path, name: a.name, media_type: a.media_type };
+}
+
+const baseName = (p: string) => p.split(/[\\/]/).pop() ?? p;
+
+// historyPartsToAttachments extracts media parts from an archived user
+// message into renderable attachments. The archive keeps URL-form
+// sources (local paths under the session's media/files dirs).
+function historyPartsToAttachments(parts: HistoryPart[]): AttachmentView[] {
+  const out: AttachmentView[] = [];
+  for (const p of parts) {
+    if (p.type === 'image' && p.source?.kind === 'url' && p.source.url) {
+      out.push({
+        id: newID('att'),
+        kind: 'image',
+        path: p.source.url,
+        name: baseName(p.source.url),
+        media_type: p.source.media_type,
+      });
+    } else if (p.type === 'audio' && p.source?.kind === 'url' && p.source.url) {
+      out.push({
+        id: newID('att'),
+        kind: 'audio',
+        path: p.source.url,
+        name: baseName(p.source.url),
+        media_type: p.source.media_type,
+      });
+    } else if (p.type === 'video' && p.source?.kind === 'url' && p.source.url) {
+      out.push({
+        id: newID('att'),
+        kind: 'video',
+        path: p.source.url,
+        name: baseName(p.source.url),
+        media_type: p.source.media_type,
+      });
+    } else if (p.type === 'file' && p.uri) {
+      out.push({
+        id: newID('att'),
+        kind: 'file',
+        path: p.uri,
+        name: p.name || baseName(p.uri),
+        media_type: p.media_type,
+      });
+    }
+  }
+  return out;
+}
+
 // historyToMessages converts stored flowcraft messages back into the
 // live MessageView shape: user text, then assistant messages with the
 // same ordered blocks (reasoning, tool calls, text) the stream
@@ -109,7 +187,13 @@ const historyToMessages = (history: HistoryMessage[]): MessageView[] => {
         .filter((p): p is { type: 'text'; text?: string } => p.type === 'text')
         .map((p) => p.text ?? '')
         .join('');
-      messages.push({ id: newID('msg'), role: 'user', text, items: [] });
+      messages.push({
+        id: newID('msg'),
+        role: 'user',
+        text,
+        items: [],
+        attachments: historyPartsToAttachments(parts),
+      });
       continue;
     }
     if (h.role === 'tool') {
@@ -130,6 +214,7 @@ const historyToMessages = (history: HistoryMessage[]): MessageView[] => {
       role: 'assistant',
       text: '',
       items: [],
+      attachments: [],
     };
     for (const p of parts) {
       switch (p.type) {
@@ -185,6 +270,7 @@ function lastAssistant(messages: MessageView[]): {
       role: 'assistant',
       text: '',
       items: [],
+      attachments: [],
     };
     return { msg, messages: [...messages, msg] };
   }
@@ -318,7 +404,7 @@ interface StoreState {
 
   init: () => Promise<void>;
   handleEvent: (ev: UIEvent) => void;
-  send: (text: string) => Promise<void>;
+  send: (text: string, attachments?: AttachmentView[]) => Promise<void>;
   retryLast: () => Promise<void>;
   clearLastFailed: () => void;
   replyInteract: (id: string, req: ReplyRequest) => Promise<void>;
@@ -409,6 +495,7 @@ export const useStore = create<StoreState>((set, get) => {
     convID: string,
     text: string,
     messages: MessageView[],
+    attachments: AttachmentView[] = [],
   ) => {
     updateConv(convID, {
       messages,
@@ -417,7 +504,13 @@ export const useStore = create<StoreState>((set, get) => {
       stage: '',
     });
     try {
-      const start = await api.startTurn(text);
+      const parts: StreamPart[] = [];
+      if (text) parts.push({ type: 'text', text });
+      for (const att of attachments) {
+        parts.push(attachmentPart(att));
+      }
+      const wire: TurnMessage = { role: 'user', content: { parts } };
+      const start = await api.startTurn(wire);
       set((state) => ({
         runConvs: { ...state.runConvs, [start.run_id]: convID },
         conversations: {
@@ -690,11 +783,18 @@ export const useStore = create<StoreState>((set, get) => {
       }
     },
 
-    send: async (text) => {
+    send: async (text, attachments = []) => {
       const trimmed = text.trim();
       const state = get();
       const conv = state.conversations[state.current];
-      if (!trimmed || !conv || conv.busy || !state.configured) return;
+      if (
+        (!trimmed && attachments.length === 0) ||
+        !conv ||
+        conv.busy ||
+        !state.configured
+      ) {
+        return;
+      }
       const messages = [
         ...conv.messages,
         {
@@ -702,9 +802,10 @@ export const useStore = create<StoreState>((set, get) => {
           role: 'user' as const,
           text: trimmed,
           items: [],
+          attachments,
         },
       ];
-      await beginTurn(state.current, trimmed, messages);
+      await beginTurn(state.current, trimmed, messages, attachments);
     },
 
     retryLast: async () => {
@@ -720,10 +821,12 @@ export const useStore = create<StoreState>((set, get) => {
       }
       if (lastUserIdx < 0) return;
       const text = conv.messages[lastUserIdx].text;
+      const attachments = conv.messages[lastUserIdx].attachments ?? [];
       await beginTurn(
         state.current,
         text,
         conv.messages.slice(0, lastUserIdx + 1),
+        attachments,
       );
     },
 

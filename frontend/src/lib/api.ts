@@ -4,11 +4,13 @@ import * as App from '../../wailsjs/go/desktop/App';
 import type {
   config as genConfig,
   desktop as gen,
+  message as genMessage,
 } from '../../wailsjs/go/models';
 import type {
   AgentSummary,
   AgentDetail,
   AgentUpdateResult,
+  AttachmentDTO,
   CacheClearResult,
   ConfigState,
   ConfigStatus,
@@ -33,6 +35,7 @@ import type {
   ProjectConfigStatus,
   SkillDTO,
   TurnStart,
+  TurnMessage,
   UndoState,
   UsagePoint,
   WorkspaceMeta,
@@ -152,7 +155,10 @@ export const api = {
   exportSession: (id: string) => App.ExportSession(id),
   sessionMode: () => App.SessionMode(),
   setSessionMode: (mode: string) => App.SetSessionMode(mode),
-  startTurn: (text: string) => App.StartTurn(text) as Promise<TurnStart>,
+  startTurn: (msg: TurnMessage) =>
+    App.StartTurn(msg as unknown as genMessage.Message) as Promise<TurnStart>,
+  readAttachment: (path: string) =>
+    App.ReadAttachment(path) as Promise<AttachmentDTO>,
   replyPrompt: (promptID: string, reply: ReplyRequest) =>
     App.ReplyPrompt(promptID, reply as unknown as gen.ReplyRequest),
   cancelTurn: (runID: string) => App.CancelTurn(runID),

@@ -112,6 +112,26 @@ func (m *Manager) Load(ctx context.Context) (*View, error) {
 		Name:     "embedded-inference",
 		Source:   resource.Source{Embed: "assets/inference.yaml"},
 		Embed:    FS(),
+	}, {
+		// Tool containers + script runtime, agent definitions, and the
+		// runtime section live in their own embedded layer files so the
+		// base document stays navigable. Each is a partial document
+		// deep-merged over the base (only the first layer is required
+		// to carry version).
+		Priority: 2,
+		Name:     "embedded-tools",
+		Source:   resource.Source{Embed: "assets/tools.yaml"},
+		Embed:    FS(),
+	}, {
+		Priority: 3,
+		Name:     "embedded-agents",
+		Source:   resource.Source{Embed: "assets/agents.yaml"},
+		Embed:    FS(),
+	}, {
+		Priority: 4,
+		Name:     "embedded-runtime",
+		Source:   resource.Source{Embed: "assets/runtime.yaml"},
+		Embed:    FS(),
 	}}
 	if m.explicit != "" {
 		// Above embedded, below the user layer: -config is meant to
