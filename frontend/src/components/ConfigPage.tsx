@@ -51,9 +51,11 @@ import { EventsOn } from '../../wailsjs/runtime/runtime';
 // InstanceRow is one editable inference instance in the settings page.
 interface RowModel {
   name: string;
-  vision: boolean;
+  inputs: string[];
+  outputs: string[];
   reasoning: string;
   webSearch: boolean;
+  endpoint: string;
 }
 
 interface InstanceRow {
@@ -69,6 +71,7 @@ interface InstanceRow {
   models: RowModel[];
   endpoint: string;
   enabled: boolean;
+  managed: boolean; // deployment owned by a capability plugin
 }
 
 type Tab =
@@ -149,9 +152,11 @@ export function ConfigPage() {
         (state.instances ?? []).map((s) => {
           const models = (s.models ?? []).map((m) => ({
             name: m.name ?? '',
-            vision: m.vision ?? false,
+            inputs: m.inputs ?? [],
+            outputs: m.outputs ?? [],
             reasoning: m.reasoning ?? '',
             webSearch: m.web_search ?? false,
+            endpoint: m.endpoint ?? '',
           }));
           return {
             id: newID(),
@@ -169,13 +174,16 @@ export function ConfigPage() {
                 : [
                     {
                       name: byType.get(s.type)?.default_model ?? '',
-                      vision: false,
+                      inputs: [],
+                      outputs: [],
                       reasoning: '',
                       webSearch: false,
+                      endpoint: '',
                     },
                   ],
             endpoint: s.endpoint ?? '',
             enabled: s.enabled ?? true,
+            managed: s.managed ?? false,
           };
         }),
       );
@@ -380,13 +388,16 @@ export function ConfigPage() {
         models: [
           {
             name: prov?.default_model ?? '',
-            vision: false,
+            inputs: [],
+            outputs: [],
             reasoning: '',
             webSearch: false,
+            endpoint: '',
           },
         ],
         endpoint: '',
         enabled: true,
+        managed: false,
       },
     ]);
   };
@@ -433,7 +444,14 @@ export function ConfigPage() {
               ...r,
               models: [
                 ...r.models,
-                { name: '', vision: false, reasoning: '', webSearch: false },
+                {
+                  name: '',
+                  inputs: [],
+                  outputs: [],
+                  reasoning: '',
+                  webSearch: false,
+                  endpoint: '',
+                },
               ],
             }
           : r,
@@ -494,12 +512,15 @@ export function ConfigPage() {
       key_env: r.keyEnv,
       models: r.models.map((m) => ({
         name: m.name,
-        vision: m.vision,
+        inputs: m.inputs,
+        outputs: m.outputs,
         reasoning: m.reasoning,
         web_search: m.webSearch,
+        endpoint: m.endpoint,
       })),
       endpoint: r.endpoint,
       enabled: r.enabled,
+      managed: r.managed,
     }));
     setSaving(true);
     try {
@@ -735,17 +756,28 @@ export function ConfigPage() {
                       <input
                         type="checkbox"
                         checked={row.enabled}
+                        disabled={row.managed}
                         onChange={(e) =>
                           update(row.id, { enabled: e.target.checked })
                         }
                         className="accent-[var(--color-accent)]"
-                        title={t('config.instanceEnabled')}
+                        title={
+                          row.managed
+                            ? t('config.managedBadge')
+                            : t('config.instanceEnabled')
+                        }
                       />
                       <span className="font-medium text-sm shrink-0">
                         {prov?.name ?? row.type}
                       </span>
+                      {row.managed && (
+                        <span className="shrink-0 rounded bg-panel px-1.5 py-0.5 text-[10px] text-dim">
+                          {t('config.managedBadge')}
+                        </span>
+                      )}
                       <input
                         value={row.name}
+                        disabled={row.managed}
                         onChange={(e) =>
                           update(row.id, { name: e.target.value })
                         }
@@ -770,15 +802,19 @@ export function ConfigPage() {
                       >
                         <ArrowDown size={14} />
                       </button>
-                      <button
-                        onClick={() =>
-                          setRows((prev) => prev.filter((r) => r.id !== row.id))
-                        }
-                        className="text-dim hover:text-err shrink-0"
-                        title={t('config.removeInstance')}
-                      >
-                        <Trash2 size={14} />
-                      </button>
+                      {!row.managed && (
+                        <button
+                          onClick={() =>
+                            setRows((prev) =>
+                              prev.filter((r) => r.id !== row.id),
+                            )
+                          }
+                          className="text-dim hover:text-err shrink-0"
+                          title={t('config.removeInstance')}
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
                     </div>
                     {row.enabled && (
                       <div className="px-4 pb-3 pt-1 space-y-2">
@@ -790,6 +826,7 @@ export function ConfigPage() {
                           </div>
                           <input
                             value={row.endpoint}
+                            disabled={row.managed}
                             onChange={(e) =>
                               update(row.id, { endpoint: e.target.value })
                             }
@@ -800,6 +837,7 @@ export function ConfigPage() {
                             {t('setup.apiMode')}
                             <select
                               value={row.api}
+                              disabled={row.managed}
                               onChange={(e) =>
                                 update(row.id, { api: e.target.value })
                               }
@@ -815,13 +853,15 @@ export function ConfigPage() {
                             <span className="text-xs font-medium text-dim">
                               {t('setup.models')}
                             </span>
-                            <button
-                              onClick={() => addModel(row.id)}
-                              className="flex items-center gap-1 text-xs text-dim hover:text-fg"
-                            >
-                              <Plus size={12} />
-                              {t('config.addModel')}
-                            </button>
+                            {!row.managed && (
+                              <button
+                                onClick={() => addModel(row.id)}
+                                className="flex items-center gap-1 text-xs text-dim hover:text-fg"
+                              >
+                                <Plus size={12} />
+                                {t('config.addModel')}
+                              </button>
+                            )}
                           </div>
                           {row.models.map((m, mi) => (
                             <div
@@ -831,6 +871,7 @@ export function ConfigPage() {
                               <div className="flex items-center gap-2">
                                 <input
                                   value={m.name}
+                                  disabled={row.managed}
                                   onChange={(e) =>
                                     updateModel(row.id, mi, {
                                       name: e.target.value,
@@ -857,33 +898,82 @@ export function ConfigPage() {
                                 >
                                   <ArrowDown size={13} />
                                 </button>
-                                <button
-                                  onClick={() => removeModel(row.id, mi)}
-                                  className="shrink-0 text-dim hover:text-err"
-                                  title={t('config.removeModel')}
-                                  aria-label={t('config.removeModel')}
-                                >
-                                  <X size={14} />
-                                </button>
+                                {!row.managed && (
+                                  <button
+                                    onClick={() => removeModel(row.id, mi)}
+                                    className="shrink-0 text-dim hover:text-err"
+                                    title={t('config.removeModel')}
+                                    aria-label={t('config.removeModel')}
+                                  >
+                                    <X size={14} />
+                                  </button>
+                                )}
                               </div>
                               <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-dim">
-                                <label className="flex items-center gap-1.5 whitespace-nowrap">
-                                  <input
-                                    type="checkbox"
-                                    checked={m.vision}
-                                    onChange={(e) =>
-                                      updateModel(row.id, mi, {
-                                        vision: e.target.checked,
-                                      })
-                                    }
-                                    className="accent-[var(--color-accent)]"
-                                  />
-                                  {t('setup.vision')}
-                                </label>
+                                <span className="flex items-center gap-1.5 whitespace-nowrap">
+                                  {t('setup.outputs')}
+                                  {['text', 'image', 'audio', 'video'].map(
+                                    (kind) => (
+                                      <button
+                                        key={kind}
+                                        type="button"
+                                        disabled={row.managed}
+                                        onClick={() =>
+                                          updateModel(row.id, mi, {
+                                            outputs: m.outputs.includes(kind)
+                                              ? m.outputs.filter(
+                                                  (k) => k !== kind,
+                                                )
+                                              : [...m.outputs, kind],
+                                          })
+                                        }
+                                        className={`rounded border px-1.5 py-0.5 ${
+                                          m.outputs.includes(kind)
+                                            ? 'border-accent bg-panel2 text-fg'
+                                            : 'border-edge text-dim hover:text-fg'
+                                        }`}
+                                      >
+                                        {kind}
+                                      </button>
+                                    ),
+                                  )}
+                                </span>
+                                <span className="flex items-center gap-1.5 whitespace-nowrap">
+                                  {t('setup.inputs')}
+                                  {[
+                                    'text',
+                                    'image',
+                                    'audio',
+                                    'video',
+                                    'file',
+                                    'data',
+                                  ].map((kind) => (
+                                    <button
+                                      key={kind}
+                                      type="button"
+                                      disabled={row.managed}
+                                      onClick={() =>
+                                        updateModel(row.id, mi, {
+                                          inputs: m.inputs.includes(kind)
+                                            ? m.inputs.filter((k) => k !== kind)
+                                            : [...m.inputs, kind],
+                                        })
+                                      }
+                                      className={`rounded border px-1.5 py-0.5 ${
+                                        m.inputs.includes(kind)
+                                          ? 'border-accent bg-panel2 text-fg'
+                                          : 'border-edge text-dim hover:text-fg'
+                                      }`}
+                                    >
+                                      {kind}
+                                    </button>
+                                  ))}
+                                </span>
                                 <label className="flex items-center gap-1.5 whitespace-nowrap">
                                   {t('setup.reasoning')}
                                   <select
                                     value={m.reasoning}
+                                    disabled={row.managed}
                                     onChange={(e) =>
                                       updateModel(row.id, mi, {
                                         reasoning: e.target.value,
@@ -902,6 +992,7 @@ export function ConfigPage() {
                                   <input
                                     type="checkbox"
                                     checked={m.webSearch}
+                                    disabled={row.managed}
                                     onChange={(e) =>
                                       updateModel(row.id, mi, {
                                         webSearch: e.target.checked,
@@ -912,6 +1003,19 @@ export function ConfigPage() {
                                   {t('setup.webSearch')}
                                 </label>
                               </div>
+                              {prov?.model_endpoint && (
+                                <input
+                                  value={m.endpoint}
+                                  disabled={row.managed}
+                                  onChange={(e) =>
+                                    updateModel(row.id, mi, {
+                                      endpoint: e.target.value,
+                                    })
+                                  }
+                                  placeholder={t('setup.endpoint')}
+                                  className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
+                                />
+                              )}
                             </div>
                           ))}
                         </div>
@@ -923,10 +1027,10 @@ export function ConfigPage() {
                             <input
                               type="password"
                               value={row.key}
+                              disabled={row.keyEnv || row.managed}
                               onChange={(e) =>
                                 update(row.id, { key: e.target.value })
                               }
-                              disabled={row.keyEnv}
                               placeholder={
                                 row.keyKeychain && row.key === ''
                                   ? t('config.keychainStored')
@@ -942,6 +1046,7 @@ export function ConfigPage() {
                               <input
                                 type="checkbox"
                                 checked={row.keyEnv}
+                                disabled={row.managed}
                                 onChange={(e) =>
                                   update(row.id, { keyEnv: e.target.checked })
                                 }

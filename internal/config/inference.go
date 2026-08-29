@@ -8,10 +8,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/inference"
+	"github.com/GizClaw/flowcraft/core/message"
 	yamlv4 "go.yaml.in/yaml/v4"
 	"sigs.k8s.io/yaml"
 )
@@ -38,6 +41,10 @@ type Provider struct {
 	// input becomes the deployment name and the generated spec declares
 	// it explicitly.
 	Azure bool
+	// ModelEndpoint marks providers whose deployment binds models to
+	// per-model endpoints (ByteDance Ark ep-xxx ids are account-scoped
+	// and live in the profile), so the settings UI surfaces the field.
+	ModelEndpoint bool
 }
 
 // Providers is the provider catalog, ordered by recommendation.
@@ -46,7 +53,7 @@ var Providers = []Provider{
 	{ID: "openai", Impl: "openai", Name: "OpenAI", DefaultModel: "gpt-5.6-sol", EnvVar: "OPENAI_API_KEY", API: "responses"},
 	{ID: "anthropic", Impl: "anthropic", Name: "Anthropic", DefaultModel: "claude-sonnet-5", EnvVar: "ANTHROPIC_API_KEY"},
 	{ID: "azure", Impl: "azure", Name: "Azure OpenAI", DefaultModel: "", EnvVar: "AZURE_OPENAI_API_KEY", Azure: true},
-	{ID: "bytedance", Impl: "bytedance", Name: "ByteDance (Ark)", DefaultModel: "doubao-seed-2-1-pro", EnvVar: "ARK_API_KEY"},
+	{ID: "bytedance", Impl: "bytedance", Name: "ByteDance (Ark)", DefaultModel: "doubao-seed-2-1-pro", EnvVar: "ARK_API_KEY", ModelEndpoint: true},
 	{ID: "kimi", Impl: "kimi", Name: "Kimi (Moonshot)", DefaultModel: "kimi-k3", EnvVar: "MOONSHOT_API_KEY"},
 	{ID: "minimax", Impl: "minimax", Name: "MiniMax", DefaultModel: "MiniMax-M3", EnvVar: "MINIMAX_API_KEY"},
 	{ID: "qwen", Impl: "qwen", Name: "Qwen (DashScope)", DefaultModel: "qwen3.7-max", EnvVar: "DASHSCOPE_API_KEY"},
@@ -77,16 +84,30 @@ const (
 	KeyKeychain
 )
 
-// Model is one model served by an inference instance, with its own
-// capabilities. A single instance may expose several models (e.g. two
-// DeepSeek models sharing one endpoint/key); the capabilities are
-// per-model because vision/reasoning/web-search support differs
-// between models.
+// Model is one model served by an inference instance. Capabilities
+// mirrors flowcraft's inference.ModelCapabilities verbatim so no
+// capability is lost across the config boundary. A single instance may
+// expose several models (e.g. two DeepSeek models sharing one
+// endpoint/key); capabilities and endpoints are per-model because they
+// differ between models.
 type Model struct {
-	Name      string // model name / Azure deployment name
-	Vision    bool   // capabilities.inputs: [image]
-	Reasoning string // "" | "always" | "toggle" → capabilities.reasoning
-	WebSearch bool   // capabilities.hosted_web_search: true
+	Name string // model name / Azure deployment name
+	// Kind is the driver model family: "" | "generate" | "embed" |
+	// "image" | "video" | "tts". Generation families are derived from
+	// Outputs on write (image/video/text); embed/tts need it explicit.
+	Kind string
+	// Capabilities declares the model's input/output content kinds,
+	// reasoning control, and hosted web search.
+	Capabilities inference.ModelCapabilities
+	// Endpoint binds this model to a per-model deployment address
+	// (ByteDance Ark ep-xxx endpoint ids are account-scoped and map per
+	// model in the profile); empty addresses the model by catalog name.
+	Endpoint string
+	// Responses marks Responses-API support for deepseek declared
+	// models (required when the provider runs api: responses).
+	Responses bool
+	// Dimensions enables custom output dimensions (openai embed).
+	Dimensions bool
 }
 
 // Instance is one configured inference endpoint: a provider type from
@@ -159,11 +180,37 @@ func (c InferenceConfig) ModelReasoning(hint string) bool {
 		return false
 	}
 	for _, m := range target.Models {
-		if m.Name == targetName && m.Reasoning != "" {
+		if m.Name == targetName && m.Capabilities.Reasoning != "" {
 			return true
 		}
 	}
 	return false
+}
+
+// ToPartKinds converts wire-form content kind strings to canonical
+// message part kinds (unknown strings pass through so the provider
+// layer, not the settings page, is the final arbiter).
+func ToPartKinds(raw []string) []message.PartKind {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make([]message.PartKind, len(raw))
+	for i, kind := range raw {
+		out[i] = message.PartKind(kind)
+	}
+	return out
+}
+
+// PartKindStrings converts canonical part kinds back to wire strings.
+func PartKindStrings(kinds []message.PartKind) []string {
+	if len(kinds) == 0 {
+		return nil
+	}
+	out := make([]string, len(kinds))
+	for i, kind := range kinds {
+		out[i] = string(kind)
+	}
+	return out
 }
 
 // ModelNames returns the non-empty model names in declaration order.
@@ -302,23 +349,68 @@ func (c InferenceConfig) InferenceYAML() ([]byte, error) {
 		} else if in.Endpoint != "" {
 			fmt.Fprintf(&b, "        base_url: %s\n", yamlQuote(in.Endpoint))
 		}
-		if in.API != "" && prov.Impl == "openai" {
-			fmt.Fprintf(&b, "        api: %s\n", yamlQuote(in.API))
+		apiMode := in.API
+		if apiMode == "" {
+			apiMode = prov.API
+		}
+		if apiMode != "" && (prov.Impl == "openai" || prov.Impl == "deepseek") {
+			fmt.Fprintf(&b, "        api: %s\n", yamlQuote(apiMode))
 		}
 		fmt.Fprintf(&b, "        models:\n")
 		for _, m := range in.Models {
+			kind := m.Kind
+			outputs := m.Capabilities.Outputs
+			if kind == "" {
+				switch {
+				case slices.Contains(outputs, message.PartVideo):
+					kind = "video"
+				case slices.Contains(outputs, message.PartImage):
+					kind = "image"
+				default:
+					kind = "generate"
+				}
+			}
+			inputs := m.Capabilities.Inputs
+			if len(outputs) == 0 && kind == "generate" {
+				// Text output is the generate family default; declared
+				// models without it would fail driver validation.
+				outputs = []message.PartKind{message.PartText}
+			}
+			if len(inputs) == 0 &&
+				(kind == "generate" || kind == "image" || kind == "video") {
+				// Undeclared inputs on a generation family default to
+				// the base text modality (same rule as the text output
+				// default). Explicit declarations are preserved
+				// verbatim: capabilities are the declarer's truth, not
+				// something the writer may rewrite.
+				inputs = []message.PartKind{message.PartText}
+			}
 			fmt.Fprintf(&b, "          - name: %s\n", yamlQuote(m.Name))
-			fmt.Fprintf(&b, "            kind: generate\n")
+			fmt.Fprintf(&b, "            kind: %s\n", yamlQuote(kind))
 			fmt.Fprintf(&b, "            capabilities:\n")
-			fmt.Fprintf(&b, "              outputs: [text]\n")
-			if m.Vision {
-				fmt.Fprintf(&b, "              inputs: [image]\n")
+			if len(outputs) > 0 {
+				fmt.Fprintf(&b, "              outputs: [%s]\n",
+					strings.Join(PartKindStrings(outputs), ", "))
 			}
-			if m.Reasoning != "" {
-				fmt.Fprintf(&b, "              reasoning: %s\n", yamlQuote(m.Reasoning))
+			if len(inputs) > 0 {
+				fmt.Fprintf(&b, "              inputs: [%s]\n",
+					strings.Join(PartKindStrings(inputs), ", "))
 			}
-			if m.WebSearch {
+			if m.Capabilities.Reasoning != "" {
+				fmt.Fprintf(&b, "              reasoning: %s\n",
+					yamlQuote(string(m.Capabilities.Reasoning)))
+			}
+			if m.Capabilities.HostedWebSearch {
 				fmt.Fprintf(&b, "              hosted_web_search: true\n")
+			}
+			// DeepSeek's responses surface requires every declared model
+			// to assert Responses-API support; derive it from the
+			// provider's api mode so settings/plugin writes stay valid.
+			if m.Responses || (prov.Impl == "deepseek" && apiMode == "responses") {
+				fmt.Fprintf(&b, "            responses: true\n")
+			}
+			if m.Dimensions {
+				fmt.Fprintf(&b, "            dimensions: true\n")
 			}
 		}
 		fmt.Fprintf(&b, "      profiles:\n")
@@ -329,10 +421,27 @@ func (c InferenceConfig) InferenceYAML() ([]byte, error) {
 			// decode accepts that stays with the instance through
 			// reorders and edits.
 			fmt.Fprintf(&b, " id: %s\n", yamlQuote(in.StableID))
-			fmt.Fprintf(&b, "          secrets:\n")
 		} else {
-			fmt.Fprintf(&b, "\n          secrets:\n")
+			fmt.Fprintf(&b, "\n")
 		}
+		if prov.Impl == "bytedance" {
+			var endpoints []Model
+			for _, m := range in.Models {
+				if strings.TrimSpace(m.Endpoint) != "" {
+					endpoints = append(endpoints, m)
+				}
+			}
+			if len(endpoints) > 0 {
+				// Ark endpoint ids (ep-xxx) are account-scoped and bind
+				// per model inside the profile, not at provider level.
+				fmt.Fprintf(&b, "          endpoints:\n")
+				for _, m := range endpoints {
+					fmt.Fprintf(&b, "            %s: %s\n",
+						yamlQuote(m.Name), yamlQuote(m.Endpoint))
+				}
+			}
+		}
+		fmt.Fprintf(&b, "          secrets:\n")
 		fmt.Fprintf(&b, "            api_key: %s\n", instanceAPIKey(in, prov))
 		if in.Enabled {
 			deps = append(deps, id)
@@ -398,6 +507,15 @@ func normalizeModels(in *Instance, prov Provider, n int) error {
 		if seen[m.Name] {
 			return fmt.Errorf(
 				"config: instance %d (%s): duplicate model %q", n, in.Type, m.Name)
+		}
+		if m.Kind != "" {
+			switch m.Kind {
+			case "generate", "embed", "image", "video", "tts":
+			default:
+				return fmt.Errorf(
+					"config: instance %d (%s): model %q has unknown kind %q",
+					n, in.Type, m.Name, m.Kind)
+			}
 		}
 		seen[m.Name] = true
 		models = append(models, m)
@@ -638,12 +756,14 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 	// with credential profiles and the deployment spec (endpoint /
 	// base_url, api mode, models + capabilities).
 	type instanceSettings struct {
+		Impl     string `json:"impl"`
 		Settings struct {
 			ID       string `json:"id"`
 			StableID string `json:"stable_id"`
 			Profiles []struct {
-				ID      string `json:"id"`
-				Secrets struct {
+				ID        string            `json:"id"`
+				Endpoints map[string]string `json:"endpoints"`
+				Secrets   struct {
 					APIKey string `json:"api_key"`
 				} `json:"secrets"`
 			} `json:"profiles"`
@@ -653,8 +773,12 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 				Endpoint string `json:"endpoint"`
 				Models   []struct {
 					Name         string `json:"name"`
+					Kind         string `json:"kind"`
+					Responses    bool   `json:"responses"`
+					Dimensions   bool   `json:"dimensions"`
 					Capabilities struct {
 						Inputs          []string `json:"inputs"`
+						Outputs         []string `json:"outputs"`
 						Reasoning       string   `json:"reasoning"`
 						HostedWebSearch bool     `json:"hosted_web_search"`
 					} `json:"capabilities"`
@@ -731,6 +855,12 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 			instID = strings.TrimPrefix(key, "provider.")
 		}
 		instType := instanceTypeFromID(instID)
+		// The resource id may predate a provider-type migration (e.g.
+		// provider.openai-sso-haivivi now running impl deepseek); the
+		// impl is the driver truth, so prefer it when resolvable.
+		if implType := providerTypeFromImpl(res.Impl); implType != "" {
+			instType = implType
+		}
 		if instType == "" {
 			continue
 		}
@@ -760,14 +890,26 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 		if spec.Endpoint != "" {
 			in.Endpoint = spec.Endpoint
 		}
+		var endpoints map[string]string
+		if len(res.Settings.Profiles) > 0 {
+			endpoints = res.Settings.Profiles[0].Endpoints
+		}
 		for _, model := range spec.Models {
-			m := Model{Name: model.Name, Reasoning: model.Capabilities.Reasoning}
-			for _, input := range model.Capabilities.Inputs {
-				if input == "image" {
-					m.Vision = true
-				}
+			m := Model{
+				Name: model.Name,
+				Kind: model.Kind,
+				Capabilities: inference.ModelCapabilities{
+					Inputs:          ToPartKinds(model.Capabilities.Inputs),
+					Outputs:         ToPartKinds(model.Capabilities.Outputs),
+					Reasoning:       inference.ReasoningKind(model.Capabilities.Reasoning),
+					HostedWebSearch: model.Capabilities.HostedWebSearch,
+				},
+				Responses:  model.Responses,
+				Dimensions: model.Dimensions,
 			}
-			m.WebSearch = model.Capabilities.HostedWebSearch
+			if endpoint := endpoints[m.Name]; endpoint != "" {
+				m.Endpoint = endpoint
+			}
 			in.Models = append(in.Models, m)
 		}
 		all = append(all, parsed{id: instID, in: in})
@@ -828,6 +970,17 @@ func instanceTypeFromID(id string) string {
 		}
 	}
 	return best
+}
+
+// providerTypeFromImpl maps a driver impl back to its catalog type id,
+// or "" when the impl is not one of the catalog drivers.
+func providerTypeFromImpl(impl string) string {
+	for _, p := range Providers {
+		if p.Impl == impl {
+			return p.ID
+		}
+	}
+	return ""
 }
 
 // mergeUserLayer merges a freshly generated user document over the

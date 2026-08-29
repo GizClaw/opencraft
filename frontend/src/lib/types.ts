@@ -18,13 +18,16 @@ export interface ProviderView {
   env_var: string;
   api: string;
   azure: boolean;
+  model_endpoint: boolean;
 }
 
 export interface ModelInstance {
   name: string;
-  vision: boolean;
+  inputs: string[];
+  outputs: string[];
   reasoning: string;
   web_search: boolean;
+  endpoint: string;
 }
 
 // AttachmentDTO mirrors the desktop binding's preview metadata for one
@@ -63,6 +66,7 @@ export interface ProviderInstance {
   models: ModelInstance[];
   endpoint: string;
   enabled: boolean;
+  managed: boolean;
 }
 
 export interface InferenceRequest {

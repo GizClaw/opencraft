@@ -14,6 +14,9 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/GizClaw/flowcraft/core/inference"
+	"github.com/GizClaw/flowcraft/core/message"
+
 	"github.com/GizClaw/opencraft/internal/config"
 	"github.com/GizClaw/opencraft/internal/plugins"
 	pluginruntime "github.com/GizClaw/opencraft/internal/plugins/runtime"
@@ -52,12 +55,7 @@ func (a *App) upsertInferenceProfile(pluginID string, profile pluginruntime.Infe
 		if m.Name == "" {
 			continue
 		}
-		models = append(models, config.Model{
-			Name:      m.Name,
-			Vision:    m.Vision,
-			Reasoning: m.Reasoning,
-			WebSearch: m.WebSearch,
-		})
+		models = append(models, profileModel(m))
 	}
 	if len(models) == 0 {
 		return errors.New("inference: profile has no named models")
@@ -95,6 +93,32 @@ func (a *App) upsertInferenceProfile(pluginID string, profile pluginruntime.Infe
 		return err
 	}
 	return nil
+}
+
+// profileModel lowers one plugin profile model into the canonical
+// config model. New plugins declare capabilities as content-kind lists;
+// the legacy vision shortcut (image input + text output) is normalized
+// for older capability plugins.
+func profileModel(m pluginruntime.ProfileModel) config.Model {
+	model := config.Model{
+		Name:     m.Name,
+		Endpoint: strings.TrimSpace(m.Endpoint),
+	}
+	caps := inference.ModelCapabilities{
+		Reasoning:       inference.ReasoningKind(strings.TrimSpace(m.Reasoning)),
+		HostedWebSearch: m.WebSearch,
+	}
+	if len(m.Inputs) > 0 || len(m.Outputs) > 0 {
+		caps.Inputs = config.ToPartKinds(m.Inputs)
+		caps.Outputs = config.ToPartKinds(m.Outputs)
+	} else if m.Vision {
+		// Legacy vision shortcut: image input on top of the text base
+		// modality, so text prompts stay preflight-visible.
+		caps.Inputs = []message.PartKind{message.PartText, message.PartImage}
+		caps.Outputs = []message.PartKind{message.PartText}
+	}
+	model.Capabilities = caps
+	return model
 }
 
 // removeInferenceProfile removes one provider (plugin deployment id)

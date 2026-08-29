@@ -7,11 +7,13 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/errdefs"
+	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/message"
 	coresession "github.com/GizClaw/flowcraft/core/runtime/session"
 	"github.com/GizClaw/flowcraft/core/telemetry"
@@ -52,12 +54,13 @@ func (a *App) Providers() []ProviderView {
 	out := make([]ProviderView, 0, len(config.Providers))
 	for _, p := range config.Providers {
 		out = append(out, ProviderView{
-			ID:           p.ID,
-			Name:         p.Name,
-			DefaultModel: p.DefaultModel,
-			EnvVar:       p.EnvVar,
-			API:          p.API,
-			Azure:        p.Azure,
+			ID:            p.ID,
+			Name:          p.Name,
+			DefaultModel:  p.DefaultModel,
+			EnvVar:        p.EnvVar,
+			API:           p.API,
+			Azure:         p.Azure,
+			ModelEndpoint: p.ModelEndpoint,
 		})
 	}
 	return out
@@ -71,6 +74,7 @@ func (a *App) ConfigState() (ConfigState, error) {
 	if err != nil {
 		return ConfigState{}, err
 	}
+	managed := a.managedPluginIDs()
 	st := ConfigState{Model: config.DefaultModel(a.userDir)}
 	for _, in := range cfg.Instances {
 		st.Instances = append(st.Instances, ProviderInstance{
@@ -88,6 +92,7 @@ func (a *App) ConfigState() (ConfigState, error) {
 			Models:      modelViews(in.Models),
 			Endpoint:    in.Endpoint,
 			Enabled:     in.Enabled,
+			Managed:     managed[in.StableID],
 		})
 	}
 	return st, nil
@@ -115,7 +120,7 @@ func (a *App) ModelOptions() ([]ModelOption, error) {
 			out = append(out, ModelOption{
 				ID:        in.DeploymentID(i+1) + "/" + model,
 				Label:     instanceLabel(in, i+1) + " · " + model,
-				Reasoning: m.Reasoning != "",
+				Reasoning: m.Capabilities.Reasoning != "",
 			})
 		}
 	}
@@ -349,6 +354,12 @@ func (a *App) saveInference(req InferenceRequest) error {
 			dst.KeyValue = existing.Instances[idx].KeyValue
 		}
 	}
+	// Plugin-managed deployments are owned by their capability plugin:
+	// content edits and removals from the settings page are rolled back
+	// to the stored config (order/priority stays user-controlled), and
+	// the frontend is reminded so the silent restore is visible.
+	instances, restored := restoreManagedInstances(
+		existing.Instances, instances, a.managedPluginIDs())
 	cfg := config.InferenceConfig{Instances: instances}
 	if len(cfg.Enabled()) == 0 {
 		return errors.New("enable at least one instance")
@@ -356,7 +367,103 @@ func (a *App) saveInference(req InferenceRequest) error {
 	if err := config.WriteInference(a.userDir, cfg); err != nil {
 		return err
 	}
+	if len(restored) > 0 && a.bridge != nil {
+		a.bridge.Emit("managed_restored", map[string]any{"ids": restored})
+	}
 	return nil
+}
+
+// managedPluginIDs returns the set of installed plugin ids. Deployments
+// whose stable id matches one of them are plugin-managed and may not be
+// edited or removed through the settings page.
+func (a *App) managedPluginIDs() map[string]bool {
+	if a.plugins == nil {
+		return nil
+	}
+	plugins, err := a.plugins.List()
+	if err != nil {
+		return nil
+	}
+	ids := make(map[string]bool, len(plugins))
+	for _, p := range plugins {
+		ids[p.ID] = true
+	}
+	return ids
+}
+
+// restoreManagedInstances reconciles the settings-page request against
+// plugin-managed deployments in the stored config. Managed rows keep
+// their request position (the user may reorder priority freely) but
+// their content is taken from the stored config whenever the request
+// edited or dropped them; the restored ids are returned for the
+// reminder toast.
+func restoreManagedInstances(
+	existing, requested []config.Instance,
+	managed map[string]bool,
+) ([]config.Instance, []string) {
+	if len(managed) == 0 {
+		return requested, nil
+	}
+	byID := make(map[string]config.Instance, len(existing))
+	for _, in := range existing {
+		if managed[in.StableID] {
+			byID[in.StableID] = in
+		}
+	}
+	if len(byID) == 0 {
+		return requested, nil
+	}
+	out := make([]config.Instance, 0, len(requested)+len(byID))
+	var restored []string
+	seen := make(map[string]bool, len(byID))
+	for _, in := range requested {
+		orig, ok := byID[in.StableID]
+		if !ok {
+			out = append(out, in)
+			continue
+		}
+		seen[in.StableID] = true
+		if !sameInstanceContent(orig, in) {
+			restored = append(restored, in.StableID)
+			out = append(out, orig)
+			continue
+		}
+		out = append(out, in)
+	}
+	for _, in := range existing {
+		if managed[in.StableID] && !seen[in.StableID] {
+			restored = append(restored, in.StableID)
+			out = append(out, in)
+		}
+	}
+	return out, restored
+}
+
+// sameInstanceContent compares the non-secret fields the settings page
+// may edit; key handling stays with the stored-key matching logic.
+func sameInstanceContent(a, b config.Instance) bool {
+	if a.StableID != b.StableID || a.Type != b.Type || a.Name != b.Name ||
+		a.API != b.API || a.Endpoint != b.Endpoint || a.Enabled != b.Enabled ||
+		len(a.Models) != len(b.Models) {
+		return false
+	}
+	for i := range a.Models {
+		if !sameModel(a.Models[i], b.Models[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// sameModel compares two model declarations including their declared
+// capabilities and per-model endpoint.
+func sameModel(a, b config.Model) bool {
+	return a.Name == b.Name && a.Kind == b.Kind && a.Endpoint == b.Endpoint &&
+		a.Responses == b.Responses && a.Dimensions == b.Dimensions &&
+		slices.Equal(a.Capabilities.Inputs, b.Capabilities.Inputs) &&
+		slices.Equal(a.Capabilities.Outputs, b.Capabilities.Outputs) &&
+		a.Capabilities.Reasoning == b.Capabilities.Reasoning &&
+		a.Capabilities.HostedWebSearch == b.Capabilities.HostedWebSearch
 }
 
 // instanceIDFor derives the positional display id for instance n
@@ -380,9 +487,11 @@ func modelViews(models []config.Model) []ModelView {
 	for _, m := range models {
 		out = append(out, ModelView{
 			Name:      m.Name,
-			Vision:    m.Vision,
-			Reasoning: m.Reasoning,
-			WebSearch: m.WebSearch,
+			Inputs:    config.PartKindStrings(m.Capabilities.Inputs),
+			Outputs:   config.PartKindStrings(m.Capabilities.Outputs),
+			Reasoning: string(m.Capabilities.Reasoning),
+			WebSearch: m.Capabilities.HostedWebSearch,
+			Endpoint:  m.Endpoint,
 		})
 	}
 	return out
@@ -393,10 +502,14 @@ func configModels(views []ModelView) []config.Model {
 	out := make([]config.Model, 0, len(views))
 	for _, v := range views {
 		out = append(out, config.Model{
-			Name:      strings.TrimSpace(v.Name),
-			Vision:    v.Vision,
-			Reasoning: strings.TrimSpace(v.Reasoning),
-			WebSearch: v.WebSearch,
+			Name: strings.TrimSpace(v.Name),
+			Capabilities: inference.ModelCapabilities{
+				Inputs:          config.ToPartKinds(v.Inputs),
+				Outputs:         config.ToPartKinds(v.Outputs),
+				Reasoning:       inference.ReasoningKind(strings.TrimSpace(v.Reasoning)),
+				HostedWebSearch: v.WebSearch,
+			},
+			Endpoint: strings.TrimSpace(v.Endpoint),
 		})
 	}
 	return out
