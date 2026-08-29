@@ -109,9 +109,17 @@ resources:
   # ------------------------------------------------------------------
   # Workspace and sandbox (box.settings.remote selects local/remote exec)
   # ------------------------------------------------------------------
-  ws:
-    kind: workspace.Workspace
+  # Shared artifact sink: the desktop installs a callback that re-emits
+  # workspace writes as artifact UI events; without a callback writes
+  # are confined but not reported.
+  artifacts:
+    kind: opencraft.artifacts
     impl: local
+  ws:
+    kind: opencraft.workspace
+    impl: local
+    deps:
+      observer: artifacts
     settings:
       root: ${env:OPEN_CRAFT_WORKDIR}
   # Shared skills registry: one discovery pass per process lifetime.
@@ -129,19 +137,26 @@ resources:
       top_n: 5
       min_score: 0
   # Mode-aware workspace for the file tools: in workspace mode it
-  # delegates to a LocalWorkspace rooted at settings.root; in yolo mode
-  # it allows any host path. The mode is the session's persisted
-  # permission state (switched with /permissions).
+  # delegates to the shared ws resource (one underlying LocalWorkspace
+  # for engine/system reads and tool writes) and derives its root from
+  # it; in yolo mode it allows any host path. The mode is the session's
+  # persisted permission state (switched with /permissions).
   hostws:
     kind: opencraft.hostworkspace
     impl: local
     deps:
       sessions: sessions
+      # Reuses ws as the confined backend so all workspace-API writes
+      # share a single workspace instance; the host/YOLO resolution
+      # root is derived from this dependency.
+      workspace: ws
       # Contributes discovered skill roots to the workspace-mode
       # read-only allowlist (read_file on references/assets).
       skills: skills
+      # YOLO-mode writes report through the same artifact sink as the
+      # shared ws workspace.
+      observer: artifacts
     settings:
-      root: ${env:OPEN_CRAFT_WORKDIR}
       # Staged skill copies live under the cache dir, which the exec
       # sandbox may write; file tools only need read access to it.
       readonly_roots: ["${env:OPEN_CRAFT_DATA_DIR}/cache"]

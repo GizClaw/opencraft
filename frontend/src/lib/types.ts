@@ -166,6 +166,22 @@ export interface HistoryMessage {
   };
 }
 
+// ArtifactDTO is one file a turn produced, persisted with the turn
+// archive and reported live as "artifact" UI events.
+export interface ArtifactDTO {
+  path: string;
+  bytes?: number;
+}
+
+// SessionTurn is one archived turn: its messages plus the artifacts it
+// produced, so resuming renders one artifact strip per turn.
+export interface SessionTurn {
+  seq: number;
+  at: string;
+  messages: HistoryMessage[];
+  artifacts?: ArtifactDTO[];
+}
+
 export type HistoryPart =
   | { type: 'text'; text?: string }
   | { type: 'reasoning'; text?: string }

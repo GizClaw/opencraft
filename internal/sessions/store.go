@@ -64,8 +64,28 @@ type Store struct {
 	// mu guards seqCache (per-session next-turn sequence numbers).
 	// The cache avoids globbing the whole history directory on every
 	// append; it is seeded once per session from the existing files.
-	mu       sync.Mutex
-	seqCache map[string]int
+	// It also guards artifactBuf, the per-conversation artifact buffer
+	// merged into the next archived turn by AppendTurn.
+	mu          sync.Mutex
+	seqCache    map[string]int
+	artifactBuf map[string][]Artifact
+}
+
+// Artifact is one file produced by a turn, reported by the workspace
+// observer and persisted with the turn archive.
+type Artifact struct {
+	Path  string `json:"path"`
+	Bytes int    `json:"bytes,omitempty"`
+}
+
+// TurnRecord is one archived turn: its messages plus the artifacts the
+// turn produced.
+type TurnRecord struct {
+	Seq       int               `json:"seq"`
+	At        time.Time         `json:"at"`
+	RunID     string            `json:"run_id,omitempty"`
+	Messages  []message.Message `json:"messages"`
+	Artifacts []Artifact        `json:"artifacts,omitempty"`
 }
 
 // sessionMeta is the per-session index document (meta.json). It embeds
@@ -178,6 +198,20 @@ func (s *Store) Create() (string, error) {
 // session's media/ and files/ directories), so the archive stays a
 // compact transcript while /resume can still re-render attachments.
 func (s *Store) AppendTurn(_ context.Context, id string, msgs []message.Message) error {
+	return s.appendTurn(id, "", msgs)
+}
+
+// AppendTurnWithRunID persists one turn like AppendTurn, additionally
+// recording the run id so post-turn reconciliation (and any later
+// correction) can target exactly this turn instead of guessing "the
+// latest one".
+func (s *Store) AppendTurnWithRunID(
+	_ context.Context, id, runID string, msgs []message.Message,
+) error {
+	return s.appendTurn(id, runID, msgs)
+}
+
+func (s *Store) appendTurn(id, runID string, msgs []message.Message) error {
 	if err := requireID(id); err != nil {
 		return err
 	}
@@ -227,11 +261,13 @@ func (s *Store) AppendTurn(_ context.Context, id string, msgs []message.Message)
 		return nil
 	}
 	now := time.Now().UTC()
-	file := struct {
-		Seq      int               `json:"seq"`
-		At       time.Time         `json:"at"`
-		Messages []message.Message `json:"messages"`
-	}{Seq: seq, At: now, Messages: archived}
+	file := TurnRecord{
+		Seq:       seq,
+		At:        now,
+		RunID:     runID,
+		Messages:  archived,
+		Artifacts: s.takeArtifacts(id),
+	}
 	data, err := json.MarshalIndent(file, "", "  ")
 	if err != nil {
 		return err
@@ -273,6 +309,128 @@ func (s *Store) AppendTurn(_ context.Context, id string, msgs []message.Message)
 	}
 	meta.UpdatedAt = now
 	return s.writeMeta(id, meta)
+}
+
+// BufferArtifact records one produced file for the conversation's next
+// archived turn. The artifact is attached to the turn file by
+// AppendTurn (the commit/archive hooks) and cleared afterwards, so
+// interrupted turns keep their partial outputs too. Re-writing the
+// same path refreshes its byte count in place.
+func (s *Store) BufferArtifact(id, path string, bytes int) error {
+	if err := requireID(id); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.artifactBuf == nil {
+		s.artifactBuf = make(map[string][]Artifact)
+	}
+	list := s.artifactBuf[id]
+	for i := range list {
+		if list[i].Path == path {
+			list[i].Bytes = bytes
+			return nil
+		}
+	}
+	s.artifactBuf[id] = append(list, Artifact{Path: path, Bytes: bytes})
+	return nil
+}
+
+// takeArtifacts returns and clears the buffered artifacts for id.
+func (s *Store) takeArtifacts(id string) []Artifact {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	list := s.artifactBuf[id]
+	delete(s.artifactBuf, id)
+	return list
+}
+
+// AppendTurnArtifacts merges artifacts into the archived turn that
+// carried runID (falling back to the most recent turn), deduping by
+// path: a repeat refresh keeps the first-seen order and the latest
+// byte count. It returns the turn's merged artifact list, which the
+// caller can push to the UI as the authoritative post-reconciliation
+// set. A conversation without an archived turn is a no-op (nil, nil).
+// It is used for post-turn reconciliation: files produced outside the
+// workspace API (e.g. exec writing docs directly) become visible only
+// after the turn archive was written.
+func (s *Store) AppendTurnArtifacts(
+	id, runID string, artifacts []Artifact,
+) ([]Artifact, error) {
+	if err := requireID(id); err != nil {
+		return nil, err
+	}
+	if len(artifacts) == 0 {
+		return nil, nil
+	}
+	path, err := s.turnPathByRun(id, runID)
+	if err != nil || path == "" {
+		return nil, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var turn TurnRecord
+	if err := json.Unmarshal(data, &turn); err != nil {
+		return nil, err
+	}
+	for _, artifact := range artifacts {
+		idx := -1
+		for i := range turn.Artifacts {
+			if turn.Artifacts[i].Path == artifact.Path {
+				idx = i
+				break
+			}
+		}
+		if idx >= 0 {
+			turn.Artifacts[idx].Bytes = artifact.Bytes
+			continue
+		}
+		turn.Artifacts = append(turn.Artifacts, artifact)
+	}
+	out, err := json.MarshalIndent(turn, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, out, 0o600); err != nil {
+		return nil, err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		return nil, err
+	}
+	return turn.Artifacts, nil
+}
+
+// turnPathByRun returns the archived turn file whose run id matches
+// runID, falling back to the highest-numbered file when runID is empty
+// or no turn carries it (e.g. pre-upgrade archives).
+func (s *Store) turnPathByRun(id, runID string) (string, error) {
+	files, err := filepath.Glob(filepath.Join(s.dir(id), "history", "*.json"))
+	if err != nil {
+		return "", err
+	}
+	if len(files) == 0 {
+		return "", nil
+	}
+	sort.Strings(files)
+	if runID != "" {
+		for _, path := range files {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				continue
+			}
+			var turn TurnRecord
+			if json.Unmarshal(data, &turn) != nil {
+				continue
+			}
+			if turn.RunID == runID {
+				return path, nil
+			}
+		}
+	}
+	return files[len(files)-1], nil
 }
 
 // SaveAttachment copies one user attachment into the session's media
@@ -369,6 +527,32 @@ func (s *Store) History(_ context.Context, id string, n int) ([]message.Message,
 		all = all[len(all)-n:]
 	}
 	return all, nil
+}
+
+// Turns returns every archived turn of one conversation, oldest first,
+// including each turn's produced artifacts.
+func (s *Store) Turns(_ context.Context, id string) ([]TurnRecord, error) {
+	if err := requireID(id); err != nil {
+		return nil, err
+	}
+	files, err := filepath.Glob(filepath.Join(s.dir(id), "history", "*.json"))
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(files)
+	turns := make([]TurnRecord, 0, len(files))
+	for _, path := range files {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var turn TurnRecord
+		if json.Unmarshal(data, &turn) != nil {
+			continue
+		}
+		turns = append(turns, turn)
+	}
+	return turns, nil
 }
 
 // RolloutPath returns the JSONL rollout path for one conversation.

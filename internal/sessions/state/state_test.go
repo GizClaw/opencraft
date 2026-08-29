@@ -152,6 +152,43 @@ func TestStateServesCheckpoints(t *testing.T) {
 	}
 }
 
+// TestAppendItemsSingleTransaction verifies the batched insert commits
+// all items atomically and round-trips through LoadItems.
+func TestAppendItemsSingleTransaction(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open("file::memory:?cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+	now := time.Now().UTC()
+	if err := s.CreateThread(ctx, Thread{
+		ID: "t1", AgentID: "agent-a", ContextID: "ctx-1",
+		CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	items := []Item{
+		{ID: "i1", ThreadID: "t1", TurnID: "turn-1", Seq: 1,
+			ItemType: "text", Role: "user", Payload: map[string]any{"text": "a"}, CreatedAt: now},
+		{ID: "i2", ThreadID: "t1", TurnID: "turn-1", Seq: 2,
+			ItemType: "text", Role: "assistant", Payload: map[string]any{"text": "b"}, CreatedAt: now},
+	}
+	if err := s.AppendItems(ctx, items); err != nil {
+		t.Fatalf("AppendItems: %v", err)
+	}
+	if err := s.AppendItems(ctx, nil); err != nil {
+		t.Fatalf("AppendItems empty: %v", err)
+	}
+	got, err := s.LoadItems(ctx, "t1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Payload["text"] != "a" || got[1].Payload["text"] != "b" {
+		t.Fatalf("items = %+v, want a,b", got)
+	}
+}
+
 func TestUpsertSummaryNodeReplacesAndDeleteSummaryNodes(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open("file::memory:?cache=shared")

@@ -470,3 +470,203 @@ func TestListEmptyWhenRootMissing(t *testing.T) {
 		t.Fatalf("List = %d entries, want 0", len(metas))
 	}
 }
+
+// TestBufferArtifactMergesIntoTurn verifies buffered artifacts are
+// attached to the next archived turn (deduped by path with the latest
+// byte count), cleared after append, and readable back through Turns.
+func TestBufferArtifactMergesIntoTurn(t *testing.T) {
+	store, err := New(t.TempDir(), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BufferArtifact(id, "docs/report.md", 100); err != nil {
+		t.Fatalf("BufferArtifact: %v", err)
+	}
+	// Re-writing the same path refreshes bytes in place.
+	if err := store.BufferArtifact(id, "docs/report.md", 250); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BufferArtifact(id, "slides.pptx", 5000); err != nil {
+		t.Fatal(err)
+	}
+	// Invalid ids are rejected before touching state.
+	if err := store.BufferArtifact("bad-id", "x.md", 1); err == nil {
+		t.Fatal("BufferArtifact accepted invalid session id")
+	}
+
+	if err := store.AppendTurn(context.Background(), id, []message.Message{
+		message.NewTextMessage(message.RoleUser, "x"),
+	}); err != nil {
+		t.Fatalf("AppendTurn: %v", err)
+	}
+	turns, err := store.Turns(context.Background(), id)
+	if err != nil {
+		t.Fatalf("Turns: %v", err)
+	}
+	if len(turns) != 1 {
+		t.Fatalf("Turns = %d records, want 1", len(turns))
+	}
+	got := turns[0].Artifacts
+	want := []Artifact{{Path: "docs/report.md", Bytes: 250}, {Path: "slides.pptx", Bytes: 5000}}
+	if len(got) != len(want) {
+		t.Fatalf("artifacts = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("artifacts[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+
+	// The buffer is consumed: the next turn archives no artifacts.
+	if err := store.AppendTurn(context.Background(), id, []message.Message{
+		message.NewTextMessage(message.RoleUser, "y"),
+	}); err != nil {
+		t.Fatalf("AppendTurn #2: %v", err)
+	}
+	turns, err = store.Turns(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 2 {
+		t.Fatalf("Turns = %d records, want 2", len(turns))
+	}
+	if len(turns[1].Artifacts) != 0 {
+		t.Fatalf("second turn artifacts = %+v, want none", turns[1].Artifacts)
+	}
+	if turns[0].Seq != 1 || turns[1].Seq != 2 {
+		t.Fatalf("seqs = %d,%d want 1,2", turns[0].Seq, turns[1].Seq)
+	}
+}
+
+// TestTurnsOldFilesWithoutArtifacts verifies pre-existing turn files
+// without an artifacts field still decode (backward compatibility).
+func TestTurnsOldFilesWithoutArtifacts(t *testing.T) {
+	store, err := New(t.TempDir(), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(store.dir(id), "history")
+	if err := os.WriteFile(
+		filepath.Join(dir, "000001.json"),
+		[]byte(`{"seq":1,"at":"2026-01-01T00:00:00Z","messages":[]}`),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	turns, err := store.Turns(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 1 || len(turns[0].Artifacts) != 0 {
+		t.Fatalf("Turns = %+v, want one record without artifacts", turns)
+	}
+}
+
+// TestAppendTurnArtifactsMergesIntoLatestTurn verifies post-turn
+// reconciliation merges into the turn that carried the run id (not
+// just the latest file), refreshing matching paths in place, and is a
+// no-op without an archived turn.
+func TestAppendTurnArtifactsMergesIntoLatestTurn(t *testing.T) {
+	store, err := New(t.TempDir(), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BufferArtifact(id, "a.md", 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendTurnWithRunID(context.Background(), id, "run-1", []message.Message{
+		message.NewTextMessage(message.RoleUser, "one"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BufferArtifact(id, "b.md", 200); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendTurnWithRunID(context.Background(), id, "run-2", []message.Message{
+		message.NewTextMessage(message.RoleUser, "two"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reconciliation targeting run-1 lands on turn 1 even though turn 2
+	// is the latest file (the next turn can start before waitTurn's
+	// post-turn scan finishes).
+	merged, err := store.AppendTurnArtifacts(id, "run-1", []Artifact{
+		{Path: "a.md", Bytes: 150},
+		{Path: "early.pptx", Bytes: 300},
+	})
+	if err != nil {
+		t.Fatalf("AppendTurnArtifacts: %v", err)
+	}
+	wantMerged := []Artifact{{Path: "a.md", Bytes: 150}, {Path: "early.pptx", Bytes: 300}}
+	if len(merged) != len(wantMerged) {
+		t.Fatalf("merged = %+v, want %+v", merged, wantMerged)
+	}
+
+	// Reconciliation for run-2 refreshes b.md and adds c.pptx.
+	merged, err = store.AppendTurnArtifacts(id, "run-2", []Artifact{
+		{Path: "b.md", Bytes: 250},
+		{Path: "c.pptx", Bytes: 300},
+	})
+	if err != nil {
+		t.Fatalf("AppendTurnArtifacts: %v", err)
+	}
+	wantMerged = []Artifact{{Path: "b.md", Bytes: 250}, {Path: "c.pptx", Bytes: 300}}
+	if len(merged) != len(wantMerged) {
+		t.Fatalf("merged = %+v, want %+v", merged, wantMerged)
+	}
+	turns, err := store.Turns(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 2 {
+		t.Fatalf("Turns = %d, want 2", len(turns))
+	}
+	got := turns[0].Artifacts
+	want := []Artifact{{Path: "a.md", Bytes: 150}, {Path: "early.pptx", Bytes: 300}}
+	if len(got) != len(want) {
+		t.Fatalf("turn 1 artifacts = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("turn 1 artifacts[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	got = turns[1].Artifacts
+	want = []Artifact{{Path: "b.md", Bytes: 250}, {Path: "c.pptx", Bytes: 300}}
+	if len(got) != len(want) {
+		t.Fatalf("turn 2 artifacts = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("turn 2 artifacts[%d] = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+
+	// A conversation with no archived turn is a silent no-op.
+	empty, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AppendTurnArtifacts(empty, "run-x", []Artifact{{Path: "x.md", Bytes: 1}}); err != nil {
+		t.Fatalf("AppendTurnArtifacts without turn: %v", err)
+	}
+	if _, err := store.AppendTurnArtifacts("bad-id", "run-x", []Artifact{{Path: "x.md", Bytes: 1}}); err == nil {
+		t.Fatal("AppendTurnArtifacts accepted invalid session id")
+	}
+}

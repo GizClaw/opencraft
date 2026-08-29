@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from 'react';
+import { Fragment, memo, useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Archive,
@@ -9,12 +9,20 @@ import {
   ChevronUp,
   Copy,
   File,
+  FileArchive,
+  FileCode,
+  FileImage,
+  FileSpreadsheet,
+  FileText,
+  Film,
   Flame,
   Folder,
   Lock,
   Loader2,
   Music2,
+  Package,
   Paperclip,
+  Presentation,
   Redo2,
   RotateCcw,
   Send,
@@ -32,7 +40,12 @@ import { api } from '../lib/api';
 import { COMPACT_SUMMARY_PREFIX } from '../lib/compact';
 import { useStore } from '../lib/store';
 import type { AttachmentView, SkillDTO, UndoState } from '../lib/types';
-import type { AssistantItem, MessageView } from '../lib/store';
+import type {
+  AssistantItem,
+  MessageView,
+  TurnArtifacts,
+  TurnDoc,
+} from '../lib/store';
 import { InteractionCard } from './InteractionCard';
 import { ApplyPatchView, ToolCard, WriteView } from './ToolCard';
 import { LiveMarkdown, looksLikeMarkdown, Markdown } from './Markdown';
@@ -330,6 +343,100 @@ function formatSize(n: number) {
   return `${n} B`;
 }
 
+// docIcon maps a file extension to a themed icon for the artifact
+// strip.
+function docIcon(path: string) {
+  const ext = path.split('.').pop()?.toLowerCase() ?? '';
+  if (['md', 'markdown', 'txt', 'rst', 'doc', 'docx', 'pdf'].includes(ext)) {
+    return <FileText size={13} className="text-accent" />;
+  }
+  if (['ppt', 'pptx', 'key'].includes(ext)) {
+    return <Presentation size={13} className="text-warn" />;
+  }
+  if (['xls', 'xlsx', 'csv'].includes(ext)) {
+    return <FileSpreadsheet size={13} className="text-ok" />;
+  }
+  if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'bmp'].includes(ext)) {
+    return <FileImage size={13} className="text-accent" />;
+  }
+  if (['mp4', 'mov', 'webm', 'mkv', 'avi'].includes(ext)) {
+    return <Film size={13} className="text-warn" />;
+  }
+  if (['zip', 'gz', 'tar', '7z', 'rar'].includes(ext)) {
+    return <FileArchive size={13} className="text-dim" />;
+  }
+  if (
+    [
+      'go',
+      'ts',
+      'tsx',
+      'js',
+      'jsx',
+      'py',
+      'rs',
+      'java',
+      'c',
+      'cpp',
+      'h',
+      'html',
+      'css',
+      'json',
+      'yaml',
+      'yml',
+      'sh',
+      'sql',
+    ].includes(ext)
+  ) {
+    return <FileCode size={13} className="text-dim" />;
+  }
+  return <File size={13} className="text-dim" />;
+}
+
+// ArtifactStrip renders the current turn's produced files as a
+// left-to-right horizontal scroll strip: one chip per file, clickable
+// to open with the system default app. It fills in live while the turn
+// runs and stays after the turn ends.
+function ArtifactStrip({ docs }: { docs: TurnDoc[] }) {
+  const { t } = useTranslation();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // Keep the newest artifact visible: the strip fills left-to-right
+    // and auto-scrolls to the right edge on new files.
+    const el = scrollRef.current;
+    if (el) el.scrollLeft = el.scrollWidth;
+  }, [docs]);
+  return (
+    <div className="rounded-xl border border-edge bg-panel2 p-3 my-3">
+      <div className="mb-2 flex items-center gap-2 text-xs text-dim">
+        <Package size={13} className="text-accent" />
+        <span className="font-medium text-fg">{t('chat.turnArtifacts')}</span>
+        <span className="rounded bg-panel px-1.5 py-0.5 tabular-nums">
+          {docs.length}
+        </span>
+      </div>
+      <div
+        ref={scrollRef}
+        className="flex gap-1.5 overflow-x-auto snap-x pb-0.5"
+      >
+        {docs.map((doc) => {
+          const name = doc.path.split('/').pop() || doc.path;
+          return (
+            <button
+              key={doc.path}
+              onClick={() => void api.openPath(doc.path)}
+              title={t('chat.openArtifact', { path: doc.path })}
+              className="flex max-w-56 shrink-0 snap-start items-center gap-1.5 rounded-lg border border-edge bg-panel px-2.5 py-1.5 text-xs text-fg transition-colors hover:border-accent/50 hover:bg-panel2"
+            >
+              {docIcon(doc.path)}
+              <span className="truncate">{name}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // AttachmentImage renders one image attachment. Live sends carry the
 // data URL already; resumed history has only the stored path, so the
 // component fetches the preview from the backend on mount (WKWebView
@@ -420,6 +527,7 @@ export function ChatView() {
   const sessions = useStore((s) => s.sessions);
   const messages = conv?.messages ?? [];
   const busy = conv?.busy ?? false;
+  const turnArtifacts = conv?.turnArtifacts ?? [];
   const configured = useStore((s) => s.configured);
   const status = useStore((s) => s.status);
   const pendingInteracts = conv?.pendingInteracts ?? [];
@@ -848,21 +956,37 @@ export function ChatView() {
           </div>
         ) : (
           <div className="max-w-4xl mx-auto space-y-4">
-            {messages.map((msg, i) => (
-              <MessageRow
-                key={msg.id}
-                msg={msg}
-                busy={busy}
-                isTurnLast={
-                  msg.role === 'assistant' &&
-                  (i === messages.length - 1 ||
-                    messages[i + 1]?.role === 'user')
-                }
-                streaming={
-                  busy && msg.role === 'assistant' && i === messages.length - 1
-                }
-              />
-            ))}
+            {messages.map((msg, i) => {
+              // A turn's strip renders right after its last message:
+              // the next turn's start minus one, or the transcript end.
+              const strip = turnArtifacts.find((t, ti) => {
+                if (t.docs.length === 0) return false;
+                const end =
+                  ti + 1 < turnArtifacts.length
+                    ? turnArtifacts[ti + 1].start - 1
+                    : messages.length - 1;
+                return end === i;
+              });
+              return (
+                <Fragment key={msg.id}>
+                  <MessageRow
+                    msg={msg}
+                    busy={busy}
+                    isTurnLast={
+                      msg.role === 'assistant' &&
+                      (i === messages.length - 1 ||
+                        messages[i + 1]?.role === 'user')
+                    }
+                    streaming={
+                      busy &&
+                      msg.role === 'assistant' &&
+                      i === messages.length - 1
+                    }
+                  />
+                  {strip && <ArtifactStrip docs={strip.docs} />}
+                </Fragment>
+              );
+            })}
             {pendingInteracts.map((spec) => (
               <InteractionCard key={spec.id} spec={spec} />
             ))}

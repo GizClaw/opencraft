@@ -308,7 +308,9 @@
     "redoEmpty": "Nothing to redo",
     "mentionSearchHint": "Type to search workspace files…",
     "mentionNoMatch": "No matches",
-    "mentionSkillHint": "Type to filter skills…"
+    "mentionSkillHint": "Type to filter skills…",
+    "turnArtifacts": "Produced this turn",
+    "openArtifact": "Open {{path}}"
   },
   "status": {
     "ready": "Ready",

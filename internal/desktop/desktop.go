@@ -27,6 +27,7 @@ import (
 	pluginruntime "github.com/GizClaw/opencraft/internal/plugins/runtime"
 	"github.com/GizClaw/opencraft/internal/rollout"
 	"github.com/GizClaw/opencraft/internal/runtime"
+	ocsandbox "github.com/GizClaw/opencraft/internal/sandbox"
 	"github.com/GizClaw/opencraft/internal/secrets"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/undo"
@@ -111,6 +112,10 @@ type App struct {
 	// preTurnSnap holds each running turn's pre-state so waitTurn can
 	// pair it with the post-state and record an undo entry.
 	preTurnSnap map[string][]undo.FileState
+	// preTurnManifest holds each running turn's pre-turn workspace
+	// manifest so waitTurn can reconcile exec-produced document files
+	// (git-free) and merge them into the archived turn.
+	preTurnManifest map[string]map[string]fileStat
 	// rollouts maps conversation ids to their JSONL event recorder.
 	rollouts map[string]*rollout.Recorder
 	// rolloutBufs buffer streamed text/reasoning per run until the
@@ -163,27 +168,28 @@ func New(opts Options) (*App, error) {
 		shutdown = nil
 	}
 	a := &App{
-		workDir:        workDir,
-		userDir:        userDir,
-		pluginDir:      pluginDir,
-		plugins:        plugins.NewStore(pluginDir),
-		kv:             plugins.NewKVStore(pluginDir),
-		bridge:         NewBridge(),
-		turns:          make(map[string]*session.Turn),
-		conversationID: ocsessions.NewID(),
-		mode:           ocsessions.ModeWorkspace,
-		think:          string(ocsessions.ThinkMedium),
-		model:          "",
-		runConvs:       make(map[string]string),
-		convRuns:       make(map[string]map[string]bool),
-		runUsage:       make(map[string]ocsessions.Usage),
-		titling:        make(map[string]bool),
-		preTurnSnap:    make(map[string][]undo.FileState),
-		undo:           undo.New(workDir),
-		secrets:        sec,
-		rollouts:       make(map[string]*rollout.Recorder),
-		rolloutBufs:    make(map[string]*rolloutBuffer),
-		otelShutdown:   shutdown,
+		workDir:         workDir,
+		userDir:         userDir,
+		pluginDir:       pluginDir,
+		plugins:         plugins.NewStore(pluginDir),
+		kv:              plugins.NewKVStore(pluginDir),
+		bridge:          NewBridge(),
+		turns:           make(map[string]*session.Turn),
+		conversationID:  ocsessions.NewID(),
+		mode:            ocsessions.ModeWorkspace,
+		think:           string(ocsessions.ThinkMedium),
+		model:           "",
+		runConvs:        make(map[string]string),
+		convRuns:        make(map[string]map[string]bool),
+		runUsage:        make(map[string]ocsessions.Usage),
+		titling:         make(map[string]bool),
+		preTurnSnap:     make(map[string][]undo.FileState),
+		preTurnManifest: make(map[string]map[string]fileStat),
+		undo:            undo.New(workDir),
+		secrets:         sec,
+		rollouts:        make(map[string]*rollout.Recorder),
+		rolloutBufs:     make(map[string]*rolloutBuffer),
+		otelShutdown:    shutdown,
 	}
 	a.cap = pluginruntime.NewManager(pluginDir, pluginruntime.DefaultLoader{
 		Root: pluginDir,
@@ -362,6 +368,14 @@ func (a *App) rebuild() error {
 	if value, ok := rt.Resource("agentlifecycle"); ok {
 		if svc, ok := value.(*agents.Lifecycle); ok {
 			lifecycle = svc
+		}
+	}
+	// Wire the runtime's artifact observer to the frontend bridge so
+	// successful workspace writes stream as "artifact" UI events (the
+	// observing workspace already filters out engine-internal writes).
+	if value, ok := rt.Resource("artifacts"); ok {
+		if obs, ok := value.(*ocsandbox.ArtifactObserver); ok {
+			obs.SetSink(a.onArtifactWrite)
 		}
 	}
 

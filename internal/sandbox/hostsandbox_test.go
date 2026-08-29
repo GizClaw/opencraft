@@ -4,11 +4,13 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/resource"
 	coresandbox "github.com/GizClaw/flowcraft/core/sandbox"
 	"github.com/GizClaw/flowcraft/core/tool"
 	"github.com/GizClaw/flowcraft/core/workspace"
@@ -264,6 +266,109 @@ func TestHostWorkspaceReadonlyRoots(t *testing.T) {
 	if _, err := hw.Read(sessionCtx("s1"), otherOutside); err == nil {
 		t.Fatal("workspace mode must reject paths outside root and readonly roots")
 	}
+}
+
+// TestHostWorkspaceFactoryDerivesRootFromWorkspace verifies the
+// factory takes the confined workspace from the workspace dependency
+// and derives the host/YOLO resolution root from it, instead of a
+// settings.root override.
+func TestHostWorkspaceFactoryDerivesRootFromWorkspace(t *testing.T) {
+	root := t.TempDir()
+	ws, err := workspace.NewLocalWorkspace(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := newTestStore(t)
+	value, err := (HostWorkspaceFactory{}).New(context.Background(), resource.Input{
+		Settings: []byte(`{}`),
+		Deps: map[string]any{
+			"sessions":  store,
+			"workspace": ws,
+		},
+	})
+	if err != nil {
+		t.Fatalf("factory new: %v", err)
+	}
+	hw, ok := value.(*HostWorkspace)
+	if !ok {
+		t.Fatalf("factory returned %T, want *HostWorkspace", value)
+	}
+	if hw.root != ws.Root() {
+		t.Fatalf("hostws root = %q, want ws root %q", hw.root, ws.Root())
+	}
+
+	// Workspace mode: writes outside the derived root are rejected.
+	outside := filepath.Join(t.TempDir(), "secret.txt")
+	if err := hw.Write(sessionCtx("s1"), outside, []byte("x")); err == nil {
+		t.Fatal("workspace mode must reject writes outside the derived root")
+	}
+	// YOLO mode: host resolution still anchors on the derived root.
+	if err := store.SetMode("s1", sessions.ModeYOLO); err != nil {
+		t.Fatal(err)
+	}
+	if err := hw.Write(sessionCtx("s1"), outside, []byte("s3cret")); err != nil {
+		t.Fatalf("yolo write outside root: %v", err)
+	}
+	data, err := hw.Read(sessionCtx("s1"), outside)
+	if err != nil || string(data) != "s3cret" {
+		t.Fatalf("yolo read = %q, %v", data, err)
+	}
+}
+
+// TestHostWorkspaceFactoryAcceptsMatchingLegacyRoot keeps older configs
+// working: a settings.root that resolves to the same directory as the
+// workspace dependency is accepted.
+func TestHostWorkspaceFactoryAcceptsMatchingLegacyRoot(t *testing.T) {
+	root := t.TempDir()
+	ws, err := workspace.NewLocalWorkspace(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := (HostWorkspaceFactory{}).New(context.Background(), resource.Input{
+		Settings: []byte(`{"root":` + strconv.Quote(root) + `}`),
+		Deps: map[string]any{
+			"sessions":  newTestStore(t),
+			"workspace": ws,
+		},
+	})
+	if err != nil {
+		t.Fatalf("factory new with matching legacy root: %v", err)
+	}
+	hw, ok := value.(*HostWorkspace)
+	if !ok || hw.root != ws.Root() {
+		t.Fatalf("factory returned %T with root %q, want ws root %q",
+			value, safeRoot(hw), ws.Root())
+	}
+}
+
+// TestHostWorkspaceFactoryRejectsMismatchedRoot fails loudly when a
+// legacy settings.root points at a different directory than ws, so
+// confinement and readonly resolution can never drift apart.
+func TestHostWorkspaceFactoryRejectsMismatchedRoot(t *testing.T) {
+	ws, err := workspace.NewLocalWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = (HostWorkspaceFactory{}).New(context.Background(), resource.Input{
+		Settings: []byte(`{"root":` + strconv.Quote(t.TempDir()) + `}`),
+		Deps: map[string]any{
+			"sessions":  newTestStore(t),
+			"workspace": ws,
+		},
+	})
+	if err == nil {
+		t.Fatal("mismatched settings.root must be rejected")
+	}
+	if !strings.Contains(err.Error(), "does not match the workspace dependency root") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func safeRoot(hw *HostWorkspace) string {
+	if hw == nil {
+		return ""
+	}
+	return hw.root
 }
 
 // TestFilesToolReadsReadonlySkillRoot verifies the full chain for the

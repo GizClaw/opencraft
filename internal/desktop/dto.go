@@ -8,6 +8,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/agents"
 	"github.com/GizClaw/opencraft/internal/config"
+	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 )
 
 // UIEvent is the envelope pushed to the frontend on the single
@@ -35,6 +36,16 @@ type StreamEvent struct {
 	RunID          string                   `json:"run_id"`
 	ConversationID string                   `json:"conversation_id,omitempty"`
 	Delta          agent.StreamDeltaPayload `json:"delta"`
+}
+
+// SessionTurnDTO is the wire form of one archived turn: its messages
+// plus the artifacts the turn produced. At is an RFC3339 string so the
+// Wails model generator never sees time.Time.
+type SessionTurnDTO struct {
+	Seq       int                   `json:"seq"`
+	At        string                `json:"at"`
+	Messages  []message.Message     `json:"messages"`
+	Artifacts []ocsessions.Artifact `json:"artifacts,omitempty"`
 }
 
 // ProviderView is one entry of the provider catalog.

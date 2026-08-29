@@ -31,6 +31,7 @@ import type {
   SandboxProbeResult,
   SearchFileHit,
   SessionMeta,
+  SessionTurn,
   ProviderInstance,
   ProjectConfigStatus,
   SkillDTO,
@@ -61,6 +62,7 @@ export const api = {
   resumeSession: (id: string) => App.ResumeSession(id),
   sessionHistory: (id: string) =>
     App.SessionHistory(id) as Promise<HistoryMessage[]>,
+  sessionTurns: (id: string) => App.SessionTurns(id) as Promise<SessionTurn[]>,
   workspaces: () => App.Workspaces() as Promise<WorkspaceMeta[]>,
   openWorkspace: (path: string) => App.OpenWorkspace(path),
   removeWorkspace: (id: string) => App.RemoveWorkspace(id),
