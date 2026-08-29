@@ -26,6 +26,10 @@ engine, it helps with coding and beyond — orchestrating any local workflow.
 A local execd sandbox, SQLite session store, and per-project approval policy
 keep everything inside a macOS/Linux desktop app (Wails v2 + React).
 
+<p align="center">
+  <img src="build/screenshot.png" alt="opencraft desktop app" width="800">
+</p>
+
 ## Features
 
 - **Chat & sessions** — streaming reasoning, tool calls, and output blocks;
