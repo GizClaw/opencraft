@@ -40,6 +40,25 @@ func TestKVSetGetListDelete(t *testing.T) {
 	}
 }
 
+// TestKVWorksForBuiltinPlugin verifies KV storage works for an id that
+// has no user-installed plugin directory (an app-bundled builtin), so
+// builtin plugins can use ctx.storage like user-installed ones.
+func TestKVWorksForBuiltinPlugin(t *testing.T) {
+	root := t.TempDir()
+	kv := NewKVStore(root)
+	got, err := kv.Get("demo", "counter")
+	if err != nil || got.Value != "" {
+		t.Fatalf("Get without plugin dir = (%+v, %v), want empty", got, err)
+	}
+	if err := kv.Set("demo", "counter", "1"); err != nil {
+		t.Fatalf("Set without plugin dir: %v", err)
+	}
+	got, err = kv.Get("demo", "counter")
+	if err != nil || got.Value != "1" {
+		t.Fatalf("Get after Set = (%+v, %v), want 1", got, err)
+	}
+}
+
 func TestKVPersistsAcrossReopen(t *testing.T) {
 	root := t.TempDir()
 	writePlugin(t, root, "hello", map[string]any{
@@ -68,8 +87,10 @@ func TestKVValidationAndRemoveAll(t *testing.T) {
 	if err := kv.Set("hello", "big", string(make([]byte, MaxKVValueBytes+1))); err == nil {
 		t.Fatal("oversized value should fail")
 	}
-	if err := kv.Set("not-installed", "k", "v"); err == nil {
-		t.Fatal("kv for a non-installed plugin should fail")
+	// KV is per-id and works for builtin (app-bundled) plugins that have
+	// no user-installed directory; only the id itself is validated.
+	if err := kv.Set("not-installed", "k", "v"); err != nil {
+		t.Fatalf("kv for a non-installed (builtin) plugin should work: %v", err)
 	}
 	if err := kv.Set("hello", "k", "v"); err != nil {
 		t.Fatal(err)

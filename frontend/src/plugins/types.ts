@@ -37,6 +37,8 @@ export interface PluginSummary {
   entry: string;
   permissions: string[];
   enabled: boolean;
+  /** Builtin plugins ship with the app and can only be disabled. */
+  builtin?: boolean;
   error?: string;
   panels?: string[];
   entries?: string[];
