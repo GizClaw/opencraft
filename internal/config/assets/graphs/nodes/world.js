@@ -21,4 +21,8 @@ for (var i = 0; i < history.length; i++) {
     content: { parts: [{ type: "text", text: history[i].text }] }
   });
 }
+// Record how many replayed history messages sit between the world
+// sections and the current turn's messages, so lifecycle hooks can
+// locate the user's turn message on the channel when persisting.
+board.setVar("world.history.count", history.length);
 board.setChannel(board.MAIN_CHANNEL, msgs.concat(board.channel(board.MAIN_CHANNEL) || []));

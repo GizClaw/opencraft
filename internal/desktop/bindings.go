@@ -551,9 +551,13 @@ func (a *App) Workspace() string {
 	return a.snapshotWorkDir()
 }
 
-// StartTurn starts one assistant turn with the given user message and
-// returns immediately. Stream deltas arrive over the UI event channel.
-func (a *App) StartTurn(text string) (TurnStart, error) {
+// StartTurn starts one assistant turn with the given user message
+// (role + text/image/audio/video/file parts) and returns immediately.
+// Stream deltas arrive over the UI event channel. Local attachments
+// are persisted into the session's media/ and files/ directories
+// first; the archive keeps their URL paths while the opencraft.media
+// prepare hook inlines the bytes before the model call.
+func (a *App) StartTurn(msg message.Message) (TurnStart, error) {
 	a.mu.Lock()
 	ctrl := a.ctrl
 	broker := a.broker
@@ -567,8 +571,19 @@ func (a *App) StartTurn(text string) (TurnStart, error) {
 		return TurnStart{}, errors.New(
 			"runtime is not ready: configure inference in Settings first")
 	}
-	if strings.TrimSpace(text) == "" {
+	if err := validateUserMessage(msg); err != nil {
+		return TurnStart{}, err
+	}
+	text := msg.Content.Text()
+	if strings.TrimSpace(text) == "" && !hasMediaParts(msg.Content.Parts) {
 		return TurnStart{}, errors.New("message is required")
+	}
+	if hasMediaParts(msg.Content.Parts) {
+		parts, err := persistAttachments(store, contextID, msg.Content.Parts)
+		if err != nil {
+			return TurnStart{}, fmt.Errorf("persist attachment: %w", err)
+		}
+		msg.Content.Parts = parts
 	}
 	// Only send a reasoning knob when the effective model declares a
 	// reasoning capability: drivers reject reasoning_effort for models
@@ -606,7 +621,7 @@ func (a *App) StartTurn(text string) (TurnStart, error) {
 	// resume is disabled) and DeleteSession would never clean.
 	turn, err := lease.Session().StartWithOptions(ctx, agent.Request{
 		ContextID: contextID,
-		Message:   message.NewTextMessage(message.RoleUser, text),
+		Message:   msg,
 		// Think level rides the board into the graph's
 		// ${board:think_level} inference node reference.
 		Inputs: map[string]any{
@@ -839,38 +854,6 @@ func (a *App) waitTurn(
 	a.mu.Unlock()
 	_ = lease.Close()
 
-	// Post-turn capture: pair the pre-state with the state left after
-	// the turn and record an undo entry (identical pairs are dropped by
-	// the store). The UI refreshes its undo/redo buttons via the event.
-	if undoStore != nil && hadBefore && len(before) > 0 {
-		after := gitSnapshot(ctx, wd)
-		if _, err := undoStore.Capture(ctx, contextID, before, after); err == nil {
-			a.emitUndoState(contextID)
-		}
-	}
-	if store != nil && turnUsage.TotalTokens > 0 {
-		_ = store.RecordUsage(context.Background(), contextID, turnUsage)
-	}
-	if usageStore != nil && turnUsage.Model != "" {
-		_ = usageStore.Record(
-			context.Background(),
-			workspaceID(wd),
-			contextID,
-			turnUsage.Model,
-			usage.Usage{
-				InputTokens:     turnUsage.InputTokens,
-				OutputTokens:    turnUsage.OutputTokens,
-				CacheReadTokens: turnUsage.CacheReadTokens,
-				ReasoningTokens: turnUsage.ReasoningTokens,
-				LatencyMs:       turnUsage.LatencyMs,
-			},
-		)
-	}
-	// Best-effort auto title: the model summarizes the conversation
-	// once; failures keep the first-message fallback. Runs off the UI
-	// event path so it never blocks stream delivery.
-	go a.autoTitle(a.appContext(), contextID)
-
 	end := TurnEnd{
 		RunID:          runID,
 		ConversationID: contextID,
@@ -889,7 +872,47 @@ func (a *App) waitTurn(
 	if end.Status == "failed" || end.Error != "" {
 		typ = rollout.TypeTurnFailed
 	}
+	// Fast bookkeeping that the resume list reads on turn_end: usage
+	// and rollout are cheap SQLite/JSONL writes and stay ahead of the
+	// UI event so the session list refresh sees current totals.
+	if store != nil && turnUsage.TotalTokens > 0 {
+		_ = store.RecordUsage(context.Background(), contextID, turnUsage)
+	}
+	if usageStore != nil && turnUsage.Model != "" {
+		_ = usageStore.Record(
+			context.Background(),
+			workspaceID(wd),
+			contextID,
+			turnUsage.Model,
+			usage.Usage{
+				InputTokens:     turnUsage.InputTokens,
+				OutputTokens:    turnUsage.OutputTokens,
+				CacheReadTokens: turnUsage.CacheReadTokens,
+				ReasoningTokens: turnUsage.ReasoningTokens,
+				LatencyMs:       turnUsage.LatencyMs,
+			},
+		)
+	}
 	a.recordTurnEnd(a.appContext(), contextID, runID, typ, end.Status, end.Error, turnUsage)
+	// Emit turn_end before the slow post-turn work below (undo git
+	// snapshot, lifecycle hooks): the frontend clears "running" as
+	// soon as the turn result is known, and none of the follow-up work
+	// affects the UI's terminal state.
+	a.bridge.Emit("turn_end", end)
+
+	// Post-turn capture: pair the pre-state with the state left after
+	// the turn and record an undo entry (identical pairs are dropped by
+	// the store). The UI refreshes its undo/redo buttons via the event.
+	if undoStore != nil && hadBefore && len(before) > 0 {
+		after := gitSnapshot(ctx, wd)
+		if _, err := undoStore.Capture(ctx, contextID, before, after); err == nil {
+			a.emitUndoState(contextID)
+		}
+	}
+	// Best-effort auto title: the model summarizes the conversation
+	// once; failures keep the first-message fallback. Runs off the UI
+	// event path so it never blocks stream delivery.
+	go a.autoTitle(a.appContext(), contextID)
 	a.fireHooks(a.appContext(), hooks.EventTurnEnd, map[string]any{
 		"event":           hooks.EventTurnEnd,
 		"conversation_id": contextID,
@@ -903,7 +926,6 @@ func (a *App) waitTurn(
 			"reasoning_tokens": turnUsage.ReasoningTokens,
 		},
 	})
-	a.bridge.Emit("turn_end", end)
 }
 
 // UndoChange reverts the latest captured turn's file changes for the

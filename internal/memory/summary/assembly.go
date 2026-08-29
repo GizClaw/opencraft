@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/inference"
@@ -50,6 +51,7 @@ type Assembly struct {
 	generate          generateFunc // nil => buffer fold only
 	now               func() time.Time
 	replayFullHistory bool
+	condenseWG        sync.WaitGroup
 }
 
 // generateFunc is the unary generation entry used for LLM condensation.
@@ -179,6 +181,7 @@ func (a *Assembly) fold(ctx context.Context, conversationID string) error {
 			return nil
 		}
 	}
+	var condense *condenseJob
 	if a.shouldCondense(node) {
 		// Merge the previous condensation with the current raw window
 		// instead of re-compressing only the window. The rolling window
@@ -195,22 +198,9 @@ func (a *Assembly) fold(ctx context.Context, conversationID string) error {
 				condenseInput = prevText + "\n" + rawText
 			}
 		}
-		if condensed, cerr := a.condense(ctx, condenseInput, a.policy.Normalize()); cerr == nil {
-			// Cap the generated output to the summary budget so a
-			// verbose generation cannot blow past MaxSummaryBytes and
-			// crowd the next condensation input.
-			if len(condensed) > p.MaxSummaryBytes {
-				condensed = truncateLines(condensed, p.MaxSummaryBytes)
-			}
-			node.Content = message.Content{Parts: []message.Part{
-				message.TextPart{Text: condensed},
-			}}
-			node.Metadata["algorithm"] = "summary_llm_condense"
-			node.Metadata["condense_raw_hash"] = hashText(rawText)
+		condense = &condenseJob{
+			node: node, rawText: rawText, input: condenseInput, policy: p,
 		}
-		// Condensation failures fall back to the buffer text: memory
-		// stays available and the next fold retries when the window
-		// advances (an unchanged window short-circuits in BufferFold).
 	}
 	// The level-0 buffer fold is a single rolling summary per thread:
 	// retire any other level-0 nodes (e.g. rows written before the
@@ -221,7 +211,60 @@ func (a *Assembly) fold(ctx context.Context, conversationID string) error {
 	if err := a.store.UpsertSummaryNode(ctx, *node); err != nil {
 		return memory.NewError(memory.KindInternal, "turn", err)
 	}
+	if condense != nil {
+		// The LLM condensation is derived state: run it off the commit
+		// path so a slow generation never delays turn completion. The
+		// buffer node above is already persisted; the goroutine swaps
+		// in the condensed content when the generation lands.
+		a.condenseWG.Add(1)
+		go func() {
+			defer a.condenseWG.Done()
+			a.runCondense(ctx, condense)
+		}()
+	}
 	return nil
+}
+
+// condenseJob carries one pending LLM condensation: the buffer-fold
+// node whose content should be replaced when the generation lands.
+type condenseJob struct {
+	node    *SummaryNode
+	rawText string
+	input   string
+	policy  Policy
+}
+
+// runCondense executes one memory condensation asynchronously and
+// re-upserts the summary node with the condensed content. Failures are
+// best-effort: the buffer text stays persisted and the next fold
+// retries when the window advances (an unchanged window short-circuits
+// via the raw-text hash).
+func (a *Assembly) runCondense(ctx context.Context, job *condenseJob) {
+	runCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+	defer cancel()
+	condensed, err := a.condense(runCtx, job.input, job.policy)
+	if err != nil {
+		return
+	}
+	// Cap the generated output to the summary budget so a verbose
+	// generation cannot blow past MaxSummaryBytes and crowd the next
+	// condensation input.
+	if len(condensed) > job.policy.MaxSummaryBytes {
+		condensed = truncateLines(condensed, job.policy.MaxSummaryBytes)
+	}
+	replacement := *job.node
+	replacement.Content = message.Content{Parts: []message.Part{
+		message.TextPart{Text: condensed},
+	}}
+	replacement.Metadata = make(map[string]any, len(job.node.Metadata)+2)
+	for k, v := range job.node.Metadata {
+		replacement.Metadata[k] = v
+	}
+	replacement.Metadata["algorithm"] = "summary_llm_condense"
+	replacement.Metadata["condense_raw_hash"] = hashText(job.rawText)
+	if err := a.store.UpsertSummaryNode(runCtx, replacement); err != nil {
+		return
+	}
 }
 
 // foldTailChunk bounds each range query while walking the foldable region

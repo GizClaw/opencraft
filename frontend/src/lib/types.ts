@@ -27,6 +27,30 @@ export interface ModelInstance {
   web_search: boolean;
 }
 
+// AttachmentDTO mirrors the desktop binding's preview metadata for one
+// local attachment. DataURL is present only for images (the preview
+// channel WKWebView can render without file:// access).
+export interface AttachmentDTO {
+  name: string;
+  path: string;
+  size: number;
+  media_type?: string;
+  data_url?: string;
+}
+
+// AttachmentView is one attachment attached to a user message or
+// staged in the composer. Images preview inline; everything else
+// renders as a file chip.
+export interface AttachmentView {
+  id: string;
+  kind: 'image' | 'file' | 'audio' | 'video';
+  path: string;
+  name: string;
+  media_type?: string;
+  size?: number;
+  data_url?: string;
+}
+
 export interface ProviderInstance {
   stable_id: string;
   type: string;
@@ -148,7 +172,16 @@ export type HistoryPart =
   | {
       type: 'tool_result';
       result?: { call_id: string; content?: string; is_error?: boolean };
-    };
+    }
+  | { type: 'image'; source?: MediaSourceWire }
+  | {
+      type: 'audio';
+      source?: MediaSourceWire;
+      format?: unknown;
+      duration_millis?: number;
+    }
+  | { type: 'video'; source?: MediaSourceWire }
+  | { type: 'file'; uri?: string; media_type?: string; name?: string };
 
 export interface KanbanCard {
   id: string;
@@ -355,8 +388,31 @@ export type StreamPart =
   | { type: 'tool_call'; call: ToolCallWire }
   | { type: 'tool_result'; result: ToolResultWire }
   | { type: 'file'; uri?: string; name?: string; media_type?: string }
-  | { type: 'image'; source?: unknown }
+  | { type: 'image'; source?: MediaSourceWire }
+  | {
+      type: 'audio';
+      source?: MediaSourceWire;
+      format?: unknown;
+      duration_millis?: number;
+    }
+  | { type: 'video'; source?: MediaSourceWire }
   | { type: 'data'; media_type?: string; value?: unknown };
+
+// MediaSourceWire is the wire form of flowcraft's media source: a
+// local/remote URL, or inline base64 bytes.
+export interface MediaSourceWire {
+  kind: 'url' | 'inline' | 'stream';
+  url?: string;
+  data?: string;
+  media_type?: string;
+}
+
+// TurnMessage is the wire form of message.Message the frontend sends
+// to StartTurn: role + type-discriminated content parts.
+export interface TurnMessage {
+  role: string;
+  content: { parts: StreamPart[] };
+}
 
 export interface StreamDelta {
   type:

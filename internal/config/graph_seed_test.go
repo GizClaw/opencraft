@@ -64,15 +64,24 @@ func TestUserConfigAndGraphNotSeeded(t *testing.T) {
 		}
 	}
 
-	// The embedded base document must reference the graph as an embed
+	// The embedded agents layer must reference the graph as an embed
 	// source so the binary copy is the one used at runtime, and the
-	// graph's node sources must do the same.
+	// graph's node sources must do the same. The base document keeps
+	// the version + core resources and loads as the first layer.
 	base, err := EmbeddedOpenCraft()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(base, []byte("embed: assets/graphs/assistant.yaml")) {
-		t.Fatal("embedded opencraft.yaml does not reference the graph via embed source")
+	if !bytes.Contains(base, []byte("version: v1")) {
+		t.Fatal("embedded opencraft.yaml base layer is missing the document version")
+	}
+	agents, err := loader.Load(context.Background(),
+		resource.Source{Embed: "assets/agents.yaml"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(agents, []byte("embed: assets/graphs/assistant.yaml")) {
+		t.Fatal("embedded agents.yaml does not reference the graph via embed source")
 	}
 	graph, err := loader.Load(context.Background(),
 		resource.Source{Embed: "assets/graphs/assistant.yaml"})

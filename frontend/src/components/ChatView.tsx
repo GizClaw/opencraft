@@ -6,12 +6,15 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   Copy,
   File,
   Flame,
   Folder,
   Lock,
   Loader2,
+  Music2,
+  Paperclip,
   Redo2,
   RotateCcw,
   Send,
@@ -20,6 +23,7 @@ import {
   Square,
   Terminal,
   Undo2,
+  Video,
   X,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -27,7 +31,7 @@ import { OnFileDrop, OnFileDropOff } from '../../wailsjs/runtime/runtime';
 import { api } from '../lib/api';
 import { COMPACT_SUMMARY_PREFIX } from '../lib/compact';
 import { useStore } from '../lib/store';
-import type { SkillDTO, UndoState } from '../lib/types';
+import type { AttachmentView, SkillDTO, UndoState } from '../lib/types';
 import type { AssistantItem, MessageView } from '../lib/store';
 import { InteractionCard } from './InteractionCard';
 import { ApplyPatchView, ToolCard, WriteView } from './ToolCard';
@@ -188,10 +192,21 @@ const MessageRow = memo(function MessageRow({
     if (msg.text.startsWith(COMPACT_SUMMARY_PREFIX)) {
       return <CompactCard text={msg.text} />;
     }
+    const attachments = msg.attachments ?? [];
+    const images = attachments.filter((a) => a.kind === 'image');
+    const files = attachments.filter((a) => a.kind !== 'image');
     return (
       <div className="flex justify-end">
-        <div className="max-w-[80%] rounded-2xl rounded-br-sm border border-accent/30 bg-accent/15 px-4 py-2.5 text-sm whitespace-pre-wrap">
-          {msg.text}
+        <div className="max-w-[80%] rounded-2xl rounded-br-sm border border-accent/30 bg-accent/15 px-4 py-2.5 text-sm">
+          {images.length > 0 && (
+            <div className="mb-2 flex flex-wrap justify-end gap-2">
+              {images.map((a) => (
+                <AttachmentImage key={a.id} att={a} />
+              ))}
+            </div>
+          )}
+          {msg.text && <div className="whitespace-pre-wrap">{msg.text}</div>}
+          {files.length > 0 && <AttachmentFiles attachments={files} />}
         </div>
       </div>
     );
@@ -308,6 +323,97 @@ function CompactCard({ text }: { text: string }) {
   );
 }
 
+// formatSize renders a byte count as a short human-readable size.
+function formatSize(n: number) {
+  if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(1)} MB`;
+  if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+  return `${n} B`;
+}
+
+// AttachmentImage renders one image attachment. Live sends carry the
+// data URL already; resumed history has only the stored path, so the
+// component fetches the preview from the backend on mount (WKWebView
+// cannot load file:// directly).
+function AttachmentImage({ att }: { att: AttachmentView }) {
+  const [url, setUrl] = useState(att.data_url ?? '');
+  useEffect(() => {
+    if (url) return;
+    let live = true;
+    void api
+      .readAttachment(att.path)
+      .then((dto) => {
+        if (live) setUrl(dto.data_url ?? 'missing');
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [att.path, url]);
+  if (url && url !== 'missing') {
+    return (
+      <img
+        src={url}
+        alt={att.name}
+        className="max-h-44 max-w-64 rounded-lg border border-edge object-contain"
+      />
+    );
+  }
+  if (url === 'missing') {
+    return (
+      <div className="flex h-24 w-36 items-center justify-center rounded-lg border border-edge bg-panel2 px-2 text-center text-[10px] text-dim">
+        <span className="truncate">{att.name}</span>
+      </div>
+    );
+  }
+  return (
+    <div className="flex h-24 w-36 items-center justify-center rounded-lg border border-edge bg-panel2">
+      <Loader2 size={14} className="animate-spin text-dim" />
+    </div>
+  );
+}
+
+// AttachmentFiles renders non-image attachments as a collapsed list
+// below the message text: one toggle reveals the file chips.
+function AttachmentFiles({ attachments }: { attachments: AttachmentView[] }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const FileIcon = (a: AttachmentView) =>
+    a.kind === 'audio' ? Music2 : a.kind === 'video' ? Video : File;
+  return (
+    <div className="mt-2">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1.5 rounded-md border border-edge bg-panel2/70 px-2 py-1 text-xs text-dim hover:text-fg"
+      >
+        <Paperclip size={12} />
+        {t('chat.files', { count: attachments.length })}
+        {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+      </button>
+      {open && (
+        <div className="mt-1.5 space-y-1">
+          {attachments.map((a) => {
+            const Icon = FileIcon(a);
+            return (
+              <div
+                key={a.id}
+                className="flex items-center gap-1.5 rounded-md border border-edge bg-panel2 px-2 py-1 text-xs"
+              >
+                <Icon size={12} className="shrink-0 text-dim" />
+                <span className="min-w-0 truncate">{a.name}</span>
+                {a.size != null && (
+                  <span className="shrink-0 text-dim tabular-nums">
+                    {formatSize(a.size)}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ChatView() {
   const current = useStore((s) => s.current);
   const conv = useStore((s) => s.conversations[s.current]);
@@ -341,6 +447,7 @@ export function ChatView() {
   const lastFailed = conv?.lastFailed ?? false;
   const openConfig = useStore((s) => s.openConfig);
   const [input, setInput] = useState('');
+  const [attachments, setAttachments] = useState<AttachmentView[]>([]);
   const [confirmYolo, setConfirmYolo] = useState(false);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [undoAvail, setUndoAvail] = useState<UndoState>({
@@ -390,6 +497,53 @@ export function ChatView() {
   // WKWebView for the Enter key).
   const composingRef = useRef(false);
   const { t } = useTranslation();
+
+  const addAttachmentPaths = async (paths: string[]) => {
+    if (paths.length === 0) return;
+    const next: AttachmentView[] = [];
+    for (const [i, p] of paths.slice(0, 8).entries()) {
+      try {
+        const dto = await api.readAttachment(p);
+        if (!dto.path) continue;
+        const mt = dto.media_type ?? '';
+        const kind: AttachmentView['kind'] = mt.startsWith('image/')
+          ? 'image'
+          : mt.startsWith('audio/')
+            ? 'audio'
+            : mt.startsWith('video/')
+              ? 'video'
+              : 'file';
+        next.push({
+          id: `att-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 7)}`,
+          kind,
+          path: dto.path,
+          name: dto.name,
+          media_type: dto.media_type,
+          size: dto.size,
+          data_url: dto.data_url,
+        });
+      } catch {
+        // Unreadable / too large files are skipped; the backend rejects
+        // them again at send time.
+      }
+    }
+    if (next.length > 0) {
+      setAttachments((prev) => [...prev, ...next].slice(0, 8));
+    }
+  };
+
+  const removeAttachment = (id: string) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
+  };
+
+  const pickAttachment = async () => {
+    try {
+      const picked = await api.pickFile(t('chat.attach'), '');
+      if (picked) void addAttachmentPaths([picked]);
+    } catch {
+      // cancelled
+    }
+  };
   const stageLabel =
     stage === 'reasoning'
       ? t('chat.stageReasoning')
@@ -400,7 +554,7 @@ export function ChatView() {
   useEffect(() => {
     OnFileDrop((_x, _y, paths) => {
       if (!paths || paths.length === 0) return;
-      setInput((prev) => prev + (prev ? '\n' : '') + paths.join('\n'));
+      void addAttachmentPaths(paths);
     }, true);
     return () => {
       OnFileDropOff();
@@ -453,12 +607,14 @@ export function ChatView() {
   }, []);
 
   const submit = () => {
-    if (!input.trim() || busy) return;
+    if ((!input.trim() && attachments.length === 0) || busy) return;
     stickRef.current = true;
     setStick(true);
     const text = input;
     setInput('');
-    void send(text);
+    const staged = attachments;
+    setAttachments([]);
+    void send(text, staged);
   };
 
   const retry = () => {
@@ -829,6 +985,35 @@ export function ChatView() {
               </span>
             )}
           </div>
+          {attachments.length > 0 && (
+            <div className="flex flex-wrap gap-2 px-3 pt-2">
+              {attachments.map((a) => (
+                <div key={a.id} className="group relative">
+                  {a.kind === 'image' && a.data_url ? (
+                    <img
+                      src={a.data_url}
+                      alt={a.name}
+                      className="h-16 w-16 rounded-lg border border-edge object-cover"
+                    />
+                  ) : (
+                    <div className="flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-lg border border-edge bg-panel2 p-1 text-[10px] text-dim">
+                      <File size={16} className="shrink-0" />
+                      <span className="w-full truncate text-center">
+                        {a.name}
+                      </span>
+                    </div>
+                  )}
+                  <button
+                    onClick={() => removeAttachment(a.id)}
+                    aria-label={t('chat.removeAttachment')}
+                    className="absolute -right-1.5 -top-1.5 rounded-full bg-err p-0.5 text-white opacity-80 hover:opacity-100"
+                  >
+                    <X size={10} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="relative">
             <div
               ref={highlightRef}
@@ -954,6 +1139,15 @@ export function ChatView() {
           )}
           <div className="flex items-center justify-between px-3 pb-2.5">
             <div className="flex items-center gap-3">
+              <button
+                onClick={() => void pickAttachment()}
+                disabled={!configured || busy}
+                title={t('chat.attach')}
+                aria-label={t('chat.attach')}
+                className="flex items-center gap-1 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim hover:text-fg disabled:opacity-50"
+              >
+                <Paperclip size={13} />
+              </button>
               {thinkSupported && (
                 <div className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim">
                   {t('chat.thinkLabel')}
@@ -1001,7 +1195,7 @@ export function ChatView() {
               ) : (
                 <button
                   onClick={submit}
-                  disabled={!input.trim()}
+                  disabled={!input.trim() && attachments.length === 0}
                   className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
                 >
                   <Send size={13} /> {t('chat.send')}
