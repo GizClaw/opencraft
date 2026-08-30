@@ -242,9 +242,62 @@ jobs:
           path: opencraft-*-linux-amd64.tar.gz
           if-no-files-found: error
 
+  windows:
+    name: package (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+
+      - name: Build Windows binary + installer
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+        run: |
+          $ver = "$env:TAG".TrimStart('v')
+          $cfg = Get-Content -Raw wails.json | ConvertFrom-Json
+          $cfg.info.productVersion = $ver
+          $cfg | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8 wails.json
+          $env:PATH = "$(go env GOPATH)\bin;$env:PATH"
+          wails build -platform windows/amd64 -clean -nsis `
+            -ldflags "-s -w -X github.com/GizClaw/opencraft/internal/app.ServiceVersion=$ver"
+
+      - name: Package binaries
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+        run: |
+          $ver = "$env:TAG".TrimStart('v')
+          Copy-Item build/bin/opencraft-amd64-installer.exe `
+            "opencraft-$ver-windows-amd64-installer.exe"
+          Compress-Archive -Path build/bin/opencraft.exe `
+            -DestinationPath "opencraft-$ver-windows-amd64.zip"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: windows-amd64
+          path: |
+            opencraft-*-windows-amd64.zip
+            opencraft-*-windows-amd64-installer.exe
+          if-no-files-found: error
+
   publish:
     name: publish release
-    needs: [macos, linux]
+    needs: [macos, linux, windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6

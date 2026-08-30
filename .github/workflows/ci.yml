@@ -150,3 +150,31 @@ jobs:
         run: |
           export PATH="$PATH:$(go env GOPATH)/bin"
           wails build -platform darwin/arm64
+
+  desktop-windows:
+    name: desktop build (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+
+      - name: Build desktop binary + installer
+        run: |
+          $env:PATH = "$(go env GOPATH)\bin;$env:PATH"
+          wails build -platform windows/amd64 -nsis

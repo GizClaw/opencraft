@@ -30,3 +30,14 @@ test:
 # GTK/WebKit development packages; see .github/workflows/ci.yml).
 build-linux:
 	wails build -platform linux/amd64 -tags webkit2_41
+
+# build-windows produces the desktop binary for Windows. Wails embeds
+# build/windows/icon.ico and cross-compiles the binary from any host.
+build-windows:
+	wails build -platform windows/amd64
+
+# build-windows-installer produces the Windows NSIS installer in
+# addition to the binary (requires makensis on PATH; macOS/Linux:
+# `brew install nsis`).
+build-windows-installer:
+	wails build -platform windows/amd64 -nsis
