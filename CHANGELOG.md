@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Windows desktop builds: the execd socket umask now lives behind a
+  platform-specific file (`syscall.Umask` is unix-only), a
+  `build/windows/icon.ico` resource, and CI/release jobs that produce
+  `opencraft-<version>-windows-amd64.zip` plus an NSIS installer
+  (`opencraft-<version>-windows-amd64-installer.exe`).
 - Optional macOS code signing and notarization in the release workflow
   (activates automatically when the Apple secrets are configured; supports
   App Store Connect API-key auth, writes a verification summary artifact,

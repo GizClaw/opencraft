@@ -38,6 +38,7 @@
 !main.go
 !execd_main.go
 !mac_window_*.go
+!execd_umask_*.go
 !wails.json
 !frontend/
 !frontend/**
@@ -67,3 +68,7 @@ frontend/wailsjs/**
 # Generated app bundles stay out of the repo; wails build reproduces them.
 build/bin/
 build/bin/**
+# Wails regenerates the NSIS installer sources and the WebView2
+# bootstrapper on every -nsis build; keep them out of git.
+build/windows/installer/
+build/windows/installer/**
