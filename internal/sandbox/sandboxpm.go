@@ -11,6 +11,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/sandbox/bwrap"
 	sandboxlocal "github.com/GizClaw/flowcraft/core/sandbox/local"
 	"github.com/GizClaw/flowcraft/core/sandbox/seatbelt"
+	sbwindows "github.com/GizClaw/flowcraft/core/sandbox/windows"
 
 	"github.com/GizClaw/opencraft/internal/config"
 )
@@ -122,6 +123,22 @@ func SandboxRunner(
 				"opencraft sandbox: bwrap: %w", err)
 		}
 		return runner, policy, nil
+	case "windows":
+		// flowcraft v0.2.2 Windows backend with OS-level write
+		// confinement: the child runs under a restricted Low-integrity
+		// token and can only write inside the workspace/root and the
+		// configured writable paths. The backend does not combine
+		// confinement with ConPTY TTY sessions yet, so interactive
+		// sessions stay disabled on Windows and the advertised
+		// capability surface is kept honest (issue #38).
+		runner, err := sbwindows.New(workDir,
+			sbwindows.WithWriteConfinement(),
+			sbwindows.WithWritablePaths(writable...))
+		if err != nil {
+			return nil, coresandbox.EnvPolicy{}, fmt.Errorf(
+				"opencraft sandbox: windows: %w", err)
+		}
+		return noTTYRunner{runner}, policy, nil
 	default:
 		return sandboxlocal.New(workDir), policy, nil
 	}
@@ -130,8 +147,18 @@ func SandboxRunner(
 // UnconfinedRunner returns a runner that executes commands directly on
 // the host with the full environment (no OS-level sandbox), used by the
 // execd child for YOLO-mode start requests.
-func UnconfinedRunner(workDir string) coresandbox.Runner {
-	return sandboxlocal.New(workDir)
+func UnconfinedRunner(workDir string) (coresandbox.Runner, error) {
+	if goruntime.GOOS == "windows" {
+		// Same job-object backend as the confined runner, but without
+		// write confinement (YOLO keeps its full-host-access
+		// contract). Interactive sessions stay disabled on Windows.
+		runner, err := sbwindows.New(workDir)
+		if err != nil {
+			return nil, fmt.Errorf("opencraft sandbox: windows (unconfined): %w", err)
+		}
+		return noTTYRunner{runner}, nil
+	}
+	return sandboxlocal.New(workDir), nil
 }
 
 func dedupeStrings(in []string) []string {

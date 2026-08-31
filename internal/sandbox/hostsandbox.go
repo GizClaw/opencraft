@@ -19,6 +19,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/sandbox/bwrap"
 	sandboxlocal "github.com/GizClaw/flowcraft/core/sandbox/local"
 	"github.com/GizClaw/flowcraft/core/sandbox/seatbelt"
+	sbwindows "github.com/GizClaw/flowcraft/core/sandbox/windows"
 	corenet "github.com/GizClaw/flowcraft/core/utils/net"
 
 	"github.com/GizClaw/opencraft/internal/execd"
@@ -255,6 +256,17 @@ func (HostSandboxFactory) New(
 		case "linux":
 			backend, err = bwrap.New(s.Root,
 				bwrap.WithWritablePaths(s.WritablePaths...))
+		case "windows":
+			// flowcraft v0.2.2 Windows backend with OS-level write
+			// confinement; interactive sessions are disabled on
+			// Windows (issue #38) and the capability surface is kept
+			// honest.
+			var wb coresandbox.Runner
+			if wb, err = sbwindows.New(s.Root,
+				sbwindows.WithWriteConfinement(),
+				sbwindows.WithWritablePaths(s.WritablePaths...)); err == nil {
+				backend = noTTYRunner{wb}
+			}
 		default:
 			backend = sandboxlocal.New(s.Root)
 		}

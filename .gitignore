@@ -39,6 +39,7 @@
 !execd_main.go
 !mac_window_*.go
 !execd_umask_*.go
+!execd_watch_*.go
 !wails.json
 !frontend/
 !frontend/**
