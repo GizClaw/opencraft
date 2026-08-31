@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // ProjectConfigDir finds the nearest .opencraft/config directory above
@@ -10,6 +11,12 @@ import (
 // (opencraft.yaml). The global ~/.opencraft/config is
 // excluded so discovery never mistakes it for a project layer.
 func ProjectConfigDir(workDir string) (string, bool) {
+	if strings.TrimSpace(workDir) == "" {
+		// Empty means "no workspace": never walk the current directory
+		// (Finder-launched apps have cwd "/") looking for a project
+		// layer.
+		return "", false
+	}
 	userDir, _ := UserConfigDir()
 	dir := workDir
 	for {

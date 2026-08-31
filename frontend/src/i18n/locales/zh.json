@@ -40,10 +40,16 @@
     "moreWorkspaces": "更多工作区",
     "plugins": "插件",
     "removeWorkspace": "从历史中移除",
+    "workspaceEmpty": "未选择工作区",
     "noAgents": "暂无子代理",
     "noAgentsHint": "助手可通过 create_agent 创建",
     "inferenceConfig": "推理配置",
     "settings": "设置"
+  },
+  "welcome": {
+    "title": "选择工作区开始",
+    "body": "OpenCraft 在一个项目文件夹内工作：助手创建或修改的文件都保存在那里。选择一个文件夹开始，或从侧边栏历史中打开。",
+    "chooseWorkspace": "选择文件夹…"
   },
   "kanban": {
     "title": "委托看板",

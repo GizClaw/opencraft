@@ -967,17 +967,25 @@ export function ToolsPanel() {
 
   return (
     <main className="flex-1 min-w-0 h-full flex flex-col min-h-0 bg-panel">
-      <header className="h-11 shrink-0 border-b border-edge flex items-center gap-3 px-4 select-none">
+      <header
+        className="h-11 shrink-0 border-b border-edge flex items-center gap-3 px-4 select-none"
+        style={{ ['--wails-draggable' as string]: 'drag' }}
+      >
         <HeaderIcon className="h-4 w-4 shrink-0 text-accent" />
         <h2 className="text-sm font-semibold">{meta?.label(t)}</h2>
         <span className="flex-1" />
-        <button
-          onClick={closeTools}
-          className="text-dim hover:text-fg"
-          title={t('tools.close')}
+        <div
+          className="flex items-center"
+          style={{ ['--wails-draggable' as string]: 'no-drag' }}
         >
-          <X size={18} />
-        </button>
+          <button
+            onClick={closeTools}
+            className="text-dim hover:text-fg"
+            title={t('tools.close')}
+          >
+            <X size={18} />
+          </button>
+        </div>
       </header>
       <div
         className={

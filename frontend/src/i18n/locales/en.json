@@ -40,10 +40,16 @@
     "moreWorkspaces": "More workspaces",
     "plugins": "Plugins",
     "removeWorkspace": "Remove from history",
+    "workspaceEmpty": "No workspace selected",
     "noAgents": "No subagents yet",
     "noAgentsHint": "The assistant can create agents with create_agent",
     "inferenceConfig": "Inference setup",
     "settings": "Settings"
+  },
+  "welcome": {
+    "title": "Choose a workspace to start",
+    "body": "OpenCraft works inside a project folder: files the assistant creates or changes live there. Pick a folder to begin — or open one from history in the sidebar.",
+    "chooseWorkspace": "Choose folder…"
   },
   "kanban": {
     "title": "Delegation board",

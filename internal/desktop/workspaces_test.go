@@ -69,6 +69,77 @@ func TestWorkspaceIDValidation(t *testing.T) {
 	}
 }
 
+func TestLastWorkspaceRestoresMostRecentExisting(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "workspaces")
+	older := filepath.Join(t.TempDir(), "repo-a")
+	newer := filepath.Join(t.TempDir(), "repo-b")
+	// repo-gone is recorded but never created: a stale history entry
+	// whose directory no longer exists must be skipped.
+	gone := filepath.Join(t.TempDir(), "repo-gone")
+	for _, dir := range []string{older, newer} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := saveWorkspaceMeta(root, older); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	if err := saveWorkspaceMeta(root, newer); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	if err := saveWorkspaceMeta(root, gone); err != nil {
+		t.Fatal(err)
+	}
+
+	got := lastWorkspaceFromDir(root)
+	if got != newer {
+		t.Fatalf("lastWorkspaceFromDir = %q, want %q", got, newer)
+	}
+}
+
+func TestLastWorkspaceSkipsHome(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "workspaces")
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no user home")
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveWorkspaceMeta(root, home); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	repo := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveWorkspaceMeta(root, repo); err != nil {
+		t.Fatal(err)
+	}
+
+	got := lastWorkspaceFromDir(root)
+	if got != repo {
+		t.Fatalf("lastWorkspaceFromDir = %q, want %q (home must not be auto-restored)", got, repo)
+	}
+}
+
+func TestLastWorkspaceEmptyHistory(t *testing.T) {
+	if got := lastWorkspaceFromDir(filepath.Join(t.TempDir(), "missing")); got != "" {
+		t.Fatalf("lastWorkspaceFromDir = %q, want empty", got)
+	}
+}
+
+func TestRebuildWithNoWorkspaceIsANoop(t *testing.T) {
+	app := &App{workDir: ""}
+	if err := app.rebuild(); err != nil {
+		t.Fatalf("rebuild with no workspace: %v", err)
+	}
+}
+
 func TestProjectTrustRoundTrip(t *testing.T) {
 	repo := filepath.Join(t.TempDir(), "repo")
 	if err := writeProjectTrust(repo, true); err != nil {

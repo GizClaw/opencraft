@@ -12,6 +12,7 @@ import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
 import { SubagentSidebar } from './components/SubagentSidebar';
 import { Toaster } from './components/Toaster';
+import { WelcomeView } from './components/WelcomeView';
 import { useStore, type AssistantItem } from './lib/store';
 import { usePluginStore } from './plugins/store';
 import type { UIEvent } from './lib/types';
@@ -76,7 +77,9 @@ function turnEndNotification(data: {
       const m = messages[i];
       if (m.role !== 'assistant') continue;
       snippet = m.items
-        .filter((it): it is AssistantItem & { kind: 'text' } => it.kind === 'text')
+        .filter(
+          (it): it is AssistantItem & { kind: 'text' } => it.kind === 'text',
+        )
         .map((it) => it.text)
         .join('')
         .trim();
@@ -96,6 +99,7 @@ export default function App() {
   const fatal = useStore((s) => s.fatal);
   const configOpen = useStore((s) => s.configOpen);
   const toolsView = useStore((s) => s.toolsView);
+  const workspace = useStore((s) => s.workspace);
   const current = useStore((s) => s.current);
   const subagentCards = useStore((s) => s.subagentCards);
   const subagentPanelOpen = useStore((s) => s.subagentPanelOpen);
@@ -240,7 +244,7 @@ export default function App() {
           </Suspense>
         ) : (
           <>
-            <ChatView />
+            {workspace ? <ChatView /> : <WelcomeView />}
             {subagentPanelOpen && subagentCards.length > 0 && (
               <SubagentSidebar />
             )}

@@ -307,14 +307,21 @@ func (a *App) OpenWorkspace(dir string) error {
 		"reason":          "workspace_switch",
 		"conversation_id": previous,
 	})
-	return a.rebuild()
+	if err := a.rebuild(); err != nil {
+		return err
+	}
+	// Remember the switch (best-effort) so the next launch restores
+	// this workspace. Recording here rather than in rebuild keeps the
+	// history to explicitly opened workspaces — a startup default can
+	// never re-record itself.
+	a.recordWorkspace(dir)
+	return nil
 }
 
 // ChooseWorkspace opens the native folder picker and switches the
 // workspace when the user picks one. An empty result means cancelled.
 func (a *App) ChooseWorkspace() (string, error) {
 	a.mu.Lock()
-	dir := a.workDir
 	ctx := a.ctx
 	a.mu.Unlock()
 	if ctx == nil {
@@ -323,7 +330,7 @@ func (a *App) ChooseWorkspace() (string, error) {
 	path, err := wailsruntime.OpenDirectoryDialog(
 		ctx, wailsruntime.OpenDialogOptions{
 			Title:            "选择工作区",
-			DefaultDirectory: dir,
+			DefaultDirectory: a.dialogStartDir(),
 		})
 	if err != nil {
 		return "", err
@@ -342,7 +349,6 @@ func (a *App) ChooseWorkspace() (string, error) {
 // path-selection UIs.
 func (a *App) PickFolder(title string) (string, error) {
 	a.mu.Lock()
-	dir := a.workDir
 	ctx := a.ctx
 	a.mu.Unlock()
 	if ctx == nil {
@@ -354,7 +360,7 @@ func (a *App) PickFolder(title string) (string, error) {
 	return wailsruntime.OpenDirectoryDialog(
 		ctx, wailsruntime.OpenDialogOptions{
 			Title:            title,
-			DefaultDirectory: dir,
+			DefaultDirectory: a.dialogStartDir(),
 		})
 }
 
@@ -362,7 +368,6 @@ func (a *App) PickFolder(title string) (string, error) {
 // filter (e.g. "*.zip").
 func (a *App) PickFile(title, pattern string) (string, error) {
 	a.mu.Lock()
-	dir := a.workDir
 	ctx := a.ctx
 	a.mu.Unlock()
 	if ctx == nil {
@@ -381,7 +386,7 @@ func (a *App) PickFile(title, pattern string) (string, error) {
 	return wailsruntime.OpenFileDialog(
 		ctx, wailsruntime.OpenDialogOptions{
 			Title:            title,
-			DefaultDirectory: dir,
+			DefaultDirectory: a.dialogStartDir(),
 			Filters:          filters,
 		})
 }

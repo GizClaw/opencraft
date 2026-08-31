@@ -23,6 +23,7 @@ import {
 import { api } from '../lib/api';
 import { useStore } from '../lib/store';
 import type { SessionMeta } from '../lib/types';
+import { WindowControls } from './WindowControls';
 import type { ComponentType } from 'react';
 import { MCPLogo } from './ToolsPanel';
 import { PluginEntries } from '../plugins/components/PluginEntries';
@@ -368,12 +369,17 @@ export function Sidebar() {
           height matches the chat header (h-11) so both rows align. */}
       <div
         className={`h-11 shrink-0 border-b border-edge flex items-center select-none ${
-          isMac ? 'pl-[78px]' : 'px-4'
+          isMac ? 'pl-[78px]' : ''
         }`}
         style={{ ['--wails-draggable' as string]: 'drag' }}
         onDoubleClick={() => WindowToggleMaximise()}
       >
-        {!isMac && <div className="font-semibold tracking-wide">OpenCraft</div>}
+        {!isMac && (
+          <div className="flex-1 min-w-0 pl-4 font-semibold tracking-wide truncate">
+            OpenCraft
+          </div>
+        )}
+        {!isMac && <WindowControls />}
       </div>
 
       <div className="px-4 pt-3 pb-2 select-none">
@@ -490,7 +496,9 @@ export function Sidebar() {
             </div>
           )}
           {workspaces.length === 0 ? (
-            <p className="text-xs text-dim">—</p>
+            <p className="text-xs text-dim">
+              {workspace ? '—' : t('sidebar.workspaceEmpty')}
+            </p>
           ) : (
             <>
               <ul className="space-y-1">
@@ -629,7 +637,9 @@ export function Sidebar() {
             </div>
             <div className="flex-1 overflow-y-auto p-2">
               {workspaces.length === 0 ? (
-                <p className="text-xs text-dim p-3">—</p>
+                <p className="text-xs text-dim p-3">
+                  {workspace ? '—' : t('sidebar.workspaceEmpty')}
+                </p>
               ) : (
                 <ul className="space-y-1">
                   {workspaces.map(renderWorkspaceRow)}

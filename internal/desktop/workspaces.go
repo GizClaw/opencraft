@@ -154,6 +154,44 @@ func loadWorkspaces(dir string) ([]WorkspaceMeta, error) {
 	return out, nil
 }
 
+// lastWorkspacePath returns the most recently opened workspace from
+// history that still exists, or "" when there is none. Startup uses it
+// to restore the last explicit workspace; a fresh install (no history)
+// yields "" so the app starts with no workspace selected.
+//
+// The user's home directory is never auto-restored: it was the old
+// Finder-launch fallback (recorded into history before the no-workspace
+// state existed) rather than an intentional project root. It stays in
+// the history list for explicit picks.
+func lastWorkspacePath() string {
+	dir, err := workspaceHistoryDir()
+	if err != nil {
+		return ""
+	}
+	return lastWorkspaceFromDir(dir)
+}
+
+// lastWorkspaceFromDir picks the most recent still-existing workspace
+// from a history directory, skipping the user's home (the old
+// Finder-launch fallback, not an intentional project root). Empty
+// means no workspace to restore.
+func lastWorkspaceFromDir(dir string) string {
+	metas, err := loadWorkspaces(dir)
+	if err != nil || len(metas) == 0 {
+		return ""
+	}
+	home, _ := os.UserHomeDir()
+	for _, m := range metas {
+		if home != "" && filepath.Clean(m.Path) == filepath.Clean(home) {
+			continue
+		}
+		if info, err := os.Stat(m.Path); err == nil && info.IsDir() {
+			return m.Path
+		}
+	}
+	return ""
+}
+
 // RemoveWorkspace drops one workspace from the history (the workspace
 // itself is untouched). The id must be a stable hex workspace id.
 func (a *App) RemoveWorkspace(id string) error {
@@ -172,6 +210,9 @@ func (a *App) RemoveWorkspace(id string) error {
 // exists for the current workspace and whether the user has trusted it.
 func (a *App) ProjectConfigStatus() ProjectConfigStatus {
 	wd := a.snapshotWorkDir()
+	if strings.TrimSpace(wd) == "" {
+		return ProjectConfigStatus{}
+	}
 	dir, present := config.ProjectConfigDir(wd)
 	if !present {
 		return ProjectConfigStatus{}
