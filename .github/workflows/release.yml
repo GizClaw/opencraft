@@ -282,7 +282,10 @@ jobs:
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
         run: |
           $ver = "$env:TAG".TrimStart('v')
-          Copy-Item build/bin/opencraft-amd64-installer.exe `
+          # wails names the NSIS installer after wails.json `name`
+          # (OpenCraft-amd64-installer.exe), not the binary output
+          # filename; the wildcard keeps the copy robust to renames.
+          Copy-Item build/bin/*-amd64-installer.exe `
             "opencraft-$ver-windows-amd64-installer.exe"
           Compress-Archive -Path build/bin/opencraft.exe `
             -DestinationPath "opencraft-$ver-windows-amd64.zip"
