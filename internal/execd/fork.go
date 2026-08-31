@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"syscall"
 	"time"
 )
 
@@ -65,11 +64,17 @@ func LaunchExe(
 	if err := cmd.Start(); err != nil {
 		return nil, sock, nil, fmt.Errorf("execd launch: %w", err)
 	}
+	var dialed *Client
 	stop := func() {
-		// SIGTERM first so the child runs its own cleanup
-		// (terminating sandbox sessions), then SIGKILL as a bound
-		// fallback.
-		_ = cmd.Process.Signal(syscall.SIGTERM)
+		// Close the client first: the child's Serve loop returns on
+		// EOF and runs its in-process session cleanup. On unix this is
+		// belt-and-braces alongside SIGTERM; on Windows it is the
+		// graceful shutdown trigger (SIGTERM is not deliverable there).
+		if dialed != nil {
+			_ = dialed.Close()
+		}
+		// SIGTERM on unix, no-op on Windows (EOF close above).
+		_ = terminateExecd(cmd)
 		waited := make(chan struct{})
 		go func() {
 			_ = cmd.Wait()
@@ -97,6 +102,7 @@ func LaunchExe(
 				stop()
 				return nil, sock, stop, fmt.Errorf("execd handshake: %w", err)
 			}
+			dialed = client
 			return client, sock, stop, nil
 		}
 		if time.Now().After(deadline) {

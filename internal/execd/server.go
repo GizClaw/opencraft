@@ -182,7 +182,7 @@ func (s *Server) handle(
 			caps = append(caps, string(CapSignal))
 		}
 		result = EnvironmentInfoResponse{
-			Shell:        "/bin/sh",
+			Shell:        defaultShell(),
 			Cwd:          "",
 			TmpDir:       os.TempDir(),
 			Capabilities: caps,

@@ -53,7 +53,11 @@ func runExecServer() {
 	if *listen == "" {
 		srv := execd.New(runner, os.Stdin, os.Stdout)
 		srv.DefaultEnv = policy
-		srv.SetUnconfinedBackend(sandbox.UnconfinedRunner(*workDir))
+		unconfined, err := sandbox.UnconfinedRunner(*workDir)
+		if err != nil {
+			execdFatal(1, "opencraft execd: %v", err)
+		}
+		srv.SetUnconfinedBackend(unconfined)
 		if err := srv.Serve(ctx); err != nil {
 			execdFatal(1, "opencraft execd: %v", err)
 		}
@@ -127,7 +131,11 @@ func runExecServer() {
 			}()
 			srv := execd.New(runner, conn, conn)
 			srv.DefaultEnv = policy
-			srv.SetUnconfinedBackend(sandbox.UnconfinedRunner(*workDir))
+			unconfined, err := sandbox.UnconfinedRunner(*workDir)
+			if err != nil {
+				execdFatal(1, "opencraft execd: %v", err)
+			}
+			srv.SetUnconfinedBackend(unconfined)
 			_ = srv.Serve(ctx)
 		}()
 	}
@@ -141,21 +149,6 @@ func runExecServer() {
 	case <-time.After(serveGrace):
 	}
 	_ = runner.Close()
-}
-
-// watchParent invokes onDeath once ppid stops being the caller's
-// parent. When a process dies, its children are reparented (to launchd
-// or init), so a changed Getppid is a reliable death signal without
-// relying on PID-reuse-prone kill probes.
-func watchParent(ppid int, onDeath func()) {
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-	for range ticker.C {
-		if os.Getppid() != ppid {
-			onDeath()
-			return
-		}
-	}
 }
 
 func execdFatal(code int, format string, args ...any) {

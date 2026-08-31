@@ -26,6 +26,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- flowcraft core upgraded to v0.2.2. Windows now uses flowcraft's
+  Windows sandbox backend with OS-level write confinement (restricted
+  Low-integrity token: children can only write inside the workspace and
+  configured writable paths) plus job-object process-tree lifecycle and
+  resource caps, instead of the no-isolation local runner. Sandboxed
+  process trees are terminated with their jobs (`KILL_ON_JOB_CLOSE`).
+  Interactive `exec_session` is disabled on Windows (the backend does
+  not combine confinement with ConPTY yet), and the `pty` capability is
+  no longer advertised there.
+- Windows execd lifecycle aligned with Unix: shutdown closes the client
+  connection first so the child runs its own session cleanup (SIGTERM
+  is not deliverable on Windows), and the parent-death watchdog waits
+  on a handle to the parent process instead of relying on orphan
+  reparenting.
+- `EnvironmentInfo` now reports the platform shell (`cmd.exe` on
+  Windows, `/bin/sh` elsewhere) instead of a hardcoded `/bin/sh`.
 - Assistant system prompt persona updated to a work partner — helping with
   coding and any local workflow, matching the README positioning.
 - Linux desktop builds now target webkit2gtk-4.1 (`-tags webkit2_41`), matching

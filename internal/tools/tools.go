@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	goruntime "runtime"
 
 	"github.com/GizClaw/flowcraft/core/inference/route"
 	"github.com/GizClaw/flowcraft/core/resource"
@@ -112,10 +113,19 @@ func (execSourceFactory) New(_ context.Context, in resource.Input) (any, error) 
 	if err != nil {
 		return nil, err
 	}
-	return toolList{
-		exec.MustNewCommand(runner),
-		exec.MustNewSession(runner),
-	}, nil
+	return execToolList(runner, goruntime.GOOS), nil
+}
+
+// execToolList builds the sandbox-backed exec tools for a target OS.
+// exec_session is not offered on Windows: the Windows sandbox runs
+// with OS-level write confinement, which the flowcraft backend does
+// not combine with ConPTY TTY sessions yet (issue #38).
+func execToolList(runner sandbox.Runner, goos string) toolList {
+	tools := toolList{exec.MustNewCommand(runner)}
+	if goos != "windows" {
+		tools = append(tools, exec.MustNewSession(runner))
+	}
+	return tools
 }
 
 // applypatchSourceFactory contributes the workspace-backed apply_patch

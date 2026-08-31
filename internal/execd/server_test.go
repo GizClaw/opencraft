@@ -43,7 +43,7 @@ func TestServeEnvironment(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Shell != "/bin/sh" || !strings.Contains(strings.Join(info.Capabilities, ","), "signal") {
+	if info.Shell != defaultShell() || !strings.Contains(strings.Join(info.Capabilities, ","), "signal") {
 		t.Errorf("info = %+v", info)
 	}
 }
