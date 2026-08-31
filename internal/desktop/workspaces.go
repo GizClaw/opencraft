@@ -154,21 +154,22 @@ func loadWorkspaces(dir string) ([]WorkspaceMeta, error) {
 	return out, nil
 }
 
-// lastWorkspacePath returns the most recently opened workspace from
-// history that still exists, or "" when there is none. Startup uses it
-// to restore the last explicit workspace; a fresh install (no history)
-// yields "" so the app starts with no workspace selected.
-//
-// The user's home directory is never auto-restored: it was the old
-// Finder-launch fallback (recorded into history before the no-workspace
-// state existed) rather than an intentional project root. It stays in
-// the history list for explicit picks.
-func lastWorkspacePath() string {
-	dir, err := workspaceHistoryDir()
-	if err != nil {
+// startupWorkDir resolves the initial workspace: an explicitly passed
+// directory wins, otherwise the most recently opened workspace from
+// history is restored. It never adopts the process cwd — macOS Finder
+// launches with cwd "/" and Windows Explorer with the exe folder, so
+// either would silently pick an unintended workspace — and never the
+// user's home. A fresh install (empty history) therefore starts with
+// no workspace and the UI shows the welcome screen / workspace picker
+// on every platform alike.
+func startupWorkDir(explicit, historyDir string) string {
+	if explicit != "" {
+		return explicit
+	}
+	if historyDir == "" {
 		return ""
 	}
-	return lastWorkspaceFromDir(dir)
+	return lastWorkspaceFromDir(historyDir)
 }
 
 // lastWorkspaceFromDir picks the most recent still-existing workspace
