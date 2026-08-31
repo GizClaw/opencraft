@@ -346,6 +346,29 @@ function mergeAppend(
   }
 }
 
+// friendlyInterruption maps engine interruption errors to user-facing
+// text so raw engine internals (e.g. "engine: interrupted
+// (host_shutdown)") never leak into the transcript. It returns null
+// when the error is not an interruption, so the original error stays.
+function friendlyInterruption(error: string): string | null {
+  const m = error.match(/^engine: interrupted(?: \(([a-z_]+)\))?(?:: (.+))?$/);
+  if (!m) return null;
+  const cause = m[1] ?? '';
+  const detail = m[2];
+  switch (cause) {
+    case 'host_shutdown':
+      return i18n.t('chat.interruptedHostShutdown');
+    case 'user_cancel':
+      return i18n.t('chat.cancelled');
+    case 'user_input':
+      return i18n.t('chat.interruptedUserInput');
+    case 'custom':
+      return detail ?? i18n.t('chat.interrupted');
+    default:
+      return i18n.t('chat.interrupted');
+  }
+}
+
 // mergeTurnDoc appends a produced file, or refreshes its byte count in
 // place when the same path is written again.
 function mergeTurnDoc(docs: TurnDoc[], path: string, bytes: number): TurnDoc[] {
@@ -893,8 +916,15 @@ export const useStore = create<StoreState>((set, get) => {
                 : i18n.t('chat.failed')
             : '';
           if (data.error || (failed && note)) {
+            const friendly = data.error
+              ? friendlyInterruption(data.error)
+              : null;
             const { msg, messages: next } = lastAssistant(messages);
-            mergeAppend(msg, 'text', `\n\n> ⛔ ${data.error || note}`);
+            mergeAppend(
+              msg,
+              'text',
+              `\n\n> ⛔ ${friendly ?? data.error ?? note}`,
+            );
             messages = next;
           }
           set((state) => {

@@ -75,7 +75,13 @@ const StreamView = memo(function StreamView({
   stream: MessageView[];
 }) {
   const { t } = useTranslation();
-  const items = stream.flatMap((m) => m.items);
+  // update_plan renders once in the main chat's plan panel, so it is
+  // dropped from subagent streams too.
+  const items = stream
+    .flatMap((m) => m.items)
+    .filter(
+      (it) => !(it.kind === 'tool_call' && it.tool.name === 'update_plan'),
+    );
   if (items.length === 0) return null;
   return (
     <div className="rounded-lg border border-edge bg-panel2 p-2 space-y-1.5">
