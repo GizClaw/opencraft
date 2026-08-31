@@ -460,6 +460,7 @@ interface StoreState {
   configured: boolean;
   fatal: string | null;
   configOpen: boolean;
+  configTab: string;
   toolsView: ToolPage | null;
   workspace: string;
   agents: AgentSummary[];
@@ -492,7 +493,7 @@ interface StoreState {
   clearLastFailed: () => void;
   replyInteract: (id: string, req: ReplyRequest) => Promise<void>;
   cancelRun: () => Promise<void>;
-  openConfig: () => void;
+  openConfig: (tab?: string) => void;
   closeConfig: () => void;
   openTools: (view: ToolPage) => void;
   closeTools: () => void;
@@ -641,6 +642,7 @@ export const useStore = create<StoreState>((set, get) => {
     configured: false,
     fatal: null,
     configOpen: false,
+    configTab: 'ui',
     toolsView: null,
     workspace: '',
     agents: [],
@@ -771,14 +773,6 @@ export const useStore = create<StoreState>((set, get) => {
                 messages: applyStream(conv.messages, data.delta),
                 stage,
               });
-              // The finish delta arrives as soon as generation ends —
-              // well before the backend runs its commit hooks and emits
-              // turn_end. Clear the running state here so a slow commit
-              // (SQLite writes, memory fold) never leaves the UI stuck;
-              // turn_end still settles failures/status afterwards.
-              if (data.delta?.type === 'finish') {
-                updateConv(convID, { busy: false, stage: '' });
-              }
             }
             break;
           }
@@ -1050,7 +1044,7 @@ export const useStore = create<StoreState>((set, get) => {
       }
     },
 
-    openConfig: () => set({ configOpen: true }),
+    openConfig: (tab) => set({ configOpen: true, configTab: tab ?? 'ui' }),
     closeConfig: () => set({ configOpen: false }),
 
     openTools: (view) => set({ toolsView: view, configOpen: false }),

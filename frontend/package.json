@@ -8,7 +8,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "test": "vitest run"
   },
   "dependencies": {
     "@cordisjs/core": "^3.18.1",
@@ -32,6 +33,7 @@
     "prettier": "^3.9.6",
     "tailwindcss": "^4.1.7",
     "typescript": "^5.6.3",
-    "vite": "^7.0.0"
+    "vite": "^7.0.0",
+    "vitest": "^4.1.11"
   }
 }

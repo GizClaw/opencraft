@@ -6,9 +6,9 @@ import {
   ChevronRight,
   Download,
   ExternalLink,
-  Kanban,
   Loader2,
   Plug,
+  Puzzle,
   RotateCw,
   Sparkles,
   Trash2,
@@ -25,20 +25,28 @@ import type { MCPCatalogEntry, SkillCatalogEntry } from '../lib/catalog';
 import { GitHubSearch } from './GitHubSearch';
 import type { GitHubRepo } from './GitHubSearch';
 import { probeMCPServerLaunch } from './GitHubSearch';
-import { KanbanSection } from './KanbanView';
+import { PluginManager } from '../plugins/components/PluginManager';
 const AgentGraphEditor = lazy(() =>
   import('./GraphView').then((m) => ({ default: m.AgentGraphEditor })),
 );
 
-export type ToolPage = 'mcp' | 'agents' | 'skills' | 'kanban';
+export type ToolPage = 'agents' | 'skills' | 'plugins';
 
 // MCPLogo renders the official Model Context Protocol mark (cropped from
 // the modelcontextprotocol.io brand logo) as inline SVG so it inherits
 // the surrounding text color and matches the other sidebar icons.
-export function MCPLogo({ className }: { className?: string }) {
+export function MCPLogo({
+  className,
+  size = '1.0714rem',
+}: {
+  className?: string;
+  size?: string | number;
+}) {
   return (
     <svg
       viewBox="19 23 158 168"
+      width={size}
+      height={size}
       fill="none"
       aria-hidden="true"
       className={className}
@@ -216,7 +224,7 @@ export function MCPSection() {
     const st = statuses[row.name.trim()];
     if (!st) return null;
     const base =
-      'flex items-center gap-1.5 rounded px-1.5 py-0.5 text-[10px] whitespace-nowrap';
+      'flex items-center gap-1.5 rounded px-1.5 py-0.5 text-[0.7143rem] whitespace-nowrap';
     if (st.status === 'connected') {
       return (
         <span className={`${base} text-ok border border-ok/30 bg-ok/10`}>
@@ -231,7 +239,7 @@ export function MCPSection() {
           className={`${base} text-dim border border-edge bg-panel`}
           title={t('config.mcpStatusConnectingHint')}
         >
-          <Loader2 size={10} className="animate-spin" />
+          <Loader2 size="0.7143rem" className="animate-spin" />
           {t('config.mcpStatusConnecting')}
         </span>
       );
@@ -294,7 +302,7 @@ export function MCPSection() {
     <div className="space-y-3">
       <p className="text-xs text-dim">{t('config.mcpHint')}</p>
       <div className="flex items-center gap-2 text-xs text-dim">
-        <Plug size={13} className="text-accent" />
+        <Plug size="0.9286rem" className="text-accent" />
         {t('config.mcpCount', { count: mcpRows.length })}
       </div>
       <div className="rounded-xl border border-edge bg-panel2">
@@ -302,12 +310,12 @@ export function MCPSection() {
           onClick={() => setDiscoverOpen((v) => !v)}
           className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-panel2/70"
         >
-          <Sparkles size={14} className="text-accent shrink-0" />
+          <Sparkles size="1.0000rem" className="text-accent shrink-0" />
           <span className="flex-1">{t('config.mcpDiscover')}</span>
           {discoverOpen ? (
-            <ChevronDown size={14} className="text-dim" />
+            <ChevronDown size="1.0000rem" className="text-dim" />
           ) : (
-            <ChevronRight size={14} className="text-dim" />
+            <ChevronRight size="1.0000rem" className="text-dim" />
           )}
         </button>
         {discoverOpen && (
@@ -324,7 +332,7 @@ export function MCPSection() {
                 <span className="flex-1 text-xs text-dim min-w-0 truncate">
                   {entry.description}
                 </span>
-                <code className="text-[10px] text-dim shrink-0 hidden sm:inline">
+                <code className="text-[0.7143rem] text-dim shrink-0 hidden sm:inline">
                   {entry.command} {entry.args.join(' ')}
                 </code>
                 {addedNames.has(entry.name) ? (
@@ -349,7 +357,7 @@ export function MCPSection() {
                 onPick={(repo) => void addGitHubMCP(repo)}
                 busy={addingRepo}
               />
-              <p className="text-[11px] text-dim">
+              <p className="text-[0.7857rem] text-dim">
                 {t('config.mcpSearchHint')}
               </p>
             </div>
@@ -375,7 +383,7 @@ export function MCPSection() {
             className="rounded-xl border border-edge bg-panel2 p-3 space-y-2"
           >
             <div className="flex items-center gap-2">
-              <Plug size={13} className="text-accent shrink-0" />
+              <Plug size="0.9286rem" className="text-accent shrink-0" />
               <input
                 value={row.name}
                 onChange={(e) => updateMCP(row.id, { name: e.target.value })}
@@ -389,7 +397,7 @@ export function MCPSection() {
                   className="text-dim hover:text-fg"
                   title={t('config.mcpOpenRepo')}
                 >
-                  <ExternalLink size={13} />
+                  <ExternalLink size="0.9286rem" />
                 </button>
               )}
               <select
@@ -411,12 +419,12 @@ export function MCPSection() {
                 title={t('config.mcpRemove')}
                 aria-label={t('config.mcpRemove')}
               >
-                <Trash2 size={14} />
+                <Trash2 size="1.0000rem" />
               </button>
             </div>
             <div className="space-y-2">
               <div>
-                <div className="mb-1 text-[11px] text-dim">
+                <div className="mb-1 text-[0.7857rem] text-dim">
                   {t('config.mcpCommandLabel')}
                 </div>
                 {row.transport === 'stdio' ? (
@@ -438,7 +446,7 @@ export function MCPSection() {
                 )}
               </div>
               <div>
-                <div className="mb-1 text-[11px] text-dim">
+                <div className="mb-1 text-[0.7857rem] text-dim">
                   {t('config.mcpArgsLabel')}
                 </div>
                 <input
@@ -451,7 +459,7 @@ export function MCPSection() {
                 />
               </div>
               <div>
-                <div className="mb-1 text-[11px] text-dim">
+                <div className="mb-1 text-[0.7857rem] text-dim">
                   {t('config.mcpEnvLabel')}
                 </div>
                 <textarea
@@ -478,9 +486,9 @@ export function MCPSection() {
                 className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim hover:text-fg disabled:opacity-40"
               >
                 {testing === row.id ? (
-                  <Loader2 size={12} className="animate-spin" />
+                  <Loader2 size="0.8571rem" className="animate-spin" />
                 ) : (
-                  <Zap size={12} />
+                  <Zap size="0.8571rem" />
                 )}
                 {testing === row.id
                   ? t('config.mcpTesting')
@@ -522,7 +530,7 @@ export function MCPSection() {
           }
           className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
         >
-          <Plug size={14} />
+          <Plug size="1.0000rem" />
           {t('config.mcpAdd')}
         </button>
         <button
@@ -596,13 +604,13 @@ export function AgentsSection({ onEdit }: { onEdit: (name: string) => void }) {
               className="group flex cursor-pointer items-center gap-3 rounded-xl border border-edge bg-panel2 p-3 transition-colors hover:border-accent/40"
             >
               <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-accent/20 bg-accent/10">
-                <Bot size={16} className="text-accent" />
+                <Bot size="1.1429rem" className="text-accent" />
               </span>
               <div className="flex-1 min-w-0">
                 <div className="flex items-baseline gap-2">
                   <span className="truncate text-sm font-medium">{a.name}</span>
                   {a.created_at && (
-                    <span className="shrink-0 text-[10px] text-dim tabular-nums">
+                    <span className="shrink-0 text-[0.7143rem] text-dim tabular-nums">
                       {fmtWhen(a.created_at)}
                     </span>
                   )}
@@ -625,7 +633,7 @@ export function AgentsSection({ onEdit }: { onEdit: (name: string) => void }) {
                   }}
                   className="flex items-center gap-1 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim hover:border-accent/40 hover:text-accent"
                 >
-                  <Workflow size={12} />
+                  <Workflow size="0.8571rem" />
                   {t('config.agentsEditGraph')}
                 </button>
                 <button
@@ -635,7 +643,7 @@ export function AgentsSection({ onEdit }: { onEdit: (name: string) => void }) {
                   }}
                   className="flex items-center gap-1 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim hover:border-err/40 hover:text-err"
                 >
-                  <Trash2 size={12} />
+                  <Trash2 size="0.8571rem" />
                   {t('config.agentsDelete')}
                 </button>
               </div>
@@ -659,7 +667,7 @@ export function AgentsSection({ onEdit }: { onEdit: (name: string) => void }) {
               onClick={() => void deleteAgent(confirmDelete)}
               className="flex items-center gap-1.5 rounded-lg bg-err px-4 py-1.5 text-sm text-white hover:opacity-90"
             >
-              <Trash2 size={13} />
+              <Trash2 size="0.9286rem" />
               {t('config.agentsDelete')}
             </button>
           </div>
@@ -801,14 +809,14 @@ export function SkillsSection() {
             onClick={() => setImportOpen((v) => !v)}
             className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
           >
-            <Download size={14} />
+            <Download size="1.0000rem" />
             {t('config.skillsImport')}
           </button>
           <button
             onClick={() => void reloadSkills()}
             className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
           >
-            <RotateCw size={14} />
+            <RotateCw size="1.0000rem" />
             {t('config.skillsRefresh')}
           </button>
         </div>
@@ -845,7 +853,9 @@ export function SkillsSection() {
               disabled={installing}
               className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-50"
             >
-              {installing && <Loader2 size={14} className="animate-spin" />}
+              {installing && (
+                <Loader2 size="1.0000rem" className="animate-spin" />
+              )}
               {t('config.skillsImportRun')}
             </button>
             <button
@@ -862,12 +872,12 @@ export function SkillsSection() {
           onClick={() => setDiscoverOpen((v) => !v)}
           className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-panel2/70"
         >
-          <Sparkles size={14} className="text-accent shrink-0" />
+          <Sparkles size="1.0000rem" className="text-accent shrink-0" />
           <span className="flex-1">{t('config.skillsDiscover')}</span>
           {discoverOpen ? (
-            <ChevronDown size={14} className="text-dim" />
+            <ChevronDown size="1.0000rem" className="text-dim" />
           ) : (
-            <ChevronRight size={14} className="text-dim" />
+            <ChevronRight size="1.0000rem" className="text-dim" />
           )}
         </button>
         {discoverOpen && (
@@ -924,7 +934,7 @@ export function SkillsSection() {
             title={s.path}
           >
             <div className="flex items-center gap-2">
-              <Sparkles size={15} className="text-accent shrink-0" />
+              <Sparkles size="1.0714rem" className="text-accent shrink-0" />
               <span className="text-sm font-medium">{s.name}</span>
               <span className="rounded bg-panel border border-edge px-1.5 text-xs text-dim">
                 {s.scope}
@@ -937,7 +947,7 @@ export function SkillsSection() {
                   }
                   className="flex items-center gap-1 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim hover:text-err hover:border-err/40"
                 >
-                  <Trash2 size={12} />
+                  <Trash2 size="0.8571rem" />
                   {t('config.skillsDelete')}
                 </button>
               )}
@@ -980,10 +990,9 @@ const VIEW_META: {
   icon: ComponentType<{ className?: string }>;
   label: (t: (k: string) => string) => string;
 }[] = [
-  { id: 'mcp', icon: MCPLogo, label: (t) => t('config.tabMCP') },
   { id: 'agents', icon: Bot, label: (t) => t('config.tabAgents') },
   { id: 'skills', icon: Sparkles, label: (t) => t('config.tabSkills') },
-  { id: 'kanban', icon: Kanban, label: (t) => t('kanban.title') },
+  { id: 'plugins', icon: Puzzle, label: (t) => t('config.tabPlugins') },
 ];
 
 // ToolsPanel is the right-side page shown when one of the sidebar tool
@@ -1000,6 +1009,7 @@ export function ToolsPanel() {
   if (!view) return null;
 
   const meta = VIEW_META.find((v) => v.id === view);
+  if (!meta) return null;
   const HeaderIcon = meta?.icon ?? MCPLogo;
 
   return (
@@ -1020,7 +1030,7 @@ export function ToolsPanel() {
             className="text-dim hover:text-fg"
             title={t('tools.close')}
           >
-            <X size={18} />
+            <X size="1.2857rem" />
           </button>
         </div>
       </header>
@@ -1047,10 +1057,9 @@ export function ToolsPanel() {
           </Suspense>
         ) : (
           <>
-            {view === 'mcp' && <MCPSection />}
             {view === 'agents' && <AgentsSection onEdit={setEditingAgent} />}
             {view === 'skills' && <SkillsSection />}
-            {view === 'kanban' && <KanbanSection />}
+            {view === 'plugins' && <PluginManager showTitle={false} />}
           </>
         )}
       </div>

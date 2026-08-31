@@ -51,6 +51,12 @@ jobs:
       - name: Build frontend assets
         run: npm run build --prefix frontend
 
+      - name: Test frontend
+        run: npm run test --prefix frontend
+
+      - name: Format check (frontend)
+        run: npm run format:check --prefix frontend
+
       - name: Format (gofmt)
         run: |
           files="$(gofmt -l .)"

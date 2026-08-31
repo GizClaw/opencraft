@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Copy, Minus, Square, X } from 'lucide-react';
 import {
-  Environment,
   Quit,
   WindowIsMaximised,
   WindowMinimise,
@@ -9,27 +8,21 @@ import {
 } from '../../wailsjs/runtime/runtime';
 
 // WindowControls renders the custom minimize/maximize/close buttons for
-// the frameless Windows/Linux window. macOS uses the native traffic
-// lights, so it renders nothing there. The buttons live inside the
-// draggable title strip, so they opt out of window dragging via the
-// no-drag marker (CSS custom properties inherit through the DOM).
+// the frameless Windows/Linux window. It is only mounted inside the
+// TopBar, which macOS never renders (macOS uses the native traffic
+// lights instead). The buttons live inside the draggable top bar, so
+// they opt out of window dragging via the no-drag marker (CSS custom
+// properties inherit through the DOM).
 export function WindowControls() {
-  const [isMac, setIsMac] = useState(false);
   const [maximised, setMaximised] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    void Environment().then((env) => {
-      if (!alive) return;
-      setIsMac(env.platform === 'darwin');
-      if (env.platform !== 'darwin') {
-        void WindowIsMaximised()
-          .then((m) => {
-            if (alive) setMaximised(m);
-          })
-          .catch(() => {});
-      }
-    });
+    void WindowIsMaximised()
+      .then((m) => {
+        if (alive) setMaximised(m);
+      })
+      .catch(() => {});
     // Reconcile the icon whenever the window is resized (double-click
     // maximize, Windows snap, keyboard shortcuts, …).
     const onResize = () => {
@@ -43,8 +36,6 @@ export function WindowControls() {
       window.removeEventListener('resize', onResize);
     };
   }, []);
-
-  if (isMac) return null;
 
   const toggleMaximise = () => {
     WindowToggleMaximise();
@@ -62,21 +53,21 @@ export function WindowControls() {
         aria-label="Minimize"
         className="grid w-12 place-items-center text-dim transition-colors hover:bg-panel2 hover:text-fg"
       >
-        <Minus size={15} />
+        <Minus size="1.0714rem" />
       </button>
       <button
         onClick={toggleMaximise}
         aria-label={maximised ? 'Restore' : 'Maximize'}
         className="grid w-12 place-items-center text-dim transition-colors hover:bg-panel2 hover:text-fg"
       >
-        {maximised ? <Copy size={13} /> : <Square size={12} />}
+        {maximised ? <Copy size="0.9286rem" /> : <Square size="0.8571rem" />}
       </button>
       <button
         onClick={Quit}
         aria-label="Close"
         className="grid w-12 place-items-center text-dim transition-colors hover:bg-[#e81123] hover:text-white"
       >
-        <X size={16} />
+        <X size="1.1429rem" />
       </button>
     </div>
   );

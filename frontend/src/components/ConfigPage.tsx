@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { ComponentType } from 'react';
 import {
   ArrowDown,
   ArrowDownToLine,
@@ -6,15 +7,17 @@ import {
   ArrowUpFromLine,
   BarChart3,
   Brain,
+  Check,
+  ChevronDown,
   Cpu,
   Database,
+  Kanban,
   Languages,
   Loader2,
   Monitor,
   Moon,
   Palette,
   Plus,
-  Puzzle,
   RefreshCw,
   ScrollText,
   Settings,
@@ -26,10 +29,10 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import { LogViewer } from './LogViewer';
+import { KanbanSection } from './KanbanView';
 import { useStore } from '../lib/store';
 import type {
   CacheClearResult,
@@ -44,7 +47,7 @@ import type {
   UsagePoint,
 } from '../lib/types';
 import { UsageChart } from './UsageChart';
-import { PluginManager } from '../plugins/components/PluginManager';
+import { MCPLogo, MCPSection } from './ToolsPanel';
 import { PluginPanels } from '../plugins/components/PluginPanels';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 
@@ -77,16 +80,18 @@ interface InstanceRow {
 type Tab =
   | 'ui'
   | 'inference'
+  | 'mcp'
   | 'usage'
   | 'memory'
   | 'permissions'
   | 'logs'
   | 'diagnostics'
-  | 'plugins';
+  | 'kanban';
 
 export function ConfigPage() {
   const configured = useStore((s) => s.configured);
   const closeConfig = useStore((s) => s.closeConfig);
+  const configTab = useStore((s) => s.configTab);
   const toast = useStore((s) => s.toast);
   const theme = useStore((s) => s.theme);
   const setTheme = useStore((s) => s.setTheme);
@@ -94,8 +99,9 @@ export function ConfigPage() {
     `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const { t, i18n } = useTranslation();
   const lang = i18n.resolvedLanguage?.startsWith('zh') ? 'zh' : 'en';
+  const [langMenuOpen, setLangMenuOpen] = useState(false);
 
-  const [tab, setTab] = useState<Tab>('ui');
+  const [tab, setTab] = useState<Tab>(configTab as Tab);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -566,22 +572,27 @@ export function ConfigPage() {
     return d.toLocaleDateString();
   };
 
-  const tabs: { id: Tab; label: string; icon: LucideIcon }[] = [
+  const tabs: {
+    id: Tab;
+    label: string;
+    icon: ComponentType<{ className?: string; size?: string | number }>;
+  }[] = [
     { id: 'ui', label: t('config.tabUi'), icon: Palette },
     { id: 'inference', label: t('config.tabInference'), icon: Cpu },
+    { id: 'mcp', label: t('config.tabMCP'), icon: MCPLogo },
     { id: 'usage', label: t('config.tabUsage'), icon: BarChart3 },
     { id: 'memory', label: t('config.tabMemory'), icon: Database },
     { id: 'permissions', label: t('config.tabPermissions'), icon: ShieldCheck },
     { id: 'logs', label: t('config.tabLogs'), icon: ScrollText },
     { id: 'diagnostics', label: t('config.tabDiagnostics'), icon: Stethoscope },
-    { id: 'plugins', label: t('config.tabPlugins'), icon: Puzzle },
+    { id: 'kanban', label: t('kanban.title'), icon: Kanban },
   ];
 
   return (
     <div className="fixed inset-x-0 bottom-0 top-11 z-50 bg-black/70 grid place-items-center">
-      <div className="w-[960px] max-w-[calc(100vw-48px)] h-[640px] max-h-[calc(100vh-96px)] flex flex-col rounded-2xl border border-edge bg-panel shadow-2xl">
+      <div className="w-[68.5714rem] max-w-[calc(100vw-3.4286rem)] h-[45.7143rem] max-h-[calc(100vh-6.8571rem)] flex flex-col rounded-2xl border border-edge bg-panel shadow-2xl">
         <div className="flex items-center gap-4 px-5 py-4 border-b border-edge">
-          <Settings size={18} className="text-accent" />
+          <Settings size="1.2857rem" className="text-accent" />
           <h2 className="text-base font-semibold">{t('config.title')}</h2>
           <span className="flex-1" />
           <button
@@ -589,7 +600,7 @@ export function ConfigPage() {
             className="text-dim hover:text-fg"
             aria-label={t('tools.close')}
           >
-            <X size={18} />
+            <X size="1.2857rem" />
           </button>
         </div>
 
@@ -617,7 +628,7 @@ export function ConfigPage() {
                       : 'text-dim hover:bg-panel2 hover:text-fg'
                   }`}
                 >
-                  <Icon size={15} className="shrink-0" />
+                  <Icon size="1.0714rem" className="shrink-0" />
                   <span className="truncate">{tb.label}</span>
                 </button>
               );
@@ -632,34 +643,65 @@ export function ConfigPage() {
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <div className="flex items-center gap-2 text-sm font-medium">
-                        <Languages size={15} className="text-accent" />
+                        <Languages size="1.0714rem" className="text-accent" />
                         {t('config.uiLanguage')}
                       </div>
                       <p className="mt-1 text-xs text-dim">
                         {t('config.uiLanguageHint')}
                       </p>
                     </div>
-                    <div className="flex shrink-0 overflow-hidden rounded-lg border border-edge text-sm">
+                    <div className="relative shrink-0">
                       <button
-                        onClick={() => void i18n.changeLanguage('zh')}
-                        className={`px-3 py-1.5 transition-colors ${
-                          lang === 'zh'
-                            ? 'bg-accent text-white'
-                            : 'text-dim hover:bg-panel hover:text-fg'
-                        }`}
+                        onClick={() => setLangMenuOpen((v) => !v)}
+                        className="flex items-center gap-1.5 rounded-lg border border-edge bg-panel px-2.5 py-1.5 text-sm text-fg transition-colors hover:border-accent/50"
                       >
-                        中文
+                        <Languages size="0.8571rem" className="text-dim" />
+                        {lang === 'zh' ? '中文' : 'English'}
+                        <ChevronDown
+                          size="0.8571rem"
+                          className={`text-dim transition-transform ${
+                            langMenuOpen ? 'rotate-180' : ''
+                          }`}
+                        />
                       </button>
-                      <button
-                        onClick={() => void i18n.changeLanguage('en')}
-                        className={`px-3 py-1.5 transition-colors ${
-                          lang === 'en'
-                            ? 'bg-accent text-white'
-                            : 'text-dim hover:bg-panel hover:text-fg'
-                        }`}
-                      >
-                        English
-                      </button>
+                      {langMenuOpen && (
+                        <>
+                          <div
+                            className="fixed inset-0 z-30"
+                            onClick={() => setLangMenuOpen(false)}
+                          />
+                          <div className="absolute right-0 top-full z-40 mt-1.5 w-40 rounded-xl border border-edge bg-panel p-1 shadow-xl">
+                            <button
+                              onClick={() => {
+                                setLangMenuOpen(false);
+                                void i18n.changeLanguage('zh');
+                              }}
+                              className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm ${
+                                lang === 'zh'
+                                  ? 'bg-accent/10 text-accent'
+                                  : 'text-dim hover:bg-panel2 hover:text-fg'
+                              }`}
+                            >
+                              <span>中文</span>
+                              {lang === 'zh' && <Check size="0.8571rem" />}
+                            </button>
+                            <button
+                              onClick={() => {
+                                setLangMenuOpen(false);
+                                void i18n.changeLanguage('en');
+                              }}
+                              className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm ${
+                                lang === 'en'
+                                  ? 'bg-accent/10 text-accent'
+                                  : 'text-dim hover:bg-panel2 hover:text-fg'
+                              }`}
+                            >
+                              <span>English</span>
+                              {lang === 'en' && <Check size="0.8571rem" />}
+                            </button>
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -667,7 +709,7 @@ export function ConfigPage() {
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <div className="flex items-center gap-2 text-sm font-medium">
-                        <Palette size={15} className="text-accent" />
+                        <Palette size="1.0714rem" className="text-accent" />
                         {t('config.uiTheme')}
                       </div>
                       <p className="mt-1 text-xs text-dim">
@@ -683,7 +725,7 @@ export function ConfigPage() {
                             : 'text-dim hover:bg-panel hover:text-fg'
                         }`}
                       >
-                        <Moon size={13} />
+                        <Moon size="0.9286rem" />
                         {t('config.uiThemeDark')}
                       </button>
                       <button
@@ -694,7 +736,7 @@ export function ConfigPage() {
                             : 'text-dim hover:bg-panel hover:text-fg'
                         }`}
                       >
-                        <Sun size={13} />
+                        <Sun size="0.9286rem" />
                         {t('config.uiThemeLight')}
                       </button>
                       <button
@@ -705,7 +747,7 @@ export function ConfigPage() {
                             : 'text-dim hover:bg-panel hover:text-fg'
                         }`}
                       >
-                        <Monitor size={13} />
+                        <Monitor size="0.9286rem" />
                         {t('config.uiThemeAuto')}
                       </button>
                     </div>
@@ -737,7 +779,7 @@ export function ConfigPage() {
                     onClick={() => addInstance(newType)}
                     className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
                   >
-                    <Plus size={14} />
+                    <Plus size="1.0000rem" />
                     {t('config.addInstance')}
                   </button>
                 </div>
@@ -776,7 +818,7 @@ export function ConfigPage() {
                           {prov?.name ?? row.type}
                         </span>
                         {row.managed && (
-                          <span className="shrink-0 rounded bg-panel px-1.5 py-0.5 text-[10px] text-dim">
+                          <span className="shrink-0 rounded bg-panel px-1.5 py-0.5 text-[0.7143rem] text-dim">
                             {t('config.managedBadge')}
                           </span>
                         )}
@@ -796,7 +838,7 @@ export function ConfigPage() {
                           title={t('config.moveUp')}
                           aria-label={t('config.moveUp')}
                         >
-                          <ArrowUp size={14} />
+                          <ArrowUp size="1.0000rem" />
                         </button>
                         <button
                           onClick={() => moveInstance(row.id, 1)}
@@ -805,7 +847,7 @@ export function ConfigPage() {
                           title={t('config.moveDown')}
                           aria-label={t('config.moveDown')}
                         >
-                          <ArrowDown size={14} />
+                          <ArrowDown size="1.0000rem" />
                         </button>
                         {!row.managed && (
                           <button
@@ -817,7 +859,7 @@ export function ConfigPage() {
                             className="text-dim hover:text-err shrink-0"
                             title={t('config.removeInstance')}
                           >
-                            <Trash2 size={14} />
+                            <Trash2 size="1.0000rem" />
                           </button>
                         )}
                       </div>
@@ -863,7 +905,7 @@ export function ConfigPage() {
                                   onClick={() => addModel(row.id)}
                                   className="flex items-center gap-1 text-xs text-dim hover:text-fg"
                                 >
-                                  <Plus size={12} />
+                                  <Plus size="0.8571rem" />
                                   {t('config.addModel')}
                                 </button>
                               )}
@@ -892,7 +934,7 @@ export function ConfigPage() {
                                     title={t('config.moveUp')}
                                     aria-label={t('config.moveUp')}
                                   >
-                                    <ArrowUp size={13} />
+                                    <ArrowUp size="0.9286rem" />
                                   </button>
                                   <button
                                     onClick={() => moveModel(row.id, mi, 1)}
@@ -901,7 +943,7 @@ export function ConfigPage() {
                                     title={t('config.moveDown')}
                                     aria-label={t('config.moveDown')}
                                   >
-                                    <ArrowDown size={13} />
+                                    <ArrowDown size="0.9286rem" />
                                   </button>
                                   {!row.managed && (
                                     <button
@@ -910,7 +952,7 @@ export function ConfigPage() {
                                       title={t('config.removeModel')}
                                       aria-label={t('config.removeModel')}
                                     >
-                                      <X size={14} />
+                                      <X size="1.0000rem" />
                                     </button>
                                   )}
                                 </div>
@@ -1103,7 +1145,7 @@ export function ConfigPage() {
                             title={t('config.moveUp')}
                             aria-label={t('config.moveUp')}
                           >
-                            <ArrowUp size={14} />
+                            <ArrowUp size="1.0000rem" />
                           </button>
                           <button
                             onClick={() => move(idx, 1)}
@@ -1112,7 +1154,7 @@ export function ConfigPage() {
                             title={t('config.moveDown')}
                             aria-label={t('config.moveDown')}
                           >
-                            <ArrowDown size={14} />
+                            <ArrowDown size="1.0000rem" />
                           </button>
                         </div>
                       ))}
@@ -1139,9 +1181,9 @@ export function ConfigPage() {
                     aria-label={t('config.logsRefresh')}
                   >
                     {usageLoading ? (
-                      <Loader2 size={13} className="animate-spin" />
+                      <Loader2 size="0.9286rem" className="animate-spin" />
                     ) : (
-                      <RefreshCw size={13} />
+                      <RefreshCw size="0.9286rem" />
                     )}
                     {t('config.logsRefresh')}
                   </button>
@@ -1152,7 +1194,7 @@ export function ConfigPage() {
                     {[0, 1, 2, 3].map((i) => (
                       <div
                         key={i}
-                        className="h-[72px] animate-pulse rounded-xl bg-panel2"
+                        className="h-[5.1429rem] animate-pulse rounded-xl bg-panel2"
                       />
                     ))}
                   </div>
@@ -1160,7 +1202,10 @@ export function ConfigPage() {
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                     <div className="rounded-xl border border-edge bg-panel2 p-3">
                       <div className="flex items-center gap-1.5 text-xs text-dim">
-                        <ArrowDownToLine size={13} className="text-accent" />
+                        <ArrowDownToLine
+                          size="0.9286rem"
+                          className="text-accent"
+                        />
                         {t('config.usageInput')}
                       </div>
                       <p className="mt-1.5 text-lg font-semibold tabular-nums text-accent">
@@ -1169,7 +1214,7 @@ export function ConfigPage() {
                     </div>
                     <div className="rounded-xl border border-edge bg-panel2 p-3">
                       <div className="flex items-center gap-1.5 text-xs text-dim">
-                        <ArrowUpFromLine size={13} className="text-ok" />
+                        <ArrowUpFromLine size="0.9286rem" className="text-ok" />
                         {t('config.usageOutput')}
                       </div>
                       <p className="mt-1.5 text-lg font-semibold tabular-nums text-ok">
@@ -1178,7 +1223,7 @@ export function ConfigPage() {
                     </div>
                     <div className="rounded-xl border border-edge bg-panel2 p-3">
                       <div className="flex items-center gap-1.5 text-xs text-dim">
-                        <Database size={13} className="text-subagent" />
+                        <Database size="0.9286rem" className="text-subagent" />
                         {t('config.usageCache')}
                       </div>
                       <p className="mt-1.5 text-lg font-semibold tabular-nums text-subagent">
@@ -1187,7 +1232,7 @@ export function ConfigPage() {
                     </div>
                     <div className="rounded-xl border border-edge bg-panel2 p-3">
                       <div className="flex items-center gap-1.5 text-xs text-dim">
-                        <Brain size={13} className="text-warn" />
+                        <Brain size="0.9286rem" className="text-warn" />
                         {t('config.usageReasoning')}
                       </div>
                       <p className="mt-1.5 text-lg font-semibold tabular-nums text-warn">
@@ -1204,7 +1249,7 @@ export function ConfigPage() {
                       <select
                         value={usageModel}
                         onChange={(e) => setUsageModel(e.target.value)}
-                        className="max-w-[340px] rounded-lg border border-edge bg-panel px-2 py-1.5 text-xs font-mono outline-none"
+                        className="max-w-[24.2857rem] rounded-lg border border-edge bg-panel px-2 py-1.5 text-xs font-mono outline-none"
                         title={t('config.usageModel')}
                       >
                         {usageRows.map((r) => (
@@ -1235,7 +1280,10 @@ export function ConfigPage() {
                         </button>
                       ))}
                       {usageLoading && (
-                        <Loader2 size={14} className="animate-spin text-dim" />
+                        <Loader2
+                          size="1.0000rem"
+                          className="animate-spin text-dim"
+                        />
                       )}
                     </div>
                     <div
@@ -1256,7 +1304,7 @@ export function ConfigPage() {
                           style={{ width: `${cacheHit.rate}%` }}
                         />
                       </div>
-                      <div className="mt-1.5 text-[10px] text-dim tabular-nums">
+                      <div className="mt-1.5 text-[0.7143rem] text-dim tabular-nums">
                         {fmtUsageTokens(cacheHit.read)} /{' '}
                         {fmtUsageTokens(cacheHit.input)}
                       </div>
@@ -1446,7 +1494,7 @@ export function ConfigPage() {
                   className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
                 >
                   {memorySaving && (
-                    <Loader2 size={14} className="animate-spin" />
+                    <Loader2 size="1.0000rem" className="animate-spin" />
                   )}
                   {t('setup.saveApply')}
                 </button>
@@ -1459,13 +1507,13 @@ export function ConfigPage() {
                   {t('config.permissionsHint')}
                 </p>
                 <div className="flex items-center gap-2 text-xs text-dim">
-                  <ShieldCheck size={14} className="text-ok" />
+                  <ShieldCheck size="1.0000rem" className="text-ok" />
                   {t('config.permissionsCount', { count: rules.length })}
                 </div>
                 {rules.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-edge px-6 py-10 text-center">
                     <ShieldCheck
-                      size={28}
+                      size="2.0000rem"
                       className="mx-auto mb-2 text-dim/60"
                     />
                     <p className="text-sm text-dim">
@@ -1484,7 +1532,10 @@ export function ConfigPage() {
                           i > 0 ? 'border-t border-edge/60' : ''
                         }`}
                       >
-                        <Terminal size={14} className="shrink-0 text-dim" />
+                        <Terminal
+                          size="1.0000rem"
+                          className="shrink-0 text-dim"
+                        />
                         <code className="flex-1 truncate font-mono text-sm text-fg">
                           {rule}
                         </code>
@@ -1503,14 +1554,17 @@ export function ConfigPage() {
                           aria-label={t('config.permissionsRemove')}
                           className="shrink-0 rounded p-1 text-dim opacity-0 transition-opacity hover:text-err group-hover:opacity-100"
                         >
-                          <Trash2 size={14} />
+                          <Trash2 size="1.0000rem" />
                         </button>
                       </div>
                     ))}
                   </div>
                 )}
                 <div className="flex items-center gap-2 rounded-xl border border-edge bg-panel2 p-2">
-                  <ShieldPlus size={15} className="ml-1 shrink-0 text-dim" />
+                  <ShieldPlus
+                    size="1.0714rem"
+                    className="ml-1 shrink-0 text-dim"
+                  />
                   <input
                     value={ruleInput}
                     onChange={(e) => setRuleInput(e.target.value)}
@@ -1749,11 +1803,8 @@ export function ConfigPage() {
               </div>
             )}
 
-            {tab === 'plugins' && (
-              <div className="space-y-4">
-                <PluginManager />
-              </div>
-            )}
+            {tab === 'mcp' && <MCPSection />}
+            {tab === 'kanban' && <KanbanSection />}
           </div>
         </div>
 
@@ -1766,7 +1817,7 @@ export function ConfigPage() {
               disabled={saving}
               className="flex items-center gap-1.5 rounded-lg bg-accent px-5 py-2 text-sm text-white hover:opacity-90 disabled:opacity-50"
             >
-              {saving && <Loader2 size={14} className="animate-spin" />}
+              {saving && <Loader2 size="1.0000rem" className="animate-spin" />}
               {t('setup.saveApply')}
             </button>
           )}

@@ -251,7 +251,7 @@ function GraphNodeCard({ data, selected }: NodeProps<RFNode<GraphNodeData>>) {
     return (
       <div
         onClick={() => onSelect(node.id)}
-        className={`grid h-[34px] w-[34px] cursor-pointer place-items-center rounded-full border-2 bg-err/10 text-[9px] font-semibold text-err ${
+        className={`grid h-[2.4286rem] w-[2.4286rem] cursor-pointer place-items-center rounded-full border-2 bg-err/10 text-[0.6429rem] font-semibold text-err ${
           selected ? 'border-err' : 'border-edge'
         }`}
       >
@@ -262,7 +262,7 @@ function GraphNodeCard({ data, selected }: NodeProps<RFNode<GraphNodeData>>) {
             type="target"
             position={Position.Left}
             id={`target-${i}`}
-            style={{ top: 8 + i * 9, opacity: 0 }}
+            style={{ top: `${(8 + i * 9) / 14}rem`, opacity: 0 }}
           />
         ))}
       </div>
@@ -278,12 +278,12 @@ function GraphNodeCard({ data, selected }: NodeProps<RFNode<GraphNodeData>>) {
       onClick={() => onSelect(node.id)}
       className={`flex h-full w-full cursor-pointer items-center gap-2.5 rounded-xl border bg-panel px-3 py-2 shadow-lg transition-shadow ${
         selected
-          ? 'shadow-[0_0_0_3px_rgba(79,140,255,0.25)]'
+          ? 'shadow-[0_0_0_0.2143rem_rgba(79,140,255,0.25)]'
           : 'hover:shadow-xl'
       }`}
       style={{
         borderColor: meta.stroke,
-        borderWidth: selected ? 2 : 1,
+        borderWidth: selected ? '0.1429rem' : 1,
         opacity: selected ? 1 : 0.92,
       }}
     >
@@ -293,7 +293,7 @@ function GraphNodeCard({ data, selected }: NodeProps<RFNode<GraphNodeData>>) {
           type="source"
           position={Position.Right}
           id={`source-${i}`}
-          style={{ top: 16 + i * 16, opacity: 0 }}
+          style={{ top: `${(16 + i * 16) / 14}rem`, opacity: 0 }}
         />
       ))}
       {[0, 1, 2].map((i) => (
@@ -302,7 +302,7 @@ function GraphNodeCard({ data, selected }: NodeProps<RFNode<GraphNodeData>>) {
           type="target"
           position={Position.Left}
           id={`target-${i}`}
-          style={{ top: 16 + i * 16, opacity: 0 }}
+          style={{ top: `${(16 + i * 16) / 14}rem`, opacity: 0 }}
         />
       ))}
       {[0, 1, 2].map((i) => (
@@ -313,20 +313,22 @@ function GraphNodeCard({ data, selected }: NodeProps<RFNode<GraphNodeData>>) {
           id={`back-${i}`}
           // Staggered below the source slots so a loop edge re-enters
           // at a different height than the forward edge leaves.
-          style={{ top: 24 + i * 16, opacity: 0 }}
+          style={{ top: `${(24 + i * 16) / 14}rem`, opacity: 0 }}
         />
       ))}
       <span
         className="grid h-8 w-8 shrink-0 place-items-center rounded-lg"
         style={{ background: `${meta.stroke}1f`, color: meta.stroke }}
       >
-        <Icon size={16} />
+        <Icon size="1.1429rem" />
       </span>
       <span className="min-w-0">
         <span className="block truncate text-sm font-semibold text-fg">
           {node.id}
         </span>
-        <span className="block truncate text-[11px] text-dim">{node.type}</span>
+        <span className="block truncate text-[0.7857rem] text-dim">
+          {node.type}
+        </span>
       </span>
       {entry && (
         <span className="ml-auto grid h-4 w-4 shrink-0 place-items-center rounded-full border border-ok/60 bg-ok/10">
@@ -582,7 +584,7 @@ function GenericField({
         <summary className="cursor-pointer select-none px-2.5 py-1.5 text-xs text-dim">
           <FieldLabel raw={raw} />
           {entries.length === 0 && (
-            <span className="ml-1 text-[10px] text-dim/60">
+            <span className="ml-1 text-[0.7143rem] text-dim/60">
               ({t('graph.empty')})
             </span>
           )}
@@ -678,12 +680,14 @@ function ArrayField({
             setInvalid(true);
           }
         }}
-        className={`w-full resize-y rounded-lg border bg-panel px-2 py-1 font-mono text-[11px] text-fg outline-none ${
+        className={`w-full resize-y rounded-lg border bg-panel px-2 py-1 font-mono text-[0.7857rem] text-fg outline-none ${
           invalid ? 'border-err/60' : 'border-edge'
         }`}
       />
       {invalid && (
-        <span className="text-[10px] text-err">{t('graph.invalidJson')}</span>
+        <span className="text-[0.7143rem] text-err">
+          {t('graph.invalidJson')}
+        </span>
       )}
     </label>
   );
@@ -749,7 +753,7 @@ function GraphCanvas({
               '--xy-controls-button-color': 'var(--color-dim)',
               '--xy-controls-button-color-hover': 'var(--color-fg)',
               '--xy-controls-button-border-color': 'var(--color-edge)',
-              '--xy-controls-box-shadow': '0 4px 14px rgba(0,0,0,0.45)',
+              '--xy-controls-box-shadow': '0 0.2857rem 1rem rgba(0,0,0,0.45)',
             } as CSSProperties
           }
         />
@@ -767,7 +771,7 @@ function GraphCanvas({
               '--xy-minimap-mask-stroke-color': 'var(--color-edge)',
               '--xy-minimap-node-stroke-color': 'var(--color-edge)',
               border: '1px solid var(--color-edge)',
-              borderRadius: 8,
+              borderRadius: '0.5714rem',
             } as CSSProperties
           }
         />
@@ -1035,7 +1039,7 @@ export function AgentGraphEditor({
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <div className="flex items-center gap-2">
-        <Workflow size={14} className="text-accent shrink-0" />
+        <Workflow size="1.0000rem" className="text-accent shrink-0" />
         <h3 className="text-sm font-semibold truncate">
           {t('graph.editing', { name: agentName })}
         </h3>
@@ -1061,7 +1065,7 @@ export function AgentGraphEditor({
             dirty && !confirmClose ? t('graph.unsavedClose') : t('graph.back')
           }
         >
-          <X size={16} />
+          <X size="1.1429rem" />
         </button>
       </div>
       <label className="flex flex-col gap-1 text-xs text-dim">
@@ -1079,7 +1083,7 @@ export function AgentGraphEditor({
 
       {!graph ? (
         <div className="grid h-48 place-items-center text-dim">
-          <Loader2 size={18} className="animate-spin" />
+          <Loader2 size="1.2857rem" className="animate-spin" />
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 gap-3">
@@ -1122,7 +1126,7 @@ export function AgentGraphEditor({
             ) : selected?.kind === 'edge' && selectedEdge ? (
               <div className="flex flex-col gap-3">
                 <div className="flex items-center gap-1.5 text-sm font-medium">
-                  <Braces size={13} className="text-accent" />
+                  <Braces size="0.9286rem" className="text-accent" />
                   {selectedEdge.from} → {selectedEdge.to}
                 </div>
                 <label className="flex flex-col gap-1 text-xs text-dim">
@@ -1134,7 +1138,7 @@ export function AgentGraphEditor({
                     className="rounded-lg border border-edge bg-panel px-2.5 py-1.5 text-xs text-fg outline-none focus:border-accent/60 font-mono"
                   />
                 </label>
-                <p className="text-[10px] text-dim leading-relaxed">
+                <p className="text-[0.7143rem] text-dim leading-relaxed">
                   {t('graph.conditionHint')}
                 </p>
                 <div className="flex-1" />
@@ -1170,9 +1174,9 @@ function SaveButton({
       className="flex items-center justify-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-50"
     >
       {saving ? (
-        <Loader2 size={13} className="animate-spin" />
+        <Loader2 size="0.9286rem" className="animate-spin" />
       ) : (
-        <Save size={13} />
+        <Save size="0.9286rem" />
       )}
       {t('graph.save')}
     </button>
@@ -1204,7 +1208,7 @@ function NodeInspector({
       <div className="flex items-center gap-1.5">
         <span className="truncate text-sm font-medium">{node.id}</span>
         {entry && (
-          <span className="rounded border border-ok/40 bg-ok/10 px-1 py-0.5 text-[10px] text-ok">
+          <span className="rounded border border-ok/40 bg-ok/10 px-1 py-0.5 text-[0.7143rem] text-ok">
             {t('graph.entry')}
           </span>
         )}
@@ -1249,11 +1253,11 @@ function NodeInspector({
           onChange={(e) => onRaw(e.target.value)}
           spellCheck={false}
           rows={10}
-          className="w-full resize-y bg-transparent px-2.5 pb-2 text-[11px] font-mono text-fg outline-none whitespace-pre"
+          className="w-full resize-y bg-transparent px-2.5 pb-2 text-[0.7857rem] font-mono text-fg outline-none whitespace-pre"
         />
       </details>
       {rawTouched && (
-        <p className="text-[10px] text-warn">{t('graph.rawEdited')}</p>
+        <p className="text-[0.7143rem] text-warn">{t('graph.rawEdited')}</p>
       )}
     </div>
   );

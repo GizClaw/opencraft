@@ -48,7 +48,7 @@ function CardView({
         </div>
         {running && (
           <Loader2
-            size={13}
+            size="0.9286rem"
             className="mt-0.5 shrink-0 animate-spin text-accent"
           />
         )}
@@ -56,7 +56,7 @@ function CardView({
       {(card.producer || card.consumer) && (
         <div className="flex items-center gap-1 text-xs text-dim">
           {card.producer && <span>{card.producer}</span>}
-          <ArrowRight size={10} />
+          <ArrowRight size="0.7143rem" />
           {card.consumer && <span>{card.consumer}</span>}
         </div>
       )}
@@ -81,7 +81,7 @@ function CardView({
       )}
       {elapsed(card) && (
         <div className="flex items-center gap-1 text-xs text-dim">
-          <Clock size={11} />
+          <Clock size="0.7857rem" />
           {elapsed(card)}
         </div>
       )}
@@ -92,7 +92,7 @@ function CardView({
             className="flex items-center gap-1 rounded border border-edge px-2 py-0.5 text-xs text-dim hover:text-err"
             aria-label={t('kanban.cancel')}
           >
-            <X size={11} />
+            <X size="0.7857rem" />
             {t('kanban.cancel')}
           </button>
         </div>
@@ -152,7 +152,7 @@ export function KanbanSection() {
       <p className="text-xs text-dim">{t('kanban.title')}</p>
       {cards.length === 0 ? (
         <div className="rounded-xl border border-dashed border-edge px-6 py-10 text-center">
-          <Kanban size={28} className="mx-auto mb-2 text-dim/60" />
+          <Kanban size="2.0000rem" className="mx-auto mb-2 text-dim/60" />
           <p className="text-sm text-dim">{t('kanban.empty')}</p>
         </div>
       ) : (
@@ -178,7 +178,7 @@ export function KanbanSection() {
             return (
               <div key={col.key} className="min-w-0 space-y-2">
                 <div className="flex items-center gap-2 text-xs uppercase tracking-wider text-dim">
-                  <Icon size={13} className={iconColor} />
+                  <Icon size="0.9286rem" className={iconColor} />
                   {col.label}
                   <span className="rounded bg-panel2 border border-edge px-1.5 tabular-nums">
                     {items.length}

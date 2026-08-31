@@ -63,7 +63,7 @@ export function PluginInstallDialog({ onClose }: { onClose: () => void }) {
       onClick={onClose}
     >
       <div
-        className="w-[460px] rounded-2xl border border-edge bg-panel shadow-2xl"
+        className="w-[32.8571rem] rounded-2xl border border-edge bg-panel shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-edge px-4 py-3">
@@ -71,7 +71,7 @@ export function PluginInstallDialog({ onClose }: { onClose: () => void }) {
             {t('config.pluginsInstall')}
           </h3>
           <button onClick={onClose} className="text-dim hover:text-fg">
-            <X size={16} />
+            <X size="1.1429rem" />
           </button>
         </div>
         <div className="flex flex-col gap-3 p-4">
@@ -91,18 +91,20 @@ export function PluginInstallDialog({ onClose }: { onClose: () => void }) {
               onClick={() => void pick()}
               className="flex items-center gap-1.5 rounded-lg border border-edge bg-panel2 px-2.5 py-1.5 text-xs text-dim hover:text-fg"
             >
-              <FolderOpen size={12} />
+              <FolderOpen size="0.8571rem" />
               {t('config.pluginsChooseFolder')}
             </button>
             <button
               onClick={() => void pickZip()}
               className="flex items-center gap-1.5 rounded-lg border border-edge bg-panel2 px-2.5 py-1.5 text-xs text-dim hover:text-fg"
             >
-              <FileArchive size={12} />
+              <FileArchive size="0.8571rem" />
               {t('config.pluginsChooseZip')}
             </button>
           </div>
-          {error && <p className="text-[11px] text-err break-words">{error}</p>}
+          {error && (
+            <p className="text-[0.7857rem] text-err break-words">{error}</p>
+          )}
           <div className="flex justify-end gap-2">
             <button
               onClick={onClose}
@@ -115,7 +117,7 @@ export function PluginInstallDialog({ onClose }: { onClose: () => void }) {
               disabled={busy || !path.trim()}
               className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs text-white hover:opacity-90 disabled:opacity-50"
             >
-              {busy && <Loader2 size={12} className="animate-spin" />}
+              {busy && <Loader2 size="0.8571rem" className="animate-spin" />}
               {t('config.pluginsInstall')}
             </button>
           </div>

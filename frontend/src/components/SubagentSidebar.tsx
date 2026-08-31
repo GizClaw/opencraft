@@ -6,66 +6,14 @@ import {
   ChevronRight,
   Clock,
   Minimize2,
-  Wrench,
   X,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '../lib/store';
 import type { KanbanCard } from '../lib/types';
-import type { AssistantItem, MessageView } from '../lib/store';
-
-// StreamItem renders one assistant stream item (text, reasoning, tool
-// call, or tool result) in the compact violet sidebar style.
-function StreamItem({ item }: { item: AssistantItem }) {
-  const { t } = useTranslation();
-  switch (item.kind) {
-    case 'text':
-      if (!item.text) return null;
-      return <p className="text-xs text-fg whitespace-pre-wrap">{item.text}</p>;
-    case 'reasoning':
-      if (!item.text) return null;
-      return (
-        <details className="text-xs">
-          <summary className="cursor-pointer text-violet-300/90 select-none">
-            {t('subagent.reasoning')}
-          </summary>
-          <div className="mt-1 whitespace-pre-wrap text-dim max-h-32 overflow-y-auto">
-            {item.text}
-          </div>
-        </details>
-      );
-    case 'tool_call':
-      return (
-        <div>
-          <div
-            className="flex items-center gap-1.5 font-mono text-xs"
-            title={item.tool.args}
-          >
-            <Wrench size={11} className="text-dim shrink-0" />
-            <span className="text-fg truncate">{item.tool.name}</span>
-            {item.tool.status === 'running' ? (
-              <span className="text-accent animate-pulse shrink-0">…</span>
-            ) : item.tool.status === 'error' ? (
-              <span className="text-err shrink-0">⛔</span>
-            ) : (
-              <span className="text-ok shrink-0">✓</span>
-            )}
-          </div>
-          {item.tool.result !== undefined && (
-            <div
-              className={`ml-4 border-l pl-2 text-[11px] whitespace-pre-wrap max-h-28 overflow-y-auto ${
-                item.tool.status === 'error' ? 'text-err' : 'text-dim'
-              }`}
-            >
-              {item.tool.result}
-            </div>
-          )}
-        </div>
-      );
-    default:
-      return null;
-  }
-}
+import type { MessageView } from '../lib/store';
+import { visibleStreamItems } from '../lib/stream';
+import { StreamItemView } from './StreamItemView';
 
 // StreamView renders the live stream of one subagent run: every
 // assistant item in arrival order.
@@ -77,20 +25,16 @@ const StreamView = memo(function StreamView({
   const { t } = useTranslation();
   // update_plan renders once in the main chat's plan panel, so it is
   // dropped from subagent streams too.
-  const items = stream
-    .flatMap((m) => m.items)
-    .filter(
-      (it) => !(it.kind === 'tool_call' && it.tool.name === 'update_plan'),
-    );
+  const items = visibleStreamItems(stream);
   if (items.length === 0) return null;
   return (
     <div className="rounded-lg border border-edge bg-panel2 p-2 space-y-1.5">
-      <div className="flex items-center gap-1 text-[10px] uppercase tracking-wide text-dim">
-        <Activity size={10} />
+      <div className="flex items-center gap-1 text-[0.7143rem] uppercase tracking-wide text-dim">
+        <Activity size="0.7143rem" />
         {t('subagent.stream')}
       </div>
       {items.map((item) => (
-        <StreamItem key={item.id} item={item} />
+        <StreamItemView key={item.id} item={item} variant="sidebar" />
       ))}
     </div>
   );
@@ -204,22 +148,22 @@ const SubagentCard = memo(function SubagentCard({
             {card.target}
           </span>
           {elapsed(card) && (
-            <span className="flex shrink-0 items-center gap-1 text-[10px] text-dim tabular-nums">
-              <Clock size={10} />
+            <span className="flex shrink-0 items-center gap-1 text-[0.7143rem] text-dim tabular-nums">
+              <Clock size="0.7143rem" />
               {elapsed(card)}
             </span>
           )}
           {failed && (
             <span
-              className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] ${meta.pill}`}
+              className={`shrink-0 rounded border px-1.5 py-0.5 text-[0.7143rem] ${meta.pill}`}
             >
               {meta.label}
             </span>
           )}
           {open ? (
-            <ChevronDown size={14} className="shrink-0 text-dim" />
+            <ChevronDown size="1.0000rem" className="shrink-0 text-dim" />
           ) : (
-            <ChevronRight size={14} className="shrink-0 text-dim" />
+            <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
           )}
         </button>
         {open && (
@@ -254,7 +198,7 @@ function Block({
   return (
     <div className="space-y-1">
       <div
-        className={`text-[10px] uppercase tracking-wide ${error ? 'text-err' : 'text-dim'}`}
+        className={`text-[0.7143rem] uppercase tracking-wide ${error ? 'text-err' : 'text-dim'}`}
       >
         {label}
       </div>
@@ -374,7 +318,7 @@ export function SubagentSidebar() {
   return (
     <aside className="flex h-full min-h-0 w-72 shrink-0 flex-col border-l border-edge bg-panel">
       <header className="flex h-11 shrink-0 select-none items-center gap-2 border-b border-edge px-3">
-        <Bot size={14} className="text-subagent" />
+        <Bot size="1.0000rem" className="text-subagent" />
         <span className="text-sm font-semibold">{t('subagent.title')}</span>
         {hasRunning && (
           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
@@ -389,14 +333,14 @@ export function SubagentSidebar() {
           title={t('subagent.collapseAll')}
           aria-label={t('subagent.collapseAll')}
         >
-          <Minimize2 size={14} />
+          <Minimize2 size="1.0000rem" />
         </button>
         <button
           onClick={togglePanel}
           className="text-dim hover:text-fg"
           title={t('subagent.close')}
         >
-          <X size={16} />
+          <X size="1.1429rem" />
         </button>
       </header>
       <div className="flex-1 space-y-2 overflow-y-auto p-2.5">

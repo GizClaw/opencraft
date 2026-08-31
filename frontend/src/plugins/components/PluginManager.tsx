@@ -9,7 +9,7 @@ import { PluginPanels } from './PluginPanels';
 // PluginManager is the "插件" settings tab: installed plugins with
 // enable/disable toggles, per-plugin load errors, and the panels each
 // enabled plugin contributes (settingsPanels contribution point).
-export function PluginManager() {
+export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
   const { t } = useTranslation();
   const plugins = usePluginStore((s) => s.plugins);
   const commands = usePluginStore((s) => s.commands);
@@ -34,21 +34,30 @@ export function PluginManager() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold">{t('config.tabPlugins')}</h2>
+      <div
+        className={`flex items-center ${
+          showTitle ? 'justify-between' : 'justify-end'
+        }`}
+      >
+        {showTitle && (
+          <h2 className="text-sm font-semibold">{t('config.tabPlugins')}</h2>
+        )}
         <div className="flex items-center gap-2">
           <button
             onClick={() => void load()}
             className="flex items-center gap-1.5 rounded-lg border border-edge bg-panel2 px-2.5 py-1 text-xs text-dim hover:text-fg"
           >
-            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+            <RefreshCw
+              size="0.8571rem"
+              className={loading ? 'animate-spin' : ''}
+            />
             {t('config.pluginsRefresh')}
           </button>
           <button
             onClick={() => setInstallOpen(true)}
             className="flex items-center gap-1.5 rounded-lg bg-accent px-2.5 py-1 text-xs text-white hover:opacity-90"
           >
-            <Download size={12} />
+            <Download size="0.8571rem" />
             {t('config.pluginsInstall')}
           </button>
         </div>
@@ -67,21 +76,21 @@ export function PluginManager() {
             className="rounded-xl border border-edge bg-panel2 p-3"
           >
             <div className="flex items-center gap-2">
-              <Puzzle size={14} className="text-dim shrink-0" />
+              <Puzzle size="1.0000rem" className="text-dim shrink-0" />
               <div className="min-w-0 flex-1">
                 <p className="text-sm text-fg truncate">
                   {p.name}{' '}
                   <span className="text-xs text-dim">v{p.version}</span>
                   {p.builtin && (
                     <span
-                      className="ml-1 rounded bg-panel px-1.5 py-0.5 text-[10px] text-dim"
+                      className="ml-1 rounded bg-panel px-1.5 py-0.5 text-[0.7143rem] text-dim"
                       title={t('config.pluginsBuiltinHint')}
                     >
                       {t('config.pluginsBuiltin')}
                     </span>
                   )}
                 </p>
-                <p className="text-[11px] text-dim truncate">{p.id}</p>
+                <p className="text-[0.7857rem] text-dim truncate">{p.id}</p>
               </div>
               <button
                 onClick={() => void setEnabled(p.id, !p.enabled)}
@@ -113,10 +122,12 @@ export function PluginManager() {
               )}
             </div>
             {p.error && (
-              <p className="mt-2 text-[11px] text-err break-words">{p.error}</p>
+              <p className="mt-2 text-[0.7857rem] text-err break-words">
+                {p.error}
+              </p>
             )}
             {errors[p.id] && (
-              <p className="mt-2 text-[11px] text-err break-words">
+              <p className="mt-2 text-[0.7857rem] text-err break-words">
                 {t('config.pluginLoadError')}: {errors[p.id]}
               </p>
             )}

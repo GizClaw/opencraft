@@ -48,7 +48,7 @@ export function InteractionCard({ spec }: { spec: InteractDTO }) {
   return (
     <div className="rounded-xl border border-warn/40 bg-panel2 p-4 my-3">
       <div className="flex items-center gap-2 text-sm font-medium">
-        <HelpCircle size={16} className="text-warn" />
+        <HelpCircle size="1.1429rem" className="text-warn" />
         {spec.title || t('interact.needConfirm')}
       </div>
       {bodyText && (
@@ -109,7 +109,7 @@ export function InteractionCard({ spec }: { spec: InteractDTO }) {
           }
           className="flex items-center gap-1 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
         >
-          <X size={13} /> {t('interact.cancel')}
+          <X size="0.9286rem" /> {t('interact.cancel')}
         </button>
       </div>
     </div>
