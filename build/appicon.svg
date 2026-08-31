@@ -5,9 +5,15 @@
       <stop offset="1" stop-color="#0f1218"/>
     </linearGradient>
   </defs>
-  <rect width="1024" height="1024" rx="228" fill="url(#bg)"/>
-  <text x="512" y="452" text-anchor="middle" font-family="Menlo, SF Mono, Consolas, monospace"
-        font-size="216" font-weight="600" fill="#e6e9ef">Open</text>
-  <text x="512" y="742" text-anchor="middle" font-family="Menlo, SF Mono, Consolas, monospace"
-        font-size="216" font-weight="600" fill="#4f8cff">Craft&gt;_</text>
+  <!-- Apple's icon grid: artwork occupies 824x824 centred in the
+       1024x1024 canvas, leaving ~100px transparent margins so the
+       Dock/desktop/explorer renders it at the standard size instead of
+       edge-to-edge. -->
+  <g transform="translate(100,100) scale(0.8046875)">
+    <rect width="1024" height="1024" rx="228" fill="url(#bg)"/>
+    <text x="512" y="452" text-anchor="middle" font-family="Menlo, SF Mono, Consolas, monospace"
+          font-size="216" font-weight="600" fill="#e6e9ef">Open</text>
+    <text x="512" y="742" text-anchor="middle" font-family="Menlo, SF Mono, Consolas, monospace"
+          font-size="216" font-weight="600" fill="#4f8cff">Craft&gt;_</text>
+  </g>
 </svg>

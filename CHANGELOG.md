@@ -26,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- App icon artwork now follows Apple's icon grid: the 1024px canvas
+  keeps ~100px transparent margins (824px artwork) instead of painting
+  edge-to-edge, so the Dock/desktop/Explorer no longer render the icon
+  larger than standard apps. `build/windows/icon.ico` was regenerated
+  from the updated artwork.
 - flowcraft core upgraded to v0.2.2. Windows now uses flowcraft's
   Windows sandbox backend with OS-level write confinement (restricted
   Low-integrity token: children can only write inside the workspace and
