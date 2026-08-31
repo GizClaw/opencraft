@@ -105,14 +105,10 @@ const flowcraftSkill = (
 
 export const SKILL_CATALOG: SkillCatalogEntry[] = [
   // Official FlowCraft skills — most relevant for opencraft, since the
-  // app is built on flowcraft's config/plugin model.
+  // app is built on flowcraft's config model.
   flowcraftSkill(
     'flowcraft-config',
     'Author, validate, and troubleshoot complete FlowCraft deployment configuration',
-  ),
-  flowcraftSkill(
-    'flowcraft-plugin',
-    'Author, load, and troubleshoot FlowCraft plugins (backends/plugin module)',
   ),
   codexSkill(
     'babysit-pr',
