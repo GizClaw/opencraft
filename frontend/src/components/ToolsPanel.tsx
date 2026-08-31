@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import type { ComponentType } from 'react';
 import {
   Bot,
@@ -97,6 +97,10 @@ export function MCPSection() {
   const [addingRepo, setAddingRepo] = useState(false);
   const [mcpLoading, setMCPLoading] = useState(true);
   const toast = useStore((s) => s.toast);
+  const addedNames = useMemo(
+    () => new Set(mcpRows.map((r) => r.name.trim()).filter(Boolean)),
+    [mcpRows],
+  );
 
   useEffect(() => {
     void api
@@ -323,12 +327,18 @@ export function MCPSection() {
                 <code className="text-[10px] text-dim shrink-0 hidden sm:inline">
                   {entry.command} {entry.args.join(' ')}
                 </code>
-                <button
-                  onClick={() => addCatalogMCP(entry)}
-                  className="shrink-0 rounded-md border border-accent/40 px-2 py-0.5 text-xs text-accent hover:bg-accent/10"
-                >
-                  {t('config.mcpAdd')}
-                </button>
+                {addedNames.has(entry.name) ? (
+                  <span className="shrink-0 rounded-md border border-edge px-2 py-0.5 text-xs text-dim">
+                    {t('config.mcpAdded')}
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => addCatalogMCP(entry)}
+                    className="shrink-0 rounded-md border border-accent/40 px-2 py-0.5 text-xs text-accent hover:bg-accent/10"
+                  >
+                    {t('config.mcpAdd')}
+                  </button>
+                )}
               </div>
             ))}
             <div className="border-t border-edge/60 pt-2 mt-1">
@@ -683,6 +693,27 @@ export function SkillsSection() {
   const [subpath, setSubpath] = useState('');
   const [installing, setInstalling] = useState(false);
   const [discoverOpen, setDiscoverOpen] = useState(false);
+  const installedNames = useMemo(
+    () => new Set(skills.map((s) => s.name)),
+    [skills],
+  );
+  // Discovery reports the frontmatter `name`, which can differ from the
+  // install directory name (e.g. codex's code-review-breaking-changes
+  // declares `name: code-breaking-changes`). Match the parent directory
+  // of each SKILL.md as well, since that is the real install target.
+  const installedDirs = useMemo(() => {
+    const dirs = new Set<string>();
+    for (const s of skills) {
+      const cleaned = s.path.replace(/\/SKILL\.md$/i, '');
+      const parts = cleaned.split('/').filter(Boolean);
+      const dir = parts[parts.length - 1];
+      if (dir) dirs.add(dir);
+    }
+    return dirs;
+  }, [skills]);
+
+  const isCatalogSkillInstalled = (entry: SkillCatalogEntry) =>
+    installedNames.has(entry.name) || installedDirs.has(entry.name);
 
   useEffect(() => {
     void reloadSkills();
@@ -853,15 +884,21 @@ export function SkillsSection() {
                 <span className="flex-1 text-xs text-dim min-w-0 truncate">
                   {entry.description}
                 </span>
-                <button
-                  onClick={() => void installCatalogSkill(entry)}
-                  disabled={installing}
-                  className="shrink-0 rounded-md border border-accent/40 px-2 py-0.5 text-xs text-accent hover:bg-accent/10 disabled:opacity-40"
-                >
-                  {installing
-                    ? t('config.skillsInstalling')
-                    : t('config.skillsInstall')}
-                </button>
+                {isCatalogSkillInstalled(entry) ? (
+                  <span className="shrink-0 rounded-md border border-edge px-2 py-0.5 text-xs text-dim">
+                    {t('config.skillsInstalled')}
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => void installCatalogSkill(entry)}
+                    disabled={installing}
+                    className="shrink-0 rounded-md border border-accent/40 px-2 py-0.5 text-xs text-accent hover:bg-accent/10 disabled:opacity-40"
+                  >
+                    {installing
+                      ? t('config.skillsInstalling')
+                      : t('config.skillsInstall')}
+                  </button>
+                )}
               </div>
             ))}
             <div className="border-t border-edge/60 pt-2 mt-1">
