@@ -56,3 +56,9 @@ func TestResolveInWorkspace(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveInWorkspaceRequiresWorkspace(t *testing.T) {
+	if _, err := resolveInWorkspace("", "src/a.txt"); err == nil {
+		t.Fatal("resolving against an empty workspace must fail")
+	}
+}

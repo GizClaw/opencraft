@@ -38,9 +38,11 @@ import (
 // Options configures the desktop application.
 type Options struct {
 	// WorkDir is the workspace the app operates on (project config
-	// discovery + the file panel). Empty uses the current working
-	// directory, falling back to the user's home when the app was
-	// launched from Finder (cwd "/").
+	// discovery + the file panel). Empty restores the most recently
+	// opened workspace, falling back to the current working directory
+	// when the app was launched from a terminal; a fresh install with
+	// no history starts with no workspace selected (the UI shows the
+	// workspace picker).
 	WorkDir string
 	// UserDir overrides ~/.opencraft/config (tests).
 	UserDir string
@@ -134,12 +136,24 @@ type rolloutBuffer struct {
 func New(opts Options) (*App, error) {
 	workDir := opts.WorkDir
 	if workDir == "" {
-		workDir, _ = os.Getwd()
-	}
-	if workDir == "/" {
-		if home, err := os.UserHomeDir(); err == nil {
-			workDir = home
+		// A terminal launch inside a project opens that directory
+		// (like `code .`). Finder-launched apps start with cwd "/",
+		// so the "/" case intentionally falls through to history and
+		// then to "no workspace" — never to the user's home directory.
+		if wd, err := os.Getwd(); err == nil && wd != "/" {
+			workDir = wd
 		}
+	}
+	if workDir == "" {
+		// Restore the last explicitly opened workspace; a fresh
+		// install (no history) starts with no workspace so the first
+		// run guides the user to pick a folder instead of silently
+		// opening ~.
+		workDir = lastWorkspacePath()
+	}
+	var undoStore *undo.Store
+	if workDir != "" {
+		undoStore = undo.New(workDir)
 	}
 	userDir := opts.UserDir
 	if userDir == "" {
@@ -185,7 +199,7 @@ func New(opts Options) (*App, error) {
 		titling:         make(map[string]bool),
 		preTurnSnap:     make(map[string][]undo.FileState),
 		preTurnManifest: make(map[string]map[string]fileStat),
-		undo:            undo.New(workDir),
+		undo:            undoStore,
 		secrets:         sec,
 		rollouts:        make(map[string]*rollout.Recorder),
 		rolloutBufs:     make(map[string]*rolloutBuffer),
@@ -287,6 +301,16 @@ func (a *App) rebuild() error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if strings.TrimSpace(wd) == "" {
+		// No workspace selected yet: the runtime, undo store, and
+		// session store are all workspace-bound, so there is nothing
+		// to assemble. Emit ready with an empty work_dir and let the
+		// UI show the workspace picker instead of the chat.
+		if a.bridge != nil {
+			a.bridge.Emit("ready", a.status(true))
+		}
+		return nil
+	}
 	// The user-level usage database is workspace-independent and opened
 	// once per app run. Open it outside a.mu: sqlite open executes a
 	// PRAGMA that can block on a stale database lock, and holding the
@@ -385,10 +409,6 @@ func (a *App) rebuild() error {
 	a.sessions = store
 	a.agents = lifecycle
 	a.mu.Unlock()
-
-	// Remember this workspace in the history (best-effort) once the
-	// runtime is healthy, so every successful open/switch lands here.
-	a.recordWorkspace(wd)
 
 	a.bridge.Emit("ready", a.status(true))
 	return nil

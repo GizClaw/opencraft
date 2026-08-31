@@ -879,7 +879,10 @@ export function ChatView() {
 
   return (
     <main className="flex-1 min-w-0 flex flex-col min-h-0">
-      <header className="h-11 shrink-0 border-b border-edge bg-panel flex items-center px-4 gap-2">
+      <header
+        className="h-11 shrink-0 border-b border-edge bg-panel flex items-center px-4 gap-2"
+        style={{ ['--wails-draggable' as string]: 'drag' }}
+      >
         <span className="text-sm font-medium truncate">{headerTitle}</span>
         {busy && (
           <span className="flex items-center gap-1 text-xs text-accent">
@@ -890,39 +893,44 @@ export function ChatView() {
         {undoNotice && (
           <span className="mr-1 text-xs text-dim">{undoNotice}</span>
         )}
-        <button
-          onClick={() => void runUndo(false)}
-          disabled={!undoAvail.can_undo}
-          title={t('chat.undo')}
-          aria-label={t('chat.undo')}
-          className="rounded-lg border border-edge p-1.5 text-dim transition-colors hover:text-fg disabled:opacity-40"
+        <div
+          className="flex items-center"
+          style={{ ['--wails-draggable' as string]: 'no-drag' }}
         >
-          <Undo2 size={13} />
-        </button>
-        <button
-          onClick={() => void runUndo(true)}
-          disabled={!undoAvail.can_redo}
-          title={t('chat.redo')}
-          aria-label={t('chat.redo')}
-          className="ml-1 rounded-lg border border-edge p-1.5 text-dim transition-colors hover:text-fg disabled:opacity-40"
-        >
-          <Redo2 size={13} />
-        </button>
-        {subagentCards.length > 0 && (
           <button
-            onClick={toggleSubagentPanel}
-            className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs transition-colors ${
-              subagentPanelOpen
-                ? 'border-subagent/40 bg-subagent/10 text-subagent'
-                : 'border-edge text-dim hover:text-fg'
-            }`}
-            title={t('subagent.toggle')}
-            aria-label={t('subagent.toggle')}
+            onClick={() => void runUndo(false)}
+            disabled={!undoAvail.can_undo}
+            title={t('chat.undo')}
+            aria-label={t('chat.undo')}
+            className="rounded-lg border border-edge p-1.5 text-dim transition-colors hover:text-fg disabled:opacity-40"
           >
-            <Bot size={13} />
-            {subagentCards.length}
+            <Undo2 size={13} />
           </button>
-        )}
+          <button
+            onClick={() => void runUndo(true)}
+            disabled={!undoAvail.can_redo}
+            title={t('chat.redo')}
+            aria-label={t('chat.redo')}
+            className="ml-1 rounded-lg border border-edge p-1.5 text-dim transition-colors hover:text-fg disabled:opacity-40"
+          >
+            <Redo2 size={13} />
+          </button>
+          {subagentCards.length > 0 && (
+            <button
+              onClick={toggleSubagentPanel}
+              className={`ml-1.5 flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs transition-colors ${
+                subagentPanelOpen
+                  ? 'border-subagent/40 bg-subagent/10 text-subagent'
+                  : 'border-edge text-dim hover:text-fg'
+              }`}
+              title={t('subagent.toggle')}
+              aria-label={t('subagent.toggle')}
+            >
+              <Bot size={13} />
+              {subagentCards.length}
+            </button>
+          )}
+        </div>
       </header>
 
       <ProjectTrustBanner />

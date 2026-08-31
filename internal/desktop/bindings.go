@@ -671,6 +671,9 @@ func (a *App) Workspace() string {
 // first; the archive keeps their URL paths while the opencraft.media
 // prepare hook inlines the bytes before the model call.
 func (a *App) StartTurn(msg message.Message) (TurnStart, error) {
+	if strings.TrimSpace(a.snapshotWorkDir()) == "" {
+		return TurnStart{}, errors.New("no workspace selected: pick a folder first")
+	}
 	a.mu.Lock()
 	ctrl := a.ctrl
 	broker := a.broker

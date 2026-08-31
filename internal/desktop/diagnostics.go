@@ -80,7 +80,14 @@ func (a *App) Diagnostics() DiagnosticsReport {
 	rep.NodeVersion = commandVersion(3*time.Second, "node", "--version")
 	rep.GitVersion = commandVersion(3*time.Second, "git", "--version")
 
-	if mgr, err := config.Open(config.Options{WorkDir: wd, UserDir: a.userDir}); err == nil {
+	// Without a workspace there is no project layer to discover; skip
+	// it so config.Open never falls back to the process cwd (which is
+	// "/" for Finder-launched apps).
+	if mgr, err := config.Open(config.Options{
+		WorkDir:          wd,
+		UserDir:          a.userDir,
+		SkipProjectLayer: wd == "",
+	}); err == nil {
 		if _, err := mgr.Load(context.Background()); err != nil {
 			rep.ConfigError = err.Error()
 		} else {
@@ -93,9 +100,11 @@ func (a *App) Diagnostics() DiagnosticsReport {
 		rep.InferenceConfigured = !needed
 	}
 
-	if root := gitRepoRoot(wd); root != "" {
-		rep.GitRepo = true
-		rep.GitBranch = gitBranch(root)
+	if wd != "" {
+		if root := gitRepoRoot(wd); root != "" {
+			rep.GitRepo = true
+			rep.GitBranch = gitBranch(root)
+		}
 	}
 	if a.sessions != nil {
 		if metas, err := a.sessions.List(); err == nil {
@@ -122,6 +131,9 @@ func (a *App) Diagnostics() DiagnosticsReport {
 // runner (seatbelt/bwrap) and verifies its output, so the UI can
 // confirm the OS isolation layer actually works on this machine.
 func (a *App) RunSandboxProbe() SandboxProbeResult {
+	if strings.TrimSpace(a.snapshotWorkDir()) == "" {
+		return SandboxProbeResult{Error: "no workspace selected"}
+	}
 	ctx, cancel := context.WithTimeout(a.appContext(), 30*time.Second)
 	defer cancel()
 	runner, _, err := ocsandbox.SandboxRunner(
@@ -207,7 +219,9 @@ func (a *App) ClearCaches() (CacheClearResult, error) {
 	dirs := []string{
 		filepath.Join(dataDir, "cache", "tools"),
 		filepath.Join(dataDir, "cache", "staged"),
-		filepath.Join(a.snapshotWorkDir(), ".opencraft", "cache"),
+	}
+	if wd := a.snapshotWorkDir(); wd != "" {
+		dirs = append(dirs, filepath.Join(wd, ".opencraft", "cache"))
 	}
 	var bytes int64
 	for _, dir := range dirs {
@@ -224,7 +238,11 @@ func (a *App) ClearCaches() (CacheClearResult, error) {
 // execPolicyRules loads the static allowed_commands from the merged
 // config and appends the project approvals file entries.
 func (a *App) execPolicyRules(wd string) ([]string, error) {
-	mgr, err := config.Open(config.Options{WorkDir: wd, UserDir: a.userDir})
+	mgr, err := config.Open(config.Options{
+		WorkDir:          wd,
+		UserDir:          a.userDir,
+		SkipProjectLayer: wd == "",
+	})
 	if err != nil {
 		return nil, err
 	}

@@ -16,12 +16,28 @@ func (a *App) snapshotWorkDir() string {
 	return a.workDir
 }
 
+// dialogStartDir returns the current workspace directory for native
+// dialogs, falling back to the user's home when no workspace is
+// selected (the picker still needs a real starting point).
+func (a *App) dialogStartDir() string {
+	if wd := a.snapshotWorkDir(); wd != "" {
+		return wd
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		return home
+	}
+	return ""
+}
+
 // resolveInWorkspace resolves p against the workspace root and refuses
 // paths that escape it — including via symlinks. Relative paths are
 // resolved from the root; absolute paths are allowed only when they
 // stay inside. The returned path is symlink-resolved so the caller
 // operates on the real location.
 func resolveInWorkspace(workDir, p string) (string, error) {
+	if strings.TrimSpace(workDir) == "" {
+		return "", errors.New("no workspace selected")
+	}
 	if strings.TrimSpace(p) == "" {
 		return "", errors.New("path is required")
 	}

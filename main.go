@@ -10,13 +10,16 @@ import (
 	"embed"
 	"log"
 	"os"
+	"runtime"
 
 	"github.com/GizClaw/opencraft/internal/desktop"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
+	"github.com/wailsapp/wails/v2/pkg/options/linux"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
+	"github.com/wailsapp/wails/v2/pkg/options/windows"
 )
 
 //go:embed all:frontend/dist
@@ -37,20 +40,12 @@ func main() {
 		log.Fatalf("opencraft: %v", err)
 	}
 
-	err = wails.Run(&options.App{
+	opts := &options.App{
 		Title:     "OpenCraft",
 		Width:     1440,
 		Height:    900,
 		MinWidth:  1024,
 		MinHeight: 700,
-		// Hidden, inset title bar on macOS: the system frame (rounded
-		// corners, shadow, traffic lights) stays native while the
-		// content extends to the top; the traffic lights are nudged
-		// into alignment with the chat header by
-		// applyOpenCraftWindowStyle.
-		Mac: &mac.Options{
-			TitleBar: mac.TitleBarHiddenInset(),
-		},
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
@@ -63,7 +58,39 @@ func main() {
 		Bind: []interface{}{
 			app,
 		},
-	})
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		// Hidden, inset title bar on macOS: the system frame (rounded
+		// corners, shadow, traffic lights) stays native while the
+		// content extends to the top; the traffic lights are nudged
+		// into alignment with the chat header by
+		// applyOpenCraftWindowStyle. Frameless must stay off here —
+		// Wails would strip the traffic lights entirely.
+		opts.Mac = &mac.Options{
+			TitleBar: mac.TitleBarHiddenInset(),
+		}
+	case "windows", "linux":
+		// Frameless + custom title bar on Windows/Linux to match the
+		// macOS look: the webview renders the brand strip and window
+		// controls, and Wails' built-in CSS drag/edge-resize handles
+		// the window chrome. macOS keeps its native traffic lights.
+		opts.Frameless = true
+		switch runtime.GOOS {
+		case "windows":
+			// Keep the Windows 11 rounded corners and Aero shadow;
+			// the theme follows the system (WebView2 UI chrome).
+			opts.Windows = &windows.Options{
+				Theme: windows.SystemDefault,
+			}
+		case "linux":
+			opts.Linux = &linux.Options{
+				ProgramName:      "OpenCraft",
+				WebviewGpuPolicy: linux.WebviewGpuPolicyAlways,
+			}
+		}
+	}
+	err = wails.Run(opts)
 	if err != nil {
 		log.Fatalf("opencraft: %v", err)
 	}

@@ -481,6 +481,7 @@ interface StoreState {
   setModel: (model: string) => Promise<void>;
   setTheme: (theme: 'dark' | 'light' | 'auto') => void;
   loadWorkspaces: () => Promise<void>;
+  chooseWorkspace: () => Promise<void>;
   openWorkspace: (path: string) => Promise<void>;
   removeWorkspace: (id: string) => Promise<void>;
   refreshAgents: () => Promise<void>;
@@ -1158,6 +1159,15 @@ export const useStore = create<StoreState>((set, get) => {
         set({ workspaces: (await api.workspaces()) ?? [] });
       } catch {
         // best-effort
+      }
+    },
+
+    chooseWorkspace: async () => {
+      try {
+        const path = (await api.chooseWorkspace()) ?? '';
+        if (path) await get().openWorkspace(path);
+      } catch (err) {
+        set({ statusText: String(err) });
       }
     },
 
