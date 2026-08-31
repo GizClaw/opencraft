@@ -25,6 +25,9 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+//go:embed build/appicon.png
+var appIcon []byte
+
 func main() {
 	// execd is the internal self-forked sandbox child (see
 	// execd_main.go). It must be handled before any GUI machinery
@@ -35,7 +38,12 @@ func main() {
 		return
 	}
 
-	app, err := desktop.New(desktop.Options{})
+	app, err := desktop.New(desktop.Options{
+		// TrayIcon feeds the system tray/status-bar icon; macOS renders
+		// it as a template image so the same asset works in both light
+		// and dark menu bars.
+		TrayIcon: appIcon,
+	})
 	if err != nil {
 		log.Fatalf("opencraft: %v", err)
 	}
@@ -53,8 +61,29 @@ func main() {
 		OnStartup: func(ctx context.Context) {
 			app.Startup(ctx)
 			applyOpenCraftWindowStyle()
+			installOpenCraftReopenHandler()
 		},
 		OnShutdown: app.Shutdown,
+		// Close-to-background: every close path (native window close,
+		// the custom title-bar X button, Cmd+Q / Dock Quit on macOS)
+		// funnels through OnBeforeClose. It consults the persisted
+		// "close to tray" setting: hide the app (macOS hides the whole
+		// app, Windows/Linux hide the window) or let Wails quit.
+		OnBeforeClose: func(ctx context.Context) bool {
+			return app.CloseRequested(ctx)
+		},
+		SingleInstanceLock: &options.SingleInstanceLock{
+			// Stable reverse-DNS id; do not version it. It feeds the
+			// Windows mutex, the macOS lock file + distributed
+			// notification, and the Linux D-Bus name.
+			UniqueId: "com.gizclaw.opencraft",
+			OnSecondInstanceLaunch: func(options.SecondInstanceData) {
+				// Launcher/Dock/`open -a` while the app is already
+				// running: restore the main window instead of starting
+				// a second process.
+				app.ShowMainWindow()
+			},
+		},
 		Bind: []interface{}{
 			app,
 		},

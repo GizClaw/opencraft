@@ -48,6 +48,9 @@ type Options struct {
 	// DataDir overrides the user data root ~/.opencraft (tests); the
 	// credential store lives under <dataDir>/keyring on Linux.
 	DataDir string
+	// TrayIcon is the system tray / menu bar icon (PNG). macOS renders
+	// it as a template image; nil skips the icon (tests).
+	TrayIcon []byte
 }
 
 // App is the Wails-bound application root. Exported methods on App
@@ -122,6 +125,15 @@ type App struct {
 	// rolloutBufs buffer streamed text/reasoning per run until the
 	// finish delta, so assistant items are recorded whole.
 	rolloutBufs map[string]*rolloutBuffer
+
+	// closeToTray persists the close behaviour ("hide to tray" vs
+	// "quit"). It is read by the Wails close hook on the UI thread.
+	closeToTray bool
+	// quitting is set when the user chooses Quit from the tray menu, so
+	// OnBeforeClose lets Wails terminate instead of hiding again.
+	quitting bool
+	// trayIcon is the system tray icon bytes (nil in tests).
+	trayIcon []byte
 }
 
 // rolloutBuffer accumulates one run's streamed assistant parts.
@@ -149,6 +161,12 @@ func New(opts Options) (*App, error) {
 			return nil, fmt.Errorf("desktop: user config dir: %w", err)
 		}
 		userDir = dir
+	}
+	prefs, err := loadPrefs(opts.UserDir)
+	if err != nil {
+		// A preference file read failure must not block the window;
+		// defaults apply and the next save rewrites the file.
+		prefs = desktopPrefs{CloseToTray: true}
 	}
 	if _, err := config.EnsureUserConfig(); err != nil {
 		return nil, fmt.Errorf("desktop: seed config: %w", err)
@@ -191,6 +209,8 @@ func New(opts Options) (*App, error) {
 		rollouts:        make(map[string]*rollout.Recorder),
 		rolloutBufs:     make(map[string]*rolloutBuffer),
 		otelShutdown:    shutdown,
+		closeToTray:     prefs.CloseToTray,
+		trayIcon:        opts.TrayIcon,
 	}
 	a.cap = pluginruntime.NewManager(pluginDir, pluginruntime.DefaultLoader{
 		Root: pluginDir,
@@ -254,10 +274,16 @@ func (a *App) Startup(ctx context.Context) {
 	// list or block the first turn; config changes take effect on the
 	// next rebuild/start.
 	go a.reconcileInferenceKeys()
+
+	// The tray icon is a background-resident app's primary entry point;
+	// start it once the window context exists so its actions can reach
+	// the Wails runtime.
+	a.startTray()
 }
 
 // Shutdown tears down the runtime when the window closes.
 func (a *App) Shutdown(ctx context.Context) {
+	a.stopTray()
 	a.closeRollouts()
 	a.closeRuntime()
 	a.mu.Lock()

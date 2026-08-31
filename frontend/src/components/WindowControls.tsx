@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import { Copy, Minus, Square, X } from 'lucide-react';
 import {
-  Quit,
   WindowIsMaximised,
   WindowMinimise,
   WindowToggleMaximise,
 } from '../../wailsjs/runtime/runtime';
+import { api } from '../lib/api';
 
 // WindowControls renders the custom minimize/maximize/close buttons for
 // the frameless Windows/Linux window. It is only mounted inside the
@@ -63,7 +63,9 @@ export function WindowControls() {
         {maximised ? <Copy size="0.9286rem" /> : <Square size="0.8571rem" />}
       </button>
       <button
-        onClick={Quit}
+        // Route through Go: the "close to tray / quit" setting decides
+        // whether this hides the window or terminates the app.
+        onClick={() => void api.closeRequested()}
         aria-label="Close"
         className="grid w-12 place-items-center text-dim transition-colors hover:bg-[#e81123] hover:text-white"
       >

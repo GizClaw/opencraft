@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Closing the window now keeps the app running in the background by
+  default: the process hides to the system tray (Windows/Linux) or to
+  the menu bar (macOS, native `NSApp hide` semantics) instead of
+  quitting. A new "Interface" settings toggle switches between
+  "Minimize to tray" and "Quit". The tray icon menu offers Show and
+  Quit, and launching the app again while it is backgrounded restores
+  the main window instead of starting a second instance (single-instance
+  lock on Windows/macOS/Linux). On macOS, clicking the Dock icon brings
+  the hidden window back.
 - Windows desktop builds: the execd socket umask now lives behind a
   platform-specific file (`syscall.Umask` is unix-only), a
   `build/windows/icon.ico` resource, and CI/release jobs that produce

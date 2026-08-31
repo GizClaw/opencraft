@@ -3,6 +3,7 @@ module github.com/GizClaw/opencraft
 go 1.25.5
 
 require (
+	fyne.io/systray v1.12.2
 	github.com/GizClaw/flowcraft/core v0.2.2
 	github.com/GizClaw/flowcraft/driver/anthropic v0.2.0
 	github.com/GizClaw/flowcraft/driver/azure v0.2.0

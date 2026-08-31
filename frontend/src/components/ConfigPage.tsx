@@ -14,10 +14,12 @@ import {
   Kanban,
   Languages,
   Loader2,
+  Minimize2,
   Monitor,
   Moon,
   Palette,
   Plus,
+  Power,
   RefreshCw,
   ScrollText,
   Settings,
@@ -100,8 +102,24 @@ export function ConfigPage() {
   const { t, i18n } = useTranslation();
   const lang = i18n.resolvedLanguage?.startsWith('zh') ? 'zh' : 'en';
   const [langMenuOpen, setLangMenuOpen] = useState(false);
+  // null until the persisted value loads; the row renders once known so
+  // the highlighted option never flashes the default.
+  const [closeToTray, setCloseToTray] = useState<boolean | null>(null);
 
   const [tab, setTab] = useState<Tab>(configTab as Tab);
+
+  useEffect(() => {
+    let alive = true;
+    void api
+      .getCloseToTray()
+      .then((v) => {
+        if (alive) setCloseToTray(v);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -753,6 +771,63 @@ export function ConfigPage() {
                     </div>
                   </div>
                 </div>
+                {closeToTray !== null && (
+                  <div className="rounded-xl border border-edge bg-panel2 p-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <div className="flex items-center gap-2 text-sm font-medium">
+                          <Minimize2 size="1.0714rem" className="text-accent" />
+                          {t('config.uiCloseToTray')}
+                        </div>
+                        <p className="mt-1 text-xs text-dim">
+                          {t('config.uiCloseToTrayHint')}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 overflow-hidden rounded-lg border border-edge text-sm">
+                        <button
+                          onClick={() => {
+                            const next = true;
+                            setCloseToTray(next);
+                            void api.setCloseToTray(next).catch(() => {
+                              setCloseToTray((cur) =>
+                                cur === null ? null : !next,
+                              );
+                              toast(t('config.saveFailed'));
+                            });
+                          }}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
+                            closeToTray
+                              ? 'bg-accent text-white'
+                              : 'text-dim hover:bg-panel hover:text-fg'
+                          }`}
+                        >
+                          <Minimize2 size="0.9286rem" />
+                          {t('config.uiCloseToTrayHide')}
+                        </button>
+                        <button
+                          onClick={() => {
+                            const next = false;
+                            setCloseToTray(next);
+                            void api.setCloseToTray(next).catch(() => {
+                              setCloseToTray((cur) =>
+                                cur === null ? null : !next,
+                              );
+                              toast(t('config.saveFailed'));
+                            });
+                          }}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
+                            !closeToTray
+                              ? 'bg-accent text-white'
+                              : 'text-dim hover:bg-panel hover:text-fg'
+                          }`}
+                        >
+                          <Power size="0.9286rem" />
+                          {t('config.uiCloseToTrayQuit')}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

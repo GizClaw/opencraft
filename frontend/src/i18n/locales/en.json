@@ -83,6 +83,7 @@
   "config": {
     "title": "Settings",
     "saved": "Settings saved",
+    "saveFailed": "Failed to save",
     "tabUi": "Interface",
     "tabInference": "Inference",
     "tabMCP": "MCP",
@@ -117,6 +118,10 @@
     "uiLanguageHint": "Interface language (saved locally).",
     "uiThemeDark": "Dark",
     "uiThemeLight": "Light",
+    "uiCloseToTray": "When closing the window",
+    "uiCloseToTrayHint": "Keep running in the system tray, or quit entirely. On macOS the close button hides the app in the menu bar by default.",
+    "uiCloseToTrayHide": "Minimize to tray",
+    "uiCloseToTrayQuit": "Quit",
     "memoryHint": "Tune how conversation history enters the model context. Full history replay is experimental and relies on model window metadata from the router (Azure does not declare it yet).",
     "memoryRawWindow": "Raw window",
     "memoryPreserveRecent": "Preserve recent",

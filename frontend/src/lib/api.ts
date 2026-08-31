@@ -139,6 +139,12 @@ export const api = {
   pluginUninstall: (id: string) => App.PluginUninstall(id),
   pluginInvoke: (id: string, method: string, args: string) =>
     App.PluginInvoke(id, method, args) as Promise<string>,
+  getCloseToTray: () => App.GetCloseToTray() as Promise<boolean>,
+  setCloseToTray: (closeToTray: boolean) => App.SetCloseToTray(closeToTray),
+  // CloseRequested routes the custom title-bar X button through the Go
+  // close handler so the "close to tray / quit" setting applies there
+  // exactly like the native close button.
+  closeRequested: () => App.RequestClose(),
   pickFolder: (title: string) => App.PickFolder(title) as Promise<string>,
   pickFile: (title: string, pattern: string) =>
     App.PickFile(title, pattern) as Promise<string>,

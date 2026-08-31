@@ -69,6 +69,39 @@ static void applyOpenCraftWindowStyle(void) {
 		applyOpenCraftWindowStyleInner();
 	});
 }
+
+// reopenMainWindowIfHidden is invoked on every application activation
+// (Dock click, Cmd+Tab, launch). Closing the window hides the whole app
+// ([NSApp hide]) per the default macOS scheme; without this hook,
+// clicking the Dock icon would activate the app but leave every window
+// hidden. Only acts when the main window is actually invisible.
+static void reopenMainWindowIfHidden(void) {
+	NSApplication *app = [NSApplication sharedApplication];
+	NSWindow *w = [app mainWindow];
+	if (w == nil) {
+		w = [app windows].firstObject;
+	}
+	if (w != nil && ![w isVisible]) {
+		[w makeKeyAndOrderFront:nil];
+		[app activateIgnoringOtherApps:YES];
+	}
+}
+
+static void installOpenCraftReopenHandlerInner(void) {
+	[[NSNotificationCenter defaultCenter]
+		addObserverForName:NSApplicationDidBecomeActiveNotification
+		object:nil
+		queue:[NSOperationQueue mainQueue]
+		usingBlock:^(NSNotification *note) {
+			reopenMainWindowIfHidden();
+		}];
+}
+
+static void installOpenCraftReopenHandler(void) {
+	dispatch_async(dispatch_get_main_queue(), ^{
+		installOpenCraftReopenHandlerInner();
+	});
+}
 */
 import "C"
 
@@ -76,4 +109,12 @@ import "C"
 // polish applied after startup.
 func applyOpenCraftWindowStyle() {
 	C.applyOpenCraftWindowStyle()
+}
+
+// installOpenCraftReopenHandler is the darwin implementation of the
+// dock-click reopen hook: Wails v2 has no applicationShouldHandleReopen
+// delegate hook, so we observe NSApplicationDidBecomeActiveNotification
+// and bring the hidden main window back when the user activates the app.
+func installOpenCraftReopenHandler() {
+	C.installOpenCraftReopenHandler()
 }
