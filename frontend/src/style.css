@@ -51,7 +51,9 @@ body,
     'PingFang SC',
     'Microsoft YaHei',
     sans-serif;
-  font-size: 14px;
+  /* Scale knob: 14px design base × 1.12 = whole UI scaled up 12%.
+     All rem sizes below are expressed against the 14px base. */
+  font-size: 15.68px;
   overscroll-behavior: none;
 }
 
@@ -63,9 +65,9 @@ body,
 /* Keyboard focus must stay visible even where outlines are removed
    (Tailwind preflight + custom outline-none utilities). */
 :focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
-  border-radius: 4px;
+  outline: 0.1429rem solid var(--color-accent);
+  outline-offset: 0.1429rem;
+  border-radius: 0.2857rem;
 }
 
 /* Text inputs: the composer already signals focus via its container's
@@ -77,17 +79,27 @@ textarea:focus-visible {
 }
 
 *::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 0.5714rem;
+  height: 0.5714rem;
 }
 
 *::-webkit-scrollbar-thumb {
   background: var(--color-edge);
-  border-radius: 4px;
+  border-radius: 0.2857rem;
 }
 
 *::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* The composer textarea scrolls invisibly so its content box always
+   matches the highlight mirror (a visible scrollbar would shrink the
+   textarea's wrap width and misalign the caret with the mirror). */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }
 
 .prose-chat {
@@ -146,19 +158,19 @@ textarea:focus-visible {
 .prose-chat :not(pre) > code {
   background: color-mix(in srgb, var(--color-accent) 12%, transparent);
   border: 1px solid color-mix(in srgb, var(--color-accent) 25%, transparent);
-  border-radius: 5px;
-  padding: 1px 6px;
+  border-radius: 0.3571rem;
+  padding: 0.0714rem 0.4286rem;
   color: var(--color-accent);
 }
 
 .prose-chat pre {
   background: var(--color-panel2);
   border: 1px solid var(--color-edge);
-  border-radius: 10px;
-  padding: 12px 14px;
+  border-radius: 0.7143rem;
+  padding: 0.8571rem 1rem;
   overflow-x: auto;
   margin: 0.7em 0;
-  font-size: 12.5px;
+  font-size: 0.8929rem;
 }
 
 .prose-chat pre code {
@@ -211,12 +223,12 @@ textarea:focus-visible {
 }
 
 .prose-chat blockquote {
-  border-left: 3px solid var(--color-accent);
+  border-left: 0.2143rem solid var(--color-accent);
   margin: 0.6em 0;
   padding: 0.15em 0 0.15em 1em;
   color: var(--color-dim);
   background: color-mix(in srgb, var(--color-accent) 6%, transparent);
-  border-radius: 0 8px 8px 0;
+  border-radius: 0 0.5714rem 0.5714rem 0;
 }
 
 .prose-chat table {
@@ -230,7 +242,7 @@ textarea:focus-visible {
 .prose-chat table th,
 .prose-chat table td {
   border: 1px solid var(--color-edge);
-  padding: 6px 12px;
+  padding: 0.4286rem 0.8571rem;
 }
 
 .prose-chat table th {
@@ -259,19 +271,19 @@ textarea:focus-visible {
 
 .codeblock-copy {
   position: absolute;
-  top: 8px;
-  right: 8px;
+  top: 0.5714rem;
+  right: 0.5714rem;
   opacity: 0;
   transition: opacity 120ms ease;
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
+  gap: 0.2857rem;
+  padding: 0.2143rem 0.5714rem;
   border: 1px solid var(--color-edge);
-  border-radius: 6px;
+  border-radius: 0.4286rem;
   background: var(--color-panel);
   color: var(--color-dim);
-  font-size: 11px;
+  font-size: 0.7857rem;
 }
 
 .codeblock-copy:hover {
@@ -359,23 +371,23 @@ textarea:focus-visible {
 .prose-chat th,
 .prose-chat td {
   border: 1px solid var(--color-edge);
-  padding: 4px 10px;
+  padding: 0.2857rem 0.7143rem;
 }
 
 .project-trust-banner {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 8px 16px;
+  gap: 0.8571rem;
+  padding: 0.5714rem 1.1429rem;
   border-bottom: 1px solid var(--color-edge);
   background: color-mix(in srgb, var(--color-accent) 12%, transparent);
-  font-size: 12px;
+  font-size: 0.8571rem;
 }
 
 .project-trust-banner .project-trust-copy {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 0.1429rem;
   flex: 1;
   min-width: 0;
 }
@@ -386,7 +398,7 @@ textarea:focus-visible {
 
 .project-trust-banner .project-trust-error {
   color: var(--color-err);
-  max-width: 320px;
+  max-width: 22.8571rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -394,8 +406,8 @@ textarea:focus-visible {
 
 .project-trust-banner button {
   border: 1px solid var(--color-accent);
-  border-radius: 6px;
-  padding: 4px 12px;
+  border-radius: 0.4286rem;
+  padding: 0.2857rem 0.8571rem;
   background: var(--color-accent);
   color: var(--color-bg);
   cursor: pointer;

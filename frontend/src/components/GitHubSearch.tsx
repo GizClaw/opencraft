@@ -150,9 +150,9 @@ export function GitHubSearch({
           className="flex shrink-0 items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg disabled:opacity-40"
         >
           {searching ? (
-            <Loader2 size={13} className="animate-spin" />
+            <Loader2 size="0.9286rem" className="animate-spin" />
           ) : (
-            <Search size={13} />
+            <Search size="0.9286rem" />
           )}
           {t('config.githubSearch')}
         </button>
@@ -171,7 +171,7 @@ export function GitHubSearch({
             {repo.description ?? ''}
           </span>
           {repo.stargazers_count > 0 && (
-            <span className="shrink-0 text-[10px] text-dim">
+            <span className="shrink-0 text-[0.7143rem] text-dim">
               ★ {repo.stargazers_count}
             </span>
           )}

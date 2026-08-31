@@ -1,7 +1,8 @@
-import { Fragment, memo, useEffect, useRef, useState } from 'react';
+import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   Archive,
+  ArrowUp,
   Bot,
   Check,
   ChevronDown,
@@ -25,7 +26,6 @@ import {
   Presentation,
   Redo2,
   RotateCcw,
-  Send,
   ShieldCheck,
   Sparkles,
   Square,
@@ -47,60 +47,12 @@ import type {
   TurnDoc,
 } from '../lib/store';
 import { InteractionCard } from './InteractionCard';
-import { latestPlan, PlanPanel } from './PlanPanel';
-import { ApplyPatchView, ToolCard, WriteView } from './ToolCard';
-import { LiveMarkdown, looksLikeMarkdown, Markdown } from './Markdown';
+import { PlanPanel } from './PlanPanel';
+import { ToolCard } from './ToolCard';
 import { ProjectTrustBanner } from './ProjectTrustBanner';
-
-function Reasoning({ text }: { text: string }) {
-  const { t } = useTranslation();
-  return (
-    <details className="mb-1.5">
-      <summary className="cursor-pointer text-xs text-dim select-none">
-        {t('chat.reasonCollapse')}
-      </summary>
-      <div className="mt-1 rounded-lg bg-panel2 border border-edge p-3 text-xs text-dim whitespace-pre-wrap">
-        {text}
-      </div>
-    </details>
-  );
-}
-
-type ToolCallItem = Extract<AssistantItem, { kind: 'tool_call' }>;
-
-// Tools rendered as always-visible full blocks are never folded into a
-// consecutive-run group: their content matters in place (patch diffs,
-// written file contents), not hidden behind a "Ran N tools" summary.
-const nonGroupedTools = new Set(['apply_patch', 'write_file']);
-
-// groupToolCalls merges consecutive tool calls into groups so a burst
-// of tool executions renders as one collapsible block instead of a
-// stack of cards. Non-tool items are passed through unchanged.
-function groupToolCalls(
-  items: AssistantItem[],
-): (AssistantItem | ToolCallItem[])[] {
-  const out: (AssistantItem | ToolCallItem[])[] = [];
-  let cur: ToolCallItem[] | null = null;
-  for (const item of items) {
-    // update_plan renders once in the top-left plan panel instead of
-    // as transcript cards, so its calls are dropped from the flow.
-    if (item.kind === 'tool_call' && item.tool.name === 'update_plan') {
-      continue;
-    }
-    if (item.kind === 'tool_call' && !nonGroupedTools.has(item.tool.name)) {
-      if (!cur) cur = [];
-      cur.push(item);
-    } else {
-      if (cur) {
-        out.push(cur);
-        cur = null;
-      }
-      out.push(item);
-    }
-  }
-  if (cur) out.push(cur);
-  return out;
-}
+import { StreamItemView } from './StreamItemView';
+import { latestPlan } from '../lib/plan';
+import { groupToolCalls, type ToolCallItem } from '../lib/stream';
 
 const isCommandTool = (name: string) =>
   name === 'exec_command' || name === 'exec_session';
@@ -132,16 +84,19 @@ function ToolGroupView({ tools }: { tools: ToolCallItem[] }) {
         } hover:bg-panel2/70`}
       >
         {running ? (
-          <Loader2 size={14} className="animate-spin shrink-0 text-accent" />
+          <Loader2
+            size="1.0000rem"
+            className="animate-spin shrink-0 text-accent"
+          />
         ) : failed ? (
-          <X size={14} className="shrink-0 text-err" />
+          <X size="1.0000rem" className="shrink-0 text-err" />
         ) : (
-          <Check size={14} className="shrink-0 text-ok" />
+          <Check size="1.0000rem" className="shrink-0 text-ok" />
         )}
         {allCommands ? (
-          <Terminal size={14} className="shrink-0 text-accent" />
+          <Terminal size="1.0000rem" className="shrink-0 text-accent" />
         ) : (
-          <Bot size={14} className="shrink-0 text-accent" />
+          <Bot size="1.0000rem" className="shrink-0 text-accent" />
         )}
         <span className="min-w-0 flex-1 truncate text-sm text-fg">{label}</span>
         {running && (
@@ -150,9 +105,9 @@ function ToolGroupView({ tools }: { tools: ToolCallItem[] }) {
           </span>
         )}
         {open ? (
-          <ChevronDown size={14} className="shrink-0 text-dim" />
+          <ChevronDown size="1.0000rem" className="shrink-0 text-dim" />
         ) : (
-          <ChevronRight size={14} className="shrink-0 text-dim" />
+          <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
         )}
       </button>
       {open && (
@@ -165,31 +120,6 @@ function ToolGroupView({ tools }: { tools: ToolCallItem[] }) {
     </div>
   );
 }
-
-// AssistantText renders one assistant text block. While the message is
-// still streaming, markdown parsing is deferred to plain text: parsing
-// the full document on every token delta stalls the main thread and
-// freezes the UI on long outputs. Completed messages render markdown
-// once.
-const AssistantText = memo(function AssistantText({
-  text,
-  streaming,
-}: {
-  text: string;
-  streaming: boolean;
-}) {
-  if (streaming) {
-    if (looksLikeMarkdown(text)) {
-      return <LiveMarkdown text={text} />;
-    }
-    return <div className="prose-chat whitespace-pre-wrap text-sm">{text}</div>;
-  }
-  return (
-    <div className="prose-chat text-sm">
-      <Markdown text={text} />
-    </div>
-  );
-});
 
 // MessageRow renders one conversation message. Memoized so stream
 // deltas only re-render the message that changed instead of reparsing
@@ -259,55 +189,40 @@ const MessageRow = memo(function MessageRow({
       {groups.map((group, gi) => {
         if (Array.isArray(group)) {
           return group.length === 1 ? (
-            group[0].tool.name === 'apply_patch' ? (
-              <ApplyPatchView key={group[0].id} tool={group[0].tool} />
-            ) : group[0].tool.name === 'write_file' ? (
-              <WriteView key={group[0].id} tool={group[0].tool} />
-            ) : (
-              <ToolCard key={group[0].id} tool={group[0].tool} />
-            )
+            <StreamItemView
+              key={group[0].id}
+              item={group[0]}
+              variant="chat"
+              streaming={streaming}
+            />
           ) : (
             <ToolGroupView key={`group-${gi}`} tools={group} />
           );
         }
-        switch (group.kind) {
-          case 'reasoning':
-            return <Reasoning key={group.id} text={group.text} />;
-          case 'tool_call':
-            // Non-grouped tools (apply_patch / write_file) arrive here
-            // as standalone items.
-            return group.tool.name === 'apply_patch' ? (
-              <ApplyPatchView key={group.id} tool={group.tool} />
-            ) : group.tool.name === 'write_file' ? (
-              <WriteView key={group.id} tool={group.tool} />
-            ) : (
-              <ToolCard key={group.id} tool={group.tool} />
-            );
-          case 'text':
-            return (
-              <AssistantText
-                key={group.id}
-                text={group.text}
-                streaming={streaming}
-              />
-            );
-        }
+        return (
+          <StreamItemView
+            key={group.id}
+            item={group}
+            variant="chat"
+            streaming={streaming}
+          />
+        );
       })}
       {copyable && (
         <div className="flex justify-end">
           <button
             onClick={() => void copyFinal()}
-            className="flex items-center gap-1 rounded border border-edge px-1.5 py-0.5 text-[10px] text-dim hover:text-fg"
+            className="flex items-center gap-1 rounded border border-edge px-1.5 py-0.5 text-[0.7143rem] text-dim hover:text-fg"
             aria-label={t('chat.copyOutput')}
           >
-            {copied ? <Check size={11} /> : <Copy size={11} />}
+            {copied ? <Check size="0.7857rem" /> : <Copy size="0.7857rem" />}
             {copied ? t('chat.copied') : t('chat.copyOutput')}
           </button>
         </div>
       )}
       {msg.items.length === 0 && busy && (
         <div className="flex items-center gap-2 py-1 text-sm text-dim">
-          <Loader2 size={14} className="animate-spin" />
+          <Loader2 size="1.0000rem" className="animate-spin" />
           {t('chat.thinking')}
         </div>
       )}
@@ -328,14 +243,14 @@ function CompactCard({ text }: { text: string }) {
         onClick={() => setOpen(!open)}
         className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-panel2/70"
       >
-        <Archive size={14} className="shrink-0 text-dim" />
+        <Archive size="1.0000rem" className="shrink-0 text-dim" />
         <span>{t('tool.compacted')}</span>
         <span className="flex-1" />
         <span className="text-xs text-dim">{t('tool.done')}</span>
         {open ? (
-          <ChevronDown size={14} className="shrink-0 text-dim" />
+          <ChevronDown size="1.0000rem" className="shrink-0 text-dim" />
         ) : (
-          <ChevronRight size={14} className="shrink-0 text-dim" />
+          <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
         )}
       </button>
       {open && body && (
@@ -359,22 +274,22 @@ function formatSize(n: number) {
 function docIcon(path: string) {
   const ext = path.split('.').pop()?.toLowerCase() ?? '';
   if (['md', 'markdown', 'txt', 'rst', 'doc', 'docx', 'pdf'].includes(ext)) {
-    return <FileText size={13} className="text-accent" />;
+    return <FileText size="0.9286rem" className="text-accent" />;
   }
   if (['ppt', 'pptx', 'key'].includes(ext)) {
-    return <Presentation size={13} className="text-warn" />;
+    return <Presentation size="0.9286rem" className="text-warn" />;
   }
   if (['xls', 'xlsx', 'csv'].includes(ext)) {
-    return <FileSpreadsheet size={13} className="text-ok" />;
+    return <FileSpreadsheet size="0.9286rem" className="text-ok" />;
   }
   if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'bmp'].includes(ext)) {
-    return <FileImage size={13} className="text-accent" />;
+    return <FileImage size="0.9286rem" className="text-accent" />;
   }
   if (['mp4', 'mov', 'webm', 'mkv', 'avi'].includes(ext)) {
-    return <Film size={13} className="text-warn" />;
+    return <Film size="0.9286rem" className="text-warn" />;
   }
   if (['zip', 'gz', 'tar', '7z', 'rar'].includes(ext)) {
-    return <FileArchive size={13} className="text-dim" />;
+    return <FileArchive size="0.9286rem" className="text-dim" />;
   }
   if (
     [
@@ -398,9 +313,9 @@ function docIcon(path: string) {
       'sql',
     ].includes(ext)
   ) {
-    return <FileCode size={13} className="text-dim" />;
+    return <FileCode size="0.9286rem" className="text-dim" />;
   }
-  return <File size={13} className="text-dim" />;
+  return <File size="0.9286rem" className="text-dim" />;
 }
 
 // ArtifactStrip renders the current turn's produced files as a
@@ -419,7 +334,7 @@ function ArtifactStrip({ docs }: { docs: TurnDoc[] }) {
   return (
     <div className="rounded-xl border border-edge bg-panel2 p-3 my-3">
       <div className="mb-2 flex items-center gap-2 text-xs text-dim">
-        <Package size={13} className="text-accent" />
+        <Package size="0.9286rem" className="text-accent" />
         <span className="font-medium text-fg">{t('chat.turnArtifacts')}</span>
         <span className="rounded bg-panel px-1.5 py-0.5 tabular-nums">
           {docs.length}
@@ -478,14 +393,14 @@ function AttachmentImage({ att }: { att: AttachmentView }) {
   }
   if (url === 'missing') {
     return (
-      <div className="flex h-24 w-36 items-center justify-center rounded-lg border border-edge bg-panel2 px-2 text-center text-[10px] text-dim">
+      <div className="flex h-24 w-36 items-center justify-center rounded-lg border border-edge bg-panel2 px-2 text-center text-[0.7143rem] text-dim">
         <span className="truncate">{att.name}</span>
       </div>
     );
   }
   return (
     <div className="flex h-24 w-36 items-center justify-center rounded-lg border border-edge bg-panel2">
-      <Loader2 size={14} className="animate-spin text-dim" />
+      <Loader2 size="1.0000rem" className="animate-spin text-dim" />
     </div>
   );
 }
@@ -503,9 +418,13 @@ function AttachmentFiles({ attachments }: { attachments: AttachmentView[] }) {
         onClick={() => setOpen(!open)}
         className="flex items-center gap-1.5 rounded-md border border-edge bg-panel2/70 px-2 py-1 text-xs text-dim hover:text-fg"
       >
-        <Paperclip size={12} />
+        <Paperclip size="0.8571rem" />
         {t('chat.files', { count: attachments.length })}
-        {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+        {open ? (
+          <ChevronUp size="0.8571rem" />
+        ) : (
+          <ChevronDown size="0.8571rem" />
+        )}
       </button>
       {open && (
         <div className="mt-1.5 space-y-1">
@@ -516,7 +435,7 @@ function AttachmentFiles({ attachments }: { attachments: AttachmentView[] }) {
                 key={a.id}
                 className="flex items-center gap-1.5 rounded-md border border-edge bg-panel2 px-2 py-1 text-xs"
               >
-                <Icon size={12} className="shrink-0 text-dim" />
+                <Icon size="0.8571rem" className="shrink-0 text-dim" />
                 <span className="min-w-0 truncate">{a.name}</span>
                 {a.size != null && (
                   <span className="shrink-0 text-dim tabular-nums">
@@ -539,7 +458,7 @@ export function ChatView() {
   const messages = conv?.messages ?? [];
   const busy = conv?.busy ?? false;
   const turnArtifacts = conv?.turnArtifacts ?? [];
-  const planState = latestPlan(messages);
+  const planState = useMemo(() => latestPlan(messages), [messages]);
   const [planDismissed, setPlanDismissed] = useState(false);
   const planItemsKey = planState
     ? planState.plan.items.map((s) => `${s.status}|${s.step}`).join('\n')
@@ -583,6 +502,8 @@ export function ChatView() {
   const [attachments, setAttachments] = useState<AttachmentView[]>([]);
   const [confirmYolo, setConfirmYolo] = useState(false);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [composing, setComposing] = useState(false);
   const [undoAvail, setUndoAvail] = useState<UndoState>({
     can_undo: false,
     can_redo: false,
@@ -630,6 +551,19 @@ export function ChatView() {
   // WKWebView for the Enter key).
   const composingRef = useRef(false);
   const { t } = useTranslation();
+  const thinkLevels = [
+    { value: 'low', label: t('chat.thinkLow') },
+    { value: 'medium', label: t('chat.thinkMedium') },
+    { value: 'high', label: t('chat.thinkHigh') },
+  ];
+  const thinkIndex = Math.max(
+    0,
+    thinkLevels.findIndex((l) => l.value === think),
+  );
+  const thinkLabel = thinkLevels[thinkIndex].label;
+  const modelLabel = model
+    ? (modelOptions.find((o) => o.id === model)?.label ?? model)
+    : t('chat.modelAuto');
 
   const addAttachmentPaths = async (paths: string[]) => {
     if (paths.length === 0) return;
@@ -851,7 +785,8 @@ export function ChatView() {
     const el = inputRef.current;
     if (!el) return;
     el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 208)}px`;
+    const max = Number.parseFloat(getComputedStyle(el).maxHeight) || 208;
+    el.style.height = `${Math.min(el.scrollHeight, max)}px`;
   }, [input]);
 
   const insertMention = (item: MentionItem) => {
@@ -911,7 +846,7 @@ export function ChatView() {
         <span className="text-sm font-medium truncate">{headerTitle}</span>
         {busy && (
           <span className="flex items-center gap-1 text-xs text-accent">
-            <Loader2 size={12} className="animate-spin" /> {stageLabel}
+            <Loader2 size="0.8571rem" className="animate-spin" /> {stageLabel}
           </span>
         )}
         <span className="flex-1" />
@@ -929,7 +864,7 @@ export function ChatView() {
             aria-label={t('chat.undo')}
             className="rounded-lg border border-edge p-1.5 text-dim transition-colors hover:text-fg disabled:opacity-40"
           >
-            <Undo2 size={13} />
+            <Undo2 size="0.9286rem" />
           </button>
           <button
             onClick={() => void runUndo(true)}
@@ -938,7 +873,7 @@ export function ChatView() {
             aria-label={t('chat.redo')}
             className="ml-1 rounded-lg border border-edge p-1.5 text-dim transition-colors hover:text-fg disabled:opacity-40"
           >
-            <Redo2 size={13} />
+            <Redo2 size="0.9286rem" />
           </button>
           {subagentCards.length > 0 && (
             <button
@@ -951,7 +886,7 @@ export function ChatView() {
               title={t('subagent.toggle')}
               aria-label={t('subagent.toggle')}
             >
-              <Bot size={13} />
+              <Bot size="0.9286rem" />
               {subagentCards.length}
             </button>
           )}
@@ -981,7 +916,7 @@ export function ChatView() {
                 </div>
                 {!configured && (
                   <button
-                    onClick={openConfig}
+                    onClick={() => openConfig()}
                     className="rounded-lg border border-edge px-3 py-1.5 text-sm text-fg hover:border-accent/50 transition-colors"
                   >
                     {t('chat.openSettings')}
@@ -1033,7 +968,7 @@ export function ChatView() {
                       onClick={retry}
                       className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-dim hover:text-accent"
                     >
-                      <RotateCcw size={13} /> {t('chat.retry')}
+                      <RotateCcw size="0.9286rem" /> {t('chat.retry')}
                     </button>
                     <button
                       onClick={clearLastFailed}
@@ -1058,100 +993,6 @@ export function ChatView() {
 
       <div className="shrink-0 px-6 pb-4">
         <div className="max-w-4xl mx-auto rounded-xl border border-edge bg-panel focus-within:border-accent/60 transition-colors">
-          <div
-            className={`flex items-center gap-2 rounded-t-xl border-b px-3 py-1.5 text-xs transition-colors ${
-              yolo ? 'border-yolo/40 bg-yolo/10' : 'border-transparent'
-            }`}
-          >
-            <div className="relative">
-              <button
-                onClick={() => setModeMenuOpen((v) => !v)}
-                className={`flex items-center gap-1.5 rounded-md border px-2 py-0.5 transition-colors ${
-                  yolo
-                    ? 'border-yolo/50 bg-yolo/15 text-yolo hover:bg-yolo/25'
-                    : readOnly
-                      ? 'border-accent/40 bg-accent/10 text-accent hover:bg-accent/20'
-                      : 'border-edge text-dim hover:text-fg'
-                }`}
-                title={t('chat.sandboxMode')}
-              >
-                {yolo ? (
-                  <Flame size={11} />
-                ) : readOnly ? (
-                  <Lock size={11} />
-                ) : (
-                  <ShieldCheck size={11} />
-                )}
-                {yolo
-                  ? t('chat.yoloMode')
-                  : readOnly
-                    ? t('chat.readOnlyMode')
-                    : t('chat.workspaceMode')}
-                <ChevronDown size={11} />
-              </button>
-              {modeMenuOpen && (
-                <>
-                  <div
-                    className="fixed inset-0 z-30"
-                    onClick={() => setModeMenuOpen(false)}
-                  />
-                  <div className="absolute left-0 top-full z-40 mt-1 w-44 rounded-lg border border-edge bg-panel p-1 shadow-xl">
-                    <button
-                      onClick={() => {
-                        setModeMenuOpen(false);
-                        void setMode('read-only');
-                      }}
-                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs ${
-                        readOnly
-                          ? 'bg-accent/10 text-accent'
-                          : 'text-dim hover:bg-panel2 hover:text-fg'
-                      }`}
-                    >
-                      <Lock size={12} /> {t('chat.readOnlyMode')}
-                    </button>
-                    <button
-                      onClick={() => {
-                        setModeMenuOpen(false);
-                        void setMode('workspace');
-                      }}
-                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs ${
-                        !readOnly && !yolo
-                          ? 'bg-accent/10 text-accent'
-                          : 'text-dim hover:bg-panel2 hover:text-fg'
-                      }`}
-                    >
-                      <ShieldCheck size={12} /> {t('chat.workspaceMode')}
-                    </button>
-                    <button
-                      onClick={() => {
-                        setModeMenuOpen(false);
-                        setConfirmYolo(true);
-                      }}
-                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs ${
-                        yolo
-                          ? 'bg-yolo/15 text-yolo'
-                          : 'text-dim hover:bg-panel2 hover:text-fg'
-                      }`}
-                    >
-                      <Flame size={12} /> {t('chat.yoloMode')}
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-            {readOnly && (
-              <span className="flex items-center gap-1 text-accent">
-                <Lock size={12} />
-                {t('chat.readOnlyBanner')}
-              </span>
-            )}
-            {yolo && (
-              <span className="flex items-center gap-1 text-yolo">
-                <AlertTriangle size={12} />
-                {t('chat.yoloBanner')}
-              </span>
-            )}
-          </div>
           {attachments.length > 0 && (
             <div className="flex flex-wrap gap-2 px-3 pt-2">
               {attachments.map((a) => (
@@ -1163,8 +1004,8 @@ export function ChatView() {
                       className="h-16 w-16 rounded-lg border border-edge object-cover"
                     />
                   ) : (
-                    <div className="flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-lg border border-edge bg-panel2 p-1 text-[10px] text-dim">
-                      <File size={16} className="shrink-0" />
+                    <div className="flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-lg border border-edge bg-panel2 p-1 text-[0.7143rem] text-dim">
+                      <File size="1.1429rem" className="shrink-0" />
                       <span className="w-full truncate text-center">
                         {a.name}
                       </span>
@@ -1175,92 +1016,108 @@ export function ChatView() {
                     aria-label={t('chat.removeAttachment')}
                     className="absolute -right-1.5 -top-1.5 rounded-full bg-err p-0.5 text-white opacity-80 hover:opacity-100"
                   >
-                    <X size={10} />
+                    <X size="0.7143rem" />
                   </button>
                 </div>
               ))}
             </div>
           )}
-          <div className="relative">
-            <div
-              ref={highlightRef}
-              aria-hidden="true"
-              className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-4 pt-3 text-sm text-fg"
-            >
-              {renderHighlightedInput(input)}
-            </div>
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={(e) => onInputChange(e.target.value)}
-              onCompositionStart={() => (composingRef.current = true)}
-              onCompositionEnd={() => (composingRef.current = false)}
-              onScroll={() => {
-                if (highlightRef.current) {
-                  highlightRef.current.scrollTop =
-                    inputRef.current?.scrollTop ?? 0;
-                }
-              }}
-              onKeyDown={(e) => {
-                if (mention && e.key === 'Escape') {
-                  setMention(null);
-                  return;
-                }
-                if (
-                  mention &&
-                  mention.items.length > 0 &&
-                  (e.key === 'ArrowDown' || e.key === 'ArrowUp')
-                ) {
-                  e.preventDefault();
-                  const delta = e.key === 'ArrowDown' ? 1 : -1;
-                  setMention((m) =>
-                    m
-                      ? {
-                          ...m,
-                          active:
-                            m.active == null
-                              ? delta === 1
-                                ? 0
-                                : m.items.length - 1
-                              : (m.active + delta + m.items.length) %
-                                m.items.length,
-                        }
-                      : m,
-                  );
-                  return;
-                }
-                if (mention && e.key === 'Enter' && !e.shiftKey) {
-                  const item = mention.items[mention.active ?? 0];
-                  if (item) {
-                    e.preventDefault();
-                    insertMention(item);
+          {/* The top gap lives outside the scroll container (pt-3 here)
+              so it stays visible even when the textarea is scrolled to
+              the bottom; padding inside the textarea would scroll away
+              with the content. */}
+          <div className="pt-3">
+            <div className="relative">
+              <div
+                ref={highlightRef}
+                aria-hidden="true"
+                className={`pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-4 text-base text-fg ${
+                  composing ? 'opacity-0' : ''
+                }`}
+              >
+                {!composing && renderHighlightedInput(input)}
+              </div>
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={(e) => onInputChange(e.target.value)}
+                onCompositionStart={() => {
+                  composingRef.current = true;
+                  setComposing(true);
+                }}
+                onCompositionEnd={() => {
+                  composingRef.current = false;
+                  setComposing(false);
+                }}
+                onScroll={() => {
+                  if (highlightRef.current) {
+                    highlightRef.current.scrollTop =
+                      inputRef.current?.scrollTop ?? 0;
+                  }
+                }}
+                onKeyDown={(e) => {
+                  if (mention && e.key === 'Escape') {
+                    setMention(null);
                     return;
                   }
+                  if (
+                    mention &&
+                    mention.items.length > 0 &&
+                    (e.key === 'ArrowDown' || e.key === 'ArrowUp')
+                  ) {
+                    e.preventDefault();
+                    const delta = e.key === 'ArrowDown' ? 1 : -1;
+                    setMention((m) =>
+                      m
+                        ? {
+                            ...m,
+                            active:
+                              m.active == null
+                                ? delta === 1
+                                  ? 0
+                                  : m.items.length - 1
+                                : (m.active + delta + m.items.length) %
+                                  m.items.length,
+                          }
+                        : m,
+                    );
+                    return;
+                  }
+                  if (mention && e.key === 'Enter' && !e.shiftKey) {
+                    const item = mention.items[mention.active ?? 0];
+                    if (item) {
+                      e.preventDefault();
+                      insertMention(item);
+                      return;
+                    }
+                  }
+                  if (mention && e.key === 'Enter') {
+                    e.preventDefault();
+                    return;
+                  }
+                  if (
+                    e.key === 'Enter' &&
+                    !e.shiftKey &&
+                    !e.nativeEvent.isComposing &&
+                    !composingRef.current &&
+                    e.keyCode !== 229
+                  ) {
+                    e.preventDefault();
+                    submit();
+                  }
+                }}
+                rows={1}
+                placeholder={
+                  configured
+                    ? t('chat.placeholder')
+                    : t('chat.placeholderUnconfigured')
                 }
-                if (mention && e.key === 'Enter') {
-                  e.preventDefault();
-                  return;
-                }
-                if (
-                  e.key === 'Enter' &&
-                  !e.shiftKey &&
-                  !e.nativeEvent.isComposing &&
-                  !composingRef.current &&
-                  e.keyCode !== 229
-                ) {
-                  e.preventDefault();
-                  submit();
-                }
-              }}
-              rows={3}
-              placeholder={
-                configured
-                  ? t('chat.placeholder')
-                  : t('chat.placeholderUnconfigured')
-              }
-              disabled={!configured}
-              className="relative max-h-52 w-full resize-none overflow-y-auto bg-transparent px-4 pt-3 text-sm text-transparent caret-fg outline-none disabled:opacity-50"
-            />
+                disabled={!configured}
+                className={`block relative max-h-52 w-full resize-none overflow-y-auto no-scrollbar bg-transparent px-4 text-base caret-fg outline-none placeholder:text-dim/55 disabled:opacity-50 ${
+                  composing ? 'text-fg' : 'text-transparent'
+                }`}
+              />
+            </div>
           </div>
           {mention && (
             <div className="mx-3 mb-2 max-h-48 overflow-y-auto rounded-lg border border-edge bg-panel2 shadow-xl">
@@ -1288,12 +1145,18 @@ export function ChatView() {
                   >
                     {n.trigger === '@' ? (
                       n.isDir ? (
-                        <Folder size={13} className="text-accent shrink-0" />
+                        <Folder
+                          size="0.9286rem"
+                          className="text-accent shrink-0"
+                        />
                       ) : (
-                        <File size={13} className="text-dim shrink-0" />
+                        <File size="0.9286rem" className="text-dim shrink-0" />
                       )
                     ) : (
-                      <Sparkles size={13} className="text-accent shrink-0" />
+                      <Sparkles
+                        size="0.9286rem"
+                        className="text-accent shrink-0"
+                      />
                     )}
                     <span className="shrink-0">{n.label}</span>
                     {n.sub && (
@@ -1313,59 +1176,214 @@ export function ChatView() {
                 aria-label={t('chat.attach')}
                 className="flex items-center gap-1 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim hover:text-fg disabled:opacity-50"
               >
-                <Paperclip size={13} />
+                <Paperclip size="0.9286rem" />
               </button>
-              {thinkSupported && (
-                <div className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim">
-                  {t('chat.thinkLabel')}
-                  <select
-                    value={think}
-                    onChange={(e) => void setThink(e.target.value)}
-                    className="bg-transparent outline-none text-fg"
-                  >
-                    <option value="low">{t('chat.thinkLow')}</option>
-                    <option value="medium">{t('chat.thinkMedium')}</option>
-                    <option value="high">{t('chat.thinkHigh')}</option>
-                  </select>
-                </div>
-              )}
-              {modelOptions.length > 0 && (
-                <div className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim">
-                  {t('chat.modelLabel')}
-                  <select
-                    value={model}
-                    onChange={(e) => void setModel(e.target.value)}
-                    className="bg-transparent outline-none text-fg max-w-40"
-                    title={model}
-                  >
-                    <option value="">{t('chat.modelAuto')}</option>
-                    {modelOptions.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
+              <div className="relative">
+                <button
+                  onClick={() => setModeMenuOpen((v) => !v)}
+                  className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs transition-colors ${
+                    yolo
+                      ? 'border-yolo/50 bg-yolo/15 text-yolo hover:bg-yolo/25'
+                      : readOnly
+                        ? 'border-accent/40 bg-accent/10 text-accent hover:bg-accent/20'
+                        : 'border-edge text-dim hover:text-fg'
+                  }`}
+                  title={t('chat.sandboxMode')}
+                >
+                  {yolo ? (
+                    <Flame size="0.9286rem" />
+                  ) : readOnly ? (
+                    <Lock size="0.9286rem" />
+                  ) : (
+                    <ShieldCheck size="0.9286rem" />
+                  )}
+                  {yolo
+                    ? t('chat.yoloMode')
+                    : readOnly
+                      ? t('chat.readOnlyMode')
+                      : t('chat.workspaceMode')}
+                  <ChevronUp size="0.7857rem" />
+                </button>
+                {modeMenuOpen && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-30"
+                      onClick={() => setModeMenuOpen(false)}
+                    />
+                    <div className="absolute bottom-full left-0 z-40 mb-1.5 w-80 rounded-lg border border-edge bg-panel p-1 shadow-xl">
+                      <button
+                        onClick={() => {
+                          setModeMenuOpen(false);
+                          void setMode('read-only');
+                        }}
+                        className={`w-full rounded-md px-2 py-1.5 text-left text-xs ${
+                          readOnly
+                            ? 'bg-accent/10 text-accent'
+                            : 'text-dim hover:bg-panel2 hover:text-fg'
+                        }`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <Lock size="0.8571rem" /> {t('chat.readOnlyMode')}
+                        </span>
+                        <span className="mt-0.5 block pl-5 text-[0.7143rem] leading-snug text-dim">
+                          {t('chat.readOnlyBanner')}
+                        </span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setModeMenuOpen(false);
+                          void setMode('workspace');
+                        }}
+                        className={`w-full rounded-md px-2 py-1.5 text-left text-xs ${
+                          !readOnly && !yolo
+                            ? 'bg-accent/10 text-accent'
+                            : 'text-dim hover:bg-panel2 hover:text-fg'
+                        }`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <ShieldCheck size="0.8571rem" />{' '}
+                          {t('chat.workspaceMode')}
+                        </span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setModeMenuOpen(false);
+                          setConfirmYolo(true);
+                        }}
+                        className={`w-full rounded-md px-2 py-1.5 text-left text-xs ${
+                          yolo
+                            ? 'bg-yolo/15 text-yolo'
+                            : 'text-dim hover:bg-panel2 hover:text-fg'
+                        }`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <Flame size="0.8571rem" /> {t('chat.yoloMode')}
+                        </span>
+                        <span className="mt-0.5 block pl-5 text-[0.7143rem] leading-snug text-dim">
+                          {t('chat.yoloBanner')}
+                        </span>
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-dim hidden sm:inline text-xs">
-                {busy ? t('chat.runningHint') : t('chat.enterHint')}
-              </span>
+              {(thinkSupported || modelOptions.length > 0) && (
+                <div className="relative">
+                  <button
+                    onClick={() => setModelMenuOpen((v) => !v)}
+                    title={t('chat.modelLabel')}
+                    className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim hover:text-fg"
+                  >
+                    <Sparkles size="0.8571rem" className="text-accent" />
+                    <span className="max-w-32 truncate">{modelLabel}</span>
+                    {thinkSupported && (
+                      <>
+                        <span className="text-edge">·</span>
+                        <span>{thinkLabel}</span>
+                      </>
+                    )}
+                    <ChevronUp size="0.7857rem" />
+                  </button>
+                  {modelMenuOpen && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-30"
+                        onClick={() => setModelMenuOpen(false)}
+                      />
+                      <div className="absolute bottom-full left-0 z-40 mb-1.5 w-64 rounded-xl border border-edge bg-panel p-1.5 shadow-xl">
+                        <div className="px-2 pb-1 pt-1.5 text-[0.7143rem] uppercase tracking-wider text-dim">
+                          {t('chat.modelLabel')}
+                        </div>
+                        <div className="max-h-52 overflow-y-auto">
+                          <button
+                            onClick={() => {
+                              setModelMenuOpen(false);
+                              void setModel('');
+                            }}
+                            className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs ${
+                              !model
+                                ? 'bg-accent/10 text-accent'
+                                : 'text-dim hover:bg-panel2 hover:text-fg'
+                            }`}
+                          >
+                            <span>{t('chat.modelAuto')}</span>
+                            {!model && <Check size="0.8571rem" />}
+                          </button>
+                          {modelOptions.map((m) => (
+                            <button
+                              key={m.id}
+                              onClick={() => {
+                                setModelMenuOpen(false);
+                                void setModel(m.id);
+                              }}
+                              className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs ${
+                                model === m.id
+                                  ? 'bg-accent/10 text-accent'
+                                  : 'text-dim hover:bg-panel2 hover:text-fg'
+                              }`}
+                            >
+                              <span className="truncate">{m.label}</span>
+                              {model === m.id && <Check size="0.8571rem" />}
+                            </button>
+                          ))}
+                        </div>
+                        {thinkSupported && (
+                          <>
+                            <div className="my-1 border-t border-edge" />
+                            <div className="flex items-center justify-between px-2 pt-1.5 text-xs">
+                              <span className="text-dim">
+                                {t('chat.thinkLabel')}
+                              </span>
+                              <span className="text-fg">{thinkLabel}</span>
+                            </div>
+                            <div className="px-2 pt-1.5">
+                              <input
+                                type="range"
+                                min={0}
+                                max={2}
+                                step={1}
+                                value={thinkIndex}
+                                onChange={(e) => {
+                                  const v = Number(e.target.value);
+                                  void setThink(
+                                    thinkLevels[v]?.value ?? 'medium',
+                                  );
+                                }}
+                                className="w-full accent-accent"
+                              />
+                            </div>
+                            <div className="flex justify-between px-2 pb-1.5 text-[0.7143rem] text-dim">
+                              <span>{t('chat.thinkLow')}</span>
+                              <span>{t('chat.thinkMedium')}</span>
+                              <span>{t('chat.thinkHigh')}</span>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
               {busy ? (
                 <button
                   onClick={() => void cancelRun()}
-                  className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-err hover:bg-panel2"
+                  aria-label={t('chat.stop')}
+                  title={t('chat.stop')}
+                  className="grid h-8 w-8 place-items-center rounded-lg border border-edge text-err hover:bg-panel2"
                 >
-                  <Square size={13} /> {t('chat.stop')}
+                  <Square size="0.9286rem" />
                 </button>
               ) : (
                 <button
                   onClick={submit}
                   disabled={!input.trim() && attachments.length === 0}
-                  className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
+                  aria-label={t('chat.send')}
+                  title={t('chat.send')}
+                  className="grid h-8 w-8 place-items-center rounded-lg bg-accent text-white hover:opacity-90 disabled:opacity-40"
                 >
-                  <Send size={13} /> {t('chat.send')}
+                  <ArrowUp size="1.1429rem" />
                 </button>
               )}
             </div>
@@ -1373,9 +1391,9 @@ export function ChatView() {
         </div>
         {confirmYolo && (
           <div className="fixed inset-x-0 bottom-0 top-11 z-40 grid place-items-center bg-black/60">
-            <div className="w-[420px] rounded-2xl border border-yolo/40 bg-panel p-5 shadow-2xl">
+            <div className="w-[30.0000rem] rounded-2xl border border-yolo/40 bg-panel p-5 shadow-2xl">
               <div className="flex items-center gap-2 text-sm font-semibold text-yolo">
-                <AlertTriangle size={16} />
+                <AlertTriangle size="1.1429rem" />
                 {t('chat.yoloConfirmTitle')}
               </div>
               <p className="mt-3 text-sm text-dim leading-relaxed">

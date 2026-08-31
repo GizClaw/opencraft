@@ -80,7 +80,7 @@ function CodeBlock({
           className="codeblock-copy"
           aria-label="Copy code"
         >
-          {copied ? <Check size={11} /> : <Copy size={11} />}
+          {copied ? <Check size="0.7857rem" /> : <Copy size="0.7857rem" />}
           {copied ? 'Copied' : 'Copy'}
         </button>
       )}

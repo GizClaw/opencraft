@@ -168,7 +168,7 @@ export function LogViewer({ fetchLogs }: { fetchLogs: () => Promise<string> }) {
           className="flex items-center gap-1 rounded-lg border border-edge px-2 py-1 text-xs text-dim hover:text-fg"
           aria-label={t('config.logsCopy')}
         >
-          {copied ? <Check size={12} /> : <Copy size={12} />}
+          {copied ? <Check size="0.8571rem" /> : <Copy size="0.8571rem" />}
           {t('config.logsCopy')}
         </button>
         <button
@@ -177,9 +177,9 @@ export function LogViewer({ fetchLogs }: { fetchLogs: () => Promise<string> }) {
           className="flex items-center gap-1 rounded-lg border border-edge px-2 py-1 text-xs text-dim hover:text-fg disabled:opacity-50"
         >
           {loading ? (
-            <Loader2 size={12} className="animate-spin" />
+            <Loader2 size="0.8571rem" className="animate-spin" />
           ) : (
-            <RefreshCw size={12} />
+            <RefreshCw size="0.8571rem" />
           )}
           {t('config.logsRefresh')}
         </button>
@@ -197,15 +197,15 @@ export function LogViewer({ fetchLogs }: { fetchLogs: () => Promise<string> }) {
               key={i}
               className="flex items-start gap-2 border-b border-edge/40 px-3 py-1 hover:bg-panel"
             >
-              <span className="w-28 shrink-0 truncate font-mono text-[11px] text-dim">
+              <span className="w-28 shrink-0 truncate font-mono text-[0.7857rem] text-dim">
                 {e.ts ? e.ts.replace('T', ' ').slice(5, 23) : ''}
               </span>
               <span
-                className={`w-12 shrink-0 font-mono text-[11px] font-medium ${levelClass(e.level)}`}
+                className={`w-12 shrink-0 font-mono text-[0.7857rem] font-medium ${levelClass(e.level)}`}
               >
                 {e.level || '—'}
               </span>
-              <span className="min-w-0 flex-1 break-all font-mono text-[11px] leading-relaxed">
+              <span className="min-w-0 flex-1 break-all font-mono text-[0.7857rem] leading-relaxed">
                 <span className="text-fg">{e.message}</span>{' '}
                 {e.attrs.map((a) => (
                   <span key={a.key} className="whitespace-nowrap">

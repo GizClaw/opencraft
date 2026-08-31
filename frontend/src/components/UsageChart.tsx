@@ -226,7 +226,7 @@ export function UsageChart({
 
   if (startMs <= 0 || endMs <= 0 || filled.length === 0) {
     return (
-      <div className="grid h-[200px] place-items-center rounded-xl border border-edge bg-panel2 text-sm text-dim">
+      <div className="grid h-[14.2857rem] place-items-center rounded-xl border border-edge bg-panel2 text-sm text-dim">
         {t('config.usageSeriesEmpty')}
       </div>
     );
@@ -286,7 +286,7 @@ export function UsageChart({
       <div className="relative">
         <svg
           viewBox={`0 0 ${W} ${H}`}
-          className="block h-[300px] w-full cursor-crosshair"
+          className="block h-[21.4286rem] w-full cursor-crosshair"
           onMouseMove={onMove}
           onMouseLeave={() => setHoverIdx(null)}
         >

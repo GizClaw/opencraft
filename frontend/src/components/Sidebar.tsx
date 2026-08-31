@@ -2,31 +2,25 @@ import {
   Bot,
   Download,
   FolderOpen,
-  Kanban,
   Loader2,
   MessageSquare,
   MoreHorizontal,
   Pencil,
   Plus,
+  Puzzle,
   Search,
   Settings,
   Sparkles,
   Trash2,
   X,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import {
-  Environment,
-  WindowToggleMaximise,
-} from '../../wailsjs/runtime/runtime';
+import { WindowToggleMaximise } from '../../wailsjs/runtime/runtime';
 import { api } from '../lib/api';
 import { useStore } from '../lib/store';
 import type { SessionMeta } from '../lib/types';
-import { WindowControls } from './WindowControls';
 import type { ComponentType } from 'react';
-import { MCPLogo } from './ToolsPanel';
-import { PluginEntries } from '../plugins/components/PluginEntries';
 
 function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
@@ -43,7 +37,7 @@ interface SessionRow {
   meta?: SessionMeta;
 }
 
-export function Sidebar() {
+export function Sidebar({ isMac }: { isMac: boolean }) {
   const workspace = useStore((s) => s.workspace);
   const newChat = useStore((s) => s.newChat);
   const openConfig = useStore((s) => s.openConfig);
@@ -64,7 +58,6 @@ export function Sidebar() {
   const removeWorkspace = useStore((s) => s.removeWorkspace);
   const { t } = useTranslation();
 
-  const [isMac, setIsMac] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [workspacesOpen, setWorkspacesOpen] = useState(false);
   const [sessionQuery, setSessionQuery] = useState('');
@@ -84,13 +77,6 @@ export function Sidebar() {
     onClick: () => void;
   }[] = [
     {
-      id: 'mcp',
-      label: t('sidebar.mcp'),
-      icon: MCPLogo,
-      active: toolsView === 'mcp',
-      onClick: () => (toolsView === 'mcp' ? closeTools() : openTools('mcp')),
-    },
-    {
       id: 'agents',
       label: t('sidebar.subagents'),
       icon: Bot,
@@ -107,18 +93,14 @@ export function Sidebar() {
         toolsView === 'skills' ? closeTools() : openTools('skills'),
     },
     {
-      id: 'kanban',
-      label: t('sidebar.kanban'),
-      icon: Kanban,
-      active: toolsView === 'kanban',
+      id: 'plugins',
+      label: t('config.tabPlugins'),
+      icon: Puzzle,
+      active: toolsView === 'plugins',
       onClick: () =>
-        toolsView === 'kanban' ? closeTools() : openTools('kanban'),
+        toolsView === 'plugins' ? closeTools() : openTools('plugins'),
     },
   ];
-
-  useEffect(() => {
-    void Environment().then((env) => setIsMac(env.platform === 'darwin'));
-  }, []);
 
   // The native folder picker can fail or never return in some
   // environments (e.g. wails dev running the bare binary). When it
@@ -241,9 +223,12 @@ export function Sidebar() {
           className="flex flex-1 min-w-0 items-center gap-2"
         >
           {row.running ? (
-            <Loader2 size={13} className="text-accent animate-spin shrink-0" />
+            <Loader2
+              size="0.9286rem"
+              className="text-accent animate-spin shrink-0"
+            />
           ) : (
-            <MessageSquare size={13} className="text-dim shrink-0" />
+            <MessageSquare size="0.9286rem" className="text-dim shrink-0" />
           )}
           {renameId === row.id ? (
             <input
@@ -271,7 +256,7 @@ export function Sidebar() {
             title={t('sidebar.sessionActions')}
             aria-label={t('sidebar.sessionActions')}
           >
-            <MoreHorizontal size={14} />
+            <MoreHorizontal size="1.0000rem" />
           </button>
           {menuOpenId === row.id && (
             <>
@@ -288,7 +273,7 @@ export function Sidebar() {
                   }}
                   className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-panel2"
                 >
-                  <Pencil size={12} className="text-dim" />
+                  <Pencil size="0.8571rem" className="text-dim" />
                   {t('sidebar.renameSession')}
                 </button>
                 <button
@@ -300,7 +285,7 @@ export function Sidebar() {
                   }}
                   className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-panel2"
                 >
-                  <Download size={12} className="text-dim" />
+                  <Download size="0.8571rem" className="text-dim" />
                   {t('sidebar.exportSession')}
                 </button>
                 <button
@@ -310,7 +295,7 @@ export function Sidebar() {
                   }}
                   className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm text-err hover:bg-panel2"
                 >
-                  <Trash2 size={12} className="text-err" />
+                  <Trash2 size="0.8571rem" className="text-err" />
                   {t('sidebar.deleteSession')}
                 </button>
               </div>
@@ -318,7 +303,7 @@ export function Sidebar() {
           )}
         </div>
         {(row.tokens || row.time) && (
-          <div className="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1.5 z-10 hidden group-hover:block whitespace-nowrap rounded-md border border-edge bg-panel2 px-2 py-1 text-[10px] text-dim shadow-lg">
+          <div className="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1.5 z-10 hidden group-hover:block whitespace-nowrap rounded-md border border-edge bg-panel2 px-2 py-1 text-[0.7143rem] text-dim shadow-lg">
             {[row.tokens, row.time].filter(Boolean).join(' · ')}
           </div>
         )}
@@ -346,7 +331,7 @@ export function Sidebar() {
             onClick={() => void openWorkspace(w.path)}
             className="flex flex-1 min-w-0 items-center gap-2"
           >
-            <FolderOpen size={13} className="text-dim shrink-0" />
+            <FolderOpen size="0.9286rem" className="text-dim shrink-0" />
             <span className="flex-1 truncate">{w.title}</span>
           </button>
           <button
@@ -355,7 +340,7 @@ export function Sidebar() {
             title={t('sidebar.removeWorkspace')}
             aria-label={t('sidebar.removeWorkspace')}
           >
-            <Trash2 size={12} />
+            <Trash2 size="0.8571rem" />
           </button>
         </div>
       </li>
@@ -366,21 +351,15 @@ export function Sidebar() {
     <aside className="h-full border-r border-edge bg-panel flex flex-col min-h-0">
       {/* macOS: the native traffic lights float here, so the strip
           leaves them room and doubles as the window drag area; its
-          height matches the chat header (h-11) so both rows align. */}
-      <div
-        className={`h-11 shrink-0 border-b border-edge flex items-center select-none ${
-          isMac ? 'pl-[78px]' : ''
-        }`}
-        style={{ ['--wails-draggable' as string]: 'drag' }}
-        onDoubleClick={() => WindowToggleMaximise()}
-      >
-        {!isMac && (
-          <div className="flex-1 min-w-0 pl-4 font-semibold tracking-wide truncate">
-            OpenCraft
-          </div>
-        )}
-        {!isMac && <WindowControls />}
-      </div>
+          height matches the chat header (h-11) so both rows align.
+          Windows/Linux use the full-width TopBar instead. */}
+      {isMac && (
+        <div
+          className="h-11 shrink-0 border-b border-edge flex items-center select-none pl-[5.5714rem]"
+          style={{ ['--wails-draggable' as string]: 'drag' }}
+          onDoubleClick={() => WindowToggleMaximise()}
+        />
+      )}
 
       <div className="px-4 pt-3 pb-2 select-none">
         <div className="font-mono text-base leading-tight text-fg font-semibold">
@@ -396,7 +375,7 @@ export function Sidebar() {
           onClick={newChat}
           className="w-full flex items-center gap-2 rounded-lg border border-edge bg-panel2 px-3 py-2 text-sm hover:border-accent/50 transition-colors"
         >
-          <Plus size={15} className="text-accent" />
+          <Plus size="1.0714rem" className="text-accent" />
           {t('sidebar.newChat')}
         </button>
       </div>
@@ -438,7 +417,7 @@ export function Sidebar() {
               onClick={() => setSessionsOpen(true)}
               className="w-full mt-2 flex items-center gap-2 rounded-lg border border-edge bg-panel2 px-3 py-2 text-sm hover:border-accent/50 transition-colors"
             >
-              <Search size={14} className="text-dim" />
+              <Search size="1.0000rem" className="text-dim" />
               {t('sidebar.moreSessions')}
             </button>
           )}
@@ -455,17 +434,17 @@ export function Sidebar() {
               title={t('sidebar.addWorkspace')}
               aria-label={t('sidebar.addWorkspace')}
             >
-              <Plus size={13} />
+              <Plus size="0.9286rem" />
             </button>
           </div>
           {workspaceInputOpen && (
             <div className="mb-2 flex flex-col gap-1.5 rounded-lg border border-edge bg-panel2 p-2">
               {workspaceError && (
-                <p className="text-[11px] text-red-400 break-words">
+                <p className="text-[0.7857rem] text-red-400 break-words">
                   {workspaceError}
                 </p>
               )}
-              <p className="text-[11px] text-dim">
+              <p className="text-[0.7857rem] text-dim">
                 {t('sidebar.pickerFallback')}
               </p>
               <input
@@ -509,23 +488,21 @@ export function Sidebar() {
                   onClick={() => setWorkspacesOpen(true)}
                   className="w-full mt-2 flex items-center gap-2 rounded-lg border border-edge bg-panel2 px-3 py-2 text-sm hover:border-accent/50 transition-colors"
                 >
-                  <FolderOpen size={14} className="text-dim" />
+                  <FolderOpen size="1.0000rem" className="text-dim" />
                   {t('sidebar.moreWorkspaces')}
                 </button>
               )}
             </>
           )}
         </section>
-
-        <PluginEntries />
       </div>
 
       <div className="border-t border-edge p-3 space-y-2">
         <button
-          onClick={openConfig}
+          onClick={() => openConfig()}
           className="flex items-center gap-1.5 text-xs text-dim hover:text-fg"
         >
-          <Settings size={13} />
+          <Settings size="0.9286rem" />
           {t('sidebar.settings')}
         </button>
       </div>
@@ -563,11 +540,11 @@ export function Sidebar() {
           onClick={() => setSessionsOpen(false)}
         >
           <div
-            className="w-[560px] max-h-[80vh] flex flex-col rounded-2xl border border-edge bg-panel shadow-2xl"
+            className="w-[40.0000rem] max-h-[80vh] flex flex-col rounded-2xl border border-edge bg-panel shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center gap-2 px-4 py-3 border-b border-edge">
-              <Search size={14} className="text-dim shrink-0" />
+              <Search size="1.0000rem" className="text-dim shrink-0" />
               <input
                 autoFocus
                 value={sessionQuery}
@@ -579,7 +556,7 @@ export function Sidebar() {
                 onClick={() => setSessionsOpen(false)}
                 className="text-dim hover:text-fg shrink-0"
               >
-                <X size={16} />
+                <X size="1.1429rem" />
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-2">
@@ -621,7 +598,7 @@ export function Sidebar() {
           onClick={() => setWorkspacesOpen(false)}
         >
           <div
-            className="w-[420px] max-h-[70vh] flex flex-col rounded-2xl border border-edge bg-panel shadow-2xl"
+            className="w-[30.0000rem] max-h-[70vh] flex flex-col rounded-2xl border border-edge bg-panel shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between px-4 py-3 border-b border-edge">
@@ -632,7 +609,7 @@ export function Sidebar() {
                 onClick={() => setWorkspacesOpen(false)}
                 className="text-dim hover:text-fg"
               >
-                <X size={16} />
+                <X size="1.1429rem" />
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-2">

@@ -20,7 +20,7 @@ export function Toaster() {
             aria-label={t('chat.dismiss')}
             className="shrink-0 text-dim hover:text-fg"
           >
-            <X size={13} />
+            <X size="0.9286rem" />
           </button>
         </div>
       ))}

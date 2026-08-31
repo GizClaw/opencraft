@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from './i18n';
 import {
+  Environment,
   EventsOn,
   InitializeNotifications,
   RequestNotificationAuthorization,
@@ -11,6 +12,7 @@ import { ChatView } from './components/ChatView';
 import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
 import { SubagentSidebar } from './components/SubagentSidebar';
+import { TopBar } from './components/TopBar';
 import { Toaster } from './components/Toaster';
 import { WelcomeView } from './components/WelcomeView';
 import { useStore, type AssistantItem } from './lib/store';
@@ -106,10 +108,15 @@ export default function App() {
   const loadSubagentCards = useStore((s) => s.loadSubagentCards);
   const newChat = useStore((s) => s.newChat);
   const openConfig = useStore((s) => s.openConfig);
-  const openTools = useStore((s) => s.openTools);
   const { t } = useTranslation();
   const [sidebarW, setSidebarW] = useState(
     () => Number(localStorage.getItem('oc.sidebarW')) || 240,
+  );
+  // Platform is known synchronously from the user agent so the
+  // Windows/Linux top bar never flashes on macOS (or vice versa);
+  // Environment() reconciles the canonical value right after.
+  const [isMac, setIsMac] = useState(() =>
+    /Macintosh|Mac OS X/i.test(navigator.userAgent),
   );
   // Cleanup for an in-flight sidebar drag when the tree changes
   // mid-drag, so the window listeners never leak past the component.
@@ -118,6 +125,16 @@ export default function App() {
 
   useEffect(() => {
     void init();
+    let alive = true;
+    void Environment().then((env) => {
+      if (alive) setIsMac(env.platform === 'darwin');
+    });
+    return () => {
+      alive = false;
+    };
+  }, [init]);
+
+  useEffect(() => {
     // Load installed plugins once the shell mounts; the plugin host
     // registers its settings panels and sidebar entries afterwards.
     void usePluginStore.getState().load();
@@ -160,12 +177,12 @@ export default function App() {
         openConfig();
       } else if (key === 'k') {
         e.preventDefault();
-        openTools('kanban');
+        openConfig('kanban');
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [newChat, openConfig, openTools]);
+  }, [newChat, openConfig]);
 
   // Keep the current conversation's delegation list fresh; the right
   // sidebar appears as soon as the conversation spawns a subagent.
@@ -224,9 +241,10 @@ export default function App() {
 
   return (
     <div className="h-full flex flex-col">
+      <TopBar isMac={isMac} />
       <div className="flex-1 flex min-h-0">
         <div style={{ width: sidebarW }} className="shrink-0">
-          <Sidebar />
+          <Sidebar isMac={isMac} />
         </div>
         <div
           onMouseDown={startDrag()}
