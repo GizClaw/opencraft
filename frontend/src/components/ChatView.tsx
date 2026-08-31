@@ -47,6 +47,7 @@ import type {
   TurnDoc,
 } from '../lib/store';
 import { InteractionCard } from './InteractionCard';
+import { latestPlan, PlanPanel } from './PlanPanel';
 import { ApplyPatchView, ToolCard, WriteView } from './ToolCard';
 import { LiveMarkdown, looksLikeMarkdown, Markdown } from './Markdown';
 import { ProjectTrustBanner } from './ProjectTrustBanner';
@@ -81,6 +82,11 @@ function groupToolCalls(
   const out: (AssistantItem | ToolCallItem[])[] = [];
   let cur: ToolCallItem[] | null = null;
   for (const item of items) {
+    // update_plan renders once in the top-left plan panel instead of
+    // as transcript cards, so its calls are dropped from the flow.
+    if (item.kind === 'tool_call' && item.tool.name === 'update_plan') {
+      continue;
+    }
     if (item.kind === 'tool_call' && !nonGroupedTools.has(item.tool.name)) {
       if (!cur) cur = [];
       cur.push(item);
@@ -243,9 +249,14 @@ const MessageRow = memo(function MessageRow({
       // clipboard unavailable
     }
   };
+  // update_plan calls render once in the top-left plan panel, so a
+  // message holding only those calls collapses to nothing — skip it
+  // instead of leaving an empty row in the transcript.
+  const groups = groupToolCalls(msg.items);
+  if (groups.length === 0) return null;
   return (
     <div className="flex flex-col gap-1">
-      {groupToolCalls(msg.items).map((group, gi) => {
+      {groups.map((group, gi) => {
         if (Array.isArray(group)) {
           return group.length === 1 ? (
             group[0].tool.name === 'apply_patch' ? (
@@ -528,6 +539,20 @@ export function ChatView() {
   const messages = conv?.messages ?? [];
   const busy = conv?.busy ?? false;
   const turnArtifacts = conv?.turnArtifacts ?? [];
+  const planState = latestPlan(messages);
+  const [planDismissed, setPlanDismissed] = useState(false);
+  const planItemsKey = planState
+    ? planState.plan.items.map((s) => `${s.status}|${s.step}`).join('\n')
+    : '';
+  // A dismissed plan panel reappears as soon as fresh live progress
+  // arrives, so collapsing it never hides a running plan.
+  useEffect(() => {
+    if (planState?.live) setPlanDismissed(false);
+    // planItemsKey is the stable identity of the plan content; the
+    // live flag is checked separately because a new running update
+    // must also resurface the panel.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planItemsKey, planState?.live]);
   const configured = useStore((s) => s.configured);
   const status = useStore((s) => s.status);
   const pendingInteracts = conv?.pendingInteracts ?? [];
@@ -935,89 +960,99 @@ export function ChatView() {
 
       <ProjectTrustBanner />
 
-      <div
-        ref={scrollRef}
-        onScroll={() => {
-          const el = scrollRef.current;
-          if (!el) return;
-          const pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-          stickRef.current = pinned;
-          setStick(pinned);
-        }}
-        className="flex-1 overflow-y-auto px-6 py-4"
-      >
-        {messages.length === 0 ? (
-          <div className="h-full grid place-items-center">
-            <div className="text-center space-y-3">
-              <div className="text-dim text-sm">
-                {configured ? t('chat.empty') : t('chat.emptyUnconfigured')}
+      <div className="relative flex min-h-0 flex-1 flex-col">
+        <div
+          ref={scrollRef}
+          onScroll={() => {
+            const el = scrollRef.current;
+            if (!el) return;
+            const pinned =
+              el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+            stickRef.current = pinned;
+            setStick(pinned);
+          }}
+          className="flex-1 overflow-y-auto px-6 py-4"
+        >
+          {messages.length === 0 ? (
+            <div className="h-full grid place-items-center">
+              <div className="text-center space-y-3">
+                <div className="text-dim text-sm">
+                  {configured ? t('chat.empty') : t('chat.emptyUnconfigured')}
+                </div>
+                {!configured && (
+                  <button
+                    onClick={openConfig}
+                    className="rounded-lg border border-edge px-3 py-1.5 text-sm text-fg hover:border-accent/50 transition-colors"
+                  >
+                    {t('chat.openSettings')}
+                  </button>
+                )}
               </div>
-              {!configured && (
-                <button
-                  onClick={openConfig}
-                  className="rounded-lg border border-edge px-3 py-1.5 text-sm text-fg hover:border-accent/50 transition-colors"
-                >
-                  {t('chat.openSettings')}
-                </button>
+            </div>
+          ) : (
+            <div className="max-w-4xl mx-auto space-y-4">
+              {messages.map((msg, i) => {
+                // A turn's strip renders right after its last message:
+                // the next turn's start minus one, or the transcript end.
+                const strip = turnArtifacts.find((t, ti) => {
+                  if (t.docs.length === 0) return false;
+                  const end =
+                    ti + 1 < turnArtifacts.length
+                      ? turnArtifacts[ti + 1].start - 1
+                      : messages.length - 1;
+                  return end === i;
+                });
+                return (
+                  <Fragment key={msg.id}>
+                    <MessageRow
+                      msg={msg}
+                      busy={busy}
+                      isTurnLast={
+                        msg.role === 'assistant' &&
+                        (i === messages.length - 1 ||
+                          messages[i + 1]?.role === 'user')
+                      }
+                      streaming={
+                        busy &&
+                        msg.role === 'assistant' &&
+                        i === messages.length - 1
+                      }
+                    />
+                    {strip && <ArtifactStrip docs={strip.docs} />}
+                  </Fragment>
+                );
+              })}
+              {pendingInteracts.map((spec) => (
+                <InteractionCard key={spec.id} spec={spec} />
+              ))}
+              {lastFailed && !busy && (
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-err/40 bg-err/10 px-4 py-3 text-sm">
+                  <span className="text-dim">{t('chat.lastFailed')}</span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={retry}
+                      className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-dim hover:text-accent"
+                    >
+                      <RotateCcw size={13} /> {t('chat.retry')}
+                    </button>
+                    <button
+                      onClick={clearLastFailed}
+                      className="rounded-lg px-3 py-1.5 text-dim hover:text-fg"
+                    >
+                      {t('chat.dismiss')}
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
-          </div>
-        ) : (
-          <div className="max-w-4xl mx-auto space-y-4">
-            {messages.map((msg, i) => {
-              // A turn's strip renders right after its last message:
-              // the next turn's start minus one, or the transcript end.
-              const strip = turnArtifacts.find((t, ti) => {
-                if (t.docs.length === 0) return false;
-                const end =
-                  ti + 1 < turnArtifacts.length
-                    ? turnArtifacts[ti + 1].start - 1
-                    : messages.length - 1;
-                return end === i;
-              });
-              return (
-                <Fragment key={msg.id}>
-                  <MessageRow
-                    msg={msg}
-                    busy={busy}
-                    isTurnLast={
-                      msg.role === 'assistant' &&
-                      (i === messages.length - 1 ||
-                        messages[i + 1]?.role === 'user')
-                    }
-                    streaming={
-                      busy &&
-                      msg.role === 'assistant' &&
-                      i === messages.length - 1
-                    }
-                  />
-                  {strip && <ArtifactStrip docs={strip.docs} />}
-                </Fragment>
-              );
-            })}
-            {pendingInteracts.map((spec) => (
-              <InteractionCard key={spec.id} spec={spec} />
-            ))}
-            {lastFailed && !busy && (
-              <div className="flex items-center justify-between gap-3 rounded-xl border border-err/40 bg-err/10 px-4 py-3 text-sm">
-                <span className="text-dim">{t('chat.lastFailed')}</span>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={retry}
-                    className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-dim hover:text-accent"
-                  >
-                    <RotateCcw size={13} /> {t('chat.retry')}
-                  </button>
-                  <button
-                    onClick={clearLastFailed}
-                    className="rounded-lg px-3 py-1.5 text-dim hover:text-fg"
-                  >
-                    {t('chat.dismiss')}
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
+          )}
+        </div>
+        {planState && !planDismissed && (
+          <PlanPanel
+            plan={planState.plan}
+            live={planState.live}
+            onClose={() => setPlanDismissed(true)}
+          />
         )}
       </div>
 

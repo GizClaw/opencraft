@@ -295,6 +295,8 @@
     "copyOutput": "Copy output",
     "copied": "Copied",
     "interrupted": "Interrupted",
+    "interruptedHostShutdown": "App closed or config changed; the task was interrupted",
+    "interruptedUserInput": "New input arrived; the task was interrupted",
     "failed": "Failed",
     "thinkLabel": "Thinking",
     "lastFailed": "Last reply failed",
@@ -318,6 +320,8 @@
     "mentionSearchHint": "Type to search workspace files…",
     "mentionNoMatch": "No matches",
     "mentionSkillHint": "Type to filter skills…",
+    "planTitle": "Current plan",
+    "planLoading": "Loading plan…",
     "turnArtifacts": "Produced this turn",
     "openArtifact": "Open {{path}}"
   },

@@ -2280,114 +2280,6 @@ function resultSummary(
   return null;
 }
 
-interface PlanStep {
-  step?: string;
-  status?: string;
-}
-
-interface PlanArgs {
-  explanation?: string;
-  plan: PlanStep[];
-}
-
-// planArgs extracts the update_plan snapshot from the tool arguments.
-function planArgs(tool: ToolView): PlanArgs | null {
-  const args = parseArgs(tool);
-  if (!args || !Array.isArray(args.plan)) return null;
-  return {
-    explanation:
-      typeof args.explanation === 'string' ? args.explanation : undefined,
-    plan: args.plan as PlanStep[],
-  };
-}
-
-// PlanTodoCard renders update_plan as a to-do list instead of a generic
-// tool item: explanation plus one row per step with a status marker.
-function PlanTodoCard({
-  tool,
-  plan,
-  t,
-}: {
-  tool: ToolView;
-  plan: PlanArgs;
-  t: (key: string) => string;
-}) {
-  const [open, setOpen] = useState(() => {
-    // Fully completed plans collapse into the header; active plans stay
-    // expanded so the checklist is visible while work is running.
-    return !plan.plan.every((s) => s.status === 'completed');
-  });
-  const running = tool.status === 'running';
-  const failed = tool.status === 'error';
-  const done = plan.plan.filter((s) => s.status === 'completed').length;
-  return (
-    <div
-      className={`rounded-lg border overflow-hidden my-1.5 ${
-        failed ? 'border-err/40 bg-err/5' : 'border-edge bg-panel2'
-      }`}
-    >
-      <button
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-2 px-3 py-1.5 text-xs border-b border-edge hover:bg-panel2/70"
-      >
-        {running ? (
-          <Loader2 size={13} className="text-accent animate-spin shrink-0" />
-        ) : failed ? (
-          <X size={13} className="text-err shrink-0" />
-        ) : (
-          <ClipboardList size={13} className="text-ok shrink-0" />
-        )}
-        <span className="text-dim">{t('tool.updatePlan')}</span>
-        <span className="text-dim">
-          {done}/{plan.plan.length}
-        </span>
-        <span className="flex-1" />
-        <span className="text-dim">{t(`tool.${tool.status}`)}</span>
-        {open ? (
-          <ChevronDown size={14} className="text-dim shrink-0" />
-        ) : (
-          <ChevronRight size={14} className="text-dim shrink-0" />
-        )}
-      </button>
-      {open && (
-        <div className="px-3 py-2 space-y-1.5">
-          {plan.explanation && (
-            <div className="text-xs text-dim whitespace-pre-wrap">
-              {plan.explanation}
-            </div>
-          )}
-          {plan.plan.map((item, idx) => {
-            const status = item.status ?? 'pending';
-            const completed = status === 'completed';
-            const inProgress = status === 'in_progress';
-            return (
-              <div key={idx} className="flex items-start gap-2 text-xs">
-                {inProgress ? (
-                  <Loader2
-                    size={12}
-                    className="text-accent animate-spin shrink-0 mt-0.5"
-                  />
-                ) : completed ? (
-                  <Check size={12} className="text-ok shrink-0 mt-0.5" />
-                ) : (
-                  <span className="h-3 w-3 rounded-full border border-dim shrink-0 mt-0.5" />
-                )}
-                <span
-                  className={`min-w-0 ${
-                    completed ? 'text-dim line-through' : 'text-fg'
-                  }`}
-                >
-                  {item.step}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function DiffBlock({ patch }: { patch: string }) {
   const lines = patch.split('\n');
   return (
@@ -2777,13 +2669,6 @@ export const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
     if (running && liveTools.includes(tool.name)) setOpen(true);
   }, [running, tool.name]);
 
-  // update_plan renders as a to-do list, not a generic tool item.
-  if (tool.name === 'update_plan') {
-    const plan = planArgs(tool);
-    if (plan && plan.plan.length > 0) {
-      return <PlanTodoCard tool={tool} plan={plan} t={t} />;
-    }
-  }
   // exec / read render their own standalone collapsible views without
   // the generic tool card wrapper.
   if (tool.name === 'exec_command' || tool.name === 'exec_session') {

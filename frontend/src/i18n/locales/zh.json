@@ -295,6 +295,8 @@
     "copyOutput": "复制输出",
     "copied": "已复制",
     "interrupted": "已中断",
+    "interruptedHostShutdown": "应用已关闭或配置更新，任务被中断",
+    "interruptedUserInput": "收到新输入，任务被中断",
     "failed": "失败",
     "thinkLabel": "思考",
     "lastFailed": "上一条回复失败",
@@ -318,6 +320,7 @@
     "mentionSearchHint": "输入以搜索工作区文件…",
     "mentionNoMatch": "无匹配结果",
     "mentionSkillHint": "输入以筛选技能…",
+    "planTitle": "当前计划",
     "turnArtifacts": "本回合产出",
     "openArtifact": "打开 {{path}}"
   },
