@@ -39,10 +39,9 @@ import (
 type Options struct {
 	// WorkDir is the workspace the app operates on (project config
 	// discovery + the file panel). Empty restores the most recently
-	// opened workspace, falling back to the current working directory
-	// when the app was launched from a terminal; a fresh install with
-	// no history starts with no workspace selected (the UI shows the
-	// workspace picker).
+	// opened workspace; a fresh install with no history starts with no
+	// workspace selected (the UI shows the welcome screen / workspace
+	// picker instead of the chat).
 	WorkDir string
 	// UserDir overrides ~/.opencraft/config (tests).
 	UserDir string
@@ -134,23 +133,11 @@ type rolloutBuffer struct {
 // New creates the application shell. Runtime assembly is deferred to
 // Startup so the Wails context is available for event emission.
 func New(opts Options) (*App, error) {
-	workDir := opts.WorkDir
-	if workDir == "" {
-		// A terminal launch inside a project opens that directory
-		// (like `code .`). Finder-launched apps start with cwd "/",
-		// so the "/" case intentionally falls through to history and
-		// then to "no workspace" — never to the user's home directory.
-		if wd, err := os.Getwd(); err == nil && wd != "/" {
-			workDir = wd
-		}
+	historyDir, err := workspaceHistoryDir()
+	if err != nil {
+		historyDir = ""
 	}
-	if workDir == "" {
-		// Restore the last explicitly opened workspace; a fresh
-		// install (no history) starts with no workspace so the first
-		// run guides the user to pick a folder instead of silently
-		// opening ~.
-		workDir = lastWorkspacePath()
-	}
+	workDir := startupWorkDir(opts.WorkDir, historyDir)
 	var undoStore *undo.Store
 	if workDir != "" {
 		undoStore = undo.New(workDir)

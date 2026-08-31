@@ -133,6 +133,33 @@ func TestLastWorkspaceEmptyHistory(t *testing.T) {
 	}
 }
 
+func TestStartupWorkDir(t *testing.T) {
+	// An explicitly passed workspace always wins, even when history
+	// points somewhere else.
+	history := filepath.Join(t.TempDir(), "workspaces")
+	repo := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveWorkspaceMeta(history, repo); err != nil {
+		t.Fatal(err)
+	}
+	if got := startupWorkDir("/explicit/project", history); got != "/explicit/project" {
+		t.Fatalf("startupWorkDir(explicit) = %q, want the explicit path", got)
+	}
+	// History restores the most recently opened workspace.
+	if got := startupWorkDir("", history); got != repo {
+		t.Fatalf("startupWorkDir(history) = %q, want %q", got, repo)
+	}
+	// A fresh install (empty history) starts with no workspace: the
+	// process cwd and the user's home must never be adopted, so the
+	// welcome screen shows on every platform (Finder "/", Explorer
+	// exe folder).
+	if got := startupWorkDir("", ""); got != "" {
+		t.Fatalf("startupWorkDir(fresh) = %q, want empty", got)
+	}
+}
+
 func TestRebuildWithNoWorkspaceIsANoop(t *testing.T) {
 	app := &App{workDir: ""}
 	if err := app.rebuild(); err != nil {
