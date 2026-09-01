@@ -245,17 +245,6 @@ jobs:
   windows:
     name: package (windows)
     runs-on: windows-latest
-    environment: windows-release
-    # Azure Artifact Signing (formerly Trusted Signing) secrets: mapped to
-    # job env so the guarded steps below can check their presence (the
-    # secrets context is not available in step-level `if` conditions).
-    env:
-      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-      AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
-      AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
-      AZURE_SIGNING_PROFILE: ${{ secrets.AZURE_SIGNING_PROFILE }}
     steps:
       - uses: actions/checkout@v6
 
@@ -288,46 +277,6 @@ jobs:
           wails build -platform windows/amd64 -clean -nsis `
             -ldflags "-s -w -X github.com/GizClaw/opencraft/internal/app.ServiceVersion=$ver"
 
-      # Code signing is optional: it activates only when the Azure Artifact
-      # Signing secrets are configured. The portable exe is signed before
-      # zipping, the NSIS installer is rebuilt from the signed exe (so the
-      # installed app is signed too), and the installer itself is signed
-      # after packaging.
-      - name: Sign OpenCraft.exe (Azure Artifact Signing)
-        if: ${{ env.AZURE_CLIENT_ID != '' && env.AZURE_TENANT_ID != '' && env.AZURE_CLIENT_SECRET != '' && env.AZURE_SIGNING_ENDPOINT != '' && env.AZURE_SIGNING_ACCOUNT != '' && env.AZURE_SIGNING_PROFILE != '' }}
-        uses: azure/artifact-signing-action@v2
-        with:
-          endpoint: ${{ env.AZURE_SIGNING_ENDPOINT }}
-          signing-account-name: ${{ env.AZURE_SIGNING_ACCOUNT }}
-          certificate-profile-name: ${{ env.AZURE_SIGNING_PROFILE }}
-          files-folder: ${{ github.workspace }}\build\bin
-          files-folder-filter: opencraft.exe
-          file-digest: SHA256
-          timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          timestamp-digest: SHA256
-          azure-tenant-id: ${{ env.AZURE_TENANT_ID }}
-          azure-client-id: ${{ env.AZURE_CLIENT_ID }}
-          azure-client-secret: ${{ env.AZURE_CLIENT_SECRET }}
-
-      # The `wails build -nsis` above regenerated build/windows/installer/
-      # (project.nsi, wails_tools.nsh with the tagged version, WebView2
-      # bootstrapper) and produced an installer with the unsigned exe.
-      # Rebuild the installer from the now-signed exe so the app embedded in
-      # the NSIS payload is signed as well.
-      - name: Rebuild NSIS installer with signed exe
-        if: ${{ env.AZURE_CLIENT_ID != '' && env.AZURE_TENANT_ID != '' && env.AZURE_CLIENT_SECRET != '' && env.AZURE_SIGNING_ENDPOINT != '' && env.AZURE_SIGNING_ACCOUNT != '' && env.AZURE_SIGNING_PROFILE != '' }}
-        shell: pwsh
-        run: |
-          Push-Location build/windows/installer
-          try {
-            & makensis -DARG_WAILS_AMD64_BINARY=..\..\bin\opencraft.exe project.nsi
-            if ($LASTEXITCODE -ne 0) {
-              throw "makensis failed with exit code $LASTEXITCODE"
-            }
-          } finally {
-            Pop-Location
-          }
-
       - name: Package binaries
         env:
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
@@ -340,42 +289,6 @@ jobs:
             "opencraft-$ver-windows-amd64-installer.exe"
           Compress-Archive -Path build/bin/opencraft.exe `
             -DestinationPath "opencraft-$ver-windows-amd64.zip"
-
-      - name: Sign NSIS installer (Azure Artifact Signing)
-        if: ${{ env.AZURE_CLIENT_ID != '' && env.AZURE_TENANT_ID != '' && env.AZURE_CLIENT_SECRET != '' && env.AZURE_SIGNING_ENDPOINT != '' && env.AZURE_SIGNING_ACCOUNT != '' && env.AZURE_SIGNING_PROFILE != '' }}
-        uses: azure/artifact-signing-action@v2
-        with:
-          endpoint: ${{ env.AZURE_SIGNING_ENDPOINT }}
-          signing-account-name: ${{ env.AZURE_SIGNING_ACCOUNT }}
-          certificate-profile-name: ${{ env.AZURE_SIGNING_PROFILE }}
-          files-folder: ${{ github.workspace }}
-          files-folder-filter: opencraft-*-windows-amd64-installer.exe
-          file-digest: SHA256
-          timestamp-rfc3161: http://timestamp.acs.microsoft.com
-          timestamp-digest: SHA256
-          azure-tenant-id: ${{ env.AZURE_TENANT_ID }}
-          azure-client-id: ${{ env.AZURE_CLIENT_ID }}
-          azure-client-secret: ${{ env.AZURE_CLIENT_SECRET }}
-
-      - name: Verify Windows signatures
-        if: ${{ env.AZURE_CLIENT_ID != '' && env.AZURE_TENANT_ID != '' && env.AZURE_CLIENT_SECRET != '' && env.AZURE_SIGNING_ENDPOINT != '' && env.AZURE_SIGNING_ACCOUNT != '' && env.AZURE_SIGNING_PROFILE != '' }}
-        shell: pwsh
-        env:
-          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
-        run: |
-          $ver = "$env:TAG".TrimStart('v')
-          $targets = @(
-            "build/bin/opencraft.exe",
-            "opencraft-$ver-windows-amd64-installer.exe"
-          )
-          foreach ($file in $targets) {
-            $sig = Get-AuthenticodeSignature $file
-            $subject = $sig.SignerCertificate.Subject
-            Write-Host "$file -> $($sig.Status) ($subject)"
-            if ($sig.Status -ne 'Valid') {
-              throw "Signature verification failed for $file: $($sig.Status)"
-            }
-          }
 
       - uses: actions/upload-artifact@v6
         with:
