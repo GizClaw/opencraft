@@ -169,7 +169,7 @@ export default function App() {
             ? i18n.t('notify.done')
             : data.status === 'failed' || data.status === 'aborted'
               ? i18n.t('notify.failed')
-              : data.status ?? '';
+              : (data.status ?? '');
         const snippet = data.output?.trim()
           ? truncate(data.output, maxNotifySnippet)
           : data.error
