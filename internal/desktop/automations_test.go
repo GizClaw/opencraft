@@ -196,3 +196,89 @@ func TestRunAutomationNowGuard(t *testing.T) {
 		t.Fatalf("RunAutomationNow on valid task: %v", err)
 	}
 }
+
+func TestAutomationToolHostLifecycle(t *testing.T) {
+	a, store := newAutomationTestApp(t)
+	ctx := context.Background()
+	host := &automationHostAdapter{app: a}
+
+	preview, err := host.AutomationsPreview(ctx, "create", automations.Task{
+		Name:      "agent-brief",
+		Prompt:    "任务",
+		Schedule:  automations.Schedule{Type: automations.ScheduleDaily, Time: "09:00"},
+		Workspace: a.workDir,
+		Mode:      automations.ModeWorkspace,
+		Enabled:   true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := host.AutomationsApply(ctx, "create", preview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.ID == "" {
+		t.Fatal("created task has no id")
+	}
+
+	preview, err = host.AutomationsPreview(ctx, "update", automations.Task{
+		ID:        saved.ID,
+		Name:      "renamed",
+		Prompt:    "任务2",
+		Schedule:  saved.Schedule,
+		Workspace: a.workDir,
+		Mode:      automations.ModeWorkspace,
+		Enabled:   true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated, err := host.AutomationsApply(ctx, "update", preview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Name != "renamed" {
+		t.Fatalf("updated name = %q", updated.Name)
+	}
+
+	del, err := host.AutomationsPreview(ctx, "delete", automations.Task{ID: saved.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := host.AutomationsApply(ctx, "delete", del); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.GetTask(ctx, saved.ID); err != automations.ErrNotFound {
+		t.Fatalf("GetTask after delete err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestAutomationToolHostAgentPolicy(t *testing.T) {
+	a, _ := newAutomationTestApp(t)
+	host := &automationHostAdapter{app: a}
+	ctx := context.Background()
+	base := automations.Task{
+		Name:      "x",
+		Prompt:    "p",
+		Schedule:  automations.Schedule{Type: automations.ScheduleDaily, Time: "09:00"},
+		Workspace: a.workDir,
+		Mode:      automations.ModeWorkspace,
+		Enabled:   true,
+	}
+
+	yolo := base
+	yolo.Mode = automations.ModeYOLO
+	if _, err := host.AutomationsPreview(ctx, "create", yolo); err == nil {
+		t.Fatal("agent-created yolo task must be rejected")
+	}
+
+	other := base
+	other.Workspace = filepath.Join(t.TempDir(), "other")
+	if _, err := host.AutomationsPreview(ctx, "create", other); err == nil {
+		t.Fatal("agent-created task in an unknown workspace must be rejected")
+	}
+
+	if _, err := host.AutomationsPreview(ctx, "create", base); err != nil {
+		t.Fatalf("agent-created task in the open workspace must pass: %v", err)
+	}
+}

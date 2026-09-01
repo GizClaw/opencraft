@@ -24,6 +24,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/tools/applypatch"
 	"github.com/GizClaw/opencraft/internal/tools/askuser"
 	"github.com/GizClaw/opencraft/internal/tools/assembly"
+	"github.com/GizClaw/opencraft/internal/tools/automation"
 	"github.com/GizClaw/opencraft/internal/tools/compact"
 	"github.com/GizClaw/opencraft/internal/tools/exec"
 	"github.com/GizClaw/opencraft/internal/tools/files"
@@ -44,6 +45,7 @@ func Register(r *resource.Registry) error {
 		r.Register(applypatchSourceFactory{}),
 		r.Register(webfetchSourceFactory{}),
 		r.Register(askuserSourceFactory{}),
+		r.Register(automation.SourceFactory{}),
 		r.Register(filesSourceFactory{}),
 		r.Register(imagegenSourceFactory{}),
 		r.Register(videogenSourceFactory{}),

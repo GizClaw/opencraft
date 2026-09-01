@@ -3,11 +3,13 @@ import { useTranslation } from 'react-i18next';
 import {
   CalendarClock,
   Check,
+  ChevronDown,
   ChevronUp,
   History,
   Loader2,
   MoreHorizontal,
   Pause,
+  Pencil,
   Play,
   Plus,
   Search,
@@ -280,6 +282,8 @@ export function AutomationsView() {
   const loadAutomationRuns = useStore((s) => s.loadAutomationRuns);
   const resume = useStore((s) => s.resume);
   const closeTools = useStore((s) => s.closeTools);
+  const newChat = useStore((s) => s.newChat);
+  const draftComposer = useStore((s) => s.draftComposer);
   const toast = useStore((s) => s.toast);
   const flash = useStore((s) => s.flash);
 
@@ -306,7 +310,9 @@ export function AutomationsView() {
   }, [modelMenuOpen]);
   const [query, setQuery] = useState('');
   const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const createMenuRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!menuFor) return;
     const onDown = (e: PointerEvent) => {
@@ -317,6 +323,19 @@ export function AutomationsView() {
     document.addEventListener('pointerdown', onDown);
     return () => document.removeEventListener('pointerdown', onDown);
   }, [menuFor]);
+  useEffect(() => {
+    if (!createMenuOpen) return;
+    const onDown = (e: PointerEvent) => {
+      if (
+        createMenuRef.current &&
+        !createMenuRef.current.contains(e.target as Node)
+      ) {
+        setCreateMenuOpen(false);
+      }
+    };
+    document.addEventListener('pointerdown', onDown);
+    return () => document.removeEventListener('pointerdown', onDown);
+  }, [createMenuOpen]);
   const [filter, setFilter] = useState<
     'all' | 'active' | 'paused' | 'completed'
   >('all');
@@ -375,6 +394,15 @@ export function AutomationsView() {
     setError('');
     setForm(emptyForm(workspace));
     setHistoryFor(null);
+  };
+
+  const openAICreate = async () => {
+    setCreateMenuOpen(false);
+    await newChat();
+    closeTools();
+    draftComposer(
+      "Let's set up a scheduled task together. First, explain how scheduled tasks work in OpenCraft. Then interview me to figure out what I need scheduled and when it should run.",
+    );
   };
 
   const openEdit = (task: AutomationTask) => {
@@ -492,13 +520,55 @@ export function AutomationsView() {
     <div className="space-y-3">
       <div className="flex items-start justify-between gap-3">
         <p className="text-xs text-dim">{t('automations.hint')}</p>
-        <button
-          onClick={openNew}
-          className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-sm text-white hover:opacity-90"
-        >
-          <Plus size="1.0000rem" />
-          {t('automations.new')}
-        </button>
+        <div className="relative">
+          <div className="flex items-center overflow-hidden rounded-lg bg-accent text-white">
+            <button
+              onClick={() => void openAICreate()}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm hover:opacity-90"
+              title={t('automations.createByAssistant')}
+            >
+              <Plus size="1.0000rem" />
+              {t('automations.new')}
+            </button>
+            <button
+              onClick={() => setCreateMenuOpen((v) => !v)}
+              className="border-l border-white/25 px-1.5 py-1.5 hover:opacity-90"
+              title={t('automations.createOptions')}
+            >
+              <ChevronDown size="0.8571rem" />
+            </button>
+          </div>
+          {createMenuOpen && (
+            <div
+              ref={createMenuRef}
+              className="absolute right-0 top-full z-40 mt-1.5 w-56 rounded-lg border border-edge bg-panel p-1 shadow-xl"
+            >
+              <button
+                onClick={() => void openAICreate()}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
+              >
+                <Sparkles size="0.8571rem" className="shrink-0 text-accent" />
+                <span className="flex-1 text-left">
+                  {t('automations.createByAssistant')}
+                </span>
+                <Check size="0.8571rem" className="shrink-0 text-accent" />
+              </button>
+              <div className="my-1 border-t border-edge" />
+              <button
+                onClick={() => {
+                  setCreateMenuOpen(false);
+                  openNew();
+                }}
+                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
+              >
+                <Pencil size="0.8571rem" className="shrink-0" />
+                <span className="flex-1 text-left">
+                  {t('automations.createManual')}
+                </span>
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -687,8 +757,8 @@ export function AutomationsView() {
             className="fixed inset-0 z-40 bg-black/30"
             onClick={() => setForm(null)}
           />
-          <aside className="fixed inset-y-0 right-0 z-50 w-[26rem] max-w-[92vw] overflow-y-auto border-l border-edge bg-panel p-4 shadow-2xl space-y-3">
-          <div className="flex items-center justify-between">
+          <aside className="fixed inset-y-0 right-0 z-50 flex w-[26rem] max-w-[92vw] flex-col border-l border-edge bg-panel shadow-2xl">
+          <div className="flex shrink-0 items-center justify-between border-b border-edge px-4 py-3">
             <h3 className="text-sm font-semibold">
               {form.id ? t('automations.edit') : t('automations.new')}
             </h3>
@@ -701,6 +771,7 @@ export function AutomationsView() {
             </button>
           </div>
 
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
           <Field label={t('automations.name')}>
             <input
               value={form.name}
@@ -1061,6 +1132,7 @@ export function AutomationsView() {
               )}
             </div>
           )}
+          </div>
           </aside>
         </>
       )}

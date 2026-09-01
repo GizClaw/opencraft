@@ -504,6 +504,13 @@ export function ChatView() {
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [composing, setComposing] = useState(false);
+  const composerDraft = useStore((s) => s.composerDraft);
+  const clearComposerDraft = useStore((s) => s.clearComposerDraft);
+  useEffect(() => {
+    if (!composerDraft) return;
+    setInput(composerDraft);
+    clearComposerDraft();
+  }, [composerDraft, clearComposerDraft]);
   const [undoAvail, setUndoAvail] = useState<UndoState>({
     can_undo: false,
     can_redo: false,

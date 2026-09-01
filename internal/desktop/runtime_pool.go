@@ -70,7 +70,8 @@ func (a *App) assembleRuntime(
 		app.WithConfigBase(mgr.UserDir()),
 		app.WithWorkBase(wd),
 		app.WithUsageObserver(usageObserver),
-		app.WithAgentPlugins(pluginagent.NewHost(a.plugins, a.cap)))
+		app.WithAgentPlugins(pluginagent.NewHost(a.plugins, a.cap)),
+		app.WithAutomationHost(&automationHostAdapter{app: a}))
 	if err != nil {
 		return nil, fmt.Errorf("desktop: assemble runtime: %w", err)
 	}

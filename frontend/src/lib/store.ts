@@ -480,6 +480,9 @@ interface StoreState {
   // gone.
   subagentStreams: Record<string, MessageView[]>;
   subagentStreamAt: Record<string, number>;
+  // composerDraft is a one-shot draft injected into the chat composer
+  // (used by the automations "create with OpenCraft" flow).
+  composerDraft: string;
   statusText: string;
   lastUsage: UsageDTO | null;
   cards: KanbanCard[];
@@ -513,6 +516,8 @@ interface StoreState {
   chooseWorkspace: () => Promise<void>;
   openWorkspace: (path: string) => Promise<void>;
   removeWorkspace: (id: string) => Promise<void>;
+  draftComposer: (text: string) => void;
+  clearComposerDraft: () => void;
   refreshAgents: () => Promise<void>;
   loadSessions: () => Promise<void>;
   loadAutomations: () => Promise<void>;
@@ -661,6 +666,7 @@ export const useStore = create<StoreState>((set, get) => {
     runConvs: {},
     subagentStreams: {},
     subagentStreamAt: {},
+    composerDraft: '',
     statusText: '',
     lastUsage: null,
     cards: [],
@@ -1285,6 +1291,14 @@ export const useStore = create<StoreState>((set, get) => {
       } catch (err) {
         set({ statusText: String(err) });
       }
+    },
+
+    draftComposer: (text) => {
+      set({ composerDraft: text });
+    },
+
+    clearComposerDraft: () => {
+      set({ composerDraft: '' });
     },
 
     loadCards: async () => {
