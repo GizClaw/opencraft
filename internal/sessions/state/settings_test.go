@@ -64,6 +64,36 @@ func TestSessionSettingsModel(t *testing.T) {
 	}
 }
 
+func TestSessionSettingsMode(t *testing.T) {
+	ctx := context.Background()
+	s, err := Open("file::memory:?cache=shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = s.Close() }()
+
+	// Missing row returns "" so the caller applies the workspace
+	// default.
+	if mode, err := s.Mode(ctx, "s-missing"); err != nil || mode != "" {
+		t.Fatalf("Mode(missing) = %q, %v; want \"\", nil", mode, err)
+	}
+
+	if err := s.SetMode(ctx, "s-1", "yolo"); err != nil {
+		t.Fatal(err)
+	}
+	if mode, err := s.Mode(ctx, "s-1"); err != nil || mode != "yolo" {
+		t.Fatalf("Mode(s-1) = %q, %v; want yolo, nil", mode, err)
+	}
+
+	// Upsert replaces the previous value.
+	if err := s.SetMode(ctx, "s-1", "read-only"); err != nil {
+		t.Fatal(err)
+	}
+	if mode, err := s.Mode(ctx, "s-1"); err != nil || mode != "read-only" {
+		t.Fatalf("Mode(s-1) after upsert = %q, %v; want read-only, nil", mode, err)
+	}
+}
+
 func TestSessionSettingsRemove(t *testing.T) {
 	ctx := context.Background()
 	s, err := Open("file::memory:?cache=shared")

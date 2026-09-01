@@ -185,6 +185,7 @@ func (s *Store) migrate() error {
 			updated_at TEXT NOT NULL
 		);`,
 		`ALTER TABLE session_settings ADD COLUMN model TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE session_settings ADD COLUMN mode TEXT NOT NULL DEFAULT 'workspace'`,
 	}
 	for i, stmt := range migrations {
 		version := i + 1
@@ -677,4 +678,45 @@ func (s *Store) RemoveSettings(ctx context.Context, contextID string) error {
 		return fmt.Errorf("state: remove settings %s: %w", contextID, err)
 	}
 	return nil
+}
+
+// SetMode upserts the per-session sandbox permission mode into the
+// session_settings table.
+func (s *Store) SetMode(ctx context.Context, contextID, mode string) error {
+	if strings.TrimSpace(contextID) == "" {
+		return errdefs.Validation(
+			errors.New("state: session context_id is required"))
+	}
+	if strings.TrimSpace(mode) == "" {
+		return errdefs.Validation(
+			errors.New("state: mode is required"))
+	}
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO session_settings (context_id, think_level, model, mode, updated_at)
+		VALUES (?, '', '', ?, ?)
+		ON CONFLICT(context_id) DO UPDATE SET
+			mode = excluded.mode,
+			updated_at = excluded.updated_at
+	`, contextID, mode, time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("state: set mode %s: %w", contextID, err)
+	}
+	return nil
+}
+
+// Mode returns the persisted sandbox permission mode for a session.
+// A missing row returns "", letting the caller apply its default.
+func (s *Store) Mode(ctx context.Context, contextID string) (string, error) {
+	var mode string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT mode FROM session_settings WHERE context_id = ?`,
+		contextID,
+	).Scan(&mode)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("state: load mode %s: %w", contextID, err)
+	}
+	return mode, nil
 }

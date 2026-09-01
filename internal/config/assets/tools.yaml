@@ -69,6 +69,13 @@ resources:
     impl: opencraft/plugins
     deps:
       plugin.host: plugin.host
+  # Scheduled-task management: preview + user confirmation happens in
+  # the tool; persistence delegates to the desktop automation host.
+  tool.automation:
+    kind: tool.Source
+    impl: opencraft/automation
+    deps:
+      automation.host: automation.host
   # Internal conversation compaction: folds the loop's older rounds into
   # a summary (router condensation) and persists the artifact per
   # conversation via the session store.
@@ -113,6 +120,7 @@ resources:
       tool.applypatch: tool.applypatch
       tool.webfetch: tool.webfetch
       tool.askuser: tool.askuser
+      tool.automation: tool.automation
       tool.files: tool.files
       tool.imagegen: tool.imagegen
       tool.videogen: tool.videogen

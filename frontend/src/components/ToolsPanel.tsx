@@ -4,6 +4,7 @@ import {
   Bot,
   ChevronDown,
   ChevronRight,
+  Clock,
   Download,
   ExternalLink,
   Loader2,
@@ -29,8 +30,11 @@ import { PluginManager } from '../plugins/components/PluginManager';
 const AgentGraphEditor = lazy(() =>
   import('./GraphView').then((m) => ({ default: m.AgentGraphEditor })),
 );
+const AutomationsView = lazy(() =>
+  import('./AutomationsView').then((m) => ({ default: m.AutomationsView })),
+);
 
-export type ToolPage = 'agents' | 'skills' | 'plugins';
+export type ToolPage = 'agents' | 'skills' | 'plugins' | 'automations';
 
 // MCPLogo renders the official Model Context Protocol mark (cropped from
 // the modelcontextprotocol.io brand logo) as inline SVG so it inherits
@@ -993,6 +997,11 @@ const VIEW_META: {
   { id: 'agents', icon: Bot, label: (t) => t('config.tabAgents') },
   { id: 'skills', icon: Sparkles, label: (t) => t('config.tabSkills') },
   { id: 'plugins', icon: Puzzle, label: (t) => t('config.tabPlugins') },
+  {
+    id: 'automations',
+    icon: Clock,
+    label: (t) => t('sidebar.automations'),
+  },
 ];
 
 // ToolsPanel is the right-side page shown when one of the sidebar tool
@@ -1060,6 +1069,17 @@ export function ToolsPanel() {
             {view === 'agents' && <AgentsSection onEdit={setEditingAgent} />}
             {view === 'skills' && <SkillsSection />}
             {view === 'plugins' && <PluginManager showTitle={false} />}
+            {view === 'automations' && (
+              <Suspense
+                fallback={
+                  <div className="grid h-full place-items-center text-dim text-sm">
+                    {t('app.starting')}
+                  </div>
+                }
+              >
+                <AutomationsView />
+              </Suspense>
+            )}
           </>
         )}
       </div>

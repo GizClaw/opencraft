@@ -53,6 +53,7 @@ import (
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/skills"
 	opentools "github.com/GizClaw/opencraft/internal/tools"
+	automationtool "github.com/GizClaw/opencraft/internal/tools/automation"
 )
 
 // Options controls assembly paths.
@@ -70,6 +71,9 @@ type Options struct {
 	// AgentHost supplies plugin-contributed agent capabilities
 	// (skills, MCP, hooks, tools). Nil yields an empty host.
 	AgentHost *pluginagent.Host
+	// AutomationHost supplies scheduled-task persistence for the agent
+	// automation tool. Nil yields an empty host (no tools exposed).
+	AutomationHost automationtool.Host
 }
 
 type Option func(*Options)
@@ -93,6 +97,12 @@ func WithUsageObserver(fn func(context.Context, inference.Usage)) Option {
 // WithAgentPlugins injects the desktop plugin host into the runtime.
 func WithAgentPlugins(h *pluginagent.Host) Option {
 	return func(o *Options) { o.AgentHost = h }
+}
+
+// WithAutomationHost injects the desktop automation host used by the
+// agent's automation tool.
+func WithAutomationHost(h automationtool.Host) Option {
+	return func(o *Options) { o.AutomationHost = h }
 }
 
 // BuildRuntime assembles an opencraft runtime from a deploy document.
@@ -182,6 +192,7 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 	reg.MustRegister(hooks.Factory{})
 	reg.MustRegister(hooks.ObserverFactory{})
 	reg.MustRegister(pluginagent.Factory{Host: o.AgentHost})
+	reg.MustRegister(automationtool.Factory{Host: o.AutomationHost})
 
 	builder := runtimecore.NewBuilder(reg)
 	if err := builder.WithLoader(loader); err != nil {
@@ -227,10 +238,6 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 	}); err != nil {
 		return nil, err
 	}
-	// A user-layer graph override merges with the embedded default into
-	// a two-key source object; reduce it back to the explicit file ref
-	// before the graph engine parses it.
-	normalizeGraphOverride(doc)
 	rt, err := builder.Build(ctx, doc)
 	if err != nil {
 		return nil, err

@@ -101,7 +101,7 @@ func TestHostSandboxInjectsReadOnlyWritePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetMode(id, sessions.ModeReadOnly); err != nil {
+	if err := store.SetMode(context.Background(), id, sessions.ModeReadOnly); err != nil {
 		t.Fatal(err)
 	}
 	hs := &HostSandbox{
@@ -141,7 +141,7 @@ func TestHostSandboxInjectsReadOnlyWritePolicy(t *testing.T) {
 		t.Fatalf("workspace session write policy = %v, want WriteWorkspace",
 			confined.got[1].Write)
 	}
-	if err := store.SetMode(wsID, sessions.ModeYOLO); err != nil {
+	if err := store.SetMode(context.Background(), wsID, sessions.ModeYOLO); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := hs.Start(
@@ -177,7 +177,7 @@ func TestHostSandboxSwitchesBySessionMode(t *testing.T) {
 			confined.count(), unconfined.count())
 	}
 
-	if err := store.SetMode("s1", sessions.ModeYOLO); err != nil {
+	if err := store.SetMode(context.Background(), "s1", sessions.ModeYOLO); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := hs.Start(
@@ -219,7 +219,7 @@ func TestHostWorkspaceSwitchesBySessionMode(t *testing.T) {
 	if _, err := hw.Read(sessionCtx("s1"), outside); err == nil {
 		t.Fatal("workspace mode must reject paths outside the root")
 	}
-	if err := store.SetMode("s1", sessions.ModeYOLO); err != nil {
+	if err := store.SetMode(context.Background(), "s1", sessions.ModeYOLO); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := hw.Read(sessionCtx("s1"), outside); err == nil {
@@ -303,7 +303,7 @@ func TestHostWorkspaceFactoryDerivesRootFromWorkspace(t *testing.T) {
 		t.Fatal("workspace mode must reject writes outside the derived root")
 	}
 	// YOLO mode: host resolution still anchors on the derived root.
-	if err := store.SetMode("s1", sessions.ModeYOLO); err != nil {
+	if err := store.SetMode(context.Background(), "s1", sessions.ModeYOLO); err != nil {
 		t.Fatal(err)
 	}
 	if err := hw.Write(sessionCtx("s1"), outside, []byte("s3cret")); err != nil {

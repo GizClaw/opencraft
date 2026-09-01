@@ -26,7 +26,9 @@ func (s *Service) agentsSection() (Section, error) {
 	return Section{ID: "agents_md", Role: "user", Text: text}, nil
 }
 
-func (s *Service) permissionsSection(contextID string) (Section, error) {
+func (s *Service) permissionsSection(
+	ctx context.Context, contextID string,
+) (Section, error) {
 	var prefixes []string
 	if s.prefixes != nil {
 		prefixes = s.prefixes.Rules()
@@ -34,7 +36,7 @@ func (s *Service) permissionsSection(contextID string) (Section, error) {
 	yolo := false
 	readOnly := false
 	if s.sessionStore != nil {
-		if mode, err := s.sessionStore.Mode(contextID); err == nil {
+		if mode, err := s.sessionStore.Mode(ctx, contextID); err == nil {
 			yolo = mode.IsYOLO()
 			readOnly = mode.IsReadOnly()
 		}

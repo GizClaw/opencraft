@@ -134,7 +134,7 @@ func (s *Service) RenderToBoard(
 	// Permissions are live state: the allowlist grows when the user
 	// approves commands, so render it on every turn instead of caching
 	// it with the static sections.
-	permissions, err := s.permissionsSection(contextID)
+	permissions, err := s.permissionsSection(ctx, contextID)
 	if err != nil {
 		return err
 	}

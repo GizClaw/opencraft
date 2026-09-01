@@ -10,6 +10,8 @@ import type {
   AgentSummary,
   AgentDetail,
   AgentUpdateResult,
+  AutomationRun,
+  AutomationTask,
   AttachmentDTO,
   CacheClearResult,
   ConfigState,
@@ -169,6 +171,17 @@ export const api = {
   pluginKVSet: (id: string, key: string, value: string) =>
     App.PluginKVSet(id, key, value),
   pluginKVDelete: (id: string, key: string) => App.PluginKVDelete(id, key),
+  automations: () => App.Automations() as Promise<AutomationTask[]>,
+  saveAutomation: (task: AutomationTask) =>
+    App.SaveAutomation(
+      task as unknown as gen.AutomationTaskDTO,
+    ) as Promise<AutomationTask>,
+  deleteAutomation: (id: string) => App.DeleteAutomation(id),
+  runAutomationNow: (id: string) => App.RunAutomationNow(id),
+  automationRuns: (taskId: string) =>
+    App.AutomationRuns(taskId) as Promise<AutomationRun[]>,
+  automationSessions: (workspace: string) =>
+    App.AutomationSessions(workspace) as Promise<SessionMeta[]>,
   secretExists: (scope: string, name: string) =>
     App.SecretExists(scope, name) as Promise<boolean>,
   secretDelete: (scope: string, name: string) => App.SecretDelete(scope, name),

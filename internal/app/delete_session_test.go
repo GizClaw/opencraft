@@ -87,7 +87,7 @@ func TestDeleteSessionClosesLiveSession(t *testing.T) {
 
 	ctx := context.Background()
 	key := coresession.Key{AgentID: "assistant", ContextID: "s-1"}
-	if err := store.SetModel("s-1", "deepseek/deepseek-v4-flash"); err != nil {
+	if err := store.SetModel(context.Background(), "s-1", "deepseek/deepseek-v4-flash"); err != nil {
 		t.Fatalf("seed settings: %v", err)
 	}
 
@@ -119,10 +119,10 @@ func TestDeleteSessionClosesLiveSession(t *testing.T) {
 	}
 
 	// The store-level conversation removal also drops the settings row.
-	if err := store.Remove("s-1"); err != nil {
+	if err := store.Remove(context.Background(), "s-1"); err != nil {
 		t.Fatalf("store.Remove: %v", err)
 	}
-	if model, err := store.Model("s-1"); err != nil || model != "" {
+	if model, err := store.Model(context.Background(), "s-1"); err != nil || model != "" {
 		t.Fatalf("Model after remove = %q, %v; want \"\", nil", model, err)
 	}
 }

@@ -4,6 +4,8 @@ import { api } from './api';
 import { sanitizeToolResult } from './ansi';
 import type {
   AgentSummary,
+  AutomationRun,
+  AutomationTask,
   AttachmentView,
   ConfigStatus,
   InteractDTO,
@@ -466,6 +468,8 @@ interface StoreState {
   workspace: string;
   agents: AgentSummary[];
   sessions: SessionMeta[];
+  automations: AutomationTask[];
+  automationRuns: Record<string, AutomationRun[]>;
   current: string;
   conversations: Record<string, ConversationState>;
   runConvs: Record<string, string>;
@@ -476,6 +480,9 @@ interface StoreState {
   // gone.
   subagentStreams: Record<string, MessageView[]>;
   subagentStreamAt: Record<string, number>;
+  // composerDraft is a one-shot draft injected into the chat composer
+  // (used by the automations "create with OpenCraft" flow).
+  composerDraft: string;
   statusText: string;
   lastUsage: UsageDTO | null;
   cards: KanbanCard[];
@@ -509,8 +516,12 @@ interface StoreState {
   chooseWorkspace: () => Promise<void>;
   openWorkspace: (path: string) => Promise<void>;
   removeWorkspace: (id: string) => Promise<void>;
+  draftComposer: (text: string) => void;
+  clearComposerDraft: () => void;
   refreshAgents: () => Promise<void>;
   loadSessions: () => Promise<void>;
+  loadAutomations: () => Promise<void>;
+  loadAutomationRuns: (taskId: string) => Promise<void>;
   loadCards: () => Promise<void>;
   loadSubagentCards: () => Promise<void>;
   toggleSubagentPanel: () => void;
@@ -648,11 +659,14 @@ export const useStore = create<StoreState>((set, get) => {
     workspace: '',
     agents: [],
     sessions: [],
+    automations: [],
+    automationRuns: {},
     current: '',
     conversations: {},
     runConvs: {},
     subagentStreams: {},
     subagentStreamAt: {},
+    composerDraft: '',
     statusText: '',
     lastUsage: null,
     cards: [],
@@ -703,6 +717,7 @@ export const useStore = create<StoreState>((set, get) => {
         void get().refreshAgents();
         void get().loadWorkspaces();
         void get().loadSessions();
+        void get().loadAutomations();
       } catch (err) {
         // A failed init must not strand the UI on the loading screen
         // forever; surface it as a fatal error with a retry path.
@@ -735,6 +750,7 @@ export const useStore = create<StoreState>((set, get) => {
           // load would otherwise leave the list empty until the first
           // turn triggers a refresh.
           void get().loadSessions();
+          void get().loadAutomations();
           set((state) => ({
             status: data,
             configured: !data.needed,
@@ -946,6 +962,46 @@ export const useStore = create<StoreState>((set, get) => {
         case 'session_updated':
           void get().loadSessions();
           break;
+        case 'automation_changed':
+          void get().loadAutomations();
+          break;
+        case 'automation_run': {
+          const data = ev.data as AutomationRun;
+          void get().loadAutomations();
+          if (data?.task_id) void get().loadAutomationRuns(data.task_id);
+          break;
+        }
+        case 'automation_run_started': {
+          const data = ev.data as {
+            run_id?: string;
+            conversation_id?: string;
+          };
+          if (data.conversation_id) {
+            // The run targets the currently open workspace: mark the
+            // conversation busy (creating a shell when it was never
+            // opened) so the sidebar lists the session as running, and
+            // future stream/turn_end events route to it.
+            ensureConversation(data.conversation_id);
+            if (data.run_id) {
+              set((state) => ({
+                conversations: {
+                  ...state.conversations,
+                  [data.conversation_id!]: {
+                    ...(state.conversations[data.conversation_id!] ??
+                      emptyConv()),
+                    busy: true,
+                    activeRunID: data.run_id!,
+                  },
+                },
+                runConvs: {
+                  ...state.runConvs,
+                  [data.run_id!]: data.conversation_id!,
+                },
+              }));
+            }
+          }
+          break;
+        }
         case 'managed_restored': {
           // The settings save rolled plugin-owned provider edits back
           // to the stored config; surface the reminder so the silent
@@ -1179,6 +1235,28 @@ export const useStore = create<StoreState>((set, get) => {
       }
     },
 
+    loadAutomations: async () => {
+      try {
+        set({ automations: (await api.automations()) ?? [] });
+      } catch {
+        // best-effort
+      }
+    },
+
+    loadAutomationRuns: async (taskId: string) => {
+      try {
+        const list = (await api.automationRuns(taskId)) ?? [];
+        set((state) => ({
+          automationRuns: {
+            ...state.automationRuns,
+            [taskId]: list,
+          },
+        }));
+      } catch {
+        // best-effort
+      }
+    },
+
     loadWorkspaces: async () => {
       try {
         set({ workspaces: (await api.workspaces()) ?? [] });
@@ -1213,6 +1291,14 @@ export const useStore = create<StoreState>((set, get) => {
       } catch (err) {
         set({ statusText: String(err) });
       }
+    },
+
+    draftComposer: (text) => {
+      set({ composerDraft: text });
+    },
+
+    clearComposerDraft: () => {
+      set({ composerDraft: '' });
     },
 
     loadCards: async () => {

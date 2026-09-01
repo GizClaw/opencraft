@@ -1,6 +1,7 @@
 package sessions
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 
@@ -40,12 +41,19 @@ type modeFile struct {
 const modeVersion = "v1"
 
 // SetMode persists the sandbox mode for the session.
-func (s *Store) SetMode(id string, mode Mode) error {
+func (s *Store) SetMode(ctx context.Context, id string, mode Mode) error {
 	switch mode {
 	case ModeWorkspace, ModeReadOnly, ModeYOLO:
 	default:
 		return errdefs.Validationf(
 			"sessions: unknown permission mode %q", mode)
+	}
+	// session.db is the source of truth; the YAML file is kept for
+	// compatibility with older builds that read permissions.yaml.
+	if s.db != nil {
+		if err := s.db.SetMode(ctx, id, string(mode)); err != nil {
+			return err
+		}
 	}
 	dir := s.dir(id)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -80,7 +88,18 @@ func (s *Store) SetMode(id string, mode Mode) error {
 
 // Mode returns the persisted sandbox mode for the session, defaulting
 // to workspace when the session has no permissions file.
-func (s *Store) Mode(id string) (Mode, error) {
+func (s *Store) Mode(ctx context.Context, id string) (Mode, error) {
+	if s.db != nil {
+		stored, err := s.db.Mode(ctx, id)
+		if err != nil {
+			return ModeWorkspace, err
+		}
+		switch Mode(stored) {
+		case ModeWorkspace, ModeReadOnly, ModeYOLO:
+			return Mode(stored), nil
+		}
+		// No row: fall through to the legacy YAML file.
+	}
 	data, err := os.ReadFile(filepath.Join(s.dir(id), "permissions.yaml"))
 	if err != nil {
 		if os.IsNotExist(err) {

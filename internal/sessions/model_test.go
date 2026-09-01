@@ -1,6 +1,9 @@
 package sessions
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestModelDefaultAndRoundTrip(t *testing.T) {
 	store, err := New(t.TempDir(), 40)
@@ -9,19 +12,19 @@ func TestModelDefaultAndRoundTrip(t *testing.T) {
 	}
 	defer func() { _ = store.Close() }()
 
-	if model, err := store.Model("s-missing"); err != nil || model != "" {
+	if model, err := store.Model(context.Background(), "s-missing"); err != nil || model != "" {
 		t.Errorf("Model(missing) = %q, %v; want \"\", nil", model, err)
 	}
-	if err := store.SetModel("s-x", "deepseek/deepseek-v4-flash"); err != nil {
+	if err := store.SetModel(context.Background(), "s-x", "deepseek/deepseek-v4-flash"); err != nil {
 		t.Fatal(err)
 	}
-	if model, err := store.Model("s-x"); err != nil || model != "deepseek/deepseek-v4-flash" {
+	if model, err := store.Model(context.Background(), "s-x"); err != nil || model != "deepseek/deepseek-v4-flash" {
 		t.Errorf("Model(s-x) = %q, %v; want deepseek/deepseek-v4-flash, nil", model, err)
 	}
-	if err := store.SetModel("s-x", ""); err != nil {
+	if err := store.SetModel(context.Background(), "s-x", ""); err != nil {
 		t.Fatal(err)
 	}
-	if model, err := store.Model("s-x"); err != nil || model != "" {
+	if model, err := store.Model(context.Background(), "s-x"); err != nil || model != "" {
 		t.Errorf("Model(s-x) after reset = %q, %v; want \"\", nil", model, err)
 	}
 }
@@ -32,7 +35,7 @@ func TestSetModelRejectsInvalidID(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = store.Close() }()
-	if err := store.SetModel("not-a-session", "openai/gpt-5.6-sol"); err == nil {
+	if err := store.SetModel(context.Background(), "not-a-session", "openai/gpt-5.6-sol"); err == nil {
 		t.Fatal("SetModel with invalid id should fail")
 	}
 }

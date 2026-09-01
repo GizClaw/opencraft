@@ -174,7 +174,7 @@ func (a *App) SaveMemory(settings config.MemorySettings) error {
 	if err := config.WriteMemory(a.userDir, settings); err != nil {
 		return err
 	}
-	return a.rebuild()
+	return a.requestRebuild()
 }
 
 // ModelUsageSeries returns one model's usage bucketed by hour or day,
@@ -228,7 +228,7 @@ func (a *App) SaveInstances(req InferenceRequest) error {
 	if err := a.saveInference(req); err != nil {
 		return err
 	}
-	return a.rebuild()
+	return a.requestRebuild()
 }
 
 // saveInference validates and persists the inference configuration
@@ -545,7 +545,7 @@ func (a *App) SaveMCP(servers []config.MCPServer) error {
 	if err := config.WriteMCP(a.userDir, servers); err != nil {
 		return err
 	}
-	return a.rebuild()
+	return a.requestRebuild()
 }
 
 // validateMCPServer normalizes and validates one MCP server entry the
@@ -656,7 +656,7 @@ func (a *App) MCPStatus() ([]MCPStatusDTO, error) {
 
 // Reload rebuilds the runtime from the current configuration.
 func (a *App) Reload() error {
-	return a.rebuild()
+	return a.requestRebuild()
 }
 
 // Workspace returns the workspace directory the app operates on.
@@ -671,16 +671,34 @@ func (a *App) Workspace() string {
 // first; the archive keeps their URL paths while the opencraft.media
 // prepare hook inlines the bytes before the model call.
 func (a *App) StartTurn(msg message.Message) (TurnStart, error) {
-	if strings.TrimSpace(a.snapshotWorkDir()) == "" {
+	a.mu.Lock()
+	wd := a.workDir
+	contextID := a.conversationID
+	mode := a.mode
+	think := a.think
+	model := a.model
+	a.mu.Unlock()
+	return a.startTurn(msg, contextID, mode, think, model, wd, nil)
+}
+
+// startTurn starts one assistant turn in an explicit conversation
+// context (used by the UI conversation and by automation runs, which
+// must never touch the UI's active session state). It returns
+// immediately; when done is non-nil, waitTurn delivers the terminal
+// TurnEnd on it after the turn_end UI event.
+func (a *App) startTurn(
+	msg message.Message,
+	contextID string,
+	mode ocsessions.Mode,
+	think, model, wd string,
+	done chan<- TurnEnd,
+) (TurnStart, error) {
+	if strings.TrimSpace(wd) == "" {
 		return TurnStart{}, errors.New("no workspace selected: pick a folder first")
 	}
 	a.mu.Lock()
 	ctrl := a.ctrl
 	broker := a.broker
-	contextID := a.conversationID
-	mode := a.mode
-	think := a.think
-	model := a.model
 	store := a.sessions
 	a.mu.Unlock()
 	if ctrl == nil || ctrl.Runtime() == nil || broker == nil {
@@ -713,18 +731,18 @@ func (a *App) StartTurn(msg message.Message) (TurnStart, error) {
 
 	rt := ctrl.Runtime()
 	if mode.IsYOLO() && store != nil {
-		if err := store.SetMode(contextID, mode); err != nil {
+		if err := store.SetMode(ctx, contextID, mode); err != nil {
 			return TurnStart{}, fmt.Errorf("persist permission mode: %w", err)
 		}
 	}
 	// Pre-turn snapshot for undo: files git reports as changed or
 	// untracked, captured before the turn runs. Non-git workspaces
 	// yield an empty snapshot and undo stays unavailable.
-	before := gitSnapshot(ctx, a.snapshotWorkDir())
+	before := gitSnapshot(ctx, wd)
 	// Pre-turn manifest for artifact reconciliation: a git-free list of
 	// workspace files (path → size/mtime) captured before the turn, so
 	// waitTurn can find exec-produced documents afterwards.
-	manifest, _ := manifestSnapshot(ctx, a.snapshotWorkDir())
+	manifest, _ := manifestSnapshot(ctx, wd)
 	a.fireHooks(ctx, hooks.EventUserPromptSubmit, map[string]any{
 		"event":           hooks.EventUserPromptSubmit,
 		"conversation_id": contextID,
@@ -781,7 +799,7 @@ func (a *App) StartTurn(msg message.Message) (TurnStart, error) {
 	}
 	a.convRuns[contextID][turn.RunID()] = true
 	a.mu.Unlock()
-	go a.waitTurn(lease, turn, contextID)
+	go a.waitTurn(lease, turn, contextID, done)
 	a.recordRollout(a.appContext(), a.rolloutFor(a.appContext(), contextID),
 		rollout.Event{
 			Type:           rollout.TypeTurnStarted,
@@ -838,7 +856,7 @@ func (a *App) SetSessionMode(mode string) error {
 	if store == nil {
 		return nil
 	}
-	if err := store.SetMode(contextID, m); err != nil {
+	if err := store.SetMode(a.appContext(), contextID, m); err != nil {
 		return fmt.Errorf("persist permission mode: %w", err)
 	}
 	return nil
@@ -953,6 +971,7 @@ func (a *App) waitTurn(
 	lease *coresession.Lease,
 	turn *coresession.Turn,
 	contextID string,
+	done chan<- TurnEnd,
 ) {
 	ctx := a.appContext()
 	res, err := turn.Wait(ctx)
@@ -1022,6 +1041,12 @@ func (a *App) waitTurn(
 	// soon as the turn result is known, and none of the follow-up work
 	// affects the UI's terminal state.
 	a.bridge.Emit("turn_end", end)
+	if done != nil {
+		select {
+		case done <- end:
+		default:
+		}
+	}
 
 	// Post-turn capture: pair the pre-state with the state left after
 	// the turn and record an undo entry (identical pairs are dropped by
@@ -1074,7 +1099,7 @@ func (a *App) waitTurn(
 	})
 	// A plugin toggle requested during the turn is applied now that
 	// this turn is no longer running (and no other turn is active).
-	a.maybeApplyPendingPluginRebuild()
+	a.maybeApplyPendingRebuild()
 }
 
 // UndoChange reverts the latest captured turn's file changes for the

@@ -1,6 +1,7 @@
 package sessions
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 )
@@ -15,14 +16,14 @@ func TestSessionModePersists(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mode, err := store.Mode(id)
+	mode, err := store.Mode(context.Background(), id)
 	if err != nil || mode != ModeWorkspace {
 		t.Fatalf("fresh session mode = %q, %v; want workspace", mode, err)
 	}
-	if err := store.SetMode(id, ModeYOLO); err != nil {
+	if err := store.SetMode(context.Background(), id, ModeYOLO); err != nil {
 		t.Fatal(err)
 	}
-	mode, err = store.Mode(id)
+	mode, err = store.Mode(context.Background(), id)
 	if err != nil || mode != ModeYOLO {
 		t.Fatalf("mode after set = %q, %v; want yolo", mode, err)
 	}
@@ -32,7 +33,7 @@ func TestSessionModePersists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	mode, err = reopened.Mode(id)
+	mode, err = reopened.Mode(context.Background(), id)
 	if err != nil || mode != ModeYOLO {
 		t.Fatalf("reopened mode = %q, %v; want yolo", mode, err)
 	}
@@ -47,10 +48,10 @@ func TestSessionModeReadOnlyPersists(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetMode(id, ModeReadOnly); err != nil {
+	if err := store.SetMode(context.Background(), id, ModeReadOnly); err != nil {
 		t.Fatal(err)
 	}
-	mode, err := store.Mode(id)
+	mode, err := store.Mode(context.Background(), id)
 	if err != nil || mode != ModeReadOnly {
 		t.Fatalf("mode after set = %q, %v; want read-only", mode, err)
 	}
@@ -66,10 +67,10 @@ func TestSessionModeIsolatedPerSession(t *testing.T) {
 	}
 	id1, _ := store.Create()
 	id2, _ := store.Create()
-	if err := store.SetMode(id1, ModeYOLO); err != nil {
+	if err := store.SetMode(context.Background(), id1, ModeYOLO); err != nil {
 		t.Fatal(err)
 	}
-	if mode, _ := store.Mode(id2); mode != ModeWorkspace {
+	if mode, _ := store.Mode(context.Background(), id2); mode != ModeWorkspace {
 		t.Fatalf("other session mode = %q, want workspace", mode)
 	}
 }
@@ -80,7 +81,7 @@ func TestSetModeRejectsUnknown(t *testing.T) {
 		t.Fatal(err)
 	}
 	id, _ := store.Create()
-	if err := store.SetMode(id, Mode("lunatic")); err == nil {
+	if err := store.SetMode(context.Background(), id, Mode("lunatic")); err == nil {
 		t.Fatal("unknown mode should error")
 	}
 }

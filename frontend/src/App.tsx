@@ -151,9 +151,36 @@ export default function App() {
           run_id?: string;
           conversation_id?: string;
           status: string;
+          notify?: boolean;
         };
-        const { title, body } = turnEndNotification(data);
-        void SendNotification({ id: 'turn-end', title, body });
+        if (data.notify !== false) {
+          const { title, body } = turnEndNotification(data);
+          void SendNotification({ id: 'turn-end', title, body });
+        }
+      } else if (ev.type === 'automation_notify') {
+        const data = ev.data as {
+          name?: string;
+          status?: string;
+          error?: string;
+          output?: string;
+        };
+        const statusText =
+          data.status === 'completed'
+            ? i18n.t('notify.done')
+            : data.status === 'failed' || data.status === 'aborted'
+              ? i18n.t('notify.failed')
+              : (data.status ?? '');
+        const snippet = data.output?.trim()
+          ? truncate(data.output, maxNotifySnippet)
+          : data.error
+            ? truncate(data.error, maxNotifySnippet)
+            : '';
+        const body = snippet ? `${statusText}\n${snippet}` : statusText;
+        void SendNotification({
+          id: 'automation-turn-end',
+          title: truncate(data.name || 'OpenCraft', maxNotifyTitle),
+          body,
+        });
       }
       handleEvent(ev);
     });

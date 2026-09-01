@@ -1,5 +1,6 @@
 import {
   Bot,
+  Clock,
   Download,
   FolderOpen,
   Loader2,
@@ -99,6 +100,14 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
       active: toolsView === 'plugins',
       onClick: () =>
         toolsView === 'plugins' ? closeTools() : openTools('plugins'),
+    },
+    {
+      id: 'automations',
+      label: t('sidebar.automations'),
+      icon: Clock,
+      active: toolsView === 'automations',
+      onClick: () =>
+        toolsView === 'automations' ? closeTools() : openTools('automations'),
     },
   ];
 

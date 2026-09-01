@@ -279,7 +279,7 @@ func TestRemoveRejectsTraversalID(t *testing.T) {
 		"../" + filepath.Base(victim),
 		"not-a-session",
 	} {
-		if err := store.Remove(id); err == nil {
+		if err := store.Remove(context.Background(), id); err == nil {
 			t.Fatalf("Remove(%q) accepted", id)
 		}
 	}
@@ -297,7 +297,7 @@ func TestRemoveRejectsTraversalID(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Remove(id); err != nil {
+	if err := store.Remove(context.Background(), id); err != nil {
 		t.Fatalf("Remove(valid id): %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(store.root, id)); !os.IsNotExist(err) {

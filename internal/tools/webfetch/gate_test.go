@@ -80,7 +80,7 @@ func TestYOLOBypassGate(t *testing.T) {
 	}
 
 	// YOLO mode: the gate is skipped entirely (even deny lists).
-	if err := store.SetMode("s-1", ocsessions.ModeYOLO); err != nil {
+	if err := store.SetMode(context.Background(), "s-1", ocsessions.ModeYOLO); err != nil {
 		t.Fatal(err)
 	}
 	if err := gate(ctx, "127.0.0.1"); err != nil {

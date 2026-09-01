@@ -504,6 +504,13 @@ export function ChatView() {
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [composing, setComposing] = useState(false);
+  const composerDraft = useStore((s) => s.composerDraft);
+  const clearComposerDraft = useStore((s) => s.clearComposerDraft);
+  useEffect(() => {
+    if (!composerDraft) return;
+    setInput(composerDraft);
+    clearComposerDraft();
+  }, [composerDraft, clearComposerDraft]);
   const [undoAvail, setUndoAvail] = useState<UndoState>({
     can_undo: false,
     can_redo: false,
@@ -1031,7 +1038,7 @@ export function ChatView() {
               <div
                 ref={highlightRef}
                 aria-hidden="true"
-                className={`pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-4 text-base text-fg ${
+                className={`pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-4 text-sm text-fg ${
                   composing ? 'opacity-0' : ''
                 }`}
               >
@@ -1113,7 +1120,7 @@ export function ChatView() {
                     : t('chat.placeholderUnconfigured')
                 }
                 disabled={!configured}
-                className={`block relative max-h-52 w-full resize-none overflow-y-auto no-scrollbar bg-transparent px-4 text-base caret-fg outline-none placeholder:text-dim/55 disabled:opacity-50 ${
+                className={`block relative max-h-52 w-full resize-none overflow-y-auto no-scrollbar bg-transparent px-4 text-sm caret-fg outline-none placeholder:text-dim/55 disabled:opacity-50 ${
                   composing ? 'text-fg' : 'text-transparent'
                 }`}
               />
@@ -1167,7 +1174,7 @@ export function ChatView() {
               )}
             </div>
           )}
-          <div className="flex items-center justify-between px-3 pb-2.5">
+          <div className="mt-3 flex items-center justify-between px-3 pb-2.5">
             <div className="flex items-center gap-3">
               <button
                 onClick={() => void pickAttachment()}

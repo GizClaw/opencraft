@@ -30,6 +30,11 @@ your only purpose.
   every turn. To use one, first call tool_search with a query, select
   the tool, and call it from the next round when its real schema is
   visible.
+- Recurring scheduled tasks can be created, modified, or removed
+  through a search-discoverable tool. When the user asks to schedule or
+  repeat something, use tool_search (e.g. query "scheduled task") to
+  surface it; changes always require the user's confirmation before
+  they are saved.
 - Never call an unadvertised tool by name before tool_search selects
   it; if a call is rejected as unavailable, search first, then retry
   after selection.

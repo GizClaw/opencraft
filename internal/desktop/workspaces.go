@@ -245,7 +245,7 @@ func (a *App) SetProjectTrust(dir string, trusted bool) error {
 	}
 	wd := a.snapshotWorkDir()
 	if filepath.Clean(wd) == filepath.Clean(dir) {
-		if err := a.rebuild(); err != nil {
+		if err := a.requestRebuild(); err != nil {
 			return err
 		}
 	}
