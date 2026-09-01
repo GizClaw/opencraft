@@ -263,7 +263,15 @@ jobs:
         run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
 
       - name: Install NSIS
-        run: choco install nsis -y --no-progress
+        run: |
+          choco install nsis -y --no-progress
+          # choco updates the machine PATH, which the runner does not reload
+          # mid-job; export the NSIS bin dir so later steps can find makensis.
+          $nsisDir = "${env:ProgramFiles(x86)}\NSIS"
+          if (-not (Test-Path "$nsisDir\makensis.exe")) {
+            throw "makensis not found at $nsisDir after chocolatey install"
+          }
+          "$nsisDir" | Out-File -FilePath $env:GITHUB_PATH -Append
 
       - name: Build Windows binary + installer
         env:
@@ -276,6 +284,9 @@ jobs:
           $env:PATH = "$(go env GOPATH)\bin;$env:PATH"
           wails build -platform windows/amd64 -clean -nsis `
             -ldflags "-s -w -X github.com/GizClaw/opencraft/internal/app.ServiceVersion=$ver"
+          if (-not (Get-ChildItem build/bin/*-amd64-installer.exe -ErrorAction SilentlyContinue)) {
+            throw "wails build did not produce the NSIS installer (makensis missing or failed)"
+          }
 
       - name: Package binaries
         env:
