@@ -238,6 +238,7 @@ export interface TurnEnd {
   conversation_id?: string;
   status: string;
   error?: string;
+  notify?: boolean;
 }
 
 export interface ReplyRequest {
@@ -458,4 +459,44 @@ export interface StreamDelta {
 export interface UIEvent {
   type: string;
   data: unknown;
+}
+
+// Automation types mirror internal/desktop/automations.go DTOs.
+
+export interface AutomationSchedule {
+  type: string;
+  interval_hours?: number;
+  days?: string[];
+  time?: string;
+  cron?: string;
+}
+
+export interface AutomationTask {
+  id: string;
+  name: string;
+  prompt: string;
+  schedule: AutomationSchedule;
+  workspace: string;
+  mode: string;
+  model: string;
+  think: string;
+  notify: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  last_run_at: string;
+  last_status: string;
+  next_run_at: string;
+}
+
+export interface AutomationRun {
+  id: string;
+  task_id: string;
+  at: string;
+  status: string;
+  error: string;
+  conversation_id: string;
+  run_id: string;
+  duration_ms: number;
+  summary: string;
 }

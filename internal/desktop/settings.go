@@ -283,6 +283,8 @@ func (a *App) DeleteSession(id string) error {
 
 // OpenWorkspace switches the workspace root and rebuilds the runtime
 // (config discovery, sandbox root, and the session store all follow).
+// When a turn is running (user or automation), the switch is deferred
+// until the last turn ends so unattended runs are never killed.
 func (a *App) OpenWorkspace(dir string) error {
 	dir = strings.TrimSpace(dir)
 	if dir == "" {
@@ -296,6 +298,20 @@ func (a *App) OpenWorkspace(dir string) error {
 		return fmt.Errorf("%s is not a directory", dir)
 	}
 	a.mu.Lock()
+	active := len(a.turns) > 0
+	a.mu.Unlock()
+	if active {
+		a.mu.Lock()
+		a.pendingWorkDir = dir
+		a.pendingRebuild = true
+		a.mu.Unlock()
+		return nil
+	}
+	return a.applyOpenWorkspace(dir)
+}
+
+func (a *App) applyOpenWorkspace(dir string) error {
+	a.mu.Lock()
 	a.workDir = dir
 	previous := a.conversationID
 	a.mu.Unlock()
@@ -307,7 +323,7 @@ func (a *App) OpenWorkspace(dir string) error {
 		"reason":          "workspace_switch",
 		"conversation_id": previous,
 	})
-	if err := a.rebuild(); err != nil {
+	if err := a.requestRebuild(); err != nil {
 		return err
 	}
 	// Remember the switch (best-effort) so the next launch restores

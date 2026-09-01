@@ -151,9 +151,12 @@ export default function App() {
           run_id?: string;
           conversation_id?: string;
           status: string;
+          notify?: boolean;
         };
-        const { title, body } = turnEndNotification(data);
-        void SendNotification({ id: 'turn-end', title, body });
+        if (data.notify !== false) {
+          const { title, body } = turnEndNotification(data);
+          void SendNotification({ id: 'turn-end', title, body });
+        }
       }
       handleEvent(ev);
     });

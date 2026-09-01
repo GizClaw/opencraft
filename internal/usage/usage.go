@@ -1,39 +1,30 @@
-// Package usage owns the user-level token usage database
-// (~/.opencraft/user.db): per-model usage across every workspace and
-// session, aggregated on demand.
+// Package usage owns the user-level token usage tables in
+// ~/.opencraft/user.db: per-model usage across every workspace and
+// session, aggregated on demand. The desktop shell shares one
+// userdb.DB between usage and automations; New attaches to that
+// handle, while Open remains a convenience for standalone use/tests.
 package usage
 
 import (
 	"context"
 	"database/sql"
 	"fmt"
-	"os"
-	"path/filepath"
 	"time"
 
-	_ "modernc.org/sqlite" // registers the "sqlite" driver.
+	"github.com/GizClaw/opencraft/internal/userdb"
 )
 
 // Store is the user-level usage database.
 type Store struct {
-	db *sql.DB
+	db      *sql.DB
+	closeFn func() error
 }
 
-// Open opens (creating if necessary) the usage database at path.
-func Open(path string) (*Store, error) {
-	if dir := filepath.Dir(path); dir != "." {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return nil, fmt.Errorf("usage: create directory: %w", err)
-		}
-	}
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		return nil, fmt.Errorf("usage: open %s: %w", path, err)
-	}
-	db.SetMaxOpenConns(1)
-	if _, err := db.Exec("PRAGMA journal_mode=WAL"); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("usage: enable WAL: %w", err)
+// New attaches the usage store to an existing user database handle
+// and ensures the usage schema exists.
+func New(db *sql.DB) (*Store, error) {
+	if db == nil {
+		return nil, fmt.Errorf("usage: nil database")
 	}
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS model_usage (
 		workspace_id TEXT NOT NULL,
@@ -47,7 +38,6 @@ func Open(path string) (*Store, error) {
 		updated_at TEXT NOT NULL,
 		PRIMARY KEY (workspace_id, session_id, model)
 	)`); err != nil {
-		_ = db.Close()
 		return nil, fmt.Errorf("usage: create schema: %w", err)
 	}
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS model_usage_hourly (
@@ -60,14 +50,41 @@ func Open(path string) (*Store, error) {
 		latency_ms INTEGER NOT NULL DEFAULT 0,
 		PRIMARY KEY (model, hour)
 	)`); err != nil {
-		_ = db.Close()
 		return nil, fmt.Errorf("usage: create hourly schema: %w", err)
 	}
 	return &Store{db: db}, nil
 }
 
+// Open opens (creating if necessary) the usage database at path. It
+// owns the connection and Close closes it. Desktop callers should
+// prefer New over a shared userdb.DB.
+func Open(path string) (*Store, error) {
+	udb, err := userdb.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	st, err := New(udb.SQLDB())
+	if err != nil {
+		_ = udb.Close()
+		return nil, err
+	}
+	st.closeFn = udb.Close
+	return st, nil
+}
+
 // Close closes the database handle.
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	if s == nil {
+		return nil
+	}
+	if s.closeFn != nil {
+		return s.closeFn()
+	}
+	if s.db != nil {
+		return s.db.Close()
+	}
+	return nil
+}
 
 // Usage is one recorded usage delta for a model in a session.
 type Usage struct {

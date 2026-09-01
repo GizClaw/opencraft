@@ -219,6 +219,9 @@ type TurnEnd struct {
 	ConversationID string `json:"conversation_id,omitempty"`
 	Status         string `json:"status"`
 	Error          string `json:"error,omitempty"`
+	// Notify lets an automation task suppress the system notification
+	// for this turn (nil = notify, the default for user turns).
+	Notify *bool `json:"notify,omitempty"`
 }
 
 // ReplyRequest is a user answer to one interaction.

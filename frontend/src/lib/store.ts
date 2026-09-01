@@ -4,6 +4,8 @@ import { api } from './api';
 import { sanitizeToolResult } from './ansi';
 import type {
   AgentSummary,
+  AutomationRun,
+  AutomationTask,
   AttachmentView,
   ConfigStatus,
   InteractDTO,
@@ -466,6 +468,8 @@ interface StoreState {
   workspace: string;
   agents: AgentSummary[];
   sessions: SessionMeta[];
+  automations: AutomationTask[];
+  automationRuns: Record<string, AutomationRun[]>;
   current: string;
   conversations: Record<string, ConversationState>;
   runConvs: Record<string, string>;
@@ -511,6 +515,8 @@ interface StoreState {
   removeWorkspace: (id: string) => Promise<void>;
   refreshAgents: () => Promise<void>;
   loadSessions: () => Promise<void>;
+  loadAutomations: () => Promise<void>;
+  loadAutomationRuns: (taskId: string) => Promise<void>;
   loadCards: () => Promise<void>;
   loadSubagentCards: () => Promise<void>;
   toggleSubagentPanel: () => void;
@@ -648,6 +654,8 @@ export const useStore = create<StoreState>((set, get) => {
     workspace: '',
     agents: [],
     sessions: [],
+    automations: [],
+    automationRuns: {},
     current: '',
     conversations: {},
     runConvs: {},
@@ -703,6 +711,7 @@ export const useStore = create<StoreState>((set, get) => {
         void get().refreshAgents();
         void get().loadWorkspaces();
         void get().loadSessions();
+        void get().loadAutomations();
       } catch (err) {
         // A failed init must not strand the UI on the loading screen
         // forever; surface it as a fatal error with a retry path.
@@ -735,6 +744,7 @@ export const useStore = create<StoreState>((set, get) => {
           // load would otherwise leave the list empty until the first
           // turn triggers a refresh.
           void get().loadSessions();
+          void get().loadAutomations();
           set((state) => ({
             status: data,
             configured: !data.needed,
@@ -946,6 +956,15 @@ export const useStore = create<StoreState>((set, get) => {
         case 'session_updated':
           void get().loadSessions();
           break;
+        case 'automation_changed':
+          void get().loadAutomations();
+          break;
+        case 'automation_run': {
+          const data = ev.data as AutomationRun;
+          void get().loadAutomations();
+          if (data?.task_id) void get().loadAutomationRuns(data.task_id);
+          break;
+        }
         case 'managed_restored': {
           // The settings save rolled plugin-owned provider edits back
           // to the stored config; surface the reminder so the silent
@@ -1176,6 +1195,28 @@ export const useStore = create<StoreState>((set, get) => {
         // best-effort
       } finally {
         set({ sessionsLoading: false });
+      }
+    },
+
+    loadAutomations: async () => {
+      try {
+        set({ automations: (await api.automations()) ?? [] });
+      } catch {
+        // best-effort
+      }
+    },
+
+    loadAutomationRuns: async (taskId: string) => {
+      try {
+        const list = (await api.automationRuns(taskId)) ?? [];
+        set((state) => ({
+          automationRuns: {
+            ...state.automationRuns,
+            [taskId]: list,
+          },
+        }));
+      } catch {
+        // best-effort
       }
     },
 

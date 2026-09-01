@@ -22,6 +22,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/agents"
 	app "github.com/GizClaw/opencraft/internal/app"
+	"github.com/GizClaw/opencraft/internal/automations"
 	"github.com/GizClaw/opencraft/internal/config"
 	"github.com/GizClaw/opencraft/internal/plugins"
 	pluginagent "github.com/GizClaw/opencraft/internal/plugins/agent"
@@ -33,6 +34,7 @@ import (
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/undo"
 	"github.com/GizClaw/opencraft/internal/usage"
+	"github.com/GizClaw/opencraft/internal/userdb"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -80,18 +82,27 @@ type App struct {
 	bridge       *Bridge
 	otelShutdown func(context.Context) error
 
-	ctrl     *runtime.Controller
-	broker   *runtime.Broker
-	sessions *ocsessions.Store
-	usage    *usage.Store
-	agents   *agents.Lifecycle
-	undo     *undo.Store
-	secrets  *secrets.Manager
-	turns    map[string]*session.Turn
-	// pendingPluginRebuild defers a plugin-driven runtime rebuild until
-	// no turn is running, so toggling a plugin never aborts an active
-	// agent turn.
-	pendingPluginRebuild bool
+	ctrl            *runtime.Controller
+	broker          *runtime.Broker
+	sessions        *ocsessions.Store
+	usage           *usage.Store
+	userDB          *userdb.DB
+	automationStore *automations.Store
+	automations     *automations.Manager
+	// automationConvs maps automation conversation ids back to their
+	// task so turn_end can apply the task's notification policy.
+	automationConvs map[string]string
+	agents          *agents.Lifecycle
+	undo            *undo.Store
+	secrets         *secrets.Manager
+	turns           map[string]*session.Turn
+	// pendingRebuild defers any runtime rebuild (settings, MCP,
+	// plugins, workspace switch) until no turn is running, so
+	// unattended automation runs survive configuration changes.
+	pendingRebuild bool
+	// pendingWorkDir carries a workspace switch requested while a run
+	// was active; it is applied once the last turn ends.
+	pendingWorkDir string
 
 	// conversationID is the stable session context for the current
 	// conversation. Every turn in the conversation reuses it so
@@ -215,6 +226,7 @@ func New(opts Options) (*App, error) {
 		model:            "",
 		runConvs:         make(map[string]string),
 		convRuns:         make(map[string]map[string]bool),
+		automationConvs:  make(map[string]string),
 		runUsage:         make(map[string]ocsessions.Usage),
 		titling:          make(map[string]bool),
 		preTurnSnap:      make(map[string][]undo.FileState),
@@ -246,7 +258,7 @@ func New(opts Options) (*App, error) {
 			if a.bridge != nil {
 				a.bridge.Emit("inference_changed", map[string]any{})
 			}
-			return a.rebuild()
+			return a.requestRebuild()
 		},
 		Remove: func(_, id string) error {
 			if err := a.removeInferenceProfile(id); err != nil {
@@ -255,7 +267,7 @@ func New(opts Options) (*App, error) {
 			if a.bridge != nil {
 				a.bridge.Emit("inference_changed", map[string]any{})
 			}
-			return a.rebuild()
+			return a.requestRebuild()
 		},
 	})
 	return a, nil
@@ -281,6 +293,7 @@ func (a *App) Startup(ctx context.Context) {
 		return a.runConvs[runID]
 	})
 	a.bridge.SetRollout(a.onStreamRollout)
+	a.openUserDB()
 	if err := a.rebuild(); err != nil {
 		a.bridge.Emit("fatal", map[string]any{"error": err.Error()})
 	}
@@ -302,18 +315,87 @@ func (a *App) Startup(ctx context.Context) {
 func (a *App) Shutdown(ctx context.Context) {
 	a.stopTray()
 	a.closeRollouts()
+	// Stop scheduling before tearing down the runtime: in-flight runs
+	// are killed by closeRuntime and their records are reconciled on
+	// the next launch.
+	if m := a.automationManagerRef(); m != nil {
+		m.Stop()
+	}
 	a.closeRuntime()
 	a.mu.Lock()
-	if a.usage != nil {
-		_ = a.usage.Close()
-		a.usage = nil
-	}
+	udb := a.userDB
+	usageStore := a.usage
+	a.userDB = nil
+	a.usage = nil
+	a.automationStore = nil
+	a.automations = nil
 	a.mu.Unlock()
+	if udb != nil {
+		_ = udb.Close()
+	} else if usageStore != nil {
+		_ = usageStore.Close()
+	}
 	if a.otelShutdown != nil {
 		flushCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		_ = a.otelShutdown(flushCtx)
 	}
+}
+
+// openUserDB opens ~/.opencraft/user.db once at startup and wires the
+// usage and automation stores to the shared connection. Failures are
+// best-effort: the window still opens, and automation bindings report
+// "unavailable" until the store is fixed.
+func (a *App) openUserDB() {
+	dataDir, err := config.UserDataDir()
+	if err != nil {
+		return
+	}
+	udb, err := userdb.Open(filepath.Join(dataDir, "user.db"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "opencraft: open user db: %v\n", err)
+		return
+	}
+	usageStore, err := usage.New(udb.SQLDB())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "opencraft: usage schema: %v\n", err)
+	}
+	autoStore, err := automations.New(udb.SQLDB())
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "opencraft: automation schema: %v\n", err)
+	}
+	if usageStore == nil && autoStore == nil {
+		_ = udb.Close()
+		return
+	}
+	a.mu.Lock()
+	a.userDB = udb
+	a.usage = usageStore
+	a.automationStore = autoStore
+	if autoStore != nil {
+		mgr, mgrErr := automations.NewManager(autoStore, automations.ManagerOptions{
+			Run:    a.runAutomation,
+			Window: 2 * time.Minute,
+			Limit:  4,
+			OnChange: func() {
+				if a.bridge != nil {
+					a.bridge.Emit("automation_changed", map[string]any{})
+				}
+			},
+			OnRun: func(r automations.Run) {
+				if a.bridge != nil {
+					a.bridge.Emit("automation_run", toAutomationRunDTO(r))
+				}
+			},
+		})
+		if mgrErr != nil {
+			fmt.Fprintf(os.Stderr, "opencraft: automation manager: %v\n", mgrErr)
+		} else {
+			a.automations = mgr
+			mgr.Start()
+		}
+	}
+	a.mu.Unlock()
 }
 
 // rebuild loads the user configuration layer and assembles a fresh
@@ -446,35 +528,54 @@ func (a *App) rebuild() error {
 }
 
 // refreshAgentPlugins applies plugin-driven agent capability changes.
-// It rebuilds immediately when no turn is running; otherwise it marks
-// the rebuild pending and applies it after the last active turn ends.
+// Rebuilds are deferred while any turn (user or automation) runs.
 func (a *App) refreshAgentPlugins() error {
+	return a.requestRebuild()
+}
+
+// maybeApplyPendingRebuild runs after a turn ends and applies the
+// deferred workspace switch or runtime rebuild once no turn runs.
+func (a *App) maybeApplyPendingRebuild() {
+	a.mu.Lock()
+	if len(a.turns) > 0 {
+		a.mu.Unlock()
+		return
+	}
+	pending := a.pendingRebuild
+	wd := a.pendingWorkDir
+	a.pendingRebuild = false
+	a.pendingWorkDir = ""
+	a.mu.Unlock()
+	if wd != "" {
+		if err := a.applyOpenWorkspace(wd); err != nil {
+			fmt.Fprintf(os.Stderr,
+				"opencraft: deferred workspace switch failed: %v\n", err)
+		}
+		return
+	}
+	if !pending {
+		return
+	}
+	if err := a.rebuild(); err != nil {
+		fmt.Fprintf(os.Stderr,
+			"opencraft: deferred rebuild failed: %v\n", err)
+	}
+}
+
+// requestRebuild applies a runtime rebuild immediately when no turn
+// is active and defers it otherwise, so user turns and unattended
+// automation runs are never killed by configuration changes.
+func (a *App) requestRebuild() error {
 	a.mu.Lock()
 	active := len(a.turns) > 0
 	if active {
-		a.pendingPluginRebuild = true
+		a.pendingRebuild = true
 	}
 	a.mu.Unlock()
 	if active {
 		return nil
 	}
 	return a.rebuild()
-}
-
-// maybeApplyPendingPluginRebuild runs after a turn ends and rebuilds
-// if a plugin change was deferred and no other turn is still running.
-func (a *App) maybeApplyPendingPluginRebuild() {
-	a.mu.Lock()
-	if !a.pendingPluginRebuild || len(a.turns) > 0 {
-		a.mu.Unlock()
-		return
-	}
-	a.pendingPluginRebuild = false
-	a.mu.Unlock()
-	if err := a.rebuild(); err != nil {
-		fmt.Fprintf(os.Stderr,
-			"opencraft: deferred plugin rebuild failed: %v\n", err)
-	}
 }
 
 func (a *App) closeRuntime() {
@@ -489,7 +590,8 @@ func (a *App) closeRuntime() {
 	a.runConvs = make(map[string]string)
 	a.convRuns = make(map[string]map[string]bool)
 	a.runUsage = make(map[string]ocsessions.Usage)
-	a.pendingPluginRebuild = false
+	a.pendingRebuild = false
+	a.pendingWorkDir = ""
 	a.mu.Unlock()
 
 	if broker != nil {
