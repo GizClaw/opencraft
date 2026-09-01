@@ -83,6 +83,7 @@
   "config": {
     "title": "设置",
     "saved": "设置已保存",
+    "saveFailed": "保存失败",
     "tabUi": "界面",
     "tabInference": "推理",
     "tabMCP": "MCP",
@@ -117,6 +118,10 @@
     "uiLanguageHint": "界面语言（保存在本地）。",
     "uiThemeDark": "深色",
     "uiThemeLight": "浅色",
+    "uiCloseToTray": "关闭窗口时",
+    "uiCloseToTrayHint": "保留应用在系统托盘后台运行，或直接退出。macOS 上关闭按钮默认将应用隐藏到菜单栏。",
+    "uiCloseToTrayHide": "最小化到托盘",
+    "uiCloseToTrayQuit": "直接退出",
     "memoryHint": "控制对话历史如何进入模型上下文。全量历史重放为实验性，依赖路由器的模型窗口元数据（azure 暂未声明）。",
     "memoryRawWindow": "原始窗口",
     "memoryPreserveRecent": "保留最近",

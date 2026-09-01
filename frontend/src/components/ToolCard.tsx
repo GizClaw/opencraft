@@ -23,6 +23,11 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
+import {
+  looksLikeUnifiedDiff,
+  parseUnifiedDiff,
+  recoverJsonContent,
+} from '../lib/diff';
 import type { ToolView } from '../lib/store';
 import type { PatchFileDTO, PatchLineDTO } from '../lib/types';
 
@@ -398,7 +403,14 @@ function ReadView({ tool }: { tool: ToolView }) {
         })()
       : null;
   const path = parsed?.file_path || argPath || tool.name;
-  const content = parsed?.content ?? '';
+  // Corrupt old archives sometimes break the result JSON (a raw
+  // newline inside the envelope); recover the content leniently so the
+  // card still renders instead of falling back to raw red JSON.
+  const content =
+    parsed?.content ??
+    (tool.result !== undefined ? recoverJsonContent(tool.result) : '') ??
+    '';
+  const diffFiles = content ? parseUnifiedDiff(content) : null;
   const lines = content ? content.split('\n').length : 0;
   const running = tool.status === 'running';
   const failed = tool.status === 'error';
@@ -480,7 +492,10 @@ function ReadView({ tool }: { tool: ToolView }) {
           {!running && parsed === null && (
             <div className="px-2.5 py-2 text-xs text-err">{tool.result}</div>
           )}
-          {!running && parsed !== null && (
+          {!running && parsed !== null && diffFiles && (
+            <GitDiffView files={diffFiles} maxHeight="max-h-72" />
+          )}
+          {!running && parsed !== null && !diffFiles && (
             <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap break-all px-2.5 py-2 font-mono text-xs text-fg">
               {content}
             </pre>
@@ -2713,6 +2728,28 @@ function ResultBlock({ tool }: { tool: ToolView }) {
         </div>
       );
     }
+  }
+  // Results that turn out to be git diffs (e.g. read_file on a .diff
+  // artifact) render as diff cards instead of raw text. The result may
+  // be a JSON envelope {file_path, content, ...}; unwrap it first.
+  const candidate = (() => {
+    try {
+      const v = JSON.parse(tool.result);
+      if (v && typeof v === 'object' && typeof v.content === 'string') {
+        return v.content;
+      }
+    } catch {
+      // not JSON
+    }
+    // Corrupt result JSON (historical archives): recover the content
+    // value so diff detection still runs.
+    return recoverJsonContent(tool.result) ?? tool.result;
+  })();
+  const diffFiles = looksLikeUnifiedDiff(candidate)
+    ? parseUnifiedDiff(candidate)
+    : null;
+  if (diffFiles) {
+    return <GitDiffView files={diffFiles} maxHeight="max-h-64" />;
   }
   return (
     <pre

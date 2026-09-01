@@ -48,6 +48,14 @@ type Options struct {
 	// DataDir overrides the user data root ~/.opencraft (tests); the
 	// credential store lives under <dataDir>/keyring on Linux.
 	DataDir string
+	// TrayIcon is the system tray / menu bar icon (PNG). macOS renders
+	// it as a template image; nil skips the icon (tests).
+	TrayIcon []byte
+	// TrayIconTemplate is the monochrome macOS menu bar glyph (PNG,
+	// black + alpha). When set, macOS uses it as the template icon while
+	// Windows/Linux keep the full-colour TrayIcon. Nil falls back to
+	// TrayIcon (tests).
+	TrayIconTemplate []byte
 }
 
 // App is the Wails-bound application root. Exported methods on App
@@ -122,6 +130,20 @@ type App struct {
 	// rolloutBufs buffer streamed text/reasoning per run until the
 	// finish delta, so assistant items are recorded whole.
 	rolloutBufs map[string]*rolloutBuffer
+
+	// closeToTray persists the close behaviour ("hide to tray" vs
+	// "quit"). It is read by the Wails close hook on the UI thread.
+	closeToTray bool
+	// quitting is set when the user chooses Quit from the tray menu, so
+	// OnBeforeClose lets Wails terminate instead of hiding again.
+	quitting bool
+	// trayIcon is the system tray icon bytes (nil in tests).
+	trayIcon []byte
+	// trayIconTemplate is the macOS menu bar glyph bytes (nil in tests).
+	trayIconTemplate []byte
+	// trayEnd is the systray external-loop teardown function (nil in
+	// tests); set by startTray, consumed by stopTray.
+	trayEnd func()
 }
 
 // rolloutBuffer accumulates one run's streamed assistant parts.
@@ -150,6 +172,12 @@ func New(opts Options) (*App, error) {
 		}
 		userDir = dir
 	}
+	prefs, err := loadPrefs(opts.UserDir)
+	if err != nil {
+		// A preference file read failure must not block the window;
+		// defaults apply and the next save rewrites the file.
+		prefs = desktopPrefs{CloseToTray: true}
+	}
 	if _, err := config.EnsureUserConfig(); err != nil {
 		return nil, fmt.Errorf("desktop: seed config: %w", err)
 	}
@@ -169,28 +197,31 @@ func New(opts Options) (*App, error) {
 		shutdown = nil
 	}
 	a := &App{
-		workDir:         workDir,
-		userDir:         userDir,
-		pluginDir:       pluginDir,
-		plugins:         plugins.NewStore(pluginDir),
-		kv:              plugins.NewKVStore(pluginDir),
-		bridge:          NewBridge(),
-		turns:           make(map[string]*session.Turn),
-		conversationID:  ocsessions.NewID(),
-		mode:            ocsessions.ModeWorkspace,
-		think:           string(ocsessions.ThinkMedium),
-		model:           "",
-		runConvs:        make(map[string]string),
-		convRuns:        make(map[string]map[string]bool),
-		runUsage:        make(map[string]ocsessions.Usage),
-		titling:         make(map[string]bool),
-		preTurnSnap:     make(map[string][]undo.FileState),
-		preTurnManifest: make(map[string]map[string]fileStat),
-		undo:            undoStore,
-		secrets:         sec,
-		rollouts:        make(map[string]*rollout.Recorder),
-		rolloutBufs:     make(map[string]*rolloutBuffer),
-		otelShutdown:    shutdown,
+		workDir:          workDir,
+		userDir:          userDir,
+		pluginDir:        pluginDir,
+		plugins:          plugins.NewStore(pluginDir),
+		kv:               plugins.NewKVStore(pluginDir),
+		bridge:           NewBridge(),
+		turns:            make(map[string]*session.Turn),
+		conversationID:   ocsessions.NewID(),
+		mode:             ocsessions.ModeWorkspace,
+		think:            string(ocsessions.ThinkMedium),
+		model:            "",
+		runConvs:         make(map[string]string),
+		convRuns:         make(map[string]map[string]bool),
+		runUsage:         make(map[string]ocsessions.Usage),
+		titling:          make(map[string]bool),
+		preTurnSnap:      make(map[string][]undo.FileState),
+		preTurnManifest:  make(map[string]map[string]fileStat),
+		undo:             undoStore,
+		secrets:          sec,
+		rollouts:         make(map[string]*rollout.Recorder),
+		rolloutBufs:      make(map[string]*rolloutBuffer),
+		otelShutdown:     shutdown,
+		closeToTray:      prefs.CloseToTray,
+		trayIcon:         opts.TrayIcon,
+		trayIconTemplate: opts.TrayIconTemplate,
 	}
 	a.cap = pluginruntime.NewManager(pluginDir, pluginruntime.DefaultLoader{
 		Root: pluginDir,
@@ -254,10 +285,16 @@ func (a *App) Startup(ctx context.Context) {
 	// list or block the first turn; config changes take effect on the
 	// next rebuild/start.
 	go a.reconcileInferenceKeys()
+
+	// The tray icon is a background-resident app's primary entry point;
+	// start it once the window context exists so its actions can reach
+	// the Wails runtime.
+	a.startTray()
 }
 
 // Shutdown tears down the runtime when the window closes.
 func (a *App) Shutdown(ctx context.Context) {
+	a.stopTray()
 	a.closeRollouts()
 	a.closeRuntime()
 	a.mu.Lock()
