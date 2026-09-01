@@ -101,11 +101,15 @@ func (a *App) upsertInferenceProfile(pluginID string, profile pluginruntime.Infe
 // for older capability plugins.
 func profileModel(m pluginruntime.ProfileModel) config.Model {
 	model := config.Model{
-		Name:     m.Name,
-		Endpoint: strings.TrimSpace(m.Endpoint),
+		Name:       m.Name,
+		Endpoint:   strings.TrimSpace(m.Endpoint),
+		EffortNone: m.EffortNone,
 	}
 	caps := inference.ModelCapabilities{
-		Reasoning:       inference.ReasoningKind(strings.TrimSpace(m.Reasoning)),
+		Reasoning: inference.ReasoningCapability{
+			Kind:      inference.ReasoningKind(strings.TrimSpace(m.Reasoning)),
+			EffortMap: config.EffortMapEfforts(m.ReasoningEffortMap),
+		},
 		HostedWebSearch: m.WebSearch,
 	}
 	if len(m.Inputs) > 0 || len(m.Outputs) > 0 {

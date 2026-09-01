@@ -23,11 +23,38 @@ export interface ProviderView {
 
 export interface ModelInstance {
   name: string;
+  kind?: string;
   inputs: string[];
   outputs: string[];
   reasoning: string;
+  reasoning_effort_map?: Record<string, string>;
+  effort_none?: boolean;
+  dimensions?: boolean;
   web_search: boolean;
   endpoint: string;
+}
+
+// ModelTemplate is one driver built-in model normalized for the
+// settings page dropdown.
+export interface ModelTemplate {
+  name: string;
+  kind: string;
+  inputs: string[];
+  outputs: string[];
+  reasoning: string;
+  reasoning_effort_map?: Record<string, string>;
+  web_search: boolean;
+  dimensions: boolean;
+  effort_none?: boolean;
+  deprecated: boolean;
+  replacement?: string;
+  max_input_tokens?: number;
+}
+
+export interface ProviderModelCatalog {
+  provider: string;
+  models: ModelTemplate[];
+  error?: string;
 }
 
 // AttachmentDTO mirrors the desktop binding's preview metadata for one

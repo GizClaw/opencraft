@@ -12,18 +12,22 @@ import (
 type ThinkLevel string
 
 const (
-	// ThinkLow is the minimal reasoning effort.
+	// ThinkMinimal is the lowest reasoning effort.
+	ThinkMinimal ThinkLevel = "minimal"
+	// ThinkLow is a low reasoning effort.
 	ThinkLow ThinkLevel = "low"
 	// ThinkMedium is the default reasoning effort.
 	ThinkMedium ThinkLevel = "medium"
-	// ThinkHigh is the maximal reasoning effort.
+	// ThinkHigh is a high reasoning effort.
 	ThinkHigh ThinkLevel = "high"
+	// ThinkXHigh is the highest reasoning effort.
+	ThinkXHigh ThinkLevel = "xhigh"
 )
 
 // Valid reports whether the level is one of the supported values.
 func (l ThinkLevel) Valid() bool {
 	switch l {
-	case ThinkLow, ThinkMedium, ThinkHigh:
+	case ThinkMinimal, ThinkLow, ThinkMedium, ThinkHigh, ThinkXHigh:
 		return true
 	default:
 		return false
@@ -48,7 +52,7 @@ func (s *Store) Think(ctx context.Context, id string) (ThinkLevel, error) {
 		return ThinkMedium, err
 	}
 	switch ThinkLevel(level) {
-	case ThinkLow, ThinkMedium, ThinkHigh:
+	case ThinkMinimal, ThinkLow, ThinkMedium, ThinkHigh, ThinkXHigh:
 		return ThinkLevel(level), nil
 	default:
 		return ThinkMedium, nil

@@ -559,9 +559,11 @@ export function ChatView() {
   const composingRef = useRef(false);
   const { t } = useTranslation();
   const thinkLevels = [
+    { value: 'minimal', label: t('chat.thinkMinimal') },
     { value: 'low', label: t('chat.thinkLow') },
     { value: 'medium', label: t('chat.thinkMedium') },
     { value: 'high', label: t('chat.thinkHigh') },
+    { value: 'xhigh', label: t('chat.thinkXHigh') },
   ];
   const thinkIndex = Math.max(
     0,
@@ -1349,7 +1351,7 @@ export function ChatView() {
                               <input
                                 type="range"
                                 min={0}
-                                max={2}
+                                max={thinkLevels.length - 1}
                                 step={1}
                                 value={thinkIndex}
                                 onChange={(e) => {
@@ -1362,9 +1364,9 @@ export function ChatView() {
                               />
                             </div>
                             <div className="flex justify-between px-2 pb-1.5 text-[0.7143rem] text-dim">
-                              <span>{t('chat.thinkLow')}</span>
-                              <span>{t('chat.thinkMedium')}</span>
-                              <span>{t('chat.thinkHigh')}</span>
+                              {thinkLevels.map((l) => (
+                                <span key={l.value}>{l.label}</span>
+                              ))}
                             </div>
                           </>
                         )}

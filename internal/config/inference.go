@@ -97,7 +97,8 @@ type Model struct {
 	// Outputs on write (image/video/text); embed/tts need it explicit.
 	Kind string
 	// Capabilities declares the model's input/output content kinds,
-	// reasoning control, and hosted web search.
+	// reasoning control (kind plus the canonical-to-wire effort map),
+	// and hosted web search.
 	Capabilities inference.ModelCapabilities
 	// Endpoint binds this model to a per-model deployment address
 	// (ByteDance Ark ep-xxx endpoint ids are account-scoped and map per
@@ -108,6 +109,20 @@ type Model struct {
 	Responses bool
 	// Dimensions enables custom output dimensions (openai embed).
 	Dimensions bool
+	// EffortNone marks OpenAI/Azure generate models whose
+	// reasoning.effort accepts "none" to disable reasoning; models
+	// without it reject a reasoning_enabled=false request.
+	EffortNone bool
+}
+
+// reasoningEffortOrder is the canonical effort ladder in ordinal order.
+// The YAML writer uses it so effort maps serialize deterministically.
+var reasoningEffortOrder = []inference.ReasoningEffort{
+	inference.ReasoningMinimal,
+	inference.ReasoningLow,
+	inference.ReasoningMedium,
+	inference.ReasoningHigh,
+	inference.ReasoningXHigh,
 }
 
 // Instance is one configured inference endpoint: a provider type from
@@ -180,7 +195,7 @@ func (c InferenceConfig) ModelReasoning(hint string) bool {
 		return false
 	}
 	for _, m := range target.Models {
-		if m.Name == targetName && m.Capabilities.Reasoning != "" {
+		if m.Name == targetName && m.Capabilities.Reasoning.Kind != "" {
 			return true
 		}
 	}
@@ -396,9 +411,21 @@ func (c InferenceConfig) InferenceYAML() ([]byte, error) {
 				fmt.Fprintf(&b, "              inputs: [%s]\n",
 					strings.Join(PartKindStrings(inputs), ", "))
 			}
-			if m.Capabilities.Reasoning != "" {
-				fmt.Fprintf(&b, "              reasoning: %s\n",
-					yamlQuote(string(m.Capabilities.Reasoning)))
+			if !m.Capabilities.Reasoning.IsZero() {
+				fmt.Fprintf(&b, "              reasoning:\n")
+				fmt.Fprintf(&b, "                kind: %s\n",
+					yamlQuote(string(m.Capabilities.Reasoning.Kind)))
+				if len(m.Capabilities.Reasoning.EffortMap) > 0 {
+					fmt.Fprintf(&b, "                effort_map:\n")
+					for _, effort := range reasoningEffortOrder {
+						mode, ok := m.Capabilities.Reasoning.EffortMap[effort]
+						if !ok {
+							continue
+						}
+						fmt.Fprintf(&b, "                  %s: %s\n",
+							yamlQuote(string(effort)), yamlQuote(mode))
+					}
+				}
 			}
 			if m.Capabilities.HostedWebSearch {
 				fmt.Fprintf(&b, "              hosted_web_search: true\n")
@@ -411,6 +438,9 @@ func (c InferenceConfig) InferenceYAML() ([]byte, error) {
 			}
 			if m.Dimensions {
 				fmt.Fprintf(&b, "            dimensions: true\n")
+			}
+			if m.EffortNone {
+				fmt.Fprintf(&b, "            effort_none: true\n")
 			}
 		}
 		fmt.Fprintf(&b, "      profiles:\n")
@@ -516,6 +546,16 @@ func normalizeModels(in *Instance, prov Provider, n int) error {
 					"config: instance %d (%s): model %q has unknown kind %q",
 					n, in.Type, m.Name, m.Kind)
 			}
+		}
+		if err := m.Capabilities.Reasoning.Validate(); err != nil {
+			return fmt.Errorf(
+				"config: instance %d (%s): model %q reasoning: %w",
+				n, in.Type, m.Name, err)
+		}
+		if m.EffortNone && prov.ID != "openai" && prov.ID != "azure" {
+			return fmt.Errorf(
+				"config: instance %d (%s): model %q: effort_none is only supported by openai/azure",
+				n, in.Type, m.Name)
 		}
 		seen[m.Name] = true
 		models = append(models, m)
@@ -777,11 +817,12 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 					Responses    bool   `json:"responses"`
 					Dimensions   bool   `json:"dimensions"`
 					Capabilities struct {
-						Inputs          []string `json:"inputs"`
-						Outputs         []string `json:"outputs"`
-						Reasoning       string   `json:"reasoning"`
-						HostedWebSearch bool     `json:"hosted_web_search"`
+						Inputs          []string                      `json:"inputs"`
+						Outputs         []string                      `json:"outputs"`
+						Reasoning       inference.ReasoningCapability `json:"reasoning"`
+						HostedWebSearch bool                          `json:"hosted_web_search"`
 					} `json:"capabilities"`
+					EffortNone bool `json:"effort_none"`
 				} `json:"models"`
 			} `json:"spec"`
 		} `json:"settings"`
@@ -901,11 +942,12 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 				Capabilities: inference.ModelCapabilities{
 					Inputs:          ToPartKinds(model.Capabilities.Inputs),
 					Outputs:         ToPartKinds(model.Capabilities.Outputs),
-					Reasoning:       inference.ReasoningKind(model.Capabilities.Reasoning),
+					Reasoning:       model.Capabilities.Reasoning,
 					HostedWebSearch: model.Capabilities.HostedWebSearch,
 				},
 				Responses:  model.Responses,
 				Dimensions: model.Dimensions,
+				EffortNone: model.EffortNone,
 			}
 			if endpoint := endpoints[m.Name]; endpoint != "" {
 				m.Endpoint = endpoint

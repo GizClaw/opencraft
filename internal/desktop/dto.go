@@ -64,12 +64,16 @@ type ProviderView struct {
 // audio/video generation, multimodal input) is lost across the
 // frontend boundary.
 type ModelView struct {
-	Name      string   `json:"name"`
-	Inputs    []string `json:"inputs"`
-	Outputs   []string `json:"outputs"`
-	Reasoning string   `json:"reasoning"`
-	WebSearch bool     `json:"web_search"`
-	Endpoint  string   `json:"endpoint"`
+	Name               string            `json:"name"`
+	Kind               string            `json:"kind,omitempty"`
+	Inputs             []string          `json:"inputs"`
+	Outputs            []string          `json:"outputs"`
+	Reasoning          string            `json:"reasoning"`
+	ReasoningEffortMap map[string]string `json:"reasoning_effort_map,omitempty"`
+	EffortNone         bool              `json:"effort_none,omitempty"`
+	Dimensions         bool              `json:"dimensions,omitempty"`
+	WebSearch          bool              `json:"web_search"`
+	Endpoint           string            `json:"endpoint"`
 }
 
 // ProviderInstance is one inference instance from the frontend.

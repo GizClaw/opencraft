@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"runtime"
@@ -47,6 +48,12 @@ func (a *App) ConfigStatus() (ConfigStatus, error) {
 	st := a.status(!needed)
 	st.Needed = needed
 	return st, nil
+}
+
+// ModelCatalog returns every driver's built-in model catalog for the
+// settings page dropdown.
+func (a *App) ModelCatalog() ([]config.ProviderModels, error) {
+	return config.ModelCatalog()
 }
 
 // Providers returns the provider catalog.
@@ -120,7 +127,7 @@ func (a *App) ModelOptions() ([]ModelOption, error) {
 			out = append(out, ModelOption{
 				ID:        in.DeploymentID(i+1) + "/" + model,
 				Label:     instanceLabel(in, i+1) + " · " + model,
-				Reasoning: m.Capabilities.Reasoning != "",
+				Reasoning: m.Capabilities.Reasoning.Kind != "",
 			})
 		}
 	}
@@ -460,9 +467,14 @@ func sameInstanceContent(a, b config.Instance) bool {
 func sameModel(a, b config.Model) bool {
 	return a.Name == b.Name && a.Kind == b.Kind && a.Endpoint == b.Endpoint &&
 		a.Responses == b.Responses && a.Dimensions == b.Dimensions &&
+		a.EffortNone == b.EffortNone &&
 		slices.Equal(a.Capabilities.Inputs, b.Capabilities.Inputs) &&
 		slices.Equal(a.Capabilities.Outputs, b.Capabilities.Outputs) &&
-		a.Capabilities.Reasoning == b.Capabilities.Reasoning &&
+		a.Capabilities.Reasoning.Kind == b.Capabilities.Reasoning.Kind &&
+		maps.Equal(
+			a.Capabilities.Reasoning.EffortMap,
+			b.Capabilities.Reasoning.EffortMap,
+		) &&
 		a.Capabilities.HostedWebSearch == b.Capabilities.HostedWebSearch
 }
 
@@ -486,12 +498,16 @@ func modelViews(models []config.Model) []ModelView {
 	out := make([]ModelView, 0, len(models))
 	for _, m := range models {
 		out = append(out, ModelView{
-			Name:      m.Name,
-			Inputs:    config.PartKindStrings(m.Capabilities.Inputs),
-			Outputs:   config.PartKindStrings(m.Capabilities.Outputs),
-			Reasoning: string(m.Capabilities.Reasoning),
-			WebSearch: m.Capabilities.HostedWebSearch,
-			Endpoint:  m.Endpoint,
+			Name:               m.Name,
+			Inputs:             config.PartKindStrings(m.Capabilities.Inputs),
+			Outputs:            config.PartKindStrings(m.Capabilities.Outputs),
+			Kind:               m.Kind,
+			Reasoning:          string(m.Capabilities.Reasoning.Kind),
+			ReasoningEffortMap: config.EffortMapStrings(m.Capabilities.Reasoning.EffortMap),
+			EffortNone:         m.EffortNone,
+			Dimensions:         m.Dimensions,
+			WebSearch:          m.Capabilities.HostedWebSearch,
+			Endpoint:           m.Endpoint,
 		})
 	}
 	return out
@@ -503,13 +519,19 @@ func configModels(views []ModelView) []config.Model {
 	for _, v := range views {
 		out = append(out, config.Model{
 			Name: strings.TrimSpace(v.Name),
+			Kind: strings.TrimSpace(v.Kind),
 			Capabilities: inference.ModelCapabilities{
-				Inputs:          config.ToPartKinds(v.Inputs),
-				Outputs:         config.ToPartKinds(v.Outputs),
-				Reasoning:       inference.ReasoningKind(strings.TrimSpace(v.Reasoning)),
+				Inputs:  config.ToPartKinds(v.Inputs),
+				Outputs: config.ToPartKinds(v.Outputs),
+				Reasoning: inference.ReasoningCapability{
+					Kind:      inference.ReasoningKind(strings.TrimSpace(v.Reasoning)),
+					EffortMap: config.EffortMapEfforts(v.ReasoningEffortMap),
+				},
 				HostedWebSearch: v.WebSearch,
 			},
-			Endpoint: strings.TrimSpace(v.Endpoint),
+			Endpoint:   strings.TrimSpace(v.Endpoint),
+			EffortNone: v.EffortNone,
+			Dimensions: v.Dimensions,
 		})
 	}
 	return out

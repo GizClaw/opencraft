@@ -161,7 +161,7 @@ func TestInferenceYAMLAzureCapabilities(t *testing.T) {
 			Capabilities: inference.ModelCapabilities{
 				Inputs:          []message.PartKind{message.PartImage},
 				Outputs:         []message.PartKind{message.PartText},
-				Reasoning:       inference.ReasoningToggle,
+				Reasoning:       inference.ReasoningCapability{Kind: inference.ReasoningToggle},
 				HostedWebSearch: true,
 			},
 		}},
@@ -175,7 +175,7 @@ func TestInferenceYAMLAzureCapabilities(t *testing.T) {
 	for _, want := range []string{
 		"outputs: [text]",
 		"inputs: [image]",
-		"reasoning: 'toggle'",
+		"reasoning:\n                kind: 'toggle'",
 		"hosted_web_search: true",
 	} {
 		if !strings.Contains(doc, want) {
@@ -202,6 +202,114 @@ func TestInferenceYAMLAzureCapabilities(t *testing.T) {
 	}
 }
 
+func TestInferenceYAMLReasoningEffortMap(t *testing.T) {
+	cfg := InferenceConfig{Instances: []Instance{{
+		StableID:  "inst-aaa",
+		Type:      "deepseek",
+		KeySource: KeyEnv,
+		Models: []Model{{
+			Name: "deepseek-v4-pro",
+			Capabilities: inference.ModelCapabilities{
+				Reasoning: inference.ReasoningCapability{
+					Kind: inference.ReasoningToggle,
+					EffortMap: map[inference.ReasoningEffort]string{
+						inference.ReasoningMinimal: "low",
+						inference.ReasoningLow:     "low",
+						inference.ReasoningMedium:  "high",
+						inference.ReasoningHigh:    "high",
+						inference.ReasoningXHigh:   "max",
+					},
+				},
+			},
+		}},
+		Enabled: true,
+	}}}
+	data, err := cfg.InferenceYAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+	for _, want := range []string{
+		"reasoning:",
+		"kind: 'toggle'",
+		"effort_map:",
+		"'minimal': 'low'",
+		"'medium': 'high'",
+		"'xhigh': 'max'",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Fatalf("effort map doc missing %q:\n%s", want, doc)
+		}
+	}
+
+	dir := t.TempDir()
+	if err := WriteInference(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadInference(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Instances) != 1 || len(loaded.Instances[0].Models) != 1 {
+		t.Fatalf("round trip = %+v", loaded.Instances)
+	}
+	got := loaded.Instances[0].Models[0].Capabilities.Reasoning
+	if got.Kind != inference.ReasoningToggle {
+		t.Fatalf("round trip reasoning kind = %q, want toggle", got.Kind)
+	}
+	if got.EffortMap[inference.ReasoningXHigh] != "max" ||
+		got.EffortMap[inference.ReasoningMedium] != "high" {
+		t.Fatalf("round trip effort map = %+v", got.EffortMap)
+	}
+}
+
+func TestInferenceYAMLEffortNone(t *testing.T) {
+	cfg := InferenceConfig{Instances: []Instance{{
+		StableID:  "inst-aaa",
+		Type:      "openai",
+		KeySource: KeyEnv,
+		Models: []Model{{
+			Name:       "gpt-5.6-sol",
+			EffortNone: true,
+			Capabilities: inference.ModelCapabilities{
+				Reasoning: inference.ReasoningCapability{
+					Kind: inference.ReasoningToggle,
+				},
+			},
+		}},
+		Enabled: true,
+	}}}
+	data, err := cfg.InferenceYAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "effort_none: true") {
+		t.Fatalf("openai effort_none missing:\n%s", data)
+	}
+
+	dir := t.TempDir()
+	if err := WriteInference(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadInference(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Instances) != 1 || !loaded.Instances[0].Models[0].EffortNone {
+		t.Fatalf("round trip effort_none = %+v", loaded.Instances)
+	}
+
+	// effort_none is a control capability only openai/azure expose.
+	bad := envKeyed(t, "deepseek")
+	bad.Instances[0].Models = []Model{{
+		Name:       "deepseek-v4-flash",
+		EffortNone: true,
+	}}
+	if _, err := bad.InferenceYAML(); err == nil {
+		t.Fatal("effort_none on deepseek must fail")
+	}
+}
+
 func TestInferenceYAMLMultipleModels(t *testing.T) {
 	cfg := InferenceConfig{Instances: []Instance{{
 		StableID:  "inst-aaa",
@@ -215,7 +323,7 @@ func TestInferenceYAMLMultipleModels(t *testing.T) {
 			{Name: "deepseek-v4-pro",
 				Capabilities: inference.ModelCapabilities{
 					Inputs:    []message.PartKind{message.PartImage},
-					Reasoning: inference.ReasoningAlways,
+					Reasoning: inference.ReasoningCapability{Kind: inference.ReasoningAlways},
 				}},
 		},
 		Enabled: true,
@@ -230,7 +338,7 @@ func TestInferenceYAMLMultipleModels(t *testing.T) {
 		"name: 'deepseek-v4-flash'",
 		"hosted_web_search: true",
 		"name: 'deepseek-v4-pro'",
-		"reasoning: 'always'",
+		"reasoning:\n                kind: 'always'",
 		"inputs: [image]",
 		"provider: deepseek-inst-aaa", // router targets use the same id
 	} {
@@ -268,7 +376,7 @@ func TestInferenceYAMLMultipleModels(t *testing.T) {
 	if in.Models[1].Name != "deepseek-v4-pro" ||
 		len(in.Models[1].Capabilities.Inputs) != 1 ||
 		in.Models[1].Capabilities.Inputs[0] != message.PartImage ||
-		in.Models[1].Capabilities.Reasoning != inference.ReasoningAlways {
+		in.Models[1].Capabilities.Reasoning.Kind != inference.ReasoningAlways {
 		t.Fatalf("model 1 = %+v", in.Models[1])
 	}
 }
@@ -685,7 +793,7 @@ func TestWriteInferenceMultipleModelsLoads(t *testing.T) {
 			{Name: "deepseek-v4-pro",
 				Capabilities: inference.ModelCapabilities{
 					Inputs:    []message.PartKind{message.PartImage},
-					Reasoning: inference.ReasoningAlways,
+					Reasoning: inference.ReasoningCapability{Kind: inference.ReasoningAlways},
 				}},
 		},
 		Enabled: true,
@@ -885,14 +993,14 @@ func TestWriteInferenceRefusesNonMappingLayer(t *testing.T) {
 func TestModelReasoning(t *testing.T) {
 	cfg := InferenceConfig{Instances: []Instance{
 		{StableID: "a", Type: "deepseek", Enabled: true, Models: []Model{
-			{Name: "m1", Capabilities: inference.ModelCapabilities{Reasoning: inference.ReasoningToggle}},
+			{Name: "m1", Capabilities: inference.ModelCapabilities{Reasoning: inference.ReasoningCapability{Kind: inference.ReasoningToggle}}},
 			{Name: "m0"}, // no reasoning capability
 		}},
 		{StableID: "b", Type: "openai", Enabled: true, Models: []Model{
-			{Name: "gpt", Capabilities: inference.ModelCapabilities{Reasoning: inference.ReasoningAlways}},
+			{Name: "gpt", Capabilities: inference.ModelCapabilities{Reasoning: inference.ReasoningCapability{Kind: inference.ReasoningAlways}}},
 		}},
 		{StableID: "c", Type: "qwen", Enabled: false, Models: []Model{
-			{Name: "q", Capabilities: inference.ModelCapabilities{Reasoning: inference.ReasoningAlways}},
+			{Name: "q", Capabilities: inference.ModelCapabilities{Reasoning: inference.ReasoningCapability{Kind: inference.ReasoningAlways}}},
 		}},
 	}}
 	if !cfg.ModelReasoning("deepseek-a/m1") {

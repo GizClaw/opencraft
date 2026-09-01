@@ -342,18 +342,19 @@ export function AutomationsView() {
   const [sessionOptions, setSessionOptions] = useState<SessionMeta[]>([]);
 
   const thinkLevels = [
+    { value: '', label: t('automations.thinkDefault') },
+    { value: 'minimal', label: t('automations.thinkMinimal') },
     { value: 'low', label: t('automations.thinkLow') },
     { value: 'medium', label: t('automations.thinkMedium') },
     { value: 'high', label: t('automations.thinkHigh') },
+    { value: 'xhigh', label: t('automations.thinkXHigh') },
   ];
   const thinkValue = form?.think ?? '';
   const thinkIndex = Math.max(
     0,
     thinkLevels.findIndex((l) => l.value === thinkValue),
   );
-  const thinkLabel = thinkValue
-    ? thinkLevels[thinkIndex].label
-    : t('automations.thinkDefault');
+  const thinkLabel = thinkLevels[thinkIndex].label;
   const modelLabel = form?.model
     ? (modelOptions.find((o) => o.id === form.model)?.label ?? form.model)
     : t('chat.modelAuto');
@@ -953,7 +954,7 @@ export function AutomationsView() {
                               <input
                                 type="range"
                                 min={0}
-                                max={2}
+                                max={thinkLevels.length - 1}
                                 step={1}
                                 value={thinkIndex}
                                 onChange={(e) => {
@@ -967,9 +968,9 @@ export function AutomationsView() {
                               />
                             </div>
                             <div className="flex justify-between px-2 pb-1.5 text-[0.7143rem] text-dim">
-                              <span>{t('chat.thinkLow')}</span>
-                              <span>{t('chat.thinkMedium')}</span>
-                              <span>{t('chat.thinkHigh')}</span>
+                              {thinkLevels.map((l) => (
+                                <span key={l.value}>{l.label}</span>
+                              ))}
                             </div>
                           </div>
                         )}

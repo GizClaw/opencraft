@@ -191,9 +191,11 @@ const (
 
 // Think levels mirror the per-session reasoning effort values.
 const (
-	ThinkLow    = "low"
-	ThinkMedium = "medium"
-	ThinkHigh   = "high"
+	ThinkMinimal = "minimal"
+	ThinkLow     = "low"
+	ThinkMedium  = "medium"
+	ThinkHigh    = "high"
+	ThinkXHigh   = "xhigh"
 )
 
 // Task is one repeatable automation configuration.
@@ -240,7 +242,7 @@ func (t Task) Validate() error {
 		return fmt.Errorf("unknown mode %q", t.Mode)
 	}
 	switch t.Think {
-	case "", ThinkLow, ThinkMedium, ThinkHigh:
+	case "", ThinkMinimal, ThinkLow, ThinkMedium, ThinkHigh, ThinkXHigh:
 	default:
 		return fmt.Errorf("unknown think level %q", t.Think)
 	}
