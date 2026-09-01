@@ -114,7 +114,7 @@ func (s stubPrefixProvider) Rules() []string { return []string(s) }
 func TestPermissionsSectionShowsLiveRules(t *testing.T) {
 	svc := New(Options{WorkBase: t.TempDir()})
 	svc.SetPrefixProvider(stubPrefixProvider{"go test", "npm install"})
-	sec, err := svc.permissionsSection("s-c1")
+	sec, err := svc.permissionsSection(context.Background(), "s-c1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestPermissionsSectionShowsLiveRules(t *testing.T) {
 
 	// Without a provider the approved-prefix line is omitted entirely.
 	plain := New(Options{WorkBase: t.TempDir()})
-	sec2, err := plain.permissionsSection("s-c1")
+	sec2, err := plain.permissionsSection(context.Background(), "s-c1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,17 +148,17 @@ func TestPermissionsSectionShowsYOLOForSession(t *testing.T) {
 	svc := New(Options{WorkBase: t.TempDir()})
 	svc.SetSessions(store)
 
-	sec, err := svc.permissionsSection(id)
+	sec, err := svc.permissionsSection(context.Background(), id)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if contains(sec.Text, "yolo") {
 		t.Fatalf("workspace session must not show yolo: %q", sec.Text)
 	}
-	if err := store.SetMode(id, ocsessions.ModeYOLO); err != nil {
+	if err := store.SetMode(context.Background(), id, ocsessions.ModeYOLO); err != nil {
 		t.Fatal(err)
 	}
-	sec2, err := svc.permissionsSection(id)
+	sec2, err := svc.permissionsSection(context.Background(), id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,17 +179,17 @@ func TestPermissionsSectionShowsReadOnlyForSession(t *testing.T) {
 	svc := New(Options{WorkBase: t.TempDir()})
 	svc.SetSessions(store)
 
-	sec, err := svc.permissionsSection(id)
+	sec, err := svc.permissionsSection(context.Background(), id)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if contains(sec.Text, "read-only") {
 		t.Fatalf("workspace session must not show read-only: %q", sec.Text)
 	}
-	if err := store.SetMode(id, ocsessions.ModeReadOnly); err != nil {
+	if err := store.SetMode(context.Background(), id, ocsessions.ModeReadOnly); err != nil {
 		t.Fatal(err)
 	}
-	sec2, err := svc.permissionsSection(id)
+	sec2, err := svc.permissionsSection(context.Background(), id)
 	if err != nil {
 		t.Fatal(err)
 	}

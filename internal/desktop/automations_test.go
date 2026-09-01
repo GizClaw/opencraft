@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/GizClaw/opencraft/internal/automations"
+	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 )
 
 func newAutomationTestApp(t *testing.T) (*App, *automations.Store) {
@@ -90,9 +91,29 @@ func TestSaveAutomationRejectsBadInput(t *testing.T) {
 	if _, err := a.SaveAutomation(dto); err == nil {
 		t.Fatal("invalid schedule must be rejected")
 	}
-	dto.Schedule = AutomationScheduleDTO{Type: "cron", Cron: "bad expr"}
+}
+
+func TestSaveAutomationExistingSession(t *testing.T) {
+	a, _ := newAutomationTestApp(t)
+	dto := automationDTO("brief", a.workDir)
+	dto.ConversationID = "s-missing"
 	if _, err := a.SaveAutomation(dto); err == nil {
-		t.Fatal("invalid cron must be rejected")
+		t.Fatal("session outside the workspace must be rejected")
+	}
+
+	root := filepath.Join(a.workDir, ".opencraft", "sessions")
+	store, err := ocsessions.New(root, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := store.Create()
+	_ = store.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dto.ConversationID = id
+	if _, err := a.SaveAutomation(dto); err != nil {
+		t.Fatalf("SaveAutomation with existing session: %v", err)
 	}
 }
 
@@ -152,22 +173,26 @@ func TestRunAutomationNowGuard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.RunAutomationNow(task.ID); err == nil {
-		t.Fatal("workspace mismatch must fail")
+	if err := a.RunAutomationNow(task.ID); err != nil {
+		t.Fatalf("RunAutomationNow on a non-open workspace must enqueue: %v", err)
 	}
-	task.Workspace = a.workDir
-	task.Enabled = false
-	if _, err := store.SaveTask(context.Background(), task); err != nil {
+	task2 := task
+	task2.Workspace = a.workDir
+	if _, err := store.SaveTask(context.Background(), task2); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.RunAutomationNow(task.ID); err == nil {
+	task2.Enabled = false
+	if _, err := store.SaveTask(context.Background(), task2); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.RunAutomationNow(task2.ID); err == nil {
 		t.Fatal("disabled task must fail")
 	}
-	task.Enabled = true
-	if _, err := store.SaveTask(context.Background(), task); err != nil {
+	task2.Enabled = true
+	if _, err := store.SaveTask(context.Background(), task2); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.RunAutomationNow(task.ID); err != nil {
+	if err := a.RunAutomationNow(task2.ID); err != nil {
 		t.Fatalf("RunAutomationNow on valid task: %v", err)
 	}
 }

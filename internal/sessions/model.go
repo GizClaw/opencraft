@@ -12,11 +12,11 @@ import (
 // choice and the default routing policy applies. The value is consumed
 // by the graph's ${board:model} inference node reference, so it must
 // stay in the same "provider/name" shape the router hint expects.
-func (s *Store) Model(id string) (string, error) {
+func (s *Store) Model(ctx context.Context, id string) (string, error) {
 	if s == nil || s.db == nil {
 		return "", nil
 	}
-	model, err := s.db.Model(context.Background(), id)
+	model, err := s.db.Model(ctx, id)
 	if err != nil {
 		return "", err
 	}
@@ -25,10 +25,10 @@ func (s *Store) Model(id string) (string, error) {
 
 // SetModel persists the per-session model hint for the conversation.
 // An empty value resets the session to the default routing policy.
-func (s *Store) SetModel(id, model string) error {
+func (s *Store) SetModel(ctx context.Context, id, model string) error {
 	if !strings.HasPrefix(id, "s-") {
 		return errdefs.Validationf("sessions: invalid session id %q", id)
 	}
 	model = strings.TrimSpace(model)
-	return s.db.SetModel(context.Background(), id, model)
+	return s.db.SetModel(ctx, id, model)
 }

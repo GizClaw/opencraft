@@ -965,6 +965,37 @@ export const useStore = create<StoreState>((set, get) => {
           if (data?.task_id) void get().loadAutomationRuns(data.task_id);
           break;
         }
+        case 'automation_run_started': {
+          const data = ev.data as {
+            run_id?: string;
+            conversation_id?: string;
+          };
+          if (data.conversation_id) {
+            // The run targets the currently open workspace: mark the
+            // conversation busy (creating a shell when it was never
+            // opened) so the sidebar lists the session as running, and
+            // future stream/turn_end events route to it.
+            ensureConversation(data.conversation_id);
+            if (data.run_id) {
+              set((state) => ({
+                conversations: {
+                  ...state.conversations,
+                  [data.conversation_id!]: {
+                    ...(state.conversations[data.conversation_id!] ??
+                      emptyConv()),
+                    busy: true,
+                    activeRunID: data.run_id!,
+                  },
+                },
+                runConvs: {
+                  ...state.runConvs,
+                  [data.run_id!]: data.conversation_id!,
+                },
+              }));
+            }
+          }
+          break;
+        }
         case 'managed_restored': {
           // The settings save rolled plugin-owned provider edits back
           // to the stored config; surface the reminder so the silent

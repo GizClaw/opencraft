@@ -171,7 +171,7 @@ func TestHostWorkspaceFactoryWrapsBothBranches(t *testing.T) {
 
 	// YOLO mode: write outside the root goes through the wrapped host
 	// branch and is reported; without RunInfo it is not.
-	if err := store.SetMode("s1", sessions.ModeYOLO); err != nil {
+	if err := store.SetMode(context.Background(), "s1", sessions.ModeYOLO); err != nil {
 		t.Fatal(err)
 	}
 	outside := filepath.Join(t.TempDir(), "secret.md")

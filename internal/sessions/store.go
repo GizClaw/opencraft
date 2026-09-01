@@ -167,6 +167,16 @@ func NewID() string {
 	return "s-" + hex.EncodeToString(b[:])
 }
 
+// Exists reports whether the session's directory exists. It returns
+// false for malformed ids and for sessions that were never created.
+func (s *Store) Exists(id string) bool {
+	if err := requireID(id); err != nil {
+		return false
+	}
+	info, err := os.Stat(s.dir(id))
+	return err == nil && info.IsDir()
+}
+
 // DefaultSessionID is the stable session key used by tools that run
 // outside any conversation (no RunInfo in the execution context), e.g.
 // update_plan's shared plan. It is a valid session id, so it can be
@@ -801,7 +811,7 @@ func (s *Store) dir(id string) string {
 // hint). The id must be a generated conversation id; runtime checkpoint
 // state for the same id is removed by the session manager's
 // DeleteSession (the desktop wires both together).
-func (s *Store) Remove(id string) error {
+func (s *Store) Remove(ctx context.Context, id string) error {
 	if err := requireID(id); err != nil {
 		return err
 	}
@@ -811,7 +821,7 @@ func (s *Store) Remove(id string) error {
 	if err := os.RemoveAll(s.dir(id)); err != nil {
 		return fmt.Errorf("sessions: remove %s: %w", id, err)
 	}
-	if err := s.db.RemoveSettings(context.Background(), id); err != nil {
+	if err := s.db.RemoveSettings(ctx, id); err != nil {
 		return fmt.Errorf("sessions: remove settings %s: %w", id, err)
 	}
 	return nil

@@ -466,9 +466,9 @@ export interface UIEvent {
 export interface AutomationSchedule {
   type: string;
   interval_hours?: number;
+  interval_weeks?: number;
   days?: string[];
   time?: string;
-  cron?: string;
 }
 
 export interface AutomationTask {
@@ -480,6 +480,7 @@ export interface AutomationTask {
   mode: string;
   model: string;
   think: string;
+  conversation_id?: string;
   notify: string;
   enabled: boolean;
   created_at: string;

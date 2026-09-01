@@ -119,7 +119,7 @@ func IsYOLO(ctx context.Context, store *sessions.Store) bool {
 	if sessionID == "" {
 		return false
 	}
-	mode, err := store.Mode(sessionID)
+	mode, err := store.Mode(ctx, sessionID)
 	return err == nil && mode.IsYOLO()
 }
 
@@ -137,7 +137,7 @@ func isReadOnly(ctx context.Context, store *sessions.Store) bool {
 	if sessionID == "" {
 		return false
 	}
-	mode, err := store.Mode(sessionID)
+	mode, err := store.Mode(ctx, sessionID)
 	return err == nil && mode.IsReadOnly()
 }
 

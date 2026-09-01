@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// ScheduleType is one of the five supported scheduling modes.
+// ScheduleType is one of the four supported scheduling modes.
 type ScheduleType string
 
 const (
@@ -21,20 +21,24 @@ const (
 	ScheduleDaily    ScheduleType = "daily"
 	ScheduleWeekdays ScheduleType = "weekdays"
 	ScheduleWeekly   ScheduleType = "weekly"
-	ScheduleCron     ScheduleType = "cron"
 )
 
 // Schedule is the time rule of one task.
 type Schedule struct {
 	Type          ScheduleType `json:"type"`
 	IntervalHours int          `json:"interval_hours,omitempty"`
-	Days          []string     `json:"days,omitempty"`
-	Time          string       `json:"time,omitempty"`
-	Cron          string       `json:"cron,omitempty"`
+	// IntervalWeeks is the weekly cadence (1 = every week). It is only
+	// meaningful for ScheduleWeekly.
+	IntervalWeeks int      `json:"interval_weeks,omitempty"`
+	Days          []string `json:"days,omitempty"`
+	Time          string   `json:"time,omitempty"`
+	// Origin anchors the weekly phase: on-weeks are counted from the
+	// Monday of Origin (RFC3339 date, e.g. "2026-09-07"). It is owned
+	// by the backend; empty falls back to the anchor's own week.
+	Origin string `json:"origin,omitempty"`
 }
 
-// Validate checks the schedule shape. It does not parse cron itself;
-// Next does that and returns an error when the expression is invalid.
+// Validate checks the schedule shape.
 func (s Schedule) Validate() error {
 	switch s.Type {
 	case ScheduleHourly:
@@ -52,13 +56,14 @@ func (s Schedule) Validate() error {
 			if err := validateDays(s.Days, true); err != nil {
 				return err
 			}
-		}
-	case ScheduleCron:
-		if strings.TrimSpace(s.Cron) == "" {
-			return fmt.Errorf("cron: expression is required")
-		}
-		if _, err := parseCron(s.Cron); err != nil {
-			return err
+			if s.IntervalWeeks < 0 {
+				return fmt.Errorf("weekly: interval_weeks must be >= 1")
+			}
+			if s.Origin != "" {
+				if _, err := time.Parse("2006-01-02", s.Origin); err != nil {
+					return fmt.Errorf("weekly: origin must be YYYY-MM-DD")
+				}
+			}
 		}
 	default:
 		return fmt.Errorf("unknown schedule type %q", s.Type)
@@ -73,26 +78,11 @@ func (s Schedule) Next(after time.Time) (time.Time, error) {
 	if err := s.Validate(); err != nil {
 		return time.Time{}, err
 	}
-	switch s.Type {
-	case ScheduleHourly:
-		return s.nextHourly(after)
-	case ScheduleDaily:
-		return nextClock(after, s.Time, 2, nil)
-	case ScheduleWeekdays:
-		return nextClock(after, s.Time, 7, weekdayOK)
-	case ScheduleWeekly:
-		set := daysSet(s.Days)
-		return nextClock(after, s.Time, 8, func(d time.Weekday) bool {
-			return set[d]
-		})
-	case ScheduleCron:
-		spec, err := parseCron(s.Cron)
-		if err != nil {
-			return time.Time{}, err
-		}
-		return spec.next(after)
+	r, err := s.recurrenceFromSchedule()
+	if err != nil {
+		return time.Time{}, err
 	}
-	return time.Time{}, fmt.Errorf("unknown schedule type %q", s.Type)
+	return r.next(after)
 }
 
 // Description returns a short human-readable schedule summary for the
@@ -109,47 +99,21 @@ func (s Schedule) Description() string {
 	case ScheduleWeekdays:
 		return "weekdays " + s.Time
 	case ScheduleWeekly:
+		if s.IntervalWeeks > 1 {
+			return fmt.Sprintf("weekly %dw %s %s", s.IntervalWeeks,
+				strings.Join(s.Days, ","), s.Time)
+		}
 		return "weekly " + strings.Join(s.Days, ",") + " " + s.Time
-	case ScheduleCron:
-		return "cron " + s.Cron
 	}
 	return string(s.Type)
 }
 
-func (s Schedule) nextHourly(after time.Time) (time.Time, error) {
-	days := daysSet(s.Days)
-	interval := time.Duration(s.IntervalHours) * time.Hour
-	for t := after.Add(interval); ; t = t.Add(interval) {
-		if days == nil || days[t.Weekday()] {
-			return t, nil
-		}
-		if t.After(after.AddDate(0, 0, 366)) {
-			return time.Time{}, fmt.Errorf("hourly: no next run within a year")
-		}
+// ensureOrigin sets the weekly phase anchor to today when the schedule
+// is weekly and no origin is persisted yet.
+func (s *Schedule) ensureOrigin(now time.Time) {
+	if s.Type == ScheduleWeekly && s.Origin == "" {
+		s.Origin = now.Format("2006-01-02")
 	}
-}
-
-// nextClock computes the next wall-clock occurrence of time "HH:MM"
-// after after, scanning at most maxDays for a date accepted by ok
-// (nil accepts every day).
-func nextClock(after time.Time, clock string, maxDays int, ok func(time.Weekday) bool) (time.Time, error) {
-	h, m, err := parseClock(clock)
-	if err != nil {
-		return time.Time{}, err
-	}
-	for day := 0; day < maxDays; day++ {
-		t := time.Date(
-			after.Year(), after.Month(), after.Day(), h, m, 0, 0,
-			after.Location(),
-		).AddDate(0, 0, day)
-		if !t.After(after) {
-			continue
-		}
-		if ok == nil || ok(t.Weekday()) {
-			return t, nil
-		}
-	}
-	return time.Time{}, fmt.Errorf("no next run within %d days", maxDays)
 }
 
 func validClock(s string) bool {
@@ -163,10 +127,6 @@ func parseClock(s string) (int, int, error) {
 		return 0, 0, fmt.Errorf("invalid time %q", s)
 	}
 	return t.Hour(), t.Minute(), nil
-}
-
-func weekdayOK(d time.Weekday) bool {
-	return d >= time.Monday && d <= time.Friday
 }
 
 // daysSet maps weekday abbreviations to Go weekdays. An empty list
@@ -238,21 +198,26 @@ const (
 
 // Task is one repeatable automation configuration.
 type Task struct {
-	ID         string
-	Name       string
-	Prompt     string
-	Schedule   Schedule
-	Workspace  string
-	Mode       string
-	Model      string
-	Think      string
-	Notify     string
-	Enabled    bool
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
-	LastRunAt  time.Time
-	LastStatus string
-	NextRunAt  time.Time
+	ID        string
+	Name      string
+	Prompt    string
+	Schedule  Schedule
+	Workspace string
+	Mode      string
+	Model     string
+	Think     string
+	// ConversationID optionally pins every run to one existing
+	// session: runs reuse that conversation (with its own mode/think/
+	// model) instead of minting a fresh one. Empty = new session per
+	// run.
+	ConversationID string
+	Notify         string
+	Enabled        bool
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	LastRunAt      time.Time
+	LastStatus     string
+	NextRunAt      time.Time
 }
 
 // Validate checks task-level fields. Workspace existence is checked by
@@ -278,6 +243,9 @@ func (t Task) Validate() error {
 	case "", ThinkLow, ThinkMedium, ThinkHigh:
 	default:
 		return fmt.Errorf("unknown think level %q", t.Think)
+	}
+	if t.ConversationID != "" && !strings.HasPrefix(t.ConversationID, "s-") {
+		return fmt.Errorf("conversation must be a session id")
 	}
 	switch t.Notify {
 	case "", NotifyAlways, NotifyFailed, NotifyNever:

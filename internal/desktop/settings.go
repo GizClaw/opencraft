@@ -69,7 +69,7 @@ func (a *App) SetModel(model string) error {
 	store := a.sessions
 	a.mu.Unlock()
 	if store != nil {
-		return store.SetModel(contextID, model)
+		return store.SetModel(a.appContext(), contextID, model)
 	}
 	return nil
 }
@@ -261,7 +261,7 @@ func (a *App) DeleteSession(id string) error {
 			return fmt.Errorf("delete runtime session: %w", err)
 		}
 	}
-	if err := store.Remove(id); err != nil {
+	if err := store.Remove(ctx, id); err != nil {
 		return err
 	}
 	a.fireHooks(a.appContext(), hooks.EventSessionEnd, map[string]any{

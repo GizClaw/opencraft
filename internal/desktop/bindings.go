@@ -731,7 +731,7 @@ func (a *App) startTurn(
 
 	rt := ctrl.Runtime()
 	if mode.IsYOLO() && store != nil {
-		if err := store.SetMode(contextID, mode); err != nil {
+		if err := store.SetMode(ctx, contextID, mode); err != nil {
 			return TurnStart{}, fmt.Errorf("persist permission mode: %w", err)
 		}
 	}
@@ -856,7 +856,7 @@ func (a *App) SetSessionMode(mode string) error {
 	if store == nil {
 		return nil
 	}
-	if err := store.SetMode(contextID, m); err != nil {
+	if err := store.SetMode(a.appContext(), contextID, m); err != nil {
 		return fmt.Errorf("persist permission mode: %w", err)
 	}
 	return nil
@@ -1040,7 +1040,6 @@ func (a *App) waitTurn(
 	// snapshot, lifecycle hooks): the frontend clears "running" as
 	// soon as the turn result is known, and none of the follow-up work
 	// affects the UI's terminal state.
-	a.applyAutomationNotify(contextID, &end)
 	a.bridge.Emit("turn_end", end)
 	if done != nil {
 		select {

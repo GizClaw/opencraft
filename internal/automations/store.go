@@ -46,6 +46,7 @@ func New(db *sql.DB) (*Store, error) {
 			mode        TEXT NOT NULL DEFAULT 'workspace',
 			model       TEXT NOT NULL DEFAULT '',
 			think       TEXT NOT NULL DEFAULT '',
+			conversation_id TEXT NOT NULL DEFAULT '',
 			notify      TEXT NOT NULL DEFAULT 'always',
 			enabled     INTEGER NOT NULL DEFAULT 1,
 			created_at  TEXT NOT NULL,
@@ -73,6 +74,9 @@ func New(db *sql.DB) (*Store, error) {
 		}
 	}
 	if err := ensureAutomationsColumn(db, "notify", "TEXT NOT NULL DEFAULT 'always'"); err != nil {
+		return nil, fmt.Errorf("automations: migrate schema: %w", err)
+	}
+	if err := ensureAutomationsColumn(db, "conversation_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		return nil, fmt.Errorf("automations: migrate schema: %w", err)
 	}
 	return &Store{db: db}, nil
@@ -143,7 +147,7 @@ func (s *Store) Close() error {
 func (s *Store) ListTasks(ctx context.Context) ([]Task, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, name, prompt, schedule, workspace, mode, model, think,
-		       notify,
+		       conversation_id, notify,
 		       enabled, created_at, updated_at, last_run_at, last_status,
 		       next_run_at
 		FROM automations ORDER BY name`)
@@ -169,7 +173,7 @@ func (s *Store) ListTasks(ctx context.Context) ([]Task, error) {
 func (s *Store) GetTask(ctx context.Context, id string) (Task, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, name, prompt, schedule, workspace, mode, model, think,
-		       notify,
+		       conversation_id, notify,
 		       enabled, created_at, updated_at, last_run_at, last_status,
 		       next_run_at
 		FROM automations WHERE id = ?`, id)
@@ -200,6 +204,15 @@ func (s *Store) SaveTask(ctx context.Context, task Task) (Task, error) {
 		return Task{}, err
 	}
 	now := time.Now()
+	// Updates from older clients may omit the weekly phase anchor;
+	// preserve the stored one instead of re-anchoring the phase.
+	if task.ID != "" {
+		if existing, err := s.GetTask(ctx, task.ID); err == nil &&
+			task.Schedule.Origin == "" {
+			task.Schedule.Origin = existing.Schedule.Origin
+		}
+	}
+	task.Schedule.ensureOrigin(now)
 	if task.ID == "" {
 		task.ID = NewID("t-")
 		task.CreatedAt = now
@@ -221,9 +234,10 @@ func (s *Store) SaveTask(ctx context.Context, task Task) (Task, error) {
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO automations (
 			id, name, prompt, schedule, workspace, mode, model, think,
-			notify, enabled, created_at, updated_at, last_run_at, last_status,
+			conversation_id, notify, enabled, created_at, updated_at,
+			last_run_at, last_status,
 			next_run_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			prompt = excluded.prompt,
@@ -232,13 +246,15 @@ func (s *Store) SaveTask(ctx context.Context, task Task) (Task, error) {
 			mode = excluded.mode,
 			model = excluded.model,
 			think = excluded.think,
+			conversation_id = excluded.conversation_id,
 			notify = excluded.notify,
 			enabled = excluded.enabled,
 			updated_at = excluded.updated_at,
 			next_run_at = excluded.next_run_at
 	`,
 		task.ID, task.Name, task.Prompt, string(scheduleJSON),
-		task.Workspace, task.Mode, task.Model, task.Think, task.Notify,
+		task.Workspace, task.Mode, task.Model, task.Think,
+		task.ConversationID, task.Notify,
 		boolInt(task.Enabled), fmtTime(task.CreatedAt), fmtTime(task.UpdatedAt),
 		fmtTime(task.LastRunAt), task.LastStatus, fmtTime(task.NextRunAt),
 	)
@@ -444,7 +460,7 @@ func scanTask(row rowScanner) (Task, error) {
 	)
 	if err := row.Scan(
 		&t.ID, &t.Name, &t.Prompt, &scheduleJSON, &t.Workspace,
-		&t.Mode, &t.Model, &t.Think, &t.Notify, &enabled,
+		&t.Mode, &t.Model, &t.Think, &t.ConversationID, &t.Notify, &enabled,
 		&createdAt, &updatedAt, &lastRunAt, &t.LastStatus, &nextRunAt,
 	); err != nil {
 		return Task{}, err

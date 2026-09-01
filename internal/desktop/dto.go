@@ -219,6 +219,10 @@ type TurnEnd struct {
 	ConversationID string `json:"conversation_id,omitempty"`
 	Status         string `json:"status"`
 	Error          string `json:"error,omitempty"`
+	// Output is the run's final assistant text (bounded), used by
+	// automation notifications outside the open workspace where the
+	// frontend has no streamed transcript to build the snippet from.
+	Output string `json:"output,omitempty"`
 	// Notify lets an automation task suppress the system notification
 	// for this turn (nil = notify, the default for user turns).
 	Notify *bool `json:"notify,omitempty"`

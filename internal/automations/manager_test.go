@@ -124,9 +124,11 @@ func TestManagerMissedWindowAdvancesWithoutRun(t *testing.T) {
 }
 
 func TestManagerRunNowDoesNotMoveAnchor(t *testing.T) {
+	release := make(chan struct{})
 	ran := make(chan string, 1)
 	m, store, _ := newTestManager(t, func(_ context.Context, task Task) (RunResult, error) {
 		ran <- task.ID
+		<-release
 		return RunResult{Status: RunCompleted}, nil
 	})
 	task := saveDailyTask(t, store, "brief")
@@ -142,6 +144,7 @@ func TestManagerRunNowDoesNotMoveAnchor(t *testing.T) {
 	if err := m.RunNow(task.ID); err == nil {
 		t.Fatal("second RunNow while running should fail")
 	}
+	close(release)
 	got, _ := store.GetTask(context.Background(), task.ID)
 	if !got.NextRunAt.Equal(before.NextRunAt) {
 		t.Fatalf("RunNow moved the anchor: %v -> %v",

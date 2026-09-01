@@ -25,11 +25,9 @@ import (
 	"github.com/GizClaw/opencraft/internal/automations"
 	"github.com/GizClaw/opencraft/internal/config"
 	"github.com/GizClaw/opencraft/internal/plugins"
-	pluginagent "github.com/GizClaw/opencraft/internal/plugins/agent"
 	pluginruntime "github.com/GizClaw/opencraft/internal/plugins/runtime"
 	"github.com/GizClaw/opencraft/internal/rollout"
 	"github.com/GizClaw/opencraft/internal/runtime"
-	ocsandbox "github.com/GizClaw/opencraft/internal/sandbox"
 	"github.com/GizClaw/opencraft/internal/secrets"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/undo"
@@ -89,9 +87,11 @@ type App struct {
 	userDB          *userdb.DB
 	automationStore *automations.Store
 	automations     *automations.Manager
-	// automationConvs maps automation conversation ids back to their
-	// task so turn_end can apply the task's notification policy.
-	automationConvs map[string]string
+	// backgroundHosts pools one background runtime per workspace for
+	// automation runs whose target workspace is not the currently open
+	// one (and for the open one too: automation never reuses the UI
+	// runtime).
+	backgroundHosts map[string]*backgroundHost
 	agents          *agents.Lifecycle
 	undo            *undo.Store
 	secrets         *secrets.Manager
@@ -226,7 +226,7 @@ func New(opts Options) (*App, error) {
 		model:            "",
 		runConvs:         make(map[string]string),
 		convRuns:         make(map[string]map[string]bool),
-		automationConvs:  make(map[string]string),
+		backgroundHosts:  make(map[string]*backgroundHost),
 		runUsage:         make(map[string]ocsessions.Usage),
 		titling:          make(map[string]bool),
 		preTurnSnap:      make(map[string][]undo.FileState),
@@ -321,6 +321,7 @@ func (a *App) Shutdown(ctx context.Context) {
 	if m := a.automationManagerRef(); m != nil {
 		m.Stop()
 	}
+	a.closeBackgroundHosts()
 	a.closeRuntime()
 	a.mu.Lock()
 	udb := a.userDB
@@ -398,7 +399,7 @@ func (a *App) openUserDB() {
 	a.mu.Unlock()
 }
 
-// rebuild loads the user configuration layer and assembles a fresh
+// rebuild loads the user configuration layer and assembles a fresh UI
 // runtime. Inference wiring is not required to start: an unconfigured
 // install builds with the embedded router shell and the UI guides the
 // user to the settings page.
@@ -407,7 +408,6 @@ func (a *App) rebuild() error {
 
 	a.mu.Lock()
 	wd := a.workDir
-	ud := a.userDir
 	a.mu.Unlock()
 	ctx := a.ctx
 	if ctx == nil {
@@ -445,82 +445,22 @@ func (a *App) rebuild() error {
 			}
 		}
 	}
-	// A discovered project layer is applied only for trusted
-	// workspaces. Without the trust gate a third-party repo could
-	// silently override hooks (host command execution), sandbox
-	// policy, or the execution graph on open.
-	opts := config.Options{WorkDir: wd, UserDir: ud}
-	if _, present := config.ProjectConfigDir(wd); present && !a.isProjectTrusted(wd) {
-		opts.SkipProjectLayer = true
-	}
-	mgr, err := config.Open(opts)
+	assembled, err := a.assembleRuntime(ctx, wd, a.bridge, a.onUsage)
 	if err != nil {
-		return fmt.Errorf("desktop: open config: %w", err)
-	}
-	view, err := mgr.Load(ctx)
-	if err != nil {
-		return fmt.Errorf("desktop: load config: %w", err)
-	}
-	rt, err := app.BuildRuntime(ctx, view.Document,
-		app.WithConfigBase(mgr.UserDir()),
-		app.WithWorkBase(wd),
-		app.WithUsageObserver(a.onUsage),
-		app.WithAgentPlugins(pluginagent.NewHost(a.plugins, a.cap)))
-	if err != nil {
-		return fmt.Errorf("desktop: assemble runtime: %w", err)
-	}
-	ctrl := runtime.NewController(rt)
-	broker := ctrl.Broker(a.bridge)
-	if err := broker.Attach(ctx); err != nil {
-		_ = ctrl.Close()
-		return fmt.Errorf("desktop: attach broker: %w", err)
-	}
-
-	// Prefer the runtime's session store resource: the memory hook
-	// and the sandbox share it, so permissions (YOLO), history, and
-	// the sessions list all read the same data. A private store is
-	// only a fallback for runtimes assembled without the resource.
-	var store *ocsessions.Store
-	if value, ok := rt.Resource("sessions"); ok {
-		if svc, ok := value.(*ocsessions.Store); ok {
-			store = svc
-		}
-	}
-	if store == nil {
-		userData, err := config.UserDataDir()
-		if err != nil {
-			broker.Close()
-			_ = ctrl.Close()
-			return fmt.Errorf("desktop: user data dir: %w", err)
-		}
-		store, err = ocsessions.New(filepath.Join(userData, "sessions"), 40)
-		if err != nil {
-			broker.Close()
-			_ = ctrl.Close()
-			return fmt.Errorf("desktop: session store: %w", err)
-		}
-	}
-
-	var lifecycle *agents.Lifecycle
-	if value, ok := rt.Resource("agentlifecycle"); ok {
-		if svc, ok := value.(*agents.Lifecycle); ok {
-			lifecycle = svc
-		}
+		return err
 	}
 	// Wire the runtime's artifact observer to the frontend bridge so
 	// successful workspace writes stream as "artifact" UI events (the
 	// observing workspace already filters out engine-internal writes).
-	if value, ok := rt.Resource("artifacts"); ok {
-		if obs, ok := value.(*ocsandbox.ArtifactObserver); ok {
-			obs.SetSink(a.onArtifactWrite)
-		}
+	if assembled.artifacts != nil {
+		assembled.artifacts.SetSink(a.onArtifactWrite)
 	}
 
 	a.mu.Lock()
-	a.ctrl = ctrl
-	a.broker = broker
-	a.sessions = store
-	a.agents = lifecycle
+	a.ctrl = assembled.ctrl
+	a.broker = assembled.broker
+	a.sessions = assembled.store
+	a.agents = assembled.lifecycle
 	a.mu.Unlock()
 
 	a.bridge.Emit("ready", a.status(true))
@@ -572,6 +512,10 @@ func (a *App) requestRebuild() error {
 		a.pendingRebuild = true
 	}
 	a.mu.Unlock()
+	// Background hosts never hot-reload: idle ones are closed now and
+	// busy ones are marked stale (reaped after their last run), so the
+	// next dispatch assembles with the latest configuration.
+	a.invalidateBackgroundHosts()
 	if active {
 		return nil
 	}

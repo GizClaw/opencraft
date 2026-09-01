@@ -9,8 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/GizClaw/flowcraft/core/message"
-
 	"github.com/GizClaw/opencraft/internal/automations"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 )
@@ -19,28 +17,29 @@ import (
 type AutomationScheduleDTO struct {
 	Type          string   `json:"type"`
 	IntervalHours int      `json:"interval_hours,omitempty"`
+	IntervalWeeks int      `json:"interval_weeks,omitempty"`
 	Days          []string `json:"days,omitempty"`
 	Time          string   `json:"time,omitempty"`
-	Cron          string   `json:"cron,omitempty"`
 }
 
 // AutomationTaskDTO is the wire form of one automation task.
 type AutomationTaskDTO struct {
-	ID         string                `json:"id"`
-	Name       string                `json:"name"`
-	Prompt     string                `json:"prompt"`
-	Schedule   AutomationScheduleDTO `json:"schedule"`
-	Workspace  string                `json:"workspace"`
-	Mode       string                `json:"mode"`
-	Model      string                `json:"model"`
-	Think      string                `json:"think"`
-	Notify     string                `json:"notify"`
-	Enabled    bool                  `json:"enabled"`
-	CreatedAt  string                `json:"created_at"`
-	UpdatedAt  string                `json:"updated_at"`
-	LastRunAt  string                `json:"last_run_at"`
-	LastStatus string                `json:"last_status"`
-	NextRunAt  string                `json:"next_run_at"`
+	ID             string                `json:"id"`
+	Name           string                `json:"name"`
+	Prompt         string                `json:"prompt"`
+	Schedule       AutomationScheduleDTO `json:"schedule"`
+	Workspace      string                `json:"workspace"`
+	Mode           string                `json:"mode"`
+	Model          string                `json:"model"`
+	Think          string                `json:"think"`
+	ConversationID string                `json:"conversation_id,omitempty"`
+	Notify         string                `json:"notify"`
+	Enabled        bool                  `json:"enabled"`
+	CreatedAt      string                `json:"created_at"`
+	UpdatedAt      string                `json:"updated_at"`
+	LastRunAt      string                `json:"last_run_at"`
+	LastStatus     string                `json:"last_status"`
+	NextRunAt      string                `json:"next_run_at"`
 }
 
 // AutomationRunDTO is the wire form of one run record.
@@ -90,16 +89,27 @@ func (a *App) SaveAutomation(dto AutomationTaskDTO) (AutomationTaskDTO, error) {
 		return AutomationTaskDTO{}, fmt.Errorf("workspace %s does not exist", workspace)
 	}
 	task := automations.Task{
-		ID:        strings.TrimSpace(dto.ID),
-		Name:      dto.Name,
-		Prompt:    dto.Prompt,
-		Schedule:  fromScheduleDTO(dto.Schedule),
-		Workspace: workspace,
-		Mode:      dto.Mode,
-		Model:     strings.TrimSpace(dto.Model),
-		Think:     strings.TrimSpace(dto.Think),
-		Notify:    dto.Notify,
-		Enabled:   dto.Enabled,
+		ID:             strings.TrimSpace(dto.ID),
+		Name:           dto.Name,
+		Prompt:         dto.Prompt,
+		Schedule:       fromScheduleDTO(dto.Schedule),
+		Workspace:      workspace,
+		Mode:           dto.Mode,
+		Model:          strings.TrimSpace(dto.Model),
+		Think:          strings.TrimSpace(dto.Think),
+		ConversationID: strings.TrimSpace(dto.ConversationID),
+		Notify:         dto.Notify,
+		Enabled:        dto.Enabled,
+	}
+	if task.ConversationID != "" {
+		ok, err := a.sessionExistsInWorkspace(workspace, task.ConversationID)
+		if err != nil {
+			return AutomationTaskDTO{}, fmt.Errorf("check session: %w", err)
+		}
+		if !ok {
+			return AutomationTaskDTO{}, fmt.Errorf(
+				"session %s does not exist in workspace", task.ConversationID)
+		}
 	}
 	saved, err := store.SaveTask(a.appContext(), task)
 	if err != nil {
@@ -139,10 +149,6 @@ func (a *App) RunAutomationNow(id string) error {
 	if !task.Enabled {
 		return errors.New("task is disabled")
 	}
-	wd := a.snapshotWorkDir()
-	if filepath.Clean(wd) != filepath.Clean(task.Workspace) {
-		return fmt.Errorf("workspace mismatch: open %s first", task.Workspace)
-	}
 	return m.RunNow(id)
 }
 
@@ -163,69 +169,86 @@ func (a *App) AutomationRuns(taskID string) ([]AutomationRunDTO, error) {
 	return out, nil
 }
 
-// runAutomation executes one task through the existing turn pipeline
-// in its own conversation and waits for the turn to finish.
+// AutomationSessions lists the sessions of one workspace for the task
+// form's existing-session picker.
+func (a *App) AutomationSessions(workspace string) ([]SessionMeta, error) {
+	workspace = strings.TrimSpace(workspace)
+	if workspace == "" {
+		return []SessionMeta{}, nil
+	}
+	root := filepath.Join(workspace, ".opencraft", "sessions")
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		return []SessionMeta{}, nil
+	}
+	store, err := ocsessions.New(root, 40)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = store.Close() }()
+	metas, err := store.List()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SessionMeta, 0, len(metas))
+	for _, m := range metas {
+		out = append(out, SessionMeta{
+			ID:          m.ID,
+			Title:       m.Title,
+			CreatedAt:   m.CreatedAt.Format(time.RFC3339),
+			UpdatedAt:   m.UpdatedAt.Format(time.RFC3339),
+			Messages:    m.Messages,
+			TotalTokens: m.Usage.TotalTokens,
+		})
+	}
+	return out, nil
+}
+
+// sessionExistsInWorkspace reports whether the session directory
+// exists under the workspace's session root.
+func (a *App) sessionExistsInWorkspace(workspace, id string) (bool, error) {
+	root := filepath.Join(workspace, ".opencraft", "sessions")
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		return false, nil
+	}
+	store, err := ocsessions.New(root, 40)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = store.Close() }()
+	return store.Exists(id), nil
+}
+
+// runAutomation executes one task on the background runtime for its
+// workspace. The task never reuses the UI runtime, so it runs even
+// when task.Workspace is not the currently open workspace.
 func (a *App) runAutomation(
 	ctx context.Context, task automations.Task,
 ) (automations.RunResult, error) {
+	// The scheduler passes a background context; tie the run to the
+	// app lifecycle instead so shutdown cancels the wait.
+	ctx = a.appContext()
 	failed := func(err error) (automations.RunResult, error) {
 		return automations.RunResult{Status: automations.RunFailed}, err
 	}
-	a.mu.Lock()
-	ctrl := a.ctrl
-	broker := a.broker
-	store := a.sessions
-	wd := a.workDir
-	a.mu.Unlock()
-	if ctrl == nil || broker == nil || store == nil {
-		return failed(errors.New("runtime 未就绪"))
+	host, err := a.backgroundHostFor(task.Workspace)
+	if err != nil {
+		return failed(err)
 	}
-	if filepath.Clean(wd) != filepath.Clean(task.Workspace) {
-		return automations.RunResult{
-			Status: automations.RunSkipped,
-			Error:  "工作区未打开：" + task.Workspace,
-		}, nil
-	}
-	contextID := ocsessions.NewID()
-	a.mu.Lock()
-	if a.automationConvs == nil {
-		a.automationConvs = make(map[string]string)
-	}
-	a.automationConvs[contextID] = task.ID
-	a.mu.Unlock()
 	mode := ocsessions.Mode(task.Mode)
 	if mode == "" {
 		mode = ocsessions.ModeWorkspace
 	}
-	if err := store.SetMode(contextID, mode); err != nil {
-		return failed(err)
-	}
-	if task.Think != "" {
-		if err := store.SetThink(ctx, contextID, ocsessions.ThinkLevel(task.Think)); err != nil {
-			return failed(err)
-		}
-	}
-	if task.Model != "" {
-		if err := store.SetModel(contextID, task.Model); err != nil {
-			return failed(err)
-		}
-	}
-	msg := message.Message{
-		Role: message.RoleUser,
-		Content: message.Content{
-			Parts: []message.Part{message.TextPart{Text: task.Prompt}},
-		},
-	}
 	done := make(chan TurnEnd, 1)
-	if _, err := a.startTurn(
-		msg, contextID, mode, task.Think, task.Model, wd, done,
+	if _, err := host.runTurn(
+		ctx, task.Prompt, mode, task.Think, task.Model,
+		task.ConversationID, done,
 	); err != nil {
 		return failed(err)
 	}
 	select {
 	case end := <-done:
 		res := automations.RunResult{
-			ConversationID: contextID,
+			ConversationID: end.ConversationID,
 			RunID:          end.RunID,
 		}
 		switch {
@@ -238,10 +261,60 @@ func (a *App) runAutomation(
 			res.Status = automations.RunFailed
 			res.Error = "turn " + end.Status
 		}
+		if a.inCurrentWorkspace(task.Workspace) {
+			// The run targets the currently open workspace: surface it
+			// as an ordinary main session (turn_end clears its busy
+			// state, refreshes the session list, and carries the
+			// task's notify policy).
+			notify := !a.suppressAutomationNotify(task, end)
+			end.Notify = &notify
+			if a.bridge != nil {
+				a.bridge.Emit("turn_end", end)
+			}
+		} else {
+			a.emitAutomationNotify(task, end)
+		}
 		return res, nil
 	case <-ctx.Done():
 		return failed(ctx.Err())
 	}
+}
+
+// emitAutomationNotify sends the background run's notification event
+// for runs outside the currently open workspace, which never surface
+// as main sessions.
+func (a *App) emitAutomationNotify(task automations.Task, end TurnEnd) {
+	if a.suppressAutomationNotify(task, end) || a.bridge == nil {
+		return
+	}
+	a.bridge.Emit("automation_notify", map[string]any{
+		"task_id": task.ID,
+		"name":    task.Name,
+		"status":  end.Status,
+		"error":   end.Error,
+		"output":  end.Output,
+	})
+}
+
+// suppressAutomationNotify reports whether the task's notify policy
+// suppresses a notification for this outcome.
+func (a *App) suppressAutomationNotify(task automations.Task, end TurnEnd) bool {
+	switch task.Notify {
+	case automations.NotifyNever:
+		return true
+	case automations.NotifyFailed:
+		return end.Status == "completed"
+	}
+	return false
+}
+
+// inCurrentWorkspace reports whether wd is the workspace currently open
+// in the main UI.
+func (a *App) inCurrentWorkspace(wd string) bool {
+	a.mu.Lock()
+	cur := a.workDir
+	a.mu.Unlock()
+	return cur != "" && filepath.Clean(cur) == filepath.Clean(wd)
 }
 
 func (a *App) automationStoreRef() *automations.Store {
@@ -262,51 +335,24 @@ func (a *App) emitAutomationChanged() {
 	}
 }
 
-// applyAutomationNotify resolves one finished automation turn's task
-// and, when the task suppresses notifications for this outcome, marks
-// the turn_end payload so the frontend skips the system banner.
-func (a *App) applyAutomationNotify(contextID string, end *TurnEnd) {
-	a.mu.Lock()
-	taskID := a.automationConvs[contextID]
-	delete(a.automationConvs, contextID)
-	store := a.automationStore
-	a.mu.Unlock()
-	if taskID == "" || store == nil {
-		return
-	}
-	task, err := store.GetTask(a.appContext(), taskID)
-	if err != nil {
-		return
-	}
-	suppress := false
-	switch task.Notify {
-	case automations.NotifyNever:
-		suppress = true
-	case automations.NotifyFailed:
-		suppress = end.Status == "completed"
-	}
-	if suppress {
-		end.Notify = &suppress
-	}
-}
-
 func toAutomationTaskDTO(t automations.Task) AutomationTaskDTO {
 	return AutomationTaskDTO{
-		ID:         t.ID,
-		Name:       t.Name,
-		Prompt:     t.Prompt,
-		Schedule:   toScheduleDTO(t.Schedule),
-		Workspace:  t.Workspace,
-		Mode:       t.Mode,
-		Model:      t.Model,
-		Think:      t.Think,
-		Notify:     t.Notify,
-		Enabled:    t.Enabled,
-		CreatedAt:  fmtTime(t.CreatedAt),
-		UpdatedAt:  fmtTime(t.UpdatedAt),
-		LastRunAt:  fmtTime(t.LastRunAt),
-		LastStatus: t.LastStatus,
-		NextRunAt:  fmtTime(t.NextRunAt),
+		ID:             t.ID,
+		Name:           t.Name,
+		Prompt:         t.Prompt,
+		Schedule:       toScheduleDTO(t.Schedule),
+		Workspace:      t.Workspace,
+		Mode:           t.Mode,
+		Model:          t.Model,
+		Think:          t.Think,
+		ConversationID: t.ConversationID,
+		Notify:         t.Notify,
+		Enabled:        t.Enabled,
+		CreatedAt:      fmtTime(t.CreatedAt),
+		UpdatedAt:      fmtTime(t.UpdatedAt),
+		LastRunAt:      fmtTime(t.LastRunAt),
+		LastStatus:     t.LastStatus,
+		NextRunAt:      fmtTime(t.NextRunAt),
 	}
 }
 
@@ -314,9 +360,9 @@ func fromScheduleDTO(d AutomationScheduleDTO) automations.Schedule {
 	return automations.Schedule{
 		Type:          automations.ScheduleType(d.Type),
 		IntervalHours: d.IntervalHours,
+		IntervalWeeks: d.IntervalWeeks,
 		Days:          d.Days,
 		Time:          d.Time,
-		Cron:          d.Cron,
 	}
 }
 
@@ -324,9 +370,9 @@ func toScheduleDTO(s automations.Schedule) AutomationScheduleDTO {
 	return AutomationScheduleDTO{
 		Type:          string(s.Type),
 		IntervalHours: s.IntervalHours,
+		IntervalWeeks: s.IntervalWeeks,
 		Days:          s.Days,
 		Time:          s.Time,
-		Cron:          s.Cron,
 	}
 }
 

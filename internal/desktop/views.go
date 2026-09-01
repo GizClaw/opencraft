@@ -199,7 +199,7 @@ func (a *App) ResumeSession(id string) (string, error) {
 	if !found && !known {
 		return "", fmt.Errorf("session %s not found", id)
 	}
-	mode, err := store.Mode(id)
+	mode, err := store.Mode(a.appContext(), id)
 	if err != nil {
 		return "", err
 	}
@@ -207,7 +207,7 @@ func (a *App) ResumeSession(id string) (string, error) {
 	if err != nil {
 		think = ocsessions.ThinkMedium
 	}
-	model, err := store.Model(id)
+	model, err := store.Model(a.appContext(), id)
 	if err != nil {
 		model = ""
 	}

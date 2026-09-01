@@ -110,54 +110,6 @@ func TestScheduleHourly(t *testing.T) {
 	}
 }
 
-func TestScheduleCron(t *testing.T) {
-	loc := time.Local
-	sched := Schedule{Type: ScheduleCron, Cron: "0 9 * * 1-5"}
-	after := time.Date(2026, 9, 4, 9, 1, 0, 0, loc) // Friday 09:01
-	next, err := sched.Next(after)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := time.Date(2026, 9, 7, 9, 0, 0, 0, loc); !next.Equal(want) {
-		t.Fatalf("cron next = %v, want %v", next, want)
-	}
-
-	sched = Schedule{Type: ScheduleCron, Cron: "*/15 9-17 * * *"}
-	after = time.Date(2026, 9, 1, 9, 0, 0, 0, loc)
-	next, err = sched.Next(after)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := time.Date(2026, 9, 1, 9, 15, 0, 0, loc); !next.Equal(want) {
-		t.Fatalf("cron step next = %v, want %v", next, want)
-	}
-
-	sched = Schedule{Type: ScheduleCron, Cron: "30 8 1 JAN MON"}
-	after = time.Date(2026, 9, 1, 0, 0, 0, 0, loc)
-	if _, err := sched.Next(after); err != nil {
-		t.Fatalf("cron names should parse: %v", err)
-	}
-}
-
-func TestScheduleCronRejectsUnsupported(t *testing.T) {
-	for _, expr := range []string{
-		"* * * *",     // four fields
-		"0 9 L * *",   // L
-		"0 9 * * 5#2", // #
-		"0 9 ? * *",   // ?
-		"0 9 * 13 *",  // out of range month
-		"0 9 * * 8",   // out of range dow
-		"0 25 * * *",  // out of range hour
-		"0 9 5-1 * *", // backwards range
-		"*/0 9 * * *", // zero step
-		"0 9 * * * *", // six fields (seconds)
-	} {
-		if _, err := parseCron(expr); err == nil {
-			t.Errorf("parseCron(%q) should fail", expr)
-		}
-	}
-}
-
 func TestScheduleDSTWallClock(t *testing.T) {
 	loc := mustLoc(t, "America/New_York")
 	// 2026-03-08 02:00-03:00 does not exist (spring forward). Go's

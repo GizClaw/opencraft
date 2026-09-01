@@ -180,6 +180,8 @@ export const api = {
   runAutomationNow: (id: string) => App.RunAutomationNow(id),
   automationRuns: (taskId: string) =>
     App.AutomationRuns(taskId) as Promise<AutomationRun[]>,
+  automationSessions: (workspace: string) =>
+    App.AutomationSessions(workspace) as Promise<SessionMeta[]>,
   secretExists: (scope: string, name: string) =>
     App.SecretExists(scope, name) as Promise<boolean>,
   secretDelete: (scope: string, name: string) => App.SecretDelete(scope, name),

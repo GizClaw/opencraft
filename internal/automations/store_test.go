@@ -64,6 +64,58 @@ func TestStoreSaveTask(t *testing.T) {
 	}
 }
 
+func TestStoreSaveTaskSetsAndPreservesWeeklyOrigin(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	task := testTask()
+	task.Schedule = Schedule{
+		Type:          ScheduleWeekly,
+		Days:          []string{"MO"},
+		Time:          "09:00",
+		IntervalWeeks: 2,
+	}
+	saved, err := store.SaveTask(ctx, task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.Schedule.Origin == "" {
+		t.Fatal("new weekly task must get a phase origin")
+	}
+	origin := saved.Schedule.Origin
+
+	// An update without an origin must keep the stored phase.
+	saved.Prompt = "更新后的提示词"
+	saved.Schedule.Origin = ""
+	updated, err := store.SaveTask(ctx, saved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Schedule.Origin != origin {
+		t.Fatalf("origin = %q, want preserved %q", updated.Schedule.Origin, origin)
+	}
+	if updated.Schedule.IntervalWeeks != 2 {
+		t.Fatalf("interval weeks = %d, want 2", updated.Schedule.IntervalWeeks)
+	}
+}
+
+func TestStoreSaveTaskConversationID(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	task := testTask()
+	task.ConversationID = "s-abc123"
+	saved, err := store.SaveTask(ctx, task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.GetTask(ctx, saved.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ConversationID != "s-abc123" {
+		t.Fatalf("conversation id = %q, want s-abc123", got.ConversationID)
+	}
+}
+
 func TestStoreSaveTaskRecomputesStaleAnchor(t *testing.T) {
 	store := newTestStore(t)
 	ctx := context.Background()
