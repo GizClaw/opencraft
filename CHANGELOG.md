@@ -31,6 +31,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (activates automatically when the Apple secrets are configured; supports
   App Store Connect API-key auth, writes a verification summary artifact,
   and marks pre-release tags).
+- Optional Windows code signing in the release workflow via Azure Artifact
+  Signing (formerly Trusted Signing): when the Azure secrets are configured,
+  the portable exe and the NSIS installer are signed and timestamped, and
+  the installer is rebuilt from the signed exe so the installed app is
+  signed too; otherwise Windows artifacts are published unsigned as before.
 - Homebrew cask (`Casks/opencraft.rb`) and a universal (arm64 + amd64) macOS
   dmg for releases.
 - Release infrastructure: GitHub Actions release workflow (tag `v*`) that
