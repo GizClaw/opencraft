@@ -2,7 +2,7 @@
 // user-configured hooks.json whose command hooks fire on agent-loop
 // events (PreToolUse / PostToolUse / UserPromptSubmit /
 // PermissionRequest / TurnEnd). Each matching command receives one JSON
-// event object on stdin, mirroring codex-rs. Hook failures never break
+// event object on stdin. Hook failures never break
 // the agent loop: they are logged through telemetry and skipped.
 package hooks
 
