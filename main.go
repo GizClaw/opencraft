@@ -28,6 +28,9 @@ var assets embed.FS
 //go:embed build/appicon.png
 var appIcon []byte
 
+//go:embed build/tray-icon.png
+var trayIconTemplate []byte
+
 func main() {
 	// execd is the internal self-forked sandbox child (see
 	// execd_main.go). It must be handled before any GUI machinery
@@ -39,10 +42,11 @@ func main() {
 	}
 
 	app, err := desktop.New(desktop.Options{
-		// TrayIcon feeds the system tray/status-bar icon; macOS renders
-		// it as a template image so the same asset works in both light
-		// and dark menu bars.
-		TrayIcon: appIcon,
+		// TrayIcon feeds the system tray icon on Windows/Linux (and the
+		// fallback on macOS); TrayIconTemplate is the monochrome macOS
+		// menu bar glyph, which adapts to light and dark menu bars.
+		TrayIcon:         appIcon,
+		TrayIconTemplate: trayIconTemplate,
 	})
 	if err != nil {
 		log.Fatalf("opencraft: %v", err)

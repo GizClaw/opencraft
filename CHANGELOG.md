@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the main window instead of starting a second instance (single-instance
   lock on Windows/macOS/Linux). On macOS, clicking the Dock icon brings
   the hidden window back.
+- Tool results that contain git diffs (e.g. `read_file` on a `.diff`
+  artifact, including compacted or legacy sessions whose result JSON
+  was stored with broken escaping) now render as proper git diff cards
+  instead of raw JSON text. A regression test pins the `read_file`
+  result serialization so the escaping cannot silently break again.
 - Windows desktop builds: the execd socket umask now lives behind a
   platform-specific file (`syscall.Umask` is unix-only), a
   `build/windows/icon.ico` resource, and CI/release jobs that produce

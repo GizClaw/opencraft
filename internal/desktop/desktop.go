@@ -51,6 +51,11 @@ type Options struct {
 	// TrayIcon is the system tray / menu bar icon (PNG). macOS renders
 	// it as a template image; nil skips the icon (tests).
 	TrayIcon []byte
+	// TrayIconTemplate is the monochrome macOS menu bar glyph (PNG,
+	// black + alpha). When set, macOS uses it as the template icon while
+	// Windows/Linux keep the full-colour TrayIcon. Nil falls back to
+	// TrayIcon (tests).
+	TrayIconTemplate []byte
 }
 
 // App is the Wails-bound application root. Exported methods on App
@@ -134,6 +139,11 @@ type App struct {
 	quitting bool
 	// trayIcon is the system tray icon bytes (nil in tests).
 	trayIcon []byte
+	// trayIconTemplate is the macOS menu bar glyph bytes (nil in tests).
+	trayIconTemplate []byte
+	// trayEnd is the systray external-loop teardown function (nil in
+	// tests); set by startTray, consumed by stopTray.
+	trayEnd func()
 }
 
 // rolloutBuffer accumulates one run's streamed assistant parts.
@@ -187,30 +197,31 @@ func New(opts Options) (*App, error) {
 		shutdown = nil
 	}
 	a := &App{
-		workDir:         workDir,
-		userDir:         userDir,
-		pluginDir:       pluginDir,
-		plugins:         plugins.NewStore(pluginDir),
-		kv:              plugins.NewKVStore(pluginDir),
-		bridge:          NewBridge(),
-		turns:           make(map[string]*session.Turn),
-		conversationID:  ocsessions.NewID(),
-		mode:            ocsessions.ModeWorkspace,
-		think:           string(ocsessions.ThinkMedium),
-		model:           "",
-		runConvs:        make(map[string]string),
-		convRuns:        make(map[string]map[string]bool),
-		runUsage:        make(map[string]ocsessions.Usage),
-		titling:         make(map[string]bool),
-		preTurnSnap:     make(map[string][]undo.FileState),
-		preTurnManifest: make(map[string]map[string]fileStat),
-		undo:            undoStore,
-		secrets:         sec,
-		rollouts:        make(map[string]*rollout.Recorder),
-		rolloutBufs:     make(map[string]*rolloutBuffer),
-		otelShutdown:    shutdown,
-		closeToTray:     prefs.CloseToTray,
-		trayIcon:        opts.TrayIcon,
+		workDir:          workDir,
+		userDir:          userDir,
+		pluginDir:        pluginDir,
+		plugins:          plugins.NewStore(pluginDir),
+		kv:               plugins.NewKVStore(pluginDir),
+		bridge:           NewBridge(),
+		turns:            make(map[string]*session.Turn),
+		conversationID:   ocsessions.NewID(),
+		mode:             ocsessions.ModeWorkspace,
+		think:            string(ocsessions.ThinkMedium),
+		model:            "",
+		runConvs:         make(map[string]string),
+		convRuns:         make(map[string]map[string]bool),
+		runUsage:         make(map[string]ocsessions.Usage),
+		titling:          make(map[string]bool),
+		preTurnSnap:      make(map[string][]undo.FileState),
+		preTurnManifest:  make(map[string]map[string]fileStat),
+		undo:             undoStore,
+		secrets:          sec,
+		rollouts:         make(map[string]*rollout.Recorder),
+		rolloutBufs:      make(map[string]*rolloutBuffer),
+		otelShutdown:     shutdown,
+		closeToTray:      prefs.CloseToTray,
+		trayIcon:         opts.TrayIcon,
+		trayIconTemplate: opts.TrayIconTemplate,
 	}
 	a.cap = pluginruntime.NewManager(pluginDir, pluginruntime.DefaultLoader{
 		Root: pluginDir,
