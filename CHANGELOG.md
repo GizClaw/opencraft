@@ -6,6 +6,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-09-01
+
+First release of the opencraft desktop workbench: a local-first workflow
+runner built on flowcraft core v0.2.2, delivered as a macOS/Linux/Windows
+desktop app (Wails v2 + React).
+
 ### Added
 
 - Closing the window now keeps the app running in the background by
@@ -37,45 +43,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   builds and publishes the macOS app bundle and the Linux binary with the
   version injected via `-ldflags`.
 - `LICENSE` (MIT) and this changelog.
-
-### Changed
-
-- App icon artwork now follows Apple's icon grid: the 1024px canvas
-  keeps ~100px transparent margins (824px artwork) instead of painting
-  edge-to-edge, so the Dock/desktop/Explorer no longer render the icon
-  larger than standard apps. `build/windows/icon.ico` was regenerated
-  from the updated artwork.
-- flowcraft core upgraded to v0.2.2. Windows now uses flowcraft's
-  Windows sandbox backend with OS-level write confinement (restricted
-  Low-integrity token: children can only write inside the workspace and
-  configured writable paths) plus job-object process-tree lifecycle and
-  resource caps, instead of the no-isolation local runner. Sandboxed
-  process trees are terminated with their jobs (`KILL_ON_JOB_CLOSE`).
-  Interactive `exec_session` is disabled on Windows (the backend does
-  not combine confinement with ConPTY yet), and the `pty` capability is
-  no longer advertised there.
-- Windows execd lifecycle aligned with Unix: shutdown closes the client
-  connection first so the child runs its own session cleanup (SIGTERM
-  is not deliverable on Windows), and the parent-death watchdog waits
-  on a handle to the parent process instead of relying on orphan
-  reparenting.
-- `EnvironmentInfo` now reports the platform shell (`cmd.exe` on
-  Windows, `/bin/sh` elsewhere) instead of a hardcoded `/bin/sh`.
-- Assistant system prompt persona updated to a work partner — helping with
-  coding and any local workflow, matching the README positioning.
-- Linux desktop builds now target webkit2gtk-4.1 (`-tags webkit2_41`), matching
-  the Ubuntu 24.04 CI runner.
-- Cleaned up all `golangci-lint` findings (errcheck/ineffassign/staticcheck/
-  unused) so the CI lint gate is green.
-
-## [0.1.0] - 2026-08-27
-
-First release of the opencraft desktop workbench: a local-first workflow
-runner built on flowcraft core v0.1.32, delivered as a macOS/Linux desktop
-app (Wails v2 + React).
-
-### Added
-
 - **Desktop UI** — chat with streaming reasoning / tool-call / output blocks,
   interrupt and cancel, session list (resume, rename, export, delete),
   workspace switching, subagent kanban and run sidebar, graph editor,
@@ -110,6 +77,36 @@ app (Wails v2 + React).
   scrubbed user input and redacted audit records.
 - **Turn-level undo/redo** — per-turn file snapshots in git workspaces with
   UI rollback.
+
+### Changed
+
+- App icon artwork now follows Apple's icon grid: the 1024px canvas
+  keeps ~100px transparent margins (824px artwork) instead of painting
+  edge-to-edge, so the Dock/desktop/Explorer no longer render the icon
+  larger than standard apps. `build/windows/icon.ico` was regenerated
+  from the updated artwork.
+- flowcraft core upgraded to v0.2.2. Windows now uses flowcraft's
+  Windows sandbox backend with OS-level write confinement (restricted
+  Low-integrity token: children can only write inside the workspace and
+  configured writable paths) plus job-object process-tree lifecycle and
+  resource caps, instead of the no-isolation local runner. Sandboxed
+  process trees are terminated with their jobs (`KILL_ON_JOB_CLOSE`).
+  Interactive `exec_session` is disabled on Windows (the backend does
+  not combine confinement with ConPTY yet), and the `pty` capability is
+  no longer advertised there.
+- Windows execd lifecycle aligned with Unix: shutdown closes the client
+  connection first so the child runs its own session cleanup (SIGTERM
+  is not deliverable on Windows), and the parent-death watchdog waits
+  on a handle to the parent process instead of relying on orphan
+  reparenting.
+- `EnvironmentInfo` now reports the platform shell (`cmd.exe` on
+  Windows, `/bin/sh` elsewhere) instead of a hardcoded `/bin/sh`.
+- Assistant system prompt persona updated to a work partner — helping with
+  coding and any local workflow, matching the README positioning.
+- Linux desktop builds now target webkit2gtk-4.1 (`-tags webkit2_41`), matching
+  the Ubuntu 24.04 CI runner.
+- Cleaned up all `golangci-lint` findings (errcheck/ineffassign/staticcheck/
+  unused) so the CI lint gate is green.
 
 ### Security
 
