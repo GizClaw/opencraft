@@ -73,7 +73,8 @@ Or download the latest package from the
 - `opencraft-<version>-windows-amd64-installer.exe` — Windows (x86_64)
   NSIS installer
 
-Windows binaries are not code-signed yet, so SmartScreen may warn on first
+Windows binaries are code-signed when the Azure secrets are configured (see
+[Code signing](#code-signing) below); otherwise SmartScreen may warn on first
 launch (More info → Run anyway), for both the portable exe and the installer.
 Release binaries are built from tagged commits by the
 [release workflow](.github/workflows/release.yml); the Homebrew cask lives in
@@ -130,6 +131,29 @@ git push origin v0.1.0
 The tag triggers the release workflow, which builds the packages, injects
 the version into the binary via `-ldflags`, and publishes the GitHub
 Release with notes from the changelog.
+
+### Code signing
+
+Release signing is optional and activates automatically when the matching
+secrets are configured:
+
+- **macOS** — Developer ID signing and notarization via the `macos-release`
+  environment secrets (see the workflow for the full list).
+- **Windows** — Azure Artifact Signing (formerly Trusted Signing) signs both
+  the portable exe and the NSIS installer (the installer is rebuilt from the
+  signed exe, so the installed app is signed too). Create a `windows-release`
+  environment (GitHub auto-creates it on first run) and add:
+  - `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET` — an Azure AD
+    app registration granted the *Artifact Signing Certificate Profile
+    Signer* role on the signing account;
+  - `AZURE_SIGNING_ENDPOINT` — the regional signing endpoint, e.g.
+    `https://eus.codesigning.azure.net/`;
+  - `AZURE_SIGNING_ACCOUNT` — the Artifact Signing account name;
+  - `AZURE_SIGNING_PROFILE` — the certificate profile name.
+
+Without these secrets the Windows artifacts are published unsigned and
+SmartScreen may warn on first launch. The workflow also supports OIDC /
+federated credentials if you prefer not to store a client secret.
 
 ## License
 
