@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -213,5 +214,152 @@ func TestInstallMakesCapabilityExecutable(t *testing.T) {
 	// for the declared capability binary.
 	if info.Mode().Perm()&0o111 == 0 {
 		t.Fatalf("capability binary is not executable after install: %v", info.Mode())
+	}
+}
+
+func TestManifestValidatesAgentCapabilities(t *testing.T) {
+	root := t.TempDir()
+	writePlugin(t, root, "agent", map[string]any{
+		"id": "agent", "name": "Agent", "version": "0.1.0",
+		"entry":      "dist/index.js",
+		"capability": map[string]any{"binary": "bin/agent", "protocol": 1},
+		"permissions": []string{
+			"skills:contribute", "mcp:contribute", "hooks:register", "tools:expose",
+		},
+		"skills":     []string{"skills"},
+		"mcpServers": []any{map[string]any{"name": "srv", "transport": "stdio", "command": "bin/srv"}},
+		"hooks":      []string{"hooks/hooks.json"},
+		"tools": []any{map[string]any{
+			"name": "ping", "description": "Ping", "method": "ping",
+			"inputSchema": map[string]any{"type": "object"},
+		}},
+	}, "")
+	s := NewStore(root)
+	list, err := s.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("List = %+v, want one valid plugin", list)
+	}
+	p := list[0]
+	if p.Error != "" || !p.HasSkills || !p.HasMCP || !p.HasHooks || !p.HasTools {
+		t.Fatalf("agent plugin summary = %+v", p)
+	}
+}
+
+func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
+	cases := []struct {
+		name string
+		m    map[string]any
+	}{
+		{
+			name: "tools without permission",
+			m: map[string]any{
+				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
+				"capability": map[string]any{"binary": "bin/x", "protocol": 1},
+				"tools":      []any{map[string]any{"name": "t", "method": "m"}},
+			},
+		},
+		{
+			name: "tools without capability",
+			m: map[string]any{
+				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
+				"permissions": []string{"tools:expose"},
+				"tools":       []any{map[string]any{"name": "t", "method": "m"}},
+			},
+		},
+		{
+			name: "mcp unknown transport",
+			m: map[string]any{
+				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
+				"permissions": []string{"mcp:contribute"},
+				"mcpServers":  []any{map[string]any{"name": "s", "transport": "carrier"}},
+			},
+		},
+		{
+			name: "skill path escapes",
+			m: map[string]any{
+				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
+				"permissions": []string{"skills:contribute"},
+				"skills":      []string{"../skills"},
+			},
+		},
+		{
+			name: "tool schema not object",
+			m: map[string]any{
+				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
+				"permissions": []string{"tools:expose"},
+				"tools": []any{map[string]any{
+					"name": "t", "method": "m", "inputSchema": []string{"not", "object"},
+				}},
+			},
+		},
+		{
+			name: "mcp server name with separator",
+			m: map[string]any{
+				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
+				"permissions": []string{"mcp:contribute"},
+				"mcpServers":  []any{map[string]any{"name": "bad:name", "transport": "stdio", "command": "bin/s"}},
+			},
+		},
+		{
+			name: "tool description too long",
+			m: map[string]any{
+				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
+				"capability":  map[string]any{"binary": "bin/x", "protocol": 1},
+				"permissions": []string{"tools:expose"},
+				"tools": []any{map[string]any{
+					"name": "t", "method": "m",
+					"description": strings.Repeat("x", 1025),
+				}},
+			},
+		},
+		{
+			name: "tool schema too large",
+			m: map[string]any{
+				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
+				"capability":  map[string]any{"binary": "bin/x", "protocol": 1},
+				"permissions": []string{"tools:expose"},
+				"tools": []any{map[string]any{
+					"name": "t", "method": "m",
+					"inputSchema": map[string]any{
+						"padding": strings.Repeat("x", 33<<10),
+					},
+				}},
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writePlugin(t, root, "x", tc.m, "")
+			s := NewStore(root)
+			list, err := s.List()
+			if err != nil {
+				t.Fatalf("List: %v", err)
+			}
+			if len(list) != 1 || list[0].Error == "" {
+				t.Fatalf("List = %+v, want a rejected plugin", list)
+			}
+		})
+	}
+}
+
+func TestInstallRejectsMissingAgentResources(t *testing.T) {
+	srcRoot := t.TempDir()
+	writePlugin(t, srcRoot, "broken", map[string]any{
+		"id": "broken", "name": "Broken", "version": "0.1.0",
+		"entry": "dist/index.js",
+		"permissions": []string{
+			"skills:contribute", "hooks:register", "mcp:contribute",
+		},
+		"skills":     []string{"skills"},
+		"hooks":      []string{"hooks/hooks.json"},
+		"mcpServers": []any{map[string]any{"name": "srv", "transport": "stdio", "command": "bin/srv"}},
+	}, "")
+	s := NewStore(t.TempDir())
+	if _, err := s.Install(filepath.Join(srcRoot, "broken")); err == nil {
+		t.Fatal("installing a plugin with missing declared resources must fail")
 	}
 }

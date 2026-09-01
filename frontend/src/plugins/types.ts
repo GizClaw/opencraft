@@ -42,6 +42,11 @@ export interface PluginSummary {
   error?: string;
   panels?: string[];
   entries?: string[];
+  /** Agent-facing capability flags contributed by the plugin. */
+  hasSkills?: boolean;
+  hasMcp?: boolean;
+  hasHooks?: boolean;
+  hasTools?: boolean;
 }
 
 export interface SettingsPanelContribution {

@@ -24,6 +24,7 @@ import (
 	app "github.com/GizClaw/opencraft/internal/app"
 	"github.com/GizClaw/opencraft/internal/config"
 	"github.com/GizClaw/opencraft/internal/plugins"
+	pluginagent "github.com/GizClaw/opencraft/internal/plugins/agent"
 	pluginruntime "github.com/GizClaw/opencraft/internal/plugins/runtime"
 	"github.com/GizClaw/opencraft/internal/rollout"
 	"github.com/GizClaw/opencraft/internal/runtime"
@@ -87,6 +88,10 @@ type App struct {
 	undo     *undo.Store
 	secrets  *secrets.Manager
 	turns    map[string]*session.Turn
+	// pendingPluginRebuild defers a plugin-driven runtime rebuild until
+	// no turn is running, so toggling a plugin never aborts an active
+	// agent turn.
+	pendingPluginRebuild bool
 
 	// conversationID is the stable session context for the current
 	// conversation. Every turn in the conversation reuses it so
@@ -376,7 +381,8 @@ func (a *App) rebuild() error {
 	rt, err := app.BuildRuntime(ctx, view.Document,
 		app.WithConfigBase(mgr.UserDir()),
 		app.WithWorkBase(wd),
-		app.WithUsageObserver(a.onUsage))
+		app.WithUsageObserver(a.onUsage),
+		app.WithAgentPlugins(pluginagent.NewHost(a.plugins, a.cap)))
 	if err != nil {
 		return fmt.Errorf("desktop: assemble runtime: %w", err)
 	}
@@ -438,6 +444,38 @@ func (a *App) rebuild() error {
 	return nil
 }
 
+// refreshAgentPlugins applies plugin-driven agent capability changes.
+// It rebuilds immediately when no turn is running; otherwise it marks
+// the rebuild pending and applies it after the last active turn ends.
+func (a *App) refreshAgentPlugins() error {
+	a.mu.Lock()
+	active := len(a.turns) > 0
+	if active {
+		a.pendingPluginRebuild = true
+	}
+	a.mu.Unlock()
+	if active {
+		return nil
+	}
+	return a.rebuild()
+}
+
+// maybeApplyPendingPluginRebuild runs after a turn ends and rebuilds
+// if a plugin change was deferred and no other turn is still running.
+func (a *App) maybeApplyPendingPluginRebuild() {
+	a.mu.Lock()
+	if !a.pendingPluginRebuild || len(a.turns) > 0 {
+		a.mu.Unlock()
+		return
+	}
+	a.pendingPluginRebuild = false
+	a.mu.Unlock()
+	if err := a.rebuild(); err != nil {
+		fmt.Fprintf(os.Stderr,
+			"opencraft: deferred plugin rebuild failed: %v\n", err)
+	}
+}
+
 func (a *App) closeRuntime() {
 	a.mu.Lock()
 	broker := a.broker
@@ -450,6 +488,7 @@ func (a *App) closeRuntime() {
 	a.runConvs = make(map[string]string)
 	a.convRuns = make(map[string]map[string]bool)
 	a.runUsage = make(map[string]ocsessions.Usage)
+	a.pendingPluginRebuild = false
 	a.mu.Unlock()
 
 	if broker != nil {

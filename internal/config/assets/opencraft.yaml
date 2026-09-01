@@ -130,12 +130,18 @@ resources:
     impl: local
     deps:
       workspace: ws
+      plugin.host: plugin.host
     settings:
       enabled: true
       work_dir: ${env:OPEN_CRAFT_WORKDIR}
       user_dir: ${env:OPEN_CRAFT_DATA_DIR}
       top_n: 5
       min_score: 0
+  # Plugin host: the desktop app injects the installed plugin store and
+  # capability runtime here; CLI/headless runtimes build an empty host.
+  plugin.host:
+    kind: opencraft.plugins
+    impl: local
   # Mode-aware workspace for the file tools: in workspace mode it
   # delegates to the shared ws resource (one underlying LocalWorkspace
   # for engine/system reads and tool writes) and derives its root from
@@ -183,6 +189,8 @@ resources:
   hooks:
     kind: opencraft.hooks
     impl: local
+    deps:
+      plugin.host: plugin.host
     settings:
       path: ${env:OPEN_CRAFT_DATA_DIR}/config/hooks.json
   # Subagent hook observer: subscribes to delegation kanban events and

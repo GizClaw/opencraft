@@ -22,6 +22,12 @@ type Factory struct{}
 
 var _ resource.Factory = Factory{}
 
+// pluginRootsProvider is implemented by the shared plugin host
+// (internal/plugins/agent) and contributes plugin skill roots.
+type pluginRootsProvider interface {
+	SkillRoots() []string
+}
+
 // Spec declares the resource contract.
 func (Factory) Spec() resource.Spec {
 	return resource.Spec{
@@ -32,6 +38,8 @@ func (Factory) Spec() resource.Spec {
 			// abstraction when present (local deployments usually
 			// omit it and read the host filesystem directly).
 			{Name: "workspace", Type: "workspace.Workspace", Required: false},
+			// Optional: enabled plugins may contribute skill roots.
+			{Name: "plugin.host", Type: "opencraft.plugins", Required: false},
 		},
 	}
 }
@@ -68,6 +76,11 @@ func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 		}
 	}
 	extraRoots := append([]string(nil), settings.ExtraRoots...)
+	if dep, ok := in.Dep("plugin.host"); ok {
+		if p, ok := dep.(pluginRootsProvider); ok && p != nil {
+			extraRoots = append(extraRoots, p.SkillRoots()...)
+		}
+	}
 	svc := NewService(Options{
 		WorkBase:   settings.WorkDir,
 		UserDir:    settings.UserDir,

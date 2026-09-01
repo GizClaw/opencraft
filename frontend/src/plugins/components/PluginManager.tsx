@@ -91,6 +91,38 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
                   )}
                 </p>
                 <p className="text-[0.7857rem] text-dim truncate">{p.id}</p>
+                {(p.hasSkills || p.hasMcp || p.hasHooks || p.hasTools) && (
+                  <div
+                    className="mt-1 flex flex-wrap gap-1"
+                    title={t('config.pluginsCapabilitiesHint')}
+                  >
+                    {p.hasSkills && (
+                      <span className="rounded bg-panel px-1.5 py-0.5 text-[0.7143rem] text-dim">
+                        {t('config.pluginsCapabilitySkills')}
+                      </span>
+                    )}
+                    {p.hasMcp && (
+                      <span className="rounded bg-panel px-1.5 py-0.5 text-[0.7143rem] text-dim">
+                        {t('config.pluginsCapabilityMcp')}
+                      </span>
+                    )}
+                    {p.hasHooks && (
+                      <span className="rounded bg-panel px-1.5 py-0.5 text-[0.7143rem] text-dim">
+                        {t('config.pluginsCapabilityHooks')}
+                      </span>
+                    )}
+                    {p.hasTools && (
+                      <span className="rounded bg-panel px-1.5 py-0.5 text-[0.7143rem] text-dim">
+                        {t('config.pluginsCapabilityTools')}
+                      </span>
+                    )}
+                  </div>
+                )}
+                {(p.hasHooks || p.hasTools) && (
+                  <p className="mt-1.5 text-[0.7857rem] text-warn">
+                    {t('config.pluginsCapabilitiesWarning')}
+                  </p>
+                )}
               </div>
               <button
                 onClick={() => void setEnabled(p.id, !p.enabled)}
