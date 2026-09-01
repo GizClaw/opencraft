@@ -7,8 +7,10 @@
   "permissions": [
     "storage:kv",
     "commands:register",
-    "statusbar:contribute"
+    "statusbar:contribute",
+    "skills:contribute"
   ],
+  "skills": ["skills"],
   "contributes": {
     "settingsPanels": [
       { "id": "hello-panel", "title": "Hello", "order": 10 }

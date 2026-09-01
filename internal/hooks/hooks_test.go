@@ -144,3 +144,85 @@ func TestLoadSkipsNonCommandHookTypes(t *testing.T) {
 		t.Fatalf("hooks = %+v, want only the command hook", m.groups[EventPreToolUse])
 	}
 }
+
+func TestLoadWithSourcesAnchorsPluginCommands(t *testing.T) {
+	pluginDir := t.TempDir()
+	hooksPath := filepath.Join(pluginDir, "hooks.json")
+	if err := os.WriteFile(hooksPath, []byte(`{
+		"hooks": {
+			"PreToolUse": [{"hooks": [{"command": "cat > plugin-hook.out"}]}]
+		}
+	}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := LoadWithSources(filepath.Join(t.TempDir(), "missing.json"), []ExtraSource{
+		{Path: hooksPath, Dir: pluginDir},
+	})
+	if err != nil {
+		t.Fatalf("LoadWithSources: %v", err)
+	}
+	m.Fire(context.Background(), EventPreToolUse, map[string]any{
+		"event": EventPreToolUse,
+		"tool":  "exec_command",
+	})
+	out := filepath.Join(pluginDir, "plugin-hook.out")
+	if _, err := os.Stat(out); err != nil {
+		t.Fatalf("plugin hook did not run with plugin dir cwd: %v", err)
+	}
+}
+
+func TestLoadWithSourcesSkipsMissingPluginFile(t *testing.T) {
+	m, err := LoadWithSources(
+		filepath.Join(t.TempDir(), "missing.json"),
+		[]ExtraSource{{Path: filepath.Join(t.TempDir(), "nope.json"), Dir: t.TempDir()}},
+	)
+	if err != nil {
+		t.Fatalf("missing plugin hooks file must be skipped, got %v", err)
+	}
+	if !m.Empty() {
+		t.Fatal("skipped plugin hooks must leave an empty manager")
+	}
+}
+
+func TestPluginHooksPayloadIsSanitized(t *testing.T) {
+	pluginDir := t.TempDir()
+	hooksPath := filepath.Join(pluginDir, "hooks.json")
+	if err := os.WriteFile(hooksPath, []byte(`{
+		"hooks": {
+			"PreToolUse": [{"hooks": [{"command": "cat > plugin-hook.out"}]}]
+		}
+	}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, err := LoadWithSources(filepath.Join(t.TempDir(), "missing.json"), []ExtraSource{
+		{Path: hooksPath, Dir: pluginDir}, // Trusted defaults to false
+	})
+	if err != nil {
+		t.Fatalf("LoadWithSources: %v", err)
+	}
+	m.Fire(context.Background(), EventPreToolUse, map[string]any{
+		"event":      EventPreToolUse,
+		"tool":       "exec_command",
+		"tool_input": map[string]any{"command": "secret"},
+		"tool_result": map[string]any{
+			"content": "api_key=sk-secret",
+		},
+	})
+	out := filepath.Join(pluginDir, "plugin-hook.out")
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("plugin hook did not run: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("hook stdin is not JSON: %v", err)
+	}
+	if payload["tool"] != "exec_command" {
+		t.Fatalf("tool field missing: %+v", payload)
+	}
+	for _, key := range []string{"tool_input", "tool_result"} {
+		if _, ok := payload[key]; ok {
+			t.Fatalf("plugin hook payload must not contain %q: %+v", key, payload)
+		}
+	}
+}

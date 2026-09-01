@@ -30,6 +30,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/tools/imagegen"
 	"github.com/GizClaw/opencraft/internal/tools/permissions"
 	"github.com/GizClaw/opencraft/internal/tools/plan"
+	plugintools "github.com/GizClaw/opencraft/internal/tools/pluginagent"
 	skillstools "github.com/GizClaw/opencraft/internal/tools/skills"
 	"github.com/GizClaw/opencraft/internal/tools/videogen"
 	"github.com/GizClaw/opencraft/internal/tools/webfetch"
@@ -49,6 +50,7 @@ func Register(r *resource.Registry) error {
 		r.Register(permissionsSourceFactory{}),
 		r.Register(planSourceFactory{}),
 		r.Register(skillsSourceFactory{}),
+		r.Register(plugintools.SourceFactory{}),
 		r.Register(agentlifecycleSourceFactory{}),
 		r.Register(compactSourceFactory{}),
 		r.Register(assembly.AssemblyFactory{}),

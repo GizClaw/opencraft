@@ -57,6 +57,17 @@ type Group struct {
 	Hooks   []Hook `json:"hooks"`
 }
 
+// ExtraSource is one additional hooks.json file (normally
+// plugin-contributed). Dir anchors relative hook commands to the
+// plugin directory. Trusted=false marks third-party sources whose
+// payload is sanitized before the command runs (tool inputs, tool
+// results, prompts and command text are stripped).
+type ExtraSource struct {
+	Path    string
+	Dir     string
+	Trusted bool
+}
+
 // configFile is the on-disk hooks.json shape.
 type configFile struct {
 	Hooks map[string][]Group `json:"hooks"`
@@ -79,9 +90,21 @@ type Factory struct{}
 
 var _ resource.Factory = Factory{}
 
+// pluginHooksProvider is implemented by the shared plugin host
+// (internal/plugins/agent) and contributes plugin hook files.
+type pluginHooksProvider interface {
+	PluginHooks() []ExtraSource
+}
+
 // Spec implements resource.Factory.
 func (Factory) Spec() resource.Spec {
-	return resource.Spec{Kind: ResourceKind, Impl: ResourceImpl}
+	return resource.Spec{
+		Kind: ResourceKind,
+		Impl: ResourceImpl,
+		Deps: []resource.DepSpec{
+			{Name: "plugin.host", Type: "opencraft.plugins", Required: false},
+		},
+	}
 }
 
 // New implements resource.Factory. A missing hooks.json yields an empty
@@ -93,7 +116,13 @@ func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 		return nil, errdefs.Validationf(
 			"opencraft hooks: decode settings: %v", err)
 	}
-	return Load(settings.Path)
+	var extra []ExtraSource
+	if dep, ok := in.Dep("plugin.host"); ok {
+		if p, ok := dep.(pluginHooksProvider); ok && p != nil {
+			extra = append(extra, p.PluginHooks()...)
+		}
+	}
+	return LoadWithSources(settings.Path, extra)
 }
 
 // Manager owns the loaded hook groups.
@@ -103,26 +132,53 @@ type Manager struct {
 }
 
 type groupEntry struct {
-	re    *regexp.Regexp
-	hooks []Hook
+	re      *regexp.Regexp
+	hooks   []Hook
+	dir     string
+	trusted bool
 }
 
 // Load parses hooks.json at path. A missing file returns an empty
 // manager. Invalid groups abort loading so misconfiguration is loud.
 func Load(path string) (*Manager, error) {
+	return LoadWithSources(path, nil)
+}
+
+// LoadWithSources parses the user hooks.json plus any plugin-provided
+// hook files. A missing user file is fine; a missing plugin file is an
+// error so a broken plugin never silently loses its hooks.
+func LoadWithSources(path string, extra []ExtraSource) (*Manager, error) {
+	m := &Manager{path: path, groups: map[string][]groupEntry{}}
+	if err := m.loadFile(path, "", true); err != nil {
+		return nil, err
+	}
+	for _, src := range extra {
+		if err := m.loadFile(src.Path, src.Dir, src.Trusted); err != nil {
+			// A broken plugin hook must not take down the whole
+			// runtime: skip the source and surface the failure through
+			// telemetry, matching the registry's per-plugin error model.
+			telemetry.Warn(context.Background(),
+				"opencraft hooks: skipping plugin hook source",
+				otellog.String("path", src.Path),
+				otellog.String("error", err.Error()))
+		}
+	}
+	return m, nil
+}
+
+func (m *Manager) loadFile(path, dir string, trusted bool) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return &Manager{path: path, groups: map[string][]groupEntry{}}, nil
+		if errors.Is(err, os.ErrNotExist) && dir == "" {
+			return nil
 		}
-		return nil, err
+		return err
 	}
 	var cfg configFile
 	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, errdefs.Validationf(
+		return errdefs.Validationf(
 			"opencraft hooks: parse %s: %v", path, err)
 	}
-	m := &Manager{path: path, groups: map[string][]groupEntry{}}
 	for event, groups := range cfg.Hooks {
 		for i, g := range groups {
 			var re *regexp.Regexp
@@ -130,7 +186,7 @@ func Load(path string) (*Manager, error) {
 				strings.TrimSpace(g.Matcher) != "*" {
 				compiled, err := regexp.Compile(g.Matcher)
 				if err != nil {
-					return nil, errdefs.Validationf(
+					return errdefs.Validationf(
 						"opencraft hooks: %s[%d].matcher: %v", event, i, err)
 				}
 				re = compiled
@@ -141,17 +197,19 @@ func Load(path string) (*Manager, error) {
 					continue // v1 supports command hooks only
 				}
 				if strings.TrimSpace(h.Command) == "" {
-					return nil, errdefs.Validationf(
+					return errdefs.Validationf(
 						"opencraft hooks: %s[%d] hook command is required", event, i)
 				}
 				hooks = append(hooks, h)
 			}
 			if len(hooks) > 0 {
-				m.groups[event] = append(m.groups[event], groupEntry{re: re, hooks: hooks})
+				m.groups[event] = append(m.groups[event], groupEntry{
+					re: re, hooks: hooks, dir: dir, trusted: trusted,
+				})
 			}
 		}
 	}
-	return m, nil
+	return nil
 }
 
 // Path returns the hooks.json path.
@@ -173,7 +231,7 @@ func (m *Manager) Fire(ctx context.Context, event string, payload map[string]any
 			continue
 		}
 		for _, h := range g.hooks {
-			m.run(ctx, event, h, payload)
+			m.run(ctx, event, h, g.dir, g.trusted, payload)
 		}
 	}
 }
@@ -195,6 +253,8 @@ func (m *Manager) run(
 	ctx context.Context,
 	event string,
 	h Hook,
+	dir string,
+	trusted bool,
 	payload map[string]any,
 ) {
 	timeout := defaultTimeout
@@ -204,7 +264,11 @@ func (m *Manager) run(
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	data, err := json.Marshal(payload)
+	runPayload := payload
+	if !trusted {
+		runPayload = sanitizePayload(payload)
+	}
+	data, err := json.Marshal(runPayload)
 	if err != nil {
 		telemetry.Warn(ctx, "opencraft hooks: marshal event failed",
 			otellog.String("event", event),
@@ -212,6 +276,9 @@ func (m *Manager) run(
 		return
 	}
 	cmd := exec.CommandContext(runCtx, "sh", "-c", h.Command)
+	if dir != "" {
+		cmd.Dir = dir
+	}
 	cmd.Stdin = bytes.NewReader(data)
 	var out bytes.Buffer
 	cmd.Stdout = &out
@@ -227,4 +294,28 @@ func (m *Manager) run(
 			otellog.String("error", err.Error()),
 			otellog.String("output", output))
 	}
+}
+
+// sanitizePayload strips content-bearing fields before a third-party
+// (plugin) hook command sees them. Identifiers and status fields stay;
+// tool inputs, tool results, prompts, command text, errors and
+// subagent messages are removed so untrusted hooks cannot exfiltrate
+// raw conversation or tool data.
+func sanitizePayload(payload map[string]any) map[string]any {
+	out := make(map[string]any, len(payload))
+	for k, v := range payload {
+		out[k] = v
+	}
+	for _, key := range []string{
+		"tool_input",
+		"tool_result",
+		"prompt",
+		"command",
+		"error",
+		"message",
+		"target",
+	} {
+		delete(out, key)
+	}
+	return out
 }

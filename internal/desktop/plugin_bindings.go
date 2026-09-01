@@ -36,7 +36,10 @@ func (a *App) PluginSetEnabled(id string, enabled bool) error {
 	if !enabled && a.cap != nil {
 		a.cap.Stop(id)
 	}
-	return nil
+	// Agent-facing capabilities (skills / MCP / hooks / tools) are
+	// assembled into the runtime; refresh it so the change takes
+	// effect (immediately, or after the current turn when one runs).
+	return a.refreshAgentPlugins()
 }
 
 // PluginInstall copies a plugin folder into the plugin root.
@@ -44,7 +47,14 @@ func (a *App) PluginInstall(src string) (plugins.PluginSummary, error) {
 	if a.plugins == nil {
 		return plugins.PluginSummary{}, errors.New("plugin store is not ready")
 	}
-	return a.plugins.Install(src)
+	sum, err := a.plugins.Install(src)
+	if err != nil {
+		return plugins.PluginSummary{}, err
+	}
+	if err := a.refreshAgentPlugins(); err != nil {
+		return plugins.PluginSummary{}, err
+	}
+	return sum, nil
 }
 
 // PluginInstallZip installs a plugin from a zip package (a release
@@ -54,7 +64,14 @@ func (a *App) PluginInstallZip(zipPath string) (plugins.PluginSummary, error) {
 	if a.plugins == nil {
 		return plugins.PluginSummary{}, errors.New("plugin store is not ready")
 	}
-	return a.plugins.InstallZip(zipPath)
+	sum, err := a.plugins.InstallZip(zipPath)
+	if err != nil {
+		return plugins.PluginSummary{}, err
+	}
+	if err := a.refreshAgentPlugins(); err != nil {
+		return plugins.PluginSummary{}, err
+	}
+	return sum, nil
 }
 
 // PluginUninstall removes a plugin and its KV data.
@@ -71,11 +88,9 @@ func (a *App) PluginUninstall(id string) error {
 	// Host fallback: a plugin may not implement cleanup or may have
 	// written resources earlier; remove lingering inference config and
 	// secrets defensively so nothing survives the uninstall.
+	profileRemoved := false
 	if err := a.removeInferenceProfile(id); err == nil {
-		_ = a.rebuild()
-		if a.bridge != nil {
-			a.bridge.Emit("inference_changed", map[string]any{})
-		}
+		profileRemoved = true
 	}
 	if a.secrets != nil {
 		_ = a.secrets.DeletePrefix(a.appContext(), "auth/"+id+"/")
@@ -87,5 +102,10 @@ func (a *App) PluginUninstall(id string) error {
 	if a.cap != nil {
 		a.cap.Stop(id)
 	}
-	return nil
+	// Notify before rebuild so the settings page reflects the config
+	// change even if the rebuild fails.
+	if profileRemoved && a.bridge != nil {
+		a.bridge.Emit("inference_changed", map[string]any{})
+	}
+	return a.refreshAgentPlugins()
 }

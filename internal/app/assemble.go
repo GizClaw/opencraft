@@ -47,6 +47,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/config"
 	"github.com/GizClaw/opencraft/internal/hooks"
 	opmemory "github.com/GizClaw/opencraft/internal/memory"
+	pluginagent "github.com/GizClaw/opencraft/internal/plugins/agent"
 	"github.com/GizClaw/opencraft/internal/sandbox"
 	"github.com/GizClaw/opencraft/internal/secrets"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
@@ -66,6 +67,9 @@ type Options struct {
 	// the model actually invoked), with the run context so callers can
 	// attribute usage to the owning turn. Nil disables observation.
 	usageObserver func(context.Context, inference.Usage)
+	// AgentHost supplies plugin-contributed agent capabilities
+	// (skills, MCP, hooks, tools). Nil yields an empty host.
+	AgentHost *pluginagent.Host
 }
 
 type Option func(*Options)
@@ -84,6 +88,11 @@ func WithWorkBase(dir string) Option {
 // on the engine's goroutine and must be non-blocking.
 func WithUsageObserver(fn func(context.Context, inference.Usage)) Option {
 	return func(o *Options) { o.usageObserver = fn }
+}
+
+// WithAgentPlugins injects the desktop plugin host into the runtime.
+func WithAgentPlugins(h *pluginagent.Host) Option {
+	return func(o *Options) { o.AgentHost = h }
 }
 
 // BuildRuntime assembles an opencraft runtime from a deploy document.
@@ -172,6 +181,7 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 	reg.MustRegister(execPolicyResource{})
 	reg.MustRegister(hooks.Factory{})
 	reg.MustRegister(hooks.ObserverFactory{})
+	reg.MustRegister(pluginagent.Factory{Host: o.AgentHost})
 
 	builder := runtimecore.NewBuilder(reg)
 	if err := builder.WithLoader(loader); err != nil {

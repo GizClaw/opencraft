@@ -1072,6 +1072,9 @@ func (a *App) waitTurn(
 			"reasoning_tokens": turnUsage.ReasoningTokens,
 		},
 	})
+	// A plugin toggle requested during the turn is applied now that
+	// this turn is no longer running (and no other turn is active).
+	a.maybeApplyPendingPluginRebuild()
 }
 
 // UndoChange reverts the latest captured turn's file changes for the

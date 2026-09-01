@@ -62,6 +62,13 @@ resources:
     impl: opencraft/skills
     deps:
       skills: skills
+  # Plugin agent capabilities: enabled plugins contribute subprocess
+  # tools and MCP servers through the shared plugin host.
+  tool.plugins:
+    kind: tool.Source
+    impl: opencraft/plugins
+    deps:
+      plugin.host: plugin.host
   # Internal conversation compaction: folds the loop's older rounds into
   # a summary (router condensation) and persists the artifact per
   # conversation via the session store.
@@ -111,6 +118,7 @@ resources:
       tool.videogen: tool.videogen
       tool.plan: tool.plan
       tool.skills: tool.skills
+      tool.plugins: tool.plugins
       tool.compact: tool.compact
       tool.permissions: tool.permissions
       tool.delegate: tool.delegate
