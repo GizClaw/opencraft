@@ -6,6 +6,8 @@ import {
   ChevronUp,
   History,
   Loader2,
+  MoreHorizontal,
+  Pause,
   Play,
   Plus,
   Search,
@@ -13,6 +15,7 @@ import {
   Sparkles,
   Trash2,
   X,
+  Zap,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { useStore } from '../lib/store';
@@ -302,6 +305,18 @@ export function AutomationsView() {
     return () => document.removeEventListener('pointerdown', onDown);
   }, [modelMenuOpen]);
   const [query, setQuery] = useState('');
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menuFor) return;
+    const onDown = (e: PointerEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuFor(null);
+      }
+    };
+    document.addEventListener('pointerdown', onDown);
+    return () => document.removeEventListener('pointerdown', onDown);
+  }, [menuFor]);
   const [filter, setFilter] = useState<
     'all' | 'active' | 'paused' | 'completed'
   >('all');
@@ -397,6 +412,15 @@ export function AutomationsView() {
     }
   };
 
+  const toggleEnabled = async (task: AutomationTask) => {
+    try {
+      await api.saveAutomation({ ...task, enabled: !task.enabled });
+      void loadAutomations();
+    } catch (err) {
+      flash(String(err));
+    }
+  };
+
   const remove = async (id: string) => {
     try {
       await api.deleteAutomation(id);
@@ -426,9 +450,8 @@ export function AutomationsView() {
   };
 
   const historyRuns = historyFor ? (runs[historyFor] ?? []) : [];
-  const runningRun = form?.id
-    ? (runs[form.id] ?? []).find((r) => r.status === 'running')
-    : undefined;
+  const runningFor = (taskId: string) =>
+    (runs[taskId] ?? []).some((r) => r.status === 'running');
 
   const filtered = automations.filter((task) => {
     if (filter === 'active' && !task.enabled) return false;
@@ -520,40 +543,140 @@ export function AutomationsView() {
       ) : (
         <div className="space-y-2">
           {filtered.map((task) => (
-            <button
+            <div
               key={task.id}
-              onClick={() => openEdit(task)}
-              className="w-full rounded-xl border border-edge bg-panel2 p-3 text-left hover:border-accent/40 transition-colors space-y-1.5"
+              className="rounded-xl border border-edge bg-panel2 p-3 hover:border-accent/40 transition-colors space-y-1.5"
             >
-              <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold min-w-0 truncate">
-                  {task.name}
-                </span>
-                <span className="flex-1" />
-                {!task.enabled && (
-                  <span className="rounded border border-edge px-1.5 py-0.5 text-[0.7143rem] text-dim">
-                    {t('automations.paused')}
-                  </span>
-                )}
-                {task.last_status && (
-                  <span
-                    className={`rounded px-1.5 py-0.5 text-[0.7143rem] ${statusClass(
-                      task.last_status,
-                    )}`}
+              <div className="flex items-start gap-2">
+                <button
+                  onClick={() => openEdit(task)}
+                  className="flex-1 min-w-0 text-left space-y-1.5"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-semibold min-w-0 truncate">
+                      {task.name}
+                    </span>
+                    {!task.enabled && (
+                      <span className="rounded border border-edge px-1.5 py-0.5 text-[0.7143rem] text-dim">
+                        {t('automations.paused')}
+                      </span>
+                    )}
+                    {task.last_status && (
+                      <span
+                        className={`rounded px-1.5 py-0.5 text-[0.7143rem] ${statusClass(
+                          task.last_status,
+                        )}`}
+                      >
+                        {task.last_status}
+                      </span>
+                    )}
+                    <span className="flex-1" />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-dim">
+                    <span>
+                      {t('automations.next')}: {fmtTime(task.next_run_at)}
+                    </span>
+                    {task.enabled && (
+                      <span className="text-accent">
+                        {timeUntil(task.next_run_at)}
+                      </span>
+                    )}
+                  </div>
+                </button>
+                <div className="relative shrink-0">
+                  <button
+                    onClick={() =>
+                      setMenuFor(menuFor === task.id ? null : task.id)
+                    }
+                    title={t('automations.more')}
+                    className="rounded-lg p-1.5 text-dim hover:bg-panel hover:text-fg"
                   >
-                    {task.last_status}
+                    <MoreHorizontal size="1.0000rem" />
+                  </button>
+                  {menuFor === task.id && (
+                    <div
+                      ref={menuRef}
+                      className="absolute right-0 top-full z-40 mt-1.5 w-44 rounded-lg border border-edge bg-panel p-1 shadow-xl"
+                    >
+                      <button
+                        onClick={() => {
+                          setMenuFor(null);
+                          void toggleEnabled(task);
+                        }}
+                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
+                      >
+                        {task.enabled ? (
+                          <Pause size="0.8571rem" className="shrink-0" />
+                        ) : (
+                          <Play size="0.8571rem" className="shrink-0" />
+                        )}
+                        <span className="flex-1 text-left">
+                          {task.enabled
+                            ? t('automations.pause')
+                            : t('automations.resume')}
+                        </span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setMenuFor(null);
+                          void runNow(task);
+                        }}
+                        disabled={
+                          runningId === task.id ||
+                          !task.enabled ||
+                          runningFor(task.id)
+                        }
+                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg disabled:opacity-40"
+                      >
+                        {runningId === task.id || runningFor(task.id) ? (
+                          <Loader2
+                            size="0.8571rem"
+                            className="shrink-0 animate-spin"
+                          />
+                        ) : (
+                          <Zap size="0.8571rem" className="shrink-0" />
+                        )}
+                        <span className="flex-1 text-left">
+                          {t('automations.runNow')}
+                        </span>
+                      </button>
+                      <div className="my-1 border-t border-edge" />
+                      <button
+                        onClick={() => {
+                          setMenuFor(null);
+                          setConfirmDelete(task.id);
+                        }}
+                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-dim hover:bg-err/10 hover:text-err"
+                      >
+                        <Trash2 size="0.8571rem" className="shrink-0" />
+                        <span className="flex-1 text-left">
+                          {t('automations.delete')}
+                        </span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+              {confirmDelete === task.id && (
+                <div className="flex items-center gap-2 rounded-lg border border-err/40 bg-err/10 px-2 py-1.5 text-xs text-dim">
+                  <span className="flex-1 min-w-0 truncate">
+                    {t('automations.deleteConfirm', { name: task.name })}
                   </span>
-                )}
-              </div>
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-dim">
-                <span>
-                  {t('automations.next')}: {fmtTime(task.next_run_at)}
-                </span>
-                <span className="text-accent">
-                  {timeUntil(task.next_run_at)}
-                </span>
-              </div>
-            </button>
+                  <button
+                    onClick={() => void remove(task.id)}
+                    className="rounded bg-err px-2 py-1 text-white"
+                  >
+                    {t('automations.delete')}
+                  </button>
+                  <button
+                    onClick={() => setConfirmDelete(null)}
+                    className="rounded border border-edge px-2 py-1"
+                  >
+                    {t('interact.cancel')}
+                  </button>
+                </div>
+              )}
+            </div>
           ))}
         </div>
       )}
@@ -569,28 +692,13 @@ export function AutomationsView() {
             <h3 className="text-sm font-semibold">
               {form.id ? t('automations.edit') : t('automations.new')}
             </h3>
-            <div className="flex items-center gap-3">
-              <label className="flex items-center gap-1.5 text-xs text-dim">
-                <input
-                  type="checkbox"
-                  checked={form.enabled}
-                  onChange={(e) =>
-                    setForm({ ...form, enabled: e.target.checked })
-                  }
-                  className="accent-accent"
-                />
-                {form.enabled
-                  ? t('automations.enabled')
-                  : t('automations.paused')}
-              </label>
-              <button
-                onClick={() => setForm(null)}
-                className="text-dim hover:text-fg"
-                title={t('tools.close')}
-              >
-                <X size="1.1428rem" />
-              </button>
-            </div>
+            <button
+              onClick={() => setForm(null)}
+              className="text-dim hover:text-fg"
+              title={t('tools.close')}
+            >
+              <X size="1.1428rem" />
+            </button>
           </div>
 
           <Field label={t('automations.name')}>
@@ -887,23 +995,6 @@ export function AutomationsView() {
           </SectionCard>
 
           <div className="flex items-center gap-2">
-            {form.id && (
-              <button
-                onClick={() => void runNow(formToTask(form))}
-                disabled={
-                  runningId === form.id || !form.enabled || !!runningRun
-                }
-                className="flex items-center gap-1 rounded-lg border border-edge px-2.5 py-1.5 text-sm text-dim hover:text-fg disabled:opacity-40"
-                title={t('automations.runNow')}
-              >
-                {runningId === form.id || runningRun ? (
-                  <Loader2 size="0.8571rem" className="animate-spin" />
-                ) : (
-                  <Play size="0.8571rem" />
-                )}
-                {t('automations.runNow')}
-              </button>
-            )}
             <button
               onClick={() => void save()}
               disabled={saving}
@@ -918,37 +1009,7 @@ export function AutomationsView() {
             >
               {t('interact.cancel')}
             </button>
-            <span className="flex-1" />
-            {form.id && !confirmDelete && (
-              <button
-                onClick={() => setConfirmDelete(form.id)}
-                className="flex items-center gap-1 rounded-lg border border-edge px-2.5 py-1.5 text-sm text-dim hover:text-err"
-              >
-                <Trash2 size="0.8571rem" />
-                {t('automations.delete')}
-              </button>
-            )}
           </div>
-
-          {confirmDelete && form.id && (
-            <div className="flex items-center gap-2 text-xs text-dim">
-              <span>
-                {t('automations.deleteConfirm', { name: form.name })}
-              </span>
-              <button
-                onClick={() => void remove(form.id)}
-                className="rounded bg-err px-2 py-1 text-white"
-              >
-                {t('automations.delete')}
-              </button>
-              <button
-                onClick={() => setConfirmDelete(null)}
-                className="rounded border border-edge px-2 py-1"
-              >
-                {t('interact.cancel')}
-              </button>
-            </div>
-          )}
 
           {form.id && (
             <div className="space-y-2 border-t border-edge pt-3">
