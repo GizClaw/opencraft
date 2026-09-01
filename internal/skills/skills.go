@@ -24,7 +24,7 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// Limits mirror agentskills.io plus codex-rs parser behaviour.
+// Limits mirror agentskills.io parser behaviour.
 const (
 	maxNameLen        = 64
 	maxDescriptionLen = 1024
@@ -678,8 +678,8 @@ func validName(name string) bool {
 }
 
 // slugify converts an arbitrary directory name into a valid skill
-// name (lowercase, hyphens), the fallback codex-rs applies for
-// third-party skills without a usable name field.
+// name (lowercase, hyphens), the fallback for third-party skills
+// without a usable name field.
 func slugify(s string) string {
 	var b strings.Builder
 	lastDash := false
@@ -702,8 +702,7 @@ func slugify(s string) string {
 	return out
 }
 
-// sanitizeSingleLine folds all whitespace runs into single spaces,
-// mirroring codex-rs sanitize_single_line.
+// sanitizeSingleLine folds all whitespace runs into single spaces.
 func sanitizeSingleLine(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }

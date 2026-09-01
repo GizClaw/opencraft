@@ -168,7 +168,7 @@ func buildMiddleware(
 }
 
 // hooksMiddleware fires PreToolUse before and PostToolUse after every
-// tool call with a JSON event payload mirroring codex-rs.
+// tool call with a JSON event payload.
 func hooksMiddleware(m *hooks.Manager) tool.Middleware {
 	if m == nil || m.Empty() {
 		return nil

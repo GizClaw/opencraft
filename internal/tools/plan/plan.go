@@ -1,9 +1,8 @@
 // Package plan provides the update_plan tool plus a store that
-// survives restarts. The tool follows codex-rs semantics: every call
-// submits a full checklist snapshot (optional explanation + list of
-// steps with statuses). Multiple steps may be in_progress at the same
-// time (e.g. parallel subagent work), mirroring codex-rs, which only
-// guides "at most one" in prose and never rejects a plan with several.
+// survives restarts. Every call submits a full checklist snapshot
+// (optional explanation + list of steps with statuses). Multiple
+// steps may be in_progress at the same time (e.g. parallel subagent
+// work); a plan with several in_progress steps is never rejected.
 // The latest snapshot is persisted per session by the session store
 // (WriteState/ReadState); this package only owns the plan semantics.
 package plan
@@ -27,7 +26,7 @@ import (
 // UpdatePlanName is the canonical update_plan tool name.
 const UpdatePlanName = "update_plan"
 
-// Step statuses, mirroring codex-rs StepStatus.
+// Step statuses.
 const (
 	StatusPending    = "pending"
 	StatusInProgress = "in_progress"
@@ -41,7 +40,7 @@ type PlanItem struct {
 }
 
 // Plan is one immutable snapshot of the agent's plan. Every update_plan
-// call replaces the whole snapshot, matching codex-rs PlanUpdate events.
+// call replaces the whole snapshot.
 type Plan struct {
 	Explanation string     `json:"explanation,omitempty"`
 	Items       []PlanItem `json:"plan"`
@@ -62,7 +61,7 @@ func (p Plan) Done() bool {
 	return true
 }
 
-// UpdatePlanArgs mirrors codex-rs UpdatePlanArgs.
+// UpdatePlanArgs is the update_plan argument payload.
 type UpdatePlanArgs struct {
 	Explanation *string    `json:"explanation,omitempty"`
 	Plan        []PlanItem `json:"plan"`
@@ -137,7 +136,7 @@ func KeyFromContext(ctx context.Context) (agentID, sessionID string) {
 
 // validate enforces the update_plan contract: plan is required and
 // each item needs a step and a valid status. Multiple in_progress
-// steps are allowed (parallel work), matching codex-rs.
+// steps are allowed (parallel work).
 func validate(args UpdatePlanArgs) error {
 	if len(args.Plan) == 0 {
 		return errdefs.Validationf(
@@ -161,8 +160,7 @@ func validate(args UpdatePlanArgs) error {
 }
 
 // decodeArgs parses update_plan arguments and rejects unknown fields
-// at both the top level and the item level, mirroring codex-rs's
-// deny_unknown_fields.
+// at both the top level and the item level.
 func decodeArgs(arguments string) (UpdatePlanArgs, error) {
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(arguments), &top); err != nil {

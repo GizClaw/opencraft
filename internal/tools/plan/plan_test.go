@@ -181,7 +181,7 @@ func TestUpdatePlanValidation(t *testing.T) {
 	}
 }
 
-// TestPlanAllowsMultipleInProgress mirrors codex-rs: parallel work can
+// TestPlanAllowsMultipleInProgress verifies that parallel work can
 // keep several steps in_progress at once; the tool must accept and
 // persist the snapshot.
 func TestPlanAllowsMultipleInProgress(t *testing.T) {
