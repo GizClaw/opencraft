@@ -5,6 +5,7 @@ import { api } from '../../lib/api';
 import { usePluginStore } from '../store';
 import { PluginInstallDialog } from './PluginInstallDialog';
 import { PluginPanels } from './PluginPanels';
+import type { PluginUpdateInfo } from '../types';
 
 // PluginManager is the "插件" settings tab: installed plugins with
 // enable/disable toggles, per-plugin load errors, and the panels each
@@ -18,9 +19,19 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
   const load = usePluginStore((s) => s.load);
   const setEnabled = usePluginStore((s) => s.setEnabled);
   const [installOpen, setInstallOpen] = useState(false);
+  const [updateId, setUpdateId] = useState<string | null>(null);
   const [confirmUninstallId, setConfirmUninstallId] = useState<string | null>(
     null,
   );
+  const [confirmRollbackId, setConfirmRollbackId] = useState<string | null>(
+    null,
+  );
+  const [actionErrors, setActionErrors] = useState<Record<string, string>>({});
+  const [updateInfo, setUpdateInfo] = useState<
+    Record<string, PluginUpdateInfo>
+  >({});
+  const [checkingUpdateId, setCheckingUpdateId] = useState<string | null>(null);
+  const [applyingUpdateId, setApplyingUpdateId] = useState<string | null>(null);
 
   const uninstall = async (id: string) => {
     setConfirmUninstallId(null);
@@ -29,6 +40,54 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
       await load();
     } catch (err) {
       console.error('plugin uninstall failed', err);
+    }
+  };
+
+  const rollback = async (id: string) => {
+    try {
+      await api.pluginRollback(id);
+      setActionErrors((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      await load();
+    } catch (err) {
+      setActionErrors((prev) => ({ ...prev, [id]: String(err) }));
+    }
+  };
+
+  const checkUpdate = async (id: string) => {
+    setCheckingUpdateId(id);
+    setActionErrors((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    try {
+      const info = await api.pluginCheckUpdate(id);
+      setUpdateInfo((prev) => ({ ...prev, [id]: info }));
+    } catch (err) {
+      setActionErrors((prev) => ({ ...prev, [id]: String(err) }));
+    } finally {
+      setCheckingUpdateId(null);
+    }
+  };
+
+  const applyUpdate = async (id: string) => {
+    setApplyingUpdateId(id);
+    try {
+      await api.pluginApplyUpdate(id);
+      setUpdateInfo((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      await load();
+    } catch (err) {
+      setActionErrors((prev) => ({ ...prev, [id]: String(err) }));
+    } finally {
+      setApplyingUpdateId(null);
     }
   };
 
@@ -138,6 +197,42 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
               </button>
               {!p.builtin && (
                 <button
+                  onClick={() => setUpdateId(p.id)}
+                  className="rounded-md px-2 py-1 text-xs text-dim hover:text-fg"
+                >
+                  {t('config.pluginsUpdate')}
+                </button>
+              )}
+              {!p.builtin && p.hasUpdate && (
+                <button
+                  onClick={() => void checkUpdate(p.id)}
+                  disabled={checkingUpdateId === p.id}
+                  className="rounded-md px-2 py-1 text-xs text-dim hover:text-fg disabled:opacity-50"
+                >
+                  {checkingUpdateId === p.id
+                    ? t('config.pluginsCheckingUpdate')
+                    : t('config.pluginsCheckUpdate')}
+                </button>
+              )}
+              {!p.builtin && p.canRollback && (
+                <button
+                  onClick={() => {
+                    if (confirmRollbackId === p.id) {
+                      setConfirmRollbackId(null);
+                      void rollback(p.id);
+                    } else {
+                      setConfirmRollbackId(p.id);
+                    }
+                  }}
+                  className="rounded-md px-2 py-1 text-xs text-dim hover:text-warn"
+                >
+                  {confirmRollbackId === p.id
+                    ? t('config.pluginsRollbackConfirm')
+                    : t('config.pluginsRollback')}
+                </button>
+              )}
+              {!p.builtin && (
+                <button
                   onClick={() => {
                     if (confirmUninstallId === p.id) {
                       void uninstall(p.id);
@@ -162,6 +257,34 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
               <p className="mt-2 text-[0.7857rem] text-err break-words">
                 {t('config.pluginLoadError')}: {errors[p.id]}
               </p>
+            )}
+            {actionErrors[p.id] && (
+              <p className="mt-2 text-[0.7857rem] text-err break-words">
+                {actionErrors[p.id]}
+              </p>
+            )}
+            {updateInfo[p.id] && (
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <span className="text-[0.7857rem] text-warn">
+                  {t('config.pluginsUpdateAvailable', {
+                    version: updateInfo[p.id].version,
+                  })}
+                </span>
+                <button
+                  onClick={() => void applyUpdate(p.id)}
+                  disabled={applyingUpdateId === p.id}
+                  className="rounded-md bg-accent px-2 py-0.5 text-xs text-white hover:opacity-90 disabled:opacity-50"
+                >
+                  {applyingUpdateId === p.id
+                    ? t('config.pluginsApplyingUpdate')
+                    : t('config.pluginsApplyUpdate')}
+                </button>
+                {updateInfo[p.id].changelog && (
+                  <p className="w-full text-[0.7857rem] text-dim break-words">
+                    {updateInfo[p.id].changelog}
+                  </p>
+                )}
+              </div>
             )}
           </li>
         ))}
@@ -190,6 +313,12 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
 
       {installOpen && (
         <PluginInstallDialog onClose={() => setInstallOpen(false)} />
+      )}
+      {updateId !== null && (
+        <PluginInstallDialog
+          pluginId={updateId}
+          onClose={() => setUpdateId(null)}
+        />
       )}
     </div>
   );

@@ -8,13 +8,16 @@ package plugins
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	goruntime "runtime"
 	"sort"
+	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/GizClaw/opencraft/internal/plugins/runtime"
@@ -98,6 +101,11 @@ type PluginSummary struct {
 	HasMCP    bool `json:"hasMcp,omitempty"`
 	HasHooks  bool `json:"hasHooks,omitempty"`
 	HasTools  bool `json:"hasTools,omitempty"`
+	// HasUpdate reports whether the plugin declares an update.url.
+	HasUpdate bool `json:"hasUpdate,omitempty"`
+	// CanRollback reports whether a rollback snapshot of the previous
+	// version is available (user plugins only).
+	CanRollback bool `json:"canRollback,omitempty"`
 }
 
 // PluginTool is one agent-callable tool exposed by a capability
@@ -122,6 +130,23 @@ type PluginMCPServer struct {
 	Args      []string          `json:"args,omitempty"`
 	Env       map[string]string `json:"env,omitempty"`
 	URL       string            `json:"url,omitempty"`
+}
+
+// PluginUpdateSource declares where opencraft can check for a newer
+// version of the plugin. The URL must return the update manifest shape
+// described by internal/plugins/update.
+type PluginUpdateSource struct {
+	URL string `json:"url"`
+}
+
+// UpdateInfo is the update manifest returned by a plugin's update.url
+// endpoint. Checksum must be "sha256:<hex>" and is verified before an
+// update package is applied.
+type UpdateInfo struct {
+	Version     string `json:"version"`
+	DownloadURL string `json:"download_url"`
+	Checksum    string `json:"checksum"`
+	Changelog   string `json:"changelog,omitempty"`
 }
 
 // Manifest mirrors plugins/<id>/plugin.json.
@@ -154,6 +179,8 @@ type Manifest struct {
 	McpServers []PluginMCPServer `json:"mcpServers,omitempty"`
 	Hooks      []string          `json:"hooks,omitempty"`
 	Tools      []PluginTool      `json:"tools,omitempty"`
+	// Update points at the plugin's update manifest endpoint.
+	Update *PluginUpdateSource `json:"update,omitempty"`
 }
 
 // pluginStateFile records explicit enable/disable choices. A plugin
@@ -166,8 +193,10 @@ const pluginStateFile = "state.json"
 // shadow builtins with the same id; builtins are always present, can be
 // disabled but never uninstalled.
 type Store struct {
-	root    string
-	builtin string
+	root        string
+	builtin     string
+	hostVersion string
+	mu          sync.Mutex
 }
 
 // NewStore returns a registry rooted at root.
@@ -175,10 +204,16 @@ func NewStore(root string) *Store {
 	return &Store{root: root, builtin: runtime.BuiltinPluginRoot()}
 }
 
+// SetHostVersion records the running host version for minHostVersion
+// enforcement. An empty value disables the check (tests/CLI).
+func (s *Store) SetHostVersion(v string) { s.hostVersion = v }
+
 // List returns every installed plugin with its manifest metadata and
 // enabled state. A broken plugin is reported with its validation error
 // instead of failing the whole list.
 func (s *Store) List() ([]PluginSummary, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err := os.MkdirAll(s.root, 0o700); err != nil {
 		return nil, fmt.Errorf("plugins: create dir: %w", err)
 	}
@@ -251,6 +286,10 @@ func (s *Store) scanDir(
 		sum.HasMCP = len(m.McpServers) > 0
 		sum.HasHooks = len(m.Hooks) > 0
 		sum.HasTools = len(m.Tools) > 0
+		sum.HasUpdate = m.Update != nil
+		if !builtin {
+			sum.CanRollback = rollbackAvailable(s.root, id)
+		}
 		for _, p := range m.Contributes.SettingsPanels {
 			sum.Panels = append(sum.Panels, p.ID)
 		}
@@ -266,6 +305,8 @@ func (s *Store) scanDir(
 // Bundle returns the plugin entry bundle source, validated so the path
 // can never escape the plugin directory.
 func (s *Store) Bundle(id string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	dir, _, err := s.pluginDir(id)
 	if err != nil {
 		return "", err
@@ -290,6 +331,8 @@ func (s *Store) Bundle(id string) (string, error) {
 // Capability returns the declared subprocess runtime for an installed
 // plugin, if any.
 func (s *Store) Capability(id string) (runtime.Capability, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	m, err := s.readManifest(id)
 	if err != nil {
 		return runtime.Capability{}, false, err
@@ -303,6 +346,8 @@ func (s *Store) Capability(id string) (runtime.Capability, bool, error) {
 // SetEnabled toggles a plugin's enabled state. The plugin must be
 // installed with a valid manifest.
 func (s *Store) SetEnabled(id string, enabled bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if _, err := s.readManifest(id); err != nil {
 		return err
 	}
@@ -319,6 +364,8 @@ func (s *Store) SetEnabled(id string, enabled bool) error {
 // directory name is irrelevant. Reinstalling an existing plugin is
 // rejected; uninstall it first.
 func (s *Store) Install(src string) (PluginSummary, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err := os.MkdirAll(s.root, 0o700); err != nil {
 		return PluginSummary{}, fmt.Errorf("plugins: create dir: %w", err)
 	}
@@ -345,6 +392,9 @@ func (s *Store) Install(src string) (PluginSummary, error) {
 	if err != nil {
 		return PluginSummary{}, err
 	}
+	if err := s.checkHostVersion(m); err != nil {
+		return PluginSummary{}, err
+	}
 	dst := filepath.Join(s.root, m.ID)
 	if _, err := os.Stat(dst); err == nil {
 		return PluginSummary{}, fmt.Errorf(
@@ -357,24 +407,17 @@ func (s *Store) Install(src string) (PluginSummary, error) {
 		_ = os.RemoveAll(dst)
 		return PluginSummary{}, fmt.Errorf("plugins: install: %w", err)
 	}
-	if err := validateInstalledAgentResources(dst, m); err != nil {
+	if err := preparePluginDir(dst, m); err != nil {
 		_ = os.RemoveAll(dst)
 		return PluginSummary{}, err
 	}
-	// Ensure the capability binary is executable regardless of how the
-	// source was copied (permissions are not always preserved).
-	if m.Capability != nil {
-		bin := filepath.Join(dst, m.Capability.Binary)
-		if err := os.Chmod(bin, 0o755); err != nil {
-			_ = os.RemoveAll(dst)
-			return PluginSummary{}, fmt.Errorf(
-				"plugins: make capability binary executable: %w", err)
-		}
-		if err := signAdHoc(bin); err != nil {
-			_ = os.RemoveAll(dst)
-			return PluginSummary{}, err
-		}
-	}
+	return summaryFromManifest(m, dst, false), nil
+}
+
+// summaryFromManifest builds the frontend-facing summary for one
+// installed manifest. canRollback reports whether a rollback snapshot
+// currently exists.
+func summaryFromManifest(m *Manifest, dir string, canRollback bool) PluginSummary {
 	sum := PluginSummary{
 		ID:          m.ID,
 		Name:        m.Name,
@@ -386,9 +429,11 @@ func (s *Store) Install(src string) (PluginSummary, error) {
 		HasMCP:      len(m.McpServers) > 0,
 		HasHooks:    len(m.Hooks) > 0,
 		HasTools:    len(m.Tools) > 0,
+		HasUpdate:   m.Update != nil,
+		CanRollback: canRollback,
 	}
 	if !sum.HasSkills && manifestHasPermission(m, "skills:contribute") &&
-		dirExists(filepath.Join(dst, "skills")) {
+		dirExists(filepath.Join(dir, "skills")) {
 		sum.HasSkills = true
 	}
 	for _, p := range m.Contributes.SettingsPanels {
@@ -397,7 +442,386 @@ func (s *Store) Install(src string) (PluginSummary, error) {
 	for _, e := range m.Contributes.SidebarEntries {
 		sum.Entries = append(sum.Entries, e.ID)
 	}
+	return sum
+}
+
+// Update replaces an installed user plugin with a newer source
+// directory. The previous version is snapshotted under
+// <root>/.backups/<id> for Rollback. The plugin's enabled state, KV
+// data, secrets and inference profile are preserved.
+func (s *Store) Update(id, src string) (PluginSummary, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ValidateID(id); err != nil {
+		return PluginSummary{}, err
+	}
+	dir, builtin, err := s.pluginDir(id)
+	if err != nil {
+		return PluginSummary{}, err
+	}
+	if builtin {
+		return PluginSummary{}, fmt.Errorf(
+			"plugins: %q is a builtin plugin and cannot be updated", id)
+	}
+	info, err := os.Stat(src)
+	if err != nil {
+		return PluginSummary{}, fmt.Errorf("plugins: update source: %w", err)
+	}
+	if !info.IsDir() {
+		return PluginSummary{}, fmt.Errorf(
+			"plugins: update source %q is not a directory", src)
+	}
+	cur, err := s.readManifest(id)
+	if err != nil {
+		return PluginSummary{}, err
+	}
+	raw, err := os.ReadFile(filepath.Join(src, "plugin.json"))
+	if err != nil {
+		return PluginSummary{}, fmt.Errorf(
+			"plugins: read source manifest: %w", err)
+	}
+	var probe struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return PluginSummary{}, fmt.Errorf("plugins: decode manifest: %w", err)
+	}
+	m, err := parseManifest(probe.ID, raw)
+	if err != nil {
+		return PluginSummary{}, err
+	}
+	if m.ID != id {
+		return PluginSummary{}, fmt.Errorf(
+			"plugins: update source manifest id %q does not match %q", m.ID, id)
+	}
+	cmp, err := compareVersions(m.Version, cur.Version)
+	if err != nil {
+		return PluginSummary{}, err
+	}
+	if cmp <= 0 {
+		return PluginSummary{}, fmt.Errorf(
+			"plugins: update %q version %q is not newer than installed %q",
+			id, m.Version, cur.Version)
+	}
+	if err := s.checkHostVersion(m); err != nil {
+		return PluginSummary{}, err
+	}
+
+	tmp, err := os.MkdirTemp(s.root, ".plugin-update-")
+	if err != nil {
+		return PluginSummary{}, fmt.Errorf("plugins: update temp dir: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(tmp) }()
+	if err := copyDir(src, tmp); err != nil {
+		return PluginSummary{}, fmt.Errorf("plugins: stage update: %w", err)
+	}
+	if err := preparePluginDir(tmp, m); err != nil {
+		return PluginSummary{}, err
+	}
+
+	backup := filepath.Join(s.root, ".backups", id)
+	if err := os.MkdirAll(filepath.Dir(backup), 0o700); err != nil {
+		return PluginSummary{}, fmt.Errorf("plugins: create backup dir: %w", err)
+	}
+	// Stage the current version as the pending snapshot first; the
+	// previous rollback snapshot is only replaced after the new version
+	// is live, so a failed swap never loses the last good rollback.
+	pending := backup + ".pending"
+	_ = os.RemoveAll(pending)
+	if err := os.Rename(dir, pending); err != nil {
+		return PluginSummary{}, fmt.Errorf("plugins: backup %q: %w", id, err)
+	}
+	if err := os.Rename(tmp, dir); err != nil {
+		restoreErr := os.Rename(pending, dir)
+		return PluginSummary{}, fmt.Errorf(
+			"plugins: replace %q: %w (restore: %v)", id, err, restoreErr)
+	}
+	old := backup + ".old"
+	_ = os.RemoveAll(old)
+	if _, statErr := os.Stat(backup); statErr == nil {
+		if err := os.Rename(backup, old); err != nil {
+			return PluginSummary{}, fmt.Errorf(
+				"plugins: move previous rollback snapshot %q: %w", id, err)
+		}
+	} else if !os.IsNotExist(statErr) {
+		return PluginSummary{}, fmt.Errorf(
+			"plugins: stat rollback snapshot %q: %w", id, statErr)
+	}
+	if err := os.Rename(pending, backup); err != nil {
+		restoreErr := os.Rename(old, backup)
+		return PluginSummary{}, fmt.Errorf(
+			"plugins: commit rollback snapshot %q: %w (restore previous snapshot: %v)",
+			id, err, restoreErr)
+	}
+	_ = os.RemoveAll(old)
+
+	sum := summaryFromManifest(m, dir, true)
+	if state, err := s.readState(); err == nil {
+		if enabled, ok := state[id]; ok {
+			sum.Enabled = enabled
+		}
+	}
 	return sum, nil
+}
+
+// UpdateZip updates a plugin from a zip package. The archive layout
+// follows InstallZip.
+func (s *Store) UpdateZip(id, zipPath string) (PluginSummary, error) {
+	dir, cleanup, err := extractPluginZip(zipPath)
+	if err != nil {
+		return PluginSummary{}, err
+	}
+	defer cleanup()
+	return s.Update(id, dir)
+}
+
+// Rollback restores the previous version snapshot created by Update.
+// The current (new) version is discarded; enabled state, KV data,
+// secrets and inference profile are preserved.
+func (s *Store) Rollback(id string) (PluginSummary, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := ValidateID(id); err != nil {
+		return PluginSummary{}, err
+	}
+	backup := filepath.Join(s.root, ".backups", id)
+	raw, err := os.ReadFile(filepath.Join(backup, "plugin.json"))
+	if err != nil {
+		return PluginSummary{}, fmt.Errorf(
+			"plugins: %q has no rollback snapshot", id)
+	}
+	var probe struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return PluginSummary{}, fmt.Errorf("plugins: decode rollback manifest: %w", err)
+	}
+	m, err := parseManifest(probe.ID, raw)
+	if err != nil {
+		return PluginSummary{}, err
+	}
+	if m.ID != id {
+		return PluginSummary{}, fmt.Errorf(
+			"plugins: rollback manifest id %q does not match %q", m.ID, id)
+	}
+	if err := s.checkHostVersion(m); err != nil {
+		return PluginSummary{}, err
+	}
+	if err := preparePluginDir(backup, m); err != nil {
+		return PluginSummary{}, err
+	}
+	dir := filepath.Join(s.root, id)
+	pending := filepath.Join(s.root, ".backups", id+".discard")
+	_ = os.RemoveAll(pending)
+	if _, err := os.Stat(dir); err == nil {
+		if err := os.Rename(dir, pending); err != nil {
+			return PluginSummary{}, fmt.Errorf(
+				"plugins: move current %q aside: %w", id, err)
+		}
+	} else if !os.IsNotExist(err) {
+		return PluginSummary{}, fmt.Errorf("plugins: stat %q: %w", id, err)
+	}
+	if err := os.Rename(backup, dir); err != nil {
+		restoreErr := os.Rename(pending, dir)
+		return PluginSummary{}, fmt.Errorf(
+			"plugins: restore %q: %w (restore current: %v)", id, err, restoreErr)
+	}
+	_ = os.RemoveAll(pending)
+	sum := summaryFromManifest(m, dir, false)
+	if state, err := s.readState(); err == nil {
+		if enabled, ok := state[id]; ok {
+			sum.Enabled = enabled
+		}
+	}
+	return sum, nil
+}
+
+// checkHostVersion enforces manifest.minHostVersion against the
+// recorded host version when both are present.
+func (s *Store) checkHostVersion(m *Manifest) error {
+	if m.MinHostVersion == "" || s.hostVersion == "" {
+		return nil
+	}
+	cmp, err := compareVersions(m.MinHostVersion, s.hostVersion)
+	if err != nil {
+		return fmt.Errorf("plugins: %w", err)
+	}
+	if cmp > 0 {
+		return fmt.Errorf(
+			"plugins: %q requires host %s, running %s",
+			m.ID, m.MinHostVersion, s.hostVersion)
+	}
+	return nil
+}
+
+const (
+	maxVersionLen        = 64
+	maxVersionSegments   = 4
+	maxPrereleaseIDs     = 8
+	maxVersionIdentifier = 32
+)
+
+// parsedVersion is a semver-shaped dotted numeric version with an
+// optional prerelease. Build metadata is ignored for ordering.
+type parsedVersion struct {
+	core []int
+	pre  []string
+}
+
+// parseVersion accepts "1", "1.2", "1.2.3", optional "v" prefix, an
+// optional "-prerelease" suffix (dot-separated identifiers) and
+// "+build" metadata. Numeric segments must be non-negative integers
+// without leading zeros; prerelease identifiers are bounded.
+func parseVersion(v string) (parsedVersion, error) {
+	orig := v
+	v = strings.TrimSpace(v)
+	v = strings.TrimPrefix(v, "v")
+	if v == "" || len(v) > maxVersionLen {
+		return parsedVersion{}, fmt.Errorf("invalid version %q", orig)
+	}
+	if i := strings.IndexByte(v, '+'); i >= 0 {
+		v = v[:i]
+	}
+	pre := ""
+	if i := strings.IndexByte(v, '-'); i >= 0 {
+		v, pre = v[:i], v[i+1:]
+	}
+	if v == "" {
+		return parsedVersion{}, fmt.Errorf("invalid version %q", orig)
+	}
+	parts := strings.Split(v, ".")
+	if len(parts) > maxVersionSegments {
+		return parsedVersion{}, fmt.Errorf("invalid version %q", orig)
+	}
+	core := make([]int, 0, len(parts))
+	for _, p := range parts {
+		if p == "" || (len(p) > 1 && p[0] == '0') {
+			return parsedVersion{}, fmt.Errorf("invalid version %q", orig)
+		}
+		n, err := strconv.Atoi(p)
+		if err != nil {
+			return parsedVersion{}, fmt.Errorf("invalid version %q", orig)
+		}
+		core = append(core, n)
+	}
+	var preIDs []string
+	if pre != "" {
+		ids := strings.Split(pre, ".")
+		if len(ids) > maxPrereleaseIDs {
+			return parsedVersion{}, fmt.Errorf("invalid version %q", orig)
+		}
+		for _, id := range ids {
+			if id == "" || len(id) > maxVersionIdentifier {
+				return parsedVersion{}, fmt.Errorf("invalid version %q", orig)
+			}
+			preIDs = append(preIDs, id)
+		}
+	}
+	return parsedVersion{core: core, pre: preIDs}, nil
+}
+
+// validateVersion checks that v is a supported version string.
+func validateVersion(v string) error {
+	_, err := parseVersion(v)
+	return err
+}
+
+// ValidateVersion is the exported validation entrypoint used by the
+// update checker before accepting a remote version.
+func ValidateVersion(v string) error { return validateVersion(v) }
+
+// compareVersions orders two version strings semver-style: dotted
+// numeric core, then prerelease precedence (release > any prerelease,
+// numeric identifiers sort before alphanumeric, shorter prerelease
+// sorts first when all identifiers are equal). Missing core segments
+// count as zero so "1" and "1.0.0" compare equal.
+func compareVersions(a, b string) (int, error) {
+	pa, err := parseVersion(a)
+	if err != nil {
+		return 0, fmt.Errorf("plugins: %w", err)
+	}
+	pb, err := parseVersion(b)
+	if err != nil {
+		return 0, fmt.Errorf("plugins: %w", err)
+	}
+	max := len(pa.core)
+	if len(pb.core) > max {
+		max = len(pb.core)
+	}
+	for i := 0; i < max; i++ {
+		var x, y int
+		if i < len(pa.core) {
+			x = pa.core[i]
+		}
+		if i < len(pb.core) {
+			y = pb.core[i]
+		}
+		if x < y {
+			return -1, nil
+		}
+		if x > y {
+			return 1, nil
+		}
+	}
+	if len(pa.pre) == 0 && len(pb.pre) == 0 {
+		return 0, nil
+	}
+	if len(pa.pre) == 0 {
+		return 1, nil
+	}
+	if len(pb.pre) == 0 {
+		return -1, nil
+	}
+	for i := 0; i < len(pa.pre) || i < len(pb.pre); i++ {
+		if i >= len(pa.pre) {
+			return -1, nil
+		}
+		if i >= len(pb.pre) {
+			return 1, nil
+		}
+		x := pa.pre[i]
+		y := pb.pre[i]
+		xn, xerr := strconv.Atoi(x)
+		yn, yerr := strconv.Atoi(y)
+		switch {
+		case xerr == nil && yerr == nil:
+			if xn < yn {
+				return -1, nil
+			}
+			if xn > yn {
+				return 1, nil
+			}
+		case xerr == nil:
+			return -1, nil // numeric identifiers sort below alphanumeric
+		case yerr == nil:
+			return 1, nil
+		default:
+			if x < y {
+				return -1, nil
+			}
+			if x > y {
+				return 1, nil
+			}
+		}
+	}
+	return 0, nil
+}
+
+// rollbackAvailable reports whether a rollback snapshot exists for id.
+func rollbackAvailable(root, id string) bool {
+	path := filepath.Join(root, ".backups", id, "plugin.json")
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var probe struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil || probe.ID != id {
+		return false
+	}
+	_, err = parseManifest(probe.ID, raw)
+	return err == nil
 }
 
 // validateInstalledAgentResources checks that every declared agent
@@ -445,6 +869,26 @@ func validateInstalledAgentResources(dst string, m *Manifest) error {
 	return nil
 }
 
+// preparePluginDir validates every declared agent resource and makes
+// the capability binary executable (ad-hoc signed on macOS). It is
+// the shared gate for install, update staging and rollback restore.
+func preparePluginDir(dir string, m *Manifest) error {
+	if err := validateInstalledAgentResources(dir, m); err != nil {
+		return err
+	}
+	if m.Capability == nil {
+		return nil
+	}
+	bin := filepath.Join(dir, m.Capability.Binary)
+	if err := os.Chmod(bin, 0o755); err != nil {
+		return fmt.Errorf("plugins: make capability binary executable: %w", err)
+	}
+	if err := signAdHoc(bin); err != nil {
+		return err
+	}
+	return nil
+}
+
 // signAdHoc ad-hoc codesigns a capability binary on macOS. An unsigned
 // Mach-O binary under ~/.opencraft is killed by the system's security
 // machinery (SIGKILL on exec); ad-hoc signing marks it as locally
@@ -473,6 +917,8 @@ func signAdHoc(path string) error {
 // Uninstall removes an installed plugin and its enable state. Plugin
 // data (KV) is removed by the caller via KVStore.RemoveAll.
 func (s *Store) Uninstall(id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	_, builtin, err := s.pluginDir(id)
 	if err != nil {
 		return err
@@ -485,6 +931,7 @@ func (s *Store) Uninstall(id string) error {
 	if err := os.RemoveAll(filepath.Join(s.root, id)); err != nil {
 		return fmt.Errorf("plugins: remove %q: %w", id, err)
 	}
+	_ = os.RemoveAll(filepath.Join(s.root, ".backups", id))
 	state, err := s.readState()
 	if err != nil {
 		return err
@@ -509,6 +956,8 @@ func (s *Store) readManifest(id string) (*Manifest, error) {
 // the read path for agent-facing capability discovery (skills, MCP
 // servers, hooks, tools).
 func (s *Store) Manifest(id string) (*Manifest, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.readManifest(id)
 }
 
@@ -516,6 +965,8 @@ func (s *Store) Manifest(id string) (*Manifest, error) {
 // wins over the builtin root). builtin reports whether the plugin is
 // app-bundled and therefore read-only.
 func (s *Store) Dir(id string) (string, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.pluginDir(id)
 }
 
@@ -560,6 +1011,17 @@ func parseManifest(id string, raw []byte) (*Manifest, error) {
 	}
 	if strings.TrimSpace(m.Version) == "" {
 		return nil, fmt.Errorf("plugins: manifest requires version")
+	}
+	if err := validateVersion(m.Version); err != nil {
+		return nil, fmt.Errorf("plugins: version: %w", err)
+	}
+	if m.MinHostVersion != "" {
+		if err := validateVersion(m.MinHostVersion); err != nil {
+			return nil, fmt.Errorf("plugins: minHostVersion: %w", err)
+		}
+	}
+	if err := validateUpdateSource(m.Update); err != nil {
+		return nil, err
 	}
 	if strings.TrimSpace(m.Entry) == "" {
 		return nil, fmt.Errorf("plugins: manifest requires entry")
@@ -724,6 +1186,31 @@ func validateAgentCapabilities(m *Manifest) error {
 				return fmt.Errorf("plugins: tools[%d] (%s): inputSchema must be a JSON object", i, t.Name)
 			}
 		}
+	}
+	return nil
+}
+
+// validateUpdateSource checks the optional update endpoint: http(s),
+// no credentials embedded, no fragment, bounded length.
+func validateUpdateSource(u *PluginUpdateSource) error {
+	if u == nil {
+		return nil
+	}
+	if strings.TrimSpace(u.URL) == "" {
+		return fmt.Errorf("plugins: update.url is required when update is declared")
+	}
+	if len(u.URL) > maxPluginURLLen {
+		return fmt.Errorf("plugins: update.url exceeds %d bytes", maxPluginURLLen)
+	}
+	parsed, err := url.Parse(u.URL)
+	if err != nil ||
+		(parsed.Scheme != "http" && parsed.Scheme != "https") ||
+		parsed.Host == "" ||
+		parsed.User != nil ||
+		parsed.Fragment != "" {
+		return fmt.Errorf(
+			"plugins: update.url %q must be an absolute http(s) URL without credentials or fragment",
+			u.URL)
 	}
 	return nil
 }

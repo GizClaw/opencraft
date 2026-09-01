@@ -65,3 +65,49 @@ permission and fails closed without it:
 
 The hello plugin demonstrates the skills side: `skills/hello/SKILL.md`
 is discovered as a normal skill when the plugin is enabled.
+
+## Update and rollback
+
+Installed user plugins can be updated from a folder or zip through the
+plugin manager. Update enforces:
+
+- the new manifest `id` must match the installed plugin;
+- the new `version` must be strictly newer than the installed one
+  (semver-style ordering: dotted numeric core with optional
+  `-prerelease`, where releases sort above prereleases);
+- `minHostVersion` must not exceed the running host version when the
+  host records one.
+
+The previous version is snapshotted to `<root>/.backups/<id>` before
+the swap, so a failed replace restores it automatically and the UI
+offers an explicit rollback afterwards. Enabled state, KV data,
+secrets and inference profiles survive update and rollback; builtin
+plugins cannot be updated or rolled back.
+
+## Remote update checks (update.url)
+
+Plugins may declare a remote update manifest:
+
+```json
+{
+  "update": {
+    "url": "https://example.com/plugins/hello/latest.json"
+  }
+}
+```
+
+The endpoint must return:
+
+```json
+{
+  "version": "0.2.0",
+  "download_url": "https://example.com/plugins/hello-0.2.0.zip",
+  "checksum": "sha256:<64 hex chars>",
+  "changelog": "What changed"
+}
+```
+
+The host validates the URL (https, no credentials, SSRF guard), the
+remote version, and the sha256 checksum before downloading; the
+downloaded zip then goes through the normal `UpdateZip` pipeline with
+version constraints and rollback. `changelog` is optional.

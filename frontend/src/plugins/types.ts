@@ -30,6 +30,13 @@ export interface PluginKVEntry {
   value: string;
 }
 
+export interface PluginUpdateInfo {
+  version: string;
+  download_url: string;
+  checksum: string;
+  changelog?: string;
+}
+
 export interface PluginSummary {
   id: string;
   name: string;
@@ -47,6 +54,10 @@ export interface PluginSummary {
   hasMcp?: boolean;
   hasHooks?: boolean;
   hasTools?: boolean;
+  /** Plugin declares an update.url endpoint. */
+  hasUpdate?: boolean;
+  /** A rollback snapshot of the previous version is available. */
+  canRollback?: boolean;
 }
 
 export interface SettingsPanelContribution {

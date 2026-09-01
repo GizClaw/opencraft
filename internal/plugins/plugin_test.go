@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -226,6 +227,7 @@ func TestManifestValidatesAgentCapabilities(t *testing.T) {
 		"permissions": []string{
 			"skills:contribute", "mcp:contribute", "hooks:register", "tools:expose",
 		},
+		"update":     map[string]any{"url": "https://example.com/plugin/latest.json"},
 		"skills":     []string{"skills"},
 		"mcpServers": []any{map[string]any{"name": "srv", "transport": "stdio", "command": "bin/srv"}},
 		"hooks":      []string{"hooks/hooks.json"},
@@ -243,7 +245,7 @@ func TestManifestValidatesAgentCapabilities(t *testing.T) {
 		t.Fatalf("List = %+v, want one valid plugin", list)
 	}
 	p := list[0]
-	if p.Error != "" || !p.HasSkills || !p.HasMCP || !p.HasHooks || !p.HasTools {
+	if p.Error != "" || !p.HasSkills || !p.HasMCP || !p.HasHooks || !p.HasTools || !p.HasUpdate {
 		t.Fatalf("agent plugin summary = %+v", p)
 	}
 }
@@ -329,6 +331,29 @@ func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
 				}},
 			},
 		},
+		{
+			name: "invalid version format",
+			m: map[string]any{
+				"id": "x", "name": "X", "version": "abc",
+				"entry": "dist/index.js", "permissions": []string{},
+			},
+		},
+		{
+			name: "update url ftp scheme",
+			m: map[string]any{
+				"id": "x", "name": "X", "version": "0.1.0",
+				"entry": "dist/index.js", "permissions": []string{},
+				"update": map[string]any{"url": "ftp://example.com/latest.json"},
+			},
+		},
+		{
+			name: "update url with credentials",
+			m: map[string]any{
+				"id": "x", "name": "X", "version": "0.1.0",
+				"entry": "dist/index.js", "permissions": []string{},
+				"update": map[string]any{"url": "https://user:pass@example.com/latest.json"},
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -361,5 +386,260 @@ func TestInstallRejectsMissingAgentResources(t *testing.T) {
 	s := NewStore(t.TempDir())
 	if _, err := s.Install(filepath.Join(srcRoot, "broken")); err == nil {
 		t.Fatal("installing a plugin with missing declared resources must fail")
+	}
+}
+
+func TestStoreUpdateRollsBackAndPreservesState(t *testing.T) {
+	root := t.TempDir()
+	oldSrc := t.TempDir()
+	writePlugin(t, oldSrc, "p", map[string]any{
+		"id": "p", "name": "P", "version": "0.1.0",
+		"entry": "dist/index.js", "permissions": []string{},
+	}, "old-bundle")
+	newSrc := t.TempDir()
+	writePlugin(t, newSrc, "p", map[string]any{
+		"id": "p", "name": "P", "version": "0.2.0",
+		"entry": "dist/index.js", "permissions": []string{},
+	}, "new-bundle")
+
+	s := NewStore(root)
+	if _, err := s.Install(filepath.Join(oldSrc, "p")); err != nil {
+		t.Fatalf("Install: %v", err)
+	}
+	if err := s.SetEnabled("p", false); err != nil {
+		t.Fatal(err)
+	}
+
+	sum, err := s.Update("p", filepath.Join(newSrc, "p"))
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+	if sum.Version != "0.2.0" || sum.Enabled {
+		t.Fatalf("updated summary = %+v, want 0.2.0 and disabled preserved", sum)
+	}
+	if bundle, _ := s.Bundle("p"); bundle != "new-bundle" {
+		t.Fatalf("bundle after update = %q", bundle)
+	}
+	if _, err := s.Update("p", filepath.Join(oldSrc, "p")); err == nil {
+		t.Fatal("downgrade/equal version update must be rejected")
+	}
+	list, _ := s.List()
+	if len(list) != 1 || !list[0].CanRollback {
+		t.Fatalf("list after update = %+v, want rollback available", list)
+	}
+
+	rb, err := s.Rollback("p")
+	if err != nil {
+		t.Fatalf("Rollback: %v", err)
+	}
+	if rb.Version != "0.1.0" || rb.Enabled {
+		t.Fatalf("rollback summary = %+v", rb)
+	}
+	if bundle, _ := s.Bundle("p"); bundle != "old-bundle" {
+		t.Fatalf("bundle after rollback = %q", bundle)
+	}
+	list, _ = s.List()
+	if len(list) != 1 || list[0].CanRollback {
+		t.Fatalf("list after rollback = %+v, want no rollback snapshot", list)
+	}
+}
+
+func TestStoreUpdateZip(t *testing.T) {
+	root := t.TempDir()
+	oldSrc := t.TempDir()
+	writePlugin(t, oldSrc, "p", map[string]any{
+		"id": "p", "name": "P", "version": "0.1.0",
+		"entry": "dist/index.js", "permissions": []string{},
+	}, "old")
+	zipPath := writeTestZip(t, map[string]string{
+		"plugin.json":   `{"id":"p","name":"P","version":"0.2.0","entry":"dist/index.js","permissions":[]}`,
+		"dist/index.js": "new",
+	})
+	s := NewStore(root)
+	if _, err := s.Install(filepath.Join(oldSrc, "p")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateZip("p", zipPath); err != nil {
+		t.Fatalf("UpdateZip: %v", err)
+	}
+	if bundle, _ := s.Bundle("p"); bundle != "new" {
+		t.Fatalf("bundle after UpdateZip = %q", bundle)
+	}
+}
+
+func TestStoreEnforcesMinHostVersion(t *testing.T) {
+	root := t.TempDir()
+	src := t.TempDir()
+	writePlugin(t, src, "p", map[string]any{
+		"id": "p", "name": "P", "version": "0.1.0",
+		"minHostVersion": "0.3.0", "entry": "dist/index.js",
+		"permissions": []string{},
+	}, "")
+	s := NewStore(root)
+	s.SetHostVersion("0.2.0")
+	if _, err := s.Install(filepath.Join(src, "p")); err == nil {
+		t.Fatal("install with minHostVersion above host must fail")
+	}
+}
+
+func TestStoreUpdateRejectsMinHostVersion(t *testing.T) {
+	root := t.TempDir()
+	oldSrc := t.TempDir()
+	writePlugin(t, oldSrc, "p", map[string]any{
+		"id": "p", "name": "P", "version": "0.1.0",
+		"entry": "dist/index.js", "permissions": []string{},
+	}, "")
+	newSrc := t.TempDir()
+	writePlugin(t, newSrc, "p", map[string]any{
+		"id": "p", "name": "P", "version": "0.2.0",
+		"minHostVersion": "0.9.0", "entry": "dist/index.js",
+		"permissions": []string{},
+	}, "")
+	s := NewStore(root)
+	s.SetHostVersion("0.5.0")
+	if _, err := s.Install(filepath.Join(oldSrc, "p")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Update("p", filepath.Join(newSrc, "p")); err == nil {
+		t.Fatal("update with minHostVersion above host must fail")
+	}
+}
+
+func TestRollbackRestoresWhenCurrentMissing(t *testing.T) {
+	root := t.TempDir()
+	oldSrc := t.TempDir()
+	writePlugin(t, oldSrc, "p", map[string]any{
+		"id": "p", "name": "P", "version": "0.1.0",
+		"entry": "dist/index.js", "permissions": []string{},
+	}, "old")
+	newSrc := t.TempDir()
+	writePlugin(t, newSrc, "p", map[string]any{
+		"id": "p", "name": "P", "version": "0.2.0",
+		"entry": "dist/index.js", "permissions": []string{},
+	}, "new")
+	s := NewStore(root)
+	if _, err := s.Install(filepath.Join(oldSrc, "p")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Update("p", filepath.Join(newSrc, "p")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(root, "p")); err != nil {
+		t.Fatal(err)
+	}
+	sum, err := s.Rollback("p")
+	if err != nil {
+		t.Fatalf("rollback with missing current dir: %v", err)
+	}
+	if sum.Version != "0.1.0" {
+		t.Fatalf("rollback version = %q", sum.Version)
+	}
+	if bundle, _ := s.Bundle("p"); bundle != "old" {
+		t.Fatalf("bundle after rollback = %q", bundle)
+	}
+}
+
+func TestRollbackRejectsTamperedBackup(t *testing.T) {
+	root := t.TempDir()
+	oldSrc := t.TempDir()
+	writePlugin(t, oldSrc, "p", map[string]any{
+		"id": "p", "name": "P", "version": "0.1.0",
+		"entry":       "dist/index.js",
+		"permissions": []string{"skills:contribute"},
+		"skills":      []string{"skills"},
+	}, "")
+	if err := os.MkdirAll(filepath.Join(oldSrc, "p", "skills"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	newSrc := t.TempDir()
+	writePlugin(t, newSrc, "p", map[string]any{
+		"id": "p", "name": "P", "version": "0.2.0",
+		"entry": "dist/index.js", "permissions": []string{},
+	}, "")
+	s := NewStore(root)
+	if _, err := s.Install(filepath.Join(oldSrc, "p")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Update("p", filepath.Join(newSrc, "p")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(root, ".backups", "p", "skills")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Rollback("p"); err == nil {
+		t.Fatal("rollback of a tampered backup must fail validation")
+	}
+}
+
+func TestCompareVersionsSemverPrecedence(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want int
+	}{
+		{"1.0.0", "1.0.0", 0},
+		{"1", "1.0.0", 0},
+		{"1.0.1", "1.0.0", 1},
+		{"1.0.0", "1.0.0-beta", 1},
+		{"1.0.0-beta", "1.0.0-rc.1", -1},
+		{"1.0.0-alpha.2", "1.0.0-alpha.10", -1},
+	}
+	for _, tc := range cases {
+		got, err := compareVersions(tc.a, tc.b)
+		if err != nil {
+			t.Fatalf("compareVersions(%q, %q): %v", tc.a, tc.b, err)
+		}
+		if got != tc.want {
+			t.Errorf("compareVersions(%q, %q) = %d, want %d", tc.a, tc.b, got, tc.want)
+		}
+	}
+	if _, err := compareVersions("abc", "1.0.0"); err == nil {
+		t.Fatal("invalid version must be rejected")
+	}
+}
+
+func TestConcurrentUpdateIsSerialized(t *testing.T) {
+	root := t.TempDir()
+	oldSrc := t.TempDir()
+	writePlugin(t, oldSrc, "p", map[string]any{
+		"id": "p", "name": "P", "version": "0.1.0",
+		"entry": "dist/index.js", "permissions": []string{},
+	}, "old")
+	newA := t.TempDir()
+	writePlugin(t, newA, "p", map[string]any{
+		"id": "p", "name": "P", "version": "0.2.0",
+		"entry": "dist/index.js", "permissions": []string{},
+	}, "new-a")
+	newB := t.TempDir()
+	writePlugin(t, newB, "p", map[string]any{
+		"id": "p", "name": "P", "version": "0.2.0",
+		"entry": "dist/index.js", "permissions": []string{},
+	}, "new-b")
+	s := NewStore(root)
+	if _, err := s.Install(filepath.Join(oldSrc, "p")); err != nil {
+		t.Fatal(err)
+	}
+	results := make(chan error, 2)
+	var wg sync.WaitGroup
+	for _, src := range []string{filepath.Join(newA, "p"), filepath.Join(newB, "p")} {
+		wg.Add(1)
+		go func(src string) {
+			defer wg.Done()
+			_, err := s.Update("p", src)
+			results <- err
+		}(src)
+	}
+	wg.Wait()
+	close(results)
+	success := 0
+	failures := 0
+	for err := range results {
+		if err == nil {
+			success++
+		} else {
+			failures++
+		}
+	}
+	if success != 1 || failures != 1 {
+		t.Fatalf("concurrent updates: success=%d failures=%d, want 1/1", success, failures)
 	}
 }

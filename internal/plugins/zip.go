@@ -21,17 +21,32 @@ const (
 // and that folder is installed through the normal Install path
 // (manifest validation, exec bit, ad-hoc signing).
 func (s *Store) InstallZip(zipPath string) (PluginSummary, error) {
+	dir, cleanup, err := extractPluginZip(zipPath)
+	if err != nil {
+		return PluginSummary{}, err
+	}
+	defer cleanup()
+	return s.Install(dir)
+}
+
+// extractPluginZip extracts a plugin package into a temporary
+// directory and returns it plus a cleanup func. The archive may carry
+// the plugin files at its root or under a single top-level directory;
+// plugin.json is located and that folder is returned.
+func extractPluginZip(zipPath string) (string, func(), error) {
 	zr, err := zip.OpenReader(zipPath)
 	if err != nil {
-		return PluginSummary{}, fmt.Errorf("plugins: open zip: %w", err)
+		return "", nil, fmt.Errorf("plugins: open zip: %w", err)
 	}
-	defer func() { _ = zr.Close() }()
-
 	tmp, err := os.MkdirTemp("", "oc-plugin-*")
 	if err != nil {
-		return PluginSummary{}, fmt.Errorf("plugins: temp dir: %w", err)
+		_ = zr.Close()
+		return "", nil, fmt.Errorf("plugins: temp dir: %w", err)
 	}
-	defer func() { _ = os.RemoveAll(tmp) }()
+	cleanup := func() {
+		_ = zr.Close()
+		_ = os.RemoveAll(tmp)
+	}
 
 	var total int64
 	manifestDir := ""
@@ -40,7 +55,8 @@ func (s *Store) InstallZip(zipPath string) (PluginSummary, error) {
 		if name == ".." ||
 			strings.HasPrefix(name, ".."+string(filepath.Separator)) ||
 			filepath.IsAbs(name) {
-			return PluginSummary{}, fmt.Errorf(
+			cleanup()
+			return "", nil, fmt.Errorf(
 				"plugins: zip entry escapes archive: %q", f.Name)
 		}
 		if f.FileInfo().IsDir() {
@@ -48,44 +64,51 @@ func (s *Store) InstallZip(zipPath string) (PluginSummary, error) {
 		}
 		if f.UncompressedSize64 > maxPluginZipFile ||
 			total+int64(f.UncompressedSize64) > maxPluginZipTotal {
-			return PluginSummary{}, fmt.Errorf(
+			cleanup()
+			return "", nil, fmt.Errorf(
 				"plugins: zip entry too large: %q", f.Name)
 		}
 		total += int64(f.UncompressedSize64)
 
 		target := filepath.Join(tmp, name)
 		if !strings.HasPrefix(target, tmp+string(filepath.Separator)) {
-			return PluginSummary{}, fmt.Errorf(
+			cleanup()
+			return "", nil, fmt.Errorf(
 				"plugins: zip entry escapes archive: %q", f.Name)
 		}
 		if filepath.Base(name) == "plugin.json" {
 			manifestDir = filepath.Dir(name)
 		}
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return PluginSummary{}, err
+			cleanup()
+			return "", nil, err
 		}
 		rc, err := f.Open()
 		if err != nil {
-			return PluginSummary{}, err
+			cleanup()
+			return "", nil, err
 		}
 		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 		if err != nil {
 			_ = rc.Close()
-			return PluginSummary{}, err
+			cleanup()
+			return "", nil, err
 		}
 		_, copyErr := io.Copy(out, rc)
 		_ = rc.Close()
 		_ = out.Close()
 		if copyErr != nil {
-			return PluginSummary{}, fmt.Errorf(
+			cleanup()
+			return "", nil, fmt.Errorf(
 				"plugins: extract %q: %w", f.Name, copyErr)
 		}
 	}
 	if manifestDir == "" {
-		return PluginSummary{}, errors.New("plugins: zip has no plugin.json")
+		cleanup()
+		return "", nil, errors.New("plugins: zip has no plugin.json")
 	}
 	if manifestDir == "." {
 		manifestDir = ""
 	}
-	return s.Install(filepath.Join(tmp, manifestDir))
+	return filepath.Join(tmp, manifestDir), cleanup, nil
 }
