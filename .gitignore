@@ -73,3 +73,7 @@ build/bin/**
 # bootstrapper on every -nsis build; keep them out of git.
 build/windows/installer/
 build/windows/installer/**
+
+# macOS junk stays out of the repo (whitelist mode: re-ignore after the
+# !build/** negation above).
+**/.DS_Store
