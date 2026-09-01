@@ -228,6 +228,7 @@ func New(opts Options) (*App, error) {
 		trayIcon:         opts.TrayIcon,
 		trayIconTemplate: opts.TrayIconTemplate,
 	}
+	a.plugins.SetHostVersion(app.ServiceVersion)
 	a.cap = pluginruntime.NewManager(pluginDir, pluginruntime.DefaultLoader{
 		Root: pluginDir,
 		CapabilityFunc: func(id string) (pluginruntime.Capability, bool, error) {

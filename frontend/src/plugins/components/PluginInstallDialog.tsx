@@ -4,18 +4,30 @@ import { useTranslation } from 'react-i18next';
 import { api } from '../../lib/api';
 import { usePluginStore } from '../store';
 
-// PluginInstallDialog installs a plugin from a local directory
-// containing plugin.json or from a zip package (release artifact).
-export function PluginInstallDialog({ onClose }: { onClose: () => void }) {
+// PluginInstallDialog installs or updates a plugin from a local
+// directory containing plugin.json or from a zip package. When
+// pluginId is set it runs the update flow instead of install.
+export function PluginInstallDialog({
+  onClose,
+  pluginId,
+}: {
+  onClose: () => void;
+  pluginId?: string;
+}) {
   const { t } = useTranslation();
   const load = usePluginStore((s) => s.load);
   const [path, setPath] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const isUpdate = pluginId !== undefined;
 
   const pick = async () => {
     try {
-      const dir = await api.pickFolder(t('config.pluginsInstallTitle'));
+      const dir = await api.pickFolder(
+        t(
+          isUpdate ? 'config.pluginsUpdateTitle' : 'config.pluginsInstallTitle',
+        ),
+      );
       if (dir) {
         setPath(dir);
         setError('');
@@ -27,7 +39,12 @@ export function PluginInstallDialog({ onClose }: { onClose: () => void }) {
 
   const pickZip = async () => {
     try {
-      const file = await api.pickFile(t('config.pluginsInstallTitle'), '*.zip');
+      const file = await api.pickFile(
+        t(
+          isUpdate ? 'config.pluginsUpdateTitle' : 'config.pluginsInstallTitle',
+        ),
+        '*.zip',
+      );
       if (file) {
         setPath(file);
         setError('');
@@ -44,9 +61,17 @@ export function PluginInstallDialog({ onClose }: { onClose: () => void }) {
     setError('');
     try {
       if (p.toLowerCase().endsWith('.zip')) {
-        await api.pluginInstallZip(p);
+        if (isUpdate) {
+          await api.pluginUpdateZip(pluginId, p);
+        } else {
+          await api.pluginInstallZip(p);
+        }
       } else {
-        await api.pluginInstall(p);
+        if (isUpdate) {
+          await api.pluginUpdate(pluginId, p);
+        } else {
+          await api.pluginInstall(p);
+        }
       }
       await load();
       onClose();
@@ -68,14 +93,20 @@ export function PluginInstallDialog({ onClose }: { onClose: () => void }) {
       >
         <div className="flex items-center justify-between border-b border-edge px-4 py-3">
           <h3 className="text-sm font-semibold">
-            {t('config.pluginsInstall')}
+            {t(isUpdate ? 'config.pluginsUpdate' : 'config.pluginsInstall')}
           </h3>
           <button onClick={onClose} className="text-dim hover:text-fg">
             <X size="1.1429rem" />
           </button>
         </div>
         <div className="flex flex-col gap-3 p-4">
-          <p className="text-xs text-dim">{t('config.pluginsInstallHint')}</p>
+          <p className="text-xs text-dim">
+            {t(
+              isUpdate
+                ? 'config.pluginsUpdateHint'
+                : 'config.pluginsInstallHint',
+            )}
+          </p>
           <div className="flex gap-2">
             <input
               value={path}
@@ -83,7 +114,11 @@ export function PluginInstallDialog({ onClose }: { onClose: () => void }) {
               onKeyDown={(e) => {
                 if (e.key === 'Enter') void install();
               }}
-              placeholder={t('config.pluginsInstallPathPlaceholder')}
+              placeholder={t(
+                isUpdate
+                  ? 'config.pluginsUpdatePathPlaceholder'
+                  : 'config.pluginsInstallPathPlaceholder',
+              )}
               className="min-w-0 flex-1 rounded-lg border border-edge bg-panel2 px-2.5 py-1.5 text-xs text-fg outline-none focus:border-accent"
               autoFocus
             />
@@ -118,7 +153,7 @@ export function PluginInstallDialog({ onClose }: { onClose: () => void }) {
               className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs text-white hover:opacity-90 disabled:opacity-50"
             >
               {busy && <Loader2 size="0.8571rem" className="animate-spin" />}
-              {t('config.pluginsInstall')}
+              {t(isUpdate ? 'config.pluginsUpdate' : 'config.pluginsInstall')}
             </button>
           </div>
         </div>

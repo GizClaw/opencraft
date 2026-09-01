@@ -7,6 +7,7 @@ import (
 	"errors"
 
 	"github.com/GizClaw/opencraft/internal/plugins"
+	pluginupdate "github.com/GizClaw/opencraft/internal/plugins/update"
 )
 
 // PluginList returns every installed plugin.
@@ -67,6 +68,116 @@ func (a *App) PluginInstallZip(zipPath string) (plugins.PluginSummary, error) {
 	sum, err := a.plugins.InstallZip(zipPath)
 	if err != nil {
 		return plugins.PluginSummary{}, err
+	}
+	if err := a.refreshAgentPlugins(); err != nil {
+		return plugins.PluginSummary{}, err
+	}
+	return sum, nil
+}
+
+// PluginUpdate replaces an installed plugin with a newer version from
+// a local directory. The previous version is kept for rollback.
+func (a *App) PluginUpdate(id, src string) (plugins.PluginSummary, error) {
+	if a.plugins == nil {
+		return plugins.PluginSummary{}, errors.New("plugin store is not ready")
+	}
+	sum, err := a.plugins.Update(id, src)
+	if err != nil {
+		return plugins.PluginSummary{}, err
+	}
+	if a.cap != nil {
+		a.cap.Stop(id)
+	}
+	if err := a.refreshAgentPlugins(); err != nil {
+		return plugins.PluginSummary{}, err
+	}
+	return sum, nil
+}
+
+// PluginUpdateZip updates a plugin from a zip package.
+func (a *App) PluginUpdateZip(id, zipPath string) (plugins.PluginSummary, error) {
+	if a.plugins == nil {
+		return plugins.PluginSummary{}, errors.New("plugin store is not ready")
+	}
+	sum, err := a.plugins.UpdateZip(id, zipPath)
+	if err != nil {
+		return plugins.PluginSummary{}, err
+	}
+	if a.cap != nil {
+		a.cap.Stop(id)
+	}
+	if err := a.refreshAgentPlugins(); err != nil {
+		return plugins.PluginSummary{}, err
+	}
+	return sum, nil
+}
+
+// PluginRollback restores the previous version snapshot of a plugin.
+func (a *App) PluginRollback(id string) (plugins.PluginSummary, error) {
+	if a.plugins == nil {
+		return plugins.PluginSummary{}, errors.New("plugin store is not ready")
+	}
+	sum, err := a.plugins.Rollback(id)
+	if err != nil {
+		return plugins.PluginSummary{}, err
+	}
+	if a.cap != nil {
+		a.cap.Stop(id)
+	}
+	if err := a.refreshAgentPlugins(); err != nil {
+		return plugins.PluginSummary{}, err
+	}
+	return sum, nil
+}
+
+// PluginCheckUpdate fetches the plugin's declared update manifest and
+// returns the newest version metadata without applying anything.
+func (a *App) PluginCheckUpdate(id string) (plugins.UpdateInfo, error) {
+	if a.plugins == nil {
+		return plugins.UpdateInfo{}, errors.New("plugin store is not ready")
+	}
+	m, err := a.plugins.Manifest(id)
+	if err != nil {
+		return plugins.UpdateInfo{}, err
+	}
+	if m.Update == nil {
+		return plugins.UpdateInfo{}, errors.New(
+			"plugin does not declare an update url")
+	}
+	return pluginupdate.Check(a.appContext(), m.Update.URL)
+}
+
+// PluginApplyUpdate checks the update manifest, downloads and verifies
+// the package, then applies it through the normal update pipeline
+// (version constraint, resource validation, rollback snapshot).
+func (a *App) PluginApplyUpdate(id string) (plugins.PluginSummary, error) {
+	if a.plugins == nil {
+		return plugins.PluginSummary{}, errors.New("plugin store is not ready")
+	}
+	m, err := a.plugins.Manifest(id)
+	if err != nil {
+		return plugins.PluginSummary{}, err
+	}
+	if m.Update == nil {
+		return plugins.PluginSummary{}, errors.New(
+			"plugin does not declare an update url")
+	}
+	info, err := pluginupdate.Check(a.appContext(), m.Update.URL)
+	if err != nil {
+		return plugins.PluginSummary{}, err
+	}
+	zipPath, cleanup, err := pluginupdate.FetchZip(
+		a.appContext(), info, pluginupdate.Policy{})
+	if err != nil {
+		return plugins.PluginSummary{}, err
+	}
+	defer cleanup()
+	sum, err := a.plugins.UpdateZip(id, zipPath)
+	if err != nil {
+		return plugins.PluginSummary{}, err
+	}
+	if a.cap != nil {
+		a.cap.Stop(id)
 	}
 	if err := a.refreshAgentPlugins(); err != nil {
 		return plugins.PluginSummary{}, err
