@@ -222,11 +222,11 @@ func (a *App) sessionExistsInWorkspace(workspace, id string) (bool, error) {
 // workspace. The task never reuses the UI runtime, so it runs even
 // when task.Workspace is not the currently open workspace.
 func (a *App) runAutomation(
-	ctx context.Context, task automations.Task,
+	_ context.Context, task automations.Task,
 ) (automations.RunResult, error) {
 	// The scheduler passes a background context; tie the run to the
 	// app lifecycle instead so shutdown cancels the wait.
-	ctx = a.appContext()
+	ctx := a.appContext()
 	failed := func(err error) (automations.RunResult, error) {
 		return automations.RunResult{Status: automations.RunFailed}, err
 	}

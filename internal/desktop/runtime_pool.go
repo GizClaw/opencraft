@@ -348,10 +348,6 @@ func (h *backgroundHost) runTurn(
 		if !store.Exists(contextID) {
 			return TurnStart{}, fmt.Errorf("session %s not found", contextID)
 		}
-		m, err := store.Mode(ctx, contextID)
-		if err != nil {
-			return TurnStart{}, fmt.Errorf("load session mode: %w", err)
-		}
 		thinkLevel, err := store.Think(ctx, contextID)
 		if err != nil {
 			thinkLevel = ocsessions.ThinkMedium
@@ -360,7 +356,6 @@ func (h *backgroundHost) runTurn(
 		if err != nil {
 			modelHint = ""
 		}
-		mode = m
 		think = string(thinkLevel)
 		model = modelHint
 	} else {

@@ -178,7 +178,7 @@ func TestManagerConcurrencyLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	m, err := NewManager(store, ManagerOptions{
 		Run:    run,
 		Now:    func() time.Time { return time.Now() },
@@ -238,7 +238,7 @@ func TestManagerStartReconcilesStaleRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	task := saveDailyTask(t, store, "brief")
 	if _, err := store.AppendRun(context.Background(), Run{
 		TaskID: task.ID,
