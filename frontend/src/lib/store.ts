@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import i18n from '../i18n';
 import { api } from './api';
+import { sanitizeToolResult } from './ansi';
 import type {
   AgentSummary,
   AttachmentView,
@@ -231,7 +232,7 @@ const historyToMessages = (history: HistoryMessage[]): MessageView[] => {
         );
         if (call) {
           call.item.tool.status = p.result.is_error ? 'error' : 'done';
-          call.item.tool.result = p.result.content;
+          call.item.tool.result = sanitizeToolResult(p.result.content ?? '');
         }
       }
       continue;
@@ -435,7 +436,7 @@ function applyStream(
               status: part.result.is_error
                 ? ('error' as const)
                 : ('done' as const),
-              result: part.result.content ?? '',
+              result: sanitizeToolResult(part.result.content ?? ''),
             },
           };
         });
