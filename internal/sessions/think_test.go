@@ -15,11 +15,17 @@ func TestThinkDefaultAndRoundTrip(t *testing.T) {
 	if level, err := store.Think(context.Background(), "s-missing"); err != nil || level != ThinkMedium {
 		t.Errorf("Think(missing) = %q, %v; want medium, nil", level, err)
 	}
-	if err := store.SetThink(context.Background(), "s-x", ThinkHigh); err != nil {
+	if err := store.SetThink(context.Background(), "s-x", ThinkMinimal); err != nil {
 		t.Fatal(err)
 	}
-	if level, err := store.Think(context.Background(), "s-x"); err != nil || level != ThinkHigh {
-		t.Errorf("Think(s-x) = %q, %v; want high, nil", level, err)
+	if level, err := store.Think(context.Background(), "s-x"); err != nil || level != ThinkMinimal {
+		t.Errorf("Think(s-x) = %q, %v; want minimal, nil", level, err)
+	}
+	if err := store.SetThink(context.Background(), "s-x", ThinkXHigh); err != nil {
+		t.Fatal(err)
+	}
+	if level, err := store.Think(context.Background(), "s-x"); err != nil || level != ThinkXHigh {
+		t.Errorf("Think(s-x) = %q, %v; want xhigh, nil", level, err)
 	}
 }
 

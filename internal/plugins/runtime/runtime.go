@@ -62,13 +62,15 @@ type InferenceProfile struct {
 // outputs); the legacy vision shortcut remains for older plugins and
 // the host normalizes it (image input + text output).
 type ProfileModel struct {
-	Name      string   `json:"name"`
-	Inputs    []string `json:"inputs,omitempty"`
-	Outputs   []string `json:"outputs,omitempty"`
-	Reasoning string   `json:"reasoning,omitempty"`
-	WebSearch bool     `json:"web_search,omitempty"`
-	Endpoint  string   `json:"endpoint,omitempty"`
-	Vision    bool     `json:"vision,omitempty"`
+	Name               string            `json:"name"`
+	Inputs             []string          `json:"inputs,omitempty"`
+	Outputs            []string          `json:"outputs,omitempty"`
+	Reasoning          string            `json:"reasoning,omitempty"`
+	ReasoningEffortMap map[string]string `json:"reasoning_effort_map,omitempty"`
+	EffortNone         bool              `json:"effort_none,omitempty"`
+	WebSearch          bool              `json:"web_search,omitempty"`
+	Endpoint           string            `json:"endpoint,omitempty"`
+	Vision             bool              `json:"vision,omitempty"`
 }
 
 // InferenceHandler is the host-side write path for inference profiles.

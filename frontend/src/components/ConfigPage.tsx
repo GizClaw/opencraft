@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentType } from 'react';
 import {
   ArrowDown,
@@ -31,6 +31,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import { LogViewer } from './LogViewer';
@@ -41,6 +42,7 @@ import type {
   DiagnosticsReport,
   MemorySettings,
   ModelUsageStat,
+  ModelTemplate,
   PolicyDecision,
   ProviderInstance,
   ProviderView,
@@ -56,9 +58,13 @@ import { EventsOn } from '../../wailsjs/runtime/runtime';
 // InstanceRow is one editable inference instance in the settings page.
 interface RowModel {
   name: string;
+  kind: string;
   inputs: string[];
   outputs: string[];
   reasoning: string;
+  reasoningEffortMap: Record<string, string>;
+  effortNone: boolean;
+  dimensions: boolean;
   webSearch: boolean;
   endpoint: string;
 }
@@ -89,6 +95,42 @@ type Tab =
   | 'logs'
   | 'diagnostics'
   | 'kanban';
+
+// EFFORT_LEVELS is the canonical reasoning effort ladder flowcraft
+// exposes; each level maps to a provider-specific wire token.
+const EFFORT_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh'] as const;
+
+// effortMapComplete reports whether a non-empty effort map defines all
+// five canonical levels. flowcraft rejects partial maps.
+function effortMapComplete(m: RowModel): boolean {
+  return EFFORT_LEVELS.every(
+    (level) => (m.reasoningEffortMap[level] ?? '').trim() !== '',
+  );
+}
+
+// modelFromTemplate lowers one driver built-in template into an
+// editable model row (capabilities are prefilled, not locked).
+function modelFromTemplate(t: ModelTemplate) {
+  return {
+    name: t.name,
+    kind: t.kind,
+    inputs: t.inputs ?? [],
+    outputs: t.outputs ?? [],
+    reasoning: t.reasoning,
+    reasoningEffortMap: t.reasoning_effort_map ?? {},
+    effortNone: t.effort_none ?? false,
+    dimensions: t.dimensions,
+    webSearch: t.web_search,
+  };
+}
+
+function templateFor(
+  templates: Map<string, ModelTemplate[]>,
+  type: string,
+  name: string,
+): ModelTemplate | undefined {
+  return templates.get(type)?.find((t) => t.name === name);
+}
 
 export function ConfigPage() {
   const configured = useStore((s) => s.configured);
@@ -128,8 +170,44 @@ export function ConfigPage() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [closeConfig]);
+
   const [rows, setRows] = useState<InstanceRow[]>([]);
   const [catalog, setCatalog] = useState<ProviderView[]>([]);
+  const [modelTemplates, setModelTemplates] = useState<
+    Map<string, ModelTemplate[]>
+  >(new Map());
+  const [catalogErrors, setCatalogErrors] = useState<Map<string, string>>(
+    new Map(),
+  );
+  const [modelMenu, setModelMenu] = useState<string | null>(null);
+  const [menuRect, setMenuRect] = useState<{
+    top: number;
+    left: number;
+    width: number;
+  } | null>(null);
+  const modelMenuRef = useRef<HTMLDivElement | null>(null);
+
+  // The catalog dropdown is portaled to document.body so the provider
+  // card's overflow-hidden cannot clip it. Scrolling or resizing
+  // outside the dropdown closes it rather than leaving a stale
+  // position; scrolling inside the dropdown list itself keeps working.
+  useEffect(() => {
+    if (!modelMenu) return;
+    const close = (e: Event) => {
+      const target = e.target;
+      if (target instanceof Node && modelMenuRef.current?.contains(target)) {
+        return;
+      }
+      setModelMenu(null);
+    };
+    const closeOnResize = () => setModelMenu(null);
+    document.addEventListener('scroll', close, true);
+    window.addEventListener('resize', closeOnResize);
+    return () => {
+      document.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', closeOnResize);
+    };
+  }, [modelMenu]);
   const [newType, setNewType] = useState('deepseek');
   const [defaultModel, setDefaultModel] = useState('');
   const [error, setError] = useState('');
@@ -174,22 +252,39 @@ export function ConfigPage() {
 
   const loadInference = useCallback(async () => {
     try {
-      const [providers, state] = await Promise.all([
+      const [providers, state, catalogs] = await Promise.all([
         api.providers(),
         api.configState(),
+        api.modelCatalog(),
       ]);
       setCatalog(providers);
+      const templates = new Map(
+        (catalogs ?? []).map((c) => [c.provider, c.models]),
+      );
+      const errors = new Map(
+        (catalogs ?? [])
+          .filter((c) => c.error)
+          .map((c) => [c.provider, c.error as string]),
+      );
+      setModelTemplates(templates);
+      setCatalogErrors(errors);
       const byType = new Map(providers.map((p) => [p.id, p]));
       setRows(
         (state.instances ?? []).map((s) => {
           const models = (s.models ?? []).map((m) => ({
             name: m.name ?? '',
+            kind: m.kind ?? '',
             inputs: m.inputs ?? [],
             outputs: m.outputs ?? [],
             reasoning: m.reasoning ?? '',
+            reasoningEffortMap: m.reasoning_effort_map ?? {},
+            effortNone: m.effort_none ?? false,
+            dimensions: m.dimensions ?? false,
             webSearch: m.web_search ?? false,
             endpoint: m.endpoint ?? '',
           }));
+          const defaultName = byType.get(s.type)?.default_model ?? '';
+          const defaultTpl = templateFor(templates, s.type, defaultName);
           return {
             id: newID(),
             stableId: s.stable_id ?? '',
@@ -204,14 +299,20 @@ export function ConfigPage() {
               models.length > 0
                 ? models
                 : [
-                    {
-                      name: byType.get(s.type)?.default_model ?? '',
-                      inputs: [],
-                      outputs: [],
-                      reasoning: '',
-                      webSearch: false,
-                      endpoint: '',
-                    },
+                    defaultTpl
+                      ? { ...modelFromTemplate(defaultTpl), endpoint: '' }
+                      : {
+                          name: defaultName,
+                          kind: '',
+                          inputs: [],
+                          outputs: [],
+                          reasoning: '',
+                          reasoningEffortMap: {},
+                          effortNone: false,
+                          dimensions: false,
+                          webSearch: false,
+                          endpoint: '',
+                        },
                   ],
             endpoint: s.endpoint ?? '',
             enabled: s.enabled ?? true,
@@ -405,6 +506,11 @@ export function ConfigPage() {
 
   const addInstance = (type: string) => {
     const prov = catalog.find((p) => p.id === type);
+    const defaultTpl = templateFor(
+      modelTemplates,
+      type,
+      prov?.default_model ?? '',
+    );
     setRows((prev) => [
       ...prev,
       {
@@ -418,14 +524,20 @@ export function ConfigPage() {
         keyEnv: false,
         keyKeychain: false,
         models: [
-          {
-            name: prov?.default_model ?? '',
-            inputs: [],
-            outputs: [],
-            reasoning: '',
-            webSearch: false,
-            endpoint: '',
-          },
+          defaultTpl
+            ? { ...modelFromTemplate(defaultTpl), endpoint: '' }
+            : {
+                name: prov?.default_model ?? '',
+                kind: '',
+                inputs: [],
+                outputs: [],
+                reasoning: '',
+                reasoningEffortMap: {},
+                effortNone: false,
+                dimensions: false,
+                webSearch: false,
+                endpoint: '',
+              },
         ],
         endpoint: '',
         enabled: true,
@@ -468,6 +580,10 @@ export function ConfigPage() {
     );
   };
 
+  const applyTemplate = (id: string, idx: number, t: ModelTemplate) => {
+    updateModel(id, idx, modelFromTemplate(t));
+  };
+
   const addModel = (id: string) => {
     setRows((prev) =>
       prev.map((r) =>
@@ -478,9 +594,13 @@ export function ConfigPage() {
                 ...r.models,
                 {
                   name: '',
+                  kind: '',
                   inputs: [],
                   outputs: [],
                   reasoning: '',
+                  reasoningEffortMap: {},
+                  effortNone: false,
+                  dimensions: false,
                   webSearch: false,
                   endpoint: '',
                 },
@@ -534,6 +654,18 @@ export function ConfigPage() {
       setError(t('setup.selectProvider'));
       return;
     }
+    for (const r of rows) {
+      for (const m of r.models) {
+        if (
+          m.reasoning !== '' &&
+          Object.keys(m.reasoningEffortMap).length > 0 &&
+          !effortMapComplete(m)
+        ) {
+          setError(t('setup.effortMapIncomplete'));
+          return;
+        }
+      }
+    }
     const instances: ProviderInstance[] = rows.map((r) => ({
       stable_id: r.stableId,
       type: r.type,
@@ -544,9 +676,13 @@ export function ConfigPage() {
       key_env: r.keyEnv,
       models: r.models.map((m) => ({
         name: m.name,
+        kind: m.kind,
         inputs: m.inputs,
         outputs: m.outputs,
         reasoning: m.reasoning,
+        reasoning_effort_map: m.reasoning === '' ? {} : m.reasoningEffortMap,
+        effort_none: m.effortNone,
+        dimensions: m.dimensions,
         web_search: m.webSearch,
         endpoint: m.endpoint,
       })),
@@ -991,17 +1127,121 @@ export function ConfigPage() {
                                 className="space-y-2 rounded-lg border border-edge bg-panel p-2.5"
                               >
                                 <div className="flex items-center gap-2">
-                                  <input
-                                    value={m.name}
-                                    disabled={row.managed}
-                                    onChange={(e) =>
-                                      updateModel(row.id, mi, {
-                                        name: e.target.value,
-                                      })
-                                    }
-                                    placeholder={t('setup.model')}
-                                    className="flex-1 min-w-36 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
-                                  />
+                                  <div className="relative flex-1 min-w-36">
+                                    <input
+                                      value={m.name}
+                                      disabled={row.managed}
+                                      onChange={(e) =>
+                                        updateModel(row.id, mi, {
+                                          name: e.target.value,
+                                        })
+                                      }
+                                      onFocus={(e) => {
+                                        const r =
+                                          e.currentTarget.getBoundingClientRect();
+                                        setMenuRect({
+                                          top: r.bottom + 4,
+                                          left: r.left,
+                                          width: r.width,
+                                        });
+                                        setModelMenu(`${row.id}:${mi}`);
+                                      }}
+                                      onBlur={() => setModelMenu(null)}
+                                      placeholder={t('setup.model')}
+                                      className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
+                                    />
+                                    {modelMenu === `${row.id}:${mi}` &&
+                                      !row.managed &&
+                                      menuRect &&
+                                      createPortal(
+                                        <div
+                                          ref={modelMenuRef}
+                                          style={{
+                                            top: menuRect.top,
+                                            left: menuRect.left,
+                                            width: menuRect.width,
+                                          }}
+                                          className="fixed z-[100] max-h-56 overflow-y-auto rounded-xl border border-edge bg-panel shadow-xl"
+                                        >
+                                          {(modelTemplates.get(row.type) ?? [])
+                                            .length === 0 ? (
+                                            <div className="px-2 py-1.5 text-xs text-dim">
+                                              {catalogErrors.get(row.type)
+                                                ? t('setup.catalogError')
+                                                : t('setup.catalogEmpty')}
+                                            </div>
+                                          ) : (
+                                            (
+                                              modelTemplates.get(row.type) ?? []
+                                            ).map((tmpl) => (
+                                              <button
+                                                key={tmpl.name}
+                                                type="button"
+                                                onMouseDown={(e) =>
+                                                  e.preventDefault()
+                                                }
+                                                onClick={() => {
+                                                  applyTemplate(
+                                                    row.id,
+                                                    mi,
+                                                    tmpl,
+                                                  );
+                                                  setModelMenu(null);
+                                                }}
+                                                className="flex w-full items-center justify-between gap-2 px-2 py-1.5 text-left text-xs hover:bg-panel2"
+                                              >
+                                                <span className="truncate font-mono">
+                                                  {tmpl.name}
+                                                </span>
+                                                <span className="shrink-0 text-dim">
+                                                  {tmpl.deprecated
+                                                    ? `⚠️ ${t('setup.deprecated')}`
+                                                    : tmpl.kind}
+                                                  {tmpl.deprecated &&
+                                                  tmpl.replacement
+                                                    ? ` → ${tmpl.replacement}`
+                                                    : ''}
+                                                </span>
+                                              </button>
+                                            ))
+                                          )}
+                                        </div>,
+                                        document.body,
+                                      )}
+                                    {(() => {
+                                      const cur = templateFor(
+                                        modelTemplates,
+                                        row.type,
+                                        m.name,
+                                      );
+                                      return cur ? (
+                                        <div className="mt-1 flex flex-wrap items-center gap-2">
+                                          {cur.deprecated && (
+                                            <span className="text-xs text-amber-600">
+                                              ⚠️{' '}
+                                              {cur.replacement
+                                                ? t('setup.deprecatedHint', {
+                                                    replacement:
+                                                      cur.replacement,
+                                                  })
+                                                : t('setup.deprecated')}
+                                            </span>
+                                          )}
+                                          {!row.managed && (
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                applyTemplate(row.id, mi, cur)
+                                              }
+                                              className="text-xs text-dim hover:text-fg"
+                                            >
+                                              ↺ {t('setup.resetCatalog')}
+                                            </button>
+                                          )}
+                                        </div>
+                                      ) : null;
+                                    })()}
+                                  </div>
                                   <button
                                     onClick={() => moveModel(row.id, mi, -1)}
                                     disabled={mi === 0}
@@ -1069,6 +1309,8 @@ export function ConfigPage() {
                                       'video',
                                       'file',
                                       'data',
+                                      'tool_call',
+                                      'tool_result',
                                     ].map((kind) => (
                                       <button
                                         key={kind}
@@ -1098,11 +1340,15 @@ export function ConfigPage() {
                                     <select
                                       value={m.reasoning}
                                       disabled={row.managed}
-                                      onChange={(e) =>
+                                      onChange={(e) => {
+                                        const reasoning = e.target.value;
                                         updateModel(row.id, mi, {
-                                          reasoning: e.target.value,
-                                        })
-                                      }
+                                          reasoning,
+                                          ...(reasoning === ''
+                                            ? { reasoningEffortMap: {} }
+                                            : {}),
+                                        });
+                                      }}
                                       className="rounded border border-edge bg-panel px-2 py-1 outline-none"
                                     >
                                       <option value="">
@@ -1112,6 +1358,112 @@ export function ConfigPage() {
                                       <option value="toggle">toggle</option>
                                     </select>
                                   </label>
+                                  <label className="flex items-center gap-1.5 whitespace-nowrap">
+                                    {t('setup.kind')}
+                                    <select
+                                      value={m.kind}
+                                      disabled={row.managed}
+                                      onChange={(e) =>
+                                        updateModel(row.id, mi, {
+                                          kind: e.target.value,
+                                        })
+                                      }
+                                      className="rounded border border-edge bg-panel px-2 py-1 outline-none"
+                                    >
+                                      <option value="">auto</option>
+                                      <option value="generate">generate</option>
+                                      <option value="embed">embed</option>
+                                      <option value="image">image</option>
+                                      <option value="video">video</option>
+                                      <option value="tts">tts</option>
+                                    </select>
+                                  </label>
+                                  {m.kind === 'embed' && (
+                                    <label className="flex items-center gap-1.5 whitespace-nowrap">
+                                      <input
+                                        type="checkbox"
+                                        checked={m.dimensions}
+                                        disabled={row.managed}
+                                        onChange={(e) =>
+                                          updateModel(row.id, mi, {
+                                            dimensions: e.target.checked,
+                                          })
+                                        }
+                                        className="accent-[var(--color-accent)]"
+                                      />
+                                      {t('setup.dimensions')}
+                                    </label>
+                                  )}
+                                  {(row.type === 'openai' ||
+                                    row.type === 'azure') && (
+                                    <label className="flex items-center gap-1.5 whitespace-nowrap">
+                                      <input
+                                        type="checkbox"
+                                        checked={m.effortNone}
+                                        disabled={row.managed}
+                                        onChange={(e) =>
+                                          updateModel(row.id, mi, {
+                                            effortNone: e.target.checked,
+                                          })
+                                        }
+                                        className="accent-[var(--color-accent)]"
+                                      />
+                                      {t('setup.effortNone')}
+                                    </label>
+                                  )}
+                                  {m.reasoning !== '' && (
+                                    <span className="flex w-full flex-wrap items-center gap-1.5">
+                                      <span className="text-dim">
+                                        {t('setup.effortMap')}
+                                      </span>
+                                      {EFFORT_LEVELS.map((level) => (
+                                        <label
+                                          key={level}
+                                          className="flex items-center gap-1 text-xs"
+                                        >
+                                          <span className="text-dim">
+                                            {level}
+                                          </span>
+                                          <input
+                                            value={
+                                              m.reasoningEffortMap[level] ?? ''
+                                            }
+                                            disabled={row.managed}
+                                            placeholder={t(
+                                              'setup.effortMapPlaceholder',
+                                            )}
+                                            onChange={(e) => {
+                                              const next = {
+                                                ...m.reasoningEffortMap,
+                                              };
+                                              const value = e.target.value;
+                                              if (value.trim() === '') {
+                                                delete next[level];
+                                              } else {
+                                                next[level] = value;
+                                              }
+                                              updateModel(row.id, mi, {
+                                                reasoningEffortMap: next,
+                                              });
+                                            }}
+                                            className="w-20 rounded border border-edge bg-panel px-1.5 py-0.5 text-xs outline-none focus:border-accent"
+                                          />
+                                        </label>
+                                      ))}
+                                      <button
+                                        type="button"
+                                        disabled={row.managed}
+                                        onClick={() =>
+                                          updateModel(row.id, mi, {
+                                            reasoningEffortMap: {},
+                                          })
+                                        }
+                                        className="rounded border border-edge px-1.5 py-0.5 text-xs text-dim hover:text-fg disabled:opacity-50"
+                                      >
+                                        {t('setup.effortMapClear')}
+                                      </button>
+                                    </span>
+                                  )}
                                   <label className="flex items-center gap-1.5 whitespace-nowrap">
                                     <input
                                       type="checkbox"

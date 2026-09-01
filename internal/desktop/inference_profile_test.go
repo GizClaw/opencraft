@@ -45,7 +45,7 @@ func TestInferenceProfileUpsertAndRemove(t *testing.T) {
 		len(in.Models) != 2 || !in.Enabled {
 		t.Fatalf("inference instance = %+v", in)
 	}
-	if in.Models[0].Capabilities.Reasoning != inference.ReasoningToggle ||
+	if in.Models[0].Capabilities.Reasoning.Kind != inference.ReasoningToggle ||
 		!in.Models[0].Capabilities.HostedWebSearch ||
 		len(in.Models[0].Capabilities.Inputs) != 1 ||
 		in.Models[0].Capabilities.Inputs[0] != message.PartText {

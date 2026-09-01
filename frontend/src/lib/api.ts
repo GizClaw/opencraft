@@ -26,6 +26,7 @@ import type {
   MemorySettings,
   ModelUsageStat,
   ModelOption,
+  ProviderModelCatalog,
   PatchFileDTO,
   PolicyDecision,
   ProviderView,
@@ -54,6 +55,7 @@ export const api = {
   configStatus: () => App.ConfigStatus() as Promise<ConfigStatus>,
   providers: () => App.Providers() as Promise<ProviderView[]>,
   configState: () => App.ConfigState() as Promise<ConfigState>,
+  modelCatalog: () => App.ModelCatalog() as Promise<ProviderModelCatalog[]>,
   saveInstances: (req: InferenceRequest) =>
     App.SaveInstances(req as unknown as gen.InferenceRequest),
   reload: () => App.Reload(),

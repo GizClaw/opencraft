@@ -6,6 +6,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- flowcraft upgraded to core v0.2.3 and drivers v0.2.1. Reasoning
+  capabilities now use the new `ReasoningCapability` object (kind +
+  canonical-to-wire effort map) end to end: config writes the object
+  form, the settings page edits each model's canonical-to-wire effort
+  map, and OpenAI/Azure `effort_none` is editable there too. Thinking
+  effort gains the canonical `minimal` and `xhigh` levels in chat and
+  automations.
+- The inference settings page now offers each driver's built-in model
+  catalog as a combobox: picking a built-in prefills the model's
+  capabilities (inputs/outputs, reasoning kind + effort map,
+  dimensions, effort_none), with a one-click reset to catalog
+  defaults; free-form custom model names stay supported. Deprecated
+  catalog models are marked with ⚠️ and their replacement. Provider
+  default models now come from the first non-deprecated catalog entry
+  instead of hardcoded names.
+
 ## [0.1.0] - 2026-09-01
 
 First release of the opencraft desktop workbench: a local-first workflow
