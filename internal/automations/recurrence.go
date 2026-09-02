@@ -29,8 +29,7 @@ type timeOfDay struct {
 //     selected weekdays (weekdays mode = daily interval 1 + Mon–Fri);
 //   - weekly: on-weeks are counted from origin's Monday every interval
 //     weeks, and the next selected weekday at at inside an on-week is
-//     returned. Without an origin (legacy schedules) the first
-//     selected weekday in the anchor's own week is used.
+//     returned. Origin is required.
 //
 // Wall-clock modes build candidates with time.Date + AddDate so DST
 // transitions follow the local clock; hourly uses absolute durations.
@@ -107,23 +106,11 @@ func (r recurrence) nextDaily(after time.Time) (time.Time, error) {
 }
 
 func (r recurrence) nextWeekly(after time.Time) (time.Time, error) {
-	if !r.origin.IsZero() {
-		return r.nextWeeklyAnchored(after)
+	if r.origin.IsZero() {
+		return time.Time{}, fmt.Errorf(
+			"weekly: origin is required")
 	}
-	// The immediate next occurrence is the first selected weekday in
-	// the anchor's week (day 7 covers the same weekday next week when
-	// the anchor is past today's time). This is the legacy fallback
-	// for schedules saved before the phase anchor existed.
-	for day := 0; day <= 7; day++ {
-		t := r.dayAt(after, day)
-		if !t.After(after) {
-			continue
-		}
-		if r.dayOK(t.Weekday()) {
-			return t, nil
-		}
-	}
-	return time.Time{}, fmt.Errorf("weekly: no selected weekday within 7 days")
+	return r.nextWeeklyAnchored(after)
 }
 
 // nextWeeklyAnchored returns the next occurrence whose week is aligned

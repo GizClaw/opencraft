@@ -25,7 +25,10 @@ const (
 // skill directory inside the repo (e.g. "skills/flowcraft-config"),
 // installing just that directory; empty installs the whole repo.
 // Runs on the host: the sandbox cannot write user-level skill roots.
-func (s *Service) Install(repo, scope, subpath string) (string, error) {
+func (s *Service) Install(
+	ctx context.Context,
+	repo, scope, subpath string,
+) (string, error) {
 	if strings.TrimSpace(repo) == "" {
 		return "", fmt.Errorf("skills: install repo is required")
 	}
@@ -64,7 +67,7 @@ func (s *Service) Install(repo, scope, subpath string) (string, error) {
 		return "", err
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	// "--" ends option parsing so a repo that merely starts with "-"
 	// (already rejected) or looks like a path can never be consumed as

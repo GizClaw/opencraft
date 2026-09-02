@@ -491,6 +491,37 @@ func (s *Store) DeleteSummaryNodes(ctx context.Context, threadID string, level i
 	return nil
 }
 
+// DeleteThread removes every state row owned by one conversation:
+// summary nodes, items, turns and the thread row. The opencraft memory
+// adapter writes items without creating thread/turn rows, so each
+// DELETE is best-effort over whatever rows exist. This backs session
+// deletion and import rollback.
+func (s *Store) DeleteThread(ctx context.Context, threadID string) error {
+	if strings.TrimSpace(threadID) == "" {
+		return errdefs.Validation(
+			errors.New("state: thread id is required"))
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("state: begin delete thread: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, stmt := range []string{
+		`DELETE FROM items WHERE thread_id = ?`,
+		`DELETE FROM summary_nodes WHERE thread_id = ?`,
+		`DELETE FROM turns WHERE thread_id = ?`,
+		`DELETE FROM threads WHERE id = ?`,
+	} {
+		if _, err := tx.ExecContext(ctx, stmt, threadID); err != nil {
+			return fmt.Errorf("state: delete thread %s: %w", threadID, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("state: commit delete thread %s: %w", threadID, err)
+	}
+	return nil
+}
+
 // ErrNotFound is returned when a requested row does not exist.
 var ErrNotFound = errors.New("state: not found")
 

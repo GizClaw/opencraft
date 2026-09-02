@@ -101,7 +101,7 @@ func newSource(
 	}
 	for _, server := range host.MCPServers() {
 		src := mcp.NewSource()
-		transport, err := serverTransport(server, mgr)
+		transport, err := serverTransport(ctx, server, mgr)
 		if err != nil {
 			_ = src.Close()
 			_ = s.Close()
@@ -122,6 +122,7 @@ func newSource(
 }
 
 func serverTransport(
+	ctx context.Context,
 	s agent.MCPServer,
 	mgr *toolchain.Manager,
 ) (mcpsdk.Transport, error) {
@@ -130,7 +131,7 @@ func serverTransport(
 		command := s.Command
 		env := s.Env
 		if mgr != nil {
-			if resolved, err := mgr.ResolveMCPCommand(command); err == nil {
+			if resolved, err := mgr.ResolveMCPCommand(ctx, command); err == nil {
 				command = resolved
 			}
 			env = mgr.AttachHostEnv(env)

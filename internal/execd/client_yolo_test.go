@@ -94,7 +94,7 @@ func TestRemoteRunnerSendsUnconfinedFromMode(t *testing.T) {
 	client, _ := newPipeServer(t, confined, unconfined)
 	ctx := context.Background()
 
-	rr, err := NewRemoteRunner(client, nil)
+	rr, err := NewRemoteRunner(ctx, client, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

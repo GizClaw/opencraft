@@ -178,6 +178,9 @@ func TestInferenceYAMLVariableParts(t *testing.T) {
 		!strings.Contains(doc, "provider.openai-2:") {
 		t.Fatalf("instance deployments missing:\n%s", doc)
 	}
+	if !strings.Contains(doc, "request_metadata:\n          envelope: client_metadata") {
+		t.Fatalf("client_metadata envelope missing:\n%s", doc)
+	}
 	// Router targets = enabled instances in priority order.
 	idx := strings.Index(doc, "provider: deepseek-1")
 	idx2 := strings.Index(doc, "provider: openai-2")
@@ -206,6 +209,7 @@ func TestInferenceYAMLAzure(t *testing.T) {
 	for _, want := range []string{
 		"provider.azure-2:",
 		"endpoint: 'https://res.openai.azure.com'",
+		"request_metadata:\n          envelope: client_metadata",
 		"name: 'gpt-5.6-sol-deploy'",
 		"kind: 'generate'",
 		"capabilities:",
@@ -583,71 +587,6 @@ func TestInferenceYAMLDeepseekResponsesDerived(t *testing.T) {
 	}
 }
 
-func TestLoadInferencePrefersImplOverResourceID(t *testing.T) {
-	// The live SSO deployment predates its provider-type migration:
-	// the resource id still says openai while impl is deepseek. The
-	// parser must trust impl so a later settings save does not regress
-	// the driver back to openai.
-	dir := t.TempDir()
-	writeFile(t, dir, "opencraft.yaml", `
-resources:
-  provider.openai-sso-haivivi:
-    kind: inference.Provider
-    impl: deepseek
-    settings:
-      id: openai-sso-haivivi
-      spec:
-        api: responses
-        models:
-          - name: deepseek-v4-flash
-            kind: generate
-            capabilities:
-              outputs: [text]
-            responses: true
-      profiles:
-        - id: sso-haivivi
-          secrets:
-            api_key: ${secret:keychain.auth/sso-haivivi/token}
-  router:
-    settings:
-      generate:
-        - tier: default
-          targets:
-            - model:
-                id:
-                  provider: openai-sso-haivivi
-                  name: deepseek-v4-flash
-                profile: sso-haivivi
-`)
-	cfg, err := LoadInference(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(cfg.Instances) != 1 {
-		t.Fatalf("instances = %+v", cfg.Instances)
-	}
-	in := cfg.Instances[0]
-	if in.Type != "deepseek" {
-		t.Fatalf("type = %q, want deepseek (from impl)", in.Type)
-	}
-	if len(in.Models) != 1 || !in.Models[0].Responses {
-		t.Fatalf("models = %+v, want responses: true parsed", in.Models)
-	}
-	// A settings save must keep impl deepseek and the responses flag.
-	if err := WriteInference(dir, cfg); err != nil {
-		t.Fatal(err)
-	}
-	doc, err := os.ReadFile(filepath.Join(dir, "opencraft.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"impl: deepseek", "api: 'responses'", "responses: true"} {
-		if !strings.Contains(string(doc), want) {
-			t.Fatalf("rewritten config missing %q:\n%s", want, doc)
-		}
-	}
-}
-
 func TestInferenceYAMLModelNormalization(t *testing.T) {
 	// Empty names fall back to the provider default.
 	cfg := InferenceConfig{Instances: []Instance{{
@@ -683,10 +622,10 @@ func TestDeploymentIDStableAcrossReorders(t *testing.T) {
 	if a.DeploymentID(9) != "deepseek-inst-a" {
 		t.Fatalf("position must not leak into stable ids: %q", a.DeploymentID(9))
 	}
-	// Legacy rows without a stable id keep the positional form.
-	legacy := Instance{Type: "deepseek"}
-	if legacy.DeploymentID(3) != "deepseek-3" {
-		t.Fatalf("legacy deployment id = %q, want deepseek-3", legacy.DeploymentID(3))
+	// Instances without a stable id use the positional form.
+	positional := Instance{Type: "deepseek"}
+	if positional.DeploymentID(3) != "deepseek-3" {
+		t.Fatalf("positional deployment id = %q, want deepseek-3", positional.DeploymentID(3))
 	}
 }
 

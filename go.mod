@@ -4,15 +4,15 @@ go 1.25.13
 
 require (
 	fyne.io/systray v1.12.2
-	github.com/GizClaw/flowcraft/core v0.2.3
-	github.com/GizClaw/flowcraft/driver/anthropic v0.2.1
-	github.com/GizClaw/flowcraft/driver/azure v0.2.1
-	github.com/GizClaw/flowcraft/driver/bytedance v0.2.1
-	github.com/GizClaw/flowcraft/driver/deepseek v0.2.1
-	github.com/GizClaw/flowcraft/driver/kimi v0.2.1
-	github.com/GizClaw/flowcraft/driver/minimax v0.2.1
-	github.com/GizClaw/flowcraft/driver/openai v0.2.1
-	github.com/GizClaw/flowcraft/driver/qwen v0.2.1
+	github.com/GizClaw/flowcraft/core v0.2.4
+	github.com/GizClaw/flowcraft/driver/anthropic v0.2.2
+	github.com/GizClaw/flowcraft/driver/azure v0.2.2
+	github.com/GizClaw/flowcraft/driver/bytedance v0.2.2
+	github.com/GizClaw/flowcraft/driver/deepseek v0.2.2
+	github.com/GizClaw/flowcraft/driver/kimi v0.2.2
+	github.com/GizClaw/flowcraft/driver/minimax v0.2.2
+	github.com/GizClaw/flowcraft/driver/openai v0.2.2
+	github.com/GizClaw/flowcraft/driver/qwen v0.2.2
 	github.com/PuerkitoBio/goquery v1.12.0
 	github.com/go-shiori/go-readability v0.0.0-20251205110129-5db1dc9836f0
 	github.com/microcosm-cc/bluemonday v1.0.27
@@ -63,7 +63,7 @@ require (
 	github.com/invopop/jsonschema v0.14.0 // indirect
 	github.com/jchv/go-winloader v0.0.0-20210711035445-715c2860da7e // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
-	github.com/klauspost/compress v1.13.5 // indirect
+	github.com/klauspost/compress v1.18.7 // indirect
 	github.com/labstack/echo/v4 v4.13.3 // indirect
 	github.com/labstack/gommon v0.4.2 // indirect
 	github.com/leaanthony/go-ansi-parser v1.6.1 // indirect

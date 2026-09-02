@@ -122,7 +122,7 @@ func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 			extra = append(extra, p.PluginHooks()...)
 		}
 	}
-	return LoadWithSources(settings.Path, extra)
+	return LoadWithSources(ctx, settings.Path, extra)
 }
 
 // Manager owns the loaded hook groups.
@@ -140,14 +140,18 @@ type groupEntry struct {
 
 // Load parses hooks.json at path. A missing file returns an empty
 // manager. Invalid groups abort loading so misconfiguration is loud.
-func Load(path string) (*Manager, error) {
-	return LoadWithSources(path, nil)
+func Load(ctx context.Context, path string) (*Manager, error) {
+	return LoadWithSources(ctx, path, nil)
 }
 
 // LoadWithSources parses the user hooks.json plus any plugin-provided
 // hook files. A missing user file is fine; a missing plugin file is an
 // error so a broken plugin never silently loses its hooks.
-func LoadWithSources(path string, extra []ExtraSource) (*Manager, error) {
+func LoadWithSources(
+	ctx context.Context,
+	path string,
+	extra []ExtraSource,
+) (*Manager, error) {
 	m := &Manager{path: path, groups: map[string][]groupEntry{}}
 	if err := m.loadFile(path, "", true); err != nil {
 		return nil, err
@@ -157,7 +161,7 @@ func LoadWithSources(path string, extra []ExtraSource) (*Manager, error) {
 			// A broken plugin hook must not take down the whole
 			// runtime: skip the source and surface the failure through
 			// telemetry, matching the registry's per-plugin error model.
-			telemetry.Warn(context.Background(),
+			telemetry.Warn(ctx,
 				"opencraft hooks: skipping plugin hook source",
 				otellog.String("path", src.Path),
 				otellog.String("error", err.Error()))

@@ -239,7 +239,7 @@ func (a *App) InstallSkill(repo, scope, subpath string) (string, error) {
 	if !ok {
 		return "", errors.New("skills resource is not available")
 	}
-	return svc.Install(repo, scope, subpath)
+	return svc.Install(a.appContext(), repo, scope, subpath)
 }
 
 // ---- kanban actions ----

@@ -204,8 +204,8 @@ func (s *Store) SaveTask(ctx context.Context, task Task) (Task, error) {
 		return Task{}, err
 	}
 	now := time.Now()
-	// Updates from older clients may omit the weekly phase anchor;
-	// preserve the stored one instead of re-anchoring the phase.
+	// Updates that omit the weekly phase anchor keep the stored one
+	// instead of re-anchoring the phase.
 	if task.ID != "" {
 		if existing, err := s.GetTask(ctx, task.ID); err == nil &&
 			task.Schedule.Origin == "" {

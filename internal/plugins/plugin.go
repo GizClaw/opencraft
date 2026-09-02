@@ -70,6 +70,7 @@ var AllowedPermissions = map[string]bool{
 	"commands:register":    true,
 	"statusbar:contribute": true,
 	"tools:expose":         true,
+	"sessions:import":      true,
 	"skills:contribute":    true,
 	"mcp:contribute":       true,
 	"hooks:register":       true,

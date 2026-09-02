@@ -135,12 +135,14 @@ func TestResolveMCPCommand(t *testing.T) {
 	for _, command := range []string{
 		"/usr/bin/npx", "./bin/server", `C:\bin\npx.exe`,
 	} {
-		got, err := m.ResolveMCPCommand(command)
+		got, err := m.ResolveMCPCommand(context.Background(), command)
 		if err != nil || got != command {
 			t.Fatalf("ResolveMCPCommand(%q) = (%q, %v)", command, got, err)
 		}
 	}
-	if _, err := m.ResolveMCPCommand("not-a-real-tool-xyz"); err == nil {
+	if _, err := m.ResolveMCPCommand(
+		context.Background(), "not-a-real-tool-xyz",
+	); err == nil {
 		t.Fatal("unknown bare command must fail")
 	}
 }

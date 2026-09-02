@@ -221,7 +221,7 @@ func (t installTool) Execute(
 	if !ok {
 		return `{"cancelled":true,"action":"install"}`, nil
 	}
-	dst, err := t.svc.Install(args.Repo, args.Scope, args.Path)
+	dst, err := t.svc.Install(ctx, args.Repo, args.Scope, args.Path)
 	if err != nil {
 		return "", err
 	}

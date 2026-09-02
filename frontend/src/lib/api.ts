@@ -34,6 +34,7 @@ import type {
   SandboxProbeResult,
   SearchFileHit,
   SessionMeta,
+  SessionImportDTO,
   SessionTurn,
   ProviderInstance,
   ProjectConfigStatus,
@@ -200,6 +201,9 @@ export const api = {
   readLog: (n: number) => App.ReadLog(n),
   renameSession: (id: string, title: string) => App.RenameSession(id, title),
   exportSession: (id: string) => App.ExportSession(id),
+  exportSessionBundle: (id: string) => App.ExportSessionBundle(id),
+  importSession: (path: string) =>
+    App.ImportSessionBundle(path) as Promise<SessionImportDTO>,
   sessionMode: () => App.SessionMode(),
   setSessionMode: (mode: string) => App.SetSessionMode(mode),
   startTurn: (msg: TurnMessage) =>

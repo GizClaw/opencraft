@@ -210,14 +210,15 @@ func TestMetaIndexSurvivesUsageRecord(t *testing.T) {
 	}
 }
 
-func TestListLegacyArchiveWithoutMeta(t *testing.T) {
+func TestListSkipsArchiveWithoutMeta(t *testing.T) {
 	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = store.Close() }()
 	id, _ := store.Create()
-	// Simulate a pre-index archive: write turn files but no meta.json.
+	// Archives without a meta index are unsupported; they must not
+	// appear in the resume list.
 	historyDir := filepath.Join(store.root, id, "history")
 	for i := 1; i <= 3; i++ {
 		data := `{"seq":` + string(rune('0'+i)) +
@@ -232,11 +233,8 @@ func TestListLegacyArchiveWithoutMeta(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list) != 1 || list[0].Messages != 3 {
-		t.Fatalf("legacy list = %+v, want 3 turns listed", list)
-	}
-	if list[0].Title != "legacy msg" {
-		t.Errorf("legacy title = %q", list[0].Title)
+	if len(list) != 0 {
+		t.Fatalf("archive without meta listed = %+v, want empty", list)
 	}
 }
 

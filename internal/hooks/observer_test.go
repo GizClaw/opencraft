@@ -44,7 +44,7 @@ func TestObserverFiresSubagentHooks(t *testing.T) {
 	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	mgr, err := Load(path)
+	mgr, err := Load(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}

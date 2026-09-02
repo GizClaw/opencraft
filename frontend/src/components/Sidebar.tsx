@@ -13,6 +13,7 @@ import {
   Settings,
   Sparkles,
   Trash2,
+  Upload,
   X,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
@@ -65,6 +66,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [importing, setImporting] = useState(false);
   const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
   const [workspaceInputOpen, setWorkspaceInputOpen] = useState(false);
   const [workspacePath, setWorkspacePath] = useState('');
@@ -129,6 +131,31 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
     setWorkspaceError('');
     await openWorkspace(path);
     await loadWorkspaces();
+  };
+
+  const handleImportSession = async () => {
+    let path = '';
+    try {
+      path =
+        (await api.pickFile(t('sidebar.importSessionTitle'), '*.json')) ?? '';
+    } catch (err) {
+      flash(t('sidebar.importFailed', { error: String(err) }));
+      return;
+    }
+    if (!path) return; // cancelled
+    setImporting(true);
+    try {
+      const imported = await api.importSession(path);
+      await loadSessions();
+      if (imported.session_id) {
+        await resume(imported.session_id);
+      }
+      flash(t('sidebar.importedSession'));
+    } catch (err) {
+      flash(t('sidebar.importFailed', { error: String(err) }));
+    } finally {
+      setImporting(false);
+    }
   };
 
   const handleOpenPath = async () => {
@@ -302,6 +329,18 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                 <button
                   onClick={() => {
                     setMenuOpenId(null);
+                    void api
+                      .exportSessionBundle(row.id)
+                      .then((path) => flash(t('sidebar.exportedTo', { path })));
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
+                >
+                  <Download size="0.8571rem" className="text-dim" />
+                  {t('sidebar.exportSessionBundle')}
+                </button>
+                <button
+                  onClick={() => {
+                    setMenuOpenId(null);
                     setConfirmDelete(row.id);
                   }}
                   className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-err hover:bg-panel2"
@@ -413,9 +452,24 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
 
       <div className="flex-1 overflow-y-auto px-3 py-4 space-y-4">
         <section>
-          <h3 className="text-xs uppercase tracking-wider text-dim mb-2">
-            {t('sidebar.sessions')}
-          </h3>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs uppercase tracking-wider text-dim">
+              {t('sidebar.sessions')}
+            </h3>
+            <button
+              onClick={() => void handleImportSession()}
+              disabled={!workspace || importing}
+              className="text-dim hover:text-fg disabled:text-dim/40 disabled:hover:text-dim/40"
+              title={t('sidebar.importSession')}
+              aria-label={t('sidebar.importSession')}
+            >
+              {importing ? (
+                <Loader2 size="0.9286rem" className="animate-spin" />
+              ) : (
+                <Upload size="0.9286rem" />
+              )}
+            </button>
+          </div>
           {visibleSessions.length === 0 ? (
             <p className="text-xs text-dim">—</p>
           ) : (

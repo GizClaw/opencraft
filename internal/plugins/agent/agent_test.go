@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -58,7 +59,7 @@ func TestHostExposesAgentCapabilities(t *testing.T) {
 		}
 	}
 
-	host := NewHost(plugins.NewStore(root), nil)
+	host := NewHost(context.Background(), plugins.NewStore(root), nil)
 	roots := host.SkillRoots()
 	if len(roots) != 1 || filepath.Clean(roots[0]) != filepath.Join(root, "cap", "skills") {
 		t.Fatalf("SkillRoots = %v", roots)
@@ -97,7 +98,9 @@ func TestHostDefaultSkillRoot(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	roots := NewHost(plugins.NewStore(root), nil).SkillRoots()
+	roots := NewHost(
+		context.Background(), plugins.NewStore(root), nil,
+	).SkillRoots()
 	if len(roots) != 1 || filepath.Clean(roots[0]) != filepath.Clean(skillDir) {
 		t.Fatalf("SkillRoots = %v, want default skills dir", roots)
 	}
@@ -113,7 +116,9 @@ func TestHostMCPCommandResolution(t *testing.T) {
 			map[string]any{"name": "path", "transport": "stdio", "command": "npx"},
 		},
 	})
-	servers := NewHost(plugins.NewStore(root), nil).MCPServers()
+	servers := NewHost(
+		context.Background(), plugins.NewStore(root), nil,
+	).MCPServers()
 	if len(servers) != 2 {
 		t.Fatalf("MCPServers = %+v", servers)
 	}
@@ -140,7 +145,9 @@ func TestHostMCPServerPrefixSanitizesPluginID(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "my.plugin", "bin", "srv"), []byte("{}"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	servers := NewHost(plugins.NewStore(root), nil).MCPServers()
+	servers := NewHost(
+		context.Background(), plugins.NewStore(root), nil,
+	).MCPServers()
 	if len(servers) != 1 || servers[0].Prefix != "my_plugin__srv__" {
 		t.Fatalf("MCPServers = %+v, want sanitized prefix", servers)
 	}

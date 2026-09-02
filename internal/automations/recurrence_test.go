@@ -48,10 +48,15 @@ func TestRecurrenceDailyWeekdayFilter(t *testing.T) {
 
 func TestRecurrenceWeeklyNextWeekday(t *testing.T) {
 	loc := time.Local
+	origin, err := time.ParseInLocation("2006-01-02", "2026-08-31", loc)
+	if err != nil {
+		t.Fatal(err)
+	}
 	r := recurrence{
 		freq: freqWeekly, interval: 1,
 		at:       timeOfDay{hour: 9, minute: 0},
 		weekdays: daysSet([]string{"MO"}),
+		origin:   origin,
 	}
 	// Wednesday → the current window's Monday.
 	next, err := r.next(time.Date(2026, 9, 2, 8, 0, 0, 0, loc))

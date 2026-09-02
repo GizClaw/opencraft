@@ -69,6 +69,11 @@ type Store struct {
 	mu          sync.Mutex
 	seqCache    map[string]int
 	artifactBuf map[string][]Artifact
+	// importPending tracks imports that have written their history but
+	// have not yet completed the memory seed. It is keyed by session id
+	// (value = source key) so a concurrent duplicate import is rejected
+	// instead of deleting an in-flight session.
+	importPending map[string]string
 }
 
 // Artifact is one file produced by a turn, reported by the workspace
@@ -89,10 +94,8 @@ type TurnRecord struct {
 }
 
 // sessionMeta is the per-session index document (meta.json). It embeds
-// the token usage (legacy meta.json files are plain Usage JSON, which
-// still unmarshals) and adds the counters and timestamps that let the
-// resume list and title generation avoid re-reading every history
-// file.
+// token usage and the counters and timestamps that let the resume list
+// and title generation avoid re-reading every history file.
 type sessionMeta struct {
 	Usage
 	TurnCount    int       `json:"turn_count,omitempty"`
@@ -100,6 +103,11 @@ type sessionMeta struct {
 	Title        string    `json:"title,omitempty"`
 	CreatedAt    time.Time `json:"created_at,omitempty"`
 	UpdatedAt    time.Time `json:"updated_at,omitempty"`
+	// ImportSource is the stable external key used for idempotent
+	// session imports. ImportReady flips only after the caller has
+	// seeded memory; the session list hides pending imports.
+	ImportSource string `json:"import_source,omitempty"`
+	ImportReady  bool   `json:"import_ready,omitempty"`
 }
 
 // New creates a Store rooted at root. The window is the number of
@@ -114,18 +122,19 @@ func New(root string, window int) (*Store, error) {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, err
 	}
-	// Tighten an existing looser directory (older builds used 0755):
-	// session archives hold file contents and tool output.
+	// Session archives hold file contents and tool output, so the
+	// directory stays owner-only.
 	_ = os.Chmod(root, 0o700)
 	db, err := state.Open(filepath.Join(root, "session.db"))
 	if err != nil {
 		return nil, err
 	}
 	return &Store{
-		root:     root,
-		window:   window,
-		db:       db,
-		seqCache: make(map[string]int),
+		root:          root,
+		window:        window,
+		db:            db,
+		seqCache:      make(map[string]int),
+		importPending: make(map[string]string),
 	}, nil
 }
 
@@ -235,38 +244,7 @@ func (s *Store) appendTurn(id, runID string, msgs []message.Message) error {
 	if err != nil {
 		return err
 	}
-	var archived []message.Message
-	for _, m := range msgs {
-		var parts []message.Part
-		for _, p := range m.Content.Parts {
-			switch part := p.(type) {
-			case message.TextPart:
-				parts = append(parts, part)
-			case message.ReasoningPart:
-				parts = append(parts, part)
-			case message.ToolCallPart:
-				parts = append(parts, part)
-			case message.ToolResultPart:
-				parts = append(parts, part)
-			case message.ImagePart:
-				parts = append(parts, part)
-			case message.AudioPart:
-				parts = append(parts, part)
-			case message.VideoPart:
-				parts = append(parts, part)
-			case message.FilePart:
-				parts = append(parts, part)
-			case message.DataPart:
-				parts = append(parts, part)
-			}
-		}
-		if len(parts) > 0 {
-			archived = append(archived, message.Message{
-				Role:    m.Role,
-				Content: message.Content{Parts: parts},
-			})
-		}
-	}
+	archived := filterArchive(msgs)
 	if len(archived) == 0 {
 		return nil
 	}
@@ -417,8 +395,7 @@ func (s *Store) AppendTurnArtifacts(
 }
 
 // turnPathByRun returns the archived turn file whose run id matches
-// runID, falling back to the highest-numbered file when runID is empty
-// or no turn carries it (e.g. pre-upgrade archives).
+// runID, or the highest-numbered file when runID is empty.
 func (s *Store) turnPathByRun(id, runID string) (string, error) {
 	if runID != "" {
 		idx, _ := s.readRunIndex(id)
@@ -428,6 +405,7 @@ func (s *Store) turnPathByRun(id, runID string) (string, error) {
 				return candidate, nil
 			}
 		}
+		return "", nil
 	}
 	files, err := filepath.Glob(filepath.Join(s.dir(id), "history", "*.json"))
 	if err != nil {
@@ -437,21 +415,6 @@ func (s *Store) turnPathByRun(id, runID string) (string, error) {
 		return "", nil
 	}
 	sort.Strings(files)
-	if runID != "" {
-		for _, path := range files {
-			data, err := os.ReadFile(path)
-			if err != nil {
-				continue
-			}
-			var turn TurnRecord
-			if json.Unmarshal(data, &turn) != nil {
-				continue
-			}
-			if turn.RunID == runID {
-				return path, nil
-			}
-		}
-	}
 	return files[len(files)-1], nil
 }
 
@@ -650,14 +613,13 @@ func (s *Store) List() ([]Meta, error) {
 		if err != nil {
 			continue
 		}
+		if meta.ImportSource != "" && !meta.ImportReady {
+			// The import is still seeding memory (or was interrupted
+			// before completion); keep it out of the resume list.
+			continue
+		}
 		if meta.TurnCount == 0 && meta.Usage == (Usage{}) {
-			// Archive written before the meta index existed (or an
-			// empty session): bounded fallback scan.
-			if lm, ok := s.legacyMeta(id); ok {
-				meta = lm
-			} else {
-				continue
-			}
+			continue
 		}
 		m := Meta{
 			ID:    id,
@@ -693,9 +655,7 @@ func (s *Store) List() ([]Meta, error) {
 	return out, nil
 }
 
-// Title returns the archived conversation title (the first user
-// message's first line) using the meta index, falling back to a
-// bounded scan for pre-index archives.
+// Title returns the archived conversation title from the meta index.
 func (s *Store) Title(id string) (string, error) {
 	if err := requireID(id); err != nil {
 		return "", err
@@ -706,9 +666,6 @@ func (s *Store) Title(id string) (string, error) {
 	}
 	if meta.Title != "" {
 		return meta.Title, nil
-	}
-	if lm, ok := s.legacyMeta(id); ok && lm.Title != "" {
-		return lm.Title, nil
 	}
 	return "", nil
 }
@@ -748,53 +705,8 @@ func (s *Store) FirstUserMessage(id string) (string, error) {
 	return "", nil
 }
 
-// legacyMeta derives session metadata for archives that predate the
-// meta index: turn count from the file list plus title and timestamps
-// from the first and last turn files. ok is false when the session has
-// no archived turns.
-func (s *Store) legacyMeta(id string) (sessionMeta, bool) {
-	files, err := filepath.Glob(filepath.Join(s.dir(id), "history", "*.json"))
-	if err != nil || len(files) == 0 {
-		return sessionMeta{}, false
-	}
-	sort.Strings(files)
-	var meta sessionMeta
-	meta.TurnCount = len(files)
-	meta.MessageCount = len(files)
-	for i := 0; i < len(files) && i < 5; i++ {
-		var turn struct {
-			At       time.Time         `json:"at"`
-			Messages []message.Message `json:"messages"`
-		}
-		data, err := os.ReadFile(files[i])
-		if err != nil {
-			continue
-		}
-		if json.Unmarshal(data, &turn) != nil {
-			continue
-		}
-		if meta.CreatedAt.IsZero() && !turn.At.IsZero() {
-			meta.CreatedAt = turn.At
-		}
-		for _, m := range turn.Messages {
-			if m.Role == message.RoleUser && meta.Title == "" {
-				meta.Title = firstLine(m.Content.Text())
-			}
-		}
-	}
-	if data, err := os.ReadFile(files[len(files)-1]); err == nil {
-		var turn struct {
-			At time.Time `json:"at"`
-		}
-		if json.Unmarshal(data, &turn) == nil {
-			meta.UpdatedAt = turn.At
-		}
-	}
-	return meta, true
-}
-
 // loadMeta reads the per-session index document. A missing file is a
-// zero document (legacy archives start empty).
+// zero document.
 func (s *Store) loadMeta(id string) (sessionMeta, error) {
 	var meta sessionMeta
 	data, err := os.ReadFile(filepath.Join(s.dir(id), "meta.json"))
@@ -860,8 +772,9 @@ func (s *Store) dir(id string) string {
 	return filepath.Join(s.root, id)
 }
 
-// Remove deletes one stored conversation: its directory (history,
-// permissions, usage) and its session_settings row (think level, model
+// Remove deletes one stored conversation end to end: its directory
+// (history, permissions, usage), its SQLite memory rows (items and
+// summary nodes) and its session_settings row (think level, model
 // hint). The id must be a generated conversation id; runtime checkpoint
 // state for the same id is removed by the session manager's
 // DeleteSession (the desktop wires both together).
@@ -870,15 +783,62 @@ func (s *Store) Remove(ctx context.Context, id string) error {
 		return err
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.removeLocked(ctx, id)
+}
+
+// removeLocked removes one conversation while the caller holds s.mu.
+func (s *Store) removeLocked(ctx context.Context, id string) error {
 	delete(s.seqCache, id)
-	s.mu.Unlock()
+	delete(s.importPending, id)
 	if err := os.RemoveAll(s.dir(id)); err != nil {
 		return fmt.Errorf("sessions: remove %s: %w", id, err)
+	}
+	if err := s.db.DeleteThread(ctx, id); err != nil {
+		return fmt.Errorf("sessions: remove %s memory: %w", id, err)
 	}
 	if err := s.db.RemoveSettings(ctx, id); err != nil {
 		return fmt.Errorf("sessions: remove settings %s: %w", id, err)
 	}
 	return nil
+}
+
+// filterArchive keeps the parts the session archive understands and
+// drops messages that end up with no archiveable content.
+func filterArchive(msgs []message.Message) []message.Message {
+	var archived []message.Message
+	for _, m := range msgs {
+		var parts []message.Part
+		for _, p := range m.Content.Parts {
+			switch part := p.(type) {
+			case message.TextPart:
+				parts = append(parts, part)
+			case message.ReasoningPart:
+				parts = append(parts, part)
+			case message.ToolCallPart:
+				parts = append(parts, part)
+			case message.ToolResultPart:
+				parts = append(parts, part)
+			case message.ImagePart:
+				parts = append(parts, part)
+			case message.AudioPart:
+				parts = append(parts, part)
+			case message.VideoPart:
+				parts = append(parts, part)
+			case message.FilePart:
+				parts = append(parts, part)
+			case message.DataPart:
+				parts = append(parts, part)
+			}
+		}
+		if len(parts) > 0 {
+			archived = append(archived, message.Message{
+				Role:    m.Role,
+				Content: message.Content{Parts: parts},
+			})
+		}
+	}
+	return archived
 }
 
 // requireID validates a caller-supplied session id before it becomes a

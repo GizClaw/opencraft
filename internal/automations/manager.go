@@ -52,6 +52,8 @@ type Manager struct {
 	started    bool
 	stopCh     chan struct{}
 	doneCh     chan struct{}
+	ctx        context.Context
+	cancel     context.CancelFunc
 }
 
 // NewManager builds a scheduler over store. Run is required.
@@ -98,9 +100,12 @@ func (m *Manager) Start() {
 	m.started = true
 	m.stopCh = make(chan struct{})
 	m.doneCh = make(chan struct{})
+	// Manager-owned lifecycle: the scan loop and its one-shot store
+	// helpers live as long as the manager, not as long as one request.
+	m.ctx, m.cancel = context.WithCancel(context.Background())
+	ctx := m.ctx
 	m.mu.Unlock()
 
-	ctx := context.Background()
 	if n, err := m.store.Reconcile(ctx); err == nil && n > 0 {
 		m.notifyChange()
 	}
@@ -111,6 +116,8 @@ func (m *Manager) Start() {
 		for {
 			select {
 			case <-m.stopCh:
+				return
+			case <-ctx.Done():
 				return
 			case <-ticker.C:
 				m.Tick()
@@ -130,6 +137,11 @@ func (m *Manager) Stop() {
 	}
 	m.started = false
 	close(m.stopCh)
+	if m.cancel != nil {
+		m.cancel()
+	}
+	m.ctx = nil
+	m.cancel = nil
 	ch := m.doneCh
 	m.mu.Unlock()
 	<-ch
@@ -137,7 +149,7 @@ func (m *Manager) Stop() {
 
 // Task returns one task (delegating to the store).
 func (m *Manager) Task(id string) (Task, error) {
-	return m.store.GetTask(context.Background(), id)
+	return m.store.GetTask(m.managerContext(), id)
 }
 
 // RunNow queues one task immediately without moving its scheduled
@@ -151,7 +163,7 @@ func (m *Manager) RunNow(taskID string) error {
 	m.pendingSet[taskID] = true
 	m.pending = append(m.pending, taskID)
 	m.mu.Unlock()
-	m.dispatch(context.Background())
+	m.dispatch(m.managerContext())
 	return nil
 }
 
@@ -178,7 +190,7 @@ func (m *Manager) Discard(taskID string) {
 // app was away) only get their anchor advanced. It then dispatches as
 // many queued tasks as slots allow.
 func (m *Manager) Tick() {
-	ctx := context.Background()
+	ctx := m.managerContext()
 	now := m.now()
 	tasks, err := m.store.ListTasks(ctx)
 	if err != nil {
@@ -223,6 +235,19 @@ func (m *Manager) Tick() {
 	m.dispatch(ctx)
 }
 
+// managerContext returns the manager-owned context after Start, or a
+// detached background context for one-shot operations before Start.
+func (m *Manager) managerContext() context.Context {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ctx != nil {
+		return m.ctx
+	}
+	// Before Start there is no manager lifecycle yet; a detached
+	// context keeps store helpers (and unit tests) usable.
+	return context.Background()
+}
+
 // dispatch starts queued runs until the slot limit is reached.
 func (m *Manager) dispatch(ctx context.Context) {
 	for {
@@ -236,7 +261,9 @@ func (m *Manager) dispatch(ctx context.Context) {
 		delete(m.pendingSet, id)
 		m.running[id] = true
 		m.mu.Unlock()
-		go m.run(ctx, id)
+		// A Stop cancels the manager context but in-flight runs must
+		// continue; detach the run from the manager's lifecycle.
+		go m.run(context.WithoutCancel(ctx), id)
 	}
 }
 

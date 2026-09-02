@@ -84,10 +84,12 @@ func (a *App) RenameSession(id, title string) error {
 	return store.WriteState(id, "title", title)
 }
 
-// ExportSession writes one conversation's transcript to
+// ExportSession writes one conversation's chat transcript to
 // <workspace>/.opencraft/exports/<id>.md and returns the path. The
-// markdown preserves the full timeline: reasoning traces, tool calls
-// with their arguments, and tool results alongside the visible text.
+// markdown keeps only user and assistant turns: each archived turn's
+// user messages are preserved, while assistant messages are collapsed
+// to the agent's final text output for that turn. Reasoning, tool
+// calls and tool results are intentionally omitted.
 func (a *App) ExportSession(id string) (string, error) {
 	if !ocsessions.ValidID(id) {
 		return "", fmt.Errorf("invalid session id %q", id)
@@ -99,7 +101,7 @@ func (a *App) ExportSession(id string) (string, error) {
 	if store == nil {
 		return "", errors.New("session store is not available")
 	}
-	msgs, err := store.History(context.Background(), id, -1)
+	turns, err := store.Turns(a.appContext(), id)
 	if err != nil {
 		return "", err
 	}
@@ -110,43 +112,32 @@ func (a *App) ExportSession(id string) (string, error) {
 		time.Now().UTC().Format("2006-01-02 15:04 UTC"),
 		"exported conversation",
 	)
-	for _, m := range msgs {
-		role := "User"
-		switch m.Role {
-		case message.RoleAssistant:
-			role = "Assistant"
-		case message.RoleTool:
-			role = "Tool"
+	var pendingAssistant string
+	flushAssistant := func() {
+		if strings.TrimSpace(pendingAssistant) == "" {
+			return
 		}
-		fmt.Fprintf(&b, "## %s\n\n", role)
-		for _, part := range m.Content.Parts {
-			switch p := part.(type) {
-			case message.ReasoningPart:
-				if p.Text != "" {
-					fmt.Fprintf(&b, "> %s\n>\n",
-						strings.ReplaceAll(p.Text, "\n", "\n> "))
+		fmt.Fprintf(&b, "## Assistant\n\n%s\n\n", pendingAssistant)
+		pendingAssistant = ""
+	}
+	for _, turn := range turns {
+		for _, m := range turn.Messages {
+			switch m.Role {
+			case message.RoleUser:
+				flushAssistant()
+				if text := strings.TrimSpace(m.Content.Text()); text != "" {
+					fmt.Fprintf(&b, "## User\n\n%s\n\n", text)
 				}
-			case message.ToolCallPart:
-				args := strings.TrimSpace(string(p.Call.Arguments))
-				fmt.Fprintf(&b, "**Tool call: `%s`**\n\n", p.Call.Name)
-				if args != "" && args != "{}" {
-					fmt.Fprintf(&b, "```json\n%s\n```\n\n", args)
-				}
-			case message.ToolResultPart:
-				if p.Result.IsError {
-					fmt.Fprintf(&b, "**Tool result (error)**\n\n")
-				} else {
-					fmt.Fprintf(&b, "**Tool result**\n\n")
-				}
-				if strings.TrimSpace(p.Result.Content) != "" {
-					fmt.Fprintf(&b, "```\n%s\n```\n\n", p.Result.Content)
-				}
-			case message.TextPart:
-				if p.Text != "" {
-					fmt.Fprintf(&b, "%s\n\n", p.Text)
+			case message.RoleAssistant:
+				if text := strings.TrimSpace(m.Content.Text()); text != "" {
+					// Keep the latest assistant text in this turn; an
+					// earlier "I'll check" before a tool call is
+					// dropped in favor of the final agent output.
+					pendingAssistant = text
 				}
 			}
 		}
+		flushAssistant()
 	}
 	dir := filepath.Join(workDir, ".opencraft", "exports")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -238,7 +229,7 @@ func (a *App) SessionHistory(id string) ([]message.Message, error) {
 	if store == nil {
 		return []message.Message{}, nil
 	}
-	return store.History(context.Background(), id, -1)
+	return store.History(a.appContext(), id, -1)
 }
 
 // SessionTurns returns every archived turn of one conversation with
@@ -254,7 +245,7 @@ func (a *App) SessionTurns(id string) ([]SessionTurnDTO, error) {
 	if store == nil {
 		return []SessionTurnDTO{}, nil
 	}
-	turns, err := store.Turns(context.Background(), id)
+	turns, err := store.Turns(a.appContext(), id)
 	if err != nil {
 		return nil, err
 	}

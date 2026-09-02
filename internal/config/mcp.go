@@ -7,8 +7,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/GizClaw/flowcraft/core/deploy"
-	"github.com/GizClaw/flowcraft/core/resource"
 	"sigs.k8s.io/yaml"
 
 	"github.com/GizClaw/opencraft/internal/toolchain"
@@ -130,29 +128,4 @@ func WriteMCP(configDir string, servers []MCPServer) error {
 		merged,
 		0o600,
 	)
-}
-
-// MigrateMCPToolchain upgrades legacy tool.mcp resources (impl "mcp")
-// to the toolchain-aware impl in memory. The user file is not
-// rewritten; the next settings-page save persists the new impl.
-func MigrateMCPToolchain(doc *deploy.Document) error {
-	if doc == nil {
-		return nil
-	}
-	res, ok := doc.Resources["tool.mcp"]
-	if !ok {
-		return nil
-	}
-	if res.Impl != "mcp" {
-		return nil
-	}
-	res.Impl = toolchain.MCPResourceImpl
-	if res.Deps == nil {
-		res.Deps = resource.Deps{}
-	}
-	if _, ok := res.Deps["toolchain"]; !ok {
-		res.Deps["toolchain"] = resource.Ref("toolchain")
-	}
-	doc.Resources["tool.mcp"] = res
-	return nil
 }

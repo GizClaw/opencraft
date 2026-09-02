@@ -285,7 +285,7 @@ func (HostSandboxFactory) New(
 		if err != nil {
 			return nil, err
 		}
-		remote, err := execd.NewRemoteRunner(client, stop)
+		remote, err := execd.NewRemoteRunner(ctx, client, stop)
 		if err != nil {
 			return nil, err
 		}

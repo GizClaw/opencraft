@@ -1,6 +1,6 @@
 // Package secrets implements opencraft's credential store for
 // flowcraft's declarative secret.Store resources, plus the app-side
-// manager used by the settings page and the literal-key migration.
+// manager used by the settings page.
 //
 // One 0600 file per secret under a 0700 directory backs the store on
 // every platform (the Linux approach): no keychain ACLs, no native
@@ -11,13 +11,10 @@
 // file sharing, casual reads) rather than against another process
 // running as the same user — a true OS credential store (Keychain,
 // libsecret, DPAPI) would be needed for that. Files without the
-// encryption magic are rejected: legacy plaintext from pre-encryption
-// builds is not readable and must be re-entered. The resource impl id
-// stays "keychain" and configs keep
-// ${secret:keychain.<name>} references so existing user documents do
-// not need rewriting. Deployments that need a richer backend (vault,
-// 1Password, Secret Service) can register their own secret.Store impl
-// without touching opencraft core.
+// encryption magic are rejected: unencrypted files are not readable
+// and must be re-entered. Deployments that need a richer backend
+// (vault, 1Password, Secret Service) can register their own secret.Store
+// impl without touching opencraft core.
 package secrets
 
 import (
@@ -39,9 +36,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/secret"
 )
 
-// ResourceImpl is the deploy impl id of this secret store. The id
-// predates the file-only backend; it is kept so already-written
-// ${secret:keychain.<name>} references keep resolving.
+// ResourceImpl is the deploy impl id of this secret store.
 const ResourceImpl = "keychain"
 
 // encMagic prefixes every sealed secret file. Files without it are
@@ -54,12 +49,6 @@ const (
 	// encKeyFile is the machine-local key file inside the store dir.
 	encKeyFile = ".key"
 )
-
-// DefaultService is the (retained) service name used for app
-// credentials (inference keys today; SSO gateway tokens later). The
-// file backend ignores it; it exists for config compatibility with the
-// earlier Keychain backend.
-const DefaultService = "opencraft"
 
 // Store is the built secret.Store value: a credential backend plus the
 // deployment flags (id / default) carried from settings.
@@ -80,9 +69,6 @@ type Settings struct {
 	// Default marks this store as the target of NAME-only
 	// ${secret:NAME} references.
 	Default bool `json:"default,omitempty"`
-	// Service overrides the Keychain service name (default "opencraft").
-	// Ignored by the file backend; kept for config compatibility.
-	Service string `json:"service,omitempty"`
 	// Dir is the credential store directory (0700). Required.
 	Dir string `json:"dir,omitempty"`
 }
@@ -98,13 +84,11 @@ type backend interface {
 
 // NewStore opens the 0600-file backend rooted at dir, creating the
 // store directory (0700) and the AES key file (.key, 0600) on first
-// use. service is retained for call-site compatibility but not used by
-// the file backend. The returned store is usable even when the
+// use. The returned store is usable even when the
 // directory or key cannot be created: Lookup then reports an error,
 // and Available reports false so callers can fall back to literal
 // config storage.
-func NewStore(dir, service string) (Store, error) {
-	_ = service // file backend; kept for call-site compatibility.
+func NewStore(dir string) (Store, error) {
 	if strings.TrimSpace(dir) == "" {
 		return Store{}, errors.New(
 			"opencraft secrets: file backend requires settings.dir")
@@ -178,7 +162,7 @@ func (factory) New(ctx context.Context, in resource.Input) (any, error) {
 	if err != nil {
 		return nil, fmt.Errorf("opencraft secrets: decode settings: %w", err)
 	}
-	store, err := NewStore(settings.Dir, settings.Service)
+	store, err := NewStore(settings.Dir)
 	if err != nil {
 		return nil, err
 	}
@@ -200,9 +184,8 @@ type Manager struct {
 }
 
 // NewManager returns a manager rooted at dir (the 0600-file backend).
-// service is retained for call-site compatibility.
-func NewManager(dir, service string) *Manager {
-	store, err := NewStore(dir, service)
+func NewManager(dir string) *Manager {
+	store, err := NewStore(dir)
 	if err != nil {
 		// Unavailable store: NewStore only fails when the directory
 		// cannot be created or the platform has no backend. Keep a
@@ -353,12 +336,10 @@ func (f *fileBackend) Get(ctx context.Context, name string) (string, bool, error
 		}
 		return strings.TrimRight(string(plain), "\r\n"), true, nil
 	}
-	// Unencrypted files are rejected, not silently read: legacy
-	// plaintext from pre-encryption builds must be re-entered so it is
-	// never left (or treated) as plaintext.
+	// Unencrypted files are rejected, not silently read: the secret
+	// must be re-entered so it is never left (or treated) as plaintext.
 	return "", false, fmt.Errorf(
-		"opencraft secrets: %q is not encrypted (legacy plaintext is "+
-			"no longer supported); re-enter the secret", name)
+		"opencraft secrets: %q is not encrypted; re-enter the secret", name)
 }
 
 func (f *fileBackend) Set(_ context.Context, name, value string) error {

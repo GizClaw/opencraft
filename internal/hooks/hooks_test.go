@@ -18,7 +18,7 @@ func writeHooks(t *testing.T, content string) string {
 }
 
 func TestLoadMissingFileReturnsEmpty(t *testing.T) {
-	m, err := Load(filepath.Join(t.TempDir(), "nope.json"))
+	m, err := Load(context.Background(), filepath.Join(t.TempDir(), "nope.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +33,7 @@ func TestLoadRejectsBadMatcher(t *testing.T) {
 			"PreToolUse": [{"matcher": "(", "hooks": [{"command": "true"}]}]
 		}
 	}`)
-	if _, err := Load(path); err == nil {
+	if _, err := Load(context.Background(), path); err == nil {
 		t.Fatal("bad matcher must be rejected")
 	}
 }
@@ -47,7 +47,7 @@ func TestFireRunsMatchingHookWithStdinPayload(t *testing.T) {
 			]
 		}
 	}`
-	m, err := Load(writeHooks(t, hooksJSON))
+	m, err := Load(context.Background(), writeHooks(t, hooksJSON))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +80,7 @@ func TestFireRunsMatchingHookWithStdinPayload(t *testing.T) {
 }
 
 func TestFireSkipsMissingHookFileAndEmptyManager(t *testing.T) {
-	m, err := Load(filepath.Join(t.TempDir(), "nope.json"))
+	m, err := Load(context.Background(), filepath.Join(t.TempDir(), "nope.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestFireMatcherPrecedence(t *testing.T) {
 			"SessionStart": [{"matcher": "^startup$", "hooks": [{"command": "cat > ` + out + `"}]}]
 		}
 	}`
-	m, err := Load(writeHooks(t, cfg))
+	m, err := Load(context.Background(), writeHooks(t, cfg))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +111,7 @@ func TestFireMatcherPrecedence(t *testing.T) {
 			"SessionStart": [{"matcher": "^resume$", "hooks": [{"command": "cat > ` + out2 + `"}]}]
 		}
 	}`
-	m2, err := Load(writeHooks(t, cfg2))
+	m2, err := Load(context.Background(), writeHooks(t, cfg2))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +133,7 @@ func TestLoadSkipsNonCommandHookTypes(t *testing.T) {
 			]
 		}
 	}`
-	m, err := Load(writeHooks(t, hooksJSON))
+	m, err := Load(context.Background(), writeHooks(t, hooksJSON))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +155,7 @@ func TestLoadWithSourcesAnchorsPluginCommands(t *testing.T) {
 	}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	m, err := LoadWithSources(filepath.Join(t.TempDir(), "missing.json"), []ExtraSource{
+	m, err := LoadWithSources(context.Background(), filepath.Join(t.TempDir(), "missing.json"), []ExtraSource{
 		{Path: hooksPath, Dir: pluginDir},
 	})
 	if err != nil {
@@ -172,7 +172,7 @@ func TestLoadWithSourcesAnchorsPluginCommands(t *testing.T) {
 }
 
 func TestLoadWithSourcesSkipsMissingPluginFile(t *testing.T) {
-	m, err := LoadWithSources(
+	m, err := LoadWithSources(context.Background(),
 		filepath.Join(t.TempDir(), "missing.json"),
 		[]ExtraSource{{Path: filepath.Join(t.TempDir(), "nope.json"), Dir: t.TempDir()}},
 	)
@@ -194,7 +194,7 @@ func TestPluginHooksPayloadIsSanitized(t *testing.T) {
 	}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	m, err := LoadWithSources(filepath.Join(t.TempDir(), "missing.json"), []ExtraSource{
+	m, err := LoadWithSources(context.Background(), filepath.Join(t.TempDir(), "missing.json"), []ExtraSource{
 		{Path: hooksPath, Dir: pluginDir}, // Trusted defaults to false
 	})
 	if err != nil {

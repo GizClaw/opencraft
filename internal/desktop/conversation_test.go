@@ -1,9 +1,14 @@
 package desktop
 
 import (
+	"context"
+	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+
+	"github.com/GizClaw/flowcraft/core/message"
 
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 )
@@ -79,5 +84,69 @@ func TestSessionBindingsRejectTraversalIDs(t *testing.T) {
 	}
 	if _, err := a.ExportSession(sid); err != nil {
 		t.Fatalf("ExportSession(valid): %v", err)
+	}
+}
+
+func TestExportSessionKeepsUserAndFinalAssistantOnly(t *testing.T) {
+	store, err := ocsessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &App{
+		mu:       sync.Mutex{},
+		sessions: store,
+		workDir:  t.TempDir(),
+		convRuns: make(map[string]map[string]bool),
+	}
+
+	sid, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendTurn(context.Background(), sid, []message.Message{
+		message.NewTextMessage(message.RoleUser, "第一轮"),
+		{
+			Role: message.RoleAssistant,
+			Content: message.Content{Parts: []message.Part{
+				message.ReasoningPart{Text: "内部推理"},
+				message.TextPart{Text: "我先看一下"},
+			}},
+		},
+		message.NewTextMessage(message.RoleAssistant, "最终回答一"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendTurn(context.Background(), sid, []message.Message{
+		message.NewTextMessage(message.RoleUser, "第二轮"),
+		message.NewTextMessage(message.RoleAssistant, "最终回答二"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	path, err := a.ExportSession(sid)
+	if err != nil {
+		t.Fatalf("ExportSession: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	md := string(data)
+	for _, want := range []string{
+		"## User",
+		"## Assistant",
+		"第一轮",
+		"第二轮",
+		"最终回答一",
+		"最终回答二",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("export missing %q:\n%s", want, md)
+		}
+	}
+	for _, banned := range []string{"我先看一下", "内部推理", "## Tool", "tool_call", "tool_result"} {
+		if strings.Contains(md, banned) {
+			t.Errorf("export contains %q:\n%s", banned, md)
+		}
 	}
 }

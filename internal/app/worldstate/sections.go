@@ -18,8 +18,8 @@ const (
 	defaultDocBudget = 16 << 10 // 16 KiB
 )
 
-func (s *Service) agentsSection() (Section, error) {
-	text, err := s.discoverAgents()
+func (s *Service) agentsSection(ctx context.Context) (Section, error) {
+	text, err := s.discoverAgents(ctx)
 	if err != nil {
 		return Section{}, err
 	}
@@ -95,7 +95,7 @@ func renderPlanSection(p plan.Plan) string {
 // discoverAgents collects AGENTS.md from the project root down to the
 // working directory (per-directory AGENTS.override.md wins), appends the
 // user-level ~/.opencraft/AGENTS.md, and applies the doc budget.
-func (s *Service) discoverAgents() (string, error) {
+func (s *Service) discoverAgents(ctx context.Context) (string, error) {
 	root := projectRoot(s.opts.WorkBase)
 	var dirs []string
 	for dir := s.opts.WorkBase; ; {
@@ -116,13 +116,13 @@ func (s *Service) discoverAgents() (string, error) {
 
 	var entries []string
 	for _, dir := range dirs {
-		if text, err := s.readDoc(dir, "AGENTS.override.md"); err != nil {
+		if text, err := s.readDoc(ctx, dir, "AGENTS.override.md"); err != nil {
 			return "", err
 		} else if text != "" {
 			entries = append(entries, text)
 			continue
 		}
-		if text, err := s.readDoc(dir, "AGENTS.md"); err != nil {
+		if text, err := s.readDoc(ctx, dir, "AGENTS.md"); err != nil {
 			return "", err
 		} else if text != "" {
 			entries = append(entries, text)
@@ -142,10 +142,10 @@ func (s *Service) discoverAgents() (string, error) {
 // readDoc reads one AGENTS doc from dir. Paths inside the workspace root
 // go through the workspace interface; anything else (ancestor dirs, user
 // config) uses the host filesystem.
-func (s *Service) readDoc(dir, name string) (string, error) {
+func (s *Service) readDoc(ctx context.Context, dir, name string) (string, error) {
 	path := filepath.Join(dir, name)
 	if s.opts.Workspace != nil && dir == s.opts.WorkBase {
-		data, err := s.opts.Workspace.Read(context.Background(), name)
+		data, err := s.opts.Workspace.Read(ctx, name)
 		if err != nil {
 			if errors.Is(err, workspace.ErrNotFound) || os.IsNotExist(err) {
 				return "", nil

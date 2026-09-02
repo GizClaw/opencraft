@@ -73,6 +73,8 @@ func (ObserverFactory) New(
 			"opencraft hooks observer: hooks dep is not *hooks.Manager")
 	}
 
+	// The observer lives for the whole runtime generation; it owns its
+	// loop context and Close cancels it.
 	ctx, cancel := context.WithCancel(context.Background())
 	sub, err := bus.Subscribe(ctx, kanban.PatternAll())
 	if err != nil {

@@ -550,6 +550,8 @@ func (sess *session) closeAll() {
 	}
 	sess.mu.Unlock()
 
+	// closeAll runs after the owning connection/session is already
+	// gone, so teardown needs its own detached timeout.
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	for _, e := range entries {

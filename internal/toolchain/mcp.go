@@ -68,7 +68,7 @@ func (MCPFactory) New(ctx context.Context, in resource.Input) (any, error) {
 	}
 	src := coretoolmcp.NewSource()
 	for _, server := range settings.Servers {
-		transport, err := mcpTransport(server, mgr)
+		transport, err := mcpTransport(ctx, server, mgr)
 		if err != nil {
 			_ = src.Close()
 			return nil, err
@@ -90,13 +90,17 @@ func RegisterMCP(r *resource.Registry) error {
 // mcpTransport builds one stdio/http transport. For stdio it resolves
 // bare commands through the toolchain manager and attaches host env
 // without overwriting explicit server env.
-func mcpTransport(server MCPServer, mgr *Manager) (mcpsdk.Transport, error) {
+func mcpTransport(
+	ctx context.Context,
+	server MCPServer,
+	mgr *Manager,
+) (mcpsdk.Transport, error) {
 	switch server.Transport {
 	case "stdio":
 		command := server.Command
 		env := server.Env
 		if mgr != nil {
-			if resolved, err := mgr.ResolveMCPCommand(command); err == nil {
+			if resolved, err := mgr.ResolveMCPCommand(ctx, command); err == nil {
 				command = resolved
 			}
 			env = mgr.AttachHostEnv(env)

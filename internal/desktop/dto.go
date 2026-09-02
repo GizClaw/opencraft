@@ -177,6 +177,13 @@ type SessionMeta struct {
 	TotalTokens int64  `json:"total_tokens"`
 }
 
+// SessionImportDTO reports a completed session import to the UI.
+type SessionImportDTO struct {
+	SessionID string `json:"session_id"`
+	Messages  int    `json:"messages"`
+	Turns     int    `json:"turns"`
+}
+
 // SkillDTO is one discovered skill for the config page.
 type SkillDTO struct {
 	Name        string `json:"name"`

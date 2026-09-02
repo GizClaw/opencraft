@@ -23,7 +23,13 @@ func TestInferenceProfileUpsertAndRemove(t *testing.T) {
 		Endpoint: "https://ai.haivivi.cn/v1",
 		Models: []pluginruntime.ProfileModel{
 			{Name: "deepseek-flash", Reasoning: "toggle", WebSearch: true},
-			{Name: "deepseek-vision", Vision: true, Reasoning: "toggle", WebSearch: true},
+			{
+				Name:      "deepseek-vision",
+				Inputs:    []string{"text", "image"},
+				Outputs:   []string{"text"},
+				Reasoning: "toggle",
+				WebSearch: true,
+			},
 		},
 		KeyRef: "auth/sso-haivivi/token",
 	}
@@ -54,7 +60,7 @@ func TestInferenceProfileUpsertAndRemove(t *testing.T) {
 	if len(in.Models[1].Capabilities.Inputs) != 2 ||
 		in.Models[1].Capabilities.Inputs[0] != message.PartText ||
 		in.Models[1].Capabilities.Inputs[1] != message.PartImage {
-		t.Fatalf("legacy vision capability not normalized: %+v", in.Models[1])
+		t.Fatalf("vision capability not carried through: %+v", in.Models[1])
 	}
 
 	if err := a.removeInferenceProfile("sso-haivivi"); err != nil {

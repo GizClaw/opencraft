@@ -144,7 +144,7 @@ func (a *App) ModelUsage() ([]ModelUsageStat, error) {
 	if store == nil {
 		return []ModelUsageStat{}, nil
 	}
-	rows, err := store.Summary(context.Background())
+	rows, err := store.Summary(a.appContext())
 	if err != nil {
 		return nil, err
 	}
@@ -206,7 +206,7 @@ func (a *App) ModelUsageSeries(
 		g = usage.GranularityDay
 	}
 	rows, err := store.Series(
-		context.Background(),
+		a.appContext(),
 		model,
 		g,
 		utcOffsetMinutes,
@@ -291,10 +291,7 @@ func (a *App) saveInference(req InferenceRequest) error {
 			// literal 0600 config so the settings page stays usable.
 			if a.secrets != nil && a.secrets.Available() {
 				account := secrets.AccountFor(in.DeploymentID(len(instances) + 1))
-				ctx := a.ctx
-				if ctx == nil {
-					ctx = context.Background()
-				}
+				ctx := a.appContext()
 				storeErr := a.secrets.Set(ctx, account, key)
 				if storeErr == nil {
 					in.KeySource = config.KeyKeychain
@@ -600,6 +597,7 @@ func validateMCPServer(srv *config.MCPServer) error {
 // mcpTransport builds the MCP transport for one server entry the same
 // way the runtime factory wires stdio/http servers.
 func mcpTransport(
+	ctx context.Context,
 	mgr *toolchain.Manager,
 	server config.MCPServer,
 ) (mcpsdk.Transport, error) {
@@ -608,7 +606,7 @@ func mcpTransport(
 		command := server.Command
 		env := server.Env
 		if mgr != nil {
-			resolved, err := mgr.ResolveMCPCommand(command)
+			resolved, err := mgr.ResolveMCPCommand(ctx, command)
 			if err != nil {
 				return nil, err
 			}
@@ -632,11 +630,11 @@ func (a *App) TestMCP(server config.MCPServer) error {
 		return err
 	}
 	const timeout = 15 * time.Second
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	ctx, cancel := context.WithTimeout(a.appContext(), timeout)
 	defer cancel()
 	src := mcp.NewSource(mcp.WithConnectTimeout(timeout))
 	defer func() { _ = src.Close() }()
-	transport, err := mcpTransport(a.currentToolchain(), server)
+	transport, err := mcpTransport(ctx, a.currentToolchain(), server)
 	if err != nil {
 		return err
 	}
@@ -657,6 +655,7 @@ func (a *App) MCPStatus() ([]MCPStatusDTO, error) {
 	}
 	a.mu.Lock()
 	ctrl := a.ctrl
+	workDir := a.workDir
 	a.mu.Unlock()
 	var src *mcp.Source
 	if ctrl != nil && ctrl.Runtime() != nil {
@@ -669,10 +668,29 @@ func (a *App) MCPStatus() ([]MCPStatusDTO, error) {
 	out := make([]MCPStatusDTO, 0, len(servers))
 	for _, srv := range servers {
 		dto := MCPStatusDTO{Name: srv.Name}
+		if srv.Transport == "stdio" {
+			mgr := a.currentToolchain()
+			if mgr != nil {
+				if _, err := mgr.ResolveMCPCommand(
+					a.appContext(), srv.Command,
+				); err != nil {
+					dto.Status = "error"
+					dto.Error = err.Error()
+					out = append(out, dto)
+					continue
+				}
+			}
+		}
 		if src == nil {
-			dto.Status = "connecting" // runtime is being assembled
+			if strings.TrimSpace(workDir) == "" {
+				dto.Status = "error"
+				dto.Error = "MCP runtime is not ready; open a workspace first"
+			} else {
+				dto.Status = "connecting" // runtime is being assembled
+			}
 		} else {
-			ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+			ctx, cancel := context.WithTimeout(
+				a.appContext(), 250*time.Millisecond)
 			probeErr := src.WaitReady(ctx, srv.Name, 200*time.Millisecond)
 			cancel()
 			switch {
@@ -1058,12 +1076,13 @@ func (a *App) waitTurn(
 	// Fast bookkeeping that the resume list reads on turn_end: usage
 	// and rollout are cheap SQLite/JSONL writes and stay ahead of the
 	// UI event so the session list refresh sees current totals.
+	persistCtx := context.WithoutCancel(ctx)
 	if store != nil && turnUsage.TotalTokens > 0 {
-		_ = store.RecordUsage(context.Background(), contextID, turnUsage)
+		_ = store.RecordUsage(persistCtx, contextID, turnUsage)
 	}
 	if usageStore != nil && turnUsage.Model != "" {
 		_ = usageStore.Record(
-			context.Background(),
+			persistCtx,
 			workspaceID(wd),
 			contextID,
 			turnUsage.Model,

@@ -30,6 +30,7 @@ const ResourceKind = "opencraft.plugins"
 // capabilities. A nil store yields an empty host (CLI / tests without
 // a desktop plugin root).
 type Host struct {
+	ctx    context.Context
 	store  *plugins.Store
 	cap    *runtime.Manager
 	once   sync.Once
@@ -37,8 +38,8 @@ type Host struct {
 }
 
 // NewHost wraps an installed plugin store and its capability runtime.
-func NewHost(store *plugins.Store, cap *runtime.Manager) *Host {
-	return &Host{store: store, cap: cap}
+func NewHost(ctx context.Context, store *plugins.Store, cap *runtime.Manager) *Host {
+	return &Host{ctx: ctx, store: store, cap: cap}
 }
 
 // NewEmpty returns a host with no plugins. It is used by runtimes
@@ -112,7 +113,7 @@ func (h *Host) scanEntries() []pluginEntry {
 	}
 	list, err := h.store.List()
 	if err != nil {
-		telemetry.WarnErr(context.Background(),
+		telemetry.WarnErr(h.ctx,
 			"plugin agent: list plugins failed", err)
 		return nil
 	}
@@ -123,14 +124,14 @@ func (h *Host) scanEntries() []pluginEntry {
 		}
 		dir, _, err := h.store.Dir(p.ID)
 		if err != nil {
-			telemetry.WarnErr(context.Background(),
+			telemetry.WarnErr(h.ctx,
 				"plugin agent: resolve plugin dir failed", err,
 				otellog.String("plugin", p.ID))
 			continue
 		}
 		m, err := h.store.Manifest(p.ID)
 		if err != nil {
-			telemetry.WarnErr(context.Background(),
+			telemetry.WarnErr(h.ctx,
 				"plugin agent: read manifest failed", err,
 				otellog.String("plugin", p.ID))
 			continue

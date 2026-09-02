@@ -57,10 +57,8 @@ type InferenceProfile struct {
 	KeyRef   string         `json:"key_ref"`
 }
 
-// ProfileModel is one model in an inference profile. New plugins
-// declare capabilities as canonical content-kind lists (inputs/
-// outputs); the legacy vision shortcut remains for older plugins and
-// the host normalizes it (image input + text output).
+// ProfileModel is one model in an inference profile. Capabilities are
+// declared as canonical content-kind lists (inputs/outputs).
 type ProfileModel struct {
 	Name               string            `json:"name"`
 	Inputs             []string          `json:"inputs,omitempty"`
@@ -70,7 +68,6 @@ type ProfileModel struct {
 	EffortNone         bool              `json:"effort_none,omitempty"`
 	WebSearch          bool              `json:"web_search,omitempty"`
 	Endpoint           string            `json:"endpoint,omitempty"`
-	Vision             bool              `json:"vision,omitempty"`
 }
 
 // InferenceHandler is the host-side write path for inference profiles.
@@ -79,6 +76,42 @@ type InferenceHandler struct {
 	Upsert func(pluginID string, profile InferenceProfile) error
 	// Remove deletes one provider deployment by id.
 	Remove func(pluginID, id string) error
+}
+
+// SessionImportRequest asks the host to import a session bundle the
+// plugin wrote to disk. BundlePath is used instead of inline messages
+// because the JSON-RPC transport is line-delimited and capped by
+// bufio.Scanner's default 64 KiB token limit.
+type SessionImportRequest struct {
+	BundlePath string `json:"bundle_path"`
+	Title      string `json:"title"`
+	Source     string `json:"source"`
+	// Workspace optionally selects a previously opened workspace. When
+	// empty the host imports into the currently active workspace.
+	Workspace string `json:"workspace,omitempty"`
+}
+
+// SessionImportResult is returned after history and memory are seeded.
+type SessionImportResult struct {
+	SessionID string `json:"session_id"`
+	Messages  int    `json:"messages"`
+	Turns     int    `json:"turns"`
+}
+
+// SessionImportHandler is the host-side write path for session.import.
+type SessionImportHandler struct {
+	// Import imports bundlePath into the requested workspace and
+	// returns the new session id.
+	Import func(pluginID string, req SessionImportRequest) (SessionImportResult, error)
+}
+
+// WorkspaceHandler answers one capability plugin's question about the
+// host's current workspace. The answer is read dynamically on every
+// call because capability subprocesses are long-lived and do not
+// observe environment-variable changes across workspace switches.
+type WorkspaceHandler struct {
+	// Current returns the currently active workspace path.
+	Current func() (string, error)
 }
 
 // SecretStore is the minimal credential surface exposed to plugins as
@@ -104,12 +137,14 @@ type Loader interface {
 // Manager owns the subprocess plugins. Processes are started lazily on
 // first Invoke and stopped via Stop / Shutdown.
 type Manager struct {
-	loader    Loader
-	root      string
-	secrets   SecretStore
-	openURL   func(url string)
-	log       io.Writer
-	inference InferenceHandler
+	loader        Loader
+	root          string
+	secrets       SecretStore
+	openURL       func(url string)
+	log           io.Writer
+	inference     InferenceHandler
+	sessionImport SessionImportHandler
+	workspace     WorkspaceHandler
 
 	handshakeTimeout time.Duration
 	callTimeout      time.Duration
@@ -117,15 +152,23 @@ type Manager struct {
 
 	mu    sync.Mutex
 	procs map[string]*process
+
+	baseCtx context.Context
+	cancel  context.CancelFunc
 }
 
 // NewManager returns a manager rooted at the plugin directory.
 func NewManager(root string, loader Loader, secrets SecretStore) *Manager {
+	// Manager-owned lifecycle: capability calls and cleanups outlive
+	// individual requests, and Shutdown cancels the base context.
+	baseCtx, cancel := context.WithCancel(context.Background())
 	return &Manager{
 		loader:           loader,
 		root:             root,
 		secrets:          secrets,
 		log:              io.Discard,
+		baseCtx:          baseCtx,
+		cancel:           cancel,
 		handshakeTimeout: DefaultHandshakeTimeout,
 		callTimeout:      DefaultCallTimeout,
 		procs:            make(map[string]*process),
@@ -145,6 +188,16 @@ func (m *Manager) SetLogger(w io.Writer) {
 // SetInferenceHandler wires the inference profile write path.
 func (m *Manager) SetInferenceHandler(h InferenceHandler) {
 	m.inference = h
+}
+
+// SetSessionImportHandler wires the host's session import write path.
+func (m *Manager) SetSessionImportHandler(h SessionImportHandler) {
+	m.sessionImport = h
+}
+
+// SetWorkspaceHandler wires the host's current-workspace query.
+func (m *Manager) SetWorkspaceHandler(h WorkspaceHandler) {
+	m.workspace = h
 }
 
 // SetEnv adds extra environment variables for plugin processes
@@ -187,7 +240,7 @@ func (m *Manager) Cleanup(id string) error {
 	if !ok {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(m.baseCtx, 10*time.Second)
 	defer cancel()
 	_, err := p.call(ctx, "lifecycle.cleanup", map[string]any{})
 	m.Stop(id)
@@ -205,6 +258,9 @@ func (m *Manager) Shutdown() {
 	m.mu.Unlock()
 	for _, p := range procs {
 		p.stop()
+	}
+	if m.cancel != nil {
+		m.cancel()
 	}
 }
 
@@ -539,12 +595,41 @@ func (m *Manager) handlePrimitive(p *process, req rpcRequest) (any, error) {
 		return m.handleInferenceUpsert(p, req)
 	case "inference.remove":
 		return m.handleInferenceRemove(p, req)
+	case "session.import":
+		return m.handleSessionImport(p, req)
+	case "workspace.current":
+		return m.handleWorkspaceCurrent()
 	case "emit.event":
 		// Reserved: forward to the host event bus once wired.
 		return map[string]any{}, nil
 	default:
 		return nil, fmt.Errorf("runtime: unknown primitive %q", req.Method)
 	}
+}
+
+func (m *Manager) handleWorkspaceCurrent() (any, error) {
+	if m.workspace.Current == nil {
+		return nil, errors.New("runtime: workspace handler unavailable")
+	}
+	path, err := m.workspace.Current()
+	if err != nil {
+		return nil, fmt.Errorf("runtime: workspace.current: %w", err)
+	}
+	return map[string]any{"workspace": path}, nil
+}
+
+func (m *Manager) handleSessionImport(p *process, req rpcRequest) (any, error) {
+	var args SessionImportRequest
+	if err := json.Unmarshal(req.Params, &args); err != nil {
+		return nil, fmt.Errorf("runtime: session.import args: %w", err)
+	}
+	if strings.TrimSpace(args.BundlePath) == "" {
+		return nil, errors.New("runtime: session.import bundle_path is required")
+	}
+	if m.sessionImport.Import == nil {
+		return nil, errors.New("runtime: session import handler unavailable")
+	}
+	return m.sessionImport.Import(p.id, args)
 }
 
 func (m *Manager) handleInferenceUpsert(p *process, req rpcRequest) (any, error) {
@@ -594,7 +679,7 @@ func (m *Manager) handleSecret(p *process, req rpcRequest) (any, error) {
 		return nil, fmt.Errorf("runtime: secret %q outside plugin namespace", args.Name)
 	}
 	account := args.Scope + "/" + args.Name
-	ctx := context.Background()
+	ctx := m.baseCtx
 	switch req.Method {
 	case "secret.get":
 		if m.secrets == nil {

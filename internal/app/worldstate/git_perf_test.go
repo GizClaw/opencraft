@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // fakeGitOnPath installs a `git` that always prints n bytes of output,
@@ -22,7 +23,8 @@ func fakeGitOnPath(t testing.TB, bytes int) {
 
 func TestGitBoundedKillsOversizedOutput(t *testing.T) {
 	fakeGitOnPath(t, 128<<10)
-	out, truncated := gitBounded(context.Background(), t.TempDir(), 4096, "status")
+	out, truncated := gitBoundedWithTimeout(
+		context.Background(), t.TempDir(), 4096, time.Minute, "status")
 	if !truncated {
 		t.Fatal("oversized git output must be reported truncated")
 	}
