@@ -227,6 +227,8 @@ export function ConfigPage() {
   const [policy, setPolicy] = useState<PolicyDecision | null>(null);
   const [cacheResult, setCacheResult] = useState<CacheClearResult | null>(null);
   const [diagBusy, setDiagBusy] = useState(false);
+  const [runtimePref, setRuntimePref] = useState('external-first');
+  const [runtimePrefBusy, setRuntimePrefBusy] = useState(false);
   const [usageRows, setUsageRows] = useState<ModelUsageStat[]>([]);
   const [usageError, setUsageError] = useState('');
   const [usageModel, setUsageModel] = useState('');
@@ -357,11 +359,27 @@ export function ConfigPage() {
 
   useEffect(() => {
     if (tab !== 'diagnostics') return;
-    void api
-      .diagnostics()
-      .then(setDiag)
+    void Promise.all([api.diagnostics(), api.runtimePreference()])
+      .then(([report, preference]) => {
+        setDiag(report);
+        setRuntimePref(preference || 'external-first');
+      })
       .catch((err) => setError(String(err)));
   }, [tab]);
+
+  const saveRuntimePreference = async (next: string) => {
+    setRuntimePrefBusy(true);
+    try {
+      await api.saveRuntimePreference(next);
+      setRuntimePref(next);
+      toast(t('config.runtimePreferenceSaved'));
+      setDiag(await api.diagnostics());
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setRuntimePrefBusy(false);
+    }
+  };
 
   const runProbe = async () => {
     setDiagBusy(true);
@@ -2141,6 +2159,82 @@ export function ConfigPage() {
                         <br />
                         {diag.user_dir}
                       </p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="rounded-lg border border-edge bg-panel2 px-3 py-2">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs text-dim">
+                        {t('config.runtimePreference')}
+                      </p>
+                      <p className="mt-1 text-xs text-dim/70">
+                        {t('config.runtimePreferenceHint')}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={runtimePref}
+                        onChange={(e) =>
+                          void saveRuntimePreference(e.target.value)
+                        }
+                        disabled={runtimePrefBusy}
+                        className="rounded-lg border border-edge bg-panel px-2 py-1.5 text-sm"
+                      >
+                        <option value="external-first">
+                          {t('config.runtimePreferenceExternal')}
+                        </option>
+                        <option value="bundled-first">
+                          {t('config.runtimePreferenceBundled')}
+                        </option>
+                        <option value="off">
+                          {t('config.runtimePreferenceOff')}
+                        </option>
+                      </select>
+                      {runtimePrefBusy && (
+                        <Loader2
+                          className="animate-spin text-dim"
+                          size="0.9rem"
+                        />
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                {diag?.toolchains && diag.toolchains.length > 0 && (
+                  <div className="rounded-lg border border-edge bg-panel2 px-3 py-2">
+                    <p className="text-xs text-dim">
+                      {t('config.diagToolchains')}
+                    </p>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      {diag.toolchains.map((tc) => (
+                        <div
+                          key={tc.tool}
+                          className="rounded-lg border border-edge/70 bg-panel px-2 py-1.5"
+                        >
+                          <p className="font-mono text-sm">{tc.tool}</p>
+                          <p
+                            className={`mt-0.5 truncate font-mono text-xs ${
+                              tc.error ? 'text-err' : 'text-dim'
+                            }`}
+                            title={tc.error || tc.path || undefined}
+                          >
+                            {tc.error
+                              ? t('config.diagToolMissing')
+                              : [
+                                  tc.version,
+                                  tc.source === 'system'
+                                    ? t('config.toolchainSystem')
+                                    : tc.source === 'bundled'
+                                      ? t('config.toolchainBundled')
+                                      : '',
+                                ]
+                                  .filter(Boolean)
+                                  .join(' · ')}
+                          </p>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 )}

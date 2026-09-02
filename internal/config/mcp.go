@@ -7,7 +7,11 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/GizClaw/flowcraft/core/deploy"
+	"github.com/GizClaw/flowcraft/core/resource"
 	"sigs.k8s.io/yaml"
+
+	"github.com/GizClaw/opencraft/internal/toolchain"
 )
 
 // MCPServer describes one external MCP tool server attached through the
@@ -37,8 +41,11 @@ type mcpLayer struct {
 // mcpSourceLayer is the tool.mcp resource declaration WriteMCP emits
 // when at least one server is configured.
 type mcpSourceLayer struct {
-	Kind     string `json:"kind"`
-	Impl     string `json:"impl"`
+	Kind string `json:"kind"`
+	Impl string `json:"impl"`
+	Deps struct {
+		Toolchain string `json:"toolchain,omitempty"`
+	} `json:"deps,omitempty"`
 	Settings struct {
 		Servers []MCPServer `json:"servers"`
 	} `json:"settings"`
@@ -89,7 +96,11 @@ func WriteMCP(configDir string, servers []MCPServer) error {
 	replaceKeys := map[string]bool{"tool.mcp": true}
 	mergeKeys := map[string]bool{}
 	if len(servers) > 0 {
-		src := &mcpSourceLayer{Kind: "tool.Source", Impl: "mcp"}
+		src := &mcpSourceLayer{
+			Kind: "tool.Source",
+			Impl: toolchain.MCPResourceImpl,
+		}
+		src.Deps.Toolchain = "toolchain"
 		src.Settings.Servers = servers
 		layer.Resources.ToolMCP = src
 		layer.Resources.Tools.Deps = map[string]string{"tool.mcp": "tool.mcp"}
@@ -119,4 +130,29 @@ func WriteMCP(configDir string, servers []MCPServer) error {
 		merged,
 		0o600,
 	)
+}
+
+// MigrateMCPToolchain upgrades legacy tool.mcp resources (impl "mcp")
+// to the toolchain-aware impl in memory. The user file is not
+// rewritten; the next settings-page save persists the new impl.
+func MigrateMCPToolchain(doc *deploy.Document) error {
+	if doc == nil {
+		return nil
+	}
+	res, ok := doc.Resources["tool.mcp"]
+	if !ok {
+		return nil
+	}
+	if res.Impl != "mcp" {
+		return nil
+	}
+	res.Impl = toolchain.MCPResourceImpl
+	if res.Deps == nil {
+		res.Deps = resource.Deps{}
+	}
+	if _, ok := res.Deps["toolchain"]; !ok {
+		res.Deps["toolchain"] = resource.Ref("toolchain")
+	}
+	doc.Resources["tool.mcp"] = res
+	return nil
 }

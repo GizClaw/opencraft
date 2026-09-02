@@ -31,6 +31,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/runtime"
 	"github.com/GizClaw/opencraft/internal/secrets"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
+	"github.com/GizClaw/opencraft/internal/toolchain"
 	"github.com/GizClaw/opencraft/internal/undo"
 	"github.com/GizClaw/opencraft/internal/usage"
 	"github.com/GizClaw/opencraft/internal/userdb"
@@ -77,6 +78,11 @@ type App struct {
 	// cap hosts subprocess capability plugins (e.g. the SSO auth
 	// protocol). Lazily started on first PluginInvoke.
 	cap *pluginruntime.Manager
+	// toolchainMgr is the active bundled-toolchain manager from the
+	// assembled runtime; toolchainFallback covers MCP save/test before
+	// a runtime is ready.
+	toolchainMgr      *toolchain.Manager
+	toolchainFallback *toolchain.Manager
 
 	bridge       *Bridge
 	otelShutdown func(context.Context) error
@@ -223,6 +229,12 @@ func New(opts Options) (*App, error) {
 	}
 	sec := secrets.NewManager(filepath.Join(dataDir, "keyring"), secrets.DefaultService)
 	pluginDir := filepath.Join(dataDir, "plugins")
+	fallbackToolchain, err := toolchain.New(toolchain.Options{
+		Preference: toolchain.PreferenceExternalFirst,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("desktop: toolchain manager: %w", err)
+	}
 	shutdown, err := initTelemetry()
 	if err != nil {
 		// Telemetry is best-effort for the desktop app: a failed
@@ -233,33 +245,34 @@ func New(opts Options) (*App, error) {
 		shutdown = nil
 	}
 	a := &App{
-		workDir:         workDir,
-		userDir:         userDir,
-		pluginDir:       pluginDir,
-		plugins:         plugins.NewStore(pluginDir),
-		kv:              plugins.NewKVStore(pluginDir),
-		bridge:          NewBridge(),
-		turns:           make(map[string]*session.Turn),
-		conversationID:  ocsessions.NewID(),
-		mode:            ocsessions.ModeWorkspace,
-		think:           string(ocsessions.ThinkMedium),
-		model:           "",
-		runConvs:        make(map[string]string),
-		convRuns:        make(map[string]map[string]bool),
-		backgroundHosts: make(map[string]*backgroundHost),
-		runUsage:        make(map[string]ocsessions.Usage),
-		titling:         make(map[string]bool),
-		preTurnSnap:     make(map[string][]undo.FileState),
-		preTurnManifest: make(map[string]map[string]fileStat),
-		undo:            undoStore,
-		secrets:         sec,
-		rollouts:        make(map[string]*rollout.Recorder),
-		rolloutBufs:     make(map[string]*rolloutBuffer),
-		otelShutdown:    shutdown,
-		closeToTray:     prefs.CloseToTray,
-		language:        language,
-		trayIcon:        opts.TrayIcon,
-		trayIconWindows: opts.TrayIconWindows,
+		workDir:           workDir,
+		userDir:           userDir,
+		pluginDir:         pluginDir,
+		plugins:           plugins.NewStore(pluginDir),
+		kv:                plugins.NewKVStore(pluginDir),
+		bridge:            NewBridge(),
+		turns:             make(map[string]*session.Turn),
+		conversationID:    ocsessions.NewID(),
+		mode:              ocsessions.ModeWorkspace,
+		think:             string(ocsessions.ThinkMedium),
+		model:             "",
+		runConvs:          make(map[string]string),
+		convRuns:          make(map[string]map[string]bool),
+		backgroundHosts:   make(map[string]*backgroundHost),
+		runUsage:          make(map[string]ocsessions.Usage),
+		titling:           make(map[string]bool),
+		preTurnSnap:       make(map[string][]undo.FileState),
+		preTurnManifest:   make(map[string]map[string]fileStat),
+		undo:              undoStore,
+		secrets:           sec,
+		rollouts:          make(map[string]*rollout.Recorder),
+		rolloutBufs:       make(map[string]*rolloutBuffer),
+		toolchainFallback: fallbackToolchain,
+		otelShutdown:      shutdown,
+		closeToTray:       prefs.CloseToTray,
+		language:          language,
+		trayIcon:          opts.TrayIcon,
+		trayIconWindows:   opts.TrayIconWindows,
 	}
 	a.plugins.SetHostVersion(app.ServiceVersion)
 	a.cap = pluginruntime.NewManager(pluginDir, pluginruntime.DefaultLoader{
@@ -490,6 +503,11 @@ func (a *App) rebuild() error {
 	a.broker = assembled.broker
 	a.sessions = assembled.store
 	a.agents = assembled.lifecycle
+	if value, ok := assembled.ctrl.Runtime().Resource("toolchain"); ok {
+		if mgr, ok := value.(*toolchain.Manager); ok {
+			a.toolchainMgr = mgr
+		}
+	}
 	a.mu.Unlock()
 
 	a.bridge.Emit("ready", a.status(true))
@@ -568,6 +586,7 @@ func (a *App) closeRuntime() {
 	a.broker = nil
 	a.ctrl = nil
 	a.sessions = nil
+	a.toolchainMgr = nil
 	a.turns = make(map[string]*session.Turn)
 	a.runConvs = make(map[string]string)
 	a.convRuns = make(map[string]map[string]bool)
