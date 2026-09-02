@@ -750,6 +750,7 @@ func (a *App) startTurn(
 	if strings.TrimSpace(wd) == "" {
 		return TurnStart{}, errors.New("no workspace selected: pick a folder first")
 	}
+	requestedAt := time.Now().UTC()
 	a.mu.Lock()
 	ctrl := a.ctrl
 	broker := a.broker
@@ -838,6 +839,12 @@ func (a *App) startTurn(
 		_ = lease.Close()
 		return TurnStart{}, fmt.Errorf("start turn: %w", err)
 	}
+	startedAt := time.Now().UTC()
+	if store != nil {
+		_ = store.RecordTurnTiming(
+			contextID, turn.RunID(), requestedAt, startedAt,
+		)
+	}
 	broker.BindTurn(turn.RunID(), turn)
 
 	a.mu.Lock()
@@ -862,7 +869,12 @@ func (a *App) startTurn(
 			ConversationID: contextID,
 			RunID:          turn.RunID(),
 		}, "turn started")
-	return TurnStart{RunID: turn.RunID(), ContextID: contextID}, nil
+	return TurnStart{
+		RunID:       turn.RunID(),
+		ContextID:   contextID,
+		RequestedAt: requestedAt.Format(time.RFC3339),
+		StartedAt:   startedAt.Format(time.RFC3339),
+	}, nil
 }
 
 // NewChat starts a fresh conversation: a new session context is
@@ -1055,10 +1067,12 @@ func (a *App) waitTurn(
 	a.mu.Unlock()
 	_ = lease.Close()
 
+	finishedAt := time.Now().UTC()
 	end := TurnEnd{
 		RunID:          runID,
 		ConversationID: contextID,
 		Status:         "unknown",
+		FinishedAt:     finishedAt.Format(time.RFC3339),
 	}
 	if res != nil {
 		end.Status = string(res.Status)
@@ -1101,6 +1115,11 @@ func (a *App) waitTurn(
 	// soon as the turn result is known, and none of the follow-up work
 	// affects the UI's terminal state.
 	a.bridge.Emit("turn_end", end)
+	if store != nil {
+		_ = store.RecordTurnFinished(
+			contextID, runID, finishedAt,
+		)
+	}
 	if done != nil {
 		select {
 		case done <- end:

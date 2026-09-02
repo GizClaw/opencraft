@@ -251,11 +251,32 @@ func (a *App) SessionTurns(id string) ([]SessionTurnDTO, error) {
 	}
 	out := make([]SessionTurnDTO, 0, len(turns))
 	for _, t := range turns {
+		requestedAt := t.RequestedAt
+		if requestedAt.IsZero() {
+			requestedAt = t.At
+		}
+		startedAt := t.StartedAt
+		if startedAt.IsZero() {
+			startedAt = t.At
+		}
+		finishedAt := t.FinishedAt
+		if finishedAt.IsZero() {
+			finishedAt = t.At
+		}
+		var durationMs int64
+		if !t.StartedAt.IsZero() && !t.FinishedAt.IsZero() &&
+			t.FinishedAt.After(t.StartedAt) {
+			durationMs = t.FinishedAt.Sub(t.StartedAt).Milliseconds()
+		}
 		out = append(out, SessionTurnDTO{
-			Seq:       t.Seq,
-			At:        t.At.Format(time.RFC3339),
-			Messages:  t.Messages,
-			Artifacts: t.Artifacts,
+			Seq:         t.Seq,
+			At:          t.At.Format(time.RFC3339),
+			RequestedAt: requestedAt.Format(time.RFC3339),
+			StartedAt:   startedAt.Format(time.RFC3339),
+			FinishedAt:  finishedAt.Format(time.RFC3339),
+			DurationMs:  durationMs,
+			Messages:    t.Messages,
+			Artifacts:   t.Artifacts,
 		})
 	}
 	return out, nil

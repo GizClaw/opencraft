@@ -33,10 +33,10 @@ export interface ToolView {
   result?: string;
 }
 
-// AssistantItem preserves the stream arrival order of one rendered
-// block (reasoning trace, tool call, or text), so the chat renders
-// output in the exact order the model produced it instead of
-// grouping all reasoning / tools / text together.
+// AssistantItem preserves the stream arrival order of one assistant
+// block (reasoning trace, tool call, or text), so renderers can show
+// output in the exact order the model produced it. The chat transcript
+// drops reasoning traces; the subagent sidebar keeps them visible.
 export type AssistantItem =
   | { kind: 'reasoning'; id: string; text: string }
   | { kind: 'tool_call'; id: string; tool: ToolView }
@@ -146,6 +146,13 @@ export interface TurnArtifacts {
   id: string;
   start: number;
   docs: TurnDoc[];
+  // requestedAt is when the user's message was accepted; startedAt is
+  // when agent execution began; finishedAt/durationMs cover the run.
+  // They are set live and restored from the per-turn archive on resume.
+  requestedAt?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  durationMs?: number;
   // runID is set once the live turn starts, so post-turn artifact
   // reconciliation ("artifact_sync") can target exactly this turn.
   runID?: string;
@@ -225,7 +232,10 @@ function historyPartsToAttachments(parts: HistoryPart[]): AttachmentView[] {
 // historyToMessages converts stored flowcraft messages back into the
 // live MessageView shape: user text, then assistant messages with the
 // same ordered blocks (reasoning, tool calls, text) the stream
-// produces; tool results are matched back to their tool call.
+// produces. Text-bearing assistant replies keep their own row so a
+// long history stays cheap to render; tool-only rounds (which produce
+// no visible separator) are appended to the previous assistant row so
+// resumed sessions do not show a stack of repeated tool group cards.
 const historyToMessages = (history: HistoryMessage[]): MessageView[] => {
   const messages: MessageView[] = [];
   const toolCalls: {
@@ -260,13 +270,20 @@ const historyToMessages = (history: HistoryMessage[]): MessageView[] => {
       }
       continue;
     }
-    const msg: MessageView = {
-      id: newID('msg'),
-      role: 'assistant',
-      text: '',
-      items: [],
-      attachments: [],
-    };
+    const hasVisibleText = parts.some(
+      (p) => p.type === 'text' && Boolean((p as { text?: string }).text),
+    );
+    let msg = messages[messages.length - 1];
+    if (!msg || msg.role !== 'assistant' || hasVisibleText) {
+      msg = {
+        id: newID('msg'),
+        role: 'assistant',
+        text: '',
+        items: [],
+        attachments: [],
+      };
+      messages.push(msg);
+    }
     for (const p of parts) {
       switch (p.type) {
         case 'text':
@@ -322,6 +339,10 @@ function historyTurnsToState(turns: SessionTurn[]): {
     turnArtifacts.push({
       id: `h-${turn.seq}`,
       start,
+      requestedAt: turn.requested_at || turn.at,
+      startedAt: turn.started_at || turn.at,
+      finishedAt: turn.finished_at || turn.at,
+      durationMs: turn.duration_ms,
       docs: (turn.artifacts ?? []).map((a) => ({
         path: a.path,
         bytes: a.bytes ?? 0,
@@ -616,12 +637,18 @@ export const useStore = create<StoreState>((set, get) => {
     attachments: AttachmentView[] = [],
   ) => {
     const conv = get().conversations[convID];
+    const requestedAt = new Date().toISOString();
     // Keep completed turns' strips; trim anything that started at or
     // beyond the (possibly retried) transcript, then open a new live
     // turn entry at the user message just appended.
     const turnArtifacts = [
       ...conv.turnArtifacts.filter((t) => t.start < messages.length),
-      { id: newTurnID(), start: messages.length - 1, docs: [] },
+      {
+        id: newTurnID(),
+        start: messages.length - 1,
+        docs: [],
+        requestedAt,
+      },
     ];
     updateConv(convID, {
       messages,
@@ -644,7 +671,12 @@ export const useStore = create<StoreState>((set, get) => {
         liveIdx >= 0
           ? [
               ...list.slice(0, liveIdx),
-              { ...list[liveIdx], runID: start.run_id },
+              {
+                ...list[liveIdx],
+                runID: start.run_id,
+                requestedAt: start.requested_at || list[liveIdx].requestedAt,
+                startedAt: start.started_at || new Date().toISOString(),
+              },
               ...list.slice(liveIdx + 1),
             ]
           : list;
@@ -925,6 +957,7 @@ export const useStore = create<StoreState>((set, get) => {
             conversation_id?: string;
             status: string;
             error?: string;
+            finished_at?: string;
           };
           // Unknown-run terminations (subagent turns) must not clear a
           // conversation's busy state; only main turns are tracked.
@@ -959,11 +992,15 @@ export const useStore = create<StoreState>((set, get) => {
             );
             messages = next;
           }
+          const finishedAt = data.finished_at || new Date().toISOString();
           set((state) => {
             const runConvs = { ...state.runConvs };
             delete runConvs[data.run_id ?? ''];
             const conv = state.conversations[convID];
             if (!conv) return state;
+            const turnArtifacts = conv.turnArtifacts.map((t) =>
+              t.runID && t.runID === data.run_id ? { ...t, finishedAt } : t,
+            );
             return {
               runConvs,
               conversations: {
@@ -971,6 +1008,7 @@ export const useStore = create<StoreState>((set, get) => {
                 [convID]: capConversation({
                   ...conv,
                   messages,
+                  turnArtifacts,
                   busy: false,
                   activeRunID: null,
                   stage: '',

@@ -5,21 +5,6 @@ import type { AssistantItem } from '../lib/store';
 import { Markdown } from './Markdown';
 import { ApplyPatchView, ToolCard, WriteView } from './ToolCard';
 
-// Reasoning is the shared chat-style collapsible reasoning block.
-function Reasoning({ text }: { text: string }) {
-  const { t } = useTranslation();
-  return (
-    <details className="mb-1.5">
-      <summary className="cursor-pointer text-xs text-dim select-none">
-        {t('chat.reasonCollapse')}
-      </summary>
-      <div className="mt-1 rounded-lg bg-panel2 border border-edge p-3 text-xs text-dim whitespace-pre-wrap">
-        {text}
-      </div>
-    </details>
-  );
-}
-
 // AssistantText renders one assistant text block. While the message is
 // still streaming it stays plain text: a half-written `#` or `**` would
 // otherwise be parsed as a heading/mark on every delta and make the font
@@ -108,9 +93,7 @@ export const StreamItemView = memo(function StreamItemView({
     case 'reasoning':
       return variant === 'sidebar' ? (
         <SidebarReasoning text={item.text} />
-      ) : (
-        <Reasoning text={item.text} />
-      );
+      ) : null;
     case 'text':
       return variant === 'sidebar' ? (
         <p className="text-xs text-fg whitespace-pre-wrap">{item.text}</p>

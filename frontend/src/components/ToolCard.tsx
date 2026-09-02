@@ -2932,7 +2932,6 @@ export const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
                     ) : (
                       <ClipboardList size="0.7857rem" />
                     )}
-                    {t('tool.copyResult')}
                   </button>
                 </div>
               </div>
