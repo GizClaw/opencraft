@@ -14,7 +14,7 @@ import (
 // maxManifestEntries bounds one per-turn workspace walk. Repos larger
 // than this skip artifact reconciliation instead of paying a full walk
 // twice per turn.
-const maxManifestEntries = 50_000
+var maxManifestEntries = 50_000
 
 // errManifestTooLarge reports that the workspace exceeded the
 // per-turn snapshot budget.
