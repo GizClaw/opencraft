@@ -1,7 +1,6 @@
 package desktop
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -102,7 +101,7 @@ func (a *App) recordWorkspace(path string) {
 		return
 	}
 	if err := saveWorkspaceMeta(dir, path); err != nil {
-		telemetry.Warn(context.Background(),
+		telemetry.Warn(a.appContext(),
 			"desktop: save workspace history failed",
 			otellog.String("path", path),
 			otellog.String("error", err.Error()))

@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"context"
+	"io"
 	"io/fs"
 	"sync"
 
@@ -72,6 +73,8 @@ type observingWorkspace struct {
 }
 
 var _ workspace.Workspace = (*observingWorkspace)(nil)
+var _ workspace.LimitedReader = (*observingWorkspace)(nil)
+var _ io.Closer = (*observingWorkspace)(nil)
 
 func (w *observingWorkspace) notify(ctx context.Context, path string, data []byte) {
 	if w.obs == nil {
@@ -97,6 +100,21 @@ func (w *observingWorkspace) Read(
 	ctx context.Context, path string,
 ) ([]byte, error) {
 	return w.inner.Read(ctx, path)
+}
+
+// ReadLimited forwards bounded reads to the inner workspace so script
+// fs.read works with the core v0.2.4 default 1 MiB cap. If the inner
+// backend cannot bound reads, the operation fails closed instead of
+// materializing an unbounded file.
+func (w *observingWorkspace) ReadLimited(
+	ctx context.Context, path string, maxBytes int64,
+) ([]byte, error) {
+	lr, ok := w.inner.(workspace.LimitedReader)
+	if !ok {
+		return nil, errdefs.NotAvailablef(
+			"opencraft workspace: bounded reads unsupported by %T", w.inner)
+	}
+	return lr.ReadLimited(ctx, path, maxBytes)
 }
 
 func (w *observingWorkspace) Write(
@@ -157,6 +175,19 @@ func (w *observingWorkspace) Stat(
 	ctx context.Context, path string,
 ) (fs.FileInfo, error) {
 	return w.inner.Stat(ctx, path)
+}
+
+// Close releases resources owned by the inner workspace. Core's
+// LocalWorkspace pins an os.Root file descriptor since v0.2.4, so the
+// runtime must close the shared observing workspace when it rebuilds.
+func (w *observingWorkspace) Close() error {
+	if w == nil || w.inner == nil {
+		return nil
+	}
+	if closer, ok := w.inner.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
 }
 
 // ObservingWorkspaceResourceKind is the deploy resource kind for the

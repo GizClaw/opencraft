@@ -141,6 +141,11 @@ type App struct {
 	// turn is active; it is recorded into the session store at turn
 	// end.
 	runUsage map[string]ocsessions.Usage
+	// sessionImportMu serializes session.import across the UI runtime
+	// and background hosts. Store.Import writes history before memory
+	// is seeded, so duplicate imports for one source must never race
+	// the pending/complete state.
+	sessionImportMu sync.Mutex
 	// titling tracks conversations whose auto-title generation is in
 	// flight, so parallel turn endings generate once per conversation.
 	titling map[string]bool
@@ -227,7 +232,7 @@ func New(opts Options) (*App, error) {
 	if dataDir == "" {
 		dataDir, _ = config.UserDataDir()
 	}
-	sec := secrets.NewManager(filepath.Join(dataDir, "keyring"), secrets.DefaultService)
+	sec := secrets.NewManager(filepath.Join(dataDir, "keyring"))
 	pluginDir := filepath.Join(dataDir, "plugins")
 	fallbackToolchain, err := toolchain.New(toolchain.Options{
 		Preference: toolchain.PreferenceExternalFirst,
@@ -305,6 +310,16 @@ func New(opts Options) (*App, error) {
 			return a.requestRebuild()
 		},
 	})
+	a.cap.SetSessionImportHandler(pluginruntime.SessionImportHandler{
+		Import: a.handleSessionImport,
+	})
+	a.cap.SetWorkspaceHandler(pluginruntime.WorkspaceHandler{
+		Current: func() (string, error) {
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			return a.workDir, nil
+		},
+	})
 	return a, nil
 }
 
@@ -332,13 +347,6 @@ func (a *App) Startup(ctx context.Context) {
 	if err := a.rebuild(); err != nil {
 		a.bridge.Emit("fatal", map[string]any{"error": err.Error()})
 	}
-	// Reconcile inference keys with the credential store: migrate
-	// literals into the store and clear dangling references. This runs
-	// after the runtime is assembled and off the startup path, so a
-	// slow or unavailable credential store can never delay the session
-	// list or block the first turn; config changes take effect on the
-	// next rebuild/start.
-	go a.reconcileInferenceKeys()
 
 	// The tray icon is a background-resident app's primary entry point;
 	// start it once the window context exists so its actions can reach
@@ -445,10 +453,7 @@ func (a *App) rebuild() error {
 	a.mu.Lock()
 	wd := a.workDir
 	a.mu.Unlock()
-	ctx := a.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
+	ctx := a.appContext()
 	if strings.TrimSpace(wd) == "" {
 		// No workspace selected yet: the runtime, undo store, and
 		// session store are all workspace-bound, so there is nothing

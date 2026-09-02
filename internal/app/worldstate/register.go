@@ -107,6 +107,7 @@ func (prepareFactory) New(ctx context.Context, in resource.Input) (any, error) {
 		if board == nil {
 			board = agent.NewBoard()
 		}
+		seedClientMetadata(board, identity)
 		if err := service.RenderToBoard(
 			ctx,
 			identity.AgentID,

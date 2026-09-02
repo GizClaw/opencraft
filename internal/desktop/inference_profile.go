@@ -15,7 +15,6 @@ import (
 	"strings"
 
 	"github.com/GizClaw/flowcraft/core/inference"
-	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/config"
 	"github.com/GizClaw/opencraft/internal/plugins"
@@ -96,9 +95,7 @@ func (a *App) upsertInferenceProfile(pluginID string, profile pluginruntime.Infe
 }
 
 // profileModel lowers one plugin profile model into the canonical
-// config model. New plugins declare capabilities as content-kind lists;
-// the legacy vision shortcut (image input + text output) is normalized
-// for older capability plugins.
+// config model. Capabilities are declared as content-kind lists.
 func profileModel(m pluginruntime.ProfileModel) config.Model {
 	model := config.Model{
 		Name:       m.Name,
@@ -115,11 +112,6 @@ func profileModel(m pluginruntime.ProfileModel) config.Model {
 	if len(m.Inputs) > 0 || len(m.Outputs) > 0 {
 		caps.Inputs = config.ToPartKinds(m.Inputs)
 		caps.Outputs = config.ToPartKinds(m.Outputs)
-	} else if m.Vision {
-		// Legacy vision shortcut: image input on top of the text base
-		// modality, so text prompts stay preflight-visible.
-		caps.Inputs = []message.PartKind{message.PartText, message.PartImage}
-		caps.Outputs = []message.PartKind{message.PartText}
 	}
 	model.Capabilities = caps
 	return model

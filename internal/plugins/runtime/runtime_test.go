@@ -223,6 +223,63 @@ func TestSecretScopeGuard(t *testing.T) {
 	}
 }
 
+func TestSessionImportPrimitive(t *testing.T) {
+	m, _ := newTestManager(t)
+	var gotPlugin string
+	var gotReq SessionImportRequest
+	m.SetSessionImportHandler(SessionImportHandler{
+		Import: func(pluginID string, req SessionImportRequest) (SessionImportResult, error) {
+			gotPlugin = pluginID
+			gotReq = req
+			return SessionImportResult{
+				SessionID: "s-imported",
+				Messages:  3,
+				Turns:     1,
+			}, nil
+		},
+	})
+
+	res, err := m.handleSessionImport(&process{id: "importer"}, rpcRequest{
+		Method: "session.import",
+		Params: json.RawMessage(
+			`{"bundle_path":"/tmp/conv.json","title":"Imported","source":"codex:1"}`),
+	})
+	if err != nil {
+		t.Fatalf("handleSessionImport: %v", err)
+	}
+	if gotPlugin != "importer" || gotReq.BundlePath != "/tmp/conv.json" ||
+		gotReq.Source != "codex:1" {
+		t.Fatalf("handler got %q %+v", gotPlugin, gotReq)
+	}
+	data, err := json.Marshal(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"session_id":"s-imported"`) {
+		t.Fatalf("unexpected result: %s", data)
+	}
+}
+
+func TestWorkspaceCurrentPrimitive(t *testing.T) {
+	m, _ := newTestManager(t)
+	m.SetWorkspaceHandler(WorkspaceHandler{
+		Current: func() (string, error) {
+			return "/live/workspace", nil
+		},
+	})
+	res, err := m.handleWorkspaceCurrent()
+	if err != nil {
+		t.Fatalf("handleWorkspaceCurrent: %v", err)
+	}
+	data, err := json.Marshal(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"workspace":"/live/workspace"`) {
+		t.Fatalf("unexpected result: %s", data)
+	}
+}
+
 func TestStopShutsDownProcess(t *testing.T) {
 	m, _ := newTestManager(t)
 	if _, err := m.Invoke(context.Background(), "test-plugin", "auth.poll", nil); err != nil {

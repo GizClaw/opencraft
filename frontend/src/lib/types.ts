@@ -170,6 +170,12 @@ export interface SessionMeta {
   total_tokens: number;
 }
 
+export interface SessionImportDTO {
+  session_id: string;
+  messages: number;
+  turns: number;
+}
+
 export interface WorkspaceMeta {
   id: string;
   path: string;

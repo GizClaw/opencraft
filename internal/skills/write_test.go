@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +13,7 @@ func newWriteService(t *testing.T) *Service {
 	root := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	return NewService(Options{
+	return NewService(context.Background(), Options{
 		WorkBase: root,
 		UserDir:  t.TempDir(),
 		Enabled:  true,

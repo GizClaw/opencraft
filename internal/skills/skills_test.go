@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -51,12 +52,12 @@ func TestDiscoverRepoLevelsAndUserDirs(t *testing.T) {
 	writeSkill(t, filepath.Join(userDir, "skills"), "dup",
 		"name: dup\ndescription: user-level dup\n")
 
-	out := Discover(workBase, userDir, nil, nil)
+	out := Discover(context.Background(), workBase, userDir, nil, nil)
 	if len(out.Skills) != 6 {
 		t.Fatalf("Discover() = %d skills, want 6: %+v", len(out.Skills), out.Skills)
 	}
 
-	svc := NewService(Options{WorkBase: workBase, UserDir: userDir, Enabled: true})
+	svc := NewService(context.Background(), Options{WorkBase: workBase, UserDir: userDir, Enabled: true})
 	got, ok := svc.ByName("alpha")
 	if !ok {
 		t.Fatal("ByName(alpha) not found")
@@ -127,7 +128,7 @@ func TestRankAndMention(t *testing.T) {
 		"name: plan\ndescription: build execution plans\n")
 	writeSkill(t, scanRoot, "search",
 		"name: search\ndescription: search the workspace\n")
-	svc := NewService(Options{WorkBase: root, Enabled: true, TopN: 2})
+	svc := NewService(context.Background(), Options{WorkBase: root, Enabled: true, TopN: 2})
 
 	ranked := svc.Rank("review the docs", 2, 0)
 	if len(ranked) == 0 || ranked[0].Name != "review" {
@@ -160,7 +161,7 @@ func TestRankMinScoreThreshold(t *testing.T) {
 	root := t.TempDir()
 	scan := filepath.Join(root, ".agents", "skills")
 	writeSkill(t, scan, "review", "name: review\ndescription: review code and docs\n")
-	svc := NewService(Options{WorkBase: root, Enabled: true})
+	svc := NewService(context.Background(), Options{WorkBase: root, Enabled: true})
 
 	scored := svc.RankScored("review the code", 5, 0)
 	if len(scored) == 0 {
@@ -179,7 +180,7 @@ func TestReadFullAndRender(t *testing.T) {
 	root := t.TempDir()
 	path := writeSkill(t, filepath.Join(root, ".agents", "skills"), "review",
 		"name: review\ndescription: review code\n")
-	svc := NewService(Options{WorkBase: root, Enabled: true})
+	svc := NewService(context.Background(), Options{WorkBase: root, Enabled: true})
 	sk, body, err := svc.ReadFull("review")
 	if err != nil {
 		t.Fatal(err)
@@ -230,7 +231,7 @@ func TestDisabledAndHiddenSkip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	svc := NewService(Options{WorkBase: root, Enabled: true})
+	svc := NewService(context.Background(), Options{WorkBase: root, Enabled: true})
 	for _, sk := range svc.List() {
 		if sk.Name == "visible" {
 			return
@@ -241,7 +242,7 @@ func TestDisabledAndHiddenSkip(t *testing.T) {
 	}
 	t.Fatalf("visible skill missing: %+v", svc.List())
 
-	disabled := NewService(Options{WorkBase: root, Enabled: false})
+	disabled := NewService(context.Background(), Options{WorkBase: root, Enabled: false})
 	if len(disabled.List()) != 0 || disabled.Enabled() {
 		t.Fatal("disabled service must be empty")
 	}
@@ -253,7 +254,7 @@ func TestDisabledList(t *testing.T) {
 	writeSkill(t, scan, "keep", "name: keep\ndescription: keep me\n")
 	path := writeSkill(t, scan, "drop", "name: drop\ndescription: drop me\n")
 
-	svc := NewService(Options{
+	svc := NewService(context.Background(), Options{
 		WorkBase: root,
 		Enabled:  true,
 		Disabled: []string{"drop", path},
@@ -287,7 +288,7 @@ func TestFollowSymlinks(t *testing.T) {
 	if err := os.Symlink(real, filepath.Join(scan, "linked")); err != nil {
 		t.Skipf("symlink unsupported: %v", err)
 	}
-	svc := NewService(Options{WorkBase: root, UserDir: userDir, Enabled: true})
+	svc := NewService(context.Background(), Options{WorkBase: root, UserDir: userDir, Enabled: true})
 	found := false
 	for _, sk := range svc.List() {
 		if sk.Name == "linked-skill" {
@@ -326,7 +327,7 @@ func TestSymlinkEscapeRejected(t *testing.T) {
 		t.Skipf("symlink unsupported: %v", err)
 	}
 
-	out := Discover(root, "", nil, nil)
+	out := Discover(context.Background(), root, "", nil, nil)
 	for _, sk := range out.Skills {
 		if sk.Name == "leak" {
 			t.Fatalf("escaping symlink skill discovered: %+v", out.Skills)
@@ -335,14 +336,14 @@ func TestSymlinkEscapeRejected(t *testing.T) {
 	if len(out.Errors) == 0 {
 		t.Fatal("escaping symlinks must be recorded as errors")
 	}
-	svc := NewService(Options{WorkBase: root, Enabled: true})
+	svc := NewService(context.Background(), Options{WorkBase: root, Enabled: true})
 	if _, _, err := svc.ReadFull("leak"); err == nil {
 		t.Fatal("ReadFull must not resolve an escaping skill")
 	}
 }
 
 func TestBuiltinEmbedded(t *testing.T) {
-	svc := NewService(Options{WorkBase: t.TempDir(), Enabled: true})
+	svc := NewService(context.Background(), Options{WorkBase: t.TempDir(), Enabled: true})
 	for _, name := range []string{"plan", "skill-creator"} {
 		sk, ok := svc.ByName(name)
 		if !ok {
@@ -393,7 +394,7 @@ func TestStageCopiesSkill(t *testing.T) {
 		defer func() { _ = os.Remove(filepath.Join(scan, "leak")) }()
 	}
 
-	svc := NewService(Options{WorkBase: root, Enabled: true})
+	svc := NewService(context.Background(), Options{WorkBase: root, Enabled: true})
 	sk, ok := svc.ByName("tool")
 	if !ok {
 		t.Fatal("tool skill not discovered")
@@ -451,8 +452,8 @@ func TestInstallFromLocalRepo(t *testing.T) {
 	git("commit", "-m", "init")
 
 	workBase := t.TempDir()
-	svc := NewService(Options{WorkBase: workBase, Enabled: true})
-	dst, err := svc.Install(src, ScopeRepo, "")
+	svc := NewService(context.Background(), Options{WorkBase: workBase, Enabled: true})
+	dst, err := svc.Install(context.Background(), src, ScopeRepo, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -485,7 +486,7 @@ func TestInstallFromLocalRepo(t *testing.T) {
 	git2("add", ".")
 	git2("commit", "-m", "init")
 	before := len(svc.List())
-	if _, err := svc.Install(bad, ScopeRepo, ""); err == nil {
+	if _, err := svc.Install(context.Background(), bad, ScopeRepo, ""); err == nil {
 		t.Fatal("repo without SKILL.md must fail to install")
 	}
 	if len(svc.List()) != before {
@@ -527,8 +528,8 @@ func TestInstallSubpathFromRepo(t *testing.T) {
 	git("commit", "-m", "init")
 
 	workBase := t.TempDir()
-	svc := NewService(Options{WorkBase: workBase, Enabled: true})
-	dst, err := svc.Install(src, ScopeRepo, "skills/flowcraft-config")
+	svc := NewService(context.Background(), Options{WorkBase: workBase, Enabled: true})
+	dst, err := svc.Install(context.Background(), src, ScopeRepo, "skills/flowcraft-config")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -572,14 +573,14 @@ func TestInstallSubpathTraversalRejected(t *testing.T) {
 	git("commit", "-m", "init")
 
 	workBase := t.TempDir()
-	svc := NewService(Options{WorkBase: workBase, Enabled: true})
+	svc := NewService(context.Background(), Options{WorkBase: workBase, Enabled: true})
 	for _, subpath := range []string{
 		"..",
 		"../escape",
 		"../../escape",
 		"/etc",
 	} {
-		if _, err := svc.Install(src, ScopeRepo, subpath); err == nil {
+		if _, err := svc.Install(context.Background(), src, ScopeRepo, subpath); err == nil {
 			t.Fatalf("Install(subpath=%q) accepted a traversal", subpath)
 		}
 	}
@@ -589,26 +590,26 @@ func TestInstallSubpathTraversalRejected(t *testing.T) {
 	}
 	git("add", "evil")
 	git("commit", "-m", "add symlink")
-	if _, err := svc.Install(src, ScopeRepo, "evil"); err == nil {
+	if _, err := svc.Install(context.Background(), src, ScopeRepo, "evil"); err == nil {
 		t.Fatal("Install(subpath=symlink-outside) accepted")
 	}
 }
 
 func TestInstallRepoFlagRejected(t *testing.T) {
 	workBase := t.TempDir()
-	svc := NewService(Options{WorkBase: workBase, Enabled: true})
+	svc := NewService(context.Background(), Options{WorkBase: workBase, Enabled: true})
 	for _, repo := range []string{
 		"-c",
 		"--template=/tmp",
 		"--bare",
 		"-c core.sshCommand=echo pwn",
 	} {
-		if _, err := svc.Install(repo, ScopeRepo, ""); err == nil {
+		if _, err := svc.Install(context.Background(), repo, ScopeRepo, ""); err == nil {
 			t.Fatalf("Install(repo=%q) accepted a flag-like repo", repo)
 		}
 	}
 	// The flag guard must not break normal path/URL installs.
-	if _, err := svc.Install("/definitely/not/a/repo", ScopeRepo, ""); err == nil {
+	if _, err := svc.Install(context.Background(), "/definitely/not/a/repo", ScopeRepo, ""); err == nil {
 		t.Fatal("non-existent repo path should fail later, not on the flag guard")
 	}
 }

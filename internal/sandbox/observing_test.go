@@ -60,6 +60,7 @@ func TestObservingWorkspaceReportsSessionWrites(t *testing.T) {
 	}
 	c := newCaptureObserver()
 	ow := &observingWorkspace{inner: inner, obs: c.ArtifactObserver}
+	t.Cleanup(func() { _ = ow.Close() })
 
 	if ow.Root() != inner.Root() {
 		t.Fatalf("Root() = %q, want %q", ow.Root(), inner.Root())
@@ -97,6 +98,32 @@ func TestObservingWorkspaceReportsSessionWrites(t *testing.T) {
 	}
 }
 
+// TestObservingWorkspaceBoundedReadAndClose verifies the wrapper can
+// satisfy workspace.LimitedReader (required by core's fs bridge) and
+// forwards Close to the inner LocalWorkspace's pinned root handle.
+func TestObservingWorkspaceBoundedReadAndClose(t *testing.T) {
+	root := t.TempDir()
+	inner, err := workspace.NewLocalWorkspace(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ow := &observingWorkspace{inner: inner}
+
+	if err := ow.Write(context.Background(), "large.txt", []byte("hello world")); err != nil {
+		t.Fatal(err)
+	}
+	data, err := ow.ReadLimited(context.Background(), "large.txt", 64)
+	if err != nil {
+		t.Fatalf("ReadLimited: %v", err)
+	}
+	if string(data) != "hello world" {
+		t.Fatalf("ReadLimited = %q", data)
+	}
+	if err := ow.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
 // TestObservingWorkspaceFactoryBuildsSharedWS verifies the
 // opencraft.workspace factory wraps the LocalWorkspace and shares the
 // artifact sink.
@@ -129,6 +156,7 @@ func TestObservingWorkspaceFactoryBuildsSharedWS(t *testing.T) {
 	if c.count() != 1 {
 		t.Fatalf("observed %d writes, want 1", c.count())
 	}
+	t.Cleanup(func() { _ = ow.Close() })
 }
 
 // TestHostWorkspaceFactoryWrapsBothBranches verifies both write paths

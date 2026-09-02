@@ -26,8 +26,11 @@ type RemoteRunner struct {
 // NewRemoteRunner queries the child's capabilities and returns a
 // runner that proxies every operation over JSON-RPC. stop terminates
 // the child and is invoked by Close.
-func NewRemoteRunner(client *Client, stop func()) (*RemoteRunner, error) {
-	ctx := context.Background()
+func NewRemoteRunner(
+	ctx context.Context,
+	client *Client,
+	stop func(),
+) (*RemoteRunner, error) {
 	info, err := client.EnvironmentInfo(ctx)
 	if err != nil {
 		if stop != nil {
@@ -90,6 +93,7 @@ func (r *RemoteRunner) Start(
 		return nil, err
 	}
 	return &remoteSession{
+		base:   context.WithoutCancel(ctx),
 		client: r.client,
 		id:     resp.ProcessID,
 		pid:    resp.PID,
@@ -124,6 +128,7 @@ func (r *RemoteRunner) Close() error {
 
 // remoteSession adapts the execd protocol to sandbox.Session.
 type remoteSession struct {
+	base   context.Context
 	client *Client
 	id     string
 	pid    int
@@ -169,7 +174,7 @@ func (s *remoteSession) Write(ctx context.Context, data []byte) error {
 }
 
 func (s *remoteSession) CloseInput() error {
-	return s.client.CloseInput(context.Background(), CloseInputParams{
+	return s.client.CloseInput(s.base, CloseInputParams{
 		ProcessID: s.id,
 	})
 }
@@ -279,7 +284,7 @@ func (s *remoteSession) Watch(context.Context) (sandbox.SessionWatcher, error) {
 }
 
 func (s *remoteSession) Close() error {
-	_ = s.Terminate(context.Background())
+	_ = s.Terminate(s.base)
 	return nil
 }
 

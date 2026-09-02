@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -470,17 +471,28 @@ func (m *Manager) Diagnose(ctx context.Context) []RuntimeStatus {
 // ResolveMCPCommand resolves a stdio MCP command while leaving
 // absolute paths and path-containing commands untouched. It returns
 // the executable path the transport should spawn.
-func (m *Manager) ResolveMCPCommand(command string) (string, error) {
+func (m *Manager) ResolveMCPCommand(
+	ctx context.Context,
+	command string,
+) (string, error) {
 	command = strings.TrimSpace(command)
 	if command == "" || filepath.IsAbs(command) ||
 		strings.ContainsAny(command, `/\`) {
 		return command, nil
 	}
-	rt, err := m.Resolve(context.Background(), command)
-	if err != nil {
-		return "", err
+	if _, managed := toolFamilies[command]; managed {
+		rt, err := m.Resolve(ctx, command)
+		if err != nil {
+			return "", err
+		}
+		return rt.Path, nil
 	}
-	return rt.Path, nil
+	path, err := exec.LookPath(command)
+	if err != nil {
+		return "", fmt.Errorf(
+			"runtimes: %s not found on PATH", command)
+	}
+	return path, nil
 }
 
 // MergeEnv overlays additions onto base without replacing keys the

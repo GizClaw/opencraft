@@ -181,7 +181,8 @@ func (l *Lifecycle) Create(ctx context.Context, spec AgentSpec) (CreateResult, e
 	if err := l.writeSpec(spec); err != nil {
 		// Roll back the runtime registration: the disk never became
 		// the source of truth, so the agent must not outlive the turn.
-		rollbackCtx, cancel := context.WithTimeout(context.Background(), removeTimeout)
+		rollbackCtx, cancel := context.WithTimeout(
+			context.WithoutCancel(ctx), removeTimeout)
 		defer cancel()
 		if unregErr := reg.UnregisterAgent(
 			rollbackCtx, spec.Name,
@@ -301,7 +302,8 @@ func (l *Lifecycle) restoreAfterFailedUpdate(
 	old AgentSpec,
 	updateErr error,
 ) {
-	rollbackCtx, cancel := context.WithTimeout(context.Background(), removeTimeout)
+	rollbackCtx, cancel := context.WithTimeout(
+		context.WithoutCancel(ctx), removeTimeout)
 	defer cancel()
 	if err := l.registrar().UnregisterAgent(
 		rollbackCtx, name,

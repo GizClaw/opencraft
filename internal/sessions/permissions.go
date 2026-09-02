@@ -2,11 +2,8 @@ package sessions
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
-	"sigs.k8s.io/yaml"
 )
 
 // Mode is the per-session sandbox permission mode.
@@ -32,14 +29,6 @@ func (m Mode) IsYOLO() bool { return m == ModeYOLO }
 // IsReadOnly reports whether m keeps the workspace root read-only.
 func (m Mode) IsReadOnly() bool { return m == ModeReadOnly }
 
-// modeFile is the on-disk shape of <session>/permissions.yaml.
-type modeFile struct {
-	Version string `json:"version"`
-	Mode    Mode   `json:"mode"`
-}
-
-const modeVersion = "v1"
-
 // SetMode persists the sandbox mode for the session.
 func (s *Store) SetMode(ctx context.Context, id string, mode Mode) error {
 	switch mode {
@@ -48,72 +37,27 @@ func (s *Store) SetMode(ctx context.Context, id string, mode Mode) error {
 		return errdefs.Validationf(
 			"sessions: unknown permission mode %q", mode)
 	}
-	// session.db is the source of truth; the YAML file is kept for
-	// compatibility with older builds that read permissions.yaml.
 	if s.db != nil {
 		if err := s.db.SetMode(ctx, id, string(mode)); err != nil {
 			return err
 		}
 	}
-	dir := s.dir(id)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	data, err := yaml.Marshal(modeFile{
-		Version: modeVersion,
-		Mode:    mode,
-	})
-	if err != nil {
-		return err
-	}
-	path := filepath.Join(dir, "permissions.yaml")
-	tmp, err := os.CreateTemp(dir, ".permissions-*")
-	if err != nil {
-		return err
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	if err := os.Chmod(tmpName, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmpName, path)
+	return nil
 }
 
 // Mode returns the persisted sandbox mode for the session, defaulting
-// to workspace when the session has no permissions file.
+// to workspace when the session has no stored mode.
 func (s *Store) Mode(ctx context.Context, id string) (Mode, error) {
-	if s.db != nil {
-		stored, err := s.db.Mode(ctx, id)
-		if err != nil {
-			return ModeWorkspace, err
-		}
-		switch Mode(stored) {
-		case ModeWorkspace, ModeReadOnly, ModeYOLO:
-			return Mode(stored), nil
-		}
-		// No row: fall through to the legacy YAML file.
+	if s.db == nil {
+		return ModeWorkspace, nil
 	}
-	data, err := os.ReadFile(filepath.Join(s.dir(id), "permissions.yaml"))
+	stored, err := s.db.Mode(ctx, id)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return ModeWorkspace, nil
-		}
 		return ModeWorkspace, err
 	}
-	var f modeFile
-	if err := yaml.Unmarshal(data, &f); err != nil {
-		return ModeWorkspace, err
-	}
-	switch f.Mode {
+	switch Mode(stored) {
 	case ModeWorkspace, ModeReadOnly, ModeYOLO:
-		return f.Mode, nil
+		return Mode(stored), nil
 	default:
 		return ModeWorkspace, nil
 	}

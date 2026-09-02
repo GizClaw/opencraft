@@ -119,7 +119,7 @@ func (s *Service) RenderToBoard(
 	extras []Section,
 	board *agent.Board,
 ) error {
-	st, err := s.session(contextID)
+	st, err := s.session(ctx, contextID)
 	if err != nil {
 		return err
 	}
@@ -338,13 +338,13 @@ func mergeSkillLists(mentioned, ranked []skills.SkillMetadata) []skills.SkillMet
 	return out
 }
 
-func (s *Service) session(contextID string) (*sessionState, error) {
+func (s *Service) session(ctx context.Context, contextID string) (*sessionState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if st, ok := s.sessions[contextID]; ok {
 		return st, nil
 	}
-	agents, err := s.agentsSection()
+	agents, err := s.agentsSection(ctx)
 	if err != nil {
 		return nil, err
 	}

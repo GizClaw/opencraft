@@ -114,9 +114,6 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 			opt(&o)
 		}
 	}
-	if err := config.MigrateMCPToolchain(&doc); err != nil {
-		return nil, err
-	}
 	if o.ConfigBase == "" {
 		o.ConfigBase, _ = config.UserConfigDir()
 	}

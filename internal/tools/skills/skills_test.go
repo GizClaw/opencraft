@@ -49,7 +49,7 @@ func newTestService(t *testing.T) *skillspkg.Service {
 	}
 	write("review", "review code and docs for quality")
 	write("plan", "build execution plans")
-	return skillspkg.NewService(skillspkg.Options{
+	return skillspkg.NewService(context.Background(), skillspkg.Options{
 		WorkBase: root, Enabled: true,
 	})
 }

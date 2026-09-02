@@ -105,8 +105,9 @@ func (b *Broker) onPromptRequested(ctx context.Context, env event.Envelope) erro
 }
 
 // wirePromptRequested mirrors session.PromptRequested with the prompt
-// parts kept raw, so they can be reconstructed despite core v0.1.5
-// marshalling []message.Part without a type discriminator.
+// parts kept raw: flowcraft's envelope marshals agent.UserPrompt.Parts
+// as plain interface values without a type discriminator, so the
+// strict typed decode cannot reconstruct the slice.
 type wirePromptRequested struct {
 	RunID    string         `json:"run_id"`
 	TurnID   string         `json:"turn_id"`
@@ -123,8 +124,8 @@ type wireUserPrompt struct {
 
 // decodePromptRequested decodes one PromptRequested envelope. A strict
 // decode wins when the payload already uses the discriminated Content
-// wire format; otherwise parts are reconstructed heuristically from
-// the plain part objects core v0.1.5 produces. Unknown part shapes are
+// wire format; otherwise parts are reconstructed from the raw part
+// objects flowcraft's event envelope carries. Unknown part shapes are
 // dropped rather than failing the whole prompt.
 func decodePromptRequested(env event.Envelope) (session.PromptRequested, error) {
 	var req session.PromptRequested
@@ -177,7 +178,7 @@ func (b *Broker) ask(ctx context.Context, spec Spec) {
 		b.mu.Unlock()
 		reply = Reply{ID: spec.ID, Status: ReplyCancelled}
 	}
-	b.deliver(spec, reply)
+	b.deliver(context.WithoutCancel(ctx), spec, reply)
 }
 
 // resolutionReason returns the reason attached to one prompt
@@ -242,7 +243,7 @@ func fallbackPromptReason(status session.PromptStatus) string {
 	}
 }
 
-func (b *Broker) deliver(spec Spec, reply Reply) {
+func (b *Broker) deliver(ctx context.Context, spec Spec, reply Reply) {
 	b.mu.Lock()
 	turn := b.turns[spec.TurnID]
 	b.mu.Unlock()
@@ -250,7 +251,7 @@ func (b *Broker) deliver(spec Spec, reply Reply) {
 		return
 	}
 	reply.ID = spec.ID
-	err := turn.Reply(context.Background(), spec.ID, ToUserReply(reply))
+	err := turn.Reply(ctx, spec.ID, ToUserReply(reply))
 	if err == nil {
 		// A successful reply resolved the prompt; no PromptResolved
 		// will follow, so drop any recorded Ask-error reason.

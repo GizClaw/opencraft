@@ -70,6 +70,7 @@ type CacheClearResult struct {
 
 // Diagnostics gathers the environment/health summary for the UI.
 func (a *App) Diagnostics() DiagnosticsReport {
+	ctx := a.appContext()
 	wd := a.snapshotWorkDir()
 	rep := DiagnosticsReport{
 		Version:   app.ServiceVersion,
@@ -79,8 +80,8 @@ func (a *App) Diagnostics() DiagnosticsReport {
 		WorkDir:   wd,
 		UserDir:   a.userDir,
 	}
-	rep.NodeVersion = commandVersion(3*time.Second, "node", "--version")
-	rep.GitVersion = commandVersion(3*time.Second, "git", "--version")
+	rep.NodeVersion = commandVersion(ctx, 3*time.Second, "node", "--version")
+	rep.GitVersion = commandVersion(ctx, 3*time.Second, "git", "--version")
 	rep.Toolchains = a.toolchainDiagnostics()
 
 	// Without a workspace there is no project layer to discover; skip
@@ -91,7 +92,7 @@ func (a *App) Diagnostics() DiagnosticsReport {
 		UserDir:          a.userDir,
 		SkipProjectLayer: wd == "",
 	}); err == nil {
-		if _, err := mgr.Load(context.Background()); err != nil {
+		if _, err := mgr.Load(ctx); err != nil {
 			rep.ConfigError = err.Error()
 		} else {
 			rep.ConfigValid = true
@@ -106,7 +107,7 @@ func (a *App) Diagnostics() DiagnosticsReport {
 	if wd != "" {
 		if root := gitRepoRoot(wd); root != "" {
 			rep.GitRepo = true
-			rep.GitBranch = gitBranch(root)
+			rep.GitBranch = gitBranch(ctx, root)
 		}
 	}
 	if a.sessions != nil {
@@ -293,8 +294,8 @@ func sandboxBackend() (string, bool) {
 }
 
 // gitBranch returns the current branch of the repo at root.
-func gitBranch(root string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+func gitBranch(ctx context.Context, root string) string {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(
 		ctx, "git", "-C", root, "branch", "--show-current").Output()
@@ -305,8 +306,13 @@ func gitBranch(root string) string {
 }
 
 // commandVersion runs one version probe best-effort.
-func commandVersion(timeout time.Duration, name string, args ...string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+func commandVersion(
+	ctx context.Context,
+	timeout time.Duration,
+	name string,
+	args ...string,
+) string {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
 	if err != nil {

@@ -132,7 +132,7 @@ var reasoningEffortOrder = []inference.ReasoningEffort{
 // (e.g. two DeepSeek endpoints); enabled instances form the router
 // priority order.
 type Instance struct {
-	StableID  string // stable identity across saves/reorders ("" on legacy configs)
+	StableID  string // stable identity across saves/reorders
 	Type      string // catalog ID: deepseek | openai | ...
 	Name      string // display label; empty derives "<type>-<n>"
 	API       string // responses | chat (openai / openai-like)
@@ -147,9 +147,8 @@ type Instance struct {
 // Rows saved through the settings page carry a stable identity, so the
 // id ("<type>-<stableID>", e.g. "deepseek-inst-0a1b2c3d") survives
 // reorders, edits, and deletions and the router's per-conversation
-// model hints stay valid across config changes. Legacy rows without a
-// stable identity fall back to the positional "<type>-<n>" form.
-// n is the 1-based position of the instance in the config.
+// model hints stay valid across config changes. n is the 1-based
+// position used when no stable identity is present.
 func (in Instance) DeploymentID(n int) string {
 	if in.StableID != "" {
 		return in.Type + "-" + in.StableID
@@ -400,6 +399,10 @@ func (c InferenceConfig) InferenceYAML() ([]byte, error) {
 		}
 		if apiMode != "" && (prov.Impl == "openai" || prov.Impl == "deepseek") {
 			fmt.Fprintf(&b, "        api: %s\n", yamlQuote(apiMode))
+		}
+		if prov.Impl == "openai" || prov.Impl == "deepseek" || prov.Impl == "azure" {
+			fmt.Fprintf(&b, "        request_metadata:\n")
+			fmt.Fprintf(&b, "          envelope: client_metadata\n")
 		}
 		fmt.Fprintf(&b, "        models:\n")
 		for _, m := range in.Models {
@@ -666,21 +669,9 @@ type KeyRequest struct {
 }
 
 // MatchStoredKeys assigns stored literal keys to request rows whose key
-// was left blank. Matching runs in three passes so reordering, deleting,
-// and editing never silently swap keys:
-//
-//  1. Exact stable-id matches claim their old instance first, so a row
-//     that was reordered or edited keeps its key no matter how its
-//     fields changed;
-//  2. Exact fingerprint matches (same type, name, model set, endpoint,
-//     api)
-//     claim their old instance first, across every row, so reordering
-//     or deleting rows keeps each key on the right row (legacy configs
-//     without stable ids);
-//  3. Rows without a stable-id or fingerprint match take the first
-//     unclaimed same-type instance with a stored key, in request
-//     order, so a brand-new row (or one whose identity was lost) still
-//     finds an available key instead of hard-failing.
+// was left blank. Only exact stable-id matches inherit keys: a row
+// without a stable id is treated as new and cannot silently take an
+// existing instance's key.
 //
 // claimed tracks old-instance indexes already inherited, preventing two
 // rows from stealing the same key. Only literal and store-sourced
@@ -693,7 +684,6 @@ func MatchStoredKeys(
 	claimed map[int]bool,
 ) ([]int, bool) {
 	matches := make([]int, len(rows))
-	done := make([]bool, len(rows))
 	for i := range matches {
 		matches[i] = -1
 	}
@@ -709,17 +699,10 @@ func MatchStoredKeys(
 			in.Type == row.Type &&
 			hasStoredKey(in)
 	}
-	fingerprint := func(row KeyRequest, in Instance) bool {
-		return in.Type == row.Type &&
-			in.Name == row.Name &&
-			sameModelSet(row.Models, in.ModelNames()) &&
-			in.Endpoint == row.Endpoint &&
-			in.API == row.API &&
-			hasStoredKey(in)
-	}
 
-	// Pass 1: exact stable-id matches across all rows.
+	unmatched := false
 	for i, row := range rows {
+		matched := false
 		for idx, in := range existing {
 			if claimed[idx] {
 				continue
@@ -727,66 +710,15 @@ func MatchStoredKeys(
 			if sameIdentity(row, in) {
 				claimed[idx] = true
 				matches[i] = idx
-				done[i] = true
+				matched = true
 				break
 			}
 		}
-	}
-	// Pass 2: exact fingerprints across all rows (legacy configs).
-	for i, row := range rows {
-		if done[i] {
-			continue
-		}
-		for idx, in := range existing {
-			if claimed[idx] {
-				continue
-			}
-			if fingerprint(row, in) {
-				claimed[idx] = true
-				matches[i] = idx
-				done[i] = true
-				break
-			}
+		if !matched {
+			unmatched = true
 		}
 	}
-	// Pass 3: leftover rows take the first unclaimed same-type key.
-	for i, row := range rows {
-		if done[i] {
-			continue
-		}
-		for idx, in := range existing {
-			if in.Type != row.Type || claimed[idx] || !hasStoredKey(in) {
-				continue
-			}
-			claimed[idx] = true
-			matches[i] = idx
-			done[i] = true
-			break
-		}
-		if !done[i] {
-			return matches, false
-		}
-	}
-	return matches, true
-}
-
-// sameModelSet reports whether two model-name sets are equal
-// (order-insensitive), used by the key fingerprint so editing the order
-// of an instance's models does not lose its stored key.
-func sameModelSet(a, b []string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	aa := append([]string(nil), a...)
-	bb := append([]string(nil), b...)
-	sort.Strings(aa)
-	sort.Strings(bb)
-	for i := range aa {
-		if aa[i] != bb[i] {
-			return false
-		}
-	}
-	return true
+	return matches, !unmatched
 }
 
 // managedResourceKeys returns the resources WriteInference owns: every
@@ -829,7 +761,6 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 		Impl     string `json:"impl"`
 		Settings struct {
 			ID       string `json:"id"`
-			StableID string `json:"stable_id"`
 			Profiles []struct {
 				ID        string            `json:"id"`
 				Endpoints map[string]string `json:"endpoints"`
@@ -925,20 +856,12 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 		if instID == "" {
 			instID = strings.TrimPrefix(key, "provider.")
 		}
-		instType := instanceTypeFromID(instID)
-		// The resource id may predate a provider-type migration (e.g.
-		// provider.openai-sso-haivivi now running impl deepseek); the
-		// impl is the driver truth, so prefer it when resolvable.
-		if implType := providerTypeFromImpl(res.Impl); implType != "" {
-			instType = implType
-		}
-		if instType == "" {
+		instType := providerTypeFromImpl(res.Impl)
+		if instType == "" || instType != instanceTypeFromID(instID) {
 			continue
 		}
 		in := Instance{Type: instType}
-		// The stable identity lives in the profile id (legacy configs
-		// carried it in settings.stable_id, which flowcraft rejects).
-		in.StableID = res.Settings.StableID
+		// The stable identity lives in the profile id.
 		if len(res.Settings.Profiles) > 0 {
 			if pid := res.Settings.Profiles[0].ID; pid != "" {
 				in.StableID = pid
@@ -1029,12 +952,8 @@ func (in *Instance) addModel(name string) {
 }
 
 // instanceTypeFromID maps a provider deployment id back to its catalog
-// type: a bare catalog id (legacy single-provider configs), a
-// "<type>-<n>" instance id, or the stable "<type>-<stableID>" form.
+// type: "<type>-<n>" or "<type>-<stableID>".
 func instanceTypeFromID(id string) string {
-	if _, ok := ProviderByID(id); ok {
-		return id
-	}
 	best := ""
 	for _, p := range Providers {
 		if strings.HasPrefix(id, p.ID+"-") && len(p.ID) > len(best) {

@@ -89,7 +89,21 @@ func gitBounded(
 	limit int64,
 	args ...string,
 ) (string, bool) {
-	runCtx, cancel := context.WithTimeout(ctx, gitTimeout)
+	return gitBoundedWithTimeout(ctx, root, limit, gitTimeout, args...)
+}
+
+// gitBoundedWithTimeout is gitBounded with an explicit timeout. The
+// production callers use gitTimeout; tests pass a larger deadline so a
+// heavily loaded CI machine cannot turn an output-limit assertion into
+// a process-start timeout.
+func gitBoundedWithTimeout(
+	ctx context.Context,
+	root string,
+	limit int64,
+	timeout time.Duration,
+	args ...string,
+) (string, bool) {
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, "git", append([]string{"-C", root}, args...)...)
 	stdout, err := cmd.StdoutPipe()

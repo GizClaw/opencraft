@@ -91,6 +91,7 @@ type Options struct {
 // without locking the hot read paths (worldstate per-turn ranking,
 // tools).
 type Service struct {
+	ctx      context.Context
 	opts     Options
 	snapshot atomic.Pointer[snapshot]
 }
@@ -105,11 +106,11 @@ type snapshot struct {
 
 // NewService discovers skills and builds the shared index. A disabled
 // service stays empty (worldstate and tools see no skills).
-func NewService(opts Options) *Service {
+func NewService(ctx context.Context, opts Options) *Service {
 	if opts.TopN <= 0 {
 		opts.TopN = defaultTopN
 	}
-	s := &Service{opts: opts}
+	s := &Service{ctx: ctx, opts: opts}
 	s.reload()
 	return s
 }
@@ -123,7 +124,13 @@ func (s *Service) reload() {
 		s.snapshot.Store(&snapshot{})
 		return
 	}
-	outcome := Discover(s.opts.WorkBase, s.opts.UserDir, s.opts.Workspace, s.opts.ExtraRoots)
+	outcome := Discover(
+		s.ctx,
+		s.opts.WorkBase,
+		s.opts.UserDir,
+		s.opts.Workspace,
+		s.opts.ExtraRoots,
+	)
 	outcome.Skills = filterDisabled(outcome.Skills, s.opts.Disabled)
 	outcome.Skills = append(outcome.Skills,
 		filterDisabled(builtinSkills(), s.opts.Disabled)...)
@@ -378,12 +385,14 @@ func RenderSection(skills []SkillMetadata) string {
 // extra roots, collecting every SKILL.md. Parse failures are recorded
 // in Errors, never fatal. Duplicate paths are de-duplicated.
 func Discover(
+	ctx context.Context,
 	workBase, userDir string,
 	ws workspace.Workspace,
 	extraRoots []string,
 ) SkillLoadOutcome {
 	scans := buildScanRoots(workBase, userDir, extraRoots)
 	c := collector{
+		ctx:       ctx,
 		workBase:  workBase,
 		ws:        ws,
 		seen:      map[string]bool{},
@@ -525,6 +534,7 @@ func repoLevels(workBase string) []string {
 }
 
 type collector struct {
+	ctx       context.Context
 	workBase  string
 	ws        workspace.Workspace
 	seen      map[string]bool
@@ -774,7 +784,7 @@ func truncateUTF8(s string, max int) string {
 func (c *collector) listDir(dir string) ([]fs.DirEntry, error) {
 	if c.ws != nil {
 		if rel, ok := withinRoot(dir, c.workBase); ok {
-			entries, err := c.ws.List(context.Background(), rel)
+			entries, err := c.ws.List(c.ctx, rel)
 			if err == nil {
 				return entries, nil
 			}

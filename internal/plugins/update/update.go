@@ -53,7 +53,7 @@ func CheckWithPolicy(
 	if err != nil {
 		return plugins.UpdateInfo{}, fmt.Errorf("plugin update: parse url: %w", err)
 	}
-	if err := validateURL(u, pol); err != nil {
+	if err := validateURL(ctx, u, pol); err != nil {
 		return plugins.UpdateInfo{}, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
@@ -80,7 +80,7 @@ func CheckWithPolicy(
 	if err := json.Unmarshal(body, &info); err != nil {
 		return plugins.UpdateInfo{}, fmt.Errorf("plugin update: decode manifest: %w", err)
 	}
-	if err := validateInfo(info, pol); err != nil {
+	if err := validateInfo(ctx, info, pol); err != nil {
 		return plugins.UpdateInfo{}, err
 	}
 	return info, nil
@@ -93,7 +93,7 @@ func FetchZip(
 	info plugins.UpdateInfo,
 	pol Policy,
 ) (string, func(), error) {
-	if err := validateInfo(info, pol); err != nil {
+	if err := validateInfo(ctx, info, pol); err != nil {
 		return "", nil, err
 	}
 	u, err := url.Parse(info.DownloadURL)
@@ -153,7 +153,7 @@ func FetchZip(
 	return tmp.Name(), cleanup, nil
 }
 
-func validateInfo(info plugins.UpdateInfo, pol Policy) error {
+func validateInfo(ctx context.Context, info plugins.UpdateInfo, pol Policy) error {
 	if info.Version == "" {
 		return errors.New("plugin update: manifest version is required")
 	}
@@ -167,7 +167,7 @@ func validateInfo(info plugins.UpdateInfo, pol Policy) error {
 	if err != nil {
 		return fmt.Errorf("plugin update: parse download_url: %w", err)
 	}
-	if err := validateURL(u, pol); err != nil {
+	if err := validateURL(ctx, u, pol); err != nil {
 		return err
 	}
 	if _, err := parseChecksum(info.Checksum); err != nil {
@@ -179,7 +179,7 @@ func validateInfo(info plugins.UpdateInfo, pol Policy) error {
 	return nil
 }
 
-func validateURL(u *url.URL, pol Policy) error {
+func validateURL(ctx context.Context, u *url.URL, pol Policy) error {
 	if u.Scheme != "http" && u.Scheme != "https" {
 		return fmt.Errorf("plugin update: unsupported scheme %q", u.Scheme)
 	}
@@ -189,7 +189,7 @@ func validateURL(u *url.URL, pol Policy) error {
 	if u.Host == "" || u.User != nil || u.Fragment != "" {
 		return errors.New("plugin update: url must be absolute, without credentials or fragment")
 	}
-	if err := checkHost(context.Background(), u.Hostname(), pol); err != nil {
+	if err := checkHost(ctx, u.Hostname(), pol); err != nil {
 		return err
 	}
 	return nil
@@ -268,7 +268,7 @@ func client(pol Policy) *http.Client {
 			if len(via) >= maxRedirects {
 				return errors.New("plugin update: too many redirects")
 			}
-			return validateURL(req.URL, pol)
+			return validateURL(req.Context(), req.URL, pol)
 		},
 	}
 }

@@ -49,7 +49,7 @@ func (a *App) toolchainDiagnostics() []toolchain.RuntimeStatus {
 			args = []string{"version"}
 		}
 		statuses[i].Version = commandVersion(
-			3*time.Second, statuses[i].Path, args...)
+			a.appContext(), 3*time.Second, statuses[i].Path, args...)
 	}
 	return statuses
 }

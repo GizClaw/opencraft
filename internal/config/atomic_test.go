@@ -39,113 +39,16 @@ func TestWriteFileAtomic(t *testing.T) {
 	}
 }
 
-func TestMatchStoredKey(t *testing.T) {
-	withKey := func(typ, name, model, endpoint, api, key string) Instance {
-		return Instance{
-			Type: typ, Name: name, Models: []Model{{Name: model}},
-			Endpoint: endpoint, API: api,
-			KeySource: KeyLiteral, KeyValue: key,
-		}
-	}
-	existing := []Instance{
-		withKey("deepseek", "", "m1", "", "responses", "k1"),
-		withKey("deepseek", "", "m2", "", "responses", "k2"),
-		{Type: "openai", Name: "", Models: []Model{{Name: "g"}}, KeySource: KeyEnv},
-	}
-	rows := func(pairs ...KeyRequest) []KeyRequest { return pairs }
-
-	// Reordering: fingerprint matches win, so B keeps k2 and A keeps k1.
-	idx, ok := MatchStoredKeys(existing, rows(
-		KeyRequest{Type: "deepseek", Models: []string{"m2"}, API: "responses"},
-		KeyRequest{Type: "deepseek", Models: []string{"m1"}, API: "responses"},
-	), map[int]bool{})
-	if !ok || existing[idx[0]].KeyValue != "k2" || existing[idx[1]].KeyValue != "k1" {
-		t.Fatalf("reorder match = %v (%v), want k2,k1", idx, ok)
-	}
-
-	// Editing in place: edited row falls back to the leftover key.
-	idx, ok = MatchStoredKeys(existing, rows(
-		KeyRequest{Type: "deepseek", Models: []string{"m9"}, API: "responses"},
-		KeyRequest{Type: "deepseek", Models: []string{"m2"}, API: "responses"},
-	), map[int]bool{})
-	if !ok || existing[idx[0]].KeyValue != "k1" || existing[idx[1]].KeyValue != "k2" {
-		t.Fatalf("edit match = %v (%v), want k1,k2", idx, ok)
-	}
-
-	// A brand-new instance has no stored key.
-	if _, ok := MatchStoredKeys(existing, rows(
-		KeyRequest{Type: "qwen", Models: []string{"q1"}},
-	), map[int]bool{}); ok {
-		t.Fatal("new instance must not match")
-	}
-
-	// Env-sourced keys are never inherited.
-	if _, ok := MatchStoredKeys(existing, rows(
-		KeyRequest{Type: "openai", Models: []string{"g"}},
-	), map[int]bool{}); ok {
-		t.Fatal("env-sourced key must not be inherited")
-	}
-
-	// Claimed tracking stops a duplicate row stealing the same key.
-	claimed := map[int]bool{}
-	idx, ok = MatchStoredKeys(existing, rows(
-		KeyRequest{Type: "deepseek", Models: []string{"m1"}, API: "responses"},
-		KeyRequest{Type: "deepseek", Models: []string{"m1"}, API: "responses"},
-	), claimed)
-	if !ok || existing[idx[0]].KeyValue != "k1" || existing[idx[1]].KeyValue != "k2" {
-		t.Fatalf("dup match = %v (%v), want k1,k2", idx, ok)
-	}
-
-	// More blank rows than stored keys still fail cleanly.
-	if _, ok := MatchStoredKeys(existing, rows(
-		KeyRequest{Type: "deepseek", Models: []string{"m9"}, API: "responses"},
-		KeyRequest{Type: "deepseek", Models: []string{"m8"}, API: "responses"},
-		KeyRequest{Type: "deepseek", Models: []string{"m7"}, API: "responses"},
-	), map[int]bool{}); ok {
-		t.Fatal("rows without an available key must fail")
-	}
-}
-
-// TestMatchStoredKeyReorderEdit reproduces the misattribution: with two
-// same-type instances, editing one row's model AND reordering it while
-// leaving the key blank makes the fingerprint and ordinal fallbacks
-// contradict each other, silently swapping the two stored keys.
-func TestMatchStoredKeyReorderEdit(t *testing.T) {
-	existing := []Instance{
-		{Type: "deepseek", Name: "", Models: []Model{{Name: "m1"}}, API: "responses", KeySource: KeyLiteral, KeyValue: "k1"},
-		{Type: "deepseek", Name: "", Models: []Model{{Name: "m2"}}, API: "responses", KeySource: KeyLiteral, KeyValue: "k2"},
-	}
-	claimed := map[int]bool{}
-
-	// Request row 1: old idx1 edited (m2 -> m9) and moved first, key blank.
-	idxs, ok := MatchStoredKeys(existing, []KeyRequest{
-		{Type: "deepseek", Models: []string{"m9"}, API: "responses"},
-		{Type: "deepseek", Models: []string{"m1"}, API: "responses"},
-	}, claimed)
-	if !ok {
-		t.Fatal("row1 should inherit a key")
-	}
-	idx1, idx2 := idxs[0], idxs[1]
-
-	// Expect row1 -> k2 (idx1), row2 -> k1 (idx0).
-	if existing[idx1].KeyValue != "k2" || existing[idx2].KeyValue != "k1" {
-		t.Fatalf("keys swapped: row1 -> %q (idx %d), row2 -> %q (idx %d), want k2/k1",
-			existing[idx1].KeyValue, idx1, existing[idx2].KeyValue, idx2)
-	}
-}
-
-// TestMatchStoredKeysStableID pins the identity path: a persisted
-// stable id wins over fingerprints, so reordering AND editing a row
-// still keeps its own key, while a brand-new row (no stable id) can
-// only take a leftover key.
+// TestMatchStoredKeysStableID pins the identity path: only persisted
+// stable ids inherit keys, so reordering AND editing a row still keeps
+// its own key, while a brand-new row (no stable id) gets no key.
 func TestMatchStoredKeysStableID(t *testing.T) {
 	existing := []Instance{
 		{StableID: "inst-a", Type: "deepseek", Name: "", Models: []Model{{Name: "m1"}}, API: "responses", KeySource: KeyLiteral, KeyValue: "k1"},
 		{StableID: "inst-b", Type: "deepseek", Name: "", Models: []Model{{Name: "m2"}}, API: "responses", KeySource: KeyLiteral, KeyValue: "k2"},
 	}
 
-	// Reorder + edit while keeping stable ids: each row keeps its own
-	// key even though neither fingerprint matches anymore.
+	// Reorder + edit while keeping stable ids: each row keeps its own key.
 	idxs, ok := MatchStoredKeys(existing, []KeyRequest{
 		{StableID: "inst-b", Type: "deepseek", Models: []string{"m9"}, API: "responses"},
 		{StableID: "inst-a", Type: "deepseek", Models: []string{"m1"}, API: "responses"},
@@ -158,18 +61,20 @@ func TestMatchStoredKeysStableID(t *testing.T) {
 			existing[idxs[0]].KeyValue, idxs[0], existing[idxs[1]].KeyValue, idxs[1])
 	}
 
-	// A brand-new row (no stable id) never steals a stable-id claim; it
-	// takes the leftover same-type key, and a row whose stable id names
-	// a different type must not inherit across providers.
+	// A brand-new row (no stable id) never inherits an existing key,
+	// and a row whose stable id names a different type must not match.
 	idxs, ok = MatchStoredKeys(existing, []KeyRequest{
 		{StableID: "inst-b", Type: "deepseek", Models: []string{"m9"}, API: "responses"},
 		{Type: "deepseek", Models: []string{"m3"}, API: "responses"},
 	}, map[int]bool{})
-	if !ok {
-		t.Fatal("new row should fall back to the leftover key")
+	if idxs[0] != 1 {
+		t.Fatalf("stable row idx = %d, want 1", idxs[0])
 	}
-	if existing[idxs[1]].KeyValue != "k1" {
-		t.Fatalf("new row took %q (idx %d), want the leftover k1", existing[idxs[1]].KeyValue, idxs[1])
+	if idxs[1] != -1 {
+		t.Fatalf("new row idx = %d, want -1", idxs[1])
+	}
+	if ok {
+		t.Fatal("unmatched new row must report ok=false")
 	}
 
 	if _, ok := MatchStoredKeys(existing, []KeyRequest{

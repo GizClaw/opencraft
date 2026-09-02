@@ -27,7 +27,7 @@ func TestRemoteRunnerCloseThroughApproval(t *testing.T) {
 		t.Fatalf("LaunchExe: %v", err)
 	}
 	t.Cleanup(stop)
-	runner, err := NewRemoteRunner(client, stop)
+	runner, err := NewRemoteRunner(ctx, client, stop)
 	if err != nil {
 		t.Fatalf("NewRemoteRunner: %v", err)
 	}

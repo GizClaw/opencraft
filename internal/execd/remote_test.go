@@ -10,11 +10,11 @@ import (
 
 func TestRemoteRunnerStartRead(t *testing.T) {
 	client, _ := testPair(t)
-	runner, err := NewRemoteRunner(client, nil)
+	ctx := context.Background()
+	runner, err := NewRemoteRunner(ctx, client, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx := context.Background()
 
 	proc, err := runner.Start(ctx, sandbox.SessionSpec{
 		ID:   "rp1",
@@ -42,7 +42,9 @@ func TestRemoteRunnerStartRead(t *testing.T) {
 
 func TestRemoteRunnerExec(t *testing.T) {
 	client, _ := testPair(t)
-	runner, err := NewRemoteRunner(client, nil)
+	runner, err := NewRemoteRunner(
+		context.Background(), client, nil,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}

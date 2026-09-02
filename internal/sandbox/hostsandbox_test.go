@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -313,62 +312,6 @@ func TestHostWorkspaceFactoryDerivesRootFromWorkspace(t *testing.T) {
 	if err != nil || string(data) != "s3cret" {
 		t.Fatalf("yolo read = %q, %v", data, err)
 	}
-}
-
-// TestHostWorkspaceFactoryAcceptsMatchingLegacyRoot keeps older configs
-// working: a settings.root that resolves to the same directory as the
-// workspace dependency is accepted.
-func TestHostWorkspaceFactoryAcceptsMatchingLegacyRoot(t *testing.T) {
-	root := t.TempDir()
-	ws, err := workspace.NewLocalWorkspace(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	value, err := (HostWorkspaceFactory{}).New(context.Background(), resource.Input{
-		Settings: []byte(`{"root":` + strconv.Quote(root) + `}`),
-		Deps: map[string]any{
-			"sessions":  newTestStore(t),
-			"workspace": ws,
-		},
-	})
-	if err != nil {
-		t.Fatalf("factory new with matching legacy root: %v", err)
-	}
-	hw, ok := value.(*HostWorkspace)
-	if !ok || hw.root != ws.Root() {
-		t.Fatalf("factory returned %T with root %q, want ws root %q",
-			value, safeRoot(hw), ws.Root())
-	}
-}
-
-// TestHostWorkspaceFactoryRejectsMismatchedRoot fails loudly when a
-// legacy settings.root points at a different directory than ws, so
-// confinement and readonly resolution can never drift apart.
-func TestHostWorkspaceFactoryRejectsMismatchedRoot(t *testing.T) {
-	ws, err := workspace.NewLocalWorkspace(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = (HostWorkspaceFactory{}).New(context.Background(), resource.Input{
-		Settings: []byte(`{"root":` + strconv.Quote(t.TempDir()) + `}`),
-		Deps: map[string]any{
-			"sessions":  newTestStore(t),
-			"workspace": ws,
-		},
-	})
-	if err == nil {
-		t.Fatal("mismatched settings.root must be rejected")
-	}
-	if !strings.Contains(err.Error(), "does not match the workspace dependency root") {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-func safeRoot(hw *HostWorkspace) string {
-	if hw == nil {
-		return ""
-	}
-	return hw.root
 }
 
 // TestFilesToolReadsReadonlySkillRoot verifies the full chain for the

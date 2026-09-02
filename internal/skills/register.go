@@ -81,7 +81,7 @@ func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 			extraRoots = append(extraRoots, p.SkillRoots()...)
 		}
 	}
-	svc := NewService(Options{
+	svc := NewService(ctx, Options{
 		WorkBase:   settings.WorkDir,
 		UserDir:    settings.UserDir,
 		Workspace:  ws,

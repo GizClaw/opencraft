@@ -226,7 +226,9 @@ func TestBuildRuntimeWithPluginHostExposesAgentCapabilities(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	host := pluginagent.NewHost(plugins.NewStore(pluginRoot), nil)
+	host := pluginagent.NewHost(
+		context.Background(), plugins.NewStore(pluginRoot), nil,
+	)
 	if roots := host.SkillRoots(); len(roots) != 1 {
 		t.Fatalf("plugin host skill roots = %v, want the plugin skills dir", roots)
 	}

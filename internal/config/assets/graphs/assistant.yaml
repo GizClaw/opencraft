@@ -54,6 +54,12 @@ nodes:
       # without a reasoning capability (drivers reject the knob for
       # them). The empty default keeps non-desktop callers from sending
       # a knob the model may not support.
+      # Per-call client metadata: opencraft.prepare seeds these board
+      # vars, and providers that can forward metadata emit it as
+      # client_metadata.thread_id / client_metadata.turn_id.
+      request_metadata:
+        thread_id: ${board:oc_thread_id}
+        turn_id: ${board:oc_turn_id}
       intent:
         text:
           reasoning_effort: ${board:think_level:}

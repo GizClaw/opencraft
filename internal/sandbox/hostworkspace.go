@@ -359,10 +359,8 @@ var _ workspace.Workspace = (*hostWorkspace)(nil)
 
 // HostWorkspaceSettings configures the workspace-mode view of the
 // HostWorkspace resource. The confined root is derived from the
-// workspace dependency (ws); Root is a legacy override kept for
-// backward compatibility and must resolve to the same directory.
+// workspace dependency (ws).
 type HostWorkspaceSettings struct {
-	Root string `json:"root,omitempty"`
 	// ReadonlyRoots are absolute host paths readable (never writable)
 	// in workspace mode. Discovered skill roots are appended by the
 	// factory from the optional skills dep.
@@ -429,15 +427,6 @@ func (HostWorkspaceFactory) New(
 		return nil, errdefs.Validationf(
 			"opencraft hostworkspace: workspace dependency must expose a root")
 	}
-	if settings.Root != "" {
-		if legacy := canonicalRoot(settings.Root); legacy != root {
-			return nil, errdefs.Validationf(
-				"opencraft hostworkspace: settings.root %q resolves to %q, "+
-					"which does not match the workspace dependency root %q; "+
-					"remove the override and let hostws derive it from ws",
-				settings.Root, legacy, root)
-		}
-	}
 	readonly := append([]string(nil), settings.ReadonlyRoots...)
 	if dep, ok := in.Dep("skills"); ok {
 		if svc, ok := dep.(*skills.Service); ok {
@@ -468,21 +457,6 @@ func workspaceDepRoot(ws workspace.Workspace) string {
 		return r.Root()
 	}
 	return ""
-}
-
-// canonicalRoot normalizes a configured path the same way the local
-// workspace normalizes its root (absolute + symlink-resolved), so a
-// legacy settings.root override can be compared with the dependency's
-// root.
-func canonicalRoot(path string) string {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return filepath.Clean(path)
-	}
-	if real, err := filepath.EvalSymlinks(abs); err == nil {
-		return filepath.Clean(real)
-	}
-	return filepath.Clean(abs)
 }
 
 func dedupePaths(paths []string) []string {

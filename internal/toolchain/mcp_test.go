@@ -1,6 +1,9 @@
 package toolchain
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestMCPTransportKeepsUnresolvableBareCommand(t *testing.T) {
 	mgr, err := New(Options{Preference: PreferenceExternalFirst})
@@ -10,7 +13,7 @@ func TestMCPTransportKeepsUnresolvableBareCommand(t *testing.T) {
 	// A configured server command that cannot be resolved today must
 	// not fail runtime assembly; the MCP source surfaces it as a
 	// connection error instead.
-	_, err = mcpTransport(MCPServer{
+	_, err = mcpTransport(context.Background(), MCPServer{
 		Name:      "server",
 		Transport: "stdio",
 		Command:   "definitely-not-a-real-command-xyz",

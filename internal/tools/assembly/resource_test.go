@@ -300,7 +300,7 @@ func TestAssemblyFiresToolHooks(t *testing.T) {
 	if err := os.WriteFile(path, []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	mgr, err := hooks.Load(path)
+	mgr, err := hooks.Load(context.Background(), path)
 	if err != nil {
 		t.Fatal(err)
 	}

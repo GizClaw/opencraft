@@ -11,7 +11,7 @@ import (
 
 func TestFileBackendEncryptsAtRest(t *testing.T) {
 	dir := t.TempDir()
-	s, err := NewStore(dir, "")
+	s, err := NewStore(dir)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -40,24 +40,24 @@ func TestFileBackendEncryptsAtRest(t *testing.T) {
 	}
 }
 
-func TestFileBackendRejectsLegacyPlaintext(t *testing.T) {
+func TestFileBackendRejectsUnencryptedFile(t *testing.T) {
 	dir := t.TempDir()
-	s, err := NewStore(dir, "")
+	s, err := NewStore(dir)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
 	b := s.backend.(*fileBackend)
-	// Simulate a file written before encryption existed.
-	if err := os.WriteFile(b.path("inference/legacy"), []byte("sk-legacy"), 0o600); err != nil {
+	// Simulate an unencrypted file.
+	if err := os.WriteFile(b.path("inference/plain"), []byte("sk-plain"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, found, err := s.Lookup(context.Background(), "inference/legacy"); err == nil || found {
-		t.Fatalf("Lookup(legacy) = (found=%v, err=%v), want rejection", found, err)
+	if _, found, err := s.Lookup(context.Background(), "inference/plain"); err == nil || found {
+		t.Fatalf("Lookup(plain) = (found=%v, err=%v), want rejection", found, err)
 	}
 	// The plaintext file must remain untouched: no silent rewrite.
-	raw, err := os.ReadFile(b.path("inference/legacy"))
-	if err != nil || string(raw) != "sk-legacy" {
-		t.Fatalf("legacy file was modified: %q, %v", raw, err)
+	raw, err := os.ReadFile(b.path("inference/plain"))
+	if err != nil || string(raw) != "sk-plain" {
+		t.Fatalf("unencrypted file was modified: %q, %v", raw, err)
 	}
 }
 
@@ -92,7 +92,7 @@ func TestFileBackendWrongKeyFails(t *testing.T) {
 
 func TestKeyFileCreatedWith0600(t *testing.T) {
 	dir := t.TempDir()
-	s, err := NewStore(dir, "")
+	s, err := NewStore(dir)
 	if err != nil {
 		t.Fatalf("NewStore: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestKeyFileCreatedWith0600(t *testing.T) {
 		t.Fatalf("key file mode = %o, want 600", perm)
 	}
 	// Reopening the same dir must reuse the same key.
-	again, err := NewStore(dir, "")
+	again, err := NewStore(dir)
 	if err != nil {
 		t.Fatalf("NewStore again: %v", err)
 	}

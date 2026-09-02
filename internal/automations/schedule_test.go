@@ -62,7 +62,12 @@ func TestScheduleWeekdays(t *testing.T) {
 
 func TestScheduleWeekly(t *testing.T) {
 	loc := time.Local
-	sched := Schedule{Type: ScheduleWeekly, Days: []string{"MO", "TH"}, Time: "10:30"}
+	sched := Schedule{
+		Type:   ScheduleWeekly,
+		Days:   []string{"MO", "TH"},
+		Time:   "10:30",
+		Origin: "2026-08-31",
+	}
 
 	after := time.Date(2026, 9, 3, 10, 31, 0, 0, loc) // Thursday
 	next, err := sched.Next(after)

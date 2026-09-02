@@ -45,7 +45,7 @@ func TestDiscoverAgentsRootToCwdWithOverride(t *testing.T) {
 	write(t, filepath.Join(sub, "AGENTS.override.md"), "override doc")
 
 	s := New(Options{WorkBase: sub})
-	got, err := s.discoverAgents()
+	got, err := s.discoverAgents(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +64,7 @@ func TestDiscoverAgentsFallsBackToCwd(t *testing.T) {
 	dir := t.TempDir()
 	write(t, filepath.Join(dir, "AGENTS.md"), "only here")
 	s := New(Options{WorkBase: dir})
-	got, err := s.discoverAgents()
+	got, err := s.discoverAgents(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestDiscoverAgentsViaWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := New(Options{WorkBase: root, Workspace: ws})
-	got, err := s.discoverAgents()
+	got, err := s.discoverAgents(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -488,7 +488,7 @@ func TestRenderToBoardInjectsRankedSkills(t *testing.T) {
 	workBase := t.TempDir()
 	writeSkillFile(t, workBase, "review", "review code and docs")
 	writeSkillFile(t, workBase, "plan", "build execution plans")
-	svc := skills.NewService(skills.Options{
+	svc := skills.NewService(context.Background(), skills.Options{
 		WorkBase: workBase, Enabled: true, TopN: 5,
 	})
 	ws := New(Options{WorkBase: workBase})
@@ -522,7 +522,7 @@ func TestRenderToBoardInjectsRankedSkills(t *testing.T) {
 func TestRenderToBoardSkipsSkillsWhenNoMatch(t *testing.T) {
 	workBase := t.TempDir()
 	writeSkillFile(t, workBase, "review", "review code and docs")
-	svc := skills.NewService(skills.Options{WorkBase: workBase, Enabled: true})
+	svc := skills.NewService(context.Background(), skills.Options{WorkBase: workBase, Enabled: true})
 	ws := New(Options{WorkBase: workBase})
 	ws.SetSkills(svc)
 
@@ -542,7 +542,7 @@ func TestRenderToBoardSkipsSkillsWhenNoMatch(t *testing.T) {
 func TestRenderToBoardMentionInjectsFullText(t *testing.T) {
 	workBase := t.TempDir()
 	writeSkillFile(t, workBase, "review", "review code and docs")
-	svc := skills.NewService(skills.Options{WorkBase: workBase, Enabled: true})
+	svc := skills.NewService(context.Background(), skills.Options{WorkBase: workBase, Enabled: true})
 	ws := New(Options{WorkBase: workBase})
 	ws.SetSkills(svc)
 
@@ -578,7 +578,7 @@ func TestMentionStagesSkillToCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	userDir := t.TempDir()
-	svc := skills.NewService(skills.Options{WorkBase: workBase, Enabled: true})
+	svc := skills.NewService(context.Background(), skills.Options{WorkBase: workBase, Enabled: true})
 	ws := New(Options{WorkBase: workBase, UserDir: userDir})
 	ws.SetSkills(svc)
 
@@ -608,7 +608,7 @@ func TestModelRequestedActivation(t *testing.T) {
 	workBase := t.TempDir()
 	writeSkillFile(t, workBase, "review", "review code and docs")
 	sess := newSessionStore(t)
-	svc := skills.NewService(skills.Options{WorkBase: workBase, Enabled: true})
+	svc := skills.NewService(context.Background(), skills.Options{WorkBase: workBase, Enabled: true})
 
 	// The model asks for $review at the end of a turn; the observe
 	// hook persists the request.
