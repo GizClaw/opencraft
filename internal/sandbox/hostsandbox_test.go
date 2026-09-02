@@ -314,13 +314,6 @@ func TestHostWorkspaceFactoryDerivesRootFromWorkspace(t *testing.T) {
 	}
 }
 
-func safeRoot(hw *HostWorkspace) string {
-	if hw == nil {
-		return ""
-	}
-	return hw.root
-}
-
 // TestFilesToolReadsReadonlySkillRoot verifies the full chain for the
 // reported skill-reference read: the file tools pass absolute paths
 // through to the workspace, whose readonly skill roots are served
