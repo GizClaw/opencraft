@@ -599,10 +599,12 @@ export function ChatView() {
   const busy = conv?.busy ?? false;
   const turnArtifacts = conv?.turnArtifacts ?? [];
   const [visibleCount, setVisibleCount] = useState(RENDER_WINDOW);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
   // A conversation switch resets the window to the tail; a resumed
   // session starts with the newest messages visible.
   useEffect(() => {
     setVisibleCount(RENDER_WINDOW);
+    setLoadingEarlier(false);
   }, [current]);
   const truncated = messages.length > visibleCount;
   const start = truncated ? messages.length - visibleCount : 0;
@@ -675,6 +677,27 @@ export function ChatView() {
   // captured from an earlier render — that race is what made the view
   // jump back to the bottom right after the user scrolled away.
   const stickRef = useRef(true);
+  const loadEarlier = () => {
+    if (!truncated || loadingEarlier) return;
+    const el = scrollRef.current;
+    const prevScrollHeight = el?.scrollHeight ?? 0;
+    const prevScrollTop = el?.scrollTop ?? 0;
+    setLoadingEarlier(true);
+    setVisibleCount((v) => v + RENDER_STEP);
+    // The transcript is chronological, so loading earlier history
+    // prepends rows above the current window. Anchor the viewport to
+    // the content that was already visible; the newly inserted history
+    // then sits above it and can be read by continuing to scroll up.
+    stickRef.current = false;
+    setStick(false);
+    requestAnimationFrame(() => {
+      const current = scrollRef.current;
+      if (!current) return;
+      const addedAbove = current.scrollHeight - prevScrollHeight;
+      current.scrollTop = prevScrollTop + addedAbove;
+    });
+    window.setTimeout(() => setLoadingEarlier(false), 250);
+  };
   const { t } = useTranslation();
   const thinkLevels = [
     { value: 'minimal', label: t('chat.thinkMinimal') },
@@ -849,9 +872,18 @@ export function ChatView() {
               el.scrollHeight - el.scrollTop - el.clientHeight < 80;
             stickRef.current = pinned;
             setStick(pinned);
+            if (!pinned && el.scrollTop <= 8 && truncated && !loadingEarlier) {
+              loadEarlier();
+            }
           }}
-          className="flex-1 overflow-y-auto px-6 py-4"
+          data-testid="chat-scroll"
+          className="flex-1 overflow-y-auto [overflow-anchor:none] px-6 py-4"
         >
+          {loadingEarlier && (
+            <div className="pointer-events-none fixed left-1/2 top-14 z-20 -translate-x-1/2 rounded-full border border-edge bg-panel p-2 shadow-xl">
+              <Loader2 size="1.0000rem" className="animate-spin text-dim" />
+            </div>
+          )}
           {messages.length === 0 ? (
             <div className="h-full grid place-items-center">
               {!configured && (
@@ -870,18 +902,6 @@ export function ChatView() {
             </div>
           ) : (
             <div className="max-w-4xl mx-auto space-y-4">
-              {truncated && (
-                <div className="pb-1">
-                  <button
-                    onClick={() => setVisibleCount((v) => v + RENDER_STEP)}
-                    className="w-full rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-xs text-dim hover:text-fg transition-colors"
-                  >
-                    {t('chat.loadEarlier', {
-                      hidden: messages.length - visibleCount,
-                    })}
-                  </button>
-                </div>
-              )}
               {visibleMessages.map((msg, localI) => {
                 const i = start + localI;
                 // A turn's strip renders right after its last message:

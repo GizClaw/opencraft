@@ -36,6 +36,12 @@ test('resumes a long session with windowed transcript', async ({ page }) => {
   await expect(page.getByText('message-249')).toBeVisible();
   await expect(page.getByText('message-0')).not.toBeVisible();
 
-  await page.getByRole('button', { name: /earlier messages/i }).click();
+  // Reaching the top auto-loads the next history window; the loaded
+  // rows appear above the current position, so scroll up again to read
+  // them once the window has been expanded.
+  const scroller = page.getByTestId('chat-scroll');
+  await scroller.evaluate((el) => el.scrollTo(0, 0));
+  await expect(page.getByText('message-50')).toBeVisible();
+  await scroller.evaluate((el) => el.scrollTo(0, 0));
   await expect(page.getByText('message-0')).toBeVisible();
 });

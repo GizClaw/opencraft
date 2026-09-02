@@ -35,13 +35,10 @@ test('renders a 5000-message session inside the render window', async ({
 
   const started = Date.now();
   await page.getByRole('button', { name: 'Huge session' }).click();
-  await expect(
-    page.getByRole('button', { name: /earlier messages/i }),
-  ).toBeVisible({
+  await expect(page.getByText('message-4999')).toBeVisible({
     timeout: 10_000,
   });
   // Generous absolute threshold: windowed rendering of a 5000-message
   // session must stay interactive on CI-class hardware.
   expect(Date.now() - started).toBeLessThan(10_000);
-  await expect(page.getByText('message-4999')).toBeVisible();
 });

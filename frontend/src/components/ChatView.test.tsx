@@ -70,7 +70,7 @@ beforeEach(() => {
 });
 
 describe('ChatView transcript windowing', () => {
-  it('renders only the newest 200 messages and loads earlier on demand', async () => {
+  it('renders only the newest 200 messages and loads earlier at the top', () => {
     setConversation(manyMessages(250));
     render(<ChatView />);
 
@@ -79,13 +79,24 @@ describe('ChatView transcript windowing', () => {
     expect(screen.getByText('message-50')).toBeInTheDocument();
     expect(screen.getByText('message-249')).toBeInTheDocument();
 
-    const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: /earlier messages/i }));
+    const scroller = screen.getByTestId('chat-scroll');
+    Object.defineProperty(scroller, 'scrollHeight', {
+      configurable: true,
+      value: 10_000,
+    });
+    Object.defineProperty(scroller, 'clientHeight', {
+      configurable: true,
+      value: 500,
+    });
+    Object.defineProperty(scroller, 'scrollTop', {
+      configurable: true,
+      value: 0,
+      writable: true,
+    });
+    fireEvent.scroll(scroller);
 
     expect(screen.getByText('message-0')).toBeInTheDocument();
-    expect(
-      screen.queryByRole('button', { name: /earlier messages/i }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText('message-249')).toBeInTheDocument();
   });
 
   it('keeps the full transcript when it fits in the window', () => {
