@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/event"
@@ -344,6 +345,7 @@ func (h *backgroundHost) runTurn(
 	if strings.TrimSpace(prompt) == "" {
 		return TurnStart{}, errors.New("prompt is required")
 	}
+	requestedAt := time.Now().UTC()
 	a := h.app
 	a.mu.Lock()
 	ctrl := h.ctrl
@@ -433,6 +435,12 @@ func (h *backgroundHost) runTurn(
 		_ = lease.Close()
 		return TurnStart{}, fmt.Errorf("start turn: %w", err)
 	}
+	startedAt := time.Now().UTC()
+	if store != nil {
+		_ = store.RecordTurnTiming(
+			contextID, turn.RunID(), requestedAt, startedAt,
+		)
+	}
 	broker.BindTurn(turn.RunID(), turn)
 
 	a.mu.Lock()
@@ -474,7 +482,12 @@ func (h *backgroundHost) runTurn(
 			ConversationID: contextID,
 			RunID:          turn.RunID(),
 		}, "turn started")
-	return TurnStart{RunID: turn.RunID(), ContextID: contextID}, nil
+	return TurnStart{
+		RunID:       turn.RunID(),
+		ContextID:   contextID,
+		RequestedAt: requestedAt.Format(time.RFC3339),
+		StartedAt:   startedAt.Format(time.RFC3339),
+	}, nil
 }
 
 // sink records background stream deltas into the local rollout and
@@ -602,11 +615,18 @@ func (h *backgroundHost) waitTurn(
 	a.mu.Unlock()
 	_ = lease.Close()
 
+	finishedAt := time.Now().UTC()
+	if store != nil {
+		_ = store.RecordTurnFinished(
+			contextID, runID, finishedAt,
+		)
+	}
 	end := TurnEnd{
 		RunID:          runID,
 		ConversationID: contextID,
 		Status:         "unknown",
 		Output:         strings.TrimSpace(output),
+		FinishedAt:     finishedAt.Format(time.RFC3339),
 	}
 	if res != nil {
 		end.Status = string(res.Status)

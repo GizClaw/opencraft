@@ -69,7 +69,6 @@ function CodeBlock({
           aria-label="Copy code"
         >
           {copied ? <Check size="0.7857rem" /> : <Copy size="0.7857rem" />}
-          {copied ? 'Copied' : 'Copy'}
         </button>
       )}
     </div>

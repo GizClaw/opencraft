@@ -40,6 +40,18 @@ export function mockBackend(cfg?: MockConfig) {
     Workspace: async () => config.workspace ?? '/workspace',
     ProjectConfigStatus: async () => null,
     CurrentSession: async () => config.currentSession ?? 's-1',
+    NewChat: async () => ({
+      session_id: 's-new',
+      mode: 'workspace',
+      think: 'medium',
+      model: '',
+    }),
+    ResumeSession: async (id: string) => ({
+      session_id: id,
+      mode: 'workspace',
+      think: 'medium',
+      model: '',
+    }),
     SessionMode: async () => 'workspace',
     GetThink: async () => 'medium',
     GetModel: async () => '',

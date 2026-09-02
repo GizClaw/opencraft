@@ -32,9 +32,9 @@ describe('groupToolCalls', () => {
     expect(groupToolCalls([])).toEqual([]);
   });
 
-  it('passes non-tool items through unchanged', () => {
+  it('drops reasoning traces and passes visible non-tool items through', () => {
     const items = [reasoning('r1'), text('t1')];
-    expect(groupToolCalls(items)).toEqual(items);
+    expect(groupToolCalls(items)).toEqual([text('t1')]);
   });
 
   it('groups consecutive tool calls into one array', () => {
@@ -49,6 +49,12 @@ describe('groupToolCalls', () => {
     const t = text('t');
     const b = tool('b', 'exec_command');
     expect(groupToolCalls([a, t, b])).toEqual([[a], t, [b]]);
+  });
+
+  it('merges tool calls separated only by hidden reasoning', () => {
+    const a = tool('a', 'exec_command');
+    const b = tool('b', 'exec_command');
+    expect(groupToolCalls([a, reasoning('r1'), b])).toEqual([[a, b]]);
   });
 
   it('keeps a single tool call as a one-element group', () => {

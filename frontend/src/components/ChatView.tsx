@@ -45,7 +45,7 @@ import { useTranslation } from 'react-i18next';
 import { OnFileDrop, OnFileDropOff } from '../../wailsjs/runtime/runtime';
 import { api } from '../lib/api';
 import { COMPACT_SUMMARY_PREFIX } from '../lib/compact';
-import { useStore } from '../lib/store';
+import { displaySessionID, isTurnBusy, useStore } from '../lib/store';
 import type { AttachmentView } from '../lib/types';
 import type {
   AssistantItem,
@@ -171,11 +171,15 @@ const MessageRow = memo(function MessageRow({
   busy,
   streaming,
   isTurnLast,
+  requestedAt,
+  startedAt,
 }: {
   msg: MessageView;
   busy: boolean;
   streaming: boolean;
   isTurnLast: boolean;
+  requestedAt?: string;
+  startedAt?: string;
 }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
@@ -188,20 +192,53 @@ const MessageRow = memo(function MessageRow({
     const files = attachments.filter((a) => a.kind !== 'image');
     return (
       <div className="flex justify-end">
-        <div className="max-w-[80%] rounded-2xl rounded-br-sm border border-accent/30 bg-accent/15 px-4 py-2.5 text-sm">
-          {images.length > 0 && (
-            <div className="mb-2 flex flex-wrap justify-end gap-2">
-              {images.map((a) => (
-                <AttachmentImage key={a.id} att={a} />
-              ))}
-            </div>
-          )}
-          {msg.text && (
-            <div className="prose-chat user-bubble-md text-sm">
-              <Markdown text={msg.text} />
-            </div>
-          )}
-          {files.length > 0 && <AttachmentFiles attachments={files} />}
+        <div className="group flex w-fit max-w-[80%] flex-col items-end gap-1">
+          <div className="rounded-2xl rounded-br-sm border border-accent/30 bg-accent/15 px-4 py-2.5 text-sm">
+            {images.length > 0 && (
+              <div className="mb-2 flex flex-wrap justify-end gap-2">
+                {images.map((a) => (
+                  <AttachmentImage key={a.id} att={a} />
+                ))}
+              </div>
+            )}
+            {msg.text && (
+              <div className="prose-chat user-bubble-md text-sm">
+                <Markdown text={msg.text} />
+              </div>
+            )}
+            {files.length > 0 && <AttachmentFiles attachments={files} />}
+          </div>
+          <div className="pointer-events-none invisible flex items-center gap-1.5 pr-1 group-hover:pointer-events-auto group-hover:visible">
+            {requestedAt && (
+              <span className="text-xs text-dim tabular-nums">
+                {formatChatTime(requestedAt)}
+              </span>
+            )}
+            {msg.text && (
+              <button
+                onClick={() => {
+                  void (async () => {
+                    try {
+                      await navigator.clipboard.writeText(msg.text);
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 1500);
+                    } catch {
+                      // clipboard unavailable
+                    }
+                  })();
+                }}
+                className="flex items-center rounded border border-edge p-1 text-dim hover:text-fg"
+                aria-label={copied ? t('chat.copied') : t('chat.copyMessage')}
+                tabIndex={-1}
+              >
+                {copied ? (
+                  <Check size="0.7857rem" />
+                ) : (
+                  <Copy size="0.7857rem" />
+                )}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -231,7 +268,7 @@ const MessageRow = memo(function MessageRow({
   const groups = groupToolCalls(msg.items);
   if (groups.length === 0) return null;
   return (
-    <div className="flex flex-col gap-1">
+    <div className="group flex flex-col gap-1">
       {groups.map((group, gi) => {
         if (Array.isArray(group)) {
           return group.length === 1 ? (
@@ -255,14 +292,20 @@ const MessageRow = memo(function MessageRow({
         );
       })}
       {copyable && (
-        <div className="flex justify-start">
+        <div className="pointer-events-none invisible flex items-center justify-start gap-1.5 pl-1 group-hover:pointer-events-auto group-hover:visible">
           <button
             onClick={() => void copyFinal()}
             className="flex items-center rounded border border-edge p-1 text-dim hover:text-fg"
             aria-label={copied ? t('chat.copied') : t('chat.copyOutput')}
+            tabIndex={-1}
           >
             {copied ? <Check size="0.7857rem" /> : <Copy size="0.7857rem" />}
           </button>
+          {startedAt && (
+            <span className="text-xs text-dim tabular-nums">
+              {formatChatTime(startedAt)}
+            </span>
+          )}
         </div>
       )}
       {msg.items.length === 0 && busy && (
@@ -274,6 +317,35 @@ const MessageRow = memo(function MessageRow({
     </div>
   );
 });
+
+// formatChatTime renders a message timestamp as a compact local clock
+// time. Older-than-today messages include the date so a resumed
+// session's timeline stays unambiguous.
+function formatChatTime(iso?: string) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return d.toLocaleString(undefined, {
+    month: sameDay ? undefined : 'numeric',
+    day: sameDay ? undefined : 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+// turnForIndex maps a transcript index to the turn entry that owns it.
+// Entries are ordered by first-message index, so the closest preceding
+// start is the owning turn.
+function turnForIndex(
+  turnArtifacts: TurnArtifacts[],
+  index: number,
+): TurnArtifacts | undefined {
+  for (let ti = turnArtifacts.length - 1; ti >= 0; ti--) {
+    if (turnArtifacts[ti].start <= index) return turnArtifacts[ti];
+  }
+  return undefined;
+}
 
 // CompactCard renders a compaction summary (a user message marked with
 // COMPACT_SUMMARY_PREFIX) as a tool-style card instead of a chat
@@ -363,6 +435,80 @@ function docIcon(path: string) {
   return <File size="0.9286rem" className="text-dim" />;
 }
 
+// absoluteArtifactPath joins workspace-relative artifact paths with the
+// current workspace so "Copy Path" always puts a usable absolute path
+// on the clipboard. Already-absolute paths are left untouched.
+function absoluteArtifactPath(path: string, workspace: string | undefined) {
+  if (!workspace) return path;
+  const absolute =
+    path.startsWith('/') ||
+    path.startsWith('\\') ||
+    /^[A-Za-z]:[\\/]/.test(path);
+  if (absolute) return path;
+  const sep = workspace.includes('\\') ? '\\' : '/';
+  const root = workspace.replace(/[\\/]+$/, '');
+  return (
+    root +
+    sep +
+    path
+      .split(/[\\/]+/)
+      .filter(Boolean)
+      .join(sep)
+  );
+}
+
+// workedForLabel renders the turn's execution time as "1h 2m 3s",
+// preferring the backend-computed duration when available.
+function workedForLabel(
+  startedAt?: string,
+  finishedAt?: string,
+  durationMs?: number,
+) {
+  let ms = durationMs;
+  if (ms === undefined && startedAt && finishedAt) {
+    const start = new Date(startedAt).getTime();
+    const end = new Date(finishedAt).getTime();
+    if (Number.isFinite(start) && Number.isFinite(end)) {
+      ms = end - start;
+    }
+  }
+  if (ms === undefined || !Number.isFinite(ms) || ms < 0) return '';
+  const total = Math.floor(ms / 1000);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const parts = [];
+  if (h > 0) parts.push(`${h}h`);
+  if (m > 0 || h > 0) parts.push(`${m}m`);
+  parts.push(`${s}s`);
+  return parts.join(' ');
+}
+
+// WorkedForLine renders the execution-time label below the turn
+// artifact card, centered between two filling divider lines.
+function WorkedForLine({
+  startedAt,
+  finishedAt,
+  durationMs,
+}: {
+  startedAt?: string;
+  finishedAt?: string;
+  durationMs?: number;
+}) {
+  const { t } = useTranslation();
+  const worked = workedForLabel(startedAt, finishedAt, durationMs);
+  if (!worked) return null;
+  return (
+    <div className="flex items-center gap-3 text-xs text-dim">
+      <div className="h-px flex-1 bg-edge" />
+      <span className="shrink-0 tabular-nums">
+        {t('chat.workedFor', { duration: worked })}
+      </span>
+      <div className="h-px flex-1 bg-edge" />
+    </div>
+  );
+}
+
 // ArtifactStrip renders the current turn's produced files as a
 // left-to-right horizontal scroll strip: one chip per file, clickable
 // to open with the system default app and with a right-click menu for
@@ -374,6 +520,7 @@ const ArtifactStrip = memo(function ArtifactStrip({
   docs: TurnDoc[];
 }) {
   const { t } = useTranslation();
+  const workspace = useStore((s) => s.workspace);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{
     doc: TurnDoc;
@@ -481,7 +628,9 @@ const ArtifactStrip = memo(function ArtifactStrip({
               className="flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
               onClick={() =>
                 void runMenuAction(async () => {
-                  await navigator.clipboard.writeText(menu.doc.path);
+                  await navigator.clipboard.writeText(
+                    absoluteArtifactPath(menu.doc.path, workspace),
+                  );
                 })
               }
             >
@@ -592,11 +741,15 @@ function AttachmentFiles({ attachments }: { attachments: AttachmentView[] }) {
 }
 
 export function ChatView() {
-  const current = useStore((s) => s.current);
-  const conv = useStore((s) => s.conversations[s.current]);
+  const current = useStore((s) => displaySessionID(s.navigation));
+  const conv = useStore((s) => {
+    const id = displaySessionID(s.navigation);
+    return id ? s.conversations[id] : undefined;
+  });
   const sessions = useStore((s) => s.sessions);
   const messages = conv?.messages ?? [];
-  const busy = conv?.busy ?? false;
+  const turn = conv?.turn;
+  const busy = turn ? isTurnBusy(turn) : false;
   const turnArtifacts = conv?.turnArtifacts ?? [];
   const [visibleCount, setVisibleCount] = useState(RENDER_WINDOW);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
@@ -636,7 +789,7 @@ export function ChatView() {
   const mode = conv?.mode ?? 'workspace';
   const setMode = useStore((s) => s.setMode);
   const think = conv?.think ?? 'medium';
-  const stage = conv?.stage ?? '';
+  const stage = turn?.name === 'running' ? turn.stage : '';
   const setThink = useStore((s) => s.setThink);
   const model = conv?.model ?? '';
   const setModel = useStore((s) => s.setModel);
@@ -647,7 +800,7 @@ export function ChatView() {
   const thinkSupported = model
     ? (modelOptions.find((o) => o.id === model)?.reasoning ?? false)
     : (status?.default_reasoning ?? false);
-  const lastFailed = conv?.lastFailed ?? false;
+  const lastFailed = turn?.name === 'failed';
   const openConfig = useStore((s) => s.openConfig);
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<AttachmentView[]>([]);
@@ -904,16 +1057,23 @@ export function ChatView() {
             <div className="max-w-4xl mx-auto space-y-4">
               {visibleMessages.map((msg, localI) => {
                 const i = start + localI;
-                // A turn's strip renders right after its last message:
-                // the next turn's start minus one, or the transcript end.
-                const strip = turnArtifacts.find((t, ti) => {
-                  if (t.docs.length === 0) return false;
-                  const end =
-                    ti + 1 < turnArtifacts.length
-                      ? turnArtifacts[ti + 1].start - 1
-                      : messages.length - 1;
-                  return end === i;
-                });
+                // Find the archived/live turn owning this message so
+                // user bubbles and final assistant rows can show the
+                // turn's request/start timestamps.
+                const turn = turnForIndex(turnArtifacts, i);
+                // The turn's artifact card and worked-for line render
+                // after its last message: before the next user bubble
+                // (or at the transcript end).
+                const turnIdx = turn ? turnArtifacts.indexOf(turn) : -1;
+                const isTurnEnd =
+                  turnIdx >= 0 &&
+                  i ===
+                    (turnIdx + 1 < turnArtifacts.length
+                      ? turnArtifacts[turnIdx + 1].start - 1
+                      : messages.length - 1);
+                const showArtifacts = isTurnEnd && (turn?.docs.length ?? 0) > 0;
+                const showWorked =
+                  isTurnEnd && msg.role === 'assistant' && !!turn;
                 return (
                   <Fragment key={msg.id}>
                     <MessageRow
@@ -924,13 +1084,31 @@ export function ChatView() {
                         (i === messages.length - 1 ||
                           messages[i + 1]?.role === 'user')
                       }
+                      requestedAt={turn?.requestedAt}
+                      startedAt={turn?.startedAt}
                       streaming={
                         busy &&
                         msg.role === 'assistant' &&
                         i === messages.length - 1
                       }
                     />
-                    {strip && <ArtifactStrip docs={strip.docs} />}
+                    {showArtifacts && turn && (
+                      <>
+                        <ArtifactStrip docs={turn.docs} />
+                        <WorkedForLine
+                          startedAt={turn.startedAt}
+                          finishedAt={turn.finishedAt}
+                          durationMs={turn.durationMs}
+                        />
+                      </>
+                    )}
+                    {showWorked && !showArtifacts && (
+                      <WorkedForLine
+                        startedAt={turn?.startedAt}
+                        finishedAt={turn?.finishedAt}
+                        durationMs={turn?.durationMs}
+                      />
+                    )}
                   </Fragment>
                 );
               })}

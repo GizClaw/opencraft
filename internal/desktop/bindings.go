@@ -724,15 +724,31 @@ func (a *App) Workspace() string {
 // are persisted into the session's media/ and files/ directories
 // first; the archive keeps their URL paths while the opencraft.media
 // prepare hook inlines the bytes before the model call.
-func (a *App) StartTurn(msg message.Message) (TurnStart, error) {
+func (a *App) StartTurn(req StartTurnRequest) (TurnStart, error) {
 	a.mu.Lock()
 	wd := a.workDir
-	contextID := a.conversationID
-	mode := a.mode
-	think := a.think
-	model := a.model
+	contextID := strings.TrimSpace(req.ContextID)
+	store := a.sessions
 	a.mu.Unlock()
-	return a.startTurn(msg, contextID, mode, think, model, wd, nil)
+	if !ocsessions.ValidID(contextID) {
+		return TurnStart{}, fmt.Errorf("invalid session id %q", contextID)
+	}
+	mode := ocsessions.ModeWorkspace
+	think := string(ocsessions.ThinkMedium)
+	model := ""
+	if store != nil {
+		ctx := a.appContext()
+		if m, err := store.Mode(ctx, contextID); err == nil {
+			mode = m
+		}
+		if lvl, err := store.Think(ctx, contextID); err == nil {
+			think = string(lvl)
+		}
+		if mdl, err := store.Model(ctx, contextID); err == nil {
+			model = mdl
+		}
+	}
+	return a.startTurn(req.Message, contextID, mode, think, model, wd, nil)
 }
 
 // startTurn starts one assistant turn in an explicit conversation
@@ -750,6 +766,7 @@ func (a *App) startTurn(
 	if strings.TrimSpace(wd) == "" {
 		return TurnStart{}, errors.New("no workspace selected: pick a folder first")
 	}
+	requestedAt := time.Now().UTC()
 	a.mu.Lock()
 	ctrl := a.ctrl
 	broker := a.broker
@@ -838,6 +855,12 @@ func (a *App) startTurn(
 		_ = lease.Close()
 		return TurnStart{}, fmt.Errorf("start turn: %w", err)
 	}
+	startedAt := time.Now().UTC()
+	if store != nil {
+		_ = store.RecordTurnTiming(
+			contextID, turn.RunID(), requestedAt, startedAt,
+		)
+	}
 	broker.BindTurn(turn.RunID(), turn)
 
 	a.mu.Lock()
@@ -862,19 +885,30 @@ func (a *App) startTurn(
 			ConversationID: contextID,
 			RunID:          turn.RunID(),
 		}, "turn started")
-	return TurnStart{RunID: turn.RunID(), ContextID: contextID}, nil
+	return TurnStart{
+		RunID:       turn.RunID(),
+		ContextID:   contextID,
+		RequestedAt: requestedAt.Format(time.RFC3339),
+		StartedAt:   startedAt.Format(time.RFC3339),
+	}, nil
 }
 
 // NewChat starts a fresh conversation: a new session context is
 // minted, so subsequent turns keep their own history and permission
 // mode. The conversation resets to workspace mode.
-func (a *App) NewChat() (string, error) {
+func (a *App) NewChat() (SessionSnapshot, error) {
 	a.mu.Lock()
 	a.conversationID = ocsessions.NewID()
 	a.mode = ocsessions.ModeWorkspace
 	a.think = string(ocsessions.ThinkMedium)
 	a.model = ""
 	id := a.conversationID
+	snapshot := SessionSnapshot{
+		SessionID: id,
+		Mode:      string(a.mode),
+		Think:     a.think,
+		Model:     a.model,
+	}
 	// Register the id in the in-memory conversation index so
 	// ResumeSession accepts it before its first turn persists history
 	// (store.List only surfaces sessions with history or usage).
@@ -883,7 +917,7 @@ func (a *App) NewChat() (string, error) {
 	}
 	a.convRuns[id] = make(map[string]bool)
 	a.mu.Unlock()
-	return id, nil
+	return snapshot, nil
 }
 
 // SessionMode returns the sandbox permission mode of the current
@@ -1055,10 +1089,12 @@ func (a *App) waitTurn(
 	a.mu.Unlock()
 	_ = lease.Close()
 
+	finishedAt := time.Now().UTC()
 	end := TurnEnd{
 		RunID:          runID,
 		ConversationID: contextID,
 		Status:         "unknown",
+		FinishedAt:     finishedAt.Format(time.RFC3339),
 	}
 	if res != nil {
 		end.Status = string(res.Status)
@@ -1101,6 +1137,11 @@ func (a *App) waitTurn(
 	// soon as the turn result is known, and none of the follow-up work
 	// affects the UI's terminal state.
 	a.bridge.Emit("turn_end", end)
+	if store != nil {
+		_ = store.RecordTurnFinished(
+			contextID, runID, finishedAt,
+		)
+	}
 	if done != nil {
 		select {
 		case done <- end:

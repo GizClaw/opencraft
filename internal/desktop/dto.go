@@ -38,14 +38,37 @@ type StreamEvent struct {
 	Delta          agent.StreamDeltaPayload `json:"delta"`
 }
 
+// StartTurnRequest carries the explicit session context for a turn, so
+// sending never depends on whichever conversation the app currently
+// has selected in the UI.
+type StartTurnRequest struct {
+	ContextID string          `json:"context_id"`
+	Message   message.Message `json:"message"`
+}
+
+// SessionSnapshot is the authoritative result of selecting a session:
+// the id plus the settings that apply to its next turn.
+type SessionSnapshot struct {
+	SessionID string `json:"session_id"`
+	Mode      string `json:"mode"`
+	Think     string `json:"think"`
+	Model     string `json:"model"`
+}
+
 // SessionTurnDTO is the wire form of one archived turn: its messages
-// plus the artifacts the turn produced. At is an RFC3339 string so the
-// Wails model generator never sees time.Time.
+// plus the artifacts the turn produced. Times are RFC3339 strings so
+// the Wails model generator never sees time.Time. RequestedAt is when
+// the user's message was accepted and StartedAt is when the agent
+// execution began; older archives fall back to At on the Go side.
 type SessionTurnDTO struct {
-	Seq       int                   `json:"seq"`
-	At        string                `json:"at"`
-	Messages  []message.Message     `json:"messages"`
-	Artifacts []ocsessions.Artifact `json:"artifacts,omitempty"`
+	Seq         int                   `json:"seq"`
+	At          string                `json:"at"`
+	RequestedAt string                `json:"requested_at,omitempty"`
+	StartedAt   string                `json:"started_at,omitempty"`
+	FinishedAt  string                `json:"finished_at,omitempty"`
+	DurationMs  int64                 `json:"duration_ms,omitempty"`
+	Messages    []message.Message     `json:"messages"`
+	Artifacts   []ocsessions.Artifact `json:"artifacts,omitempty"`
 }
 
 // ProviderView is one entry of the provider catalog.
@@ -222,10 +245,14 @@ type KanbanCard struct {
 	UpdatedAt   string `json:"updated_at"`              // RFC3339 UTC
 }
 
-// TurnStart identifies one started turn.
+// TurnStart identifies one started turn. RequestedAt is when the
+// backend accepted the user's request and StartedAt is when agent
+// execution began; both are RFC3339 UTC strings.
 type TurnStart struct {
-	RunID     string `json:"run_id"`
-	ContextID string `json:"context_id"`
+	RunID       string `json:"run_id"`
+	ContextID   string `json:"context_id"`
+	RequestedAt string `json:"requested_at,omitempty"`
+	StartedAt   string `json:"started_at,omitempty"`
 }
 
 // TurnEnd reports a turn's terminal state.
@@ -234,6 +261,7 @@ type TurnEnd struct {
 	ConversationID string `json:"conversation_id,omitempty"`
 	Status         string `json:"status"`
 	Error          string `json:"error,omitempty"`
+	FinishedAt     string `json:"finished_at,omitempty"`
 	// Output is the run's final assistant text (bounded), used by
 	// automation notifications outside the open workspace where the
 	// frontend has no streamed transcript to build the snippet from.

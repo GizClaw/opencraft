@@ -24,10 +24,11 @@ func TestResumeSessionAcceptsNewChatBeforePersist(t *testing.T) {
 		convRuns: make(map[string]map[string]bool),
 	}
 
-	id, err := a.NewChat()
+	created, err := a.NewChat()
 	if err != nil {
 		t.Fatal(err)
 	}
+	id := created.SessionID
 	// The conversation has no history/usage yet, so store.List() does
 	// not know it; ResumeSession must still accept the in-memory id.
 	metas, err := store.List()
@@ -43,11 +44,119 @@ func TestResumeSessionAcceptsNewChatBeforePersist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResumeSession for unpersisted conversation: %v", err)
 	}
-	if got != id {
-		t.Fatalf("ResumeSession returned %q, want %q", got, id)
+	if got.SessionID != id {
+		t.Fatalf("ResumeSession returned %q, want %q", got.SessionID, id)
+	}
+	if got.Mode != string(ocsessions.ModeWorkspace) ||
+		got.Think != string(ocsessions.ThinkMedium) || got.Model != "" {
+		t.Fatalf("ResumeSession snapshot = %+v, want workspace defaults", got)
 	}
 	if a.conversationID != id {
 		t.Fatalf("conversationID = %q, want %q", a.conversationID, id)
+	}
+}
+
+func TestResumeSessionSnapshotPersistsSettings(t *testing.T) {
+	store, err := ocsessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &App{
+		mu:       sync.Mutex{},
+		sessions: store,
+		convRuns: make(map[string]map[string]bool),
+	}
+	created, err := a.NewChat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := created.SessionID
+	if err := store.SetMode(context.Background(), id, ocsessions.ModeYOLO); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetThink(
+		context.Background(), id, ocsessions.ThinkHigh,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetModel(
+		context.Background(), id, "openai/gpt-test",
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	snapshot, err := a.ResumeSession(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.SessionID != id ||
+		snapshot.Mode != string(ocsessions.ModeYOLO) ||
+		snapshot.Think != string(ocsessions.ThinkHigh) ||
+		snapshot.Model != "openai/gpt-test" {
+		t.Fatalf("snapshot = %+v, want persisted settings", snapshot)
+	}
+}
+
+func TestStartTurnRejectsMissingContext(t *testing.T) {
+	store, err := ocsessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &App{
+		mu:       sync.Mutex{},
+		sessions: store,
+		convRuns: make(map[string]map[string]bool),
+	}
+	for _, contextID := range []string{"", "../escape", "s-../../bad"} {
+		_, err := a.StartTurn(StartTurnRequest{
+			ContextID: contextID,
+			Message: message.NewTextMessage(
+				message.RoleUser, "hello",
+			),
+		})
+		if err == nil {
+			t.Fatalf("StartTurn(%q) accepted missing/invalid context", contextID)
+		}
+	}
+}
+
+func TestSessionTurnsAreIsolatedPerSession(t *testing.T) {
+	store, err := ocsessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &App{
+		mu:       sync.Mutex{},
+		sessions: store,
+		convRuns: make(map[string]map[string]bool),
+	}
+	first, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendTurn(context.Background(), first, []message.Message{
+		message.NewTextMessage(message.RoleUser, "first"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendTurn(context.Background(), second, []message.Message{
+		message.NewTextMessage(message.RoleUser, "second"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	firstTurns, err := a.SessionTurns(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(firstTurns) != 1 || len(firstTurns[0].Messages) != 1 {
+		t.Fatalf("first session turns = %+v", firstTurns)
+	}
+	if got := firstTurns[0].Messages[0].Content.Text(); got != "first" {
+		t.Fatalf("first session text = %q", got)
 	}
 }
 

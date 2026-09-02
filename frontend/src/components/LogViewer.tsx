@@ -169,7 +169,6 @@ export function LogViewer({ fetchLogs }: { fetchLogs: () => Promise<string> }) {
           aria-label={t('config.logsCopy')}
         >
           {copied ? <Check size="0.8571rem" /> : <Copy size="0.8571rem" />}
-          {t('config.logsCopy')}
         </button>
         <button
           onClick={() => void load()}

@@ -43,20 +43,18 @@ function setConversation(
 ) {
   useStore.setState({
     configured: true,
-    current: 's-1',
+    navigation: { name: 'ready', sessionID: 's-1', epoch: 0 },
     workspace: '/tmp/w',
     conversations: {
       's-1': {
+        content: { name: 'ready' },
+        turn: { name: 'idle' },
         messages,
         turnArtifacts,
-        busy: false,
-        activeRunID: null,
-        stage: '',
         mode: 'workspace',
         think: 'medium',
         model: '',
         pendingInteracts: [],
-        lastFailed: false,
       },
     },
   });
@@ -178,5 +176,64 @@ describe('ChatView transcript windowing', () => {
     expect(
       screen.queryByRole('menuitem', { name: 'Save As…' }),
     ).not.toBeInTheDocument();
+  });
+
+  it('shows worked duration centered under the turn artifacts', () => {
+    setConversation(
+      [
+        {
+          id: 'm-1',
+          role: 'user',
+          text: 'make a file',
+          items: [],
+          attachments: [],
+        },
+        { id: 'm-2', role: 'user', text: 'done', items: [], attachments: [] },
+      ],
+      [
+        {
+          id: 'turn-1',
+          start: 0,
+          docs: [{ path: '/tmp/w/report.md', bytes: 42 }],
+          durationMs: 3723000,
+        },
+      ],
+    );
+    render(<ChatView />);
+
+    expect(screen.getByText('Worked for 1h 2m 3s')).toBeInTheDocument();
+  });
+
+  it('shows worked duration even when the turn produced no artifacts', () => {
+    setConversation(
+      [
+        {
+          id: 'm-1',
+          role: 'user',
+          text: 'do something',
+          items: [],
+          attachments: [],
+        },
+        {
+          id: 'm-2',
+          role: 'assistant',
+          text: '',
+          items: [{ kind: 'text', id: 't-1', text: 'done' }],
+          attachments: [],
+        },
+      ],
+      [
+        {
+          id: 'turn-1',
+          start: 0,
+          docs: [],
+          durationMs: 123000,
+        },
+      ],
+    );
+    render(<ChatView />);
+
+    expect(screen.queryByText('Produced this turn')).not.toBeInTheDocument();
+    expect(screen.getByText('Worked for 2m 3s')).toBeInTheDocument();
   });
 });

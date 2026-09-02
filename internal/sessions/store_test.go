@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/message/media"
@@ -538,6 +539,78 @@ func TestBufferArtifactMergesIntoTurn(t *testing.T) {
 	}
 	if turns[0].Seq != 1 || turns[1].Seq != 2 {
 		t.Fatalf("seqs = %d,%d want 1,2", turns[0].Seq, turns[1].Seq)
+	}
+}
+
+// TestRecordTurnTimingPersistsWithArchivedTurn verifies the request and
+// agent-start timestamps captured when a run begins are attached to the
+// matching archived turn and readable back through Turns.
+func TestRecordTurnTimingPersistsWithArchivedTurn(t *testing.T) {
+	store, err := New(t.TempDir(), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	requested := time.Date(2026, 9, 3, 1, 2, 3, 0, time.UTC)
+	started := requested.Add(350 * time.Millisecond)
+	if err := store.RecordTurnTiming(id, "run-timed", requested, started); err != nil {
+		t.Fatalf("RecordTurnTiming: %v", err)
+	}
+	if err := store.RecordTurnTiming("bad-id", "run-timed", requested, started); err == nil {
+		t.Fatal("RecordTurnTiming accepted invalid session id")
+	}
+	if err := store.AppendTurnWithRunID(context.Background(), id, "run-timed", []message.Message{
+		message.NewTextMessage(message.RoleUser, "timed"),
+	}); err != nil {
+		t.Fatalf("AppendTurnWithRunID: %v", err)
+	}
+	turns, err := store.Turns(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 1 {
+		t.Fatalf("Turns = %d records, want 1", len(turns))
+	}
+	if !turns[0].RequestedAt.Equal(requested) {
+		t.Fatalf("RequestedAt = %v, want %v", turns[0].RequestedAt, requested)
+	}
+	if !turns[0].StartedAt.Equal(started) {
+		t.Fatalf("StartedAt = %v, want %v", turns[0].StartedAt, started)
+	}
+	finished := started.Add(4 * time.Second)
+	if err := store.RecordTurnFinished(id, "run-timed", finished); err != nil {
+		t.Fatalf("RecordTurnFinished: %v", err)
+	}
+	if err := store.RecordTurnFinished("bad-id", "run-timed", finished); err == nil {
+		t.Fatal("RecordTurnFinished accepted invalid session id")
+	}
+	turns, err = store.Turns(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !turns[0].FinishedAt.Equal(finished) {
+		t.Fatalf("FinishedAt = %v, want %v", turns[0].FinishedAt, finished)
+	}
+	// Timing is consumed with its turn; a later run of the same id must
+	// not resurrect stale timestamps.
+	if err := store.AppendTurnWithRunID(context.Background(), id, "run-timed", []message.Message{
+		message.NewTextMessage(message.RoleUser, "again"),
+	}); err != nil {
+		t.Fatalf("second AppendTurnWithRunID: %v", err)
+	}
+	turns, err = store.Turns(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 2 {
+		t.Fatalf("Turns = %d records, want 2", len(turns))
+	}
+	if turns[1].RequestedAt.Equal(requested) {
+		t.Fatal("second turn reused consumed timing")
 	}
 }
 

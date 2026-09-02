@@ -211,6 +211,10 @@ export interface ArtifactDTO {
 export interface SessionTurn {
   seq: number;
   at: string;
+  requested_at?: string;
+  started_at?: string;
+  finished_at?: string;
+  duration_ms?: number;
   messages: HistoryMessage[];
   artifacts?: ArtifactDTO[];
 }
@@ -266,6 +270,15 @@ export interface SkillDTO {
 export interface TurnStart {
   run_id: string;
   context_id: string;
+  requested_at?: string;
+  started_at?: string;
+}
+
+export interface SessionSnapshot {
+  session_id: string;
+  mode: string;
+  think: string;
+  model: string;
 }
 
 export interface TurnEnd {
@@ -273,6 +286,7 @@ export interface TurnEnd {
   conversation_id?: string;
   status: string;
   error?: string;
+  finished_at?: string;
   notify?: boolean;
 }
 

@@ -69,6 +69,10 @@ type Store struct {
 	mu          sync.Mutex
 	seqCache    map[string]int
 	artifactBuf map[string][]Artifact
+	// turnTiming keeps the request/start timestamps of live runs keyed
+	// by conversation then run id, so the commit/archive hook that later
+	// persists the turn can attach the times the UI shows.
+	turnTiming map[string]map[string]TurnTiming
 	// importPending tracks imports that have written their history but
 	// have not yet completed the memory seed. It is keyed by session id
 	// (value = source key) so a concurrent duplicate import is rejected
@@ -86,11 +90,23 @@ type Artifact struct {
 // TurnRecord is one archived turn: its messages plus the artifacts the
 // turn produced.
 type TurnRecord struct {
-	Seq       int               `json:"seq"`
-	At        time.Time         `json:"at"`
-	RunID     string            `json:"run_id,omitempty"`
-	Messages  []message.Message `json:"messages"`
-	Artifacts []Artifact        `json:"artifacts,omitempty"`
+	Seq         int               `json:"seq"`
+	At          time.Time         `json:"at"`
+	RequestedAt time.Time         `json:"requested_at,omitzero"`
+	StartedAt   time.Time         `json:"started_at,omitzero"`
+	FinishedAt  time.Time         `json:"finished_at,omitzero"`
+	RunID       string            `json:"run_id,omitempty"`
+	Messages    []message.Message `json:"messages"`
+	Artifacts   []Artifact        `json:"artifacts,omitempty"`
+}
+
+// TurnTiming carries the timestamps one turn should display: when the
+// user's request was received, when the agent execution started, and
+// when it finished.
+type TurnTiming struct {
+	RequestedAt time.Time
+	StartedAt   time.Time
+	FinishedAt  time.Time
 }
 
 // sessionMeta is the per-session index document (meta.json). It embeds
@@ -249,12 +265,21 @@ func (s *Store) appendTurn(id, runID string, msgs []message.Message) error {
 		return nil
 	}
 	now := time.Now().UTC()
+	timing := TurnTiming{RequestedAt: now, StartedAt: now}
+	if runID != "" {
+		if recorded, ok := s.takeTurnTiming(id, runID); ok {
+			timing = recorded
+		}
+	}
 	file := TurnRecord{
-		Seq:       seq,
-		At:        now,
-		RunID:     runID,
-		Messages:  archived,
-		Artifacts: s.takeArtifacts(id),
+		Seq:         seq,
+		At:          now,
+		RequestedAt: timing.RequestedAt,
+		StartedAt:   timing.StartedAt,
+		FinishedAt:  timing.FinishedAt,
+		RunID:       runID,
+		Messages:    archived,
+		Artifacts:   s.takeArtifacts(id),
 	}
 	data, err := json.MarshalIndent(file, "", "  ")
 	if err != nil {
@@ -300,6 +325,101 @@ func (s *Store) appendTurn(id, runID string, msgs []message.Message) error {
 	}
 	meta.UpdatedAt = now
 	return s.writeMeta(id, meta)
+}
+
+// RecordTurnTiming stores the request and execution-start timestamps
+// for a run that has not been archived yet. appendTurn consumes the
+// entry when it persists the matching run, so live and resumed turns
+// show the same times.
+func (s *Store) RecordTurnTiming(
+	id, runID string, requestedAt, startedAt time.Time,
+) error {
+	if err := requireID(id); err != nil {
+		return err
+	}
+	if runID == "" {
+		return errdefs.Validationf("sessions: timing run id is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.turnTiming == nil {
+		s.turnTiming = make(map[string]map[string]TurnTiming)
+	}
+	if s.turnTiming[id] == nil {
+		s.turnTiming[id] = make(map[string]TurnTiming)
+	}
+	s.turnTiming[id][runID] = TurnTiming{
+		RequestedAt: requestedAt.UTC(),
+		StartedAt:   startedAt.UTC(),
+	}
+	return nil
+}
+
+// RecordTurnFinished records when a run finished. Completed turns are
+// normally archived before waitTurn observes the result, so the method
+// updates the matching turn file; when the archive has not been written
+// yet it keeps the timestamp for the upcoming appendTurn call.
+func (s *Store) RecordTurnFinished(
+	id, runID string, finishedAt time.Time,
+) error {
+	if err := requireID(id); err != nil {
+		return err
+	}
+	if runID == "" {
+		return errdefs.Validationf("sessions: timing run id is required")
+	}
+	path, err := s.turnPathByRun(id, runID)
+	if err != nil {
+		return err
+	}
+	if path != "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		var turn TurnRecord
+		if err := json.Unmarshal(data, &turn); err != nil {
+			return err
+		}
+		turn.FinishedAt = finishedAt.UTC()
+		out, err := json.MarshalIndent(turn, "", "  ")
+		if err != nil {
+			return err
+		}
+		tmp := path + ".tmp"
+		if err := os.WriteFile(tmp, out, 0o600); err != nil {
+			return err
+		}
+		return os.Rename(tmp, path)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.turnTiming == nil {
+		s.turnTiming = make(map[string]map[string]TurnTiming)
+	}
+	if s.turnTiming[id] == nil {
+		s.turnTiming[id] = make(map[string]TurnTiming)
+	}
+	timing := s.turnTiming[id][runID]
+	timing.FinishedAt = finishedAt.UTC()
+	s.turnTiming[id][runID] = timing
+	return nil
+}
+
+func (s *Store) takeTurnTiming(id, runID string) (TurnTiming, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.turnTiming == nil {
+		return TurnTiming{}, false
+	}
+	timing, ok := s.turnTiming[id][runID]
+	if ok {
+		delete(s.turnTiming[id], runID)
+		if len(s.turnTiming[id]) == 0 {
+			delete(s.turnTiming, id)
+		}
+	}
+	return timing, ok
 }
 
 // BufferArtifact records one produced file for the conversation's next
@@ -791,6 +911,7 @@ func (s *Store) Remove(ctx context.Context, id string) error {
 func (s *Store) removeLocked(ctx context.Context, id string) error {
 	delete(s.seqCache, id)
 	delete(s.importPending, id)
+	delete(s.turnTiming, id)
 	if err := os.RemoveAll(s.dir(id)); err != nil {
 		return fmt.Errorf("sessions: remove %s: %w", id, err)
 	}

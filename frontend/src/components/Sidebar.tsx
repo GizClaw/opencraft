@@ -20,7 +20,7 @@ import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { WindowToggleMaximise } from '../../wailsjs/runtime/runtime';
 import { api } from '../lib/api';
-import { useStore } from '../lib/store';
+import { displaySessionID, isTurnBusy, useStore } from '../lib/store';
 import type { SessionMeta } from '../lib/types';
 import type { ComponentType } from 'react';
 
@@ -45,7 +45,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   const openConfig = useStore((s) => s.openConfig);
   const sessions = useStore((s) => s.sessions);
   const sessionsLoading = useStore((s) => s.sessionsLoading);
-  const currentSession = useStore((s) => s.current);
+  const currentSession = useStore((s) => displaySessionID(s.navigation));
   const resume = useStore((s) => s.resume);
   const toolsView = useStore((s) => s.toolsView);
   const openTools = useStore((s) => s.openTools);
@@ -190,7 +190,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   const runningIds = useMemo(
     () =>
       Object.entries(conversations)
-        .filter(([, c]) => c.busy || c.pendingInteracts.length > 0)
+        .filter(([, c]) => isTurnBusy(c.turn) || c.pendingInteracts.length > 0)
         .map(([id]) => id),
     [conversations],
   );

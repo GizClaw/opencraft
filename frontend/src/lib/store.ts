@@ -24,6 +24,15 @@ import type {
   WorkspaceMeta,
 } from './types';
 import type { ToolPage } from '../components/ToolsPanel';
+import {
+  activeSessionID,
+  displaySessionID,
+  navigationReducer,
+  type SessionNavigation,
+  type SessionNavigationAction,
+} from './sessionMachine';
+
+export { activeSessionID, displaySessionID, type SessionNavigation };
 
 export interface ToolView {
   id: string;
@@ -33,10 +42,10 @@ export interface ToolView {
   result?: string;
 }
 
-// AssistantItem preserves the stream arrival order of one rendered
-// block (reasoning trace, tool call, or text), so the chat renders
-// output in the exact order the model produced it instead of
-// grouping all reasoning / tools / text together.
+// AssistantItem preserves the stream arrival order of one assistant
+// block (reasoning trace, tool call, or text), so renderers can show
+// output in the exact order the model produced it. The chat transcript
+// drops reasoning traces; the subagent sidebar keeps them visible.
 export type AssistantItem =
   | { kind: 'reasoning'; id: string; text: string }
   | { kind: 'tool_call'; id: string; tool: ToolView }
@@ -54,27 +63,44 @@ export interface MessageView {
   attachments: AttachmentView[];
 }
 
+// ConversationContent tracks whether a session's transcript is
+// available in the frontend. Rendering must never infer this from
+// messages.length alone.
+export type ConversationContent =
+  | { name: 'empty' }
+  | { name: 'loading' }
+  | { name: 'ready' }
+  | { name: 'live-shell' }
+  | { name: 'failed'; error: string };
+
+// TurnLifecycle is the explicit run state of one conversation.
+export type TurnLifecycle =
+  | { name: 'idle' }
+  | { name: 'starting' }
+  | { name: 'running'; runID: string; stage: string }
+  | { name: 'finished' }
+  | { name: 'failed'; error?: string };
+
+export const isTurnBusy = (turn: TurnLifecycle) =>
+  turn.name === 'starting' || turn.name === 'running';
+
 // ConversationState is the live UI state of one conversation. Each
 // conversation owns its transcript, turn state, permission mode,
 // think level, and pending prompts, so turns in different
 // conversations can run in parallel.
 export interface ConversationState {
+  content: ConversationContent;
+  turn: TurnLifecycle;
   messages: MessageView[];
   // turnArtifacts keeps one entry per turn (start = index of the
   // turn's first message in messages), each with the files that turn
   // produced. Live turns fill in via "artifact" events; resumed
   // sessions rebuild the list from the per-turn archive.
   turnArtifacts: TurnArtifacts[];
-  busy: boolean;
-  activeRunID: string | null;
-  // stage is the current activity for the running-turn header:
-  // "reasoning" | "tool:<name>" | "text" | "".
-  stage: string;
   mode: string;
   think: string;
   model: string;
   pendingInteracts: InteractDTO[];
-  lastFailed: boolean;
 }
 
 export type ToastKind = 'info' | 'warning';
@@ -121,17 +147,18 @@ function normalizeArgs(args: unknown): string {
 }
 
 const emptyConv = (): ConversationState => ({
+  content: { name: 'empty' },
+  turn: { name: 'idle' },
   messages: [],
   turnArtifacts: [],
-  busy: false,
-  activeRunID: null,
-  stage: '',
   mode: 'workspace',
   think: 'medium',
   model: '',
   pendingInteracts: [],
-  lastFailed: false,
 });
+
+const errorMessage = (err: unknown) =>
+  err instanceof Error ? err.message : String(err);
 
 // TurnDoc is one file produced by the current turn, reported by the
 // backend's workspace observer ("artifact" UI event).
@@ -146,6 +173,13 @@ export interface TurnArtifacts {
   id: string;
   start: number;
   docs: TurnDoc[];
+  // requestedAt is when the user's message was accepted; startedAt is
+  // when agent execution began; finishedAt/durationMs cover the run.
+  // They are set live and restored from the per-turn archive on resume.
+  requestedAt?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  durationMs?: number;
   // runID is set once the live turn starts, so post-turn artifact
   // reconciliation ("artifact_sync") can target exactly this turn.
   runID?: string;
@@ -225,7 +259,10 @@ function historyPartsToAttachments(parts: HistoryPart[]): AttachmentView[] {
 // historyToMessages converts stored flowcraft messages back into the
 // live MessageView shape: user text, then assistant messages with the
 // same ordered blocks (reasoning, tool calls, text) the stream
-// produces; tool results are matched back to their tool call.
+// produces. Text-bearing assistant replies keep their own row so a
+// long history stays cheap to render; tool-only rounds (which produce
+// no visible separator) are appended to the previous assistant row so
+// resumed sessions do not show a stack of repeated tool group cards.
 const historyToMessages = (history: HistoryMessage[]): MessageView[] => {
   const messages: MessageView[] = [];
   const toolCalls: {
@@ -260,13 +297,20 @@ const historyToMessages = (history: HistoryMessage[]): MessageView[] => {
       }
       continue;
     }
-    const msg: MessageView = {
-      id: newID('msg'),
-      role: 'assistant',
-      text: '',
-      items: [],
-      attachments: [],
-    };
+    const hasVisibleText = parts.some(
+      (p) => p.type === 'text' && Boolean((p as { text?: string }).text),
+    );
+    let msg = messages[messages.length - 1];
+    if (!msg || msg.role !== 'assistant' || hasVisibleText) {
+      msg = {
+        id: newID('msg'),
+        role: 'assistant',
+        text: '',
+        items: [],
+        attachments: [],
+      };
+      messages.push(msg);
+    }
     for (const p of parts) {
       switch (p.type) {
         case 'text':
@@ -322,6 +366,10 @@ function historyTurnsToState(turns: SessionTurn[]): {
     turnArtifacts.push({
       id: `h-${turn.seq}`,
       start,
+      requestedAt: turn.requested_at || turn.at,
+      startedAt: turn.started_at || turn.at,
+      finishedAt: turn.finished_at || turn.at,
+      durationMs: turn.duration_ms,
       docs: (turn.artifacts ?? []).map((a) => ({
         path: a.path,
         bytes: a.bytes ?? 0,
@@ -491,7 +539,7 @@ interface StoreState {
   sessions: SessionMeta[];
   automations: AutomationTask[];
   automationRuns: Record<string, AutomationRun[]>;
-  current: string;
+  navigation: SessionNavigation;
   conversations: Record<string, ConversationState>;
   runConvs: Record<string, string>;
   // subagentStreams folds live stream deltas of delegated subagent
@@ -578,6 +626,20 @@ function applyTheme(theme: 'dark' | 'light' | 'auto') {
 
 export const useStore = create<StoreState>((set, get) => {
   let toastSeq = 0;
+  let navigationSeq = 0;
+  // Session switches must land on the backend in the same order the
+  // user requested them. Without this queue, an older resumeSession
+  // can finish after a newer NewChat and move the backend context back
+  // to the old session.
+  let contextSwitchQueue: Promise<void> = Promise.resolve();
+  const runContextSwitch = <T>(op: () => Promise<T>) => {
+    const next = contextSwitchQueue.then(op);
+    contextSwitchQueue = next.then(
+      () => undefined,
+      () => undefined,
+    );
+    return next;
+  };
   const updateConv = (id: string, patch: Partial<ConversationState>) =>
     set((state) => {
       const conv = state.conversations[id];
@@ -590,6 +652,11 @@ export const useStore = create<StoreState>((set, get) => {
       };
     });
 
+  const updateNavigation = (action: SessionNavigationAction) =>
+    set((state) => ({
+      navigation: navigationReducer(state.navigation, action),
+    }));
+
   // ensureConversation returns the conversation, creating a busy shell
   // when it is unknown (a live turn resumed after a frontend reload
   // routes by conversation_id). Returns undefined only when the id is
@@ -601,7 +668,11 @@ export const useStore = create<StoreState>((set, get) => {
       set((state) => ({
         conversations: {
           ...state.conversations,
-          [convID]: { ...emptyConv(), busy: true },
+          [convID]: {
+            ...emptyConv(),
+            content: { name: 'live-shell' },
+            turn: { name: 'starting' },
+          },
         },
       }));
       conv = get().conversations[convID];
@@ -616,19 +687,24 @@ export const useStore = create<StoreState>((set, get) => {
     attachments: AttachmentView[] = [],
   ) => {
     const conv = get().conversations[convID];
+    const requestedAt = new Date().toISOString();
     // Keep completed turns' strips; trim anything that started at or
     // beyond the (possibly retried) transcript, then open a new live
     // turn entry at the user message just appended.
     const turnArtifacts = [
       ...conv.turnArtifacts.filter((t) => t.start < messages.length),
-      { id: newTurnID(), start: messages.length - 1, docs: [] },
+      {
+        id: newTurnID(),
+        start: messages.length - 1,
+        docs: [],
+        requestedAt,
+      },
     ];
     updateConv(convID, {
+      content: { name: 'ready' },
       messages,
       turnArtifacts,
-      busy: true,
-      lastFailed: false,
-      stage: '',
+      turn: { name: 'starting' },
     });
     try {
       const parts: StreamPart[] = [];
@@ -637,14 +713,19 @@ export const useStore = create<StoreState>((set, get) => {
         parts.push(attachmentPart(att));
       }
       const wire: TurnMessage = { role: 'user', content: { parts } };
-      const start = await api.startTurn(wire);
+      const start = await api.startTurn(convID, wire);
       const list = get().conversations[convID].turnArtifacts;
       const liveIdx = list.length - 1;
       const turnArtifacts =
         liveIdx >= 0
           ? [
               ...list.slice(0, liveIdx),
-              { ...list[liveIdx], runID: start.run_id },
+              {
+                ...list[liveIdx],
+                runID: start.run_id,
+                requestedAt: start.requested_at || list[liveIdx].requestedAt,
+                startedAt: start.started_at || new Date().toISOString(),
+              },
               ...list.slice(liveIdx + 1),
             ]
           : list;
@@ -654,7 +735,11 @@ export const useStore = create<StoreState>((set, get) => {
           ...state.conversations,
           [convID]: {
             ...state.conversations[convID],
-            activeRunID: start.run_id,
+            turn: {
+              name: 'running',
+              runID: start.run_id,
+              stage: '',
+            },
             turnArtifacts,
           },
         },
@@ -665,7 +750,10 @@ export const useStore = create<StoreState>((set, get) => {
       if (conv) {
         const { msg, messages: next } = lastAssistant(conv.messages);
         mergeAppend(msg, 'text', `⛔ ${String(err)}`);
-        updateConv(convID, { messages: next, busy: false });
+        updateConv(convID, {
+          messages: next,
+          turn: { name: 'failed', error: String(err) },
+        });
       }
     }
   };
@@ -682,7 +770,7 @@ export const useStore = create<StoreState>((set, get) => {
     sessions: [],
     automations: [],
     automationRuns: {},
-    current: '',
+    navigation: { name: 'idle', epoch: 0 },
     conversations: {},
     runConvs: {},
     subagentStreams: {},
@@ -728,9 +816,21 @@ export const useStore = create<StoreState>((set, get) => {
           configured: !status.needed,
           configOpen: false,
           toolsView: null,
-          current: currentSession,
+          navigation:
+            currentSession !== ''
+              ? { name: 'ready', sessionID: currentSession, epoch: 0 }
+              : { name: 'idle', epoch: 0 },
           conversations: {
-            [currentSession]: { ...emptyConv(), mode, think, model },
+            ...(currentSession !== ''
+              ? {
+                  [currentSession]: {
+                    ...emptyConv(),
+                    mode,
+                    think,
+                    model,
+                  },
+                }
+              : {}),
           },
           modelOptions,
           theme,
@@ -753,6 +853,10 @@ export const useStore = create<StoreState>((set, get) => {
           const workChanged = data.work_dir !== get().workspace;
           if (workChanged) {
             // Workspace switched: start fresh in the new workspace.
+            updateNavigation({
+              type: 'idle',
+              epoch: ++navigationSeq,
+            });
             set({
               workspace: data.work_dir,
               conversations: {},
@@ -807,9 +911,15 @@ export const useStore = create<StoreState>((set, get) => {
                     : part?.type === 'text'
                       ? 'text'
                       : '';
+              const turn =
+                conv.turn.name === 'running'
+                  ? { ...conv.turn, stage }
+                  : conv.turn.name === 'starting' && data.run_id
+                    ? { name: 'running' as const, runID: data.run_id, stage }
+                    : conv.turn;
               updateConv(convID, {
                 messages: applyStream(conv.messages, data.delta),
-                stage,
+                turn,
               });
             }
             break;
@@ -925,9 +1035,10 @@ export const useStore = create<StoreState>((set, get) => {
             conversation_id?: string;
             status: string;
             error?: string;
+            finished_at?: string;
           };
-          // Unknown-run terminations (subagent turns) must not clear a
-          // conversation's busy state; only main turns are tracked.
+          // Unknown-run terminations (subagent turns) must not settle a
+          // main conversation's turn; only tracked main turns are handled.
           const convID =
             (data.run_id && get().runConvs[data.run_id]) ||
             data.conversation_id;
@@ -959,11 +1070,15 @@ export const useStore = create<StoreState>((set, get) => {
             );
             messages = next;
           }
+          const finishedAt = data.finished_at || new Date().toISOString();
           set((state) => {
             const runConvs = { ...state.runConvs };
             delete runConvs[data.run_id ?? ''];
             const conv = state.conversations[convID];
             if (!conv) return state;
+            const turnArtifacts = conv.turnArtifacts.map((t) =>
+              t.runID && t.runID === data.run_id ? { ...t, finishedAt } : t,
+            );
             return {
               runConvs,
               conversations: {
@@ -971,10 +1086,10 @@ export const useStore = create<StoreState>((set, get) => {
                 [convID]: capConversation({
                   ...conv,
                   messages,
-                  busy: false,
-                  activeRunID: null,
-                  stage: '',
-                  lastFailed: failed,
+                  turnArtifacts,
+                  turn: failed
+                    ? { name: 'failed', error: data.error }
+                    : { name: 'finished' },
                 }),
               },
             };
@@ -1000,20 +1115,24 @@ export const useStore = create<StoreState>((set, get) => {
             conversation_id?: string;
           };
           if (data.conversation_id) {
-            // The run targets the currently open workspace: mark the
-            // conversation busy (creating a shell when it was never
-            // opened) so the sidebar lists the session as running, and
-            // future stream/turn_end events route to it.
+            // The run targets the currently open workspace: create a
+            // live shell when needed and register the run route so
+            // stream/turn_end events settle this conversation.
             ensureConversation(data.conversation_id);
             if (data.run_id) {
               set((state) => ({
                 conversations: {
                   ...state.conversations,
                   [data.conversation_id!]: {
-                    ...(state.conversations[data.conversation_id!] ??
-                      emptyConv()),
-                    busy: true,
-                    activeRunID: data.run_id!,
+                    ...(state.conversations[data.conversation_id!] ?? {
+                      ...emptyConv(),
+                      content: { name: 'live-shell' },
+                    }),
+                    turn: {
+                      name: 'running',
+                      runID: data.run_id!,
+                      stage: '',
+                    },
                   },
                 },
                 runConvs: {
@@ -1045,11 +1164,13 @@ export const useStore = create<StoreState>((set, get) => {
     send: async (text, attachments = []) => {
       const trimmed = text.trim();
       const state = get();
-      const conv = state.conversations[state.current];
+      const convID = activeSessionID(state.navigation);
+      const conv = convID ? state.conversations[convID] : undefined;
       if (
         (!trimmed && attachments.length === 0) ||
+        !convID ||
         !conv ||
-        conv.busy ||
+        isTurnBusy(conv.turn) ||
         !state.configured
       ) {
         return;
@@ -1064,13 +1185,14 @@ export const useStore = create<StoreState>((set, get) => {
           attachments,
         },
       ];
-      await beginTurn(state.current, trimmed, messages, attachments);
+      await beginTurn(convID, trimmed, messages, attachments);
     },
 
     retryLast: async () => {
       const state = get();
-      const conv = state.conversations[state.current];
-      if (!conv || conv.busy) return;
+      const convID = activeSessionID(state.navigation);
+      const conv = convID ? state.conversations[convID] : undefined;
+      if (!convID || !conv || isTurnBusy(conv.turn)) return;
       let lastUserIdx = -1;
       for (let i = conv.messages.length - 1; i >= 0; i--) {
         if (conv.messages[i].role === 'user') {
@@ -1082,7 +1204,7 @@ export const useStore = create<StoreState>((set, get) => {
       const text = conv.messages[lastUserIdx].text;
       const attachments = conv.messages[lastUserIdx].attachments ?? [];
       await beginTurn(
-        state.current,
+        convID,
         text,
         conv.messages.slice(0, lastUserIdx + 1),
         attachments,
@@ -1090,7 +1212,11 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     clearLastFailed: () => {
-      updateConv(get().current, { lastFailed: false });
+      const convID = activeSessionID(get().navigation);
+      const conv = convID ? get().conversations[convID] : undefined;
+      if (conv?.turn.name === 'failed') {
+        updateConv(convID, { turn: { name: 'idle' } });
+      }
     },
 
     replyInteract: async (id, req) => {
@@ -1114,10 +1240,11 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     cancelRun: async () => {
-      const conv = get().conversations[get().current];
-      if (conv?.activeRunID) {
+      const convID = activeSessionID(get().navigation);
+      const conv = convID ? get().conversations[convID] : undefined;
+      if (conv?.turn.name === 'running') {
         try {
-          await api.cancelTurn(conv.activeRunID);
+          await api.cancelTurn(conv.turn.runID);
         } catch {
           // turn_end settles the UI regardless
         }
@@ -1131,10 +1258,25 @@ export const useStore = create<StoreState>((set, get) => {
     closeTools: () => set({ toolsView: null }),
 
     newChat: async () => {
+      const previous = get().navigation;
       try {
-        const id = await api.newChat();
+        const nav = ++navigationSeq;
+        updateNavigation({
+          type: 'switch',
+          kind: 'new',
+          previousSessionID:
+            previous.name === 'ready' ? previous.sessionID : undefined,
+          epoch: nav,
+        });
+        const snapshot = await runContextSwitch(() => api.newChat());
+        const id = snapshot.session_id;
+        if (nav !== navigationSeq) return;
         set((state) => ({
-          current: id,
+          navigation: navigationReducer(state.navigation, {
+            type: 'ready',
+            sessionID: id,
+            epoch: nav,
+          }),
           toolsView: null,
           subagentStreams: {},
           subagentStreamAt: {},
@@ -1143,47 +1285,101 @@ export const useStore = create<StoreState>((set, get) => {
             [id]: emptyConv(),
           },
         }));
-      } catch {
-        // best-effort
+      } catch (err) {
+        const nav = get().navigation;
+        updateNavigation({
+          type: 'fail',
+          epoch: nav.name === 'switching' ? nav.epoch : navigationSeq,
+          previousSessionID:
+            previous.name === 'ready' ? previous.sessionID : undefined,
+          error: errorMessage(err),
+        });
       }
       void get().loadSessions();
     },
 
     resume: async (id) => {
+      const previous = get().navigation;
       try {
+        const nav = ++navigationSeq;
+        updateNavigation({
+          type: 'switch',
+          kind: 'resume',
+          targetID: id,
+          previousSessionID:
+            previous.name === 'ready' ? previous.sessionID : undefined,
+          epoch: nav,
+        });
         // Switch the backend session context first (conversation id,
         // mode, think, model all follow the selected session); without
         // this the mode/think/model reads below return the previous
         // conversation's values and new turns land in the old session.
-        await api.resumeSession(id);
-        if (get().conversations[id]) {
-          set({ current: id, toolsView: null });
+        const snapshot = await runContextSwitch(() => api.resumeSession(id));
+        if (nav !== navigationSeq) return;
+        const resolvedID = snapshot.session_id;
+        const existing = get().conversations[resolvedID];
+        if (existing?.content.name === 'ready') {
+          set({
+            navigation: navigationReducer(get().navigation, {
+              type: 'ready',
+              sessionID: resolvedID,
+              epoch: nav,
+            }),
+            toolsView: null,
+            conversations: {
+              ...get().conversations,
+              [resolvedID]: {
+                ...get().conversations[resolvedID],
+                mode: snapshot.mode,
+                think: snapshot.think,
+                model: snapshot.model,
+              },
+            },
+          });
           return;
         }
-        const [mode, turns, think, model] = await Promise.all([
-          api.sessionMode(),
-          api.sessionTurns(id),
-          api.getThink(),
-          api.getModel(),
-        ]);
+        const turns = await api.sessionTurns(resolvedID);
+        if (nav !== navigationSeq) return;
         const { messages, turnArtifacts } = historyTurnsToState(turns);
+        // A live shell may already hold the current run's streamed
+        // messages. Keep them after the archived history; completed
+        // shells are replaced by the archive instead of duplicated.
+        const keepLive =
+          existing?.content.name === 'live-shell' &&
+          (existing.turn.name === 'running' ||
+            existing.turn.name === 'starting');
+        const mergedMessages = keepLive
+          ? [...messages, ...existing.messages]
+          : messages;
         set((state) => ({
-          current: id,
+          navigation: navigationReducer(state.navigation, {
+            type: 'ready',
+            sessionID: resolvedID,
+            epoch: nav,
+          }),
           toolsView: null,
           conversations: {
             ...state.conversations,
-            [id]: capConversation({
+            [resolvedID]: capConversation({
               ...emptyConv(),
-              mode,
-              think,
-              model,
-              messages,
+              content: { name: 'ready' },
+              mode: snapshot.mode,
+              think: snapshot.think,
+              model: snapshot.model,
+              messages: mergedMessages,
               turnArtifacts,
             }),
           },
         }));
       } catch (err) {
-        set({ statusText: String(err) });
+        const nav = get().navigation;
+        updateNavigation({
+          type: 'fail',
+          epoch: nav.name === 'switching' ? nav.epoch : navigationSeq,
+          previousSessionID:
+            previous.name === 'ready' ? previous.sessionID : undefined,
+          error: errorMessage(err),
+        });
       }
     },
 
@@ -1195,7 +1391,7 @@ export const useStore = create<StoreState>((set, get) => {
           delete conversations[id];
           return { conversations };
         });
-        if (get().current === id) {
+        if (activeSessionID(get().navigation) === id) {
           // The active conversation is gone: switch to a fresh one so
           // the chat never points at a deleted session.
           await get().newChat();
@@ -1214,7 +1410,8 @@ export const useStore = create<StoreState>((set, get) => {
     setMode: async (mode) => {
       try {
         await api.setSessionMode(mode);
-        updateConv(get().current, { mode });
+        const convID = activeSessionID(get().navigation);
+        if (convID) updateConv(convID, { mode });
       } catch (err) {
         set({ statusText: String(err) });
       }
@@ -1223,7 +1420,8 @@ export const useStore = create<StoreState>((set, get) => {
     setThink: async (level) => {
       try {
         await api.setThink(level);
-        updateConv(get().current, { think: level });
+        const convID = activeSessionID(get().navigation);
+        if (convID) updateConv(convID, { think: level });
       } catch (err) {
         set({ statusText: String(err) });
       }
@@ -1232,7 +1430,8 @@ export const useStore = create<StoreState>((set, get) => {
     setModel: async (model) => {
       try {
         await api.setModel(model);
-        updateConv(get().current, { model });
+        const convID = activeSessionID(get().navigation);
+        if (convID) updateConv(convID, { model });
       } catch (err) {
         set({ statusText: String(err) });
       }
@@ -1338,7 +1537,7 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     loadSubagentCards: async () => {
-      const convID = get().current;
+      const convID = activeSessionID(get().navigation);
       if (!convID) return;
       try {
         const cards = (await api.conversationDelegationCards(convID)) ?? [];

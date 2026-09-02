@@ -15,14 +15,16 @@ export const nonGroupedTools = new Set(['apply_patch', 'write_file']);
 
 // groupToolCalls merges consecutive tool calls into groups so a burst
 // of tool executions renders as one collapsible block instead of a
-// stack of cards. Non-tool items are passed through unchanged.
+// stack of cards. Non-tool items are passed through unchanged, except
+// hidden reasoning traces, which no longer split a visible tool burst
+// in the chat transcript.
 export function groupToolCalls(
   items: AssistantItem[],
 ): (AssistantItem | ToolCallItem[])[] {
   const out: (AssistantItem | ToolCallItem[])[] = [];
   let cur: ToolCallItem[] | null = null;
   for (const item of items) {
-    if (isPlanCall(item)) {
+    if (isPlanCall(item) || item.kind === 'reasoning') {
       continue;
     }
     if (item.kind === 'tool_call' && !nonGroupedTools.has(item.tool.name)) {
