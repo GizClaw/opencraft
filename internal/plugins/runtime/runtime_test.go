@@ -50,10 +50,29 @@ func helperPlugin() {
 	}
 }
 
+// malformedPlugin emits a non-JSON line and exits, exercising the
+// handshake-failure path for hostile/broken plugins.
+func malformedPlugin() {
+	_, _ = fmt.Fprintln(os.Stdout, "this is not json")
+	os.Exit(0)
+}
+
+// oversizedPlugin emits a line beyond bufio.Scanner's token limit and
+// exits, exercising the read-loop teardown path.
+func oversizedPlugin() {
+	_, _ = fmt.Fprintln(os.Stdout, strings.Repeat("x", 128<<10))
+	os.Exit(0)
+}
+
 func TestHelperProcess(t *testing.T) {
-	if os.Getenv("GO_WANT_HELPER_PROCESS") == "1" {
+	switch os.Getenv("GO_WANT_HELPER_PROCESS") {
+	case "1":
 		helperPlugin()
 		os.Exit(0)
+	case "2":
+		malformedPlugin()
+	case "3":
+		oversizedPlugin()
 	}
 }
 
@@ -100,6 +119,34 @@ func newTestManager(t *testing.T) (*Manager, *memSecrets) {
 	m.SetEnv([]string{"GO_WANT_HELPER_PROCESS=1"})
 	m.callTimeout = 2 * time.Second
 	return m, sec
+}
+
+func newTestManagerWithHelper(t *testing.T, mode string) (*Manager, *memSecrets) {
+	t.Helper()
+	sec := &memSecrets{m: map[string]string{}}
+	loader := testLoader{
+		cap: Capability{Binary: "helper", Protocol: 1},
+		bin: os.Args[0],
+	}
+	m := NewManager(t.TempDir(), loader, sec)
+	m.SetEnv([]string{"GO_WANT_HELPER_PROCESS=" + mode})
+	m.handshakeTimeout = 2 * time.Second
+	m.callTimeout = 2 * time.Second
+	return m, sec
+}
+
+func TestMalformedPluginFailsHandshake(t *testing.T) {
+	m, _ := newTestManagerWithHelper(t, "2")
+	if _, err := m.Invoke(context.Background(), "test-plugin", "auth.begin", nil); err == nil {
+		t.Fatal("malformed plugin unexpectedly answered")
+	}
+}
+
+func TestOversizedPluginFailsHandshake(t *testing.T) {
+	m, _ := newTestManagerWithHelper(t, "3")
+	if _, err := m.Invoke(context.Background(), "test-plugin", "auth.begin", nil); err == nil {
+		t.Fatal("oversized plugin unexpectedly answered")
+	}
 }
 
 func TestInvokeAndPrimitive(t *testing.T) {
