@@ -188,3 +188,42 @@ Body.
 		t.Fatalf("skills = %+v, want escaping symlink skipped", skills)
 	}
 }
+
+func TestPluginSkillRootOwners(t *testing.T) {
+	root := t.TempDir()
+	pluginDir := filepath.Join(root, "skill-plugin")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{
+		"id": "skill-plugin",
+		"name": "Skill Plugin",
+		"version": "1.0.0",
+		"entry": "dist/index.js",
+		"permissions": ["skills:contribute"],
+		"skills": ["skills/lark"]
+	}`
+	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.json"), []byte(manifest), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := &App{plugins: plugins.NewStore(root)}
+
+	owners := a.pluginSkillRootOwners()
+	want := filepath.Join(pluginDir, "skills", "lark")
+	owner, ok := owners[filepath.Clean(want)]
+	if !ok || owner.ID != "skill-plugin" || owner.Name != "Skill Plugin" {
+		t.Fatalf("owners = %#v, want skill-plugin owning %s", owners, want)
+	}
+	if got, ok := pluginSkillOwnerForPath(
+		owners, filepath.Join(want, "SKILL.md"),
+	); !ok || got.ID != "skill-plugin" {
+		t.Fatalf("pluginSkillOwnerForPath = %#v, %v", got, ok)
+	}
+
+	if err := a.plugins.SetEnabled("skill-plugin", false); err != nil {
+		t.Fatal(err)
+	}
+	if owners := a.pluginSkillRootOwners(); len(owners) != 1 {
+		t.Fatalf("disabled plugin must still own its skill roots: %#v", owners)
+	}
+}

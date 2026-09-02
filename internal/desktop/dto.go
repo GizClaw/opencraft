@@ -183,6 +183,10 @@ type SkillDTO struct {
 	Description string `json:"description"`
 	Scope       string `json:"scope"`
 	Path        string `json:"path"`
+	// PluginID/PluginName are set when the skill is contributed by an
+	// installed plugin. Plugin skills are read-only from this page.
+	PluginID   string `json:"plugin_id,omitempty"`
+	PluginName string `json:"plugin_name,omitempty"`
 }
 
 // MCPStatusDTO is the UI snapshot of one MCP server's connection state.

@@ -151,12 +151,16 @@ func (a *App) Skills() ([]SkillDTO, error) {
 	}
 	items := svc.List()
 	out := make([]SkillDTO, 0, len(items))
+	owners := a.pluginSkillRootOwners()
 	for _, s := range items {
+		owner, _ := pluginSkillOwnerForPath(owners, s.Path)
 		out = append(out, SkillDTO{
 			Name:        s.Name,
 			Description: s.Description,
 			Scope:       s.Scope,
 			Path:        s.Path,
+			PluginID:    owner.ID,
+			PluginName:  owner.Name,
 		})
 	}
 	return out, nil
@@ -170,6 +174,14 @@ func (a *App) DeleteSkill(skillPath string) error {
 	a.mu.Unlock()
 	if ctrl == nil || ctrl.Runtime() == nil {
 		return errors.New("runtime is not ready")
+	}
+	if owner, ok := pluginSkillOwnerForPath(
+		a.pluginSkillRootOwners(), skillPath,
+	); ok {
+		return fmt.Errorf(
+			"skills: plugin %q owns this skill and it cannot be deleted",
+			owner.ID,
+		)
 	}
 	value, ok := ctrl.Runtime().Resource("skills")
 	if !ok {

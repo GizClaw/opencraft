@@ -31,6 +31,15 @@ func (a *App) CloseRequested(ctx context.Context) bool {
 	return true
 }
 
+// MarkQuitting records that the user chose to terminate the app (for
+// example Cmd+Q or Dock Quit on macOS). It lets the next OnBeforeClose
+// round return false so Wails can stop instead of hiding to tray.
+func (a *App) MarkQuitting() {
+	a.mu.Lock()
+	a.quitting = true
+	a.mu.Unlock()
+}
+
 // RequestClose is the JS binding for the custom title-bar X button. It
 // behaves identically to the native close path (CloseRequested), so the
 // "close to tray" setting applies no matter how the window is closed.
@@ -69,9 +78,7 @@ func (a *App) ShowMainWindow() {
 // must be set before runtime.Quit because Quit also passes through
 // OnBeforeClose, which would otherwise hide the app again.
 func (a *App) QuitFromTray() {
-	a.mu.Lock()
-	a.quitting = true
-	a.mu.Unlock()
+	a.MarkQuitting()
 	ctx := a.ctx
 	if ctx == nil {
 		// Tray actions only exist after Startup, so this is defensive.

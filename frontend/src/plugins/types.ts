@@ -72,15 +72,9 @@ export interface PluginToolDTO {
   mutates_state: boolean;
 }
 
-/** UI view of one skill contributed by a plugin's skill roots. */
-export interface PluginSkillDTO {
-  name: string;
-  description?: string;
-  scope?: string;
-  path: string;
-}
-
 export interface SettingsPanelContribution {
+  /** Id of the plugin that registered this panel. */
+  pluginId: string;
   id: string;
   title: string;
   order: number;
@@ -97,6 +91,8 @@ export interface SidebarEntryContribution {
 }
 
 export interface CommandContribution {
+  /** Id of the plugin that registered this command. */
+  pluginId: string;
   id: string;
   title: string;
   order: number;

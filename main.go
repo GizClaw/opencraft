@@ -70,14 +70,19 @@ func main() {
 			app.Startup(ctx)
 			applyOpenCraftWindowStyle()
 			installOpenCraftReopenHandler()
+			installOpenCraftTerminateHandler()
 		},
 		OnShutdown: app.Shutdown,
 		// Close-to-background: every close path (native window close,
 		// the custom title-bar X button, Cmd+Q / Dock Quit on macOS)
-		// funnels through OnBeforeClose. It consults the persisted
-		// "close to tray" setting: hide the app (macOS hides the whole
-		// app, Windows/Linux hide the window) or let Wails quit.
+		// funnels through OnBeforeClose. macOS Cmd+Q / Dock Quit is
+		// detected first and always lets Wails terminate; other closes
+		// consult the persisted "close to tray" setting.
 		OnBeforeClose: func(ctx context.Context) bool {
+			if macConsumeTerminateRequest() {
+				app.MarkQuitting()
+				return false
+			}
 			return app.CloseRequested(ctx)
 		},
 		SingleInstanceLock: &options.SingleInstanceLock{

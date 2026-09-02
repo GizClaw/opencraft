@@ -126,19 +126,10 @@ func (a *App) PluginTools(id string) ([]PluginToolDTO, error) {
 	return out, nil
 }
 
-// PluginSkillDTO is the UI-facing view of one skill contributed by a
-// plugin's declared skill roots.
-type PluginSkillDTO struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Scope       string `json:"scope"`
-	Path        string `json:"path"`
-}
-
 // PluginSkills returns the skills discovered under a plugin's skill
 // roots. The plugin manager renders them as an expandable list; the
 // skills themselves are served through the shared skills registry.
-func (a *App) PluginSkills(id string) ([]PluginSkillDTO, error) {
+func (a *App) PluginSkills(id string) ([]SkillDTO, error) {
 	if a.plugins == nil {
 		return nil, errors.New("plugin store is not ready")
 	}
@@ -165,7 +156,7 @@ func (a *App) PluginSkills(id string) ([]PluginSkillDTO, error) {
 	// settings-only sessions or a stale/disabled registry. Merging
 	// both also keeps the plugin manager usable before the runtime is
 	// ready.
-	out := make([]PluginSkillDTO, 0, 4)
+	out := make([]SkillDTO, 0, 4)
 	seen := map[string]bool{}
 	svc, svcErr := a.skillsService()
 	if svcErr == nil {
@@ -175,11 +166,13 @@ func (a *App) PluginSkills(id string) ([]PluginSkillDTO, error) {
 				continue
 			}
 			seen[s.Path] = true
-			out = append(out, PluginSkillDTO{
+			out = append(out, SkillDTO{
 				Name:        s.Name,
 				Description: s.Description,
 				Scope:       s.Scope,
 				Path:        s.Path,
+				PluginID:    id,
+				PluginName:  m.Name,
 			})
 		}
 	}
@@ -187,6 +180,8 @@ func (a *App) PluginSkills(id string) ([]PluginSkillDTO, error) {
 		if seen[s.Path] {
 			continue
 		}
+		s.PluginID = id
+		s.PluginName = m.Name
 		seen[s.Path] = true
 		out = append(out, s)
 	}
@@ -222,8 +217,8 @@ func skillInAnyRoot(skillPath string, roots []string) bool {
 // every SKILL.md without depending on the assembled runtime. Used as a
 // fallback so the plugin manager can list skills before the runtime is
 // ready.
-func scanPluginSkillRoots(roots []string) []PluginSkillDTO {
-	var out []PluginSkillDTO
+func scanPluginSkillRoots(roots []string) []SkillDTO {
+	var out []SkillDTO
 	seen := map[string]bool{}
 	for _, root := range roots {
 		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
@@ -258,7 +253,7 @@ func scanPluginSkillRoots(roots []string) []PluginSkillDTO {
 				return nil
 			}
 			seen[clean] = true
-			out = append(out, PluginSkillDTO{
+			out = append(out, SkillDTO{
 				Name:        res.Metadata.Name,
 				Description: res.Metadata.Description,
 				Scope:       "user",
@@ -268,6 +263,80 @@ func scanPluginSkillRoots(roots []string) []PluginSkillDTO {
 		})
 	}
 	return out
+}
+
+// pluginSkillOwner is the plugin that contributes one skill root.
+type pluginSkillOwner struct {
+	ID   string
+	Name string
+}
+
+// pluginSkillRootOwners maps each installed plugin's skill roots to
+// the plugin that owns them. The skills page uses this to mark plugin
+// skills as read-only and show the owning plugin, even when the plugin
+// is currently disabled.
+func (a *App) pluginSkillRootOwners() map[string]pluginSkillOwner {
+	if a.plugins == nil {
+		return nil
+	}
+	list, err := a.plugins.List()
+	if err != nil {
+		return nil
+	}
+	owners := map[string]pluginSkillOwner{}
+	for _, p := range list {
+		if p.Error != "" ||
+			!pluginHasPermission(p.Permissions, "skills:contribute") {
+			continue
+		}
+		m, err := a.plugins.Manifest(p.ID)
+		if err != nil {
+			continue
+		}
+		dir, _, err := a.plugins.Dir(p.ID)
+		if err != nil {
+			continue
+		}
+		var roots []string
+		if len(m.Skills) == 0 {
+			roots = []string{filepath.Join(dir, "skills")}
+		} else {
+			for _, rel := range m.Skills {
+				if abs, ok := pluginPathInside(dir, rel); ok {
+					roots = append(roots, abs)
+				}
+			}
+		}
+		owner := pluginSkillOwner{ID: p.ID, Name: p.Name}
+		for _, root := range roots {
+			owners[filepath.Clean(root)] = owner
+		}
+	}
+	return owners
+}
+
+// pluginSkillOwnerForPath resolves the plugin that owns a skill path,
+// if any.
+func pluginSkillOwnerForPath(
+	owners map[string]pluginSkillOwner,
+	skillPath string,
+) (pluginSkillOwner, bool) {
+	for root, owner := range owners {
+		if skillPath == root ||
+			strings.HasPrefix(skillPath, root+string(filepath.Separator)) {
+			return owner, true
+		}
+	}
+	return pluginSkillOwner{}, false
+}
+
+func pluginHasPermission(perms []string, want string) bool {
+	for _, p := range perms {
+		if p == want {
+			return true
+		}
+	}
+	return false
 }
 
 // PluginUpdate replaces an installed plugin with a newer version from

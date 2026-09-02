@@ -253,6 +253,8 @@ export interface SkillDTO {
   description: string;
   scope: string;
   path: string;
+  plugin_id?: string;
+  plugin_name?: string;
 }
 
 export interface TurnStart {

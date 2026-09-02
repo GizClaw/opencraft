@@ -54,9 +54,7 @@ describe('PluginManager tools visibility', () => {
     const user = userEvent.setup();
     render(<PluginManager showTitle={false} />);
 
-    await user.click(
-      screen.getByRole('button', { name: /Agent capabilities/ }),
-    );
+    await user.click(screen.getByRole('button', { name: /Tool Plugin/ }));
     expect(apiMock.pluginTools).toHaveBeenCalledWith('tool-plugin');
     expect(await screen.findByText('do_thing')).toBeInTheDocument();
     expect(screen.getByText('Does a thing')).toBeInTheDocument();
