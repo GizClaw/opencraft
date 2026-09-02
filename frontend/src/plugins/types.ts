@@ -64,6 +64,14 @@ export interface PluginSummary {
   canRollback?: boolean;
 }
 
+/** UI view of one agent-callable tool declared by a plugin manifest. */
+export interface PluginToolDTO {
+  name: string;
+  description?: string;
+  method: string;
+  mutates_state: boolean;
+}
+
 export interface SettingsPanelContribution {
   id: string;
   title: string;

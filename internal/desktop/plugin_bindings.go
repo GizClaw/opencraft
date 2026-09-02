@@ -86,6 +86,42 @@ func (a *App) PluginInspect(src string) (plugins.PluginSummary, error) {
 	return a.plugins.Inspect(src)
 }
 
+// PluginToolDTO is the UI-facing view of one agent-callable tool
+// declared by a plugin manifest.
+type PluginToolDTO struct {
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	Method       string `json:"method"`
+	MutatesState bool   `json:"mutates_state"`
+}
+
+// PluginTools returns the agent-callable tools a plugin declares. The
+// plugin manager uses it to render an expandable tool list; the tools
+// themselves are only callable by the agent through the tool catalog.
+func (a *App) PluginTools(id string) ([]PluginToolDTO, error) {
+	if a.plugins == nil {
+		return nil, errors.New("plugin store is not ready")
+	}
+	m, err := a.plugins.Manifest(id)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]PluginToolDTO, 0, len(m.Tools))
+	for _, t := range m.Tools {
+		mutates := true
+		if t.MutatesState != nil {
+			mutates = *t.MutatesState
+		}
+		out = append(out, PluginToolDTO{
+			Name:         t.Name,
+			Description:  t.Description,
+			Method:       t.Method,
+			MutatesState: mutates,
+		})
+	}
+	return out, nil
+}
+
 // PluginUpdate replaces an installed plugin with a newer version from
 // a local directory. The previous version is kept for rollback.
 func (a *App) PluginUpdate(id, src string) (plugins.PluginSummary, error) {

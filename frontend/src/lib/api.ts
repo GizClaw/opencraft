@@ -47,6 +47,7 @@ import type {
 import type {
   PluginKVEntry,
   PluginSummary,
+  PluginToolDTO,
   PluginUpdateInfo,
 } from '../plugins/types';
 
@@ -137,6 +138,7 @@ export const api = {
   cancelCard: (id: string) => App.CancelCard(id),
   chooseWorkspace: () => App.ChooseWorkspace(),
   pluginList: () => App.PluginList() as Promise<PluginSummary[]>,
+  pluginTools: (id: string) => App.PluginTools(id) as Promise<PluginToolDTO[]>,
   pluginBundle: (id: string) => App.PluginBundle(id) as Promise<string>,
   pluginInstall: (dir: string) =>
     App.PluginInstall(dir) as Promise<PluginSummary>,
