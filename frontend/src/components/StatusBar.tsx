@@ -2,12 +2,19 @@ import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { displaySessionID, isTurnBusy, useStore } from '../lib/store';
 
+const RUNTIME_LABELS: Record<string, string> = {
+  python: 'Python',
+  node: 'Node.js',
+  uv: 'uv',
+};
+
 export function StatusBar() {
   const busy = useStore((s) => {
     const conv = s.conversations[displaySessionID(s.navigation)];
     return conv ? isTurnBusy(conv.turn) : false;
   });
   const statusText = useStore((s) => s.statusText);
+  const toolchainStatus = useStore((s) => s.toolchainStatus);
   const lastUsage = useStore((s) => s.lastUsage);
   const model = useStore((s) => s.status?.default_model) ?? '';
   const { t } = useTranslation();
@@ -15,11 +22,24 @@ export function StatusBar() {
   return (
     <footer className="h-8 shrink-0 border-t border-edge bg-panel flex items-center gap-3 px-4 text-xs text-dim">
       <span className="flex items-center gap-1.5 min-w-0">
-        {busy && (
+        {(busy || toolchainStatus?.busy) && (
           <Loader2 size="0.9286rem" className="animate-spin text-accent" />
         )}
         <span className="truncate">
-          {statusText || (busy ? t('status.running') : t('status.ready'))}
+          {toolchainStatus?.busy
+            ? `${t('status.preparingRuntime', {
+                family:
+                  RUNTIME_LABELS[toolchainStatus.family ?? ''] ??
+                  toolchainStatus.family ??
+                  t('status.runtime'),
+              })}${
+                toolchainStatus.percent != null && toolchainStatus.percent >= 0
+                  ? ` ${toolchainStatus.percent}%`
+                  : ''
+              }`
+            : toolchainStatus?.error
+              ? t('status.runtimePrepFailed')
+              : statusText || (busy ? t('status.running') : t('status.ready'))}
         </span>
       </span>
       <span className="flex-1" />

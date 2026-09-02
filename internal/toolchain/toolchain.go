@@ -437,10 +437,41 @@ func (m *Manager) lookBundled(family, tool string) (*Runtime, error) {
 	if entry == nil {
 		return nil, nil
 	}
-	if err := m.ensureExtracted(family); err != nil {
+	if err := m.ensureExtracted(family, nil); err != nil {
 		return nil, err
 	}
 	return look(), nil
+}
+
+// PrepareBundled extracts every missing bundled runtime in the
+// background. With the default external-first policy, families already
+// available on PATH are skipped. progress receives per-family byte
+// progress when extraction starts.
+func (m *Manager) PrepareBundled(progress ProgressFunc) error {
+	if m.preference == PreferenceOff || m.manifest == nil {
+		return nil
+	}
+	var errs []error
+	for _, item := range []struct {
+		family string
+		tool   string
+	}{
+		{family: "python", tool: "python"},
+		{family: "node", tool: "node"},
+		{family: "uv", tool: "uv"},
+	} {
+		if m.manifest.entry(item.family) == nil {
+			continue
+		}
+		if m.preference == PreferenceExternalFirst &&
+			m.lookExternal(item.tool) != nil {
+			continue
+		}
+		if err := m.ensureExtracted(item.family, progress); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // toolCandidates returns executable names to try for one bare tool.

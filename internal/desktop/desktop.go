@@ -83,6 +83,9 @@ type App struct {
 	// a runtime is ready.
 	toolchainMgr      *toolchain.Manager
 	toolchainFallback *toolchain.Manager
+	// toolchainPrepRunning guards one background runtime preparation
+	// pass at a time.
+	toolchainPrepRunning bool
 
 	bridge       *Bridge
 	otelShutdown func(context.Context) error
@@ -463,6 +466,7 @@ func (a *App) rebuild() error {
 		if a.bridge != nil {
 			a.bridge.Emit("ready", a.status(true))
 		}
+		a.maybePrepareBundledRuntimes()
 		return nil
 	}
 	// The user-level usage database is workspace-independent and opened
@@ -492,6 +496,7 @@ func (a *App) rebuild() error {
 		if a.bridge != nil {
 			a.bridge.Emit("ready", a.status(false))
 		}
+		a.maybePrepareBundledRuntimes()
 		return nil
 	}
 	if err != nil {
@@ -517,6 +522,7 @@ func (a *App) rebuild() error {
 	a.mu.Unlock()
 
 	a.bridge.Emit("ready", a.status(true))
+	a.maybePrepareBundledRuntimes()
 	return nil
 }
 

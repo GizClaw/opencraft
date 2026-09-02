@@ -15,11 +15,15 @@ import (
 	"strings"
 )
 
+// ProgressFunc reports runtime extraction progress. done/total count
+// uncompressed file bytes so callers can render a percentage.
+type ProgressFunc func(family string, done, total int64)
+
 // ensureExtracted unpacks one bundled runtime archive into the user
 // cache. It runs only when bundled resolution needs that family and no
 // extracted copy exists yet; extraction is atomic (temp dir + rename)
 // so concurrent launcher/app processes cannot observe a partial tree.
-func (m *Manager) ensureExtracted(family string) error {
+func (m *Manager) ensureExtracted(family string, progress ProgressFunc) error {
 	if m.root == "" {
 		return fmt.Errorf("runtimes: no bundled runtime root")
 	}
@@ -63,8 +67,25 @@ func (m *Manager) ensureExtracted(family string) error {
 		return err
 	}
 	defer func() { _ = os.RemoveAll(tmp) }()
-	if err := extractArchive(data, tmp); err != nil {
+	total, err := archiveTotal(data)
+	if err != nil {
+		return fmt.Errorf("runtimes: inspect %s archive: %w", family, err)
+	}
+	if total > 0 && progress != nil {
+		progress(family, 0, total)
+	}
+	if err := extractArchiveWithProgress(
+		data, tmp,
+		func(done int64) {
+			if progress != nil {
+				progress(family, done, total)
+			}
+		},
+	); err != nil {
 		return fmt.Errorf("runtimes: extract %s: %w", family, err)
+	}
+	if total > 0 && progress != nil {
+		progress(family, total, total)
 	}
 	if err := os.Rename(tmp, target); err != nil {
 		if info, statErr := os.Stat(target); statErr == nil && info.IsDir() {
@@ -76,26 +97,39 @@ func (m *Manager) ensureExtracted(family string) error {
 }
 
 func extractArchive(data []byte, dest string) error {
+	return extractArchiveWithProgress(data, dest, nil)
+}
+
+func extractArchiveWithProgress(
+	data []byte,
+	dest string,
+	fileProgress func(done int64),
+) error {
 	switch {
 	case len(data) >= 2 && data[0] == 'P' && data[1] == 'K':
-		return extractZip(data, dest)
+		return extractZip(data, dest, fileProgress)
 	case len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b:
 		gz, err := gzip.NewReader(bytes.NewReader(data))
 		if err != nil {
 			return err
 		}
 		defer func() { _ = gz.Close() }()
-		return extractTar(gz, dest)
+		return extractTar(gz, dest, fileProgress)
 	default:
 		return fmt.Errorf("unsupported runtime archive format")
 	}
 }
 
-func extractZip(data []byte, dest string) error {
+func extractZip(
+	data []byte,
+	dest string,
+	fileProgress func(done int64),
+) error {
 	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return err
 	}
+	var done int64
 	for _, f := range zr.File {
 		rel, ok := stripArchiveRoot(f.Name)
 		if !ok {
@@ -111,6 +145,7 @@ func extractZip(data []byte, dest string) error {
 			}
 			continue
 		}
+		size := int64(f.UncompressedSize64)
 		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 			return err
 		}
@@ -123,17 +158,26 @@ func extractZip(data []byte, dest string) error {
 		if mode == 0 {
 			mode = 0o644
 		}
-		err = writeFile(out, rc, mode)
+		n, err := writeFile(out, rc, mode)
 		_ = rc.Close()
 		if err != nil {
 			return err
+		}
+		done += n
+		if fileProgress != nil && size > 0 {
+			fileProgress(done)
 		}
 	}
 	return nil
 }
 
-func extractTar(r io.Reader, dest string) error {
+func extractTar(
+	r io.Reader,
+	dest string,
+	fileProgress func(done int64),
+) error {
 	tr := tar.NewReader(r)
+	var done int64
 	for {
 		hdr, err := tr.Next()
 		if err == io.EOF {
@@ -159,8 +203,13 @@ func extractTar(r io.Reader, dest string) error {
 			if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 				return err
 			}
-			if err := writeFile(out, tr, hdr.FileInfo().Mode().Perm()); err != nil {
+			n, err := writeFile(out, tr, hdr.FileInfo().Mode().Perm())
+			if err != nil {
 				return err
+			}
+			done += n
+			if fileProgress != nil && hdr.Size > 0 {
+				fileProgress(done)
 			}
 		case tar.TypeSymlink:
 			link := filepath.Clean(filepath.FromSlash(hdr.Linkname))
@@ -194,6 +243,45 @@ func extractTar(r io.Reader, dest string) error {
 	}
 }
 
+func archiveTotal(data []byte) (int64, error) {
+	switch {
+	case len(data) >= 2 && data[0] == 'P' && data[1] == 'K':
+		zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+		if err != nil {
+			return 0, err
+		}
+		var total int64
+		for _, f := range zr.File {
+			if !f.FileInfo().IsDir() {
+				total += int64(f.UncompressedSize64)
+			}
+		}
+		return total, nil
+	case len(data) >= 2 && data[0] == 0x1f && data[1] == 0x8b:
+		gz, err := gzip.NewReader(bytes.NewReader(data))
+		if err != nil {
+			return 0, err
+		}
+		defer func() { _ = gz.Close() }()
+		tr := tar.NewReader(gz)
+		var total int64
+		for {
+			hdr, err := tr.Next()
+			if err == io.EOF {
+				return total, nil
+			}
+			if err != nil {
+				return 0, err
+			}
+			if hdr.Typeflag == tar.TypeReg {
+				total += hdr.Size
+			}
+		}
+	default:
+		return 0, fmt.Errorf("unsupported runtime archive format")
+	}
+}
+
 func stripArchiveRoot(name string) (string, bool) {
 	parts := strings.Split(strings.ReplaceAll(name, "\\", "/"), "/")
 	if len(parts) <= 1 {
@@ -212,18 +300,18 @@ func safeJoin(dest, rel string) (string, error) {
 	return filepath.Join(dest, clean), nil
 }
 
-func writeFile(path string, r io.Reader, mode os.FileMode) error {
+func writeFile(path string, r io.Reader, mode os.FileMode) (int64, error) {
 	out, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	_, copyErr := io.Copy(out, r)
+	n, copyErr := io.Copy(out, r)
 	closeErr := out.Close()
 	if copyErr != nil {
-		return copyErr
+		return n, copyErr
 	}
 	if runtime.GOOS != "windows" {
 		_ = os.Chmod(path, mode)
 	}
-	return closeErr
+	return n, closeErr
 }

@@ -317,6 +317,15 @@ type StatusDTO struct {
 	Busy bool   `json:"busy"`
 }
 
+// ToolchainStatusDTO reports background runtime preparation progress
+// to the status bar.
+type ToolchainStatusDTO struct {
+	Busy    bool   `json:"busy"`
+	Family  string `json:"family,omitempty"`
+	Percent int    `json:"percent,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
 // UsageDTO reports one inference usage report.
 type UsageDTO struct {
 	Model            string `json:"model"`
