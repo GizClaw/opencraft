@@ -74,6 +74,13 @@ jobs:
         with:
           version: v2.12.2
 
+      - name: Vulnerability scan (govulncheck)
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+      - name: Frontend dependency audit
+        working-directory: frontend
+        run: npm audit --omit=dev
+
       # Sandbox tests (app/sandbox/execd) build a bwrap-backed runtime.
       - name: Install sandbox dependency (bubblewrap)
         run: |
@@ -98,6 +105,113 @@ jobs:
 
       - name: Modules tidy
         run: go mod tidy -diff
+
+      # Timing-sensitive performance assertions are skipped under -race
+      # (above), so run them once without the race detector.
+      - name: Performance threshold assertions
+        run: go test -count=1 ./internal/sessions ./internal/tools/files ./internal/undo ./internal/desktop ./internal/app/worldstate
+
+  frontend-e2e:
+    name: frontend e2e (playwright)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci --prefix frontend
+
+      # wailsjs is generated, not committed; npm run build (tsc) needs it.
+      - name: Generate Wails bindings
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          mkdir -p frontend/dist
+          touch frontend/dist/.gitkeep
+          wails generate module
+
+      - name: Build frontend assets
+        run: npm run build --prefix frontend
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+        working-directory: frontend
+
+      - name: Run Playwright E2E
+        run: npm run test:e2e --prefix frontend
+
+  test-macos:
+    name: test (macos)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Generate Wails bindings
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          mkdir -p frontend/dist
+          touch frontend/dist/.gitkeep
+          wails generate module
+      - name: Build frontend assets
+        run: npm ci --prefix frontend && npm run build --prefix frontend
+      - name: Platform tests (sandbox/execd/desktop/sessions)
+        run: go test -count=1 ./internal/sandbox ./internal/execd ./internal/desktop ./internal/sessions
+
+  test-windows:
+    name: test (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Generate Wails bindings
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+          $env:PATH = "$(go env GOPATH)\bin;$env:PATH"
+          New-Item -ItemType Directory -Force frontend/dist | Out-Null
+          New-Item -ItemType File -Force frontend/dist/.gitkeep | Out-Null
+          wails generate module
+        shell: pwsh
+      - name: Build frontend assets
+        run: npm ci --prefix frontend; npm run build --prefix frontend
+        shell: pwsh
+      # Windows-specific value is the real OS sandbox backend. The full
+      # unit suites in these packages are Unix-mode/file-handle
+      # sensitive (POSIX permission asserts, SQLite cleanup on TempDir
+      # removal, POSIX shell fixtures), so Windows runs the sandbox
+      # contract suite plus a compile check of the rest.
+      - name: Sandbox contract (windows)
+        run: go test -count=1 ./internal/sandbox -run TestSandboxRunnerContract
+        shell: pwsh
+      - name: Compile check (sandbox/desktop/sessions/secrets/undo)
+        run: go vet ./internal/sandbox ./internal/desktop ./internal/sessions ./internal/secrets ./internal/undo
+        shell: pwsh
 
   desktop-linux:
     name: desktop build (linux)

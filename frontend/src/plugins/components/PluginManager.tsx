@@ -3,9 +3,77 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../../lib/api';
 import { usePluginStore } from '../store';
+import { compareVersions } from '../version';
 import { PluginInstallDialog } from './PluginInstallDialog';
 import { PluginPanels } from './PluginPanels';
-import type { PluginUpdateInfo } from '../types';
+import type { PluginToolDTO, PluginUpdateInfo } from '../types';
+
+// PluginToolsList lazily loads one plugin's agent-callable tools and
+// renders them in an expandable list. Tools are only invokable by the
+// agent through the tool catalog; this is the UI's visibility surface.
+function PluginToolsList({ pluginId }: { pluginId: string }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const [tools, setTools] = useState<PluginToolDTO[] | null>(null);
+  const [error, setError] = useState('');
+
+  const toggle = async () => {
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    setOpen(true);
+    if (tools === null) {
+      try {
+        setTools(await api.pluginTools(pluginId));
+      } catch (err) {
+        setError(String(err));
+      }
+    }
+  };
+
+  return (
+    <div className="mt-1.5">
+      <button
+        onClick={() => void toggle()}
+        className="rounded border border-edge px-1.5 py-0.5 text-[0.7143rem] text-dim hover:text-fg"
+      >
+        {open ? t('config.pluginsToolsHide') : t('config.pluginsToolsShow')}
+      </button>
+      {open && (
+        <div className="mt-1.5 space-y-1.5">
+          {error && <p className="text-xs text-err">{error}</p>}
+          {tools !== null && tools.length === 0 && (
+            <p className="text-xs text-dim">{t('config.pluginsToolsEmpty')}</p>
+          )}
+          {tools?.map((tool) => (
+            <div
+              key={tool.name}
+              className="rounded-lg border border-edge bg-panel px-2 py-1.5"
+            >
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-xs text-fg truncate">
+                  {tool.name}
+                </span>
+                {tool.mutates_state && (
+                  <span className="shrink-0 rounded bg-warn/10 px-1 py-0.5 text-[0.7rem] text-warn">
+                    {t('config.pluginsToolMutates')}
+                  </span>
+                )}
+              </div>
+              {tool.description && (
+                <p className="mt-0.5 text-xs text-dim">{tool.description}</p>
+              )}
+              <p className="mt-0.5 font-mono text-[0.7rem] text-dim">
+                {tool.method}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // PluginManager is the "插件" settings tab: installed plugins with
 // enable/disable toggles, per-plugin load errors, and the panels each
@@ -148,8 +216,28 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
                       {t('config.pluginsBuiltin')}
                     </span>
                   )}
+                  {p.shadowsBuiltin && (
+                    <span
+                      className="ml-1 rounded bg-warn/10 px-1.5 py-0.5 text-[0.7143rem] text-warn"
+                      title={t('config.pluginsShadowHint', {
+                        version: p.builtinVersion ?? '',
+                      })}
+                    >
+                      {t('config.pluginsShadow')}
+                    </span>
+                  )}
                 </p>
                 <p className="text-[0.7857rem] text-dim truncate">{p.id}</p>
+                {p.shadowsBuiltin &&
+                  p.builtinVersion &&
+                  compareVersions(p.version, p.builtinVersion) < 0 && (
+                    <p className="mt-1 text-[0.7857rem] text-warn">
+                      {t('config.pluginsShadowOlder', {
+                        version: p.version,
+                        builtinVersion: p.builtinVersion,
+                      })}
+                    </p>
+                  )}
                 {(p.hasSkills || p.hasMcp || p.hasHooks || p.hasTools) && (
                   <div
                     className="mt-1 flex flex-wrap gap-1"
@@ -182,6 +270,7 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
                     {t('config.pluginsCapabilitiesWarning')}
                   </p>
                 )}
+                {p.hasTools && <PluginToolsList pluginId={p.id} />}
               </div>
               <button
                 onClick={() => void setEnabled(p.id, !p.enabled)}
@@ -203,7 +292,7 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
                   {t('config.pluginsUpdate')}
                 </button>
               )}
-              {!p.builtin && p.hasUpdate && (
+              {p.hasUpdate && (
                 <button
                   onClick={() => void checkUpdate(p.id)}
                   disabled={checkingUpdateId === p.id}

@@ -84,3 +84,31 @@ func TestTruncateMiddlewareSkipsErrors(t *testing.T) {
 		t.Fatalf("error result must pass through untouched, got %d runes", len([]rune(res.Content)))
 	}
 }
+
+func TestTruncateCacheOwnerOnly(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), ".opencraft", "cache", "tools")
+	mw := truncateMiddleware(TruncateSettings{
+		Enabled:  true,
+		MaxChars: 10,
+		Dir:      dir,
+	})
+	next := func(context.Context, message.ToolCall) message.ToolResult {
+		return message.ToolResult{CallID: "call-1", Content: strings.Repeat("x", 100)}
+	}
+	mw(next)(context.Background(), message.ToolCall{})
+
+	dirInfo, err := os.Stat(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := dirInfo.Mode().Perm(); perm != 0o700 {
+		t.Fatalf("cache dir mode = %o, want 700", perm)
+	}
+	fileInfo, err := os.Stat(filepath.Join(dir, "call-1.output"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := fileInfo.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("cache file mode = %o, want 600", perm)
+	}
+}

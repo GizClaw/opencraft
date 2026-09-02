@@ -373,6 +373,33 @@ func TestServeReadExitCode(t *testing.T) {
 	}
 }
 
+func TestServeReadMaxBytesCapped(t *testing.T) {
+	client, _ := testPair(t)
+	ctx := context.Background()
+	if _, err := client.Start(ctx, ExecParams{
+		ProcessID: "noisy",
+		Argv:      []string{"/bin/sh", "-c", "yes x"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Ask for an absurd window: the server must clamp it to maxReadBytes
+	// instead of buffering unbounded output.
+	read, err := client.Read(ctx, ReadParams{
+		ProcessID: "noisy",
+		MaxBytes:  intPtr(1 << 30),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	total := 0
+	for _, ch := range read.Chunks {
+		total += len(ch.Data)
+	}
+	if total > maxReadBytes {
+		t.Fatalf("read returned %d bytes, cap is %d", total, maxReadBytes)
+	}
+}
+
 // stubSession is a controllable sandbox.Session for exercising server
 // semantics without real processes: Read reports EOF immediately while
 // the process stays alive until the test emits the exit event.

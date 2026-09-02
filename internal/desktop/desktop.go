@@ -246,6 +246,7 @@ func New(opts Options) (*App, error) {
 		CapabilityFunc: func(id string) (pluginruntime.Capability, bool, error) {
 			return a.plugins.Capability(id)
 		},
+		DirFunc: a.plugins.Dir,
 	}, sec)
 	a.cap.SetEnv([]string{"OPENCRAFT_VERSION=" + app.ServiceVersion})
 	a.cap.SetInferenceHandler(pluginruntime.InferenceHandler{

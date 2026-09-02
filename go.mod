@@ -1,6 +1,6 @@
 module github.com/GizClaw/opencraft
 
-go 1.25.5
+go 1.25.13
 
 require (
 	fyne.io/systray v1.12.2

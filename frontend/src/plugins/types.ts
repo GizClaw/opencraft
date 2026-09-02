@@ -46,6 +46,10 @@ export interface PluginSummary {
   enabled: boolean;
   /** Builtin plugins ship with the app and can only be disabled. */
   builtin?: boolean;
+  /** User plugin that overrides an app-bundled builtin with the same id. */
+  shadowsBuiltin?: boolean;
+  /** Version of the shadowed builtin, when known. */
+  builtinVersion?: string;
   error?: string;
   panels?: string[];
   entries?: string[];
@@ -58,6 +62,14 @@ export interface PluginSummary {
   hasUpdate?: boolean;
   /** A rollback snapshot of the previous version is available. */
   canRollback?: boolean;
+}
+
+/** UI view of one agent-callable tool declared by a plugin manifest. */
+export interface PluginToolDTO {
+  name: string;
+  description?: string;
+  method: string;
+  mutates_state: boolean;
 }
 
 export interface SettingsPanelContribution {

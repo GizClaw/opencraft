@@ -28,7 +28,7 @@ func (s stubSource) LazyTools() []tool.LazyTool { return nil }
 
 var _ tool.Source = stubSource{}
 
-func newAssembly(t *testing.T, settings string, src tool.Source) *tool.Assembly {
+func newAssembly(t testing.TB, settings string, src tool.Source) *tool.Assembly {
 	t.Helper()
 	f := AssemblyFactory{}
 	value, err := f.New(context.Background(), resource.Input{

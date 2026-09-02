@@ -3,3 +3,5 @@ dist
 wailsjs
 package-lock.json
 package.json.md5
+test-results/
+playwright-report/

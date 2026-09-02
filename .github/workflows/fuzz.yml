@@ -1,0 +1,35 @@
+name: fuzz
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { pkg: ./internal/utils/patch, target: FuzzParsePatch }
+          - { pkg: ./internal/plugins, target: FuzzExtractPluginZip }
+          - { pkg: ./internal/tools/assembly, target: FuzzRedactContent }
+          - { pkg: ./internal/skills, target: FuzzSkillFrontmatter }
+          - { pkg: ./internal/app, target: FuzzExecPolicyRule }
+          - { pkg: ./internal/sessions, target: FuzzRequireID }
+          - { pkg: ./internal/config, target: FuzzUserConfigYAML }
+          - { pkg: ./internal/execd, target: FuzzRPCRequest }
+          - { pkg: ./internal/utils/extract, target: FuzzStripHiddenHTML }
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Fuzz ${{ matrix.target }}
+        run: go test -run '^$' -fuzz ${{ matrix.target }} -fuzztime 60s ${{ matrix.pkg }}

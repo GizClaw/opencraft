@@ -55,6 +55,11 @@ frontend/package.json.md5
 # of git and generate them in CI.
 frontend/wailsjs/
 frontend/wailsjs/**
+# Playwright artifacts (reports and per-run snapshots).
+frontend/test-results/
+frontend/test-results/**
+frontend/playwright-report/
+frontend/playwright-report/**
 # Frontend plugins ship in the repo as reference implementations.
 !plugins/
 !plugins/hello/

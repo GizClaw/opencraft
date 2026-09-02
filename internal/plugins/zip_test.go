@@ -68,3 +68,24 @@ func TestInstallZipRejectsTraversal(t *testing.T) {
 		t.Fatal("zip traversal must fail")
 	}
 }
+
+func TestInstallZipRejectsMissingManifest(t *testing.T) {
+	zipPath := writeTestZip(t, map[string]string{
+		"dist/index.js": "export function apply() {}",
+	})
+	store := NewStore(t.TempDir())
+	if _, err := store.InstallZip(zipPath); err == nil {
+		t.Fatal("zip without plugin.json must fail")
+	}
+}
+
+func TestInstallZipRejectsAbsoluteEntry(t *testing.T) {
+	zipPath := writeTestZip(t, map[string]string{
+		"plugin.json":   `{"id":"z","name":"Z","version":"1","entry":"dist/index.js"}`,
+		"/etc/evil.txt": "evil",
+	})
+	store := NewStore(t.TempDir())
+	if _, err := store.InstallZip(zipPath); err == nil {
+		t.Fatal("zip with absolute entry must fail")
+	}
+}
