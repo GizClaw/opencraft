@@ -410,7 +410,10 @@
   "status": {
     "ready": "就绪",
     "running": "运行中",
-    "thinking": "思考"
+    "thinking": "思考",
+    "runtime": "运行环境",
+    "preparingRuntime": "正在准备 {{family}} 运行环境…",
+    "runtimePrepFailed": "运行环境准备失败"
   },
   "interact": {
     "needConfirm": "需要你的确认",

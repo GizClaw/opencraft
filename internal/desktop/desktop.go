@@ -83,6 +83,9 @@ type App struct {
 	// a runtime is ready.
 	toolchainMgr      *toolchain.Manager
 	toolchainFallback *toolchain.Manager
+	// toolchainPrepRunning guards one background runtime preparation
+	// pass at a time.
+	toolchainPrepRunning bool
 
 	bridge       *Bridge
 	otelShutdown func(context.Context) error
@@ -236,6 +239,7 @@ func New(opts Options) (*App, error) {
 	pluginDir := filepath.Join(dataDir, "plugins")
 	fallbackToolchain, err := toolchain.New(toolchain.Options{
 		Preference: toolchain.PreferenceExternalFirst,
+		CacheDir:   filepath.Join(dataDir, "runtime"),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("desktop: toolchain manager: %w", err)
@@ -462,6 +466,7 @@ func (a *App) rebuild() error {
 		if a.bridge != nil {
 			a.bridge.Emit("ready", a.status(true))
 		}
+		a.maybePrepareBundledRuntimes()
 		return nil
 	}
 	// The user-level usage database is workspace-independent and opened
@@ -491,6 +496,7 @@ func (a *App) rebuild() error {
 		if a.bridge != nil {
 			a.bridge.Emit("ready", a.status(false))
 		}
+		a.maybePrepareBundledRuntimes()
 		return nil
 	}
 	if err != nil {
@@ -516,6 +522,7 @@ func (a *App) rebuild() error {
 	a.mu.Unlock()
 
 	a.bridge.Emit("ready", a.status(true))
+	a.maybePrepareBundledRuntimes()
 	return nil
 }
 

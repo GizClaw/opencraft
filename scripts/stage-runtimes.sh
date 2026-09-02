@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# stage-runtimes.sh downloads and stages the bundled language/tool
-# runtimes described by runtimes/manifest.json into <root>/runtime.
+# stage-runtimes.sh downloads and stages compressed bundled language
+# runtimes described by runtimes/manifest.json into <root>/archives.
+# The app extracts one family lazily when a bundled fallback is needed.
 #
 # Usage:
 #   scripts/stage-runtimes.sh <platform> [runtime-root] [manifest]
@@ -17,30 +18,14 @@ launcher_dir="$root/launcher"
 
 python3 - "$manifest" "$platform" "$root" <<'PY'
 import hashlib
-import io
 import json
 import os
-import pathlib
-import shutil
 import sys
-import tarfile
-import tempfile
 import urllib.request
-import zipfile
 
 manifest_path, platform, root = sys.argv[1:]
 with open(manifest_path, encoding="utf-8") as f:
     manifest = json.load(f)
-
-# Layout directories use major.minor for python/go/uv and major for node.
-def version_dir(family, version):
-    parts = version.split(".")
-    if family == "node":
-        return parts[0]
-    return ".".join(parts[:2])
-
-def family_name(family):
-    return {"python": "python", "go": "go", "node": "node", "uv": "uv"}[family]
 
 def verify(data, expected):
     digest = hashlib.sha256(data).hexdigest()
@@ -48,45 +33,6 @@ def verify(data, expected):
         raise SystemExit(
             f"stage-runtimes: sha256 mismatch: got {digest}, want {expected}"
         )
-
-def extract(data, target):
-    target = pathlib.Path(target)
-    target.mkdir(parents=True, exist_ok=True)
-    bio = io.BytesIO(data)
-
-    def write_file(dest, reader, mode=None):
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        with reader() as src, open(dest, "wb") as out:
-            out.write(src.read())
-        if mode:
-            os.chmod(dest, mode & 0o777)
-
-    if data[:2] == b"PK":
-        with zipfile.ZipFile(bio) as zf:
-            for member in zf.infolist():
-                parts = pathlib.PurePosixPath(member.filename).parts
-                if len(parts) <= 1 or member.is_dir():
-                    continue
-                dest = target.joinpath(*parts[1:])
-                mode = (member.external_attr >> 16) & 0o777
-                write_file(dest, lambda m=member: zf.open(m), mode)
-        return
-    with tarfile.open(fileobj=bio, mode="r:*") as tf:
-        for member in tf.getmembers():
-            parts = pathlib.PurePosixPath(member.name).parts
-            if len(parts) <= 1:
-                continue
-            dest = target.joinpath(*parts[1:])
-            if member.isdir():
-                dest.mkdir(parents=True, exist_ok=True)
-                continue
-            if member.issym():
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                dest.symlink_to(member.linkname)
-                continue
-            if not member.isfile():
-                continue
-            write_file(dest, lambda m=member: tf.extractfile(m), member.mode)
 
 for family, entry in manifest.items():
     if family == "schema_version":
@@ -99,12 +45,12 @@ for family, entry in manifest.items():
     with urllib.request.urlopen(url, timeout=300) as resp:
         data = resp.read()
     verify(data, expected)
-    target = os.path.join(
-        root, family_name(family), version_dir(family, entry["version"]), platform
-    )
-    extract(data, target)
+    target = os.path.join(root, "archives", family, platform)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with open(target, "wb") as out:
+        out.write(data)
 
-print(f"stage-runtimes: staged runtimes under {root}")
+print(f"stage-runtimes: staged compressed runtimes under {root}/archives")
 PY
 
 mkdir -p "$launcher_dir"
@@ -130,7 +76,7 @@ import shutil
 import sys
 
 launcher_dir, launcher_bin = sys.argv[1:]
-for tool in ("python", "python3", "go", "gofmt", "node", "npm",
+for tool in ("python", "python3", "node", "npm",
              "npx", "corepack", "uv", "uvx"):
     dest = os.path.join(launcher_dir, tool + ".exe")
     if os.path.exists(dest):
@@ -142,7 +88,7 @@ for tool in ("python", "python3", "go", "gofmt", "node", "npm",
 PY
     ;;
   *)
-    for tool in python python3 go gofmt node npm npx corepack uv uvx; do
+    for tool in python python3 node npm npx corepack uv uvx; do
       ln -sf runtime-launcher "$launcher_dir/$tool"
     done
     ;;

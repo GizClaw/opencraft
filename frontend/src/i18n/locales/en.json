@@ -411,7 +411,10 @@
   "status": {
     "ready": "Ready",
     "running": "Running",
-    "thinking": "thinking"
+    "thinking": "thinking",
+    "runtime": "runtime",
+    "preparingRuntime": "Preparing {{family}} runtime…",
+    "runtimePrepFailed": "Runtime preparation failed"
   },
   "interact": {
     "needConfirm": "Your input is needed",

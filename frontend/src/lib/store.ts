@@ -111,6 +111,13 @@ export interface ToastItem {
   kind: ToastKind;
 }
 
+export interface ToolchainStatus {
+  busy: boolean;
+  family?: string;
+  percent?: number;
+  error?: string;
+}
+
 let msgSeq = 0;
 const newID = (prefix: string) => `${prefix}-${Date.now()}-${msgSeq++}`;
 let turnSeq = 0;
@@ -553,6 +560,7 @@ interface StoreState {
   // (used by the automations "create with OpenCraft" flow).
   composerDraft: string;
   statusText: string;
+  toolchainStatus: ToolchainStatus | null;
   lastUsage: UsageDTO | null;
   cards: KanbanCard[];
   subagentCards: KanbanCard[];
@@ -777,6 +785,7 @@ export const useStore = create<StoreState>((set, get) => {
     subagentStreamAt: {},
     composerDraft: '',
     statusText: '',
+    toolchainStatus: null,
     lastUsage: null,
     cards: [],
     subagentCards: [],
@@ -944,6 +953,9 @@ export const useStore = create<StoreState>((set, get) => {
         }
         case 'status':
           set({ statusText: (ev.data as { text: string }).text });
+          break;
+        case 'toolchain_status':
+          set({ toolchainStatus: ev.data as ToolchainStatus });
           break;
         case 'usage':
           set({ lastUsage: ev.data as UsageDTO });

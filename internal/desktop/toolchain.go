@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"path/filepath"
 	"time"
 
 	"github.com/GizClaw/opencraft/internal/config"
@@ -22,14 +23,85 @@ func (a *App) currentToolchain() *toolchain.Manager {
 	// Tests and embedded hosts may construct App without New; a
 	// default manager is harmless (external-only) and keeps
 	// diagnostics/MCP helpers nil-safe.
+	cacheDir := ""
+	if a.userDir != "" {
+		cacheDir = filepath.Join(filepath.Dir(a.userDir), "runtime")
+	}
 	fallback, err := toolchain.New(toolchain.Options{
 		Preference: toolchain.PreferenceExternalFirst,
+		CacheDir:   cacheDir,
 	})
 	if err == nil {
 		a.toolchainFallback = fallback
 		return fallback
 	}
 	return nil
+}
+
+// maybePrepareBundledRuntimes starts one background pass that extracts
+// missing compressed runtimes. Progress is pushed to the status bar;
+// the pass is skipped when another is already running or runtimes are
+// disabled.
+func (a *App) maybePrepareBundledRuntimes() {
+	a.mu.Lock()
+	if a.toolchainPrepRunning {
+		a.mu.Unlock()
+		return
+	}
+	mgr := a.toolchainMgr
+	if mgr == nil {
+		mgr = a.toolchainFallback
+	}
+	if mgr == nil || mgr.Preference() == toolchain.PreferenceOff {
+		a.mu.Unlock()
+		return
+	}
+	a.toolchainPrepRunning = true
+	a.mu.Unlock()
+
+	go func() {
+		defer func() {
+			a.mu.Lock()
+			a.toolchainPrepRunning = false
+			a.mu.Unlock()
+		}()
+		started := false
+		lastPercent := -1
+		err := mgr.PrepareBundled(func(family string, done, total int64) {
+			started = true
+			percent := 0
+			if total > 0 {
+				percent = int(done * 100 / total)
+			}
+			if percent == lastPercent && done != total {
+				return
+			}
+			lastPercent = percent
+			a.emitToolchainStatus(ToolchainStatusDTO{
+				Busy:    true,
+				Family:  family,
+				Percent: percent,
+			})
+		})
+		if started {
+			a.emitToolchainStatus(ToolchainStatusDTO{Busy: false})
+		}
+		if err != nil {
+			a.emitToolchainStatus(ToolchainStatusDTO{
+				Busy:  false,
+				Error: err.Error(),
+			})
+		}
+	}()
+}
+
+func (a *App) emitToolchainStatus(status ToolchainStatusDTO) {
+	a.mu.Lock()
+	bridge := a.bridge
+	a.mu.Unlock()
+	if bridge != nil {
+		bridge.Emit("toolchain_status", status)
+	}
 }
 
 // toolchainDiagnostics returns tool statuses, or an empty list when

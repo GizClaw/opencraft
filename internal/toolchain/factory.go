@@ -44,6 +44,7 @@ func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 		ManifestPath:    settings.ManifestPath,
 		SandboxCacheDir: settings.SandboxCacheDir,
 		HostCacheDir:    settings.HostCacheDir,
+		CacheDir:        settings.CacheDir,
 	})
 	if err != nil {
 		return nil, errdefs.Validationf(
