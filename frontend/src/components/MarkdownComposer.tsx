@@ -19,7 +19,7 @@ import {
   type JSONContent,
 } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import { Plugin, PluginKey } from '@tiptap/pm/state';
+import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
 import type { Node as PMNode } from '@tiptap/pm/model';
 import type { SuggestionProps } from '@tiptap/suggestion';
@@ -520,6 +520,25 @@ export const MarkdownComposer = forwardRef<
         // While a mention popup is open its own keymap owns Enter/arrows;
         // let the plugin handle them instead of submitting the message.
         if (suggestionOpenRef.current) return false;
+        if (event.key === 'Home' || event.key === 'End') {
+          event.preventDefault();
+          const edge = event.key === 'Home' ? 'start' : 'end';
+          const $from = _view.state.selection.$from;
+          const target = edge === 'start' ? $from.start() : $from.end();
+          let anchor = target;
+          if (event.shiftKey) {
+            const domSel = _view.dom.ownerDocument.getSelection();
+            const domAnchor = domSel?.anchorNode
+              ? _view.posAtDOM(domSel.anchorNode, domSel.anchorOffset)
+              : null;
+            anchor = domAnchor ?? _view.state.selection.anchor;
+          }
+          const tr = _view.state.tr.setSelection(
+            TextSelection.create(_view.state.doc, anchor, target),
+          );
+          _view.dispatch(tr);
+          return true;
+        }
         if (
           event.key === 'Enter' &&
           !event.shiftKey &&
