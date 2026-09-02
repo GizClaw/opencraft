@@ -547,7 +547,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
 
       {sessionsOpen && (
         <div
-          className="fixed inset-x-0 bottom-0 top-11 z-40 grid place-items-center bg-black/60 p-6"
+          className="fixed bottom-0 top-11 left-0 right-0 z-40 grid place-items-center bg-black/60 p-6"
           onClick={() => setSessionsOpen(false)}
         >
           <div
@@ -605,7 +605,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
 
       {workspacesOpen && (
         <div
-          className="fixed inset-x-0 bottom-0 top-11 z-40 grid place-items-center bg-black/60 p-6"
+          className="fixed bottom-0 top-11 left-0 right-0 z-40 grid place-items-center bg-black/60 p-6"
           onClick={() => setWorkspacesOpen(false)}
         >
           <div
@@ -640,7 +640,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
 
       {confirmWorkspace && removingWorkspace && (
         <div
-          className="fixed inset-x-0 bottom-0 top-11 z-50 grid place-items-center bg-black/60 p-6"
+          className="fixed bottom-0 top-11 left-0 right-0 z-50 grid place-items-center bg-black/60 p-6"
           onClick={() => setConfirmWorkspace(null)}
         >
           <div
