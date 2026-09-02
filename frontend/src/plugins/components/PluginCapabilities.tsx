@@ -46,7 +46,7 @@ export function PluginCapabilitiesSection({
 
   return (
     <div className="space-y-3">
-      {error && <p className="text-xs text-err">{error}</p>}
+      {error && <p className="break-words text-xs text-err">{error}</p>}
       {!loaded && !error && (
         <div className="flex items-center gap-2 text-xs text-dim">
           <Loader2 size="0.8571rem" className="animate-spin" />
@@ -66,10 +66,10 @@ export function PluginCapabilitiesSection({
               {tools!.map((tool) => (
                 <div
                   key={tool.name}
-                  className="rounded-md border border-edge bg-panel px-2.5 py-2"
+                  className="min-w-0 overflow-hidden rounded-md border border-edge bg-panel px-2.5 py-2"
                 >
-                  <div className="flex items-center gap-2">
-                    <span className="min-w-0 truncate font-mono text-xs font-medium text-fg">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-fg">
                       {tool.name}
                     </span>
                     {tool.mutates_state && (
@@ -79,11 +79,11 @@ export function PluginCapabilitiesSection({
                     )}
                   </div>
                   {tool.description && (
-                    <p className="mt-1 text-xs leading-relaxed text-dim">
+                    <p className="mt-1 break-words text-xs leading-relaxed text-dim">
                       {tool.description}
                     </p>
                   )}
-                  <p className="mt-1 font-mono text-[0.7rem] text-dim/70">
+                  <p className="mt-1 break-all font-mono text-[0.7rem] text-dim/70">
                     {tool.method}
                   </p>
                 </div>
@@ -105,26 +105,26 @@ export function PluginCapabilitiesSection({
               {skills!.map((skill) => (
                 <div
                   key={skill.path}
-                  className="rounded-md border border-edge bg-panel px-2.5 py-2"
+                  className="min-w-0 overflow-hidden rounded-md border border-edge bg-panel px-2.5 py-2"
                 >
-                  <div className="flex items-center gap-2">
-                    <span className="min-w-0 truncate font-mono text-xs font-medium text-fg">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-fg">
                       {skill.name}
                     </span>
                     {skill.plugin_id ? (
-                      <span className="shrink-0 rounded border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[0.65rem] text-accent">
+                      <span className="max-w-[14rem] shrink-0 truncate rounded border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[0.65rem] text-accent">
                         {t('config.skillsPluginFrom', {
                           name: skill.plugin_name || skill.plugin_id,
                         })}
                       </span>
                     ) : skill.scope ? (
-                      <span className="shrink-0 rounded bg-panel px-1.5 py-0.5 text-[0.65rem] text-dim">
+                      <span className="max-w-[14rem] shrink-0 truncate rounded bg-panel px-1.5 py-0.5 text-[0.65rem] text-dim">
                         {skill.scope}
                       </span>
                     ) : null}
                   </div>
                   {skill.description && (
-                    <p className="mt-1 text-xs leading-relaxed text-dim">
+                    <p className="mt-1 break-words text-xs leading-relaxed text-dim">
                       {skill.description}
                     </p>
                   )}

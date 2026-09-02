@@ -23,7 +23,7 @@ export function PluginDetailDrawer({
     <>
       <div className="fixed inset-0 z-40 bg-black/30" onClick={onClose} />
       <aside
-        className="fixed inset-y-0 right-0 z-50 flex w-[30rem] max-w-[94vw] flex-col border-l border-edge bg-panel shadow-2xl"
+        className="fixed inset-y-0 right-0 z-50 flex w-[42rem] max-w-[94vw] flex-col border-l border-edge bg-panel shadow-2xl"
         role="dialog"
         aria-modal="true"
         aria-label={plugin.name}
@@ -45,7 +45,7 @@ export function PluginDetailDrawer({
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+        <div className="min-h-0 min-w-0 flex-1 space-y-4 overflow-y-auto p-4">
           <div className="space-y-1.5">
             <p className="break-all font-mono text-xs text-dim">{plugin.id}</p>
           </div>
@@ -53,7 +53,7 @@ export function PluginDetailDrawer({
           {plugin.shadowsBuiltin &&
             plugin.builtinVersion &&
             compareVersions(plugin.version, plugin.builtinVersion) < 0 && (
-              <p className="text-[0.7857rem] text-warn">
+              <p className="break-words text-[0.7857rem] text-warn">
                 {t('config.pluginsShadowOlder', {
                   version: plugin.version,
                   builtinVersion: plugin.builtinVersion,
@@ -68,7 +68,7 @@ export function PluginDetailDrawer({
           )}
 
           {(plugin.hasHooks || plugin.hasTools) && (
-            <p className="text-xs text-warn">
+            <p className="break-words text-xs text-warn">
               {t('config.pluginsCapabilitiesWarning')}
             </p>
           )}
@@ -85,7 +85,7 @@ export function PluginDetailDrawer({
                   <button
                     key={cmd.id}
                     onClick={() => cmd.run()}
-                    className="rounded-lg border border-edge bg-panel2 px-2.5 py-1.5 text-xs hover:border-accent/50"
+                    className="max-w-full break-words rounded-lg border border-edge bg-panel2 px-2.5 py-1.5 text-left text-xs hover:border-accent/50"
                   >
                     {cmd.title}
                   </button>
