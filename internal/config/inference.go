@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/deploy"
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/message"
 	yamlv4 "go.yaml.in/yaml/v4"
@@ -299,6 +300,35 @@ func InferenceNeeded(configDir string) (bool, error) {
 		return false, nil
 	}
 	return true, nil
+}
+
+// RouterConfigured reports whether the merged deployment document
+// carries at least one router generate target. The embedded inference
+// layer contributes a router retry shell with no pools until the user
+// or project layer declares targets, so this distinguishes "inference
+// is not configured yet" (an expected UI state) from a real router
+// validation failure at build time.
+func RouterConfigured(doc deploy.Document) (bool, error) {
+	res, ok := doc.Resources["router"]
+	if !ok {
+		return false, nil
+	}
+	var settings struct {
+		Generate []struct {
+			Targets []json.RawMessage `json:"targets"`
+		} `json:"generate"`
+	}
+	if len(res.Settings) > 0 {
+		if err := json.Unmarshal(res.Settings, &settings); err != nil {
+			return false, fmt.Errorf("config: decode merged router policy: %w", err)
+		}
+	}
+	for _, pool := range settings.Generate {
+		if len(pool.Targets) > 0 {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // InferenceYAML renders the user configuration layer

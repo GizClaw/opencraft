@@ -117,6 +117,7 @@ export const api = {
   allowPermission: (rule: string) => App.AllowPermission(rule),
   denyPermission: (rule: string) => App.DenyPermission(rule),
   skills: () => App.Skills() as Promise<SkillDTO[]>,
+  skillContent: (path: string) => App.SkillContent(path) as Promise<string>,
   deleteSkill: (path: string) => App.DeleteSkill(path),
   installSkill: (repo: string, scope: string, subpath: string) =>
     App.InstallSkill(repo, scope, subpath) as Promise<string>,

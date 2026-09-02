@@ -69,6 +69,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   const [workspaceInputOpen, setWorkspaceInputOpen] = useState(false);
   const [workspacePath, setWorkspacePath] = useState('');
   const [workspaceError, setWorkspaceError] = useState('');
+  const [confirmWorkspace, setConfirmWorkspace] = useState<string | null>(null);
 
   const toolButtons: {
     id: string;
@@ -205,6 +206,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
     [sessions, sessionQuery],
   );
   const visibleWorkspaces = workspaces.slice(0, 5);
+  const removingWorkspace = workspaces.find((w) => w.id === confirmWorkspace);
   const runningOnly = runningIds.filter(
     (id) => !sessions.some((s) => s.id === id),
   ).length;
@@ -344,7 +346,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
             <span className="flex-1 truncate">{w.title}</span>
           </button>
           <button
-            onClick={() => void removeWorkspace(w.id)}
+            onClick={() => setConfirmWorkspace(w.id)}
             className="text-dim opacity-0 group-hover:opacity-100 hover:text-err shrink-0"
             title={t('sidebar.removeWorkspace')}
             aria-label={t('sidebar.removeWorkspace')}
@@ -631,6 +633,46 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                   {workspaces.map(renderWorkspaceRow)}
                 </ul>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmWorkspace && removingWorkspace && (
+        <div
+          className="fixed inset-x-0 bottom-0 top-11 z-50 grid place-items-center bg-black/60 p-6"
+          onClick={() => setConfirmWorkspace(null)}
+        >
+          <div
+            className="w-[26.0000rem] rounded-2xl border border-edge bg-panel p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="text-sm">
+              {t(
+                removingWorkspace.path === workspace
+                  ? 'sidebar.removeWorkspaceConfirmActive'
+                  : 'sidebar.removeWorkspaceConfirm',
+                { title: removingWorkspace.title },
+              )}
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmWorkspace(null)}
+                className="rounded border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
+              >
+                {t('interact.cancel')}
+              </button>
+              <button
+                onClick={() => {
+                  const id = confirmWorkspace;
+                  setConfirmWorkspace(null);
+                  setWorkspacesOpen(false);
+                  void removeWorkspace(id);
+                }}
+                className="rounded bg-err px-3 py-1.5 text-sm text-white hover:opacity-90"
+              >
+                {t('sidebar.removeWorkspace')}
+              </button>
             </div>
           </div>
         </div>

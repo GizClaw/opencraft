@@ -177,7 +177,7 @@ func TestRankMinScoreThreshold(t *testing.T) {
 
 func TestReadFullAndRender(t *testing.T) {
 	root := t.TempDir()
-	writeSkill(t, filepath.Join(root, ".agents", "skills"), "review",
+	path := writeSkill(t, filepath.Join(root, ".agents", "skills"), "review",
 		"name: review\ndescription: review code\n")
 	svc := NewService(Options{WorkBase: root, Enabled: true})
 	sk, body, err := svc.ReadFull("review")
@@ -189,6 +189,21 @@ func TestReadFullAndRender(t *testing.T) {
 	}
 	if _, _, err := svc.ReadFull("missing"); err == nil {
 		t.Fatal("ReadFull(missing) should fail")
+	}
+	byPath, pathBody, err := svc.ReadByPath(path)
+	if err != nil {
+		t.Fatalf("ReadByPath(%q): %v", path, err)
+	}
+	if byPath.Name != "review" || !strings.Contains(pathBody, "Do the thing.") {
+		t.Fatalf(
+			"ReadByPath = (%q, %q), want review with instructions",
+			byPath.Name, pathBody,
+		)
+	}
+	if _, _, err := svc.ReadByPath(
+		filepath.Join(t.TempDir(), "SKILL.md"),
+	); err == nil {
+		t.Fatal("ReadByPath(stale/outside path) should fail")
 	}
 
 	if got := RenderSection(nil); got != "" {

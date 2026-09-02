@@ -301,41 +301,66 @@ func (s *Service) ReadFull(name string) (SkillMetadata, string, error) {
 	if !ok {
 		return SkillMetadata{}, "", fmt.Errorf("skills: %q not found", name)
 	}
+	body, err := s.readBody(sk)
+	if err != nil {
+		return SkillMetadata{}, "", err
+	}
+	return sk, body, nil
+}
+
+// ReadByPath returns the metadata plus full SKILL.md body for one
+// discovered skill, identified by the exact path returned from List.
+// Like ReadFull it only serves paths in the current snapshot, so a
+// stale path from the UI cannot read an arbitrary file on disk.
+func (s *Service) ReadByPath(path string) (SkillMetadata, string, error) {
+	snap := s.snapshot.Load()
+	sk, ok := snap.byPath[path]
+	if !ok {
+		return SkillMetadata{}, "", fmt.Errorf("skills: %q not found", path)
+	}
+	body, err := s.readBody(sk)
+	if err != nil {
+		return SkillMetadata{}, "", err
+	}
+	return sk, body, nil
+}
+
+func (s *Service) readBody(sk SkillMetadata) (string, error) {
 	if strings.HasPrefix(sk.Path, "builtin://") {
 		body, err := readBuiltin(sk.Path)
 		if err != nil {
-			return SkillMetadata{}, "", fmt.Errorf("skills: read %s: %w", sk.Path, err)
+			return "", fmt.Errorf("skills: read %s: %w", sk.Path, err)
 		}
 		if len(body) > maxSkillFileBytes {
-			return SkillMetadata{}, "", fmt.Errorf(
+			return "", fmt.Errorf(
 				"skills: %s exceeds the %d-byte SKILL.md limit",
 				sk.Path, maxSkillFileBytes)
 		}
-		return sk, strings.TrimSpace(body), nil
+		return strings.TrimSpace(body), nil
 	}
 	snap := s.snapshot.Load()
 	resolved, err := filepath.EvalSymlinks(sk.Path)
 	if err != nil {
-		return SkillMetadata{}, "", fmt.Errorf("skills: resolve %s: %w", sk.Path, err)
+		return "", fmt.Errorf("skills: resolve %s: %w", sk.Path, err)
 	}
 	if !insideAnyRoot(resolved, snap.scanRoots) {
-		return SkillMetadata{}, "", fmt.Errorf(
+		return "", fmt.Errorf(
 			"skills: %q resolves outside the configured skill roots", sk.Path)
 	}
 	data, err := os.ReadFile(resolved)
 	if err != nil {
-		return SkillMetadata{}, "", fmt.Errorf("skills: read %s: %w", sk.Path, err)
+		return "", fmt.Errorf("skills: read %s: %w", sk.Path, err)
 	}
 	if len(data) > maxSkillFileBytes {
-		return SkillMetadata{}, "", fmt.Errorf(
+		return "", fmt.Errorf(
 			"skills: %s exceeds the %d-byte SKILL.md limit",
 			sk.Path, maxSkillFileBytes)
 	}
 	_, body, err := splitFrontmatter(data)
 	if err != nil {
-		return SkillMetadata{}, "", fmt.Errorf("skills: %s: %w", sk.Path, err)
+		return "", fmt.Errorf("skills: %s: %w", sk.Path, err)
 	}
-	return sk, strings.TrimSpace(string(body)), nil
+	return strings.TrimSpace(string(body)), nil
 }
 
 // RenderSection renders the per-turn "## Skills" metadata list. Bodies

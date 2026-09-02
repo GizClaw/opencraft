@@ -40,6 +40,13 @@ type assembledRuntime struct {
 	artifacts *ocsandbox.ArtifactObserver
 }
 
+// errInferenceUnconfigured marks an expected no-runtime state: a
+// workspace is open but the merged deployment has no inference targets
+// yet. The UI treats it like "no workspace" (emit ready and let the
+// settings page guide setup); background/headless callers surface it
+// as a normal error instead of assembling an invalid router.
+var errInferenceUnconfigured = errors.New("desktop: inference is not configured")
+
 // assembleRuntime loads the user configuration layer for wd, builds a
 // runtime with backend and usageObserver, and resolves the session /
 // agent / artifact resources. It is shared by the UI rebuild path and
@@ -65,6 +72,13 @@ func (a *App) assembleRuntime(
 	view, err := mgr.Load(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("desktop: load config: %w", err)
+	}
+	configured, err := config.RouterConfigured(view.Document)
+	if err != nil {
+		return nil, fmt.Errorf("desktop: inspect inference config: %w", err)
+	}
+	if !configured {
+		return nil, errInferenceUnconfigured
 	}
 	rt, err := app.BuildRuntime(ctx, view.Document,
 		app.WithConfigBase(mgr.UserDir()),

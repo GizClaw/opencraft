@@ -3,8 +3,11 @@ package desktop
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
+
+	session "github.com/GizClaw/flowcraft/core/runtime/session"
 )
 
 func TestWorkspaceHistoryRoundTrip(t *testing.T) {
@@ -164,6 +167,130 @@ func TestRebuildWithNoWorkspaceIsANoop(t *testing.T) {
 	app := &App{workDir: ""}
 	if err := app.rebuild(); err != nil {
 		t.Fatalf("rebuild with no workspace: %v", err)
+	}
+}
+
+func TestRemoveCurrentWorkspaceSwitchesToNext(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	history := filepath.Join(home, ".opencraft", "workspaces")
+	current := t.TempDir()
+	next := t.TempDir()
+	if err := saveWorkspaceMeta(history, current); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveWorkspaceMeta(history, next); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &App{workDir: current}
+	if err := a.RemoveWorkspace(workspaceID(current)); err != nil {
+		t.Fatalf("RemoveWorkspace(current): %v", err)
+	}
+	if got := a.snapshotWorkDir(); got != next {
+		t.Fatalf("work dir after removing current = %q, want %q", got, next)
+	}
+	metas, err := loadWorkspaces(history)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metas) != 1 || metas[0].Path != next {
+		t.Fatalf("history after removal = %+v, want only %q", metas, next)
+	}
+	if a.usage != nil {
+		_ = a.usage.Close()
+	}
+}
+
+func TestRemoveCurrentWorkspaceClosesWhenNoOther(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	history := filepath.Join(home, ".opencraft", "workspaces")
+	current := t.TempDir()
+	if err := saveWorkspaceMeta(history, current); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &App{workDir: current}
+	if err := a.RemoveWorkspace(workspaceID(current)); err != nil {
+		t.Fatalf("RemoveWorkspace(current): %v", err)
+	}
+	if got := a.snapshotWorkDir(); got != "" {
+		t.Fatalf("work dir after removing sole current = %q, want empty", got)
+	}
+	metas, err := loadWorkspaces(history)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metas) != 0 {
+		t.Fatalf("history after removal = %+v, want empty", metas)
+	}
+}
+
+func TestRemoveNonCurrentWorkspaceKeepsCurrent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	history := filepath.Join(home, ".opencraft", "workspaces")
+	current := t.TempDir()
+	other := t.TempDir()
+	if err := saveWorkspaceMeta(history, current); err != nil {
+		t.Fatal(err)
+	}
+	if err := saveWorkspaceMeta(history, other); err != nil {
+		t.Fatal(err)
+	}
+
+	a := &App{workDir: current}
+	if err := a.RemoveWorkspace(workspaceID(other)); err != nil {
+		t.Fatalf("RemoveWorkspace(other): %v", err)
+	}
+	if got := a.snapshotWorkDir(); got != current {
+		t.Fatalf("work dir after removing other = %q, want current %q", got, current)
+	}
+	metas, err := loadWorkspaces(history)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(metas) != 1 || metas[0].Path != current {
+		t.Fatalf("history after removal = %+v, want only %q", metas, current)
+	}
+}
+
+func TestCloseWorkspaceDefersWhileTurnRuns(t *testing.T) {
+	a := &App{
+		mu:      sync.Mutex{},
+		workDir: t.TempDir(),
+		turns:   map[string]*session.Turn{"run-1": {}},
+	}
+	if err := a.closeWorkspace(); err != nil {
+		t.Fatalf("closeWorkspace during turn: %v", err)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.pendingNoWorkspace || !a.pendingRebuild {
+		t.Fatal("close workspace must be deferred while a turn is running")
+	}
+	if a.workDir == "" {
+		t.Fatal("work dir must not clear until the deferred close applies")
+	}
+}
+
+func TestMaybeApplyPendingCloseWorkspaceWhenIdle(t *testing.T) {
+	a := &App{
+		mu:                 sync.Mutex{},
+		workDir:            t.TempDir(),
+		turns:              map[string]*session.Turn{},
+		pendingNoWorkspace: true,
+		pendingRebuild:     true,
+	}
+	a.maybeApplyPendingRebuild()
+	if got := a.snapshotWorkDir(); got != "" {
+		t.Fatalf("work dir after pending close = %q, want empty", got)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.pendingNoWorkspace || a.pendingRebuild {
+		t.Fatal("pending close must be consumed")
 	}
 }
 

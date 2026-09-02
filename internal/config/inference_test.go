@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GizClaw/flowcraft/core/deploy"
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/message"
 )
@@ -76,6 +77,81 @@ func TestNeeded(t *testing.T) {
 	needed, err = InferenceNeeded(dir)
 	if err != nil || !needed {
 		t.Fatalf("broken yaml: needed=%v err=%v, want true", needed, err)
+	}
+}
+
+func TestRouterConfigured(t *testing.T) {
+	tests := []struct {
+		name string
+		doc  string
+		want bool
+	}{
+		{
+			name: "no router",
+			doc:  "version: v1\nresources: {}\n",
+			want: false,
+		},
+		{
+			name: "router shell without targets",
+			doc: `version: v1
+resources:
+  router:
+    kind: inference.Router
+    impl: unified
+    settings:
+      retry:
+        generate:
+          max_attempts: 2
+`,
+			want: false,
+		},
+		{
+			name: "empty generate pool",
+			doc: `version: v1
+resources:
+  router:
+    kind: inference.Router
+    impl: unified
+    settings:
+      generate:
+        - tier: default
+          targets: []
+`,
+			want: false,
+		},
+		{
+			name: "generate target",
+			doc: `version: v1
+resources:
+  router:
+    kind: inference.Router
+    impl: unified
+    settings:
+      generate:
+        - tier: default
+          targets:
+            - model:
+                id:
+                  provider: deepseek-1
+                  name: deepseek-v4-flash
+`,
+			want: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			doc, err := deploy.Parse([]byte(tc.doc))
+			if err != nil {
+				t.Fatalf("parse doc: %v", err)
+			}
+			got, err := RouterConfigured(doc)
+			if err != nil {
+				t.Fatalf("RouterConfigured: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("RouterConfigured = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 

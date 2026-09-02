@@ -66,6 +66,49 @@ func TestInferenceProfileUpsertAndRemove(t *testing.T) {
 	}
 }
 
+func TestRebuildUnconfiguredAfterRemovingLastProfile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	userDir := filepath.Join(home, ".opencraft", "config")
+	if err := os.MkdirAll(userDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	a := fileManagerApp(t, userDir)
+	a.workDir = t.TempDir()
+	a.bridge = NewBridge()
+
+	// Simulate a plugin-owned inference profile as the only provider.
+	cfg := config.InferenceConfig{Instances: []config.Instance{{
+		StableID:  "sso-haivivi",
+		Type:      "deepseek",
+		KeySource: config.KeyEnv,
+		Enabled:   true,
+	}}}
+	if err := config.WriteInference(userDir, cfg); err != nil {
+		t.Fatalf("seed inference config: %v", err)
+	}
+
+	if err := a.removeInferenceProfile("sso-haivivi"); err != nil {
+		t.Fatalf("remove profile: %v", err)
+	}
+	if err := a.rebuild(); err != nil {
+		t.Fatalf("rebuild after removing last inference profile: %v", err)
+	}
+	needed, err := config.InferenceNeeded(userDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !needed {
+		t.Fatal("config must be reported as inference-needed after removing the last profile")
+	}
+	if a.ctrl != nil || a.sessions != nil {
+		t.Fatal("unconfigured rebuild must not leave a runtime assembled")
+	}
+	if a.usage != nil {
+		_ = a.usage.Close()
+	}
+}
+
 func TestInferenceProfileValidation(t *testing.T) {
 	a := fileManagerApp(t, t.TempDir())
 	base := pluginruntime.InferenceProfile{

@@ -8,6 +8,7 @@ package desktop
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -103,6 +104,9 @@ type App struct {
 	// pendingWorkDir carries a workspace switch requested while a run
 	// was active; it is applied once the last turn ends.
 	pendingWorkDir string
+	// pendingNoWorkspace carries a close-workspace request made while
+	// a run was active; it is applied once the last turn ends.
+	pendingNoWorkspace bool
 
 	// conversationID is the stable session context for the current
 	// conversation. Every turn in the conversation reuses it so
@@ -401,9 +405,10 @@ func (a *App) openUserDB() {
 }
 
 // rebuild loads the user configuration layer and assembles a fresh UI
-// runtime. Inference wiring is not required to start: an unconfigured
-// install builds with the embedded router shell and the UI guides the
-// user to the settings page.
+// runtime. Assembly is only attempted when a workspace is open and the
+// merged deployment has inference targets; without a workspace or
+// before inference is configured the app emits ready and the UI guides
+// the user (the embedded router shell cannot validate without pools).
 func (a *App) rebuild() error {
 	a.closeRuntime()
 
@@ -447,6 +452,12 @@ func (a *App) rebuild() error {
 		}
 	}
 	assembled, err := a.assembleRuntime(ctx, wd, a.bridge, a.onUsage)
+	if errors.Is(err, errInferenceUnconfigured) {
+		if a.bridge != nil {
+			a.bridge.Emit("ready", a.status(false))
+		}
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -484,9 +495,18 @@ func (a *App) maybeApplyPendingRebuild() {
 	}
 	pending := a.pendingRebuild
 	wd := a.pendingWorkDir
+	closeWorkspace := a.pendingNoWorkspace
 	a.pendingRebuild = false
 	a.pendingWorkDir = ""
+	a.pendingNoWorkspace = false
 	a.mu.Unlock()
+	if closeWorkspace {
+		if err := a.applyCloseWorkspace(); err != nil {
+			fmt.Fprintf(os.Stderr,
+				"opencraft: deferred workspace close failed: %v\n", err)
+		}
+		return
+	}
 	if wd != "" {
 		if err := a.applyOpenWorkspace(wd); err != nil {
 			fmt.Fprintf(os.Stderr,
@@ -537,6 +557,7 @@ func (a *App) closeRuntime() {
 	a.runUsage = make(map[string]ocsessions.Usage)
 	a.pendingRebuild = false
 	a.pendingWorkDir = ""
+	a.pendingNoWorkspace = false
 	a.mu.Unlock()
 
 	if broker != nil {

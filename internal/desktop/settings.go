@@ -166,6 +166,32 @@ func (a *App) Skills() ([]SkillDTO, error) {
 	return out, nil
 }
 
+// SkillContent returns the markdown body of one discovered SKILL.md so
+// the settings page can render a skill detail drawer. Paths are
+// resolved through the current skill snapshot only (never arbitrary
+// filesystem paths).
+func (a *App) SkillContent(skillPath string) (string, error) {
+	a.mu.Lock()
+	ctrl := a.ctrl
+	a.mu.Unlock()
+	if ctrl == nil || ctrl.Runtime() == nil {
+		return "", errors.New("runtime is not ready")
+	}
+	value, ok := ctrl.Runtime().Resource("skills")
+	if !ok {
+		return "", errors.New("skills resource is not available")
+	}
+	svc, ok := value.(*skills.Service)
+	if !ok {
+		return "", errors.New("skills resource is not available")
+	}
+	_, body, err := svc.ReadByPath(skillPath)
+	if err != nil {
+		return "", err
+	}
+	return body, nil
+}
+
 // DeleteSkill removes one non-builtin skill directory (by its
 // SKILL.md path as listed by Skills) and reloads the registry.
 func (a *App) DeleteSkill(skillPath string) error {
@@ -316,10 +342,46 @@ func (a *App) OpenWorkspace(dir string) error {
 		a.mu.Lock()
 		a.pendingWorkDir = dir
 		a.pendingRebuild = true
+		a.pendingNoWorkspace = false
 		a.mu.Unlock()
 		return nil
 	}
 	return a.applyOpenWorkspace(dir)
+}
+
+// closeWorkspace returns to the no-workspace state: the runtime is
+// closed and the UI shows the workspace picker / welcome screen. When
+// a turn is running, the close is deferred until the last turn ends.
+func (a *App) closeWorkspace() error {
+	a.mu.Lock()
+	active := len(a.turns) > 0
+	a.mu.Unlock()
+	if active {
+		a.mu.Lock()
+		a.pendingWorkDir = ""
+		a.pendingNoWorkspace = true
+		a.pendingRebuild = true
+		a.mu.Unlock()
+		a.invalidateBackgroundHosts()
+		return nil
+	}
+	return a.applyCloseWorkspace()
+}
+
+func (a *App) applyCloseWorkspace() error {
+	a.mu.Lock()
+	previous := a.conversationID
+	a.workDir = ""
+	a.mu.Unlock()
+	// closeRollouts takes a.mu itself; calling it while holding the
+	// lock would self-deadlock (sync.Mutex is not reentrant).
+	a.closeRollouts()
+	a.fireHooks(a.appContext(), hooks.EventSessionEnd, map[string]any{
+		"event":           hooks.EventSessionEnd,
+		"reason":          "workspace_close",
+		"conversation_id": previous,
+	})
+	return a.requestRebuild()
 }
 
 func (a *App) applyOpenWorkspace(dir string) error {
