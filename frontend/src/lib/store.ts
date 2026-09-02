@@ -87,6 +87,24 @@ const newID = (prefix: string) => `${prefix}-${Date.now()}-${msgSeq++}`;
 let turnSeq = 0;
 const newTurnID = () => `live-${++turnSeq}`;
 
+// MAX_CONV_MESSAGES bounds the in-memory transcript per conversation.
+// Older messages stay in the backend archive (sessionTurns) and can be
+// re-opened via resume; keeping them in the store would grow memory
+// without bound on long-running sessions.
+const MAX_CONV_MESSAGES = 800;
+
+// capConversation trims the oldest messages past the in-memory cap and
+// re-bases per-turn artifact strip indexes onto the trimmed array.
+function capConversation(conv: ConversationState): ConversationState {
+  if (conv.messages.length <= MAX_CONV_MESSAGES) return conv;
+  const drop = conv.messages.length - MAX_CONV_MESSAGES;
+  const messages = conv.messages.slice(drop);
+  const turnArtifacts = conv.turnArtifacts
+    .map((t) => ({ ...t, start: t.start - drop }))
+    .filter((t) => t.start >= 0);
+  return { ...conv, messages, turnArtifacts };
+}
+
 // normalizeArgs coerces the wire form of tool arguments to a string:
 // arguments is a json.RawMessage, so the frontend receives a parsed
 // object/array rather than text, and rendering it raw crashes React.
@@ -564,7 +582,7 @@ export const useStore = create<StoreState>((set, get) => {
       return {
         conversations: {
           ...state.conversations,
-          [id]: { ...conv, ...patch },
+          [id]: capConversation({ ...conv, ...patch }),
         },
       };
     });
@@ -941,18 +959,20 @@ export const useStore = create<StoreState>((set, get) => {
           set((state) => {
             const runConvs = { ...state.runConvs };
             delete runConvs[data.run_id ?? ''];
+            const conv = state.conversations[convID];
+            if (!conv) return state;
             return {
               runConvs,
               conversations: {
                 ...state.conversations,
-                [convID]: {
-                  ...state.conversations[convID],
+                [convID]: capConversation({
+                  ...conv,
                   messages,
                   busy: false,
                   activeRunID: null,
                   stage: '',
                   lastFailed: failed,
-                },
+                }),
               },
             };
           });
@@ -1149,14 +1169,14 @@ export const useStore = create<StoreState>((set, get) => {
           toolsView: null,
           conversations: {
             ...state.conversations,
-            [id]: {
+            [id]: capConversation({
               ...emptyConv(),
               mode,
               think,
               model,
               messages,
               turnArtifacts,
-            },
+            }),
           },
         }));
       } catch (err) {

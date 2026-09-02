@@ -6,8 +6,28 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/errdefs"
+
+	"github.com/GizClaw/opencraft/internal/runtime"
 )
+
+func confirmCtx(t *testing.T, choice string, cancelled bool) context.Context {
+	t.Helper()
+	meta := map[string]string{}
+	if cancelled {
+		meta[runtime.MetaStatus] = string(runtime.ReplyCancelled)
+	} else {
+		meta[runtime.MetaChoice] = choice
+	}
+	return agent.ContextWithHost(context.Background(), agent.HostFuncs{
+		AskUserFn: func(
+			context.Context, agent.UserPrompt,
+		) (agent.UserReply, error) {
+			return agent.UserReply{Metadata: meta}, nil
+		},
+	})
+}
 
 func testTool(t *testing.T) *Tool {
 	t.Helper()
@@ -26,7 +46,7 @@ func TestCreateToolDefinitionAndExecute(t *testing.T) {
 		t.Errorf("description should mention delegation: %s", desc.Description)
 	}
 
-	got, err := tool.Tools()[0].Execute(context.Background(),
+	got, err := tool.Tools()[0].Execute(confirmCtx(t, "yes", false),
 		`{"name":"researcher","description":"Summarizes code","graph":"{\"name\":\"g\",\"entry\":\"llm\",\"nodes\":[{\"id\":\"llm\",\"type\":\"inference\",\"config\":{\"system_prompt\":\"SP\"}}],\"edges\":[{\"from\":\"llm\",\"to\":\"__end__\"}]}"}`)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
@@ -63,7 +83,7 @@ func TestRemoveToolExecute(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	got, err := tool.Tools()[2].Execute(context.Background(),
+	got, err := tool.Tools()[2].Execute(confirmCtx(t, "yes", false),
 		`{"name":"worker"}`)
 	if err != nil {
 		t.Fatalf("Execute remove: %v", err)
@@ -95,7 +115,7 @@ func TestUpdateToolDefinitionAndExecute(t *testing.T) {
 		t.Errorf("description should mention flowcraft-config: %s", def.Description)
 	}
 
-	got, err := tool.Tools()[1].Execute(context.Background(),
+	got, err := tool.Tools()[1].Execute(confirmCtx(t, "yes", false),
 		`{"name":"worker","description":"new description","graph":"{\"name\":\"g2\",\"entry\":\"llm\",\"nodes\":[{\"id\":\"llm\",\"type\":\"inference\",\"config\":{\"system_prompt\":\"SP2\"}}],\"edges\":[{\"from\":\"llm\",\"to\":\"__end__\"}]}"}`)
 	if err != nil {
 		t.Fatalf("Execute update: %v", err)
@@ -118,11 +138,26 @@ func TestUpdateToolDefinitionAndExecute(t *testing.T) {
 
 func TestUpdateToolRequiresExistingAgent(t *testing.T) {
 	tool := testTool(t)
-	if _, err := tool.Tools()[1].Execute(context.Background(),
+	if _, err := tool.Tools()[1].Execute(confirmCtx(t, "yes", false),
 		`{"name":"ghost","description":"desc"}`); err == nil {
 		t.Fatal("update of missing agent succeeded")
 	} else if !errdefs.IsNotFound(err) {
 		t.Errorf("error = %v, want NotFound", err)
+	}
+}
+
+func TestCreateToolRequiresConfirmation(t *testing.T) {
+	tool := testTool(t)
+	out, err := tool.Tools()[0].Execute(confirmCtx(t, "", true),
+		`{"name":"sneaky","description":"d","graph":"{}"}`)
+	if err != nil {
+		t.Fatalf("Execute(cancelled): %v", err)
+	}
+	if !strings.Contains(out, `"cancelled":true`) {
+		t.Fatalf("cancelled output = %q", out)
+	}
+	if len(tool.lifecycle.List()) != 0 {
+		t.Fatal("cancelled create must not register an agent")
 	}
 }
 

@@ -3,11 +3,14 @@ package agents
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/tool"
+
+	"github.com/GizClaw/opencraft/internal/tools/confirm"
 )
 
 const (
@@ -98,6 +101,16 @@ func (t createTool) Execute(
 	if err := strictDecode(arguments, &args); err != nil {
 		return "", err
 	}
+	ok, err := confirm.Confirm(ctx, "Create subagent?",
+		fmt.Sprintf("Create persistent subagent %q (\"%s\")? Its graph "+
+			"definition persists under ~/.opencraft/agents and is "+
+			"re-registered on every startup.", args.Name, args.Description))
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return `{"cancelled":true,"action":"create"}`, nil
+	}
 	result, err := t.lifecycle.Create(ctx, AgentSpec{
 		Name:        args.Name,
 		Description: args.Description,
@@ -166,6 +179,15 @@ func (t updateTool) Execute(
 	if err := strictDecode(arguments, &args); err != nil {
 		return "", err
 	}
+	ok, err := confirm.Confirm(ctx, "Update subagent?",
+		fmt.Sprintf("Update persistent subagent %q? Its description and/or "+
+			"graph definition will be replaced.", args.Name))
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return `{"cancelled":true,"action":"update"}`, nil
+	}
 	result, err := t.lifecycle.Update(ctx, args.Name, args.Description, args.Graph)
 	if err != nil {
 		return "", err
@@ -213,6 +235,16 @@ func (t removeTool) Execute(
 	}
 	if err := strictDecode(arguments, &args); err != nil {
 		return "", err
+	}
+	ok, err := confirm.Confirm(ctx, "Remove subagent?",
+		fmt.Sprintf("Remove persistent subagent %q? In-flight delegations "+
+			"drain and its declaration under ~/.opencraft/agents is deleted.",
+			args.Name))
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return `{"cancelled":true,"action":"remove"}`, nil
 	}
 	if err := t.lifecycle.Remove(ctx, args.Name); err != nil {
 		return "", err

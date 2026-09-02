@@ -18,6 +18,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/sandbox"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/utils/extract"
+	"golang.org/x/net/http/httpproxy"
 )
 
 // Name is the canonical web_fetch tool name.
@@ -116,6 +117,23 @@ func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
 		if err := t.gate(ctx, u.Hostname()); err != nil {
 			return "", err
 		}
+		// The SSRF guard pins DNS to the validated addresses only on
+		// direct dials. Through an HTTP(S) proxy the transport dials the
+		// proxy instead, so the target would be re-resolved by the proxy
+		// and a DNS rebinding window would reopen. Fail closed: refuse
+		// proxy use while the guard is active. YOLO/allow_private paths
+		// resolve allowPrivate to true and are exempt (no SSRF concern).
+		if t.allowPrivate == nil || !t.allowPrivate(ctx) {
+			if proxy, err := envProxy(u.String()); err != nil {
+				return "", errdefs.Validationf(
+					"web_fetch: proxy resolution: %v", err)
+			} else if proxy != nil {
+				return "", errdefs.Validationf(
+					"web_fetch: the SSRF guard cannot pin DNS through proxy %s; "+
+						"unset HTTP(S)_PROXY/ALL_PROXY for this fetch or enable "+
+						"web_fetch.allow_private", proxy.Redacted())
+			}
+		}
 	}
 
 	var opts []extract.Option
@@ -163,7 +181,13 @@ func hardenedClient(
 ) *http.Client {
 	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
 	tr := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
+		// Re-read the environment on every request (httpproxy, unlike
+		// http.ProxyFromEnvironment, does not cache the first lookup), so
+		// the Execute-side proxy rejection and this transport agree on
+		// the current proxy configuration.
+		Proxy: func(req *http.Request) (*url.URL, error) {
+			return envProxy(req.URL.String())
+		},
 		DialContext:           pinnedDial(gate, allowPrivate, dialer),
 		DialTLSContext:        pinnedTLSDial(gate, allowPrivate, dialer),
 		MaxIdleConns:          10,
@@ -188,6 +212,17 @@ func hardenedClient(
 			return nil
 		},
 	}
+}
+
+// envProxy resolves the proxy configured for rawURL from the process
+// environment. It is a variable so tests can stub it without mutating
+// the process environment.
+var envProxy = func(rawURL string) (*url.URL, error) {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	return httpproxy.FromEnvironment().ProxyFunc()(u)
 }
 
 // pinnedDial resolves addr once, validates the resolved addresses

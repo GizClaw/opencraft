@@ -8,8 +8,28 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GizClaw/flowcraft/core/agent"
+
+	"github.com/GizClaw/opencraft/internal/runtime"
 	skillspkg "github.com/GizClaw/opencraft/internal/skills"
 )
+
+func confirmCtx(t *testing.T, choice string, cancelled bool) context.Context {
+	t.Helper()
+	meta := map[string]string{}
+	if cancelled {
+		meta[runtime.MetaStatus] = string(runtime.ReplyCancelled)
+	} else {
+		meta[runtime.MetaChoice] = choice
+	}
+	return agent.ContextWithHost(context.Background(), agent.HostFuncs{
+		AskUserFn: func(
+			context.Context, agent.UserPrompt,
+		) (agent.UserReply, error) {
+			return agent.UserReply{Metadata: meta}, nil
+		},
+	})
+}
 
 func newTestService(t *testing.T) *skillspkg.Service {
 	t.Helper()
@@ -81,7 +101,7 @@ func TestSkillSearchTool(t *testing.T) {
 func TestSkillCreateModifyTools(t *testing.T) {
 	svc := newTestService(t)
 	create := createTool{svc}
-	out, err := create.Execute(context.Background(),
+	out, err := create.Execute(confirmCtx(t, "yes", false),
 		`{"name":"qa","description":"run the qa checklist","body":"## Steps\n1. Build.\n2. Test.\n","files":{"scripts/run.py":"#!/usr/bin/env python3\nprint('ok')\n"},"executable":["scripts/run.py"]}`)
 	if err != nil {
 		t.Fatal(err)
@@ -107,7 +127,7 @@ func TestSkillCreateModifyTools(t *testing.T) {
 	}
 
 	modify := modifyTool{svc}
-	out, err = modify.Execute(context.Background(),
+	out, err = modify.Execute(confirmCtx(t, "yes", false),
 		`{"name":"qa","body":"## Steps\n1. Build.\n2. Test.\n3. Ship.\n","files":{"scripts/run.py":"#!/usr/bin/env python3\nprint('v2')\n"}}`)
 	if err != nil {
 		t.Fatal(err)
@@ -127,7 +147,7 @@ func TestSkillCreateModifyTools(t *testing.T) {
 	}
 
 	// Partial patch mode edits just one hunk of SKILL.md.
-	out, err = modify.Execute(context.Background(),
+	out, err = modify.Execute(confirmCtx(t, "yes", false),
 		`{"name":"qa","patch":"*** Begin Patch\n*** Update File: SKILL.md\n@@\n-3. Ship.\n+3. Ship to prod.\n*** End Patch\n"}`)
 	if err != nil {
 		t.Fatal(err)
@@ -144,20 +164,36 @@ func TestSkillCreateModifyTools(t *testing.T) {
 	}
 
 	// patch and body are mutually exclusive.
-	if _, err := modify.Execute(context.Background(),
+	if _, err := modify.Execute(confirmCtx(t, "yes", false),
 		`{"name":"qa","body":"x","patch":"*** Begin Patch\n*** End Patch\n"}`); err == nil {
 		t.Fatal("patch + body must be rejected")
 	}
 
 	// Invalid names are rejected.
-	if _, err := create.Execute(context.Background(),
+	if _, err := create.Execute(confirmCtx(t, "yes", false),
 		`{"name":"Bad Name","description":"x","body":"y"}`); err == nil {
 		t.Fatal("invalid name must fail")
 	}
 	// Unknown arguments are rejected.
-	if _, err := modify.Execute(context.Background(),
+	if _, err := modify.Execute(confirmCtx(t, "yes", false),
 		`{"name":"qa","body":"x","nope":1}`); err == nil {
 		t.Fatal("unknown argument must fail")
+	}
+}
+
+func TestSkillCreateRequiresConfirmation(t *testing.T) {
+	svc := newTestService(t)
+	create := createTool{svc}
+	out, err := create.Execute(confirmCtx(t, "", true),
+		`{"name":"sneaky","description":"d","body":"## X\n"}`)
+	if err != nil {
+		t.Fatalf("Execute(cancelled): %v", err)
+	}
+	if !strings.Contains(out, `"cancelled":true`) {
+		t.Fatalf("cancelled output = %q", out)
+	}
+	if _, _, err := svc.ReadFull("sneaky"); err == nil {
+		t.Fatal("cancelled create must not write a skill")
 	}
 }
 

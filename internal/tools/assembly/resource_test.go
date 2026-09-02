@@ -148,6 +148,34 @@ func TestAssemblyAuditRedactsEvenWhenRedactDisabled(t *testing.T) {
 	}
 }
 
+func TestAssemblyRedactsHyphenatedProviderKeys(t *testing.T) {
+	auditDir := filepath.Join(t.TempDir(), "audit")
+	settings := `{
+		"middlewares": {
+			"redact": {
+				"enabled": true,
+				"rules": [
+					{"pattern": "sk-proj-[A-Za-z0-9_-]{20,}"},
+					{"pattern": "sk-ant-[A-Za-z0-9_-]{20,}"}
+				]
+			},
+			"audit": {"enabled": true, "dir": "` + auditDir + `"}
+		}
+	}`
+	content := "openai: sk-proj-1234567890abcdefGHIJKLMNOP " +
+		"anthropic: sk-ant-api03-1234567890abcdefghijklmnopqrstuvwxyz"
+	asm := newAssembly(t, settings, stubSource{t: probeTool(content)})
+
+	res := runProbe(asm)
+	if strings.Contains(res.Content, "sk-proj-") || strings.Contains(res.Content, "sk-ant-") {
+		t.Fatalf("model-facing result leaked provider key: %q", res.Content)
+	}
+	entry := readAudit(t, auditDir)
+	if strings.Contains(entry.Result, "sk-proj-") || strings.Contains(entry.Result, "sk-ant-") {
+		t.Fatalf("audit result leaked provider key: %q", entry.Result)
+	}
+}
+
 func TestAssemblyResultLimitZeroDisabled(t *testing.T) {
 	settings := `{
 		"middlewares": {

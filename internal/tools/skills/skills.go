@@ -8,6 +8,7 @@ package skills
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/tool"
 
 	"github.com/GizClaw/opencraft/internal/skills"
+	"github.com/GizClaw/opencraft/internal/tools/confirm"
 )
 
 const (
@@ -196,7 +198,7 @@ func (installTool) Metadata() tool.ToolMeta {
 }
 
 func (t installTool) Execute(
-	_ context.Context, arguments string,
+	ctx context.Context, arguments string,
 ) (string, error) {
 	var args struct {
 		Repo  string `json:"repo"`
@@ -205,6 +207,19 @@ func (t installTool) Execute(
 	}
 	if err := strictDecode(arguments, &args, "repo", "scope", "path"); err != nil {
 		return "", err
+	}
+	scope := args.Scope
+	if scope == "" {
+		scope = "user"
+	}
+	ok, err := confirm.Confirm(ctx, "Install skill?",
+		fmt.Sprintf("Install skill from %q into the %s skill root%s?",
+			args.Repo, scope, subpathNote(args.Path)))
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return `{"cancelled":true,"action":"install"}`, nil
 	}
 	dst, err := t.svc.Install(args.Repo, args.Scope, args.Path)
 	if err != nil {
@@ -251,7 +266,7 @@ func (createTool) Metadata() tool.ToolMeta {
 }
 
 func (t createTool) Execute(
-	_ context.Context, arguments string,
+	ctx context.Context, arguments string,
 ) (string, error) {
 	var args struct {
 		Name        string            `json:"name"`
@@ -265,6 +280,15 @@ func (t createTool) Execute(
 		arguments, &args, "name", "description", "body", "scope", "files", "executable",
 	); err != nil {
 		return "", err
+	}
+	ok, err := confirm.Confirm(ctx, "Create skill?",
+		fmt.Sprintf("Create skill %q in the %s skill root with %d supporting file(s)?",
+			args.Name, scopeLabel(args.Scope), len(args.Files)))
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return `{"cancelled":true,"action":"create"}`, nil
 	}
 	path, err := t.svc.Create(args.Name, skills.SkillDocument{
 		Description: args.Description,
@@ -321,7 +345,7 @@ func (modifyTool) Metadata() tool.ToolMeta {
 }
 
 func (t modifyTool) Execute(
-	_ context.Context, arguments string,
+	ctx context.Context, arguments string,
 ) (string, error) {
 	var args struct {
 		Name        string            `json:"name"`
@@ -336,6 +360,15 @@ func (t modifyTool) Execute(
 		arguments, &args, "name", "description", "body", "scope", "files", "executable", "patch",
 	); err != nil {
 		return "", err
+	}
+	ok, err := confirm.Confirm(ctx, "Modify skill?",
+		fmt.Sprintf("Modify skill %q in the %s skill root?",
+			args.Name, scopeLabel(args.Scope)))
+	if err != nil {
+		return "", err
+	}
+	if !ok {
+		return `{"cancelled":true,"action":"modify"}`, nil
 	}
 	if strings.TrimSpace(args.Patch) != "" {
 		if strings.TrimSpace(args.Body) != "" ||
@@ -363,6 +396,20 @@ func (t modifyTool) Execute(
 	}
 	return "Updated skill " + args.Name + " at " + path +
 		". The registry reloaded; skill_read and skill_search now see the new content.", nil
+}
+
+func scopeLabel(scope string) string {
+	if scope == "" || scope == "repo" {
+		return "repo"
+	}
+	return scope
+}
+
+func subpathNote(path string) string {
+	if path == "" {
+		return ""
+	}
+	return " (subdirectory " + path + ")"
 }
 
 // strictDecode parses tool arguments and rejects unknown fields.

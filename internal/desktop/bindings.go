@@ -764,7 +764,7 @@ func (a *App) startTurn(
 	// Pre-turn manifest for artifact reconciliation: a git-free list of
 	// workspace files (path → size/mtime) captured before the turn, so
 	// waitTurn can find exec-produced documents afterwards.
-	manifest, _ := manifestSnapshot(ctx, wd)
+	manifest, manifestErr := manifestSnapshot(ctx, wd)
 	a.fireHooks(ctx, hooks.EventUserPromptSubmit, map[string]any{
 		"event":           hooks.EventUserPromptSubmit,
 		"conversation_id": contextID,
@@ -811,7 +811,9 @@ func (a *App) startTurn(
 	a.mu.Lock()
 	a.turns[turn.RunID()] = turn
 	a.preTurnSnap[turn.RunID()] = before
-	a.preTurnManifest[turn.RunID()] = manifest
+	if manifestErr == nil {
+		a.preTurnManifest[turn.RunID()] = manifest
+	}
 	a.runConvs[turn.RunID()] = contextID
 	if a.convRuns == nil {
 		a.convRuns = make(map[string]map[string]bool)
@@ -983,7 +985,10 @@ func openCommand(path string) *exec.Cmd {
 	case "darwin":
 		return exec.Command("open", path)
 	case "windows":
-		return exec.Command("cmd", "/c", "start", "", path)
+		// rundll32's FileProtocolHandler invokes ShellExecute semantics
+		// without going through cmd.exe, so a path containing shell
+		// metacharacters cannot be reinterpreted as a command line.
+		return exec.Command("rundll32", "url.dll,FileProtocolHandler", path)
 	default:
 		return exec.Command("xdg-open", path)
 	}

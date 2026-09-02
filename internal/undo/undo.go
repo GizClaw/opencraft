@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -26,6 +27,12 @@ const MaxFileBytes = 4 << 20
 
 // maxLiveEntries bounds retained snapshots per conversation.
 const maxLiveEntries = 20
+
+// maxUndoBytes is the global budget for all undo snapshots across every
+// conversation (live + undone). Oldest entries are pruned once the
+// budget is exceeded, so a workspace with many changed files cannot
+// fill the disk without bound.
+var maxUndoBytes = int64(256 << 20) // 256 MiB
 
 // FileState is one file's content at a snapshot point. Present=false
 // means the file did not exist (undo removes it, redo recreates it).
@@ -111,6 +118,7 @@ func (s *Store) Capture(
 		return 0, err
 	}
 	pruneLive(liveDir)
+	s.pruneGlobal()
 	return seq, nil
 }
 
@@ -135,9 +143,10 @@ func (s *Store) Undo(_ context.Context, contextID string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(undoneDir, 0o755); err != nil {
+	if err := os.MkdirAll(undoneDir, 0o700); err != nil {
 		return nil, fmt.Errorf("undo: mkdir redo dir: %w", err)
 	}
+	_ = os.Chmod(undoneDir, 0o700)
 	if err := os.Rename(
 		filepath.Join(liveDir, entryName(seq)),
 		filepath.Join(undoneDir, entryName(seq)),
@@ -171,9 +180,10 @@ func (s *Store) Redo(_ context.Context, contextID string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(liveDir, 0o755); err != nil {
+	if err := os.MkdirAll(liveDir, 0o700); err != nil {
 		return nil, fmt.Errorf("undo: mkdir live dir: %w", err)
 	}
+	_ = os.Chmod(liveDir, 0o700)
 	if err := os.Rename(
 		filepath.Join(undoneDir, entryName(seq)),
 		filepath.Join(liveDir, entryName(seq)),
@@ -206,7 +216,15 @@ func (s *Store) dirs(contextID string) (live, undone string, err error) {
 		return "", "", fmt.Errorf("undo: invalid context id %q", contextID)
 	}
 	base := filepath.Join(s.root, id)
-	return filepath.Join(base, "live"), filepath.Join(base, "undone"), nil
+	liveDir := filepath.Join(base, "live")
+	undoneDir := filepath.Join(base, "undone")
+	for _, dir := range []string{liveDir, undoneDir} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return "", "", fmt.Errorf("undo: mkdir %s: %w", dir, err)
+		}
+		_ = os.Chmod(dir, 0o700)
+	}
+	return liveDir, undoneDir, nil
 }
 
 // apply writes/deletes files per the given states. Skipped states are
@@ -271,9 +289,10 @@ func (s *Store) resolve(rel string) (string, error) {
 func entryName(seq int) string { return fmt.Sprintf("%06d.json", seq) }
 
 func writeEntry(path string, entry Entry) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("undo: mkdir: %w", err)
 	}
+	_ = os.Chmod(filepath.Dir(path), 0o700)
 	data, err := json.Marshal(entry)
 	if err != nil {
 		return fmt.Errorf("undo: encode entry: %w", err)
@@ -340,6 +359,48 @@ func pruneLive(dir string) {
 	}
 	for _, seq := range seqs[:len(seqs)-maxLiveEntries] {
 		_ = os.Remove(filepath.Join(dir, entryName(seq)))
+	}
+}
+
+// pruneGlobal removes the oldest undo entries across every
+// conversation once the total snapshot size exceeds maxUndoBytes. The
+// most recent entry is always kept even when it alone exceeds the
+// budget.
+func (s *Store) pruneGlobal() {
+	type entry struct {
+		path string
+		mod  time.Time
+		size int64
+	}
+	var entries []entry
+	var total int64
+	_ = filepath.WalkDir(s.root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		if !strings.HasSuffix(path, ".json") {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		entries = append(entries, entry{
+			path: path, mod: info.ModTime(), size: info.Size(),
+		})
+		total += info.Size()
+		return nil
+	})
+	if total <= maxUndoBytes || len(entries) <= 1 {
+		return
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].mod.Before(entries[j].mod)
+	})
+	for i := 0; i < len(entries)-1 && total > maxUndoBytes; i++ {
+		if err := os.Remove(entries[i].path); err == nil {
+			total -= entries[i].size
+		}
 	}
 }
 

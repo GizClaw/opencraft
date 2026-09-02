@@ -46,9 +46,10 @@ func truncateMiddleware(cfg TruncateSettings) tool.Middleware {
 				return res
 			}
 			path := filepath.Join(cfg.Dir, res.CallID+".output")
-			if err := os.MkdirAll(cfg.Dir, 0o755); err == nil {
+			if err := os.MkdirAll(cfg.Dir, 0o700); err == nil {
+				_ = os.Chmod(cfg.Dir, 0o700)
 				tmp := path + ".tmp"
-				if err := os.WriteFile(tmp, []byte(res.Content), 0o644); err == nil {
+				if err := os.WriteFile(tmp, []byte(res.Content), 0o600); err == nil {
 					_ = os.Rename(tmp, path)
 				}
 			}

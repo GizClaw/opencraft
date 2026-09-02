@@ -12,14 +12,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/tool"
 
 	"github.com/GizClaw/opencraft/internal/automations"
-	"github.com/GizClaw/opencraft/internal/runtime"
+	"github.com/GizClaw/opencraft/internal/tools/confirm"
 )
 
 // Name is the canonical tool name.
@@ -290,31 +289,7 @@ func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
 func (t *Tool) confirm(
 	ctx context.Context, title, body string,
 ) (bool, error) {
-	host, ok := agent.HostFromContext(ctx)
-	if !ok {
-		return false, errdefs.NotAvailablef(
-			"automation: no host in tool context")
-	}
-	rawOpts, _ := json.Marshal([]runtime.Option{
-		{Label: "Yes", Value: "yes"},
-		{Label: "No", Value: "no"},
-	})
-	reply, err := host.AskUser(ctx, agent.UserPrompt{
-		Parts:  []message.Part{message.TextPart{Text: body}},
-		Source: "opencraft.automation",
-		Metadata: map[string]string{
-			runtime.MetaKind:    string(runtime.KindConfirm),
-			runtime.MetaTitle:   title,
-			runtime.MetaOptions: string(rawOpts),
-		},
-	})
-	if err != nil {
-		return false, err
-	}
-	if reply.Metadata[runtime.MetaStatus] == string(runtime.ReplyCancelled) {
-		return false, nil
-	}
-	return reply.Metadata[runtime.MetaChoice] == "yes", nil
+	return confirm.Confirm(ctx, title, body)
 }
 
 func confirmTitle(action string) string {

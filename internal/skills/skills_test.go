@@ -597,3 +597,20 @@ func TestInstallRepoFlagRejected(t *testing.T) {
 		t.Fatal("non-existent repo path should fail later, not on the flag guard")
 	}
 }
+
+func TestOversizedSkillRejected(t *testing.T) {
+	big := strings.Repeat("x", maxSkillFileBytes+1)
+	if _, err := parseBytes("big/SKILL.md", []byte(
+		"---\nname: big\ndescription: d\n---\n\n"+big)); err == nil {
+		t.Fatal("oversized SKILL.md accepted by parseBytes")
+	}
+
+	root := t.TempDir()
+	path := writeSkill(t, root, "big", "name: big\ndescription: d\n")
+	if err := os.Truncate(path, maxSkillFileBytes+1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseFile(path); err == nil {
+		t.Fatal("oversized SKILL.md accepted by ParseFile")
+	}
+}

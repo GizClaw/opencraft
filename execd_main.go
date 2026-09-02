@@ -29,6 +29,8 @@ func runExecServer() {
 	workDir := fs.String("workdir", "", "working directory (default: current)")
 	sandboxPolicy := fs.String("sandbox-policy", "",
 		"JSON-encoded sandbox policy from the parent (writable paths + env policy)")
+	sandboxPolicyFile := fs.String("sandbox-policy-file", "",
+		"path to a 0600 JSON sandbox policy file from the parent; read once and removed")
 	parentPid := fs.Int("parent-pid", 0,
 		"exit when this parent process dies (0: disabled)")
 	if err := fs.Parse(os.Args[2:]); err != nil {
@@ -40,8 +42,21 @@ func runExecServer() {
 		execdFatal(1, "opencraft execd: seed config: %v", err)
 	}
 	var pol sandbox.SandboxPolicy
-	if *sandboxPolicy != "" {
-		if err := json.Unmarshal([]byte(*sandboxPolicy), &pol); err != nil {
+	var policyJSON string
+	if *sandboxPolicyFile != "" {
+		data, err := os.ReadFile(*sandboxPolicyFile)
+		if err != nil {
+			execdFatal(1, "opencraft execd: sandbox policy file: %v", err)
+		}
+		policyJSON = string(data)
+		// The policy is only needed at startup; remove it so it does
+		// not linger on disk (and is never visible through argv).
+		_ = os.Remove(*sandboxPolicyFile)
+	} else {
+		policyJSON = *sandboxPolicy
+	}
+	if policyJSON != "" {
+		if err := json.Unmarshal([]byte(policyJSON), &pol); err != nil {
 			execdFatal(1, "opencraft execd: sandbox policy: %v", err)
 		}
 	}

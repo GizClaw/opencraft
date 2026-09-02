@@ -159,6 +159,11 @@ resources:
           enabled: true
           rules:
             - pattern: "sk-(?:[A-Za-z0-9]{16,})"
+            # OpenAI project keys and Anthropic API keys contain hyphens
+            # (sk-proj-..., sk-ant-...), which the legacy sk- rule does
+            # not match.
+            - pattern: "sk-proj-[A-Za-z0-9_-]{20,}"
+            - pattern: "sk-ant-[A-Za-z0-9_-]{20,}"
             - pattern: "AKIA[0-9A-Z]{16}"
             - pattern: "gh[pousr]_[A-Za-z0-9]{20,}"
             - pattern: "xox[baprs]-[A-Za-z0-9-]{10,}"

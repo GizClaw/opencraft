@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 	"path/filepath"
 	"sort"
@@ -9,6 +10,15 @@ import (
 
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 )
+
+// maxManifestEntries bounds one per-turn workspace walk. Repos larger
+// than this skip artifact reconciliation instead of paying a full walk
+// twice per turn.
+const maxManifestEntries = 50_000
+
+// errManifestTooLarge reports that the workspace exceeded the
+// per-turn snapshot budget.
+var errManifestTooLarge = errors.New("manifest: workspace too large to snapshot")
 
 // fileStat identifies one workspace file for change detection. ModNs
 // is the modification time in Unix nanoseconds; Size plus ModNs catch
@@ -27,12 +37,17 @@ type fileStat struct {
 // followed.
 func manifestSnapshot(ctx context.Context, wd string) (map[string]fileStat, error) {
 	out := make(map[string]fileStat)
+	visited := 0
 	err := filepath.WalkDir(wd, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		visited++
+		if visited > maxManifestEntries {
+			return fs.SkipAll
 		}
 		if path == wd {
 			return nil
@@ -60,6 +75,9 @@ func manifestSnapshot(ctx context.Context, wd string) (map[string]fileStat, erro
 		}
 		return nil
 	})
+	if visited > maxManifestEntries {
+		return nil, errManifestTooLarge
+	}
 	return out, err
 }
 

@@ -10,8 +10,23 @@ import (
 	"github.com/GizClaw/flowcraft/core/secret"
 )
 
+// newKeyedBackend builds a file backend with a real encryption key, so
+// tests exercise the sealed format rather than the unusable nil-key
+// state.
+func newKeyedBackend(t *testing.T, dir string) *fileBackend {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	key, err := loadOrCreateKey(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &fileBackend{dir: dir, key: key}
+}
+
 func TestFileBackendRoundTrip(t *testing.T) {
-	b := &fileBackend{dir: t.TempDir()}
+	b := newKeyedBackend(t, t.TempDir())
 	if err := b.Set(context.Background(), "account-a", "value-a"); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
@@ -32,7 +47,7 @@ func TestFileBackendRoundTrip(t *testing.T) {
 
 func TestFileBackendNameCannotEscape(t *testing.T) {
 	dir := t.TempDir()
-	b := &fileBackend{dir: dir}
+	b := newKeyedBackend(t, dir)
 	// Names with separators and traversal attempts must stay inside the
 	// store directory (file names are sha256 hashes).
 	for _, name := range []string{"../outside", "a/b", `a\b`, ".."} {
@@ -48,14 +63,14 @@ func TestFileBackendNameCannotEscape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(entries) != 5 {
-		// 4 secret files + accounts.json index.
-		t.Fatalf("store dir has %d entries, want 5", len(entries))
+	if len(entries) != 6 {
+		// 4 secret files + accounts.json index + the encryption key.
+		t.Fatalf("store dir has %d entries, want 6", len(entries))
 	}
 }
 
 func TestStoreLookupAndFlags(t *testing.T) {
-	b := &fileBackend{dir: t.TempDir()}
+	b := newKeyedBackend(t, t.TempDir())
 	if err := b.Set(context.Background(), "x", "secret-x"); err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +165,7 @@ func TestManagerSetGetDelete(t *testing.T) {
 }
 
 func TestDeletePrefix(t *testing.T) {
-	b := &fileBackend{dir: t.TempDir()}
+	b := newKeyedBackend(t, t.TempDir())
 	ctx := context.Background()
 	for _, acc := range []string{
 		"auth/sso-haivivi/token",
@@ -187,5 +202,5 @@ func TestDeletePrefix(t *testing.T) {
 // newFileManager forces the file backend so tests stay hermetic on
 // every platform (NewManager picks the macOS Keychain on darwin).
 func newFileManager(dir string) *Manager {
-	return &Manager{store: Store{backend: &fileBackend{dir: dir}}}
+	return NewFileManager(dir)
 }

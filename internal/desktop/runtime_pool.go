@@ -385,7 +385,7 @@ func (h *backgroundHost) runTurn(
 		think = ""
 	}
 	before := gitSnapshot(ctx, h.workDir)
-	manifest, _ := manifestSnapshot(ctx, h.workDir)
+	manifest, manifestErr := manifestSnapshot(ctx, h.workDir)
 
 	key := coresession.Key{AgentID: "assistant", ContextID: contextID}
 	lease, err := ctrl.Runtime().Sessions().Open(ctx, key)
@@ -424,7 +424,9 @@ func (h *backgroundHost) runTurn(
 	a.mu.Lock()
 	h.turns[turn.RunID()] = turn
 	h.preTurnSnap[turn.RunID()] = before
-	h.preTurnManifest[turn.RunID()] = manifest
+	if manifestErr == nil {
+		h.preTurnManifest[turn.RunID()] = manifest
+	}
 	h.runConvs[turn.RunID()] = contextID
 	wd := h.workDir
 	// Runs in the currently open workspace must be resumable from the

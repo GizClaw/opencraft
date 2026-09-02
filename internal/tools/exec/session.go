@@ -20,6 +20,10 @@ const SessionName = "exec_session"
 // handle and its output buffer).
 const maxSessions = 64
 
+// maxReadBytes caps one session read so a single call cannot request
+// an unbounded output window from the sandbox backend.
+const maxReadBytes = 1 << 20 // 1 MiB
+
 // SessionTool manages named sessions on one environment. It is safe
 // for concurrent use.
 type SessionTool struct {
@@ -187,6 +191,9 @@ func (t *SessionTool) read(ctx context.Context, a args) (any, error) {
 	maxBytes := 4096
 	if a.MaxBytes != nil {
 		maxBytes = *a.MaxBytes
+	}
+	if maxBytes <= 0 || maxBytes > maxReadBytes {
+		maxBytes = maxReadBytes
 	}
 	out, err := proc.Read(ctx, after, maxBytes)
 	if err != nil {
