@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentType } from 'react';
 import {
   Bot,
@@ -8,9 +8,11 @@ import {
   Download,
   ExternalLink,
   Loader2,
+  MoreHorizontal,
   Plug,
   Puzzle,
   RotateCw,
+  Search,
   Sparkles,
   Trash2,
   Workflow,
@@ -26,6 +28,7 @@ import type { MCPCatalogEntry, SkillCatalogEntry } from '../lib/catalog';
 import { GitHubSearch } from './GitHubSearch';
 import type { GitHubRepo } from './GitHubSearch';
 import { probeMCPServerLaunch } from './GitHubSearch';
+import { SkillDetailDrawer } from './SkillDetailDrawer';
 import { PluginManager } from '../plugins/components/PluginManager';
 const AgentGraphEditor = lazy(() =>
   import('./GraphView').then((m) => ({ default: m.AgentGraphEditor })),
@@ -707,6 +710,10 @@ export function SkillsSection() {
   const [subpath, setSubpath] = useState('');
   const [installing, setInstalling] = useState(false);
   const [discoverOpen, setDiscoverOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [selectedSkill, setSelectedSkill] = useState<SkillRow | null>(null);
   const installedNames = useMemo(
     () => new Set(skills.map((s) => s.name)),
     [skills],
@@ -729,9 +736,30 @@ export function SkillsSection() {
   const isCatalogSkillInstalled = (entry: SkillCatalogEntry) =>
     installedNames.has(entry.name) || installedDirs.has(entry.name);
 
+  const filteredSkills = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return skills;
+    return skills.filter((s) =>
+      [s.name, s.description, s.path, s.scope, s.plugin_id, s.plugin_name].some(
+        (v) => v?.toLowerCase().includes(q),
+      ),
+    );
+  }, [query, skills]);
+
   useEffect(() => {
     void reloadSkills();
   }, []);
+
+  useEffect(() => {
+    if (!menuFor) return;
+    const onDown = (e: PointerEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuFor(null);
+      }
+    };
+    document.addEventListener('pointerdown', onDown);
+    return () => document.removeEventListener('pointerdown', onDown);
+  }, [menuFor]);
 
   const reloadSkills = () => {
     setError('');
@@ -807,72 +835,41 @@ export function SkillsSection() {
   };
 
   return (
-    <div className="space-y-3">
+    <div className="flex flex-col gap-4">
       <div className="flex items-start justify-between gap-3">
-        <p className="text-xs text-dim">{t('config.skillsHint')}</p>
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={() => setImportOpen((v) => !v)}
-            className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
-          >
-            <Download size="1.0000rem" />
-            {t('config.skillsImport')}
-          </button>
+        <p className="min-w-0 flex-1 text-xs text-dim">
+          {t('config.skillsHint')}
+        </p>
+        <div className="flex shrink-0 items-center gap-2">
           <button
             onClick={() => void reloadSkills()}
-            className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
+            className="flex items-center gap-1.5 rounded-lg border border-edge bg-panel2 px-2.5 py-1 text-xs text-dim hover:text-fg"
           >
-            <RotateCw size="1.0000rem" />
+            <RotateCw size="0.8571rem" />
             {t('config.skillsRefresh')}
+          </button>
+          <button
+            onClick={() => setImportOpen(true)}
+            className="flex items-center gap-1.5 rounded-lg bg-accent px-2.5 py-1 text-xs text-white hover:opacity-90"
+          >
+            <Download size="0.8571rem" />
+            {t('config.skillsImport')}
           </button>
         </div>
       </div>
-      {importOpen && (
-        <div className="rounded-xl border border-edge bg-panel2 p-3 space-y-2">
-          <p className="text-xs text-dim">{t('config.skillsImportHint')}</p>
-          <input
-            value={repo}
-            onChange={(e) => setRepo(e.target.value)}
-            placeholder={t('config.skillsImportRepo')}
-            className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
-          />
-          <div className="flex gap-2">
-            <select
-              value={scope}
-              onChange={(e) => setScope(e.target.value)}
-              title={t('config.skillsImportScope')}
-              className="rounded-lg border border-edge bg-panel px-2 py-1.5 text-sm outline-none"
-            >
-              <option value="user">{t('config.skillsImportScopeUser')}</option>
-              <option value="repo">{t('config.skillsImportScopeRepo')}</option>
-            </select>
-            <input
-              value={subpath}
-              onChange={(e) => setSubpath(e.target.value)}
-              placeholder={t('config.skillsImportSubpath')}
-              className="flex-1 min-w-0 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => void installSkill()}
-              disabled={installing}
-              className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-50"
-            >
-              {installing && (
-                <Loader2 size="1.0000rem" className="animate-spin" />
-              )}
-              {t('config.skillsImportRun')}
-            </button>
-            <button
-              onClick={() => setImportOpen(false)}
-              className="rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
-            >
-              {t('interact.cancel')}
-            </button>
-          </div>
-        </div>
-      )}
+      {error && <p className="text-xs text-err">{error}</p>}
+      <div className="relative">
+        <Search
+          size="0.8571rem"
+          className="absolute left-2.5 top-1/2 -translate-y-1/2 text-dim"
+        />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={t('config.skillsSearch')}
+          className="w-full rounded-lg border border-edge bg-panel pl-8 pr-3 py-1.5 text-sm outline-none focus:border-accent"
+        />
+      </div>
       <div className="rounded-xl border border-edge bg-panel2">
         <button
           onClick={() => setDiscoverOpen((v) => !v)}
@@ -929,69 +926,213 @@ export function SkillsSection() {
           </div>
         )}
       </div>
-      {error && <p className="text-xs text-err">{error}</p>}
-      {skills.length === 0 ? (
-        <p className="text-sm text-dim">{t('config.skillsEmpty')}</p>
+      {filteredSkills.length === 0 ? (
+        <div className="rounded-xl border border-edge bg-panel2 p-6 text-center text-sm text-dim">
+          {skills.length === 0
+            ? t('config.skillsEmpty')
+            : t('config.skillsSearchEmpty')}
+        </div>
       ) : (
-        skills.map((s) => (
-          <div
-            key={s.name}
-            className="rounded-xl border border-edge bg-panel2 p-3"
-            title={s.path}
-          >
-            <div className="flex items-center gap-2">
-              <Sparkles size="1.0714rem" className="text-accent shrink-0" />
-              <span className="text-sm font-medium">{s.name}</span>
-              {s.plugin_id ? (
-                <span className="rounded bg-accent/10 border border-accent/30 px-1.5 text-xs text-accent">
-                  {t('config.skillsPluginFrom', {
-                    name: s.plugin_name || s.plugin_id,
-                  })}
-                </span>
-              ) : (
-                <span className="rounded bg-panel border border-edge px-1.5 text-xs text-dim">
-                  {s.scope}
-                </span>
-              )}
-              <span className="flex-1" />
-              {s.scope !== 'builtin' && !s.plugin_id && (
-                <button
-                  onClick={() =>
-                    setSkillToDelete({ name: s.name, path: s.path })
-                  }
-                  className="flex items-center gap-1 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim hover:text-err hover:border-err/40"
-                >
-                  <Trash2 size="0.8571rem" />
-                  {t('config.skillsDelete')}
-                </button>
-              )}
-            </div>
-            {s.description && (
-              <p className="text-xs text-dim mt-1">{s.description}</p>
-            )}
-          </div>
-        ))
+        <ul className="flex flex-col gap-2">
+          {filteredSkills.map((s) => {
+            const removable = s.scope !== 'builtin' && !s.plugin_id;
+            const scopeLabel =
+              s.scope === 'builtin'
+                ? t('config.skillsScopeBuiltin')
+                : s.scope === 'user'
+                  ? t('config.skillsScopeUser')
+                  : s.scope === 'repo'
+                    ? t('config.skillsScopeRepo')
+                    : s.scope;
+            return (
+              <li
+                key={s.path}
+                className="rounded-xl border border-edge bg-panel2 p-3 transition-colors hover:border-accent/40"
+              >
+                <div className="flex items-start gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedSkill(s)}
+                    className="flex min-w-0 flex-1 items-start gap-2 text-left"
+                    title={s.name}
+                  >
+                    <Sparkles
+                      size="1.0714rem"
+                      className="mt-0.5 shrink-0 text-accent"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex flex-wrap items-center gap-1.5">
+                        <span className="min-w-0 truncate text-sm font-semibold">
+                          {s.name}
+                        </span>
+                        {s.plugin_id ? (
+                          <span className="shrink-0 rounded border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[0.7143rem] text-accent">
+                            {t('config.skillsPluginFrom', {
+                              name: s.plugin_name || s.plugin_id,
+                            })}
+                          </span>
+                        ) : (
+                          <span className="shrink-0 rounded border border-edge bg-panel px-1.5 py-0.5 text-[0.7143rem] text-dim">
+                            {scopeLabel}
+                          </span>
+                        )}
+                      </span>
+                      <span
+                        className="mt-0.5 block truncate font-mono text-xs text-dim"
+                        title={s.path}
+                      >
+                        {s.path}
+                      </span>
+                      {s.description && (
+                        <span
+                          className="mt-1 block truncate text-xs text-dim"
+                          title={s.description}
+                        >
+                          {s.description}
+                        </span>
+                      )}
+                    </span>
+                  </button>
+                  {removable && (
+                    <div className="relative shrink-0">
+                      <button
+                        onClick={() =>
+                          setMenuFor(menuFor === s.path ? null : s.path)
+                        }
+                        aria-label={t('config.skillsMore')}
+                        title={t('config.skillsMore')}
+                        className="rounded-lg p-1.5 text-dim hover:bg-panel hover:text-fg"
+                      >
+                        <MoreHorizontal size="1.0000rem" />
+                      </button>
+                      {menuFor === s.path && (
+                        <div
+                          ref={menuRef}
+                          className="absolute right-0 top-full z-40 mt-1.5 w-44 rounded-lg border border-edge bg-panel p-1 shadow-xl"
+                        >
+                          <button
+                            onClick={() => {
+                              setMenuFor(null);
+                              setSkillToDelete({ name: s.name, path: s.path });
+                            }}
+                            className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-dim hover:bg-err/10 hover:text-err"
+                          >
+                            <Trash2 size="0.8571rem" className="shrink-0" />
+                            <span className="flex-1 text-left">
+                              {t('config.skillsDelete')}
+                            </span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                {skillToDelete?.path === s.path && (
+                  <div className="mt-2 flex items-center gap-2 rounded-lg border border-err/40 bg-err/10 px-2 py-1.5 text-xs text-dim">
+                    <span className="min-w-0 flex-1 truncate">
+                      {t('config.skillsDeleteConfirm', { name: s.name })}
+                    </span>
+                    <button
+                      onClick={() => void deleteSkill(s.path)}
+                      className="shrink-0 rounded bg-err px-2 py-1 text-white hover:opacity-90"
+                    >
+                      {t('config.skillsDelete')}
+                    </button>
+                    <button
+                      onClick={() => setSkillToDelete(null)}
+                      className="shrink-0 rounded border border-edge px-2 py-1 hover:text-fg"
+                    >
+                      {t('interact.cancel')}
+                    </button>
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
       )}
-      {skillToDelete && (
-        <div className="rounded-xl border border-err/40 bg-panel2 p-4">
-          <p className="text-sm">
-            {t('config.skillsDeleteConfirm', {
-              name: skillToDelete.name,
-            })}
-          </p>
-          <div className="mt-3 flex gap-2">
-            <button
-              onClick={() => setSkillToDelete(null)}
-              className="rounded-lg border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg"
-            >
-              {t('interact.cancel')}
-            </button>
-            <button
-              onClick={() => void deleteSkill(skillToDelete.path)}
-              className="rounded-lg bg-err px-4 py-1.5 text-sm text-white hover:opacity-90"
-            >
-              {t('config.skillsDelete')}
-            </button>
+      {selectedSkill && (
+        <SkillDetailDrawer
+          skill={selectedSkill}
+          onClose={() => setSelectedSkill(null)}
+        />
+      )}
+      {importOpen && (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-6"
+          onClick={() => setImportOpen(false)}
+        >
+          <div
+            className="w-[34rem] max-w-full rounded-2xl border border-edge bg-panel shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-edge px-4 py-3">
+              <h3 className="text-sm font-semibold">
+                {t('config.skillsImport')}
+              </h3>
+              <button
+                onClick={() => setImportOpen(false)}
+                className="text-dim hover:text-fg"
+                aria-label={t('tools.close')}
+              >
+                <X size="1.1429rem" />
+              </button>
+            </div>
+            <div className="flex flex-col gap-3 p-4">
+              <p className="text-xs text-dim">{t('config.skillsImportHint')}</p>
+              <input
+                value={repo}
+                onChange={(e) => setRepo(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void installSkill();
+                }}
+                placeholder={t('config.skillsImportRepo')}
+                className="w-full rounded-lg border border-edge bg-panel2 px-2.5 py-1.5 text-xs outline-none focus:border-accent"
+                autoFocus
+              />
+              <div className="flex gap-2">
+                <select
+                  value={scope}
+                  onChange={(e) => setScope(e.target.value)}
+                  title={t('config.skillsImportScope')}
+                  className="shrink-0 rounded-lg border border-edge bg-panel2 px-2 py-1.5 text-xs outline-none"
+                >
+                  <option value="user">
+                    {t('config.skillsImportScopeUser')}
+                  </option>
+                  <option value="repo">
+                    {t('config.skillsImportScopeRepo')}
+                  </option>
+                </select>
+                <input
+                  value={subpath}
+                  onChange={(e) => setSubpath(e.target.value)}
+                  placeholder={t('config.skillsImportSubpath')}
+                  className="min-w-0 flex-1 rounded-lg border border-edge bg-panel2 px-2.5 py-1.5 text-xs outline-none focus:border-accent"
+                />
+              </div>
+              {error && (
+                <p className="text-[0.7857rem] text-err break-words">{error}</p>
+              )}
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setImportOpen(false)}
+                  className="rounded-lg px-3 py-1.5 text-xs text-dim hover:text-fg"
+                >
+                  {t('config.cancel')}
+                </button>
+                <button
+                  onClick={() => void installSkill()}
+                  disabled={installing || !repo.trim()}
+                  className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs text-white hover:opacity-90 disabled:opacity-50"
+                >
+                  {installing && (
+                    <Loader2 size="0.8571rem" className="animate-spin" />
+                  )}
+                  {t('config.skillsImportRun')}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

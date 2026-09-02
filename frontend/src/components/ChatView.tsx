@@ -1330,7 +1330,7 @@ export function ChatView() {
                         className="fixed inset-0 z-30"
                         onClick={() => setModelMenuOpen(false)}
                       />
-                      <div className="absolute bottom-full left-0 z-40 mb-1.5 w-64 rounded-xl border border-edge bg-panel p-1.5 shadow-xl">
+                      <div className="absolute bottom-full right-0 z-40 mb-1.5 w-64 rounded-xl border border-edge bg-panel p-1.5 shadow-xl">
                         <div className="px-2 pb-1 pt-1.5 text-[0.7143rem] uppercase tracking-wider text-dim">
                           {t('chat.modelLabel')}
                         </div>

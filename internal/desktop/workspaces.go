@@ -194,7 +194,10 @@ func lastWorkspaceFromDir(dir string) string {
 }
 
 // RemoveWorkspace drops one workspace from the history (the workspace
-// itself is untouched). The id must be a stable hex workspace id.
+// itself is untouched). Removing the currently open workspace closes it
+// too: the app switches to the most recent remaining workspace, or
+// returns to the no-workspace welcome state when none is left. The id
+// must be a stable hex workspace id.
 func (a *App) RemoveWorkspace(id string) error {
 	id = strings.TrimSpace(id)
 	if id == "" || !isWorkspaceID(id) {
@@ -204,7 +207,42 @@ func (a *App) RemoveWorkspace(id string) error {
 	if err != nil {
 		return err
 	}
-	return removeWorkspaceMeta(dir, id)
+	current := a.snapshotWorkDir()
+	if current == "" || workspaceID(current) != id {
+		return removeWorkspaceMeta(dir, id)
+	}
+	next, ok, err := nextWorkspaceAfterRemoval(dir, id)
+	if err != nil {
+		return err
+	}
+	if err := removeWorkspaceMeta(dir, id); err != nil {
+		return err
+	}
+	if ok {
+		return a.OpenWorkspace(next)
+	}
+	return a.closeWorkspace()
+}
+
+// nextWorkspaceAfterRemoval returns the most recently opened existing
+// workspace other than removeID. Stale history entries whose directory
+// no longer exists are skipped.
+func nextWorkspaceAfterRemoval(
+	dir, removeID string,
+) (string, bool, error) {
+	metas, err := loadWorkspaces(dir)
+	if err != nil {
+		return "", false, err
+	}
+	for _, m := range metas {
+		if m.ID == removeID {
+			continue
+		}
+		if info, err := os.Stat(m.Path); err == nil && info.IsDir() {
+			return m.Path, true, nil
+		}
+	}
+	return "", false, nil
 }
 
 // ProjectConfigStatus reports whether a project configuration layer

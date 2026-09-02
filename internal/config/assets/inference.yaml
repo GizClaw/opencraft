@@ -61,8 +61,10 @@ resources:
       provider.qwen: provider.qwen
   # Router shell: the retry/fallback policy is fixed; the generate
   # targets come from the setup-written user layer (keyed providers in
-  # priority order). Without targets the router validates no pools, so
-  # startup is guided by the settings page.
+  # priority order). Without targets the router cannot validate ("no
+  # pools"), so the desktop treats this state as unconfigured and
+  # defers full runtime assembly until the settings page writes
+  # targets.
   router:
     kind: inference.Router
     impl: unified

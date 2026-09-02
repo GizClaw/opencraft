@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"errors"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -40,6 +41,20 @@ func TestBackgroundHostForMissingWorkspace(t *testing.T) {
 	}
 	if len(a.backgroundHosts) != 0 {
 		t.Fatalf("pool must stay empty, got %d hosts", len(a.backgroundHosts))
+	}
+}
+
+func TestBackgroundHostUnconfiguredInferenceFails(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	a := newPoolTestApp()
+	a.userDir = filepath.Join(home, ".opencraft", "config")
+	_, err := a.assembleBackgroundHost(t.TempDir())
+	if !errors.Is(err, errInferenceUnconfigured) {
+		t.Fatalf("background host error = %v, want errInferenceUnconfigured", err)
+	}
+	if len(a.backgroundHosts) != 0 {
+		t.Fatalf("failed assembly must not leave a pooled host, got %d", len(a.backgroundHosts))
 	}
 }
 

@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -16,10 +17,18 @@ func TestOpenWorkspaceDoesNotSelfDeadlock(t *testing.T) {
 	work := t.TempDir()
 	a := fileManagerApp(t, t.TempDir())
 	a.workDir = work
-	// A missing user config dir makes rebuild fail fast (before the
-	// runtime/execd machinery starts), so the test only exercises the
-	// lock handoff: any return means no deadlock.
-	a.userDir = filepath.Join(t.TempDir(), "missing")
+	// An unparseable user config makes rebuild fail before the
+	// runtime/execd machinery starts (an absent config is now a valid
+	// unconfigured state), so the test only exercises the lock
+	// handoff: any return means no deadlock.
+	a.userDir = t.TempDir()
+	if err := os.WriteFile(
+		filepath.Join(a.userDir, "opencraft.yaml"),
+		[]byte(":: not yaml ["),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
 
 	done := make(chan error, 1)
 	go func() { done <- a.OpenWorkspace(work) }()
