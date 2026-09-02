@@ -7,12 +7,30 @@ import { Check, Copy } from 'lucide-react';
 // Markdown renders assistant content with GFM. Code blocks get a copy
 // button, syntax highlighting via rehype-highlight, and tables are
 // wrapped so they scroll instead of overflowing the chat column.
-export const Markdown = memo(function Markdown({ text }: { text: string }) {
+// disableNavigation keeps anchors clickable but suppresses the default
+// navigation for surfaces where local references must not leave the app.
+export const Markdown = memo(function Markdown({
+  text,
+  disableNavigation = false,
+}: {
+  text: string;
+  disableNavigation?: boolean;
+}) {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       rehypePlugins={[rehypeHighlight]}
       components={{
+        a: ({ href, children }) => (
+          <a
+            href={href}
+            onClick={
+              disableNavigation ? (event) => event.preventDefault() : undefined
+            }
+          >
+            {children}
+          </a>
+        ),
         pre: CodeBlock,
         table: (props) => (
           <div className="overflow-x-auto">

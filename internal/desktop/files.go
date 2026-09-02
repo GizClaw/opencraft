@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -144,6 +145,99 @@ func (a *App) OpenPath(path string) error {
 	// Detach so the launcher process does not linger as a zombie.
 	_ = cmd.Process.Release()
 	return nil
+}
+
+// SaveArtifactAs copies a workspace artifact to a user-selected
+// destination via the native save dialog.
+func (a *App) SaveArtifactAs(path string) (string, error) {
+	src, err := a.workspaceRegularFile(path)
+	if err != nil {
+		return "", err
+	}
+	texts := a.desktopTexts()
+	dest, err := wailsruntime.SaveFileDialog(
+		a.appContext(),
+		wailsruntime.SaveDialogOptions{
+			Title:                texts.saveArtifactTitle,
+			DefaultFilename:      filepath.Base(src),
+			DefaultDirectory:     filepath.Dir(src),
+			CanCreateDirectories: true,
+		},
+	)
+	if err != nil {
+		return "", err
+	}
+	if dest == "" {
+		return "", nil
+	}
+	if filepath.Clean(dest) == filepath.Clean(src) {
+		return dest, nil
+	}
+	if err := copyRegularFile(src, dest); err != nil {
+		return "", err
+	}
+	return dest, nil
+}
+
+// RevealArtifact highlights the artifact in the platform file manager
+// (Finder, Explorer, or the Linux file manager).
+func (a *App) RevealArtifact(path string) error {
+	resolved, err := a.workspaceRegularFile(path)
+	if err != nil {
+		return err
+	}
+	return revealInFileManager(resolved)
+}
+
+// OpenArtifactWith opens the platform "Open With" flow. The concrete
+// behavior is per-platform: macOS asks for an app, Windows opens the
+// Open With dialog, and Linux falls back to the default opener when no
+// portable chooser is available.
+func (a *App) OpenArtifactWith(path string) error {
+	resolved, err := a.workspaceRegularFile(path)
+	if err != nil {
+		return err
+	}
+	return openArtifactWith(resolved, a.desktopTexts().openWithPrompt)
+}
+
+func (a *App) workspaceRegularFile(path string) (string, error) {
+	wd := a.snapshotWorkDir()
+	resolved, err := resolveInWorkspace(wd, path)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("%s is not a regular file", resolved)
+	}
+	return resolved, nil
+}
+
+func copyRegularFile(src, dest string) error {
+	info, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = in.Close() }()
+	out, err := os.OpenFile(
+		dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(out, in)
+	closeErr := out.Close()
+	if copyErr != nil {
+		return copyErr
+	}
+	return closeErr
 }
 
 // OpenExternal opens a URL in the system default browser. Only

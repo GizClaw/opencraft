@@ -114,7 +114,7 @@ export function SkillDetailDrawer({
               </p>
             ) : (
               <div className="prose-chat text-sm">
-                <Markdown text={body} />
+                <Markdown text={body} disableNavigation />
               </div>
             )}
           </section>

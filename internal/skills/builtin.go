@@ -8,11 +8,11 @@ import (
 	"strings"
 )
 
-// builtinFS holds the system skills shipped with opencraft
-// (P1-3: embedded system skills, e.g. plan and code-review). They
-// never touch disk: metadata is registered statically and ReadFull
-// serves the body straight from the binary, so there is no writable
-// "system" area on disk for the model to tamper with.
+// builtinFS holds the system skills shipped with opencraft (plan,
+// skill-creator, skill-installer). They never touch disk: metadata is
+// registered statically and ReadFull serves the body straight from the
+// binary, so there is no writable "system" area on disk for the model
+// to tamper with.
 //
 //go:embed assets/skills
 var builtinFS embed.FS

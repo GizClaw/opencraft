@@ -70,8 +70,8 @@ func TestDiscoverRepoLevelsAndUserDirs(t *testing.T) {
 	if !ok || !strings.Contains(dup.Path, filepath.Join("sub", "dir")) {
 		t.Fatalf("ByName(dup) = %q, want cwd-level dup to beat user-level", dup.Path)
 	}
-	if len(svc.List()) != 10 { // 6 discovered + 4 built-ins
-		t.Fatalf("List() = %d, want 10", len(svc.List()))
+	if len(svc.List()) != 9 { // 6 discovered + 3 built-ins
+		t.Fatalf("List() = %d, want 9", len(svc.List()))
 	}
 }
 
@@ -344,7 +344,7 @@ func TestSymlinkEscapeRejected(t *testing.T) {
 
 func TestBuiltinEmbedded(t *testing.T) {
 	svc := NewService(context.Background(), Options{WorkBase: t.TempDir(), Enabled: true})
-	for _, name := range []string{"plan", "skill-creator"} {
+	for _, name := range []string{"plan", "skill-creator", "skill-installer"} {
 		sk, ok := svc.ByName(name)
 		if !ok {
 			t.Fatalf("builtin %s missing", name)
@@ -356,20 +356,6 @@ func TestBuiltinEmbedded(t *testing.T) {
 		if err != nil || !strings.Contains(body, "#") {
 			t.Fatalf("builtin %s body: %q, %v", name, body, err)
 		}
-	}
-	// code-review ships as a builtin but can be shadowed by a user- or
-	// repo-scope install of the same name; it must still be
-	// discoverable and readable either way.
-	sk, ok := svc.ByName("code-review")
-	if !ok {
-		t.Fatal("code-review missing (builtin or user scope)")
-	}
-	if sk.Scope == "builtin" && !strings.HasPrefix(sk.Path, "builtin://") {
-		t.Fatalf("builtin code-review metadata = %+v", sk)
-	}
-	_, body, err := svc.ReadFull("code-review")
-	if err != nil || strings.TrimSpace(body) == "" {
-		t.Fatalf("code-review body empty: %q, %v", body, err)
 	}
 }
 

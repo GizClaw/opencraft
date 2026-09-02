@@ -234,5 +234,8 @@ export const api = {
     return App.SearchFiles(query, cap) as Promise<SearchFileHit[]>;
   },
   openPath: (path: string) => App.OpenPath(path),
+  saveArtifactAs: (path: string) => App.SaveArtifactAs(path) as Promise<string>,
+  revealArtifact: (path: string) => App.RevealArtifact(path),
+  openArtifactWith: (path: string) => App.OpenArtifactWith(path),
   openExternal: (url: string) => App.OpenExternal(url),
 };

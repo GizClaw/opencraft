@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { Markdown } from './Markdown';
 
@@ -23,6 +23,19 @@ describe('Markdown', () => {
     expect(
       screen.queryByRole('link', { name: 'click me' }),
     ).not.toBeInTheDocument();
+  });
+
+  it('keeps links clickable without navigating when disabled', () => {
+    render(
+      <Markdown text="[deploy.md](references/deploy.md)" disableNavigation />,
+    );
+
+    const link = screen.getByRole('link', { name: 'deploy.md' });
+    expect(link).toHaveAttribute('href', 'references/deploy.md');
+
+    fireEvent.click(link);
+
+    expect(screen.getByRole('link', { name: 'deploy.md' })).toBeInTheDocument();
   });
 
   it('renders code fences with GFM', () => {

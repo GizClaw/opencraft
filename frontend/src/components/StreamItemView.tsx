@@ -95,7 +95,7 @@ function SidebarToolCall({
 // variants: the compact sidebar style ("sidebar") or the full chat
 // transcript style ("chat"). Both render paths share this component so
 // item visibility and per-kind dispatch never drift again.
-export function StreamItemView({
+export const StreamItemView = memo(function StreamItemView({
   item,
   variant,
   streaming = false,
@@ -129,4 +129,4 @@ export function StreamItemView({
         <ToolCard key={item.id} tool={item.tool} />
       );
   }
-}
+});

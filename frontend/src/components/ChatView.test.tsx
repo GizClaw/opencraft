@@ -1,8 +1,8 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useStore } from '../lib/store';
-import type { MessageView } from '../lib/store';
+import type { MessageView, TurnArtifacts } from '../lib/store';
 import { ChatView } from './ChatView';
 
 const apiMock = vi.hoisted(() => ({
@@ -15,6 +15,9 @@ const apiMock = vi.hoisted(() => ({
   readAttachment: vi.fn(),
   pickFile: vi.fn(),
   openPath: vi.fn(),
+  saveArtifactAs: vi.fn(async () => ''),
+  revealArtifact: vi.fn(async () => undefined),
+  openArtifactWith: vi.fn(async () => undefined),
   startTurn: vi.fn(),
 }));
 
@@ -34,7 +37,10 @@ function manyMessages(n: number): MessageView[] {
   }));
 }
 
-function setConversation(messages: MessageView[]) {
+function setConversation(
+  messages: MessageView[],
+  turnArtifacts: TurnArtifacts[] = [],
+) {
   useStore.setState({
     configured: true,
     current: 's-1',
@@ -42,7 +48,7 @@ function setConversation(messages: MessageView[]) {
     conversations: {
       's-1': {
         messages,
-        turnArtifacts: [],
+        turnArtifacts,
         busy: false,
         activeRunID: null,
         stage: '',
@@ -64,7 +70,7 @@ beforeEach(() => {
 });
 
 describe('ChatView transcript windowing', () => {
-  it('renders only the newest 200 messages and loads earlier on demand', async () => {
+  it('renders only the newest 200 messages and loads earlier at the top', () => {
     setConversation(manyMessages(250));
     render(<ChatView />);
 
@@ -73,13 +79,24 @@ describe('ChatView transcript windowing', () => {
     expect(screen.getByText('message-50')).toBeInTheDocument();
     expect(screen.getByText('message-249')).toBeInTheDocument();
 
-    const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: /earlier messages/i }));
+    const scroller = screen.getByTestId('chat-scroll');
+    Object.defineProperty(scroller, 'scrollHeight', {
+      configurable: true,
+      value: 10_000,
+    });
+    Object.defineProperty(scroller, 'clientHeight', {
+      configurable: true,
+      value: 500,
+    });
+    Object.defineProperty(scroller, 'scrollTop', {
+      configurable: true,
+      value: 0,
+      writable: true,
+    });
+    fireEvent.scroll(scroller);
 
     expect(screen.getByText('message-0')).toBeInTheDocument();
-    expect(
-      screen.queryByRole('button', { name: /earlier messages/i }),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText('message-249')).toBeInTheDocument();
   });
 
   it('keeps the full transcript when it fits in the window', () => {
@@ -107,5 +124,59 @@ describe('ChatView transcript windowing', () => {
 
     expect(screen.getByText('bold').tagName).toBe('STRONG');
     expect(screen.getByText('code').tagName).toBe('CODE');
+  });
+
+  it('opens a right-click menu on turn artifacts', async () => {
+    setConversation(
+      [
+        {
+          id: 'm-1',
+          role: 'user',
+          text: 'make a file',
+          items: [],
+          attachments: [],
+        },
+        { id: 'm-2', role: 'user', text: 'done', items: [], attachments: [] },
+      ],
+      [
+        {
+          id: 'turn-1',
+          start: 0,
+          docs: [{ path: '/tmp/w/report.md', bytes: 42 }],
+        },
+      ],
+    );
+    render(<ChatView />);
+
+    const chip = screen.getByRole('button', { name: /report\.md/i });
+    fireEvent.contextMenu(chip);
+
+    expect(
+      screen.getByRole('menuitem', { name: 'Save As…' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('menuitem', { name: 'Copy Path' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('menuitem', { name: /File Manager/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('menuitem', { name: 'Open With…' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('separator')).toBeInTheDocument();
+    const items = screen.getAllByRole('menuitem');
+    expect(items[0]).toHaveTextContent('Open With…');
+    expect(items[1]).toHaveTextContent('Save As…');
+    expect(items[2]).toHaveTextContent('Copy Path');
+    expect(items[3]).toHaveTextContent(/File Manager/i);
+
+    await userEvent
+      .setup()
+      .click(screen.getByRole('menuitem', { name: 'Save As…' }));
+
+    expect(apiMock.saveArtifactAs).toHaveBeenCalledWith('/tmp/w/report.md');
+    expect(
+      screen.queryByRole('menuitem', { name: 'Save As…' }),
+    ).not.toBeInTheDocument();
   });
 });

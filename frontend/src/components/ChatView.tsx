@@ -1,4 +1,12 @@
-import { Fragment, memo, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Fragment,
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent,
+} from 'react';
 import {
   AlertTriangle,
   Archive,
@@ -71,65 +79,88 @@ const RENDER_STEP = 100;
 // ToolGroupView renders a burst of consecutive tool calls as one
 // collapsible block ("Ran 4 commands"), defaulting to collapsed; the
 // individual tool cards appear once expanded.
-function ToolGroupView({ tools }: { tools: ToolCallItem[] }) {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  const allCommands = tools.every((ti) => isCommandTool(ti.tool.name));
-  const running = tools.some((ti) => ti.tool.status === 'running');
-  const failed = tools.some((ti) => ti.tool.status === 'error');
-  const done = tools.filter((ti) => ti.tool.status === 'done').length;
-  const label = allCommands
-    ? t('chat.ranCommands', { count: tools.length })
-    : t('chat.ranTools', { count: tools.length });
+const ToolGroupView = memo(
+  function ToolGroupView({ tools }: { tools: ToolCallItem[] }) {
+    const { t } = useTranslation();
+    const [open, setOpen] = useState(false);
+    const allCommands = tools.every((ti) => isCommandTool(ti.tool.name));
+    const running = tools.some((ti) => ti.tool.status === 'running');
+    const failed = tools.some((ti) => ti.tool.status === 'error');
+    const done = tools.filter((ti) => ti.tool.status === 'done').length;
+    const label = allCommands
+      ? t('chat.ranCommands', { count: tools.length })
+      : t('chat.ranTools', { count: tools.length });
 
-  return (
-    <div className="my-1.5">
-      <button
-        onClick={() => setOpen(!open)}
-        className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
-          failed
-            ? 'border-err/40 bg-err/5'
-            : running
-              ? 'border-accent/40 bg-panel2'
-              : 'border-edge bg-panel2'
-        } hover:bg-panel2/70`}
-      >
-        {running ? (
-          <Loader2
-            size="1.0000rem"
-            className="animate-spin shrink-0 text-accent"
-          />
-        ) : failed ? (
-          <X size="1.0000rem" className="shrink-0 text-err" />
-        ) : (
-          <Check size="1.0000rem" className="shrink-0 text-ok" />
-        )}
-        {allCommands ? (
-          <Terminal size="1.0000rem" className="shrink-0 text-accent" />
-        ) : (
-          <Bot size="1.0000rem" className="shrink-0 text-accent" />
-        )}
-        <span className="min-w-0 flex-1 truncate text-sm text-fg">{label}</span>
-        {running && (
-          <span className="shrink-0 text-xs text-dim tabular-nums">
-            {done}/{tools.length}
+    return (
+      <div className="my-1.5">
+        <button
+          onClick={() => setOpen(!open)}
+          className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+            failed
+              ? 'border-err/40 bg-err/5'
+              : running
+                ? 'border-accent/40 bg-panel2'
+                : 'border-edge bg-panel2'
+          } hover:bg-panel2/70`}
+        >
+          {running ? (
+            <Loader2
+              size="1.0000rem"
+              className="animate-spin shrink-0 text-accent"
+            />
+          ) : failed ? (
+            <X size="1.0000rem" className="shrink-0 text-err" />
+          ) : (
+            <Check size="1.0000rem" className="shrink-0 text-ok" />
+          )}
+          {allCommands ? (
+            <Terminal size="1.0000rem" className="shrink-0 text-accent" />
+          ) : (
+            <Bot size="1.0000rem" className="shrink-0 text-accent" />
+          )}
+          <span className="min-w-0 flex-1 truncate text-sm text-fg">
+            {label}
           </span>
+          {running && (
+            <span className="shrink-0 text-xs text-dim tabular-nums">
+              {done}/{tools.length}
+            </span>
+          )}
+          {open ? (
+            <ChevronDown size="1.0000rem" className="shrink-0 text-dim" />
+          ) : (
+            <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
+          )}
+        </button>
+        {open && (
+          <div className="mt-1 space-y-1.5">
+            {tools.map((item) => (
+              <ToolCard key={item.id} tool={item.tool} />
+            ))}
+          </div>
         )}
-        {open ? (
-          <ChevronDown size="1.0000rem" className="shrink-0 text-dim" />
-        ) : (
-          <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
-        )}
-      </button>
-      {open && (
-        <div className="mt-1 space-y-1.5">
-          {tools.map((item) => (
-            <ToolCard key={item.id} tool={item.tool} />
-          ))}
-        </div>
-      )}
-    </div>
-  );
+      </div>
+    );
+  },
+  (prev, next) => sameToolGroup(prev.tools, next.tools),
+);
+
+function sameToolGroup(a: ToolCallItem[], b: ToolCallItem[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i].tool;
+    const y = b[i].tool;
+    if (
+      a[i].id !== b[i].id ||
+      x.id !== y.id ||
+      x.name !== y.name ||
+      x.status !== y.status ||
+      x.result !== y.result
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // MessageRow renders one conversation message. Memoized so stream
@@ -334,17 +365,52 @@ function docIcon(path: string) {
 
 // ArtifactStrip renders the current turn's produced files as a
 // left-to-right horizontal scroll strip: one chip per file, clickable
-// to open with the system default app. It fills in live while the turn
-// runs and stays after the turn ends.
-function ArtifactStrip({ docs }: { docs: TurnDoc[] }) {
+// to open with the system default app and with a right-click menu for
+// save-as, copying the path, revealing the file, and open-with. It
+// fills in live while the turn runs and stays after the turn ends.
+const ArtifactStrip = memo(function ArtifactStrip({
+  docs,
+}: {
+  docs: TurnDoc[];
+}) {
   const { t } = useTranslation();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [menu, setMenu] = useState<{
+    doc: TurnDoc;
+    x: number;
+    y: number;
+  } | null>(null);
   useEffect(() => {
     // Keep the newest artifact visible: the strip fills left-to-right
     // and auto-scrolls to the right edge on new files.
     const el = scrollRef.current;
     if (el) el.scrollLeft = el.scrollWidth;
   }, [docs]);
+  const closeMenu = () => setMenu(null);
+  const openMenu = (event: MouseEvent<HTMLButtonElement>, doc: TurnDoc) => {
+    event.preventDefault();
+    const menuWidth = 220;
+    const menuHeight = 160;
+    setMenu({
+      doc,
+      x: Math.min(event.clientX, window.innerWidth - menuWidth - 8),
+      y: Math.min(event.clientY, window.innerHeight - menuHeight - 8),
+    });
+  };
+  const runMenuAction = async (action: () => Promise<unknown>) => {
+    try {
+      await action();
+    } catch (err) {
+      console.error('opencraft artifact action failed:', err);
+    } finally {
+      closeMenu();
+    }
+  };
+  const revealLabel = /Macintosh|Mac OS X/i.test(navigator.userAgent)
+    ? t('chat.artifactRevealMac')
+    : /Windows/i.test(navigator.userAgent)
+      ? t('chat.artifactRevealWindows')
+      : t('chat.artifactRevealLinux');
   return (
     <div className="rounded-xl border border-edge bg-panel2 p-3 my-3">
       <div className="mb-2 flex items-center gap-2 text-xs text-dim">
@@ -364,7 +430,9 @@ function ArtifactStrip({ docs }: { docs: TurnDoc[] }) {
             <button
               key={doc.path}
               onClick={() => void api.openPath(doc.path)}
+              onContextMenu={(e) => openMenu(e, doc)}
               title={t('chat.openArtifact', { path: doc.path })}
+              aria-haspopup="menu"
               className="flex max-w-56 shrink-0 snap-start items-center gap-1.5 rounded-lg border border-edge bg-panel px-2.5 py-1.5 text-xs text-fg transition-colors hover:border-accent/50 hover:bg-panel2"
             >
               {docIcon(doc.path)}
@@ -373,9 +441,67 @@ function ArtifactStrip({ docs }: { docs: TurnDoc[] }) {
           );
         })}
       </div>
+      {menu && (
+        <>
+          <div
+            className="fixed inset-0 z-50"
+            onMouseDown={closeMenu}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              closeMenu();
+            }}
+          />
+          <div
+            role="menu"
+            className="fixed z-[60] min-w-52 rounded-lg border border-edge bg-panel p-1 shadow-xl"
+            style={{ left: menu.x, top: menu.y }}
+            onContextMenu={(e) => e.preventDefault()}
+          >
+            <button
+              role="menuitem"
+              className="flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
+              onClick={() =>
+                void runMenuAction(() => api.openArtifactWith(menu.doc.path))
+              }
+            >
+              {t('chat.artifactOpenWith')}
+            </button>
+            <div role="separator" className="my-1 border-t border-edge" />
+            <button
+              role="menuitem"
+              className="flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
+              onClick={() =>
+                void runMenuAction(() => api.saveArtifactAs(menu.doc.path))
+              }
+            >
+              {t('chat.artifactSaveAs')}
+            </button>
+            <button
+              role="menuitem"
+              className="flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
+              onClick={() =>
+                void runMenuAction(async () => {
+                  await navigator.clipboard.writeText(menu.doc.path);
+                })
+              }
+            >
+              {t('chat.artifactCopyPath')}
+            </button>
+            <button
+              role="menuitem"
+              className="flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
+              onClick={() =>
+                void runMenuAction(() => api.revealArtifact(menu.doc.path))
+              }
+            >
+              {revealLabel}
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
-}
+});
 
 // AttachmentImage renders one image attachment. Live sends carry the
 // data URL already; resumed history has only the stored path, so the
@@ -473,10 +599,12 @@ export function ChatView() {
   const busy = conv?.busy ?? false;
   const turnArtifacts = conv?.turnArtifacts ?? [];
   const [visibleCount, setVisibleCount] = useState(RENDER_WINDOW);
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
   // A conversation switch resets the window to the tail; a resumed
   // session starts with the newest messages visible.
   useEffect(() => {
     setVisibleCount(RENDER_WINDOW);
+    setLoadingEarlier(false);
   }, [current]);
   const truncated = messages.length > visibleCount;
   const start = truncated ? messages.length - visibleCount : 0;
@@ -549,6 +677,27 @@ export function ChatView() {
   // captured from an earlier render — that race is what made the view
   // jump back to the bottom right after the user scrolled away.
   const stickRef = useRef(true);
+  const loadEarlier = () => {
+    if (!truncated || loadingEarlier) return;
+    const el = scrollRef.current;
+    const prevScrollHeight = el?.scrollHeight ?? 0;
+    const prevScrollTop = el?.scrollTop ?? 0;
+    setLoadingEarlier(true);
+    setVisibleCount((v) => v + RENDER_STEP);
+    // The transcript is chronological, so loading earlier history
+    // prepends rows above the current window. Anchor the viewport to
+    // the content that was already visible; the newly inserted history
+    // then sits above it and can be read by continuing to scroll up.
+    stickRef.current = false;
+    setStick(false);
+    requestAnimationFrame(() => {
+      const current = scrollRef.current;
+      if (!current) return;
+      const addedAbove = current.scrollHeight - prevScrollHeight;
+      current.scrollTop = prevScrollTop + addedAbove;
+    });
+    window.setTimeout(() => setLoadingEarlier(false), 250);
+  };
   const { t } = useTranslation();
   const thinkLevels = [
     { value: 'minimal', label: t('chat.thinkMinimal') },
@@ -631,8 +780,11 @@ export function ChatView() {
 
   useEffect(() => {
     if (!stickRef.current) return;
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    const frame = requestAnimationFrame(() => {
+      const el = scrollRef.current;
+      if (el && stickRef.current) el.scrollTop = el.scrollHeight;
+    });
+    return () => cancelAnimationFrame(frame);
   }, [messages, pendingInteracts, stick]);
 
   useEffect(() => {
@@ -720,9 +872,18 @@ export function ChatView() {
               el.scrollHeight - el.scrollTop - el.clientHeight < 80;
             stickRef.current = pinned;
             setStick(pinned);
+            if (!pinned && el.scrollTop <= 8 && truncated && !loadingEarlier) {
+              loadEarlier();
+            }
           }}
-          className="flex-1 overflow-y-auto px-6 py-4"
+          data-testid="chat-scroll"
+          className="flex-1 overflow-y-auto [overflow-anchor:none] px-6 py-4"
         >
+          {loadingEarlier && (
+            <div className="pointer-events-none fixed left-1/2 top-14 z-20 -translate-x-1/2 rounded-full border border-edge bg-panel p-2 shadow-xl">
+              <Loader2 size="1.0000rem" className="animate-spin text-dim" />
+            </div>
+          )}
           {messages.length === 0 ? (
             <div className="h-full grid place-items-center">
               {!configured && (
@@ -741,18 +902,6 @@ export function ChatView() {
             </div>
           ) : (
             <div className="max-w-4xl mx-auto space-y-4">
-              {truncated && (
-                <div className="pb-1">
-                  <button
-                    onClick={() => setVisibleCount((v) => v + RENDER_STEP)}
-                    className="w-full rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-xs text-dim hover:text-fg transition-colors"
-                  >
-                    {t('chat.loadEarlier', {
-                      hidden: messages.length - visibleCount,
-                    })}
-                  </button>
-                </div>
-              )}
               {visibleMessages.map((msg, localI) => {
                 const i = start + localI;
                 // A turn's strip renders right after its last message:
