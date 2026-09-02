@@ -78,3 +78,39 @@ func TestSetCloseToTrayPersists(t *testing.T) {
 		t.Fatal("persisted close-to-tray should be false")
 	}
 }
+
+func TestSetLanguagePersistsWithoutDroppingCloseToTray(t *testing.T) {
+	dir := t.TempDir()
+	a := &App{userDir: dir, closeToTray: true, language: "zh"}
+	if err := a.SetLanguage("zh-CN"); err != nil {
+		t.Fatal(err)
+	}
+	if a.language != "zh" {
+		t.Fatalf("language = %q, want zh", a.language)
+	}
+	prefs, err := loadPrefs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prefs.Language != "zh" {
+		t.Fatalf("persisted language = %q, want zh", prefs.Language)
+	}
+	if !prefs.CloseToTray {
+		t.Fatal("SetLanguage must not drop close-to-tray")
+	}
+
+	// Closing the window preference must not drop the language either.
+	if err := a.SetCloseToTray(false); err != nil {
+		t.Fatal(err)
+	}
+	prefs, err = loadPrefs(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prefs.Language != "zh" {
+		t.Fatalf("language after SetCloseToTray = %q, want zh", prefs.Language)
+	}
+	if prefs.CloseToTray {
+		t.Fatal("close-to-tray should be false")
+	}
+}

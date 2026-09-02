@@ -1,19 +1,23 @@
 package desktop
 
 import (
+	"fmt"
 	"runtime"
 	"sync/atomic"
 
 	"fyne.io/systray"
+
+	app "github.com/GizClaw/opencraft/internal/app"
 )
 
-// tray labels. Keep them short: Windows overflow menus truncate long
-// labels, and macOS menu bar items should fit in one glance.
-const (
-	trayTooltip  = "OpenCraft"
-	trayShowItem = "打开 OpenCraft"
-	trayQuitItem = "退出"
-)
+// trayItems holds the live tray menu rows so the language binding can
+// retitle them without rebuilding the whole menu.
+type trayItems struct {
+	version *systray.MenuItem
+	about   *systray.MenuItem
+	show    *systray.MenuItem
+	quit    *systray.MenuItem
+}
 
 // trayStarted guards systray.Quit so Shutdown never touches the systray
 // library before Run or after the tray goroutine ended.
@@ -47,24 +51,36 @@ func (a *App) startTray() {
 // thread). It installs the icon and menu; callbacks run on the tray
 // library's own goroutines and marshal back through the Wails runtime.
 func (a *App) trayReady() {
-	if runtime.GOOS == "darwin" {
-		// Template images adapt to light/dark menu bars; the colour
-		// channel is ignored and the alpha is used. Prefer the dedicated
-		// monochrome glyph (build/tray-icon.png); fall back to the app
-		// icon's silhouette.
-		if a.trayIconTemplate != nil {
-			systray.SetTemplateIcon(a.trayIconTemplate, a.trayIcon)
+	texts := a.desktopTexts()
+	if runtime.GOOS == "windows" {
+		if a.trayIconWindows != nil {
+			systray.SetIcon(a.trayIconWindows)
 		} else if a.trayIcon != nil {
-			systray.SetTemplateIcon(a.trayIcon, a.trayIcon)
+			systray.SetIcon(a.trayIcon)
 		}
 	} else if a.trayIcon != nil {
 		systray.SetIcon(a.trayIcon)
 	}
-	systray.SetTooltip(trayTooltip)
+	systray.SetTooltip(texts.trayTooltip)
 
-	show := systray.AddMenuItem(trayShowItem, "Show OpenCraft")
+	version := systray.AddMenuItem(
+		fmt.Sprintf(texts.versionFormat, app.ServiceVersion), texts.versionTooltip)
+	version.Disable()
+	about := systray.AddMenuItem(texts.about, texts.aboutTooltip)
+	about.Disable()
 	systray.AddSeparator()
-	quit := systray.AddMenuItem(trayQuitItem, "Quit OpenCraft")
+
+	show := systray.AddMenuItem(texts.show, texts.showTooltip)
+	systray.AddSeparator()
+	quit := systray.AddMenuItem(texts.quit, texts.quitTooltip)
+	a.mu.Lock()
+	a.trayItems = &trayItems{
+		version: version,
+		about:   about,
+		show:    show,
+		quit:    quit,
+	}
+	a.mu.Unlock()
 
 	go func() {
 		for {
@@ -79,6 +95,26 @@ func (a *App) trayReady() {
 	}()
 }
 
+// updateTrayTexts retitles existing tray menu rows after the frontend
+// reports a language change. No-op before trayReady has stored rows.
+func (a *App) updateTrayTexts() {
+	texts := a.desktopTexts()
+	a.mu.Lock()
+	items := a.trayItems
+	a.mu.Unlock()
+	if items == nil {
+		return
+	}
+	items.version.SetTitle(fmt.Sprintf(texts.versionFormat, app.ServiceVersion))
+	items.version.SetTooltip(texts.versionTooltip)
+	items.about.SetTitle(texts.about)
+	items.about.SetTooltip(texts.aboutTooltip)
+	items.show.SetTitle(texts.show)
+	items.show.SetTooltip(texts.showTooltip)
+	items.quit.SetTitle(texts.quit)
+	items.quit.SetTooltip(texts.quitTooltip)
+}
+
 // stopTray tears the tray down during application shutdown. It is
 // best-effort: process termination cleans up anything that remains.
 func (a *App) stopTray() {
@@ -86,6 +122,7 @@ func (a *App) stopTray() {
 		a.mu.Lock()
 		end := a.trayEnd
 		a.trayEnd = nil
+		a.trayItems = nil
 		a.mu.Unlock()
 		if end != nil {
 			runOnMain(end)

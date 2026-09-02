@@ -29,8 +29,8 @@ var assets embed.FS
 //go:embed build/appicon.png
 var appIcon []byte
 
-//go:embed build/tray-icon.png
-var trayIconTemplate []byte
+//go:embed build/windows/icon.ico
+var appIconWindows []byte
 
 func main() {
 	// execd is the internal self-forked sandbox child (see
@@ -46,11 +46,13 @@ func main() {
 	}
 
 	app, err := desktop.New(desktop.Options{
-		// TrayIcon feeds the system tray icon on Windows/Linux (and the
-		// fallback on macOS); TrayIconTemplate is the monochrome macOS
-		// menu bar glyph, which adapts to light and dark menu bars.
-		TrayIcon:         appIcon,
-		TrayIconTemplate: trayIconTemplate,
+		// TrayIcon feeds the system tray / menu bar icon on every
+		// platform: PNG on macOS/Linux, and the .ico resource on
+		// Windows (systray loads .ico files there). The full-colour
+		// app icon is shown as-is, including on macOS (no monochrome
+		// template treatment).
+		TrayIcon:        appIcon,
+		TrayIconWindows: appIconWindows,
 	})
 	if err != nil {
 		log.Fatalf("opencraft: %v", err)
@@ -76,12 +78,13 @@ func main() {
 		// Close-to-background: every close path (native window close,
 		// the custom title-bar X button, Cmd+Q / Dock Quit on macOS)
 		// funnels through OnBeforeClose. macOS Cmd+Q / Dock Quit is
-		// detected first and always lets Wails terminate; other closes
-		// consult the persisted "close to tray" setting.
+		// detected first and recorded as a quit request; other closes
+		// consult the persisted "close to tray" setting. Real quits
+		// first ask for confirmation (scheduled tasks stop), then let
+		// Wails terminate.
 		OnBeforeClose: func(ctx context.Context) bool {
 			if macConsumeTerminateRequest() {
 				app.MarkQuitting()
-				return false
 			}
 			return app.CloseRequested(ctx)
 		},

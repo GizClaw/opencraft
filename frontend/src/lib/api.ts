@@ -184,6 +184,7 @@ export const api = {
     App.SaveAutomation(
       task as unknown as gen.AutomationTaskDTO,
     ) as Promise<AutomationTask>,
+  setLanguage: (language: string) => App.SetLanguage(language),
   deleteAutomation: (id: string) => App.DeleteAutomation(id),
   runAutomationNow: (id: string) => App.RunAutomationNow(id),
   automationRuns: (taskId: string) =>

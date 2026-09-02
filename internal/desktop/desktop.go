@@ -50,14 +50,14 @@ type Options struct {
 	// DataDir overrides the user data root ~/.opencraft (tests); the
 	// credential store lives under <dataDir>/keyring on Linux.
 	DataDir string
-	// TrayIcon is the system tray / menu bar icon (PNG). macOS renders
-	// it as a template image; nil skips the icon (tests).
+	// TrayIcon is the system tray / menu bar icon (PNG). It is shown
+	// as-is on macOS/Linux; Windows uses TrayIconWindows when set.
+	// Nil skips the icon (tests).
 	TrayIcon []byte
-	// TrayIconTemplate is the monochrome macOS menu bar glyph (PNG,
-	// black + alpha). When set, macOS uses it as the template icon while
-	// Windows/Linux keep the full-colour TrayIcon. Nil falls back to
-	// TrayIcon (tests).
-	TrayIconTemplate []byte
+	// TrayIconWindows is the Windows system tray icon (.ico).
+	// Windows systray loads .ico files, so PNG bytes would not render.
+	// Nil falls back to TrayIcon (tests and other platforms).
+	TrayIconWindows []byte
 }
 
 // App is the Wails-bound application root. Exported methods on App
@@ -154,13 +154,25 @@ type App struct {
 	// closeToTray persists the close behaviour ("hide to tray" vs
 	// "quit"). It is read by the Wails close hook on the UI thread.
 	closeToTray bool
-	// quitting is set when the user chooses Quit from the tray menu, so
-	// OnBeforeClose lets Wails terminate instead of hiding again.
+	// quitting is set when the user has asked for a real quit (tray
+	// Quit, macOS Cmd+Q/Dock Quit, or "quit" close mode). OnBeforeClose
+	// then asks for confirmation instead of hiding to the tray again.
 	quitting bool
+	// quitConfirmed is set once the exit warning has been accepted, so
+	// a second OnBeforeClose round (e.g. RequestClose -> runtime.Quit)
+	// does not show the dialog again.
+	quitConfirmed bool
+	// language is the desktop UI language ("zh" or "en") for native
+	// tray/menu and dialog copy. The frontend keeps it in sync.
+	language string
 	// trayIcon is the system tray icon bytes (nil in tests).
 	trayIcon []byte
-	// trayIconTemplate is the macOS menu bar glyph bytes (nil in tests).
-	trayIconTemplate []byte
+	// trayIconWindows is the Windows system tray icon bytes (nil in
+	// tests and on non-Windows builds).
+	trayIconWindows []byte
+	// trayItems are the live tray menu rows, so SetLanguage can retitle
+	// them after the frontend reports its detected language.
+	trayItems *trayItems
 	// trayEnd is the systray external-loop teardown function (nil in
 	// tests); set by startTray, consumed by stopTray.
 	trayEnd func()
@@ -198,6 +210,10 @@ func New(opts Options) (*App, error) {
 		// defaults apply and the next save rewrites the file.
 		prefs = desktopPrefs{CloseToTray: true}
 	}
+	language := prefs.Language
+	if language == "" {
+		language = defaultDesktopLanguage()
+	}
 	if _, err := config.EnsureUserConfig(); err != nil {
 		return nil, fmt.Errorf("desktop: seed config: %w", err)
 	}
@@ -217,32 +233,33 @@ func New(opts Options) (*App, error) {
 		shutdown = nil
 	}
 	a := &App{
-		workDir:          workDir,
-		userDir:          userDir,
-		pluginDir:        pluginDir,
-		plugins:          plugins.NewStore(pluginDir),
-		kv:               plugins.NewKVStore(pluginDir),
-		bridge:           NewBridge(),
-		turns:            make(map[string]*session.Turn),
-		conversationID:   ocsessions.NewID(),
-		mode:             ocsessions.ModeWorkspace,
-		think:            string(ocsessions.ThinkMedium),
-		model:            "",
-		runConvs:         make(map[string]string),
-		convRuns:         make(map[string]map[string]bool),
-		backgroundHosts:  make(map[string]*backgroundHost),
-		runUsage:         make(map[string]ocsessions.Usage),
-		titling:          make(map[string]bool),
-		preTurnSnap:      make(map[string][]undo.FileState),
-		preTurnManifest:  make(map[string]map[string]fileStat),
-		undo:             undoStore,
-		secrets:          sec,
-		rollouts:         make(map[string]*rollout.Recorder),
-		rolloutBufs:      make(map[string]*rolloutBuffer),
-		otelShutdown:     shutdown,
-		closeToTray:      prefs.CloseToTray,
-		trayIcon:         opts.TrayIcon,
-		trayIconTemplate: opts.TrayIconTemplate,
+		workDir:         workDir,
+		userDir:         userDir,
+		pluginDir:       pluginDir,
+		plugins:         plugins.NewStore(pluginDir),
+		kv:              plugins.NewKVStore(pluginDir),
+		bridge:          NewBridge(),
+		turns:           make(map[string]*session.Turn),
+		conversationID:  ocsessions.NewID(),
+		mode:            ocsessions.ModeWorkspace,
+		think:           string(ocsessions.ThinkMedium),
+		model:           "",
+		runConvs:        make(map[string]string),
+		convRuns:        make(map[string]map[string]bool),
+		backgroundHosts: make(map[string]*backgroundHost),
+		runUsage:        make(map[string]ocsessions.Usage),
+		titling:         make(map[string]bool),
+		preTurnSnap:     make(map[string][]undo.FileState),
+		preTurnManifest: make(map[string]map[string]fileStat),
+		undo:            undoStore,
+		secrets:         sec,
+		rollouts:        make(map[string]*rollout.Recorder),
+		rolloutBufs:     make(map[string]*rolloutBuffer),
+		otelShutdown:    shutdown,
+		closeToTray:     prefs.CloseToTray,
+		language:        language,
+		trayIcon:        opts.TrayIcon,
+		trayIconWindows: opts.TrayIconWindows,
 	}
 	a.plugins.SetHostVersion(app.ServiceVersion)
 	a.cap = pluginruntime.NewManager(pluginDir, pluginruntime.DefaultLoader{

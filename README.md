@@ -110,14 +110,9 @@ inference is not configured yet. Settings are written to
 `~/.opencraft/config/opencraft.yaml` — the single user-editable document for
 inference instances, router policy, and MCP servers.
 
-## Documentation
+## Changelog
 
-- [Plugin system design](docs/plans/plugin-system.md) — plugin
-  manifests, the builtin/user roots and shadowing, install/update/
-  rollback, and agent-facing capabilities (skills, MCP, hooks, tools).
-- [Capability subprocess RPC](docs/plans/capability-rpc.md) — the
-  JSON-RPC wire protocol between the host and plugin subprocesses.
-- Release history is tracked in [CHANGELOG.md](CHANGELOG.md).
+Release history is tracked in [CHANGELOG.md](CHANGELOG.md).
 
 ## Contributing
 

@@ -2,6 +2,9 @@ package desktop
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"runtime"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -15,14 +18,31 @@ func (a *App) CloseRequested(ctx context.Context) bool {
 	a.mu.Lock()
 	closeToTray := a.closeToTray
 	quitting := a.quitting
+	quitConfirmed := a.quitConfirmed
 	a.mu.Unlock()
-	if quitting {
-		// The user chose Quit from the tray menu; let Wails terminate.
+
+	if quitting && quitConfirmed {
+		// Already asked and accepted; let Wails terminate.
 		return false
 	}
-	if !closeToTray {
+	if quitting || !closeToTray {
+		// Every real exit goes through the warning: tray Quit,
+		// Cmd+Q/Dock Quit on macOS, and window closes configured to
+		// quit. Cancel keeps the app running (and clears the tray /
+		// macOS quit request so a later close hides to tray again).
+		if !a.confirmQuit(ctx) {
+			if quitting {
+				a.clearQuitRequest()
+			}
+			return true
+		}
+		a.mu.Lock()
+		a.quitting = true
+		a.quitConfirmed = true
+		a.mu.Unlock()
 		return false
 	}
+
 	// Hide to background. runtime.Hide is exactly the per-platform
 	// semantics we want: macOS hides the whole application ([NSApp
 	// hide], the default macOS scheme) and Windows/Linux hide the
@@ -31,12 +51,58 @@ func (a *App) CloseRequested(ctx context.Context) bool {
 	return true
 }
 
-// MarkQuitting records that the user chose to terminate the app (for
-// example Cmd+Q or Dock Quit on macOS). It lets the next OnBeforeClose
-// round return false so Wails can stop instead of hiding to tray.
+// confirmQuit shows the exit warning and reports whether the user chose
+// to continue. A nil context (defensive; Startup has not run yet)
+// cannot show a dialog, so the quit is allowed.
+func (a *App) confirmQuit(ctx context.Context) bool {
+	if ctx == nil {
+		return true
+	}
+	texts := a.desktopTexts()
+	buttons := []string{texts.quitDialogConfirm, texts.quitDialogCancel}
+	defaultButton := texts.quitDialogCancel
+	cancelButton := texts.quitDialogCancel
+	if runtime.GOOS != "darwin" {
+		// Wails' Windows/Linux question dialogs are native Yes/No
+		// boxes; default to No so Enter does not quit by accident.
+		buttons = []string{"Yes", "No"}
+		defaultButton = "No"
+		cancelButton = "No"
+	}
+	selection, err := wailsruntime.MessageDialog(ctx, wailsruntime.MessageDialogOptions{
+		Type:          wailsruntime.QuestionDialog,
+		Title:         texts.quitDialogTitle,
+		Message:       texts.quitDialogMessage,
+		Buttons:       buttons,
+		DefaultButton: defaultButton,
+		CancelButton:  cancelButton,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "opencraft: exit confirmation dialog: %v\n", err)
+		return false
+	}
+	// Windows and Linux return "Yes"/"No"; macOS returns the button
+	// label from Buttons.
+	return selection == texts.quitDialogConfirm || selection == "Yes"
+}
+
+// MarkQuitting records that the user requested to terminate the app
+// (tray Quit, or Cmd+Q / Dock Quit on macOS). The confirmation dialog
+// is shown by the next CloseRequested round; cancelling clears the
+// request so ordinary window closes keep their close-to-tray behaviour.
 func (a *App) MarkQuitting() {
 	a.mu.Lock()
 	a.quitting = true
+	a.quitConfirmed = false
+	a.mu.Unlock()
+}
+
+// clearQuitRequest resets an unconfirmed quit request after the user
+// cancels the exit warning.
+func (a *App) clearQuitRequest() {
+	a.mu.Lock()
+	a.quitting = false
+	a.quitConfirmed = false
 	a.mu.Unlock()
 }
 
@@ -50,7 +116,7 @@ func (a *App) RequestClose() {
 		return
 	}
 	if a.CloseRequested(ctx) {
-		// Hidden to tray; the process keeps running.
+		// Hidden to tray, or the user cancelled the exit warning.
 		return
 	}
 	// Direct-quit mode (or already quitting): terminate the app.
@@ -78,12 +144,12 @@ func (a *App) ShowMainWindow() {
 // must be set before runtime.Quit because Quit also passes through
 // OnBeforeClose, which would otherwise hide the app again.
 func (a *App) QuitFromTray() {
-	a.MarkQuitting()
 	ctx := a.ctx
 	if ctx == nil {
 		// Tray actions only exist after Startup, so this is defensive.
 		return
 	}
+	a.MarkQuitting()
 	wailsruntime.Quit(ctx)
 }
 
@@ -101,6 +167,5 @@ func (a *App) SetCloseToTray(closeToTray bool) error {
 	a.mu.Lock()
 	a.closeToTray = closeToTray
 	a.mu.Unlock()
-	userDir := a.userDir
-	return savePrefs(userDir, desktopPrefs{CloseToTray: closeToTray})
+	return a.persistDesktopPrefs()
 }

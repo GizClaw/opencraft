@@ -102,6 +102,157 @@ textarea:focus-visible {
   display: none;
 }
 
+/* TipTap composer: the chat input box renders Markdown inline instead of
+   asking for a separate preview pane. The block styling stays compact so
+   the composer reads like a single-line input until the message grows. */
+.markdown-composer {
+  caret-color: var(--color-accent);
+}
+
+.markdown-composer .ProseMirror {
+  min-height: 1.5714rem;
+  padding: 0.1786rem 0;
+  outline: none;
+}
+
+.markdown-composer .ProseMirror > * {
+  margin: 0;
+}
+
+.markdown-composer .ProseMirror p {
+  margin: 0;
+}
+
+.markdown-composer .ProseMirror p + p {
+  margin-top: 0.3571rem;
+}
+
+.markdown-composer .ProseMirror h1,
+.markdown-composer .ProseMirror h2,
+.markdown-composer .ProseMirror h3,
+.markdown-composer .ProseMirror h4,
+.markdown-composer .ProseMirror h5,
+.markdown-composer .ProseMirror h6 {
+  margin: 0.25em 0;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.markdown-composer .ProseMirror h1 {
+  font-size: 1.3em;
+}
+
+.markdown-composer .ProseMirror h2 {
+  font-size: 1.18em;
+}
+
+.markdown-composer .ProseMirror h3 {
+  font-size: 1.06em;
+}
+
+.markdown-composer .ProseMirror h4,
+.markdown-composer .ProseMirror h5,
+.markdown-composer .ProseMirror h6 {
+  font-size: 1em;
+}
+
+.markdown-composer .ProseMirror :not(pre) > code {
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-accent) 25%, transparent);
+  border-radius: 0.3571rem;
+  padding: 0.0714rem 0.4286rem;
+  color: var(--color-accent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
+
+.markdown-composer .ProseMirror pre {
+  background: var(--color-panel2);
+  border: 1px solid var(--color-edge);
+  border-radius: 0.5714rem;
+  margin: 0.35em 0;
+  padding: 0.5714rem 0.8571rem;
+  overflow-x: auto;
+}
+
+.markdown-composer .ProseMirror pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-fg);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8929rem;
+}
+
+.markdown-composer .ProseMirror strong {
+  color: var(--color-fg);
+  font-weight: 600;
+}
+
+.markdown-composer .ProseMirror ul,
+.markdown-composer .ProseMirror ol {
+  margin: 0.2em 0;
+  padding-left: 1.3em;
+}
+
+.markdown-composer .ProseMirror ul {
+  list-style: disc;
+}
+
+.markdown-composer .ProseMirror ol {
+  list-style: decimal;
+}
+
+.markdown-composer .ProseMirror li {
+  margin: 0.1429rem 0;
+}
+
+.markdown-composer .ProseMirror blockquote {
+  border-left: 0.2143rem solid var(--color-accent);
+  margin: 0.3em 0;
+  padding-left: 0.8571rem;
+  color: var(--color-dim);
+}
+
+.markdown-composer .ProseMirror hr {
+  border: none;
+  border-top: 1px solid var(--color-edge);
+  margin: 0.6em 0;
+}
+
+.markdown-composer .ProseMirror a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+
+.markdown-composer .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: var(--color-dim);
+  opacity: 0.55;
+}
+
+.mention-token {
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  border-radius: 0.2857rem;
+  padding: 0 0.1429rem;
+}
+
+.mention-suggestion {
+  color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  border-radius: 0.1429rem;
+}
+
+.suggestion-popup {
+  z-index: 50;
+  min-width: 18rem;
+  max-width: 24rem;
+}
+
 .prose-chat {
   line-height: 1.7;
   color: var(--color-fg);
@@ -109,6 +260,13 @@ textarea:focus-visible {
 
 .prose-chat p {
   margin: 0.55em 0;
+}
+
+/* User bubbles keep single line breaks readable: the TipTap composer
+   serializes Shift+Enter hard breaks as newlines, and the Markdown
+   renderer should not collapse them back into spaces. */
+.user-bubble-md p {
+  white-space: pre-wrap;
 }
 
 .prose-chat h1,

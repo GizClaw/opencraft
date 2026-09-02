@@ -15,6 +15,7 @@ const apiMock = vi.hoisted(() => ({
   loadAutomations: vi.fn(),
   startTurn: vi.fn(),
   cancelTurn: vi.fn(),
+  deleteSession: vi.fn(),
   replyPrompt: vi.fn(),
   undoState: vi.fn(),
 }));
@@ -81,6 +82,9 @@ beforeEach(() => {
     run_id: 'r-1',
     context_id: 's-1',
   });
+  apiMock.deleteSession.mockRejectedValue(
+    new Error('cannot delete the active conversation'),
+  );
   apiMock.listSessions.mockResolvedValue([]);
   apiMock.undoState.mockResolvedValue({ can_undo: false, can_redo: false });
 });
@@ -123,6 +127,18 @@ describe('store: send and stream', () => {
     });
     await useStore.getState().send('also ignored');
     expect(apiMock.startTurn).not.toHaveBeenCalled();
+  });
+
+  it('surfaces active-conversation deletion errors as a warning toast', async () => {
+    await useStore.getState().deleteSession('s-1');
+
+    expect(useStore.getState().statusText).toBe('');
+    expect(useStore.getState().toasts).toMatchObject([
+      {
+        kind: 'warning',
+        text: expect.any(String),
+      },
+    ]);
   });
 
   it('folds stream deltas into one assistant message', () => {

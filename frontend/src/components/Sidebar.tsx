@@ -275,14 +275,14 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                 className="fixed inset-0 z-20"
                 onClick={() => setMenuOpenId(null)}
               />
-              <div className="absolute right-0 top-6 z-30 min-w-32 rounded-lg border border-edge bg-panel shadow-xl py-1">
+              <div className="absolute right-0 top-6 z-30 w-44 rounded-lg border border-edge bg-panel shadow-xl py-1">
                 <button
                   onClick={() => {
                     setMenuOpenId(null);
                     setRenameId(row.id);
                     setRenameValue(row.meta?.title ?? row.title);
                   }}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-panel2"
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
                 >
                   <Pencil size="0.8571rem" className="text-dim" />
                   {t('sidebar.renameSession')}
@@ -294,7 +294,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                       .exportSession(row.id)
                       .then((path) => flash(t('sidebar.exportedTo', { path })));
                   }}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-panel2"
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
                 >
                   <Download size="0.8571rem" className="text-dim" />
                   {t('sidebar.exportSession')}
@@ -304,7 +304,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                     setMenuOpenId(null);
                     setConfirmDelete(row.id);
                   }}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm text-err hover:bg-panel2"
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-err hover:bg-panel2"
                 >
                   <Trash2 size="0.8571rem" className="text-err" />
                   {t('sidebar.deleteSession')}

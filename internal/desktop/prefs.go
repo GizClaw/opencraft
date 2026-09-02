@@ -23,6 +23,9 @@ type desktopPrefs struct {
 	// macOS behaviour); on Windows/Linux the window is hidden and the
 	// app keeps running in the system tray. When false, closing quits.
 	CloseToTray bool `json:"closeToTray"`
+	// Language is the desktop UI language ("zh" or "en"). Empty means
+	// the process locale decides until the frontend syncs its choice.
+	Language string `json:"language,omitempty"`
 }
 
 // loadPrefs reads the desktop preference file. A missing or corrupt file

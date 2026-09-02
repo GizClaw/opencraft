@@ -17,20 +17,17 @@ import {
   FileText,
   Film,
   Flame,
-  Folder,
   Lock,
   Loader2,
   Music2,
   Package,
   Paperclip,
   Presentation,
-  Redo2,
   RotateCcw,
   ShieldCheck,
   Sparkles,
   Square,
   Terminal,
-  Undo2,
   Video,
   X,
 } from 'lucide-react';
@@ -39,7 +36,7 @@ import { OnFileDrop, OnFileDropOff } from '../../wailsjs/runtime/runtime';
 import { api } from '../lib/api';
 import { COMPACT_SUMMARY_PREFIX } from '../lib/compact';
 import { useStore } from '../lib/store';
-import type { AttachmentView, SkillDTO, UndoState } from '../lib/types';
+import type { AttachmentView } from '../lib/types';
 import type {
   AssistantItem,
   MessageView,
@@ -47,6 +44,11 @@ import type {
   TurnDoc,
 } from '../lib/store';
 import { InteractionCard } from './InteractionCard';
+import {
+  MarkdownComposer,
+  type MarkdownComposerHandle,
+} from './MarkdownComposer';
+import { Markdown } from './Markdown';
 import { PlanPanel } from './PlanPanel';
 import { ToolCard } from './ToolCard';
 import { ProjectTrustBanner } from './ProjectTrustBanner';
@@ -161,7 +163,11 @@ const MessageRow = memo(function MessageRow({
               ))}
             </div>
           )}
-          {msg.text && <div className="whitespace-pre-wrap">{msg.text}</div>}
+          {msg.text && (
+            <div className="prose-chat user-bubble-md text-sm">
+              <Markdown text={msg.text} />
+            </div>
+          )}
           {files.length > 0 && <AttachmentFiles attachments={files} />}
         </div>
       </div>
@@ -216,14 +222,13 @@ const MessageRow = memo(function MessageRow({
         );
       })}
       {copyable && (
-        <div className="flex justify-end">
+        <div className="flex justify-start">
           <button
             onClick={() => void copyFinal()}
-            className="flex items-center gap-1 rounded border border-edge px-1.5 py-0.5 text-[0.7143rem] text-dim hover:text-fg"
-            aria-label={t('chat.copyOutput')}
+            className="flex items-center rounded border border-edge p-1 text-dim hover:text-fg"
+            aria-label={copied ? t('chat.copied') : t('chat.copyOutput')}
           >
             {copied ? <Check size="0.7857rem" /> : <Copy size="0.7857rem" />}
-            {copied ? t('chat.copied') : t('chat.copyOutput')}
           </button>
         </div>
       )}
@@ -519,43 +524,16 @@ export function ChatView() {
   const [confirmYolo, setConfirmYolo] = useState(false);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
-  const [composing, setComposing] = useState(false);
   const composerDraft = useStore((s) => s.composerDraft);
   const clearComposerDraft = useStore((s) => s.clearComposerDraft);
+  const composerRef = useRef<MarkdownComposerHandle>(null);
   useEffect(() => {
     if (!composerDraft) return;
+    composerRef.current?.setMarkdown(composerDraft);
     setInput(composerDraft);
     clearComposerDraft();
   }, [composerDraft, clearComposerDraft]);
-  const [undoAvail, setUndoAvail] = useState<UndoState>({
-    can_undo: false,
-    can_redo: false,
-  });
-  const [undoNotice, setUndoNotice] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-  const highlightRef = useRef<HTMLDivElement>(null);
-  // Inline mention picker: "@query" searches workspace files,
-  // "$query" completes skill names. Arrow keys move, Enter inserts,
-  // Escape closes.
-  type MentionKind = 'file' | 'skill';
-  interface MentionItem {
-    key: string;
-    label: string;
-    sub: string;
-    isDir?: boolean;
-    trigger: '@' | '$';
-    insert: string;
-  }
-  const [mention, setMention] = useState<{
-    kind: MentionKind;
-    query: string;
-    items: MentionItem[];
-    active: number | null;
-  } | null>(null);
-  const fileSearchSeq = useRef(0);
-  const fileSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const skillsCache = useRef<SkillDTO[] | null>(null);
   // Stick-to-bottom: while the agent streams, the view follows the
   // latest output with an instant snap. Smooth-scrolling on every
   // delta races when the window is occluded (switching screens) and
@@ -569,10 +547,6 @@ export function ChatView() {
   // captured from an earlier render — that race is what made the view
   // jump back to the bottom right after the user scrolled away.
   const stickRef = useRef(true);
-  // Tracks IME composition so pressing Enter to confirm a candidate
-  // never sends the message (isComposing alone is unreliable in
-  // WKWebView for the Enter key).
-  const composingRef = useRef(false);
   const { t } = useTranslation();
   const thinkLevels = [
     { value: 'minimal', label: t('chat.thinkMinimal') },
@@ -659,34 +633,6 @@ export function ChatView() {
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages, pendingInteracts, stick]);
 
-  // Refresh undo/redo availability when a turn finishes or the
-  // conversation switches (captures happen on turn end).
-  useEffect(() => {
-    if (busy) return;
-    void api
-      .undoState()
-      .then(setUndoAvail)
-      .catch(() => {});
-  }, [busy, current]);
-
-  const runUndo = async (redo: boolean) => {
-    try {
-      const files = redo ? await api.redoChange() : await api.undoChange();
-      setUndoNotice(
-        redo
-          ? t('chat.redoDone', { count: files.length })
-          : t('chat.undoDone', { count: files.length }),
-      );
-      void api
-        .undoState()
-        .then(setUndoAvail)
-        .catch(() => {});
-    } catch {
-      setUndoNotice(redo ? t('chat.redoEmpty') : t('chat.undoEmpty'));
-    }
-    window.setTimeout(() => setUndoNotice(''), 3000);
-  };
-
   useEffect(() => {
     const onVisibility = () => {
       if (document.visibilityState === 'visible' && stickRef.current) {
@@ -699,11 +645,12 @@ export function ChatView() {
   }, []);
 
   const submit = () => {
-    if ((!input.trim() && attachments.length === 0) || busy) return;
+    const text = composerRef.current?.getMarkdown() ?? input;
+    if ((!text.trim() && attachments.length === 0) || busy) return;
     stickRef.current = true;
     setStick(true);
-    const text = input;
     setInput('');
+    composerRef.current?.clear();
     const staged = attachments;
     setAttachments([]);
     void send(text, staged);
@@ -711,147 +658,8 @@ export function ChatView() {
 
   const retry = () => {
     setInput('');
+    composerRef.current?.clear();
     void retryLast();
-  };
-
-  const onInputChange = (value: string) => {
-    setInput(value);
-    const fileMatch = value.match(/(?:^|\s)@([\w./-]*)$/);
-    const skillMatch = value.match(/(?:^|\s)\$([a-z0-9-]*)$/i);
-    if (fileMatch) {
-      const query = fileMatch[1];
-      setMention((m) =>
-        m && m.kind === 'file'
-          ? { ...m, query }
-          : { kind: 'file', query, items: [], active: null },
-      );
-      if (fileSearchTimer.current) clearTimeout(fileSearchTimer.current);
-      fileSearchTimer.current = setTimeout(() => {
-        const seq = ++fileSearchSeq.current;
-        void api
-          .searchFiles(query)
-          .then((hits) => {
-            if (seq !== fileSearchSeq.current) return;
-            const list = Array.isArray(hits) ? hits : [];
-            setMention((m) =>
-              m && m.kind === 'file'
-                ? {
-                    ...m,
-                    items: list.map((h) => ({
-                      key: h.path,
-                      label: h.path,
-                      sub: '',
-                      isDir: h.is_dir,
-                      trigger: '@' as const,
-                      insert: '@' + h.path,
-                    })),
-                  }
-                : m,
-            );
-          })
-          .catch(() => {
-            if (seq === fileSearchSeq.current) {
-              setMention((m) =>
-                m && m.kind === 'file' ? { ...m, items: [] } : m,
-              );
-            }
-          });
-      }, 120);
-    } else if (skillMatch) {
-      const query = skillMatch[1];
-      setMention((m) =>
-        m && m.kind === 'skill'
-          ? { ...m, query }
-          : { kind: 'skill', query, items: [], active: null },
-      );
-      const apply = (skills: SkillDTO[]) => {
-        const q = query.toLowerCase();
-        setMention((m) =>
-          m && m.kind === 'skill'
-            ? {
-                ...m,
-                items: skills
-                  .filter((s) => s.name.toLowerCase().includes(q))
-                  .map((s) => ({
-                    key: s.name,
-                    label: s.name,
-                    sub: s.description,
-                    trigger: '$' as const,
-                    insert: '$' + s.name,
-                  })),
-              }
-            : m,
-        );
-      };
-      if (skillsCache.current) {
-        apply(skillsCache.current);
-      } else {
-        void api
-          .skills()
-          .then((skills) => {
-            skillsCache.current = skills;
-            apply(skills);
-          })
-          .catch(() => {
-            skillsCache.current = [];
-            setMention((m) =>
-              m && m.kind === 'skill' ? { ...m, items: [] } : m,
-            );
-          });
-      }
-    } else {
-      setMention(null);
-    }
-  };
-
-  // Grow the composer with the content up to a max height; shrink back
-  // when the text is cleared.
-  useEffect(() => {
-    const el = inputRef.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    const max = Number.parseFloat(getComputedStyle(el).maxHeight) || 208;
-    el.style.height = `${Math.min(el.scrollHeight, max)}px`;
-  }, [input]);
-
-  const insertMention = (item: MentionItem) => {
-    const re =
-      item.trigger === '@'
-        ? /(?:^|\s)@([\w./-]*)$/
-        : /(?:^|\s)\$([a-z0-9-]*)$/i;
-    const match = input.match(re);
-    let next: string;
-    if (match) {
-      const at = match.index! + match[0].indexOf(item.trigger);
-      next = input.slice(0, at) + item.insert;
-    } else {
-      next = input + item.insert;
-    }
-    setInput(next + ' ');
-    setMention(null);
-    inputRef.current?.focus();
-  };
-
-  // renderHighlightedInput colors @/$ mention tokens in the composer
-  // mirror layer; the textarea itself renders transparent text so the
-  // highlight shows through while selection stays native.
-  const renderHighlightedInput = (text: string) => {
-    const nodes: React.ReactNode[] = [];
-    const re = /@[\w./-]+|\$[a-z0-9-]+/gi;
-    let last = 0;
-    let m: RegExpExecArray | null;
-    let key = 0;
-    while ((m = re.exec(text)) !== null) {
-      if (m.index > last) nodes.push(text.slice(last, m.index));
-      nodes.push(
-        <span key={key++} className="text-accent">
-          {m[0]}
-        </span>,
-      );
-      last = m.index + m[0].length;
-    }
-    if (last < text.length) nodes.push(text.slice(last));
-    return nodes;
   };
 
   const sessionTitle = sessions.find((s) => s.id === current)?.title;
@@ -861,9 +669,10 @@ export function ChatView() {
       : t('chat.newSession');
   const yolo = mode === 'yolo';
   const readOnly = mode === 'read-only';
+  const centerComposer = messages.length === 0 && configured;
 
   return (
-    <main className="flex-1 min-w-0 flex flex-col min-h-0">
+    <main className="relative flex-1 min-w-0 flex flex-col min-h-0">
       <header
         className="h-11 shrink-0 border-b border-edge bg-panel flex items-center px-4 gap-2"
         style={{ ['--wails-draggable' as string]: 'drag' }}
@@ -875,31 +684,10 @@ export function ChatView() {
           </span>
         )}
         <span className="flex-1" />
-        {undoNotice && (
-          <span className="mr-1 text-xs text-dim">{undoNotice}</span>
-        )}
         <div
           className="flex items-center"
           style={{ ['--wails-draggable' as string]: 'no-drag' }}
         >
-          <button
-            onClick={() => void runUndo(false)}
-            disabled={!undoAvail.can_undo}
-            title={t('chat.undo')}
-            aria-label={t('chat.undo')}
-            className="rounded-lg border border-edge p-1.5 text-dim transition-colors hover:text-fg disabled:opacity-40"
-          >
-            <Undo2 size="0.9286rem" />
-          </button>
-          <button
-            onClick={() => void runUndo(true)}
-            disabled={!undoAvail.can_redo}
-            title={t('chat.redo')}
-            aria-label={t('chat.redo')}
-            className="ml-1 rounded-lg border border-edge p-1.5 text-dim transition-colors hover:text-fg disabled:opacity-40"
-          >
-            <Redo2 size="0.9286rem" />
-          </button>
           {subagentCards.length > 0 && (
             <button
               onClick={toggleSubagentPanel}
@@ -935,19 +723,19 @@ export function ChatView() {
         >
           {messages.length === 0 ? (
             <div className="h-full grid place-items-center">
-              <div className="text-center space-y-3">
-                <div className="text-dim text-sm">
-                  {configured ? t('chat.empty') : t('chat.emptyUnconfigured')}
-                </div>
-                {!configured && (
+              {!configured && (
+                <div className="text-center space-y-3">
+                  <div className="text-dim text-sm">
+                    {t('chat.emptyUnconfigured')}
+                  </div>
                   <button
                     onClick={() => openConfig()}
                     className="rounded-lg border border-edge px-3 py-1.5 text-sm text-fg hover:border-accent/50 transition-colors"
                   >
                     {t('chat.openSettings')}
                   </button>
-                )}
-              </div>
+                </div>
+              )}
             </div>
           ) : (
             <div className="max-w-4xl mx-auto space-y-4">
@@ -1029,7 +817,13 @@ export function ChatView() {
         )}
       </div>
 
-      <div className="shrink-0 px-6 pb-4">
+      <div
+        className={
+          centerComposer
+            ? 'absolute inset-x-0 top-[calc(50%+1.375rem)] z-10 mx-auto w-full max-w-4xl -translate-y-1/2 px-6'
+            : 'shrink-0 px-6 pb-4'
+        }
+      >
         <div className="max-w-4xl mx-auto rounded-xl border border-edge bg-panel focus-within:border-accent/60 transition-colors">
           {attachments.length > 0 && (
             <div className="flex flex-wrap gap-2 px-3 pt-2">
@@ -1061,150 +855,23 @@ export function ChatView() {
             </div>
           )}
           {/* The top gap lives outside the scroll container (pt-3 here)
-              so it stays visible even when the textarea is scrolled to
-              the bottom; padding inside the textarea would scroll away
+              so it stays visible even when the editor is scrolled to
+              the bottom; padding inside the editor would scroll away
               with the content. */}
           <div className="pt-3">
-            <div className="relative">
-              <div
-                ref={highlightRef}
-                aria-hidden="true"
-                className={`pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-4 text-sm text-fg ${
-                  composing ? 'opacity-0' : ''
-                }`}
-              >
-                {!composing && renderHighlightedInput(input)}
-              </div>
-              <textarea
-                ref={inputRef}
-                value={input}
-                onChange={(e) => onInputChange(e.target.value)}
-                onCompositionStart={() => {
-                  composingRef.current = true;
-                  setComposing(true);
-                }}
-                onCompositionEnd={() => {
-                  composingRef.current = false;
-                  setComposing(false);
-                }}
-                onScroll={() => {
-                  if (highlightRef.current) {
-                    highlightRef.current.scrollTop =
-                      inputRef.current?.scrollTop ?? 0;
-                  }
-                }}
-                onKeyDown={(e) => {
-                  if (mention && e.key === 'Escape') {
-                    setMention(null);
-                    return;
-                  }
-                  if (
-                    mention &&
-                    mention.items.length > 0 &&
-                    (e.key === 'ArrowDown' || e.key === 'ArrowUp')
-                  ) {
-                    e.preventDefault();
-                    const delta = e.key === 'ArrowDown' ? 1 : -1;
-                    setMention((m) =>
-                      m
-                        ? {
-                            ...m,
-                            active:
-                              m.active == null
-                                ? delta === 1
-                                  ? 0
-                                  : m.items.length - 1
-                                : (m.active + delta + m.items.length) %
-                                  m.items.length,
-                          }
-                        : m,
-                    );
-                    return;
-                  }
-                  if (mention && e.key === 'Enter' && !e.shiftKey) {
-                    const item = mention.items[mention.active ?? 0];
-                    if (item) {
-                      e.preventDefault();
-                      insertMention(item);
-                      return;
-                    }
-                  }
-                  if (mention && e.key === 'Enter') {
-                    e.preventDefault();
-                    return;
-                  }
-                  if (
-                    e.key === 'Enter' &&
-                    !e.shiftKey &&
-                    !e.nativeEvent.isComposing &&
-                    !composingRef.current &&
-                    e.keyCode !== 229
-                  ) {
-                    e.preventDefault();
-                    submit();
-                  }
-                }}
-                rows={1}
-                placeholder={
-                  configured
-                    ? t('chat.placeholder')
-                    : t('chat.placeholderUnconfigured')
-                }
-                disabled={!configured}
-                className={`block relative max-h-52 w-full resize-none overflow-y-auto no-scrollbar bg-transparent px-4 text-sm caret-fg outline-none placeholder:text-dim/55 disabled:opacity-50 ${
-                  composing ? 'text-fg' : 'text-transparent'
-                }`}
-              />
-            </div>
+            <MarkdownComposer
+              ref={composerRef}
+              initialMarkdown={input}
+              placeholder={
+                configured
+                  ? t('chat.placeholder')
+                  : t('chat.placeholderUnconfigured')
+              }
+              disabled={!configured}
+              onValueChange={setInput}
+              onSubmit={submit}
+            />
           </div>
-          {mention && (
-            <div className="mx-3 mb-2 max-h-48 overflow-y-auto rounded-lg border border-edge bg-panel2 shadow-xl">
-              {mention.items.length === 0 ? (
-                <div className="px-3 py-2 text-xs text-dim">
-                  {mention.query
-                    ? t('chat.mentionNoMatch')
-                    : mention.kind === 'file'
-                      ? t('chat.mentionSearchHint')
-                      : t('chat.mentionSkillHint')}
-                </div>
-              ) : (
-                mention.items.slice(0, 12).map((n, i) => (
-                  <button
-                    key={n.key}
-                    onClick={() => insertMention(n)}
-                    onMouseEnter={() =>
-                      setMention((m) => (m ? { ...m, active: i } : m))
-                    }
-                    className={`w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm ${
-                      i === mention.active
-                        ? 'bg-accent/15 text-accent'
-                        : 'hover:bg-panel'
-                    }`}
-                  >
-                    {n.trigger === '@' ? (
-                      n.isDir ? (
-                        <Folder
-                          size="0.9286rem"
-                          className="text-accent shrink-0"
-                        />
-                      ) : (
-                        <File size="0.9286rem" className="text-dim shrink-0" />
-                      )
-                    ) : (
-                      <Sparkles
-                        size="0.9286rem"
-                        className="text-accent shrink-0"
-                      />
-                    )}
-                    <span className="shrink-0">{n.label}</span>
-                    {n.sub && (
-                      <span className="truncate text-xs text-dim">{n.sub}</span>
-                    )}
-                  </button>
-                ))
-              )}
-            </div>
-          )}
           <div className="mt-3 flex items-center justify-between px-3 pb-2.5">
             <div className="flex items-center gap-3">
               <button

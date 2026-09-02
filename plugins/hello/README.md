@@ -39,7 +39,6 @@ export function apply(ctx) {
 Every registration is a reversible effect tied to the plugin's Cordis
 scope: contributions, `ctx.on` subscriptions and `ctx.effect` cleanups
 all run in reverse order when the plugin is disabled or reloaded.
-See `docs/plans/plugin-system.md` for the full design.
 
 ## Agent-facing capabilities
 
@@ -101,7 +100,6 @@ warns before installing a shadow, and the plugin list marks overrides
 with a badge. Enable state is shared per id. A builtin that declares
 `update.url` can also be updated directly: applying the update installs
 the package as a user shadow, and uninstalling it restores the builtin.
-See `docs/plans/plugin-system.md` for the full semantics.
 
 ## Remote update checks (update.url)
 
