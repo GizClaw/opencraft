@@ -13,6 +13,7 @@ import (
 	"runtime"
 
 	"github.com/GizClaw/opencraft/internal/desktop"
+	"github.com/GizClaw/opencraft/internal/headless"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -39,6 +40,9 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "execd" {
 		runExecServer()
 		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "run" {
+		os.Exit(headless.Main(os.Args[2:]))
 	}
 
 	app, err := desktop.New(desktop.Options{
