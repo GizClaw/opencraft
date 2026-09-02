@@ -52,6 +52,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/secrets"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 	"github.com/GizClaw/opencraft/internal/skills"
+	"github.com/GizClaw/opencraft/internal/toolchain"
 	opentools "github.com/GizClaw/opencraft/internal/tools"
 	automationtool "github.com/GizClaw/opencraft/internal/tools/automation"
 )
@@ -113,6 +114,9 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 			opt(&o)
 		}
 	}
+	if err := config.MigrateMCPToolchain(&doc); err != nil {
+		return nil, err
+	}
 	if o.ConfigBase == "" {
 		o.ConfigBase, _ = config.UserConfigDir()
 	}
@@ -166,6 +170,8 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 		ocsessions.Register,
 		opmedia.Register,
 		skills.Register,
+		toolchain.Register,
+		toolchain.RegisterMCP,
 		opentools.Register,
 		sandbox.Register,
 		secrets.Register,

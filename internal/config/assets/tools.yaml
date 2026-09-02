@@ -69,6 +69,7 @@ resources:
     impl: opencraft/plugins
     deps:
       plugin.host: plugin.host
+      toolchain: toolchain
   # Scheduled-task management: preview + user confirmation happens in
   # the tool; persistence delegates to the desktop automation host.
   tool.automation:

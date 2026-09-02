@@ -342,6 +342,15 @@ export interface MemorySettings {
   replay_full_history: boolean;
 }
 
+export interface ToolchainStatus {
+  tool: string;
+  family: string;
+  version: string;
+  source: 'system' | 'bundled' | '';
+  path: string;
+  error: string;
+}
+
 export interface DiagnosticsReport {
   version: string;
   go_version: string;
@@ -361,6 +370,7 @@ export interface DiagnosticsReport {
   sandbox_backend: string;
   sandbox_available: boolean;
   usage_total_tokens: number;
+  toolchains?: ToolchainStatus[];
 }
 
 export interface SandboxProbeResult {

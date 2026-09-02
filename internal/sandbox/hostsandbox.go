@@ -24,6 +24,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/execd"
 	"github.com/GizClaw/opencraft/internal/sessions"
+	"github.com/GizClaw/opencraft/internal/toolchain"
 	"github.com/GizClaw/opencraft/internal/utils/resourcedep"
 )
 
@@ -67,6 +68,34 @@ func (h *HostSandbox) Close() error {
 	// In remote mode the unconfined runner shares the confined backend
 	// (its Close is a no-op wrapper), so ownership stays in confined.
 	return errors.Join(h.confined.Close(), h.unconfined.Close())
+}
+
+// mergeToolchainEnv layers the toolchain manager's sandbox additions
+// onto the configured env policy without overwriting explicit user
+// values. The allow-list stays owned by the policy (explicit config or
+// the curated default); toolchain variables are only added where the
+// user has not already set them.
+func mergeToolchainEnv(
+	policy coresandbox.EnvPolicy,
+	mgr *toolchain.Manager,
+) coresandbox.EnvPolicy {
+	additions := mgr.SandboxEnv()
+	if len(additions) == 0 {
+		return policy
+	}
+	inject := make(map[string]string, len(policy.Inject)+len(additions))
+	for key, value := range policy.Inject {
+		inject[key] = value
+	}
+	for key, value := range additions {
+		if _, exists := inject[key]; !exists {
+			inject[key] = value
+		}
+	}
+	return coresandbox.EnvPolicy{
+		Allow:  policy.Allow,
+		Inject: inject,
+	}
 }
 
 func (h *HostSandbox) Capabilities() coresandbox.Capabilities {
@@ -188,6 +217,7 @@ func (HostSandboxFactory) Spec() resource.Spec {
 			{Name: "execpolicy", Type: "opencraft.execpolicy", Required: true},
 			{Name: "sessions", Type: sessions.ResourceKind, Required: true},
 			{Name: "netpolicy", Type: NetPolicyResourceKind, Required: false},
+			{Name: "toolchain", Type: toolchain.ResourceKind, Required: false},
 		},
 	}
 }
@@ -216,6 +246,16 @@ func (HostSandboxFactory) New(
 	if err != nil {
 		return nil, err
 	}
+	env := s.Env()
+	if dep, ok := in.Dep("toolchain"); ok {
+		mgr, ok := dep.(*toolchain.Manager)
+		if !ok {
+			return nil, errdefs.Validationf(
+				"opencraft sandbox: toolchain dep is %T, want *toolchain.Manager",
+				dep)
+		}
+		env = mergeToolchainEnv(env, mgr)
+	}
 	// The configured exec network posture becomes the runner default:
 	// WithDefaults pins Net onto every call, so deny-all / allow-list /
 	// proxy apply to all sandboxed commands without touching each tool.
@@ -231,7 +271,12 @@ func (HostSandboxFactory) New(
 	// start request carries Unconfined).
 	var backend coresandbox.Runner
 	if s.Remote {
-		polJSON, err := json.Marshal(s.SandboxPolicy())
+		pol := s.SandboxPolicy()
+		pol.EnvPolicy = &EnvPolicyConfig{
+			Allow:  env.Allow,
+			Inject: env.Inject,
+		}
+		polJSON, err := json.Marshal(pol)
 		if err != nil {
 			return nil, errdefs.Validationf(
 				"opencraft sandbox: encode env policy: %v", err)
@@ -278,7 +323,7 @@ func (HostSandboxFactory) New(
 	// Workspace mode chain: approval gate → env policy → OS backend.
 	confined := coresandbox.WithApproval(
 		coresandbox.WithDefaults(backend, coresandbox.ExecOptions{
-			Env: s.Env(),
+			Env: env,
 			Net: execNet,
 		}),
 		approver.Approve, approver.Allowlist())

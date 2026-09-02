@@ -29,6 +29,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/rollout"
 	"github.com/GizClaw/opencraft/internal/secrets"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
+	"github.com/GizClaw/opencraft/internal/toolchain"
 	"github.com/GizClaw/opencraft/internal/undo"
 	"github.com/GizClaw/opencraft/internal/usage"
 )
@@ -598,10 +599,23 @@ func validateMCPServer(srv *config.MCPServer) error {
 
 // mcpTransport builds the MCP transport for one server entry the same
 // way the runtime factory wires stdio/http servers.
-func mcpTransport(server config.MCPServer) (mcpsdk.Transport, error) {
+func mcpTransport(
+	mgr *toolchain.Manager,
+	server config.MCPServer,
+) (mcpsdk.Transport, error) {
 	switch server.Transport {
 	case "stdio":
-		return mcp.Stdio(server.Command, server.Args, server.Env)
+		command := server.Command
+		env := server.Env
+		if mgr != nil {
+			resolved, err := mgr.ResolveMCPCommand(command)
+			if err != nil {
+				return nil, err
+			}
+			command = resolved
+			env = mgr.AttachHostEnv(env)
+		}
+		return mcp.Stdio(command, server.Args, env)
 	case "http":
 		return mcp.StreamableHTTP(server.URL, nil, nil)
 	default:
@@ -622,7 +636,7 @@ func (a *App) TestMCP(server config.MCPServer) error {
 	defer cancel()
 	src := mcp.NewSource(mcp.WithConnectTimeout(timeout))
 	defer func() { _ = src.Close() }()
-	transport, err := mcpTransport(server)
+	transport, err := mcpTransport(a.currentToolchain(), server)
 	if err != nil {
 		return err
 	}
