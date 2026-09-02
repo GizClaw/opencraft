@@ -75,14 +75,33 @@ plugin manager. Update enforces:
 - the new `version` must be strictly newer than the installed one
   (semver-style ordering: dotted numeric core with optional
   `-prerelease`, where releases sort above prereleases);
+- when overriding a builtin, the new version must not be older than
+  the builtin version;
 - `minHostVersion` must not exceed the running host version when the
   host records one.
 
 The previous version is snapshotted to `<root>/.backups/<id>` before
 the swap, so a failed replace restores it automatically and the UI
 offers an explicit rollback afterwards. Enabled state, KV data,
-secrets and inference profiles survive update and rollback; builtin
-plugins cannot be updated or rolled back.
+secrets and inference profiles survive update and rollback.
+
+## Builtin plugins and overrides
+
+App-bundled (builtin) plugins are read-only: they cannot be rolled back
+or uninstalled in place, only disabled. To override a builtin, install
+a user plugin with the same `id` (a folder, zip, or remote update
+package) into `~/.opencraft/plugins/<id>/`. The user copy then
+**shadows** the builtin and behaves like any other user plugin: it can
+be updated, rolled back, and uninstalled. Uninstalling the shadow
+removes only the user copy and reveals the builtin again.
+
+The shadow's version must be at least the builtin's version (equal is
+allowed); older installs and updates are rejected. The install dialog
+warns before installing a shadow, and the plugin list marks overrides
+with a badge. Enable state is shared per id. A builtin that declares
+`update.url` can also be updated directly: applying the update installs
+the package as a user shadow, and uninstalling it restores the builtin.
+See `docs/plans/plugin-system.md` for the full semantics.
 
 ## Remote update checks (update.url)
 

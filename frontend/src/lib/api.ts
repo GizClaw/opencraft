@@ -142,6 +142,8 @@ export const api = {
     App.PluginInstall(dir) as Promise<PluginSummary>,
   pluginInstallZip: (zip: string) =>
     App.PluginInstallZip(zip) as Promise<PluginSummary>,
+  pluginInspect: (path: string) =>
+    App.PluginInspect(path) as Promise<PluginSummary>,
   pluginUpdate: (id: string, dir: string) =>
     App.PluginUpdate(id, dir) as Promise<PluginSummary>,
   pluginUpdateZip: (id: string, zip: string) =>

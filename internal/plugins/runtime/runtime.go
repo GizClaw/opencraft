@@ -652,6 +652,11 @@ func allowedHost(allowed []string, host string) bool {
 type DefaultLoader struct {
 	// CapabilityFunc returns the declared capability for id.
 	CapabilityFunc func(id string) (Capability, bool, error)
+	// DirFunc resolves where an installed plugin lives and whether it
+	// is a user copy. When set, BinaryPath uses it to refuse falling
+	// back to a builtin binary for a user plugin that shadows a
+	// builtin (the manifests could disagree).
+	DirFunc func(id string) (dir string, builtin bool, err error)
 	// Root is the plugin directory.
 	Root string
 }
@@ -671,8 +676,22 @@ func (l DefaultLoader) BinaryPath(id string, cap Capability) (string, error) {
 	}
 	path := filepath.Join(l.Root, id, bin)
 	if _, err := os.Stat(path); err != nil {
-		// Not in the user plugin dir: fall back to the read-only
-		// builtin (app-bundled) plugin directory.
+		// Not in the user plugin dir. A user copy that shadows a
+		// builtin must not silently use the builtin's binary; only
+		// plugins that live in the builtin root may fall back.
+		if l.DirFunc != nil {
+			_, builtin, err := l.DirFunc(id)
+			if err != nil {
+				return "", fmt.Errorf("runtime: resolve plugin %q: %w", id, err)
+			}
+			if !builtin {
+				return "", fmt.Errorf(
+					"runtime: capability binary %q missing from user plugin %q",
+					bin, id)
+			}
+		}
+		// Fall back to the read-only builtin (app-bundled) plugin
+		// directory.
 		if root := BuiltinPluginRoot(); root != "" {
 			path = filepath.Join(root, id, bin)
 		}

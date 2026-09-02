@@ -3,6 +3,8 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../../lib/api';
 import { usePluginStore } from '../store';
+import { compareVersions } from '../version';
+import type { PluginSummary } from '../types';
 
 // PluginInstallDialog installs or updates a plugin from a local
 // directory containing plugin.json or from a zip package. When
@@ -19,7 +21,20 @@ export function PluginInstallDialog({
   const [path, setPath] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [shadow, setShadow] = useState<PluginSummary | null>(null);
   const isUpdate = pluginId !== undefined;
+
+  const inspect = async (p: string) => {
+    if (!p.trim() || isUpdate) {
+      setShadow(null);
+      return;
+    }
+    try {
+      setShadow(await api.pluginInspect(p.trim()));
+    } catch {
+      setShadow(null);
+    }
+  };
 
   const pick = async () => {
     try {
@@ -31,6 +46,7 @@ export function PluginInstallDialog({
       if (dir) {
         setPath(dir);
         setError('');
+        void inspect(dir);
       }
     } catch (err) {
       setError(String(err));
@@ -48,6 +64,7 @@ export function PluginInstallDialog({
       if (file) {
         setPath(file);
         setError('');
+        void inspect(file);
       }
     } catch (err) {
       setError(String(err));
@@ -110,7 +127,10 @@ export function PluginInstallDialog({
           <div className="flex gap-2">
             <input
               value={path}
-              onChange={(e) => setPath(e.target.value)}
+              onChange={(e) => {
+                setPath(e.target.value);
+                void inspect(e.target.value);
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') void install();
               }}
@@ -137,6 +157,23 @@ export function PluginInstallDialog({
               {t('config.pluginsChooseZip')}
             </button>
           </div>
+          {shadow?.shadowsBuiltin && (
+            <div className="rounded-lg border border-warn/30 bg-warn/10 px-2.5 py-2 text-xs text-warn">
+              {t('config.pluginsShadowInstallWarn', {
+                name: shadow.name,
+                builtinVersion: shadow.builtinVersion ?? '',
+              })}
+              {shadow.builtinVersion &&
+                compareVersions(shadow.version, shadow.builtinVersion) < 0 && (
+                  <p className="mt-1">
+                    {t('config.pluginsShadowInstallTooOld', {
+                      version: shadow.version,
+                      builtinVersion: shadow.builtinVersion,
+                    })}
+                  </p>
+                )}
+            </div>
+          )}
           {error && (
             <p className="text-[0.7857rem] text-err break-words">{error}</p>
           )}

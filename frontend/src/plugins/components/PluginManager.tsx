@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../../lib/api';
 import { usePluginStore } from '../store';
+import { compareVersions } from '../version';
 import { PluginInstallDialog } from './PluginInstallDialog';
 import { PluginPanels } from './PluginPanels';
 import type { PluginUpdateInfo } from '../types';
@@ -148,8 +149,28 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
                       {t('config.pluginsBuiltin')}
                     </span>
                   )}
+                  {p.shadowsBuiltin && (
+                    <span
+                      className="ml-1 rounded bg-warn/10 px-1.5 py-0.5 text-[0.7143rem] text-warn"
+                      title={t('config.pluginsShadowHint', {
+                        version: p.builtinVersion ?? '',
+                      })}
+                    >
+                      {t('config.pluginsShadow')}
+                    </span>
+                  )}
                 </p>
                 <p className="text-[0.7857rem] text-dim truncate">{p.id}</p>
+                {p.shadowsBuiltin &&
+                  p.builtinVersion &&
+                  compareVersions(p.version, p.builtinVersion) < 0 && (
+                    <p className="mt-1 text-[0.7857rem] text-warn">
+                      {t('config.pluginsShadowOlder', {
+                        version: p.version,
+                        builtinVersion: p.builtinVersion,
+                      })}
+                    </p>
+                  )}
                 {(p.hasSkills || p.hasMcp || p.hasHooks || p.hasTools) && (
                   <div
                     className="mt-1 flex flex-wrap gap-1"
@@ -203,7 +224,7 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
                   {t('config.pluginsUpdate')}
                 </button>
               )}
-              {!p.builtin && p.hasUpdate && (
+              {p.hasUpdate && (
                 <button
                   onClick={() => void checkUpdate(p.id)}
                   disabled={checkingUpdateId === p.id}

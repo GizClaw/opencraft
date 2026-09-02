@@ -46,6 +46,10 @@ export interface PluginSummary {
   enabled: boolean;
   /** Builtin plugins ship with the app and can only be disabled. */
   builtin?: boolean;
+  /** User plugin that overrides an app-bundled builtin with the same id. */
+  shadowsBuiltin?: boolean;
+  /** Version of the shadowed builtin, when known. */
+  builtinVersion?: string;
   error?: string;
   panels?: string[];
   entries?: string[];

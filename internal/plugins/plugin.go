@@ -96,6 +96,12 @@ type PluginSummary struct {
 	Error   string   `json:"error,omitempty"`
 	Panels  []string `json:"panels,omitempty"`
 	Entries []string `json:"entries,omitempty"`
+	// ShadowsBuiltin marks a user plugin that overrides an app-bundled
+	// builtin with the same id. BuiltinVersion reports the version of
+	// the shadowed builtin so the UI can compare it with the user
+	// version.
+	ShadowsBuiltin bool   `json:"shadowsBuiltin,omitempty"`
+	BuiltinVersion string `json:"builtinVersion,omitempty"`
 	// Agent-facing capability flags (skills / MCP / hooks / tools).
 	HasSkills bool `json:"hasSkills,omitempty"`
 	HasMCP    bool `json:"hasMcp,omitempty"`
@@ -289,6 +295,10 @@ func (s *Store) scanDir(
 		sum.HasUpdate = m.Update != nil
 		if !builtin {
 			sum.CanRollback = rollbackAvailable(s.root, id)
+			if v := s.builtinVersion(id); v != "" {
+				sum.ShadowsBuiltin = true
+				sum.BuiltinVersion = v
+			}
 		}
 		for _, p := range m.Contributes.SettingsPanels {
 			sum.Panels = append(sum.Panels, p.ID)
@@ -395,6 +405,17 @@ func (s *Store) Install(src string) (PluginSummary, error) {
 	if err := s.checkHostVersion(m); err != nil {
 		return PluginSummary{}, err
 	}
+	if bv := s.builtinVersion(m.ID); bv != "" {
+		cmp, err := compareVersions(m.Version, bv)
+		if err != nil {
+			return PluginSummary{}, fmt.Errorf("plugins: compare with builtin %q: %w", bv, err)
+		}
+		if cmp < 0 {
+			return PluginSummary{}, fmt.Errorf(
+				"plugins: %q version %q is older than the builtin version %q; install %q or newer to override it",
+				m.ID, m.Version, bv, bv)
+		}
+	}
 	dst := filepath.Join(s.root, m.ID)
 	if _, err := os.Stat(dst); err == nil {
 		return PluginSummary{}, fmt.Errorf(
@@ -411,7 +432,86 @@ func (s *Store) Install(src string) (PluginSummary, error) {
 		_ = os.RemoveAll(dst)
 		return PluginSummary{}, err
 	}
-	return summaryFromManifest(m, dst, false), nil
+	return s.withBuiltinInfo(summaryFromManifest(m, dst, false)), nil
+}
+
+// Inspect reads a plugin source (a folder containing plugin.json or a
+// zip package) and returns its manifest summary without installing
+// it. The install dialog uses it to warn when the source would
+// override a builtin with the same id.
+func (s *Store) Inspect(src string) (PluginSummary, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dir, cleanup, err := sourcePluginDir(src)
+	if err != nil {
+		return PluginSummary{}, err
+	}
+	defer cleanup()
+	raw, err := os.ReadFile(filepath.Join(dir, "plugin.json"))
+	if err != nil {
+		return PluginSummary{}, fmt.Errorf("plugins: read source manifest: %w", err)
+	}
+	var probe struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return PluginSummary{}, fmt.Errorf("plugins: decode manifest: %w", err)
+	}
+	m, err := parseManifest(probe.ID, raw)
+	if err != nil {
+		return PluginSummary{}, err
+	}
+	if err := s.checkHostVersion(m); err != nil {
+		return PluginSummary{}, err
+	}
+	sum := summaryFromManifest(m, dir, false)
+	return s.withBuiltinInfo(sum), nil
+}
+
+// sourcePluginDir resolves a plugin source: a directory containing
+// plugin.json, or a zip package (extracted to a temporary directory).
+func sourcePluginDir(src string) (string, func(), error) {
+	info, err := os.Stat(src)
+	if err != nil {
+		return "", nil, fmt.Errorf("plugins: source: %w", err)
+	}
+	if info.IsDir() {
+		return src, func() {}, nil
+	}
+	return extractPluginZip(src)
+}
+
+// withBuiltinInfo annotates a user-plugin summary when a builtin with
+// the same id exists, so installers/updaters can surface the override
+// relationship immediately.
+func (s *Store) withBuiltinInfo(sum PluginSummary) PluginSummary {
+	if sum.Builtin || s.builtin == "" {
+		return sum
+	}
+	if v := s.builtinVersion(sum.ID); v != "" {
+		sum.ShadowsBuiltin = true
+		sum.BuiltinVersion = v
+	}
+	return sum
+}
+
+// builtinVersion reads the manifest version of the app-bundled builtin
+// with id, or "" when no builtin exists or its manifest is unreadable.
+func (s *Store) builtinVersion(id string) string {
+	if s.builtin == "" {
+		return ""
+	}
+	raw, err := os.ReadFile(filepath.Join(s.builtin, id, "plugin.json"))
+	if err != nil {
+		return ""
+	}
+	var probe struct {
+		Version string `json:"version"`
+	}
+	if json.Unmarshal(raw, &probe) != nil || probe.Version == "" {
+		return ""
+	}
+	return probe.Version
 }
 
 // summaryFromManifest builds the frontend-facing summary for one
@@ -503,6 +603,17 @@ func (s *Store) Update(id, src string) (PluginSummary, error) {
 			"plugins: update %q version %q is not newer than installed %q",
 			id, m.Version, cur.Version)
 	}
+	if bv := s.builtinVersion(id); bv != "" {
+		cmp, err := compareVersions(m.Version, bv)
+		if err != nil {
+			return PluginSummary{}, fmt.Errorf("plugins: compare with builtin %q: %w", bv, err)
+		}
+		if cmp < 0 {
+			return PluginSummary{}, fmt.Errorf(
+				"plugins: update %q version %q is older than the builtin version %q; update to %q or newer",
+				id, m.Version, bv, bv)
+		}
+	}
 	if err := s.checkHostVersion(m); err != nil {
 		return PluginSummary{}, err
 	}
@@ -561,7 +672,7 @@ func (s *Store) Update(id, src string) (PluginSummary, error) {
 			sum.Enabled = enabled
 		}
 	}
-	return sum, nil
+	return s.withBuiltinInfo(sum), nil
 }
 
 // UpdateZip updates a plugin from a zip package. The archive layout
@@ -633,7 +744,7 @@ func (s *Store) Rollback(id string) (PluginSummary, error) {
 			sum.Enabled = enabled
 		}
 	}
-	return sum, nil
+	return s.withBuiltinInfo(sum), nil
 }
 
 // checkHostVersion enforces manifest.minHostVersion against the

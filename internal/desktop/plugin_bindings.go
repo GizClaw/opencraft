@@ -75,6 +75,17 @@ func (a *App) PluginInstallZip(zipPath string) (plugins.PluginSummary, error) {
 	return sum, nil
 }
 
+// PluginInspect reads a plugin source folder/zip and reports its
+// manifest summary (including whether it would shadow a builtin)
+// without installing it. The install dialog uses it for pre-flight
+// warnings.
+func (a *App) PluginInspect(src string) (plugins.PluginSummary, error) {
+	if a.plugins == nil {
+		return plugins.PluginSummary{}, errors.New("plugin store is not ready")
+	}
+	return a.plugins.Inspect(src)
+}
+
 // PluginUpdate replaces an installed plugin with a newer version from
 // a local directory. The previous version is kept for rollback.
 func (a *App) PluginUpdate(id, src string) (plugins.PluginSummary, error) {
@@ -172,7 +183,19 @@ func (a *App) PluginApplyUpdate(id string) (plugins.PluginSummary, error) {
 		return plugins.PluginSummary{}, err
 	}
 	defer cleanup()
-	sum, err := a.plugins.UpdateZip(id, zipPath)
+	_, builtin, err := a.plugins.Dir(id)
+	if err != nil {
+		return plugins.PluginSummary{}, err
+	}
+	var sum plugins.PluginSummary
+	if builtin {
+		// The builtin bundle is read-only: applying a remote update
+		// installs the package as a user-root shadow copy. The builtin
+		// stays intact and reappears if the shadow is uninstalled.
+		sum, err = a.plugins.InstallZip(zipPath)
+	} else {
+		sum, err = a.plugins.UpdateZip(id, zipPath)
+	}
 	if err != nil {
 		return plugins.PluginSummary{}, err
 	}
