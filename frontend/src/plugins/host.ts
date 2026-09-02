@@ -115,9 +115,13 @@ function makeRegistrar<T>(arr: T[]): Registrar<T> {
   return {
     add: function (this: unknown, item: T) {
       const ctx = callerOf.call(this);
-      arr.push(item);
+      const tagged = {
+        ...item,
+        pluginId: (ctx.config as { id?: string }).id ?? '',
+      } as T;
+      arr.push(tagged);
       const dispose = () => {
-        const i = arr.indexOf(item);
+        const i = arr.indexOf(tagged);
         if (i >= 0) arr.splice(i, 1);
       };
       ctx.effect(() => dispose);

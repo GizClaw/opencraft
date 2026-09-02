@@ -28,8 +28,10 @@ import (
 var idRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
 // toolNameRe constrains agent-facing tool names: lowercase start,
-// then lowercase letters, digits, dot, underscore or dash.
-var toolNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
+// then lowercase letters, digits, underscore or dash. Providers
+// (OpenAI-compatible /responses) require tool names to match
+// ^[a-zA-Z0-9_-]+$, so dot is deliberately not allowed here.
+var toolNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 
 // Bounds on agent-facing manifest declarations. These keep plugin.json
 // and the tool definitions derived from it bounded before they reach

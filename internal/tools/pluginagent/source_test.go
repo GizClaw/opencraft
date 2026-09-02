@@ -60,12 +60,12 @@ func TestSourceExposesCapabilityTools(t *testing.T) {
 		t.Fatalf("NewRegistry: %v", err)
 	}
 	names := reg.Names()
-	if len(names) != 1 || names[0] != "hello:ping" {
+	if len(names) != 1 || names[0] != "hello__ping" {
 		t.Fatalf("registry names = %v", names)
 	}
-	got, ok := reg.Get("hello:ping")
+	got, ok := reg.Get("hello__ping")
 	if !ok {
-		t.Fatal("hello:ping missing from registry")
+		t.Fatal("hello__ping missing from registry")
 	}
 	if def := got.Definition(); def.Description != "[plugin hello] Ping the plugin" {
 		t.Fatalf("definition = %+v", def)
@@ -87,5 +87,26 @@ func TestSourceEmptyHost(t *testing.T) {
 	}
 	if len(reg.Names()) != 0 {
 		t.Fatalf("empty host must contribute no tools, got %v", reg.Names())
+	}
+}
+
+func TestSourceSanitizesPluginIDInToolName(t *testing.T) {
+	host := &fakeHost{
+		specs: []agent.ToolSpec{{
+			PluginID: "my.plugin",
+			Name:     "ping",
+			Method:   "ping",
+		}},
+	}
+	src, err := newSource(t.Context(), host)
+	if err != nil {
+		t.Fatalf("newSource: %v", err)
+	}
+	reg, err := tool.NewRegistry([]tool.Source{src})
+	if err != nil {
+		t.Fatalf("NewRegistry: %v", err)
+	}
+	if names := reg.Names(); len(names) != 1 || names[0] != "my_plugin__ping" {
+		t.Fatalf("registry names = %v, want [my_plugin__ping]", names)
 	}
 }

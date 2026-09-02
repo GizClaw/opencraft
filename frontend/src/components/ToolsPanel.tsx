@@ -686,10 +686,12 @@ interface SkillRow {
   description: string;
   scope: string;
   path: string;
+  plugin_id?: string;
+  plugin_name?: string;
 }
 
-// SkillsSection lists skills discovered by the runtime; builtin skills
-// are read-only, user skills can be deleted.
+// SkillsSection lists skills discovered by the runtime; builtin and
+// plugin-provided skills are read-only, user skills can be deleted.
 export function SkillsSection() {
   const { t } = useTranslation();
   const flash = useStore((s) => s.flash);
@@ -940,11 +942,19 @@ export function SkillsSection() {
             <div className="flex items-center gap-2">
               <Sparkles size="1.0714rem" className="text-accent shrink-0" />
               <span className="text-sm font-medium">{s.name}</span>
-              <span className="rounded bg-panel border border-edge px-1.5 text-xs text-dim">
-                {s.scope}
-              </span>
+              {s.plugin_id ? (
+                <span className="rounded bg-accent/10 border border-accent/30 px-1.5 text-xs text-accent">
+                  {t('config.skillsPluginFrom', {
+                    name: s.plugin_name || s.plugin_id,
+                  })}
+                </span>
+              ) : (
+                <span className="rounded bg-panel border border-edge px-1.5 text-xs text-dim">
+                  {s.scope}
+                </span>
+              )}
               <span className="flex-1" />
-              {s.scope !== 'builtin' && (
+              {s.scope !== 'builtin' && !s.plugin_id && (
                 <button
                   onClick={() =>
                     setSkillToDelete({ name: s.name, path: s.path })

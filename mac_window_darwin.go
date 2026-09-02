@@ -7,6 +7,7 @@ package main
 #cgo LDFLAGS: -framework Foundation -framework Cocoa -framework WebKit
 #import <Cocoa/Cocoa.h>
 #import <WebKit/WebKit.h>
+#import <objc/runtime.h>
 
 // applyOpenCraftWindowStyle nudges the traffic lights vertically so
 // they line up with the chat header title. The system title bar stays
@@ -102,6 +103,66 @@ static void installOpenCraftReopenHandler(void) {
 		installOpenCraftReopenHandlerInner();
 	});
 }
+
+// Wails routes Cmd+Q and Dock Quit through the same OnBeforeClose
+// callback as a plain window close. macOS users expect Quit to actually
+// terminate even when "close to tray" is enabled, so these handlers
+// record that the quit came from the application menu or Dock. The Go
+// side consumes the flag in OnBeforeClose and lets Wails stop instead
+// of hiding the app.
+static volatile BOOL g_forceQuit = NO;
+static IMP g_originalShouldTerminate = NULL;
+
+static NSApplicationTerminateReply opencraftShouldTerminate(
+	id self, SEL _cmd, NSApplication *sender
+) {
+	__sync_lock_test_and_set(&g_forceQuit, YES);
+	if (g_originalShouldTerminate != NULL) {
+		return ((NSApplicationTerminateReply(*)(id, SEL, NSApplication *))
+			g_originalShouldTerminate)(self, _cmd, sender);
+	}
+	return NSTerminateCancel;
+}
+
+static void installOpenCraftTerminateHandlersInner(void) {
+	NSApplication *app = [NSApplication sharedApplication];
+	id delegate = [app delegate];
+	if (delegate != nil) {
+		Method m = class_getInstanceMethod(
+			[delegate class], @selector(applicationShouldTerminate:));
+		if (m != NULL) {
+			g_originalShouldTerminate = method_getImplementation(m);
+			method_setImplementation(m, (IMP)opencraftShouldTerminate);
+		}
+	}
+	// The application menu's Quit item (Cmd+Q) normally calls Wails'
+	// private context selector directly. Retarget it to the standard
+	// terminate: path so it flows through applicationShouldTerminate
+	// and is recognised like Dock Quit.
+	for (NSMenuItem *rootItem in [[app mainMenu] itemArray]) {
+		NSMenu *submenu = [rootItem submenu];
+		if (submenu == nil) {
+			continue;
+		}
+		for (NSMenuItem *item in [submenu itemArray]) {
+			if ([item action] == @selector(Quit)) {
+				[item setTarget:NSApp];
+				[item setAction:@selector(terminate:)];
+				break;
+			}
+		}
+	}
+}
+
+static void installOpenCraftTerminateHandler(void) {
+	dispatch_async(dispatch_get_main_queue(), ^{
+		installOpenCraftTerminateHandlersInner();
+	});
+}
+
+static BOOL opencraftConsumeTerminateRequest(void) {
+	return __sync_lock_test_and_set(&g_forceQuit, NO);
+}
 */
 import "C"
 
@@ -117,4 +178,17 @@ func applyOpenCraftWindowStyle() {
 // and bring the hidden main window back when the user activates the app.
 func installOpenCraftReopenHandler() {
 	C.installOpenCraftReopenHandler()
+}
+
+// installOpenCraftTerminateHandler wires the Cmd+Q / Dock Quit
+// detection after Wails has installed its AppDelegate and menu.
+func installOpenCraftTerminateHandler() {
+	C.installOpenCraftTerminateHandler()
+}
+
+// macConsumeTerminateRequest reports whether the current close was
+// requested from the macOS application menu or Dock, and clears the
+// flag so ordinary window closes keep their close-to-tray behaviour.
+func macConsumeTerminateRequest() bool {
+	return bool(C.opencraftConsumeTerminateRequest())
 }

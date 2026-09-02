@@ -306,6 +306,25 @@ func TestManifestRejectsAgentCapabilityMistakes(t *testing.T) {
 			},
 		},
 		{
+			name: "tool name with dot",
+			m: map[string]any{
+				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
+				"capability":  map[string]any{"binary": "bin/x", "protocol": 1},
+				"permissions": []string{"tools:expose"},
+				"tools": []any{map[string]any{
+					"name": "tool.name", "method": "m",
+				}},
+			},
+		},
+		{
+			name: "mcp server name with dot",
+			m: map[string]any{
+				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",
+				"permissions": []string{"mcp:contribute"},
+				"mcpServers":  []any{map[string]any{"name": "bad.name", "transport": "stdio", "command": "bin/s"}},
+			},
+		},
+		{
 			name: "tool description too long",
 			m: map[string]any{
 				"id": "x", "name": "X", "version": "0.1.0", "entry": "dist/index.js",

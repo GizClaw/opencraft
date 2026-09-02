@@ -72,7 +72,7 @@ func TestHostExposesAgentCapabilities(t *testing.T) {
 	servers := host.MCPServers()
 	if len(servers) != 1 ||
 		servers[0].Command != filepath.Join(root, "cap", "bin", "srv") ||
-		servers[0].Prefix != "cap:srv:" {
+		servers[0].Prefix != "cap__srv__" {
 		t.Fatalf("MCPServers = %+v", servers)
 	}
 	specs := host.ToolSpecs()
@@ -122,5 +122,26 @@ func TestHostMCPCommandResolution(t *testing.T) {
 	}
 	if servers[1].Command != "npx" {
 		t.Fatalf("path command = %q, want bare PATH command untouched", servers[1].Command)
+	}
+}
+
+func TestHostMCPServerPrefixSanitizesPluginID(t *testing.T) {
+	root := t.TempDir()
+	writePlugin(t, root, "my.plugin", map[string]any{
+		"id": "my.plugin", "name": "Dotted", "version": "0.1.0",
+		"entry": "dist/index.js", "permissions": []string{"mcp:contribute"},
+		"mcpServers": []any{map[string]any{
+			"name": "srv", "transport": "stdio", "command": "bin/srv",
+		}},
+	})
+	if err := os.MkdirAll(filepath.Join(root, "my.plugin", "bin"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "my.plugin", "bin", "srv"), []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	servers := NewHost(plugins.NewStore(root), nil).MCPServers()
+	if len(servers) != 1 || servers[0].Prefix != "my_plugin__srv__" {
+		t.Fatalf("MCPServers = %+v, want sanitized prefix", servers)
 	}
 }

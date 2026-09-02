@@ -10,3 +10,10 @@ func applyOpenCraftWindowStyle() {}
 // Windows and Linux restore the window from the tray menu or the
 // second-instance handler instead.
 func installOpenCraftReopenHandler() {}
+
+// installOpenCraftTerminateHandler is a no-op on platforms without a
+// macOS application menu / Dock.
+func installOpenCraftTerminateHandler() {}
+
+// macConsumeTerminateRequest is always false off macOS.
+func macConsumeTerminateRequest() bool { return false }

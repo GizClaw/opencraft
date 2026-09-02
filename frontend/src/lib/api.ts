@@ -139,6 +139,7 @@ export const api = {
   chooseWorkspace: () => App.ChooseWorkspace(),
   pluginList: () => App.PluginList() as Promise<PluginSummary[]>,
   pluginTools: (id: string) => App.PluginTools(id) as Promise<PluginToolDTO[]>,
+  pluginSkills: (id: string) => App.PluginSkills(id) as Promise<SkillDTO[]>,
   pluginBundle: (id: string) => App.PluginBundle(id) as Promise<string>,
   pluginInstall: (dir: string) =>
     App.PluginInstall(dir) as Promise<PluginSummary>,

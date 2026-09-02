@@ -73,6 +73,8 @@ export interface PluginToolDTO {
 }
 
 export interface SettingsPanelContribution {
+  /** Id of the plugin that registered this panel. */
+  pluginId: string;
   id: string;
   title: string;
   order: number;
@@ -89,6 +91,8 @@ export interface SidebarEntryContribution {
 }
 
 export interface CommandContribution {
+  /** Id of the plugin that registered this command. */
+  pluginId: string;
   id: string;
   title: string;
   order: number;

@@ -161,7 +161,10 @@ var (
 )
 
 func (a *toolAdapter) Definition() message.ToolDefinition {
-	name := a.spec.PluginID + ":" + a.spec.Name
+	// Provider tool-name schemas reject punctuation such as ':' and
+	// '.', so namespace with '__' and sanitize dots in the plugin id.
+	name := strings.ReplaceAll(a.spec.PluginID, ".", "_") +
+		"__" + a.spec.Name
 	description := a.spec.Description
 	if description != "" {
 		description = "[plugin " + a.spec.PluginID + "] " + description
