@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { mockBackend } from './mock/backend';
+import { typeComposerMessage } from './helpers';
 
 test('sends a message and renders the streamed tool call', async ({ page }) => {
   await page.addInitScript(mockBackend as never, {
@@ -7,7 +8,7 @@ test('sends a message and renders the streamed tool call', async ({ page }) => {
   });
   await page.goto('/');
 
-  await page.getByPlaceholder('What shall we craft today?').fill('hello world');
+  await typeComposerMessage(page, 'hello world');
   await page.getByRole('button', { name: 'Send' }).click();
   await expect(page.getByText('hello world')).toBeVisible();
 

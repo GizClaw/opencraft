@@ -1,14 +1,13 @@
 import { expect, test } from '@playwright/test';
 import { mockBackend } from './mock/backend';
+import { typeComposerMessage } from './helpers';
 
 test('renders an approval prompt and submits the choice', async ({ page }) => {
   await page.addInitScript(mockBackend as never, {
     startTurn: { run_id: 'r-1', context_id: 's-1' },
   });
   await page.goto('/');
-  await page
-    .getByPlaceholder('What shall we craft today?')
-    .fill('run a command');
+  await typeComposerMessage(page, 'run a command');
   await page.getByRole('button', { name: 'Send' }).click();
   await expect(page.getByText('run a command')).toBeVisible();
   // The approval prompt arrives mid-turn, after a user message exists.
