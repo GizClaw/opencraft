@@ -236,6 +236,7 @@ func New(opts Options) (*App, error) {
 	pluginDir := filepath.Join(dataDir, "plugins")
 	fallbackToolchain, err := toolchain.New(toolchain.Options{
 		Preference: toolchain.PreferenceExternalFirst,
+		CacheDir:   filepath.Join(dataDir, "runtime"),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("desktop: toolchain manager: %w", err)

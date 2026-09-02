@@ -1,9 +1,8 @@
 // Package toolchain manages OpenCraft's bundled language/tool runtimes
-// (Python, Go, Node, uv/uvx). Runtimes ship as relocatable sidecar
-// directories next to the app; this package locates and validates
-// them, resolves bare tool names (python/go/node/uvx/npx/...) against
-// the external PATH or the bundle, and produces the environment
-// surfaces sandboxed commands and host-side MCP servers consume.
+// (Python, Node, uv/uvx). Release apps ship compressed runtime archives
+// next to the binary; this package extracts a family into the user
+// cache only when an external tool is missing. Go is intentionally not
+// bundled and stays external-only when present on PATH.
 package toolchain
 
 import (
@@ -60,6 +59,7 @@ type Settings struct {
 	ManifestPath    string `json:"manifest_path,omitempty"`
 	SandboxCacheDir string `json:"sandbox_cache_dir,omitempty"`
 	HostCacheDir    string `json:"host_cache_dir,omitempty"`
+	CacheDir        string `json:"cache_dir,omitempty"`
 }
 
 // DefaultSettings returns the embedded defaults.
@@ -168,6 +168,7 @@ type Options struct {
 	ManifestPath    string
 	SandboxCacheDir string
 	HostCacheDir    string
+	CacheDir        string
 }
 
 // Manager resolves tools against external and bundled runtimes.
@@ -179,6 +180,7 @@ type Manager struct {
 	launcherDir     string
 	sandboxCacheDir string
 	hostCacheDir    string
+	cacheDir        string
 }
 
 // New builds a Manager. Root, manifest and cache paths default from
@@ -191,6 +193,10 @@ func New(opts Options) (*Manager, error) {
 	root := opts.Root
 	if root == "" {
 		root = BundledRoot()
+	}
+	cacheDir := opts.CacheDir
+	if cacheDir == "" {
+		cacheDir = defaultCacheDir()
 	}
 	manifestPath := opts.ManifestPath
 	if manifestPath == "" && root != "" {
@@ -222,6 +228,7 @@ func New(opts Options) (*Manager, error) {
 		launcherDir:     launcherDir,
 		sandboxCacheDir: opts.SandboxCacheDir,
 		hostCacheDir:    opts.HostCacheDir,
+		cacheDir:        cacheDir,
 	}, nil
 }
 
@@ -265,6 +272,25 @@ func BundledRoot() string {
 	return ""
 }
 
+// defaultCacheDir returns where lazily extracted runtimes live when
+// the app does not provide an explicit toolchain cache directory.
+// OPEN_CRAFT_TOOLCHAIN_CACHE (used inside sandboxes) wins, then
+// OPEN_CRAFT_DATA_DIR so tests and custom data roots stay isolated;
+// otherwise runtimes land under ~/.opencraft/runtime.
+func defaultCacheDir() string {
+	if dir := strings.TrimSpace(os.Getenv("OPEN_CRAFT_TOOLCHAIN_CACHE")); dir != "" {
+		return dir
+	}
+	if dir := strings.TrimSpace(os.Getenv("OPEN_CRAFT_DATA_DIR")); dir != "" {
+		return filepath.Join(dir, "runtime")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".opencraft", "runtime")
+}
+
 // Resolve resolves one bare tool name to an executable. Tools that
 // are absolute paths or contain a path separator are the caller's
 // business and rejected here.
@@ -285,7 +311,6 @@ func (m *Manager) Resolve(ctx context.Context, tool string) (*Runtime, error) {
 	}
 	external := m.lookExternal(tool)
 	_ = ctx
-	bundled := m.lookBundled(family, tool)
 	switch {
 	case m.preference == PreferenceOff:
 		if external == nil {
@@ -294,8 +319,20 @@ func (m *Manager) Resolve(ctx context.Context, tool string) (*Runtime, error) {
 				tool)
 		}
 		return external, nil
-	case external != nil && (m.preference == PreferenceExternalFirst || bundled == nil):
+	case external != nil && m.preference == PreferenceExternalFirst:
 		return external, nil
+	}
+	// Only inspect/extract a bundled sidecar when the resolution
+	// policy actually needs it. With external-first, an existing
+	// system tool avoids touching the compressed runtime archive.
+	bundled, bundledErr := m.lookBundled(family, tool)
+	if bundledErr != nil {
+		if external != nil {
+			return external, nil
+		}
+		return nil, bundledErr
+	}
+	switch {
 	case bundled != nil:
 		return bundled, nil
 	case external != nil:
@@ -340,10 +377,12 @@ func (m *Manager) lookExternal(tool string) *Runtime {
 	return nil
 }
 
-// lookBundled resolves one tool inside the staged sidecar.
-func (m *Manager) lookBundled(family, tool string) *Runtime {
+// lookBundled resolves one tool inside the staged sidecar. Runtimes
+// may ship as compressed archives and are extracted into the user
+// cache only when a bundled fallback is actually needed.
+func (m *Manager) lookBundled(family, tool string) (*Runtime, error) {
 	if m.preference == PreferenceOff || m.root == "" {
-		return nil
+		return nil, nil
 	}
 	var entry *manifestEntry
 	if m.manifest != nil {
@@ -351,39 +390,57 @@ func (m *Manager) lookBundled(family, tool string) *Runtime {
 	}
 	version := ""
 	var roots []string
-	if entry != nil {
-		version = entry.Version
+	addRoot := func(base string) {
+		if base == "" {
+			return
+		}
 		roots = append(roots,
-			filepath.Join(m.root, family, version, platformKey()))
+			filepath.Join(base, family, version, platformKey()))
 		if minor := dirVersion(version, family); minor != "" && minor != version {
 			roots = append(roots,
-				filepath.Join(m.root, family, minor, platformKey()))
+				filepath.Join(base, family, minor, platformKey()))
 		}
+	}
+	if entry != nil {
+		version = entry.Version
+		addRoot(m.cacheDir)
+		addRoot(m.root)
 	} else {
 		// Dev/test fallback: no manifest, look for a single staged
 		// copy under <root>/<family>/<platform>.
-		roots = append(roots,
-			filepath.Join(m.root, family, platformKey()))
+		roots = append(roots, filepath.Join(m.root, family, platformKey()))
 	}
-	for _, dir := range roots {
-		binDir := filepath.Join(dir, binRel(family))
-		for _, name := range toolCandidates(tool) {
-			path, ok := lookPathIn(binDir, name)
-			if !ok {
-				continue
-			}
-			return &Runtime{
-				Tool:    tool,
-				Family:  family,
-				Version: version,
-				Path:    path,
-				BinDir:  binDir,
-				Root:    dir,
-				Source:  SourceBundled,
+	look := func() *Runtime {
+		for _, dir := range roots {
+			binDir := filepath.Join(dir, binRel(family))
+			for _, name := range toolCandidates(tool) {
+				path, ok := lookPathIn(binDir, name)
+				if !ok {
+					continue
+				}
+				return &Runtime{
+					Tool:    tool,
+					Family:  family,
+					Version: version,
+					Path:    path,
+					BinDir:  binDir,
+					Root:    dir,
+					Source:  SourceBundled,
+				}
 			}
 		}
+		return nil
 	}
-	return nil
+	if rt := look(); rt != nil {
+		return rt, nil
+	}
+	if entry == nil {
+		return nil, nil
+	}
+	if err := m.ensureExtracted(family); err != nil {
+		return nil, err
+	}
+	return look(), nil
 }
 
 // toolCandidates returns executable names to try for one bare tool.
@@ -402,6 +459,9 @@ func toolCandidates(tool string) []string {
 func (m *Manager) SandboxEnv() map[string]string {
 	out := map[string]string{
 		"OPEN_CRAFT_TOOLCHAIN_PREFERENCE": string(m.preference),
+	}
+	if m.cacheDir != "" {
+		out["OPEN_CRAFT_TOOLCHAIN_CACHE"] = m.cacheDir
 	}
 	if launcher := m.LauncherDir(); launcher != "" {
 		out["PATH"] = prependPath(os.Getenv("PATH"), launcher)

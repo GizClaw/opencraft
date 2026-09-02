@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"path/filepath"
 	"time"
 
 	"github.com/GizClaw/opencraft/internal/config"
@@ -22,8 +23,13 @@ func (a *App) currentToolchain() *toolchain.Manager {
 	// Tests and embedded hosts may construct App without New; a
 	// default manager is harmless (external-only) and keeps
 	// diagnostics/MCP helpers nil-safe.
+	cacheDir := ""
+	if a.userDir != "" {
+		cacheDir = filepath.Join(filepath.Dir(a.userDir), "runtime")
+	}
 	fallback, err := toolchain.New(toolchain.Options{
 		Preference: toolchain.PreferenceExternalFirst,
+		CacheDir:   cacheDir,
 	})
 	if err == nil {
 		a.toolchainFallback = fallback

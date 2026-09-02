@@ -15,21 +15,6 @@
       "windows-amd64": "63d263ab0162f34a241a56dc5b283c22d6e131f5516117e6a921350c69ba7d4f"
     }
   },
-  "go": {
-    "version": "1.25.14",
-    "urls": {
-      "darwin-arm64": "https://dl.google.com/go/go1.25.14.darwin-arm64.tar.gz",
-      "darwin-amd64": "https://dl.google.com/go/go1.25.14.darwin-amd64.tar.gz",
-      "linux-amd64": "https://dl.google.com/go/go1.25.14.linux-amd64.tar.gz",
-      "windows-amd64": "https://dl.google.com/go/go1.25.14.windows-amd64.zip"
-    },
-    "sha256": {
-      "darwin-arm64": "5b26c0b6f308240fca2614fb02f622cfcc8c0cc3b69c78bba4845489a4590259",
-      "darwin-amd64": "b09087a67d5792a8b0fcbf74212d62560c94ac8a8fd750ff920d8cb5f1e20118",
-      "linux-amd64": "a21ae5633a269bcd7e90cf767e48225633795e99d831742cbf3397064fee7712",
-      "windows-amd64": "119044a92b3987c341cd6aebb256676dd4780d292f7b4e72a3e9976677841697"
-    }
-  },
   "node": {
     "version": "24.20.0",
     "urls": {

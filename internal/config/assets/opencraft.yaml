@@ -28,15 +28,15 @@ resources:
   # ------------------------------------------------------------------
   # Runtime foundations: event bus, memory, session store
   # ------------------------------------------------------------------
-  # Bundled language/tool runtimes (Python/Go/Node/uv): locates the
-  # read-only sidecar, resolves bare commands and supplies sandbox /
-  # host environment additions. Dev runs without a sidecar simply stay
-  # external-only.
+  # Bundled language/tool runtimes (Python/Node/uv): compressed archives
+  # are extracted into the user cache only when an external tool is
+  # missing. Go is intentionally not bundled and stays external-only.
   toolchain:
     kind: opencraft.toolchain
     impl: local
     settings:
       preference: external-first
+      cache_dir: ${env:OPEN_CRAFT_DATA_DIR}/runtime
   events:
     kind: event.Bus
     impl: memory
