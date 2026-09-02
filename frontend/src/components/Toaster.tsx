@@ -1,4 +1,4 @@
-import { X } from 'lucide-react';
+import { AlertTriangle, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '../lib/store';
 
@@ -12,8 +12,18 @@ export function Toaster() {
       {toasts.map((item) => (
         <div
           key={item.id}
-          className="flex items-start gap-2 rounded-lg border border-edge bg-panel px-3 py-2 text-sm shadow-xl"
+          className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-sm shadow-xl ${
+            item.kind === 'warning'
+              ? 'border-warn/40 bg-warn/10'
+              : 'border-edge bg-panel'
+          }`}
         >
+          {item.kind === 'warning' && (
+            <AlertTriangle
+              size="0.9286rem"
+              className="mt-0.5 shrink-0 text-warn"
+            />
+          )}
           <span className="min-w-0 flex-1 break-words">{item.text}</span>
           <button
             onClick={() => dismissToast(item.id)}

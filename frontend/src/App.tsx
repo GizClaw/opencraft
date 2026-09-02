@@ -18,6 +18,7 @@ import { WelcomeView } from './components/WelcomeView';
 import { useStore, type AssistantItem } from './lib/store';
 import { usePluginStore } from './plugins/store';
 import type { UIEvent } from './lib/types';
+import { api } from './lib/api';
 
 const ConfigPage = lazy(() =>
   import('./components/ConfigPage').then((m) => ({ default: m.ConfigPage })),
@@ -133,6 +134,22 @@ export default function App() {
       alive = false;
     };
   }, [init]);
+
+  // Keep the native tray menu and exit dialog in the same language as
+  // the UI: report the detected language once and on every change.
+  useEffect(() => {
+    const syncLanguage = () => {
+      const language = i18n.language?.startsWith('zh') ? 'zh' : 'en';
+      void api.setLanguage(language).catch(() => {
+        // Native language sync is best-effort; the UI still works.
+      });
+    };
+    syncLanguage();
+    i18n.on('languageChanged', syncLanguage);
+    return () => {
+      i18n.off('languageChanged', syncLanguage);
+    };
+  }, []);
 
   useEffect(() => {
     // Load installed plugins once the shell mounts; the plugin host

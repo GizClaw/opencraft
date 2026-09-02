@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from 'react';
+import { memo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
@@ -24,36 +24,6 @@ export const Markdown = memo(function Markdown({ text }: { text: string }) {
       {text}
     </ReactMarkdown>
   );
-});
-
-// liveMarkdownCap keeps the throttled streaming preview cheap: beyond
-// this size we fall back to plain text until the turn completes.
-const liveMarkdownCap = 6000;
-
-// MARKDOWN_RE is a cheap structural probe used during streaming: when
-// the partial text has none of these markers, plain text is cheaper and
-// visually identical.
-const MARKDOWN_RE =
-  /```|(^|\n)\s{0,3}#{1,6}\s|\*\*|__|^\s{0,3}([-+*]|\d+\.)\s|\|.*\|/m;
-
-export function looksLikeMarkdown(text: string): boolean {
-  return text.length <= liveMarkdownCap && MARKDOWN_RE.test(text);
-}
-
-// LiveMarkdown renders a still-streaming message as markdown, throttled
-// so the unified parse+highlight pipeline runs at most every 120ms
-// instead of once per token.
-export const LiveMarkdown = memo(function LiveMarkdown({
-  text,
-}: {
-  text: string;
-}) {
-  const [rendered, setRendered] = useState('');
-  useEffect(() => {
-    const timer = setTimeout(() => setRendered(text), 120);
-    return () => clearTimeout(timer);
-  }, [text]);
-  return <Markdown text={rendered || text} />;
 });
 
 function CodeBlock({

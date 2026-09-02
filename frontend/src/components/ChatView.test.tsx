@@ -92,4 +92,20 @@ describe('ChatView transcript windowing', () => {
       screen.queryByRole('button', { name: /earlier messages/i }),
     ).not.toBeInTheDocument();
   });
+
+  it('renders markdown inside user bubbles', () => {
+    setConversation([
+      {
+        id: 'm-user',
+        role: 'user',
+        text: '**bold** and `code`',
+        items: [],
+        attachments: [],
+      },
+    ]);
+    render(<ChatView />);
+
+    expect(screen.getByText('bold').tagName).toBe('STRONG');
+    expect(screen.getByText('code').tagName).toBe('CODE');
+  });
 });

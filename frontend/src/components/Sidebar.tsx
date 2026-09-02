@@ -275,14 +275,14 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                 className="fixed inset-0 z-20"
                 onClick={() => setMenuOpenId(null)}
               />
-              <div className="absolute right-0 top-6 z-30 min-w-32 rounded-lg border border-edge bg-panel shadow-xl py-1">
+              <div className="absolute right-0 top-6 z-30 w-44 rounded-lg border border-edge bg-panel shadow-xl py-1">
                 <button
                   onClick={() => {
                     setMenuOpenId(null);
                     setRenameId(row.id);
                     setRenameValue(row.meta?.title ?? row.title);
                   }}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-panel2"
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
                 >
                   <Pencil size="0.8571rem" className="text-dim" />
                   {t('sidebar.renameSession')}
@@ -294,7 +294,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                       .exportSession(row.id)
                       .then((path) => flash(t('sidebar.exportedTo', { path })));
                   }}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm hover:bg-panel2"
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
                 >
                   <Download size="0.8571rem" className="text-dim" />
                   {t('sidebar.exportSession')}
@@ -304,7 +304,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                     setMenuOpenId(null);
                     setConfirmDelete(row.id);
                   }}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-sm text-err hover:bg-panel2"
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-err hover:bg-panel2"
                 >
                   <Trash2 size="0.8571rem" className="text-err" />
                   {t('sidebar.deleteSession')}
@@ -547,7 +547,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
 
       {sessionsOpen && (
         <div
-          className="fixed inset-x-0 bottom-0 top-11 z-40 grid place-items-center bg-black/60 p-6"
+          className="fixed bottom-0 top-11 left-0 right-0 z-40 grid place-items-center bg-black/60 p-6"
           onClick={() => setSessionsOpen(false)}
         >
           <div
@@ -605,7 +605,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
 
       {workspacesOpen && (
         <div
-          className="fixed inset-x-0 bottom-0 top-11 z-40 grid place-items-center bg-black/60 p-6"
+          className="fixed bottom-0 top-11 left-0 right-0 z-40 grid place-items-center bg-black/60 p-6"
           onClick={() => setWorkspacesOpen(false)}
         >
           <div
@@ -640,7 +640,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
 
       {confirmWorkspace && removingWorkspace && (
         <div
-          className="fixed inset-x-0 bottom-0 top-11 z-50 grid place-items-center bg-black/60 p-6"
+          className="fixed bottom-0 top-11 left-0 right-0 z-50 grid place-items-center bg-black/60 p-6"
           onClick={() => setConfirmWorkspace(null)}
         >
           <div

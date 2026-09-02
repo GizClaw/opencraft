@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { mockBackend } from './mock/backend';
+import { typeComposerMessage } from './helpers';
 
 test('assistant output cannot inject HTML or javascript links', async ({
   page,
@@ -9,9 +10,7 @@ test('assistant output cannot inject HTML or javascript links', async ({
   });
   await page.goto('/');
 
-  await page
-    .getByPlaceholder('What shall we craft today?')
-    .fill('render something');
+  await typeComposerMessage(page, 'render something');
   await page.getByRole('button', { name: 'Send' }).click();
 
   await page.evaluate(() => {

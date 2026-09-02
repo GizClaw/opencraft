@@ -2,7 +2,7 @@ package desktop
 
 // Thin wails binding over the capability subprocess runtime. The host
 // only routes method-name + JSON payloads; it never interprets domain
-// semantics (see internal/plugins/runtime and docs/plans/capability-rpc.md).
+// semantics (see internal/plugins/runtime).
 
 import (
 	"encoding/json"

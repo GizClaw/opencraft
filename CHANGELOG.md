@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   catalog models are marked with ⚠️ and their replacement. Provider
   default models now come from the first non-deprecated catalog entry
   instead of hardcoded names.
+- Desktop exit polish: real quits (tray Quit, macOS Cmd+Q/Dock Quit,
+  and the "Quit" close mode) now ask for confirmation first because
+  exiting stops scheduled tasks. The tray/menu-bar icon uses the
+  full-colour app icon on every platform, and the tray menu shows the
+  app version and a short about line. Native tray/exit copy follows
+  the UI's zh/en language, synced from the frontend and persisted in
+  desktop preferences.
 
 ## [0.1.0] - 2026-09-01
 

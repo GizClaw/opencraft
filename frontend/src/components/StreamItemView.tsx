@@ -2,7 +2,7 @@ import { memo } from 'react';
 import { Wrench } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { AssistantItem } from '../lib/store';
-import { LiveMarkdown, looksLikeMarkdown, Markdown } from './Markdown';
+import { Markdown } from './Markdown';
 import { ApplyPatchView, ToolCard, WriteView } from './ToolCard';
 
 // Reasoning is the shared chat-style collapsible reasoning block.
@@ -21,10 +21,9 @@ function Reasoning({ text }: { text: string }) {
 }
 
 // AssistantText renders one assistant text block. While the message is
-// still streaming, markdown parsing is deferred to plain text: parsing
-// the full document on every token delta stalls the main thread and
-// freezes the UI on long outputs. Completed messages render markdown
-// once.
+// still streaming it stays plain text: a half-written `#` or `**` would
+// otherwise be parsed as a heading/mark on every delta and make the font
+// size jump around. Completed messages render markdown once.
 const AssistantText = memo(function AssistantText({
   text,
   streaming,
@@ -33,9 +32,6 @@ const AssistantText = memo(function AssistantText({
   streaming: boolean;
 }) {
   if (streaming) {
-    if (looksLikeMarkdown(text)) {
-      return <LiveMarkdown text={text} />;
-    }
     return <div className="prose-chat whitespace-pre-wrap text-sm">{text}</div>;
   }
   return (

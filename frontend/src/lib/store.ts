@@ -77,9 +77,12 @@ export interface ConversationState {
   lastFailed: boolean;
 }
 
+export type ToastKind = 'info' | 'warning';
+
 export interface ToastItem {
   id: number;
   text: string;
+  kind: ToastKind;
 }
 
 let msgSeq = 0;
@@ -544,7 +547,7 @@ interface StoreState {
   loadSubagentCards: () => Promise<void>;
   toggleSubagentPanel: () => void;
   flash: (text: string) => void;
-  toast: (text: string) => void;
+  toast: (text: string, kind?: ToastKind) => void;
   dismissToast: (id: number) => void;
 }
 
@@ -1199,7 +1202,12 @@ export const useStore = create<StoreState>((set, get) => {
         }
         await get().loadSessions();
       } catch (err) {
-        set({ statusText: String(err) });
+        const message = String(err);
+        if (/cannot delete the active conversation/i.test(message)) {
+          get().toast(i18n.t('sidebar.cannotDeleteActive'), 'warning');
+        } else {
+          set({ statusText: message });
+        }
       }
     },
 
@@ -1384,9 +1392,9 @@ export const useStore = create<StoreState>((set, get) => {
       set((state) => ({ subagentPanelOpen: !state.subagentPanelOpen })),
 
     flash: (text) => get().toast(text),
-    toast: (text) => {
+    toast: (text, kind = 'info') => {
       const id = ++toastSeq;
-      set((state) => ({ toasts: [...state.toasts, { id, text }] }));
+      set((state) => ({ toasts: [...state.toasts, { id, text, kind }] }));
       setTimeout(() => {
         set((state) => ({
           toasts: state.toasts.filter((t) => t.id !== id),
