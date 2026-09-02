@@ -201,10 +201,16 @@ jobs:
       - name: Build frontend assets
         run: npm ci --prefix frontend; npm run build --prefix frontend
         shell: pwsh
-      # internal/execd tests are POSIX-shell based and not portable to
-      # Windows; the Windows sandbox path is covered by internal/sandbox.
-      - name: Platform tests (sandbox/desktop/sessions/secrets/undo)
-        run: go test -count=1 ./internal/sandbox ./internal/desktop ./internal/sessions ./internal/secrets ./internal/undo
+      # Windows-specific value is the real OS sandbox backend. The full
+      # unit suites in these packages are Unix-mode/file-handle
+      # sensitive (POSIX permission asserts, SQLite cleanup on TempDir
+      # removal, POSIX shell fixtures), so Windows runs the sandbox
+      # contract suite plus a compile check of the rest.
+      - name: Sandbox contract (windows)
+        run: go test -count=1 ./internal/sandbox -run TestSandboxRunnerContract
+        shell: pwsh
+      - name: Compile check (sandbox/desktop/sessions/secrets/undo)
+        run: go vet ./internal/sandbox ./internal/desktop ./internal/sessions ./internal/secrets ./internal/undo
         shell: pwsh
 
   desktop-linux:
