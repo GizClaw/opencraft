@@ -1094,37 +1094,37 @@ export function ChatView() {
             </div>
           </div>
         </div>
-        {confirmYolo && (
-          <div className="fixed bottom-0 top-11 left-0 right-0 z-40 grid place-items-center bg-black/60">
-            <div className="w-[30.0000rem] rounded-2xl border border-yolo/40 bg-panel p-5 shadow-2xl">
-              <div className="flex items-center gap-2 text-sm font-semibold text-yolo">
-                <AlertTriangle size="1.1429rem" />
-                {t('chat.yoloConfirmTitle')}
-              </div>
-              <p className="mt-3 text-sm text-dim leading-relaxed">
-                {t('chat.yoloConfirmBody')}
-              </p>
-              <div className="mt-4 flex justify-end gap-2">
-                <button
-                  onClick={() => setConfirmYolo(false)}
-                  className="rounded-lg border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg"
-                >
-                  {t('interact.cancel')}
-                </button>
-                <button
-                  onClick={() => {
-                    setConfirmYolo(false);
-                    void setMode('yolo');
-                  }}
-                  className="rounded-lg bg-err px-4 py-1.5 text-sm text-white hover:opacity-90"
-                >
-                  {t('chat.confirmSwitch')}
-                </button>
-              </div>
+      </div>
+      {confirmYolo && (
+        <div className="fixed bottom-0 top-11 left-0 right-0 z-40 grid place-items-center bg-black/60">
+          <div className="w-[30.0000rem] rounded-2xl border border-yolo/40 bg-panel p-5 shadow-2xl">
+            <div className="flex items-center gap-2 text-sm font-semibold text-yolo">
+              <AlertTriangle size="1.1429rem" />
+              {t('chat.yoloConfirmTitle')}
+            </div>
+            <p className="mt-3 text-sm text-dim leading-relaxed">
+              {t('chat.yoloConfirmBody')}
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmYolo(false)}
+                className="rounded-lg border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg"
+              >
+                {t('interact.cancel')}
+              </button>
+              <button
+                onClick={() => {
+                  setConfirmYolo(false);
+                  void setMode('yolo');
+                }}
+                className="rounded-lg bg-err px-4 py-1.5 text-sm text-white hover:opacity-90"
+              >
+                {t('chat.confirmSwitch')}
+              </button>
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </main>
   );
 }
