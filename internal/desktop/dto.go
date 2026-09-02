@@ -38,6 +38,23 @@ type StreamEvent struct {
 	Delta          agent.StreamDeltaPayload `json:"delta"`
 }
 
+// StartTurnRequest carries the explicit session context for a turn, so
+// sending never depends on whichever conversation the app currently
+// has selected in the UI.
+type StartTurnRequest struct {
+	ContextID string          `json:"context_id"`
+	Message   message.Message `json:"message"`
+}
+
+// SessionSnapshot is the authoritative result of selecting a session:
+// the id plus the settings that apply to its next turn.
+type SessionSnapshot struct {
+	SessionID string `json:"session_id"`
+	Mode      string `json:"mode"`
+	Think     string `json:"think"`
+	Model     string `json:"model"`
+}
+
 // SessionTurnDTO is the wire form of one archived turn: its messages
 // plus the artifacts the turn produced. Times are RFC3339 strings so
 // the Wails model generator never sees time.Time. RequestedAt is when

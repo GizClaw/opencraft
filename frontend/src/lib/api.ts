@@ -4,7 +4,6 @@ import * as App from '../../wailsjs/go/desktop/App';
 import type {
   config as genConfig,
   desktop as gen,
-  message as genMessage,
 } from '../../wailsjs/go/models';
 import type {
   AgentSummary,
@@ -34,6 +33,7 @@ import type {
   SandboxProbeResult,
   SearchFileHit,
   SessionMeta,
+  SessionSnapshot,
   SessionImportDTO,
   SessionTurn,
   ProviderInstance,
@@ -66,10 +66,11 @@ export const api = {
     App.ProjectConfigStatus() as Promise<ProjectConfigStatus>,
   setProjectTrust: (path: string, trusted: boolean) =>
     App.SetProjectTrust(path, trusted),
-  newChat: () => App.NewChat(),
+  newChat: () => App.NewChat() as Promise<SessionSnapshot>,
   listSessions: () => App.ListSessions() as Promise<SessionMeta[]>,
   currentSession: () => App.CurrentSession(),
-  resumeSession: (id: string) => App.ResumeSession(id),
+  resumeSession: (id: string) =>
+    App.ResumeSession(id) as Promise<SessionSnapshot>,
   sessionHistory: (id: string) =>
     App.SessionHistory(id) as Promise<HistoryMessage[]>,
   sessionTurns: (id: string) => App.SessionTurns(id) as Promise<SessionTurn[]>,
@@ -206,8 +207,11 @@ export const api = {
     App.ImportSessionBundle(path) as Promise<SessionImportDTO>,
   sessionMode: () => App.SessionMode(),
   setSessionMode: (mode: string) => App.SetSessionMode(mode),
-  startTurn: (msg: TurnMessage) =>
-    App.StartTurn(msg as unknown as genMessage.Message) as Promise<TurnStart>,
+  startTurn: (contextID: string, msg: TurnMessage) =>
+    App.StartTurn({
+      context_id: contextID,
+      message: msg,
+    } as unknown as gen.StartTurnRequest) as Promise<TurnStart>,
   readAttachment: (path: string) =>
     App.ReadAttachment(path) as Promise<AttachmentDTO>,
   replyPrompt: (promptID: string, reply: ReplyRequest) =>

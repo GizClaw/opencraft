@@ -274,6 +274,13 @@ export interface TurnStart {
   started_at?: string;
 }
 
+export interface SessionSnapshot {
+  session_id: string;
+  mode: string;
+  think: string;
+  model: string;
+}
+
 export interface TurnEnd {
   run_id: string;
   conversation_id?: string;

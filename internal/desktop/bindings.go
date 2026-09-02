@@ -724,15 +724,31 @@ func (a *App) Workspace() string {
 // are persisted into the session's media/ and files/ directories
 // first; the archive keeps their URL paths while the opencraft.media
 // prepare hook inlines the bytes before the model call.
-func (a *App) StartTurn(msg message.Message) (TurnStart, error) {
+func (a *App) StartTurn(req StartTurnRequest) (TurnStart, error) {
 	a.mu.Lock()
 	wd := a.workDir
-	contextID := a.conversationID
-	mode := a.mode
-	think := a.think
-	model := a.model
+	contextID := strings.TrimSpace(req.ContextID)
+	store := a.sessions
 	a.mu.Unlock()
-	return a.startTurn(msg, contextID, mode, think, model, wd, nil)
+	if !ocsessions.ValidID(contextID) {
+		return TurnStart{}, fmt.Errorf("invalid session id %q", contextID)
+	}
+	mode := ocsessions.ModeWorkspace
+	think := string(ocsessions.ThinkMedium)
+	model := ""
+	if store != nil {
+		ctx := a.appContext()
+		if m, err := store.Mode(ctx, contextID); err == nil {
+			mode = m
+		}
+		if lvl, err := store.Think(ctx, contextID); err == nil {
+			think = string(lvl)
+		}
+		if mdl, err := store.Model(ctx, contextID); err == nil {
+			model = mdl
+		}
+	}
+	return a.startTurn(req.Message, contextID, mode, think, model, wd, nil)
 }
 
 // startTurn starts one assistant turn in an explicit conversation
@@ -880,13 +896,19 @@ func (a *App) startTurn(
 // NewChat starts a fresh conversation: a new session context is
 // minted, so subsequent turns keep their own history and permission
 // mode. The conversation resets to workspace mode.
-func (a *App) NewChat() (string, error) {
+func (a *App) NewChat() (SessionSnapshot, error) {
 	a.mu.Lock()
 	a.conversationID = ocsessions.NewID()
 	a.mode = ocsessions.ModeWorkspace
 	a.think = string(ocsessions.ThinkMedium)
 	a.model = ""
 	id := a.conversationID
+	snapshot := SessionSnapshot{
+		SessionID: id,
+		Mode:      string(a.mode),
+		Think:     a.think,
+		Model:     a.model,
+	}
 	// Register the id in the in-memory conversation index so
 	// ResumeSession accepts it before its first turn persists history
 	// (store.List only surfaces sessions with history or usage).
@@ -895,7 +917,7 @@ func (a *App) NewChat() (string, error) {
 	}
 	a.convRuns[id] = make(map[string]bool)
 	a.mu.Unlock()
-	return id, nil
+	return snapshot, nil
 }
 
 // SessionMode returns the sandbox permission mode of the current

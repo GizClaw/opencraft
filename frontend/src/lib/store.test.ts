@@ -7,12 +7,15 @@ const apiMock = vi.hoisted(() => ({
   workspace: vi.fn(),
   sessionMode: vi.fn(),
   currentSession: vi.fn(),
+  resumeSession: vi.fn(),
   getThink: vi.fn(),
   getModel: vi.fn(),
   modelOptions: vi.fn(),
   listSessions: vi.fn(),
+  sessionTurns: vi.fn(),
   loadWorkspaces: vi.fn(),
   loadAutomations: vi.fn(),
+  newChat: vi.fn(),
   startTurn: vi.fn(),
   cancelTurn: vi.fn(),
   deleteSession: vi.fn(),
@@ -43,19 +46,17 @@ function resetStore() {
     sessions: [],
     automations: [],
     automationRuns: {},
-    current: 's-1',
+    navigation: { name: 'ready', sessionID: 's-1', epoch: 0 },
     conversations: {
       's-1': {
+        content: { name: 'empty' },
+        turn: { name: 'idle' },
         messages: [],
         turnArtifacts: [],
-        busy: false,
-        activeRunID: null,
-        stage: '',
         mode: 'workspace',
         think: 'medium',
         model: '',
         pendingInteracts: [],
-        lastFailed: false,
       },
     },
     runConvs: {},
@@ -75,6 +76,24 @@ function resetStore() {
   });
 }
 
+function historyTurn(seq: number, userText: string, assistantText: string) {
+  return {
+    seq,
+    at: '2026-09-03T00:00:00Z',
+    messages: [
+      {
+        role: 'user',
+        content: { parts: [{ type: 'text', text: userText }] },
+      },
+      {
+        role: 'assistant',
+        content: { parts: [{ type: 'text', text: assistantText }] },
+      },
+    ],
+    artifacts: [],
+  };
+}
+
 beforeEach(() => {
   resetStore();
   vi.clearAllMocks();
@@ -85,7 +104,20 @@ beforeEach(() => {
   apiMock.deleteSession.mockRejectedValue(
     new Error('cannot delete the active conversation'),
   );
+  apiMock.newChat.mockResolvedValue({
+    session_id: 's-new',
+    mode: 'workspace',
+    think: 'medium',
+    model: '',
+  });
+  apiMock.resumeSession.mockResolvedValue({
+    session_id: 's-2',
+    mode: 'workspace',
+    think: 'medium',
+    model: '',
+  });
   apiMock.listSessions.mockResolvedValue([]);
+  apiMock.sessionTurns.mockResolvedValue([]);
   apiMock.undoState.mockResolvedValue({ can_undo: false, can_redo: false });
 });
 
@@ -94,14 +126,16 @@ describe('store: send and stream', () => {
     await useStore.getState().send('hello');
 
     const conv = useStore.getState().conversations['s-1'];
-    expect(conv.busy).toBe(true);
-    expect(conv.activeRunID).toBe('r-1');
+    expect(conv.turn).toMatchObject({ name: 'running', runID: 'r-1' });
     expect(conv.messages[0]).toMatchObject({
       role: 'user',
       text: 'hello',
     });
     expect(useStore.getState().runConvs['r-1']).toBe('s-1');
-    expect(apiMock.startTurn).toHaveBeenCalled();
+    expect(apiMock.startTurn).toHaveBeenCalledWith(
+      's-1',
+      expect.objectContaining({ role: 'user' }),
+    );
   });
 
   it('ignores send while busy or unconfigured', async () => {
@@ -109,7 +143,7 @@ describe('store: send and stream', () => {
       conversations: {
         's-1': {
           ...useStore.getState().conversations['s-1'],
-          busy: true,
+          turn: { name: 'starting' },
         },
       },
     });
@@ -121,7 +155,7 @@ describe('store: send and stream', () => {
       conversations: {
         's-1': {
           ...useStore.getState().conversations['s-1'],
-          busy: false,
+          turn: { name: 'idle' },
         },
       },
     });
@@ -141,14 +175,164 @@ describe('store: send and stream', () => {
     ]);
   });
 
+  it('new chat switches to an empty conversation without disturbing active runs', async () => {
+    useStore.setState({
+      navigation: { name: 'ready', sessionID: 's-old', epoch: 0 },
+      runConvs: { 'r-old': 's-old' },
+      subagentStreams: { 'r-old': [] },
+      subagentStreamAt: { 'r-old': 123 },
+      conversations: {
+        's-old': {
+          ...useStore.getState().conversations['s-1'],
+          messages: [
+            {
+              id: 'm-old',
+              role: 'user',
+              text: 'old history',
+              items: [],
+              attachments: [],
+            },
+          ],
+        },
+      },
+    });
+
+    await useStore.getState().newChat();
+
+    const state = useStore.getState();
+    expect(state.navigation).toMatchObject({
+      name: 'ready',
+      sessionID: 's-new',
+    });
+    expect(state.runConvs).toEqual({ 'r-old': 's-old' });
+    expect(state.conversations['s-old']).toBeDefined();
+    expect(state.conversations['s-new']).toBeDefined();
+    expect(state.conversations['s-new'].messages).toEqual([]);
+  });
+
+  it('serializes session switches so a stale resume cannot override new chat', async () => {
+    let resolveOldResume!: () => void;
+    apiMock.resumeSession.mockReturnValue(
+      new Promise((resolve) => {
+        resolveOldResume = () =>
+          resolve({
+            session_id: 's-old',
+            mode: 'workspace',
+            think: 'medium',
+            model: '',
+          });
+      }),
+    );
+
+    const oldResume = useStore.getState().resume('s-old');
+    const newChat = useStore.getState().newChat();
+
+    // NewChat is queued behind the in-flight resume, so it must not hit
+    // the backend first and let the older resume win afterwards.
+    expect(apiMock.newChat).not.toHaveBeenCalled();
+    resolveOldResume();
+    await oldResume;
+    await newChat;
+
+    expect(useStore.getState().navigation).toMatchObject({
+      name: 'ready',
+      sessionID: 's-new',
+    });
+  });
+
+  it('resume applies the snapshot and loads history into a ready conversation', async () => {
+    apiMock.sessionTurns.mockResolvedValue([
+      historyTurn(1, 'history user', 'history answer'),
+    ]);
+
+    await useStore.getState().resume('s-2');
+
+    const state = useStore.getState();
+    expect(state.navigation).toMatchObject({
+      name: 'ready',
+      sessionID: 's-2',
+    });
+    const conv = state.conversations['s-2'];
+    expect(conv.content).toEqual({ name: 'ready' });
+    expect(conv.mode).toBe('workspace');
+    expect(conv.think).toBe('medium');
+    expect(conv.messages.map((m) => m.text || '')).toContain('history user');
+    expect(apiMock.sessionTurns).toHaveBeenCalledWith('s-2');
+  });
+
+  it('resume merges history with an active live shell', async () => {
+    useStore.setState({
+      conversations: {
+        ...useStore.getState().conversations,
+        's-2': {
+          ...useStore.getState().conversations['s-1'],
+          content: { name: 'live-shell' },
+          turn: { name: 'running', runID: 'r-live', stage: 'text' },
+          messages: [
+            {
+              id: 'live-1',
+              role: 'assistant',
+              text: '',
+              items: [{ kind: 'text', id: 'live-text', text: 'live answer' }],
+              attachments: [],
+            },
+          ],
+        },
+      },
+    });
+    apiMock.sessionTurns.mockResolvedValue([
+      historyTurn(1, 'history user', 'history answer'),
+    ]);
+
+    await useStore.getState().resume('s-2');
+
+    const conv = useStore.getState().conversations['s-2'];
+    expect(conv.content).toEqual({ name: 'ready' });
+    const texts = conv.messages.flatMap((m) =>
+      m.role === 'user'
+        ? [m.text]
+        : m.items
+            .filter(
+              (
+                it,
+              ): it is Extract<
+                MessageView['items'][number],
+                { kind: 'text' }
+              > => it.kind === 'text',
+            )
+            .map((it) => it.text),
+    );
+    expect(texts).toContain('history user');
+    expect(texts).toContain('history answer');
+    expect(conv.messages[conv.messages.length - 1].items).toContainEqual(
+      expect.objectContaining({ kind: 'text', text: 'live answer' }),
+    );
+    expect(useStore.getState().navigation).toMatchObject({
+      name: 'ready',
+      sessionID: 's-2',
+    });
+  });
+
+  it('resume failure leaves navigation failed with the previous session visible', async () => {
+    apiMock.resumeSession.mockRejectedValue(new Error('switch failed'));
+
+    await useStore.getState().resume('s-2');
+
+    const nav = useStore.getState().navigation;
+    expect(nav).toMatchObject({
+      name: 'failed',
+      previousSessionID: 's-1',
+      error: 'switch failed',
+    });
+  });
+
   it('folds stream deltas into one assistant message', () => {
     useStore.setState({
       runConvs: { 'r-1': 's-1' },
       conversations: {
         's-1': {
           ...useStore.getState().conversations['s-1'],
-          busy: true,
-          activeRunID: 'r-1',
+          turn: { name: 'running', runID: 'r-1', stage: '' },
         },
       },
     });
@@ -217,7 +401,7 @@ describe('store: send and stream', () => {
     });
 
     const conv = useStore.getState().conversations['s-1'];
-    expect(conv.stage).toBe('text');
+    expect(conv.turn).toMatchObject({ name: 'running', stage: 'text' });
     expect(conv.messages).toHaveLength(1);
     const items = conv.messages[0].items;
     expect(items[0]).toMatchObject({ kind: 'reasoning', text: 'thinking…' });
@@ -238,8 +422,7 @@ describe('store: send and stream', () => {
       conversations: {
         's-1': {
           ...useStore.getState().conversations['s-1'],
-          busy: true,
-          activeRunID: 'r-1',
+          turn: { name: 'running', runID: 'r-1', stage: '' },
         },
       },
     });
@@ -249,9 +432,7 @@ describe('store: send and stream', () => {
     });
 
     const conv = useStore.getState().conversations['s-1'];
-    expect(conv.busy).toBe(false);
-    expect(conv.activeRunID).toBeNull();
-    expect(conv.lastFailed).toBe(false);
+    expect(conv.turn).toEqual({ name: 'finished' });
     expect(useStore.getState().runConvs['r-1']).toBeUndefined();
   });
 
@@ -261,8 +442,7 @@ describe('store: send and stream', () => {
       conversations: {
         's-1': {
           ...useStore.getState().conversations['s-1'],
-          busy: true,
-          activeRunID: 'r-1',
+          turn: { name: 'running', runID: 'r-1', stage: '' },
           messages: [
             {
               id: 'a-1',
@@ -286,7 +466,7 @@ describe('store: send and stream', () => {
     });
 
     const conv = useStore.getState().conversations['s-1'];
-    expect(conv.lastFailed).toBe(true);
+    expect(conv.turn).toMatchObject({ name: 'failed', error: 'engine boom' });
     const text = conv.messages[0].items.find(
       (i) => i.kind === 'text',
     ) as Extract<MessageView['items'][number], { kind: 'text' }>;

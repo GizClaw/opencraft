@@ -15,7 +15,7 @@ import { SubagentSidebar } from './components/SubagentSidebar';
 import { TopBar } from './components/TopBar';
 import { Toaster } from './components/Toaster';
 import { WelcomeView } from './components/WelcomeView';
-import { useStore, type AssistantItem } from './lib/store';
+import { activeSessionID, useStore, type AssistantItem } from './lib/store';
 import { usePluginStore } from './plugins/store';
 import type { UIEvent } from './lib/types';
 import { api } from './lib/api';
@@ -103,7 +103,7 @@ export default function App() {
   const configOpen = useStore((s) => s.configOpen);
   const toolsView = useStore((s) => s.toolsView);
   const workspace = useStore((s) => s.workspace);
-  const current = useStore((s) => s.current);
+  const current = useStore((s) => activeSessionID(s.navigation));
   const subagentCards = useStore((s) => s.subagentCards);
   const subagentPanelOpen = useStore((s) => s.subagentPanelOpen);
   const loadSubagentCards = useStore((s) => s.loadSubagentCards);

@@ -1,9 +1,12 @@
 import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { useStore } from '../lib/store';
+import { displaySessionID, isTurnBusy, useStore } from '../lib/store';
 
 export function StatusBar() {
-  const busy = useStore((s) => s.conversations[s.current]?.busy ?? false);
+  const busy = useStore((s) => {
+    const conv = s.conversations[displaySessionID(s.navigation)];
+    return conv ? isTurnBusy(conv.turn) : false;
+  });
   const statusText = useStore((s) => s.statusText);
   const lastUsage = useStore((s) => s.lastUsage);
   const model = useStore((s) => s.status?.default_model) ?? '';

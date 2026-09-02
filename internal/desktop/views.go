@@ -158,21 +158,21 @@ func (a *App) CurrentSession() string {
 }
 
 // ResumeSession switches the conversation context to an existing
-// session, restoring its permission mode. It returns the session id
-// so the UI can highlight it.
-func (a *App) ResumeSession(id string) (string, error) {
+// session, restoring its settings. It returns the authoritative
+// SessionSnapshot so the UI can apply id + settings atomically.
+func (a *App) ResumeSession(id string) (SessionSnapshot, error) {
 	if strings.TrimSpace(id) == "" {
-		return "", errors.New("session id is required")
+		return SessionSnapshot{}, errors.New("session id is required")
 	}
 	a.mu.Lock()
 	store := a.sessions
 	a.mu.Unlock()
 	if store == nil {
-		return "", errors.New("session store is not available")
+		return SessionSnapshot{}, errors.New("session store is not available")
 	}
 	metas, err := store.List()
 	if err != nil {
-		return "", err
+		return SessionSnapshot{}, err
 	}
 	found := false
 	for _, m := range metas {
@@ -188,11 +188,11 @@ func (a *App) ResumeSession(id string) (string, error) {
 	_, known := a.convRuns[id]
 	a.mu.Unlock()
 	if !found && !known {
-		return "", fmt.Errorf("session %s not found", id)
+		return SessionSnapshot{}, fmt.Errorf("session %s not found", id)
 	}
 	mode, err := store.Mode(a.appContext(), id)
 	if err != nil {
-		return "", err
+		return SessionSnapshot{}, err
 	}
 	think, err := store.Think(a.appContext(), id)
 	if err != nil {
@@ -213,7 +213,12 @@ func (a *App) ResumeSession(id string) (string, error) {
 		"source":          "resume",
 		"conversation_id": id,
 	})
-	return id, nil
+	return SessionSnapshot{
+		SessionID: id,
+		Mode:      string(mode),
+		Think:     string(think),
+		Model:     model,
+	}, nil
 }
 
 // SessionHistory returns the stored messages of one conversation as

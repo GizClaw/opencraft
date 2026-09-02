@@ -43,20 +43,18 @@ function setConversation(
 ) {
   useStore.setState({
     configured: true,
-    current: 's-1',
+    navigation: { name: 'ready', sessionID: 's-1', epoch: 0 },
     workspace: '/tmp/w',
     conversations: {
       's-1': {
+        content: { name: 'ready' },
+        turn: { name: 'idle' },
         messages,
         turnArtifacts,
-        busy: false,
-        activeRunID: null,
-        stage: '',
         mode: 'workspace',
         think: 'medium',
         model: '',
         pendingInteracts: [],
-        lastFailed: false,
       },
     },
   });
