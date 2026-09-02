@@ -66,3 +66,28 @@ func TestSearchFilesEmptyQuery(t *testing.T) {
 		t.Fatalf("empty query must return no hits, got %d", len(hits))
 	}
 }
+
+func TestCopyRegularFile(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "artifact.txt")
+	if err := os.WriteFile(src, []byte("hello artifact"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(t.TempDir(), "copy.txt")
+	if err := copyRegularFile(src, dest); err != nil {
+		t.Fatalf("copyRegularFile: %v", err)
+	}
+	data, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "hello artifact" {
+		t.Fatalf("copy contents = %q, want original", data)
+	}
+	info, err := os.Stat(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o640 {
+		t.Fatalf("copy mode = %o, want 640", info.Mode().Perm())
+	}
+}

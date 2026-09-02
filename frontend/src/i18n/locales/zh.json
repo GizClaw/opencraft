@@ -398,7 +398,13 @@
     "mentionSkillHint": "输入以筛选技能…",
     "planTitle": "当前计划",
     "turnArtifacts": "本回合产出",
-    "openArtifact": "打开 {{path}}"
+    "openArtifact": "打开 {{path}}",
+    "artifactSaveAs": "另存为…",
+    "artifactCopyPath": "复制路径",
+    "artifactRevealMac": "在 Finder 中显示",
+    "artifactRevealWindows": "在资源管理器中显示",
+    "artifactRevealLinux": "在文件管理器中显示",
+    "artifactOpenWith": "打开方式…"
   },
   "status": {
     "ready": "就绪",

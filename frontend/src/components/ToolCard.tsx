@@ -509,7 +509,7 @@ function ReadView({ tool }: { tool: ToolView }) {
 // WriteView renders write_file in full: the new content is always
 // visible as a git-style diff scrolled to a ~10-line viewport, with a
 // lightweight status line only while running or on failure.
-export function WriteView({ tool }: { tool: ToolView }) {
+export const WriteView = memo(function WriteView({ tool }: { tool: ToolView }) {
   const { t } = useTranslation();
   const args = parseArgs(tool);
   const path = args && typeof args.file_path === 'string' ? args.file_path : '';
@@ -551,7 +551,7 @@ export function WriteView({ tool }: { tool: ToolView }) {
       )}
     </div>
   );
-}
+});
 
 // AskUserView renders ask_user as a standalone collapsible block: the
 // header shows the question and the user's answer once provided;

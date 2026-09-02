@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { SkillDTO } from '../lib/types';
 import { SkillDetailDrawer } from './SkillDetailDrawer';
@@ -39,5 +39,20 @@ describe('SkillDetailDrawer', () => {
     expect(
       await screen.findByText(/Failed to read SKILL\.md|读取 SKILL\.md 失败/),
     ).toBeInTheDocument();
+  });
+
+  it('keeps SKILL.md references clickable without navigation', async () => {
+    apiMock.skillContent.mockResolvedValue(
+      '# Plan instructions\n\n[deploy.md](references/deploy.md)',
+    );
+    render(<SkillDetailDrawer skill={skill} onClose={() => {}} />);
+
+    await screen.findByRole('heading', { name: 'Plan instructions' });
+    const link = screen.getByRole('link', { name: 'deploy.md' });
+    expect(link).toHaveAttribute('href', 'references/deploy.md');
+
+    fireEvent.click(link);
+
+    expect(screen.getByRole('link', { name: 'deploy.md' })).toBeInTheDocument();
   });
 });

@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The built-in `code-review` skill was removed; review behavior is left
+  to installed user/repo skills and the agent's review guidance.
 - flowcraft upgraded to core v0.2.3 and drivers v0.2.1. Reasoning
   capabilities now use the new `ReasoningCapability` object (kind +
   canonical-to-wire effort map) end to end: config writes the object

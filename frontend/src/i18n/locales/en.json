@@ -399,7 +399,13 @@
     "planTitle": "Current plan",
     "planLoading": "Loading plan…",
     "turnArtifacts": "Produced this turn",
-    "openArtifact": "Open {{path}}"
+    "openArtifact": "Open {{path}}",
+    "artifactSaveAs": "Save As…",
+    "artifactCopyPath": "Copy Path",
+    "artifactRevealMac": "Show in Finder",
+    "artifactRevealWindows": "Show in Explorer",
+    "artifactRevealLinux": "Show in File Manager",
+    "artifactOpenWith": "Open With…"
   },
   "status": {
     "ready": "Ready",

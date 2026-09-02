@@ -22,6 +22,8 @@ type desktopTexts struct {
 	quitDialogMessage string
 	quitDialogConfirm string
 	quitDialogCancel  string
+	saveArtifactTitle string
+	openWithPrompt    string
 }
 
 // desktopLocales holds the two supported desktop languages. They mirror
@@ -41,6 +43,8 @@ var desktopLocales = map[string]desktopTexts{
 		quitDialogMessage: "退出后，OpenCraft 的定时任务将不再执行。\n确定要退出吗？",
 		quitDialogConfirm: "继续退出",
 		quitDialogCancel:  "取消",
+		saveArtifactTitle: "产物另存为",
+		openWithPrompt:    "选择用于打开此文件的应用程序",
 	},
 	"en": {
 		trayTooltip:       "OpenCraft",
@@ -56,6 +60,8 @@ var desktopLocales = map[string]desktopTexts{
 		quitDialogMessage: "Scheduled tasks will stop running when OpenCraft exits.\nAre you sure you want to quit?",
 		quitDialogConfirm: "Continue",
 		quitDialogCancel:  "Cancel",
+		saveArtifactTitle: "Save Artifact As",
+		openWithPrompt:    "Choose an application to open this file",
 	},
 }
 
