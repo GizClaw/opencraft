@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
@@ -197,6 +198,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 // streamRecorder converts stream deltas into rollout JSONL events,
 // buffering reasoning/text parts until the stream finish delta.
 type streamRecorder struct {
+	mu        sync.Mutex
 	enc       *json.Encoder
 	runID     string
 	conversID string
@@ -256,6 +258,8 @@ func (r *streamRecorder) emit(ev rollout.Event) {
 	if r.enc == nil {
 		return
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if ev.Time == "" {
 		ev.Time = time.Now().UTC().Format(time.RFC3339Nano)
 	}
