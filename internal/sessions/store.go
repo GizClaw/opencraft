@@ -290,6 +290,9 @@ func (s *Store) appendTurn(id, runID string, msgs []message.Message) error {
 	if err := os.Rename(tmp, path); err != nil {
 		return err
 	}
+	if runID != "" {
+		s.indexRun(id, runID, path)
+	}
 
 	// Keep the meta index in sync: title (first user message), message
 	// and turn counts, and timestamps. This is what makes List() and
@@ -417,6 +420,15 @@ func (s *Store) AppendTurnArtifacts(
 // runID, falling back to the highest-numbered file when runID is empty
 // or no turn carries it (e.g. pre-upgrade archives).
 func (s *Store) turnPathByRun(id, runID string) (string, error) {
+	if runID != "" {
+		idx, _ := s.readRunIndex(id)
+		if name, ok := idx[runID]; ok {
+			candidate := filepath.Join(s.dir(id), "history", name)
+			if _, err := os.Stat(candidate); err == nil {
+				return candidate, nil
+			}
+		}
+	}
 	files, err := filepath.Glob(filepath.Join(s.dir(id), "history", "*.json"))
 	if err != nil {
 		return "", err
@@ -441,6 +453,48 @@ func (s *Store) turnPathByRun(id, runID string) (string, error) {
 		}
 	}
 	return files[len(files)-1], nil
+}
+
+// runIndexFile maps one turn's run id to its archived file name, so
+// post-turn artifact reconciliation is O(1) instead of re-reading every
+// history file on each turn.
+const runIndexFile = "runs.json"
+
+func (s *Store) indexRun(id, runID, path string) {
+	idx, err := s.readRunIndex(id)
+	if err != nil {
+		idx = map[string]string{}
+	}
+	idx[runID] = filepath.Base(path)
+	_ = s.writeRunIndex(id, idx)
+}
+
+func (s *Store) readRunIndex(id string) (map[string]string, error) {
+	idx := map[string]string{}
+	data, err := os.ReadFile(filepath.Join(s.dir(id), runIndexFile))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return idx, nil
+		}
+		return idx, err
+	}
+	if err := json.Unmarshal(data, &idx); err != nil {
+		return idx, err
+	}
+	return idx, nil
+}
+
+func (s *Store) writeRunIndex(id string, idx map[string]string) error {
+	data, err := json.Marshal(idx)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(s.dir(id), runIndexFile)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 // SaveAttachment copies one user attachment into the session's media

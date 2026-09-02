@@ -79,11 +79,12 @@ func (s *fileAuditSink) Record(_ context.Context, rec toolmiddleware.AuditRecord
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		slog.Error("opencraft audit: create directory",
 			"dir", filepath.Dir(s.path), "error", err)
 		return
 	}
+	_ = os.Chmod(filepath.Dir(s.path), 0o700)
 	f, err := os.OpenFile(s.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		slog.Error("opencraft audit: open log", "path", s.path, "error", err)

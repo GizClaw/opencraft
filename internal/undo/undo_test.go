@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -80,6 +81,54 @@ func TestUndoRedoRoundTrip(t *testing.T) {
 	}
 	if len(changed) != 1 || changed[0] != "b.go" {
 		t.Fatalf("redo changed = %v", changed)
+	}
+}
+
+func TestGlobalPruneBoundsDiskUsage(t *testing.T) {
+	old := maxUndoBytes
+	maxUndoBytes = 1 << 10
+	t.Cleanup(func() { maxUndoBytes = old })
+
+	root := t.TempDir()
+	store := New(root)
+	ctx := context.Background()
+	for _, cid := range []string{"s-aaaaaaaaaaaaaaaa", "s-bbbbbbbbbbbbbbbb"} {
+		for i := 0; i < 3; i++ {
+			before := []FileState{state("a.go", true, strings.Repeat("x", 512))}
+			after := []FileState{state("a.go", true, strings.Repeat("y", 512))}
+			if _, err := store.Capture(ctx, cid, before, after); err != nil {
+				t.Fatalf("capture %s/%d: %v", cid, i, err)
+			}
+		}
+	}
+
+	var total int64
+	_ = filepath.WalkDir(root, func(_ string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			if info, ierr := d.Info(); ierr == nil {
+				total += info.Size()
+			}
+		}
+		return nil
+	})
+	// At most the budget plus the newest kept entry (which is exempt).
+	if total > maxUndoBytes+2<<10 {
+		t.Fatalf("undo total = %d bytes, want <= %d", total, maxUndoBytes+2<<10)
+	}
+	if _, err := store.Available(ctx, "s-aaaaaaaaaaaaaaaa"); err != nil {
+		t.Fatalf("newest entry must survive pruning: %v", err)
+	}
+
+	// Snapshot dirs are owner-only.
+	undoRoot := filepath.Join(root, ".opencraft", "undo")
+	for _, sub := range []string{"live", "undone"} {
+		info, err := os.Stat(filepath.Join(undoRoot, "s-aaaaaaaaaaaaaaaa", sub))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if perm := info.Mode().Perm(); perm != 0o700 {
+			t.Fatalf("%s mode = %o, want 700", sub, perm)
+		}
 	}
 }
 

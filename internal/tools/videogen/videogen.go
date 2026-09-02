@@ -41,9 +41,12 @@ const OutDir = "generated"
 // must happen before provider URLs expire.
 const defaultTimeout = 20 * time.Minute
 
-// maxDownloadBytes caps the downloaded video size (1 GiB). Artifacts
-// beyond it are refused before they can exhaust memory.
-const maxDownloadBytes = 1 << 30
+// maxDownloadBytes caps the downloaded video size. Artifacts beyond it
+// are refused before they can exhaust memory.
+const maxDownloadBytes = 256 << 20 // 256 MiB
+
+// maxFirstFrameBytes caps one first-frame image read into memory.
+const maxFirstFrameBytes = 10 << 20 // 10 MiB
 
 // maxDownloadRedirects bounds provider-issued download redirects.
 const maxDownloadRedirects = 10
@@ -250,6 +253,16 @@ func (t *Tool) readFirstFrame(
 		return message.ImagePart{}, errdefs.Validationf(
 			"%s: first_frame: %v", Name, err)
 	}
+	info, err := t.ws.Stat(ctx, path)
+	if err != nil {
+		return message.ImagePart{}, errdefs.Validationf(
+			"%s: first_frame: stat %s: %v", Name, path, err)
+	}
+	if info.Size() > maxFirstFrameBytes {
+		return message.ImagePart{}, errdefs.Validationf(
+			"%s: first_frame: %s is %d bytes (limit %d)",
+			Name, path, info.Size(), maxFirstFrameBytes)
+	}
 	data, err := t.ws.Read(ctx, path)
 	if err != nil {
 		return message.ImagePart{}, errdefs.Validationf(
@@ -297,11 +310,12 @@ func (t *Tool) saveVideos(
 	return paths, nil
 }
 
-// download fetches the provider-issued video URL into a temp file (so
-// a slow or oversized stream never pins the whole artifact in memory)
-// and returns the bytes for the workspace write. The artifact is
-// bounded by maxDownloadBytes, and an oversized declared
-// Content-Length is rejected up front.
+// download fetches the provider-issued video URL into a temp file,
+// then reads it back for the workspace write. The artifact is bounded
+// by maxDownloadBytes (the workspace API takes whole-file bytes), an
+// oversized declared Content-Length is rejected up front, and the
+// stream itself is capped so a slow or malicious provider cannot grow
+// the in-memory copy beyond the limit.
 func (t *Tool) download(ctx context.Context, url string) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {

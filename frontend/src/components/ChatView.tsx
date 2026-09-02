@@ -57,6 +57,13 @@ import { groupToolCalls, type ToolCallItem } from '../lib/stream';
 const isCommandTool = (name: string) =>
   name === 'exec_command' || name === 'exec_session';
 
+// RENDER_WINDOW bounds the number of transcript messages mounted in the
+// DOM. Older messages remain in the store/archive; "load earlier"
+// grows the window in steps instead of rendering a long session at
+// once.
+const RENDER_WINDOW = 200;
+const RENDER_STEP = 100;
+
 // ToolGroupView renders a burst of consecutive tool calls as one
 // collapsible block ("Ran 4 commands"), defaulting to collapsed; the
 // individual tool cards appear once expanded.
@@ -458,6 +465,15 @@ export function ChatView() {
   const messages = conv?.messages ?? [];
   const busy = conv?.busy ?? false;
   const turnArtifacts = conv?.turnArtifacts ?? [];
+  const [visibleCount, setVisibleCount] = useState(RENDER_WINDOW);
+  // A conversation switch resets the window to the tail; a resumed
+  // session starts with the newest messages visible.
+  useEffect(() => {
+    setVisibleCount(RENDER_WINDOW);
+  }, [current]);
+  const truncated = messages.length > visibleCount;
+  const start = truncated ? messages.length - visibleCount : 0;
+  const visibleMessages = truncated ? messages.slice(start) : messages;
   const planState = useMemo(() => latestPlan(messages), [messages]);
   const [planDismissed, setPlanDismissed] = useState(false);
   const planItemsKey = planState
@@ -935,7 +951,20 @@ export function ChatView() {
             </div>
           ) : (
             <div className="max-w-4xl mx-auto space-y-4">
-              {messages.map((msg, i) => {
+              {truncated && (
+                <div className="pb-1">
+                  <button
+                    onClick={() => setVisibleCount((v) => v + RENDER_STEP)}
+                    className="w-full rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-xs text-dim hover:text-fg transition-colors"
+                  >
+                    {t('chat.loadEarlier', {
+                      hidden: messages.length - visibleCount,
+                    })}
+                  </button>
+                </div>
+              )}
+              {visibleMessages.map((msg, localI) => {
+                const i = start + localI;
                 // A turn's strip renders right after its last message:
                 // the next turn's start minus one, or the transcript end.
                 const strip = turnArtifacts.find((t, ti) => {

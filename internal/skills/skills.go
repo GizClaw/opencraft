@@ -28,6 +28,11 @@ import (
 const (
 	maxNameLen        = 64
 	maxDescriptionLen = 1024
+	// maxSkillFileBytes caps one SKILL.md document (frontmatter + body).
+	// Discovery, activation, and skill_read all refuse larger files so a
+	// third-party skill cannot inject an unbounded document into the
+	// model context or memory.
+	maxSkillFileBytes = 256 << 10 // 256 KiB
 	defaultTopN       = 5
 )
 
@@ -301,6 +306,11 @@ func (s *Service) ReadFull(name string) (SkillMetadata, string, error) {
 		if err != nil {
 			return SkillMetadata{}, "", fmt.Errorf("skills: read %s: %w", sk.Path, err)
 		}
+		if len(body) > maxSkillFileBytes {
+			return SkillMetadata{}, "", fmt.Errorf(
+				"skills: %s exceeds the %d-byte SKILL.md limit",
+				sk.Path, maxSkillFileBytes)
+		}
 		return sk, strings.TrimSpace(body), nil
 	}
 	snap := s.snapshot.Load()
@@ -315,6 +325,11 @@ func (s *Service) ReadFull(name string) (SkillMetadata, string, error) {
 	data, err := os.ReadFile(resolved)
 	if err != nil {
 		return SkillMetadata{}, "", fmt.Errorf("skills: read %s: %w", sk.Path, err)
+	}
+	if len(data) > maxSkillFileBytes {
+		return SkillMetadata{}, "", fmt.Errorf(
+			"skills: %s exceeds the %d-byte SKILL.md limit",
+			sk.Path, maxSkillFileBytes)
 	}
 	_, body, err := splitFrontmatter(data)
 	if err != nil {
@@ -581,6 +596,14 @@ type ParseResult struct {
 // sanitization. A missing or invalid name falls back to the parent
 // directory name (D4) with a warning; only malformed files fail.
 func ParseFile(path string) (ParseResult, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return ParseResult{}, err
+	}
+	if info.Size() > maxSkillFileBytes {
+		return ParseResult{}, fmt.Errorf(
+			"SKILL.md exceeds the %d-byte limit", maxSkillFileBytes)
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return ParseResult{}, err
@@ -592,6 +615,11 @@ func ParseFile(path string) (ParseResult, error) {
 // sanitization. A missing or invalid name falls back to the parent
 // directory name (D4) with a warning; only malformed files fail.
 func parseBytes(path string, data []byte) (ParseResult, error) {
+	if len(data) > maxSkillFileBytes {
+		return ParseResult{}, fmt.Errorf(
+			"%s exceeds the %d-byte SKILL.md limit",
+			path, maxSkillFileBytes)
+	}
 	fm, body, err := splitFrontmatter(data)
 	if err != nil {
 		return ParseResult{}, err

@@ -670,3 +670,41 @@ func TestAppendTurnArtifactsMergesIntoLatestTurn(t *testing.T) {
 		t.Fatal("AppendTurnArtifacts accepted invalid session id")
 	}
 }
+
+func TestRunIndexWrittenAndUsed(t *testing.T) {
+	root := t.TempDir()
+	store, err := New(root, 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendTurnWithRunID(context.Background(), id, "run-abc", []message.Message{
+		message.NewTextMessage(message.RoleUser, "one"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, id, runIndexFile))
+	if err != nil {
+		t.Fatalf("run index not written: %v", err)
+	}
+	var idx map[string]string
+	if err := json.Unmarshal(raw, &idx); err != nil {
+		t.Fatal(err)
+	}
+	if idx["run-abc"] != "000001.json" {
+		t.Fatalf("run index = %v, want run-abc -> 000001.json", idx)
+	}
+	if _, err := store.AppendTurnArtifacts(id, "run-abc", []Artifact{
+		{Path: "x.md", Bytes: 1},
+	}); err != nil {
+		t.Fatalf("AppendTurnArtifacts via index: %v", err)
+	}
+	turns, err := store.Turns(context.Background(), id)
+	if err != nil || len(turns) != 1 || len(turns[0].Artifacts) != 1 {
+		t.Fatalf("turns after indexed lookup = %+v, %v", turns, err)
+	}
+}

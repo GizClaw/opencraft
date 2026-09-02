@@ -6,12 +6,18 @@
 // every platform (the Linux approach): no keychain ACLs, no native
 // authorization prompts, no cgo. Secrets are encrypted at rest with
 // AES-256-GCM under a machine-local 32-byte key stored next to them as
-// .key (0600). Pre-encryption plaintext files stay readable and are
-// rewritten encrypted on the next Set. The resource impl id stays
-// "keychain" and configs keep ${secret:keychain.<name>} references so
-// existing user documents do not need rewriting. Deployments that need
-// a richer backend (vault, 1Password, Secret Service) can register
-// their own secret.Store impl without touching opencraft core.
+// .key (0600). The key and the ciphertext live in the same user-owned
+// directory, so this protects against accidental exposure (backups,
+// file sharing, casual reads) rather than against another process
+// running as the same user — a true OS credential store (Keychain,
+// libsecret, DPAPI) would be needed for that. Files without the
+// encryption magic are rejected: legacy plaintext from pre-encryption
+// builds is not readable and must be re-entered. The resource impl id
+// stays "keychain" and configs keep
+// ${secret:keychain.<name>} references so existing user documents do
+// not need rewriting. Deployments that need a richer backend (vault,
+// 1Password, Secret Service) can register their own secret.Store impl
+// without touching opencraft core.
 package secrets
 
 import (
@@ -38,8 +44,8 @@ import (
 // ${secret:keychain.<name>} references keep resolving.
 const ResourceImpl = "keychain"
 
-// encMagic prefixes every sealed secret file so Get can distinguish
-// ciphertext from legacy plaintext.
+// encMagic prefixes every sealed secret file. Files without it are
+// rejected rather than treated as plaintext.
 var encMagic = []byte("ocenc1:")
 
 const (
@@ -268,10 +274,9 @@ func AccountFor(deploymentID string) string {
 
 // fileBackend stores one 0600 file per secret under a 0700 directory.
 // File names are sha256 hashes of the account so arbitrary names can
-// never escape the directory. With a key present every file is sealed
-// with AES-256-GCM (magic + random nonce + ciphertext+tag); a nil key
-// keeps the legacy plaintext behavior so tests and pre-encryption
-// stores keep working.
+// never escape the directory. Every file is sealed with AES-256-GCM
+// (magic + random nonce + ciphertext+tag) under the store's 32-byte
+// key; a backend without a key is unusable.
 type fileBackend struct {
 	dir string
 	key []byte
@@ -281,7 +286,9 @@ type fileBackend struct {
 // files (filenames are sha256 hashes and cannot be enumerated).
 const accountsFile = "accounts.json"
 
-func (f *fileBackend) Available() bool { return f != nil && f.dir != "" }
+func (f *fileBackend) Available() bool {
+	return f != nil && f.dir != "" && len(f.key) == encKeyLen
+}
 
 func (f *fileBackend) path(name string) string {
 	sum := sha256.Sum256([]byte(name))
@@ -329,7 +336,7 @@ func (f *fileBackend) removeAccount(name string) {
 	_ = f.writeAccounts(kept)
 }
 
-func (f *fileBackend) Get(_ context.Context, name string) (string, bool, error) {
+func (f *fileBackend) Get(ctx context.Context, name string) (string, bool, error) {
 	raw, err := os.ReadFile(f.path(name))
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -346,9 +353,12 @@ func (f *fileBackend) Get(_ context.Context, name string) (string, bool, error) 
 		}
 		return strings.TrimRight(string(plain), "\r\n"), true, nil
 	}
-	// Legacy plaintext (written before encryption): readable, and the
-	// next Set rewrites it sealed.
-	return strings.TrimRight(string(raw), "\r\n"), true, nil
+	// Unencrypted files are rejected, not silently read: legacy
+	// plaintext from pre-encryption builds must be re-entered so it is
+	// never left (or treated) as plaintext.
+	return "", false, fmt.Errorf(
+		"opencraft secrets: %q is not encrypted (legacy plaintext is "+
+			"no longer supported); re-enter the secret", name)
 }
 
 func (f *fileBackend) Set(_ context.Context, name, value string) error {
@@ -386,11 +396,11 @@ func (f *fileBackend) DeletePrefix(_ context.Context, prefix string) error {
 	return f.writeAccounts(kept)
 }
 
-// seal encrypts value with AES-256-GCM under f.key. A nil key keeps
-// the legacy plaintext format (tests and pre-encryption stores).
+// seal encrypts value with AES-256-GCM under f.key. A missing key is
+// an error: plaintext writes are never allowed.
 func (f *fileBackend) seal(value []byte) ([]byte, error) {
 	if len(f.key) == 0 {
-		return value, nil
+		return nil, errors.New("opencraft secrets: no encryption key")
 	}
 	gcm, err := newGCM(f.key)
 	if err != nil {
@@ -408,8 +418,8 @@ func (f *fileBackend) seal(value []byte) ([]byte, error) {
 	return out, nil
 }
 
-// decrypt reverses seal. Files without the magic prefix are legacy
-// plaintext and are not routed here.
+// decrypt reverses seal. Files without the magic prefix are rejected
+// by Get before this runs.
 func (f *fileBackend) decrypt(raw []byte) ([]byte, error) {
 	if len(f.key) == 0 {
 		return nil, errors.New("opencraft secrets: no encryption key")

@@ -5,6 +5,7 @@
 package files
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -131,13 +132,15 @@ func (t *readFileTool) Execute(ctx context.Context, arguments string) (string, e
 			ReadFileName, args.FilePath, len(data), maxReadFileBytes)
 	}
 
-	text := string(data)
-	endsWithNL := strings.HasSuffix(text, "\n")
-	raw := strings.Split(text, "\n")
-	if len(raw) > 0 && raw[len(raw)-1] == "" {
-		raw = raw[:len(raw)-1]
+	total := 0
+	endsWithNL := false
+	if len(data) > 0 {
+		total = bytes.Count(data, []byte{'\n'})
+		endsWithNL = data[len(data)-1] == '\n'
+		if !endsWithNL {
+			total++
+		}
 	}
-	total := len(raw)
 	offset := args.Offset
 	if offset < 1 {
 		offset = 1
@@ -157,7 +160,7 @@ func (t *readFileTool) Execute(ctx context.Context, arguments string) (string, e
 	if end > total {
 		end = total
 	}
-	content := strings.Join(raw[start:end], "\n")
+	content := joinLineRange(data, start, end)
 	if end < total || (end == total && total > 0 && endsWithNL) {
 		content += "\n"
 	}
@@ -173,6 +176,37 @@ func (t *readFileTool) Execute(ctx context.Context, arguments string) (string, e
 		return "", errdefs.Internalf("%s: encode result: %v", ReadFileName, err)
 	}
 	return string(payload), nil
+}
+
+// joinLineRange returns lines [start, end) of data as a single string
+// without allocating the whole file as a line slice. Lines are split
+// on '\n'; a trailing newline is not part of a line.
+func joinLineRange(data []byte, start, end int) string {
+	if start >= end || len(data) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	line := 0
+	idx := 0
+	for line < end && idx < len(data) {
+		nl := bytes.IndexByte(data[idx:], '\n')
+		lineEnd := len(data)
+		if nl >= 0 {
+			lineEnd = idx + nl
+		}
+		if line >= start {
+			if b.Len() > 0 {
+				b.WriteByte('\n')
+			}
+			b.Write(data[idx:lineEnd])
+		}
+		if nl < 0 {
+			break
+		}
+		idx = lineEnd + 1
+		line++
+	}
+	return b.String()
 }
 
 // ---------------------------------------------------------------------------

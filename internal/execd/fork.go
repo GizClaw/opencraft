@@ -20,10 +20,11 @@ const stopGrace = 3 * time.Second
 // Launch forks the current executable in execd mode and dials its
 // unix socket. policyJSON is the parent's serialized sandbox policy
 // (writable paths + environment policy); it is forwarded to the child
-// as -sandbox-policy so the child's default environment matches the
-// deploy document. The returned stop function terminates the child
-// and removes the socket. The returned socket path is the unix socket
-// the child listens on (useful for cleanup verification and status).
+// through a 0600 temp file (-sandbox-policy-file) rather than a
+// command-line argument, so injected env values never show up in `ps`.
+// The returned stop function terminates the child and removes the
+// socket. The returned socket path is the unix socket the child
+// listens on (useful for cleanup verification and status).
 func Launch(
 	ctx context.Context,
 	workDir, policyJSON string,
@@ -49,6 +50,29 @@ func LaunchExe(
 	}
 	_ = os.Remove(sock)
 
+	var policyFile string
+	if policyJSON != "" {
+		f, err := os.CreateTemp("", "opencraft-policy-*.json")
+		if err != nil {
+			return nil, sock, nil, fmt.Errorf("execd policy file: %w", err)
+		}
+		policyFile = f.Name()
+		if err := f.Chmod(0o600); err != nil {
+			_ = f.Close()
+			_ = os.Remove(policyFile)
+			return nil, sock, nil, fmt.Errorf("execd policy file mode: %w", err)
+		}
+		if _, err := f.WriteString(policyJSON); err != nil {
+			_ = f.Close()
+			_ = os.Remove(policyFile)
+			return nil, sock, nil, fmt.Errorf("execd policy write: %w", err)
+		}
+		if err := f.Close(); err != nil {
+			_ = os.Remove(policyFile)
+			return nil, sock, nil, fmt.Errorf("execd policy close: %w", err)
+		}
+	}
+
 	// The child watches its parent: if this process dies without
 	// running stop (SIGKILL, crash), the child self-terminates and
 	// removes the socket instead of leaking.
@@ -56,12 +80,15 @@ func LaunchExe(
 		"execd", "-listen", sock, "-workdir", workDir,
 		"-parent-pid", strconv.Itoa(os.Getpid()),
 	}
-	if policyJSON != "" {
-		args = append(args, "-sandbox-policy", policyJSON)
+	if policyFile != "" {
+		args = append(args, "-sandbox-policy-file", policyFile)
 	}
 	cmd := exec.CommandContext(ctx, executable, args...)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
+		if policyFile != "" {
+			_ = os.Remove(policyFile)
+		}
 		return nil, sock, nil, fmt.Errorf("execd launch: %w", err)
 	}
 	var dialed *Client
@@ -87,6 +114,9 @@ func LaunchExe(
 			<-waited
 		}
 		_ = os.Remove(sock)
+		if policyFile != "" {
+			_ = os.Remove(policyFile)
+		}
 	}
 
 	// Allow generous startup time: the child compiles/links and builds

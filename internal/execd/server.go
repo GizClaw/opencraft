@@ -34,6 +34,13 @@ type Server struct {
 	DefaultEnv sandbox.EnvPolicy
 }
 
+// maxReadBytes caps one process/read response so a client cannot ask
+// the server to buffer an unbounded output window.
+const maxReadBytes = 1 << 20 // 1 MiB
+
+// maxWaitMs caps the server-side wait window of one empty read.
+const maxWaitMs = 30_000
+
 // New creates a Server over the given backend and transport.
 func New(backend sandbox.Runner, in io.Reader, out io.Writer) *Server {
 	return &Server{backend: backend, in: in, out: out}
@@ -289,12 +296,18 @@ func (s *Server) read(
 	if p.MaxBytes != nil {
 		maxBytes = *p.MaxBytes
 	}
+	if maxBytes <= 0 || maxBytes > maxReadBytes {
+		maxBytes = maxReadBytes
+	}
 	// WaitMs turns an empty read into a bounded wait for output (or
 	// process exit) instead of returning immediately, so a client's
 	// Wait loop does not busy-poll the RPC channel.
 	waitMs := 0
 	if p.WaitMs != nil {
 		waitMs = *p.WaitMs
+	}
+	if waitMs > maxWaitMs {
+		waitMs = maxWaitMs
 	}
 	var deadline time.Time
 	if waitMs > 0 {

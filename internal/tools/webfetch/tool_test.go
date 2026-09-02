@@ -175,6 +175,36 @@ func TestToolDialResolvesOnceAndBlocksPrivate(t *testing.T) {
 	}
 }
 
+func TestToolRejectsProxyWhileSSRFGuardActive(t *testing.T) {
+	orig := lookupHost
+	lookupHost = func(_ context.Context, host string) ([]net.IP, error) {
+		return []net.IP{net.ParseIP("8.8.8.8")}, nil
+	}
+	t.Cleanup(func() { lookupHost = orig })
+
+	t.Setenv("HTTPS_PROXY", "http://127.0.0.1:3128")
+	t.Setenv("https_proxy", "")
+	t.Setenv("HTTP_PROXY", "")
+	t.Setenv("http_proxy", "")
+	t.Setenv("ALL_PROXY", "")
+	t.Setenv("all_proxy", "")
+
+	tool := New()
+	tool.SetGate(DomainGate(sandbox.WebFetchPolicy{}))
+	_, err := tool.Execute(context.Background(), `{"url":"https://example.com/"}`)
+	if err == nil || !strings.Contains(err.Error(), "cannot pin DNS through proxy") {
+		t.Fatalf("Execute(proxy) error = %v, want proxy-pinning rejection", err)
+	}
+
+	// allow_private (and YOLO via SetAllowPrivate) is exempt: the SSRF
+	// concern is gone, so proxies stay usable.
+	tool.SetAllowPrivate(func(context.Context) bool { return true })
+	_, err = tool.Execute(context.Background(), `{"url":"https://example.com/"}`)
+	if err != nil && strings.Contains(err.Error(), "cannot pin DNS through proxy") {
+		t.Fatalf("allow_private must not reject proxies, got %v", err)
+	}
+}
+
 func TestHardenedClientRedirectPolicy(t *testing.T) {
 	gate := func(_ context.Context, host string) error {
 		if host == "blocked.example" {

@@ -40,7 +40,7 @@ func TestFileBackendEncryptsAtRest(t *testing.T) {
 	}
 }
 
-func TestFileBackendReadsLegacyPlaintext(t *testing.T) {
+func TestFileBackendRejectsLegacyPlaintext(t *testing.T) {
 	dir := t.TempDir()
 	s, err := NewStore(dir, "")
 	if err != nil {
@@ -51,20 +51,23 @@ func TestFileBackendReadsLegacyPlaintext(t *testing.T) {
 	if err := os.WriteFile(b.path("inference/legacy"), []byte("sk-legacy"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, found, err := s.Lookup(context.Background(), "inference/legacy")
-	if err != nil || !found || got != "sk-legacy" {
-		t.Fatalf("Lookup(legacy) = (%q, %v, %v), want sk-legacy", got, found, err)
+	if _, found, err := s.Lookup(context.Background(), "inference/legacy"); err == nil || found {
+		t.Fatalf("Lookup(legacy) = (found=%v, err=%v), want rejection", found, err)
 	}
-	// The next write seals it.
-	if err := s.Set(context.Background(), "inference/legacy", "sk-new"); err != nil {
-		t.Fatal(err)
-	}
+	// The plaintext file must remain untouched: no silent rewrite.
 	raw, err := os.ReadFile(b.path("inference/legacy"))
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || string(raw) != "sk-legacy" {
+		t.Fatalf("legacy file was modified: %q, %v", raw, err)
 	}
-	if !bytes.HasPrefix(raw, encMagic) {
-		t.Fatal("rewritten legacy file is not encrypted")
+}
+
+func TestFileBackendWithoutKeyIsUnavailable(t *testing.T) {
+	b := &fileBackend{dir: t.TempDir()}
+	if b.Available() {
+		t.Fatal("backend without a key must be unavailable")
+	}
+	if err := b.Set(context.Background(), "x", "v"); err == nil {
+		t.Fatal("Set without a key must fail: plaintext writes are forbidden")
 	}
 }
 

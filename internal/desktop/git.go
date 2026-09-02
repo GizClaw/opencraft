@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,7 +12,11 @@ import (
 	"github.com/GizClaw/opencraft/internal/undo"
 )
 
-const gitSnapshotTimeout = 10 * time.Second
+const (
+	gitSnapshotTimeout  = 10 * time.Second
+	maxGitSnapshotBytes = 4 << 20 // 4 MiB of porcelain status
+	maxGitSnapshotPaths = 2000    // cap the per-turn undo snapshot
+)
 
 // gitChangedPaths returns workspace-relative paths that git reports as
 // changed, staged, or untracked. It returns nil when the workspace is
@@ -26,8 +31,27 @@ func gitChangedPaths(ctx context.Context, wd string) []string {
 	cmd := exec.CommandContext(runCtx,
 		"git", "-C", repo,
 		"status", "--porcelain", "--untracked-files=all", "-z")
-	out, err := cmd.Output()
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		return nil
+	}
+	if err := cmd.Start(); err != nil {
+		return nil
+	}
+	out, err := io.ReadAll(io.LimitReader(stdout, maxGitSnapshotBytes+1))
+	if err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return nil
+	}
+	if len(out) > maxGitSnapshotBytes {
+		// Too many changes to snapshot safely: skip undo for this turn
+		// rather than buffering an unbounded status.
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return nil
+	}
+	if err := cmd.Wait(); err != nil {
 		return nil
 	}
 	parts := strings.Split(string(out), "\x00")
@@ -47,6 +71,9 @@ func gitChangedPaths(ctx context.Context, wd string) []string {
 		}
 		if path != "" {
 			paths = append(paths, filepath.ToSlash(path))
+			if len(paths) >= maxGitSnapshotPaths {
+				return nil
+			}
 		}
 	}
 	return paths
