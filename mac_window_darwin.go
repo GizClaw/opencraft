@@ -160,8 +160,8 @@ static void installOpenCraftTerminateHandler(void) {
 	});
 }
 
-static BOOL opencraftConsumeTerminateRequest(void) {
-	return __sync_lock_test_and_set(&g_forceQuit, NO);
+static int opencraftConsumeTerminateRequest(void) {
+	return __sync_lock_test_and_set(&g_forceQuit, NO) ? 1 : 0;
 }
 */
 import "C"
@@ -190,5 +190,5 @@ func installOpenCraftTerminateHandler() {
 // requested from the macOS application menu or Dock, and clears the
 // flag so ordinary window closes keep their close-to-tray behaviour.
 func macConsumeTerminateRequest() bool {
-	return bool(C.opencraftConsumeTerminateRequest())
+	return C.opencraftConsumeTerminateRequest() != 0
 }
