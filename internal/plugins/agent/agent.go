@@ -220,7 +220,8 @@ func (h *Host) MCPServers() []MCPServer {
 				Args:      append([]string(nil), srv.Args...),
 				Env:       copyEnv(srv.Env),
 				URL:       srv.URL,
-				Prefix:    e.id + ":" + srv.Name + ":",
+				Prefix: strings.ReplaceAll(e.id, ".", "_") +
+					"__" + srv.Name + "__",
 			})
 		}
 	}

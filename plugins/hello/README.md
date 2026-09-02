@@ -60,7 +60,7 @@ permission and fails closed without it:
   `prompt`, `command`, errors and subagent messages) are stripped
   before the command runs.
 - `tools:expose` — `tools` declare capability subprocess methods that
-  become ordinary agent tools (`<plugin>:<tool>`); they require a
+  become ordinary agent tools (`<plugin>__<tool>`); they require a
   `capability` binary.
 
 The hello plugin demonstrates the skills side: `skills/hello/SKILL.md`

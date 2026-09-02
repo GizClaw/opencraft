@@ -72,6 +72,14 @@ export interface PluginToolDTO {
   mutates_state: boolean;
 }
 
+/** UI view of one skill contributed by a plugin's skill roots. */
+export interface PluginSkillDTO {
+  name: string;
+  description?: string;
+  scope?: string;
+  path: string;
+}
+
 export interface SettingsPanelContribution {
   id: string;
   title: string;

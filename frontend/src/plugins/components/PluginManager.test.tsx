@@ -7,6 +7,7 @@ import { PluginManager } from './PluginManager';
 
 const apiMock = vi.hoisted(() => ({
   pluginTools: vi.fn(),
+  pluginSkills: vi.fn(),
   pluginList: vi.fn(),
 }));
 
@@ -53,7 +54,9 @@ describe('PluginManager tools visibility', () => {
     const user = userEvent.setup();
     render(<PluginManager showTitle={false} />);
 
-    await user.click(screen.getByRole('button', { name: 'Show agent tools' }));
+    await user.click(
+      screen.getByRole('button', { name: /Agent capabilities/ }),
+    );
     expect(apiMock.pluginTools).toHaveBeenCalledWith('tool-plugin');
     expect(await screen.findByText('do_thing')).toBeInTheDocument();
     expect(screen.getByText('Does a thing')).toBeInTheDocument();

@@ -304,7 +304,7 @@ func TestBuildRuntimeWithPluginHostExposesAgentCapabilities(t *testing.T) {
 	}
 	foundTool := false
 	for _, def := range asm.Catalog().Definitions() {
-		if def.Name == "plug:ping" {
+		if def.Name == "plug__ping" {
 			foundTool = true
 			break
 		}
