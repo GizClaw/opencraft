@@ -288,5 +288,8 @@ func writeStub(t *testing.T, path, name string) {
 
 func setExternalPath(t *testing.T, external string) {
 	t.Helper()
-	t.Setenv("PATH", external+string(os.PathListSeparator)+"/usr/bin"+string(os.PathListSeparator)+"/bin")
+	// Keep the fixture PATH fully isolated: CI runners also put Go /
+	// Python / Node on /usr/bin, which would otherwise be picked up as
+	// an "external" tool and make bundled-fallback assertions fail.
+	t.Setenv("PATH", external)
 }
