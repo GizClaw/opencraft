@@ -17,6 +17,8 @@ import {
   FileText,
   Film,
   Flame,
+  FolderOpen,
+  Globe,
   Lock,
   Loader2,
   Music2,
@@ -949,6 +951,9 @@ export function ChatView() {
                           <ShieldCheck size="0.8571rem" />{' '}
                           {t('chat.workspaceMode')}
                         </span>
+                        <span className="mt-0.5 block pl-5 text-[0.7143rem] leading-snug text-dim">
+                          {t('chat.workspaceBanner')}
+                        </span>
                       </button>
                       <button
                         onClick={() => {
@@ -958,13 +963,13 @@ export function ChatView() {
                         className={`w-full rounded-md px-2 py-1.5 text-left text-xs ${
                           yolo
                             ? 'bg-yolo/15 text-yolo'
-                            : 'text-dim hover:bg-panel2 hover:text-fg'
+                            : 'text-yolo hover:bg-yolo/10 hover:text-yolo'
                         }`}
                       >
                         <span className="flex items-center gap-2">
                           <Flame size="0.8571rem" /> {t('chat.yoloMode')}
                         </span>
-                        <span className="mt-0.5 block pl-5 text-[0.7143rem] leading-snug text-dim">
+                        <span className="mt-0.5 block pl-5 text-[0.7143rem] leading-snug text-yolo/80">
                           {t('chat.yoloBanner')}
                         </span>
                       </button>
@@ -1096,14 +1101,67 @@ export function ChatView() {
         </div>
       </div>
       {confirmYolo && (
-        <div className="fixed bottom-0 top-11 left-0 right-0 z-40 grid place-items-center bg-black/60">
-          <div className="w-[30.0000rem] rounded-2xl border border-yolo/40 bg-panel p-5 shadow-2xl">
-            <div className="flex items-center gap-2 text-sm font-semibold text-yolo">
-              <AlertTriangle size="1.1429rem" />
-              {t('chat.yoloConfirmTitle')}
+        <div className="fixed bottom-0 top-11 left-0 right-0 z-40 grid place-items-center bg-black/60 p-6">
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            className="w-[34rem] max-w-[calc(100vw-3rem)] max-h-[calc(100vh-6rem)] overflow-y-auto rounded-2xl border border-yolo/50 bg-panel p-5 shadow-2xl"
+          >
+            <div className="flex items-start gap-3">
+              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-yolo/40 bg-yolo/15 text-yolo">
+                <AlertTriangle size="1.1429rem" />
+              </div>
+              <div className="min-w-0">
+                <h2 className="text-sm font-semibold leading-snug text-fg">
+                  {t('chat.yoloConfirmTitle')}
+                </h2>
+                <p className="mt-1 text-xs leading-relaxed text-dim">
+                  {t('chat.yoloConfirmIntro')}
+                </p>
+              </div>
             </div>
-            <p className="mt-3 text-sm text-dim leading-relaxed">
-              {t('chat.yoloConfirmBody')}
+            <div className="mt-4 space-y-2">
+              {[
+                {
+                  icon: FolderOpen,
+                  title: t('chat.yoloConfirmFiles'),
+                  body: t('chat.yoloConfirmFilesBody'),
+                },
+                {
+                  icon: Terminal,
+                  title: t('chat.yoloConfirmTerminal'),
+                  body: t('chat.yoloConfirmTerminalBody'),
+                },
+                {
+                  icon: Globe,
+                  title: t('chat.yoloConfirmNetwork'),
+                  body: t('chat.yoloConfirmNetworkBody'),
+                },
+              ].map((risk) => {
+                const Icon = risk.icon;
+                return (
+                  <div
+                    key={risk.title}
+                    className="flex items-start gap-2.5 rounded-lg border border-edge/70 bg-panel2/60 px-3 py-2.5"
+                  >
+                    <Icon
+                      size="0.9286rem"
+                      className="mt-0.5 shrink-0 text-yolo"
+                    />
+                    <div className="min-w-0">
+                      <div className="text-xs font-medium text-fg">
+                        {risk.title}
+                      </div>
+                      <p className="mt-0.5 text-[0.7857rem] leading-snug text-dim">
+                        {risk.body}
+                      </p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="mt-4 rounded-lg border border-yolo/25 bg-yolo/5 px-3 py-2 text-[0.7857rem] leading-snug text-dim">
+              {t('chat.yoloConfirmScope')}
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button
@@ -1117,7 +1175,7 @@ export function ChatView() {
                   setConfirmYolo(false);
                   void setMode('yolo');
                 }}
-                className="rounded-lg bg-err px-4 py-1.5 text-sm text-white hover:opacity-90"
+                className="rounded-lg bg-yolo px-4 py-1.5 text-sm font-medium text-white hover:opacity-90"
               >
                 {t('chat.confirmSwitch')}
               </button>
