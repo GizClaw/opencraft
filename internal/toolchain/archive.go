@@ -96,10 +96,6 @@ func (m *Manager) ensureExtracted(family string, progress ProgressFunc) error {
 	return nil
 }
 
-func extractArchive(data []byte, dest string) error {
-	return extractArchiveWithProgress(data, dest, nil)
-}
-
 func extractArchiveWithProgress(
 	data []byte,
 	dest string,
