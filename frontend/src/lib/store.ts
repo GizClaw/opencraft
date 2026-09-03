@@ -547,6 +547,7 @@ interface StoreState {
   closeTools: () => void;
   newChat: () => Promise<void>;
   resume: (id: string) => Promise<void>;
+  backFromFailure: () => void;
   deleteSession: (id: string) => Promise<void>;
   setMode: (mode: string) => Promise<void>;
   setThink: (level: string) => Promise<void>;
@@ -1274,6 +1275,10 @@ export const useStore = create<StoreState>((set, get) => {
         });
       }
       void get().loadSessions();
+    },
+
+    backFromFailure: () => {
+      stateRoot.sendFocus({ type: 'BACK' });
     },
 
     resume: async (id) => {
