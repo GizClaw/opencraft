@@ -1,12 +1,16 @@
 import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { displaySessionID, isTurnBusy, useStore } from '../lib/store';
+import { useStore } from '../lib/store';
+import { useConversationState, useFocusState } from '../state/react';
 
 export function StatusBar() {
-  const busy = useStore((s) => {
-    const conv = s.conversations[displaySessionID(s.navigation)];
-    return conv ? isTurnBusy(conv.turn) : false;
-  });
+  const focus = useFocusState();
+  const conversation = useConversationState(
+    focus.name === 'active' ? focus.sessionID : undefined,
+  );
+  const busy =
+    conversation?.turn.name === 'starting' ||
+    conversation?.turn.name === 'running';
   const statusText = useStore((s) => s.statusText);
   const lastUsage = useStore((s) => s.lastUsage);
   const model = useStore((s) => s.status?.default_model) ?? '';

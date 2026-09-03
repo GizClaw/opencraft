@@ -24,15 +24,8 @@ import type {
   WorkspaceMeta,
 } from './types';
 import type { ToolPage } from '../components/ToolsPanel';
-import {
-  activeSessionID,
-  displaySessionID,
-  navigationReducer,
-  type SessionNavigation,
-  type SessionNavigationAction,
-} from './sessionMachine';
-
-export { activeSessionID, displaySessionID, type SessionNavigation };
+import { routeBackendEvent, type EventDataSink } from '../state/eventRouter';
+import { stateRoot } from '../state/app';
 
 export interface ToolView {
   id: string;
@@ -63,34 +56,11 @@ export interface MessageView {
   attachments: AttachmentView[];
 }
 
-// ConversationContent tracks whether a session's transcript is
-// available in the frontend. Rendering must never infer this from
-// messages.length alone.
-export type ConversationContent =
-  | { name: 'empty' }
-  | { name: 'loading' }
-  | { name: 'ready' }
-  | { name: 'live-shell' }
-  | { name: 'failed'; error: string };
-
-// TurnLifecycle is the explicit run state of one conversation.
-export type TurnLifecycle =
-  | { name: 'idle' }
-  | { name: 'starting' }
-  | { name: 'running'; runID: string; stage: string }
-  | { name: 'finished' }
-  | { name: 'failed'; error?: string };
-
-export const isTurnBusy = (turn: TurnLifecycle) =>
-  turn.name === 'starting' || turn.name === 'running';
-
 // ConversationState is the live UI state of one conversation. Each
 // conversation owns its transcript, turn state, permission mode,
 // think level, and pending prompts, so turns in different
 // conversations can run in parallel.
 export interface ConversationState {
-  content: ConversationContent;
-  turn: TurnLifecycle;
   messages: MessageView[];
   // turnArtifacts keeps one entry per turn (start = index of the
   // turn's first message in messages), each with the files that turn
@@ -147,8 +117,6 @@ function normalizeArgs(args: unknown): string {
 }
 
 const emptyConv = (): ConversationState => ({
-  content: { name: 'empty' },
-  turn: { name: 'idle' },
   messages: [],
   turnArtifacts: [],
   mode: 'workspace',
@@ -366,6 +334,7 @@ function historyTurnsToState(turns: SessionTurn[]): {
     turnArtifacts.push({
       id: `h-${turn.seq}`,
       start,
+      runID: turn.run_id,
       requestedAt: turn.requested_at || turn.at,
       startedAt: turn.started_at || turn.at,
       finishedAt: turn.finished_at || turn.at,
@@ -539,7 +508,6 @@ interface StoreState {
   sessions: SessionMeta[];
   automations: AutomationTask[];
   automationRuns: Record<string, AutomationRun[]>;
-  navigation: SessionNavigation;
   conversations: Record<string, ConversationState>;
   runConvs: Record<string, string>;
   // subagentStreams folds live stream deltas of delegated subagent
@@ -576,6 +544,8 @@ interface StoreState {
   closeTools: () => void;
   newChat: () => Promise<void>;
   resume: (id: string) => Promise<void>;
+  retryTranscript: (id: string) => Promise<void>;
+  backFromFailure: () => void;
   deleteSession: (id: string) => Promise<void>;
   setMode: (mode: string) => Promise<void>;
   setThink: (level: string) => Promise<void>;
@@ -626,7 +596,6 @@ function applyTheme(theme: 'dark' | 'light' | 'auto') {
 
 export const useStore = create<StoreState>((set, get) => {
   let toastSeq = 0;
-  let navigationSeq = 0;
   // Session switches must land on the backend in the same order the
   // user requested them. Without this queue, an older resumeSession
   // can finish after a newer NewChat and move the backend context back
@@ -652,11 +621,6 @@ export const useStore = create<StoreState>((set, get) => {
       };
     });
 
-  const updateNavigation = (action: SessionNavigationAction) =>
-    set((state) => ({
-      navigation: navigationReducer(state.navigation, action),
-    }));
-
   // ensureConversation returns the conversation, creating a busy shell
   // when it is unknown (a live turn resumed after a frontend reload
   // routes by conversation_id). Returns undefined only when the id is
@@ -670,8 +634,6 @@ export const useStore = create<StoreState>((set, get) => {
           ...state.conversations,
           [convID]: {
             ...emptyConv(),
-            content: { name: 'live-shell' },
-            turn: { name: 'starting' },
           },
         },
       }));
@@ -701,11 +663,13 @@ export const useStore = create<StoreState>((set, get) => {
       },
     ];
     updateConv(convID, {
-      content: { name: 'ready' },
       messages,
       turnArtifacts,
-      turn: { name: 'starting' },
     });
+    const startingActor = stateRoot.registry.ensure(convID, {
+      workspaceGeneration: stateRoot.generation(),
+    });
+    startingActor?.send({ type: 'SEND_STARTED' });
     try {
       const parts: StreamPart[] = [];
       if (text) parts.push({ type: 'text', text });
@@ -735,15 +699,11 @@ export const useStore = create<StoreState>((set, get) => {
           ...state.conversations,
           [convID]: {
             ...state.conversations[convID],
-            turn: {
-              name: 'running',
-              runID: start.run_id,
-              stage: '',
-            },
             turnArtifacts,
           },
         },
       }));
+      startingActor?.send({ type: 'RUN_STARTED', runID: start.run_id });
       void get().loadSessions();
     } catch (err) {
       const conv = get().conversations[convID];
@@ -752,9 +712,310 @@ export const useStore = create<StoreState>((set, get) => {
         mergeAppend(msg, 'text', `⛔ ${String(err)}`);
         updateConv(convID, {
           messages: next,
-          turn: { name: 'failed', error: String(err) },
+        });
+        startingActor?.send({
+          type: 'TURN_ENDED',
+          runID: '',
+          status: 'failed',
+          error: String(err),
         });
       }
+    }
+  };
+
+  const eventDataSink: EventDataSink = {
+    writeConversationData: (conversationID, ev) => {
+      switch (ev.type) {
+        case 'stream': {
+          const data = ev.data as {
+            run_id?: string;
+            conversation_id?: string;
+            delta: StreamDelta;
+          };
+          if (!data.run_id) break;
+          const conv = ensureConversation(conversationID);
+          if (!conv) break;
+          updateConv(conversationID, {
+            messages: applyStream(conv.messages, data.delta),
+          });
+          break;
+        }
+        case 'interact': {
+          const spec = ev.data as InteractDTO;
+          const conv = ensureConversation(conversationID);
+          if (!conv) break;
+          if (!conv.pendingInteracts.some((p) => p.id === spec.id)) {
+            updateConv(conversationID, {
+              pendingInteracts: [...conv.pendingInteracts, spec],
+            });
+          }
+          break;
+        }
+        case 'resolved': {
+          const data = ev.data as { id: string };
+          const conv = get().conversations[conversationID];
+          if (conv?.pendingInteracts.some((p) => p.id === data.id)) {
+            updateConv(conversationID, {
+              pendingInteracts: conv.pendingInteracts.filter(
+                (p) => p.id !== data.id,
+              ),
+            });
+          }
+          break;
+        }
+        case 'artifact': {
+          const data = ev.data as {
+            path?: string;
+            bytes?: number;
+          };
+          if (!data.path) break;
+          const conv = ensureConversation(conversationID);
+          if (!conv) break;
+          const list = conv.turnArtifacts;
+          if (list.length === 0) break;
+          const idx = list.length - 1;
+          const docs = mergeTurnDoc(list[idx].docs, data.path, data.bytes ?? 0);
+          updateConv(conversationID, {
+            turnArtifacts: [
+              ...list.slice(0, idx),
+              { ...list[idx], docs },
+              ...list.slice(idx + 1),
+            ],
+          });
+          break;
+        }
+        case 'artifact_sync': {
+          const data = ev.data as {
+            run_id?: string;
+            artifacts?: { path: string; bytes?: number }[];
+          };
+          if (!Array.isArray(data.artifacts)) break;
+          const conv = ensureConversation(conversationID);
+          if (!conv) break;
+          const list = conv.turnArtifacts;
+          const idx = list.findIndex((t) => t.runID && t.runID === data.run_id);
+          if (idx < 0) break;
+          const docs = data.artifacts.map((a) => ({
+            path: a.path,
+            bytes: a.bytes ?? 0,
+          }));
+          updateConv(conversationID, {
+            turnArtifacts: [
+              ...list.slice(0, idx),
+              { ...list[idx], docs },
+              ...list.slice(idx + 1),
+            ],
+          });
+          break;
+        }
+        case 'turn_end': {
+          const data = ev.data as {
+            run_id?: string;
+            status: string;
+            error?: string;
+            finished_at?: string;
+          };
+          const conv = ensureConversation(conversationID);
+          if (!conv) break;
+          const failed =
+            data.status === 'failed' ||
+            data.status === 'aborted' ||
+            data.status === 'canceled' ||
+            data.status === 'interrupted';
+          let messages = conv.messages;
+          const note = failed
+            ? data.status === 'canceled'
+              ? i18n.t('chat.cancelled')
+              : data.status === 'interrupted'
+                ? i18n.t('chat.interrupted')
+                : i18n.t('chat.failed')
+            : '';
+          if (data.error || (failed && note)) {
+            const friendly = data.error
+              ? friendlyInterruption(data.error)
+              : null;
+            const { msg, messages: next } = lastAssistant(messages);
+            mergeAppend(
+              msg,
+              'text',
+              `\n\n> ⛔ ${friendly ?? data.error ?? note}`,
+            );
+            messages = next;
+          }
+          const finishedAt = data.finished_at || new Date().toISOString();
+          set((state) => {
+            const runConvs = { ...state.runConvs };
+            delete runConvs[data.run_id ?? ''];
+            const conv = state.conversations[conversationID];
+            if (!conv) return state;
+            const turnArtifacts = conv.turnArtifacts.map((t) =>
+              t.runID && t.runID === data.run_id ? { ...t, finishedAt } : t,
+            );
+            return {
+              runConvs,
+              conversations: {
+                ...state.conversations,
+                [conversationID]: capConversation({
+                  ...conv,
+                  messages,
+                  turnArtifacts,
+                }),
+              },
+            };
+          });
+          void get().loadSessions();
+          break;
+        }
+        case 'automation_run_started': {
+          const data = ev.data as {
+            run_id?: string;
+            conversation_id?: string;
+          };
+          const conv = get().conversations[conversationID];
+          if (!conv) {
+            set((state) => ({
+              conversations: {
+                ...state.conversations,
+                [conversationID]: emptyConv(),
+              },
+            }));
+          }
+          if (data.run_id) {
+            set((state) => ({
+              runConvs: {
+                ...state.runConvs,
+                [data.run_id!]: conversationID,
+              },
+            }));
+          }
+          break;
+        }
+      }
+    },
+
+    writeSubagentStream: (ev) => {
+      if (ev.type !== 'stream') return;
+      const data = ev.data as {
+        run_id?: string;
+        delta: StreamDelta;
+      };
+      if (!data.run_id) return;
+      const runID = data.run_id;
+      set((state) => ({
+        subagentStreams: {
+          ...state.subagentStreams,
+          [runID]: applyStream(state.subagentStreams[runID] ?? [], data.delta),
+        },
+        subagentStreamAt: {
+          ...state.subagentStreamAt,
+          [runID]: Date.now(),
+        },
+      }));
+    },
+
+    writeGlobalData: (ev) => {
+      switch (ev.type) {
+        case 'ready': {
+          const data = ev.data as ConfigStatus;
+          const workChanged = data.work_dir !== get().workspace;
+          if (workChanged) {
+            stateRoot.resetWorkspace();
+            set({
+              workspace: data.work_dir,
+              conversations: {},
+              runConvs: {},
+              subagentStreams: {},
+              subagentStreamAt: {},
+            });
+            void get().loadSessions();
+            void get().newChat();
+          }
+          void get().loadSessions();
+          void get().loadAutomations();
+          set((state) => ({
+            status: data,
+            configured: !data.needed,
+            configOpen: workChanged ? false : state.configOpen,
+            fatal: null,
+          }));
+          void api.modelOptions().then((modelOptions) => set({ modelOptions }));
+          void get().refreshAgents();
+          void get().loadWorkspaces();
+          break;
+        }
+        case 'fatal':
+          set({ fatal: (ev.data as { error: string }).error ?? '' });
+          break;
+        case 'status':
+          set({ statusText: (ev.data as { text: string }).text });
+          break;
+        case 'usage':
+          set({ lastUsage: ev.data as UsageDTO });
+          break;
+        case 'managed_restored': {
+          const ids = ((ev.data as { ids?: string[] }).ids ?? []).filter(
+            (id) => id,
+          );
+          if (ids.length > 0) {
+            get().toast(
+              i18n.t('config.managedRestored', { plugins: ids.join(', ') }),
+            );
+          }
+          break;
+        }
+      }
+    },
+
+    refreshSessionList: () => void get().loadSessions(),
+    refreshAutomations: () => void get().loadAutomations(),
+    refreshAutomationRuns: (ev) => {
+      const data = ev.data as AutomationRun;
+      if (data?.task_id) void get().loadAutomationRuns(data.task_id);
+    },
+    conversationForRunID: (runID) => get().runConvs[runID],
+    pendingInteractConversation: (promptID) => {
+      for (const [convID, conv] of Object.entries(get().conversations)) {
+        if (conv.pendingInteracts.some((p) => p.id === promptID)) {
+          return convID;
+        }
+      }
+      return undefined;
+    },
+  };
+
+  const activeConversationID = () => {
+    const snapshot = stateRoot.focusSnapshot;
+    return snapshot.value === 'active'
+      ? (snapshot.context as { sessionID: string }).sessionID
+      : '';
+  };
+
+  const conversationTurnState = (conversationID: string) => {
+    const actor = stateRoot.registry.get(conversationID);
+    if (!actor) return { name: 'idle' as const };
+    const value = actor.getSnapshot().value as { turn: string };
+    const context = actor.getSnapshot().context as {
+      currentRunID?: string;
+      turnStage?: string;
+      turnError?: string;
+      failureStatus?: string;
+    };
+    switch (value.turn) {
+      case 'starting':
+        return { name: 'starting' as const };
+      case 'running':
+        return {
+          name: 'running' as const,
+          runID: context.currentRunID ?? '',
+          stage: context.turnStage ?? '',
+        };
+      case 'failed':
+        return {
+          name: 'failed' as const,
+          error: context.turnError,
+        };
+      default:
+        return { name: value.turn as 'idle' | 'succeeded' };
     }
   };
 
@@ -770,7 +1031,6 @@ export const useStore = create<StoreState>((set, get) => {
     sessions: [],
     automations: [],
     automationRuns: {},
-    navigation: { name: 'idle', epoch: 0 },
     conversations: {},
     runConvs: {},
     subagentStreams: {},
@@ -816,10 +1076,6 @@ export const useStore = create<StoreState>((set, get) => {
           configured: !status.needed,
           configOpen: false,
           toolsView: null,
-          navigation:
-            currentSession !== ''
-              ? { name: 'ready', sessionID: currentSession, epoch: 0 }
-              : { name: 'idle', epoch: 0 },
           conversations: {
             ...(currentSession !== ''
               ? {
@@ -835,6 +1091,50 @@ export const useStore = create<StoreState>((set, get) => {
           modelOptions,
           theme,
         });
+        if (currentSession !== '') {
+          stateRoot.sendFocus({
+            type: 'RESTORE_FOCUS',
+            sessionID: currentSession,
+          });
+          const actor = stateRoot.registry.ensure(currentSession, {
+            workspaceGeneration: stateRoot.generation(),
+          });
+          const generation = stateRoot.generation();
+          actor?.send({
+            type: 'HYDRATE_REQUESTED',
+            request: 1,
+            generation,
+          });
+          void api
+            .sessionTurns(currentSession)
+            .then((turns) => {
+              const { messages, turnArtifacts } = historyTurnsToState(turns);
+              set((state) => ({
+                conversations: {
+                  ...state.conversations,
+                  [currentSession]: capConversation({
+                    ...(state.conversations[currentSession] ?? emptyConv()),
+                    messages,
+                    turnArtifacts,
+                  }),
+                },
+              }));
+              actor?.send({
+                type: 'HYDRATE_OK',
+                request: 1,
+                generation,
+                empty: turns.length === 0,
+              });
+            })
+            .catch((err) => {
+              actor?.send({
+                type: 'HYDRATE_FAIL',
+                request: 1,
+                generation,
+                error: errorMessage(err),
+              });
+            });
+        }
         void get().refreshAgents();
         void get().loadWorkspaces();
         void get().loadSessions();
@@ -847,330 +1147,22 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     handleEvent: (ev) => {
-      switch (ev.type) {
-        case 'ready': {
-          const data = ev.data as ConfigStatus;
-          const workChanged = data.work_dir !== get().workspace;
-          if (workChanged) {
-            // Workspace switched: start fresh in the new workspace.
-            updateNavigation({
-              type: 'idle',
-              epoch: ++navigationSeq,
-            });
-            set({
-              workspace: data.work_dir,
-              conversations: {},
-              runConvs: {},
-              subagentStreams: {},
-              subagentStreamAt: {},
-            });
-            void get().loadSessions();
-            // Mint a fresh backend conversation so the app-level
-            // conversationID follows the new workspace.
-            void get().newChat();
-          }
-          // Reload the session list on every ready event, not only
-          // when the workspace changed: a backend that finishes
-          // assembling after the frontend already ran its initial
-          // load would otherwise leave the list empty until the first
-          // turn triggers a refresh.
-          void get().loadSessions();
-          void get().loadAutomations();
-          set((state) => ({
-            status: data,
-            configured: !data.needed,
-            configOpen: workChanged ? false : state.configOpen,
-            fatal: null,
-          }));
-          void api.modelOptions().then((modelOptions) => set({ modelOptions }));
-          void get().refreshAgents();
-          void get().loadWorkspaces();
-          break;
-        }
-        case 'fatal':
-          set({ fatal: (ev.data as { error: string }).error ?? '' });
-          break;
-        case 'stream': {
-          const data = ev.data as {
-            run_id?: string;
-            conversation_id?: string;
-            delta: StreamDelta;
-          };
-          if (!data.run_id) break;
-          const convID = get().runConvs[data.run_id] || data.conversation_id;
-          if (convID) {
-            // Main turn: fold into its own conversation.
-            const conv = ensureConversation(convID);
-            if (conv) {
-              const part = data.delta?.part;
-              const stage =
-                part?.type === 'reasoning'
-                  ? 'reasoning'
-                  : part?.type === 'tool_call'
-                    ? `tool:${part.call.name}`
-                    : part?.type === 'text'
-                      ? 'text'
-                      : '';
-              const turn =
-                conv.turn.name === 'running'
-                  ? { ...conv.turn, stage }
-                  : conv.turn.name === 'starting' && data.run_id
-                    ? { name: 'running' as const, runID: data.run_id, stage }
-                    : conv.turn;
-              updateConv(convID, {
-                messages: applyStream(conv.messages, data.delta),
-                turn,
-              });
-            }
-            break;
-          }
-          // Delegated subagent run (inherited observer sink): fold
-          // into the sidebar stream, never into a chat.
-          const runID = data.run_id;
-          set((state) => ({
-            subagentStreams: {
-              ...state.subagentStreams,
-              [runID]: applyStream(
-                state.subagentStreams[runID] ?? [],
-                data.delta,
-              ),
-            },
-            subagentStreamAt: {
-              ...state.subagentStreamAt,
-              [runID]: Date.now(),
-            },
-          }));
-          break;
-        }
-        case 'status':
-          set({ statusText: (ev.data as { text: string }).text });
-          break;
-        case 'usage':
-          set({ lastUsage: ev.data as UsageDTO });
-          break;
-        case 'interact': {
-          const spec = ev.data as InteractDTO;
-          const convID =
-            (spec.run_id && get().runConvs[spec.run_id]) ||
-            spec.conversation_id;
-          if (!convID) break;
-          const conv = ensureConversation(convID);
-          if (!conv) break;
-          if (!conv.pendingInteracts.some((p) => p.id === spec.id)) {
-            updateConv(convID, {
-              pendingInteracts: [...conv.pendingInteracts, spec],
-            });
-          }
-          break;
-        }
-        case 'resolved': {
-          const id = (ev.data as { id: string }).id;
-          for (const [convID, conv] of Object.entries(get().conversations)) {
-            if (conv.pendingInteracts.some((p) => p.id === id)) {
-              updateConv(convID, {
-                pendingInteracts: conv.pendingInteracts.filter(
-                  (p) => p.id !== id,
-                ),
-              });
-              break;
-            }
-          }
-          break;
-        }
-        case 'artifact': {
-          const data = ev.data as {
-            conversation_id?: string;
-            path?: string;
-            bytes?: number;
-          };
-          const convID = data.conversation_id;
-          if (!convID || !data.path) break;
-          const conv = ensureConversation(convID);
-          if (!conv) break;
-          const list = conv.turnArtifacts;
-          if (list.length === 0) break;
-          const idx = list.length - 1;
-          const docs = mergeTurnDoc(list[idx].docs, data.path, data.bytes ?? 0);
-          updateConv(convID, {
-            turnArtifacts: [
-              ...list.slice(0, idx),
-              { ...list[idx], docs },
-              ...list.slice(idx + 1),
-            ],
-          });
-          break;
-        }
-        case 'artifact_sync': {
-          // Post-turn reconciliation: the backend merged exec-produced
-          // documents into the turn archive; replace that turn's docs
-          // with the authoritative list.
-          const data = ev.data as {
-            conversation_id?: string;
-            run_id?: string;
-            artifacts?: { path: string; bytes?: number }[];
-          };
-          const convID = data.conversation_id;
-          if (!convID || !Array.isArray(data.artifacts)) break;
-          const conv = ensureConversation(convID);
-          if (!conv) break;
-          const list = conv.turnArtifacts;
-          const idx = list.findIndex((t) => t.runID && t.runID === data.run_id);
-          if (idx < 0) break;
-          const docs = data.artifacts.map((a) => ({
-            path: a.path,
-            bytes: a.bytes ?? 0,
-          }));
-          updateConv(convID, {
-            turnArtifacts: [
-              ...list.slice(0, idx),
-              { ...list[idx], docs },
-              ...list.slice(idx + 1),
-            ],
-          });
-          break;
-        }
-        case 'turn_end': {
-          const data = ev.data as {
-            run_id?: string;
-            conversation_id?: string;
-            status: string;
-            error?: string;
-            finished_at?: string;
-          };
-          // Unknown-run terminations (subagent turns) must not settle a
-          // main conversation's turn; only tracked main turns are handled.
-          const convID =
-            (data.run_id && get().runConvs[data.run_id]) ||
-            data.conversation_id;
-          if (!convID) break;
-          const conv = ensureConversation(convID);
-          if (!conv) break;
-          const failed =
-            data.status === 'failed' ||
-            data.status === 'aborted' ||
-            data.status === 'canceled' ||
-            data.status === 'interrupted';
-          let messages = conv.messages;
-          const note = failed
-            ? data.status === 'canceled'
-              ? i18n.t('chat.cancelled')
-              : data.status === 'interrupted'
-                ? i18n.t('chat.interrupted')
-                : i18n.t('chat.failed')
-            : '';
-          if (data.error || (failed && note)) {
-            const friendly = data.error
-              ? friendlyInterruption(data.error)
-              : null;
-            const { msg, messages: next } = lastAssistant(messages);
-            mergeAppend(
-              msg,
-              'text',
-              `\n\n> ⛔ ${friendly ?? data.error ?? note}`,
-            );
-            messages = next;
-          }
-          const finishedAt = data.finished_at || new Date().toISOString();
-          set((state) => {
-            const runConvs = { ...state.runConvs };
-            delete runConvs[data.run_id ?? ''];
-            const conv = state.conversations[convID];
-            if (!conv) return state;
-            const turnArtifacts = conv.turnArtifacts.map((t) =>
-              t.runID && t.runID === data.run_id ? { ...t, finishedAt } : t,
-            );
-            return {
-              runConvs,
-              conversations: {
-                ...state.conversations,
-                [convID]: capConversation({
-                  ...conv,
-                  messages,
-                  turnArtifacts,
-                  turn: failed
-                    ? { name: 'failed', error: data.error }
-                    : { name: 'finished' },
-                }),
-              },
-            };
-          });
-          void get().loadSessions();
-          break;
-        }
-        case 'session_updated':
-          void get().loadSessions();
-          break;
-        case 'automation_changed':
-          void get().loadAutomations();
-          break;
-        case 'automation_run': {
-          const data = ev.data as AutomationRun;
-          void get().loadAutomations();
-          if (data?.task_id) void get().loadAutomationRuns(data.task_id);
-          break;
-        }
-        case 'automation_run_started': {
-          const data = ev.data as {
-            run_id?: string;
-            conversation_id?: string;
-          };
-          if (data.conversation_id) {
-            // The run targets the currently open workspace: create a
-            // live shell when needed and register the run route so
-            // stream/turn_end events settle this conversation.
-            ensureConversation(data.conversation_id);
-            if (data.run_id) {
-              set((state) => ({
-                conversations: {
-                  ...state.conversations,
-                  [data.conversation_id!]: {
-                    ...(state.conversations[data.conversation_id!] ?? {
-                      ...emptyConv(),
-                      content: { name: 'live-shell' },
-                    }),
-                    turn: {
-                      name: 'running',
-                      runID: data.run_id!,
-                      stage: '',
-                    },
-                  },
-                },
-                runConvs: {
-                  ...state.runConvs,
-                  [data.run_id!]: data.conversation_id!,
-                },
-              }));
-            }
-          }
-          break;
-        }
-        case 'managed_restored': {
-          // The settings save rolled plugin-owned provider edits back
-          // to the stored config; surface the reminder so the silent
-          // restore is visible.
-          const ids = ((ev.data as { ids?: string[] }).ids ?? []).filter(
-            (id) => id,
-          );
-          if (ids.length > 0) {
-            get().toast(
-              i18n.t('config.managedRestored', { plugins: ids.join(', ') }),
-            );
-          }
-          break;
-        }
-      }
+      routeBackendEvent(ev, { root: stateRoot, data: eventDataSink });
     },
 
     send: async (text, attachments = []) => {
       const trimmed = text.trim();
       const state = get();
-      const convID = activeSessionID(state.navigation);
+      const convID = activeConversationID();
       const conv = convID ? state.conversations[convID] : undefined;
       if (
         (!trimmed && attachments.length === 0) ||
         !convID ||
         !conv ||
-        isTurnBusy(conv.turn) ||
+        (() => {
+          const turn = conversationTurnState(convID);
+          return turn.name === 'starting' || turn.name === 'running';
+        })() ||
         !state.configured
       ) {
         return;
@@ -1190,9 +1182,17 @@ export const useStore = create<StoreState>((set, get) => {
 
     retryLast: async () => {
       const state = get();
-      const convID = activeSessionID(state.navigation);
+      const convID = activeConversationID();
       const conv = convID ? state.conversations[convID] : undefined;
-      if (!convID || !conv || isTurnBusy(conv.turn)) return;
+      const turn = convID ? conversationTurnState(convID) : undefined;
+      if (
+        !convID ||
+        !conv ||
+        turn?.name === 'starting' ||
+        turn?.name === 'running'
+      ) {
+        return;
+      }
       let lastUserIdx = -1;
       for (let i = conv.messages.length - 1; i >= 0; i--) {
         if (conv.messages[i].role === 'user') {
@@ -1212,10 +1212,11 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     clearLastFailed: () => {
-      const convID = activeSessionID(get().navigation);
-      const conv = convID ? get().conversations[convID] : undefined;
-      if (conv?.turn.name === 'failed') {
-        updateConv(convID, { turn: { name: 'idle' } });
+      const convID = activeConversationID();
+      if (!convID) return;
+      const turn = conversationTurnState(convID);
+      if (turn.name === 'failed') {
+        stateRoot.registry.get(convID)?.send({ type: 'DISMISS_FAILURE' });
       }
     },
 
@@ -1240,11 +1241,11 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     cancelRun: async () => {
-      const convID = activeSessionID(get().navigation);
-      const conv = convID ? get().conversations[convID] : undefined;
-      if (conv?.turn.name === 'running') {
+      const convID = activeConversationID();
+      const turn = convID ? conversationTurnState(convID) : undefined;
+      if (turn?.name === 'running') {
         try {
-          await api.cancelTurn(conv.turn.runID);
+          await api.cancelTurn(turn.runID);
         } catch {
           // turn_end settles the UI regardless
         }
@@ -1258,25 +1259,24 @@ export const useStore = create<StoreState>((set, get) => {
     closeTools: () => set({ toolsView: null }),
 
     newChat: async () => {
-      const previous = get().navigation;
+      stateRoot.sendFocus({ type: 'OPEN_NEW' });
+      const request = stateRoot.focusSnapshot.context.request;
       try {
-        const nav = ++navigationSeq;
-        updateNavigation({
-          type: 'switch',
-          kind: 'new',
-          previousSessionID:
-            previous.name === 'ready' ? previous.sessionID : undefined,
-          epoch: nav,
-        });
         const snapshot = await runContextSwitch(() => api.newChat());
+        stateRoot.sendFocus({
+          type: 'OPEN_SUCCEEDED',
+          request,
+          sessionID: snapshot.session_id,
+        });
+        const focus = stateRoot.focusSnapshot;
+        if (
+          focus.value !== 'active' ||
+          focus.context.sessionID !== snapshot.session_id
+        ) {
+          return;
+        }
         const id = snapshot.session_id;
-        if (nav !== navigationSeq) return;
         set((state) => ({
-          navigation: navigationReducer(state.navigation, {
-            type: 'ready',
-            sessionID: id,
-            epoch: nav,
-          }),
           toolsView: null,
           subagentStreams: {},
           subagentStreamAt: {},
@@ -1285,46 +1285,100 @@ export const useStore = create<StoreState>((set, get) => {
             [id]: emptyConv(),
           },
         }));
+        stateRoot.registry.ensure(id, {
+          workspaceGeneration: stateRoot.generation(),
+          readyEmpty: true,
+        });
       } catch (err) {
-        const nav = get().navigation;
-        updateNavigation({
-          type: 'fail',
-          epoch: nav.name === 'switching' ? nav.epoch : navigationSeq,
-          previousSessionID:
-            previous.name === 'ready' ? previous.sessionID : undefined,
+        stateRoot.sendFocus({
+          type: 'OPEN_FAILED',
+          request,
           error: errorMessage(err),
         });
       }
       void get().loadSessions();
     },
 
-    resume: async (id) => {
-      const previous = get().navigation;
+    backFromFailure: () => {
+      stateRoot.sendFocus({ type: 'BACK' });
+    },
+
+    retryTranscript: async (id) => {
+      const actor = stateRoot.registry.ensure(id, {
+        workspaceGeneration: stateRoot.generation(),
+      });
+      const context = actor?.getSnapshot().context as {
+        lastHydrateRequest?: number;
+      };
+      const request = (context?.lastHydrateRequest ?? 0) + 1;
+      const generation = stateRoot.generation();
+      actor?.send({ type: 'HYDRATE_REQUESTED', request, generation });
       try {
-        const nav = ++navigationSeq;
-        updateNavigation({
-          type: 'switch',
-          kind: 'resume',
-          targetID: id,
-          previousSessionID:
-            previous.name === 'ready' ? previous.sessionID : undefined,
-          epoch: nav,
-        });
-        // Switch the backend session context first (conversation id,
-        // mode, think, model all follow the selected session); without
-        // this the mode/think/model reads below return the previous
-        // conversation's values and new turns land in the old session.
-        const snapshot = await runContextSwitch(() => api.resumeSession(id));
-        if (nav !== navigationSeq) return;
-        const resolvedID = snapshot.session_id;
-        const existing = get().conversations[resolvedID];
-        if (existing?.content.name === 'ready') {
-          set({
-            navigation: navigationReducer(get().navigation, {
-              type: 'ready',
-              sessionID: resolvedID,
-              epoch: nav,
+        const turns = await api.sessionTurns(id);
+        const { messages, turnArtifacts } = historyTurnsToState(turns);
+        set((state) => ({
+          conversations: {
+            ...state.conversations,
+            [id]: capConversation({
+              ...emptyConv(),
+              mode: state.conversations[id]?.mode ?? 'workspace',
+              think: state.conversations[id]?.think ?? 'medium',
+              model: state.conversations[id]?.model ?? '',
+              messages,
+              turnArtifacts,
             }),
+          },
+        }));
+        actor?.send({
+          type: 'HYDRATE_OK',
+          request,
+          generation,
+          empty: turns.length === 0,
+        });
+      } catch (err) {
+        actor?.send({
+          type: 'HYDRATE_FAIL',
+          request,
+          generation,
+          error: errorMessage(err),
+        });
+      }
+    },
+
+    resume: async (id) => {
+      if (activeConversationID() === id) return;
+      stateRoot.sendFocus({ type: 'OPEN_SESSION', id });
+      const request = stateRoot.focusSnapshot.context.request;
+      try {
+        const snapshot = await runContextSwitch(() => api.resumeSession(id));
+        stateRoot.sendFocus({
+          type: 'OPEN_SUCCEEDED',
+          request,
+          sessionID: snapshot.session_id,
+        });
+        const focus = stateRoot.focusSnapshot;
+        if (
+          focus.value !== 'active' ||
+          focus.context.sessionID !== snapshot.session_id
+        ) {
+          return;
+        }
+        const resolvedID = snapshot.session_id;
+        const actor = stateRoot.registry.ensure(resolvedID, {
+          workspaceGeneration: stateRoot.generation(),
+        });
+        const hydrateRequest = 1;
+        const generation = stateRoot.generation();
+        actor?.send({
+          type: 'HYDRATE_REQUESTED',
+          request: hydrateRequest,
+          generation,
+        });
+        const existing = get().conversations[resolvedID];
+        const actorValue = actor?.getSnapshot().value as
+          { transcript: string; turn: string } | undefined;
+        if (existing && actorValue?.transcript === 'ready') {
+          set({
             toolsView: null,
             conversations: {
               ...get().conversations,
@@ -1336,33 +1390,50 @@ export const useStore = create<StoreState>((set, get) => {
               },
             },
           });
+          actor?.send({
+            type: 'HYDRATE_OK',
+            request: hydrateRequest,
+            generation,
+            empty: existing.messages.length === 0,
+          });
           return;
         }
-        const turns = await api.sessionTurns(resolvedID);
-        if (nav !== navigationSeq) return;
+        let turns: Awaited<ReturnType<typeof api.sessionTurns>>;
+        try {
+          turns = await api.sessionTurns(resolvedID);
+        } catch (err) {
+          actor?.send({
+            type: 'HYDRATE_FAIL',
+            request: hydrateRequest,
+            generation,
+            error: errorMessage(err),
+          });
+          if (!existing) {
+            set((state) => ({
+              conversations: {
+                ...state.conversations,
+                [resolvedID]: emptyConv(),
+              },
+            }));
+          }
+          return;
+        }
         const { messages, turnArtifacts } = historyTurnsToState(turns);
         // A live shell may already hold the current run's streamed
         // messages. Keep them after the archived history; completed
         // shells are replaced by the archive instead of duplicated.
         const keepLive =
-          existing?.content.name === 'live-shell' &&
-          (existing.turn.name === 'running' ||
-            existing.turn.name === 'starting');
+          Boolean(existing) &&
+          (actorValue?.turn === 'running' || actorValue?.turn === 'starting');
         const mergedMessages = keepLive
           ? [...messages, ...existing.messages]
           : messages;
         set((state) => ({
-          navigation: navigationReducer(state.navigation, {
-            type: 'ready',
-            sessionID: resolvedID,
-            epoch: nav,
-          }),
           toolsView: null,
           conversations: {
             ...state.conversations,
             [resolvedID]: capConversation({
               ...emptyConv(),
-              content: { name: 'ready' },
               mode: snapshot.mode,
               think: snapshot.think,
               model: snapshot.model,
@@ -1371,13 +1442,16 @@ export const useStore = create<StoreState>((set, get) => {
             }),
           },
         }));
+        actor?.send({
+          type: 'HYDRATE_OK',
+          request: hydrateRequest,
+          generation,
+          empty: turns.length === 0 && !keepLive,
+        });
       } catch (err) {
-        const nav = get().navigation;
-        updateNavigation({
-          type: 'fail',
-          epoch: nav.name === 'switching' ? nav.epoch : navigationSeq,
-          previousSessionID:
-            previous.name === 'ready' ? previous.sessionID : undefined,
+        stateRoot.sendFocus({
+          type: 'OPEN_FAILED',
+          request,
           error: errorMessage(err),
         });
       }
@@ -1386,12 +1460,17 @@ export const useStore = create<StoreState>((set, get) => {
     deleteSession: async (id) => {
       try {
         await api.deleteSession(id);
+        stateRoot.registry.get(id)?.send({
+          type: 'SESSION_DELETED',
+          deletedAt: new Date().toISOString(),
+        });
+        stateRoot.registry.markDeleted(id);
         set((state) => {
           const conversations = { ...state.conversations };
           delete conversations[id];
           return { conversations };
         });
-        if (activeSessionID(get().navigation) === id) {
+        if (activeConversationID() === id) {
           // The active conversation is gone: switch to a fresh one so
           // the chat never points at a deleted session.
           await get().newChat();
@@ -1410,7 +1489,7 @@ export const useStore = create<StoreState>((set, get) => {
     setMode: async (mode) => {
       try {
         await api.setSessionMode(mode);
-        const convID = activeSessionID(get().navigation);
+        const convID = activeConversationID();
         if (convID) updateConv(convID, { mode });
       } catch (err) {
         set({ statusText: String(err) });
@@ -1420,7 +1499,7 @@ export const useStore = create<StoreState>((set, get) => {
     setThink: async (level) => {
       try {
         await api.setThink(level);
-        const convID = activeSessionID(get().navigation);
+        const convID = activeConversationID();
         if (convID) updateConv(convID, { think: level });
       } catch (err) {
         set({ statusText: String(err) });
@@ -1430,7 +1509,7 @@ export const useStore = create<StoreState>((set, get) => {
     setModel: async (model) => {
       try {
         await api.setModel(model);
-        const convID = activeSessionID(get().navigation);
+        const convID = activeConversationID();
         if (convID) updateConv(convID, { model });
       } catch (err) {
         set({ statusText: String(err) });
@@ -1537,7 +1616,7 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     loadSubagentCards: async () => {
-      const convID = activeSessionID(get().navigation);
+      const convID = activeConversationID();
       if (!convID) return;
       try {
         const cards = (await api.conversationDelegationCards(convID)) ?? [];

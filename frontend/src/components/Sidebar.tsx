@@ -20,7 +20,8 @@ import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { WindowToggleMaximise } from '../../wailsjs/runtime/runtime';
 import { api } from '../lib/api';
-import { displaySessionID, isTurnBusy, useStore } from '../lib/store';
+import { useStore } from '../lib/store';
+import { useFocusState, useRunningConversations } from '../state/react';
 import type { SessionMeta } from '../lib/types';
 import type { ComponentType } from 'react';
 
@@ -45,7 +46,8 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   const openConfig = useStore((s) => s.openConfig);
   const sessions = useStore((s) => s.sessions);
   const sessionsLoading = useStore((s) => s.sessionsLoading);
-  const currentSession = useStore((s) => displaySessionID(s.navigation));
+  const focus = useFocusState();
+  const currentSession = focus.name === 'active' ? focus.sessionID : '';
   const resume = useStore((s) => s.resume);
   const toolsView = useStore((s) => s.toolsView);
   const openTools = useStore((s) => s.openTools);
@@ -187,13 +189,16 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
 
   // Running conversations always stay visible; stored sessions fill the
   // list up to five entries total.
-  const runningIds = useMemo(
-    () =>
-      Object.entries(conversations)
-        .filter(([, c]) => isTurnBusy(c.turn) || c.pendingInteracts.length > 0)
-        .map(([id]) => id),
-    [conversations],
-  );
+  const runningActors = useRunningConversations();
+  const runningIds = useMemo(() => {
+    const ids = new Set(
+      runningActors.map(({ conversationID }) => conversationID),
+    );
+    for (const [id, conv] of Object.entries(conversations)) {
+      if (conv.pendingInteracts.length > 0) ids.add(id);
+    }
+    return [...ids];
+  }, [runningActors, conversations]);
   const visibleSessions = useMemo<SessionRow[]>(() => {
     const running = runningIds.map((id) => {
       const meta = sessions.find((s) => s.id === id);

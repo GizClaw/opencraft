@@ -160,6 +160,64 @@ func TestSessionTurnsAreIsolatedPerSession(t *testing.T) {
 	}
 }
 
+func TestSessionTurnsExposeRunID(t *testing.T) {
+	store, err := ocsessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &App{
+		mu:       sync.Mutex{},
+		sessions: store,
+		convRuns: make(map[string]map[string]bool),
+	}
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AppendTurnWithRunID(
+		context.Background(), id, "run-abc", []message.Message{
+			message.NewTextMessage(message.RoleUser, "hello"),
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+	turns, err := a.SessionTurns(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 1 || turns[0].RunID != "run-abc" {
+		t.Fatalf("SessionTurns = %+v, want one turn with run-abc", turns)
+	}
+}
+
+func TestActiveRunCoversMainAndBackgroundRuns(t *testing.T) {
+	workDir := filepath.Join(t.TempDir(), "ws")
+	a := &App{
+		mu:      sync.Mutex{},
+		workDir: workDir,
+		runConvs: map[string]string{
+			"main-run": "s-main",
+		},
+		backgroundHosts: map[string]*backgroundHost{
+			workDir: {
+				workDir: workDir,
+				runConvs: map[string]string{
+					"bg-run": "s-bg",
+				},
+			},
+		},
+	}
+	if got := a.ActiveRun("s-main"); got.RunID != "main-run" {
+		t.Fatalf("ActiveRun(s-main) = %+v, want main-run", got)
+	}
+	if got := a.ActiveRun("s-bg"); got.RunID != "bg-run" {
+		t.Fatalf("ActiveRun(s-bg) = %+v, want bg-run", got)
+	}
+	if got := a.ActiveRun("s-idle"); got.RunID != "" {
+		t.Fatalf("ActiveRun(s-idle) = %+v, want empty", got)
+	}
+}
+
 func TestSessionBindingsRejectTraversalIDs(t *testing.T) {
 	store, err := ocsessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {

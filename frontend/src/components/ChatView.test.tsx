@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useStore } from '../lib/store';
+import { stateRoot } from '../state/app';
 import type { MessageView, TurnArtifacts } from '../lib/store';
 import { ChatView } from './ChatView';
 
@@ -41,14 +42,16 @@ function setConversation(
   messages: MessageView[],
   turnArtifacts: TurnArtifacts[] = [],
 ) {
+  stateRoot.sendFocus({ type: 'RESTORE_FOCUS', sessionID: 's-1' });
+  const actor = stateRoot.registry.ensure('s-1', {
+    workspaceGeneration: stateRoot.generation(),
+  });
+  actor?.send({ type: 'NEW_CHAT_READY' });
   useStore.setState({
     configured: true,
-    navigation: { name: 'ready', sessionID: 's-1', epoch: 0 },
     workspace: '/tmp/w',
     conversations: {
       's-1': {
-        content: { name: 'ready' },
-        turn: { name: 'idle' },
         messages,
         turnArtifacts,
         mode: 'workspace',
@@ -61,6 +64,7 @@ function setConversation(
 }
 
 beforeEach(() => {
+  stateRoot.resetWorkspace();
   vi.clearAllMocks();
   apiMock.projectConfigStatus.mockResolvedValue(null);
   apiMock.workspace.mockResolvedValue('/tmp/w');
@@ -235,5 +239,55 @@ describe('ChatView transcript windowing', () => {
 
     expect(screen.queryByText('Produced this turn')).not.toBeInTheDocument();
     expect(screen.getByText('Worked for 2m 3s')).toBeInTheDocument();
+  });
+});
+
+describe('ChatView projections', () => {
+  it('renders no-session with a start action', () => {
+    stateRoot.resetWorkspace();
+    render(<ChatView />);
+    expect(
+      screen.getByRole('button', { name: 'Start a new conversation' }),
+    ).toBeInTheDocument();
+  });
+
+  it('renders an opening placeholder while focus is switching', () => {
+    stateRoot.resetWorkspace();
+    stateRoot.sendFocus({ type: 'OPEN_SESSION', id: 's-2' });
+    render(<ChatView />);
+    expect(screen.getByText('Opening conversation…')).toBeInTheDocument();
+  });
+
+  it('renders switch failure with back and retry actions', () => {
+    stateRoot.resetWorkspace();
+    stateRoot.sendFocus({ type: 'RESTORE_FOCUS', sessionID: 's-1' });
+    stateRoot.sendFocus({ type: 'OPEN_SESSION', id: 's-2' });
+    stateRoot.sendFocus({ type: 'OPEN_FAILED', request: 1, error: 'boom' });
+    render(<ChatView />);
+
+    expect(
+      screen.getByText("Couldn't open that conversation"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Back' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Try again' }),
+    ).toBeInTheDocument();
+  });
+
+  it('renders transcript loading while history is hydrating', () => {
+    setConversation([]);
+    stateRoot.resetWorkspace();
+    stateRoot.sendFocus({ type: 'RESTORE_FOCUS', sessionID: 's-1' });
+    stateRoot.registry
+      .ensure('s-1', {
+        workspaceGeneration: stateRoot.generation(),
+      })
+      ?.send({
+        type: 'HYDRATE_REQUESTED',
+        request: 99,
+        generation: stateRoot.generation(),
+      });
+    render(<ChatView />);
+    expect(screen.getByText('Loading history…')).toBeInTheDocument();
   });
 });

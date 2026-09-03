@@ -10,6 +10,7 @@ import {
 import {
   AlertTriangle,
   Archive,
+  ArrowLeft,
   ArrowUp,
   Bot,
   Check,
@@ -45,7 +46,8 @@ import { useTranslation } from 'react-i18next';
 import { OnFileDrop, OnFileDropOff } from '../../wailsjs/runtime/runtime';
 import { api } from '../lib/api';
 import { COMPACT_SUMMARY_PREFIX } from '../lib/compact';
-import { displaySessionID, isTurnBusy, useStore } from '../lib/store';
+import { useStore } from '../lib/store';
+import { useConversationState, useFocusState } from '../state/react';
 import type { AttachmentView } from '../lib/types';
 import type {
   AssistantItem,
@@ -741,15 +743,16 @@ function AttachmentFiles({ attachments }: { attachments: AttachmentView[] }) {
 }
 
 export function ChatView() {
-  const current = useStore((s) => displaySessionID(s.navigation));
+  const focus = useFocusState();
+  const current = focus.name === 'active' ? focus.sessionID : '';
   const conv = useStore((s) => {
-    const id = displaySessionID(s.navigation);
-    return id ? s.conversations[id] : undefined;
+    return current ? s.conversations[current] : undefined;
   });
+  const conversationState = useConversationState(current);
   const sessions = useStore((s) => s.sessions);
   const messages = conv?.messages ?? [];
-  const turn = conv?.turn;
-  const busy = turn ? isTurnBusy(turn) : false;
+  const turnState = conversationState?.turn;
+  const busy = turnState?.name === 'starting' || turnState?.name === 'running';
   const turnArtifacts = conv?.turnArtifacts ?? [];
   const [visibleCount, setVisibleCount] = useState(RENDER_WINDOW);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
@@ -780,6 +783,10 @@ export function ChatView() {
   const status = useStore((s) => s.status);
   const pendingInteracts = conv?.pendingInteracts ?? [];
   const send = useStore((s) => s.send);
+  const newChat = useStore((s) => s.newChat);
+  const resume = useStore((s) => s.resume);
+  const retryTranscript = useStore((s) => s.retryTranscript);
+  const backFromFailure = useStore((s) => s.backFromFailure);
   const cancelRun = useStore((s) => s.cancelRun);
   const clearLastFailed = useStore((s) => s.clearLastFailed);
   const subagentCards = useStore((s) => s.subagentCards);
@@ -789,7 +796,7 @@ export function ChatView() {
   const mode = conv?.mode ?? 'workspace';
   const setMode = useStore((s) => s.setMode);
   const think = conv?.think ?? 'medium';
-  const stage = turn?.name === 'running' ? turn.stage : '';
+  const stage = turnState?.name === 'running' ? turnState.stage : '';
   const setThink = useStore((s) => s.setThink);
   const model = conv?.model ?? '';
   const setModel = useStore((s) => s.setModel);
@@ -800,7 +807,7 @@ export function ChatView() {
   const thinkSupported = model
     ? (modelOptions.find((o) => o.id === model)?.reasoning ?? false)
     : (status?.default_reasoning ?? false);
-  const lastFailed = turn?.name === 'failed';
+  const lastFailed = turnState?.name === 'failed';
   const openConfig = useStore((s) => s.openConfig);
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<AttachmentView[]>([]);
@@ -978,6 +985,119 @@ export function ChatView() {
   const readOnly = mode === 'read-only';
   const centerComposer = messages.length === 0 && configured;
 
+  const retryFocusSwitch = () => {
+    if (focus.name !== 'failed') return;
+    if (focus.to.kind === 'existing') {
+      void resume(focus.to.id);
+    } else {
+      void newChat();
+    }
+  };
+
+  if (focus.name === 'no-session') {
+    return (
+      <main className="relative flex-1 min-w-0 grid place-items-center">
+        <div className="text-center space-y-3 px-6">
+          <p className="text-sm text-dim">{t('chat.noSession')}</p>
+          <button
+            onClick={() => void newChat()}
+            className="rounded-lg border border-edge px-4 py-1.5 text-sm text-fg hover:border-accent/50 transition-colors"
+          >
+            {t('chat.startNew')}
+          </button>
+        </div>
+      </main>
+    );
+  }
+
+  if (focus.name === 'opening') {
+    return (
+      <main className="relative flex-1 min-w-0 grid place-items-center">
+        <div className="flex items-center gap-2 text-sm text-dim">
+          <Loader2 size="0.9286rem" className="animate-spin text-accent" />
+          {t('chat.opening')}
+        </div>
+      </main>
+    );
+  }
+
+  if (focus.name === 'failed') {
+    return (
+      <main className="relative flex-1 min-w-0 grid place-items-center">
+        <div className="max-w-md w-full space-y-3 rounded-xl border border-err/40 bg-err/10 px-5 py-4 text-sm">
+          <div className="flex items-center gap-2 font-medium text-fg">
+            <AlertTriangle size="0.9286rem" className="text-err" />
+            {t('chat.switchFailed')}
+          </div>
+          <p className="whitespace-pre-wrap break-all text-dim">
+            {focus.error}
+          </p>
+          <div className="flex gap-2">
+            {focus.from.kind === 'session' && (
+              <button
+                onClick={backFromFailure}
+                className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-dim hover:text-fg"
+              >
+                <ArrowLeft size="0.8571rem" />
+                {t('chat.backToSession')}
+              </button>
+            )}
+            <button
+              onClick={retryFocusSwitch}
+              className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-dim hover:text-accent"
+            >
+              <RotateCcw size="0.8571rem" />
+              {t('chat.retrySwitch')}
+            </button>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  const historyBlocked =
+    focus.name === 'active' &&
+    conversationState?.transcript.name !== 'ready' &&
+    !busy;
+  const historyFailed =
+    conversationState?.transcript.name === 'failed' && !busy;
+  const historyWarning =
+    focus.name === 'active' &&
+    conversationState?.transcript.name !== 'ready' &&
+    busy;
+
+  if (focus.name === 'active' && historyBlocked) {
+    return (
+      <main className="relative flex-1 min-w-0 grid place-items-center">
+        <div className="text-center space-y-3 px-6">
+          {historyFailed ? (
+            <>
+              <AlertTriangle size="1.25rem" className="mx-auto text-err" />
+              <p className="text-sm text-dim">{t('chat.historyFailed')}</p>
+              <p className="max-w-md text-xs text-dim">
+                {conversationState?.transcript.name === 'failed' &&
+                  'error' in conversationState.transcript &&
+                  conversationState.transcript.error}
+              </p>
+              <button
+                onClick={() => current && void retryTranscript(current)}
+                className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-accent"
+              >
+                <RotateCcw size="0.8571rem" />
+                {t('chat.retryHistory')}
+              </button>
+            </>
+          ) : (
+            <div className="flex items-center gap-2 text-sm text-dim">
+              <Loader2 size="0.9286rem" className="animate-spin text-accent" />
+              {t('chat.loadingHistory')}
+            </div>
+          )}
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="relative flex-1 min-w-0 flex flex-col min-h-0">
       <header
@@ -1035,6 +1155,12 @@ export function ChatView() {
           {loadingEarlier && (
             <div className="pointer-events-none fixed left-1/2 top-14 z-20 -translate-x-1/2 rounded-full border border-edge bg-panel p-2 shadow-xl">
               <Loader2 size="1.0000rem" className="animate-spin text-dim" />
+            </div>
+          )}
+          {historyWarning && (
+            <div className="mb-3 flex items-center gap-2 rounded-lg border border-edge bg-panel2/70 px-3 py-2 text-xs text-dim">
+              <AlertTriangle size="0.8571rem" className="text-accent" />
+              {t('chat.liveWithoutHistory')}
             </div>
           )}
           {messages.length === 0 ? (

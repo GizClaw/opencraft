@@ -215,6 +215,7 @@ export interface SessionTurn {
   started_at?: string;
   finished_at?: string;
   duration_ms?: number;
+  run_id?: string;
   messages: HistoryMessage[];
   artifacts?: ArtifactDTO[];
 }
@@ -281,6 +282,12 @@ export interface SessionSnapshot {
   model: string;
 }
 
+// ActiveRunDTO mirrors App.ActiveRun: the run id currently executing
+// in one conversation, or empty when the conversation is idle.
+export interface ActiveRunDTO {
+  run_id?: string;
+}
+
 export interface TurnEnd {
   run_id: string;
   conversation_id?: string;
@@ -335,6 +342,7 @@ export interface ResolvedDTO {
   id: string;
   status: string;
   reason: string;
+  conversation_id?: string;
 }
 
 export interface FileNode {

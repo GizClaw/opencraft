@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MessageView } from './store';
+import { stateRoot } from '../state/app';
 import { useStore } from './store';
 
 const apiMock = vi.hoisted(() => ({
@@ -26,6 +27,12 @@ const apiMock = vi.hoisted(() => ({
 vi.mock('../lib/api', () => ({ api: apiMock }));
 
 function resetStore() {
+  stateRoot.resetWorkspace();
+  stateRoot.sendFocus({ type: 'RESTORE_FOCUS', sessionID: 's-1' });
+  stateRoot.registry.ensure('s-1', {
+    workspaceGeneration: stateRoot.generation(),
+    readyEmpty: true,
+  });
   useStore.setState({
     status: {
       needed: false,
@@ -46,11 +53,8 @@ function resetStore() {
     sessions: [],
     automations: [],
     automationRuns: {},
-    navigation: { name: 'ready', sessionID: 's-1', epoch: 0 },
     conversations: {
       's-1': {
-        content: { name: 'empty' },
-        turn: { name: 'idle' },
         messages: [],
         turnArtifacts: [],
         mode: 'workspace',
@@ -94,6 +98,16 @@ function historyTurn(seq: number, userText: string, assistantText: string) {
   };
 }
 
+function actorValue(conversationID: string) {
+  const actor = stateRoot.registry.get(conversationID);
+  if (!actor) return undefined;
+  return actor.getSnapshot().value as {
+    lifecycle: string;
+    transcript: string;
+    turn: string;
+  };
+}
+
 beforeEach(() => {
   resetStore();
   vi.clearAllMocks();
@@ -126,7 +140,7 @@ describe('store: send and stream', () => {
     await useStore.getState().send('hello');
 
     const conv = useStore.getState().conversations['s-1'];
-    expect(conv.turn).toMatchObject({ name: 'running', runID: 'r-1' });
+    expect(actorValue('s-1')?.turn).toBe('running');
     expect(conv.messages[0]).toMatchObject({
       role: 'user',
       text: 'hello',
@@ -139,26 +153,11 @@ describe('store: send and stream', () => {
   });
 
   it('ignores send while busy or unconfigured', async () => {
-    useStore.setState({
-      conversations: {
-        's-1': {
-          ...useStore.getState().conversations['s-1'],
-          turn: { name: 'starting' },
-        },
-      },
-    });
+    stateRoot.registry.get('s-1')?.send({ type: 'SEND_STARTED' });
     await useStore.getState().send('ignored');
     expect(apiMock.startTurn).not.toHaveBeenCalled();
 
     useStore.setState({ configured: false });
-    useStore.setState({
-      conversations: {
-        's-1': {
-          ...useStore.getState().conversations['s-1'],
-          turn: { name: 'idle' },
-        },
-      },
-    });
     await useStore.getState().send('also ignored');
     expect(apiMock.startTurn).not.toHaveBeenCalled();
   });
@@ -177,7 +176,6 @@ describe('store: send and stream', () => {
 
   it('new chat switches to an empty conversation without disturbing active runs', async () => {
     useStore.setState({
-      navigation: { name: 'ready', sessionID: 's-old', epoch: 0 },
       runConvs: { 'r-old': 's-old' },
       subagentStreams: { 'r-old': [] },
       subagentStreamAt: { 'r-old': 123 },
@@ -200,10 +198,8 @@ describe('store: send and stream', () => {
     await useStore.getState().newChat();
 
     const state = useStore.getState();
-    expect(state.navigation).toMatchObject({
-      name: 'ready',
-      sessionID: 's-new',
-    });
+    expect(stateRoot.focusSnapshot.value).toBe('active');
+    expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-new');
     expect(state.runConvs).toEqual({ 'r-old': 's-old' });
     expect(state.conversations['s-old']).toBeDefined();
     expect(state.conversations['s-new']).toBeDefined();
@@ -234,10 +230,8 @@ describe('store: send and stream', () => {
     await oldResume;
     await newChat;
 
-    expect(useStore.getState().navigation).toMatchObject({
-      name: 'ready',
-      sessionID: 's-new',
-    });
+    expect(stateRoot.focusSnapshot.value).toBe('active');
+    expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-new');
   });
 
   it('resume applies the snapshot and loads history into a ready conversation', async () => {
@@ -248,12 +242,10 @@ describe('store: send and stream', () => {
     await useStore.getState().resume('s-2');
 
     const state = useStore.getState();
-    expect(state.navigation).toMatchObject({
-      name: 'ready',
-      sessionID: 's-2',
-    });
+    expect(stateRoot.focusSnapshot.value).toBe('active');
+    expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-2');
     const conv = state.conversations['s-2'];
-    expect(conv.content).toEqual({ name: 'ready' });
+    expect(actorValue('s-2')?.transcript).toBe('ready');
     expect(conv.mode).toBe('workspace');
     expect(conv.think).toBe('medium');
     expect(conv.messages.map((m) => m.text || '')).toContain('history user');
@@ -261,13 +253,15 @@ describe('store: send and stream', () => {
   });
 
   it('resume merges history with an active live shell', async () => {
+    const live = stateRoot.registry.ensure('s-2', {
+      workspaceGeneration: stateRoot.generation(),
+    });
+    live?.send({ type: 'RUN_STARTED', runID: 'r-live' });
     useStore.setState({
       conversations: {
         ...useStore.getState().conversations,
         's-2': {
           ...useStore.getState().conversations['s-1'],
-          content: { name: 'live-shell' },
-          turn: { name: 'running', runID: 'r-live', stage: 'text' },
           messages: [
             {
               id: 'live-1',
@@ -287,7 +281,7 @@ describe('store: send and stream', () => {
     await useStore.getState().resume('s-2');
 
     const conv = useStore.getState().conversations['s-2'];
-    expect(conv.content).toEqual({ name: 'ready' });
+    expect(actorValue('s-2')?.transcript).toBe('ready');
     const texts = conv.messages.flatMap((m) =>
       m.role === 'user'
         ? [m.text]
@@ -307,32 +301,48 @@ describe('store: send and stream', () => {
     expect(conv.messages[conv.messages.length - 1].items).toContainEqual(
       expect.objectContaining({ kind: 'text', text: 'live answer' }),
     );
-    expect(useStore.getState().navigation).toMatchObject({
-      name: 'ready',
-      sessionID: 's-2',
-    });
+    expect(stateRoot.focusSnapshot.value).toBe('active');
+    expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-2');
   });
 
-  it('resume failure leaves navigation failed with the previous session visible', async () => {
+  it('resume failure leaves focus failed with the previous session available', async () => {
     apiMock.resumeSession.mockRejectedValue(new Error('switch failed'));
 
     await useStore.getState().resume('s-2');
 
-    const nav = useStore.getState().navigation;
-    expect(nav).toMatchObject({
-      name: 'failed',
-      previousSessionID: 's-1',
-      error: 'switch failed',
+    const snapshot = stateRoot.focusSnapshot;
+    expect(snapshot.value).toBe('failed');
+    expect(snapshot.context.error).toBe('switch failed');
+    expect(snapshot.context.from).toEqual({
+      kind: 'session',
+      id: 's-1',
     });
   });
 
+  it('retryTranscript reloads history after an archive failure', async () => {
+    apiMock.sessionTurns
+      .mockRejectedValueOnce(new Error('archive down'))
+      .mockResolvedValueOnce([
+        historyTurn(1, 'history user', 'history answer'),
+      ]);
+
+    await useStore.getState().resume('s-2');
+    expect(actorValue('s-2')?.transcript).toBe('failed');
+
+    await useStore.getState().retryTranscript('s-2');
+
+    expect(actorValue('s-2')?.transcript).toBe('ready');
+    const conv = useStore.getState().conversations['s-2'];
+    expect(conv.messages.map((m) => m.text || '')).toContain('history user');
+  });
+
   it('folds stream deltas into one assistant message', () => {
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
     useStore.setState({
       runConvs: { 'r-1': 's-1' },
       conversations: {
         's-1': {
           ...useStore.getState().conversations['s-1'],
-          turn: { name: 'running', runID: 'r-1', stage: '' },
         },
       },
     });
@@ -401,7 +411,7 @@ describe('store: send and stream', () => {
     });
 
     const conv = useStore.getState().conversations['s-1'];
-    expect(conv.turn).toMatchObject({ name: 'running', stage: 'text' });
+    expect(actorValue('s-1')?.turn).toBe('running');
     expect(conv.messages).toHaveLength(1);
     const items = conv.messages[0].items;
     expect(items[0]).toMatchObject({ kind: 'reasoning', text: 'thinking…' });
@@ -417,12 +427,12 @@ describe('store: send and stream', () => {
   });
 
   it('turn_end clears busy and removes the run mapping', () => {
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
     useStore.setState({
       runConvs: { 'r-1': 's-1' },
       conversations: {
         's-1': {
           ...useStore.getState().conversations['s-1'],
-          turn: { name: 'running', runID: 'r-1', stage: '' },
         },
       },
     });
@@ -432,17 +442,17 @@ describe('store: send and stream', () => {
     });
 
     const conv = useStore.getState().conversations['s-1'];
-    expect(conv.turn).toEqual({ name: 'finished' });
+    expect(actorValue('s-1')?.turn).toBe('succeeded');
     expect(useStore.getState().runConvs['r-1']).toBeUndefined();
   });
 
   it('failed turn_end appends an error marker and sets lastFailed', () => {
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
     useStore.setState({
       runConvs: { 'r-1': 's-1' },
       conversations: {
         's-1': {
           ...useStore.getState().conversations['s-1'],
-          turn: { name: 'running', runID: 'r-1', stage: '' },
           messages: [
             {
               id: 'a-1',
@@ -466,7 +476,7 @@ describe('store: send and stream', () => {
     });
 
     const conv = useStore.getState().conversations['s-1'];
-    expect(conv.turn).toMatchObject({ name: 'failed', error: 'engine boom' });
+    expect(actorValue('s-1')?.turn).toBe('failed');
     const text = conv.messages[0].items.find(
       (i) => i.kind === 'text',
     ) as Extract<MessageView['items'][number], { kind: 'text' }>;
@@ -535,6 +545,7 @@ describe('store: transcript cap', () => {
   }
 
   it('caps conversation messages at 800 and re-bases turn starts', () => {
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-x' });
     useStore.setState({
       conversations: {
         's-1': {

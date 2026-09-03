@@ -6,6 +6,7 @@ import type {
   desktop as gen,
 } from '../../wailsjs/go/models';
 import type {
+  ActiveRunDTO,
   AgentSummary,
   AgentDetail,
   AgentUpdateResult,
@@ -69,6 +70,7 @@ export const api = {
   newChat: () => App.NewChat() as Promise<SessionSnapshot>,
   listSessions: () => App.ListSessions() as Promise<SessionMeta[]>,
   currentSession: () => App.CurrentSession(),
+  activeRun: (id: string) => App.ActiveRun(id) as Promise<ActiveRunDTO>,
   resumeSession: (id: string) =>
     App.ResumeSession(id) as Promise<SessionSnapshot>,
   sessionHistory: (id: string) =>
