@@ -19,32 +19,30 @@ import (
 	app "github.com/GizClaw/opencraft/internal/app"
 	"github.com/GizClaw/opencraft/internal/config"
 	ocsandbox "github.com/GizClaw/opencraft/internal/sandbox"
-	"github.com/GizClaw/opencraft/internal/toolchain"
 	otellog "go.opentelemetry.io/otel/log"
 )
 
 // DiagnosticsReport is the environment/health summary shown on the
 // settings Diagnostics tab.
 type DiagnosticsReport struct {
-	Version             string                    `json:"version"`
-	GoVersion           string                    `json:"go_version"`
-	NodeVersion         string                    `json:"node_version"`
-	GitVersion          string                    `json:"git_version"`
-	Platform            string                    `json:"platform"`
-	Arch                string                    `json:"arch"`
-	WorkDir             string                    `json:"work_dir"`
-	UserDir             string                    `json:"user_dir"`
-	ConfigValid         bool                      `json:"config_valid"`
-	ConfigError         string                    `json:"config_error,omitempty"`
-	InferenceConfigured bool                      `json:"inference_configured"`
-	GitRepo             bool                      `json:"git_repo"`
-	GitBranch           string                    `json:"git_branch,omitempty"`
-	SessionCount        int                       `json:"session_count"`
-	ActiveRuns          int                       `json:"active_runs"`
-	SandboxBackend      string                    `json:"sandbox_backend"`
-	SandboxAvailable    bool                      `json:"sandbox_available"`
-	UsageTotalTokens    int64                     `json:"usage_total_tokens"`
-	Toolchains          []toolchain.RuntimeStatus `json:"toolchains"`
+	Version             string `json:"version"`
+	GoVersion           string `json:"go_version"`
+	NodeVersion         string `json:"node_version"`
+	GitVersion          string `json:"git_version"`
+	Platform            string `json:"platform"`
+	Arch                string `json:"arch"`
+	WorkDir             string `json:"work_dir"`
+	UserDir             string `json:"user_dir"`
+	ConfigValid         bool   `json:"config_valid"`
+	ConfigError         string `json:"config_error,omitempty"`
+	InferenceConfigured bool   `json:"inference_configured"`
+	GitRepo             bool   `json:"git_repo"`
+	GitBranch           string `json:"git_branch,omitempty"`
+	SessionCount        int    `json:"session_count"`
+	ActiveRuns          int    `json:"active_runs"`
+	SandboxBackend      string `json:"sandbox_backend"`
+	SandboxAvailable    bool   `json:"sandbox_available"`
+	UsageTotalTokens    int64  `json:"usage_total_tokens"`
 }
 
 // SandboxProbeResult reports one sandbox self-test run.
@@ -82,7 +80,6 @@ func (a *App) Diagnostics() DiagnosticsReport {
 	}
 	rep.NodeVersion = commandVersion(ctx, 3*time.Second, "node", "--version")
 	rep.GitVersion = commandVersion(ctx, 3*time.Second, "git", "--version")
-	rep.Toolchains = a.toolchainDiagnostics()
 
 	// Without a workspace there is no project layer to discover; skip
 	// it so config.Open never falls back to the process cwd (which is

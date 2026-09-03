@@ -12,11 +12,6 @@
 !CONTRIBUTING.md
 !CODE_OF_CONDUCT.md
 
-# Bundled language/toolchain runtime manifest (metadata only; binary
-# sidecars are staged by release CI and stay out of the repo).
-!runtimes/
-!runtimes/**
-
 # ── Go CI ──
 !.golangci.yml
 !.github/

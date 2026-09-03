@@ -201,16 +201,6 @@
     "diagPolicyCheck": "Check",
     "diagPolicyAllowed": "Allowed: would run without approval",
     "diagPolicyAsk": "Not allowed: would ask for approval",
-    "diagToolchains": "Language toolchains",
-    "diagToolMissing": "not available",
-    "toolchainSystem": "system",
-    "toolchainBundled": "bundled",
-    "runtimePreference": "Runtime preference",
-    "runtimePreferenceHint": "External tools win by default; bundled runtimes are only a fallback.",
-    "runtimePreferenceExternal": "External first (default)",
-    "runtimePreferenceBundled": "Bundled first",
-    "runtimePreferenceOff": "Off (external only)",
-    "runtimePreferenceSaved": "Runtime preference saved",
     "mcpHint": "Attach external MCP tool servers; their tools are discovered lazily through tool_search.",
     "mcpCount": "{{count}} server(s)",
     "mcpCommandLabel": "Command",
@@ -411,10 +401,7 @@
   "status": {
     "ready": "Ready",
     "running": "Running",
-    "thinking": "thinking",
-    "runtime": "runtime",
-    "preparingRuntime": "Preparing {{family}} runtime…",
-    "runtimePrepFailed": "Runtime preparation failed"
+    "thinking": "thinking"
   },
   "interact": {
     "needConfirm": "Your input is needed",

@@ -69,39 +69,6 @@ jobs:
           # wails output filename.
           mv "$app" build/bin/OpenCraft.app
 
-      - name: Stage bundled runtimes (universal)
-        run: |
-          runtime_dir="build/bin/OpenCraft.app/Contents/Resources/runtime"
-          bash scripts/stage-runtimes.sh darwin-arm64 "$runtime_dir"
-          bash scripts/stage-runtimes.sh darwin-amd64 "$runtime_dir"
-
-      - name: Build universal runtime launcher
-        run: |
-          launcher_dir="build/bin/OpenCraft.app/Contents/Resources/runtime/launcher"
-          GOOS=darwin GOARCH=arm64 go build \
-            -o "$launcher_dir/runtime-launcher-arm64" \
-            ./internal/toolchain/launchermain
-          GOOS=darwin GOARCH=amd64 go build \
-            -o "$launcher_dir/runtime-launcher-amd64" \
-            ./internal/toolchain/launchermain
-          lipo -create \
-            -output "$launcher_dir/runtime-launcher" \
-            "$launcher_dir/runtime-launcher-arm64" \
-            "$launcher_dir/runtime-launcher-amd64"
-          rm -f "$launcher_dir/runtime-launcher-arm64" \
-            "$launcher_dir/runtime-launcher-amd64"
-
-      - name: Ad-hoc sign bundled runtimes
-        run: |
-          runtime_dir="build/bin/OpenCraft.app/Contents/Resources/runtime"
-          if [ -d "$runtime_dir" ]; then
-            while IFS= read -r -d '' f; do
-              if file "$f" | grep -q 'Mach-O'; then
-                codesign --force -s - "$f"
-              fi
-            done < <(find "$runtime_dir" -type f -print0)
-          fi
-
       # Code signing and notarization are optional: they activate only
       # when the Apple secrets are configured (see the README for how to
       # create the Developer ID certificate and secrets).
@@ -121,17 +88,6 @@ jobs:
           if [ -z "$identity" ]; then
             echo "::error::No Developer ID Application identity found in the imported certificate"
             exit 1
-          fi
-          # Nested runtime executables must carry their own signature;
-          # --deep is not used for the main bundle signature.
-          runtime_dir="build/bin/OpenCraft.app/Contents/Resources/runtime"
-          if [ -d "$runtime_dir" ]; then
-            while IFS= read -r -d '' f; do
-              if file "$f" | grep -q 'Mach-O'; then
-                codesign --force --options runtime --timestamp \
-                  --sign "$identity" "$f"
-              fi
-            done < <(find "$runtime_dir" -type f -print0)
           fi
           codesign --force --options runtime --timestamp \
             --sign "$identity" build/bin/OpenCraft.app
@@ -289,13 +245,10 @@ jobs:
           wails build -platform linux/amd64 -clean -tags webkit2_41 \
             -ldflags "-s -w -X github.com/GizClaw/opencraft/internal/app.ServiceVersion=${TAG#v}"
 
-      - name: Stage bundled runtimes
-        run: bash scripts/stage-runtimes.sh linux-amd64 build/bin/runtime
-
       - name: Package binary
         env:
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
-        run: tar -C build/bin -czf "opencraft-${TAG#v}-linux-amd64.tar.gz" opencraft runtime
+        run: tar -C build/bin -czf "opencraft-${TAG#v}-linux-amd64.tar.gz" opencraft
 
       - uses: actions/upload-artifact@v6
         with:
@@ -349,26 +302,6 @@ jobs:
             throw "wails build did not produce the NSIS installer (makensis missing or failed)"
           }
 
-      - name: Stage bundled runtimes
-        run: bash scripts/stage-runtimes.sh windows-amd64 build/bin/runtime
-
-      - name: Rebuild NSIS installer with runtime
-        run: |
-          $nsi = "build/windows/installer/project.nsi"
-          $content = Get-Content -Raw $nsi
-          if (-not $content.Contains("runtime\*")) {
-            $runtimeFiles = "SetOutPath `$INSTDIR\runtime`r`n" +
-              'File /r "..\..\bin\runtime\*"' + "`r`n" +
-              "SetOutPath `$INSTDIR"
-            $content = $content.Replace(
-              "!insertmacro wails.files",
-              "!insertmacro wails.files`r`n    $runtimeFiles")
-            Set-Content -Path $nsi -Value $content -Encoding utf8
-          }
-          Push-Location build/windows/installer
-          & makensis /DARG_WAILS_AMD64_BINARY="..\..\bin\opencraft.exe" project.nsi
-          Pop-Location
-
       - name: Package binaries
         env:
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
@@ -379,7 +312,7 @@ jobs:
           # filename; the wildcard keeps the copy robust to renames.
           Copy-Item build/bin/*-amd64-installer.exe `
             "opencraft-$ver-windows-amd64-installer.exe"
-          Compress-Archive -Path build/bin/opencraft.exe, build/bin/runtime `
+          Compress-Archive -Path build/bin/opencraft.exe `
             -DestinationPath "opencraft-$ver-windows-amd64.zip"
 
       - uses: actions/upload-artifact@v6

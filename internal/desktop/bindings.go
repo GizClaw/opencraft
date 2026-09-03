@@ -29,7 +29,6 @@ import (
 	"github.com/GizClaw/opencraft/internal/rollout"
 	"github.com/GizClaw/opencraft/internal/secrets"
 	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
-	"github.com/GizClaw/opencraft/internal/toolchain"
 	"github.com/GizClaw/opencraft/internal/undo"
 	"github.com/GizClaw/opencraft/internal/usage"
 )
@@ -596,24 +595,10 @@ func validateMCPServer(srv *config.MCPServer) error {
 
 // mcpTransport builds the MCP transport for one server entry the same
 // way the runtime factory wires stdio/http servers.
-func mcpTransport(
-	ctx context.Context,
-	mgr *toolchain.Manager,
-	server config.MCPServer,
-) (mcpsdk.Transport, error) {
+func mcpTransport(server config.MCPServer) (mcpsdk.Transport, error) {
 	switch server.Transport {
 	case "stdio":
-		command := server.Command
-		env := server.Env
-		if mgr != nil {
-			resolved, err := mgr.ResolveMCPCommand(ctx, command)
-			if err != nil {
-				return nil, err
-			}
-			command = resolved
-			env = mgr.AttachHostEnv(env)
-		}
-		return mcp.Stdio(command, server.Args, env)
+		return mcp.Stdio(server.Command, server.Args, server.Env)
 	case "http":
 		return mcp.StreamableHTTP(server.URL, nil, nil)
 	default:
@@ -634,7 +619,7 @@ func (a *App) TestMCP(server config.MCPServer) error {
 	defer cancel()
 	src := mcp.NewSource(mcp.WithConnectTimeout(timeout))
 	defer func() { _ = src.Close() }()
-	transport, err := mcpTransport(ctx, a.currentToolchain(), server)
+	transport, err := mcpTransport(server)
 	if err != nil {
 		return err
 	}
@@ -668,19 +653,6 @@ func (a *App) MCPStatus() ([]MCPStatusDTO, error) {
 	out := make([]MCPStatusDTO, 0, len(servers))
 	for _, srv := range servers {
 		dto := MCPStatusDTO{Name: srv.Name}
-		if srv.Transport == "stdio" {
-			mgr := a.currentToolchain()
-			if mgr != nil {
-				if _, err := mgr.ResolveMCPCommand(
-					a.appContext(), srv.Command,
-				); err != nil {
-					dto.Status = "error"
-					dto.Error = err.Error()
-					out = append(out, dto)
-					continue
-				}
-			}
-		}
 		if src == nil {
 			if strings.TrimSpace(workDir) == "" {
 				dto.Status = "error"
