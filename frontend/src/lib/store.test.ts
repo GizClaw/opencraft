@@ -305,7 +305,7 @@ describe('store: send and stream', () => {
     expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-2');
   });
 
-  it('resume failure leaves navigation failed with the previous session visible', async () => {
+  it('resume failure leaves focus failed with the previous session available', async () => {
     apiMock.resumeSession.mockRejectedValue(new Error('switch failed'));
 
     await useStore.getState().resume('s-2');
