@@ -547,6 +547,7 @@ interface StoreState {
   closeTools: () => void;
   newChat: () => Promise<void>;
   resume: (id: string) => Promise<void>;
+  retryTranscript: (id: string) => Promise<void>;
   backFromFailure: () => void;
   deleteSession: (id: string) => Promise<void>;
   setMode: (mode: string) => Promise<void>;
@@ -1279,6 +1280,48 @@ export const useStore = create<StoreState>((set, get) => {
 
     backFromFailure: () => {
       stateRoot.sendFocus({ type: 'BACK' });
+    },
+
+    retryTranscript: async (id) => {
+      const actor = stateRoot.registry.ensure(id, {
+        workspaceGeneration: stateRoot.generation(),
+      });
+      const context = actor?.getSnapshot().context as {
+        lastHydrateRequest?: number;
+      };
+      const request = (context?.lastHydrateRequest ?? 0) + 1;
+      const generation = stateRoot.generation();
+      actor?.send({ type: 'HYDRATE_REQUESTED', request, generation });
+      try {
+        const turns = await api.sessionTurns(id);
+        const { messages, turnArtifacts } = historyTurnsToState(turns);
+        set((state) => ({
+          conversations: {
+            ...state.conversations,
+            [id]: capConversation({
+              ...emptyConv(),
+              mode: state.conversations[id]?.mode ?? 'workspace',
+              think: state.conversations[id]?.think ?? 'medium',
+              model: state.conversations[id]?.model ?? '',
+              messages,
+              turnArtifacts,
+            }),
+          },
+        }));
+        actor?.send({
+          type: 'HYDRATE_OK',
+          request,
+          generation,
+          empty: turns.length === 0,
+        });
+      } catch (err) {
+        actor?.send({
+          type: 'HYDRATE_FAIL',
+          request,
+          generation,
+          error: errorMessage(err),
+        });
+      }
     },
 
     resume: async (id) => {

@@ -319,6 +319,23 @@ describe('store: send and stream', () => {
     });
   });
 
+  it('retryTranscript reloads history after an archive failure', async () => {
+    apiMock.sessionTurns
+      .mockRejectedValueOnce(new Error('archive down'))
+      .mockResolvedValueOnce([
+        historyTurn(1, 'history user', 'history answer'),
+      ]);
+
+    await useStore.getState().resume('s-2');
+    expect(actorValue('s-2')?.transcript).toBe('failed');
+
+    await useStore.getState().retryTranscript('s-2');
+
+    expect(actorValue('s-2')?.transcript).toBe('ready');
+    const conv = useStore.getState().conversations['s-2'];
+    expect(conv.messages.map((m) => m.text || '')).toContain('history user');
+  });
+
   it('folds stream deltas into one assistant message', () => {
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
     useStore.setState({

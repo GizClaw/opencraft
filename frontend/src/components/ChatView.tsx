@@ -786,6 +786,7 @@ export function ChatView() {
   const send = useStore((s) => s.send);
   const newChat = useStore((s) => s.newChat);
   const resume = useStore((s) => s.resume);
+  const retryTranscript = useStore((s) => s.retryTranscript);
   const backFromFailure = useStore((s) => s.backFromFailure);
   const cancelRun = useStore((s) => s.cancelRun);
   const clearLastFailed = useStore((s) => s.clearLastFailed);
@@ -1081,7 +1082,7 @@ export function ChatView() {
                   conversationState.transcript.error}
               </p>
               <button
-                onClick={() => current && void resume(current)}
+                onClick={() => current && void retryTranscript(current)}
                 className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-accent"
               >
                 <RotateCcw size="0.8571rem" />
