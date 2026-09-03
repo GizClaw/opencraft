@@ -269,7 +269,7 @@ jobs:
       - name: Build desktop binary
         run: |
           export PATH="$PATH:$(go env GOPATH)/bin"
-          wails build -platform darwin/arm64
+          make build-macos
 
   desktop-windows:
     name: desktop build (windows)

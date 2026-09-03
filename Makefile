@@ -1,4 +1,4 @@
-.PHONY: all fmt fmt-check lint test gen-bindings build-linux
+.PHONY: all fmt fmt-check lint test gen-bindings build-macos build-macos-universal build-linux
 
 all: fmt lint test
 
@@ -40,6 +40,28 @@ endif
 # explicit flags keep the intent visible and the version injection
 # works in every mode.
 WINDOWS_LDFLAGS := -s -w -X github.com/GizClaw/opencraft/internal/app.ServiceVersion=$(VERSION)
+MACOS_LDFLAGS := -s -w -X github.com/GizClaw/opencraft/internal/app.ServiceVersion=$(VERSION)
+
+# Local Go toolchains newer than the go.mod version (e.g. Homebrew Go
+# 1.27) link against macOS 13 while Wails still passes a 10.13 minimum,
+# producing "built for newer macOS" ld warnings. Pin macOS desktop builds
+# to the repository's Go version and silence the harmless duplicate
+# -lobjc warning emitted by newer Xcode linkers.
+GOMOD_GO_VERSION := $(shell awk '/^go /{print $$2; exit}' go.mod)
+GO_TOOLCHAIN ?= go$(GOMOD_GO_VERSION)
+MACOS_CGO_LDFLAGS ?= -Wl,-no_warn_duplicate_libraries
+
+# build-macos produces the desktop binary for the current macOS
+# architecture (arm64 on Apple Silicon, amd64 on Intel).
+build-macos:
+	GOTOOLCHAIN=$(GO_TOOLCHAIN) CGO_LDFLAGS="$(MACOS_CGO_LDFLAGS)" wails build
+
+# build-macos-universal produces the Apple Silicon + Intel universal app
+# used by the release workflow.
+build-macos-universal:
+	GOTOOLCHAIN=$(GO_TOOLCHAIN) CGO_LDFLAGS="$(MACOS_CGO_LDFLAGS)" \
+		wails build -platform darwin/universal -clean \
+		-ldflags "$(MACOS_LDFLAGS)"
 
 # build-linux produces the desktop binary for Linux (requires the
 # GTK/WebKit development packages; see .github/workflows/ci.yml).
