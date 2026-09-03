@@ -1,10 +1,15 @@
 import type { StateRoot } from './root';
+import type { ConversationActor } from './actorRegistry';
 import type { ConversationEvent } from './machines/conversation';
 import type { UIEvent } from '../lib/types';
 
 type FailedStatus = 'failed' | 'aborted' | 'canceled' | 'interrupted';
 
 export interface EventDataSink {
+  syncConversationActor?(
+    conversationID: string,
+    actor: ConversationActor,
+  ): void;
   writeConversationData(conversationID: string, ev: UIEvent): void;
   writeSubagentStream(ev: UIEvent): void;
   writeGlobalData(ev: UIEvent): void;
@@ -142,6 +147,7 @@ function routeToConversation(
     workspaceGeneration: deps.root.generation(),
   });
   if (!actor) return;
+  deps.data.syncConversationActor?.(conversationID, actor);
 
   // Data and state changes stay in one synchronous unit. State is
   // checked first so a late event never reaches the data layer.

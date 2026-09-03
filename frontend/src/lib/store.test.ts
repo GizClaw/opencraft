@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MessageView } from './store';
-import { useStore } from './store';
+import { stateRoot, useStore } from './store';
 
 const apiMock = vi.hoisted(() => ({
   configStatus: vi.fn(),
@@ -26,6 +26,7 @@ const apiMock = vi.hoisted(() => ({
 vi.mock('../lib/api', () => ({ api: apiMock }));
 
 function resetStore() {
+  stateRoot.resetWorkspace();
   useStore.setState({
     status: {
       needed: false,
@@ -539,6 +540,7 @@ describe('store: transcript cap', () => {
       conversations: {
         's-1': {
           ...useStore.getState().conversations['s-1'],
+          turn: { name: 'running', runID: 'r-x', stage: '' },
           messages: manyMessages(1000),
           turnArtifacts: [
             { id: 'old', start: 100, docs: [] },
