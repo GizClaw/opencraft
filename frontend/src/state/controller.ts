@@ -76,7 +76,10 @@ export class SessionController {
       sessionID: snapshot.session_id,
     });
     const state = this.root.focusSnapshot;
-    if (state.value === 'active' && state.context.sessionID === snapshot.session_id) {
+    if (
+      state.value === 'active' &&
+      state.context.sessionID === snapshot.session_id
+    ) {
       this.deps.onSessionOpened(snapshot);
     }
   }

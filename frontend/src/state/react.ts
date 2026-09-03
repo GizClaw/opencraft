@@ -50,9 +50,7 @@ export function useConversationState(
   const actor = stateRoot.registry.get(id);
   if (!actor) return undefined;
   return projectConversation(
-    actor.getSnapshot() as unknown as Parameters<
-      typeof projectConversation
-    >[0],
+    actor.getSnapshot() as unknown as Parameters<typeof projectConversation>[0],
   );
 }
 
@@ -71,10 +69,7 @@ export function useRunningConversations(): Array<{
         typeof projectConversation
       >[0],
     );
-    if (
-      state.turn.name === 'starting' ||
-      state.turn.name === 'running'
-    ) {
+    if (state.turn.name === 'starting' || state.turn.name === 'running') {
       out.push({ conversationID: actor.getSnapshot().context.id, state });
     }
   }

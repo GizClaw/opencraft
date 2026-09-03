@@ -21,10 +21,7 @@ import { useTranslation } from 'react-i18next';
 import { WindowToggleMaximise } from '../../wailsjs/runtime/runtime';
 import { api } from '../lib/api';
 import { useStore } from '../lib/store';
-import {
-  useFocusState,
-  useRunningConversations,
-} from '../state/react';
+import { useFocusState, useRunningConversations } from '../state/react';
 import type { SessionMeta } from '../lib/types';
 import type { ComponentType } from 'react';
 
@@ -50,8 +47,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   const sessions = useStore((s) => s.sessions);
   const sessionsLoading = useStore((s) => s.sessionsLoading);
   const focus = useFocusState();
-  const currentSession =
-    focus.name === 'active' ? focus.sessionID : '';
+  const currentSession = focus.name === 'active' ? focus.sessionID : '';
   const resume = useStore((s) => s.resume);
   const toolsView = useStore((s) => s.toolsView);
   const openTools = useStore((s) => s.openTools);
@@ -195,7 +191,9 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   // list up to five entries total.
   const runningActors = useRunningConversations();
   const runningIds = useMemo(() => {
-    const ids = new Set(runningActors.map(({ conversationID }) => conversationID));
+    const ids = new Set(
+      runningActors.map(({ conversationID }) => conversationID),
+    );
     for (const [id, conv] of Object.entries(conversations)) {
       if (conv.pendingInteracts.length > 0) ids.add(id);
     }

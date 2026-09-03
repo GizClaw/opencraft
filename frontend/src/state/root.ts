@@ -1,9 +1,6 @@
 import { createActor } from 'xstate';
 import { ConversationRegistry } from './actorRegistry';
-import {
-  sessionFocusMachine,
-  type FocusEvent,
-} from './machines/sessionFocus';
+import { sessionFocusMachine, type FocusEvent } from './machines/sessionFocus';
 
 function makeFocusActor(sessionID: string) {
   return createActor(sessionFocusMachine, {
@@ -32,9 +29,9 @@ export class StateRoot {
       this.version += 1;
       listener();
     };
-    const unsubFocus = this.focusActor.subscribe(
-      wrapped,
-    ) as unknown as { unsubscribe(): void };
+    const unsubFocus = this.focusActor.subscribe(wrapped) as unknown as {
+      unsubscribe(): void;
+    };
     const unsubRegistry = this.registry.subscribe(wrapped);
     return () => {
       unsubFocus.unsubscribe();

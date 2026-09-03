@@ -752,8 +752,7 @@ export function ChatView() {
   const sessions = useStore((s) => s.sessions);
   const messages = conv?.messages ?? [];
   const turnState = conversationState?.turn;
-  const busy =
-    turnState?.name === 'starting' || turnState?.name === 'running';
+  const busy = turnState?.name === 'starting' || turnState?.name === 'running';
   const turnArtifacts = conv?.turnArtifacts ?? [];
   const [visibleCount, setVisibleCount] = useState(RENDER_WINDOW);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
@@ -1030,7 +1029,9 @@ export function ChatView() {
             <AlertTriangle size="0.9286rem" className="text-err" />
             {t('chat.switchFailed')}
           </div>
-          <p className="whitespace-pre-wrap break-all text-dim">{focus.error}</p>
+          <p className="whitespace-pre-wrap break-all text-dim">
+            {focus.error}
+          </p>
           <div className="flex gap-2">
             {focus.from.kind === 'session' && (
               <button
@@ -1071,10 +1072,7 @@ export function ChatView() {
         <div className="text-center space-y-3 px-6">
           {historyFailed ? (
             <>
-              <AlertTriangle
-                size="1.25rem"
-                className="mx-auto text-err"
-              />
+              <AlertTriangle size="1.25rem" className="mx-auto text-err" />
               <p className="text-sm text-dim">{t('chat.historyFailed')}</p>
               <p className="max-w-md text-xs text-dim">
                 {conversationState?.transcript.name === 'failed' &&

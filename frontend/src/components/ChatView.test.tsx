@@ -278,13 +278,15 @@ describe('ChatView projections', () => {
     setConversation([]);
     stateRoot.resetWorkspace();
     stateRoot.sendFocus({ type: 'RESTORE_FOCUS', sessionID: 's-1' });
-    stateRoot.registry.ensure('s-1', {
-      workspaceGeneration: stateRoot.generation(),
-    })?.send({
-      type: 'HYDRATE_REQUESTED',
-      request: 99,
-      generation: stateRoot.generation(),
-    });
+    stateRoot.registry
+      .ensure('s-1', {
+        workspaceGeneration: stateRoot.generation(),
+      })
+      ?.send({
+        type: 'HYDRATE_REQUESTED',
+        request: 99,
+        generation: stateRoot.generation(),
+      });
     render(<ChatView />);
     expect(screen.getByText('Loading history…')).toBeInTheDocument();
   });

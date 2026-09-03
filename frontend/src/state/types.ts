@@ -3,13 +3,9 @@
 // shorthand; the machines keep that metadata in context instead of
 // duplicating it in `state.value`.
 
-export type SessionRef =
-  | { kind: 'none' }
-  | { kind: 'session'; id: string };
+export type SessionRef = { kind: 'none' } | { kind: 'session'; id: string };
 
-export type SessionTarget =
-  | { kind: 'new' }
-  | { kind: 'existing'; id: string };
+export type SessionTarget = { kind: 'new' } | { kind: 'existing'; id: string };
 
 export type TranscriptState =
   | { name: 'unloaded' }
@@ -17,11 +13,7 @@ export type TranscriptState =
   | { name: 'ready'; empty: boolean }
   | { name: 'failed'; error: string };
 
-export type TurnEndKind =
-  | 'failed'
-  | 'aborted'
-  | 'canceled'
-  | 'interrupted';
+export type TurnEndKind = 'failed' | 'aborted' | 'canceled' | 'interrupted';
 
 export type TurnState =
   | { name: 'idle' }
@@ -30,9 +22,7 @@ export type TurnState =
   | { name: 'succeeded' }
   | { name: 'failed'; status: TurnEndKind; error?: string };
 
-export type LifecycleState =
-  | { name: 'alive' }
-  | { name: 'deleted' };
+export type LifecycleState = { name: 'alive' } | { name: 'deleted' };
 
 export type FocusState =
   | { name: 'no-session' }

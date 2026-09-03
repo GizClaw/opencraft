@@ -248,8 +248,7 @@ export const conversationMachine = createMachine({
               },
               {
                 guard: ({ context, event }) =>
-                  !context.deletedAt &&
-                  event.runID === context.currentRunID,
+                  !context.deletedAt && event.runID === context.currentRunID,
                 target: 'succeeded',
                 actions: assign({
                   currentRunID: () => undefined,

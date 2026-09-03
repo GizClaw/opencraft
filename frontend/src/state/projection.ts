@@ -95,7 +95,10 @@ export function projectConversation(snapshot: {
       transcript = { name: 'loading' };
       break;
     case 'ready':
-      transcript = { name: 'ready', empty: snapshot.context.emptyTranscript ?? false };
+      transcript = {
+        name: 'ready',
+        empty: snapshot.context.emptyTranscript ?? false,
+      };
       break;
     case 'failed':
       transcript = {

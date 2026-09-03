@@ -1,9 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { UIEvent } from '../lib/types';
-import {
-  routeBackendEvent,
-  type EventDataSink,
-} from './eventRouter';
+import { routeBackendEvent, type EventDataSink } from './eventRouter';
 import { StateRoot } from './root';
 
 function fakeSink() {

@@ -56,7 +56,9 @@ function streamStage(delta: StreamPayload['delta']): string | undefined {
  * Maps a backend event to the corresponding conversation actor event,
  * or undefined for data-only events.
  */
-export function toConversationEvent(ev: UIEvent): ConversationEvent | undefined {
+export function toConversationEvent(
+  ev: UIEvent,
+): ConversationEvent | undefined {
   switch (ev.type) {
     case 'automation_run_started': {
       const data = ev.data as { run_id?: string };
@@ -101,12 +103,7 @@ export function canApplyEvent(
   projection: {
     lifecycle: { name: 'alive' | 'deleted' };
     turn: {
-      name:
-        | 'idle'
-        | 'starting'
-        | 'running'
-        | 'succeeded'
-        | 'failed';
+      name: 'idle' | 'starting' | 'running' | 'succeeded' | 'failed';
     };
   },
   ev: UIEvent,
@@ -159,7 +156,10 @@ function routeToConversation(
   };
   const projection = {
     lifecycle: { name: value.lifecycle as 'alive' | 'deleted' },
-    turn: { name: value.turn as 'idle' | 'starting' | 'running' | 'succeeded' | 'failed' },
+    turn: {
+      name: value.turn as
+        'idle' | 'starting' | 'running' | 'succeeded' | 'failed',
+    },
   };
   if (!canApplyEvent(projection, ev)) return;
 
@@ -195,9 +195,7 @@ export function routeBackendEvent(ev: UIEvent, deps: EventRouterDeps) {
       };
       const conversationID =
         data.conversation_id ??
-        (data.run_id
-          ? deps.data.conversationForRunID(data.run_id)
-          : undefined);
+        (data.run_id ? deps.data.conversationForRunID(data.run_id) : undefined);
       if (conversationID) {
         routeToConversation(conversationID, ev, deps);
         return;
@@ -212,9 +210,7 @@ export function routeBackendEvent(ev: UIEvent, deps: EventRouterDeps) {
       const data = ev.data as { id?: string; conversation_id?: string };
       const conversationID =
         data.conversation_id ??
-        (data.id
-          ? deps.data.pendingInteractConversation(data.id)
-          : undefined);
+        (data.id ? deps.data.pendingInteractConversation(data.id) : undefined);
       if (conversationID) {
         routeToConversation(conversationID, ev, deps);
       }

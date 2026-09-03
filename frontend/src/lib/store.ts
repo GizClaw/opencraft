@@ -24,10 +24,7 @@ import type {
   WorkspaceMeta,
 } from './types';
 import type { ToolPage } from '../components/ToolsPanel';
-import {
-  routeBackendEvent,
-  type EventDataSink,
-} from '../state/eventRouter';
+import { routeBackendEvent, type EventDataSink } from '../state/eventRouter';
 import { stateRoot } from '../state/app';
 
 export interface ToolView {
@@ -777,11 +774,7 @@ export const useStore = create<StoreState>((set, get) => {
           const list = conv.turnArtifacts;
           if (list.length === 0) break;
           const idx = list.length - 1;
-          const docs = mergeTurnDoc(
-            list[idx].docs,
-            data.path,
-            data.bytes ?? 0,
-          );
+          const docs = mergeTurnDoc(list[idx].docs, data.path, data.bytes ?? 0);
           updateConv(conversationID, {
             turnArtifacts: [
               ...list.slice(0, idx),
@@ -800,9 +793,7 @@ export const useStore = create<StoreState>((set, get) => {
           const conv = ensureConversation(conversationID);
           if (!conv) break;
           const list = conv.turnArtifacts;
-          const idx = list.findIndex(
-            (t) => t.runID && t.runID === data.run_id,
-          );
+          const idx = list.findIndex((t) => t.runID && t.runID === data.run_id);
           if (idx < 0) break;
           const docs = data.artifacts.map((a) => ({
             path: a.path,
@@ -858,9 +849,7 @@ export const useStore = create<StoreState>((set, get) => {
             const conv = state.conversations[conversationID];
             if (!conv) return state;
             const turnArtifacts = conv.turnArtifacts.map((t) =>
-              t.runID && t.runID === data.run_id
-                ? { ...t, finishedAt }
-                : t,
+              t.runID && t.runID === data.run_id ? { ...t, finishedAt } : t,
             );
             return {
               runConvs,
@@ -915,10 +904,7 @@ export const useStore = create<StoreState>((set, get) => {
       set((state) => ({
         subagentStreams: {
           ...state.subagentStreams,
-          [runID]: applyStream(
-            state.subagentStreams[runID] ?? [],
-            data.delta,
-          ),
+          [runID]: applyStream(state.subagentStreams[runID] ?? [], data.delta),
         },
         subagentStreamAt: {
           ...state.subagentStreamAt,
@@ -1390,8 +1376,7 @@ export const useStore = create<StoreState>((set, get) => {
         });
         const existing = get().conversations[resolvedID];
         const actorValue = actor?.getSnapshot().value as
-          | { transcript: string; turn: string }
-          | undefined;
+          { transcript: string; turn: string } | undefined;
         if (existing && actorValue?.transcript === 'ready') {
           set({
             toolsView: null,
@@ -1439,8 +1424,7 @@ export const useStore = create<StoreState>((set, get) => {
         // shells are replaced by the archive instead of duplicated.
         const keepLive =
           Boolean(existing) &&
-          (actorValue?.turn === 'running' ||
-            actorValue?.turn === 'starting');
+          (actorValue?.turn === 'running' || actorValue?.turn === 'starting');
         const mergedMessages = keepLive
           ? [...messages, ...existing.messages]
           : messages;
