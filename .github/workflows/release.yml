@@ -58,16 +58,17 @@ jobs:
           export PATH="$PATH:$(go env GOPATH)/bin"
           jq --arg v "${TAG#v}" '.info.productVersion = $v' wails.json > wails.json.tmp
           mv wails.json.tmp wails.json
-          # lipo merges the arm64 + amd64 builds into one universal app.
-          wails build -platform darwin/arm64,darwin/amd64 -clean \
-            -ldflags "-s -w -X github.com/GizClaw/opencraft/internal/app.ServiceVersion=${TAG#v}"
+          make build-macos-universal VERSION="${TAG#v}"
 
       - name: Prepare app bundle
         run: |
-          app="$(find build/bin -maxdepth 1 -name '*.app' | head -1)"
-          # Keep the bundle name stable for the cask regardless of the
-          # wails output filename.
-          mv "$app" build/bin/OpenCraft.app
+          # wails build -platform darwin/universal already produces
+          # build/bin/OpenCraft.app; this is a fallback in case the
+          # bundle is ever named after the lower-case output filename.
+          app="$(find build/bin -maxdepth 1 -name '*.app' ! -name 'OpenCraft.app' | head -1)"
+          if [ -n "$app" ]; then
+            mv "$app" build/bin/OpenCraft.app
+          fi
 
       # Code signing and notarization are optional: they activate only
       # when the Apple secrets are configured (see the README for how to
