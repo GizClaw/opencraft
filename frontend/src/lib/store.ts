@@ -314,7 +314,6 @@ const historyToMessages = (history: HistoryMessage[]): MessageView[] => {
         }
       }
     }
-    messages.push(msg);
   }
   return messages;
 };

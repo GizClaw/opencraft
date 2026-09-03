@@ -39,8 +39,8 @@ endif
 # wails adds -s -w and -H windowsgui itself in production mode; the
 # explicit flags keep the intent visible and the version injection
 # works in every mode.
-WINDOWS_LDFLAGS := -s -w -X github.com/GizClaw/opencraft/internal/app.ServiceVersion=$(VERSION)
-MACOS_LDFLAGS := -s -w -X github.com/GizClaw/opencraft/internal/app.ServiceVersion=$(VERSION)
+WINDOWS_LDFLAGS := -s -w -X github.com/GizClaw/opencraft/internal/foundation/version.ServiceVersion=$(VERSION)
+MACOS_LDFLAGS := -s -w -X github.com/GizClaw/opencraft/internal/foundation/version.ServiceVersion=$(VERSION)
 
 # Local Go toolchains newer than the go.mod version (e.g. Homebrew Go
 # 1.27) link against macOS 13 while Wails still passes a 10.13 minimum,

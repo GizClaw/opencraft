@@ -252,6 +252,34 @@ describe('store: send and stream', () => {
     expect(apiMock.sessionTurns).toHaveBeenCalledWith('s-2');
   });
 
+  it('does not duplicate an archived assistant message', async () => {
+    apiMock.sessionTurns.mockResolvedValue([
+      historyTurn(1, 'history user', 'history answer'),
+    ]);
+
+    await useStore.getState().resume('s-2');
+
+    const conv = useStore.getState().conversations['s-2'];
+    const assistantTexts = conv.messages.flatMap((m) =>
+      m.role === 'user'
+        ? []
+        : m.items
+            .filter(
+              (
+                it,
+              ): it is Extract<
+                MessageView['items'][number],
+                { kind: 'text' }
+              > => it.kind === 'text',
+            )
+            .map((it) => it.text),
+    );
+    expect(conv.messages).toHaveLength(2);
+    expect(assistantTexts.filter((t) => t === 'history answer')).toHaveLength(
+      1,
+    );
+  });
+
   it('resume merges history with an active live shell', async () => {
     const live = stateRoot.registry.ensure('s-2', {
       workspaceGeneration: stateRoot.generation(),

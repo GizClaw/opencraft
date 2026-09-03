@@ -17,9 +17,9 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/GizClaw/opencraft/internal/config"
-	"github.com/GizClaw/opencraft/internal/execd"
-	"github.com/GizClaw/opencraft/internal/sandbox"
+	"github.com/GizClaw/opencraft/internal/capabilities/execd"
+	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
+	"github.com/GizClaw/opencraft/internal/foundation/config"
 )
 
 func runExecServer() {

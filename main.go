@@ -12,8 +12,8 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/GizClaw/opencraft/internal/desktop"
-	"github.com/GizClaw/opencraft/internal/headless"
+	"github.com/GizClaw/opencraft/internal/adapters/desktop"
+	"github.com/GizClaw/opencraft/internal/adapters/headless"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"

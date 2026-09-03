@@ -1,0 +1,8 @@
+# Generated app bundles stay out of the repo; wails build reproduces them.
+bin/
+bin/**
+# Wails regenerates the NSIS installer sources and the WebView2
+# bootstrapper on every -nsis build; keep them out of git.
+windows/installer/
+windows/installer/**
+
