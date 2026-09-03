@@ -48,12 +48,9 @@ function setConversation(
   });
   useStore.setState({
     configured: true,
-    navigation: { name: 'ready', sessionID: 's-1', epoch: 0 },
     workspace: '/tmp/w',
     conversations: {
       's-1': {
-        content: { name: 'ready' },
-        turn: { name: 'idle' },
         messages,
         turnArtifacts,
         mode: 'workspace',
