@@ -28,15 +28,6 @@ resources:
   # ------------------------------------------------------------------
   # Runtime foundations: event bus, memory, session store
   # ------------------------------------------------------------------
-  # Bundled language/tool runtimes (Python/Node/uv): compressed archives
-  # are extracted into the user cache only when an external tool is
-  # missing. Go is intentionally not bundled and stays external-only.
-  toolchain:
-    kind: opencraft.toolchain
-    impl: local
-    settings:
-      preference: external-first
-      cache_dir: ${env:OPEN_CRAFT_DATA_DIR}/runtime
   events:
     kind: event.Bus
     impl: memory
@@ -223,7 +214,6 @@ resources:
       execpolicy: execpolicy
       sessions: sessions
       netpolicy: netpolicy
-      toolchain: toolchain
     settings:
       root: ${env:OPEN_CRAFT_WORKDIR}
       writable_paths: ["${env:OPEN_CRAFT_CACHE}"]

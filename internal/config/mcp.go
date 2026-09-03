@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 
 	"sigs.k8s.io/yaml"
-
-	"github.com/GizClaw/opencraft/internal/toolchain"
 )
 
 // MCPServer describes one external MCP tool server attached through the
@@ -39,11 +37,8 @@ type mcpLayer struct {
 // mcpSourceLayer is the tool.mcp resource declaration WriteMCP emits
 // when at least one server is configured.
 type mcpSourceLayer struct {
-	Kind string `json:"kind"`
-	Impl string `json:"impl"`
-	Deps struct {
-		Toolchain string `json:"toolchain,omitempty"`
-	} `json:"deps,omitempty"`
+	Kind     string `json:"kind"`
+	Impl     string `json:"impl"`
 	Settings struct {
 		Servers []MCPServer `json:"servers"`
 	} `json:"settings"`
@@ -94,11 +89,7 @@ func WriteMCP(configDir string, servers []MCPServer) error {
 	replaceKeys := map[string]bool{"tool.mcp": true}
 	mergeKeys := map[string]bool{}
 	if len(servers) > 0 {
-		src := &mcpSourceLayer{
-			Kind: "tool.Source",
-			Impl: toolchain.MCPResourceImpl,
-		}
-		src.Deps.Toolchain = "toolchain"
+		src := &mcpSourceLayer{Kind: "tool.Source", Impl: "mcp"}
 		src.Settings.Servers = servers
 		layer.Resources.ToolMCP = src
 		layer.Resources.Tools.Deps = map[string]string{"tool.mcp": "tool.mcp"}

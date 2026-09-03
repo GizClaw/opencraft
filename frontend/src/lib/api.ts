@@ -133,9 +133,6 @@ export const api = {
   memoryConfig: () => App.MemoryConfig() as Promise<MemorySettings>,
   saveMemory: (s: MemorySettings) =>
     App.SaveMemory(s as unknown as genConfig.MemorySettings) as Promise<void>,
-  runtimePreference: () => App.RuntimePreference() as Promise<string>,
-  saveRuntimePreference: (preference: string) =>
-    App.SaveRuntimePreference(preference) as Promise<void>,
   diagnostics: () => App.Diagnostics() as Promise<DiagnosticsReport>,
   runSandboxProbe: () => App.RunSandboxProbe() as Promise<SandboxProbeResult>,
   evaluateCommandPolicy: (command: string) =>

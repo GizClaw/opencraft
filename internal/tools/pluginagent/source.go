@@ -20,7 +20,6 @@ import (
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/GizClaw/opencraft/internal/plugins/agent"
-	"github.com/GizClaw/opencraft/internal/toolchain"
 )
 
 // ResourceImpl is the deploy impl id of the plugin agent source.
@@ -49,7 +48,6 @@ func (SourceFactory) Spec() resource.Spec {
 		Impl: ResourceImpl,
 		Deps: []resource.DepSpec{
 			{Name: "plugin.host", Type: agent.ResourceKind, Required: true},
-			{Name: "toolchain", Type: toolchain.ResourceKind, Required: false},
 		},
 	}
 }
@@ -67,16 +65,7 @@ func (SourceFactory) New(ctx context.Context, in resource.Input) (any, error) {
 		return nil, errdefs.Validationf(
 			"plugin agent tools: plugins dep is %T, want capability host", dep)
 	}
-	var mgr *toolchain.Manager
-	if dep, ok := in.Dep("toolchain"); ok {
-		mgr, ok = dep.(*toolchain.Manager)
-		if !ok {
-			return nil, errdefs.Validationf(
-				"plugin agent tools: toolchain dep is %T, want *toolchain.Manager",
-				dep)
-		}
-	}
-	return newSource(ctx, host, mgr)
+	return newSource(ctx, host)
 }
 
 // Source aggregates capability tools and plugin MCP servers.
@@ -86,22 +75,14 @@ type Source struct {
 	mcpSources []*mcp.Source
 }
 
-func newSource(
-	ctx context.Context,
-	host CapabilityHost,
-	managers ...*toolchain.Manager,
-) (*Source, error) {
-	var mgr *toolchain.Manager
-	if len(managers) > 0 {
-		mgr = managers[0]
-	}
+func newSource(ctx context.Context, host CapabilityHost) (*Source, error) {
 	s := &Source{host: host}
 	for _, spec := range host.ToolSpecs() {
 		s.capTools = append(s.capTools, &toolAdapter{host: host, spec: spec})
 	}
 	for _, server := range host.MCPServers() {
 		src := mcp.NewSource()
-		transport, err := serverTransport(ctx, server, mgr)
+		transport, err := serverTransport(server)
 		if err != nil {
 			_ = src.Close()
 			_ = s.Close()
@@ -121,22 +102,10 @@ func newSource(
 	return s, nil
 }
 
-func serverTransport(
-	ctx context.Context,
-	s agent.MCPServer,
-	mgr *toolchain.Manager,
-) (mcpsdk.Transport, error) {
+func serverTransport(s agent.MCPServer) (mcpsdk.Transport, error) {
 	switch s.Transport {
 	case "stdio":
-		command := s.Command
-		env := s.Env
-		if mgr != nil {
-			if resolved, err := mgr.ResolveMCPCommand(ctx, command); err == nil {
-				command = resolved
-			}
-			env = mgr.AttachHostEnv(env)
-		}
-		return mcp.Stdio(command, s.Args, env)
+		return mcp.Stdio(s.Command, s.Args, s.Env)
 	case "http":
 		return mcp.StreamableHTTP(s.URL, nil, nil)
 	default:
