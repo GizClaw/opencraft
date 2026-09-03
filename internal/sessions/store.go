@@ -527,14 +527,13 @@ func (s *Store) turnPathByRun(id, runID string) (string, error) {
 		}
 		return "", nil
 	}
-	files, err := filepath.Glob(filepath.Join(s.dir(id), "history", "*.json"))
+	files, err := s.historyFileNames(id)
 	if err != nil {
 		return "", err
 	}
 	if len(files) == 0 {
 		return "", nil
 	}
-	sort.Strings(files)
 	return files[len(files)-1], nil
 }
 
@@ -638,17 +637,13 @@ func (s *Store) SaveAttachment(id, kind, srcPath string) (string, error) {
 // n < 0 returns every archived message; n == 0 uses the store window
 // (the recent context injected into the model); n > 0 caps at n.
 func (s *Store) History(_ context.Context, id string, n int) ([]message.Message, error) {
-	if err := requireID(id); err != nil {
-		return nil, err
-	}
 	if n == 0 {
 		n = s.window
 	}
-	files, err := filepath.Glob(filepath.Join(s.dir(id), "history", "*.json"))
+	files, err := s.historyFileNames(id)
 	if err != nil {
 		return nil, err
 	}
-	sort.Strings(files)
 	// The bounded window only reads the newest files that can supply n
 	// messages; a full history (n < 0) still reads everything.
 	limit := n
@@ -679,14 +674,10 @@ func (s *Store) History(_ context.Context, id string, n int) ([]message.Message,
 // Turns returns every archived turn of one conversation, oldest first,
 // including each turn's produced artifacts.
 func (s *Store) Turns(_ context.Context, id string) ([]TurnRecord, error) {
-	if err := requireID(id); err != nil {
-		return nil, err
-	}
-	files, err := filepath.Glob(filepath.Join(s.dir(id), "history", "*.json"))
+	files, err := s.historyFileNames(id)
 	if err != nil {
 		return nil, err
 	}
-	sort.Strings(files)
 	turns := make([]TurnRecord, 0, len(files))
 	for _, path := range files {
 		data, err := os.ReadFile(path)
@@ -700,6 +691,21 @@ func (s *Store) Turns(_ context.Context, id string) ([]TurnRecord, error) {
 		turns = append(turns, turn)
 	}
 	return turns, nil
+}
+
+// historyFileNames returns the sorted archive file names of one
+// conversation. The filename is the turn sequence number, so sorting
+// lexically equals sorting chronologically.
+func (s *Store) historyFileNames(id string) ([]string, error) {
+	if err := requireID(id); err != nil {
+		return nil, err
+	}
+	files, err := filepath.Glob(filepath.Join(s.dir(id), "history", "*.json"))
+	if err != nil {
+		return nil, err
+	}
+	sort.Strings(files)
+	return files, nil
 }
 
 // RolloutPath returns the JSONL rollout path for one conversation.

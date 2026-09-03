@@ -24,7 +24,7 @@ type Bridge struct {
 	ctx context.Context
 
 	mu      sync.Mutex
-	pending map[string]chan runtime.Reply
+	pending map[string]pendingPrompt
 	runConv func(runID string) string
 	// lastRun is the run id of the most recent stream delta; the
 	// usage observer uses it to attribute a generation to its turn.
@@ -34,9 +34,17 @@ type Bridge struct {
 	rollout func(ctx context.Context, runID string, delta agent.StreamDeltaPayload)
 }
 
+// pendingPrompt keeps the reply channel plus the owning conversation
+// captured when Ask registered the prompt. Resolve uses it so the
+// frontend can route "resolved" without a pending-interact scan.
+type pendingPrompt struct {
+	ch             chan runtime.Reply
+	conversationID string
+}
+
 // NewBridge creates the frontend bridge.
 func NewBridge() *Bridge {
-	return &Bridge{pending: make(map[string]chan runtime.Reply)}
+	return &Bridge{pending: make(map[string]pendingPrompt)}
 }
 
 // SetContext installs the Wails runtime context used for event
@@ -132,8 +140,12 @@ func streamRunID(subject event.Subject) string {
 // frontend and blocks until an answer arrives or ctx ends.
 func (b *Bridge) Ask(ctx context.Context, spec runtime.Spec) (runtime.Reply, error) {
 	replyCh := make(chan runtime.Reply, 1)
+	conversationID := b.conversationOf(spec.RunID)
 	b.mu.Lock()
-	b.pending[spec.ID] = replyCh
+	b.pending[spec.ID] = pendingPrompt{
+		ch:             replyCh,
+		conversationID: conversationID,
+	}
 	b.mu.Unlock()
 	defer func() {
 		b.mu.Lock()
@@ -149,7 +161,7 @@ func (b *Bridge) Ask(ctx context.Context, spec runtime.Spec) (runtime.Reply, err
 	b.Emit("interact", InteractDTO{
 		ID:             spec.ID,
 		RunID:          spec.RunID,
-		ConversationID: b.conversationOf(spec.RunID),
+		ConversationID: conversationID,
 		Kind:           string(spec.Kind),
 		Title:          spec.Title,
 		Body:           body,
@@ -172,7 +184,7 @@ func (b *Bridge) Ask(ctx context.Context, spec runtime.Spec) (runtime.Reply, err
 // resolved externally).
 func (b *Bridge) Answer(promptID string, req ReplyRequest) (bool, error) {
 	b.mu.Lock()
-	ch, ok := b.pending[promptID]
+	p, ok := b.pending[promptID]
 	if ok {
 		delete(b.pending, promptID)
 	}
@@ -193,7 +205,7 @@ func (b *Bridge) Answer(promptID string, req ReplyRequest) (bool, error) {
 		reply.Option = nil
 		reply.Options = nil
 	}
-	ch <- reply
+	p.ch <- reply
 	return true, nil
 }
 
@@ -206,10 +218,18 @@ func (b *Bridge) Resolve(
 	reason string,
 ) error {
 	b.mu.Lock()
+	p, ok := b.pending[id]
 	delete(b.pending, id)
 	b.mu.Unlock()
+	conversationID := ""
+	if ok {
+		conversationID = p.conversationID
+	}
 	b.Emit("resolved", ResolvedDTO{
-		ID: id, Status: string(status), Reason: reason,
+		ID:             id,
+		Status:         string(status),
+		Reason:         reason,
+		ConversationID: conversationID,
 	})
 	return nil
 }

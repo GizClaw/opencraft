@@ -256,35 +256,68 @@ func (a *App) SessionTurns(id string) ([]SessionTurnDTO, error) {
 	}
 	out := make([]SessionTurnDTO, 0, len(turns))
 	for _, t := range turns {
-		requestedAt := t.RequestedAt
-		if requestedAt.IsZero() {
-			requestedAt = t.At
-		}
-		startedAt := t.StartedAt
-		if startedAt.IsZero() {
-			startedAt = t.At
-		}
-		finishedAt := t.FinishedAt
-		if finishedAt.IsZero() {
-			finishedAt = t.At
-		}
-		var durationMs int64
-		if !t.StartedAt.IsZero() && !t.FinishedAt.IsZero() &&
-			t.FinishedAt.After(t.StartedAt) {
-			durationMs = t.FinishedAt.Sub(t.StartedAt).Milliseconds()
-		}
-		out = append(out, SessionTurnDTO{
-			Seq:         t.Seq,
-			At:          t.At.Format(time.RFC3339),
-			RequestedAt: requestedAt.Format(time.RFC3339),
-			StartedAt:   startedAt.Format(time.RFC3339),
-			FinishedAt:  finishedAt.Format(time.RFC3339),
-			DurationMs:  durationMs,
-			Messages:    t.Messages,
-			Artifacts:   t.Artifacts,
-		})
+		out = append(out, toSessionTurnDTO(t))
 	}
 	return out, nil
+}
+
+// toSessionTurnDTO maps one stored turn record to the wire form,
+// applying the same legacy-time fallbacks used by older archives.
+func toSessionTurnDTO(t ocsessions.TurnRecord) SessionTurnDTO {
+	requestedAt := t.RequestedAt
+	if requestedAt.IsZero() {
+		requestedAt = t.At
+	}
+	startedAt := t.StartedAt
+	if startedAt.IsZero() {
+		startedAt = t.At
+	}
+	finishedAt := t.FinishedAt
+	if finishedAt.IsZero() {
+		finishedAt = t.At
+	}
+	var durationMs int64
+	if !t.StartedAt.IsZero() && !t.FinishedAt.IsZero() &&
+		t.FinishedAt.After(t.StartedAt) {
+		durationMs = t.FinishedAt.Sub(t.StartedAt).Milliseconds()
+	}
+	return SessionTurnDTO{
+		Seq:         t.Seq,
+		At:          t.At.Format(time.RFC3339),
+		RequestedAt: requestedAt.Format(time.RFC3339),
+		StartedAt:   startedAt.Format(time.RFC3339),
+		FinishedAt:  finishedAt.Format(time.RFC3339),
+		DurationMs:  durationMs,
+		RunID:       t.RunID,
+		Messages:    t.Messages,
+		Artifacts:   t.Artifacts,
+	}
+}
+
+// ActiveRun returns the run id currently active in one conversation.
+// It covers both main-session runs and background-host runs targeting
+// the currently open workspace, so a frontend reload can restore a
+// busy turn without waiting for the first stream event.
+func (a *App) ActiveRun(conversationID string) ActiveRunDTO {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for runID, conv := range a.runConvs {
+		if conv == conversationID {
+			return ActiveRunDTO{RunID: runID}
+		}
+	}
+	workDir := filepath.Clean(a.workDir)
+	for _, h := range a.backgroundHosts {
+		if filepath.Clean(h.workDir) != workDir {
+			continue
+		}
+		for runID, conv := range h.runConvs {
+			if conv == conversationID {
+				return ActiveRunDTO{RunID: runID}
+			}
+		}
+	}
+	return ActiveRunDTO{}
 }
 
 // DelegationCards snapshots the delegation kanban board, newest first.

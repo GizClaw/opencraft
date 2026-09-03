@@ -55,6 +55,12 @@ type SessionSnapshot struct {
 	Model     string `json:"model"`
 }
 
+// ActiveRunDTO is the response of the ActiveRun binding: the run id
+// currently executing inside one conversation, or empty when idle.
+type ActiveRunDTO struct {
+	RunID string `json:"run_id,omitempty"`
+}
+
 // SessionTurnDTO is the wire form of one archived turn: its messages
 // plus the artifacts the turn produced. Times are RFC3339 strings so
 // the Wails model generator never sees time.Time. RequestedAt is when
@@ -67,6 +73,7 @@ type SessionTurnDTO struct {
 	StartedAt   string                `json:"started_at,omitempty"`
 	FinishedAt  string                `json:"finished_at,omitempty"`
 	DurationMs  int64                 `json:"duration_ms,omitempty"`
+	RunID       string                `json:"run_id,omitempty"`
 	Messages    []message.Message     `json:"messages"`
 	Artifacts   []ocsessions.Artifact `json:"artifacts,omitempty"`
 }
@@ -332,9 +339,10 @@ type UsageDTO struct {
 // ResolvedDTO notifies the UI that a pending interaction was resolved
 // externally.
 type ResolvedDTO struct {
-	ID     string `json:"id"`
-	Status string `json:"status"`
-	Reason string `json:"reason"`
+	ID             string `json:"id"`
+	Status         string `json:"status"`
+	Reason         string `json:"reason"`
+	ConversationID string `json:"conversation_id,omitempty"`
 }
 
 // FileNode is one directory entry in the workspace panel.

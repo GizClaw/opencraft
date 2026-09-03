@@ -4,7 +4,26 @@ import (
 	"context"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+
+	ocsessions "github.com/GizClaw/opencraft/internal/sessions"
 )
+
+// bufferObservedArtifact persists one workspace write into the owning
+// conversation's artifact buffer. The main runtime also emits the
+// matching "artifact" UI event before buffering; background hosts only
+// buffer because their runs are not surfaced as live chat turns.
+func bufferObservedArtifact(
+	store *ocsessions.Store,
+	ctx context.Context,
+	path string,
+	data []byte,
+) {
+	info, ok := agent.RunInfoFromContext(ctx)
+	if !ok || info.ConversationID == "" || store == nil {
+		return
+	}
+	_ = store.BufferArtifact(info.ConversationID, path, len(data))
+}
 
 // onArtifactWrite re-emits one observed workspace write as an
 // "artifact" UI event attributed to the owning conversation. Only
@@ -21,13 +40,8 @@ func (a *App) onArtifactWrite(ctx context.Context, path string, data []byte) {
 		"path":            path,
 		"bytes":           len(data),
 	})
-	// Buffer the artifact into the session store so the commit/archive
-	// hook persists it with the turn file ("artifacts" field); resume
-	// then replays one strip per turn.
 	a.mu.Lock()
 	store := a.sessions
 	a.mu.Unlock()
-	if store != nil {
-		_ = store.BufferArtifact(info.ConversationID, path, len(data))
-	}
+	bufferObservedArtifact(store, ctx, path, data)
 }

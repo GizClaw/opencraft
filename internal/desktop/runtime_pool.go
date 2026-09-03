@@ -571,17 +571,11 @@ func (h *backgroundHost) recordUsage(ctx context.Context, u inference.Usage) {
 func (h *backgroundHost) onArtifactWrite(
 	ctx context.Context, path string, data []byte,
 ) {
-	info, ok := agent.RunInfoFromContext(ctx)
-	if !ok || info.ConversationID == "" {
-		return
-	}
 	a := h.app
 	a.mu.Lock()
 	store := h.sessions
 	a.mu.Unlock()
-	if store != nil {
-		_ = store.BufferArtifact(info.ConversationID, path, len(data))
-	}
+	bufferObservedArtifact(store, ctx, path, data)
 }
 
 // waitTurn waits for one background turn, records usage/rollout,

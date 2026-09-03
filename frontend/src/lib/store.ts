@@ -366,6 +366,7 @@ function historyTurnsToState(turns: SessionTurn[]): {
     turnArtifacts.push({
       id: `h-${turn.seq}`,
       start,
+      runID: turn.run_id,
       requestedAt: turn.requested_at || turn.at,
       startedAt: turn.started_at || turn.at,
       finishedAt: turn.finished_at || turn.at,
@@ -964,7 +965,22 @@ export const useStore = create<StoreState>((set, get) => {
           break;
         }
         case 'resolved': {
-          const id = (ev.data as { id: string }).id;
+          const data = ev.data as {
+            id: string;
+            conversation_id?: string;
+          };
+          const id = data.id;
+          if (data.conversation_id) {
+            const conv = get().conversations[data.conversation_id];
+            if (conv?.pendingInteracts.some((p) => p.id === id)) {
+              updateConv(data.conversation_id, {
+                pendingInteracts: conv.pendingInteracts.filter(
+                  (p) => p.id !== id,
+                ),
+              });
+            }
+            break;
+          }
           for (const [convID, conv] of Object.entries(get().conversations)) {
             if (conv.pendingInteracts.some((p) => p.id === id)) {
               updateConv(convID, {
