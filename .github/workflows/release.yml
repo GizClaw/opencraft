@@ -206,11 +206,25 @@ jobs:
               2>&1 | tee /tmp/notary.log
             status=${PIPESTATUS[0]}
           fi
-          if [ $status -ne 0 ]; then
+          sub_id="$(sed -n 's/.*id: \([0-9a-fA-F-]\{36\}\).*/\1/p' /tmp/notary.log | head -1)"
+          if [ $status -ne 0 ] ||
+            grep -Eq 'status: (Invalid|Rejected)' /tmp/notary.log; then
             echo "::error::notarization failed (exit ${status})"
+            if [ -n "$sub_id" ]; then
+              if [ -n "$APPLE_API_PRIVATE_KEY" ]; then
+                xcrun notarytool log "$sub_id" \
+                  --key /tmp/AuthKey.p8 \
+                  --key-id "$APPLE_API_KEY" \
+                  --issuer "$APPLE_API_ISSUER" || true
+              else
+                xcrun notarytool log "$sub_id" \
+                  --apple-id "$APPLE_ID" \
+                  --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+                  --team-id "$APPLE_TEAM_ID" || true
+              fi
+            fi
             exit 1
           fi
-          sub_id="$(sed -n 's/.*id: \([0-9a-fA-F-]\{36\}\).*/\1/p' /tmp/notary.log | head -1)"
           xcrun stapler staple "$dmg"
           {
             echo "## macOS verification (${TAG#v})"
