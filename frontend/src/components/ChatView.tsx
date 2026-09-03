@@ -45,7 +45,8 @@ import { useTranslation } from 'react-i18next';
 import { OnFileDrop, OnFileDropOff } from '../../wailsjs/runtime/runtime';
 import { api } from '../lib/api';
 import { COMPACT_SUMMARY_PREFIX } from '../lib/compact';
-import { displaySessionID, isTurnBusy, useStore } from '../lib/store';
+import { useStore } from '../lib/store';
+import { useConversationState, useFocusState } from '../state/react';
 import type { AttachmentView } from '../lib/types';
 import type {
   AssistantItem,
@@ -741,15 +742,17 @@ function AttachmentFiles({ attachments }: { attachments: AttachmentView[] }) {
 }
 
 export function ChatView() {
-  const current = useStore((s) => displaySessionID(s.navigation));
+  const focus = useFocusState();
+  const current = focus.name === 'active' ? focus.sessionID : '';
   const conv = useStore((s) => {
-    const id = displaySessionID(s.navigation);
-    return id ? s.conversations[id] : undefined;
+    return current ? s.conversations[current] : undefined;
   });
+  const conversationState = useConversationState(current);
   const sessions = useStore((s) => s.sessions);
   const messages = conv?.messages ?? [];
-  const turn = conv?.turn;
-  const busy = turn ? isTurnBusy(turn) : false;
+  const turnState = conversationState?.turn;
+  const busy =
+    turnState?.name === 'starting' || turnState?.name === 'running';
   const turnArtifacts = conv?.turnArtifacts ?? [];
   const [visibleCount, setVisibleCount] = useState(RENDER_WINDOW);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
@@ -789,7 +792,7 @@ export function ChatView() {
   const mode = conv?.mode ?? 'workspace';
   const setMode = useStore((s) => s.setMode);
   const think = conv?.think ?? 'medium';
-  const stage = turn?.name === 'running' ? turn.stage : '';
+  const stage = turnState?.name === 'running' ? turnState.stage : '';
   const setThink = useStore((s) => s.setThink);
   const model = conv?.model ?? '';
   const setModel = useStore((s) => s.setModel);
@@ -800,7 +803,7 @@ export function ChatView() {
   const thinkSupported = model
     ? (modelOptions.find((o) => o.id === model)?.reasoning ?? false)
     : (status?.default_reasoning ?? false);
-  const lastFailed = turn?.name === 'failed';
+  const lastFailed = turnState?.name === 'failed';
   const openConfig = useStore((s) => s.openConfig);
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<AttachmentView[]>([]);

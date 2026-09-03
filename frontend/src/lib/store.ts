@@ -28,7 +28,7 @@ import {
   routeBackendEvent,
   type EventDataSink,
 } from '../state/eventRouter';
-import { StateRoot } from '../state/root';
+import { stateRoot } from '../state/app';
 import {
   activeSessionID,
   displaySessionID,
@@ -608,8 +608,6 @@ interface StoreState {
 let themeMedia: MediaQueryList | null = null;
 let themeMediaHandler: (() => void) | null = null;
 
-export const stateRoot = new StateRoot();
-
 // applyTheme resolves dark/light/auto (auto follows the OS preference)
 // and keeps a media-query listener alive while auto is selected.
 function applyTheme(theme: 'dark' | 'light' | 'auto') {
@@ -752,6 +750,10 @@ export const useStore = create<StoreState>((set, get) => {
           },
         },
       }));
+      const actor = stateRoot.registry.ensure(convID, {
+        workspaceGeneration: stateRoot.generation(),
+      });
+      actor?.send({ type: 'RUN_STARTED', runID: start.run_id });
       void get().loadSessions();
     } catch (err) {
       const conv = get().conversations[convID];
@@ -1082,6 +1084,13 @@ export const useStore = create<StoreState>((set, get) => {
     },
   };
 
+  const activeConversationID = () => {
+    const snapshot = stateRoot.focusSnapshot;
+    return snapshot.value === 'active'
+      ? (snapshot.context as { sessionID: string }).sessionID
+      : '';
+  };
+
   return {
     status: null,
     configured: false,
@@ -1186,7 +1195,7 @@ export const useStore = create<StoreState>((set, get) => {
     send: async (text, attachments = []) => {
       const trimmed = text.trim();
       const state = get();
-      const convID = activeSessionID(state.navigation);
+      const convID = activeConversationID();
       const conv = convID ? state.conversations[convID] : undefined;
       if (
         (!trimmed && attachments.length === 0) ||
@@ -1212,7 +1221,7 @@ export const useStore = create<StoreState>((set, get) => {
 
     retryLast: async () => {
       const state = get();
-      const convID = activeSessionID(state.navigation);
+      const convID = activeConversationID();
       const conv = convID ? state.conversations[convID] : undefined;
       if (!convID || !conv || isTurnBusy(conv.turn)) return;
       let lastUserIdx = -1;
@@ -1234,7 +1243,7 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     clearLastFailed: () => {
-      const convID = activeSessionID(get().navigation);
+      const convID = activeConversationID();
       const conv = convID ? get().conversations[convID] : undefined;
       if (conv?.turn.name === 'failed') {
         updateConv(convID, { turn: { name: 'idle' } });
@@ -1262,7 +1271,7 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     cancelRun: async () => {
-      const convID = activeSessionID(get().navigation);
+      const convID = activeConversationID();
       const conv = convID ? get().conversations[convID] : undefined;
       if (conv?.turn.name === 'running') {
         try {
@@ -1437,7 +1446,7 @@ export const useStore = create<StoreState>((set, get) => {
           delete conversations[id];
           return { conversations };
         });
-        if (activeSessionID(get().navigation) === id) {
+        if (activeConversationID() === id) {
           // The active conversation is gone: switch to a fresh one so
           // the chat never points at a deleted session.
           await get().newChat();
@@ -1456,7 +1465,7 @@ export const useStore = create<StoreState>((set, get) => {
     setMode: async (mode) => {
       try {
         await api.setSessionMode(mode);
-        const convID = activeSessionID(get().navigation);
+        const convID = activeConversationID();
         if (convID) updateConv(convID, { mode });
       } catch (err) {
         set({ statusText: String(err) });
@@ -1466,7 +1475,7 @@ export const useStore = create<StoreState>((set, get) => {
     setThink: async (level) => {
       try {
         await api.setThink(level);
-        const convID = activeSessionID(get().navigation);
+        const convID = activeConversationID();
         if (convID) updateConv(convID, { think: level });
       } catch (err) {
         set({ statusText: String(err) });
@@ -1476,7 +1485,7 @@ export const useStore = create<StoreState>((set, get) => {
     setModel: async (model) => {
       try {
         await api.setModel(model);
-        const convID = activeSessionID(get().navigation);
+        const convID = activeConversationID();
         if (convID) updateConv(convID, { model });
       } catch (err) {
         set({ statusText: String(err) });
@@ -1583,7 +1592,7 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     loadSubagentCards: async () => {
-      const convID = activeSessionID(get().navigation);
+      const convID = activeConversationID();
       if (!convID) return;
       try {
         const cards = (await api.conversationDelegationCards(convID)) ?? [];

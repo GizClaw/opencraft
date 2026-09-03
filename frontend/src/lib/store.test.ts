@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MessageView } from './store';
-import { stateRoot, useStore } from './store';
+import { stateRoot } from '../state/app';
+import { useStore } from './store';
 
 const apiMock = vi.hoisted(() => ({
   configStatus: vi.fn(),
@@ -27,6 +28,11 @@ vi.mock('../lib/api', () => ({ api: apiMock }));
 
 function resetStore() {
   stateRoot.resetWorkspace();
+  stateRoot.sendFocus({ type: 'RESTORE_FOCUS', sessionID: 's-1' });
+  stateRoot.registry.ensure('s-1', {
+    workspaceGeneration: stateRoot.generation(),
+    readyEmpty: true,
+  });
   useStore.setState({
     status: {
       needed: false,

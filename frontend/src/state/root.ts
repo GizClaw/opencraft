@@ -20,10 +20,30 @@ export class StateRoot {
   readonly registry = new ConversationRegistry();
   private focusActor: ReturnType<typeof makeFocusActor>;
   private workspaceGeneration = 0;
+  private version = 0;
 
   constructor(sessionID = '') {
     this.focusActor = makeFocusActor(sessionID);
     this.focusActor.start();
+  }
+
+  subscribe(listener: () => void): () => void {
+    const wrapped = () => {
+      this.version += 1;
+      listener();
+    };
+    const unsubFocus = this.focusActor.subscribe(
+      wrapped,
+    ) as unknown as { unsubscribe(): void };
+    const unsubRegistry = this.registry.subscribe(wrapped);
+    return () => {
+      unsubFocus.unsubscribe();
+      unsubRegistry();
+    };
+  }
+
+  getVersion(): number {
+    return this.version;
   }
 
   get focusSnapshot() {

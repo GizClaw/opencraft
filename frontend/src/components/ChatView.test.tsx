@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useStore } from '../lib/store';
+import { stateRoot } from '../state/app';
 import type { MessageView, TurnArtifacts } from '../lib/store';
 import { ChatView } from './ChatView';
 
@@ -41,6 +42,10 @@ function setConversation(
   messages: MessageView[],
   turnArtifacts: TurnArtifacts[] = [],
 ) {
+  stateRoot.sendFocus({ type: 'RESTORE_FOCUS', sessionID: 's-1' });
+  stateRoot.registry.ensure('s-1', {
+    workspaceGeneration: stateRoot.generation(),
+  });
   useStore.setState({
     configured: true,
     navigation: { name: 'ready', sessionID: 's-1', epoch: 0 },
@@ -61,6 +66,7 @@ function setConversation(
 }
 
 beforeEach(() => {
+  stateRoot.resetWorkspace();
   vi.clearAllMocks();
   apiMock.projectConfigStatus.mockResolvedValue(null);
   apiMock.workspace.mockResolvedValue('/tmp/w');
