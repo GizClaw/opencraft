@@ -1110,9 +1110,44 @@ export const useStore = create<StoreState>((set, get) => {
             type: 'RESTORE_FOCUS',
             sessionID: currentSession,
           });
-          stateRoot.registry.ensure(currentSession, {
+          const actor = stateRoot.registry.ensure(currentSession, {
             workspaceGeneration: stateRoot.generation(),
           });
+          const generation = stateRoot.generation();
+          actor?.send({
+            type: 'HYDRATE_REQUESTED',
+            request: 1,
+            generation,
+          });
+          void api
+            .sessionTurns(currentSession)
+            .then((turns) => {
+              const { messages, turnArtifacts } = historyTurnsToState(turns);
+              set((state) => ({
+                conversations: {
+                  ...state.conversations,
+                  [currentSession]: capConversation({
+                    ...(state.conversations[currentSession] ?? emptyConv()),
+                    messages,
+                    turnArtifacts,
+                  }),
+                },
+              }));
+              actor?.send({
+                type: 'HYDRATE_OK',
+                request: 1,
+                generation,
+                empty: turns.length === 0,
+              });
+            })
+            .catch((err) => {
+              actor?.send({
+                type: 'HYDRATE_FAIL',
+                request: 1,
+                generation,
+                error: errorMessage(err),
+              });
+            });
         }
         void get().refreshAgents();
         void get().loadWorkspaces();
