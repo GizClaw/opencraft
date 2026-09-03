@@ -41,12 +41,11 @@ func (a *App) configureHostManager() {
 	})
 }
 
-// inferenceConfigured reports whether the merged deployment for wd has
-// at least one usable inference target. It mirrors the old desktop
+// inferenceConfigured reports whether the merged deployment has at
+// least one usable inference target. It mirrors the old desktop
 // readiness check without assembling a runtime.
-func (a *App) inferenceConfigured(wd string) (bool, error) {
+func (a *App) inferenceConfigured() (bool, error) {
 	mgr, err := config.Open(config.Options{
-		WorkDir: wd,
 		UserDir: a.userDir,
 	})
 	if err != nil {

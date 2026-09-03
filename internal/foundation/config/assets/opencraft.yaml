@@ -7,8 +7,9 @@ version: v1
 # each as its own embedded layer and deep-merges them in order.
 # Inference wiring (provider / infer assembly / router) lives in
 # assets/inference.yaml on purpose: the settings page writes the
-# variable parts to ~/.opencraft/config/opencraft.yaml and the
-# optional workspace layer can override them per repo.
+# variable parts to ~/.opencraft/config/opencraft.yaml. Configuration
+# is user-level only; workspace opencraft.yaml files are not loaded as
+# an override layer.
 
 resources:
   # Credential storage: the file-backed secret store feeds the

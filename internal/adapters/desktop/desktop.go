@@ -124,7 +124,7 @@ type App struct {
 	// the workspace session store).
 	runUsage map[string]ocsessions.Usage
 	// dataDir is the root passed to host.Manager; it is also the
-	// workspace state/config root.
+	// workspace state root.
 	dataDir string
 	// sessionImportMu serializes session.import across the UI runtime
 	// and background hosts. Store.Import writes history before memory
@@ -442,7 +442,7 @@ func (a *App) rebuild() error {
 			}
 		}
 	}
-	configured, err := a.inferenceConfigured(wd)
+	configured, err := a.inferenceConfigured()
 	if err != nil {
 		return err
 	}

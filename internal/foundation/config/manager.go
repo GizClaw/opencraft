@@ -1,5 +1,5 @@
 // Package config owns opencraft's user-facing configuration: discovery,
-// seeding, layered loading (embedded base -> user -> workspace), and the
+// seeding, layered loading (embedded base -> user), and the
 // app-level execution document. The deploy layering itself is
 // flowcraft core's deploy.LoadLayers.
 package config
@@ -17,27 +17,14 @@ import (
 type Layer string
 
 const (
-	LayerUser      Layer = "user"
-	LayerWorkspace Layer = "workspace"
+	LayerUser Layer = "user"
 )
 
 // Options configures a Manager.
 type Options struct {
-	// WorkDir is the directory configuration is discovered from.
-	// Defaults to the current working directory.
-	WorkDir string
 	// UserDir overrides the global user configuration directory
 	// (defaults to ~/.opencraft/config).
 	UserDir string
-	// WorkspaceConfig is the full path to the workspace-owned
-	// opencraft.yaml under ~/.opencraft/workspaces/<wid>/opencraft.yaml.
-	// When non-empty it is loaded above the user layer as the
-	// workspace layer. The final Host injects this path explicitly;
-	// it is never discovered from the project directory.
-	WorkspaceConfig string
-	// WorkspaceLayout supplies the same path through the typed layout.
-	// WorkspaceConfig wins when both are set.
-	WorkspaceLayout *WorkspaceLayout
 	// Explicit adds an on-disk deploy document as a layer above the
 	// embedded base (the -config flag). It may be partial: resources it
 	// does not name keep the embedded defaults, and anything it names
@@ -47,15 +34,14 @@ type Options struct {
 	Explicit string
 }
 
-// Manager owns layered configuration loading: the embedded base, the
-// user layer, and the optional workspace layer.
+// Manager owns layered configuration loading: the embedded base and
+// the user layer.
 type Manager struct {
-	userDir   string
-	explicit  string
-	workspace string
+	userDir  string
+	explicit string
 }
 
-// Open creates a Manager for workDir.
+// Open creates a Manager rooted at the user configuration directory.
 func Open(opts Options) (*Manager, error) {
 	userDir := opts.UserDir
 	var err error
@@ -65,27 +51,16 @@ func Open(opts Options) (*Manager, error) {
 			return nil, err
 		}
 	}
-	workspaceConfig := opts.WorkspaceConfig
-	if workspaceConfig == "" && opts.WorkspaceLayout != nil {
-		workspaceConfig = opts.WorkspaceLayout.ConfigFile
-	}
 	return &Manager{
-		userDir:   userDir,
-		explicit:  opts.Explicit,
-		workspace: workspaceConfig,
+		userDir:  userDir,
+		explicit: opts.Explicit,
 	}, nil
 }
 
-// WorkspaceConfig returns the injected workspace configuration path,
-// or "" when no workspace layer is configured.
-func (m *Manager) WorkspaceConfig() string { return m.workspace }
-
-// View is the merged deployment plus provenance.
+// View is the merged deployment document.
 type View struct {
 	// Document is the deploy document merged across layers.
 	Document deploy.Document
-	// Provenance records which layer provided each resource/agent.
-	Provenance deploy.Provenance
 }
 
 // Load merges the layered deploy documents.
@@ -127,8 +102,8 @@ func (m *Manager) Load(ctx context.Context) (*View, error) {
 	}}
 	if m.explicit != "" {
 		// Above embedded, below the user layer: -config is meant to
-		// override built-ins, but user/workspace layers still win for
-		// the keys they set.
+		// override built-ins, but the user layer still wins for the
+		// keys it sets.
 		layers = append(layers, deploy.Layer{
 			Priority: 5,
 			Name:     "explicit",
@@ -147,25 +122,11 @@ func (m *Manager) Load(ctx context.Context) (*View, error) {
 			BaseDir:  m.userDir,
 		})
 	}
-	// The workspace-owned layer sits above the user layer. Its BaseDir
-	// is the workspace state root under the user data
-	// directory, never a directory inside the project.
-	if m.workspace != "" {
-		if _, err := os.Stat(m.workspace); err == nil {
-			layers = append(layers, deploy.Layer{
-				Priority: 20,
-				Name:     string(LayerWorkspace),
-				Source:   resource.Source{File: filepath.Base(m.workspace)},
-				BaseDir:  filepath.Dir(m.workspace),
-			})
-		}
-	}
-	doc, provenance, err := deploy.LoadLayers(ctx, layers)
+	doc, _, err := deploy.LoadLayers(ctx, layers)
 	if err != nil {
 		return nil, err
 	}
 	return &View{
-		Document:   doc,
-		Provenance: provenance,
+		Document: doc,
 	}, nil
 }

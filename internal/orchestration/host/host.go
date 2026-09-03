@@ -208,9 +208,7 @@ func (m *Manager) assemble(
 	}
 	_ = layout.Ensure()
 	mgr, err := config.Open(config.Options{
-		WorkDir:         workDir,
-		UserDir:         userDir,
-		WorkspaceLayout: &layout,
+		UserDir: userDir,
 	})
 	if err != nil {
 		return nil, err

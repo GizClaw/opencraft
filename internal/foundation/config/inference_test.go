@@ -37,7 +37,7 @@ func envKeyed(t *testing.T, ids ...string) InferenceConfig {
 
 func load(t *testing.T, workDir, userDir string) *View {
 	t.Helper()
-	mgr, err := Open(Options{WorkDir: workDir, UserDir: userDir})
+	mgr, err := Open(Options{UserDir: userDir})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,11 +72,11 @@ func TestNeeded(t *testing.T) {
 		t.Fatalf("with router: needed=%v err=%v, want false", needed, err)
 	}
 
-	// Unparseable user layer is treated as unconfigured.
-	writeFile(t, dir, "opencraft.yaml", ":: not yaml [")
+	// An unparseable user layer is an error, never "unconfigured".
+	writeFile(t, dir, "opencraft.yaml", "a: [unterminated\n")
 	needed, err = InferenceNeeded(dir)
-	if err != nil || !needed {
-		t.Fatalf("broken yaml: needed=%v err=%v, want true", needed, err)
+	if err == nil || needed {
+		t.Fatalf("broken yaml: needed=%v err=%v, want error and false", needed, err)
 	}
 }
 

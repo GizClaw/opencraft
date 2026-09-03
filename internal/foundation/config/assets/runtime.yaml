@@ -1,5 +1,5 @@
 # Runtime section. Partial embedded deploy layer: deep-merged on top
-# of the base, tool, and agent layers; the user/workspace layers still win.
+# of the base, tool, and agent layers; the user layer still wins.
 runtime:
   event_bus: events
   # The session store owns the project's session.db and serves as the

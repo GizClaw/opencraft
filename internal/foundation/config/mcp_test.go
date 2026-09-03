@@ -157,6 +157,33 @@ agents:
 	}
 }
 
+func TestWriteMCPClearPreservesOtherToolsDeps(t *testing.T) {
+	dir := t.TempDir()
+	existing := `version: v1
+resources:
+  tools:
+    deps:
+      tool.exec: tool.exec
+      tool.mcp: tool.mcp
+`
+	if err := os.WriteFile(filepath.Join(dir, "opencraft.yaml"), []byte(existing), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteMCP(dir, nil); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "opencraft.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "tool.exec") {
+		t.Fatalf("clearing MCP dropped unrelated tools dep:\n%s", data)
+	}
+	if strings.Contains(string(data), "tool.mcp") {
+		t.Fatalf("clearing MCP left stale tool.mcp dep:\n%s", data)
+	}
+}
+
 func TestLoadMCPMissingLayer(t *testing.T) {
 	servers, err := LoadMCP(filepath.Join(t.TempDir(), "nope"))
 	if err != nil || servers == nil || len(servers) != 0 {

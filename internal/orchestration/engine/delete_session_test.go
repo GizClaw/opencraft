@@ -3,7 +3,6 @@ package engine
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -29,9 +28,7 @@ func TestDeleteSessionClosesLiveSession(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "test-key")
 
 	userDir := filepath.Join(home, ".opencraft", "config")
-	if err := os.MkdirAll(userDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	seedLocalSandboxConfig(t, userDir)
 	cfg := config.InferenceConfig{
 		Instances: []config.Instance{{
 			Type:      config.Providers[0].ID,
@@ -42,14 +39,9 @@ func TestDeleteSessionClosesLiveSession(t *testing.T) {
 	if err := config.WriteInference(userDir, cfg); err != nil {
 		t.Fatalf("write inference config: %v", err)
 	}
-	workspaceConfig := writeTestWorkspaceConfig(
-		t, home, work,
-		"resources:\n  box:\n    settings:\n      remote: false\n")
 
 	mgr, err := config.Open(config.Options{
-		WorkDir:         work,
-		UserDir:         userDir,
-		WorkspaceConfig: workspaceConfig,
+		UserDir: userDir,
 	})
 	if err != nil {
 		t.Fatal(err)

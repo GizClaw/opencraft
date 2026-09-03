@@ -83,19 +83,20 @@ func (a *App) Diagnostics() DiagnosticsReport {
 	rep.GitVersion = commandVersion(ctx, 3*time.Second, "git", "--version")
 
 	if mgr, err := config.Open(config.Options{
-		WorkDir: wd,
 		UserDir: a.userDir,
 	}); err == nil {
-		if _, err := mgr.Load(ctx); err != nil {
+		if view, err := mgr.Load(ctx); err != nil {
 			rep.ConfigError = err.Error()
 		} else {
 			rep.ConfigValid = true
+			if configured, err := config.RouterConfigured(view.Document); err == nil {
+				rep.InferenceConfigured = configured
+			} else {
+				rep.ConfigError = err.Error()
+			}
 		}
 	} else {
 		rep.ConfigError = err.Error()
-	}
-	if needed, err := config.InferenceNeeded(a.userDir); err == nil {
-		rep.InferenceConfigured = !needed
 	}
 
 	if wd != "" {
@@ -237,7 +238,6 @@ func (a *App) ClearCaches() (CacheClearResult, error) {
 // config and appends the project approvals file entries.
 func (a *App) execPolicyRules(wd string) ([]string, error) {
 	mgr, err := config.Open(config.Options{
-		WorkDir: wd,
 		UserDir: a.userDir,
 	})
 	if err != nil {

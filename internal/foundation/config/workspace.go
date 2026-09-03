@@ -14,7 +14,12 @@ import (
 // two different paths never collide in practice while the id stays
 // short enough for file names and URLs.
 func WorkspaceID(workDir string) string {
-	sum := sha256.Sum256([]byte(filepath.Clean(workDir)))
+	cleaned := filepath.Clean(workDir)
+	abs, err := filepath.Abs(cleaned)
+	if err == nil {
+		cleaned = abs
+	}
+	sum := sha256.Sum256([]byte(cleaned))
 	return hex.EncodeToString(sum[:16])
 }
 
@@ -58,8 +63,9 @@ type WorkspaceLayout struct {
 	ID   string
 	Root string // <dataDir>/workspaces/<id>
 
-	// Workspace-owned configuration, flattened into the root.
-	ConfigFile    string // opencraft.yaml
+	// Workspace-owned state files. Configuration is user-level only;
+	// workspace opencraft.yaml files are no longer loaded as an
+	// override layer.
 	ApprovalsFile string // approvals.yaml
 
 	// Conversation state. SessionsDir is the sessions.Store root: it
@@ -93,7 +99,6 @@ func ResolveWorkspace(dataDir, workDir string) (WorkspaceLayout, error) {
 		WorkDir:       filepath.Clean(workDir),
 		ID:            id,
 		Root:          root,
-		ConfigFile:    filepath.Join(root, "opencraft.yaml"),
 		ApprovalsFile: filepath.Join(root, "approvals.yaml"),
 		SessionsDir:   filepath.Join(root, "sessions"),
 		SessionDBPath: filepath.Join(root, "sessions", "session.db"),

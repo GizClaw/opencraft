@@ -1,7 +1,7 @@
 # Tool containers (each tool.Source is one tool group; the tools
 # assembly aggregates them through deps) plus the script runtime.
 # Partial embedded deploy layer: deep-merged on top of
-# assets/opencraft.yaml; the user/workspace layers still win.
+# assets/opencraft.yaml; the user layer still wins.
 resources:
   # ------------------------------------------------------------------
   # Tool containers: each tool.Source is one tool group; tools

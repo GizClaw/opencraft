@@ -82,8 +82,8 @@ func LoadMCP(configDir string) ([]MCPServer, error) {
 // WriteMCP persists the MCP server list into the user configuration
 // layer, merging over it so the inference wiring and other manual
 // resources survive. An empty list removes the tool.mcp source and its
-// tools assembly dep entirely, so the merged document never declares an
-// MCP source without servers.
+// tools assembly dep, preserving any other user-declared tools deps, so
+// the merged document never declares an MCP source without servers.
 func WriteMCP(configDir string, servers []MCPServer) error {
 	layer := mcpLayer{Version: "v1"}
 	replaceKeys := map[string]bool{"tool.mcp": true}
@@ -95,9 +95,10 @@ func WriteMCP(configDir string, servers []MCPServer) error {
 		layer.Resources.Tools.Deps = map[string]string{"tool.mcp": "tool.mcp"}
 		mergeKeys["tools"] = true
 	} else {
-		// Replace the user-layer tools deps with an empty mapping so a
-		// stale tool.mcp dependency from a previous save is removed.
-		layer.Resources.Tools.Deps = map[string]string{}
+		// Replace the user-layer tools resource with every existing dep
+		// except tool.mcp, so clearing MCP never deletes unrelated deps.
+		layer.Resources.Tools.Deps = userLayerToolsDepsWithoutMCP(
+			filepath.Join(configDir, "opencraft.yaml"))
 		replaceKeys["tools"] = true
 	}
 	fresh, err := yaml.Marshal(layer)
@@ -119,4 +120,33 @@ func WriteMCP(configDir string, servers []MCPServer) error {
 		merged,
 		0o600,
 	)
+}
+
+// userLayerToolsDepsWithoutMCP reads the current user layer's tools deps
+// and returns every dependency except tool.mcp. Missing layers return an
+// empty mapping.
+func userLayerToolsDepsWithoutMCP(path string) map[string]string {
+	out := map[string]string{}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return out
+	}
+	var doc struct {
+		Resources map[string]struct {
+			Deps map[string]string `json:"deps"`
+		} `json:"resources"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return out
+	}
+	tools, ok := doc.Resources["tools"]
+	if !ok {
+		return out
+	}
+	for key, ref := range tools.Deps {
+		if key != "tool.mcp" {
+			out[key] = ref
+		}
+	}
+	return out
 }

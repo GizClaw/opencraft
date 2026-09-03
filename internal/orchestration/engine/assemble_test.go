@@ -18,22 +18,6 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 )
 
-func writeTestWorkspaceConfig(
-	t *testing.T, home, work, content string,
-) string {
-	t.Helper()
-	wsRoot := filepath.Join(
-		home, ".opencraft", "workspaces", config.WorkspaceID(work))
-	if err := os.MkdirAll(wsRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(wsRoot, "opencraft.yaml")
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return path
-}
-
 func testWorkspaceLayout(
 	t *testing.T, home, work string,
 ) *config.WorkspaceLayout {
@@ -46,11 +30,27 @@ func testWorkspaceLayout(
 	return &layout
 }
 
+// seedLocalSandboxConfig pre-seeds the user layer with local
+// (non-execd) sandboxing: the test binary cannot fork itself into
+// execd mode, so engine tests use the in-process platform backend.
+// WriteInference preserves this box override.
+func seedLocalSandboxConfig(t *testing.T, configDir string) {
+	t.Helper()
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	seed := []byte("version: v1\nresources:\n  box:\n    settings:\n      remote: false\n")
+	if err := os.WriteFile(
+		filepath.Join(configDir, "opencraft.yaml"), seed, 0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestBuildRuntimeAssemblesNewTools verifies that the embedded deploy
 // document (with the new tool sources) assembles into a runtime. The
-// inference wiring comes from the wizard-generated user layer, and the
-// project layer disables the remote execd backend so the test binary
-// is not self-forked as an execd child.
+// inference wiring and the local-sandbox override live in the
+// wizard-generated user layer.
 func TestBuildRuntimeAssemblesNewTools(t *testing.T) {
 	work := t.TempDir()
 	home := t.TempDir()
@@ -58,9 +58,7 @@ func TestBuildRuntimeAssemblesNewTools(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "test-key")
 
 	userDir := filepath.Join(home, ".opencraft", "config")
-	if err := os.MkdirAll(userDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	seedLocalSandboxConfig(t, userDir)
 	// First-run wizard output: DeepSeek keyed, provider wired into the
 	// infer assembly.
 	cfg := config.InferenceConfig{
@@ -73,16 +71,9 @@ func TestBuildRuntimeAssemblesNewTools(t *testing.T) {
 	if err := config.WriteInference(userDir, cfg); err != nil {
 		t.Fatalf("write inference config: %v", err)
 	}
-	// Workspace layer: disable remote execd so the test binary is not
-	// self-forked as an execd child.
-	workspaceConfig := writeTestWorkspaceConfig(
-		t, home, work,
-		"resources:\n  box:\n    settings:\n      remote: false\n")
 
 	mgr, err := config.Open(config.Options{
-		WorkDir:         work,
-		UserDir:         userDir,
-		WorkspaceConfig: workspaceConfig,
+		UserDir: userDir,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -175,9 +166,7 @@ func TestBuildRuntimeWithPluginHostExposesAgentCapabilities(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "test-key")
 
 	userDir := filepath.Join(home, ".opencraft", "config")
-	if err := os.MkdirAll(userDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	seedLocalSandboxConfig(t, userDir)
 	cfg := config.InferenceConfig{
 		Instances: []config.Instance{{
 			Type:      config.Providers[0].ID,
@@ -188,9 +177,6 @@ func TestBuildRuntimeWithPluginHostExposesAgentCapabilities(t *testing.T) {
 	if err := config.WriteInference(userDir, cfg); err != nil {
 		t.Fatalf("write inference config: %v", err)
 	}
-	workspaceConfig := writeTestWorkspaceConfig(
-		t, home, work,
-		"resources:\n  box:\n    settings:\n      remote: false\n")
 
 	// A real plugin on disk: one skill, one hook file, one capability
 	// tool declaration.
@@ -248,9 +234,7 @@ func TestBuildRuntimeWithPluginHostExposesAgentCapabilities(t *testing.T) {
 	}
 
 	mgr, err := config.Open(config.Options{
-		WorkDir:         work,
-		UserDir:         userDir,
-		WorkspaceConfig: workspaceConfig,
+		UserDir: userDir,
 	})
 	if err != nil {
 		t.Fatal(err)

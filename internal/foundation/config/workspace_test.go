@@ -29,6 +29,22 @@ func TestWorkspaceIDStableAndPathSafe(t *testing.T) {
 	}
 }
 
+func TestWorkspaceIDUsesAbsolutePath(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	abs := filepath.Join(cwd, "proj")
+	rel, err := filepath.Rel(cwd, abs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if WorkspaceID(abs) != WorkspaceID(rel) {
+		t.Fatalf("relative and absolute paths must share an id: %q vs %q",
+			WorkspaceID(abs), WorkspaceID(rel))
+	}
+}
+
 func TestWorkspaceRootIsolatedByID(t *testing.T) {
 	dataDir := t.TempDir()
 	workA := filepath.Join(t.TempDir(), "a")
@@ -62,9 +78,6 @@ func TestResolveWorkspaceLayout(t *testing.T) {
 	want := filepath.Join(dataDir, "workspaces", WorkspaceID(workDir))
 	if layout.Root != want {
 		t.Fatalf("root = %q, want %q", layout.Root, want)
-	}
-	if layout.ConfigFile != filepath.Join(want, "opencraft.yaml") {
-		t.Fatalf("config file = %q", layout.ConfigFile)
 	}
 	if layout.SessionDBPath != filepath.Join(want, "sessions", "session.db") {
 		t.Fatalf("session db = %q", layout.SessionDBPath)

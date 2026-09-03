@@ -11,8 +11,7 @@ import (
 
 // MemorySettings mirrors the resources.mem.settings subtree the
 // settings page manages. The settings page always submits the complete
-// set and mergeUserLayer replaces the user-layer resource wholesale,
-// so no omitempty: every write persists all four keys and false is
+// set, so no omitempty: every write persists all four keys and false is
 // never dropped.
 type MemorySettings struct {
 	MaxRawMessages    int  `json:"max_raw_messages"`
@@ -54,7 +53,9 @@ func LoadMemory(configDir string) (MemorySettings, error) {
 }
 
 // WriteMemory persists the memory settings into the user configuration
-// layer, deep-merging so hand-written sibling keys (e.g. deps) survive.
+// layer. The mem resource is replaced wholesale by the fresh partial
+// resource, so stale or unknown keys cannot survive in
+// resources.mem.settings and later fail the runtime's strict decode.
 func WriteMemory(configDir string, settings MemorySettings) error {
 	layer := memoryLayer{Version: "v1"}
 	layer.Resources.Mem = &memoryResourceLayer{Settings: settings}
@@ -65,8 +66,8 @@ func WriteMemory(configDir string, settings MemorySettings) error {
 	merged, err := mergeUserLayer(
 		filepath.Join(configDir, "opencraft.yaml"),
 		fresh,
-		map[string]bool{},
 		map[string]bool{"mem": true},
+		map[string]bool{},
 		false, // memory does not own provider resources; preserve them
 	)
 	if err != nil {

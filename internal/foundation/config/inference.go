@@ -287,9 +287,8 @@ func InferenceNeeded(configDir string) (bool, error) {
 		Resources map[string]any `json:"resources"`
 	}
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		// Unparseable user layer: treat as unconfigured so the
-		// settings page can rewrite it.
-		return true, nil
+		return false, fmt.Errorf(
+			"config: parse user config: %w", err)
 	}
 	// The embedded inference layer provides providers + infer + the
 	// router retry shell; the user-written layer is what adds the
@@ -304,7 +303,7 @@ func InferenceNeeded(configDir string) (bool, error) {
 // RouterConfigured reports whether the merged deployment document
 // carries at least one router generate target. The embedded inference
 // layer contributes a router retry shell with no pools until the user
-// or workspace layer declares targets, so this distinguishes "inference
+// layer declares targets, so this distinguishes "inference
 // is not configured yet" (an expected UI state) from a real router
 // validation failure at build time.
 func RouterConfigured(doc deploy.Document) (bool, error) {
@@ -620,7 +619,7 @@ func WriteInference(configDir string, cfg InferenceConfig) error {
 	merged, err := mergeUserLayer(
 		filepath.Join(configDir, "opencraft.yaml"),
 		fresh,
-		managedResourceKeys(cfg),
+		managedResourceKeys(),
 		map[string]bool{},
 		true, // inference owns every provider.* resource
 	)
@@ -643,7 +642,7 @@ func RemoveInferenceConfig(configDir string) error {
 	merged, err := mergeUserLayer(
 		filepath.Join(configDir, "opencraft.yaml"),
 		fresh,
-		managedResourceKeys(InferenceConfig{}),
+		managedResourceKeys(),
 		map[string]bool{},
 		true, // inference owns every provider.* resource
 	)
@@ -721,14 +720,12 @@ func MatchStoredKeys(
 	return matches, !unmatched
 }
 
-// managedResourceKeys returns the resources WriteInference owns: every
-// provider declaration, the router, and the infer dep wiring. Infer is
-// managed even when Azure is not selected so a stale dep left by a
-// previous Azure configuration is removed instead of referencing a
-// deleted provider. Everything else in the user layer is preserved.
-func managedResourceKeys(cfg InferenceConfig) map[string]bool {
-	keys := map[string]bool{"router": true, "infer": true}
-	return keys
+// managedResourceKeys returns the user-layer resources WriteInference
+// replaces wholesale: the router policy and the infer dep wiring.
+// Provider.* resources are managed separately by dropping every old
+// provider key and keeping only the freshly generated ones.
+func managedResourceKeys() map[string]bool {
+	return map[string]bool{"router": true, "infer": true}
 }
 
 // LoadInference reads the user configuration layer back into an

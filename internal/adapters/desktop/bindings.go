@@ -40,13 +40,11 @@ func (a *App) Version() string {
 // ConfigStatus returns the current configuration state; the frontend
 // pulls it on mount and after every rebuild.
 func (a *App) ConfigStatus() (ConfigStatus, error) {
-	needed, err := config.InferenceNeeded(a.userDir)
+	configured, err := a.inferenceConfigured()
 	if err != nil {
 		return ConfigStatus{}, err
 	}
-	st := a.status(!needed)
-	st.Needed = needed
-	return st, nil
+	return a.status(configured), nil
 }
 
 // ModelCatalog returns every driver's built-in model catalog for the

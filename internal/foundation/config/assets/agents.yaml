@@ -1,5 +1,5 @@
 # Agent definitions. Partial embedded deploy layer: deep-merged on
-# top of the base and tool layers; the user/workspace layers still win.
+# top of the base and tool layers; the user layer still wins.
 agents:
   assistant:
     card:
@@ -18,7 +18,7 @@ agents:
       settings:
         # The default graph ships embedded (graph + node scripts +
         # system prompt all resolve from the binary). To use your own,
-        # override this reference in the user or workspace layer, e.g.
+        # override this reference in the user layer, e.g.
         # graph: { file: graphs/my-assistant.yaml }.
         graph: { embed: assets/graphs/assistant.yaml }
         build:
