@@ -201,7 +201,6 @@ func (a *App) ResumeSession(id string) (SessionSnapshot, error) {
 	a.model = model
 	a.mu.Unlock()
 	a.fireHooks(a.appContext(), hooks.EventSessionStart, map[string]any{
-		"event":           hooks.EventSessionStart,
 		"source":          "resume",
 		"conversation_id": id,
 	})

@@ -47,6 +47,10 @@ const (
 	alwaysSkipDir      = ".git"
 )
 
+// maxGrepFiles bounds how many files one grep scans when no match is
+// found. It is a variable so tests can exercise the cap cheaply.
+var maxGrepFiles = 5_000
+
 // Tool is the workspace-backed file tool group.
 type Tool struct {
 	ws workspace.Workspace
@@ -122,14 +126,15 @@ func (t *readFileTool) Execute(ctx context.Context, arguments string) (string, e
 	if err := validateFilePath(args.FilePath); err != nil {
 		return "", err
 	}
-	data, err := t.ws.Read(ctx, args.FilePath)
+	data, oversized, err := readFileBounded(
+		ctx, t.ws, args.FilePath, maxReadFileBytes)
 	if err != nil {
 		return "", err
 	}
-	if len(data) > maxReadFileBytes {
+	if oversized {
 		return "", errdefs.Validationf(
-			"%s: %s is %d bytes (limit %d); use grep or a narrower range",
-			ReadFileName, args.FilePath, len(data), maxReadFileBytes)
+			"%s: %s exceeds the %d-byte limit; use grep or a narrower range",
+			ReadFileName, args.FilePath, maxReadFileBytes)
 	}
 
 	total := 0
@@ -468,6 +473,7 @@ func (t *grepTool) Execute(ctx context.Context, arguments string) (string, error
 
 	var matches []grepMatch
 	var skippedLarge int
+	scannedFiles := 0
 	truncated := false
 	err = workspace.Walk(ctx, t.ws, root, func(p string, entry fs.DirEntry) error {
 		if entry.IsDir() {
@@ -484,11 +490,17 @@ func (t *grepTool) Execute(ctx context.Context, arguments string) (string, error
 		if len(matches) >= maxMatches {
 			return errStopWalk
 		}
-		data, err := t.ws.Read(ctx, p)
+		scannedFiles++
+		if scannedFiles > maxGrepFiles {
+			truncated = true
+			return errStopWalk
+		}
+		data, oversized, err := readFileBounded(
+			ctx, t.ws, p, maxGrepFileBytes)
 		if err != nil {
 			return nil // unreadable file: skip
 		}
-		if len(data) > maxGrepFileBytes {
+		if oversized {
 			skippedLarge++
 			return nil
 		}
@@ -654,4 +666,28 @@ func validatePattern(p string) error {
 		}
 	}
 	return nil
+}
+
+// readFileBounded reads at most maxBytes+1 through the workspace's
+// LimitedReader when available, falling back to the plain Read API for
+// workspaces that do not implement bounded reads. oversized reports
+// whether the file is larger than maxBytes.
+func readFileBounded(
+	ctx context.Context,
+	ws workspace.Workspace,
+	path string,
+	maxBytes int,
+) (data []byte, oversized bool, err error) {
+	if lr, ok := ws.(workspace.LimitedReader); ok {
+		data, err = lr.ReadLimited(ctx, path, int64(maxBytes)+1)
+		if err != nil {
+			return nil, false, err
+		}
+		return data, len(data) > maxBytes, nil
+	}
+	data, err = ws.Read(ctx, path)
+	if err != nil {
+		return nil, false, err
+	}
+	return data, len(data) > maxBytes, nil
 }

@@ -134,10 +134,9 @@ type remoteSession struct {
 	pid    int
 	caps   sandbox.SessionCapabilities
 
-	mu      sync.Mutex
-	lastSeq int64
-	exited  bool
-	exit    *sandbox.SessionExit
+	mu     sync.Mutex
+	exited bool
+	exit   *sandbox.SessionExit
 }
 
 var _ sandbox.Session = (*remoteSession)(nil)
@@ -200,49 +199,19 @@ func (s *remoteSession) Terminate(ctx context.Context) error {
 }
 
 func (s *remoteSession) Wait(ctx context.Context) (sandbox.SessionExit, error) {
-	waitMs := 100
-	for {
-		s.mu.Lock()
-		exited, exit := s.exited, s.exit
-		after := s.lastSeq
-		s.mu.Unlock()
-		if exited {
-			if exit != nil {
-				return *exit, nil
-			}
-			return sandbox.SessionExit{
-				Code: 0, Reason: sandbox.SessionExited,
-			}, nil
-		}
-		out, err := s.readWait(ctx, after, 1, waitMs)
-		if err != nil {
-			return sandbox.SessionExit{}, err
-		}
-		s.mu.Lock()
-		s.lastSeq = out.NextSeq
-		s.mu.Unlock()
-	}
-}
-
-// readWait is Read with a server-side wait: when no output is buffered
-// the execd child blocks up to waitMs before answering, so a Wait loop
-// parks in the RPC instead of hammering the socket.
-func (s *remoteSession) readWait(
-	ctx context.Context,
-	afterSeq int64,
-	maxBytes int,
-	waitMs int,
-) (sandbox.SessionOutput, error) {
-	resp, err := s.client.Read(ctx, ReadParams{
-		ProcessID: s.id,
-		AfterSeq:  &afterSeq,
-		MaxBytes:  &maxBytes,
-		WaitMs:    &waitMs,
-	})
+	resp, err := s.client.Wait(ctx, WaitParams{ProcessID: s.id})
 	if err != nil {
-		return sandbox.SessionOutput{}, err
+		return sandbox.SessionExit{}, err
 	}
-	return s.foldRead(resp)
+	exit := sandbox.SessionExit{
+		Code:   int(resp.ExitCode),
+		Reason: sessionReason(resp.Reason),
+	}
+	s.mu.Lock()
+	s.exited = true
+	s.exit = &exit
+	s.mu.Unlock()
+	return exit, nil
 }
 
 // foldRead converts a wire response into a sandbox.SessionOutput and

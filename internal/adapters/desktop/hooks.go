@@ -1,27 +1,18 @@
 package desktop
 
-import (
-	"context"
+import "context"
 
-	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
-)
-
-// fireHooks resolves the hooks manager from the runtime and fires one
-// lifecycle event. Payload content is never logged by the hooks
-// package; hook execution failures surface through telemetry without
-// blocking the agent loop.
+// fireHooks forwards one adapter-owned lifecycle event (session start,
+// session end, workspace transitions) through the current Host, which
+// owns the runtime's hooks manager. Payload content is never logged by
+// the hooks package; hook execution failures surface through telemetry
+// without blocking the UI.
 func (a *App) fireHooks(ctx context.Context, event string, payload map[string]any) {
-	ctrl := a.controller()
-	if ctrl == nil || ctrl.Runtime() == nil {
+	a.mu.Lock()
+	h := a.currentHost
+	a.mu.Unlock()
+	if h == nil {
 		return
 	}
-	value, ok := ctrl.Runtime().Resource("hooks")
-	if !ok {
-		return
-	}
-	mgr, ok := value.(*hooks.Manager)
-	if !ok || mgr == nil || mgr.Empty() {
-		return
-	}
-	mgr.Fire(ctx, event, payload)
+	h.FireHook(ctx, event, payload)
 }

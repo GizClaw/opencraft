@@ -506,7 +506,11 @@ func (s *Store) UpdateArchiveTurnArtifacts(
 }
 
 // DeleteConversationRows removes every state row owned by one
-// conversation.
+// conversation. Memory rows live in the same workspace DB and are
+// registered by orchestration/migrations; they are removed here too so
+// a conversation deletion never leaves orphaned memory context
+// behind. A store that has not run the workspace migrations yet has no
+// such tables, and the cleanup is skipped for them.
 func (s *Store) DeleteConversationRows(ctx context.Context, id string) error {
 	if strings.TrimSpace(id) == "" {
 		return fmt.Errorf("state: conversation id is required")
@@ -527,10 +531,40 @@ func (s *Store) DeleteConversationRows(ctx context.Context, id string) error {
 			return fmt.Errorf("state: delete conversation %s: %w", id, err)
 		}
 	}
+	for _, table := range []string{"memory_items", "summary_nodes"} {
+		query := `DELETE FROM ` + table + ` WHERE thread_id = ?`
+		if err := execIfTableExists(ctx, tx, table, query, id); err != nil {
+			return fmt.Errorf("state: delete conversation %s memory: %w", id, err)
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("state: commit delete conversation %s: %w", id, err)
 	}
 	return nil
+}
+
+// execIfTableExists runs query only when table is present in the
+// database. Workspace DBs get their complete schema registered by
+// orchestration/migrations, so standalone stores and tests may
+// legitimately not have the tables yet.
+func execIfTableExists(
+	ctx context.Context,
+	tx *sql.Tx,
+	table, query string,
+	args ...any,
+) error {
+	var found int
+	err := tx.QueryRowContext(ctx, `
+		SELECT 1 FROM sqlite_master
+		WHERE type = 'table' AND name = ?`, table).Scan(&found)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, query, args...)
+	return err
 }
 
 type rowScanner interface {

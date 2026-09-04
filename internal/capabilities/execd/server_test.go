@@ -6,6 +6,7 @@ import (
 	"net"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -334,6 +335,112 @@ func TestServeReadExitedFromWatcherEvent(t *testing.T) {
 	}
 }
 
+// TestServeWaitDoesNotRead verifies process/wait returns the exit state
+// by waiting on the session instead of polling Read, so buffered
+// output is never consumed by a wait.
+func TestServeWaitDoesNotRead(t *testing.T) {
+	probe := &waitProbeSession{}
+	backend := &waitProbeRunner{sess: probe}
+	ctx, cancel := context.WithCancel(context.Background())
+	serverConn, clientConn := net.Pipe()
+	go func() {
+		_ = New(backend, serverConn, serverConn).Serve(ctx)
+	}()
+	client, err := Dial(ctx, clientConn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = client.Close()
+		cancel()
+	})
+
+	if _, err := client.Start(ctx, ExecParams{
+		ProcessID: "stub",
+		Argv:      []string{"/bin/true"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := client.Wait(ctx, WaitParams{ProcessID: "stub"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.ExitCode != 9 || resp.Reason != ReasonExited {
+		t.Fatalf("wait response = %+v, want exit 9/exited", resp)
+	}
+	if probe.readCalls.Load() != 0 {
+		t.Fatalf("process/wait performed %d Read calls, want 0",
+			probe.readCalls.Load())
+	}
+}
+
+// TestServeWaitDoesNotBlockOtherRequests verifies process/wait runs
+// asynchronously: while a wait is outstanding, another request on the
+// same connection is still answered.
+func TestServeWaitDoesNotBlockOtherRequests(t *testing.T) {
+	probe := &waitProbeSession{
+		started: make(chan struct{}),
+		block:   make(chan struct{}),
+	}
+	backend := &waitProbeRunner{sess: probe}
+	ctx, cancel := context.WithCancel(context.Background())
+	serverConn, clientConn := net.Pipe()
+	go func() {
+		_ = New(backend, serverConn, serverConn).Serve(ctx)
+	}()
+	client, err := Dial(ctx, clientConn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = client.Close()
+		cancel()
+	})
+	defer func() {
+		select {
+		case <-probe.block:
+		default:
+			close(probe.block)
+		}
+	}()
+
+	if _, err := client.Start(ctx, ExecParams{
+		ProcessID: "stub",
+		Argv:      []string{"/bin/true"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitResp := make(chan *WaitResponse, 1)
+	go func() {
+		resp, err := client.Wait(ctx, WaitParams{ProcessID: "stub"})
+		if err != nil {
+			waitResp <- nil
+			return
+		}
+		waitResp <- resp
+	}()
+
+	select {
+	case <-probe.started:
+	case <-time.After(10 * time.Second):
+		t.Fatal("process/wait never reached the server")
+	}
+	infoCtx, infoCancel := context.WithTimeout(ctx, 2*time.Second)
+	defer infoCancel()
+	if _, err := client.EnvironmentInfo(infoCtx); err != nil {
+		t.Fatalf("request blocked behind process/wait: %v", err)
+	}
+	close(probe.block)
+	select {
+	case resp := <-waitResp:
+		if resp == nil || resp.ExitCode != 9 {
+			t.Fatalf("wait response = %+v, want exit 9", resp)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for process/wait response")
+	}
+}
+
 // TestServeReadExitCode verifies the real exit code of a short-lived
 // process survives the race between output EOF and the watcher's exit
 // event: Exited is never reported without an attached ExitCode.
@@ -429,6 +536,34 @@ func (s *stubSession) Watch(context.Context) (sandbox.SessionWatcher, error) {
 }
 func (s *stubSession) Close() error { return nil }
 
+// waitProbeSession records whether the server-side wait path touches
+// Read at all; process/wait must block on Wait only.
+type waitProbeSession struct {
+	stubSession
+	readCalls atomic.Int32
+	started   chan struct{} // closed when Wait begins (tests only)
+	block     chan struct{} // optional: Wait blocks until closed
+}
+
+func (s *waitProbeSession) Read(
+	context.Context, int64, int,
+) (sandbox.SessionOutput, error) {
+	s.readCalls.Add(1)
+	return sandbox.SessionOutput{NextSeq: 0, EOF: true}, nil
+}
+
+func (s *waitProbeSession) Wait(
+	context.Context,
+) (sandbox.SessionExit, error) {
+	if s.started != nil {
+		close(s.started)
+	}
+	if s.block != nil {
+		<-s.block
+	}
+	return sandbox.SessionExit{Code: 9, Reason: sandbox.SessionExited}, nil
+}
+
 type stubWatcher struct {
 	events chan sandbox.SessionEvent
 }
@@ -452,5 +587,25 @@ func (r *stubRunner) Start(context.Context, sandbox.SessionSpec) (sandbox.Sessio
 }
 func (r *stubRunner) List(context.Context) ([]sandbox.SessionInfo, error) { return nil, nil }
 func (r *stubRunner) Terminate(context.Context, string) error             { return nil }
+
+type waitProbeRunner struct {
+	sess *waitProbeSession
+}
+
+func (r *waitProbeRunner) Close() error { return nil }
+func (r *waitProbeRunner) Capabilities() sandbox.Capabilities {
+	return sandbox.Capabilities{
+		Features: sandbox.SessionFeatures{Signal: true, Events: true},
+	}
+}
+func (r *waitProbeRunner) Start(
+	context.Context, sandbox.SessionSpec,
+) (sandbox.Session, error) {
+	return r.sess, nil
+}
+func (r *waitProbeRunner) List(context.Context) ([]sandbox.SessionInfo, error) {
+	return nil, nil
+}
+func (r *waitProbeRunner) Terminate(context.Context, string) error { return nil }
 
 func intPtr(v int) *int { return &v }

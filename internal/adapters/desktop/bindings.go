@@ -22,7 +22,6 @@ import (
 	otellog "go.opentelemetry.io/otel/log"
 	"sigs.k8s.io/yaml"
 
-	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
 	"github.com/GizClaw/opencraft/internal/capabilities/secrets"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	octelemetry "github.com/GizClaw/opencraft/internal/capabilities/telemetry"
@@ -765,11 +764,6 @@ func (a *App) startTurn(
 		think = ""
 	}
 	ctx := a.appContext()
-	a.fireHooks(ctx, hooks.EventUserPromptSubmit, map[string]any{
-		"event":           hooks.EventUserPromptSubmit,
-		"conversation_id": contextID,
-		"prompt":          text,
-	})
 	requestedAt := time.Now().UTC()
 	run, err := h.StartRun(ctx, host.RunOptions{
 		Message:   msg,
@@ -1020,19 +1014,6 @@ func (a *App) waitTurn(
 		}
 	}
 	a.emitUndoState(contextID)
-	a.fireHooks(a.appContext(), hooks.EventTurnEnd, map[string]any{
-		"event":           hooks.EventTurnEnd,
-		"conversation_id": contextID,
-		"run_id":          runID,
-		"status":          end.Status,
-		"error":           end.Error,
-		"usage": map[string]int64{
-			"input_tokens":     turnUsage.InputTokens,
-			"output_tokens":    turnUsage.OutputTokens,
-			"total_tokens":     turnUsage.TotalTokens,
-			"reasoning_tokens": turnUsage.ReasoningTokens,
-		},
-	})
 	// A plugin toggle requested during the turn is applied now that
 	// this turn is no longer running (and no other turn is active).
 	a.maybeApplyPendingRebuild()

@@ -2,6 +2,7 @@ package files
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -187,6 +188,114 @@ func TestGlobDoubleStar(t *testing.T) {
 	}
 	if strings.Contains(gotSingle, "sub/") || !strings.Contains(gotSingle, "b_test.go") {
 		t.Errorf("glob single star semantics: %s", gotSingle)
+	}
+}
+
+// trackingWorkspace records whether reads went through the bounded
+// LimitedReader path or the whole-file Read path.
+type trackingWorkspace struct {
+	workspace.Workspace
+	fullReads    int
+	limitedReads int
+}
+
+func (w *trackingWorkspace) Read(ctx context.Context, path string) ([]byte, error) {
+	w.fullReads++
+	return w.Workspace.Read(ctx, path)
+}
+
+func (w *trackingWorkspace) ReadLimited(
+	ctx context.Context, path string, maxBytes int64,
+) ([]byte, error) {
+	w.limitedReads++
+	return w.Workspace.(workspace.LimitedReader).ReadLimited(ctx, path, maxBytes)
+}
+
+func TestReadFileUsesLimitedRead(t *testing.T) {
+	inner, err := workspace.NewLocalWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracked := &trackingWorkspace{Workspace: inner}
+	tool, err := New(tracked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	large := strings.Repeat("x", maxReadFileBytes+1)
+	if err := inner.Write(context.Background(), "big.txt", []byte(large)); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := execute(t, tool.read(), `{"file_path":"big.txt"}`); err == nil {
+		t.Fatal("read_file should reject an oversized file")
+	}
+	if tracked.fullReads != 0 {
+		t.Fatalf("read_file used %d whole-file reads, want 0", tracked.fullReads)
+	}
+	if tracked.limitedReads == 0 {
+		t.Fatal("read_file did not use ReadLimited")
+	}
+}
+
+func TestGrepUsesLimitedReadAndSkipsLargeFiles(t *testing.T) {
+	inner, err := workspace.NewLocalWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tracked := &trackingWorkspace{Workspace: inner}
+	tool, err := New(tracked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	large := strings.Repeat("x", maxGrepFileBytes+1)
+	if err := inner.Write(context.Background(), "big.txt", []byte(large)); err != nil {
+		t.Fatal(err)
+	}
+	if err := inner.Write(context.Background(), "small.txt", []byte("needle\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := execute(t, tool.grep(), `{"pattern":"needle"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `"skipped_large":1`) {
+		t.Errorf("grep skipped_large not reported: %s", got)
+	}
+	if tracked.fullReads != 0 {
+		t.Fatalf("grep used %d whole-file reads, want 0", tracked.fullReads)
+	}
+	if tracked.limitedReads == 0 {
+		t.Fatal("grep did not use ReadLimited")
+	}
+}
+
+func TestGrepStopsAfterFileScanBudget(t *testing.T) {
+	old := maxGrepFiles
+	maxGrepFiles = 10
+	t.Cleanup(func() { maxGrepFiles = old })
+
+	inner, err := workspace.NewLocalWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool, err := New(inner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 25; i++ {
+		name := fmt.Sprintf("f%02d.txt", i)
+		if err := inner.Write(context.Background(), name, []byte("no match\n")); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := execute(t, tool.grep(), `{"pattern":"needle"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, `"truncated":true`) {
+		t.Errorf("grep should stop at the scan budget: %s", got)
 	}
 }
 

@@ -89,13 +89,7 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 		return nil, errors.New("host: session store is not ready")
 	}
 
-	requestedAt := time.Now().UTC()
 	contextID := opts.ContextID
-	before := gitSnapshot(ctx, h.workDir)
-	manifest, manifestErr := manifestSnapshot(ctx, h.workDir)
-	if manifestErr != nil {
-		manifest = nil
-	}
 	mode := opts.Mode
 	if mode == "" {
 		mode = ocsessions.ModeWorkspace
@@ -139,6 +133,15 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 				return nil, fmt.Errorf("host: persist model: %w", err)
 			}
 		}
+	}
+
+	h.fireUserPromptSubmit(ctx, contextID, opts.Message.Content.Text())
+
+	requestedAt := time.Now().UTC()
+	before := gitSnapshot(ctx, h.workDir)
+	manifest, manifestErr := manifestSnapshot(ctx, h.workDir)
+	if manifestErr != nil {
+		manifest = nil
 	}
 
 	key := coresession.Key{AgentID: "assistant", ContextID: contextID}
@@ -284,6 +287,9 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 		}
 		host.dropRun(RunID(r.RunID()))
 		go host.AutoTitle(context.WithoutCancel(ctx), detail.contextID)
+		host.fireTurnEnd(
+			persistCtx, detail.contextID, r.RunID(),
+			status, errText, turnUsage)
 	}
 	if r.host.Broker() != nil {
 		r.host.Broker().UnbindTurn(r.RunID())

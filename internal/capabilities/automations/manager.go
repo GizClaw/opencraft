@@ -50,6 +50,7 @@ type Manager struct {
 	pendingSet map[string]bool
 	running    map[string]bool
 	started    bool
+	stopped    bool
 	stopCh     chan struct{}
 	doneCh     chan struct{}
 	ctx        context.Context
@@ -98,6 +99,7 @@ func (m *Manager) Start() {
 		return
 	}
 	m.started = true
+	m.stopped = false
 	m.stopCh = make(chan struct{})
 	m.doneCh = make(chan struct{})
 	// Manager-owned lifecycle: the scan loop and its one-shot store
@@ -136,6 +138,9 @@ func (m *Manager) Stop() {
 		return
 	}
 	m.started = false
+	m.stopped = true
+	m.pending = nil
+	m.pendingSet = make(map[string]bool)
 	close(m.stopCh)
 	if m.cancel != nil {
 		m.cancel()
@@ -156,6 +161,10 @@ func (m *Manager) Task(id string) (Task, error) {
 // anchor. It rejects tasks that are already pending or running.
 func (m *Manager) RunNow(taskID string) error {
 	m.mu.Lock()
+	if m.stopped {
+		m.mu.Unlock()
+		return errors.New("automations: manager is stopped")
+	}
 	if m.pendingSet[taskID] || m.running[taskID] {
 		m.mu.Unlock()
 		return errors.New("automations: task is already queued or running")
@@ -190,6 +199,12 @@ func (m *Manager) Discard(taskID string) {
 // app was away) only get their anchor advanced. It then dispatches as
 // many queued tasks as slots allow.
 func (m *Manager) Tick() {
+	m.mu.Lock()
+	stopped := m.stopped
+	m.mu.Unlock()
+	if stopped {
+		return
+	}
 	ctx := m.managerContext()
 	now := m.now()
 	tasks, err := m.store.ListTasks(ctx)
@@ -252,6 +267,10 @@ func (m *Manager) managerContext() context.Context {
 func (m *Manager) dispatch(ctx context.Context) {
 	for {
 		m.mu.Lock()
+		if m.stopped {
+			m.mu.Unlock()
+			return
+		}
 		if len(m.running) >= m.limit || len(m.pending) == 0 {
 			m.mu.Unlock()
 			return

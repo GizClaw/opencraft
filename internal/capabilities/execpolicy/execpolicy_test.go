@@ -3,9 +3,11 @@ package execpolicy
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/agent"
@@ -128,6 +130,51 @@ func TestAlwaysAllowPersists(t *testing.T) {
 		Command: "go", Args: []string{"run", "main.go"},
 	}) {
 		t.Error("persisted rule not loaded")
+	}
+}
+
+func TestAlwaysAllowConcurrentPersistsAllRules(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "approvals.yaml")
+	m, err := New(nil, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const rules = 20
+	var wg sync.WaitGroup
+	for i := 0; i < rules; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			rule := fmt.Sprintf("cmd%d *", i)
+			if err := m.AlwaysAllow(rule); err != nil {
+				t.Errorf("AlwaysAllow(%s): %v", rule, err)
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < rules; i++ {
+		rule := fmt.Sprintf("cmd%d *", i)
+		if !strings.Contains(string(data), rule) {
+			t.Fatalf("approvals file lost rule %q: %s", rule, data)
+		}
+	}
+	// A fresh manager must see every persisted rule.
+	m2, err := New(nil, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < rules; i++ {
+		if !m2.Allowlist().Matches(sandbox.ExecRequest{
+			Command: fmt.Sprintf("cmd%d", i),
+			Args:    []string{"run"},
+		}) {
+			t.Errorf("persisted rule cmd%d missing after reload", i)
+		}
 	}
 }
 

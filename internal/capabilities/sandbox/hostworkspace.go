@@ -3,6 +3,7 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -52,6 +53,18 @@ func (w *HostWorkspace) Read(ctx context.Context, path string) ([]byte, error) {
 	return w.pick(ctx).Read(ctx, path)
 }
 
+// ReadLimited forwards bounded reads to the currently selected
+// workspace view so tools never materialize an oversized file.
+func (w *HostWorkspace) ReadLimited(
+	ctx context.Context, path string, maxBytes int64,
+) ([]byte, error) {
+	if lr, ok := w.pick(ctx).(workspace.LimitedReader); ok {
+		return lr.ReadLimited(ctx, path, maxBytes)
+	}
+	return nil, errdefs.NotAvailablef(
+		"opencraft workspace: bounded reads unsupported by %T", w.pick(ctx))
+}
+
 func (w *HostWorkspace) Write(
 	ctx context.Context, path string, data []byte,
 ) error {
@@ -95,6 +108,7 @@ func (w *HostWorkspace) Stat(
 }
 
 var _ workspace.Workspace = (*HostWorkspace)(nil)
+var _ workspace.LimitedReader = (*HostWorkspace)(nil)
 
 // confinedWithReadonly is the workspace-mode view: paths under a
 // readonly root are served read-only from the host, everything else
@@ -125,6 +139,29 @@ func (w *confinedWithReadonly) Read(ctx context.Context, path string) ([]byte, e
 		return w.host.Read(ctx, path)
 	}
 	return w.confined.Read(ctx, path)
+}
+
+// ReadLimited mirrors Read: readonly roots are served from the host
+// view, everything else from the confined view, both bounded.
+func (w *confinedWithReadonly) ReadLimited(
+	ctx context.Context, path string, maxBytes int64,
+) ([]byte, error) {
+	full, err := coresandbox.Resolve(w.root, path)
+	if err != nil {
+		return nil, err
+	}
+	if w.readonlyPath(full) {
+		if lr, ok := w.host.(workspace.LimitedReader); ok {
+			return lr.ReadLimited(ctx, path, maxBytes)
+		}
+		return nil, errdefs.NotAvailablef(
+			"opencraft workspace: bounded reads unsupported by %T", w.host)
+	}
+	if lr, ok := w.confined.(workspace.LimitedReader); ok {
+		return lr.ReadLimited(ctx, path, maxBytes)
+	}
+	return nil, errdefs.NotAvailablef(
+		"opencraft workspace: bounded reads unsupported by %T", w.confined)
 }
 
 func (w *confinedWithReadonly) Write(
@@ -191,6 +228,7 @@ func (w *confinedWithReadonly) Stat(
 }
 
 var _ workspace.Workspace = (*confinedWithReadonly)(nil)
+var _ workspace.LimitedReader = (*confinedWithReadonly)(nil)
 
 // hostWorkspace is the YOLO-mode workspace: relative paths resolve
 // against the workspace root, absolute paths and escapes are allowed,
@@ -220,6 +258,38 @@ func (w *hostWorkspace) Read(_ context.Context, path string) ([]byte, error) {
 			return nil, fmt.Errorf("%w: %s", workspace.ErrNotFound, path)
 		}
 		return nil, fmt.Errorf("workspace: read %s: %w", path, err)
+	}
+	return data, nil
+}
+
+// ReadLimited opens the file and drains at most maxBytes+1 bytes, so a
+// huge YOLO-mode file cannot force an oversized allocation.
+func (w *hostWorkspace) ReadLimited(
+	_ context.Context, path string, maxBytes int64,
+) ([]byte, error) {
+	if maxBytes <= 0 {
+		return nil, errdefs.Validationf(
+			"workspace: ReadLimited maxBytes must be positive")
+	}
+	full, err := w.resolve(path)
+	if err != nil {
+		return nil, err
+	}
+	f, err := os.Open(full)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("%w: %s", workspace.ErrNotFound, path)
+		}
+		return nil, fmt.Errorf("workspace: read %s: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("workspace: read %s: %w", path, err)
+	}
+	if int64(len(data)) > maxBytes {
+		return nil, errdefs.Validationf(
+			"workspace: %s exceeds %d bytes", path, maxBytes)
 	}
 	return data, nil
 }
@@ -356,6 +426,7 @@ func (w *hostWorkspace) Stat(
 }
 
 var _ workspace.Workspace = (*hostWorkspace)(nil)
+var _ workspace.LimitedReader = (*hostWorkspace)(nil)
 
 // HostWorkspaceSettings configures the workspace-mode view of the
 // HostWorkspace resource. The confined root is derived from the

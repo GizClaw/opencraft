@@ -2,8 +2,11 @@ package host_test
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/message"
@@ -91,4 +94,99 @@ func TestHostRunWritesFileEndToEnd(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(workDir, ".opencraft")); !os.IsNotExist(err) {
 		t.Fatalf("project .opencraft must not be created: %v", err)
 	}
+}
+
+func TestHostRunFiresExternalLifecycleHooks(t *testing.T) {
+	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	workDir := t.TempDir()
+	dataDir := t.TempDir()
+	t.Setenv("HOME", filepath.Join(dataDir, "home"))
+	configDir := filepath.Join(dataDir, "config")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeConfig(t, configDir, provider.URL())
+
+	hookDir := t.TempDir()
+	startFile := filepath.Join(hookDir, "start.json")
+	endFile := filepath.Join(hookDir, "end.json")
+	sessionFile := filepath.Join(hookDir, "session.json")
+	hookJSON := fmt.Sprintf(`{
+		"hooks": {
+			"UserPromptSubmit": [{"hooks": [{"command": "cat > %s"}]}],
+			"TurnEnd":          [{"hooks": [{"command": "cat > %s"}]}],
+			"SessionStart":     [{"hooks": [{"command": "cat > %s"}]}]
+		}
+	}`, shellQuote(startFile), shellQuote(endFile), shellQuote(sessionFile))
+	if err := os.WriteFile(
+		filepath.Join(configDir, "hooks.json"), []byte(hookJSON), 0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := host.NewManagerAt(dataDir, configDir)
+	ctx := context.Background()
+	h, err := mgr.Acquire(ctx, workDir, interact.Auto{}, nil)
+	if err != nil {
+		t.Fatalf("acquire host: %v", err)
+	}
+	defer func() { _ = h.Close() }()
+
+	run, err := h.StartRun(ctx, host.RunOptions{
+		Message: message.NewTextMessage(message.RoleUser, "hello hooks"),
+	})
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	assertHookPayload(t, startFile, "UserPromptSubmit", map[string]string{
+		"conversation_id": run.ContextID(),
+		"prompt":          "hello hooks",
+	})
+
+	if _, err := run.Wait(ctx); err != nil {
+		t.Fatalf("wait run: %v", err)
+	}
+	assertHookPayload(t, endFile, "TurnEnd", map[string]string{
+		"conversation_id": run.ContextID(),
+		"run_id":          run.RunID(),
+		"status":          "completed",
+	})
+
+	h.FireHook(ctx, "SessionStart", map[string]any{
+		"conversation_id": run.ContextID(),
+		"source":          "resume",
+	})
+	assertHookPayload(t, sessionFile, "SessionStart", map[string]string{
+		"conversation_id": run.ContextID(),
+		"source":          "resume",
+	})
+}
+
+func assertHookPayload(
+	t *testing.T,
+	path, wantEvent string,
+	wantFields map[string]string,
+) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("hook output %s: %v", path, err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("decode hook output %s: %v", path, err)
+	}
+	if got, _ := payload["event"].(string); got != wantEvent {
+		t.Fatalf("hook event = %q, want %q (payload %s)", got, wantEvent, data)
+	}
+	for key, want := range wantFields {
+		got, _ := payload[key].(string)
+		if got != want {
+			t.Fatalf("hook %s field = %q, want %q (payload %s)", key, got, want, data)
+		}
+	}
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

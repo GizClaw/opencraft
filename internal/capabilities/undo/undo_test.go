@@ -1,7 +1,9 @@
 package undo
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -11,7 +13,13 @@ import (
 )
 
 func state(path string, present bool, content string) FileState {
-	return FileState{Path: path, Present: present, Content: content}
+	return FileState{
+		Path:    path,
+		Present: present,
+		Kind:    KindFile,
+		Mode:    0o644,
+		Content: []byte(content),
+	}
 }
 
 func readFile(t *testing.T, root, rel string) (string, bool) {
@@ -224,7 +232,7 @@ func TestNewWithRootUsesInjectedUndoDir(t *testing.T) {
 	if _, err := store.Capture(context.Background(), "s-1", []FileState{
 		{Path: "a.txt", Present: false},
 	}, []FileState{
-		{Path: "a.txt", Present: true, Content: "x"},
+		{Path: "a.txt", Present: true, Kind: KindFile, Content: []byte("x")},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -276,4 +284,96 @@ func TestPruneKeepsNewest(t *testing.T) {
 		t.Fatalf("oldest kept seq = %d, want 6", seqs[0])
 	}
 	_ = undone
+}
+
+func TestApplyPreservesBinaryAndMode(t *testing.T) {
+	root := t.TempDir()
+	store := NewWithRoot(root, t.TempDir())
+	binary := []byte{0xff, 0x00, 0xfe, '\n', 0x80}
+	if _, err := store.apply([]FileState{{
+		Path:    "tool.bin",
+		Present: true,
+		Kind:    KindFile,
+		Mode:    0o751,
+		Content: binary,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "tool.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(data, binary) {
+		t.Fatalf("binary content changed: %x", data)
+	}
+	info, err := os.Stat(filepath.Join(root, "tool.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o751 {
+		t.Fatalf("mode = %o, want 751", perm)
+	}
+}
+
+func TestApplyRestoresSymlink(t *testing.T) {
+	root := t.TempDir()
+	store := NewWithRoot(root, t.TempDir())
+	if _, err := store.apply([]FileState{{
+		Path:       "link",
+		Present:    true,
+		Kind:       KindSymlink,
+		LinkTarget: "target.txt",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(filepath.Join(root, "link"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		t.Fatalf("restored path is not a symlink: %v", info.Mode())
+	}
+	target, err := os.Readlink(filepath.Join(root, "link"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target != "target.txt" {
+		t.Fatalf("symlink target = %q, want target.txt", target)
+	}
+}
+
+func TestFileStateJSONBackwardCompatible(t *testing.T) {
+	// Snapshots written before kinds existed stored plain string
+	// content. "same" is also valid base64, so the legacy path must be
+	// selected by the missing kind marker rather than content parsing.
+	var legacy FileState
+	if err := json.Unmarshal(
+		[]byte(`{"path":"a.go","present":true,"content":"same"}`),
+		&legacy,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if string(legacy.Content) != "same" {
+		t.Fatalf("legacy content = %q, want same", legacy.Content)
+	}
+
+	current := FileState{
+		Path:    "bin.dat",
+		Present: true,
+		Kind:    KindFile,
+		Mode:    0o600,
+		Content: []byte{0xff, 0x00, 0xfe},
+	}
+	raw, err := json.Marshal(current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded FileState
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(decoded.Content, current.Content) ||
+		decoded.Mode != current.Mode {
+		t.Fatalf("decoded = %+v, want %+v", decoded, current)
+	}
 }

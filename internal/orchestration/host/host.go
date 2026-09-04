@@ -15,6 +15,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference"
 
 	ocsagents "github.com/GizClaw/opencraft/internal/capabilities/agents"
+	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
@@ -269,6 +270,11 @@ func (m *Manager) assemble(
 			h.agents = lifecycle
 		}
 	}
+	if value, ok := rt.Resource("hooks"); ok {
+		if mgr, ok := value.(*hooks.Manager); ok && mgr != nil {
+			h.hooks = mgr
+		}
+	}
 	if value, ok := rt.Resource("artifacts"); ok {
 		if obs, ok := value.(*sandbox.ArtifactObserver); ok && obs != nil {
 			obs.SetSink(h.onArtifactWrite)
@@ -381,6 +387,7 @@ type Host struct {
 	broker  *interact.Broker
 	manager *Manager
 	agents  *ocsagents.Lifecycle
+	hooks   *hooks.Manager
 	usage   func(context.Context, inference.Usage)
 
 	mu         sync.Mutex

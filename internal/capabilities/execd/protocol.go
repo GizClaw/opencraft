@@ -38,6 +38,7 @@ const (
 	MethodProcessSignal     = "process/signal"
 	MethodProcessResize     = "process/resize"
 	MethodProcessTerminate  = "process/terminate"
+	MethodProcessWait       = "process/wait"
 	MethodProcessOutput     = "process/output"
 	MethodProcessExited     = "process/exited"
 	MethodProcessClosed     = "process/closed"
@@ -183,9 +184,22 @@ type TerminateParams struct {
 	ProcessID string `json:"processId"`
 }
 
+// WaitParams identifies the process a client wants to wait for.
+type WaitParams struct {
+	ProcessID string `json:"processId"`
+}
+
 // TerminateResponse reports whether the process is still running.
 type TerminateResponse struct {
 	Running bool `json:"running"`
+}
+
+// WaitResponse carries the process exit state. Unlike Read, waiting
+// never consumes output: the process's retained ring stays readable
+// after Wait returns.
+type WaitResponse struct {
+	ExitCode int32  `json:"exitCode"`
+	Reason   string `json:"reason"`
 }
 
 // OutputNotification is the process/output push event.

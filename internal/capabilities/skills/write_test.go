@@ -2,6 +2,7 @@ package skills
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -280,5 +281,74 @@ func TestPatchSkillPartialEdit(t *testing.T) {
 		ScopeRepo,
 	); err == nil {
 		t.Fatal("escaping patch must fail")
+	}
+}
+
+// TestPatchRestoresOriginalWhenSwapFails injects a rename failure at
+// the staged-to-live swap and verifies the original skill directory is
+// restored instead of being deleted.
+func TestPatchRestoresOriginalWhenSwapFails(t *testing.T) {
+	svc := newWriteService(t)
+	if _, err := svc.Create(
+		"swap-guard",
+		SkillDocument{
+			Description: "guard the swap",
+			Body:        "original body",
+		},
+		ScopeRepo,
+	); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(
+		svc.opts.WorkBase, ".agents", "skills", "swap-guard", "SKILL.md",
+	)
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	origRename := patchRename
+	injected := false
+	patchRename = func(oldPath, newPath string) error {
+		if strings.HasPrefix(filepath.Base(oldPath), ".skill-patch-") {
+			injected = true
+			return errors.New("injected swap failure")
+		}
+		return origRename(oldPath, newPath)
+	}
+	defer func() { patchRename = origRename }()
+
+	if _, err := svc.Patch("swap-guard", `*** Begin Patch
+*** Update File: SKILL.md
+@@
+-original body
++replacement body
+*** End Patch
+`, ScopeRepo); err == nil {
+		t.Fatal("injected rename failure must fail the patch")
+	}
+	if !injected {
+		t.Fatal("test hook did not fire")
+	}
+
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("original skill missing after failed swap: %v", err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("original content changed after failed swap: %q", got)
+	}
+	root := filepath.Join(svc.opts.WorkBase, ".agents", "skills")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".skill-backup-") {
+			t.Fatalf("backup directory left behind: %s", entry.Name())
+		}
+	}
+	if _, _, err := svc.ReadFull("swap-guard"); err != nil {
+		t.Fatalf("skill no longer discoverable: %v", err)
 	}
 }

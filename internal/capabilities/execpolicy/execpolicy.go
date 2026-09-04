@@ -158,15 +158,19 @@ func (m *Manager) Approve(
 }
 
 // AlwaysAllow adds a rule to the allowlist and persists it to the
-// project approvals file.
+// project approvals file. The in-memory update and the file
+// read-modify-write share one lock so concurrent approvals cannot lose
+// each other's persisted rules.
 func (m *Manager) AlwaysAllow(rule string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	before := m.allowlist.Rules()
 	if err := m.allowlist.Add(rule); err != nil {
 		return err
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	entries, err := m.readFile()
 	if err != nil {
+		_ = m.allowlist.Set(before)
 		return err
 	}
 	for _, e := range entries {
@@ -175,13 +179,19 @@ func (m *Manager) AlwaysAllow(rule string) error {
 		}
 	}
 	entries = append(entries, rule)
-	return m.writeFile(entries)
+	if err := m.writeFile(entries); err != nil {
+		_ = m.allowlist.Set(before)
+		return err
+	}
+	return nil
 }
 
 // Remove deletes a rule from the allowlist and persists the change.
 // It is a no-op when the rule is not present.
 func (m *Manager) Remove(rule string) error {
-	rules := m.Rules()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rules := m.allowlist.Rules()
 	filtered := rules[:0:0]
 	removed := false
 	for _, r := range rules {
@@ -197,10 +207,9 @@ func (m *Manager) Remove(rule string) error {
 	if err := m.allowlist.Set(filtered); err != nil {
 		return err
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	entries, err := m.readFile()
 	if err != nil {
+		_ = m.allowlist.Set(rules)
 		return err
 	}
 	out := entries[:0:0]
@@ -209,7 +218,11 @@ func (m *Manager) Remove(rule string) error {
 			out = append(out, e)
 		}
 	}
-	return m.writeFile(out)
+	if err := m.writeFile(out); err != nil {
+		_ = m.allowlist.Set(rules)
+		return err
+	}
+	return nil
 }
 
 // NormaliseCommand renders the normalized token list of an ExecRequest

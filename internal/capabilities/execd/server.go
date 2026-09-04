@@ -112,6 +112,15 @@ func (s *Server) Serve(ctx context.Context) error {
 			})
 			continue
 		}
+		if req.Method == MethodProcessWait {
+			// A wait can block for as long as the process lives; serve
+			// it on a separate goroutine so terminate/read requests on
+			// the same connection keep working while it waits.
+			go func(req RPCRequest) {
+				s.respond(s.handle(ctx, sess, req))
+			}(req)
+			continue
+		}
 		resp := s.handle(ctx, sess, req)
 		s.respond(resp)
 		if req.Method == MethodInitialize && resp.Error == nil {
@@ -179,6 +188,13 @@ func (s *Server) handle(
 			break
 		}
 		result, rpcErr = s.terminate(ctx, sess, p)
+	case MethodProcessWait:
+		var p WaitParams
+		if err := json.Unmarshal(req.Params, &p); err != nil {
+			rpcErr = invalid("process/wait params: " + err.Error())
+			break
+		}
+		result, rpcErr = s.wait(ctx, sess, p)
 	case MethodEnvironmentInfo:
 		features := s.backend.Capabilities().Features
 		caps := []string{string(CapExec), string(CapSession)}
@@ -459,6 +475,28 @@ func (s *Server) terminate(
 		time.Sleep(10 * time.Millisecond)
 	}
 	return TerminateResponse{Running: running}, nil
+}
+
+// wait blocks until the process exits and returns its exit state
+// without reading any buffered output. The client can keep pulling the
+// retained output with process/read after Wait returns.
+func (s *Server) wait(
+	ctx context.Context,
+	sess *session,
+	p WaitParams,
+) (any, *RPCError) {
+	entry, ok := sess.get(p.ProcessID)
+	if !ok {
+		return nil, &RPCError{Code: ErrInvalid, Message: "unknown process"}
+	}
+	exit, err := entry.proc.Wait(ctx)
+	if err != nil {
+		return nil, internal(err)
+	}
+	return WaitResponse{
+		ExitCode: int32(exit.Code),
+		Reason:   exitReasonWire(exit.Reason),
+	}, nil
 }
 
 // pushEvents forwards watcher events as notifications.

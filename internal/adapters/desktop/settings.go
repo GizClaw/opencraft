@@ -294,7 +294,6 @@ func (a *App) DeleteSession(id string) error {
 	delete(a.convRuns, id)
 	a.mu.Unlock()
 	a.fireHooks(a.appContext(), hooks.EventSessionEnd, map[string]any{
-		"event":           hooks.EventSessionEnd,
 		"reason":          "delete",
 		"conversation_id": id,
 	})
@@ -356,7 +355,6 @@ func (a *App) applyCloseWorkspace() error {
 	a.workDir = ""
 	a.mu.Unlock()
 	a.fireHooks(a.appContext(), hooks.EventSessionEnd, map[string]any{
-		"event":           hooks.EventSessionEnd,
 		"reason":          "workspace_close",
 		"conversation_id": previous,
 	})
@@ -369,7 +367,6 @@ func (a *App) applyOpenWorkspace(dir string) error {
 	previous := a.conversationID
 	a.mu.Unlock()
 	a.fireHooks(a.appContext(), hooks.EventSessionEnd, map[string]any{
-		"event":           hooks.EventSessionEnd,
 		"reason":          "workspace_switch",
 		"conversation_id": previous,
 	})

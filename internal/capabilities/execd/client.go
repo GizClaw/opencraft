@@ -92,6 +92,16 @@ func (c *Client) Terminate(ctx context.Context, params TerminateParams) (*Termin
 	return &out, nil
 }
 
+// Wait blocks until the process exits. Unlike a Read-based polling
+// loop, it never consumes process output.
+func (c *Client) Wait(ctx context.Context, params WaitParams) (*WaitResponse, error) {
+	var out WaitResponse
+	if err := c.call(ctx, MethodProcessWait, params, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 func (c *Client) EnvironmentInfo(ctx context.Context) (*EnvironmentInfoResponse, error) {
 	var out EnvironmentInfoResponse
 	if err := c.call(ctx, MethodEnvironmentInfo, nil, &out); err != nil {

@@ -7,6 +7,7 @@
 package undo
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -34,13 +35,61 @@ const maxLiveEntries = 20
 // fill the disk without bound.
 var maxUndoBytes = int64(256 << 20) // 256 MiB
 
+// Snapshot file kinds.
+const (
+	KindFile    = "file"
+	KindSymlink = "symlink"
+)
+
 // FileState is one file's content at a snapshot point. Present=false
 // means the file did not exist (undo removes it, redo recreates it).
 type FileState struct {
-	Path    string `json:"path"`
-	Present bool   `json:"present"`
-	Content string `json:"content,omitempty"`
-	Skipped bool   `json:"skipped,omitempty"`
+	Path       string `json:"path"`
+	Present    bool   `json:"present"`
+	Kind       string `json:"kind,omitempty"` // KindFile (default) | KindSymlink
+	Mode       uint32 `json:"mode,omitempty"` // permission bits for regular files
+	Content    []byte `json:"content,omitempty"`
+	LinkTarget string `json:"link_target,omitempty"`
+	Skipped    bool   `json:"skipped,omitempty"`
+}
+
+// UnmarshalJSON decodes both the current schema (kind + base64
+// content) and legacy snapshots that stored content as a plain JSON
+// string before kinds and modes existed.
+func (f *FileState) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Path       string          `json:"path"`
+		Present    bool            `json:"present"`
+		Kind       string          `json:"kind,omitempty"`
+		Mode       uint32          `json:"mode,omitempty"`
+		Content    json.RawMessage `json:"content,omitempty"`
+		LinkTarget string          `json:"link_target,omitempty"`
+		Skipped    bool            `json:"skipped,omitempty"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	f.Path = raw.Path
+	f.Present = raw.Present
+	f.Kind = raw.Kind
+	f.Mode = raw.Mode
+	f.LinkTarget = raw.LinkTarget
+	f.Skipped = raw.Skipped
+	if len(raw.Content) == 0 {
+		return nil
+	}
+	if raw.Kind == "" {
+		var legacy string
+		if err := json.Unmarshal(raw.Content, &legacy); err != nil {
+			return fmt.Errorf("undo: decode legacy content: %w", err)
+		}
+		f.Content = []byte(legacy)
+		return nil
+	}
+	if err := json.Unmarshal(raw.Content, &f.Content); err != nil {
+		return fmt.Errorf("undo: decode content: %w", err)
+	}
+	return nil
 }
 
 // Entry is one captured before/after pair for a conversation turn.
@@ -253,17 +302,71 @@ func (s *Store) apply(states []FileState) ([]string, error) {
 			changed = append(changed, st.Path)
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			errs = append(errs, fmt.Errorf("undo: mkdir %s: %w", st.Path, err))
-			continue
+		kind := st.Kind
+		if kind == "" {
+			kind = KindFile
 		}
-		if err := os.WriteFile(path, []byte(st.Content), 0o644); err != nil {
-			errs = append(errs, fmt.Errorf("undo: write %s: %w", st.Path, err))
-			continue
+		switch kind {
+		case KindSymlink:
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				errs = append(errs, fmt.Errorf(
+					"undo: remove old %s: %w", st.Path, err))
+				continue
+			}
+			if err := os.Symlink(st.LinkTarget, path); err != nil {
+				errs = append(errs, fmt.Errorf(
+					"undo: symlink %s -> %s: %w",
+					st.Path, st.LinkTarget, err))
+				continue
+			}
+		default:
+			if err := writeStateFile(path, st.Content, st.Mode); err != nil {
+				errs = append(errs, fmt.Errorf("undo: write %s: %w", st.Path, err))
+				continue
+			}
 		}
 		changed = append(changed, st.Path)
 	}
 	return changed, errors.Join(errs...)
+}
+
+// writeStateFile writes content through a same-directory temp file and
+// renames it over the target. Rename replaces a symlink instead of
+// following it, so restoring a snapshot can never redirect the write
+// outside the workspace.
+func writeStateFile(path string, data []byte, mode uint32) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", path, err)
+	}
+	perm := os.FileMode(mode).Perm()
+	if perm == 0 {
+		perm = 0o644
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".undo-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }()
+	if err := tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *Store) resolve(rel string) (string, error) {
@@ -418,7 +521,11 @@ func equalStates(a, b []FileState) bool {
 	for _, st := range a {
 		other, ok := bm[st.Path]
 		if !ok || other.Present != st.Present ||
-			other.Skipped != st.Skipped || other.Content != st.Content {
+			other.Kind != st.Kind ||
+			other.Mode != st.Mode ||
+			other.Skipped != st.Skipped ||
+			other.LinkTarget != st.LinkTarget ||
+			!bytes.Equal(other.Content, st.Content) {
 			return false
 		}
 	}

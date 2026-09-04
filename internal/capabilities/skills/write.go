@@ -85,6 +85,10 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	return nil
 }
 
+// patchRename is split out so tests can inject a rename failure
+// between the staged copy and the live skill directory.
+var patchRename = os.Rename
+
 // buildSkillDoc renders and validates one SKILL.md document: YAML
 // frontmatter with name + description followed by the Markdown body.
 func buildSkillDoc(name, description, body string) ([]byte, error) {
@@ -285,12 +289,30 @@ func (s *Service) Patch(name, patch, scope string) ([]string, error) {
 	if _, err := parseBytes(filepath.Join(tmp, "SKILL.md"), data); err != nil {
 		return nil, fmt.Errorf("skills: invalid skill after patch: %w", err)
 	}
-	if err := os.RemoveAll(dir); err != nil {
-		return nil, err
+	// Swap via a sibling backup so a failed replacement never destroys
+	// the original: move the live skill aside first, then rename the
+	// staged copy into place, and only discard the backup afterwards.
+	backup, err := os.MkdirTemp(root, ".skill-backup-*")
+	if err != nil {
+		return nil, fmt.Errorf("skills: create backup dir: %w", err)
 	}
-	if err := os.Rename(tmp, dir); err != nil {
-		return nil, err
+	defer func() { _ = os.RemoveAll(backup) }()
+	if err := os.RemoveAll(backup); err != nil {
+		return nil, fmt.Errorf("skills: prepare backup dir: %w", err)
 	}
+	if err := patchRename(dir, backup); err != nil {
+		return nil, fmt.Errorf("skills: move current skill aside: %w", err)
+	}
+	if err := patchRename(tmp, dir); err != nil {
+		if restoreErr := patchRename(backup, dir); restoreErr != nil {
+			return nil, fmt.Errorf(
+				"skills: replace %q: %w (original restore failed: %v)",
+				dir, err, restoreErr)
+		}
+		return nil, fmt.Errorf(
+			"skills: replace %q: %w (original restored)", dir, err)
+	}
+	_ = os.RemoveAll(backup)
 	s.Reload()
 	paths := make([]string, 0, len(results))
 	for _, r := range results {

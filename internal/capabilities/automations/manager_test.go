@@ -253,3 +253,80 @@ func TestManagerStartReconcilesStaleRuns(t *testing.T) {
 		t.Fatalf("stale run status = %q, want failed", runs[0].Status)
 	}
 }
+
+// TestManagerStopDoesNotDispatchQueued verifies Stop clears the pending
+// queue and prevents in-flight run completion from starting queued
+// tasks afterwards.
+func TestManagerStopDoesNotDispatchQueued(t *testing.T) {
+	_, store := newUserStore(t)
+	now := time.Date(2026, 9, 1, 9, 0, 10, 0, time.Local)
+	started := make(chan string, 2)
+	release := make(chan struct{})
+	m, err := NewManager(store, ManagerOptions{
+		Run: func(_ context.Context, task Task) (RunResult, error) {
+			started <- task.ID
+			<-release
+			return RunResult{Status: RunCompleted}, nil
+		},
+		Now:    func() time.Time { return now },
+		Limit:  1,
+		Window: time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}()
+
+	first := saveDailyTask(t, store, "first")
+	second := saveDailyTask(t, store, "second")
+	due := now.Add(-10 * time.Second)
+	for _, id := range []string{first.ID, second.ID} {
+		if err := store.AdvanceNextRun(context.Background(), id, due); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	m.Start()
+	defer m.Stop()
+	m.Tick()
+	select {
+	case got := <-started:
+		if got != first.ID {
+			t.Fatalf("first run id = %s, want %s", got, first.ID)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("first task did not start")
+	}
+
+	// Second task becomes pending behind the running one.
+	m.Tick()
+	m.mu.Lock()
+	pending := len(m.pending) + len(m.pendingSet)
+	m.mu.Unlock()
+	if pending == 0 {
+		t.Fatal("second task was not queued")
+	}
+
+	m.Stop()
+	close(release)
+	select {
+	case extra := <-started:
+		t.Fatalf("queued task %s started after Stop", extra)
+	case <-time.After(300 * time.Millisecond):
+	}
+	m.mu.Lock()
+	pending = len(m.pending) + len(m.pendingSet)
+	m.mu.Unlock()
+	if pending != 0 {
+		t.Fatalf("pending queue after Stop = %d, want 0", pending)
+	}
+	if err := m.RunNow(second.ID); err == nil {
+		t.Fatal("RunNow after Stop must fail")
+	}
+}
