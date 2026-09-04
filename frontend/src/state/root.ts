@@ -10,8 +10,9 @@ function makeFocusActor(sessionID: string) {
 
 /**
  * StateRoot owns the root focus actor plus the per-conversation actor
- * registry. Shell/workspace state is added when the old Zustand state
- * is migrated; until then this class is the state-transfer core.
+ * registry. Registry actors survive workspace switches so turns still
+ * running in a previous workspace keep streaming; only the focus actor
+ * is reset for the newly active workspace.
  */
 export class StateRoot {
   readonly registry = new ConversationRegistry();

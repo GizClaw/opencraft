@@ -18,6 +18,7 @@ export interface EventDataSink {
   refreshAutomationRuns(ev: UIEvent): void;
   conversationForRunID(runID: string): string | undefined;
   pendingInteractConversation(promptID: string): string | undefined;
+  activeWorkspace?(): string;
 }
 
 export interface EventRouterDeps {
@@ -142,6 +143,7 @@ function routeToConversation(
   if (deps.root.registry.isDeleted(conversationID)) return;
   const actor = deps.root.registry.ensure(conversationID, {
     workspaceGeneration: deps.root.generation(),
+    workspace: deps.data.activeWorkspace?.(),
   });
   if (!actor) return;
   deps.data.syncConversationActor?.(conversationID, actor);

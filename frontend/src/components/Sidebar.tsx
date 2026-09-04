@@ -21,7 +21,11 @@ import { useTranslation } from 'react-i18next';
 import { WindowToggleMaximise } from '../../wailsjs/runtime/runtime';
 import { api } from '../lib/api';
 import { pendingConversationIDs, useStore } from '../lib/store';
-import { useFocusState, useRunningConversations } from '../state/react';
+import {
+  conversationWorkspace,
+  useFocusState,
+  useRunningConversations,
+} from '../state/react';
 import type { SessionMeta } from '../lib/types';
 import type { ComponentType } from 'react';
 
@@ -189,10 +193,13 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
 
   // Running conversations always stay visible; stored sessions fill the
   // list up to five entries total.
-  const runningActors = useRunningConversations();
+  const runningActors = useRunningConversations(workspace);
   const pendingInteractIds = useMemo(
-    () => pendingConversationIDs(pendingPromptConvs),
-    [pendingPromptConvs],
+    () =>
+      pendingConversationIDs(pendingPromptConvs).filter(
+        (id) => conversationWorkspace(id) === workspace,
+      ),
+    [pendingPromptConvs, workspace],
   );
   const runningIds = useMemo(() => {
     const ids = new Set(

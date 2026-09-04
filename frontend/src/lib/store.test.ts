@@ -33,6 +33,7 @@ function resetStore() {
   stateRoot.registry.ensure('s-1', {
     workspaceGeneration: stateRoot.generation(),
     readyEmpty: true,
+    workspace: '/tmp/w',
   });
   useStore.setState({
     status: {
@@ -1103,5 +1104,209 @@ describe('store: init session bootstrap', () => {
 
     expect(apiMock.newChat).not.toHaveBeenCalled();
     expect(stateRoot.focusSnapshot.value).toBe('no-session');
+  });
+});
+
+describe('store: workspace switch session restore', () => {
+  it('mints a fresh session for a new workspace and keeps a running conversation alive', async () => {
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    useStore.setState({
+      workspace: '/tmp/a',
+      runConvs: { 'r-1': 's-1' },
+      conversations: {
+        's-1': {
+          ...useStore.getState().conversations['s-1'],
+          messages: [
+            {
+              id: 'm-1',
+              role: 'user',
+              text: 'question from workspace a',
+              items: [],
+              attachments: [],
+            },
+          ],
+        },
+      },
+    });
+    apiMock.currentSession.mockResolvedValue('');
+
+    useStore.setState({ workspace: '/tmp/b' });
+    await useStore.getState().restoreWorkspaceSession('/tmp/b');
+
+    const state = useStore.getState();
+    expect(apiMock.newChat).toHaveBeenCalledTimes(1);
+    expect(stateRoot.focusSnapshot.value).toBe('active');
+    expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-new');
+    expect(state.conversations['s-1']).toBeDefined();
+    expect(state.conversations['s-1'].messages[0].text).toBe(
+      'question from workspace a',
+    );
+    expect(state.runConvs['r-1']).toBe('s-1');
+    expect(actorValue('s-1')?.turn).toBe('running');
+  });
+
+  it('switches back to the workspace saved session and hydrates it', async () => {
+    apiMock.currentSession.mockResolvedValue('s-a');
+    apiMock.resumeSession.mockResolvedValue({
+      session_id: 's-a',
+      mode: 'workspace',
+      think: 'medium',
+      model: '',
+    });
+    apiMock.sessionTurns.mockResolvedValue([
+      historyTurn(1, 'previous question', 'previous answer'),
+    ]);
+
+    useStore.setState({ workspace: '/tmp/a' });
+    await useStore.getState().restoreWorkspaceSession('/tmp/a');
+
+    const state = useStore.getState();
+    expect(apiMock.newChat).not.toHaveBeenCalled();
+    expect(apiMock.resumeSession).toHaveBeenCalledWith('s-a');
+    expect(stateRoot.focusSnapshot.value).toBe('active');
+    expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-a');
+    const conv = state.conversations['s-a'];
+    const texts = conv.messages.flatMap((m) =>
+      m.role === 'user'
+        ? [m.text]
+        : m.items
+            .filter(
+              (
+                it,
+              ): it is Extract<
+                MessageView['items'][number],
+                { kind: 'text' }
+              > => it.kind === 'text',
+            )
+            .map((it) => it.text),
+    );
+    expect(texts).toContain('previous question');
+    expect(texts).toContain('previous answer');
+  });
+
+  it('ready after a workspace change restores the saved session', async () => {
+    apiMock.currentSession.mockResolvedValue('s-a');
+    apiMock.resumeSession.mockResolvedValue({
+      session_id: 's-a',
+      mode: 'workspace',
+      think: 'medium',
+      model: '',
+    });
+    apiMock.sessionTurns.mockResolvedValue([]);
+
+    useStore.setState({ workspace: '/tmp/b' });
+    useStore.getState().handleEvent({
+      type: 'ready',
+      data: {
+        needed: false,
+        default_model: 'm',
+        default_reasoning: true,
+        work_dir: '/tmp/a',
+        user_dir: '/tmp/u',
+        version: 'test',
+        agents: 0,
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(useStore.getState().workspace).toBe('/tmp/a');
+      expect(stateRoot.focusSnapshot.value).toBe('active');
+      expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-a');
+    });
+  });
+
+  it('keeps a running conversation visible after a workspace round trip', async () => {
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    useStore.setState({
+      workspace: '/tmp/a',
+      runConvs: { 'r-1': 's-1' },
+      conversations: {
+        's-1': {
+          ...useStore.getState().conversations['s-1'],
+          messages: [
+            {
+              id: 'm-1',
+              role: 'user',
+              text: 'question before switch',
+              items: [],
+              attachments: [],
+            },
+          ],
+        },
+      },
+    });
+    apiMock.currentSession
+      .mockResolvedValueOnce('')
+      .mockResolvedValueOnce('s-1');
+    apiMock.resumeSession.mockResolvedValue({
+      session_id: 's-1',
+      mode: 'workspace',
+      think: 'medium',
+      model: '',
+    });
+    apiMock.sessionTurns.mockResolvedValue([]);
+
+    useStore.getState().handleEvent({
+      type: 'ready',
+      data: {
+        needed: false,
+        default_model: 'm',
+        default_reasoning: true,
+        work_dir: '/tmp/b',
+        user_dir: '/tmp/u',
+        version: 'test',
+        agents: 0,
+      },
+    });
+    await vi.waitFor(() => {
+      expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-new');
+    });
+
+    useStore.getState().handleEvent({
+      type: 'stream',
+      data: {
+        run_id: 'r-1',
+        conversation_id: 's-1',
+        delta: {
+          type: 'part',
+          part: { type: 'text', text: 'answer after switch' },
+        },
+      },
+    });
+    useStore.getState().flushStreams();
+
+    useStore.getState().handleEvent({
+      type: 'ready',
+      data: {
+        needed: false,
+        default_model: 'm',
+        default_reasoning: true,
+        work_dir: '/tmp/a',
+        user_dir: '/tmp/u',
+        version: 'test',
+        agents: 0,
+      },
+    });
+    await vi.waitFor(() => {
+      expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-1');
+    });
+
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.messages[0].text).toBe('question before switch');
+    const texts = conv.messages.flatMap((m) =>
+      m.role === 'user'
+        ? [m.text]
+        : m.items
+            .filter(
+              (
+                it,
+              ): it is Extract<
+                MessageView['items'][number],
+                { kind: 'text' }
+              > => it.kind === 'text',
+            )
+            .map((it) => it.text),
+    );
+    expect(texts).toContain('answer after switch');
   });
 });

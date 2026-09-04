@@ -45,13 +45,14 @@ func (b *Conversation) StartTurn(
 	req StartTurnRequest,
 ) (TurnStart, error) {
 	ctx := b.core.Shell.Context()
+	workDir := b.core.ActiveWorkDir()
 	h := b.core.Runtime.Current()
 	if h == nil {
 		return TurnStart{}, fmt.Errorf("conversation: runtime is not ready")
 	}
 	contextID := req.ContextID
 	if contextID == "" {
-		contextID = b.core.Conversation.New()
+		contextID = b.core.Conversation.New(workDir)
 	}
 	requestedAt := time.Now().UTC()
 	sink := agent.StreamSinkFunc(func(
@@ -72,9 +73,9 @@ func (b *Conversation) StartTurn(
 	run, err := h.StartRun(ctx, host.RunOptions{
 		Message:   req.Message,
 		ContextID: contextID,
-		Mode:      b.core.Conversation.Mode(),
-		Think:     b.core.Conversation.Think(),
-		Model:     b.core.Conversation.Model(),
+		Mode:      b.core.Conversation.Mode(workDir),
+		Think:     b.core.Conversation.Think(workDir),
+		Model:     b.core.Conversation.Model(workDir),
 		Backend:   b.core.Prompt,
 		Sink:      sink,
 		QueueSize: 256,
@@ -160,22 +161,23 @@ func streamRunID(subject event.Subject) string {
 
 // NewChat mints a fresh conversation id.
 func (b *Conversation) NewChat() string {
-	return b.core.Conversation.New()
+	return b.core.Conversation.New(b.core.ActiveWorkDir())
 }
 
 // CurrentSession returns the active conversation id.
 func (b *Conversation) CurrentSession() string {
-	return b.core.Conversation.Current()
+	return b.core.Conversation.Current(b.core.ActiveWorkDir())
 }
 
 // SessionMode returns the current conversation sandbox mode.
 func (b *Conversation) SessionMode() string {
-	return string(b.core.Conversation.Mode())
+	return string(b.core.Conversation.Mode(b.core.ActiveWorkDir()))
 }
 
 // ResumeSession selects an existing conversation and its settings.
 func (b *Conversation) ResumeSession(id string) error {
 	ctx := b.core.Shell.Context()
+	workDir := b.core.ActiveWorkDir()
 	h := b.core.Runtime.Current()
 	if h == nil || h.Sessions() == nil {
 		return fmt.Errorf("conversation: session store is not ready")
@@ -192,7 +194,7 @@ func (b *Conversation) ResumeSession(id string) error {
 	if err != nil {
 		return err
 	}
-	b.core.Conversation.SetCurrent(id, mode, string(think), model)
+	b.core.Conversation.SetCurrent(workDir, id, mode, string(think), model)
 	return nil
 }
 
@@ -202,6 +204,7 @@ func (b *Conversation) ForkTurn(
 	contextID, runID string,
 ) (string, error) {
 	ctx := b.core.Shell.Context()
+	workDir := b.core.ActiveWorkDir()
 	h := b.core.Runtime.Current()
 	if h == nil || h.Sessions() == nil {
 		return "", fmt.Errorf("conversation: session store is not ready")
@@ -222,13 +225,16 @@ func (b *Conversation) ForkTurn(
 	if err != nil {
 		return "", err
 	}
-	b.core.Conversation.SetCurrent(newID, mode, string(think), model)
+	b.core.Conversation.SetCurrent(
+		workDir, newID, mode, string(think), model,
+	)
 	return newID, nil
 }
 
 // SetSessionMode persists and updates the conversation sandbox mode.
 func (b *Conversation) SetSessionMode(mode string) error {
 	ctx := b.core.Shell.Context()
+	workDir := b.core.ActiveWorkDir()
 	m := sessions.Mode(mode)
 	switch m {
 	case sessions.ModeWorkspace, sessions.ModeReadOnly, sessions.ModeYOLO:
@@ -237,11 +243,13 @@ func (b *Conversation) SetSessionMode(mode string) error {
 	}
 	h := b.core.Runtime.Current()
 	if h != nil && h.Sessions() != nil {
-		if err := h.Sessions().SetMode(ctx, b.core.Conversation.Current(), m); err != nil {
+		if err := h.Sessions().SetMode(
+			ctx, b.core.Conversation.Current(workDir), m,
+		); err != nil {
 			return err
 		}
 	}
-	b.core.Conversation.SetMode(m)
+	b.core.Conversation.SetMode(workDir, m)
 	return nil
 }
 

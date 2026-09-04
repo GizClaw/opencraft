@@ -4,11 +4,13 @@ export interface ConversationInput {
   conversationID: string;
   workspaceGeneration?: number;
   readyEmpty?: boolean;
+  workspace?: string;
 }
 
 interface ConversationContext {
   id: string;
   workspaceGeneration: number;
+  workspace?: string;
   lastHydrateRequest?: number;
   currentRunID?: string;
   lastEndedRunID?: string;
@@ -48,6 +50,7 @@ export const conversationMachine = createMachine({
   context: ({ input }) => ({
     id: input.conversationID,
     workspaceGeneration: input.workspaceGeneration ?? 0,
+    workspace: input.workspace,
     emptyTranscript: input.readyEmpty ?? false,
   }),
   states: {

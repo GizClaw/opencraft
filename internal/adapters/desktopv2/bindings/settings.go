@@ -28,35 +28,41 @@ func NewSettingsBinding(c *core.Core) *Settings {
 
 // GetThink returns the current reasoning effort.
 func (b *Settings) GetThink() (string, error) {
-	return b.core.Conversation.Think(), nil
+	return b.core.Conversation.Think(b.core.ActiveWorkDir()), nil
 }
 
 // SetThink updates and persists the reasoning effort.
 func (b *Settings) SetThink(level string) error {
 	ctx := b.core.Shell.Context()
+	workDir := b.core.ActiveWorkDir()
 	lv := sessions.ThinkLevel(level)
 	if !lv.Valid() {
 		return fmt.Errorf("unknown think level %q", level)
 	}
-	b.core.Conversation.SetThink(string(lv))
+	b.core.Conversation.SetThink(workDir, string(lv))
 	if h := b.core.Runtime.Current(); h != nil && h.Sessions() != nil {
-		return h.Sessions().SetThink(ctx, b.core.Conversation.Current(), lv)
+		return h.Sessions().SetThink(
+			ctx, b.core.Conversation.Current(workDir), lv,
+		)
 	}
 	return nil
 }
 
 // GetModel returns the current model hint.
 func (b *Settings) GetModel() (string, error) {
-	return b.core.Conversation.Model(), nil
+	return b.core.Conversation.Model(b.core.ActiveWorkDir()), nil
 }
 
 // SetModel updates and persists the model hint.
 func (b *Settings) SetModel(model string) error {
 	ctx := b.core.Shell.Context()
+	workDir := b.core.ActiveWorkDir()
 	model = strings.TrimSpace(model)
-	b.core.Conversation.SetModel(model)
+	b.core.Conversation.SetModel(workDir, model)
 	if h := b.core.Runtime.Current(); h != nil && h.Sessions() != nil {
-		return h.Sessions().SetModel(ctx, b.core.Conversation.Current(), model)
+		return h.Sessions().SetModel(
+			ctx, b.core.Conversation.Current(workDir), model,
+		)
 	}
 	return nil
 }

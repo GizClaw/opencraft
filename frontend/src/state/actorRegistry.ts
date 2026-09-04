@@ -8,6 +8,7 @@ export type ConversationActor = ReturnType<typeof createConversationActor>;
 export interface ConversationActorOptions {
   workspaceGeneration: number;
   readyEmpty?: boolean;
+  workspace?: string;
 }
 
 /**
@@ -56,6 +57,7 @@ export class ConversationRegistry {
       conversationID,
       workspaceGeneration: options.workspaceGeneration,
       readyEmpty: options.readyEmpty ?? false,
+      workspace: options.workspace,
     };
     const actor = createConversationActor(input);
     this.actors.set(conversationID, actor);

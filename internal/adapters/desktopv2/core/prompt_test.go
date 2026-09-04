@@ -18,7 +18,7 @@ import (
 func TestPromptAskEmitsCompleteInteractDTO(t *testing.T) {
 	p := NewPrompt()
 	conv := NewConversation()
-	sessionID := conv.New()
+	sessionID := conv.New("/tmp/w")
 	conv.TrackRun(sessionID, "r-1")
 	p.SetRunConvResolver(conv.ConversationForRun)
 	events := make(chan map[string]any, 1)
@@ -114,7 +114,7 @@ func TestPromptAskEmitsCompleteInteractDTO(t *testing.T) {
 func TestPromptResolveEmitsResolvedEvent(t *testing.T) {
 	p := NewPrompt()
 	conv := NewConversation()
-	sessionID := conv.New()
+	sessionID := conv.New("/tmp/w")
 	conv.TrackRun(sessionID, "r-1")
 	p.SetRunConvResolver(conv.ConversationForRun)
 	events := make(chan map[string]any, 2)
