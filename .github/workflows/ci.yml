@@ -79,7 +79,24 @@ jobs:
 
       - name: Frontend dependency audit
         working-directory: frontend
-        run: npm audit --omit=dev
+        shell: bash
+        run: |
+          set +e
+          out="$(npm audit --omit=dev --json 2>&1)"
+          code=$?
+          set -e
+          if [ "$code" -eq 0 ]; then
+            exit 0
+          fi
+          # npm's legacy audit endpoint is being retired and
+          # intermittently returns 400/503. Real vulnerability findings
+          # still fail the job; only endpoint outages are skipped.
+          if printf '%s' "$out" | grep -Eq 'Bad Request|Service Unavailable|audit endpoint returned an error|This endpoint is being retired'; then
+            echo "npm audit endpoint unavailable; skipping audit"
+            exit 0
+          fi
+          printf '%s\n' "$out"
+          exit "$code"
 
       # Sandbox tests (app/sandbox/execd) build a bwrap-backed runtime.
       - name: Install sandbox dependency (bubblewrap)
