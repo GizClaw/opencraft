@@ -1,7 +1,10 @@
 import { usePluginStore } from '../store';
 
 // PluginPanels renders the settingsPanels contribution point for one
-// settings tab, optionally scoped to one plugin's detail drawer.
+// settings surface, optionally scoped to one plugin's detail drawer.
+// Known tab values: "ui" (Interface settings), "plugins" (plugin
+// detail drawer, the default) and "import" (settings Import tab for
+// plugin-provided session import UIs).
 export function PluginPanels({
   tab,
   pluginId,

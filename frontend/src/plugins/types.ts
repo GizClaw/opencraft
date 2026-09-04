@@ -78,7 +78,12 @@ export interface SettingsPanelContribution {
   id: string;
   title: string;
   order: number;
-  /** Settings tab to render in; defaults to "plugins". */
+  /**
+   * Settings surface to render in. Defaults to "plugins" (the plugin's
+   * detail drawer); "ui" renders at the top of the Interface settings
+   * tab; "import" renders in the settings page's Import tab, the
+   * reserved home for "Import from another AI app" plugin UIs.
+   */
   tab?: string;
   Component: ComponentType;
 }

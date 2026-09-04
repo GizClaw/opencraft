@@ -11,6 +11,7 @@ import {
   ChevronDown,
   Cpu,
   Database,
+  Import,
   Kanban,
   Languages,
   Loader2,
@@ -53,6 +54,7 @@ import type {
 import { UsageChart } from './UsageChart';
 import { MCPLogo, MCPSection } from './ToolsPanel';
 import { PluginPanels } from '../plugins/components/PluginPanels';
+import { usePluginStore } from '../plugins/store';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
 
 // InstanceRow is one editable inference instance in the settings page.
@@ -94,6 +96,7 @@ type Tab =
   | 'permissions'
   | 'logs'
   | 'diagnostics'
+  | 'import'
   | 'kanban';
 
 // EFFORT_LEVELS is the canonical reasoning effort ladder flowcraft
@@ -149,6 +152,12 @@ export function ConfigPage() {
   const [closeToTray, setCloseToTray] = useState<boolean | null>(null);
 
   const [tab, setTab] = useState<Tab>(configTab as Tab);
+  const importPanelCount = usePluginStore((s) =>
+    s.panels.reduce(
+      (n, p) => n + ((p.tab ?? 'plugins') === 'import' ? 1 : 0),
+      0,
+    ),
+  );
 
   useEffect(() => {
     let alive = true;
@@ -739,6 +748,7 @@ export function ConfigPage() {
     { id: 'permissions', label: t('config.tabPermissions'), icon: ShieldCheck },
     { id: 'logs', label: t('config.tabLogs'), icon: ScrollText },
     { id: 'diagnostics', label: t('config.tabDiagnostics'), icon: Stethoscope },
+    { id: 'import', label: t('config.tabImport'), icon: Import },
     { id: 'kanban', label: t('kanban.title'), icon: Kanban },
   ];
 
@@ -2232,6 +2242,23 @@ export function ConfigPage() {
               </div>
             )}
 
+            {tab === 'import' && (
+              <div className="space-y-3">
+                <p className="text-xs text-dim">{t('config.importIntro')}</p>
+                <PluginPanels tab="import" />
+                {importPanelCount === 0 && (
+                  <div className="rounded-xl border border-dashed border-edge bg-panel2/50 p-8 text-center">
+                    <Import
+                      size="1.5714rem"
+                      className="mx-auto mb-2 text-dim"
+                    />
+                    <p className="text-xs text-dim">
+                      {t('config.importEmpty')}
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
             {tab === 'mcp' && <MCPSection />}
             {tab === 'kanban' && <KanbanSection />}
           </div>
