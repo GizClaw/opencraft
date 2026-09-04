@@ -55,6 +55,9 @@ type Run struct {
 	done          bool
 	detail        *runDetail
 	skipAutoTitle bool
+	startedAt     time.Time
+	finishedAt    time.Time
+	durationMs    int64
 }
 
 // ContextID returns the conversation id the run writes to.
@@ -67,6 +70,17 @@ func (r *Run) ContextID() string {
 
 // RunID returns the engine run id.
 func (r *Run) RunID() string { return r.turn.RunID() }
+
+// FinishedTiming returns the Host-measured end time and run duration
+// in milliseconds once Wait has released the run. Callers that emit a
+// terminal turn event should use this instead of re-reading the clock,
+// so the event agrees with the persisted turn archive.
+func (r *Run) FinishedTiming() (time.Time, int64) {
+	if r == nil {
+		return time.Time{}, 0
+	}
+	return r.finishedAt, r.durationMs
+}
 
 // StartRun opens a session and starts one assistant turn. The caller
 // must call Wait (or Close) to release the lease.
@@ -211,6 +225,7 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 		lease:         lease,
 		turn:          turn,
 		skipAutoTitle: opts.SkipAutoTitle,
+		startedAt:     startedAt,
 	}
 	run.detail = &runDetail{
 		run:       run,
@@ -271,6 +286,13 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 	}
 	res, err := r.turn.Wait(ctx)
 	r.done = true
+	finishedAt := time.Now().UTC()
+	if !r.startedAt.IsZero() {
+		if duration := finishedAt.Sub(r.startedAt); duration > 0 {
+			r.durationMs = duration.Milliseconds()
+		}
+	}
+	r.finishedAt = finishedAt
 	host := r.host
 	detail := r.detail
 	if host != nil && detail != nil {
@@ -298,7 +320,6 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 				otellog.String("run.id", r.RunID()),
 				otellog.String("status", status))
 		}
-		finishedAt := time.Now().UTC()
 		typ := rollout.TypeTurnCompleted
 		if errText != "" || status == "failed" {
 			typ = rollout.TypeTurnFailed

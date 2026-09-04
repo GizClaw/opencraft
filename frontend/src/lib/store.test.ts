@@ -852,6 +852,43 @@ describe('store: send and stream', () => {
     expect(useStore.getState().runConvs['r-1']).toBeUndefined();
   });
 
+  it('turn_end stores the backend duration instead of estimating from timestamps', () => {
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    useStore.setState({
+      conversations: {
+        's-1': {
+          ...useStore.getState().conversations['s-1'],
+          turnArtifacts: [
+            {
+              id: 'live-1',
+              start: 0,
+              runID: 'r-1',
+              docs: [],
+              startedAt: '2026-09-04T12:00:00Z',
+            },
+          ],
+        },
+      },
+    });
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-1',
+        conversation_id: 's-1',
+        status: 'completed',
+        finished_at: '2026-09-04T12:00:00Z',
+        duration_ms: 123000,
+      },
+    });
+
+    expect(
+      useStore.getState().conversations['s-1'].turnArtifacts[0],
+    ).toMatchObject({
+      durationMs: 123000,
+      finishedAt: '2026-09-04T12:00:00Z',
+    });
+  });
+
   it('failed turn_end stores status on the turn without a message marker', () => {
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
     useStore.setState({

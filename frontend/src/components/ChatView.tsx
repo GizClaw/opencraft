@@ -646,23 +646,21 @@ function absoluteArtifactPath(path: string, workspace: string | undefined) {
   );
 }
 
-// workedForLabel renders the turn's execution time as "1h 2m 3s",
-// preferring the backend-computed duration when available.
-function workedForLabel(
-  startedAt?: string,
-  finishedAt?: string,
-  durationMs?: number,
-) {
-  let ms = durationMs;
-  if (ms === undefined && startedAt && finishedAt) {
-    const start = new Date(startedAt).getTime();
-    const end = new Date(finishedAt).getTime();
-    if (Number.isFinite(start) && Number.isFinite(end)) {
-      ms = end - start;
-    }
+// workedForLabel renders the backend-computed execution time as
+// "1h 2m 3s" (or "<1s" for sub-second runs). It intentionally does not
+// fall back to started/finished timestamps: live turns receive
+// duration_ms on turn_end and resumed turns load it from the archive,
+// so second-precision event times are never used as an estimate.
+function workedForLabel(durationMs?: number) {
+  if (
+    durationMs === undefined ||
+    !Number.isFinite(durationMs) ||
+    durationMs < 0
+  ) {
+    return '';
   }
-  if (ms === undefined || !Number.isFinite(ms) || ms < 0) return '';
-  const total = Math.floor(ms / 1000);
+  if (durationMs < 1000) return '<1s';
+  const total = Math.floor(durationMs / 1000);
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
@@ -675,17 +673,9 @@ function workedForLabel(
 
 // WorkedForLine renders the execution-time label below the turn
 // artifact card, centered between two filling divider lines.
-function WorkedForLine({
-  startedAt,
-  finishedAt,
-  durationMs,
-}: {
-  startedAt?: string;
-  finishedAt?: string;
-  durationMs?: number;
-}) {
+function WorkedForLine({ durationMs }: { durationMs?: number }) {
   const { t } = useTranslation();
-  const worked = workedForLabel(startedAt, finishedAt, durationMs);
+  const worked = workedForLabel(durationMs);
   if (!worked) return null;
   return (
     <div className="flex items-center gap-3 text-xs text-dim">
@@ -1621,19 +1611,11 @@ export function ChatView() {
                     {showArtifacts && turn && (
                       <>
                         <ArtifactStrip docs={turn.docs} />
-                        <WorkedForLine
-                          startedAt={turn.startedAt}
-                          finishedAt={turn.finishedAt}
-                          durationMs={turn.durationMs}
-                        />
+                        <WorkedForLine durationMs={turn.durationMs} />
                       </>
                     )}
                     {showWorked && !showArtifacts && (
-                      <WorkedForLine
-                        startedAt={turn?.startedAt}
-                        finishedAt={turn?.finishedAt}
-                        durationMs={turn?.durationMs}
-                      />
+                      <WorkedForLine durationMs={turn?.durationMs} />
                     )}
                     {endStatus && turn && (
                       <TurnEndNotice

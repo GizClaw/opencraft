@@ -290,6 +290,7 @@ export interface TurnEnd {
   status: string;
   error?: string;
   finished_at?: string;
+  duration_ms?: number;
   notify?: boolean;
 }
 

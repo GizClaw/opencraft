@@ -166,6 +166,8 @@ export interface TurnArtifacts {
   docs: TurnDoc[];
   // requestedAt is when the user's message was accepted; startedAt is
   // when agent execution began; finishedAt/durationMs cover the run.
+  // durationMs comes from the backend turn_end event or archive and is
+  // preferred over timestamps when rendering "worked for".
   // They are set live and restored from the per-turn archive on resume.
   requestedAt?: string;
   startedAt?: string;
@@ -1011,6 +1013,7 @@ export const useStore = create<StoreState>((set, get) => {
             status: string;
             error?: string;
             finished_at?: string;
+            duration_ms?: number;
           };
           const conv = ensureConversation(conversationID);
           if (!conv) break;
@@ -1025,6 +1028,10 @@ export const useStore = create<StoreState>((set, get) => {
                 ? {
                     ...t,
                     finishedAt,
+                    durationMs:
+                      data.duration_ms !== undefined
+                        ? data.duration_ms
+                        : t.durationMs,
                     status: normalizeTurnStatus(data.status) ?? t.status,
                     error: data.error ?? t.error,
                   }

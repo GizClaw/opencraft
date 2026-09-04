@@ -16,6 +16,10 @@ type TurnEndEvent struct {
 	Status         string `json:"status"`
 	Error          string `json:"error,omitempty"`
 	FinishedAt     string `json:"finished_at,omitempty"`
+	// DurationMs is the Host-measured run duration persisted with the
+	// archived turn. It is always present (even when zero) so the UI
+	// never has to estimate from second-precision timestamps.
+	DurationMs int64 `json:"duration_ms"`
 	// Output is the run's final assistant text (bounded), used by
 	// automation notifications outside the open workspace where the
 	// frontend has no streamed transcript to build the snippet from.
@@ -25,10 +29,11 @@ type TurnEndEvent struct {
 	Notify *bool `json:"notify,omitempty"`
 }
 
-// NewTurnEnd builds a wire turn-end event with RFC3339 time.
+// NewTurnEnd builds a wire turn-end event with the RFC3339 end time
+// and the duration the Host persisted for this run.
 func NewTurnEnd(
 	runID, conversationID, status, errorText, output string,
-	finishedAt time.Time,
+	finishedAt time.Time, durationMs int64,
 ) TurnEndEvent {
 	return TurnEndEvent{
 		RunID:          runID,
@@ -36,6 +41,7 @@ func NewTurnEnd(
 		Status:         status,
 		Error:          errorText,
 		FinishedAt:     finishedAt.UTC().Format(time.RFC3339),
+		DurationMs:     durationMs,
 		Output:         output,
 	}
 }

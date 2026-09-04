@@ -234,6 +234,71 @@ describe('ChatView transcript windowing', () => {
     expect(screen.getByText('Worked for 2m 3s')).toBeInTheDocument();
   });
 
+  it('does not infer worked duration from second-precision timestamps', () => {
+    setConversation(
+      [
+        {
+          id: 'm-1',
+          role: 'user',
+          text: 'do something',
+          items: [],
+          attachments: [],
+        },
+        {
+          id: 'm-2',
+          role: 'assistant',
+          text: '',
+          items: [{ kind: 'text', id: 't-1', text: 'done' }],
+          attachments: [],
+        },
+      ],
+      [
+        {
+          id: 'turn-1',
+          start: 0,
+          docs: [],
+          startedAt: '2026-09-04T12:00:00Z',
+          finishedAt: '2026-09-04T12:00:00Z',
+        },
+      ],
+    );
+    render(<ChatView />);
+
+    expect(screen.queryByText(/Worked for/)).not.toBeInTheDocument();
+  });
+
+  it('renders sub-second durations as <1s', () => {
+    setConversation(
+      [
+        {
+          id: 'm-1',
+          role: 'user',
+          text: 'do something',
+          items: [],
+          attachments: [],
+        },
+        {
+          id: 'm-2',
+          role: 'assistant',
+          text: '',
+          items: [{ kind: 'text', id: 't-1', text: 'done' }],
+          attachments: [],
+        },
+      ],
+      [
+        {
+          id: 'turn-1',
+          start: 0,
+          docs: [],
+          durationMs: 500,
+        },
+      ],
+    );
+    render(<ChatView />);
+
+    expect(screen.getByText('Worked for <1s')).toBeInTheDocument();
+  });
+
   it('renders message-peek ticks with user/answer previews', () => {
     setConversation(
       [

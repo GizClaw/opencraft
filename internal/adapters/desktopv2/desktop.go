@@ -224,7 +224,7 @@ func (d *Desktop) runAutomation(
 		})
 	}
 	res, waitErr := run.Wait(ctx)
-	finishedAt := time.Now().UTC()
+	finishedAt, durationMs := run.FinishedTiming()
 	result := automations.RunResult{
 		ConversationID: contextID,
 		RunID:          runID,
@@ -255,7 +255,8 @@ func (d *Desktop) runAutomation(
 	notify := !suppressAutomationNotify(task, result.Status, errText)
 	if current {
 		end := core.NewTurnEnd(
-			runID, contextID, status, errText, output, finishedAt,
+			runID, contextID, status, errText, output,
+			finishedAt, durationMs,
 		)
 		end.Notify = &notify
 		d.core.Shell.Emit("turn_end", end)
