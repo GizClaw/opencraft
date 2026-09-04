@@ -81,6 +81,8 @@ export const api = {
       model: '',
     } as SessionSnapshot;
   },
+  forkTurn: (contextID: string, runID: string) =>
+    Conversation.ForkTurn(contextID, runID),
   listSessions: () => Session.List() as unknown as Promise<SessionMeta[]>,
   currentSession: () => Conversation.CurrentSession(),
   activeRun: async (id: string) =>

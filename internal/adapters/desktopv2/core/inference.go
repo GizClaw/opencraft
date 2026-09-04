@@ -97,6 +97,11 @@ func (c *Core) upsertInferenceProfile(
 	if _, ok := config.ProviderByID(profile.Type); !ok {
 		return fmt.Errorf("inference: unknown provider type %q", profile.Type)
 	}
+	if err := config.ValidateProviderSpec(
+		profile.Type, profile.API, profile.ProviderSpec,
+	); err != nil {
+		return err
+	}
 
 	models := make([]config.Model, 0, len(profile.Models))
 	for _, m := range profile.Models {
@@ -109,15 +114,16 @@ func (c *Core) upsertInferenceProfile(
 		return errors.New("inference: profile has no named models")
 	}
 	inst := config.Instance{
-		StableID:  profile.ID,
-		Type:      profile.Type,
-		Name:      profile.Name,
-		API:       profile.API,
-		Endpoint:  profile.Endpoint,
-		Models:    models,
-		KeySource: config.KeyKeychain,
-		KeyValue:  profile.KeyRef,
-		Enabled:   true,
+		StableID:     profile.ID,
+		Type:         profile.Type,
+		Name:         profile.Name,
+		API:          profile.API,
+		Endpoint:     profile.Endpoint,
+		Models:       models,
+		KeySource:    config.KeyKeychain,
+		KeyValue:     profile.KeyRef,
+		Enabled:      true,
+		ProviderSpec: profile.ProviderSpec,
 	}
 	return config.UpdateInferenceState(
 		c.UserDir,

@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/inference"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/core"
@@ -28,6 +29,26 @@ func TestConfigMemoryRoundTrip(t *testing.T) {
 	}
 	if got.MaxRawMessages != 48 || got.PreserveRecent != 6 {
 		t.Fatalf("memory config = %+v", got)
+	}
+}
+
+func TestMCPProbeStatusClassifiesTransientTimeout(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "ready", err: nil, want: "connected"},
+		{name: "still connecting", err: errdefs.Timeoutf("not ready within 200ms"), want: "connecting"},
+		{name: "rejected", err: errdefs.Validationf("server rejected connection"), want: "error"},
+		{name: "closed", err: errdefs.NotAvailablef("source is closed"), want: "error"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := mcpProbeStatus(tt.err); got != tt.want {
+				t.Fatalf("mcpProbeStatus(%v) = %q, want %q", tt.err, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -190,6 +211,47 @@ func TestSaveInstancesRestoresManagedRows(t *testing.T) {
 	if managed.StableID != "sso-haivivi-main" || !managed.Enabled ||
 		managed.KeyValue != "managed-key" {
 		t.Fatalf("managed instance not restored: %+v", managed)
+	}
+}
+
+func TestRestoreManagedInstancesKeepsProviderSpec(t *testing.T) {
+	spec := map[string]any{
+		"chat_stream_options": map[string]any{
+			"include_usage": false,
+		},
+	}
+	model := config.Model{Name: "glm-5.3-flash"}
+	existing := []config.Instance{{
+		StableID:     "sso-haivivi-glm",
+		Type:         "openai",
+		Name:         "Haivivi SSO · GLM",
+		API:          "chat",
+		KeySource:    config.KeyKeychain,
+		KeyValue:     "auth/sso-haivivi/token",
+		Models:       []config.Model{model},
+		ProviderSpec: spec,
+		Enabled:      true,
+	}}
+	requested := []config.Instance{{
+		StableID:  "sso-haivivi-glm",
+		Type:      "openai",
+		Name:      "Haivivi SSO · GLM",
+		API:       "chat",
+		KeySource: config.KeyKeychain,
+		KeyValue:  "auth/sso-haivivi/token",
+		Models:    []config.Model{model},
+		Enabled:   true,
+	}}
+	out, restored := restoreManagedInstances(
+		existing, requested,
+		map[string]bool{"sso-haivivi-glm": true},
+	)
+	if len(out) != 1 || len(restored) != 0 {
+		t.Fatalf("out = %+v restored = %v", out, restored)
+	}
+	if out[0].ProviderSpec == nil ||
+		out[0].ProviderSpec["chat_stream_options"] == nil {
+		t.Fatalf("managed provider spec dropped: %+v", out[0])
 	}
 }
 

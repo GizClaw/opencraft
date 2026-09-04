@@ -139,6 +139,105 @@ func TestPluginInferenceMultipleProviders(t *testing.T) {
 	}
 }
 
+func TestPluginInferenceProviderSpecWritesChatStreamOptions(t *testing.T) {
+	dir := t.TempDir()
+	c := NewCore(dir, dir, "")
+
+	profile := pluginruntime.InferenceProfile{
+		ID:       "sso-haivivi-glm",
+		Type:     "openai",
+		Name:     "Haivivi SSO · GLM",
+		API:      "chat",
+		Endpoint: "https://ai.haivivi.cn/v1",
+		Models: []pluginruntime.ProfileModel{
+			{Name: "glm-5.3-flash", Reasoning: "always"},
+		},
+		KeyRef: "auth/sso-haivivi/token",
+		ProviderSpec: map[string]any{
+			"chat_stream_options": map[string]any{
+				"include_usage": false,
+			},
+		},
+	}
+	if err := c.upsertInferenceProfile("sso-haivivi", profile); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	cfg, err := config.LoadInference(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Instances) != 1 {
+		t.Fatalf("instances = %+v, want one GLM instance", cfg.Instances)
+	}
+	opts, ok := cfg.Instances[0].ProviderSpec["chat_stream_options"].(map[string]any)
+	if !ok || opts["include_usage"] != false {
+		t.Fatalf("provider spec = %+v", cfg.Instances[0].ProviderSpec)
+	}
+
+	data, err := cfg.InferenceYAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+	for _, want := range []string{
+		"api: 'chat'",
+		"chat_stream_options:",
+		"include_usage: false",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Fatalf("GLM spec missing %q:\n%s", want, doc)
+		}
+	}
+}
+
+func TestPluginInferenceProviderSpecValidation(t *testing.T) {
+	dir := t.TempDir()
+	c := NewCore(dir, dir, "")
+
+	base := pluginruntime.InferenceProfile{
+		ID:       "sso-haivivi-glm",
+		Type:     "openai",
+		API:      "chat",
+		Endpoint: "https://ai.haivivi.cn/v1",
+		Models:   []pluginruntime.ProfileModel{{Name: "glm-5.3-flash"}},
+		KeyRef:   "auth/sso-haivivi/token",
+		ProviderSpec: map[string]any{
+			"chat_stream_options": map[string]any{"include_usage": false},
+		},
+	}
+
+	if err := c.upsertInferenceProfile("sso-haivivi", base); err != nil {
+		t.Fatalf("valid openai chat profile rejected: %v", err)
+	}
+
+	badChat := base
+	badChat.Type = "deepseek"
+	if err := c.upsertInferenceProfile(
+		"sso-haivivi", badChat,
+	); err == nil || !strings.Contains(err.Error(), "openai chat") {
+		t.Fatalf("chat_stream_options on non-openai profile = %v", err)
+	}
+
+	badAPI := base
+	badAPI.API = "responses"
+	if err := c.upsertInferenceProfile(
+		"sso-haivivi", badAPI,
+	); err == nil || !strings.Contains(err.Error(), "openai chat") {
+		t.Fatalf("chat_stream_options on responses profile = %v", err)
+	}
+
+	managed := base
+	managed.ProviderSpec = map[string]any{
+		"api": "chat",
+	}
+	if err := c.upsertInferenceProfile(
+		"sso-haivivi", managed,
+	); err == nil || !strings.Contains(err.Error(), "managed by the host") {
+		t.Fatalf("host-managed provider_spec key = %v", err)
+	}
+}
+
 func TestPluginInferenceCannotHijackAnotherInstance(t *testing.T) {
 	dir := t.TempDir()
 	c := NewCore(dir, dir, "")

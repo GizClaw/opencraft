@@ -19,6 +19,7 @@ const apiMock = vi.hoisted(() => ({
   loadAutomations: vi.fn(),
   newChat: vi.fn(),
   startTurn: vi.fn(),
+  forkTurn: vi.fn(),
   cancelTurn: vi.fn(),
   deleteSession: vi.fn(),
   replyPrompt: vi.fn(),
@@ -116,6 +117,7 @@ beforeEach(() => {
     run_id: 'r-1',
     context_id: 's-1',
   });
+  apiMock.forkTurn.mockResolvedValue('s-fork');
   apiMock.deleteSession.mockRejectedValue(
     new Error('cannot delete the active conversation'),
   );
@@ -169,6 +171,42 @@ describe('store: send and stream', () => {
 
     expect(useStore.getState().toolsView).toBeNull();
     expect(apiMock.resumeSession).not.toHaveBeenCalled();
+  });
+
+  it('forkTurn creates the fork and switches to its hydrated history', async () => {
+    apiMock.forkTurn.mockResolvedValue('s-fork');
+    apiMock.resumeSession.mockResolvedValue({
+      session_id: 's-fork',
+      mode: 'workspace',
+      think: 'medium',
+      model: '',
+    });
+    apiMock.sessionTurns.mockResolvedValue([
+      historyTurn(1, 'fork prompt', 'fork answer'),
+    ]);
+
+    await useStore.getState().forkTurn('r-fork');
+
+    expect(apiMock.forkTurn).toHaveBeenCalledWith('s-1', 'r-fork');
+    expect(apiMock.resumeSession).toHaveBeenCalledWith('s-fork');
+    expect(stateRoot.focusSnapshot.value).toBe('active');
+    expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-fork');
+    const conv = useStore.getState().conversations['s-fork'];
+    const texts = conv.messages.flatMap((m) =>
+      m.role === 'user'
+        ? [m.text]
+        : m.items
+            .filter(
+              (
+                it,
+              ): it is Extract<
+                MessageView['items'][number],
+                { kind: 'text' }
+              > => it.kind === 'text',
+            )
+            .map((it) => it.text),
+    );
+    expect(texts).toEqual(['fork prompt', 'fork answer']);
   });
 
   it('surfaces active-conversation deletion errors as a warning toast', async () => {

@@ -198,15 +198,15 @@ export function MCPSection() {
     try {
       await api.saveMCP(servers);
       setMCPError('');
+      // The runtime is rebuilt by SaveMCP, so every server reconnects
+      // in the background. Show "connecting" until the poll converges
+      // instead of probing once while the handshake is still running.
+      const pending: Record<string, MCPStatus> = {};
+      for (const srv of servers) {
+        pending[srv.name] = { name: srv.name, status: 'connecting' };
+      }
+      setStatuses(pending);
       toast(t('config.mcpSaved'));
-      void api
-        .mcpStatus()
-        .then((list) => {
-          const map: Record<string, MCPStatus> = {};
-          for (const s of list) map[s.name] = s;
-          setStatuses(map);
-        })
-        .catch(() => {});
     } catch (err) {
       setMCPError(String(err));
     } finally {

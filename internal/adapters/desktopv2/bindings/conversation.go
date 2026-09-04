@@ -196,6 +196,36 @@ func (b *Conversation) ResumeSession(id string) error {
 	return nil
 }
 
+// ForkTurn copies the source conversation through runID into a fresh
+// session, switches the UI to it, and returns the new session id.
+func (b *Conversation) ForkTurn(
+	contextID, runID string,
+) (string, error) {
+	ctx := b.core.Shell.Context()
+	h := b.core.Runtime.Current()
+	if h == nil || h.Sessions() == nil {
+		return "", fmt.Errorf("conversation: session store is not ready")
+	}
+	newID, err := h.ForkConversation(ctx, contextID, runID)
+	if err != nil {
+		return "", err
+	}
+	mode, err := h.Sessions().Mode(ctx, newID)
+	if err != nil {
+		return "", err
+	}
+	think, err := h.Sessions().Think(ctx, newID)
+	if err != nil {
+		return "", err
+	}
+	model, err := h.Sessions().Model(ctx, newID)
+	if err != nil {
+		return "", err
+	}
+	b.core.Conversation.SetCurrent(newID, mode, string(think), model)
+	return newID, nil
+}
+
 // SetSessionMode persists and updates the conversation sandbox mode.
 func (b *Conversation) SetSessionMode(mode string) error {
 	ctx := b.core.Shell.Context()

@@ -26,6 +26,16 @@ import (
 	"github.com/GizClaw/opencraft/internal/orchestration/migrations"
 )
 
+// UsageRecorder receives one finished turn's aggregated usage so
+// adapters can persist user-level accounting rows. workspaceID and
+// sessionID are explicit; the recorder must not re-derive them from
+// process state. Errors are logged by the host and never fail the turn.
+type UsageRecorder func(
+	ctx context.Context,
+	workspaceID, sessionID string,
+	usage sessions.Usage,
+) error
+
 // Manager pools Hosts by workspace and keeps one sessions.Store per
 // workspace root.
 type Manager struct {
@@ -38,6 +48,7 @@ type Manager struct {
 	stores        map[string]*storeRef
 	engineOptFunc func() []engine.Option
 	usageObserver func(context.Context, inference.Usage)
+	usageRecorder UsageRecorder
 }
 
 type hostRef struct {
@@ -82,6 +93,15 @@ func (m *Manager) SetEngineOptionsFunc(fn func() []engine.Option) {
 func (m *Manager) SetUsageObserver(fn func(context.Context, inference.Usage)) {
 	m.mu.Lock()
 	m.usageObserver = fn
+	m.mu.Unlock()
+}
+
+// SetUsageRecorder installs the user-level usage sink called once per
+// finished turn with the run's aggregated usage. UI and automation
+// turns share the Host, so one recorder covers both paths.
+func (m *Manager) SetUsageRecorder(fn UsageRecorder) {
+	m.mu.Lock()
+	m.usageRecorder = fn
 	m.mu.Unlock()
 }
 
@@ -192,6 +212,7 @@ func (m *Manager) assemble(
 	m.mu.Lock()
 	engineOptFunc := m.engineOptFunc
 	usageObserver := m.usageObserver
+	usageRecorder := m.usageRecorder
 	m.mu.Unlock()
 	var engineOptions []engine.Option
 	if engineOptFunc != nil {
@@ -228,13 +249,15 @@ func (m *Manager) assemble(
 		return nil, err
 	}
 	h := &Host{
-		workDir:  workDir,
-		userDir:  userDir,
-		manager:  m,
-		usage:    usageObserver,
-		runs:     make(map[RunID]*runDetail),
-		rollouts: make(map[ConversationID]*rollout.Recorder),
-		titling:  make(map[ConversationID]bool),
+		workDir:       workDir,
+		userDir:       userDir,
+		workspaceID:   layout.ID,
+		manager:       m,
+		usage:         usageObserver,
+		usageRecorder: usageRecorder,
+		runs:          make(map[RunID]*runDetail),
+		rollouts:      make(map[ConversationID]*rollout.Recorder),
+		titling:       make(map[ConversationID]bool),
 	}
 	buildOpts := append([]engine.Option{
 		engine.WithConfigBase(userDir),
@@ -436,15 +459,17 @@ func (m *Manager) releaseStore(store *sessions.Store) {
 
 // Host is one shared workspace runtime.
 type Host struct {
-	workDir string
-	userDir string
-	store   *sessions.Store
-	ctrl    *engine.Controller
-	broker  *interact.Broker
-	manager *Manager
-	agents  *ocsagents.Lifecycle
-	hooks   *hooks.Manager
-	usage   func(context.Context, inference.Usage)
+	workDir       string
+	userDir       string
+	workspaceID   string
+	store         *sessions.Store
+	ctrl          *engine.Controller
+	broker        *interact.Broker
+	manager       *Manager
+	agents        *ocsagents.Lifecycle
+	hooks         *hooks.Manager
+	usage         func(context.Context, inference.Usage)
+	usageRecorder UsageRecorder
 
 	mu         sync.Mutex
 	runs       map[RunID]*runDetail

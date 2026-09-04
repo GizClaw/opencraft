@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/inference"
 	flowtelemetry "github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/tool/mcp"
@@ -366,16 +368,29 @@ func (b *Config) MCPStatus() ([]MCPStatusDTO, error) {
 			probeCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 			err := src.WaitReady(probeCtx, srv.Name, 200*time.Millisecond)
 			cancel()
-			if err == nil {
-				dto.Status = "connected"
-			} else {
-				dto.Status = "error"
+			dto.Status = mcpProbeStatus(err)
+			if dto.Status == "error" {
 				dto.Error = err.Error()
 			}
 		}
 		out = append(out, dto)
 	}
 	return out, nil
+}
+
+// mcpProbeStatus classifies one MCP readiness probe. A probe timeout
+// only means the background connect is still running, so it maps to
+// "connecting"; terminal failures (validation, rejection, closed
+// source) map to "error".
+func mcpProbeStatus(err error) string {
+	switch {
+	case err == nil:
+		return "connected"
+	case errdefs.IsTimeout(err):
+		return "connecting"
+	default:
+		return "error"
+	}
 }
 
 // Reload rebuilds the runtime from current configuration.
@@ -659,6 +674,10 @@ func restoreManagedInstances(
 			continue
 		}
 		seen[in.StableID] = true
+		// The settings page has no UI for the provider_spec bag, so a
+		// managed row always keeps the stored provider options even
+		// when the round-trip request does not carry them.
+		in.ProviderSpec = orig.ProviderSpec
 		if !sameInstanceContent(orig, in) {
 			restored = append(restored, in.StableID)
 			out = append(out, orig)
@@ -680,7 +699,8 @@ func restoreManagedInstances(
 func sameInstanceContent(a, b config.Instance) bool {
 	if a.StableID != b.StableID || a.Type != b.Type || a.Name != b.Name ||
 		a.API != b.API || a.Endpoint != b.Endpoint || a.Enabled != b.Enabled ||
-		len(a.Models) != len(b.Models) {
+		len(a.Models) != len(b.Models) ||
+		!reflect.DeepEqual(a.ProviderSpec, b.ProviderSpec) {
 		return false
 	}
 	for i := range a.Models {

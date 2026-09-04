@@ -29,6 +29,7 @@ import {
   Flame,
   FolderOpen,
   Globe,
+  GitFork,
   Lock,
   Loader2,
   Music2,
@@ -181,19 +182,17 @@ function archivedTurnEndKind(status?: TurnStatus): TurnEndKind | undefined {
 
 // TurnEndNotice explains why a turn stopped without embedding an error
 // into the assistant message. It renders after the turn's last message
-// and only exposes live Retry/Dismiss actions while that turn is still
+// and only exposes a live Dismiss action while that turn is still
 // the current XState failure; resumed history stays static.
 function TurnEndNotice({
   status,
   error,
   live = false,
-  onRetry,
   onDismiss,
 }: {
   status: TurnEndKind;
   error?: string;
   live?: boolean;
-  onRetry?: () => void;
   onDismiss?: () => void;
 }) {
   const { t } = useTranslation();
@@ -248,16 +247,6 @@ function TurnEndNotice({
         )}
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
-        {live && failure && (
-          <button
-            onClick={onRetry}
-            title={t('chat.retry')}
-            aria-label={t('chat.retry')}
-            className="grid h-7 w-7 place-items-center rounded-lg border border-edge text-dim hover:border-accent/50 hover:text-accent"
-          >
-            <RotateCcw size="0.8571rem" />
-          </button>
-        )}
         {live && (
           <button
             onClick={() => {
@@ -284,6 +273,8 @@ const MessageRow = memo(function MessageRow({
   busy,
   streaming,
   isTurnLast,
+  forkable,
+  onFork,
   requestedAt,
   startedAt,
 }: {
@@ -291,6 +282,8 @@ const MessageRow = memo(function MessageRow({
   busy: boolean;
   streaming: boolean;
   isTurnLast: boolean;
+  forkable?: boolean;
+  onFork?: () => void;
   requestedAt?: string;
   startedAt?: string;
 }) {
@@ -365,6 +358,7 @@ const MessageRow = memo(function MessageRow({
     .join('\n')
     .trim();
   const copyable = isTurnLast && !streaming && finalText.length > 0;
+  const showActions = copyable || Boolean(forkable && onFork);
   const copyFinal = async () => {
     if (!finalText) return;
     try {
@@ -404,16 +398,29 @@ const MessageRow = memo(function MessageRow({
           />
         );
       })}
-      {copyable && (
+      {showActions && (
         <div className="pointer-events-none invisible flex items-center justify-start gap-1.5 pl-1 group-hover:pointer-events-auto group-hover:visible">
-          <button
-            onClick={() => void copyFinal()}
-            className="flex items-center rounded border border-edge p-1 text-dim hover:text-fg"
-            aria-label={copied ? t('chat.copied') : t('chat.copyOutput')}
-            tabIndex={-1}
-          >
-            {copied ? <Check size="0.7857rem" /> : <Copy size="0.7857rem" />}
-          </button>
+          {forkable && onFork && (
+            <button
+              onClick={onFork}
+              className="flex items-center rounded border border-edge p-1 text-dim hover:text-accent"
+              aria-label={t('chat.forkTurn')}
+              title={t('chat.forkTurn')}
+              tabIndex={-1}
+            >
+              <GitFork size="0.7857rem" />
+            </button>
+          )}
+          {copyable && (
+            <button
+              onClick={() => void copyFinal()}
+              className="flex items-center rounded border border-edge p-1 text-dim hover:text-fg"
+              aria-label={copied ? t('chat.copied') : t('chat.copyOutput')}
+              tabIndex={-1}
+            >
+              {copied ? <Check size="0.7857rem" /> : <Copy size="0.7857rem" />}
+            </button>
+          )}
           {startedAt && (
             <span className="text-xs text-dim tabular-nums">
               {formatChatTime(startedAt)}
@@ -924,6 +931,7 @@ export function ChatView() {
   const status = useStore((s) => s.status);
   const pendingInteracts = conv?.pendingInteracts ?? [];
   const send = useStore((s) => s.send);
+  const forkTurn = useStore((s) => s.forkTurn);
   const newChat = useStore((s) => s.newChat);
   const resume = useStore((s) => s.resume);
   const retryTranscript = useStore((s) => s.retryTranscript);
@@ -933,7 +941,6 @@ export function ChatView() {
   const subagentCards = useStore((s) => s.subagentCards);
   const subagentPanelOpen = useStore((s) => s.subagentPanelOpen);
   const toggleSubagentPanel = useStore((s) => s.toggleSubagentPanel);
-  const retryLast = useStore((s) => s.retryLast);
   const mode = conv?.mode ?? 'workspace';
   const setMode = useStore((s) => s.setMode);
   const think = conv?.think ?? 'medium';
@@ -954,6 +961,8 @@ export function ChatView() {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<AttachmentView[]>([]);
   const [confirmYolo, setConfirmYolo] = useState(false);
+  const [forkTarget, setForkTarget] = useState<TurnArtifacts | null>(null);
+  const [forking, setForking] = useState(false);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const composerDraft = useStore((s) => s.composerDraft);
@@ -1112,10 +1121,12 @@ export function ChatView() {
     void send(text, staged);
   };
 
-  const retry = () => {
-    setInput('');
-    composerRef.current?.clear();
-    void retryLast();
+  const confirmFork = () => {
+    const target = forkTarget;
+    if (!target?.runID || forking) return;
+    setForkTarget(null);
+    setForking(true);
+    void forkTurn(target.runID).finally(() => setForking(false));
   };
 
   const sessionTitle = sessions.find((s) => s.id === current)?.title;
@@ -1346,23 +1357,31 @@ export function ChatView() {
                 const liveEnd = isTurnEnd && failedTurn && turn === lastTurn;
                 const endStatus =
                   archivedEnd ?? (liveEnd ? failedTurn.status : undefined);
+                const isAssistantTurnLast =
+                  msg.role === 'assistant' &&
+                  (i === messages.length - 1 ||
+                    messages[i + 1]?.role === 'user');
+                const assistantStreaming =
+                  busy && msg.role === 'assistant' && i === messages.length - 1;
+                const canFork =
+                  isAssistantTurnLast &&
+                  !assistantStreaming &&
+                  !forking &&
+                  !endStatus &&
+                  Boolean(turn?.runID);
                 return (
                   <Fragment key={msg.id}>
                     <MessageRow
                       msg={msg}
                       busy={busy}
-                      isTurnLast={
-                        msg.role === 'assistant' &&
-                        (i === messages.length - 1 ||
-                          messages[i + 1]?.role === 'user')
+                      isTurnLast={isAssistantTurnLast}
+                      forkable={canFork}
+                      onFork={
+                        canFork && turn ? () => setForkTarget(turn) : undefined
                       }
                       requestedAt={turn?.requestedAt}
                       startedAt={turn?.startedAt}
-                      streaming={
-                        busy &&
-                        msg.role === 'assistant' &&
-                        i === messages.length - 1
-                      }
+                      streaming={assistantStreaming}
                     />
                     {showArtifacts && turn && (
                       <>
@@ -1390,7 +1409,6 @@ export function ChatView() {
                             : turn.error
                         }
                         live={Boolean(liveEnd)}
-                        onRetry={liveEnd ? retry : undefined}
                         onDismiss={liveEnd ? clearLastFailed : undefined}
                       />
                     )}
@@ -1700,6 +1718,45 @@ export function ChatView() {
           </div>
         </div>
       </div>
+      {forkTarget && (
+        <div className="fixed bottom-0 top-11 left-0 right-0 z-40 grid place-items-center bg-black/60 p-6">
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            className="w-[34rem] max-w-[calc(100vw-3rem)] rounded-2xl border border-edge bg-panel p-5 shadow-2xl"
+          >
+            <div className="flex items-start gap-3">
+              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-accent/40 bg-accent/10 text-accent">
+                <GitFork size="1.1429rem" />
+              </div>
+              <div className="min-w-0">
+                <h2 className="text-sm font-semibold leading-snug text-fg">
+                  {t('chat.forkTurnTitle')}
+                </h2>
+                <p className="mt-1 text-xs leading-relaxed text-dim">
+                  {t('chat.forkTurnBody')}
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setForkTarget(null)}
+                className="rounded-lg border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg"
+              >
+                {t('interact.cancel')}
+              </button>
+              <button
+                onClick={confirmFork}
+                disabled={forking}
+                className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
+              >
+                <GitFork size="0.9286rem" />
+                {t('chat.forkTurnConfirm')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {confirmYolo && (
         <div className="fixed bottom-0 top-11 left-0 right-0 z-40 grid place-items-center bg-black/60 p-6">
           <div

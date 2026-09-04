@@ -226,11 +226,13 @@ func TestSecretScopeGuard(t *testing.T) {
 func TestInferencePrimitivesForwardPluginAndInstanceIDs(t *testing.T) {
 	m, _ := newTestManager(t)
 	var upsertedPlugin, upsertedID string
+	var upsertedSpec map[string]any
 	var removedPlugin, removedID string
 	m.SetInferenceHandler(InferenceHandler{
 		Upsert: func(pluginID string, profile InferenceProfile) error {
 			upsertedPlugin = pluginID
 			upsertedID = profile.ID
+			upsertedSpec = profile.ProviderSpec
 			return nil
 		},
 		Remove: func(pluginID, id string) error {
@@ -241,12 +243,21 @@ func TestInferencePrimitivesForwardPluginAndInstanceIDs(t *testing.T) {
 	})
 
 	if _, err := m.handleInferenceUpsert(&process{id: "plug"}, rpcRequest{
-		Params: json.RawMessage(`{"id":"plug-gateway"}`),
+		Params: json.RawMessage(`{
+			"id": "plug-gateway",
+			"provider_spec": {
+				"chat_stream_options": {"include_usage": false}
+			}
+		}`),
 	}); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 	if upsertedPlugin != "plug" || upsertedID != "plug-gateway" {
 		t.Fatalf("upsert forwarded %q/%q", upsertedPlugin, upsertedID)
+	}
+	opts, ok := upsertedSpec["chat_stream_options"].(map[string]any)
+	if !ok || opts["include_usage"] != false {
+		t.Fatalf("upsert provider_spec = %#v", upsertedSpec)
 	}
 	if _, err := m.handleInferenceRemove(&process{id: "plug"}, rpcRequest{
 		Params: json.RawMessage(`{"id":"plug-embed"}`),

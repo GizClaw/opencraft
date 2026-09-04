@@ -30,6 +30,7 @@ export function mockBackend(cfg?: MockConfig) {
   const config: MockConfig = cfg ?? {};
   let newChatSeq = 0;
   let startTurnSeq = 0;
+  let forkSeq = 0;
   const listeners: Record<string, Array<(data: unknown) => void>> = {};
 
   const emit = (name: string, data: unknown) => {
@@ -86,6 +87,7 @@ export function mockBackend(cfg?: MockConfig) {
     Conversation: {
       CancelTurn: noop,
       CurrentSession: async () => config.currentSession ?? 's-1',
+      ForkTurn: async () => `s-fork-${++forkSeq}`,
       NewChat: async () => {
         const queued = config.newChatIds?.shift();
         if (queued) return queued;

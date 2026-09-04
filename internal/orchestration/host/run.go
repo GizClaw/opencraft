@@ -303,10 +303,7 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 				store.RecordTurnEnd(
 					detail.contextID, r.RunID(), finishedAt, status, errText))
 		}
-		if store != nil && turnUsage.TotalTokens > 0 {
-			telemetry.WarnErr(persistCtx, "host: record turn usage failed",
-				store.RecordUsage(persistCtx, detail.contextID, turnUsage))
-		}
+		host.persistTurnUsage(persistCtx, detail.contextID, turnUsage)
 		host.recordTurnEnd(
 			persistCtx, detail.contextID, r.RunID(),
 			typ, status, errText, turnUsage)
@@ -338,6 +335,28 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 		host.finishCloseIfIdle()
 	}
 	return res, err
+}
+
+// persistTurnUsage records one finished turn's usage in the workspace
+// session store and forwards it to the user-level recorder installed on
+// the manager. Both writes are best-effort: failures are logged and
+// never fail the turn.
+func (h *Host) persistTurnUsage(
+	ctx context.Context,
+	contextID string,
+	usage ocsessions.Usage,
+) {
+	if h == nil || usage.TotalTokens <= 0 {
+		return
+	}
+	if h.store != nil {
+		telemetry.WarnErr(ctx, "host: record turn usage failed",
+			h.store.RecordUsage(ctx, contextID, usage))
+	}
+	if h.usageRecorder != nil {
+		telemetry.WarnErr(ctx, "host: record user-level usage failed",
+			h.usageRecorder(ctx, h.workspaceID, contextID, usage))
+	}
 }
 
 // Close cancels and releases an unfinished run.

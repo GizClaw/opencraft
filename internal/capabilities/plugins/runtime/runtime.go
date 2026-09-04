@@ -60,6 +60,11 @@ type InferenceProfile struct {
 	Endpoint string         `json:"endpoint"`
 	Models   []ProfileModel `json:"models"`
 	KeyRef   string         `json:"key_ref"`
+	// ProviderSpec carries provider-specific spec options (for example
+	// openai's chat_stream_options) as an opaque bag. The host writes
+	// them into the provider spec; keys the host manages itself are
+	// rejected.
+	ProviderSpec map[string]any `json:"provider_spec,omitempty"`
 }
 
 // ProfileModel is one model in an inference profile. Capabilities are

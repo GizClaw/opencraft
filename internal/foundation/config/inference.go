@@ -133,15 +133,20 @@ var reasoningEffortOrder = []inference.ReasoningEffort{
 // (e.g. two DeepSeek endpoints); enabled instances form the router
 // priority order.
 type Instance struct {
-	StableID  string // stable identity across saves/reorders
-	Type      string // catalog ID: deepseek | openai | ...
-	Name      string // display label; empty derives "<type>-<n>"
-	API       string // responses | chat (openai / openai-like)
-	Endpoint  string // base URL override; empty uses the driver default
-	Models    []Model
-	KeySource KeySource
-	KeyValue  string // literal key (KeyLiteral) or store account (KeyKeychain)
-	Enabled   bool
+	StableID string // stable identity across saves/reorders
+	Type     string // catalog ID: deepseek | openai | ...
+	Name     string // display label; empty derives "<type>-<n>"
+	API      string // responses | chat (openai / openai-like)
+	Endpoint string // base URL override; empty uses the driver default
+	// ProviderSpec carries provider-owned spec options as an opaque
+	// map (for example openai's chat_stream_options). The host never
+	// interprets its contents; flowcraft's strict provider decode is
+	// the final validator.
+	ProviderSpec map[string]any
+	Models       []Model
+	KeySource    KeySource
+	KeyValue     string // literal key (KeyLiteral) or store account (KeyKeychain)
+	Enabled      bool
 }
 
 // DeploymentID returns the provider resource id for this instance.
@@ -404,6 +409,13 @@ func (c InferenceConfig) InferenceYAML() ([]byte, error) {
 			fmt.Fprintf(&b, "        request_metadata:\n")
 			fmt.Fprintf(&b, "          envelope: client_metadata\n")
 		}
+		if len(in.ProviderSpec) > 0 {
+			if err := writeProviderSpecYAML(&b, in.ProviderSpec); err != nil {
+				return nil, fmt.Errorf(
+					"config: encode provider spec for %s: %w", id, err,
+				)
+			}
+		}
 		fmt.Fprintf(&b, "        models:\n")
 		for _, m := range in.Models {
 			kind := m.Kind
@@ -544,6 +556,34 @@ func (c InferenceConfig) InferenceYAML() ([]byte, error) {
 		fmt.Fprintf(&b, "          targets: []\n")
 	}
 	return []byte(b.String()), nil
+}
+
+// writeProviderSpecYAML renders an opaque provider spec map under the
+// eight-space spec indentation used by InferenceYAML. yamlv4 sorts
+// map keys and the fixed two-space indent keeps nested values aligned
+// with the hand-written spec fields.
+func writeProviderSpecYAML(
+	b *strings.Builder,
+	spec map[string]any,
+) error {
+	var buf bytes.Buffer
+	enc := yamlv4.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(spec); err != nil {
+		return err
+	}
+	if err := enc.Close(); err != nil {
+		return err
+	}
+	for _, line := range strings.Split(
+		strings.TrimRight(buf.String(), "\n"),
+		"\n",
+	) {
+		b.WriteString("        ")
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	return nil
 }
 
 // normalizeModels trims model names, fills empty ones with the
@@ -715,6 +755,41 @@ func reconcileProviderOwners(
 		}
 	}
 	return out
+}
+
+// managedProviderSpecKeys are the top-level provider spec keys the
+// host writes from typed fields. Plugin provider_spec bags must not
+// duplicate them.
+var managedProviderSpecKeys = map[string]bool{
+	"api":              true,
+	"base_url":         true,
+	"endpoint":         true,
+	"models":           true,
+	"request_metadata": true,
+}
+
+// ValidateProviderSpec checks an opaque plugin provider_spec bag
+// before it is written. Reserved host-managed keys are rejected and
+// provider-owned constraints (chat_stream_options is openai chat
+// only) fail early; the flowcraft strict decode remains the final
+// arbiter after the config is built.
+func ValidateProviderSpec(typ, api string, spec map[string]any) error {
+	for key := range spec {
+		if managedProviderSpecKeys[key] {
+			return fmt.Errorf(
+				"provider spec key %q is managed by the host", key,
+			)
+		}
+	}
+	if _, ok := spec["chat_stream_options"]; ok {
+		if !strings.EqualFold(typ, "openai") ||
+			!strings.EqualFold(api, "chat") {
+			return fmt.Errorf(
+				"chat_stream_options requires an openai chat profile",
+			)
+		}
+	}
+	return nil
 }
 
 // writeInferenceLocked writes the user inference YAML. Callers hold
@@ -961,8 +1036,9 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 	// with credential profiles and the deployment spec (endpoint /
 	// base_url, api mode, models + capabilities).
 	type instanceSettings struct {
-		Impl     string `json:"impl"`
-		Settings struct {
+		Impl         string         `json:"impl"`
+		ProviderSpec map[string]any `json:"-"`
+		Settings     struct {
 			ID       string `json:"id"`
 			Profiles []struct {
 				ID        string            `json:"id"`
@@ -999,6 +1075,25 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 		var res instanceSettings
 		if err := yaml.Unmarshal(raw, &res); err != nil {
 			return InferenceConfig{}, fmt.Errorf("config: parse %s: %w", id, err)
+		}
+		var specDoc struct {
+			Settings struct {
+				Spec map[string]any `json:"spec"`
+			} `json:"settings"`
+		}
+		if err := yaml.Unmarshal(raw, &specDoc); err != nil {
+			return InferenceConfig{}, fmt.Errorf(
+				"config: parse %s spec: %w", id, err,
+			)
+		}
+		extras := make(map[string]any)
+		for key, value := range specDoc.Settings.Spec {
+			if !managedProviderSpecKeys[key] {
+				extras[key] = value
+			}
+		}
+		if len(extras) > 0 {
+			res.ProviderSpec = extras
 		}
 		providers[id] = res
 	}
@@ -1087,6 +1182,7 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 		if spec.Endpoint != "" {
 			in.Endpoint = spec.Endpoint
 		}
+		in.ProviderSpec = res.ProviderSpec
 		var endpoints map[string]string
 		if len(res.Settings.Profiles) > 0 {
 			endpoints = res.Settings.Profiles[0].Endpoints

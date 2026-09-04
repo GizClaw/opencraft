@@ -642,7 +642,7 @@ interface StoreState {
   handleEvent: (ev: UIEvent) => void;
   flushStreams: () => void;
   send: (text: string, attachments?: AttachmentView[]) => Promise<void>;
-  retryLast: () => Promise<void>;
+  forkTurn: (runID: string) => Promise<void>;
   clearLastFailed: () => void;
   replyInteract: (id: string, req: ReplyRequest) => Promise<void>;
   cancelRun: () => Promise<void>;
@@ -806,9 +806,9 @@ export const useStore = create<StoreState>((set, get) => {
   ) => {
     const conv = get().conversations[convID];
     const requestedAt = new Date().toISOString();
-    // Keep completed turns' strips; trim anything that started at or
-    // beyond the (possibly retried) transcript, then open a new live
-    // turn entry at the user message just appended.
+    // Keep existing turn strips that still own messages in the new
+    // transcript, then open a new live turn entry at the user message
+    // just appended.
     const turnArtifacts = [
       ...conv.turnArtifacts.filter((t) => t.start < messages.length),
       {
@@ -1500,35 +1500,17 @@ export const useStore = create<StoreState>((set, get) => {
       await beginTurn(convID, trimmed, messages, attachments);
     },
 
-    retryLast: async () => {
-      const state = get();
+    forkTurn: async (runID) => {
       const convID = activeConversationID();
-      const conv = convID ? state.conversations[convID] : undefined;
-      const turn = convID ? conversationTurnState(convID) : undefined;
-      if (
-        !convID ||
-        !conv ||
-        turn?.name === 'starting' ||
-        turn?.name === 'running'
-      ) {
-        return;
+      if (!convID || !runID) return;
+      try {
+        const newID = await runContextSwitch(() => api.forkTurn(convID, runID));
+        if (!newID) return;
+        await get().resume(newID);
+        void get().loadSessions();
+      } catch (err) {
+        set({ statusText: String(err) });
       }
-      let lastUserIdx = -1;
-      for (let i = conv.messages.length - 1; i >= 0; i--) {
-        if (conv.messages[i].role === 'user') {
-          lastUserIdx = i;
-          break;
-        }
-      }
-      if (lastUserIdx < 0) return;
-      const text = conv.messages[lastUserIdx].text;
-      const attachments = conv.messages[lastUserIdx].attachments ?? [];
-      await beginTurn(
-        convID,
-        text,
-        conv.messages.slice(0, lastUserIdx + 1),
-        attachments,
-      );
     },
 
     clearLastFailed: () => {
