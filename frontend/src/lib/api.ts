@@ -193,13 +193,15 @@ export const api = {
   pluginKVGet: (id: string, key: string) =>
     Plugin.KVGet(id, key) as unknown as Promise<PluginKVEntry>,
   pluginKVList: (id: string) =>
-    Plugin.KVGet(id, '') as unknown as Promise<PluginKVEntry[]>,
+    Plugin.KVList(id) as unknown as Promise<PluginKVEntry[]>,
   pluginKVSet: (id: string, key: string, value: string) =>
     Plugin.KVSet(id, key, value),
   pluginKVDelete: (id: string, key: string) => Plugin.KVDelete(id, key),
   automations: () => Automation.List() as unknown as Promise<AutomationTask[]>,
   saveAutomation: (task: AutomationTask) =>
-    Automation.Save(task as any) as unknown as Promise<AutomationTask>,
+    Automation.Save(
+      task as unknown as gen.AutomationTaskDTO,
+    ) as unknown as Promise<AutomationTask>,
   setLanguage: (language: string) => Lifecycle.SetLanguage(language),
   deleteAutomation: (id: string) => Automation.Delete(id),
   runAutomationNow: (id: string) => Automation.RunNow(id),

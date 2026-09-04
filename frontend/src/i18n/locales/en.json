@@ -594,6 +594,7 @@
     "deleteConfirm": "Delete {{name}}? Its run history will be removed.",
     "noRuns": "No runs yet",
     "duration": "Duration",
+    "interruptedRestart": "App was closed or restarted; the run was interrupted",
     "openSession": "Open session"
   },
   "graph": {

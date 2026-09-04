@@ -124,7 +124,7 @@ export function mockBackend(cfg?: MockConfig) {
       InstallZip: async () => null,
       Invoke: async () => '',
       KVDelete: noop,
-      KVGet: async () => null,
+      KVGet: async () => ({ key: '', value: '' }),
       KVList: emptyList,
       KVSet: noop,
       List: emptyList,

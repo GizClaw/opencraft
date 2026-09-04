@@ -149,6 +149,13 @@ function statusClass(status: string): string {
   }
 }
 
+function runErrorMessage(error: string, t: (key: string) => string): string {
+  if (error === 'interrupted_by_app_restart' || error === '应用重启中断') {
+    return t('automations.interruptedRestart');
+  }
+  return error;
+}
+
 function fmtTime(iso: string): string {
   if (!iso) return '—';
   const d = new Date(iso);
@@ -1129,7 +1136,7 @@ export function AutomationsView() {
                         )}
                         {run.error && (
                           <p className="text-[0.7143rem] text-err min-w-0 truncate">
-                            {run.error}
+                            {runErrorMessage(run.error, t)}
                           </p>
                         )}
                         {run.conversation_id && (

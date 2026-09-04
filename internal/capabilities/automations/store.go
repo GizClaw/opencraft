@@ -300,7 +300,7 @@ func (s *Store) AdvanceNextRun(
 // number of runs corrected.
 func (s *Store) Reconcile(ctx context.Context) (int64, error) {
 	res, err := s.db.ExecContext(ctx, `
-		UPDATE automation_runs SET status = 'failed', error = '应用重启中断'
+		UPDATE automation_runs SET status = 'failed', error = 'interrupted_by_app_restart'
 		WHERE status = 'running'`)
 	if err != nil {
 		return 0, fmt.Errorf("automations: reconcile runs: %w", err)

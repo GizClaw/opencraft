@@ -217,7 +217,7 @@ func TestStoreReconcileStaleRuns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runs[0].Status != RunFailed || runs[0].Error != "应用重启中断" {
+	if runs[0].Status != RunFailed || runs[0].Error != "interrupted_by_app_restart" {
 		t.Fatalf("stale run not reconciled: %+v", runs[0])
 	}
 	_ = run

@@ -321,6 +321,13 @@ func (b *Session) ImportBundle(
 	if err != nil {
 		return SessionImportDTO{}, err
 	}
+	// The desktop import flow has no separate memory-seeding stage:
+	// mark the conversation complete immediately so List surfaces it
+	// in the session sidebar instead of leaving it pending forever.
+	if err := h.Sessions().CompleteImport(ctx, id); err != nil {
+		_ = h.Sessions().AbortImport(ctx, id)
+		return SessionImportDTO{}, err
+	}
 	messages := 0
 	for _, turn := range req.Turns {
 		messages += len(turn.Messages)
