@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"errors"
+	"os"
 	"strings"
 	"text/template"
 
@@ -48,9 +50,13 @@ func (h *Host) AutoTitle(ctx context.Context, contextID string) {
 		return
 	}
 	var custom string
-	if store.ReadState(contextID, "title", &custom) == nil &&
-		strings.TrimSpace(custom) != "" {
-		return
+	if err := store.ReadState(contextID, "title", &custom); err == nil {
+		if strings.TrimSpace(custom) != "" {
+			return
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		telemetry.WarnErr(ctx, "host: read custom title failed", err,
+			otellog.String("session", contextID))
 	}
 	first, err := store.FirstUserMessage(contextID)
 	if err != nil {
@@ -94,6 +100,8 @@ func (h *Host) AutoTitle(ctx context.Context, contextID string) {
 		},
 	})
 	if err != nil {
+		telemetry.WarnErr(ctx, "host: auto title generation failed", err,
+			otellog.String("session", contextID))
 		return
 	}
 	if h.usage != nil {
@@ -109,17 +117,20 @@ func (h *Host) AutoTitle(ctx context.Context, contextID string) {
 	if len(runes) > maxTitle {
 		title = string(runes[:maxTitle]) + "…"
 	}
-	if err := store.WriteState(contextID, "title", title); err == nil {
-		h.mu.Lock()
-		fn := h.sessionUpd
-		h.mu.Unlock()
-		if fn != nil {
-			fn(ctx, contextID)
-		}
-		telemetry.Info(ctx, "host: auto title generated",
-			otellog.String("session", contextID),
-			otellog.Int("title_chars", len(title)))
+	if err := store.WriteState(contextID, "title", title); err != nil {
+		telemetry.WarnErr(ctx, "host: persist auto title failed", err,
+			otellog.String("session", contextID))
+		return
 	}
+	h.mu.Lock()
+	fn := h.sessionUpd
+	h.mu.Unlock()
+	if fn != nil {
+		fn(ctx, contextID)
+	}
+	telemetry.Info(ctx, "host: auto title generated",
+		otellog.String("session", contextID),
+		otellog.Int("title_chars", len(title)))
 }
 
 func titleSystemContent() message.Content {

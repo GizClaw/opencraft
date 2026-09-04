@@ -213,7 +213,7 @@ func (s *Service) skillsSections(
 ) []Section {
 	svc := s.opts.Skills
 	mentioned := svc.Mentioned(reqText)
-	modelRequested := s.consumeActivations(agentID, contextID)
+	modelRequested := s.consumeActivations(ctx, agentID, contextID)
 	scored := svc.RankScored(reqText, svc.TopN(), svc.MinScore())
 	ranked := make([]skills.SkillMetadata, 0, len(scored))
 	for _, sc := range scored {

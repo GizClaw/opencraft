@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/GizClaw/flowcraft/core/telemetry"
+
 	"github.com/GizClaw/opencraft/internal/capabilities/automations"
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
 	pluginagent "github.com/GizClaw/opencraft/internal/capabilities/plugins/agent"
@@ -132,17 +134,21 @@ func (r *Runtime) OpenUserDB(ctx context.Context) error {
 		return fmt.Errorf("runtime: open user db: %w", err)
 	}
 	if err := migrations.User(ctx, udb); err != nil {
-		_ = udb.Close()
+		telemetry.WarnErr(ctx, "desktop runtime: close user db after migration failure",
+			udb.Close())
 		return fmt.Errorf("runtime: migrate user db: %w", err)
 	}
 	usageStore, err := usage.Attach(udb)
 	if err != nil {
-		_ = udb.Close()
+		telemetry.WarnErr(ctx, "desktop runtime: close user db after usage attach failure",
+			udb.Close())
 		return fmt.Errorf("runtime: attach usage: %w", err)
 	}
 	automationStore, err := automations.Attach(udb)
 	if err != nil {
-		_ = udb.Close()
+		telemetry.WarnErr(ctx,
+			"desktop runtime: close user db after automations attach failure",
+			udb.Close())
 		return fmt.Errorf("runtime: attach automations: %w", err)
 	}
 
@@ -237,6 +243,7 @@ func (r *Runtime) Close() {
 	r.current = nil
 	r.mu.Unlock()
 	if udb != nil {
-		_ = udb.Close()
+		telemetry.WarnErr(context.Background(),
+			"desktop runtime: close user db failed", udb.Close())
 	}
 }

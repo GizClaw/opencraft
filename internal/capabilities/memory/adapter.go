@@ -4,12 +4,15 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/telemetry"
+	otellog "go.opentelemetry.io/otel/log"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/memory/summary"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
@@ -31,7 +34,11 @@ func (a *sqliteTurnStore) AppendMessages(
 	if err != nil {
 		return fmt.Errorf("memory: begin append: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			telemetry.WarnErr(ctx, "memory: rollback append failed", err)
+		}
+	}()
 	if err := a.appendMessagesTx(ctx, tx, conversationID, turnID, msgs); err != nil {
 		return err
 	}
@@ -57,7 +64,10 @@ func (a *sqliteTurnStore) appendMessagesTx(
 		if text == "" {
 			continue
 		}
-		payload, _ := json.Marshal(map[string]any{"text": text})
+		payload, err := json.Marshal(map[string]any{"text": text})
+		if err != nil {
+			return fmt.Errorf("memory: marshal message payload: %w", err)
+		}
 		id := conversationID + ":" + turnID + ":" + strconv.FormatInt(seq, 10)
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO memory_items(
@@ -126,7 +136,9 @@ func (a *sqliteTurnStore) loadRange(
 	if err != nil {
 		return nil, fmt.Errorf("memory: load messages: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		telemetry.WarnErr(ctx, "memory: close message rows failed", rows.Close())
+	}()
 	var out []message.Message
 	for rows.Next() {
 		var role, payload string
@@ -136,7 +148,11 @@ func (a *sqliteTurnStore) loadRange(
 		var obj struct {
 			Text string `json:"text"`
 		}
-		_ = json.Unmarshal([]byte(payload), &obj)
+		if err := json.Unmarshal([]byte(payload), &obj); err != nil {
+			telemetry.WarnErr(ctx, "memory: decode message payload failed", err,
+				otellog.String("conversation.id", conversationID))
+			continue
+		}
 		if obj.Text == "" {
 			continue
 		}
@@ -148,11 +164,23 @@ func (a *sqliteTurnStore) loadRange(
 func (a *sqliteTurnStore) UpsertSummaryNode(
 	ctx context.Context, node summary.SummaryNode,
 ) error {
-	parents, _ := json.Marshal(node.ParentIDs)
-	sources, _ := json.Marshal(node.SourceIDs)
-	metadata, _ := json.Marshal(node.Metadata)
-	content, _ := json.Marshal(node.Content)
-	_, err := a.db.SQLDB().ExecContext(ctx, `
+	parents, err := json.Marshal(node.ParentIDs)
+	if err != nil {
+		return fmt.Errorf("memory: marshal summary parents: %w", err)
+	}
+	sources, err := json.Marshal(node.SourceIDs)
+	if err != nil {
+		return fmt.Errorf("memory: marshal summary sources: %w", err)
+	}
+	metadata, err := json.Marshal(node.Metadata)
+	if err != nil {
+		return fmt.Errorf("memory: marshal summary metadata: %w", err)
+	}
+	content, err := json.Marshal(node.Content)
+	if err != nil {
+		return fmt.Errorf("memory: marshal summary content: %w", err)
+	}
+	_, err = a.db.SQLDB().ExecContext(ctx, `
 		INSERT INTO summary_nodes(
 			id, thread_id, level, parent_ids, source_ids, summary,
 			created_at, updated_at, metadata
@@ -187,7 +215,9 @@ func (a *sqliteTurnStore) ListSummaryNodes(
 	if err != nil {
 		return nil, fmt.Errorf("memory: list summary nodes: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		telemetry.WarnErr(ctx, "memory: close summary rows failed", rows.Close())
+	}()
 	var nodes []summary.SummaryNode
 	for rows.Next() {
 		var n summary.SummaryNode
@@ -196,12 +226,33 @@ func (a *sqliteTurnStore) ListSummaryNodes(
 			&content, &createdAt, &updatedAt, &metadata); err != nil {
 			return nil, fmt.Errorf("memory: scan summary node: %w", err)
 		}
-		_ = json.Unmarshal([]byte(parents), &n.ParentIDs)
-		_ = json.Unmarshal([]byte(sources), &n.SourceIDs)
-		_ = json.Unmarshal([]byte(content), &n.Content)
-		_ = json.Unmarshal([]byte(metadata), &n.Metadata)
-		n.CreatedAt, _ = time.Parse(time.RFC3339Nano, createdAt)
-		n.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updatedAt)
+		if err := json.Unmarshal([]byte(parents), &n.ParentIDs); err != nil {
+			telemetry.WarnErr(ctx, "memory: decode summary parents failed", err,
+				otellog.String("conversation.id", conversationID))
+		}
+		if err := json.Unmarshal([]byte(sources), &n.SourceIDs); err != nil {
+			telemetry.WarnErr(ctx, "memory: decode summary sources failed", err,
+				otellog.String("conversation.id", conversationID))
+		}
+		if err := json.Unmarshal([]byte(content), &n.Content); err != nil {
+			telemetry.WarnErr(ctx, "memory: decode summary content failed", err,
+				otellog.String("conversation.id", conversationID))
+		}
+		if err := json.Unmarshal([]byte(metadata), &n.Metadata); err != nil {
+			telemetry.WarnErr(ctx, "memory: decode summary metadata failed", err,
+				otellog.String("conversation.id", conversationID))
+		}
+		var timeErr error
+		n.CreatedAt, timeErr = time.Parse(time.RFC3339Nano, createdAt)
+		if timeErr != nil {
+			telemetry.WarnErr(ctx, "memory: parse summary created time failed",
+				timeErr, otellog.String("conversation.id", conversationID))
+		}
+		n.UpdatedAt, timeErr = time.Parse(time.RFC3339Nano, updatedAt)
+		if timeErr != nil {
+			telemetry.WarnErr(ctx, "memory: parse summary updated time failed",
+				timeErr, otellog.String("conversation.id", conversationID))
+		}
 		nodes = append(nodes, n)
 	}
 	return nodes, rows.Err()

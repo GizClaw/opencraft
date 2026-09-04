@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 )
 
 // Conversation is the SQLite-backed session index row. It replaces the
@@ -36,6 +37,8 @@ type ArchiveTurn struct {
 	RequestedAt   time.Time
 	StartedAt     time.Time
 	FinishedAt    time.Time
+	Status        string
+	Error         string
 	ArtifactsJSON []byte
 }
 
@@ -132,7 +135,9 @@ func (s *Store) ListConversations(ctx context.Context) ([]Conversation, error) {
 	if err != nil {
 		return nil, fmt.Errorf("state: list conversations: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		telemetry.WarnErr(ctx, "state: close conversation rows failed", rows.Close())
+	}()
 	var out []Conversation
 	for rows.Next() {
 		c, err := scanConversation(rows)
@@ -246,7 +251,11 @@ func (s *Store) CommitConversationTurnWithHook(
 	if err != nil {
 		return fmt.Errorf("state: begin conversation turn: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			telemetry.WarnErr(ctx, "state: rollback commit turn failed", err)
+		}
+	}()
 
 	if turn.RunID != "" {
 		var existing int64
@@ -297,13 +306,16 @@ func (s *Store) CommitConversationTurnWithHook(
 	res, err := tx.ExecContext(ctx, `
 		INSERT INTO archive_turns(
 			conversation_id, seq, run_id, at,
-			requested_at, started_at, finished_at, artifacts_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+			requested_at, started_at, finished_at,
+			status, error, artifacts_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.ID, turnSeq, runID,
 		turn.At.UTC().Format(time.RFC3339Nano),
 		turn.RequestedAt.UTC().Format(time.RFC3339Nano),
 		turn.StartedAt.UTC().Format(time.RFC3339Nano),
 		turn.FinishedAt.UTC().Format(time.RFC3339Nano),
+		turn.Status,
+		turn.Error,
 		string(turn.ArtifactsJSON),
 	)
 	if err != nil {
@@ -368,20 +380,23 @@ func (s *Store) ListArchiveTurns(
 ) ([]ArchiveTurn, error) {
 	rows, err := s.db.SQLDB().QueryContext(ctx, `
 		SELECT id, conversation_id, seq, run_id, at,
-			requested_at, started_at, finished_at, artifacts_json
+			requested_at, started_at, finished_at,
+			status, error, artifacts_json
 		FROM archive_turns WHERE conversation_id = ? ORDER BY seq`, conversationID)
 	if err != nil {
 		return nil, fmt.Errorf("state: list archive turns: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		telemetry.WarnErr(ctx, "state: close archive turn rows failed", rows.Close())
+	}()
 	var out []ArchiveTurn
 	for rows.Next() {
 		var t ArchiveTurn
 		var conversationID string
 		var runID sql.NullString
-		var at, requested, started, finished, artifacts string
+		var at, requested, started, finished, status, errText, artifacts string
 		if err := rows.Scan(&t.ID, &conversationID, &t.Seq, &runID, &at,
-			&requested, &started, &finished, &artifacts); err != nil {
+			&requested, &started, &finished, &status, &errText, &artifacts); err != nil {
 			return nil, fmt.Errorf("state: scan archive turn: %w", err)
 		}
 		t.RunID = runID.String
@@ -389,6 +404,8 @@ func (s *Store) ListArchiveTurns(
 		t.RequestedAt = parseTime(requested)
 		t.StartedAt = parseTime(started)
 		t.FinishedAt = parseTime(finished)
+		t.Status = status
+		t.Error = errText
 		t.ArtifactsJSON = []byte(artifacts)
 		out = append(out, t)
 	}
@@ -407,7 +424,9 @@ func (s *Store) ListArchiveMessages(
 	if err != nil {
 		return nil, fmt.Errorf("state: list archive messages: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		telemetry.WarnErr(ctx, "state: close archive message rows failed", rows.Close())
+	}()
 	var out []ArchiveMessage
 	for rows.Next() {
 		var m ArchiveMessage
@@ -425,37 +444,28 @@ func (s *Store) ListArchiveMessages(
 	return out, rows.Err()
 }
 
-// UpdateArchiveTurnTimes updates timing columns of one turn.
-func (s *Store) UpdateArchiveTurnTimes(
+// UpdateArchiveTurnEnd records the terminal status/error and finish
+// time of one run. The status/error fields are written by the host
+// after the engine observer/committer has already inserted the turn,
+// so archive rows always carry the same status the UI event reports.
+func (s *Store) UpdateArchiveTurnEnd(
 	ctx context.Context, conversationID, runID string,
-	requestedAt, startedAt, finishedAt time.Time,
+	finishedAt time.Time, status, errText string,
 ) error {
 	if runID == "" {
 		return fmt.Errorf("state: run id is required")
 	}
-	updates := []string{}
-	args := []any{}
-	if !requestedAt.IsZero() {
-		updates = append(updates, "requested_at = ?")
-		args = append(args, requestedAt.UTC().Format(time.RFC3339Nano))
-	}
-	if !startedAt.IsZero() {
-		updates = append(updates, "started_at = ?")
-		args = append(args, startedAt.UTC().Format(time.RFC3339Nano))
-	}
-	if !finishedAt.IsZero() {
-		updates = append(updates, "finished_at = ?")
-		args = append(args, finishedAt.UTC().Format(time.RFC3339Nano))
-	}
-	if len(updates) == 0 {
-		return nil
-	}
-	args = append(args, conversationID, runID)
+	finishedAt = finishedAt.UTC()
 	_, err := s.db.SQLDB().ExecContext(ctx, `
-		UPDATE archive_turns SET `+strings.Join(updates, ", ")+`
-		WHERE conversation_id = ? AND run_id = ?`, args...)
+		UPDATE archive_turns SET
+			finished_at = ?,
+			status = ?,
+			error = ?
+		WHERE conversation_id = ? AND run_id = ?`,
+		finishedAt.Format(time.RFC3339Nano),
+		status, errText, conversationID, runID)
 	if err != nil {
-		return fmt.Errorf("state: update archive timing: %w", err)
+		return fmt.Errorf("state: update archive turn end: %w", err)
 	}
 	return nil
 }
@@ -519,7 +529,11 @@ func (s *Store) DeleteConversationRows(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("state: begin delete conversation: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			telemetry.WarnErr(ctx, "state: rollback delete conversation failed", err)
+		}
+	}()
 	for _, stmt := range []string{
 		`DELETE FROM archive_messages WHERE conversation_id = ?`,
 		`DELETE FROM archive_turns WHERE conversation_id = ?`,
@@ -589,7 +603,12 @@ func scanConversation(row rowScanner) (Conversation, error) {
 func parseTime(s string) time.Time {
 	t, err := time.Parse(time.RFC3339Nano, s)
 	if err != nil {
-		t, _ = time.Parse(time.RFC3339, s)
+		var fallbackErr error
+		t, fallbackErr = time.Parse(time.RFC3339, s)
+		if fallbackErr != nil {
+			telemetry.WarnErr(context.Background(),
+				"state: parse stored timestamp failed", fallbackErr)
+		}
 	}
 	return t
 }

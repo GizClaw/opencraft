@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"sync"
+
+	"github.com/GizClaw/flowcraft/core/telemetry"
 )
 
 // Client is the execd JSON-RPC client: synchronous requests plus
@@ -32,7 +34,8 @@ func Dial(ctx context.Context, conn io.ReadWriteCloser) (*Client, error) {
 	go c.readLoop()
 	var init InitializeResponse
 	if err := c.call(ctx, MethodInitialize, InitializeParams{ClientName: "opencraft"}, &init); err != nil {
-		_ = conn.Close()
+		telemetry.WarnErr(ctx, "execd: close connection after handshake failure",
+			conn.Close())
 		return nil, err
 	}
 	return c, nil
@@ -188,7 +191,10 @@ func (c *Client) readLoop() {
 			Error  *RPCError       `json:"error"`
 		}
 		if err := dec.Decode(&msg); err != nil {
-			_ = c.Close()
+			telemetry.WarnErr(context.Background(),
+				"execd: decode response failed; closing client", err)
+			telemetry.WarnErr(context.Background(),
+				"execd: close client after decode failure", c.Close())
 			return
 		}
 		if msg.ID == nil {

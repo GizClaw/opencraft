@@ -17,6 +17,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/sandbox"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 	"sigs.k8s.io/yaml"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
@@ -121,11 +122,14 @@ func (m *Manager) Approve(
 		return sandbox.Deny, errdefs.NotAvailablef(
 			"opencraft execpolicy: no host in tool context")
 	}
-	opts, _ := json.Marshal([]interact.Option{
+	opts, err := json.Marshal([]interact.Option{
 		{Label: "Allow once", Value: "allow_once"},
 		{Label: "Deny", Value: "deny"},
 		{Label: "Always allow", Value: "always"},
 	})
+	if err != nil {
+		return sandbox.Deny, err
+	}
 	reply, err := host.AskUser(ctx, agent.UserPrompt{
 		Parts: []message.Part{message.TextPart{
 			Text: fmt.Sprintf(
@@ -170,7 +174,9 @@ func (m *Manager) AlwaysAllow(rule string) error {
 	}
 	entries, err := m.readFile()
 	if err != nil {
-		_ = m.allowlist.Set(before)
+		telemetry.WarnErr(context.Background(),
+			"opencraft execpolicy: rollback allowlist after read failure",
+			m.allowlist.Set(before))
 		return err
 	}
 	for _, e := range entries {
@@ -180,7 +186,9 @@ func (m *Manager) AlwaysAllow(rule string) error {
 	}
 	entries = append(entries, rule)
 	if err := m.writeFile(entries); err != nil {
-		_ = m.allowlist.Set(before)
+		telemetry.WarnErr(context.Background(),
+			"opencraft execpolicy: rollback allowlist after write failure",
+			m.allowlist.Set(before))
 		return err
 	}
 	return nil
@@ -209,7 +217,9 @@ func (m *Manager) Remove(rule string) error {
 	}
 	entries, err := m.readFile()
 	if err != nil {
-		_ = m.allowlist.Set(rules)
+		telemetry.WarnErr(context.Background(),
+			"opencraft execpolicy: rollback allowlist after read failure",
+			m.allowlist.Set(rules))
 		return err
 	}
 	out := entries[:0:0]
@@ -219,7 +229,9 @@ func (m *Manager) Remove(rule string) error {
 		}
 	}
 	if err := m.writeFile(out); err != nil {
-		_ = m.allowlist.Set(rules)
+		telemetry.WarnErr(context.Background(),
+			"opencraft execpolicy: rollback allowlist after write failure",
+			m.allowlist.Set(rules))
 		return err
 	}
 	return nil
@@ -270,9 +282,16 @@ func (m *Manager) writeFile(entries []string) error {
 		return err
 	}
 	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
+	defer func() {
+		if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
+			telemetry.WarnErr(context.Background(),
+				"opencraft execpolicy: remove approvals temp file failed", err)
+		}
+	}()
 	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
+		telemetry.WarnErr(context.Background(),
+			"opencraft execpolicy: close approvals temp after write failure",
+			tmp.Close())
 		return err
 	}
 	if err := tmp.Close(); err != nil {

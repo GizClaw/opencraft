@@ -25,6 +25,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference/route"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/message/media"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/tool"
 	"github.com/GizClaw/flowcraft/core/workspace"
 	"github.com/rs/xid"
@@ -325,7 +326,10 @@ func (t *Tool) download(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, errdefs.Internalf("%s: download: %v", Name, err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		telemetry.WarnErr(ctx, "videogen: close provider response failed",
+			resp.Body.Close())
+	}()
 	if resp.StatusCode != http.StatusOK {
 		return nil, errdefs.Internalf(
 			"%s: download: provider returned %s", Name, resp.Status)
@@ -340,20 +344,26 @@ func (t *Tool) download(ctx context.Context, url string) ([]byte, error) {
 		return nil, errdefs.Internalf("%s: download: %v", Name, err)
 	}
 	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
+	defer func() {
+		telemetry.WarnErr(ctx, "videogen: remove download temp failed",
+			os.Remove(tmpName))
+	}()
 	n, err := io.Copy(tmp, io.LimitReader(resp.Body, maxDownloadBytes+1))
 	if err != nil {
-		_ = tmp.Close()
+		telemetry.WarnErr(ctx, "videogen: close download temp after copy failure",
+			tmp.Close())
 		return nil, errdefs.Internalf("%s: download: %v", Name, err)
 	}
 	if n > maxDownloadBytes {
-		_ = tmp.Close()
+		telemetry.WarnErr(ctx, "videogen: close oversized download temp",
+			tmp.Close())
 		return nil, errdefs.Internalf(
 			"%s: download: artifact exceeds the %d byte cap",
 			Name, maxDownloadBytes)
 	}
 	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
-		_ = tmp.Close()
+		telemetry.WarnErr(ctx, "videogen: close download temp after seek failure",
+			tmp.Close())
 		return nil, errdefs.Internalf("%s: download: %v", Name, err)
 	}
 	data, err := io.ReadAll(tmp)

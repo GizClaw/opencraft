@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -19,7 +20,9 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/inference/route"
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/tool"
+	otellog "go.opentelemetry.io/otel/log"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/summarytext"
@@ -160,7 +163,11 @@ func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
 
 	var art artifact
 	if args.ConversationID != "" {
-		_ = t.store.ReadState(args.ConversationID, compactStateName, &art)
+		if err := t.store.ReadState(args.ConversationID, compactStateName, &art); err != nil &&
+			!errors.Is(err, os.ErrNotExist) {
+			telemetry.WarnErr(ctx, "compact: load previous compaction state failed",
+				err, otellog.String("conversation.id", args.ConversationID))
+		}
 	}
 	if art.Summary != "" && setsEqual(art.Covered, ids) {
 		return encodePatch(art.Summary)
@@ -214,10 +221,11 @@ func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
 	defer t.mu.Unlock()
 	merged := mergeIDs(art.Covered, ids)
 	if args.ConversationID != "" {
-		_ = t.store.WriteState(args.ConversationID, compactStateName, artifact{
-			Covered: merged,
-			Summary: summary,
-		})
+		telemetry.WarnErr(ctx, "compact: persist compaction state failed",
+			t.store.WriteState(args.ConversationID, compactStateName, artifact{
+				Covered: merged,
+				Summary: summary,
+			}), otellog.String("conversation.id", args.ConversationID))
 	}
 	return encodePatch(summary)
 }

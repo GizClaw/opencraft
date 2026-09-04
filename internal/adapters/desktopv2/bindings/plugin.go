@@ -1,11 +1,14 @@
 package bindings
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
@@ -39,10 +42,20 @@ func (b *Plugin) SetEnabled(id string, enabled bool) error {
 	if err := b.core.Plugin.Store.SetEnabled(id, enabled); err != nil {
 		return err
 	}
+	var removeErr error
 	if !enabled {
 		b.core.Plugin.Capability.Stop(id)
+		removed, err := b.core.RemovePluginInference(id)
+		if err != nil {
+			removeErr = err
+		} else if removed {
+			b.core.Shell.Emit("inference_changed", map[string]any{})
+		}
 	}
-	return b.refresh()
+	if err := b.refresh(); err != nil {
+		return err
+	}
+	return removeErr
 }
 
 // Bundle returns the plugin entry bundle source.
@@ -195,7 +208,7 @@ func pluginSkillRoots(m *plugins.Manifest, dir string) []string {
 // directories are skipped.
 func scanPluginSkillRoot(root string) []SkillSummary {
 	var out []SkillSummary
-	_ = filepath.WalkDir(root, func(
+	err := filepath.WalkDir(root, func(
 		path string, d os.DirEntry, err error,
 	) error {
 		if err != nil {
@@ -216,6 +229,8 @@ func scanPluginSkillRoot(root string) []SkillSummary {
 		}
 		parsed, parseErr := skills.ParseFile(path)
 		if parseErr != nil {
+			telemetry.WarnErr(context.Background(),
+				"desktop plugin: parse skill file failed", parseErr)
 			return nil
 		}
 		meta := parsed.Metadata
@@ -227,6 +242,8 @@ func scanPluginSkillRoot(root string) []SkillSummary {
 		})
 		return nil
 	})
+	telemetry.WarnErr(context.Background(),
+		"desktop plugin: scan skill root failed", err)
 	return out
 }
 
@@ -305,10 +322,26 @@ func (b *Plugin) ApplyUpdate(
 	return sum, b.refresh()
 }
 
-// Uninstall removes one user plugin and its KV data.
+// Uninstall removes one user plugin and everything it registered:
+// inference profiles (with the host-side fallback for plugins that do
+// not implement lifecycle.cleanup or whose process is not running),
+// scoped secrets, and KV data.
 func (b *Plugin) Uninstall(id string) error {
 	if b.core.Plugin.Capability != nil {
-		_ = b.core.Plugin.Capability.Cleanup(id)
+		telemetry.WarnErr(context.Background(),
+			"desktop plugin: capability cleanup failed",
+			b.core.Plugin.Capability.Cleanup(id))
+	}
+	removed, err := b.core.RemovePluginInference(id)
+	if err != nil {
+		return err
+	}
+	if b.core.Plugin.Secrets != nil && b.core.Plugin.Secrets.Available() {
+		if err := b.core.Plugin.Secrets.DeletePrefix(
+			b.core.Shell.Context(), "auth/"+id+"/",
+		); err != nil {
+			return err
+		}
 	}
 	if err := b.core.Plugin.Store.Uninstall(id); err != nil {
 		return err
@@ -316,6 +349,9 @@ func (b *Plugin) Uninstall(id string) error {
 	b.core.Plugin.KV.RemoveAll(id)
 	if b.core.Plugin.Capability != nil {
 		b.core.Plugin.Capability.Stop(id)
+	}
+	if removed {
+		b.core.Shell.Emit("inference_changed", map[string]any{})
 	}
 	return b.refresh()
 }

@@ -2,9 +2,13 @@ package db
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/GizClaw/flowcraft/core/telemetry"
 )
 
 // Migration is one versioned schema step owned by the centralized
@@ -72,7 +76,11 @@ func (d *DB) applyMigration(ctx context.Context, m Migration) error {
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			telemetry.WarnErr(ctx, "db: rollback migration failed", err)
+		}
+	}()
 	for _, stmt := range m.Statements {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("statement %q: %w", firstLine(stmt), err)

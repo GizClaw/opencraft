@@ -9,6 +9,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
 )
@@ -98,7 +99,8 @@ func (s *Store) Import(ctx context.Context, req ImportRequest) (string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
-	_ = os.Chmod(dir, 0o700)
+	telemetry.WarnErr(ctx, "sessions: secure import dir failed",
+		os.Chmod(dir, 0o700))
 
 	title := strings.TrimSpace(req.Title)
 	if title == "" {
@@ -122,7 +124,8 @@ func (s *Store) Import(ctx context.Context, req ImportRequest) (string, error) {
 		ImportSource: source,
 	}
 	if err := s.db.EnsureConversation(ctx, conv); err != nil {
-		_ = os.RemoveAll(dir)
+		telemetry.WarnErr(ctx, "sessions: clean up failed import dir failed",
+			os.RemoveAll(dir))
 		return "", err
 	}
 	messageCount := 0
@@ -142,7 +145,9 @@ func (s *Store) Import(ctx context.Context, req ImportRequest) (string, error) {
 			StartedAt:   arch.At,
 			FinishedAt:  arch.At,
 		}, turnMsgs); err != nil {
-			_ = s.removeLocked(ctx, id)
+			telemetry.WarnErr(ctx,
+				"sessions: rollback failed import turn failed",
+				s.removeLocked(ctx, id))
 			return "", err
 		}
 	}
@@ -156,7 +161,9 @@ func (s *Store) Import(ctx context.Context, req ImportRequest) (string, error) {
 		ImportSource: source,
 	}
 	if err := s.db.UpsertConversation(ctx, conv); err != nil {
-		_ = s.removeLocked(ctx, id)
+		telemetry.WarnErr(ctx,
+			"sessions: rollback failed import metadata failed",
+			s.removeLocked(ctx, id))
 		return "", err
 	}
 	s.importPending[id] = source

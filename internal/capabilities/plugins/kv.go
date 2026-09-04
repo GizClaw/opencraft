@@ -8,12 +8,15 @@ package plugins
 // to JS.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sync"
+
+	"github.com/GizClaw/flowcraft/core/telemetry"
 )
 
 const (
@@ -109,7 +112,9 @@ func (s *KVStore) RemoveAll(pluginID string) {
 	if err := ValidateID(pluginID); err != nil {
 		return
 	}
-	_ = os.RemoveAll(filepath.Join(s.root, ".data", pluginID))
+	telemetry.WarnErr(context.Background(),
+		"plugins: remove plugin kv data failed",
+		os.RemoveAll(filepath.Join(s.root, ".data", pluginID)))
 }
 
 // ValidateKVKey checks one plugin KV key.

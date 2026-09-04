@@ -300,8 +300,10 @@ func truncateRunes(s string, maxBytes int) string {
 
 func stableMessageID(threadID string, index int, msg message.Message) string {
 	h := sha256.New()
-	_, _ = fmt.Fprintf(h, "%s|%d|%s|%s",
-		threadID, index, msg.Role, msg.Content.Text())
+	if _, err := fmt.Fprintf(h, "%s|%d|%s|%s",
+		threadID, index, msg.Role, msg.Content.Text()); err != nil {
+		panic(fmt.Sprintf("summary: hash write failed: %v", err))
+	}
 	return hex.EncodeToString(h.Sum(nil))
 }
 
@@ -312,7 +314,10 @@ func stableMessageID(threadID string, index int, msg message.Message) string {
 // rows.
 func stableID(threadID string, level int, p Policy) string {
 	h := sha256.New()
-	_, _ = fmt.Fprintf(h, "%s|%d|%d:%d:%d",
-		threadID, level, p.MaxRawMessages, p.PreserveRecent, p.MaxSummaryBytes)
+	if _, err := fmt.Fprintf(h, "%s|%d|%d:%d:%d",
+		threadID, level, p.MaxRawMessages, p.PreserveRecent,
+		p.MaxSummaryBytes); err != nil {
+		panic(fmt.Sprintf("summary: hash write failed: %v", err))
+	}
 	return hex.EncodeToString(h.Sum(nil))
 }

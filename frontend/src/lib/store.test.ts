@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MessageView } from './store';
 import { stateRoot } from '../state/app';
-import { useStore } from './store';
+import { friendlyFailure, useStore } from './store';
 
 const apiMock = vi.hoisted(() => ({
   configStatus: vi.fn(),
@@ -258,6 +258,69 @@ describe('store: send and stream', () => {
     expect(apiMock.sessionTurns).toHaveBeenCalledWith('s-2');
   });
 
+  it('resume keeps archived turn status on the turn artifact', async () => {
+    apiMock.sessionTurns.mockResolvedValue([
+      {
+        ...historyTurn(1, 'history user', 'partial answer'),
+        status: 'failed',
+        error: 'engine boom',
+      },
+    ]);
+
+    await useStore.getState().resume('s-2');
+
+    const conv = useStore.getState().conversations['s-2'];
+    expect(conv.turnArtifacts[0]).toMatchObject({
+      status: 'failed',
+      error: 'engine boom',
+    });
+  });
+
+  it('resume strips legacy marker text from older failures', async () => {
+    apiMock.sessionTurns.mockResolvedValue([
+      {
+        seq: 1,
+        at: '2026-09-03T00:00:00Z',
+        messages: [
+          {
+            role: 'user',
+            content: { parts: [{ type: 'text', text: 'history user' }] },
+          },
+          {
+            role: 'assistant',
+            content: {
+              parts: [
+                {
+                  type: 'text',
+                  text: 'partial\n\n> ⛔ graph "opencraft-assistant" node "llm": provider_failure during generate',
+                },
+              ],
+            },
+          },
+        ],
+        artifacts: [],
+      },
+    ]);
+
+    await useStore.getState().resume('s-2');
+
+    const conv = useStore.getState().conversations['s-2'];
+    const assistantTexts = conv.messages
+      .filter((m) => m.role === 'assistant')
+      .flatMap((m) =>
+        m.items
+          .filter(
+            (
+              it,
+            ): it is Extract<MessageView['items'][number], { kind: 'text' }> =>
+              it.kind === 'text',
+          )
+          .map((it) => it.text),
+      );
+    expect(assistantTexts).toEqual(['partial']);
+    expect(conv.turnArtifacts[0].status).toBe('failed');
+  });
+
   it('does not duplicate an archived assistant message', async () => {
     apiMock.sessionTurns.mockResolvedValue([
       historyTurn(1, 'history user', 'history answer'),
@@ -480,13 +543,14 @@ describe('store: send and stream', () => {
     expect(useStore.getState().runConvs['r-1']).toBeUndefined();
   });
 
-  it('failed turn_end appends an error marker and sets lastFailed', () => {
+  it('failed turn_end stores status on the turn without a message marker', () => {
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
     useStore.setState({
       runConvs: { 'r-1': 's-1' },
       conversations: {
         's-1': {
           ...useStore.getState().conversations['s-1'],
+          turnArtifacts: [{ id: 'live-1', start: 0, runID: 'r-1', docs: [] }],
           messages: [
             {
               id: 'a-1',
@@ -511,10 +575,67 @@ describe('store: send and stream', () => {
 
     const conv = useStore.getState().conversations['s-1'];
     expect(actorValue('s-1')?.turn).toBe('failed');
+    expect(conv.turnArtifacts[0]).toMatchObject({
+      status: 'failed',
+      error: 'engine boom',
+    });
     const text = conv.messages[0].items.find(
       (i) => i.kind === 'text',
     ) as Extract<MessageView['items'][number], { kind: 'text' }>;
-    expect(text.text).toContain('engine boom');
+    expect(text.text).toBe('partial');
+  });
+
+  it('canceled turn_end keeps the transcript clean and records the status', () => {
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    useStore.setState({
+      runConvs: { 'r-1': 's-1' },
+      conversations: {
+        's-1': {
+          ...useStore.getState().conversations['s-1'],
+          turnArtifacts: [{ id: 'live-1', start: 0, runID: 'r-1', docs: [] }],
+          messages: [
+            {
+              id: 'a-1',
+              role: 'assistant',
+              text: '',
+              items: [{ kind: 'text', id: 't-1', text: 'partial' }],
+              attachments: [],
+            },
+          ],
+        },
+      },
+    });
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-1',
+        conversation_id: 's-1',
+        status: 'canceled',
+        error: 'context canceled',
+      },
+    });
+
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.turnArtifacts[0]).toMatchObject({
+      status: 'canceled',
+    });
+    const text = conv.messages[0].items.find(
+      (i) => i.kind === 'text',
+    ) as Extract<MessageView['items'][number], { kind: 'text' }>;
+    expect(text.text).toBe('partial');
+    expect(text.text).not.toContain('context canceled');
+    expect(stateRoot.registry.get('s-1')?.getSnapshot().context).toMatchObject({
+      failureStatus: 'canceled',
+    });
+  });
+
+  it('friendlyFailure hides graph internals for provider errors', () => {
+    const friendly = friendlyFailure(
+      'graph "opencraft-assistant" node "llm": provider_failure during generate',
+    );
+    expect(friendly).toBeTruthy();
+    expect(friendly ?? '').not.toContain('graph "opencraft-assistant"');
+    expect(friendly ?? '').not.toContain('provider_failure');
   });
 });
 

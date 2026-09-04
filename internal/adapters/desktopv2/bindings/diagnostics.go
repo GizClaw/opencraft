@@ -11,6 +11,7 @@ import (
 	"time"
 
 	coresandbox "github.com/GizClaw/flowcraft/core/sandbox"
+	flowtelemetry "github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/execpolicy"
@@ -199,7 +200,9 @@ func (b *Diagnostics) ClearCaches() (CacheClearResult, error) {
 	var bytes int64
 	for _, dir := range dirs {
 		bytes += dirSize(dir)
-		_ = os.RemoveAll(dir)
+		flowtelemetry.WarnErr(context.Background(),
+			"desktop diagnostics: clear cache directory failed",
+			os.RemoveAll(dir))
 	}
 	return CacheClearResult{Dirs: dirs, Bytes: bytes}, nil
 }
@@ -226,7 +229,10 @@ func (b *Diagnostics) RunSandboxProbe() SandboxProbeResult {
 	if err != nil {
 		return SandboxProbeResult{Error: err.Error()}
 	}
-	defer func() { _ = runner.Close() }()
+	defer func() {
+		flowtelemetry.WarnErr(probeCtx,
+			"desktop diagnostics: close sandbox runner failed", runner.Close())
+	}()
 	sess, err := runner.Start(probeCtx, coresandbox.SessionSpec{
 		ID:   "diagnostics-probe",
 		Argv: []string{"echo", "opencraft-sandbox-ok"},
@@ -234,7 +240,10 @@ func (b *Diagnostics) RunSandboxProbe() SandboxProbeResult {
 	if err != nil {
 		return SandboxProbeResult{Error: err.Error()}
 	}
-	defer func() { _ = sess.Close() }()
+	defer func() {
+		flowtelemetry.WarnErr(probeCtx,
+			"desktop diagnostics: close sandbox session failed", sess.Close())
+	}()
 	out, readErr := sess.Read(probeCtx, 0, 64*1024)
 	var output strings.Builder
 	if readErr == nil {
@@ -263,7 +272,7 @@ func (b *Diagnostics) RunSandboxProbe() SandboxProbeResult {
 
 func dirSize(dir string) int64 {
 	var total int64
-	_ = filepath.WalkDir(dir, func(_ string, d os.DirEntry, err error) error {
+	err := filepath.WalkDir(dir, func(_ string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
@@ -272,5 +281,7 @@ func dirSize(dir string) int64 {
 		}
 		return nil
 	})
+	flowtelemetry.WarnErr(context.Background(),
+		"desktop diagnostics: walk cache directory failed", err)
 	return total
 }

@@ -2,12 +2,15 @@ package plugins
 
 import (
 	"archive/zip"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/GizClaw/flowcraft/core/telemetry"
 )
 
 const (
@@ -40,12 +43,15 @@ func extractPluginZip(zipPath string) (string, func(), error) {
 	}
 	tmp, err := os.MkdirTemp("", "oc-plugin-*")
 	if err != nil {
-		_ = zr.Close()
+		telemetry.WarnErr(context.Background(),
+			"plugins: close zip after temp dir failure", zr.Close())
 		return "", nil, fmt.Errorf("plugins: temp dir: %w", err)
 	}
 	cleanup := func() {
-		_ = zr.Close()
-		_ = os.RemoveAll(tmp)
+		telemetry.WarnErr(context.Background(),
+			"plugins: close zip during cleanup failed", zr.Close())
+		telemetry.WarnErr(context.Background(),
+			"plugins: remove zip extract temp failed", os.RemoveAll(tmp))
 	}
 
 	var total int64
@@ -90,13 +96,16 @@ func extractPluginZip(zipPath string) (string, func(), error) {
 		}
 		out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 		if err != nil {
-			_ = rc.Close()
+			telemetry.WarnErr(context.Background(),
+				"plugins: close zip entry after open output failure", rc.Close())
 			cleanup()
 			return "", nil, err
 		}
 		_, copyErr := io.Copy(out, rc)
-		_ = rc.Close()
-		_ = out.Close()
+		telemetry.WarnErr(context.Background(),
+			"plugins: close zip entry after copy failed", rc.Close())
+		telemetry.WarnErr(context.Background(),
+			"plugins: close extracted output failed", out.Close())
 		if copyErr != nil {
 			cleanup()
 			return "", nil, fmt.Errorf(

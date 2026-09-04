@@ -34,6 +34,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/secret"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 )
 
 // ResourceImpl is the deploy impl id of this secret store.
@@ -281,10 +282,16 @@ func (f *fileBackend) path(name string) string {
 func (f *fileBackend) readAccounts() []string {
 	raw, err := os.ReadFile(filepath.Join(f.dir, accountsFile))
 	if err != nil {
+		if !os.IsNotExist(err) {
+			telemetry.WarnErr(context.Background(),
+				"opencraft secrets: read account list failed", err)
+		}
 		return nil
 	}
 	var list []string
 	if err := json.Unmarshal(raw, &list); err != nil {
+		telemetry.WarnErr(context.Background(),
+			"opencraft secrets: decode account list failed", err)
 		return nil
 	}
 	return list
@@ -298,17 +305,17 @@ func (f *fileBackend) writeAccounts(list []string) error {
 	return os.WriteFile(filepath.Join(f.dir, accountsFile), raw, 0o600)
 }
 
-func (f *fileBackend) addAccount(name string) {
+func (f *fileBackend) addAccount(name string) error {
 	list := f.readAccounts()
 	for _, n := range list {
 		if n == name {
-			return
+			return nil
 		}
 	}
-	_ = f.writeAccounts(append(list, name))
+	return f.writeAccounts(append(list, name))
 }
 
-func (f *fileBackend) removeAccount(name string) {
+func (f *fileBackend) removeAccount(name string) error {
 	list := f.readAccounts()
 	kept := list[:0]
 	for _, n := range list {
@@ -316,7 +323,7 @@ func (f *fileBackend) removeAccount(name string) {
 			kept = append(kept, n)
 		}
 	}
-	_ = f.writeAccounts(kept)
+	return f.writeAccounts(kept)
 }
 
 func (f *fileBackend) Get(ctx context.Context, name string) (string, bool, error) {
@@ -350,7 +357,9 @@ func (f *fileBackend) Set(_ context.Context, name, value string) error {
 	if err := os.WriteFile(f.path(name), data, 0o600); err != nil {
 		return fmt.Errorf("opencraft secrets: write %q: %w", name, err)
 	}
-	f.addAccount(name)
+	if err := f.addAccount(name); err != nil {
+		return fmt.Errorf("opencraft secrets: record account %q: %w", name, err)
+	}
 	return nil
 }
 
@@ -358,7 +367,9 @@ func (f *fileBackend) Delete(_ context.Context, name string) error {
 	if err := os.Remove(f.path(name)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("opencraft secrets: delete %q: %w", name, err)
 	}
-	f.removeAccount(name)
+	if err := f.removeAccount(name); err != nil {
+		return fmt.Errorf("opencraft secrets: record account removal %q: %w", name, err)
+	}
 	return nil
 }
 
@@ -461,7 +472,10 @@ func loadOrCreateKey(dir string) ([]byte, error) {
 		}
 		return nil, err
 	}
-	defer func() { _ = fd.Close() }()
+	defer func() {
+		telemetry.WarnErr(context.Background(),
+			"opencraft secrets: close key file failed", fd.Close())
+	}()
 	if err := fd.Chmod(0o600); err != nil {
 		return nil, err
 	}

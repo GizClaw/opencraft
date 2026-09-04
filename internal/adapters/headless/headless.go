@@ -21,6 +21,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/event"
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
@@ -76,7 +77,9 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("headless: acquire host: %w", err)
 	}
-	defer func() { _ = h.Close() }()
+	defer func() {
+		telemetry.WarnErr(ctx, "headless: close host failed", h.Close())
+	}()
 
 	var enc *json.Encoder
 	if opts.Out != nil {
@@ -211,5 +214,6 @@ func (r *streamRecorder) encode(ev rollout.Event) {
 	if ev.Time == "" {
 		ev.Time = time.Now().UTC().Format(time.RFC3339Nano)
 	}
-	_ = r.enc.Encode(ev)
+	telemetry.WarnErr(context.Background(),
+		"headless: encode rollout event failed", r.enc.Encode(ev))
 }

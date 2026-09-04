@@ -11,6 +11,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/deploy"
@@ -607,11 +608,118 @@ func instanceAPIKey(in Instance, prov Provider) string {
 	return yamlQuote(in.KeyValue)
 }
 
-// WriteInference persists the inference configuration into the user
-// configuration directory (opencraft.yaml), merging over the existing
-// layer so resources the settings page does not manage (MCP servers,
-// sandbox policy, custom graphs) are preserved.
-func WriteInference(configDir string, cfg InferenceConfig) error {
+// providerOwnersFileName records, outside the flowcraft deployment
+// document, which installed plugin owns each plugin-submitted
+// inference instance. Flowcraft's strict provider settings cannot
+// carry an extra owner field, so the stable provider profile id cannot
+// be the sole ownership carrier once a plugin may submit several
+// instances.
+const providerOwnersFileName = "plugin-provider-owners.json"
+
+// inferenceStateMu serializes inference config + owner writes. Both
+// files together form one logical state (rows and their plugin owners);
+// a plugin upsert, settings save and plugin disable/uninstall can run
+// concurrently.
+var inferenceStateMu sync.Mutex
+
+// providerOwnersPath returns the sidecar path inside the user config
+// directory.
+func providerOwnersPath(configDir string) string {
+	return filepath.Join(configDir, providerOwnersFileName)
+}
+
+// LoadProviderOwners returns the current plugin→instance ownership
+// sidecar. A missing file is an empty map, not an error.
+func LoadProviderOwners(configDir string) (map[string]string, error) {
+	inferenceStateMu.Lock()
+	defer inferenceStateMu.Unlock()
+	return loadProviderOwnersLocked(configDir)
+}
+
+func loadProviderOwnersLocked(configDir string) (map[string]string, error) {
+	data, err := os.ReadFile(providerOwnersPath(configDir))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return map[string]string{}, nil
+		}
+		return nil, fmt.Errorf("config: read %s: %w", providerOwnersFileName, err)
+	}
+	if len(data) == 0 {
+		return map[string]string{}, nil
+	}
+	owners := map[string]string{}
+	if err := json.Unmarshal(data, &owners); err != nil {
+		return nil, fmt.Errorf(
+			"config: decode %s: %w", providerOwnersFileName, err)
+	}
+	return owners, nil
+}
+
+// DropProviderOwners removes every ownership row whose owning plugin
+// id matches pluginID and reports how many were dropped. It is the
+// owner-sidecar update used when a plugin is disabled or uninstalled
+// without an inference config rewrite.
+func DropProviderOwners(configDir, pluginID string) (int, error) {
+	inferenceStateMu.Lock()
+	defer inferenceStateMu.Unlock()
+	owners, err := loadProviderOwnersLocked(configDir)
+	if err != nil {
+		return 0, err
+	}
+	dropped := 0
+	for id, owner := range owners {
+		if owner == pluginID {
+			delete(owners, id)
+			dropped++
+		}
+	}
+	if dropped == 0 {
+		return 0, nil
+	}
+	return dropped, saveProviderOwnersLocked(configDir, owners)
+}
+
+func saveProviderOwnersLocked(configDir string, owners map[string]string) error {
+	if len(owners) == 0 {
+		path := providerOwnersPath(configDir)
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("config: remove %s: %w", providerOwnersFileName, err)
+		}
+		return nil
+	}
+	data, err := json.MarshalIndent(owners, "", "  ")
+	if err != nil {
+		return fmt.Errorf("config: encode %s: %w", providerOwnersFileName, err)
+	}
+	data = append(data, '\n')
+	return writeFileAtomic(providerOwnersPath(configDir), data, 0o600)
+}
+
+// reconcileProviderOwners keeps only owner rows whose stable id still
+// exists in cfg, so a settings save that drops a plugin row also drops
+// its stale ownership record.
+func reconcileProviderOwners(
+	owners map[string]string,
+	instances []Instance,
+) map[string]string {
+	alive := make(map[string]bool, len(instances))
+	for _, in := range instances {
+		if in.StableID != "" {
+			alive[in.StableID] = true
+		}
+	}
+	out := make(map[string]string, len(owners))
+	for id, owner := range owners {
+		if owner != "" && alive[id] {
+			out[id] = owner
+		}
+	}
+	return out
+}
+
+// writeInferenceLocked writes the user inference YAML. Callers hold
+// inferenceStateMu.
+func writeInferenceLocked(configDir string, cfg InferenceConfig) error {
 	fresh, err := cfg.InferenceYAML()
 	if err != nil {
 		return err
@@ -633,11 +741,93 @@ func WriteInference(configDir string, cfg InferenceConfig) error {
 	)
 }
 
-// RemoveInferenceConfig drops every inference-managed resource
-// (router, infer and each provider.*) from the user layer, returning
-// the install to the unconfigured state. Non-inference resources are
-// preserved. Used when the last provider is removed (e.g. SSO logout).
-func RemoveInferenceConfig(configDir string) error {
+// WriteInference persists the inference configuration into the user
+// configuration directory (opencraft.yaml), merging over the existing
+// layer so resources the settings page does not manage (MCP servers,
+// sandbox policy, custom graphs) are preserved. Plugin ownership rows
+// whose instances survive the write are preserved; rows removed by the
+// write drop their stale ownership records.
+func WriteInference(configDir string, cfg InferenceConfig) error {
+	return WriteInferenceOwned(configDir, cfg, nil)
+}
+
+// WriteInferenceOwned writes the inference configuration and replaces
+// the plugin ownership sidecar while holding the config-state lock.
+// owners is the full ownership map; nil preserves and reconciles the
+// existing map against cfg.
+func WriteInferenceOwned(
+	configDir string,
+	cfg InferenceConfig,
+	owners map[string]string,
+) error {
+	inferenceStateMu.Lock()
+	defer inferenceStateMu.Unlock()
+	if err := writeInferenceLocked(configDir, cfg); err != nil {
+		return err
+	}
+	if owners == nil {
+		var err error
+		owners, err = loadProviderOwnersLocked(configDir)
+		if err != nil {
+			return err
+		}
+	}
+	return saveProviderOwnersLocked(
+		configDir,
+		reconcileProviderOwners(owners, cfg.Instances),
+	)
+}
+
+// UpdateInferenceState runs one load-modify-write transaction over the
+// inference config and its plugin ownership sidecar while holding the
+// config-state lock. update receives the current rows and owners and
+// returns the next state; returning nil owners preserves the current
+// ownership sidecar (reconciled against the next rows). An empty next
+// config removes the inference resources instead of writing an invalid
+// empty document.
+func UpdateInferenceState(
+	configDir string,
+	update func(
+		cfg InferenceConfig,
+		owners map[string]string,
+	) (InferenceConfig, map[string]string, bool, error),
+) error {
+	inferenceStateMu.Lock()
+	defer inferenceStateMu.Unlock()
+	cfg, err := LoadInference(configDir)
+	if err != nil {
+		return err
+	}
+	owners, err := loadProviderOwnersLocked(configDir)
+	if err != nil {
+		return err
+	}
+	nextCfg, nextOwners, changed, err := update(cfg, owners)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
+	if len(nextCfg.Instances) == 0 {
+		if err := removeInferenceConfigLocked(configDir); err != nil {
+			return err
+		}
+		return saveProviderOwnersLocked(configDir, map[string]string{})
+	}
+	if err := writeInferenceLocked(configDir, nextCfg); err != nil {
+		return err
+	}
+	if nextOwners == nil {
+		nextOwners = owners
+	}
+	return saveProviderOwnersLocked(
+		configDir,
+		reconcileProviderOwners(nextOwners, nextCfg.Instances),
+	)
+}
+
+func removeInferenceConfigLocked(configDir string) error {
 	fresh := []byte("version: v1\nresources: {}\n")
 	merged, err := mergeUserLayer(
 		filepath.Join(configDir, "opencraft.yaml"),
@@ -649,11 +839,27 @@ func RemoveInferenceConfig(configDir string) error {
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(
+	if err := writeFileAtomic(
 		filepath.Join(configDir, "opencraft.yaml"),
 		merged,
 		0o600,
-	)
+	); err != nil {
+		return err
+	}
+	return nil
+}
+
+// RemoveInferenceConfig drops every inference-managed resource
+// (router, infer and each provider.*) from the user layer, returning
+// the install to the unconfigured state. Non-inference resources are
+// preserved. Used when the last provider is removed (e.g. SSO logout).
+func RemoveInferenceConfig(configDir string) error {
+	inferenceStateMu.Lock()
+	defer inferenceStateMu.Unlock()
+	if err := removeInferenceConfigLocked(configDir); err != nil {
+		return err
+	}
+	return saveProviderOwnersLocked(configDir, map[string]string{})
 }
 
 // KeyRequest is one request row that needs a stored literal key

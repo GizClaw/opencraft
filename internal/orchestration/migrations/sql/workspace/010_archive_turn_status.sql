@@ -1,0 +1,2 @@
+ALTER TABLE archive_turns ADD COLUMN status TEXT NOT NULL DEFAULT '';
+ALTER TABLE archive_turns ADD COLUMN error TEXT NOT NULL DEFAULT '';

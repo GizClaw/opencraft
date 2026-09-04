@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/utils"
 
 	"golang.org/x/net/html/atom"
@@ -45,7 +46,10 @@ func Fetch(ctx context.Context, httpClient *http.Client, timeout time.Duration, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		telemetry.WarnErr(ctx, "extract: close fetch response failed",
+			resp.Body.Close())
+	}()
 
 	if resp.StatusCode >= 400 {
 		return nil, fmt.Errorf("HTTP %d from %s", resp.StatusCode, resp.Request.URL.Host)

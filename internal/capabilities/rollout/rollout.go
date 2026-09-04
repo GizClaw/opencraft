@@ -8,6 +8,7 @@ package rollout
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/telemetry"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
@@ -169,7 +171,10 @@ func tailSeq(path string) (int64, error) {
 		}
 		return 0, err
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		telemetry.WarnErr(context.Background(),
+			"rollout: close rollout file failed", f.Close())
+	}()
 	st, err := f.Stat()
 	if err != nil {
 		return 0, err

@@ -11,6 +11,8 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/message"
 	coresession "github.com/GizClaw/flowcraft/core/runtime/session"
+	"github.com/GizClaw/flowcraft/core/telemetry"
+	otellog "go.opentelemetry.io/otel/log"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
@@ -99,15 +101,24 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 		if !fresh {
 			if m, err := store.Mode(ctx, contextID); err == nil {
 				mode = m
+			} else {
+				telemetry.WarnErr(ctx, "host: load conversation mode failed", err,
+					otellog.String("conversation.id", contextID))
 			}
 			if think == "" {
 				if lvl, err := store.Think(ctx, contextID); err == nil {
 					think = string(lvl)
+				} else {
+					telemetry.WarnErr(ctx, "host: load conversation think level failed", err,
+						otellog.String("conversation.id", contextID))
 				}
 			}
 			if model == "" {
 				if m, err := store.Model(ctx, contextID); err == nil {
 					model = m
+				} else {
+					telemetry.WarnErr(ctx, "host: load conversation model failed", err,
+						otellog.String("conversation.id", contextID))
 				}
 			}
 		}
@@ -144,6 +155,7 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 	requestedAt := time.Now().UTC()
 	manifest, manifestErr := manifestSnapshot(ctx, h.workDir)
 	if manifestErr != nil {
+		telemetry.WarnErr(ctx, "host: workspace manifest snapshot failed", manifestErr)
 		manifest = nil
 	}
 
@@ -177,13 +189,15 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 		},
 	}, optsList...)
 	if err != nil {
-		_ = lease.Close()
+		telemetry.WarnErr(ctx, "host: close session lease after start failure",
+			lease.Close())
 		return nil, fmt.Errorf("host: start turn: %w", err)
 	}
 	startedAt := time.Now().UTC()
-	_ = store.RecordTurnTiming(
-		contextID, turn.RunID(), requestedAt, startedAt,
-	)
+	telemetry.WarnErr(ctx, "host: record turn timing failed",
+		store.RecordTurnTiming(
+			contextID, turn.RunID(), requestedAt, startedAt,
+		))
 	if h.Broker() != nil {
 		h.Broker().BindTurn(turn.RunID(), turn)
 	}
@@ -215,8 +229,13 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 // reject reasoning_effort for such models; an empty model hint resolves
 // to the router default like the rest of the runtime.
 func reasoningCapableThink(userDir, model, think string) string {
-	if cfg, err := config.LoadInference(userDir); err == nil &&
-		!cfg.ModelReasoning(model) {
+	cfg, err := config.LoadInference(userDir)
+	if err != nil {
+		telemetry.WarnErr(context.Background(),
+			"host: load inference config for reasoning capability failed", err)
+		return think
+	}
+	if !cfg.ModelReasoning(model) {
 		return ""
 	}
 	return think
@@ -262,6 +281,17 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 		if err != nil && errText == "" {
 			errText = err.Error()
 		}
+		execErr := err
+		if execErr == nil && res != nil {
+			execErr = res.Err
+		}
+		if execErr != nil {
+			telemetry.WarnErr(persistCtx, "host: turn execution failed",
+				unwrapErrForTelemetry(execErr),
+				otellog.String("conversation.id", detail.contextID),
+				otellog.String("run.id", r.RunID()),
+				otellog.String("status", status))
+		}
 		finishedAt := time.Now().UTC()
 		typ := rollout.TypeTurnCompleted
 		if errText != "" || status == "failed" {
@@ -269,10 +299,13 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 		}
 		store := host.store
 		if store != nil {
-			_ = store.RecordTurnFinished(detail.contextID, r.RunID(), finishedAt)
+			telemetry.WarnErr(persistCtx, "host: record turn end failed",
+				store.RecordTurnEnd(
+					detail.contextID, r.RunID(), finishedAt, status, errText))
 		}
 		if store != nil && turnUsage.TotalTokens > 0 {
-			_ = store.RecordUsage(persistCtx, detail.contextID, turnUsage)
+			telemetry.WarnErr(persistCtx, "host: record turn usage failed",
+				store.RecordUsage(persistCtx, detail.contextID, turnUsage))
 		}
 		host.recordTurnEnd(
 			persistCtx, detail.contextID, r.RunID(),
@@ -281,8 +314,10 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 			if after, snapErr := manifestSnapshot(persistCtx, host.workDir); snapErr == nil {
 				docs := diffDocumentArtifacts(detail.manifest, after)
 				if len(docs) > 0 {
-					_, _ = store.AppendTurnArtifacts(
+					_, appendErr := store.AppendTurnArtifacts(
 						detail.contextID, r.RunID(), docs)
+					telemetry.WarnErr(persistCtx, "host: append turn artifacts failed",
+						appendErr)
 				}
 			}
 		}
@@ -296,7 +331,8 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 		r.host.Broker().UnbindTurn(r.RunID())
 	}
 	if r.lease != nil {
-		_ = r.lease.Close()
+		telemetry.WarnErr(ctx, "host: close run session lease failed",
+			r.lease.Close())
 	}
 	if host != nil {
 		host.finishCloseIfIdle()
@@ -309,5 +345,23 @@ func (r *Run) Close() {
 	if r == nil || r.done {
 		return
 	}
-	_, _ = r.Wait(context.Background())
+	// Wait already reports execution failures to telemetry with the
+	// error unwrapped; Close only needs to release the run.
+	_, waitErr := r.Wait(context.Background())
+	if waitErr != nil {
+		_ = waitErr // Already reported by Wait.
+	}
+}
+
+// unwrapErrForTelemetry strips one wrapper so telemetry stores the
+// underlying error rather than the host/runtime prefix added by the
+// Turn execution path.
+func unwrapErrForTelemetry(err error) error {
+	if err == nil {
+		return nil
+	}
+	if unwrapped := errors.Unwrap(err); unwrapped != nil {
+		return unwrapped
+	}
+	return err
 }

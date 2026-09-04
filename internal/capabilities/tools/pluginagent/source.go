@@ -15,6 +15,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/resource"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/tool"
 	"github.com/GizClaw/flowcraft/core/tool/mcp"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -70,13 +71,14 @@ func (SourceFactory) New(ctx context.Context, in resource.Input) (any, error) {
 
 // Source aggregates capability tools and plugin MCP servers.
 type Source struct {
+	ctx        context.Context
 	host       CapabilityHost
 	capTools   []tool.Tool
 	mcpSources []*mcp.Source
 }
 
 func newSource(ctx context.Context, host CapabilityHost) (*Source, error) {
-	s := &Source{host: host}
+	s := &Source{ctx: ctx, host: host}
 	for _, spec := range host.ToolSpecs() {
 		s.capTools = append(s.capTools, &toolAdapter{host: host, spec: spec})
 	}
@@ -84,15 +86,23 @@ func newSource(ctx context.Context, host CapabilityHost) (*Source, error) {
 		src := mcp.NewSource()
 		transport, err := serverTransport(server)
 		if err != nil {
-			_ = src.Close()
-			_ = s.Close()
+			telemetry.WarnErr(ctx,
+				"plugin agent tools: close mcp source after transport failure",
+				src.Close())
+			telemetry.WarnErr(ctx,
+				"plugin agent tools: close plugin sources after transport failure",
+				s.Close())
 			return nil, err
 		}
 		if err := src.AddServer(
 			ctx, server.Name, transport, mcp.WithPrefix(server.Prefix),
 		); err != nil {
-			_ = src.Close()
-			_ = s.Close()
+			telemetry.WarnErr(ctx,
+				"plugin agent tools: close mcp source after attach failure",
+				src.Close())
+			telemetry.WarnErr(ctx,
+				"plugin agent tools: close plugin sources after attach failure",
+				s.Close())
 			return nil, fmt.Errorf(
 				"plugin agent tools: attach mcp server %q (%s): %w",
 				server.Name, server.PluginID, err)
@@ -130,7 +140,9 @@ func (s *Source) LazyTools() []tool.LazyTool { return nil }
 // background connects can publish their tools.
 func (s *Source) Attach(r tool.Registrar) {
 	for _, t := range s.capTools {
-		_ = r.Add(t) // duplicate of the construction-time snapshot is fine
+		// Duplicate of the construction-time snapshot is fine.
+		telemetry.WarnErr(s.ctx, "plugin agent tools: register capability tool failed",
+			r.Add(t))
 	}
 	for _, src := range s.mcpSources {
 		src.Attach(r)

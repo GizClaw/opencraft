@@ -7,6 +7,8 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	"github.com/GizClaw/flowcraft/core/telemetry"
 )
 
 // Thresholds aligned with the original summarize constants.
@@ -62,7 +64,10 @@ func (e *DefaultExtractor) extractHTML(ctx context.Context, cfg *extractorConfig
 	metadata, _ := ExtractMetadataWithURL(bytes.NewReader(data), fetchResult.FinalURL)
 
 	// Readability: compute once, reuse across layers.
-	readabilityResult, _ := ExtractWithReadability(data)
+	readabilityResult, err := ExtractWithReadability(data)
+	if err != nil {
+		telemetry.WarnErr(ctx, "extract: readability extraction failed", err)
+	}
 
 	// --- Layer 1: Readability HTML Segments vs Raw Segments ---
 	var readabilitySegments string
@@ -70,10 +75,16 @@ func (e *DefaultExtractor) extractHTML(ctx context.Context, cfg *extractorConfig
 		segs, err := ExtractArticleContent([]byte(readabilityResult.HTML), 30)
 		if err == nil {
 			readabilitySegments = segs
+		} else {
+			telemetry.WarnErr(ctx, "extract: readability article extraction failed",
+				err)
 		}
 	}
 
-	rawSegments, _ := ExtractArticleContent(data, 30)
+	rawSegments, err := ExtractArticleContent(data, 30)
+	if err != nil {
+		telemetry.WarnErr(ctx, "extract: raw article extraction failed", err)
+	}
 
 	selectedContent := selectLayer1(readabilitySegments, rawSegments)
 	selectedMethod := "segments"

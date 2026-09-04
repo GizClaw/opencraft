@@ -12,6 +12,7 @@ import {
   Archive,
   ArrowLeft,
   ArrowUp,
+  Ban,
   Bot,
   Check,
   ChevronDown,
@@ -46,7 +47,7 @@ import { useTranslation } from 'react-i18next';
 import { OnFileDrop, OnFileDropOff } from '../../wailsjs/runtime/runtime';
 import { api } from '../lib/api';
 import { COMPACT_SUMMARY_PREFIX } from '../lib/compact';
-import { useStore } from '../lib/store';
+import { friendlyFailure, friendlyInterruption, useStore } from '../lib/store';
 import { useConversationState, useFocusState } from '../state/react';
 import type { AttachmentView } from '../lib/types';
 import type {
@@ -54,7 +55,9 @@ import type {
   MessageView,
   TurnArtifacts,
   TurnDoc,
+  TurnStatus,
 } from '../lib/store';
+import type { TurnEndKind } from '../state/types';
 import { InteractionCard } from './InteractionCard';
 import {
   MarkdownComposer,
@@ -64,7 +67,7 @@ import { Markdown } from './Markdown';
 import { PlanPanel } from './PlanPanel';
 import { ToolCard } from './ToolCard';
 import { StreamItemView } from './StreamItemView';
-import { latestPlan } from '../lib/plan';
+import { latestPlan, planNeedsRefresh } from '../lib/plan';
 import { groupToolCalls, type ToolCallItem } from '../lib/stream';
 
 const isCommandTool = (name: string) =>
@@ -162,6 +165,115 @@ function sameToolGroup(a: ToolCallItem[], b: ToolCallItem[]): boolean {
     }
   }
   return true;
+}
+
+function archivedTurnEndKind(status?: TurnStatus): TurnEndKind | undefined {
+  switch (status) {
+    case 'failed':
+    case 'aborted':
+    case 'canceled':
+    case 'interrupted':
+      return status;
+    default:
+      return undefined;
+  }
+}
+
+// TurnEndNotice explains why a turn stopped without embedding an error
+// into the assistant message. It renders after the turn's last message
+// and only exposes live Retry/Dismiss actions while that turn is still
+// the current XState failure; resumed history stays static.
+function TurnEndNotice({
+  status,
+  error,
+  live = false,
+  onRetry,
+  onDismiss,
+}: {
+  status: TurnEndKind;
+  error?: string;
+  live?: boolean;
+  onRetry?: () => void;
+  onDismiss?: () => void;
+}) {
+  const { t } = useTranslation();
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
+  const failure = status === 'failed' || status === 'aborted';
+  const container = failure
+    ? 'border-err/40 bg-err/10'
+    : status === 'interrupted'
+      ? 'border-warn/40 bg-warn/10'
+      : 'border-edge bg-panel2';
+  const iconBox = failure
+    ? 'border-err/30 bg-err/10 text-err'
+    : status === 'interrupted'
+      ? 'border-warn/30 bg-warn/10 text-warn'
+      : 'border-edge bg-panel text-dim';
+  const Icon = status === 'canceled' ? Ban : AlertTriangle;
+  const friendlyError = error ? friendlyFailure(error) : null;
+  let title: string;
+  let detail: string;
+  if (status === 'aborted') {
+    title = t('chat.lastAborted');
+    detail = friendlyError || error || t('chat.lastAbortedDetail');
+  } else if (status === 'canceled') {
+    title = t('chat.lastCancelled');
+    detail = t('chat.lastCancelledDetail');
+  } else if (status === 'interrupted') {
+    title = t('chat.lastInterrupted');
+    detail =
+      (error ? friendlyInterruption(error) : null) ??
+      t('chat.lastInterruptedDetail');
+  } else {
+    title = t('chat.lastFailed');
+    detail = friendlyError || error || t('chat.lastFailedDetail');
+  }
+  return (
+    <div
+      role={failure ? 'alert' : 'status'}
+      className={`flex items-start gap-3 rounded-xl border px-4 py-3 text-sm ${container}`}
+    >
+      <span
+        className={`mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg border ${iconBox}`}
+      >
+        <Icon size="0.9286rem" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="font-medium text-fg">{title}</p>
+        {detail && (
+          <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-dim">
+            {detail}
+          </p>
+        )}
+      </div>
+      <div className="flex shrink-0 items-center gap-1.5">
+        {live && failure && (
+          <button
+            onClick={onRetry}
+            title={t('chat.retry')}
+            aria-label={t('chat.retry')}
+            className="grid h-7 w-7 place-items-center rounded-lg border border-edge text-dim hover:border-accent/50 hover:text-accent"
+          >
+            <RotateCcw size="0.8571rem" />
+          </button>
+        )}
+        {live && (
+          <button
+            onClick={() => {
+              setDismissed(true);
+              onDismiss?.();
+            }}
+            title={t('chat.dismiss')}
+            aria-label={t('chat.dismiss')}
+            className="grid h-7 w-7 place-items-center rounded-lg text-dim hover:bg-panel2 hover:text-fg"
+          >
+            <X size="0.9286rem" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // MessageRow renders one conversation message. Memoized so stream
@@ -342,10 +454,19 @@ function turnForIndex(
   turnArtifacts: TurnArtifacts[],
   index: number,
 ): TurnArtifacts | undefined {
-  for (let ti = turnArtifacts.length - 1; ti >= 0; ti--) {
-    if (turnArtifacts[ti].start <= index) return turnArtifacts[ti];
+  let lo = 0;
+  let hi = turnArtifacts.length - 1;
+  let best: TurnArtifacts | undefined;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (turnArtifacts[mid].start <= index) {
+      best = turnArtifacts[mid];
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
   }
-  return undefined;
+  return best;
 }
 
 // CompactCard renders a compaction summary (a user message marked with
@@ -522,6 +643,7 @@ const ArtifactStrip = memo(function ArtifactStrip({
 }) {
   const { t } = useTranslation();
   const workspace = useStore((s) => s.workspace);
+  const flash = useStore((s) => s.flash);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{
     doc: TurnDoc;
@@ -577,7 +699,9 @@ const ArtifactStrip = memo(function ArtifactStrip({
           return (
             <button
               key={doc.path}
-              onClick={() => void api.openPath(doc.path)}
+              onClick={() =>
+                void api.openPath(doc.path).catch((err) => flash(String(err)))
+              }
               onContextMenu={(e) => openMenu(e, doc)}
               title={t('chat.openArtifact', { path: doc.path })}
               aria-haspopup="menu"
@@ -755,16 +879,34 @@ export function ChatView() {
   const turnArtifacts = conv?.turnArtifacts ?? [];
   const [visibleCount, setVisibleCount] = useState(RENDER_WINDOW);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
+  const planCacheRef = useRef<{
+    messages: MessageView[];
+    plan: ReturnType<typeof latestPlan>;
+  } | null>(null);
   // A conversation switch resets the window to the tail; a resumed
   // session starts with the newest messages visible.
   useEffect(() => {
     setVisibleCount(RENDER_WINDOW);
     setLoadingEarlier(false);
+    planCacheRef.current = null;
   }, [current]);
   const truncated = messages.length > visibleCount;
   const start = truncated ? messages.length - visibleCount : 0;
   const visibleMessages = truncated ? messages.slice(start) : messages;
-  const planState = useMemo(() => latestPlan(messages), [messages]);
+  const turnIndexById = useMemo(
+    () => new Map(turnArtifacts.map((turn, ti) => [turn, ti] as const)),
+    [turnArtifacts],
+  );
+  const planState = useMemo(() => {
+    const cached = planCacheRef.current;
+    if (cached && !planNeedsRefresh(cached.messages, messages)) {
+      planCacheRef.current = { messages, plan: cached.plan };
+      return cached.plan;
+    }
+    const plan = latestPlan(messages);
+    planCacheRef.current = { messages, plan };
+    return plan;
+  }, [messages]);
   const [planDismissed, setPlanDismissed] = useState(false);
   const planItemsKey = planState
     ? planState.plan.items.map((s) => `${s.status}|${s.step}`).join('\n')
@@ -806,7 +948,8 @@ export function ChatView() {
   const thinkSupported = model
     ? (modelOptions.find((o) => o.id === model)?.reasoning ?? false)
     : (modelOptions[0]?.reasoning ?? status?.default_reasoning ?? false);
-  const lastFailed = turnState?.name === 'failed';
+  const failedTurn = turnState?.name === 'failed' ? turnState : undefined;
+  const lastTurn = turnArtifacts[turnArtifacts.length - 1];
   const openConfig = useStore((s) => s.openConfig);
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<AttachmentView[]>([]);
@@ -1187,7 +1330,7 @@ export function ChatView() {
                 // The turn's artifact card and worked-for line render
                 // after its last message: before the next user bubble
                 // (or at the transcript end).
-                const turnIdx = turn ? turnArtifacts.indexOf(turn) : -1;
+                const turnIdx = turn ? (turnIndexById.get(turn) ?? -1) : -1;
                 const isTurnEnd =
                   turnIdx >= 0 &&
                   i ===
@@ -1197,6 +1340,12 @@ export function ChatView() {
                 const showArtifacts = isTurnEnd && (turn?.docs.length ?? 0) > 0;
                 const showWorked =
                   isTurnEnd && msg.role === 'assistant' && !!turn;
+                const archivedEnd = isTurnEnd
+                  ? archivedTurnEndKind(turn?.status)
+                  : undefined;
+                const liveEnd = isTurnEnd && failedTurn && turn === lastTurn;
+                const endStatus =
+                  archivedEnd ?? (liveEnd ? failedTurn.status : undefined);
                 return (
                   <Fragment key={msg.id}>
                     <MessageRow
@@ -1232,31 +1381,25 @@ export function ChatView() {
                         durationMs={turn?.durationMs}
                       />
                     )}
+                    {endStatus && turn && (
+                      <TurnEndNotice
+                        status={endStatus}
+                        error={
+                          liveEnd
+                            ? (turn.error ?? failedTurn?.error)
+                            : turn.error
+                        }
+                        live={Boolean(liveEnd)}
+                        onRetry={liveEnd ? retry : undefined}
+                        onDismiss={liveEnd ? clearLastFailed : undefined}
+                      />
+                    )}
                   </Fragment>
                 );
               })}
               {pendingInteracts.map((spec) => (
                 <InteractionCard key={spec.id} spec={spec} />
               ))}
-              {lastFailed && !busy && (
-                <div className="flex items-center justify-between gap-3 rounded-xl border border-err/40 bg-err/10 px-4 py-3 text-sm">
-                  <span className="text-dim">{t('chat.lastFailed')}</span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={retry}
-                      className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-dim hover:text-accent"
-                    >
-                      <RotateCcw size="0.9286rem" /> {t('chat.retry')}
-                    </button>
-                    <button
-                      onClick={clearLastFailed}
-                      className="rounded-lg px-3 py-1.5 text-dim hover:text-fg"
-                    >
-                      {t('chat.dismiss')}
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
           )}
         </div>

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/telemetry"
+
 	"github.com/GizClaw/opencraft/internal/foundation/db"
 )
 
@@ -49,7 +51,9 @@ func (s *Store) ListTasks(ctx context.Context) ([]Task, error) {
 	if err != nil {
 		return nil, fmt.Errorf("automations: list tasks: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		telemetry.WarnErr(ctx, "automations: close task rows failed", rows.Close())
+	}()
 	var out []Task
 	for rows.Next() {
 		t, err := scanTask(rows)
@@ -165,7 +169,11 @@ func (s *Store) DeleteTask(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("automations: begin delete: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			telemetry.WarnErr(ctx, "automations: rollback delete failed", err)
+		}
+	}()
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM automation_runs WHERE task_id = ?`, id); err != nil {
 		return fmt.Errorf("automations: delete runs: %w", err)
@@ -175,7 +183,12 @@ func (s *Store) DeleteTask(ctx context.Context, id string) error {
 	if err != nil {
 		return fmt.Errorf("automations: delete task: %w", err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		telemetry.WarnErr(ctx, "automations: deleted task rows affected failed",
+			rowsErr)
+	}
+	if n == 0 {
 		return ErrNotFound
 	}
 	if err := tx.Commit(); err != nil {
@@ -194,7 +207,9 @@ func (s *Store) ListRuns(ctx context.Context, taskID string) ([]Run, error) {
 	if err != nil {
 		return nil, fmt.Errorf("automations: list runs: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		telemetry.WarnErr(ctx, "automations: close run rows failed", rows.Close())
+	}()
 	var out []Run
 	for rows.Next() {
 		var r Run
@@ -230,7 +245,11 @@ func (s *Store) AppendRun(ctx context.Context, run Run) (Run, error) {
 	if err != nil {
 		return Run{}, fmt.Errorf("automations: begin run: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			telemetry.WarnErr(ctx, "automations: rollback run failed", err)
+		}
+	}()
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO automation_runs (
 			id, task_id, at, status, error, conversation_id, run_id,
@@ -305,7 +324,11 @@ func (s *Store) Reconcile(ctx context.Context) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("automations: reconcile runs: %w", err)
 	}
-	n, _ := res.RowsAffected()
+	n, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		telemetry.WarnErr(ctx, "automations: reconciled rows affected failed",
+			rowsErr)
+	}
 	if _, err := s.db.ExecContext(ctx, `
 		UPDATE automations SET last_status = 'failed'
 		WHERE last_status = 'running'`); err != nil {

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/GizClaw/flowcraft/core/telemetry"
+	otellog "go.opentelemetry.io/otel/log"
 )
 
 // WorkspaceMeta records one previously opened workspace inside the
@@ -71,6 +75,9 @@ func ListWorkspaces(dataDir string) ([]WorkspaceMeta, error) {
 		}
 		var meta WorkspaceMeta
 		if err := json.Unmarshal(data, &meta); err != nil {
+			telemetry.WarnErr(context.Background(),
+				"config: decode workspace meta failed", err,
+				otellog.String("path", filepath.Join(dir, entry.Name())))
 			continue
 		}
 		if meta.Path == "" || meta.ID == "" {
@@ -79,8 +86,18 @@ func ListWorkspaces(dataDir string) ([]WorkspaceMeta, error) {
 		out = append(out, meta)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		ti, _ := time.Parse(time.RFC3339Nano, out[i].LastOpened)
-		tj, _ := time.Parse(time.RFC3339Nano, out[j].LastOpened)
+		ti, err := time.Parse(time.RFC3339Nano, out[i].LastOpened)
+		if err != nil {
+			telemetry.WarnErr(context.Background(),
+				"config: parse workspace last opened failed", err,
+				otellog.String("workspace.id", out[i].ID))
+		}
+		tj, err := time.Parse(time.RFC3339Nano, out[j].LastOpened)
+		if err != nil {
+			telemetry.WarnErr(context.Background(),
+				"config: parse workspace last opened failed", err,
+				otellog.String("workspace.id", out[j].ID))
+		}
 		return ti.After(tj)
 	})
 	return out, nil

@@ -8,8 +8,11 @@ package usage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
+
+	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/foundation/db"
 )
@@ -50,7 +53,11 @@ func (s *Store) Record(
 	if err != nil {
 		return fmt.Errorf("usage: begin tx: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			telemetry.WarnErr(ctx, "usage: rollback record failed", err)
+		}
+	}()
 
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO model_usage (
@@ -129,7 +136,9 @@ func (s *Store) Summary(ctx context.Context) ([]SummaryRow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("usage: summary: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		telemetry.WarnErr(ctx, "usage: close summary rows failed", rows.Close())
+	}()
 	var out []SummaryRow
 	for rows.Next() {
 		var r SummaryRow
@@ -205,7 +214,9 @@ func (s *Store) Series(
 	if err != nil {
 		return nil, fmt.Errorf("usage: series: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		telemetry.WarnErr(ctx, "usage: close series rows failed", rows.Close())
+	}()
 	var out []Point
 	for rows.Next() {
 		var p Point

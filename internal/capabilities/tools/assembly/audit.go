@@ -3,15 +3,16 @@ package assembly
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/tool"
 	toolmiddleware "github.com/GizClaw/flowcraft/core/tool/middleware"
+	otellog "go.opentelemetry.io/otel/log"
 )
 
 // AuditSettings enables the append-only tool-call audit trail. Dir is
@@ -60,7 +61,7 @@ type fileAuditSink struct {
 }
 
 // Record implements toolmiddleware.AuditSink.
-func (s *fileAuditSink) Record(_ context.Context, rec toolmiddleware.AuditRecord) {
+func (s *fileAuditSink) Record(ctx context.Context, rec toolmiddleware.AuditRecord) {
 	entry := auditEntry{
 		Timestamp:  time.Now().UTC().Format(time.RFC3339Nano),
 		Tool:       rec.Call.Name,
@@ -72,7 +73,7 @@ func (s *fileAuditSink) Record(_ context.Context, rec toolmiddleware.AuditRecord
 	}
 	data, err := json.Marshal(entry)
 	if err != nil {
-		slog.Error("opencraft audit: marshal record", "error", err)
+		telemetry.WarnErr(ctx, "opencraft audit: marshal record failed", err)
 		return
 	}
 	data = append(data, '\n')
@@ -80,19 +81,26 @@ func (s *fileAuditSink) Record(_ context.Context, rec toolmiddleware.AuditRecord
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
-		slog.Error("opencraft audit: create directory",
-			"dir", filepath.Dir(s.path), "error", err)
+		telemetry.WarnErr(ctx, "opencraft audit: create directory failed", err,
+			otellog.String("dir", filepath.Dir(s.path)))
 		return
 	}
-	_ = os.Chmod(filepath.Dir(s.path), 0o700)
+	telemetry.WarnErr(ctx, "opencraft audit: secure audit directory failed",
+		os.Chmod(filepath.Dir(s.path), 0o700),
+		otellog.String("dir", filepath.Dir(s.path)))
 	f, err := os.OpenFile(s.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		slog.Error("opencraft audit: open log", "path", s.path, "error", err)
+		telemetry.WarnErr(ctx, "opencraft audit: open audit file failed", err,
+			otellog.String("path", s.path))
 		return
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		telemetry.WarnErr(ctx, "opencraft audit: close audit file failed",
+			f.Close())
+	}()
 	if _, err := f.Write(data); err != nil {
-		slog.Error("opencraft audit: write record", "path", s.path, "error", err)
+		telemetry.WarnErr(ctx, "opencraft audit: write record failed", err,
+			otellog.String("path", s.path))
 	}
 }
 

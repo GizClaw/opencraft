@@ -75,16 +75,21 @@ func (h *Host) rolloutFor(
 	}
 	path, err := store.RolloutPath(conversationID)
 	if err != nil {
+		telemetry.WarnErr(ctx, "rollout: resolve path failed", err,
+			otellog.String("conversation.id", conversationID))
 		return nil
 	}
 	rec, err := rollout.Open(path)
 	if err != nil {
+		telemetry.WarnErr(ctx, "rollout: open recorder failed", err,
+			otellog.String("conversation.id", conversationID))
 		return nil
 	}
 	h.mu.Lock()
 	if existing := h.rollouts[id]; existing != nil {
 		h.mu.Unlock()
-		_ = rec.Close()
+		telemetry.WarnErr(ctx, "rollout: close duplicate recorder failed",
+			rec.Close())
 		return existing
 	}
 	h.rollouts[id] = rec
@@ -223,7 +228,8 @@ func (h *Host) closeRollouts() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for id, rec := range h.rollouts {
-		_ = rec.Close()
+		telemetry.WarnErr(context.Background(),
+			"rollout: close recorder failed", rec.Close())
 		delete(h.rollouts, id)
 	}
 }

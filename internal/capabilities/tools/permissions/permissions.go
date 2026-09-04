@@ -109,10 +109,13 @@ func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
 	if args.Reason != "" {
 		prompt += "\n\nReason: " + args.Reason
 	}
-	opts, _ := json.Marshal([]interact.Option{
+	opts, err := json.Marshal([]interact.Option{
 		{Label: "Grant", Value: "grant"},
 		{Label: "Deny", Value: "deny"},
 	})
+	if err != nil {
+		return "", errdefs.Validationf("%s: marshal options: %v", Name, err)
+	}
 	reply, err := host.AskUser(ctx, agent.UserPrompt{
 		Parts:  []message.Part{message.TextPart{Text: prompt}},
 		Source: "opencraft.request_permissions",

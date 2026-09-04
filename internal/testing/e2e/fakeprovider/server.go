@@ -66,7 +66,10 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Stream bool `json:"stream"`
 	}
-	_ = json.Unmarshal(body, &req)
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, "decode request", http.StatusBadRequest)
+		return
+	}
 
 	s.mu.Lock()
 	s.calls++
@@ -85,7 +88,9 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		s.writeStream(w, reply)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(s.completion(reply))
+	if err := json.NewEncoder(w).Encode(s.completion(reply)); err != nil {
+		http.Error(w, "encode response", http.StatusInternalServerError)
+	}
 }
 
 func (s *Server) completion(reply Reply) map[string]any {
@@ -131,7 +136,11 @@ func (s *Server) writeStream(w http.ResponseWriter, reply Reply) {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
+	var writeErr error
 	chunk := func(delta map[string]any, finish any) {
+		if writeErr != nil {
+			return
+		}
 		payload := map[string]any{
 			"id":      "chatcmpl-fake",
 			"object":  "chat.completion.chunk",
@@ -143,8 +152,15 @@ func (s *Server) writeStream(w http.ResponseWriter, reply Reply) {
 				"finish_reason": finish,
 			}},
 		}
-		data, _ := json.Marshal(payload)
-		_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
+		data, err := json.Marshal(payload)
+		if err != nil {
+			writeErr = err
+			return
+		}
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+			writeErr = err
+			return
+		}
 		flusher.Flush()
 	}
 	if len(reply.ToolCalls) > 0 {
@@ -168,7 +184,9 @@ func (s *Server) writeStream(w http.ResponseWriter, reply Reply) {
 		}
 		chunk(map[string]any{}, "stop")
 	}
-	_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	if _, err := io.WriteString(w, "data: [DONE]\n\n"); err != nil {
+		return
+	}
 	flusher.Flush()
 }
 

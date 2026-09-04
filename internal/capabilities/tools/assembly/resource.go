@@ -12,8 +12,10 @@ import (
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/resource"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/tool"
 	toolmiddleware "github.com/GizClaw/flowcraft/core/tool/middleware"
+	otellog "go.opentelemetry.io/otel/log"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
 )
@@ -177,7 +179,11 @@ func hooksMiddleware(m *hooks.Manager) tool.Middleware {
 		return func(ctx context.Context, call message.ToolCall) message.ToolResult {
 			args := map[string]any{}
 			if len(call.Arguments) > 0 {
-				_ = json.Unmarshal(call.Arguments, &args)
+				if err := json.Unmarshal(call.Arguments, &args); err != nil {
+					telemetry.WarnErr(ctx,
+						"tool assembly: decode hook event arguments failed", err,
+						otellog.String("tool.name", call.Name))
+				}
 			}
 			m.Fire(ctx, hooks.EventPreToolUse, map[string]any{
 				"event":      hooks.EventPreToolUse,

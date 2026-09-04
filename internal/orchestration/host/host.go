@@ -13,6 +13,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/inference"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	ocsagents "github.com/GizClaw/opencraft/internal/capabilities/agents"
 	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
@@ -123,7 +124,8 @@ func (m *Manager) Acquire(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if ref := m.hosts[workDir]; ref != nil {
-		_ = h.Close()
+		telemetry.WarnErr(context.Background(),
+			"host: close duplicate assembled host", h.Close())
 		ref.refs++
 		return ref.host, nil
 	}
@@ -145,7 +147,8 @@ func (m *Manager) Invalidate(workDir string) {
 	delete(m.hosts, workDir)
 	h := ref.host
 	m.mu.Unlock()
-	_ = h.Close()
+	telemetry.WarnErr(context.Background(), "host: invalidate close failed",
+		h.Close())
 }
 
 // CloseAll invalidates every pooled Host.
@@ -158,7 +161,8 @@ func (m *Manager) CloseAll() {
 	}
 	m.mu.Unlock()
 	for _, h := range hosts {
-		_ = h.Close()
+		telemetry.WarnErr(context.Background(), "host: close all failed",
+			h.Close())
 	}
 }
 
@@ -200,13 +204,18 @@ func (m *Manager) assemble(
 		}
 	}
 	if dataDir == "" {
-		dataDir, _ = config.UserDataDir()
+		var err error
+		dataDir, err = config.UserDataDir()
+		if err != nil {
+			telemetry.WarnErr(ctx, "host: resolve user data dir failed", err)
+		}
 	}
 	layout, err := config.ResolveWorkspace(dataDir, workDir)
 	if err != nil {
 		return nil, err
 	}
-	_ = layout.Ensure()
+	telemetry.WarnErr(ctx, "host: ensure workspace layout failed",
+		layout.Ensure())
 	mgr, err := config.Open(config.Options{
 		UserDir: userDir,
 	})
@@ -251,14 +260,16 @@ func (m *Manager) assemble(
 	}
 	broker := interact.NewWithBackendResolver(rt, fallback, resolver)
 	if err := broker.Attach(ctx); err != nil {
-		_ = ctrl.Close()
+		telemetry.WarnErr(ctx, "host: close controller after broker attach failure",
+			ctrl.Close())
 		return nil, err
 	}
 	value, ok := rt.Resource("sessions")
 	store, ok2 := value.(*sessions.Store)
 	if !ok || !ok2 || store == nil {
 		broker.Close()
-		_ = ctrl.Close()
+		telemetry.WarnErr(ctx, "host: close controller after session resource failure",
+			ctrl.Close())
 		return nil, errors.New("host: session store resource missing")
 	}
 	h.store = store
@@ -346,13 +357,15 @@ func (m *Manager) acquireStore(
 		return nil, err
 	}
 	if err := migrations.Workspace(ctx, store.Database(), root); err != nil {
-		_ = store.Close()
+		telemetry.WarnErr(ctx, "host: close store after workspace migration failure",
+			store.Close())
 		return nil, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if ref := m.stores[root]; ref != nil {
-		_ = store.Close()
+		telemetry.WarnErr(ctx, "host: close duplicate session store",
+			store.Close())
 		ref.refs++
 		return ref.store, nil
 	}
@@ -371,7 +384,8 @@ func (m *Manager) releaseStore(store *sessions.Store) {
 		ref.refs--
 		if ref.refs == 0 {
 			delete(m.stores, root)
-			_ = store.Close()
+			telemetry.WarnErr(context.Background(),
+				"host: close released session store failed", store.Close())
 		}
 		return
 	}
@@ -572,7 +586,8 @@ func (h *Host) doClose() {
 	h.mu.Unlock()
 	h.closeRollouts()
 	h.broker.Close()
-	_ = h.ctrl.Close()
+	telemetry.WarnErr(context.Background(), "host: close controller failed",
+		h.ctrl.Close())
 	if h.manager != nil {
 		h.manager.releaseStore(h.store)
 	}

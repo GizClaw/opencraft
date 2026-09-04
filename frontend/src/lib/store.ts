@@ -135,6 +135,12 @@ export interface TurnDoc {
   bytes: number;
 }
 
+// TurnStatus is the persisted terminal state of an archived turn. It
+// mirrors the backend turn_end status so resumed sessions can render
+// failures/cancellations without embedding an error into message text.
+export type TurnStatus =
+  'completed' | 'failed' | 'aborted' | 'canceled' | 'interrupted';
+
 // TurnArtifacts is one turn's produced files plus the index of its
 // first message in the flattened transcript.
 export interface TurnArtifacts {
@@ -151,6 +157,10 @@ export interface TurnArtifacts {
   // runID is set once the live turn starts, so post-turn artifact
   // reconciliation ("artifact_sync") can target exactly this turn.
   runID?: string;
+  // status/error come from the live turn_end event and are persisted
+  // with the archived turn for resumed sessions.
+  status?: TurnStatus;
+  error?: string;
 }
 
 // attachmentPart lowers one staged attachment into the message wire
@@ -329,7 +339,8 @@ function historyTurnsToState(turns: SessionTurn[]): {
   const turnArtifacts: TurnArtifacts[] = [];
   for (const turn of turns) {
     const start = messages.length;
-    messages.push(...historyToMessages(turn.messages));
+    const cleaned = stripLegacyTurnMarker(historyToMessages(turn.messages));
+    messages.push(...cleaned.messages);
     turnArtifacts.push({
       id: `h-${turn.seq}`,
       start,
@@ -338,6 +349,8 @@ function historyTurnsToState(turns: SessionTurn[]): {
       startedAt: turn.started_at || turn.at,
       finishedAt: turn.finished_at || turn.at,
       durationMs: turn.duration_ms,
+      status: normalizeTurnStatus(turn.status) ?? cleaned.status,
+      error: turn.error,
       docs: (turn.artifacts ?? []).map((a) => ({
         path: a.path,
         bytes: a.bytes ?? 0,
@@ -369,6 +382,55 @@ function lastAssistant(messages: MessageView[]): {
   return { msg, messages: [...messages.slice(0, -1), msg] };
 }
 
+function normalizeTurnStatus(status?: string): TurnStatus | undefined {
+  switch (status) {
+    case 'completed':
+    case 'failed':
+    case 'aborted':
+    case 'canceled':
+    case 'interrupted':
+      return status;
+    default:
+      return undefined;
+  }
+}
+
+// stripLegacyTurnMarker removes the old `> ⛔/⏹/⚠️` text that older
+// versions appended inside assistant messages. New turns persist
+// status/error on the archive row instead, so the transcript stays
+// clean; the legacy marker still lets us recover a status for history
+// that predates the archive column.
+function stripLegacyTurnMarker(messages: MessageView[]): {
+  messages: MessageView[];
+  status?: TurnStatus;
+} {
+  let status: TurnStatus | undefined;
+  const next: MessageView[] = [];
+  for (const msg of messages) {
+    let changed = false;
+    const items: AssistantItem[] = [];
+    for (const item of msg.items) {
+      if (item.kind !== 'text') {
+        items.push(item);
+        continue;
+      }
+      const m = item.text.match(/(?:\n\n)?>\s*(⏹|⚠️|⛔)\s+[\s\S]*$/);
+      if (!m) {
+        items.push(item);
+        continue;
+      }
+      status =
+        m[1] === '⛔' ? 'failed' : m[1] === '⏹' ? 'canceled' : 'interrupted';
+      const text = item.text.slice(0, m.index ?? 0).trimEnd();
+      if (text) items.push({ ...item, text });
+      changed = true;
+    }
+    if (changed && items.length === 0) continue;
+    next.push(changed ? { ...msg, items } : msg);
+  }
+  return { messages: next, status };
+}
+
 function mergeAppend(
   msg: MessageView,
   kind: 'text' | 'reasoning',
@@ -390,7 +452,7 @@ function mergeAppend(
 // text so raw engine internals (e.g. "engine: interrupted
 // (host_shutdown)") never leak into the transcript. It returns null
 // when the error is not an interruption, so the original error stays.
-function friendlyInterruption(error: string): string | null {
+export function friendlyInterruption(error: string): string | null {
   const m = error.match(/^engine: interrupted(?: \(([a-z_]+)\))?(?:: (.+))?$/);
   if (!m) return null;
   const cause = m[1] ?? '';
@@ -406,6 +468,31 @@ function friendlyInterruption(error: string): string | null {
       return detail ?? i18n.t('chat.interrupted');
     default:
       return i18n.t('chat.interrupted');
+  }
+}
+
+// friendlyFailure maps flowcraft graph/inference errors to user-safe
+// text. The `graph "..." node "..."` prefix is internal plumbing; a
+// provider failure only needs to tell the user the model call did not
+// go through and that retrying is reasonable.
+export function friendlyFailure(error: string): string | null {
+  const m = error.match(
+    /^(?:graph "[^"]+" node "[^"]+": )?([a-z_]+)(?: during [a-z_]+)?(?: at [^:]+)?$/,
+  );
+  if (!m) return null;
+  switch (m[1]) {
+    case 'provider_failure':
+      return i18n.t('chat.providerFailure');
+    case 'invalid_provider_response':
+      return i18n.t('chat.invalidProviderResponse');
+    case 'unknown_provider':
+    case 'unknown_model':
+    case 'unknown_profile':
+      return i18n.t('chat.modelConfiguration');
+    case 'invalid_request':
+      return i18n.t('chat.invalidRequest');
+    default:
+      return i18n.t('chat.genericFailure');
   }
 }
 
@@ -553,6 +640,10 @@ interface StoreState {
   loadWorkspaces: () => Promise<void>;
   chooseWorkspace: () => Promise<void>;
   openWorkspace: (path: string) => Promise<void>;
+  openSessionInWorkspace: (
+    sessionID: string,
+    workspacePath: string,
+  ) => Promise<void>;
   removeWorkspace: (id: string) => Promise<void>;
   draftComposer: (text: string) => void;
   clearComposerDraft: () => void;
@@ -707,11 +798,6 @@ export const useStore = create<StoreState>((set, get) => {
     } catch (err) {
       const conv = get().conversations[convID];
       if (conv) {
-        const { msg, messages: next } = lastAssistant(conv.messages);
-        mergeAppend(msg, 'text', `⛔ ${String(err)}`);
-        updateConv(convID, {
-          messages: next,
-        });
         startingActor?.send({
           type: 'TURN_ENDED',
           runID: '',
@@ -816,31 +902,6 @@ export const useStore = create<StoreState>((set, get) => {
           };
           const conv = ensureConversation(conversationID);
           if (!conv) break;
-          const failed =
-            data.status === 'failed' ||
-            data.status === 'aborted' ||
-            data.status === 'canceled' ||
-            data.status === 'interrupted';
-          let messages = conv.messages;
-          const note = failed
-            ? data.status === 'canceled'
-              ? i18n.t('chat.cancelled')
-              : data.status === 'interrupted'
-                ? i18n.t('chat.interrupted')
-                : i18n.t('chat.failed')
-            : '';
-          if (data.error || (failed && note)) {
-            const friendly = data.error
-              ? friendlyInterruption(data.error)
-              : null;
-            const { msg, messages: next } = lastAssistant(messages);
-            mergeAppend(
-              msg,
-              'text',
-              `\n\n> ⛔ ${friendly ?? data.error ?? note}`,
-            );
-            messages = next;
-          }
           const finishedAt = data.finished_at || new Date().toISOString();
           set((state) => {
             const runConvs = { ...state.runConvs };
@@ -848,7 +909,14 @@ export const useStore = create<StoreState>((set, get) => {
             const conv = state.conversations[conversationID];
             if (!conv) return state;
             const turnArtifacts = conv.turnArtifacts.map((t) =>
-              t.runID && t.runID === data.run_id ? { ...t, finishedAt } : t,
+              t.runID && t.runID === data.run_id
+                ? {
+                    ...t,
+                    finishedAt,
+                    status: normalizeTurnStatus(data.status) ?? t.status,
+                    error: data.error ?? t.error,
+                  }
+                : t,
             );
             return {
               runConvs,
@@ -856,7 +924,6 @@ export const useStore = create<StoreState>((set, get) => {
                 ...state.conversations,
                 [conversationID]: capConversation({
                   ...conv,
-                  messages,
                   turnArtifacts,
                 }),
               },
@@ -937,7 +1004,13 @@ export const useStore = create<StoreState>((set, get) => {
             configOpen: workChanged ? false : state.configOpen,
             fatal: null,
           }));
-          void api.modelOptions().then((modelOptions) => set({ modelOptions }));
+          void api
+            .modelOptions()
+            .then((modelOptions) => set({ modelOptions }))
+            .catch(() => {
+              // model list refresh is best-effort; the UI keeps the
+              // last known options until the next ready event.
+            });
           void get().refreshAgents();
           void get().loadWorkspaces();
           break;
@@ -1253,8 +1326,10 @@ export const useStore = create<StoreState>((set, get) => {
       if (turn?.name === 'running') {
         try {
           await api.cancelTurn(turn.runID);
-        } catch {
-          // turn_end settles the UI regardless
+        } catch (err) {
+          // Surface cancel failures instead of leaving the UI running
+          // silently; a real cancel still settles via turn_end.
+          set({ statusText: String(err) });
         }
       }
     },
@@ -1600,6 +1675,25 @@ export const useStore = create<StoreState>((set, get) => {
       } catch (err) {
         set({ statusText: String(err) });
       }
+    },
+
+    openSessionInWorkspace: async (sessionID, workspacePath) => {
+      const state = get();
+      if (workspacePath && workspacePath !== state.workspace) {
+        await api.openWorkspace(workspacePath);
+        // The backend emits "ready" asynchronously relative to the
+        // binding response; wait until the store has applied it so a
+        // pending newChat is queued before resume tries to open the
+        // target session in the new workspace.
+        const deadline = Date.now() + 5000;
+        while (get().workspace !== workspacePath && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        if (get().workspace !== workspacePath) {
+          throw new Error('workspace switch did not complete');
+        }
+      }
+      await get().resume(sessionID);
     },
 
     removeWorkspace: async (id) => {

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/telemetry"
+
 	"github.com/GizClaw/opencraft/internal/foundation/db"
 )
 
@@ -40,7 +42,10 @@ func ensureColumn(
 	if err != nil {
 		return fmt.Errorf("inspect %s: %w", table, err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		telemetry.WarnErr(ctx, "migrations: close column inspection rows failed",
+			rows.Close())
+	}()
 	for rows.Next() {
 		var (
 			cid     int
@@ -76,7 +81,10 @@ func backfillWeeklyOrigins(ctx context.Context, db *sql.DB) error {
 	if err != nil {
 		return fmt.Errorf("list automations for origin backfill: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		telemetry.WarnErr(ctx, "migrations: close automations rows failed",
+			rows.Close())
+	}()
 
 	type scheduleJSON struct {
 		Type          string   `json:"type"`

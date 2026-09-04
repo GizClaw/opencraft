@@ -448,21 +448,31 @@ func (l *Lifecycle) writeSpec(spec AgentSpec) error {
 	}
 	tmpName := tmp.Name()
 	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
+		telemetry.WarnErr(context.Background(),
+			"agents: close agent spec temp after write failure", tmp.Close())
+		telemetry.WarnErr(context.Background(),
+			"agents: remove agent spec temp after write failure",
+			os.Remove(tmpName))
 		return err
 	}
 	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		_ = os.Remove(tmpName)
+		telemetry.WarnErr(context.Background(),
+			"agents: close agent spec temp after sync failure", tmp.Close())
+		telemetry.WarnErr(context.Background(),
+			"agents: remove agent spec temp after sync failure",
+			os.Remove(tmpName))
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmpName)
+		telemetry.WarnErr(context.Background(),
+			"agents: remove agent spec temp after close failure",
+			os.Remove(tmpName))
 		return err
 	}
 	if err := os.Rename(tmpName, filepath.Join(dir, specFile)); err != nil {
-		_ = os.Remove(tmpName)
+		telemetry.WarnErr(context.Background(),
+			"agents: remove agent spec temp after rename failure",
+			os.Remove(tmpName))
 		return err
 	}
 	return nil

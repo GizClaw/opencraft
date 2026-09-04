@@ -14,6 +14,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/tool"
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
@@ -283,7 +284,9 @@ func pinnedTLSDial(
 			MinVersion: tls.VersionTLS12,
 		})
 		if err := tconn.HandshakeContext(ctx); err != nil {
-			_ = conn.Close()
+			telemetry.WarnErr(ctx,
+				"web_fetch: close connection after TLS handshake failure",
+				conn.Close())
 			return nil, fmt.Errorf("web_fetch: TLS handshake with %s: %w", host, err)
 		}
 		return tconn, nil

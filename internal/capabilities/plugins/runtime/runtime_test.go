@@ -223,6 +223,41 @@ func TestSecretScopeGuard(t *testing.T) {
 	}
 }
 
+func TestInferencePrimitivesForwardPluginAndInstanceIDs(t *testing.T) {
+	m, _ := newTestManager(t)
+	var upsertedPlugin, upsertedID string
+	var removedPlugin, removedID string
+	m.SetInferenceHandler(InferenceHandler{
+		Upsert: func(pluginID string, profile InferenceProfile) error {
+			upsertedPlugin = pluginID
+			upsertedID = profile.ID
+			return nil
+		},
+		Remove: func(pluginID, id string) error {
+			removedPlugin = pluginID
+			removedID = id
+			return nil
+		},
+	})
+
+	if _, err := m.handleInferenceUpsert(&process{id: "plug"}, rpcRequest{
+		Params: json.RawMessage(`{"id":"plug-gateway"}`),
+	}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if upsertedPlugin != "plug" || upsertedID != "plug-gateway" {
+		t.Fatalf("upsert forwarded %q/%q", upsertedPlugin, upsertedID)
+	}
+	if _, err := m.handleInferenceRemove(&process{id: "plug"}, rpcRequest{
+		Params: json.RawMessage(`{"id":"plug-embed"}`),
+	}); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if removedPlugin != "plug" || removedID != "plug-embed" {
+		t.Fatalf("remove forwarded %q/%q", removedPlugin, removedID)
+	}
+}
+
 func TestSessionImportPrimitive(t *testing.T) {
 	m, _ := newTestManager(t)
 	var gotPlugin string

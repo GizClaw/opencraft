@@ -333,7 +333,7 @@ export function MCPSection() {
             {MCP_CATALOG.map((entry) => (
               <div
                 key={entry.name}
-                className="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-panel"
+                className="[content-visibility:auto] [contain-intrinsic-size:auto_2.5rem] flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-panel"
               >
                 <span className="text-sm min-w-0 truncate">{entry.name}</span>
                 <span className="flex-1 text-xs text-dim min-w-0 truncate">
@@ -400,7 +400,11 @@ export function MCPSection() {
               />
               {row.source && (
                 <button
-                  onClick={() => void api.openExternal(row.source!)}
+                  onClick={() =>
+                    void api
+                      .openExternal(row.source!)
+                      .catch((err) => setMCPError(String(err)))
+                  }
                   className="text-dim hover:text-fg"
                   title={t('config.mcpOpenRepo')}
                 >
@@ -947,7 +951,7 @@ export function SkillsSection() {
             return (
               <li
                 key={s.path}
-                className="rounded-xl border border-edge bg-panel2 p-3 transition-colors hover:border-accent/40"
+                className="[content-visibility:auto] [contain-intrinsic-size:auto_5.5rem] rounded-xl border border-edge bg-panel2 p-3 transition-colors hover:border-accent/40"
               >
                 <div className="flex items-start gap-2">
                   <button

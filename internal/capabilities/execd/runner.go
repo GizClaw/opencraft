@@ -10,6 +10,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/sandbox"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/rs/xid"
 )
@@ -118,7 +119,8 @@ func (r *RemoteRunner) Terminate(ctx context.Context, id string) error {
 // Close shuts the client down and terminates the child.
 func (r *RemoteRunner) Close() error {
 	if r.client != nil {
-		_ = r.client.Close()
+		telemetry.WarnErr(context.Background(),
+			"execd: close remote runner client failed", r.client.Close())
 	}
 	if r.stop != nil {
 		r.stop()
@@ -253,8 +255,7 @@ func (s *remoteSession) Watch(context.Context) (sandbox.SessionWatcher, error) {
 }
 
 func (s *remoteSession) Close() error {
-	_ = s.Terminate(s.base)
-	return nil
+	return s.Terminate(s.base)
 }
 
 func sandboxStream(stream string) sandbox.SessionStream {

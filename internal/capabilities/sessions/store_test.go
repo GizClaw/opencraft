@@ -567,11 +567,15 @@ func TestRecordTurnTimingPersistsWithArchivedTurn(t *testing.T) {
 		t.Fatalf("StartedAt = %v, want %v", turns[0].StartedAt, started)
 	}
 	finished := started.Add(4 * time.Second)
-	if err := store.RecordTurnFinished(id, "run-timed", finished); err != nil {
-		t.Fatalf("RecordTurnFinished: %v", err)
+	if err := store.RecordTurnEnd(
+		id, "run-timed", finished, "failed", "engine boom",
+	); err != nil {
+		t.Fatalf("RecordTurnEnd: %v", err)
 	}
-	if err := store.RecordTurnFinished("bad-id", "run-timed", finished); err == nil {
-		t.Fatal("RecordTurnFinished accepted invalid session id")
+	if err := store.RecordTurnEnd(
+		"bad-id", "run-timed", finished, "failed", "engine boom",
+	); err == nil {
+		t.Fatal("RecordTurnEnd accepted invalid session id")
 	}
 	turns, err = store.Turns(context.Background(), id)
 	if err != nil {
@@ -579,6 +583,9 @@ func TestRecordTurnTimingPersistsWithArchivedTurn(t *testing.T) {
 	}
 	if !turns[0].FinishedAt.Equal(finished) {
 		t.Fatalf("FinishedAt = %v, want %v", turns[0].FinishedAt, finished)
+	}
+	if turns[0].Status != "failed" || turns[0].Error != "engine boom" {
+		t.Fatalf("turn status/error = %q/%q", turns[0].Status, turns[0].Error)
 	}
 	// A retried commit for the same run id is idempotent: the turn is
 	// not archived twice.

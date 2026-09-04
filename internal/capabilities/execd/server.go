@@ -13,6 +13,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/sandbox"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/rs/xid"
 )
@@ -505,7 +506,10 @@ func (s *Server) pushEvents(
 	entry *processEntry,
 	watcher sandbox.SessionWatcher,
 ) {
-	defer func() { _ = watcher.Close() }()
+	defer func() {
+		telemetry.WarnErr(context.Background(),
+			"execd: close session watcher failed", watcher.Close())
+	}()
 	for ev := range watcher.Events() {
 		switch ev.Type {
 		case sandbox.SessionEventOutput:
@@ -556,21 +560,27 @@ func (s *Server) pushEvents(
 func (s *Server) respond(resp Response) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_ = json.NewEncoder(s.out).Encode(resp)
+	telemetry.WarnErr(context.Background(),
+		"execd: encode JSON-RPC response failed",
+		json.NewEncoder(s.out).Encode(resp))
 }
 
 func (s *Server) notify(method string, params any) {
 	raw, err := json.Marshal(params)
 	if err != nil {
+		telemetry.WarnErr(context.Background(),
+			"execd: marshal JSON-RPC notification failed", err)
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_ = json.NewEncoder(s.out).Encode(map[string]any{
-		"jsonrpc": "2.0",
-		"method":  method,
-		"params":  json.RawMessage(raw),
-	})
+	telemetry.WarnErr(context.Background(),
+		"execd: encode JSON-RPC notification failed",
+		json.NewEncoder(s.out).Encode(map[string]any{
+			"jsonrpc": "2.0",
+			"method":  method,
+			"params":  json.RawMessage(raw),
+		}))
 }
 
 func (sess *session) get(id string) (*processEntry, bool) {
@@ -594,10 +604,13 @@ func (sess *session) closeAll() {
 	defer cancel()
 	for _, e := range entries {
 		if e.watcher != nil {
-			_ = e.watcher.Close()
+			telemetry.WarnErr(ctx, "execd: close watcher during teardown failed",
+				e.watcher.Close())
 		}
-		_ = e.proc.Terminate(ctx)
-		_ = e.proc.Close()
+		telemetry.WarnErr(ctx, "execd: terminate session during teardown failed",
+			e.proc.Terminate(ctx))
+		telemetry.WarnErr(ctx, "execd: close session during teardown failed",
+			e.proc.Close())
 	}
 }
 

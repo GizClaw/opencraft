@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/inference"
+	flowtelemetry "github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/tool/mcp"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -120,7 +121,10 @@ func (b *Config) ConfigState() (ConfigState, error) {
 	if err != nil {
 		return ConfigState{}, err
 	}
-	managed := b.managedPluginIDs()
+	managed, err := b.managedInstanceIDs()
+	if err != nil {
+		return ConfigState{}, err
+	}
 	st := ConfigState{Model: config.DefaultModel(b.core.UserDir)}
 	for _, in := range cfg.Instances {
 		st.Instances = append(st.Instances, ProviderInstance{
@@ -318,7 +322,10 @@ func (b *Config) TestMCP(
 	testCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	src := mcp.NewSource(mcp.WithConnectTimeout(timeout))
-	defer func() { _ = src.Close() }()
+	defer func() {
+		flowtelemetry.WarnErr(ctx, "desktop config: close MCP test source failed",
+			src.Close())
+	}()
 	transport, err := mcpTransport(server)
 	if err != nil {
 		return err
@@ -417,133 +424,167 @@ type InferenceRequest struct {
 }
 
 func (b *Config) saveInference(req InferenceRequest) error {
-	// Existing instances let an empty key ("leave blank to keep")
-	// inherit the stored key instead of forcing a re-entry. A missing
-	// or unparseable config is treated as a fresh install.
-	existing, _ := config.LoadInference(b.core.UserDir)
-	claimed := make(map[int]bool)
-	type keyedRow struct {
-		idx      int    // position in instances
-		name     string // request display name (error messages)
-		typ      string // catalog id
-		required bool   // enabled rows must end up with a key
+	// Resolve the plugin-owned rows before entering the config-state
+	// transaction; managedInstanceIDs reads the owner sidecar and the
+	// plugin store, neither of which may be read while holding the
+	// inference write lock.
+	managed, err := b.managedInstanceIDs()
+	if err != nil {
+		return err
 	}
-	var pending []keyedRow
-	instances := make([]config.Instance, 0, len(req.Instances))
-	for _, p := range req.Instances {
-		prov, ok := providerByID(strings.TrimSpace(p.Type))
-		if !ok {
-			return fmt.Errorf("unknown provider type %q", p.Type)
-		}
-		in := config.Instance{
-			StableID:  strings.TrimSpace(p.StableID),
-			Type:      prov.ID,
-			Name:      strings.TrimSpace(p.Name),
-			API:       strings.TrimSpace(p.API),
-			Models:    configModels(p.Models),
-			Endpoint:  strings.TrimSpace(p.Endpoint),
-			Enabled:   p.Enabled,
-			KeySource: config.KeyLiteral,
-		}
-		if in.StableID == "" {
-			// A row without an identity is brand new in the settings
-			// page; give it one so the next save matches by id.
-			in.StableID = config.NewStableID()
-		}
-		switch {
-		case p.KeyEnv:
-			in.KeySource = config.KeyEnv
-			if os.Getenv(prov.EnvVar) == "" {
-				return fmt.Errorf(
-					"environment variable %s is not set; cannot use the env key source",
-					prov.EnvVar)
+	var restored []string
+	err = config.UpdateInferenceState(
+		b.core.UserDir,
+		func(
+			existing config.InferenceConfig,
+			_ map[string]string,
+		) (
+			next config.InferenceConfig,
+			_ map[string]string,
+			_ bool,
+			err error,
+		) {
+			claimed := make(map[int]bool)
+			type keyedRow struct {
+				idx      int    // position in instances
+				name     string // request display name (error messages)
+				typ      string // catalog id
+				required bool   // enabled rows must end up with a key
 			}
-		case strings.TrimSpace(p.Key) != "":
-			key := strings.TrimSpace(p.Key)
-			// New keys go into the OS credential store when it is
-			// available; the config keeps only a ${secret:...}
-			// reference. A failed store write falls back to the
-			// literal 0600 config so the settings page stays usable.
-			if b.core.Plugin.Secrets != nil && b.core.Plugin.Secrets.Available() {
-				account := secrets.AccountFor(in.DeploymentID(len(instances) + 1))
-				storeErr := b.core.Plugin.Secrets.Set(
-					b.core.Shell.Context(), account, key,
+			var pending []keyedRow
+			instances := make([]config.Instance, 0, len(req.Instances))
+			for _, p := range req.Instances {
+				prov, ok := providerByID(strings.TrimSpace(p.Type))
+				if !ok {
+					err = fmt.Errorf("unknown provider type %q", p.Type)
+					return
+				}
+				in := config.Instance{
+					StableID:  strings.TrimSpace(p.StableID),
+					Type:      prov.ID,
+					Name:      strings.TrimSpace(p.Name),
+					API:       strings.TrimSpace(p.API),
+					Models:    configModels(p.Models),
+					Endpoint:  strings.TrimSpace(p.Endpoint),
+					Enabled:   p.Enabled,
+					KeySource: config.KeyLiteral,
+				}
+				if in.StableID == "" {
+					// A row without an identity is brand new in the
+					// settings page; give it one so the next save
+					// matches by id.
+					in.StableID = config.NewStableID()
+				}
+				switch {
+				case p.KeyEnv:
+					in.KeySource = config.KeyEnv
+					if os.Getenv(prov.EnvVar) == "" {
+						err = fmt.Errorf(
+							"environment variable %s is not set; cannot use the env key source",
+							prov.EnvVar)
+						return
+					}
+				case strings.TrimSpace(p.Key) != "":
+					key := strings.TrimSpace(p.Key)
+					// New keys go into the OS credential store when it
+					// is available; the config keeps only a
+					// ${secret:...} reference. A failed store write
+					// falls back to the literal 0600 config so the
+					// settings page stays usable.
+					if b.core.Plugin.Secrets != nil &&
+						b.core.Plugin.Secrets.Available() {
+						account := secrets.AccountFor(
+							in.DeploymentID(len(instances) + 1),
+						)
+						storeErr := b.core.Plugin.Secrets.Set(
+							b.core.Shell.Context(), account, key,
+						)
+						if storeErr == nil {
+							in.KeySource = config.KeyKeychain
+							in.KeyValue = account
+							break
+						}
+					}
+					in.KeyValue = key
+				case p.Enabled:
+					pending = append(pending, keyedRow{
+						idx:      len(instances),
+						name:     p.Name,
+						typ:      prov.ID,
+						required: true,
+					})
+				case strings.TrimSpace(p.StableID) != "":
+					// Disabled rows with a persisted identity keep
+					// their stored key too, so re-enabling needs no
+					// re-entry. Unlike enabled rows, a missing stored
+					// key is not an error: the row stays declared
+					// without one.
+					pending = append(pending, keyedRow{
+						idx:  len(instances),
+						name: p.Name,
+						typ:  prov.ID,
+					})
+				default:
+					// Disabled instances may be saved without a key;
+					// they are kept so re-enabling needs no re-entry.
+				}
+				instances = append(instances, in)
+			}
+			if len(pending) > 0 {
+				rows := make([]config.KeyRequest, len(pending))
+				for i, r := range pending {
+					rows[i] = config.KeyRequest{
+						StableID: strings.TrimSpace(
+							req.Instances[r.idx].StableID),
+						Type:     r.typ,
+						Name:     strings.TrimSpace(req.Instances[r.idx].Name),
+						Models:   requestModelNames(req.Instances[r.idx].Models),
+						Endpoint: strings.TrimSpace(req.Instances[r.idx].Endpoint),
+						API:      strings.TrimSpace(req.Instances[r.idx].API),
+					}
+				}
+				idxs, ok := config.MatchStoredKeys(
+					existing.Instances, rows, claimed,
 				)
-				if storeErr == nil {
-					in.KeySource = config.KeyKeychain
-					in.KeyValue = account
-					break
+				if !ok {
+					for i, idx := range idxs {
+						if idx >= 0 || !pending[i].required {
+							continue
+						}
+						err = fmt.Errorf(
+							"instance %s (%s): an API key or the env key source is required",
+							pending[i].name, pending[i].typ)
+						return
+					}
+				}
+				for i, idx := range idxs {
+					if idx < 0 {
+						// Optional row (disabled, no stored key) stays
+						// keyless.
+						continue
+					}
+					dst := &instances[pending[i].idx]
+					dst.KeySource = existing.Instances[idx].KeySource
+					dst.KeyValue = existing.Instances[idx].KeyValue
 				}
 			}
-			in.KeyValue = key
-		case p.Enabled:
-			pending = append(pending, keyedRow{
-				idx:      len(instances),
-				name:     p.Name,
-				typ:      prov.ID,
-				required: true,
-			})
-		case strings.TrimSpace(p.StableID) != "":
-			// Disabled rows with a persisted identity keep their stored
-			// key too, so re-enabling needs no re-entry. Unlike enabled
-			// rows, a missing stored key is not an error: the row stays
-			// declared without one.
-			pending = append(pending, keyedRow{
-				idx:  len(instances),
-				name: p.Name,
-				typ:  prov.ID,
-			})
-		default:
-			// Disabled instances may be saved without a key; they are
-			// kept so re-enabling needs no re-entry.
-		}
-		instances = append(instances, in)
-	}
-	if len(pending) > 0 {
-		rows := make([]config.KeyRequest, len(pending))
-		for i, r := range pending {
-			rows[i] = config.KeyRequest{
-				StableID: strings.TrimSpace(req.Instances[r.idx].StableID),
-				Type:     r.typ,
-				Name:     strings.TrimSpace(req.Instances[r.idx].Name),
-				Models:   requestModelNames(req.Instances[r.idx].Models),
-				Endpoint: strings.TrimSpace(req.Instances[r.idx].Endpoint),
-				API:      strings.TrimSpace(req.Instances[r.idx].API),
+			// Plugin-managed deployments are owned by their capability
+			// plugin: content edits and removals from the settings page
+			// are rolled back to the stored config (order/priority
+			// stays user-controlled), and the frontend is reminded so
+			// the silent restore is visible.
+			instances, restored = restoreManagedInstances(
+				existing.Instances, instances, managed,
+			)
+			next = config.InferenceConfig{Instances: instances}
+			if len(next.Enabled()) == 0 {
+				err = errors.New("enable at least one instance")
+				return
 			}
-		}
-		idxs, ok := config.MatchStoredKeys(existing.Instances, rows, claimed)
-		if !ok {
-			for i, idx := range idxs {
-				if idx >= 0 || !pending[i].required {
-					continue
-				}
-				return fmt.Errorf(
-					"instance %s (%s): an API key or the env key source is required",
-					pending[i].name, pending[i].typ)
-			}
-		}
-		for i, idx := range idxs {
-			if idx < 0 {
-				// Optional row (disabled, no stored key) stays keyless.
-				continue
-			}
-			dst := &instances[pending[i].idx]
-			dst.KeySource = existing.Instances[idx].KeySource
-			dst.KeyValue = existing.Instances[idx].KeyValue
-		}
-	}
-	// Plugin-managed deployments are owned by their capability plugin:
-	// content edits and removals from the settings page are rolled back
-	// to the stored config (order/priority stays user-controlled), and
-	// the frontend is reminded so the silent restore is visible.
-	instances, restored := restoreManagedInstances(
-		existing.Instances, instances, b.managedPluginIDs(),
+			return next, nil, true, nil
+		},
 	)
-	cfg := config.InferenceConfig{Instances: instances}
-	if len(cfg.Enabled()) == 0 {
-		return errors.New("enable at least one instance")
-	}
-	if err := config.WriteInference(b.core.UserDir, cfg); err != nil {
+	if err != nil {
 		return err
 	}
 	if len(restored) > 0 {
@@ -554,22 +595,36 @@ func (b *Config) saveInference(req InferenceRequest) error {
 	return nil
 }
 
-// managedPluginIDs returns the set of installed plugin ids. Deployments
-// whose stable id matches one of them are plugin-managed and may not be
-// edited or removed through the settings page.
-func (b *Config) managedPluginIDs() map[string]bool {
+// managedInstanceIDs returns the stable ids of inference instances
+// owned by an installed and enabled plugin. Ownership comes from the
+// explicit sidecar. Rows whose plugin is disabled or no longer
+// installed are not locked, so the user can remove or edit them after
+// disabling a plugin.
+func (b *Config) managedInstanceIDs() (map[string]bool, error) {
 	if b.core.Plugin == nil || b.core.Plugin.Store == nil {
-		return nil
+		return nil, nil
 	}
 	installed, err := b.core.Plugin.Store.List()
 	if err != nil {
-		return nil
+		return nil, err
 	}
-	ids := make(map[string]bool, len(installed))
+	owners, err := config.LoadProviderOwners(b.core.UserDir)
+	if err != nil {
+		return nil, err
+	}
+	enabled := make(map[string]bool, len(installed))
 	for _, p := range installed {
-		ids[p.ID] = true
+		if p.Enabled && p.Error == "" {
+			enabled[p.ID] = true
+		}
 	}
-	return ids
+	ids := make(map[string]bool, len(owners))
+	for instanceID, pluginID := range owners {
+		if enabled[pluginID] {
+			ids[instanceID] = true
+		}
+	}
+	return ids, nil
 }
 
 // restoreManagedInstances reconciles the settings-page request against

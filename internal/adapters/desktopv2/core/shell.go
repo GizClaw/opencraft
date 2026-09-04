@@ -2,10 +2,10 @@ package core
 
 import (
 	"context"
-	"fmt"
-	"os"
 	"runtime"
 	"sync"
+
+	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -53,6 +53,16 @@ func (s *Shell) Context() context.Context {
 		return s.ctx
 	}
 	return context.Background()
+}
+
+// OpenURL opens an http(s) URL in the system default browser. Before
+// Startup there is no Wails context, so the call is a no-op.
+func (s *Shell) OpenURL(url string) {
+	ctx := s.activeContext()
+	if ctx == nil {
+		return
+	}
+	wailsruntime.BrowserOpenURL(ctx, url)
 }
 
 // activeContext returns the real Wails context, or nil before Startup.
@@ -126,7 +136,7 @@ func (s *Shell) confirmQuit(ctx context.Context) bool {
 		CancelButton:  cancelButton,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "opencraft: exit confirmation dialog: %v\n", err)
+		telemetry.WarnErr(ctx, "desktop: exit confirmation dialog failed", err)
 		return false
 	}
 	return selection == texts.QuitDialogConfirm || selection == "Yes"

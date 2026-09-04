@@ -22,6 +22,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/GizClaw/flowcraft/core/telemetry"
 )
 
 const (
@@ -46,7 +48,10 @@ type Capability struct {
 
 // InferenceProfile is a plugin-submitted inference provider profile.
 // The host validates and writes it but does not interpret its domain
-// meaning (gateway, session, ...).
+// meaning (gateway, session, ...). ID is the full stable provider
+// instance id and must be unique across the user's inference config;
+// it is independent of the plugin id, so one plugin can submit several
+// profiles. Ownership is recorded separately by the host.
 type InferenceProfile struct {
 	ID       string         `json:"id"`
 	Type     string         `json:"type"`
@@ -363,7 +368,9 @@ func (m *Manager) start(id string, cap Capability, bin string) (*process, error)
 	}
 	go p.readLoop(stdout)
 	go func() {
-		_, _ = io.Copy(m.log, stderr)
+		_, copyErr := io.Copy(m.log, stderr)
+		telemetry.WarnErr(m.baseCtx,
+			"plugin runtime: drain capability stderr failed", copyErr)
 	}()
 	go func() {
 		<-p.done
@@ -527,6 +534,8 @@ func (p *process) handleResponse(line []byte) {
 func (p *process) handleRequest(line []byte) {
 	var req rpcRequest
 	if err := json.Unmarshal(line, &req); err != nil {
+		telemetry.WarnErr(p.manager.baseCtx,
+			"plugin runtime: decode capability request failed", err)
 		return
 	}
 	// The handshake is a plugin→host request with no response writer
@@ -538,15 +547,21 @@ func (p *process) handleRequest(line []byte) {
 	select {
 	case <-p.ready:
 	default:
-		_ = p.respondError(req, -32001, "handshake required")
+		telemetry.WarnErr(p.manager.baseCtx,
+			"plugin runtime: send handshake-required response failed",
+			p.respondError(req, -32001, "handshake required"))
 		return
 	}
 	result, err := p.manager.handlePrimitive(p, req)
 	if err != nil {
-		_ = p.respondError(req, -32000, err.Error())
+		telemetry.WarnErr(p.manager.baseCtx,
+			"plugin runtime: send primitive error response failed",
+			p.respondError(req, -32000, err.Error()))
 		return
 	}
-	_ = p.respond(req, result)
+	telemetry.WarnErr(p.manager.baseCtx,
+		"plugin runtime: send primitive response failed",
+		p.respond(req, result))
 }
 
 func (p *process) handleHandshake(req rpcRequest) {
@@ -554,20 +569,29 @@ func (p *process) handleHandshake(req rpcRequest) {
 		ID       string `json:"id"`
 		Protocol int    `json:"protocol"`
 	}
-	_ = json.Unmarshal(req.Params, &hs)
+	if err := json.Unmarshal(req.Params, &hs); err != nil {
+		telemetry.WarnErr(p.manager.baseCtx,
+			"plugin runtime: decode capability handshake failed", err)
+	}
 	select {
 	case <-p.ready:
-		_ = p.respondError(req, -32000, "duplicate handshake")
+		telemetry.WarnErr(p.manager.baseCtx,
+			"plugin runtime: send duplicate handshake response failed",
+			p.respondError(req, -32000, "duplicate handshake"))
 		return
 	default:
 	}
 	if hs.ID != p.id || hs.Protocol != ProtocolVersion {
-		_ = p.respondError(req, -32002, "handshake mismatch")
+		telemetry.WarnErr(p.manager.baseCtx,
+			"plugin runtime: send handshake mismatch response failed",
+			p.respondError(req, -32002, "handshake mismatch"))
 		p.stop()
 		return
 	}
 	close(p.ready)
-	_ = p.respond(req, map[string]any{"ok": true})
+	telemetry.WarnErr(p.manager.baseCtx,
+		"plugin runtime: send handshake response failed",
+		p.respond(req, map[string]any{"ok": true}))
 }
 
 func (p *process) respond(req rpcRequest, result any) error {
@@ -596,8 +620,10 @@ func (p *process) stop() {
 		return
 	default:
 	}
-	_ = p.cmd.Process.Kill()
-	_ = p.stdin.Close()
+	telemetry.WarnErr(p.manager.baseCtx,
+		"plugin runtime: kill capability process failed", p.cmd.Process.Kill())
+	telemetry.WarnErr(p.manager.baseCtx,
+		"plugin runtime: close capability stdin failed", p.stdin.Close())
 }
 
 // handlePrimitive executes one plugin→host primitive request.
@@ -653,9 +679,6 @@ func (m *Manager) handleInferenceUpsert(p *process, req rpcRequest) (any, error)
 	if err := json.Unmarshal(req.Params, &profile); err != nil {
 		return nil, fmt.Errorf("runtime: inference.upsert args: %w", err)
 	}
-	if profile.ID != p.id {
-		return nil, fmt.Errorf("runtime: profile id %q outside plugin %q", profile.ID, p.id)
-	}
 	if m.inference.Upsert == nil {
 		return nil, errors.New("runtime: inference upsert handler unavailable")
 	}
@@ -668,9 +691,6 @@ func (m *Manager) handleInferenceRemove(p *process, req rpcRequest) (any, error)
 	}
 	if err := json.Unmarshal(req.Params, &args); err != nil {
 		return nil, fmt.Errorf("runtime: inference.remove args: %w", err)
-	}
-	if args.ID != p.id {
-		return nil, fmt.Errorf("runtime: remove id %q outside plugin %q", args.ID, p.id)
 	}
 	if m.inference.Remove == nil {
 		return nil, errors.New("runtime: inference remove handler unavailable")

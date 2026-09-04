@@ -22,6 +22,8 @@ import (
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/resource"
+	"github.com/GizClaw/flowcraft/core/telemetry"
+	otellog "go.opentelemetry.io/otel/log"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
@@ -56,6 +58,8 @@ type TurnRecord struct {
 	StartedAt   time.Time         `json:"started_at,omitzero"`
 	FinishedAt  time.Time         `json:"finished_at,omitzero"`
 	RunID       string            `json:"run_id,omitempty"`
+	Status      string            `json:"status,omitempty"`
+	Error       string            `json:"error,omitempty"`
 	Messages    []message.Message `json:"messages"`
 	Artifacts   []Artifact        `json:"artifacts,omitempty"`
 }
@@ -107,7 +111,8 @@ func New(root string, window int) (*Store, error) {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, err
 	}
-	_ = os.Chmod(root, 0o700)
+	telemetry.WarnErr(context.Background(),
+		"sessions: secure store root failed", os.Chmod(root, 0o700))
 	db, err := state.Open(filepath.Join(root, "session.db"))
 	if err != nil {
 		return nil, err
@@ -199,7 +204,8 @@ func (s *Store) Create() (string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
-	_ = os.Chmod(dir, 0o700)
+	telemetry.WarnErr(context.Background(),
+		"sessions: secure conversation dir failed", os.Chmod(dir, 0o700))
 	return id, nil
 }
 
@@ -327,9 +333,17 @@ func (s *Store) RecordTurnTiming(
 	return nil
 }
 
-// RecordTurnFinished records when a run finished.
-func (s *Store) RecordTurnFinished(
-	id, runID string, finishedAt time.Time,
+// RecordTurnEnd records when a run finished plus its terminal status
+// and error. Persisting status here keeps the archive in sync with the
+// same turn_end event the UI receives.
+func (s *Store) RecordTurnEnd(
+	id, runID string, finishedAt time.Time, status, errText string,
+) error {
+	return s.recordTurnEnd(id, runID, finishedAt, status, errText)
+}
+
+func (s *Store) recordTurnEnd(
+	id, runID string, finishedAt time.Time, status, errText string,
 ) error {
 	if err := requireID(id); err != nil {
 		return err
@@ -338,9 +352,9 @@ func (s *Store) RecordTurnFinished(
 		return errdefs.Validationf("sessions: timing run id is required")
 	}
 	finishedAt = finishedAt.UTC()
-	if err := s.db.UpdateArchiveTurnTimes(
+	if err := s.db.UpdateArchiveTurnEnd(
 		context.Background(), id, runID,
-		time.Time{}, time.Time{}, finishedAt,
+		finishedAt, status, errText,
 	); err != nil {
 		return err
 	}
@@ -459,13 +473,19 @@ func (s *Store) SaveAttachment(id, kind, srcPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = src.Close() }()
+	defer func() {
+		telemetry.WarnErr(context.Background(),
+			"sessions: close attachment source failed", src.Close())
+	}()
 	dir := filepath.Join(s.dir(id), kind)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
 	var suffix [4]byte
-	_, _ = rand.Read(suffix[:])
+	if _, err := rand.Read(suffix[:]); err != nil {
+		telemetry.WarnErr(context.Background(),
+			"sessions: generate attachment suffix failed", err)
+	}
 	name := fmt.Sprintf("%d-%x%s", time.Now().UnixNano(), suffix[:], filepath.Ext(srcPath))
 	dst := filepath.Join(dir, name)
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
@@ -473,12 +493,15 @@ func (s *Store) SaveAttachment(id, kind, srcPath string) (string, error) {
 		return "", err
 	}
 	if _, err := io.Copy(out, src); err != nil {
-		_ = out.Close()
-		_ = os.Remove(dst)
+		telemetry.WarnErr(context.Background(),
+			"sessions: close partial attachment failed", out.Close())
+		telemetry.WarnErr(context.Background(),
+			"sessions: remove partial attachment failed", os.Remove(dst))
 		return "", err
 	}
 	if err := out.Close(); err != nil {
-		_ = os.Remove(dst)
+		telemetry.WarnErr(context.Background(),
+			"sessions: remove attachment after close failure", os.Remove(dst))
 		return "", err
 	}
 	return dst, nil
@@ -538,10 +561,16 @@ func (s *Store) Turns(ctx context.Context, id string) ([]TurnRecord, error) {
 			StartedAt:   t.StartedAt,
 			FinishedAt:  t.FinishedAt,
 			RunID:       t.RunID,
+			Status:      t.Status,
+			Error:       t.Error,
 			Messages:    byTurn[t.ID],
 		}
 		if len(t.ArtifactsJSON) > 0 {
-			_ = json.Unmarshal(t.ArtifactsJSON, &rec.Artifacts)
+			if err := json.Unmarshal(t.ArtifactsJSON, &rec.Artifacts); err != nil {
+				telemetry.WarnErr(ctx,
+					"sessions: decode turn artifacts failed", err,
+					otellog.String("conversation.id", id))
+			}
 		}
 		out = append(out, rec)
 	}
@@ -569,7 +598,11 @@ func (s *Store) List() ([]Meta, error) {
 		}
 		var usage Usage
 		if len(c.UsageJSON) > 0 {
-			_ = json.Unmarshal(c.UsageJSON, &usage)
+			if err := json.Unmarshal(c.UsageJSON, &usage); err != nil {
+				telemetry.WarnErr(context.Background(),
+					"sessions: decode conversation usage failed", err,
+					otellog.String("conversation.id", c.ID))
+			}
 		}
 		if c.TurnCount == 0 && usage == (Usage{}) {
 			continue
@@ -645,7 +678,10 @@ func (s *Store) LoadUsage(ctx context.Context, id string) (Usage, error) {
 	}
 	var usage Usage
 	if len(c.UsageJSON) > 0 {
-		_ = json.Unmarshal(c.UsageJSON, &usage)
+		if err := json.Unmarshal(c.UsageJSON, &usage); err != nil {
+			telemetry.WarnErr(ctx, "sessions: decode usage failed", err,
+				otellog.String("conversation.id", id))
+		}
 	}
 	return usage, nil
 }

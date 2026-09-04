@@ -158,7 +158,10 @@ export const conversationMachine = createMachine({
             // ignored via lastEndedRunID.
             STREAM: {
               guard: ({ context, event }) =>
-                !context.deletedAt && event.runID !== context.lastEndedRunID,
+                !context.deletedAt &&
+                event.runID !== context.lastEndedRunID &&
+                (event.runID !== context.currentRunID ||
+                  event.stage !== context.turnStage),
               target: 'running',
               actions: assign({
                 currentRunID: ({ event }) => event.runID,
@@ -179,7 +182,10 @@ export const conversationMachine = createMachine({
             },
             STREAM: {
               guard: ({ context, event }) =>
-                !context.deletedAt && event.runID !== context.lastEndedRunID,
+                !context.deletedAt &&
+                event.runID !== context.lastEndedRunID &&
+                (event.runID !== context.currentRunID ||
+                  event.stage !== context.turnStage),
               target: 'running',
               actions: assign({
                 currentRunID: ({ event }) => event.runID,
@@ -221,7 +227,9 @@ export const conversationMachine = createMachine({
           on: {
             STREAM: {
               guard: ({ context, event }) =>
-                !context.deletedAt && event.runID === context.currentRunID,
+                !context.deletedAt &&
+                event.runID === context.currentRunID &&
+                event.stage !== context.turnStage,
               actions: assign({
                 turnStage: ({ event }) => event.stage ?? '',
               }),

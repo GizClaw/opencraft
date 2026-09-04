@@ -4,6 +4,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/telemetry"
+
 	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/automations"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
@@ -148,7 +150,10 @@ func (b *Automation) AutomationSessions(
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = store.Close() }()
+	defer func() {
+		telemetry.WarnErr(ctx, "desktop automation: close session store failed",
+			store.Close())
+	}()
 	if err := migrations.Workspace(ctx, store.Database(), layout.SessionsDir); err != nil {
 		return nil, err
 	}

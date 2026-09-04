@@ -25,6 +25,8 @@ func TestConversationArchiveCommitRoundTrip(t *testing.T) {
 		RequestedAt: time.Now().UTC(),
 		StartedAt:   time.Now().UTC(),
 		FinishedAt:  time.Now().UTC(),
+		Status:      "canceled",
+		Error:       "context canceled",
 	}, []state.ArchiveMessage{
 		{Role: string(message.RoleUser), Content: message.Content{
 			Parts: []message.Part{message.TextPart{Text: "hi"}},
@@ -45,7 +47,9 @@ func TestConversationArchiveCommitRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(turns) != 1 || turns[0].RunID != "run-1" {
+	if len(turns) != 1 || turns[0].RunID != "run-1" ||
+		turns[0].Status != "canceled" ||
+		turns[0].Error != "context canceled" {
 		t.Fatalf("turns = %+v", turns)
 	}
 	msgs, err := s.ListArchiveMessages(ctx, "s-1")

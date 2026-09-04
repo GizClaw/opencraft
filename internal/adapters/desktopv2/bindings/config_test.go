@@ -115,14 +115,17 @@ func TestConfigStateMarksPluginManagedInstances(t *testing.T) {
 	writePluginManifest(t, dir, "sso-haivivi")
 	b := NewConfig(core.NewCore(dir, dir, ""))
 
-	if err := config.WriteInference(dir, config.InferenceConfig{Instances: []config.Instance{
-		{StableID: "sso-haivivi", Type: "deepseek", Name: "Haivivi SSO",
+	cfg := config.InferenceConfig{Instances: []config.Instance{
+		{StableID: "sso-haivivi-main", Type: "deepseek", Name: "Haivivi SSO",
 			KeySource: config.KeyEnv, Enabled: true,
 			Models: []config.Model{{Name: "deepseek-v4-flash"}}},
 		{StableID: "user-1", Type: "openai", Name: "My OpenAI",
 			KeySource: config.KeyEnv, Enabled: true,
 			Models: []config.Model{{Name: "gpt-5.6-sol"}}},
-	}}); err != nil {
+	}}
+	if err := config.WriteInferenceOwned(dir, cfg, map[string]string{
+		"sso-haivivi-main": "sso-haivivi",
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -134,8 +137,8 @@ func TestConfigStateMarksPluginManagedInstances(t *testing.T) {
 	for _, in := range state.Instances {
 		managed[in.StableID] = in.Managed
 	}
-	if !managed["sso-haivivi"] {
-		t.Fatalf("sso-haivivi should be managed: %+v", state.Instances)
+	if !managed["sso-haivivi-main"] {
+		t.Fatalf("sso-haivivi-main should be managed: %+v", state.Instances)
 	}
 	if managed["user-1"] {
 		t.Fatalf("user-1 should not be managed: %+v", state.Instances)
@@ -149,7 +152,7 @@ func TestSaveInstancesRestoresManagedRows(t *testing.T) {
 	b := NewConfig(core.NewCore(dir, dir, ""))
 
 	seed := config.InferenceConfig{Instances: []config.Instance{
-		{StableID: "sso-haivivi", Type: "deepseek", Name: "Haivivi SSO",
+		{StableID: "sso-haivivi-main", Type: "deepseek", Name: "Haivivi SSO",
 			KeySource: config.KeyLiteral, KeyValue: "managed-key",
 			Enabled: true,
 			Models:  []config.Model{{Name: "deepseek-v4-flash"}}},
@@ -157,7 +160,9 @@ func TestSaveInstancesRestoresManagedRows(t *testing.T) {
 			KeySource: config.KeyLiteral, KeyValue: "user-key", Enabled: true,
 			Models: []config.Model{{Name: "gpt-5.6-sol"}}},
 	}}
-	if err := config.WriteInference(dir, seed); err != nil {
+	if err := config.WriteInferenceOwned(dir, seed, map[string]string{
+		"sso-haivivi-main": "sso-haivivi",
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -178,12 +183,104 @@ func TestSaveInstancesRestoresManagedRows(t *testing.T) {
 	}
 	var managed config.Instance
 	for _, in := range cfg.Instances {
-		if in.StableID == "sso-haivivi" {
+		if in.StableID == "sso-haivivi-main" {
 			managed = in
 		}
 	}
-	if managed.StableID != "sso-haivivi" || !managed.Enabled ||
+	if managed.StableID != "sso-haivivi-main" || !managed.Enabled ||
 		managed.KeyValue != "managed-key" {
 		t.Fatalf("managed instance not restored: %+v", managed)
+	}
+}
+
+func TestConfigStateMarksMultiplePluginOwnedInstances(t *testing.T) {
+	dir := t.TempDir()
+	writePluginManifest(t, dir, "sso-haivivi")
+	b := NewConfig(core.NewCore(dir, dir, ""))
+
+	cfg := config.InferenceConfig{Instances: []config.Instance{
+		{StableID: "sso-haivivi-main", Type: "deepseek", Name: "Main",
+			KeySource: config.KeyEnv, Enabled: true,
+			Models: []config.Model{{Name: "deepseek-v4-flash"}}},
+		{StableID: "sso-haivivi-gateway", Type: "deepseek",
+			Name: "Gateway", KeySource: config.KeyEnv, Enabled: true,
+			Models: []config.Model{{Name: "deepseek-v4-flash"}}},
+		{StableID: "user-1", Type: "openai", Name: "User",
+			KeySource: config.KeyEnv, Enabled: true,
+			Models: []config.Model{{Name: "gpt-5.6-sol"}}},
+	}}
+	owners := map[string]string{
+		"sso-haivivi-main":    "sso-haivivi",
+		"sso-haivivi-gateway": "sso-haivivi",
+	}
+	if err := config.WriteInferenceOwned(dir, cfg, owners); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := b.ConfigState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	managed := map[string]bool{}
+	for _, in := range state.Instances {
+		managed[in.StableID] = in.Managed
+	}
+	if !managed["sso-haivivi-main"] || !managed["sso-haivivi-gateway"] {
+		t.Fatalf("plugin-owned instances should be managed: %+v", state.Instances)
+	}
+	if managed["user-1"] {
+		t.Fatalf("user row must not be managed: %+v", state.Instances)
+	}
+}
+
+func TestSaveInstancesRestoresMultipleManagedRows(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	dir := t.TempDir()
+	writePluginManifest(t, dir, "sso-haivivi")
+	b := NewConfig(core.NewCore(dir, dir, ""))
+
+	seed := config.InferenceConfig{Instances: []config.Instance{
+		{StableID: "sso-haivivi-main", Type: "deepseek", Name: "Main",
+			KeySource: config.KeyLiteral, KeyValue: "key-1", Enabled: true,
+			Models: []config.Model{{Name: "deepseek-v4-flash"}}},
+		{StableID: "sso-haivivi-gateway", Type: "deepseek",
+			Name: "Gateway", KeySource: config.KeyLiteral,
+			KeyValue: "key-2", Enabled: true,
+			Models: []config.Model{{Name: "deepseek-v4-flash"}}},
+		{StableID: "user-1", Type: "openai", Name: "User",
+			KeySource: config.KeyLiteral, KeyValue: "user-key",
+			Enabled: true,
+			Models:  []config.Model{{Name: "gpt-5.6-sol"}}},
+	}}
+	owners := map[string]string{
+		"sso-haivivi-main":    "sso-haivivi",
+		"sso-haivivi-gateway": "sso-haivivi",
+	}
+	if err := config.WriteInferenceOwned(dir, seed, owners); err != nil {
+		t.Fatal(err)
+	}
+
+	req := InferenceRequest{Instances: []ProviderInstance{
+		{StableID: "user-1", Type: "openai", Name: "User",
+			KeyEnv: true, Enabled: true,
+			Models: []ModelView{{Name: "gpt-5.6-sol"}}},
+	}}
+	if err := b.SaveInstances(req); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	cfg, err := config.LoadInference(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Instances) != 3 {
+		t.Fatalf("instances = %+v, want managed rows restored", cfg.Instances)
+	}
+	gotOwners, err := config.LoadProviderOwners(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotOwners["sso-haivivi-main"] != "sso-haivivi" ||
+		gotOwners["sso-haivivi-gateway"] != "sso-haivivi" {
+		t.Fatalf("owners = %+v", gotOwners)
 	}
 }

@@ -2161,7 +2161,9 @@ export function ConfigPage() {
                     {t('config.diagClearCache')}
                   </button>
                   <button
-                    onClick={() => void api.reload()}
+                    onClick={() =>
+                      void api.reload().catch((err) => toast(String(err)))
+                    }
                     className="rounded-lg border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg"
                   >
                     {t('config.diagReload')}

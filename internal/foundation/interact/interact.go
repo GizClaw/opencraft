@@ -14,6 +14,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/event"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/runtime/session"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 )
 
 // Kind describes the shape of one user interaction.
@@ -159,7 +160,11 @@ func ToUserReply(r Reply) agent.UserReply {
 		meta[MetaChoice] = *r.Option
 	}
 	if len(r.Options) > 0 {
-		raw, _ := json.Marshal(r.Options)
+		raw, err := json.Marshal(r.Options)
+		if err != nil {
+			telemetry.WarnErr(context.Background(),
+				"interact: marshal reply options failed", err)
+		}
 		meta[MetaChoices] = string(raw)
 	}
 	if r.Text != "" {
