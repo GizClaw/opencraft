@@ -117,9 +117,10 @@ func (b *Conversation) waitTurn(
 	if err != nil && errText == "" {
 		errText = err.Error()
 	}
+	finishedAt, durationMs := run.FinishedTiming()
 	end := core.NewTurnEnd(
 		run.RunID(), contextID, status, errText,
-		lastAssistantOutput(res), time.Now(),
+		lastAssistantOutput(res), finishedAt, durationMs,
 	)
 	b.core.Shell.Emit("turn_end", end)
 	b.core.Shell.Emit("status", core.StatusEvent{})
