@@ -160,7 +160,7 @@ func (b *Session) Rename(id, title string) error {
 // Delete removes one conversation. The active conversation is refused.
 func (b *Session) Delete(id string) error {
 	ctx := b.core.Shell.Context()
-	if id == b.core.Conversation.Current() {
+	if id == b.core.Conversation.Current(b.core.ActiveWorkDir()) {
 		return errors.New("cannot delete the active conversation")
 	}
 	h := b.core.Runtime.Current()

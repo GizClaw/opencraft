@@ -662,6 +662,7 @@ interface StoreState {
   loadWorkspaces: () => Promise<void>;
   chooseWorkspace: () => Promise<void>;
   openWorkspace: (path: string) => Promise<void>;
+  restoreWorkspaceSession: (workDir: string) => Promise<void>;
   openSessionInWorkspace: (
     sessionID: string,
     workspacePath: string,
@@ -716,6 +717,22 @@ export const useStore = create<StoreState>((set, get) => {
   // can finish after a newer NewChat and move the backend context back
   // to the old session.
   let contextSwitchQueue: Promise<void> = Promise.resolve();
+  // Workspace switches are applied in order. Older restores ignore
+  // their result once a newer switch has been requested.
+  let workspaceSwitchSeq = 0;
+  let workspaceRestoreInFlight = false;
+  let workspaceRestorePromise: Promise<void> | null = null;
+  const waitForWorkspaceRestore = async () => {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      if (!workspaceRestoreInFlight) return;
+      if (workspaceRestorePromise) {
+        await workspaceRestorePromise;
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  };
   const runContextSwitch = <T>(op: () => Promise<T>) => {
     const next = contextSwitchQueue.then(op);
     contextSwitchQueue = next.then(
@@ -1079,17 +1096,29 @@ export const useStore = create<StoreState>((set, get) => {
           const data = ev.data as ConfigStatus;
           const workChanged = data.work_dir !== get().workspace;
           if (workChanged) {
-            stateRoot.resetWorkspace();
+            // Keep conversation actors and transcripts alive across a
+            // workspace switch: a turn that is still running in the
+            // old workspace continues to stream into its conversation.
+            // Only the focus is reset; the session restore below
+            // decides which conversation the new workspace shows.
+            stateRoot.sendFocus({ type: 'WORKSPACE_RESET' });
             set({
               workspace: data.work_dir,
-              conversations: {},
-              runConvs: {},
-              pendingPromptConvs: {},
+              toolsView: null,
+              configOpen: false,
               subagentStreams: {},
               subagentStreamAt: {},
             });
             void get().loadSessions();
-            void get().newChat();
+            const restore = get().restoreWorkspaceSession(data.work_dir);
+            workspaceRestoreInFlight = true;
+            workspaceRestorePromise = restore;
+            void restore.finally(() => {
+              if (workspaceRestorePromise === restore) {
+                workspaceRestorePromise = null;
+                workspaceRestoreInFlight = false;
+              }
+            });
           }
           void get().loadSessions();
           void get().loadAutomations();
@@ -1900,11 +1929,42 @@ export const useStore = create<StoreState>((set, get) => {
       }
     },
 
+    restoreWorkspaceSession: async (workDir) => {
+      const seq = ++workspaceSwitchSeq;
+      stateRoot.sendFocus({ type: 'WORKSPACE_RESET' });
+      if (!workDir || get().workspace !== workDir) return;
+      let currentSession = '';
+      try {
+        currentSession = await api.currentSession();
+      } catch {
+        // Fall through and mint a fresh session below.
+      }
+      if (seq !== workspaceSwitchSeq || get().workspace !== workDir) {
+        return;
+      }
+      if (!currentSession) {
+        await get().newChat();
+        return;
+      }
+      await get().resume(currentSession);
+      const focus = stateRoot.focusSnapshot;
+      if (
+        seq === workspaceSwitchSeq &&
+        get().workspace === workDir &&
+        focus.value !== 'active'
+      ) {
+        // The saved session is gone or cannot be resumed; land on a
+        // fresh conversation instead of leaving the workspace blank.
+        await get().newChat();
+      }
+    },
+
     openWorkspace: async (path) => {
       try {
         await api.openWorkspace(path);
-        // The runtime rebuild emits "ready", which resets the
-        // conversations and refreshes sessions/workspaces.
+        // The runtime rebuild emits "ready"; the ready handler
+        // restores the target workspace's session and refreshes
+        // sessions/workspaces.
       } catch (err) {
         set({ statusText: String(err) });
       }
@@ -1925,6 +1985,7 @@ export const useStore = create<StoreState>((set, get) => {
         if (get().workspace !== workspacePath) {
           throw new Error('workspace switch did not complete');
         }
+        await waitForWorkspaceRestore();
       }
       await get().resume(sessionID);
     },
