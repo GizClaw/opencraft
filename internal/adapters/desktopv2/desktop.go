@@ -15,6 +15,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/bindings"
 	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/core"
@@ -158,7 +159,10 @@ func (d *Desktop) Shutdown(ctx context.Context) {
 		// context so telemetry still gets its full drain window.
 		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = d.otelShutdown(flushCtx)
+		if err := d.otelShutdown(flushCtx); err != nil {
+			telemetry.WarnErr(context.Background(),
+				"desktop: telemetry shutdown failed", err)
+		}
 	}
 }
 

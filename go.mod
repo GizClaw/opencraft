@@ -11,7 +11,7 @@ require (
 	github.com/GizClaw/flowcraft/driver/deepseek v0.2.2
 	github.com/GizClaw/flowcraft/driver/kimi v0.2.2
 	github.com/GizClaw/flowcraft/driver/minimax v0.2.2
-	github.com/GizClaw/flowcraft/driver/openai v0.2.2
+	github.com/GizClaw/flowcraft/driver/openai v0.2.3
 	github.com/GizClaw/flowcraft/driver/qwen v0.2.2
 	github.com/PuerkitoBio/goquery v1.12.0
 	github.com/go-shiori/go-readability v0.0.0-20251205110129-5db1dc9836f0
