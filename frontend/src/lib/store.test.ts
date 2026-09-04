@@ -607,3 +607,72 @@ describe('store: transcript cap', () => {
     expect(conv.turnArtifacts.map((t) => t.start)).toEqual([700]);
   });
 });
+
+describe('store: init session bootstrap', () => {
+  const status = {
+    needed: false,
+    default_model: 'm',
+    default_reasoning: true,
+    work_dir: '/tmp/w',
+    user_dir: '/tmp/u',
+    version: 'test',
+    agents: 0,
+  };
+
+  function stubInitApi(options: {
+    currentSession?: string;
+    workspace?: string;
+  }) {
+    apiMock.configStatus.mockResolvedValue(status);
+    apiMock.workspace.mockResolvedValue(options.workspace ?? '/tmp/w');
+    apiMock.sessionMode.mockResolvedValue('workspace');
+    apiMock.currentSession.mockResolvedValue(options.currentSession ?? '');
+    apiMock.getThink.mockResolvedValue('medium');
+    apiMock.getModel.mockResolvedValue('');
+    apiMock.modelOptions.mockResolvedValue([]);
+  }
+
+  it('starts a fresh conversation when no current session exists', async () => {
+    stateRoot.resetWorkspace();
+    stubInitApi({ currentSession: '', workspace: '/tmp/w' });
+
+    await useStore.getState().init();
+
+    expect(apiMock.newChat).toHaveBeenCalledTimes(1);
+    expect(stateRoot.focusSnapshot.value).toBe('active');
+    expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-new');
+    expect(useStore.getState().conversations['s-new']).toBeDefined();
+  });
+
+  it('does not mint twice when init runs concurrently', async () => {
+    stateRoot.resetWorkspace();
+    stubInitApi({ currentSession: '', workspace: '/tmp/w' });
+
+    await Promise.all([useStore.getState().init(), useStore.getState().init()]);
+
+    expect(apiMock.newChat).toHaveBeenCalledTimes(1);
+    expect(stateRoot.focusSnapshot.value).toBe('active');
+    expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-new');
+  });
+
+  it('restores an existing session instead of minting another', async () => {
+    stateRoot.resetWorkspace();
+    stubInitApi({ currentSession: 's-1', workspace: '/tmp/w' });
+
+    await useStore.getState().init();
+
+    expect(apiMock.newChat).not.toHaveBeenCalled();
+    expect(stateRoot.focusSnapshot.value).toBe('active');
+    expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-1');
+  });
+
+  it('stays on no-session while no workspace is open', async () => {
+    stateRoot.resetWorkspace();
+    stubInitApi({ currentSession: '', workspace: '' });
+
+    await useStore.getState().init();
+
+    expect(apiMock.newChat).not.toHaveBeenCalled();
+    expect(stateRoot.focusSnapshot.value).toBe('no-session');
+  });
+});

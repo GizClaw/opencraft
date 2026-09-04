@@ -142,17 +142,20 @@ func extractConversation(req *agent.Request, res *agent.Result) []message.Messag
 		channel := res.LastBoard.Channel(agent.MainChannel)
 		if n, ok := sectionCount(res.LastBoard); ok && n >= 0 && n <= len(channel) {
 			msgs = channel[n:]
-			// The model-facing board carries the user's turn message
-			// with inline media (the opencraft.media prepare hook
-			// inlined URL sources before the LLM). The archive keeps
-			// the URL form from the original request so attachments
-			// stay compact and re-renderable on resume. The user
-			// message sits right after the world sections and the
-			// replayed history messages.
+			// Full-history replay prepends the persisted conversation
+			// between the world sections and this turn's messages.
+			// Those replayed messages are context, not new
+			// conversation, so they must be dropped before persisting
+			// the turn.
 			if h, ok := historyCount(res.LastBoard); ok && h >= 0 && h < len(msgs) &&
 				msgs[h].Role == message.RoleUser {
-				restored := make([]message.Message, 0, len(msgs))
-				restored = append(restored, msgs[:h]...)
+				// The model-facing board carries the user's turn
+				// message with inline media (the opencraft.media
+				// prepare hook inlined URL sources before the LLM).
+				// The archive keeps the URL form from the original
+				// request so attachments stay compact and
+				// re-renderable on resume.
+				restored := make([]message.Message, 0, len(msgs)-h)
 				restored = append(restored, req.Message)
 				restored = append(restored, msgs[h+1:]...)
 				msgs = restored

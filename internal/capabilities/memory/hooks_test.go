@@ -365,6 +365,117 @@ func TestCommitHookPersistsFullConversation(t *testing.T) {
 	}
 }
 
+// TestCommitHookDropsReplayedHistory verifies that full-history replay
+// never re-persists earlier turns: each commit stores only the current
+// user message and the messages produced by this turn, so the archive
+// and memory rows stay linear instead of growing with every replay.
+func TestCommitHookDropsReplayedHistory(t *testing.T) {
+	store, err := newMigratedSessions(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	adapter := &sqliteTurnStore{db: store.Database()}
+	res := &memoryResource{
+		Assembly: summary.NewAssembly(adapter),
+		store:    adapter,
+	}
+
+	value, err := (commitHookFactory{}).New(context.Background(), resource.Input{
+		Settings: []byte(`{}`),
+		Deps: map[string]any{
+			"memory":   res,
+			"sessions": store,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	committer := value.(agent.CommitterFunc)
+	ctx := context.Background()
+
+	commit := func(runID, userText, replyText string, replay []message.Message) {
+		t.Helper()
+		board := agent.NewBoard()
+		board.AppendChannelMessage(agent.MainChannel,
+			message.NewTextMessage(message.RoleSystem, "environment section"))
+		board.AppendChannelMessage(agent.MainChannel,
+			message.NewTextMessage(message.RoleSystem, "skills section"))
+		for _, m := range replay {
+			board.AppendChannelMessage(agent.MainChannel, m)
+		}
+		board.AppendChannelMessage(agent.MainChannel,
+			message.NewTextMessage(message.RoleUser, userText))
+		board.AppendChannelMessage(agent.MainChannel,
+			message.NewTextMessage(message.RoleAssistant, replyText))
+		board.SetVar("world.sections.count", int64(2))
+		board.SetVar("world.history.count", int64(len(replay)))
+
+		id := agent.Identity{
+			RunID:          runID,
+			AgentID:        "assistant",
+			ConversationID: "s-replay",
+		}
+		req := &agent.Request{
+			ContextID: "s-replay",
+			Message:   message.NewTextMessage(message.RoleUser, userText),
+		}
+		result := &agent.Result{
+			RunID:     runID,
+			Status:    agent.StatusCompleted,
+			LastBoard: board,
+			Messages: []message.Message{
+				message.NewTextMessage(message.RoleAssistant, replyText),
+			},
+		}
+		if err := committer(ctx, id, req, result); err != nil {
+			t.Fatalf("commit %s: %v", runID, err)
+		}
+	}
+
+	commit("run-1", "hi", "hello", nil)
+	history, err := store.History(ctx, "s-replay", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 2 {
+		t.Fatalf("history after turn 1 = %d messages, want 2", len(history))
+	}
+
+	// Turn 2's board replays the full persisted conversation, exactly
+	// like the world node does when replay_full_history is enabled.
+	commit("run-2", "你是谁", "我是助手", history)
+	history, err = store.History(ctx, "s-replay", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 4 {
+		t.Fatalf("history after turn 2 = %d messages, want 4 (no replay duplicates)", len(history))
+	}
+	if history[2].Role != message.RoleUser || history[2].Content.Text() != "你是谁" {
+		t.Errorf("third message = %+v, want current user message only", history[2])
+	}
+	if history[3].Role != message.RoleAssistant || history[3].Content.Text() != "我是助手" {
+		t.Errorf("fourth message = %+v, want current assistant reply only", history[3])
+	}
+	if n, err := adapter.CountMessages(ctx, "s-replay"); err != nil || n != 4 {
+		t.Fatalf("memory messages = %d, %v; want 4", n, err)
+	}
+
+	turns, err := store.Turns(ctx, "s-replay")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(turns) != 2 {
+		t.Fatalf("turns = %d, want 2", len(turns))
+	}
+	for i, turn := range turns {
+		if len(turn.Messages) != 2 {
+			t.Errorf("turn %d messages = %d, want 2 (current turn only)", i+1, len(turn.Messages))
+		}
+	}
+}
+
 // TestCommitHookExcludesCompactionSummary verifies that a compaction
 // summary appended by the compact graph node as a marked user message
 // is kept out of both the session archive and the memory raw window:

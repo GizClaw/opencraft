@@ -9,6 +9,19 @@ afterEach(() => {
 
 // jsdom stubs for browser APIs the components touch but jsdom lacks.
 if (typeof window !== 'undefined') {
+  if (!window.localStorage) {
+    Object.defineProperty(window, 'localStorage', {
+      writable: true,
+      configurable: true,
+      value: {
+        getItem: vi.fn(() => null),
+        setItem: vi.fn(),
+        removeItem: vi.fn(),
+        clear: vi.fn(),
+      },
+    });
+  }
+
   if (!window.matchMedia) {
     Object.defineProperty(window, 'matchMedia', {
       writable: true,
