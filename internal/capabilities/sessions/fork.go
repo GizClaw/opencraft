@@ -12,6 +12,8 @@ import (
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/message/media"
+	"github.com/GizClaw/flowcraft/core/telemetry"
+	otellog "go.opentelemetry.io/otel/log"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
 )
@@ -70,7 +72,11 @@ func (s *Store) Fork(
 	cleanup := true
 	defer func() {
 		if cleanup {
-			_ = s.Remove(ctx, newID)
+			if err := s.Remove(ctx, newID); err != nil {
+				telemetry.WarnErr(ctx,
+					"sessions: remove forked session after fork failure", err,
+					otellog.String("conversation.id", newID))
+			}
 		}
 	}()
 

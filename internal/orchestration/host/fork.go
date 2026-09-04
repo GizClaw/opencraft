@@ -7,6 +7,8 @@ import (
 
 	fcmemory "github.com/GizClaw/flowcraft/core/memory"
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/telemetry"
+	otellog "go.opentelemetry.io/otel/log"
 
 	opmemory "github.com/GizClaw/opencraft/internal/capabilities/memory"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
@@ -30,7 +32,11 @@ func (h *Host) ForkConversation(
 		return "", err
 	}
 	if err := h.seedForkMemory(ctx, forked); err != nil {
-		_ = h.store.Remove(ctx, forked.ID)
+		if removeErr := h.store.Remove(ctx, forked.ID); removeErr != nil {
+			telemetry.WarnErr(ctx,
+				"host: remove forked session after memory seed failure",
+				removeErr, otellog.String("conversation.id", forked.ID))
+		}
 		return "", fmt.Errorf("host: fork memory seed %s: %w", forked.ID, err)
 	}
 	return forked.ID, nil
