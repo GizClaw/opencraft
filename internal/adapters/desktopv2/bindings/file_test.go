@@ -31,3 +31,22 @@ func TestFileListAndSearch(t *testing.T) {
 		t.Fatalf("hits = %+v", hits)
 	}
 }
+
+func TestRenderPatchNeverReturnsNilLines(t *testing.T) {
+	root := t.TempDir()
+	c := core.NewCore(t.TempDir(), t.TempDir(), root)
+	b := NewFileBinding(c)
+	files, err := b.RenderPatch(`*** Begin Patch
+*** Delete File: missing.txt
+*** End Patch
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 1 {
+		t.Fatalf("files = %+v", files)
+	}
+	if files[0].Lines == nil {
+		t.Fatal("RenderPatch must return an empty lines slice, not null")
+	}
+}

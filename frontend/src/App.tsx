@@ -129,11 +129,27 @@ export default function App() {
   useEffect(() => {
     void init();
     let alive = true;
+    let removeDebugContextMenu: (() => void) | null = null;
     void Environment().then((env) => {
-      if (alive) setIsMac(env.platform === 'darwin');
+      if (!alive) return;
+      setIsMac(env.platform === 'darwin');
+      // Wails dev/debug builds always enable the native webview
+      // context menu, which exposes Reload + Inspect Element to users.
+      // Keep the app menu clean outside production; React's own
+      // right-click menus still work because they prevent the default
+      // themselves and are not cancelled by this listener.
+      if (env.buildType !== 'production') {
+        const onContextMenu = (event: MouseEvent) => {
+          if (!event.defaultPrevented) event.preventDefault();
+        };
+        window.addEventListener('contextmenu', onContextMenu, true);
+        removeDebugContextMenu = () =>
+          window.removeEventListener('contextmenu', onContextMenu, true);
+      }
     });
     return () => {
       alive = false;
+      removeDebugContextMenu?.();
     };
   }, [init]);
 

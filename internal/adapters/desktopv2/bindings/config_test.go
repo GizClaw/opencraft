@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/GizClaw/flowcraft/core/inference"
+
 	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/core"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 )
@@ -52,6 +54,43 @@ func TestConfigSaveInstances(t *testing.T) {
 		len(state.Instances[0].Models) != 1 ||
 		state.Instances[0].Models[0].Name != "deepseek-v4-flash" {
 		t.Fatalf("config state = %+v", state)
+	}
+}
+
+func TestConfigStatusReportsDefaultReasoning(t *testing.T) {
+	dir := t.TempDir()
+	b := NewConfig(core.NewCore(dir, dir, ""))
+	if err := config.WriteInference(dir, config.InferenceConfig{
+		Instances: []config.Instance{{
+			StableID:  "primary",
+			Type:      "deepseek",
+			Name:      "Primary",
+			KeySource: config.KeyEnv,
+			Enabled:   true,
+			Models: []config.Model{{
+				Name: "deepseek-v4-flash",
+				Capabilities: inference.ModelCapabilities{
+					Reasoning: inference.ReasoningCapability{
+						Kind: inference.ReasoningAlways,
+					},
+				},
+			}},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	status, err := b.ConfigStatus()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Needed {
+		t.Fatalf("status = %+v, want configured", status)
+	}
+	if !status.DefaultReasoning {
+		t.Fatal("default reasoning must reflect the router model capability")
+	}
+	if status.DefaultModel == "" {
+		t.Fatal("default model must be reported")
 	}
 }
 

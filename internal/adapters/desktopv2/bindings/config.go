@@ -38,27 +38,42 @@ func (b *Config) Version() string {
 
 // ConfigStatus describes whether the runtime can be assembled.
 type ConfigStatus struct {
-	Configured bool   `json:"configured"`
-	WorkDir    string `json:"work_dir"`
-	UserDir    string `json:"user_dir"`
-	Version    string `json:"version"`
+	Needed           bool   `json:"needed"`
+	DefaultModel     string `json:"default_model"`
+	DefaultReasoning bool   `json:"default_reasoning"`
+	WorkDir          string `json:"work_dir"`
+	UserDir          string `json:"user_dir"`
+	Version          string `json:"version"`
+	Agents           int    `json:"agents"`
 }
 
 // ConfigStatus reports the current configuration state.
 func (b *Config) ConfigStatus() (ConfigStatus, error) {
 	configured := false
-	mgr, err := config.Open(config.Options{UserDir: b.core.UserDir})
+	userDir := b.core.UserDir
+	mgr, err := config.Open(config.Options{UserDir: userDir})
 	if err == nil {
 		view, loadErr := mgr.Load(b.core.Shell.Context())
 		if loadErr == nil {
 			configured, _ = config.RouterConfigured(view.Document)
 		}
 	}
+	defaultReasoning := false
+	if cfg, err := config.LoadInference(userDir); err == nil {
+		defaultReasoning = cfg.ModelReasoning("")
+	}
+	agents := 0
+	if h := b.core.Runtime.Current(); h != nil && h.Agents() != nil {
+		agents = len(h.Agents().List())
+	}
 	return ConfigStatus{
-		Configured: configured,
-		WorkDir:    b.core.WorkDir,
-		UserDir:    b.core.UserDir,
-		Version:    telemetry.ServiceVersion,
+		Needed:           !configured,
+		DefaultModel:     config.DefaultModel(userDir),
+		DefaultReasoning: defaultReasoning,
+		WorkDir:          b.core.WorkDir,
+		UserDir:          userDir,
+		Version:          telemetry.ServiceVersion,
+		Agents:           agents,
 	}, nil
 }
 

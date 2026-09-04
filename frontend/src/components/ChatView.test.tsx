@@ -240,6 +240,27 @@ describe('ChatView transcript windowing', () => {
 });
 
 describe('ChatView projections', () => {
+  it('renders the greeting above the centered composer in a new session', () => {
+    setConversation([]);
+    render(<ChatView />);
+    expect(screen.getByText('What shall we craft today?')).toBeInTheDocument();
+  });
+
+  it('shows the think level when the auto router model supports reasoning', () => {
+    setConversation([]);
+    useStore.setState({
+      modelOptions: [
+        {
+          id: 'deepseek-1/deepseek-v4-flash',
+          label: 'Primary',
+          reasoning: true,
+        },
+      ],
+    });
+    render(<ChatView />);
+    expect(screen.getByText('Medium')).toBeInTheDocument();
+  });
+
   it('renders no-session with a start action', () => {
     stateRoot.resetWorkspace();
     render(<ChatView />);

@@ -315,7 +315,13 @@ func (b *File) RenderPatch(patch string) ([]PatchFile, error) {
 	}
 	out := make([]PatchFile, 0, len(files))
 	for _, f := range files {
-		pf := PatchFile{Path: f.Path, Action: f.Action, Added: f.Added, Removed: f.Removed}
+		pf := PatchFile{
+			Path:    f.Path,
+			Action:  f.Action,
+			Added:   f.Added,
+			Removed: f.Removed,
+			Lines:   []PatchLine{},
+		}
 		for _, l := range f.Lines {
 			kind := "context"
 			switch l.Kind {
