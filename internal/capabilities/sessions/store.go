@@ -744,6 +744,58 @@ func (s *Store) RecordUsage(ctx context.Context, id string, usage Usage) error {
 	return s.db.UpsertConversation(ctx, c)
 }
 
+// AddUsage accumulates one usage delta onto the cumulative usage
+// already recorded for a session. Turn-end persistence and background
+// generations such as auto titles both feed deltas here, so a session's
+// total_tokens stays cumulative instead of reflecting only the last
+// call. It serializes on the store mutex to keep concurrent turn ends
+// from overwriting each other.
+func (s *Store) AddUsage(ctx context.Context, id string, delta Usage) error {
+	if err := requireID(id); err != nil {
+		return err
+	}
+	if delta.TotalTokens <= 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	c, err := s.db.Conversation(ctx, id)
+	if err == state.ErrNotFound {
+		c = state.Conversation{ID: id, CreatedAt: time.Now().UTC()}
+		if err := s.db.EnsureConversation(ctx, c); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+	var usage Usage
+	if len(c.UsageJSON) > 0 {
+		if err := json.Unmarshal(c.UsageJSON, &usage); err != nil {
+			telemetry.WarnErr(ctx, "sessions: decode usage before add failed", err,
+				otellog.String("conversation.id", id))
+		}
+	}
+	if delta.Model != "" {
+		usage.Model = delta.Model
+	}
+	usage.InputTokens += delta.InputTokens
+	usage.OutputTokens += delta.OutputTokens
+	usage.TotalTokens += delta.TotalTokens
+	usage.CacheReadTokens += delta.CacheReadTokens
+	usage.CacheWriteTokens += delta.CacheWriteTokens
+	usage.ReasoningTokens += delta.ReasoningTokens
+	usage.LatencyMs += delta.LatencyMs
+
+	raw, err := json.Marshal(usage)
+	if err != nil {
+		return err
+	}
+	c.UsageJSON = raw
+	c.UpdatedAt = time.Now().UTC()
+	return s.db.UpsertConversation(ctx, c)
+}
+
 // Remove removes one conversation and its on-disk directory.
 func (s *Store) Remove(ctx context.Context, id string) error {
 	if err := requireID(id); err != nil {

@@ -206,6 +206,58 @@ func TestMetaIndexSurvivesUsageRecord(t *testing.T) {
 	}
 }
 
+func TestAddUsageAccumulatesAcrossTurns(t *testing.T) {
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.AddUsage(context.Background(), id, Usage{
+		Model:           "openai-1/gpt-test",
+		InputTokens:     100,
+		OutputTokens:    50,
+		TotalTokens:     150,
+		CacheReadTokens: 20,
+		LatencyMs:       100,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddUsage(context.Background(), id, Usage{
+		Model:            "openai-1/gpt-test",
+		InputTokens:      30,
+		OutputTokens:     10,
+		TotalTokens:      40,
+		CacheWriteTokens: 5,
+		ReasoningTokens:  7,
+		LatencyMs:        200,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := store.LoadUsage(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Usage{
+		Model:            "openai-1/gpt-test",
+		InputTokens:      130,
+		OutputTokens:     60,
+		TotalTokens:      190,
+		CacheReadTokens:  20,
+		CacheWriteTokens: 5,
+		ReasoningTokens:  7,
+		LatencyMs:        300,
+	}
+	if got != want {
+		t.Fatalf("usage = %+v, want %+v", got, want)
+	}
+}
+
 func TestListSkipsArchiveWithoutMeta(t *testing.T) {
 	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
@@ -402,6 +454,9 @@ func TestAllIDMethodsRejectTraversal(t *testing.T) {
 	if err := store.RecordUsage(context.Background(), bad, Usage{TotalTokens: 1}); err == nil {
 		t.Error("RecordUsage accepted traversal id")
 	}
+	if err := store.AddUsage(context.Background(), bad, Usage{TotalTokens: 1}); err == nil {
+		t.Error("AddUsage accepted traversal id")
+	}
 	if err := store.WriteState(bad, "title", "x"); err == nil {
 		t.Error("WriteState accepted traversal id")
 	}
@@ -424,6 +479,9 @@ func TestAllIDMethodsRejectTraversal(t *testing.T) {
 	}
 	if err := store.RecordUsage(context.Background(), id, Usage{TotalTokens: 1}); err != nil {
 		t.Fatalf("RecordUsage valid id: %v", err)
+	}
+	if err := store.AddUsage(context.Background(), id, Usage{TotalTokens: 1}); err != nil {
+		t.Fatalf("AddUsage valid id: %v", err)
 	}
 	if err := store.WriteState(id, "title", "hi"); err != nil {
 		t.Fatalf("WriteState valid id: %v", err)

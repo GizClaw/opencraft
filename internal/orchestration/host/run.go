@@ -337,10 +337,11 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 	return res, err
 }
 
-// persistTurnUsage records one finished turn's usage in the workspace
-// session store and forwards it to the user-level recorder installed on
-// the manager. Both writes are best-effort: failures are logged and
-// never fail the turn.
+// persistTurnUsage records one usage delta (a finished turn, an
+// auto-title generation, or another post-run model call) in the
+// workspace session store and forwards it to the user-level recorder
+// installed on the manager. Both writes are best-effort: failures are
+// logged and never fail the turn.
 func (h *Host) persistTurnUsage(
 	ctx context.Context,
 	contextID string,
@@ -350,8 +351,8 @@ func (h *Host) persistTurnUsage(
 		return
 	}
 	if h.store != nil {
-		telemetry.WarnErr(ctx, "host: record turn usage failed",
-			h.store.RecordUsage(ctx, contextID, usage))
+		telemetry.WarnErr(ctx, "host: add session usage failed",
+			h.store.AddUsage(ctx, contextID, usage))
 	}
 	if h.usageRecorder != nil {
 		telemetry.WarnErr(ctx, "host: record user-level usage failed",

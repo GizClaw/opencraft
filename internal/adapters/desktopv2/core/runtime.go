@@ -172,22 +172,13 @@ func (r *Runtime) recordTurnUsage(
 	workspaceID, sessionID string,
 	u sessions.Usage,
 ) error {
-	if u.Model == "" || u.TotalTokens <= 0 {
-		return nil
-	}
 	r.mu.Lock()
 	store := r.usage
 	r.mu.Unlock()
 	if store == nil {
 		return nil
 	}
-	return store.Record(ctx, workspaceID, sessionID, u.Model, usage.Usage{
-		InputTokens:     u.InputTokens,
-		OutputTokens:    u.OutputTokens,
-		CacheReadTokens: u.CacheReadTokens,
-		ReasoningTokens: u.ReasoningTokens,
-		LatencyMs:       u.LatencyMs,
-	})
+	return store.RecordSessionUsage(ctx, workspaceID, sessionID, u)
 }
 
 // Acquire returns a shared Host for workDir. The prompt backend is

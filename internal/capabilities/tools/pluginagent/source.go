@@ -135,15 +135,11 @@ func (s *Source) Tools() []tool.Tool {
 
 func (s *Source) LazyTools() []tool.LazyTool { return nil }
 
-// Attach implements tool.RegistryAttacher: capability tools are
-// published immediately, and each MCP source receives the registrar so
-// background connects can publish their tools.
+// Attach implements tool.RegistryAttacher. Capability tools are static
+// and already exposed through Tools(), so only MCP sources need the
+// registrar: their connections and tool projections arrive in the
+// background after the registry snapshot.
 func (s *Source) Attach(r tool.Registrar) {
-	for _, t := range s.capTools {
-		// Duplicate of the construction-time snapshot is fine.
-		telemetry.WarnErr(s.ctx, "plugin agent tools: register capability tool failed",
-			r.Add(t))
-	}
 	for _, src := range s.mcpSources {
 		src.Attach(r)
 	}

@@ -135,7 +135,9 @@ func initTelemetry(dataDir string) (func(context.Context) error, error) {
 // Startup wires the Wails context into the core shell.
 func (d *Desktop) Startup(ctx context.Context) {
 	d.core.Shell.SetContext(ctx)
-	if err := d.core.Runtime.OpenUserDB(ctx); err == nil {
+	if err := d.core.Runtime.OpenUserDB(ctx); err != nil {
+		telemetry.WarnErr(ctx, "desktop: open user db failed", err)
+	} else {
 		d.startAutomations(ctx)
 	}
 	if err := d.core.ReloadRuntime(ctx); err != nil {

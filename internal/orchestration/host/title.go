@@ -107,6 +107,10 @@ func (h *Host) AutoTitle(ctx context.Context, contextID string) {
 	if h.usage != nil {
 		h.usage(ctx, response.Usage)
 	}
+	// Title generation is a real model call against this session: feed
+	// its usage into the session total and the user-level model_usage
+	// tables instead of only showing it as a transient UI event.
+	h.persistTurnUsage(ctx, contextID, usageFromReport(response.Usage))
 	title := strings.TrimSpace(response.Message.Content.Text())
 	title = strings.Join(strings.Fields(title), " ")
 	if title == "" {

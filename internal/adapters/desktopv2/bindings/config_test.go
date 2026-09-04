@@ -32,6 +32,18 @@ func TestConfigMemoryRoundTrip(t *testing.T) {
 	}
 }
 
+func TestModelUsageRequiresUserDB(t *testing.T) {
+	b := NewConfig(core.NewCore(t.TempDir(), t.TempDir(), ""))
+	if _, err := b.ModelUsage(); err == nil {
+		t.Fatal("ModelUsage succeeded before OpenUserDB, want not-ready error")
+	}
+	if _, err := b.ModelUsageSeries(
+		"openai-1/gpt-test", "hour", 0, "", "",
+	); err == nil {
+		t.Fatal("ModelUsageSeries succeeded before OpenUserDB, want not-ready error")
+	}
+}
+
 func TestMCPProbeStatusClassifiesTransientTimeout(t *testing.T) {
 	tests := []struct {
 		name string

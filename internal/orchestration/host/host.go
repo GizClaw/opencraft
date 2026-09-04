@@ -333,26 +333,52 @@ func (h *Host) reportUsage(ctx context.Context, usage inference.Usage) {
 		h.mu.Unlock()
 		return
 	}
-	d.usage.TotalTokens += usage.TotalTokens
-	d.usage.InputTokens += usage.InputTokens
-	d.usage.OutputTokens += usage.OutputTokens
-	if usage.Model.ID.Provider != "" && usage.Model.ID.Name != "" {
-		d.usage.Model = usage.Model.ID.Provider + "/" + usage.Model.ID.Name
-	}
-	if usage.Output.ReasoningTokens != nil {
-		d.usage.ReasoningTokens += *usage.Output.ReasoningTokens
-	}
-	if usage.Input.CacheReadTokens != nil {
-		d.usage.CacheReadTokens += *usage.Input.CacheReadTokens
-	}
-	if usage.Input.CacheWriteTokens != nil {
-		d.usage.CacheWriteTokens += *usage.Input.CacheWriteTokens
-	}
+	d.usage = addSessionUsage(d.usage, usageFromReport(usage))
 	fn := d.notify
 	h.mu.Unlock()
 	if fn != nil {
 		fn(ctx, usage)
 	}
+}
+
+// usageFromReport maps one inference usage report to the session usage
+// delta shape used by the Host and sessions.Store.
+func usageFromReport(u inference.Usage) sessions.Usage {
+	out := sessions.Usage{
+		InputTokens:  u.InputTokens,
+		OutputTokens: u.OutputTokens,
+		TotalTokens:  u.TotalTokens,
+		LatencyMs:    u.LatencyMs,
+	}
+	if u.Model.ID.Provider != "" && u.Model.ID.Name != "" {
+		out.Model = u.Model.ID.Provider + "/" + u.Model.ID.Name
+	}
+	if u.Output.ReasoningTokens != nil {
+		out.ReasoningTokens = *u.Output.ReasoningTokens
+	}
+	if u.Input.CacheReadTokens != nil {
+		out.CacheReadTokens = *u.Input.CacheReadTokens
+	}
+	if u.Input.CacheWriteTokens != nil {
+		out.CacheWriteTokens = *u.Input.CacheWriteTokens
+	}
+	return out
+}
+
+// addSessionUsage accumulates one usage delta onto a session's running
+// total, keeping the most recent non-empty model attribution.
+func addSessionUsage(base, delta sessions.Usage) sessions.Usage {
+	base.InputTokens += delta.InputTokens
+	base.OutputTokens += delta.OutputTokens
+	base.TotalTokens += delta.TotalTokens
+	base.CacheReadTokens += delta.CacheReadTokens
+	base.CacheWriteTokens += delta.CacheWriteTokens
+	base.ReasoningTokens += delta.ReasoningTokens
+	base.LatencyMs += delta.LatencyMs
+	if delta.Model != "" {
+		base.Model = delta.Model
+	}
+	return base
 }
 
 func (h *Host) takeUsage(runID string) sessions.Usage {

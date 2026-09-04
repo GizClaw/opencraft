@@ -14,6 +14,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
+	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
 )
 
@@ -104,6 +105,27 @@ func (s *Store) Record(
 		return fmt.Errorf("usage: commit: %w", err)
 	}
 	return nil
+}
+
+// RecordSessionUsage accumulates one session usage delta into the
+// user-level per-model tables. It is the adapter shared by the desktop
+// and headless Hosts, so turn usage and auto-title usage land in the
+// same model_usage rows regardless of which entry point ran the turn.
+func (s *Store) RecordSessionUsage(
+	ctx context.Context,
+	workspaceID, sessionID string,
+	u ocsessions.Usage,
+) error {
+	if u.Model == "" || u.TotalTokens <= 0 {
+		return nil
+	}
+	return s.Record(ctx, workspaceID, sessionID, u.Model, Usage{
+		InputTokens:     u.InputTokens,
+		OutputTokens:    u.OutputTokens,
+		CacheReadTokens: u.CacheReadTokens,
+		ReasoningTokens: u.ReasoningTokens,
+		LatencyMs:       u.LatencyMs,
+	})
 }
 
 // SummaryRow aggregates one model's usage across all workspaces and

@@ -199,7 +199,7 @@ func (b *Config) ModelUsage() ([]ModelUsageStat, error) {
 	ctx := b.core.Shell.Context()
 	store := b.core.Runtime.Usage()
 	if store == nil {
-		return []ModelUsageStat{}, nil
+		return nil, errNotReady("usage")
 	}
 	rows, err := store.Summary(ctx)
 	if err != nil {
@@ -240,7 +240,10 @@ func (b *Config) ModelUsageSeries(
 ) ([]UsagePoint, error) {
 	ctx := b.core.Shell.Context()
 	store := b.core.Runtime.Usage()
-	if store == nil || model == "" {
+	if store == nil {
+		return nil, errNotReady("usage")
+	}
+	if model == "" {
 		return []UsagePoint{}, nil
 	}
 	g := usage.GranularityHour

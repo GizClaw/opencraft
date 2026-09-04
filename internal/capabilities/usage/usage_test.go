@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
 	"github.com/GizClaw/opencraft/internal/orchestration/migrations"
 )
@@ -73,6 +74,60 @@ func TestRecordAndSummary(t *testing.T) {
 	}
 	if rows[1].Model != "openai-1/g" || rows[1].InputTokens != 30 {
 		t.Fatalf("openai summary = %+v", rows[1])
+	}
+}
+
+func TestRecordSessionUsage(t *testing.T) {
+	store, _ := newUsageStore(t)
+	ctx := context.Background()
+
+	if err := store.RecordSessionUsage(ctx, "ws-a", "s-1", ocsessions.Usage{
+		Model:            "deepseek-1/m",
+		InputTokens:      100,
+		OutputTokens:     20,
+		TotalTokens:      120,
+		CacheReadTokens:  10,
+		CacheWriteTokens: 2,
+		ReasoningTokens:  5,
+		LatencyMs:        456,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A second call accumulates onto the same (workspace, session, model)
+	// row instead of replacing it.
+	if err := store.RecordSessionUsage(ctx, "ws-a", "s-1", ocsessions.Usage{
+		Model:        "deepseek-1/m",
+		InputTokens:  50,
+		OutputTokens: 10,
+		TotalTokens:  60,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Empty model or zero totals are ignored.
+	if err := store.RecordSessionUsage(ctx, "ws-a", "s-1", ocsessions.Usage{
+		TotalTokens: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordSessionUsage(ctx, "ws-a", "s-1", ocsessions.Usage{
+		Model: "deepseek-1/m",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := store.Summary(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("summary rows = %d, want 1: %+v", len(rows), rows)
+	}
+	row := rows[0]
+	if row.Model != "deepseek-1/m" ||
+		row.InputTokens != 150 || row.OutputTokens != 30 ||
+		row.CacheReadTokens != 10 || row.ReasoningTokens != 5 ||
+		row.LatencyMs != 456 {
+		t.Fatalf("summary row = %+v", row)
 	}
 }
 
