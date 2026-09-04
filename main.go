@@ -12,8 +12,8 @@ import (
 	"os"
 	"runtime"
 
-	"github.com/GizClaw/opencraft/internal/desktop"
-	"github.com/GizClaw/opencraft/internal/headless"
+	"github.com/GizClaw/opencraft/internal/adapters/desktopv2"
+	"github.com/GizClaw/opencraft/internal/adapters/headless"
 
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -45,12 +45,7 @@ func main() {
 		os.Exit(headless.Main(os.Args[2:]))
 	}
 
-	app, err := desktop.New(desktop.Options{
-		// TrayIcon feeds the system tray / menu bar icon on every
-		// platform: PNG on macOS/Linux, and the .ico resource on
-		// Windows (systray loads .ico files there). The full-colour
-		// app icon is shown as-is, including on macOS (no monochrome
-		// template treatment).
+	app, err := desktopv2.New(desktopv2.Options{
 		TrayIcon:        appIcon,
 		TrayIconWindows: appIconWindows,
 	})
@@ -84,9 +79,9 @@ func main() {
 		// Wails terminate.
 		OnBeforeClose: func(ctx context.Context) bool {
 			if macConsumeTerminateRequest() {
-				app.MarkQuitting()
+				app.Lifecycle().MarkQuitting()
 			}
-			return app.CloseRequested(ctx)
+			return app.Lifecycle().CloseRequested()
 		},
 		SingleInstanceLock: &options.SingleInstanceLock{
 			// Stable reverse-DNS id; do not version it. It feeds the
@@ -97,12 +92,10 @@ func main() {
 				// Launcher/Dock/`open -a` while the app is already
 				// running: restore the main window instead of starting
 				// a second process.
-				app.ShowMainWindow()
+				app.Lifecycle().ShowMainWindow()
 			},
 		},
-		Bind: []interface{}{
-			app,
-		},
+		Bind: app.Bindings(),
 	}
 	switch runtime.GOOS {
 	case "darwin":

@@ -79,7 +79,24 @@ jobs:
 
       - name: Frontend dependency audit
         working-directory: frontend
-        run: npm audit --omit=dev
+        shell: bash
+        run: |
+          set +e
+          out="$(npm audit --omit=dev --json 2>&1)"
+          code=$?
+          set -e
+          if [ "$code" -eq 0 ]; then
+            exit 0
+          fi
+          # npm's legacy audit endpoint is being retired and
+          # intermittently returns 400/503. Real vulnerability findings
+          # still fail the job; only endpoint outages are skipped.
+          if printf '%s' "$out" | grep -Eq 'Bad Request|Service Unavailable|audit endpoint returned an error|This endpoint is being retired'; then
+            echo "npm audit endpoint unavailable; skipping audit"
+            exit 0
+          fi
+          printf '%s\n' "$out"
+          exit "$code"
 
       # Sandbox tests (app/sandbox/execd) build a bwrap-backed runtime.
       - name: Install sandbox dependency (bubblewrap)
@@ -101,7 +118,7 @@ jobs:
             "GOPATH=$(go env GOPATH)" \
             "GOMODCACHE=$(go env GOMODCACHE)" "GOCACHE=$(go env GOCACHE)" \
             go test -race -skip 'Test(Create|Update)RollsBackOnPersistFailure$' ./...
-          go test -race -run 'Test(Create|Update)RollsBackOnPersistFailure$' ./internal/agents
+          go test -race -run 'Test(Create|Update)RollsBackOnPersistFailure$' ./internal/capabilities/agents
 
       - name: Modules tidy
         run: go mod tidy -diff
@@ -109,7 +126,7 @@ jobs:
       # Timing-sensitive performance assertions are skipped under -race
       # (above), so run them once without the race detector.
       - name: Performance threshold assertions
-        run: go test -count=1 ./internal/sessions ./internal/tools/files ./internal/undo ./internal/desktop ./internal/app/worldstate
+        run: go test -count=1 ./internal/capabilities/sessions ./internal/capabilities/tools/files ./internal/adapters/desktopv2 ./internal/capabilities/worldstate
 
   frontend-e2e:
     name: frontend e2e (playwright)
@@ -174,7 +191,7 @@ jobs:
       - name: Build frontend assets
         run: npm ci --prefix frontend && npm run build --prefix frontend
       - name: Platform tests (sandbox/execd/desktop/sessions)
-        run: go test -count=1 ./internal/sandbox ./internal/execd ./internal/desktop ./internal/sessions
+        run: go test -count=1 ./internal/capabilities/sandbox ./internal/capabilities/execd ./internal/adapters/desktopv2 ./internal/capabilities/sessions
 
   test-windows:
     name: test (windows)
@@ -207,10 +224,10 @@ jobs:
       # removal, POSIX shell fixtures), so Windows runs the sandbox
       # contract suite plus a compile check of the rest.
       - name: Sandbox contract (windows)
-        run: go test -count=1 ./internal/sandbox -run TestSandboxRunnerContract
+        run: go test -count=1 ./internal/capabilities/sandbox -run TestSandboxRunnerContract
         shell: pwsh
-      - name: Compile check (sandbox/desktop/sessions/secrets/undo)
-        run: go vet ./internal/sandbox ./internal/desktop ./internal/sessions ./internal/secrets ./internal/undo
+      - name: Compile check (sandbox/desktop/sessions/secrets)
+        run: go vet ./internal/capabilities/sandbox ./internal/adapters/desktopv2 ./internal/capabilities/sessions ./internal/capabilities/secrets
         shell: pwsh
 
   desktop-linux:

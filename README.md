@@ -48,8 +48,8 @@ keep everything inside a macOS / Linux / Windows desktop app (Wails v2 + React).
   with `.opencraft/approvals.yaml` approvals.
 - **Multi-agent & skills** — persistent subagents with delegation kanban;
   skill discovery, git-based install, and authoring tools.
-- **Workflow** — git context in the worldstate, turn-level undo/redo, JSONL
-  session rollout stream, external lifecycle hooks, configurable network
+- **Workflow** — git context in the worldstate, JSONL session rollout stream,
+  external lifecycle hooks, configurable network
   policy with a web_fetch SSRF gate, and a diagnostics tab.
 
 ## Installation

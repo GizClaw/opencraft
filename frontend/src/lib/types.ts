@@ -1,5 +1,5 @@
-// Shared DTO types mirroring internal/desktop/dto.go plus the
-// flowcraft stream protocol wire shapes the frontend renders.
+// Shared DTO types mirroring the desktopv2 bindings plus the flowcraft
+// stream protocol wire shapes the frontend renders.
 
 export interface ConfigStatus {
   needed: boolean;
@@ -183,12 +183,6 @@ export interface WorkspaceMeta {
   last_opened: string;
 }
 
-export interface ProjectConfigStatus {
-  present: boolean;
-  trusted: boolean;
-  path?: string;
-}
-
 // HistoryMessage is the wire form of flowcraft's message.Message: the
 // resume view gets the same ordered parts (text, reasoning, tool
 // calls, tool results) the live stream renders.
@@ -270,7 +264,7 @@ export interface SkillDTO {
 
 export interface TurnStart {
   run_id: string;
-  context_id: string;
+  conversation_id: string;
   requested_at?: string;
   started_at?: string;
 }
@@ -350,17 +344,11 @@ export interface FileNode {
   path: string;
   is_dir: boolean;
   size: number;
-  children?: FileNode[];
 }
 
 export interface SearchFileHit {
   path: string;
   is_dir: boolean;
-}
-
-export interface UndoState {
-  can_undo: boolean;
-  can_redo: boolean;
 }
 
 export interface MemorySettings {

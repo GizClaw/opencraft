@@ -314,7 +314,6 @@ const historyToMessages = (history: HistoryMessage[]): MessageView[] => {
         }
       }
     }
-    messages.push(msg);
   }
   return messages;
 };
@@ -1134,6 +1133,14 @@ export const useStore = create<StoreState>((set, get) => {
                 error: errorMessage(err),
               });
             });
+        } else if (
+          workspace &&
+          stateRoot.focusSnapshot.value === 'no-session'
+        ) {
+          // The backend keeps the current conversation id only in
+          // memory, so a fresh launch has no current session. Mint one
+          // immediately instead of landing on the no-session screen.
+          await get().newChat();
         }
         void get().refreshAgents();
         void get().loadWorkspaces();
@@ -1346,7 +1353,12 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     resume: async (id) => {
-      if (activeConversationID() === id) return;
+      if (activeConversationID() === id) {
+        // Returning to the already-active conversation means closing
+        // whatever overlay/tool page currently covers the chat.
+        set({ toolsView: null, configOpen: false });
+        return;
+      }
       stateRoot.sendFocus({ type: 'OPEN_SESSION', id });
       const request = stateRoot.focusSnapshot.context.request;
       try {

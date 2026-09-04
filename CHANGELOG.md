@@ -102,9 +102,6 @@ desktop app (Wails v2 + React).
   link-local destinations by default.
 - **Session events** — append-only JSONL rollout stream per session with
   scrubbed user input and redacted audit records.
-- **Turn-level undo/redo** — per-turn file snapshots in git workspaces with
-  UI rollback.
-
 ### Changed
 
 - App icon artwork now follows Apple's icon grid: the 1024px canvas

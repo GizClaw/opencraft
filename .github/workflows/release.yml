@@ -244,7 +244,7 @@ jobs:
         run: |
           export PATH="$PATH:$(go env GOPATH)/bin"
           wails build -platform linux/amd64 -clean -tags webkit2_41 \
-            -ldflags "-s -w -X github.com/GizClaw/opencraft/internal/app.ServiceVersion=${TAG#v}"
+            -ldflags "-s -w -X github.com/GizClaw/opencraft/internal/foundation/version.ServiceVersion=${TAG#v}"
 
       - name: Package binary
         env:
@@ -298,7 +298,7 @@ jobs:
           $cfg | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8 wails.json
           $env:PATH = "$(go env GOPATH)\bin;$env:PATH"
           wails build -platform windows/amd64 -clean -nsis `
-            -ldflags "-s -w -X github.com/GizClaw/opencraft/internal/app.ServiceVersion=$ver"
+            -ldflags "-s -w -X github.com/GizClaw/opencraft/internal/foundation/version.ServiceVersion=$ver"
           if (-not (Get-ChildItem build/bin/*-amd64-installer.exe -ErrorAction SilentlyContinue)) {
             throw "wails build did not produce the NSIS installer (makensis missing or failed)"
           }

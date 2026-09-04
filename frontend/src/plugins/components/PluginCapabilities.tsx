@@ -31,8 +31,8 @@ export function PluginCapabilitiesSection({
     ])
       .then(([toolRes, skillRes]) => {
         if (cancelled) return;
-        setTools(toolRes);
-        setSkills(skillRes);
+        setTools(toolRes ?? []);
+        setSkills(skillRes ?? []);
       })
       .catch((err: unknown) => {
         if (!cancelled) setError(String(err));

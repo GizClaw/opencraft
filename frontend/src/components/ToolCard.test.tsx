@@ -59,6 +59,12 @@ describe('ToolCard', () => {
     );
     await user.click(screen.getByRole('button', { name: /list/i }));
     expect(screen.getByText('a.go')).toBeInTheDocument();
+    // list_dir renders the result tree directly without the generic
+    // arguments/result section labels.
+    expect(screen.queryByText('arguments')).not.toBeInTheDocument();
+    expect(screen.queryByText('参数')).not.toBeInTheDocument();
+    expect(screen.queryByText('result')).not.toBeInTheDocument();
+    expect(screen.queryByText('结果')).not.toBeInTheDocument();
   });
 
   it('shows a failed exec result', async () => {

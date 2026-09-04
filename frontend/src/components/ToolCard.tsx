@@ -2510,7 +2510,7 @@ function FileDiff({
   collapsible: boolean;
 }) {
   const [open, setOpen] = useState(true);
-  const hunks = groupHunks(file.lines);
+  const hunks = groupHunks(file.lines ?? []);
   return (
     <div className="border-b border-edge last:border-b-0">
       <FileHeader
@@ -2669,30 +2669,6 @@ export const ApplyPatchView = memo(function ApplyPatchView({
 });
 
 function ArgsBlock({ tool }: { tool: ToolView }) {
-  const { t } = useTranslation();
-  if (tool.name === 'list_dir') {
-    const args = parseArgs(tool);
-    if (args) {
-      const path = typeof args.path === 'string' ? args.path : '.';
-      const flags: string[] = [];
-      if (args.recursive) flags.push('recursive');
-      if (args.include_hidden) flags.push('hidden');
-      if (typeof args.max_depth === 'number') {
-        flags.push(`depth ${args.max_depth}`);
-      }
-      return (
-        <div className="flex items-center gap-2 text-xs">
-          <Folder size="0.9286rem" className="text-accent shrink-0" />
-          <code className="font-mono">{path}</code>
-          {flags.length > 0 && (
-            <span className="rounded border border-edge bg-panel px-1.5 py-0.5 text-[0.7143rem] text-dim">
-              {flags.join(' · ')}
-            </span>
-          )}
-        </div>
-      );
-    }
-  }
   const pretty = (() => {
     const args = parseArgs(tool);
     return args ? JSON.stringify(args, null, 2) : tool.args;
@@ -2845,6 +2821,7 @@ export const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
   }
   const summary = summaryOf(tool);
   const summaryLine = resultSummary(tool, t);
+  const resultOnly = tool.name === 'list_dir';
 
   const copyResult = async () => {
     if (tool.result === undefined) return;
@@ -2912,32 +2889,43 @@ export const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
       )}
       {open && (
         <div className="border-t border-edge px-3 py-2 space-y-2">
-          <div className="text-xs text-dim">{t('tool.arguments')}:</div>
-          <ArgsBlock tool={tool} />
-          {tool.result !== undefined && (
+          {!resultOnly && (
             <>
-              <div className="flex items-center justify-between pt-1">
-                <div className="text-xs text-dim">{t('tool.result')}:</div>
-                <div className="flex items-center gap-2 text-[0.7143rem] text-dim">
-                  <span className="tabular-nums">
-                    {tool.result.split('\n').length} {t('tool.lines')}
-                  </span>
-                  <button
-                    onClick={() => void copyResult()}
-                    className="flex items-center gap-1 rounded border border-edge px-1.5 py-0.5 text-dim hover:text-fg"
-                    aria-label={t('tool.copyResult')}
-                  >
-                    {copied ? (
-                      <Check size="0.7857rem" />
-                    ) : (
-                      <ClipboardList size="0.7857rem" />
-                    )}
-                  </button>
-                </div>
-              </div>
-              <ResultBlock tool={tool} />
+              <div className="text-xs text-dim">{t('tool.arguments')}:</div>
+              <ArgsBlock tool={tool} />
             </>
           )}
+          {tool.result !== undefined ? (
+            <>
+              {!resultOnly && (
+                <div className="flex items-center justify-between pt-1">
+                  <div className="text-xs text-dim">{t('tool.result')}:</div>
+                  <div className="flex items-center gap-2 text-[0.7143rem] text-dim">
+                    <span className="tabular-nums">
+                      {tool.result.split('\n').length} {t('tool.lines')}
+                    </span>
+                    <button
+                      onClick={() => void copyResult()}
+                      className="flex items-center gap-1 rounded border border-edge px-1.5 py-0.5 text-dim hover:text-fg"
+                      aria-label={t('tool.copyResult')}
+                    >
+                      {copied ? (
+                        <Check size="0.7857rem" />
+                      ) : (
+                        <ClipboardList size="0.7857rem" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+              <ResultBlock tool={tool} />
+            </>
+          ) : resultOnly && running ? (
+            <div className="flex items-center gap-1.5 text-xs text-dim">
+              <Loader2 size="0.8571rem" className="animate-spin" />
+              {t('tool.running')}
+            </div>
+          ) : null}
         </div>
       )}
     </div>

@@ -1,9 +1,20 @@
-// Typed wrappers over the generated Wails bindings. The Go context
-// argument is null from the frontend (Wails injects it server-side).
-import * as App from '../../wailsjs/go/desktop/App';
+// Typed wrappers over the desktopv2 Wails bindings.
+import i18n from '../i18n';
+import * as Agent from '../../wailsjs/go/bindings/Agent';
+import * as Automation from '../../wailsjs/go/bindings/Automation';
+import * as Config from '../../wailsjs/go/bindings/Config';
+import * as Conversation from '../../wailsjs/go/bindings/Conversation';
+import * as Diagnostics from '../../wailsjs/go/bindings/Diagnostics';
+import * as File from '../../wailsjs/go/bindings/File';
+import * as Lifecycle from '../../wailsjs/go/bindings/Lifecycle';
+import * as Plugin from '../../wailsjs/go/bindings/Plugin';
+import * as Secret from '../../wailsjs/go/bindings/Secret';
+import * as Session from '../../wailsjs/go/bindings/Session';
+import * as Settings from '../../wailsjs/go/bindings/Settings';
+import * as Workspace from '../../wailsjs/go/bindings/Workspace';
 import type {
+  bindings as gen,
   config as genConfig,
-  desktop as gen,
 } from '../../wailsjs/go/models';
 import type {
   ActiveRunDTO,
@@ -38,11 +49,9 @@ import type {
   SessionImportDTO,
   SessionTurn,
   ProviderInstance,
-  ProjectConfigStatus,
   SkillDTO,
   TurnStart,
   TurnMessage,
-  UndoState,
   UsagePoint,
   WorkspaceMeta,
 } from './types';
@@ -54,40 +63,59 @@ import type {
 } from '../plugins/types';
 
 export const api = {
-  version: () => App.Version(),
-  configStatus: () => App.ConfigStatus() as Promise<ConfigStatus>,
-  providers: () => App.Providers() as Promise<ProviderView[]>,
-  configState: () => App.ConfigState() as Promise<ConfigState>,
-  modelCatalog: () => App.ModelCatalog() as Promise<ProviderModelCatalog[]>,
+  version: () => Config.Version(),
+  configStatus: () => Config.ConfigStatus() as unknown as Promise<ConfigStatus>,
+  providers: () => Config.Providers() as unknown as Promise<ProviderView[]>,
+  configState: () => Config.ConfigState() as Promise<ConfigState>,
+  modelCatalog: () => Config.ModelCatalog() as Promise<ProviderModelCatalog[]>,
   saveInstances: (req: InferenceRequest) =>
-    App.SaveInstances(req as unknown as gen.InferenceRequest),
-  reload: () => App.Reload(),
-  workspace: () => App.Workspace(),
-  projectConfigStatus: () =>
-    App.ProjectConfigStatus() as Promise<ProjectConfigStatus>,
-  setProjectTrust: (path: string, trusted: boolean) =>
-    App.SetProjectTrust(path, trusted),
-  newChat: () => App.NewChat() as Promise<SessionSnapshot>,
-  listSessions: () => App.ListSessions() as Promise<SessionMeta[]>,
-  currentSession: () => App.CurrentSession(),
-  activeRun: (id: string) => App.ActiveRun(id) as Promise<ActiveRunDTO>,
-  resumeSession: (id: string) =>
-    App.ResumeSession(id) as Promise<SessionSnapshot>,
+    Config.SaveInstances(req as unknown as gen.InferenceRequest),
+  reload: () => Config.Reload(),
+  workspace: () => Workspace.Active(),
+  newChat: async () => {
+    const id = await Conversation.NewChat();
+    return {
+      session_id: id,
+      mode: 'workspace',
+      think: 'medium',
+      model: '',
+    } as SessionSnapshot;
+  },
+  listSessions: () => Session.List() as unknown as Promise<SessionMeta[]>,
+  currentSession: () => Conversation.CurrentSession(),
+  activeRun: async (id: string) =>
+    ({ run_id: await Session.ActiveRun(id) }) as ActiveRunDTO,
+  resumeSession: async (id: string) => {
+    await Conversation.ResumeSession(id);
+    return {
+      session_id: id,
+      mode: await Conversation.SessionMode(),
+      think: await Settings.GetThink(),
+      model: await Settings.GetModel(),
+    } as SessionSnapshot;
+  },
   sessionHistory: (id: string) =>
-    App.SessionHistory(id) as Promise<HistoryMessage[]>,
-  sessionTurns: (id: string) => App.SessionTurns(id) as Promise<SessionTurn[]>,
-  workspaces: () => App.Workspaces() as Promise<WorkspaceMeta[]>,
-  openWorkspace: (path: string) => App.OpenWorkspace(path),
-  removeWorkspace: (id: string) => App.RemoveWorkspace(id),
-  delegationCards: () => App.DelegationCards() as Promise<KanbanCard[]>,
-  readFile: (path: string) => App.ReadFile(path),
-  fileDiff: (path: string) => App.FileDiff(path),
-  getThink: () => App.GetThink(),
-  setThink: (level: string) => App.SetThink(level),
-  getModel: () => App.GetModel(),
-  setModel: (model: string) => App.SetModel(model),
-  modelOptions: () => App.ModelOptions() as Promise<ModelOption[]>,
-  modelUsage: () => App.ModelUsage() as Promise<ModelUsageStat[]>,
+    Session.History(id, -1) as unknown as Promise<HistoryMessage[]>,
+  sessionTurns: (id: string) =>
+    Session.Turns(id) as unknown as Promise<SessionTurn[]>,
+  workspaces: () => Workspace.List() as Promise<WorkspaceMeta[]>,
+  openWorkspace: (path: string) => Workspace.Open(path),
+  removeWorkspace: (id: string) => Workspace.Remove(id),
+  delegationCards: () =>
+    Session.DelegationCards() as unknown as Promise<KanbanCard[]>,
+  conversationDelegationCards: (contextID: string) =>
+    Session.ConversationDelegationCards(contextID) as unknown as Promise<
+      KanbanCard[]
+    >,
+  readFile: (path: string) => File.ReadText(path),
+  fileDiff: (path: string) => File.Diff(path),
+  getThink: () => Settings.GetThink(),
+  setThink: (level: string) => Settings.SetThink(level),
+  getModel: () => Settings.GetModel(),
+  setModel: (model: string) => Settings.SetModel(model),
+  modelOptions: () =>
+    Config.ModelOptions() as unknown as Promise<ModelOption[]>,
+  modelUsage: () => Config.ModelUsage() as unknown as Promise<ModelUsageStat[]>,
   modelUsageSeries: (
     model: string,
     granularity: 'hour' | 'day',
@@ -95,150 +123,128 @@ export const api = {
     start: string,
     end: string,
   ) =>
-    App.ModelUsageSeries(
-      model,
-      granularity,
-      utcOffsetMinutes,
-      start,
-      end,
-    ) as Promise<UsagePoint[]>,
-  mcpConfig: () => App.MCPConfig() as Promise<MCPServer[]>,
+    Config.ModelUsageSeries(model, granularity, utcOffsetMinutes, start, end),
+  mcpConfig: () => Config.MCPConfig() as Promise<MCPServer[]>,
   saveMCP: (servers: MCPServer[]) =>
-    App.SaveMCP(servers as unknown as genConfig.MCPServer[]),
+    Config.SaveMCP(servers as unknown as genConfig.MCPServer[]),
   agentDetail: (name: string) =>
-    App.AgentDetail(name) as unknown as Promise<AgentDetail>,
+    Agent.Detail(name) as unknown as Promise<AgentDetail>,
   updateAgent: (name: string, description: string, graph: string) =>
-    App.UpdateAgent(
-      name,
-      description,
-      graph,
-    ) as unknown as Promise<AgentUpdateResult>,
-  mcpStatus: () => App.MCPStatus() as Promise<MCPStatus[]>,
+    Agent.Update(name, description, graph),
+  mcpStatus: () => Config.MCPStatus() as unknown as Promise<MCPStatus[]>,
   testMCP: (server: MCPServer) =>
-    App.TestMCP(server as unknown as genConfig.MCPServer),
-  deleteSession: (id: string) => App.DeleteSession(id),
-  permissions: () => App.Permissions(),
-  allowPermission: (rule: string) => App.AllowPermission(rule),
-  denyPermission: (rule: string) => App.DenyPermission(rule),
-  skills: () => App.Skills() as Promise<SkillDTO[]>,
-  skillContent: (path: string) => App.SkillContent(path) as Promise<string>,
-  deleteSkill: (path: string) => App.DeleteSkill(path),
+    Config.TestMCP(server as unknown as genConfig.MCPServer),
+  deleteSession: (id: string) => Session.Delete(id),
+  permissions: () => Settings.Permissions(),
+  allowPermission: (rule: string) => Settings.AllowPermission(rule),
+  denyPermission: (rule: string) => Settings.DenyPermission(rule),
+  skills: () => Settings.Skills() as unknown as Promise<SkillDTO[]>,
+  skillContent: (path: string) => Settings.SkillContent(path),
+  deleteSkill: (path: string) => Settings.DeleteSkill(path),
   installSkill: (repo: string, scope: string, subpath: string) =>
-    App.InstallSkill(repo, scope, subpath) as Promise<string>,
+    Settings.InstallSkill(repo, scope, subpath),
   renderPatch: (patch: string) =>
-    App.RenderPatch(patch) as Promise<PatchFileDTO[]>,
+    File.RenderPatch(patch) as unknown as Promise<PatchFileDTO[]>,
   renderSkillPatch: (name: string, scope: string, patch: string) =>
-    App.RenderSkillPatch(name, scope, patch) as Promise<PatchFileDTO[]>,
-  undoChange: () => App.UndoChange() as Promise<string[]>,
-  redoChange: () => App.RedoChange() as Promise<string[]>,
-  undoState: () => App.UndoState() as Promise<UndoState>,
-  memoryConfig: () => App.MemoryConfig() as Promise<MemorySettings>,
+    Settings.RenderSkillPatch(name, scope, patch) as unknown as Promise<
+      PatchFileDTO[]
+    >,
+  memoryConfig: () => Config.MemoryConfig() as Promise<MemorySettings>,
   saveMemory: (s: MemorySettings) =>
-    App.SaveMemory(s as unknown as genConfig.MemorySettings) as Promise<void>,
-  diagnostics: () => App.Diagnostics() as Promise<DiagnosticsReport>,
-  runSandboxProbe: () => App.RunSandboxProbe() as Promise<SandboxProbeResult>,
+    Config.SaveMemory(s as unknown as genConfig.MemorySettings),
+  diagnostics: () =>
+    Diagnostics.Diagnostics() as unknown as Promise<DiagnosticsReport>,
+  runSandboxProbe: () =>
+    Diagnostics.RunSandboxProbe() as unknown as Promise<SandboxProbeResult>,
   evaluateCommandPolicy: (command: string) =>
-    App.EvaluateCommandPolicy(command) as Promise<PolicyDecision>,
-  clearCaches: () => App.ClearCaches() as Promise<CacheClearResult>,
-  cancelCard: (id: string) => App.CancelCard(id),
-  chooseWorkspace: () => App.ChooseWorkspace(),
-  pluginList: () => App.PluginList() as Promise<PluginSummary[]>,
-  pluginTools: (id: string) => App.PluginTools(id) as Promise<PluginToolDTO[]>,
-  pluginSkills: (id: string) => App.PluginSkills(id) as Promise<SkillDTO[]>,
-  pluginBundle: (id: string) => App.PluginBundle(id) as Promise<string>,
-  pluginInstall: (dir: string) =>
-    App.PluginInstall(dir) as Promise<PluginSummary>,
-  pluginInstallZip: (zip: string) =>
-    App.PluginInstallZip(zip) as Promise<PluginSummary>,
-  pluginInspect: (path: string) =>
-    App.PluginInspect(path) as Promise<PluginSummary>,
-  pluginUpdate: (id: string, dir: string) =>
-    App.PluginUpdate(id, dir) as Promise<PluginSummary>,
-  pluginUpdateZip: (id: string, zip: string) =>
-    App.PluginUpdateZip(id, zip) as Promise<PluginSummary>,
-  pluginRollback: (id: string) =>
-    App.PluginRollback(id) as Promise<PluginSummary>,
-  pluginCheckUpdate: (id: string) =>
-    App.PluginCheckUpdate(id) as Promise<PluginUpdateInfo>,
-  pluginApplyUpdate: (id: string) =>
-    App.PluginApplyUpdate(id) as Promise<PluginSummary>,
+    Diagnostics.EvaluateCommandPolicy(
+      command,
+    ) as unknown as Promise<PolicyDecision>,
+  clearCaches: () =>
+    Diagnostics.ClearCaches() as unknown as Promise<CacheClearResult>,
+  cancelCard: (id: string) => Settings.CancelCard(id),
+  chooseWorkspace: () =>
+    Workspace.ChooseWorkspace(i18n.t('sidebar.chooseWorkspaceTitle')),
+  pluginList: () => Plugin.List() as Promise<PluginSummary[]>,
+  pluginTools: (id: string) =>
+    Plugin.Tools(id) as unknown as Promise<PluginToolDTO[]>,
+  pluginSkills: (id: string) =>
+    Plugin.Skills(id) as unknown as Promise<SkillDTO[]>,
+  pluginBundle: (id: string) => Plugin.Bundle(id),
+  pluginInstall: (dir: string) => Plugin.Install(dir),
+  pluginInstallZip: (zip: string) => Plugin.InstallZip(zip),
+  pluginInspect: (path: string) => Plugin.Inspect(path),
+  pluginUpdate: (id: string, dir: string) => Plugin.Update(id, dir),
+  pluginUpdateZip: (id: string, zip: string) => Plugin.UpdateZip(id, zip),
+  pluginRollback: (id: string) => Plugin.Rollback(id),
+  pluginCheckUpdate: (id: string) => Plugin.CheckUpdate(id),
+  pluginApplyUpdate: (id: string) => Plugin.ApplyUpdate(id),
   pluginSetEnabled: (id: string, enabled: boolean) =>
-    App.PluginSetEnabled(id, enabled),
-  pluginUninstall: (id: string) => App.PluginUninstall(id),
+    Plugin.SetEnabled(id, enabled),
+  pluginUninstall: (id: string) => Plugin.Uninstall(id),
   pluginInvoke: (id: string, method: string, args: string) =>
-    App.PluginInvoke(id, method, args) as Promise<string>,
-  getCloseToTray: () => App.GetCloseToTray() as Promise<boolean>,
-  setCloseToTray: (closeToTray: boolean) => App.SetCloseToTray(closeToTray),
-  // CloseRequested routes the custom title-bar X button through the Go
-  // close handler so the "close to tray / quit" setting applies there
-  // exactly like the native close button.
-  closeRequested: () => App.RequestClose(),
-  pickFolder: (title: string) => App.PickFolder(title) as Promise<string>,
-  pickFile: (title: string, pattern: string) =>
-    App.PickFile(title, pattern) as Promise<string>,
+    Plugin.Invoke(id, method, args),
+  getCloseToTray: () => Lifecycle.GetCloseToTray(),
+  setCloseToTray: (closeToTray: boolean) =>
+    Lifecycle.SetCloseToTray(closeToTray),
+  closeRequested: () => Lifecycle.RequestClose(),
+  pickFolder: (title: string) => File.PickFolder(title),
+  pickFile: (title: string, pattern: string) => File.PickFile(title, pattern),
   pluginKVGet: (id: string, key: string) =>
-    App.PluginKVGet(id, key) as Promise<PluginKVEntry>,
+    Plugin.KVGet(id, key) as unknown as Promise<PluginKVEntry>,
   pluginKVList: (id: string) =>
-    App.PluginKVList(id) as Promise<PluginKVEntry[]>,
+    Plugin.KVList(id) as unknown as Promise<PluginKVEntry[]>,
   pluginKVSet: (id: string, key: string, value: string) =>
-    App.PluginKVSet(id, key, value),
-  pluginKVDelete: (id: string, key: string) => App.PluginKVDelete(id, key),
-  automations: () => App.Automations() as Promise<AutomationTask[]>,
+    Plugin.KVSet(id, key, value),
+  pluginKVDelete: (id: string, key: string) => Plugin.KVDelete(id, key),
+  automations: () => Automation.List() as unknown as Promise<AutomationTask[]>,
   saveAutomation: (task: AutomationTask) =>
-    App.SaveAutomation(
+    Automation.Save(
       task as unknown as gen.AutomationTaskDTO,
-    ) as Promise<AutomationTask>,
-  setLanguage: (language: string) => App.SetLanguage(language),
-  deleteAutomation: (id: string) => App.DeleteAutomation(id),
-  runAutomationNow: (id: string) => App.RunAutomationNow(id),
+    ) as unknown as Promise<AutomationTask>,
+  setLanguage: (language: string) => Lifecycle.SetLanguage(language),
+  deleteAutomation: (id: string) => Automation.Delete(id),
+  runAutomationNow: (id: string) => Automation.RunNow(id),
   automationRuns: (taskId: string) =>
-    App.AutomationRuns(taskId) as Promise<AutomationRun[]>,
+    Automation.Runs(taskId) as unknown as Promise<AutomationRun[]>,
   automationSessions: (workspace: string) =>
-    App.AutomationSessions(workspace) as Promise<SessionMeta[]>,
-  secretExists: (scope: string, name: string) =>
-    App.SecretExists(scope, name) as Promise<boolean>,
-  secretDelete: (scope: string, name: string) => App.SecretDelete(scope, name),
-  readLog: (n: number) => App.ReadLog(n),
-  renameSession: (id: string, title: string) => App.RenameSession(id, title),
-  exportSession: (id: string) => App.ExportSession(id),
-  exportSessionBundle: (id: string) => App.ExportSessionBundle(id),
+    Automation.AutomationSessions(workspace) as unknown as Promise<
+      SessionMeta[]
+    >,
+  secretExists: (scope: string, name: string) => Secret.Exists(scope, name),
+  secretDelete: (scope: string, name: string) => Secret.Delete(scope, name),
+  readLog: (n: number) => Settings.ReadLog(n),
+  renameSession: (id: string, title: string) => Session.Rename(id, title),
+  exportSession: (id: string) => Session.ExportMarkdown(id),
+  exportSessionBundle: (id: string) => Session.ExportBundle(id),
   importSession: (path: string) =>
-    App.ImportSessionBundle(path) as Promise<SessionImportDTO>,
-  sessionMode: () => App.SessionMode(),
-  setSessionMode: (mode: string) => App.SetSessionMode(mode),
+    Session.ImportBundle(path) as unknown as Promise<SessionImportDTO>,
+  sessionMode: () => Conversation.SessionMode(),
+  setSessionMode: (mode: string) => Conversation.SetSessionMode(mode),
   startTurn: (contextID: string, msg: TurnMessage) =>
-    App.StartTurn({
+    Conversation.StartTurn({
       context_id: contextID,
       message: msg,
-    } as unknown as gen.StartTurnRequest) as Promise<TurnStart>,
+    } as unknown as gen.StartTurnRequest) as unknown as Promise<TurnStart>,
   readAttachment: (path: string) =>
-    App.ReadAttachment(path) as Promise<AttachmentDTO>,
+    File.ReadAttachment(path) as unknown as Promise<AttachmentDTO>,
   replyPrompt: (promptID: string, reply: ReplyRequest) =>
-    App.ReplyPrompt(promptID, reply as unknown as gen.ReplyRequest),
-  cancelTurn: (runID: string) => App.CancelTurn(runID),
-  listAgents: () => App.ListAgents() as Promise<AgentSummary[]>,
-  unregisterAgent: (name: string) => App.UnregisterAgent(name),
-  conversationDelegationCards: (contextID: string) =>
-    App.ConversationDelegationCards(contextID) as Promise<KanbanCard[]>,
-  listDir: (dir: string) => App.ListDir(dir) as Promise<FileNode[]>,
-  // Fall back to a root-level listing when the running binary predates
-  // the SearchFiles binding, so "@" never breaks into a blank popup.
-  searchFiles: async (query: string, limit?: number) => {
-    const cap = limit ?? 50;
-    if (typeof App.SearchFiles !== 'function') {
-      const wd = await App.Workspace();
-      const nodes = await App.ListDir(wd);
-      const q = query.toLowerCase();
-      return nodes
-        .filter((n) => n.name.toLowerCase().includes(q))
-        .slice(0, cap)
-        .map((n) => ({ path: n.name, is_dir: n.is_dir }));
-    }
-    return App.SearchFiles(query, cap) as Promise<SearchFileHit[]>;
-  },
-  openPath: (path: string) => App.OpenPath(path),
-  saveArtifactAs: (path: string) => App.SaveArtifactAs(path) as Promise<string>,
-  revealArtifact: (path: string) => App.RevealArtifact(path),
-  openArtifactWith: (path: string) => App.OpenArtifactWith(path),
-  openExternal: (url: string) => App.OpenExternal(url),
+    Conversation.ReplyPrompt(
+      promptID,
+      reply.text ?? '',
+      reply.option ?? '',
+      reply.options ?? [],
+      !!reply.cancel,
+    ),
+  cancelTurn: (runID: string) => Conversation.CancelTurn(runID),
+  listAgents: () => Agent.List() as unknown as Promise<AgentSummary[]>,
+  unregisterAgent: (name: string) => Agent.Unregister(name),
+  listDir: (dir: string) => File.List(dir) as unknown as Promise<FileNode[]>,
+  searchFiles: (query: string, limit?: number) =>
+    File.Search(query, limit ?? 50) as unknown as Promise<SearchFileHit[]>,
+  openPath: (path: string) => File.OpenPath(path),
+  saveArtifactAs: (path: string) => File.SaveArtifactAs(path),
+  revealArtifact: (path: string) => File.Reveal(path),
+  openArtifactWith: (path: string) => File.OpenArtifactWith(path),
+  openExternal: (url: string) => File.OpenExternal(url),
 };

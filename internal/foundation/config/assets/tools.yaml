@@ -1,0 +1,209 @@
+# Tool containers (each tool.Source is one tool group; the tools
+# assembly aggregates them through deps) plus the script runtime.
+# Partial embedded deploy layer: deep-merged on top of
+# assets/opencraft.yaml; the user layer still wins.
+resources:
+  # ------------------------------------------------------------------
+  # Tool containers: each tool.Source is one tool group; tools
+  # aggregates them through many deps
+  # ------------------------------------------------------------------
+  tool.exec:
+    kind: tool.Source
+    impl: opencraft/exec
+    deps:
+      sandbox: box
+  tool.applypatch:
+    kind: tool.Source
+    impl: opencraft/applypatch
+    deps:
+      hostworkspace: hostws
+  tool.webfetch:
+    kind: tool.Source
+    impl: opencraft/webfetch
+    deps:
+      # The domain gate (allow/deny lists + private-IP SSRF guard) is
+      # installed only when the netpolicy dependency is wired; the
+      # sessions dep lets YOLO sessions keep their "no sandbox" semantics.
+      netpolicy: netpolicy
+      sessions: sessions
+  tool.askuser:
+    kind: tool.Source
+    impl: opencraft/askuser
+  tool.files:
+    kind: tool.Source
+    impl: opencraft/files
+    deps:
+      hostworkspace: hostws
+  # Text-to-image generation: routes an image-output request through the
+  # inference router, which selects an image-capable model from the
+  # user's generate targets; generated files land under generated/.
+  tool.imagegen:
+    kind: tool.Source
+    impl: opencraft/imagegen
+    deps:
+      router: router
+      hostworkspace: hostws
+  # Text-to-video generation: routes a video-output request through the
+  # inference router (MiniMax Hailuo / ByteDance Seedance), downloads
+  # the finished artifact, and persists it under generated/.
+  tool.videogen:
+    kind: tool.Source
+    impl: opencraft/videogen
+    deps:
+      router: router
+      hostworkspace: hostws
+  tool.plan:
+    kind: tool.Source
+    impl: opencraft/plan
+    deps:
+      sessions: sessions
+  tool.skills:
+    kind: tool.Source
+    impl: opencraft/skills
+    deps:
+      skills: skills
+  # Plugin agent capabilities: enabled plugins contribute subprocess
+  # tools and MCP servers through the shared plugin host.
+  tool.plugins:
+    kind: tool.Source
+    impl: opencraft/plugins
+    deps:
+      plugin.host: plugin.host
+  # Scheduled-task management: preview + user confirmation happens in
+  # the tool; persistence delegates to the desktop automation host.
+  tool.automation:
+    kind: tool.Source
+    impl: opencraft/automation
+    deps:
+      automation.host: automation.host
+  # Internal conversation compaction: folds the loop's older rounds into
+  # a summary (router condensation) and persists the artifact per
+  # conversation via the session store.
+  tool.compact:
+    kind: tool.Source
+    impl: opencraft/compact
+    deps:
+      router: router
+      sessions: sessions
+  tool.permissions:
+    kind: tool.Source
+    impl: opencraft/permissions
+    deps:
+      execpolicy: execpolicy
+  # Subagent delegation tools (delegate / delegation_status /
+  # delegation_targets): target discovery resolves the per-generation
+  # delegation directory at call time.
+  tool.delegate:
+    kind: tool.Source
+    impl: delegation
+    deps:
+      directory: delegate.directory
+  # Persistent subagent tools (create_agent / unregister_agent): the
+  # registry lives under the user data dir, so subagents survive
+  # restarts and are re-registered on startup.
+  agentlifecycle:
+    kind: opencraft.agentlifecycle
+    impl: local
+    settings:
+      dir: ${env:OPEN_CRAFT_DATA_DIR}/agents
+  tool.agentlifecycle:
+    kind: tool.Source
+    impl: opencraft/agentlifecycle
+    deps:
+      agentlifecycle: agentlifecycle
+  tools:
+    kind: tool.Assembly
+    impl: opencraft
+    deps:
+      hooks: hooks
+      tool: tool.exec
+      tool.applypatch: tool.applypatch
+      tool.webfetch: tool.webfetch
+      tool.askuser: tool.askuser
+      tool.automation: tool.automation
+      tool.files: tool.files
+      tool.imagegen: tool.imagegen
+      tool.videogen: tool.videogen
+      tool.plan: tool.plan
+      tool.skills: tool.skills
+      tool.plugins: tool.plugins
+      tool.compact: tool.compact
+      tool.permissions: tool.permissions
+      tool.delegate: tool.delegate
+      tool.agentlifecycle: tool.agentlifecycle
+    settings:
+      middlewares:
+        recover:
+          enabled: true
+        timeout:
+          default: 5m
+        # Oversized tool outputs are persisted in full under
+        # .opencraft/cache/tools/<call_id>.output and truncated in
+        # context, keeping the loop's MainChannel from growing unbounded
+        # on a single tool result.
+        truncate:
+          enabled: true
+          max_chars: 8000
+          dir: ${env:OPEN_CRAFT_TOOL_CACHE}
+          work_dir: ${env:OPEN_CRAFT_WORKDIR}
+        # Hard ceiling on any single tool result that may reach the
+        # model context. Truncate then turns oversized-but-bounded
+        # outputs into a persisted head+tail excerpt; together they keep
+        # the loop's MainChannel bounded even for pathological outputs.
+        result_limit:
+          max_chars: 32768
+        # Best-effort secret stripping from tool results before the
+        # model sees them. The same rules always apply to the audit
+        # trail below, even when this middleware is disabled.
+        redact:
+          enabled: true
+          rules:
+            - pattern: "sk-(?:[A-Za-z0-9]{16,})"
+            # OpenAI project keys and Anthropic API keys contain hyphens
+            # (sk-proj-..., sk-ant-...), which the legacy sk- rule does
+            # not match.
+            - pattern: "sk-proj-[A-Za-z0-9_-]{20,}"
+            - pattern: "sk-ant-[A-Za-z0-9_-]{20,}"
+            - pattern: "AKIA[0-9A-Z]{16}"
+            - pattern: "gh[pousr]_[A-Za-z0-9]{20,}"
+            - pattern: "xox[baprs]-[A-Za-z0-9-]{10,}"
+            - pattern: '(?i)bearer\s+[A-Za-z0-9._~+/=-]{16,}'
+            - pattern: '(?i)api[_-]?key\s*[:=]\s*[A-Za-z0-9_-]{8,}'
+            - pattern: '-----BEGIN [A-Z0-9 ]+-----[\s\S]*?-----END [A-Z0-9 ]+-----'
+        # Append-only tool-call audit trail: one JSONL record per call
+        # with redacted copies of arguments and results.
+        audit:
+          enabled: true
+          dir: ${env:OPEN_CRAFT_AUDIT_DIR}
+      dynamic:
+        default: deferred
+        exposures:
+          tool_search: always
+          exec_command: always
+          exec_session: always
+          apply_patch: always
+          ask_user: always
+          read_file: always
+          write_file: always
+          list_dir: always
+          grep: always
+          glob: always
+          update_plan: always
+          request_permissions: always
+          # Skill tools are advertised in the per-turn skills section,
+          # so the model must be able to call them immediately; the
+          # tool_search select/next-round dance is too fragile for
+          # them. skill_install stays deferred (mutating, heavier).
+          skill_search: always
+          skill_read: always
+          # Search-discoverable layers (everything not listed falls to
+          # the default: deferred, which covers the delegate family,
+          # agent lifecycle, and skill authoring tools):
+          # - direct: hidden until recently used or selected via
+          #   tool_search, then visible for recent_window rounds.
+          # - deferred: hidden until tool_search selects it, then
+          #   visible for selected_retention rounds.
+          web_fetch: direct
+          # Internal machinery: callable by exact name (the compact
+          # graph node), never offered to the model.
+          compact: hidden

@@ -17,13 +17,13 @@ jobs:
       matrix:
         include:
           - { pkg: ./internal/utils/patch, target: FuzzParsePatch }
-          - { pkg: ./internal/plugins, target: FuzzExtractPluginZip }
-          - { pkg: ./internal/tools/assembly, target: FuzzRedactContent }
-          - { pkg: ./internal/skills, target: FuzzSkillFrontmatter }
-          - { pkg: ./internal/app, target: FuzzExecPolicyRule }
-          - { pkg: ./internal/sessions, target: FuzzRequireID }
-          - { pkg: ./internal/config, target: FuzzUserConfigYAML }
-          - { pkg: ./internal/execd, target: FuzzRPCRequest }
+          - { pkg: ./internal/capabilities/plugins, target: FuzzExtractPluginZip }
+          - { pkg: ./internal/capabilities/tools/assembly, target: FuzzRedactContent }
+          - { pkg: ./internal/capabilities/skills, target: FuzzSkillFrontmatter }
+          - { pkg: ./internal/orchestration/engine, target: FuzzExecPolicyRule }
+          - { pkg: ./internal/capabilities/sessions, target: FuzzRequireID }
+          - { pkg: ./internal/foundation/config, target: FuzzUserConfigYAML }
+          - { pkg: ./internal/capabilities/execd, target: FuzzRPCRequest }
           - { pkg: ./internal/utils/extract, target: FuzzStripHiddenHTML }
     steps:
       - uses: actions/checkout@v6

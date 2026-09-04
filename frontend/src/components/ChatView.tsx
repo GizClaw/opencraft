@@ -63,7 +63,6 @@ import {
 import { Markdown } from './Markdown';
 import { PlanPanel } from './PlanPanel';
 import { ToolCard } from './ToolCard';
-import { ProjectTrustBanner } from './ProjectTrustBanner';
 import { StreamItemView } from './StreamItemView';
 import { latestPlan } from '../lib/plan';
 import { groupToolCalls, type ToolCallItem } from '../lib/stream';
@@ -806,7 +805,7 @@ export function ChatView() {
   // empty) declares a reasoning capability.
   const thinkSupported = model
     ? (modelOptions.find((o) => o.id === model)?.reasoning ?? false)
-    : (status?.default_reasoning ?? false);
+    : (modelOptions[0]?.reasoning ?? status?.default_reasoning ?? false);
   const lastFailed = turnState?.name === 'failed';
   const openConfig = useStore((s) => s.openConfig);
   const [input, setInput] = useState('');
@@ -1133,8 +1132,6 @@ export function ChatView() {
         </div>
       </header>
 
-      <ProjectTrustBanner />
-
       <div className="relative flex min-h-0 flex-1 flex-col">
         <div
           ref={scrollRef}
@@ -1279,6 +1276,13 @@ export function ChatView() {
             : 'shrink-0 px-6 pb-4'
         }
       >
+        {centerComposer && (
+          <div className="pointer-events-none absolute inset-x-6 bottom-full mb-3 text-center">
+            <div className="text-lg font-semibold text-fg">
+              {t('chat.empty')}
+            </div>
+          </div>
+        )}
         <div className="max-w-4xl mx-auto rounded-xl border border-edge bg-panel focus-within:border-accent/60 transition-colors">
           {attachments.length > 0 && (
             <div className="flex flex-wrap gap-2 px-3 pt-2">

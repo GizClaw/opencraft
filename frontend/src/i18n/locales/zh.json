@@ -2,18 +2,15 @@
   "app": {
     "starting": "OpenCraft 启动中…",
     "startupFailed": "启动失败",
-    "unknownError": "未知错误"
+    "unknownError": "未知错误",
+    "crashed": "OpenCraft UI 崩溃了",
+    "tryAgain": "重试",
+    "reload": "重新加载"
   },
   "notify": {
     "done": "任务完成",
     "failed": "任务失败",
     "interact": "需要你的输入"
-  },
-  "projectTrust": {
-    "title": "检测到项目配置文件",
-    "body": "此工作区带有 .opencraft/config 配置层。在信任之前不会生效：未信任的项目配置可能覆盖 hooks、沙箱策略和执行图。",
-    "trust": "信任项目配置",
-    "working": "应用中…"
   },
   "sidebar": {
     "newChat": "新会话",
@@ -30,6 +27,7 @@
     "cannotDeleteActive": "当前会话正在使用中，无法删除。",
     "searchSessions": "搜索会话…",
     "addWorkspace": "添加工作区",
+    "chooseWorkspaceTitle": "选择工作区…",
     "open": "打开",
     "cancel": "取消",
     "pickerFallback": "原生选择器不可用，输入工作区路径：",
@@ -328,6 +326,7 @@
     "stageTool": "正在使用 {{tool}}…",
     "newSession": "新会话",
     "loadEarlier": "显示更早的 {{hidden}} 条消息",
+    "empty": "今天想打造点什么？",
     "emptyUnconfigured": "推理尚未配置，请打开设置添加模型",
     "openSettings": "打开设置",
     "noSession": "当前没有打开的会话",
@@ -345,7 +344,7 @@
     "thinking": "思考中…",
     "stop": "停止",
     "send": "发送",
-    "placeholder": "今天想打造点什么？",
+    "placeholder": "和 OpenCraft 一起工作",
     "placeholderUnconfigured": "完成推理配置后开始对话",
     "sandboxMode": "沙箱模式",
     "workspaceMode": "工作区模式",
@@ -387,16 +386,11 @@
     "files_other": "{{count}} 个文件",
     "removeAttachment": "移除附件",
     "retry": "重试上一条",
-    "undo": "撤销上一轮改动",
-    "redo": "重做",
-    "undoDone": "已回滚 {{count}} 个文件",
-    "redoDone": "已恢复 {{count}} 个文件",
-    "undoEmpty": "没有可撤销的改动",
-    "redoEmpty": "没有可重做的改动",
     "mentionSearchHint": "输入以搜索工作区文件…",
     "mentionNoMatch": "无匹配结果",
     "mentionSkillHint": "输入以筛选技能…",
     "planTitle": "当前计划",
+    "planLoading": "计划加载中…",
     "turnArtifacts": "本回合产出",
     "workedFor": "耗时 {{duration}}",
     "openArtifact": "打开 {{path}}",
@@ -491,6 +485,7 @@
     "result": "结果",
     "copyResult": "复制",
     "lines": "行",
+    "model": "模型",
     "entries": "项",
     "files": "个文件",
     "truncated": "已截断",
@@ -599,6 +594,7 @@
     "deleteConfirm": "删除 {{name}}？其运行历史也会被移除。",
     "noRuns": "暂无运行记录",
     "duration": "耗时",
+    "interruptedRestart": "应用已关闭或重启，运行被中断",
     "openSession": "打开会话"
   },
   "graph": {
@@ -612,6 +608,7 @@
     "zoomIn": "放大",
     "zoomOut": "缩小",
     "fit": "适应窗口",
+    "relayout": "重新布局",
     "condition": "条件 (expr)",
     "conditionHint": "可选 expr 表达式，基于 board 变量判断是否走这条边；留空表示无条件。",
     "save": "保存",

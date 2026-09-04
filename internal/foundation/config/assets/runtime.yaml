@@ -1,0 +1,13 @@
+# Runtime section. Partial embedded deploy layer: deep-merged on top
+# of the base, tool, and agent layers; the user layer still wins.
+runtime:
+  event_bus: events
+  # The session store owns the project's session.db and serves as the
+  # agent checkpoint store (one SQLite connection, one schema owner).
+  checkpoint_store: sessions
+  sessions:
+    idle_timeout: 10m
+    resume: false
+  dynamic_catalog:
+    tools:
+      assistant: tools

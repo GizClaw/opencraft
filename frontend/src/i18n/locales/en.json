@@ -2,18 +2,15 @@
   "app": {
     "starting": "OpenCraft is starting…",
     "startupFailed": "Startup failed",
-    "unknownError": "Unknown error"
+    "unknownError": "Unknown error",
+    "crashed": "OpenCraft UI crashed",
+    "tryAgain": "Try again",
+    "reload": "Reload"
   },
   "notify": {
     "done": "Task finished",
     "failed": "Task failed",
     "interact": "Input needed"
-  },
-  "projectTrust": {
-    "title": "Project configuration detected",
-    "body": "This workspace ships a .opencraft/config layer. It is skipped until you trust it: untrusted project config can override hooks, sandbox policy, and the execution graph.",
-    "trust": "Trust project config",
-    "working": "Applying…"
   },
   "sidebar": {
     "newChat": "New chat",
@@ -30,6 +27,7 @@
     "cannotDeleteActive": "Cannot delete the conversation that is currently open.",
     "searchSessions": "Search sessions…",
     "addWorkspace": "Add workspace",
+    "chooseWorkspaceTitle": "Choose a workspace…",
     "open": "Open",
     "cancel": "Cancel",
     "pickerFallback": "Native picker unavailable; type a workspace path:",
@@ -328,6 +326,7 @@
     "stageTool": "Using {{tool}}…",
     "newSession": "New session",
     "loadEarlier": "Show {{hidden}} earlier messages",
+    "empty": "What shall we craft today?",
     "emptyUnconfigured": "Inference is not configured yet",
     "openSettings": "Open Settings",
     "noSession": "No conversation is open",
@@ -345,7 +344,7 @@
     "thinking": "Thinking…",
     "stop": "Stop",
     "send": "Send",
-    "placeholder": "What shall we craft today?",
+    "placeholder": "Work with OpenCraft",
     "placeholderUnconfigured": "Start chatting after finishing the inference setup",
     "sandboxMode": "Sandbox mode",
     "workspaceMode": "Workspace mode",
@@ -387,12 +386,6 @@
     "files_other": "{{count}} files",
     "removeAttachment": "Remove attachment",
     "retry": "Retry last",
-    "undo": "Undo last turn",
-    "redo": "Redo",
-    "undoDone": "Reverted {{count}} file(s)",
-    "redoDone": "Restored {{count}} file(s)",
-    "undoEmpty": "Nothing to undo",
-    "redoEmpty": "Nothing to redo",
     "mentionSearchHint": "Type to search workspace files…",
     "mentionNoMatch": "No matches",
     "mentionSkillHint": "Type to filter skills…",
@@ -492,6 +485,7 @@
     "result": "result",
     "copyResult": "Copy",
     "lines": "lines",
+    "model": "Model",
     "entries": "entries",
     "files": "files",
     "truncated": "truncated",
@@ -600,6 +594,7 @@
     "deleteConfirm": "Delete {{name}}? Its run history will be removed.",
     "noRuns": "No runs yet",
     "duration": "Duration",
+    "interruptedRestart": "App was closed or restarted; the run was interrupted",
     "openSession": "Open session"
   },
   "graph": {
@@ -613,6 +608,7 @@
     "zoomIn": "Zoom in",
     "zoomOut": "Zoom out",
     "fit": "Fit to window",
+    "relayout": "Relayout",
     "condition": "Condition (expr)",
     "conditionHint": "Optional expr expression over board variables that gates this edge; empty means unconditional.",
     "save": "Save",
