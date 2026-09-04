@@ -6,10 +6,12 @@ describe('StateRoot', () => {
     const root = new StateRoot();
     const actor = root.registry.ensure('s-1', {
       workspaceGeneration: root.generation(),
+      workspace: '/tmp/w',
     });
     expect(actor).toBeDefined();
     expect(root.registry.size()).toBe(1);
     expect(root.registry.isDeleted('s-1')).toBe(false);
+    expect(actor?.getSnapshot().context.workspace).toBe('/tmp/w');
   });
 
   it('workspace reset stops conversations, clears tombstones, bumps generation', () => {

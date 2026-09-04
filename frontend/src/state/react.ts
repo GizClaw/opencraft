@@ -32,6 +32,13 @@ export function useActiveConversationId(): string | undefined {
   return focus.name === 'active' ? focus.sessionID : undefined;
 }
 
+export function conversationWorkspace(
+  conversationID: string,
+): string | undefined {
+  const actor = stateRoot.registry.get(conversationID);
+  return actor?.getSnapshot().context.workspace as string | undefined;
+}
+
 export function useConversationState(
   conversationID?: string,
 ): ConversationViewState | undefined {
@@ -54,7 +61,7 @@ export function useConversationState(
   );
 }
 
-export function useRunningConversations(): Array<{
+export function useRunningConversations(workspace?: string): Array<{
   conversationID: string;
   state: ConversationViewState;
 }> {
@@ -69,7 +76,11 @@ export function useRunningConversations(): Array<{
         typeof projectConversation
       >[0],
     );
-    if (state.turn.name === 'starting' || state.turn.name === 'running') {
+    const actorWorkspace = actor.getSnapshot().context.workspace as
+      string | undefined;
+    const active =
+      state.turn.name === 'starting' || state.turn.name === 'running';
+    if (active && (workspace === undefined || actorWorkspace === workspace)) {
       out.push({ conversationID: actor.getSnapshot().context.id, state });
     }
   }

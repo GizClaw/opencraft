@@ -33,6 +33,7 @@ function resetStore() {
   stateRoot.registry.ensure('s-1', {
     workspaceGeneration: stateRoot.generation(),
     readyEmpty: true,
+    workspace: '/tmp/w',
   });
   useStore.setState({
     status: {

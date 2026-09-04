@@ -841,6 +841,7 @@ export const useStore = create<StoreState>((set, get) => {
     });
     const startingActor = stateRoot.registry.ensure(convID, {
       workspaceGeneration: stateRoot.generation(),
+      workspace: get().workspace,
     });
     startingActor?.send({ type: 'SEND_STARTED' });
     try {
@@ -1171,6 +1172,7 @@ export const useStore = create<StoreState>((set, get) => {
     conversationForRunID: (runID) => get().runConvs[runID],
     pendingInteractConversation: (promptID) =>
       get().pendingPromptConvs[promptID],
+    activeWorkspace: () => get().workspace,
   };
 
   const activeConversationID = () => {
@@ -1416,6 +1418,7 @@ export const useStore = create<StoreState>((set, get) => {
           });
           const actor = stateRoot.registry.ensure(currentSession, {
             workspaceGeneration: stateRoot.generation(),
+            workspace: get().workspace,
           });
           const generation = stateRoot.generation();
           actor?.send({
@@ -1621,6 +1624,7 @@ export const useStore = create<StoreState>((set, get) => {
         stateRoot.registry.ensure(id, {
           workspaceGeneration: stateRoot.generation(),
           readyEmpty: true,
+          workspace: get().workspace,
         });
         retainLiveConversations(id);
       } catch (err) {
@@ -1640,6 +1644,7 @@ export const useStore = create<StoreState>((set, get) => {
     retryTranscript: async (id) => {
       const actor = stateRoot.registry.ensure(id, {
         workspaceGeneration: stateRoot.generation(),
+        workspace: get().workspace,
       });
       const context = actor?.getSnapshot().context as {
         lastHydrateRequest?: number;
@@ -1705,6 +1710,7 @@ export const useStore = create<StoreState>((set, get) => {
         const resolvedID = snapshot.session_id;
         const actor = stateRoot.registry.ensure(resolvedID, {
           workspaceGeneration: stateRoot.generation(),
+          workspace: get().workspace,
         });
         const hydrateRequest = 1;
         const generation = stateRoot.generation();
