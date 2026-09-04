@@ -1,6 +1,7 @@
 import {
   Fragment,
   memo,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -60,6 +61,7 @@ import type {
 } from '../lib/store';
 import type { TurnEndKind } from '../state/types';
 import { InteractionCard } from './InteractionCard';
+import { MessagePeek } from './MessagePeek';
 import {
   MarkdownComposer,
   type MarkdownComposerHandle,
@@ -273,6 +275,9 @@ const MessageRow = memo(function MessageRow({
   busy,
   streaming,
   isTurnLast,
+  msgIndex,
+  turnIndex,
+  turnStart,
   forkable,
   onFork,
   requestedAt,
@@ -282,6 +287,9 @@ const MessageRow = memo(function MessageRow({
   busy: boolean;
   streaming: boolean;
   isTurnLast: boolean;
+  msgIndex: number;
+  turnIndex: number;
+  turnStart: boolean;
   forkable?: boolean;
   onFork?: () => void;
   requestedAt?: string;
@@ -291,13 +299,25 @@ const MessageRow = memo(function MessageRow({
   const [copied, setCopied] = useState(false);
   if (msg.role === 'user') {
     if (msg.text.startsWith(COMPACT_SUMMARY_PREFIX)) {
-      return <CompactCard text={msg.text} />;
+      return (
+        <CompactCard
+          text={msg.text}
+          msgIndex={msgIndex}
+          turnIndex={turnIndex}
+          turnStart={turnStart}
+        />
+      );
     }
     const attachments = msg.attachments ?? [];
     const images = attachments.filter((a) => a.kind === 'image');
     const files = attachments.filter((a) => a.kind !== 'image');
     return (
-      <div className="flex justify-end">
+      <div
+        data-msg-index={msgIndex}
+        data-turn-index={turnIndex >= 0 ? turnIndex : undefined}
+        data-turn-start={turnStart ? 'true' : undefined}
+        className="flex justify-end"
+      >
         <div className="group flex w-fit max-w-[80%] flex-col items-end gap-1">
           <div className="rounded-2xl rounded-br-sm border border-accent/30 bg-accent/15 px-4 py-2.5 text-sm">
             {images.length > 0 && (
@@ -375,7 +395,12 @@ const MessageRow = memo(function MessageRow({
   const groups = groupToolCalls(msg.items);
   if (groups.length === 0) return null;
   return (
-    <div className="group flex flex-col gap-1">
+    <div
+      data-msg-index={msgIndex}
+      data-turn-index={turnIndex >= 0 ? turnIndex : undefined}
+      data-turn-start={turnStart ? 'true' : undefined}
+      className="group flex flex-col gap-1"
+    >
       {groups.map((group, gi) => {
         if (Array.isArray(group)) {
           return group.length === 1 ? (
@@ -479,12 +504,27 @@ function turnForIndex(
 // CompactCard renders a compaction summary (a user message marked with
 // COMPACT_SUMMARY_PREFIX) as a tool-style card instead of a chat
 // bubble, so auto-compaction is visible in the transcript.
-function CompactCard({ text }: { text: string }) {
+function CompactCard({
+  text,
+  msgIndex,
+  turnIndex,
+  turnStart,
+}: {
+  text: string;
+  msgIndex: number;
+  turnIndex: number;
+  turnStart: boolean;
+}) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(true);
   const body = text.slice(COMPACT_SUMMARY_PREFIX.length).trim();
   return (
-    <div className="overflow-hidden rounded-lg border border-edge bg-panel2 my-1.5">
+    <div
+      data-msg-index={msgIndex}
+      data-turn-index={turnIndex >= 0 ? turnIndex : undefined}
+      data-turn-start={turnStart ? 'true' : undefined}
+      className="overflow-hidden rounded-lg border border-edge bg-panel2 my-1.5"
+    >
       <button
         onClick={() => setOpen(!open)}
         className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-panel2/70"
@@ -886,6 +926,7 @@ export function ChatView() {
   const turnArtifacts = conv?.turnArtifacts ?? [];
   const [visibleCount, setVisibleCount] = useState(RENDER_WINDOW);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
+  const [peekCurrent, setPeekCurrent] = useState(-1);
   const planCacheRef = useRef<{
     messages: MessageView[];
     plan: ReturnType<typeof latestPlan>;
@@ -895,6 +936,7 @@ export function ChatView() {
   useEffect(() => {
     setVisibleCount(RENDER_WINDOW);
     setLoadingEarlier(false);
+    setPeekCurrent(-1);
     planCacheRef.current = null;
   }, [current]);
   const truncated = messages.length > visibleCount;
@@ -957,6 +999,55 @@ export function ChatView() {
     : (modelOptions[0]?.reasoning ?? status?.default_reasoning ?? false);
   const failedTurn = turnState?.name === 'failed' ? turnState : undefined;
   const lastTurn = turnArtifacts[turnArtifacts.length - 1];
+  const peekItems = useMemo(
+    () =>
+      turnArtifacts.map((turn, ti) => {
+        const nextStart =
+          ti + 1 < turnArtifacts.length
+            ? turnArtifacts[ti + 1].start
+            : messages.length;
+        let user = '';
+        for (
+          let mi = turn.start;
+          mi < Math.min(nextStart, messages.length);
+          mi++
+        ) {
+          const m = messages[mi];
+          if (m.role === 'user' && !m.text.startsWith(COMPACT_SUMMARY_PREFIX)) {
+            user = m.text;
+            break;
+          }
+        }
+        let answer = '';
+        for (
+          let mi = Math.min(nextStart, messages.length) - 1;
+          mi >= turn.start;
+          mi--
+        ) {
+          const m = messages[mi];
+          if (m.role !== 'assistant') continue;
+          const text = m.items
+            .filter(
+              (it): it is Extract<AssistantItem, { kind: 'text' }> =>
+                it.kind === 'text',
+            )
+            .map((it) => it.text)
+            .join('\n')
+            .trim();
+          if (text) {
+            answer = text;
+            break;
+          }
+        }
+        return {
+          index: ti,
+          user,
+          answer,
+          running: busy && turn === lastTurn,
+        };
+      }),
+    [busy, lastTurn, messages, turnArtifacts],
+  );
   const openConfig = useStore((s) => s.openConfig);
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<AttachmentView[]>([]);
@@ -988,6 +1079,42 @@ export function ChatView() {
   // captured from an earlier render — that race is what made the view
   // jump back to the bottom right after the user scrolled away.
   const stickRef = useRef(true);
+  // refreshPeekCurrent derives the "current turn" from the message
+  // rows currently visible in the transcript. Rows carry the turn they
+  // belong to even when the transcript window starts in the middle of
+  // a long turn, so the ruler follows the content actually on screen.
+  // It only writes when the resolved turn changes, so stream flushes
+  // do not cause an extra render for a stationary viewport.
+  const refreshPeekCurrent = useCallback(() => {
+    const scroller = scrollRef.current;
+    if (!scroller || turnArtifacts.length === 0) {
+      setPeekCurrent(-1);
+      return;
+    }
+    const view = scroller.getBoundingClientRect();
+    const rows = scroller.querySelectorAll<HTMLElement>('[data-turn-index]');
+    let found = -1;
+    for (const row of rows) {
+      const index = Number(row.dataset.turnIndex);
+      if (!Number.isInteger(index)) continue;
+      const rect = row.getBoundingClientRect();
+      if (rect.bottom <= view.top + 1) {
+        found = index;
+        continue;
+      }
+      if (rect.top >= view.bottom - 1) break;
+      found = index;
+      break;
+    }
+    let next = found;
+    if (next < 0) {
+      if (rows.length === 0) return;
+      const first = Number(rows[0].dataset.turnIndex);
+      const last = Number(rows[rows.length - 1].dataset.turnIndex);
+      next = scroller.scrollTop <= 1 ? first : last;
+    }
+    setPeekCurrent((prev) => (prev === next ? prev : next));
+  }, [turnArtifacts.length]);
   const loadEarlier = () => {
     if (!truncated || loadingEarlier) return;
     const el = scrollRef.current;
@@ -1006,8 +1133,42 @@ export function ChatView() {
       if (!current) return;
       const addedAbove = current.scrollHeight - prevScrollHeight;
       current.scrollTop = prevScrollTop + addedAbove;
+      refreshPeekCurrent();
     });
     window.setTimeout(() => setLoadingEarlier(false), 250);
+  };
+  const jumpToTurn = (index: number) => {
+    const turn = turnArtifacts[index];
+    if (!turn) return;
+    const target = turn.start;
+    const expanding = target < start;
+    if (expanding) {
+      setVisibleCount((prev) => Math.max(prev, messages.length - target));
+      setLoadingEarlier(false);
+    }
+    // A jump is an explicit navigation: never snap back to the newest
+    // output afterwards.
+    stickRef.current = false;
+    setStick(false);
+    const runScroll = () => {
+      const scroller = scrollRef.current;
+      if (!scroller) return;
+      const exact = scroller.querySelector<HTMLElement>(
+        `[data-msg-index="${target}"]`,
+      );
+      const row =
+        exact ??
+        scroller.querySelector<HTMLElement>(`[data-turn-index="${index}"]`);
+      if (!row) return;
+      const containerRect = scroller.getBoundingClientRect();
+      const top =
+        row.getBoundingClientRect().top -
+        containerRect.top +
+        scroller.scrollTop;
+      scroller.scrollTop = Math.max(0, top - 12);
+      refreshPeekCurrent();
+    };
+    requestAnimationFrame(() => requestAnimationFrame(runScroll));
   };
   const { t } = useTranslation();
   const thinkLevels = [
@@ -1094,9 +1255,15 @@ export function ChatView() {
     const frame = requestAnimationFrame(() => {
       const el = scrollRef.current;
       if (el && stickRef.current) el.scrollTop = el.scrollHeight;
+      refreshPeekCurrent();
     });
     return () => cancelAnimationFrame(frame);
-  }, [messages, pendingInteracts, stick]);
+  }, [messages, pendingInteracts, stick, refreshPeekCurrent]);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(refreshPeekCurrent);
+    return () => cancelAnimationFrame(frame);
+  }, [current, messages, refreshPeekCurrent, turnArtifacts, visibleCount]);
 
   useEffect(() => {
     const onVisibility = () => {
@@ -1299,6 +1466,7 @@ export function ChatView() {
             if (!pinned && el.scrollTop <= 8 && truncated && !loadingEarlier) {
               loadEarlier();
             }
+            refreshPeekCurrent();
           }}
           data-testid="chat-scroll"
           className="flex-1 overflow-y-auto [overflow-anchor:none] px-6 py-4"
@@ -1342,6 +1510,8 @@ export function ChatView() {
                 // after its last message: before the next user bubble
                 // (or at the transcript end).
                 const turnIdx = turn ? (turnIndexById.get(turn) ?? -1) : -1;
+                const turnStart =
+                  turnIdx >= 0 && turnArtifacts[turnIdx].start === i;
                 const isTurnEnd =
                   turnIdx >= 0 &&
                   i ===
@@ -1375,6 +1545,9 @@ export function ChatView() {
                       msg={msg}
                       busy={busy}
                       isTurnLast={isAssistantTurnLast}
+                      msgIndex={i}
+                      turnIndex={turnIdx}
+                      turnStart={turnStart}
                       forkable={canFork}
                       onFork={
                         canFork && turn ? () => setForkTarget(turn) : undefined
@@ -1421,6 +1594,11 @@ export function ChatView() {
             </div>
           )}
         </div>
+        <MessagePeek
+          items={peekItems}
+          currentIndex={peekCurrent}
+          onJump={jumpToTurn}
+        />
         {planState && !planDismissed && (
           <PlanPanel
             plan={planState.plan}

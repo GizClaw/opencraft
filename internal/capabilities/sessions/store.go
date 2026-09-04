@@ -134,8 +134,12 @@ func (s *Store) State() *state.Store { return s.db }
 // Database returns the shared workspace DB handle.
 func (s *Store) Database() *db.DB { return s.db.Handle() }
 
-// Close closes the SQLite database handle.
-func (s *Store) Close() error {
+// CloseDB closes the SQLite database handle. Store intentionally does
+// not implement io.Closer: one workspace Store is shared by every
+// flowcraft runtime, so runtimes must not own its close. The
+// orchestration/host Manager owns the DB lifecycle and calls CloseDB
+// only after the last Host/store reference is released.
+func (s *Store) CloseDB() error {
 	if s == nil || s.db == nil {
 		return nil
 	}

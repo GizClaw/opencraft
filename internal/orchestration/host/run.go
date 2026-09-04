@@ -41,15 +41,20 @@ type RunOptions struct {
 	// Host's fallback backend applies, so UI and automation turns can
 	// share one runtime with different prompt policies.
 	Backend interact.Backend
+	// SkipAutoTitle disables the post-run background title generation
+	// for one-off callers (for example headless runs) that do not need
+	// a title and should not pay an extra model call.
+	SkipAutoTitle bool
 }
 
 // Run is one live assistant turn owned by a Host.
 type Run struct {
-	host   *Host
-	lease  *coresession.Lease
-	turn   *coresession.Turn
-	done   bool
-	detail *runDetail
+	host          *Host
+	lease         *coresession.Lease
+	turn          *coresession.Turn
+	done          bool
+	detail        *runDetail
+	skipAutoTitle bool
 }
 
 // ContextID returns the conversation id the run writes to.
@@ -202,9 +207,10 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 		h.Broker().BindTurn(turn.RunID(), turn)
 	}
 	run := &Run{
-		host:  h,
-		lease: lease,
-		turn:  turn,
+		host:          h,
+		lease:         lease,
+		turn:          turn,
+		skipAutoTitle: opts.SkipAutoTitle,
 	}
 	run.detail = &runDetail{
 		run:       run,
@@ -319,7 +325,9 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 			}
 		}
 		host.dropRun(RunID(r.RunID()))
-		go host.AutoTitle(context.WithoutCancel(ctx), detail.contextID)
+		if !r.skipAutoTitle {
+			host.launchAutoTitle(context.WithoutCancel(ctx), detail.contextID)
+		}
 		host.fireTurnEnd(
 			persistCtx, detail.contextID, r.RunID(),
 			status, errText, turnUsage)

@@ -141,7 +141,7 @@ func TestSessionFilePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = store.CloseDB() }()
 	id, err := store.Create()
 	if err != nil {
 		t.Fatal(err)
@@ -175,7 +175,7 @@ func TestMetaIndexSurvivesUsageRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = store.CloseDB() }()
 	id, _ := store.Create()
 	if err := store.AppendTurn(context.Background(), id, []message.Message{
 		message.NewTextMessage(message.RoleUser, "first"),
@@ -211,7 +211,7 @@ func TestAddUsageAccumulatesAcrossTurns(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = store.CloseDB() }()
 	id, err := store.Create()
 	if err != nil {
 		t.Fatal(err)
@@ -263,7 +263,7 @@ func TestListSkipsArchiveWithoutMeta(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = store.CloseDB() }()
 	// A created-but-never-used conversation must not appear in the
 	// resume list.
 	_, _ = store.Create()
@@ -497,7 +497,7 @@ func TestListEmptyWhenRootMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = store.CloseDB() }()
 	if err := os.RemoveAll(store.root); err != nil {
 		t.Fatal(err)
 	}
@@ -521,7 +521,7 @@ func TestBufferArtifactMergesIntoTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = store.CloseDB() }()
 	id, err := store.Create()
 	if err != nil {
 		t.Fatal(err)
@@ -593,7 +593,7 @@ func TestRecordTurnTimingPersistsWithArchivedTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = store.CloseDB() }()
 	id, err := store.Create()
 	if err != nil {
 		t.Fatal(err)
@@ -669,7 +669,7 @@ func TestTurnByRunIDLoadsOneCompletedTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = store.CloseDB() }()
 	id, err := store.Create()
 	if err != nil {
 		t.Fatal(err)
@@ -736,7 +736,7 @@ func TestLegacyJSONHistoryMigratedIntoSQLite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = store.CloseDB() }()
 	hist, err := store.History(context.Background(), id, -1)
 	if err != nil {
 		t.Fatal(err)
@@ -758,7 +758,7 @@ func TestAppendTurnArtifactsMergesIntoLatestTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = store.CloseDB() }()
 	id, err := store.Create()
 	if err != nil {
 		t.Fatal(err)

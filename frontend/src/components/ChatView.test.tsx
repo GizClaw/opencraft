@@ -233,6 +233,49 @@ describe('ChatView transcript windowing', () => {
     expect(screen.queryByText('Produced this turn')).not.toBeInTheDocument();
     expect(screen.getByText('Worked for 2m 3s')).toBeInTheDocument();
   });
+
+  it('renders message-peek ticks with user/answer previews', () => {
+    setConversation(
+      [
+        {
+          id: 'm-1',
+          role: 'user',
+          text: 'build search',
+          items: [],
+          attachments: [],
+        },
+        {
+          id: 'm-2',
+          role: 'assistant',
+          text: '',
+          items: [{ kind: 'text', id: 't-1', text: 'search built' }],
+          attachments: [],
+        },
+        {
+          id: 'm-3',
+          role: 'user',
+          text: 'add sorting',
+          items: [],
+          attachments: [],
+        },
+      ],
+      [
+        { id: 'turn-1', start: 0, docs: [] },
+        { id: 'turn-2', start: 2, docs: [] },
+      ],
+    );
+    render(<ChatView />);
+
+    expect(screen.getByTestId('message-peek')).toBeInTheDocument();
+    const firstTick = screen.getByRole('button', {
+      name: 'Jump to turn 1',
+    });
+    fireEvent.mouseEnter(firstTick);
+
+    const tooltip = screen.getByRole('tooltip');
+    expect(tooltip).toHaveTextContent('build search');
+    expect(tooltip).toHaveTextContent('search built');
+  });
 });
 
 describe('ChatView projections', () => {

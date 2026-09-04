@@ -36,7 +36,7 @@ func TestImportPersistsAndDedupes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
+	t.Cleanup(func() { _ = store.CloseDB() })
 	ctx := context.Background()
 
 	id, err := store.Import(ctx, importFixture())
@@ -97,7 +97,7 @@ func TestImportPendingReturnsSameIDWhileInFlight(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
+	t.Cleanup(func() { _ = store.CloseDB() })
 
 	id, err := store.Import(context.Background(), importFixture())
 	if err != nil {
@@ -123,7 +123,7 @@ func TestImportRequiresSourceAndArchiveableMessages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
+	t.Cleanup(func() { _ = store.CloseDB() })
 
 	req := importFixture()
 	req.Source = ""

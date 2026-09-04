@@ -19,7 +19,7 @@ func TestFactoryWiresRouter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = store.CloseDB() }()
 
 	router, err := route.New(
 		&inference.Assembly{},

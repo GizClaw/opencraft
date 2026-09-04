@@ -27,25 +27,45 @@ type titlePromptData struct {
 	MaxWords int
 }
 
-// AutoTitle generates a short conversation title once after a turn
-// finishes. A manual title (conversation_state "title") always wins.
-func (h *Host) AutoTitle(ctx context.Context, contextID string) {
+// launchAutoTitle starts one background title generation. It is the
+// only entry point for asynchronous titles: it registers the job with
+// Host.titleWG before spawning the goroutine so Host.doClose waits for
+// it instead of closing the shared store underneath it.
+func (h *Host) launchAutoTitle(ctx context.Context, contextID string) {
+	if h == nil {
+		return
+	}
 	id := ConversationID(contextID)
 	h.mu.Lock()
-	store := h.store
-	ctrl := h.ctrl
+	if h.closed {
+		h.mu.Unlock()
+		return
+	}
 	if h.titling[id] {
 		h.mu.Unlock()
 		return
 	}
 	h.titling[id] = true
+	h.titleWG.Add(1)
 	h.mu.Unlock()
-	defer func() {
-		h.mu.Lock()
-		delete(h.titling, id)
-		h.mu.Unlock()
+	go func() {
+		defer func() {
+			h.mu.Lock()
+			delete(h.titling, id)
+			h.mu.Unlock()
+			h.titleWG.Done()
+		}()
+		h.autoTitle(ctx, contextID)
 	}()
+}
 
+// autoTitle generates a short conversation title once after a turn
+// finishes. A manual title (conversation_state "title") always wins.
+func (h *Host) autoTitle(ctx context.Context, contextID string) {
+	h.mu.Lock()
+	store := h.store
+	ctrl := h.ctrl
+	h.mu.Unlock()
 	if store == nil || ctrl == nil || ctrl.Runtime() == nil {
 		return
 	}

@@ -22,7 +22,7 @@ func Open(t *testing.T, root string, window int) (*sessions.Store, error) {
 		return nil, err
 	}
 	t.Cleanup(func() {
-		if err := store.Close(); err != nil {
+		if err := store.CloseDB(); err != nil {
 			t.Errorf("sessionstore: close store: %v", err)
 		}
 	})

@@ -19,7 +19,7 @@ func TestPersistUserAttachmentsCopiesLocalImages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = store.CloseDB() }()
 
 	source, err := newLocalURLSource(src, "image/png")
 	if err != nil {

@@ -34,6 +34,56 @@ type Server struct {
 	mu      sync.Mutex
 	replies []Reply
 	calls   int
+	hold    *Gate
+}
+
+// Gate pauses the next completion request until Release. It lets
+// integration tests arrange deterministic ordering around an in-flight
+// provider call (for example closing a runtime while a run is active).
+type Gate struct {
+	ready       chan struct{}
+	release     chan struct{}
+	readyOnce   sync.Once
+	releaseOnce sync.Once
+}
+
+func newGate() *Gate {
+	return &Gate{
+		ready:   make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+// Ready is closed once the gated request reaches the fake provider.
+func (g *Gate) Ready() <-chan struct{} {
+	if g == nil {
+		return nil
+	}
+	return g.ready
+}
+
+// Release unblocks the gated request.
+func (g *Gate) Release() {
+	if g == nil {
+		return
+	}
+	g.releaseOnce.Do(func() { close(g.release) })
+}
+
+func (g *Gate) markReady() {
+	if g == nil {
+		return
+	}
+	g.readyOnce.Do(func() { close(g.ready) })
+}
+
+// HoldNext returns a gate applied to the next completion request.
+func (s *Server) HoldNext() *Gate {
+	g := newGate()
+	s.mu.Lock()
+	s.hold = g
+	s.mu.Unlock()
+	return g
 }
 
 // New starts a fake provider serving the given reply sequence. The
@@ -81,7 +131,15 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	if idx >= 0 {
 		reply = s.replies[idx]
 	}
+	hold := s.hold
+	s.hold = nil
+	if hold != nil {
+		hold.markReady()
+	}
 	s.mu.Unlock()
+	if hold != nil {
+		<-hold.release
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if req.Stream {

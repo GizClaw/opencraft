@@ -18,7 +18,7 @@ func TestForkCopiesHistoryThroughRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
+	t.Cleanup(func() { _ = store.CloseDB() })
 	ctx := context.Background()
 
 	sourceID, err := store.Create()
@@ -116,7 +116,7 @@ func TestForkCopiesSessionAttachments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
+	t.Cleanup(func() { _ = store.CloseDB() })
 	ctx := context.Background()
 
 	sourceID, err := store.Create()
@@ -204,7 +204,7 @@ func TestForkRejectsUnfinishedSourceTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
+	t.Cleanup(func() { _ = store.CloseDB() })
 	ctx := context.Background()
 
 	sourceID, err := store.Create()

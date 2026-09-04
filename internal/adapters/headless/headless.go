@@ -129,6 +129,10 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	run, err := h.StartRun(ctx, host.RunOptions{
 		Message: message.NewTextMessage(message.RoleUser, opts.Prompt),
 		Sink:    agent.StreamSinkFunc(rec.record),
+		// One-shot CLI runs return as soon as the turn ends; do not
+		// start a background title generation that would add an extra
+		// model call or delay teardown.
+		SkipAutoTitle: true,
 	})
 	if err != nil {
 		return Result{}, fmt.Errorf("headless: start run: %w", err)

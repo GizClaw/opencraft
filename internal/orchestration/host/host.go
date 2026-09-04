@@ -143,14 +143,18 @@ func (m *Manager) Acquire(
 		return nil, err
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if ref := m.hosts[workDir]; ref != nil {
-		telemetry.WarnErr(context.Background(),
-			"host: close duplicate assembled host", h.Close())
 		ref.refs++
-		return ref.host, nil
+		existing := ref.host
+		m.mu.Unlock()
+		// The freshly assembled host never reached the pool and has no
+		// runs; close it outside the manager lock so it can release its
+		// own session-store reference.
+		h.doClose()
+		return existing, nil
 	}
 	m.hosts[workDir] = &hostRef{host: h, refs: 1}
+	m.mu.Unlock()
 	return h, nil
 }
 
@@ -259,6 +263,7 @@ func (m *Manager) assemble(
 		rollouts:      make(map[ConversationID]*rollout.Recorder),
 		titling:       make(map[ConversationID]bool),
 	}
+	var sessionStore *sessions.Store
 	buildOpts := append([]engine.Option{
 		engine.WithConfigBase(userDir),
 		engine.WithWorkBase(workDir),
@@ -266,7 +271,11 @@ func (m *Manager) assemble(
 		engine.WithSessionStore(func(
 			ctx context.Context, root string, window int,
 		) (*sessions.Store, error) {
-			return m.acquireStore(ctx, workDir, root, window)
+			store, err := m.acquireStore(ctx, workDir, root, window)
+			if err == nil {
+				sessionStore = store
+			}
+			return store, err
 		}),
 		engine.WithUsageObserver(func(ctx context.Context, usage inference.Usage) {
 			if _, ok := agent.RunInfoFromContext(ctx); ok {
@@ -280,6 +289,9 @@ func (m *Manager) assemble(
 	}, engineOptions...)
 	rt, err := engine.BuildRuntime(ctx, view.Document, buildOpts...)
 	if err != nil {
+		if sessionStore != nil {
+			m.releaseStore(sessionStore)
+		}
 		return nil, err
 	}
 	ctrl := engine.NewController(rt)
@@ -290,6 +302,9 @@ func (m *Manager) assemble(
 	if err := broker.Attach(ctx); err != nil {
 		telemetry.WarnErr(ctx, "host: close controller after broker attach failure",
 			ctrl.Close())
+		if sessionStore != nil {
+			m.releaseStore(sessionStore)
+		}
 		return nil, err
 	}
 	value, ok := rt.Resource("sessions")
@@ -298,6 +313,9 @@ func (m *Manager) assemble(
 		broker.Close()
 		telemetry.WarnErr(ctx, "host: close controller after session resource failure",
 			ctrl.Close())
+		if sessionStore != nil {
+			m.releaseStore(sessionStore)
+		}
 		return nil, errors.New("host: session store resource missing")
 	}
 	h.store = store
@@ -448,13 +466,13 @@ func (m *Manager) acquireStore(
 	}
 	if err := migrations.Workspace(ctx, store.Database(), root); err != nil {
 		telemetry.WarnErr(ctx, "host: close store after workspace migration failure",
-			store.Close())
+			store.CloseDB())
 		return nil, err
 	}
 	m.mu.Lock()
 	if ref := m.stores[root]; ref != nil {
 		telemetry.WarnErr(ctx, "host: close duplicate session store",
-			store.Close())
+			store.CloseDB())
 		ref.refs++
 		s := ref.store
 		m.mu.Unlock()
@@ -477,7 +495,7 @@ func (m *Manager) releaseStore(store *sessions.Store) {
 		if ref.refs == 0 {
 			delete(m.stores, root)
 			telemetry.WarnErr(context.Background(),
-				"host: close released session store failed", store.Close())
+				"host: close released session store failed", store.CloseDB())
 		}
 		return
 	}
@@ -501,6 +519,7 @@ type Host struct {
 	runs       map[RunID]*runDetail
 	rollouts   map[ConversationID]*rollout.Recorder
 	titling    map[ConversationID]bool
+	titleWG    sync.WaitGroup
 	artifact   func(context.Context, string, []byte)
 	sessionUpd func(context.Context, string)
 	closing    bool
@@ -678,6 +697,10 @@ func (h *Host) doClose() {
 	}
 	h.closed = true
 	h.mu.Unlock()
+	// Auto-titles borrow the runtime and shared session store after a
+	// turn ends. Wait for them before tearing either down so a title
+	// never races the DB close.
+	h.titleWG.Wait()
 	h.closeRollouts()
 	h.broker.Close()
 	telemetry.WarnErr(context.Background(), "host: close controller failed",

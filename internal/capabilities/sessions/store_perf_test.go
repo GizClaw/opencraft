@@ -17,7 +17,7 @@ func benchStore(tb testing.TB, turns int) (*Store, string) {
 	if err != nil {
 		tb.Fatal(err)
 	}
-	tb.Cleanup(func() { _ = store.Close() })
+	tb.Cleanup(func() { _ = store.CloseDB() })
 	id, err := store.Create()
 	if err != nil {
 		tb.Fatal(err)
