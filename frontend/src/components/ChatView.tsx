@@ -61,7 +61,11 @@ import type {
 } from '../lib/store';
 import type { TurnEndKind } from '../state/types';
 import { InteractionCard } from './InteractionCard';
-import { MessagePeek } from './MessagePeek';
+import {
+  MessagePeek,
+  MAX_PEEK_MARKDOWN_CHARS,
+  MAX_PEEK_USER_CHARS,
+} from './MessagePeek';
 import {
   MarkdownComposer,
   type MarkdownComposerHandle,
@@ -82,6 +86,22 @@ const isCommandTool = (name: string) =>
 // once.
 const RENDER_WINDOW = 200;
 const RENDER_STEP = 100;
+
+// assistantPreviewText builds the hover preview without ever copying
+// the full assistant answer: it stops as soon as the preview budget is
+// used, so one huge markdown reply stays cheap to peek.
+function assistantPreviewText(items: AssistantItem[], limit: number): string {
+  let out = '';
+  for (const item of items) {
+    if (item.kind !== 'text' || !item.text) continue;
+    if (out.length >= limit) break;
+    const sep = out ? '\n' : '';
+    const remaining = Math.max(0, limit - out.length - sep.length);
+    out += sep + item.text.slice(0, remaining);
+    if (out.length >= limit) break;
+  }
+  return out.trim();
+}
 
 // ToolGroupView renders a burst of consecutive tool calls as one
 // collapsible block ("Ran 4 commands"), defaulting to collapsed; the
@@ -999,55 +1019,73 @@ export function ChatView() {
     : (modelOptions[0]?.reasoning ?? status?.default_reasoning ?? false);
   const failedTurn = turnState?.name === 'failed' ? turnState : undefined;
   const lastTurn = turnArtifacts[turnArtifacts.length - 1];
-  const peekItems = useMemo(
-    () =>
-      turnArtifacts.map((turn, ti) => {
-        const nextStart =
-          ti + 1 < turnArtifacts.length
-            ? turnArtifacts[ti + 1].start
-            : messages.length;
-        let user = '';
-        for (
-          let mi = turn.start;
-          mi < Math.min(nextStart, messages.length);
-          mi++
-        ) {
-          const m = messages[mi];
-          if (m.role === 'user' && !m.text.startsWith(COMPACT_SUMMARY_PREFIX)) {
-            user = m.text;
-            break;
-          }
-        }
-        let answer = '';
-        for (
-          let mi = Math.min(nextStart, messages.length) - 1;
-          mi >= turn.start;
-          mi--
-        ) {
-          const m = messages[mi];
-          if (m.role !== 'assistant') continue;
-          const text = m.items
-            .filter(
-              (it): it is Extract<AssistantItem, { kind: 'text' }> =>
-                it.kind === 'text',
-            )
-            .map((it) => it.text)
-            .join('\n')
-            .trim();
-          if (text) {
-            answer = text;
-            break;
-          }
-        }
-        return {
-          index: ti,
-          user,
-          answer,
-          running: busy && turn === lastTurn,
-        };
-      }),
-    [busy, lastTurn, messages, turnArtifacts],
+  // MessagePeek only needs the turn boundaries while rendering ticks.
+  // Preview text is fetched lazily on hover from refs, so token
+  // streaming does not force us to re-extract every turn's answer on
+  // every stream flush.
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  const turnArtifactsRef = useRef(turnArtifacts);
+  turnArtifactsRef.current = turnArtifacts;
+  const lastTurnRef = useRef(lastTurn);
+  lastTurnRef.current = lastTurn;
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+  const startRef = useRef(start);
+  startRef.current = start;
+  const peekTicks = useMemo(
+    () => turnArtifacts.map((_, index) => ({ index })),
+    [turnArtifacts],
   );
+  const peekPreview = useCallback((index: number) => {
+    const turns = turnArtifactsRef.current;
+    const currentMessages = messagesRef.current;
+    if (index < 0 || index >= turns.length) {
+      return { user: '', answer: '', running: false };
+    }
+    const turn = turns[index];
+    const nextStart =
+      index + 1 < turns.length
+        ? turns[index + 1].start
+        : currentMessages.length;
+    let user = '';
+    for (
+      let mi = turn.start;
+      mi < Math.min(nextStart, currentMessages.length);
+      mi++
+    ) {
+      const m = currentMessages[mi];
+      if (m.role === 'user' && !m.text.startsWith(COMPACT_SUMMARY_PREFIX)) {
+        user = m.text;
+        break;
+      }
+    }
+    let answer = '';
+    for (
+      let mi = Math.min(nextStart, currentMessages.length) - 1;
+      mi >= turn.start;
+      mi--
+    ) {
+      const m = currentMessages[mi];
+      if (m.role !== 'assistant') continue;
+      const text = assistantPreviewText(m.items, MAX_PEEK_MARKDOWN_CHARS);
+      if (text) {
+        answer = text;
+        break;
+      }
+    }
+    if (user.length >= MAX_PEEK_USER_CHARS) {
+      user = `${user.slice(0, MAX_PEEK_USER_CHARS).trimEnd()}\n\n…`;
+    }
+    if (answer.length >= MAX_PEEK_MARKDOWN_CHARS) {
+      answer = `${answer.trimEnd()}\n\n…`;
+    }
+    return {
+      user,
+      answer,
+      running: busyRef.current && turn === lastTurnRef.current,
+    };
+  }, []);
   const openConfig = useStore((s) => s.openConfig);
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<AttachmentView[]>([]);
@@ -1087,7 +1125,7 @@ export function ChatView() {
   // do not cause an extra render for a stationary viewport.
   const refreshPeekCurrent = useCallback(() => {
     const scroller = scrollRef.current;
-    if (!scroller || turnArtifacts.length === 0) {
+    if (!scroller || turnArtifactsRef.current.length === 0) {
       setPeekCurrent(-1);
       return;
     }
@@ -1114,7 +1152,18 @@ export function ChatView() {
       next = scroller.scrollTop <= 1 ? first : last;
     }
     setPeekCurrent((prev) => (prev === next ? prev : next));
-  }, [turnArtifacts.length]);
+  }, []);
+  // schedulePeekRefresh coalesces scroll-driven current-turn lookups
+  // into one pass per animation frame instead of scanning the mounted
+  // transcript on every scroll event.
+  const peekRefreshRafRef = useRef<number | null>(null);
+  const schedulePeekRefresh = useCallback(() => {
+    if (peekRefreshRafRef.current != null) return;
+    peekRefreshRafRef.current = requestAnimationFrame(() => {
+      peekRefreshRafRef.current = null;
+      refreshPeekCurrent();
+    });
+  }, [refreshPeekCurrent]);
   const loadEarlier = () => {
     if (!truncated || loadingEarlier) return;
     const el = scrollRef.current;
@@ -1133,43 +1182,48 @@ export function ChatView() {
       if (!current) return;
       const addedAbove = current.scrollHeight - prevScrollHeight;
       current.scrollTop = prevScrollTop + addedAbove;
-      refreshPeekCurrent();
+      schedulePeekRefresh();
     });
     window.setTimeout(() => setLoadingEarlier(false), 250);
   };
-  const jumpToTurn = (index: number) => {
-    const turn = turnArtifacts[index];
-    if (!turn) return;
-    const target = turn.start;
-    const expanding = target < start;
-    if (expanding) {
-      setVisibleCount((prev) => Math.max(prev, messages.length - target));
-      setLoadingEarlier(false);
-    }
-    // A jump is an explicit navigation: never snap back to the newest
-    // output afterwards.
-    stickRef.current = false;
-    setStick(false);
-    const runScroll = () => {
-      const scroller = scrollRef.current;
-      if (!scroller) return;
-      const exact = scroller.querySelector<HTMLElement>(
-        `[data-msg-index="${target}"]`,
-      );
-      const row =
-        exact ??
-        scroller.querySelector<HTMLElement>(`[data-turn-index="${index}"]`);
-      if (!row) return;
-      const containerRect = scroller.getBoundingClientRect();
-      const top =
-        row.getBoundingClientRect().top -
-        containerRect.top +
-        scroller.scrollTop;
-      scroller.scrollTop = Math.max(0, top - 12);
-      refreshPeekCurrent();
-    };
-    requestAnimationFrame(() => requestAnimationFrame(runScroll));
-  };
+  const jumpToTurn = useCallback(
+    (index: number) => {
+      const turn = turnArtifactsRef.current[index];
+      if (!turn) return;
+      const target = turn.start;
+      const expanding = target < startRef.current;
+      if (expanding) {
+        setVisibleCount((prev) =>
+          Math.max(prev, messagesRef.current.length - target),
+        );
+        setLoadingEarlier(false);
+      }
+      // A jump is an explicit navigation: never snap back to the newest
+      // output afterwards.
+      stickRef.current = false;
+      setStick(false);
+      const runScroll = () => {
+        const scroller = scrollRef.current;
+        if (!scroller) return;
+        const exact = scroller.querySelector<HTMLElement>(
+          `[data-msg-index="${target}"]`,
+        );
+        const row =
+          exact ??
+          scroller.querySelector<HTMLElement>(`[data-turn-index="${index}"]`);
+        if (!row) return;
+        const containerRect = scroller.getBoundingClientRect();
+        const top =
+          row.getBoundingClientRect().top -
+          containerRect.top +
+          scroller.scrollTop;
+        scroller.scrollTop = Math.max(0, top - 12);
+        schedulePeekRefresh();
+      };
+      requestAnimationFrame(() => requestAnimationFrame(runScroll));
+    },
+    [schedulePeekRefresh],
+  );
   const { t } = useTranslation();
   const thinkLevels = [
     { value: 'minimal', label: t('chat.thinkMinimal') },
@@ -1255,15 +1309,23 @@ export function ChatView() {
     const frame = requestAnimationFrame(() => {
       const el = scrollRef.current;
       if (el && stickRef.current) el.scrollTop = el.scrollHeight;
-      refreshPeekCurrent();
     });
     return () => cancelAnimationFrame(frame);
-  }, [messages, pendingInteracts, stick, refreshPeekCurrent]);
+  }, [messages, pendingInteracts, stick]);
 
   useEffect(() => {
     const frame = requestAnimationFrame(refreshPeekCurrent);
     return () => cancelAnimationFrame(frame);
-  }, [current, messages, refreshPeekCurrent, turnArtifacts, visibleCount]);
+  }, [current, refreshPeekCurrent, turnArtifacts, visibleCount]);
+
+  useEffect(
+    () => () => {
+      if (peekRefreshRafRef.current != null) {
+        cancelAnimationFrame(peekRefreshRafRef.current);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     const onVisibility = () => {
@@ -1466,7 +1528,7 @@ export function ChatView() {
             if (!pinned && el.scrollTop <= 8 && truncated && !loadingEarlier) {
               loadEarlier();
             }
-            refreshPeekCurrent();
+            schedulePeekRefresh();
           }}
           data-testid="chat-scroll"
           className="flex-1 overflow-y-auto [overflow-anchor:none] px-6 py-4"
@@ -1595,9 +1657,11 @@ export function ChatView() {
           )}
         </div>
         <MessagePeek
-          items={peekItems}
+          items={peekTicks}
           currentIndex={peekCurrent}
           onJump={jumpToTurn}
+          getPreview={peekPreview}
+          revision={turnArtifacts}
         />
         {planState && !planDismissed && (
           <PlanPanel

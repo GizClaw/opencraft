@@ -2,19 +2,24 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { MessagePeek, type MessagePeekItem } from './MessagePeek';
 
-const turns: MessagePeekItem[] = [
-  {
-    index: 0,
-    user: 'Add search',
-    answer: 'Search **added**.',
-    running: false,
-  },
-  { index: 1, user: 'Add sorting', answer: '', running: true },
+const turns: MessagePeekItem[] = [{ index: 0 }, { index: 1 }];
+const previews = [
+  { user: 'Add search', answer: 'Search **added**.', running: false },
+  { user: 'Add sorting', answer: '', running: true },
 ];
+
+const previewFor = (index: number) => previews[index];
 
 describe('MessagePeek', () => {
   it('renders one tick per turn and highlights the current turn', () => {
-    render(<MessagePeek items={turns} currentIndex={0} onJump={vi.fn()} />);
+    render(
+      <MessagePeek
+        items={turns}
+        currentIndex={0}
+        onJump={vi.fn()}
+        getPreview={previewFor}
+      />,
+    );
 
     expect(screen.getByTestId('message-peek')).toBeInTheDocument();
     expect(
@@ -25,13 +30,23 @@ describe('MessagePeek', () => {
     ).toBeInTheDocument();
   });
 
-  it('shows the user request and final assistant answer on hover', () => {
-    render(<MessagePeek items={turns} currentIndex={0} onJump={vi.fn()} />);
+  it('loads previews lazily on hover and renders markdown', () => {
+    const getPreview = vi.fn(previewFor);
+    render(
+      <MessagePeek
+        items={turns}
+        currentIndex={0}
+        onJump={vi.fn()}
+        getPreview={getPreview}
+      />,
+    );
+    expect(getPreview).not.toHaveBeenCalled();
 
     fireEvent.mouseEnter(
       screen.getByRole('button', { name: 'Jump to turn 1' }),
     );
 
+    expect(getPreview).toHaveBeenCalledWith(0);
     const tooltip = screen.getByRole('tooltip');
     expect(tooltip).toHaveTextContent('Add search');
     expect(tooltip).toHaveTextContent('Search added.');
@@ -47,7 +62,14 @@ describe('MessagePeek', () => {
 
   it('calls onJump when a tick is clicked', () => {
     const onJump = vi.fn();
-    render(<MessagePeek items={turns} currentIndex={0} onJump={onJump} />);
+    render(
+      <MessagePeek
+        items={turns}
+        currentIndex={0}
+        onJump={onJump}
+        getPreview={previewFor}
+      />,
+    );
 
     fireEvent.click(screen.getByRole('button', { name: 'Jump to turn 2' }));
 
@@ -55,20 +77,34 @@ describe('MessagePeek', () => {
   });
 
   it('renders nothing without turns', () => {
-    render(<MessagePeek items={[]} currentIndex={-1} onJump={vi.fn()} />);
+    render(
+      <MessagePeek
+        items={[]}
+        currentIndex={-1}
+        onJump={vi.fn()}
+        getPreview={previewFor}
+      />,
+    );
 
     expect(screen.queryByTestId('message-peek')).not.toBeInTheDocument();
   });
 
   it('switches to a keyboard-reachable scrubber for dense sessions', () => {
-    const denseTurns = Array.from({ length: 70 }, (_, i) => ({
-      index: i,
-      user: `user-${i}`,
-      answer: `answer-${i}`,
+    const denseTurns = Array.from({ length: 70 }, (_, i) => ({ index: i }));
+    const getPreview = vi.fn((index: number) => ({
+      user: `user-${index}`,
+      answer: `answer-${index}`,
       running: false,
     }));
     const onJump = vi.fn();
-    render(<MessagePeek items={denseTurns} currentIndex={0} onJump={onJump} />);
+    render(
+      <MessagePeek
+        items={denseTurns}
+        currentIndex={0}
+        onJump={onJump}
+        getPreview={getPreview}
+      />,
+    );
 
     const scrubber = screen.getByRole('slider', {
       name: 'Message peek: turn scrubber',

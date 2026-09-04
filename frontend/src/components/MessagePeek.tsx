@@ -9,14 +9,27 @@ import { Markdown } from './Markdown';
 // full height maps to turn order, so every turn remains reachable.
 const DENSE_TICK_THRESHOLD = 40;
 const GRADIENT_TICK_LIMIT = 256;
+// Preview Markdown is bounded so a hover over a huge assistant reply
+// does not pay the full parse cost; the chat transcript stays the
+// place for the complete answer.
+export const MAX_PEEK_USER_CHARS = 800;
+export const MAX_PEEK_MARKDOWN_CHARS = 4000;
 
 export interface MessagePeekItem {
   // index is the turn's position in turnArtifacts; ChatView uses it as
   // the jump target and as the current-position identity.
   index: number;
+}
+
+export interface MessagePeekPreview {
   user: string;
   answer: string;
   running: boolean;
+}
+
+function boundedMarkdown(text: string, max: number) {
+  if (text.length <= max) return text;
+  return `${text.slice(0, max).trimEnd()}\n\n…`;
 }
 
 // MessagePeek renders the compact turn ruler on the left side of the
@@ -28,16 +41,24 @@ export const MessagePeek = memo(function MessagePeek({
   items,
   currentIndex,
   onJump,
+  getPreview,
+  revision,
 }: {
   items: MessagePeekItem[];
   currentIndex: number;
   onJump: (turnIndex: number) => void;
+  getPreview: (turnIndex: number) => MessagePeekPreview;
+  // revision only exists to re-fetch a hovered preview when the turn
+  // archive changes (new turn, artifacts, turn_end). Token streaming
+  // does not change it, so an open tooltip is not reparsed every delta.
+  revision?: unknown;
 }) {
   const { t } = useTranslation();
   const rootRef = useRef<HTMLDivElement>(null);
   const scrubberRef = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState<number | null>(null);
   const [tooltipTop, setTooltipTop] = useState(0);
+  const [preview, setPreview] = useState<MessagePeekPreview | null>(null);
   const dense = items.length > DENSE_TICK_THRESHOLD;
   const activeIndex = currentIndex >= 0 ? currentIndex : 0;
 
@@ -64,10 +85,16 @@ export const MessagePeek = memo(function MessagePeek({
     }
   }, [dense, hovered, items.length]);
 
+  useEffect(() => {
+    if (hovered == null || hovered >= items.length) {
+      setPreview(null);
+      return;
+    }
+    setPreview(getPreview(hovered));
+  }, [getPreview, hovered, items.length, revision]);
+
   if (items.length === 0) return null;
 
-  const hoveredItem =
-    hovered == null || hovered >= items.length ? null : items[hovered];
   const indexFromPointer = (clientY: number) => {
     const el = scrubberRef.current ?? rootRef.current;
     if (!el) return 0;
@@ -188,18 +215,18 @@ export const MessagePeek = memo(function MessagePeek({
           }}
         />
       )}
-      {hoveredItem && (
+      {preview && (
         <div
           role="tooltip"
           className="pointer-events-none absolute left-8 z-50 w-[22rem] rounded-2xl border border-edge/80 bg-panel/95 p-4 shadow-2xl ring-1 ring-edge/40 backdrop-blur-sm"
           style={{ top: tooltipTop }}
         >
-          {hoveredItem.user ? (
+          {preview.user ? (
             <div className="flex items-start justify-between gap-3">
               <div className="prose-chat min-w-0 flex-1 text-sm font-semibold leading-relaxed text-fg [&_p:first-child]:my-0 [&_p:first-child]:line-clamp-2 [&_p:first-child]:whitespace-pre-wrap [&_p:first-child]:break-words">
-                <Markdown text={hoveredItem.user} />
+                <Markdown text={boundedMarkdown(preview.user, 800)} />
               </div>
-              {hoveredItem.running && (
+              {preview.running && (
                 <span className="mt-0.5 flex shrink-0 items-center gap-1 text-xs text-accent">
                   <Loader2 size="0.8571rem" className="animate-spin" />
                   {t('chat.messagePeekRunning')}
@@ -207,28 +234,33 @@ export const MessagePeek = memo(function MessagePeek({
               )}
             </div>
           ) : (
-            hoveredItem.running && (
+            preview.running && (
               <div className="flex items-center gap-1.5 text-xs text-accent">
                 <Loader2 size="0.8571rem" className="animate-spin" />
                 {t('chat.messagePeekRunning')}
               </div>
             )
           )}
-          {hoveredItem.user && hoveredItem.answer && (
+          {preview.user && preview.answer && (
             <div className="my-3 h-px bg-edge/70" />
           )}
-          {hoveredItem.answer ? (
+          {preview.answer ? (
             <div>
               <div className="text-[0.7143rem] font-semibold uppercase tracking-wider text-dim">
                 {t('chat.messagePeekAssistant')}
               </div>
               <div className="prose-chat mt-1.5 max-h-44 overflow-y-auto pr-1 text-xs opacity-75 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_p]:break-words [&_p]:whitespace-pre-wrap">
-                <Markdown text={hoveredItem.answer} />
+                <Markdown
+                  text={boundedMarkdown(
+                    preview.answer,
+                    MAX_PEEK_MARKDOWN_CHARS,
+                  )}
+                />
               </div>
             </div>
           ) : (
-            !hoveredItem.user &&
-            !hoveredItem.running && (
+            !preview.user &&
+            !preview.running && (
               <p className="text-xs text-dim">
                 {t('chat.messagePeekNoContent')}
               </p>
