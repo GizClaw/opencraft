@@ -7,9 +7,7 @@ import type { MessageView, TurnArtifacts } from '../lib/store';
 import { ChatView } from './ChatView';
 
 const apiMock = vi.hoisted(() => ({
-  projectConfigStatus: vi.fn(),
   workspace: vi.fn(),
-  setProjectTrust: vi.fn(),
   undoState: vi.fn(),
   undoChange: vi.fn(),
   redoChange: vi.fn(),
@@ -66,7 +64,6 @@ function setConversation(
 beforeEach(() => {
   stateRoot.resetWorkspace();
   vi.clearAllMocks();
-  apiMock.projectConfigStatus.mockResolvedValue(null);
   apiMock.workspace.mockResolvedValue('/tmp/w');
   apiMock.undoState.mockResolvedValue({ can_undo: false, can_redo: false });
 });

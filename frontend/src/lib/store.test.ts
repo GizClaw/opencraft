@@ -162,6 +162,14 @@ describe('store: send and stream', () => {
     expect(apiMock.startTurn).not.toHaveBeenCalled();
   });
 
+  it('resuming the active session closes the tool page', async () => {
+    useStore.setState({ toolsView: 'plugins' });
+    await useStore.getState().resume('s-1');
+
+    expect(useStore.getState().toolsView).toBeNull();
+    expect(apiMock.resumeSession).not.toHaveBeenCalled();
+  });
+
   it('surfaces active-conversation deletion errors as a warning toast', async () => {
     await useStore.getState().deleteSession('s-1');
 

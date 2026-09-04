@@ -183,12 +183,6 @@ export interface WorkspaceMeta {
   last_opened: string;
 }
 
-export interface ProjectConfigStatus {
-  present: boolean;
-  trusted: boolean;
-  path?: string;
-}
-
 // HistoryMessage is the wire form of flowcraft's message.Message: the
 // resume view gets the same ordered parts (text, reasoning, tool
 // calls, tool results) the live stream renders.

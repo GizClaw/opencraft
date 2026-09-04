@@ -9,12 +9,6 @@
     "failed": "任务失败",
     "interact": "需要你的输入"
   },
-  "projectTrust": {
-    "title": "检测到项目配置文件",
-    "body": "此工作区带有 .opencraft/config 配置层。在信任之前不会生效：未信任的项目配置可能覆盖 hooks、沙箱策略和执行图。",
-    "trust": "信任项目配置",
-    "working": "应用中…"
-  },
   "sidebar": {
     "newChat": "新会话",
     "subagents": "子代理",

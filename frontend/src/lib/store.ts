@@ -1345,7 +1345,12 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     resume: async (id) => {
-      if (activeConversationID() === id) return;
+      if (activeConversationID() === id) {
+        // Returning to the already-active conversation means closing
+        // whatever overlay/tool page currently covers the chat.
+        set({ toolsView: null, configOpen: false });
+        return;
+      }
       stateRoot.sendFocus({ type: 'OPEN_SESSION', id });
       const request = stateRoot.focusSnapshot.context.request;
       try {

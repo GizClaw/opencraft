@@ -9,12 +9,6 @@
     "failed": "Task failed",
     "interact": "Input needed"
   },
-  "projectTrust": {
-    "title": "Project configuration detected",
-    "body": "This workspace ships a .opencraft/config layer. It is skipped until you trust it: untrusted project config can override hooks, sandbox policy, and the execution graph.",
-    "trust": "Trust project config",
-    "working": "Applying…"
-  },
   "sidebar": {
     "newChat": "New chat",
     "subagents": "Subagents",

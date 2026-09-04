@@ -229,6 +229,22 @@ func (m *Manager) Stop(id string) {
 	}
 }
 
+// StopAll terminates every running capability process. Unlike
+// Shutdown it keeps the manager usable: the next Invoke restarts a
+// process with the manager's current environment.
+func (m *Manager) StopAll() {
+	m.mu.Lock()
+	procs := make([]*process, 0, len(m.procs))
+	for id, p := range m.procs {
+		delete(m.procs, id)
+		procs = append(procs, p)
+	}
+	m.mu.Unlock()
+	for _, p := range procs {
+		p.stop()
+	}
+}
+
 // Cleanup asks a running capability plugin to clean up its own
 // resources (inference profile, secrets) via lifecycle.cleanup, then
 // stops it. Best-effort: a plugin without a running process or without

@@ -63,7 +63,6 @@ import {
 import { Markdown } from './Markdown';
 import { PlanPanel } from './PlanPanel';
 import { ToolCard } from './ToolCard';
-import { ProjectTrustBanner } from './ProjectTrustBanner';
 import { StreamItemView } from './StreamItemView';
 import { latestPlan } from '../lib/plan';
 import { groupToolCalls, type ToolCallItem } from '../lib/stream';
@@ -1132,8 +1131,6 @@ export function ChatView() {
           )}
         </div>
       </header>
-
-      <ProjectTrustBanner />
 
       <div className="relative flex min-h-0 flex-1 flex-col">
         <div
