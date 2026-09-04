@@ -52,7 +52,8 @@ func TestShellContextFallsBackBeforeStartup(t *testing.T) {
 	if s.Context() == nil {
 		t.Fatal("Context must never be nil before Startup")
 	}
-	ctx := context.WithValue(context.Background(), struct{}{}, "wails")
+	type shellContextKey struct{}
+	ctx := context.WithValue(context.Background(), shellContextKey{}, "wails")
 	s.SetContext(ctx)
 	if s.Context() != ctx {
 		t.Fatal("Context must return the installed Wails context")

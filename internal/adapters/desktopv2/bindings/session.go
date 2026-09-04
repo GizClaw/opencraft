@@ -170,12 +170,13 @@ func (b *Session) ExportMarkdown(
 	}
 	for _, turn := range turns {
 		for _, m := range turn.Messages {
-			if m.Role == message.RoleUser {
+			switch m.Role {
+			case message.RoleUser:
 				flush()
 				if text := strings.TrimSpace(m.Content.Text()); text != "" {
 					fmt.Fprintf(&bld, "## User\n\n%s\n\n", text)
 				}
-			} else if m.Role == message.RoleAssistant {
+			case message.RoleAssistant:
 				if text := strings.TrimSpace(m.Content.Text()); text != "" {
 					pending = text
 				}
