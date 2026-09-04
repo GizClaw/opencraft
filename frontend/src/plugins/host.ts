@@ -141,6 +141,7 @@ function provideServices(ctx: Context, c: ContributionState) {
     'ui',
     {
       flash: (text: string) => useMainStore.getState().flash(text),
+      pickFolder: (title: string) => api.pickFolder(title),
     } satisfies UIService,
     true,
   );
