@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -45,6 +46,53 @@ func toSessionMeta(m sessions.Meta) SessionMeta {
 		UpdatedAt:   m.UpdatedAt.UTC().Format(time.RFC3339),
 		Messages:    m.Messages,
 		TotalTokens: m.Usage.TotalTokens,
+	}
+}
+
+// SessionTurnDTO is the wire form of one archived turn. Times are
+// RFC3339 strings and the UI duration is computed from the stored
+// started/finished stamps with the same legacy fallbacks older
+// archives relied on.
+type SessionTurnDTO struct {
+	Seq         int                 `json:"seq"`
+	At          string              `json:"at"`
+	RequestedAt string              `json:"requested_at,omitempty"`
+	StartedAt   string              `json:"started_at,omitempty"`
+	FinishedAt  string              `json:"finished_at,omitempty"`
+	DurationMs  int64               `json:"duration_ms,omitempty"`
+	RunID       string              `json:"run_id,omitempty"`
+	Messages    []message.Message   `json:"messages"`
+	Artifacts   []sessions.Artifact `json:"artifacts,omitempty"`
+}
+
+func toSessionTurnDTO(t sessions.TurnRecord) SessionTurnDTO {
+	requestedAt := t.RequestedAt
+	if requestedAt.IsZero() {
+		requestedAt = t.At
+	}
+	startedAt := t.StartedAt
+	if startedAt.IsZero() {
+		startedAt = t.At
+	}
+	finishedAt := t.FinishedAt
+	if finishedAt.IsZero() {
+		finishedAt = t.At
+	}
+	var durationMs int64
+	if !t.StartedAt.IsZero() && !t.FinishedAt.IsZero() &&
+		t.FinishedAt.After(t.StartedAt) {
+		durationMs = t.FinishedAt.Sub(t.StartedAt).Milliseconds()
+	}
+	return SessionTurnDTO{
+		Seq:         t.Seq,
+		At:          t.At.UTC().Format(time.RFC3339),
+		RequestedAt: requestedAt.UTC().Format(time.RFC3339),
+		StartedAt:   startedAt.UTC().Format(time.RFC3339),
+		FinishedAt:  finishedAt.UTC().Format(time.RFC3339),
+		DurationMs:  durationMs,
+		RunID:       t.RunID,
+		Messages:    t.Messages,
+		Artifacts:   t.Artifacts,
 	}
 }
 
@@ -124,13 +172,21 @@ func (b *Session) Delete(id string) error {
 // Turns returns every archived turn of one conversation.
 func (b *Session) Turns(
 	id string,
-) ([]sessions.TurnRecord, error) {
+) ([]SessionTurnDTO, error) {
 	ctx := b.core.Shell.Context()
 	h := b.core.Runtime.Current()
 	if h == nil || h.Sessions() == nil {
 		return nil, errNotReady("session")
 	}
-	return h.Sessions().Turns(ctx, id)
+	turns, err := h.Sessions().Turns(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]SessionTurnDTO, 0, len(turns))
+	for _, turn := range turns {
+		out = append(out, toSessionTurnDTO(turn))
+	}
+	return out, nil
 }
 
 func (b *Session) exportsDir() (string, error) {
@@ -233,28 +289,47 @@ func (b *Session) ExportBundle(
 	return path, os.WriteFile(path, data, 0o644)
 }
 
+// SessionImportDTO reports a completed bundle import to the UI.
+type SessionImportDTO struct {
+	SessionID string `json:"session_id"`
+	Messages  int    `json:"messages"`
+	Turns     int    `json:"turns"`
+}
+
 // ImportBundle imports a neutral session bundle into the current
 // workspace store.
 func (b *Session) ImportBundle(
 	path string,
-) (string, error) {
+) (SessionImportDTO, error) {
 	ctx := b.core.Shell.Context()
 	h := b.core.Runtime.Current()
 	if h == nil || h.Sessions() == nil {
-		return "", errNotReady("session")
+		return SessionImportDTO{}, errNotReady("session")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return "", err
+		return SessionImportDTO{}, err
 	}
 	var req sessions.ImportRequest
 	if err := json.Unmarshal(data, &req); err != nil {
-		return "", err
+		return SessionImportDTO{}, err
 	}
 	if req.Source == "" {
 		req.Source = fmt.Sprintf("opencraft:%d", time.Now().UnixNano())
 	}
-	return h.Sessions().Import(ctx, req)
+	id, err := h.Sessions().Import(ctx, req)
+	if err != nil {
+		return SessionImportDTO{}, err
+	}
+	messages := 0
+	for _, turn := range req.Turns {
+		messages += len(turn.Messages)
+	}
+	return SessionImportDTO{
+		SessionID: id,
+		Messages:  messages,
+		Turns:     len(req.Turns),
+	}, nil
 }
 
 // ActiveRun returns the run id currently active in one conversation.
@@ -277,25 +352,64 @@ type DelegationCard struct {
 	Producer    string `json:"producer,omitempty"`
 	Consumer    string `json:"consumer,omitempty"`
 	Status      string `json:"status"`
+	Target      string `json:"target"`
+	Input       string `json:"input,omitempty"`
+	Output      string `json:"output,omitempty"`
+	Caller      string `json:"caller,omitempty"`
+	Depth       int    `json:"depth"`
+	Error       string `json:"error,omitempty"`
 	RunID       string `json:"run_id,omitempty"`
 	ParentRunID string `json:"parent_run_id,omitempty"`
+	CallID      string `json:"call_id,omitempty"`
 	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
 }
 
 func cardDTO(c *kanban.Card) (DelegationCard, bool) {
 	if c == nil || c.Task == nil {
 		return DelegationCard{}, false
 	}
-	parent := c.Task.Request.Request.Metadata[delegation.ParentRunMetadataKey]
-	return DelegationCard{
-		ID:          c.ID,
-		Producer:    c.Producer,
-		Consumer:    c.Consumer,
-		Status:      string(c.Status),
-		RunID:       c.RunID,
-		ParentRunID: parent,
-		CreatedAt:   c.CreatedAt.UTC().Format(time.RFC3339),
-	}, true
+	req := c.Task.Request.Request
+	dto := DelegationCard{
+		ID:        c.ID,
+		Producer:  c.Producer,
+		Consumer:  c.Consumer,
+		Status:    string(c.Status),
+		RunID:     c.RunID,
+		CreatedAt: c.CreatedAt.UTC().Format(time.RFC3339),
+		UpdatedAt: c.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+	dto.Target = req.Target
+	dto.Input = truncateDisplay(req.Input, 200)
+	dto.Caller = c.Task.Request.Caller
+	dto.Depth = c.Task.Request.Depth
+	dto.ParentRunID = c.Task.Request.ParentRunID
+	dto.CallID = c.Task.Request.CallID
+	if dto.ParentRunID == "" {
+		dto.ParentRunID = req.Metadata[delegation.ParentRunMetadataKey]
+	}
+	if dto.CallID == "" {
+		dto.CallID = req.Metadata[delegation.CallIDMetadataKey]
+	}
+	if c.Result != nil {
+		dto.Output = truncateDisplay(c.Result.Response.Output, 400)
+		dto.Error = c.Result.Response.Error
+	}
+	return dto, true
+}
+
+func sortCardsNewestFirst(cards []DelegationCard) {
+	sort.SliceStable(cards, func(i, j int) bool {
+		return cards[i].CreatedAt > cards[j].CreatedAt
+	})
+}
+
+func truncateDisplay(s string, n int) string {
+	s = strings.TrimSpace(s)
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
 
 func (b *Session) board() (*kanban.Board, error) {
@@ -326,6 +440,7 @@ func (b *Session) DelegationCards() ([]DelegationCard, error) {
 			out = append(out, dto)
 		}
 	}
+	sortCardsNewestFirst(out)
 	return out, nil
 }
 
@@ -352,5 +467,6 @@ func (b *Session) ConversationDelegationCards(
 			out = append(out, dto)
 		}
 	}
+	sortCardsNewestFirst(out)
 	return out, nil
 }

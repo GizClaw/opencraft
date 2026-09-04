@@ -1,6 +1,12 @@
 package bindings
 
 import (
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"sigs.k8s.io/yaml"
+
 	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/core"
 )
 
@@ -19,6 +25,29 @@ type AgentSummary struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	CreatedAt   string `json:"created_at,omitempty"`
+}
+
+// GraphNode is the UI snapshot of one subagent graph node. Config is
+// kept as raw JSON so the editor round-trips node-type-specific knobs.
+type GraphNode struct {
+	ID     string          `json:"id"`
+	Type   string          `json:"type"`
+	Config json.RawMessage `json:"config,omitempty"`
+}
+
+// GraphEdge is one directed transition in a subagent graph.
+type GraphEdge struct {
+	From      string `json:"from"`
+	To        string `json:"to"`
+	Condition string `json:"condition,omitempty"`
+}
+
+// Graph is the parsed flowcraft graph definition of one subagent.
+type Graph struct {
+	Name  string      `json:"name"`
+	Entry string      `json:"entry"`
+	Nodes []GraphNode `json:"nodes"`
+	Edges []GraphEdge `json:"edges"`
 }
 
 // List returns every persisted subagent.
@@ -43,8 +72,16 @@ func (b *Agent) List() ([]AgentSummary, error) {
 type AgentDetail struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
-	Graph       string `json:"graph"`
+	Graph       Graph  `json:"graph"`
 	CreatedAt   string `json:"created_at,omitempty"`
+}
+
+func parseAgentGraph(raw string) (Graph, error) {
+	var g Graph
+	if err := yaml.Unmarshal([]byte(raw), &g); err != nil {
+		return Graph{}, fmt.Errorf("parse subagent graph: %w", err)
+	}
+	return g, nil
 }
 
 // Detail returns one agent declaration.
@@ -58,11 +95,15 @@ func (b *Agent) Detail(name string) (AgentDetail, error) {
 	if err != nil {
 		return AgentDetail{}, err
 	}
+	graph, err := parseAgentGraph(spec.Graph)
+	if err != nil {
+		return AgentDetail{}, err
+	}
 	return AgentDetail{
 		Name:        spec.Name,
 		Description: spec.Description,
-		Graph:       spec.Graph,
-		CreatedAt:   spec.CreatedAt.UTC().String(),
+		Graph:       graph,
+		CreatedAt:   spec.CreatedAt.UTC().Format(time.RFC3339),
 	}, nil
 }
 

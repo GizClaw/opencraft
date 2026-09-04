@@ -109,9 +109,10 @@ func (b *Plugin) Rollback(id string) (plugins.PluginSummary, error) {
 
 // PluginToolDTO is the settings view of one plugin tool.
 type PluginToolDTO struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Method      string `json:"method"`
+	Name         string `json:"name"`
+	Description  string `json:"description"`
+	Method       string `json:"method"`
+	MutatesState bool   `json:"mutates_state"`
 }
 
 // Tools returns tools declared by one plugin.
@@ -122,10 +123,15 @@ func (b *Plugin) Tools(id string) ([]PluginToolDTO, error) {
 	}
 	out := make([]PluginToolDTO, 0, len(m.Tools))
 	for _, t := range m.Tools {
+		mutates := true
+		if t.MutatesState != nil {
+			mutates = *t.MutatesState
+		}
 		out = append(out, PluginToolDTO{
-			Name:        t.Name,
-			Description: t.Description,
-			Method:      t.Method,
+			Name:         t.Name,
+			Description:  t.Description,
+			Method:       t.Method,
+			MutatesState: mutates,
 		})
 	}
 	return out, nil
@@ -143,7 +149,7 @@ func (b *Plugin) Skills(id string) ([]SkillSummary, error) {
 	}
 	roots := pluginSkillRoots(m, dir)
 	seen := map[string]bool{}
-	var out []SkillSummary
+	out := make([]SkillSummary, 0)
 	for _, root := range roots {
 		for _, sk := range scanPluginSkillRoot(root) {
 			if seen[sk.Path] {

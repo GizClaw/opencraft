@@ -37,6 +37,8 @@ type StartTurnRequest struct {
 type TurnStart struct {
 	RunID          string `json:"run_id"`
 	ConversationID string `json:"conversation_id"`
+	RequestedAt    string `json:"requested_at,omitempty"`
+	StartedAt      string `json:"started_at,omitempty"`
 }
 
 // StartTurn starts one assistant turn and returns immediately.
@@ -53,6 +55,7 @@ func (b *Conversation) StartTurn(
 		contextID = b.core.Conversation.New()
 	}
 	st, _ := b.undoStore()
+	requestedAt := time.Now().UTC()
 	sink := agent.StreamSinkFunc(func(
 		ctx context.Context,
 		env event.Envelope,
@@ -85,12 +88,15 @@ func (b *Conversation) StartTurn(
 	if err != nil {
 		return TurnStart{}, err
 	}
+	startedAt := time.Now().UTC()
 	b.core.Conversation.TrackRun(contextID, run.RunID())
 	b.core.Shell.Emit("status", core.StatusEvent{Busy: true})
 	go b.waitTurn(ctx, run, contextID)
 	return TurnStart{
 		RunID:          run.RunID(),
 		ConversationID: contextID,
+		RequestedAt:    requestedAt.Format(time.RFC3339),
+		StartedAt:      startedAt.Format(time.RFC3339),
 	}, nil
 }
 

@@ -36,45 +36,12 @@ func (b *Config) Version() string {
 	return telemetry.ServiceVersion
 }
 
-// ConfigStatus describes whether the runtime can be assembled.
-type ConfigStatus struct {
-	Needed           bool   `json:"needed"`
-	DefaultModel     string `json:"default_model"`
-	DefaultReasoning bool   `json:"default_reasoning"`
-	WorkDir          string `json:"work_dir"`
-	UserDir          string `json:"user_dir"`
-	Version          string `json:"version"`
-	Agents           int    `json:"agents"`
-}
+// ConfigStatus is the binding-side alias of the core status DTO.
+type ConfigStatus = core.ConfigStatus
 
 // ConfigStatus reports the current configuration state.
 func (b *Config) ConfigStatus() (ConfigStatus, error) {
-	configured := false
-	userDir := b.core.UserDir
-	mgr, err := config.Open(config.Options{UserDir: userDir})
-	if err == nil {
-		view, loadErr := mgr.Load(b.core.Shell.Context())
-		if loadErr == nil {
-			configured, _ = config.RouterConfigured(view.Document)
-		}
-	}
-	defaultReasoning := false
-	if cfg, err := config.LoadInference(userDir); err == nil {
-		defaultReasoning = cfg.ModelReasoning("")
-	}
-	agents := 0
-	if h := b.core.Runtime.Current(); h != nil && h.Agents() != nil {
-		agents = len(h.Agents().List())
-	}
-	return ConfigStatus{
-		Needed:           !configured,
-		DefaultModel:     config.DefaultModel(userDir),
-		DefaultReasoning: defaultReasoning,
-		WorkDir:          b.core.WorkDir,
-		UserDir:          userDir,
-		Version:          telemetry.ServiceVersion,
-		Agents:           agents,
-	}, nil
+	return b.core.ConfigStatus(), nil
 }
 
 // ProviderView is one entry of the provider catalog.

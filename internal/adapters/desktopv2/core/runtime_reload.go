@@ -16,8 +16,12 @@ func (c *Core) ReloadRuntime(ctx context.Context) error {
 	if err := c.Runtime.Reload(ctx); err != nil {
 		return err
 	}
+	emitReady := func() {
+		c.Shell.Emit("ready", c.ConfigStatus())
+	}
 	workDir := c.ActiveWorkDir()
 	if strings.TrimSpace(workDir) == "" {
+		emitReady()
 		return nil
 	}
 	mgr, err := config.Open(config.Options{UserDir: c.UserDir})
@@ -33,8 +37,12 @@ func (c *Core) ReloadRuntime(ctx context.Context) error {
 		return err
 	}
 	if !configured {
+		emitReady()
 		return nil
 	}
-	_, err = c.Runtime.Acquire(ctx, workDir, interact.Auto{})
-	return err
+	if _, err = c.Runtime.Acquire(ctx, workDir, interact.Auto{}); err != nil {
+		return err
+	}
+	emitReady()
+	return nil
 }
