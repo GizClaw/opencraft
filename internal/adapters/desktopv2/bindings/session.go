@@ -13,7 +13,6 @@ import (
 	"github.com/GizClaw/flowcraft/core/delegation"
 	"github.com/GizClaw/flowcraft/core/delegation/kanban"
 	"github.com/GizClaw/flowcraft/core/message"
-	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
@@ -324,7 +323,9 @@ type SessionImportDTO struct {
 }
 
 // ImportBundle imports a neutral session bundle into the current
-// workspace store.
+// workspace store. The shared Host writes the archive, seeds memory
+// and marks the conversation complete, so the UI flow and the plugin
+// session.import primitive behave identically.
 func (b *Session) ImportBundle(
 	path string,
 ) (SessionImportDTO, error) {
@@ -344,16 +345,8 @@ func (b *Session) ImportBundle(
 	if req.Source == "" {
 		req.Source = fmt.Sprintf("opencraft:%d", time.Now().UnixNano())
 	}
-	id, err := h.Sessions().Import(ctx, req)
+	id, err := h.ImportSession(ctx, req)
 	if err != nil {
-		return SessionImportDTO{}, err
-	}
-	// The desktop import flow has no separate memory-seeding stage:
-	// mark the conversation complete immediately so List surfaces it
-	// in the session sidebar instead of leaving it pending forever.
-	if err := h.Sessions().CompleteImport(ctx, id); err != nil {
-		telemetry.WarnErr(ctx, "desktop session: abort failed import failed",
-			h.Sessions().AbortImport(ctx, id))
 		return SessionImportDTO{}, err
 	}
 	messages := 0

@@ -175,7 +175,7 @@ describe('ChatView transcript windowing', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('shows worked duration centered under the turn artifacts', () => {
+  it('shows worked duration at the top of an artifact turn', () => {
     setConversation(
       [
         {
@@ -232,6 +232,9 @@ describe('ChatView transcript windowing', () => {
 
     expect(screen.queryByText('Produced this turn')).not.toBeInTheDocument();
     expect(screen.getByText('Worked for 2m 3s')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Worked for 2m 3s' }),
+    ).not.toBeInTheDocument();
   });
 
   it('does not infer worked duration from second-precision timestamps', () => {
@@ -297,6 +300,138 @@ describe('ChatView transcript windowing', () => {
     render(<ChatView />);
 
     expect(screen.getByText('Worked for <1s')).toBeInTheDocument();
+  });
+
+  it('folds an ended turn to the final assistant output', async () => {
+    setConversation(
+      [
+        {
+          id: 'm-user',
+          role: 'user',
+          text: 'prompt',
+          items: [],
+          attachments: [],
+        },
+        {
+          id: 'm-middle',
+          role: 'assistant',
+          text: '',
+          items: [{ kind: 'text', id: 't-middle', text: 'middle step' }],
+          attachments: [],
+        },
+        {
+          id: 'm-final',
+          role: 'assistant',
+          text: '',
+          items: [{ kind: 'text', id: 't-final', text: 'final answer' }],
+          attachments: [],
+        },
+      ],
+      [
+        {
+          id: 'turn-1',
+          start: 0,
+          docs: [],
+          durationMs: 123000,
+          runID: 'r-1',
+        },
+      ],
+    );
+    render(<ChatView />);
+
+    const worked = screen.getByRole('button', {
+      name: 'Worked for 2m 3s',
+    });
+    const final = screen.getByText('final answer');
+    expect(
+      worked.compareDocumentPosition(final) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(screen.queryByText('middle step')).not.toBeInTheDocument();
+    await userEvent.setup().click(worked);
+    expect(screen.getByText('middle step')).toBeInTheDocument();
+    expect(screen.getByText('final answer')).toBeInTheDocument();
+  });
+
+  it('keeps the worked header for legacy turns without duration', async () => {
+    setConversation(
+      [
+        {
+          id: 'm-user',
+          role: 'user',
+          text: 'prompt',
+          items: [],
+          attachments: [],
+        },
+        {
+          id: 'm-middle',
+          role: 'assistant',
+          text: '',
+          items: [{ kind: 'text', id: 't-middle', text: 'middle step' }],
+          attachments: [],
+        },
+        {
+          id: 'm-final',
+          role: 'assistant',
+          text: '',
+          items: [{ kind: 'text', id: 't-final', text: 'final answer' }],
+          attachments: [],
+        },
+      ],
+      [
+        {
+          id: 'turn-1',
+          start: 0,
+          docs: [],
+          runID: 'r-1',
+        },
+      ],
+    );
+    render(<ChatView />);
+
+    const header = screen.getByRole('button', { name: 'Worked for …' });
+    expect(screen.queryByText('middle step')).not.toBeInTheDocument();
+    await userEvent.setup().click(header);
+    expect(screen.getByText('middle step')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Process \(/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it('keeps a running turn expanded and shows Working at the top', () => {
+    setConversation(
+      [
+        {
+          id: 'm-user',
+          role: 'user',
+          text: 'prompt',
+          items: [],
+          attachments: [],
+        },
+        {
+          id: 'm-live',
+          role: 'assistant',
+          text: '',
+          items: [{ kind: 'text', id: 't-live', text: 'streamed answer' }],
+          attachments: [],
+        },
+      ],
+      [
+        {
+          id: 'turn-1',
+          start: 0,
+          docs: [],
+          runID: 'r-1',
+        },
+      ],
+    );
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    render(<ChatView />);
+
+    expect(screen.getByText('Working…')).toBeInTheDocument();
+    expect(screen.getByText('streamed answer')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Process \(/ }),
+    ).not.toBeInTheDocument();
   });
 
   it('renders message-peek ticks with user/answer previews', () => {

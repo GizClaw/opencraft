@@ -671,19 +671,30 @@ function workedForLabel(durationMs?: number) {
   return parts.join(' ');
 }
 
-// WorkedForLine renders the execution-time label below the turn
-// artifact card, centered between two filling divider lines.
-function WorkedForLine({ durationMs }: { durationMs?: number }) {
+// TurnStatusLine sits at the top of a turn's output: "Working…" while
+// the turn is live and "Worked for …" once the backend duration is
+// known. It is left-aligned instead of centered between dividers.
+function TurnStatusLine({
+  running = false,
+  durationMs,
+}: {
+  running?: boolean;
+  durationMs?: number;
+}) {
   const { t } = useTranslation();
+  if (running) {
+    return (
+      <div className="flex items-center gap-1.5 py-0.5 text-xs text-dim">
+        <Loader2 size="0.8571rem" className="animate-spin text-accent" />
+        <span>{t('chat.working')}</span>
+      </div>
+    );
+  }
   const worked = workedForLabel(durationMs);
   if (!worked) return null;
   return (
-    <div className="flex items-center gap-3 text-xs text-dim">
-      <div className="h-px flex-1 bg-edge" />
-      <span className="shrink-0 tabular-nums">
-        {t('chat.workedFor', { duration: worked })}
-      </span>
-      <div className="h-px flex-1 bg-edge" />
+    <div className="py-0.5 text-xs text-dim tabular-nums">
+      {t('chat.workedFor', { duration: worked })}
     </div>
   );
 }
@@ -834,6 +845,182 @@ const ArtifactStrip = memo(function ArtifactStrip({
   );
 });
 
+// TurnRenderRow is one transcript message plus its global index, so a
+// turn block can render rows with the same data attributes the
+// scroll/peek logic relies on.
+interface TurnRenderRow {
+  msg: MessageView;
+  i: number;
+}
+
+// TurnSummaryHeader doubles as the ended turn's fold control: when
+// intermediate rows exist the Worked for label becomes a button with
+// a chevron, and clicking it expands/collapses those rows.
+function TurnSummaryHeader({
+  running,
+  durationMs,
+  processCount,
+  open,
+  onToggle,
+}: {
+  running: boolean;
+  durationMs?: number;
+  processCount: number;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const { t } = useTranslation();
+  if (running) {
+    return <TurnStatusLine running />;
+  }
+  const worked = workedForLabel(durationMs);
+  // Legacy turns may have no duration_ms at all; keep the same header
+  // shape ("Worked for … >") instead of exposing a Process (n) label.
+  const label = t('chat.workedFor', { duration: worked || '…' });
+  if (processCount === 0) {
+    if (!worked) return null;
+    return <div className="py-0.5 text-xs text-dim tabular-nums">{label}</div>;
+  }
+  return (
+    <button
+      onClick={onToggle}
+      aria-expanded={open}
+      className="flex items-center gap-1 py-0.5 text-left text-xs text-dim tabular-nums hover:text-fg"
+    >
+      <span>{label}</span>
+      {open ? (
+        <ChevronDown size="0.9286rem" className="shrink-0" />
+      ) : (
+        <ChevronRight size="0.9286rem" className="shrink-0" />
+      )}
+    </button>
+  );
+}
+
+// TurnBlock renders one complete turn. Live turns stay fully expanded
+// with a Working… status line at the top; ended turns fold everything
+// except the final assistant message behind the process toggle.
+function TurnBlock({
+  turn,
+  turnIdx,
+  rows,
+  running,
+  busy,
+  endStatus,
+  endError,
+  liveEnd,
+  forking,
+  onFork,
+  onDismissFailure,
+}: {
+  turn: TurnArtifacts;
+  turnIdx: number;
+  rows: TurnRenderRow[];
+  running: boolean;
+  busy: boolean;
+  endStatus?: TurnEndKind;
+  endError?: string;
+  liveEnd: boolean;
+  forking: boolean;
+  onFork: (turn: TurnArtifacts) => void;
+  onDismissFailure: () => void;
+}) {
+  const [processOpen, setProcessOpen] = useState(false);
+  const userRows = rows.filter((row) => row.msg.role === 'user');
+  const assistantRows = rows.filter((row) => row.msg.role === 'assistant');
+  const finalRow = assistantRows[assistantRows.length - 1];
+  const processRows = finalRow
+    ? assistantRows.filter(
+        (row) => row.i < finalRow.i && groupToolCalls(row.msg.items).length > 0,
+      )
+    : [];
+  const worked = workedForLabel(turn.durationMs);
+  const showTurnHeader = worked !== '' || processRows.length > 0;
+  const lastAssistantStreaming = running && Boolean(finalRow);
+
+  const renderRow = (
+    row: TurnRenderRow,
+    isTurnLast: boolean,
+    streaming: boolean,
+  ) => {
+    const canFork =
+      row.msg.role === 'assistant' &&
+      isTurnLast &&
+      !streaming &&
+      !forking &&
+      !endStatus &&
+      Boolean(turn.runID);
+    return (
+      <MessageRow
+        key={row.msg.id}
+        msg={row.msg}
+        busy={running ? false : busy}
+        streaming={streaming}
+        isTurnLast={isTurnLast}
+        msgIndex={row.i}
+        turnIndex={turnIdx}
+        turnStart={row.i === turn.start}
+        forkable={canFork}
+        onFork={canFork && turn ? () => onFork(turn) : undefined}
+        requestedAt={turn.requestedAt}
+        startedAt={turn.startedAt}
+      />
+    );
+  };
+
+  const footer =
+    turn.docs.length > 0 ? <ArtifactStrip docs={turn.docs} /> : null;
+  const endNotice =
+    endStatus && turn ? (
+      <TurnEndNotice
+        status={endStatus}
+        error={endError}
+        live={liveEnd}
+        onDismiss={liveEnd ? onDismissFailure : undefined}
+      />
+    ) : null;
+
+  return (
+    <div data-turn-index={turnIdx} className="space-y-2">
+      {userRows.map((row) => renderRow(row, false, false))}
+      {running ? (
+        <>
+          <TurnStatusLine running />
+          {assistantRows.map((row, ai) =>
+            renderRow(
+              row,
+              ai === assistantRows.length - 1,
+              row === finalRow && lastAssistantStreaming,
+            ),
+          )}
+        </>
+      ) : (
+        <>
+          <TurnSummaryHeader
+            running={false}
+            durationMs={turn.durationMs}
+            processCount={processRows.length}
+            open={processOpen}
+            onToggle={() => setProcessOpen((open) => !open)}
+          />
+          {processOpen &&
+            processRows.map((row) => renderRow(row, false, false))}
+          {finalRow && (
+            <>
+              {showTurnHeader && (
+                <div aria-hidden="true" className="h-px bg-edge" />
+              )}
+              {renderRow(finalRow, true, false)}
+            </>
+          )}
+        </>
+      )}
+      {footer}
+      {endNotice}
+    </div>
+  );
+}
+
 // AttachmentImage renders one image attachment. Live sends carry the
 // data URL already; resumed history has only the stored path, so the
 // component fetches the preview from the backend on mount (WKWebView
@@ -952,6 +1139,34 @@ export function ChatView() {
   const truncated = messages.length > visibleCount;
   const start = truncated ? messages.length - visibleCount : 0;
   const visibleMessages = truncated ? messages.slice(start) : messages;
+  const renderEnd = start + visibleMessages.length;
+  const completeTurnBlocks: {
+    turn: TurnArtifacts;
+    turnIdx: number;
+    rows: TurnRenderRow[];
+  }[] = [];
+  let partialTurnVisible = false;
+  if (turnArtifacts.length > 0) {
+    for (let ti = 0; ti < turnArtifacts.length; ti++) {
+      const turn = turnArtifacts[ti];
+      const turnEnd =
+        ti + 1 < turnArtifacts.length
+          ? turnArtifacts[ti + 1].start
+          : messages.length;
+      const lo = Math.max(start, turn.start);
+      const hi = Math.min(turnEnd, renderEnd);
+      if (lo >= hi) continue;
+      if (lo !== turn.start || hi !== turnEnd) {
+        partialTurnVisible = true;
+        continue;
+      }
+      const rows: TurnRenderRow[] = [];
+      for (let i = lo; i < hi; i++) {
+        rows.push({ msg: messages[i], i });
+      }
+      completeTurnBlocks.push({ turn, turnIdx: ti, rows });
+    }
+  }
   const turnIndexById = useMemo(
     () => new Map(turnArtifacts.map((turn, ti) => [turn, ti] as const)),
     [turnArtifacts],
@@ -1009,6 +1224,7 @@ export function ChatView() {
     : (modelOptions[0]?.reasoning ?? status?.default_reasoning ?? false);
   const failedTurn = turnState?.name === 'failed' ? turnState : undefined;
   const lastTurn = turnArtifacts[turnArtifacts.length - 1];
+  const usesTurnBlocks = completeTurnBlocks.length > 0 && !partialTurnVisible;
   // MessagePeek only needs the turn boundaries while rendering ticks.
   // Preview text is fetched lazily on hover from refs, so token
   // streaming does not force us to re-extract every turn's answer on
@@ -1550,17 +1766,44 @@ export function ChatView() {
                 </div>
               )}
             </div>
+          ) : usesTurnBlocks ? (
+            <div className="max-w-4xl mx-auto space-y-4">
+              {completeTurnBlocks.map((block) => {
+                const turn = block.turn;
+                const running = busy && turn === lastTurn;
+                const archivedEnd = archivedTurnEndKind(turn.status);
+                const liveEnd = !busy && failedTurn && turn === lastTurn;
+                const endStatus =
+                  archivedEnd ?? (liveEnd ? failedTurn.status : undefined);
+                const endError =
+                  turn.error ??
+                  (liveEnd && failedTurn ? failedTurn.error : undefined);
+                return (
+                  <TurnBlock
+                    key={turn.id}
+                    turn={turn}
+                    turnIdx={block.turnIdx}
+                    rows={block.rows}
+                    running={running}
+                    busy={busy}
+                    endStatus={endStatus}
+                    endError={endError}
+                    liveEnd={Boolean(liveEnd)}
+                    forking={forking}
+                    onFork={setForkTarget}
+                    onDismissFailure={clearLastFailed}
+                  />
+                );
+              })}
+              {pendingInteracts.map((spec) => (
+                <InteractionCard key={spec.id} spec={spec} />
+              ))}
+            </div>
           ) : (
             <div className="max-w-4xl mx-auto space-y-4">
               {visibleMessages.map((msg, localI) => {
                 const i = start + localI;
-                // Find the archived/live turn owning this message so
-                // user bubbles and final assistant rows can show the
-                // turn's request/start timestamps.
                 const turn = turnForIndex(turnArtifacts, i);
-                // The turn's artifact card and worked-for line render
-                // after its last message: before the next user bubble
-                // (or at the transcript end).
                 const turnIdx = turn ? (turnIndexById.get(turn) ?? -1) : -1;
                 const turnStart =
                   turnIdx >= 0 && turnArtifacts[turnIdx].start === i;
@@ -1611,11 +1854,11 @@ export function ChatView() {
                     {showArtifacts && turn && (
                       <>
                         <ArtifactStrip docs={turn.docs} />
-                        <WorkedForLine durationMs={turn.durationMs} />
+                        <TurnStatusLine durationMs={turn.durationMs} />
                       </>
                     )}
                     {showWorked && !showArtifacts && (
-                      <WorkedForLine durationMs={turn?.durationMs} />
+                      <TurnStatusLine durationMs={turn?.durationMs} />
                     )}
                     {endStatus && turn && (
                       <TurnEndNotice

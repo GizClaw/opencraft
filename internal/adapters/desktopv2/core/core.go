@@ -45,5 +45,7 @@ func NewCore(userDir, dataDir, workDir string) *Core {
 	runtime.SetAgentPlugins(plugin.Store, plugin.Capability)
 	plugin.Capability.SetOpenURL(c.Shell.OpenURL)
 	c.wirePluginInference()
+	c.wirePluginSessionImport()
+	c.wirePluginWorkspace()
 	return c
 }

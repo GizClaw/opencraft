@@ -515,11 +515,14 @@ type Host struct {
 	usage         func(context.Context, inference.Usage)
 	usageRecorder UsageRecorder
 
-	mu         sync.Mutex
-	runs       map[RunID]*runDetail
-	rollouts   map[ConversationID]*rollout.Recorder
-	titling    map[ConversationID]bool
-	titleWG    sync.WaitGroup
+	mu       sync.Mutex
+	runs     map[RunID]*runDetail
+	rollouts map[ConversationID]*rollout.Recorder
+	titling  map[ConversationID]bool
+	titleWG  sync.WaitGroup
+	// importMu serializes archive write + memory seed across callers
+	// so a duplicate import with the same Source cannot double-seed.
+	importMu   sync.Mutex
 	artifact   func(context.Context, string, []byte)
 	sessionUpd func(context.Context, string)
 	closing    bool
