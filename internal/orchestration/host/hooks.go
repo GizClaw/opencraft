@@ -47,7 +47,7 @@ func (h *Host) fireUserPromptSubmit(
 }
 
 // fireTurnEnd fires the TurnEnd hook after the run's usage, rollout,
-// undo and artifact post-processing have settled.
+// and artifact post-processing have settled.
 func (h *Host) fireTurnEnd(
 	ctx context.Context,
 	conversationID, runID, status, errText string,

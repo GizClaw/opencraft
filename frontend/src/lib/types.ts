@@ -1,5 +1,5 @@
-// Shared DTO types mirroring internal/desktop/dto.go plus the
-// flowcraft stream protocol wire shapes the frontend renders.
+// Shared DTO types mirroring the desktopv2 bindings plus the flowcraft
+// stream protocol wire shapes the frontend renders.
 
 export interface ConfigStatus {
   needed: boolean;
@@ -349,11 +349,6 @@ export interface FileNode {
 export interface SearchFileHit {
   path: string;
   is_dir: boolean;
-}
-
-export interface UndoState {
-  can_undo: boolean;
-  can_redo: boolean;
 }
 
 export interface MemorySettings {

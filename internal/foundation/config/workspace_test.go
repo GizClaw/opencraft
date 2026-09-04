@@ -86,7 +86,7 @@ func TestResolveWorkspaceLayout(t *testing.T) {
 		t.Fatalf("cache dir = %q", layout.CacheDir)
 	}
 	// ResolveWorkspace creates only the root; Ensure creates the rest.
-	if _, err := os.Stat(filepath.Join(want, "undo")); !os.IsNotExist(err) {
+	if _, err := os.Stat(layout.CacheDir); !os.IsNotExist(err) {
 		t.Fatalf("Ensure must not run during ResolveWorkspace: %v", err)
 	}
 	if err := layout.Ensure(); err != nil {
@@ -94,7 +94,6 @@ func TestResolveWorkspaceLayout(t *testing.T) {
 	}
 	for _, dir := range []string{
 		layout.SessionsDir,
-		layout.UndoDir,
 		layout.CacheDir,
 		layout.AuditDir,
 		layout.ExportsDir,

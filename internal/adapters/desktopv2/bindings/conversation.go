@@ -13,7 +13,6 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
-	"github.com/GizClaw/opencraft/internal/capabilities/undo"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
 
@@ -54,7 +53,6 @@ func (b *Conversation) StartTurn(
 	if contextID == "" {
 		contextID = b.core.Conversation.New()
 	}
-	st, _ := b.undoStore()
 	requestedAt := time.Now().UTC()
 	sink := agent.StreamSinkFunc(func(
 		ctx context.Context,
@@ -77,7 +75,6 @@ func (b *Conversation) StartTurn(
 		Mode:      b.core.Conversation.Mode(),
 		Think:     b.core.Conversation.Think(),
 		Model:     b.core.Conversation.Model(),
-		Undo:      st,
 		Backend:   b.core.Prompt,
 		Sink:      sink,
 		QueueSize: 256,
@@ -225,48 +222,6 @@ func (b *Conversation) CancelTurn(runID string) error {
 		return fmt.Errorf("conversation: runtime is not ready")
 	}
 	return h.CancelRun(runID)
-}
-
-func (b *Conversation) undoStore() (*undo.Store, error) {
-	workDir := b.core.ActiveWorkDir()
-	if workDir == "" {
-		return nil, fmt.Errorf("conversation: no workspace selected")
-	}
-	layout, err := b.core.ResolveLayout(workDir)
-	if err != nil {
-		return nil, err
-	}
-	return undo.NewWithRoot(workDir, layout.UndoDir), nil
-}
-
-// UndoChange reverts the latest captured turn.
-func (b *Conversation) UndoChange() ([]string, error) {
-	ctx := b.core.Shell.Context()
-	st, err := b.undoStore()
-	if err != nil {
-		return nil, err
-	}
-	return st.Undo(ctx, b.core.Conversation.Current())
-}
-
-// RedoChange re-applies the latest undone turn.
-func (b *Conversation) RedoChange() ([]string, error) {
-	ctx := b.core.Shell.Context()
-	st, err := b.undoStore()
-	if err != nil {
-		return nil, err
-	}
-	return st.Redo(ctx, b.core.Conversation.Current())
-}
-
-// UndoState reports undo/redo availability.
-func (b *Conversation) UndoState() (undo.State, error) {
-	ctx := b.core.Shell.Context()
-	st, err := b.undoStore()
-	if err != nil {
-		return undo.State{}, nil
-	}
-	return st.Available(ctx, b.core.Conversation.Current())
 }
 
 // ReplyPrompt answers one pending interaction.

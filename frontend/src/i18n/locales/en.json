@@ -2,7 +2,10 @@
   "app": {
     "starting": "OpenCraft is starting…",
     "startupFailed": "Startup failed",
-    "unknownError": "Unknown error"
+    "unknownError": "Unknown error",
+    "crashed": "OpenCraft UI crashed",
+    "tryAgain": "Try again",
+    "reload": "Reload"
   },
   "notify": {
     "done": "Task finished",
@@ -24,6 +27,7 @@
     "cannotDeleteActive": "Cannot delete the conversation that is currently open.",
     "searchSessions": "Search sessions…",
     "addWorkspace": "Add workspace",
+    "chooseWorkspaceTitle": "Choose a workspace…",
     "open": "Open",
     "cancel": "Cancel",
     "pickerFallback": "Native picker unavailable; type a workspace path:",
@@ -382,12 +386,6 @@
     "files_other": "{{count}} files",
     "removeAttachment": "Remove attachment",
     "retry": "Retry last",
-    "undo": "Undo last turn",
-    "redo": "Redo",
-    "undoDone": "Reverted {{count}} file(s)",
-    "redoDone": "Restored {{count}} file(s)",
-    "undoEmpty": "Nothing to undo",
-    "redoEmpty": "Nothing to redo",
     "mentionSearchHint": "Type to search workspace files…",
     "mentionNoMatch": "No matches",
     "mentionSkillHint": "Type to filter skills…",
@@ -487,6 +485,7 @@
     "result": "result",
     "copyResult": "Copy",
     "lines": "lines",
+    "model": "Model",
     "entries": "entries",
     "files": "files",
     "truncated": "truncated",
@@ -608,6 +607,7 @@
     "zoomIn": "Zoom in",
     "zoomOut": "Zoom out",
     "fit": "Fit to window",
+    "relayout": "Relayout",
     "condition": "Condition (expr)",
     "conditionHint": "Optional expr expression over board variables that gates this edge; empty means unconditional.",
     "save": "Save",

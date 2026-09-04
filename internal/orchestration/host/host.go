@@ -19,7 +19,6 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
-	"github.com/GizClaw/opencraft/internal/capabilities/undo"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/orchestration/engine"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
@@ -414,8 +413,6 @@ type runDetail struct {
 	usage     sessions.Usage
 	notify    func(context.Context, inference.Usage)
 	buffer    *rolloutBuffer
-	undo      *undo.Store
-	before    []undo.FileState
 	manifest  map[string]fileStat
 	backend   interact.Backend
 }

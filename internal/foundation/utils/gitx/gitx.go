@@ -1,5 +1,5 @@
 // Package gitx centralizes bounded, read-only git access shared by
-// worldstate context snapshots and desktop undo/manifest snapshots.
+// worldstate context snapshots and desktop artifact manifest snapshots.
 // It never mutates the repository.
 package gitx
 

@@ -28,10 +28,6 @@ export function mockBackend(cfg?: MockConfig) {
 
   type Handler = (...args: any[]) => Promise<unknown>;
 
-  const undoState: Handler = async () => ({
-    can_undo: false,
-    can_redo: false,
-  });
   const emptyList: Handler = async () => [];
   const noop: Handler = async () => undefined;
 
@@ -80,15 +76,12 @@ export function mockBackend(cfg?: MockConfig) {
       CancelTurn: noop,
       CurrentSession: async () => config.currentSession ?? 's-1',
       NewChat: async () => 's-new',
-      RedoChange: emptyList,
       ReplyPrompt: async () => true,
       ResumeSession: noop,
       SessionMode: async () => 'workspace',
       SetSessionMode: noop,
       StartTurn: async () =>
         config.startTurn ?? { run_id: 'r-1', context_id: 's-1' },
-      UndoChange: emptyList,
-      UndoState: undoState,
     },
     Diagnostics: {
       ClearCaches: async () => ({ dirs: [], bytes: 0 }),
@@ -237,7 +230,6 @@ export function mockBackend(cfg?: MockConfig) {
     PluginUpdateZip: ['Plugin', 'UpdateZip'],
     ReadAttachment: ['File', 'ReadAttachment'],
     ReadFile: ['File', 'ReadText'],
-    RedoChange: ['Conversation', 'RedoChange'],
     RemoveWorkspace: ['Workspace', 'Remove'],
     RenameSession: ['Session', 'Rename'],
     ReplyPrompt: ['Conversation', 'ReplyPrompt'],
@@ -255,8 +247,6 @@ export function mockBackend(cfg?: MockConfig) {
     SetThink: ['Settings', 'SetThink'],
     Skills: ['Settings', 'Skills'],
     StartTurn: ['Conversation', 'StartTurn'],
-    UndoChange: ['Conversation', 'UndoChange'],
-    UndoState: ['Conversation', 'UndoState'],
     UnregisterAgent: ['Agent', 'Unregister'],
     UpdateAgent: ['Agent', 'Update'],
     Version: ['Config', 'Version'],

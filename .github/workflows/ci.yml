@@ -126,7 +126,7 @@ jobs:
       # Timing-sensitive performance assertions are skipped under -race
       # (above), so run them once without the race detector.
       - name: Performance threshold assertions
-        run: go test -count=1 ./internal/capabilities/sessions ./internal/capabilities/tools/files ./internal/capabilities/undo ./internal/adapters/desktopv2 ./internal/capabilities/worldstate
+        run: go test -count=1 ./internal/capabilities/sessions ./internal/capabilities/tools/files ./internal/adapters/desktopv2 ./internal/capabilities/worldstate
 
   frontend-e2e:
     name: frontend e2e (playwright)
@@ -226,8 +226,8 @@ jobs:
       - name: Sandbox contract (windows)
         run: go test -count=1 ./internal/capabilities/sandbox -run TestSandboxRunnerContract
         shell: pwsh
-      - name: Compile check (sandbox/desktop/sessions/secrets/undo)
-        run: go vet ./internal/capabilities/sandbox ./internal/adapters/desktopv2 ./internal/capabilities/sessions ./internal/capabilities/secrets ./internal/capabilities/undo
+      - name: Compile check (sandbox/desktop/sessions/secrets)
+        run: go vet ./internal/capabilities/sandbox ./internal/adapters/desktopv2 ./internal/capabilities/sessions ./internal/capabilities/secrets
         shell: pwsh
 
   desktop-linux:

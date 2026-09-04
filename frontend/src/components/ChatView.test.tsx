@@ -8,9 +8,6 @@ import { ChatView } from './ChatView';
 
 const apiMock = vi.hoisted(() => ({
   workspace: vi.fn(),
-  undoState: vi.fn(),
-  undoChange: vi.fn(),
-  redoChange: vi.fn(),
   readAttachment: vi.fn(),
   pickFile: vi.fn(),
   openPath: vi.fn(),
@@ -65,7 +62,6 @@ beforeEach(() => {
   stateRoot.resetWorkspace();
   vi.clearAllMocks();
   apiMock.workspace.mockResolvedValue('/tmp/w');
-  apiMock.undoState.mockResolvedValue({ can_undo: false, can_redo: false });
 });
 
 describe('ChatView transcript windowing', () => {

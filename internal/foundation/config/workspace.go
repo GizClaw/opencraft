@@ -74,7 +74,6 @@ type WorkspaceLayout struct {
 	SessionsDir   string // sessions/<conversation-id>/media|files|rollout.jsonl
 
 	// Workspace runtime state.
-	UndoDir    string
 	CacheDir   string // cache/tools
 	AuditDir   string
 	ExportsDir string
@@ -102,7 +101,6 @@ func ResolveWorkspace(dataDir, workDir string) (WorkspaceLayout, error) {
 		ApprovalsFile: filepath.Join(root, "approvals.yaml"),
 		SessionsDir:   filepath.Join(root, "sessions"),
 		SessionDBPath: filepath.Join(root, "sessions", "session.db"),
-		UndoDir:       filepath.Join(root, "undo"),
 		CacheDir:      filepath.Join(root, "cache", "tools"),
 		AuditDir:      filepath.Join(root, "audit"),
 		ExportsDir:    filepath.Join(root, "exports"),
@@ -115,7 +113,6 @@ func (l WorkspaceLayout) Ensure() error {
 	for _, dir := range []string{
 		l.Root,
 		l.SessionsDir,
-		l.UndoDir,
 		l.CacheDir,
 		l.AuditDir,
 		l.ExportsDir,

@@ -11,12 +11,9 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/message"
 	coresession "github.com/GizClaw/flowcraft/core/runtime/session"
-	"github.com/GizClaw/flowcraft/core/telemetry"
-	otellog "go.opentelemetry.io/otel/log"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
-	"github.com/GizClaw/opencraft/internal/capabilities/undo"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 )
@@ -38,8 +35,6 @@ type RunOptions struct {
 	QueueSize int
 	// OnUsage receives inference usage attributed to this run.
 	OnUsage func(context.Context, inference.Usage)
-	// Undo enables turn-level git snapshots when set.
-	Undo *undo.Store
 	// Backend answers interactive prompts for this run. When nil the
 	// Host's fallback backend applies, so UI and automation turns can
 	// share one runtime with different prompt policies.
@@ -147,7 +142,6 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 	h.fireUserPromptSubmit(ctx, contextID, opts.Message.Content.Text())
 
 	requestedAt := time.Now().UTC()
-	before := gitSnapshot(ctx, h.workDir)
 	manifest, manifestErr := manifestSnapshot(ctx, h.workDir)
 	if manifestErr != nil {
 		manifest = nil
@@ -202,8 +196,6 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 		run:       run,
 		contextID: contextID,
 		notify:    opts.OnUsage,
-		undo:      opts.Undo,
-		before:    before,
 		manifest:  manifest,
 		backend:   opts.Backend,
 	}
@@ -285,18 +277,6 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 		host.recordTurnEnd(
 			persistCtx, detail.contextID, r.RunID(),
 			typ, status, errText, turnUsage)
-		if detail.undo != nil && len(detail.before) > 0 {
-			after := gitSnapshot(persistCtx, host.workDir)
-			if _, capErr := detail.undo.Capture(
-				persistCtx, detail.contextID, detail.before, after,
-			); capErr != nil {
-				// best-effort: undo capture must not fail the run
-				telemetry.Warn(persistCtx, "host: undo capture failed",
-					otellog.String("conversation", detail.contextID),
-					otellog.String("run", r.RunID()),
-					otellog.String("error", capErr.Error()))
-			}
-		}
 		if store != nil && detail.manifest != nil {
 			if after, snapErr := manifestSnapshot(persistCtx, host.workDir); snapErr == nil {
 				docs := diffDocumentArtifacts(detail.manifest, after)

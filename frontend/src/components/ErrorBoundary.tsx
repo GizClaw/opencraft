@@ -1,5 +1,6 @@
 import { Component } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
+import i18n from '../i18n';
 
 interface Props {
   children: ReactNode;
@@ -29,7 +30,7 @@ export class ErrorBoundary extends Component<Props, State> {
         <div className="h-full grid place-items-center bg-bg px-6">
           <div className="max-w-lg rounded-2xl border border-err/40 bg-panel p-6 shadow-2xl">
             <h1 className="text-base font-semibold text-err">
-              OpenCraft UI crashed
+              {i18n.t('app.crashed')}
             </h1>
             <p className="mt-2 text-sm text-dim break-words">
               {String(this.state.error?.message ?? this.state.error)}
@@ -42,13 +43,13 @@ export class ErrorBoundary extends Component<Props, State> {
                 onClick={() => this.setState({ error: null })}
                 className="rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
               >
-                Try again
+                {i18n.t('app.tryAgain')}
               </button>
               <button
                 onClick={() => window.location.reload()}
                 className="rounded-lg bg-accent px-3 py-1.5 text-sm text-white hover:opacity-90"
               >
-                Reload
+                {i18n.t('app.reload')}
               </button>
             </div>
           </div>

@@ -1,4 +1,5 @@
 // Typed wrappers over the desktopv2 Wails bindings.
+import i18n from '../i18n';
 import * as Agent from '../../wailsjs/go/bindings/Agent';
 import * as Automation from '../../wailsjs/go/bindings/Automation';
 import * as Config from '../../wailsjs/go/bindings/Config';
@@ -51,7 +52,6 @@ import type {
   SkillDTO,
   TurnStart,
   TurnMessage,
-  UndoState,
   UsagePoint,
   WorkspaceMeta,
 } from './types';
@@ -149,9 +149,6 @@ export const api = {
     Settings.RenderSkillPatch(name, scope, patch) as unknown as Promise<
       PatchFileDTO[]
     >,
-  undoChange: () => Conversation.UndoChange(),
-  redoChange: () => Conversation.RedoChange(),
-  undoState: () => Conversation.UndoState() as Promise<UndoState>,
   memoryConfig: () => Config.MemoryConfig() as Promise<MemorySettings>,
   saveMemory: (s: MemorySettings) =>
     Config.SaveMemory(s as unknown as genConfig.MemorySettings),
@@ -166,7 +163,8 @@ export const api = {
   clearCaches: () =>
     Diagnostics.ClearCaches() as unknown as Promise<CacheClearResult>,
   cancelCard: (id: string) => Settings.CancelCard(id),
-  chooseWorkspace: () => Workspace.ChooseWorkspace('选择工作区'),
+  chooseWorkspace: () =>
+    Workspace.ChooseWorkspace(i18n.t('sidebar.chooseWorkspaceTitle')),
   pluginList: () => Plugin.List() as Promise<PluginSummary[]>,
   pluginTools: (id: string) =>
     Plugin.Tools(id) as unknown as Promise<PluginToolDTO[]>,

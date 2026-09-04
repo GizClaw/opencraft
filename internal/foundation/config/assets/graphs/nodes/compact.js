@@ -38,8 +38,9 @@ function renderText(m) {
     }
   }
   if (lines.length > 0) {
-    if (text.trim() !== "") text += "\n";
-    text += lines.join("\n");
+    var trimmed = text.trim();
+    if (trimmed === "") return lines.join("\n");
+    return trimmed + "\n" + lines.join("\n");
   }
   return text;
 }

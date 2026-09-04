@@ -21,7 +21,6 @@ const apiMock = vi.hoisted(() => ({
   cancelTurn: vi.fn(),
   deleteSession: vi.fn(),
   replyPrompt: vi.fn(),
-  undoState: vi.fn(),
 }));
 
 vi.mock('../lib/api', () => ({ api: apiMock }));
@@ -132,7 +131,6 @@ beforeEach(() => {
   });
   apiMock.listSessions.mockResolvedValue([]);
   apiMock.sessionTurns.mockResolvedValue([]);
-  apiMock.undoState.mockResolvedValue({ can_undo: false, can_redo: false });
 });
 
 describe('store: send and stream', () => {
