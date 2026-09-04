@@ -74,7 +74,12 @@ export const api = {
   workspace: () => Workspace.Active(),
   newChat: async () => {
     const id = await Conversation.NewChat();
-    return { session_id: id, mode: 'workspace', think: 'medium', model: '' } as SessionSnapshot;
+    return {
+      session_id: id,
+      mode: 'workspace',
+      think: 'medium',
+      model: '',
+    } as SessionSnapshot;
   },
   listSessions: () => Session.List() as unknown as Promise<SessionMeta[]>,
   currentSession: () => Conversation.CurrentSession(),
@@ -99,14 +104,17 @@ export const api = {
   delegationCards: () =>
     Session.DelegationCards() as unknown as Promise<KanbanCard[]>,
   conversationDelegationCards: (contextID: string) =>
-    Session.ConversationDelegationCards(contextID) as unknown as Promise<KanbanCard[]>,
+    Session.ConversationDelegationCards(contextID) as unknown as Promise<
+      KanbanCard[]
+    >,
   readFile: (path: string) => File.ReadText(path),
   fileDiff: (path: string) => File.Diff(path),
   getThink: () => Settings.GetThink(),
   setThink: (level: string) => Settings.SetThink(level),
   getModel: () => Settings.GetModel(),
   setModel: (model: string) => Settings.SetModel(model),
-  modelOptions: () => Config.ModelOptions() as unknown as Promise<ModelOption[]>,
+  modelOptions: () =>
+    Config.ModelOptions() as unknown as Promise<ModelOption[]>,
   modelUsage: () => Config.ModelUsage() as unknown as Promise<ModelUsageStat[]>,
   modelUsageSeries: (
     model: string,
@@ -114,7 +122,8 @@ export const api = {
     utcOffsetMinutes: number,
     start: string,
     end: string,
-  ) => Config.ModelUsageSeries(model, granularity, utcOffsetMinutes, start, end),
+  ) =>
+    Config.ModelUsageSeries(model, granularity, utcOffsetMinutes, start, end),
   mcpConfig: () => Config.MCPConfig() as Promise<MCPServer[]>,
   saveMCP: (servers: MCPServer[]) =>
     Config.SaveMCP(servers as unknown as genConfig.MCPServer[]),
@@ -137,24 +146,32 @@ export const api = {
   renderPatch: (patch: string) =>
     File.RenderPatch(patch) as unknown as Promise<PatchFileDTO[]>,
   renderSkillPatch: (name: string, scope: string, patch: string) =>
-    Settings.RenderSkillPatch(name, scope, patch) as unknown as Promise<PatchFileDTO[]>,
+    Settings.RenderSkillPatch(name, scope, patch) as unknown as Promise<
+      PatchFileDTO[]
+    >,
   undoChange: () => Conversation.UndoChange(),
   redoChange: () => Conversation.RedoChange(),
   undoState: () => Conversation.UndoState() as Promise<UndoState>,
   memoryConfig: () => Config.MemoryConfig() as Promise<MemorySettings>,
   saveMemory: (s: MemorySettings) =>
     Config.SaveMemory(s as unknown as genConfig.MemorySettings),
-  diagnostics: () => Diagnostics.Diagnostics() as unknown as Promise<DiagnosticsReport>,
+  diagnostics: () =>
+    Diagnostics.Diagnostics() as unknown as Promise<DiagnosticsReport>,
   runSandboxProbe: () =>
     Diagnostics.RunSandboxProbe() as unknown as Promise<SandboxProbeResult>,
   evaluateCommandPolicy: (command: string) =>
-    Diagnostics.EvaluateCommandPolicy(command) as unknown as Promise<PolicyDecision>,
-  clearCaches: () => Diagnostics.ClearCaches() as unknown as Promise<CacheClearResult>,
+    Diagnostics.EvaluateCommandPolicy(
+      command,
+    ) as unknown as Promise<PolicyDecision>,
+  clearCaches: () =>
+    Diagnostics.ClearCaches() as unknown as Promise<CacheClearResult>,
   cancelCard: (id: string) => Settings.CancelCard(id),
   chooseWorkspace: () => Workspace.ChooseWorkspace('选择工作区'),
   pluginList: () => Plugin.List() as Promise<PluginSummary[]>,
-  pluginTools: (id: string) => Plugin.Tools(id) as unknown as Promise<PluginToolDTO[]>,
-  pluginSkills: (id: string) => Plugin.Skills(id) as unknown as Promise<SkillDTO[]>,
+  pluginTools: (id: string) =>
+    Plugin.Tools(id) as unknown as Promise<PluginToolDTO[]>,
+  pluginSkills: (id: string) =>
+    Plugin.Skills(id) as unknown as Promise<SkillDTO[]>,
   pluginBundle: (id: string) => Plugin.Bundle(id),
   pluginInstall: (dir: string) => Plugin.Install(dir),
   pluginInstallZip: (zip: string) => Plugin.InstallZip(zip),
@@ -164,12 +181,14 @@ export const api = {
   pluginRollback: (id: string) => Plugin.Rollback(id),
   pluginCheckUpdate: (id: string) => Plugin.CheckUpdate(id),
   pluginApplyUpdate: (id: string) => Plugin.ApplyUpdate(id),
-  pluginSetEnabled: (id: string, enabled: boolean) => Plugin.SetEnabled(id, enabled),
+  pluginSetEnabled: (id: string, enabled: boolean) =>
+    Plugin.SetEnabled(id, enabled),
   pluginUninstall: (id: string) => Plugin.Uninstall(id),
   pluginInvoke: (id: string, method: string, args: string) =>
     Plugin.Invoke(id, method, args),
   getCloseToTray: () => Lifecycle.GetCloseToTray(),
-  setCloseToTray: (closeToTray: boolean) => Lifecycle.SetCloseToTray(closeToTray),
+  setCloseToTray: (closeToTray: boolean) =>
+    Lifecycle.SetCloseToTray(closeToTray),
   closeRequested: () => Lifecycle.RequestClose(),
   pickFolder: (title: string) => File.PickFolder(title),
   pickFile: (title: string, pattern: string) => File.PickFile(title, pattern),
@@ -189,7 +208,9 @@ export const api = {
   automationRuns: (taskId: string) =>
     Automation.Runs(taskId) as unknown as Promise<AutomationRun[]>,
   automationSessions: (workspace: string) =>
-    Automation.AutomationSessions(workspace) as unknown as Promise<SessionMeta[]>,
+    Automation.AutomationSessions(workspace) as unknown as Promise<
+      SessionMeta[]
+    >,
   secretExists: (scope: string, name: string) => Secret.Exists(scope, name),
   secretDelete: (scope: string, name: string) => Secret.Delete(scope, name),
   readLog: (n: number) => Settings.ReadLog(n),
