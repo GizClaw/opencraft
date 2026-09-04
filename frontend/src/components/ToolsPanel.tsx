@@ -1,7 +1,9 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import type { ComponentType } from 'react';
+import type { ComponentType, MouseEvent } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Bot,
+  Check,
   ChevronDown,
   ChevronRight,
   Clock,
@@ -10,6 +12,7 @@ import {
   Loader2,
   MoreHorizontal,
   Plug,
+  Plus,
   Puzzle,
   RotateCw,
   Search,
@@ -94,28 +97,460 @@ interface MCPRow {
 const newMCPID = () =>
   `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-// MCPSection manages the MCP tool-server list: load on mount, edit rows,
-// and persist with one save action (mirrors the former Settings tab).
+const emptyMCPRow = (): MCPRow => ({
+  id: newMCPID(),
+  name: '',
+  transport: 'stdio',
+  command: '',
+  url: '',
+  argsText: '',
+  envText: '',
+});
+
+// MCPDetailDialog is the centered configuration form shown when a server
+// is clicked in the MCP list. The dialog edits a local draft and leaves
+// persistence to the surrounding MCPSection's single Save & apply, so
+// multiple server edits are still applied as one runtime reload.
+function MCPDetailDialog({
+  draft,
+  isNew,
+  toServer,
+  onClose,
+  onCommit,
+  onRemove,
+}: {
+  draft: MCPRow;
+  isNew: boolean;
+  toServer: (row: MCPRow) => MCPServer;
+  onClose: () => void;
+  onCommit: (row: MCPRow) => void;
+  onRemove: () => void;
+}) {
+  const { t } = useTranslation();
+  const [row, setRow] = useState<MCPRow>(draft);
+  const [error, setError] = useState('');
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<{
+    ok: boolean;
+    msg: string;
+  } | null>(null);
+  const [transportOpen, setTransportOpen] = useState(false);
+  const transportRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.stopImmediatePropagation();
+        if (transportOpen) {
+          setTransportOpen(false);
+        } else {
+          onClose();
+        }
+      }
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => document.removeEventListener('keydown', onKey, true);
+  }, [onClose, transportOpen]);
+
+  useEffect(() => {
+    if (!transportOpen) return;
+    const onDown = (e: PointerEvent) => {
+      if (
+        transportRef.current &&
+        !transportRef.current.contains(e.target as Node)
+      ) {
+        setTransportOpen(false);
+      }
+    };
+    document.addEventListener('pointerdown', onDown);
+    return () => document.removeEventListener('pointerdown', onDown);
+  }, [transportOpen]);
+
+  const update = (patch: Partial<MCPRow>) => {
+    setRow((prev) => ({ ...prev, ...patch }));
+    setError('');
+    setTestResult(null);
+  };
+
+  const envRows = useMemo(() => {
+    if (!row.envText) return [];
+    return row.envText.split('\n').map((line) => {
+      const eq = line.indexOf('=');
+      return eq < 0
+        ? { key: line, value: '' }
+        : { key: line.slice(0, eq), value: line.slice(eq + 1) };
+    });
+  }, [row.envText]);
+
+  const updateEnvRows = (rows: { key: string; value: string }[]) => {
+    update({
+      envText: rows.map((r) => `${r.key}=${r.value}`).join('\n'),
+    });
+  };
+
+  const addEnvRow = () => {
+    updateEnvRows([...envRows, { key: '', value: '' }]);
+  };
+
+  const updateEnvRow = (
+    index: number,
+    patch: Partial<{ key: string; value: string }>,
+  ) => {
+    updateEnvRows(
+      envRows.map((r, i) => (i === index ? { ...r, ...patch } : r)),
+    );
+  };
+
+  const removeEnvRow = (index: number) => {
+    updateEnvRows(envRows.filter((_, i) => i !== index));
+  };
+
+  const runTest = async () => {
+    setTesting(true);
+    setTestResult(null);
+    setError('');
+    try {
+      await api.testMCP(toServer(row));
+      setTestResult({ ok: true, msg: '' });
+    } catch (err) {
+      setTestResult({ ok: false, msg: String(err) });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const commit = () => {
+    if (!row.name.trim()) {
+      setError(t('config.mcpNameRequired'));
+      return;
+    }
+    if (row.transport === 'stdio' && !row.command.trim()) {
+      setError(t('config.mcpCommandRequired'));
+      return;
+    }
+    if (row.transport === 'http' && !row.url.trim()) {
+      setError(t('config.mcpURLRequired'));
+      return;
+    }
+    onCommit(row);
+  };
+
+  const missingConnection =
+    !row.name.trim() ||
+    (row.transport === 'stdio' ? !row.command.trim() : !row.url.trim());
+
+  const fieldClass =
+    'w-full rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent';
+  const envInputClass =
+    'rounded-lg border border-edge bg-panel2 px-2.5 py-1.5 text-xs outline-none focus:border-accent';
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-6"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-[calc(100vh-2rem)] w-[38rem] max-w-full flex-col rounded-2xl border border-edge bg-panel shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+        aria-label={
+          isNew ? t('config.mcpAdd') : row.name.trim() || t('config.mcpName')
+        }
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex shrink-0 items-center justify-between border-b border-edge px-4 py-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <Plug size="1.0714rem" className="shrink-0 text-accent" />
+            <h3 className="min-w-0 truncate text-sm font-semibold">
+              {isNew
+                ? t('config.mcpAdd')
+                : row.name.trim() || t('config.mcpName')}
+            </h3>
+            {row.source && (
+              <button
+                onClick={() =>
+                  void api
+                    .openExternal(row.source!)
+                    .catch((err) => setError(String(err)))
+                }
+                className="text-dim hover:text-fg"
+                title={t('config.mcpOpenRepo')}
+                aria-label={t('config.mcpOpenRepo')}
+              >
+                <ExternalLink size="0.9286rem" />
+              </button>
+            )}
+          </div>
+          <button
+            onClick={onClose}
+            className="text-dim hover:text-fg"
+            aria-label={t('tools.close')}
+          >
+            <X size="1.1429rem" />
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
+          <div className="flex items-start gap-3">
+            <div className="min-w-0 flex-1">
+              <label
+                htmlFor="mcp-dialog-name"
+                className="mb-1 block text-[0.7857rem] text-dim"
+              >
+                {t('config.mcpName')}
+              </label>
+              <input
+                id="mcp-dialog-name"
+                value={row.name}
+                onChange={(e) => update({ name: e.target.value })}
+                placeholder={t('config.mcpName')}
+                autoFocus
+                className={fieldClass}
+              />
+            </div>
+            <div className="w-32 shrink-0">
+              <label
+                htmlFor="mcp-dialog-transport"
+                className="mb-1 block text-[0.7857rem] text-dim"
+              >
+                {t('config.mcpTransportLabel')}
+              </label>
+              <div ref={transportRef} className="relative">
+                <button
+                  id="mcp-dialog-transport"
+                  type="button"
+                  onClick={() => setTransportOpen((v) => !v)}
+                  className="flex w-full items-center justify-between gap-1.5 rounded-lg border border-edge bg-panel px-2.5 py-1.5 text-sm text-fg transition-colors hover:border-accent/50"
+                >
+                  <span>{row.transport}</span>
+                  <ChevronDown
+                    size="0.8571rem"
+                    className={`text-dim transition-transform ${
+                      transportOpen ? 'rotate-180' : ''
+                    }`}
+                  />
+                </button>
+                {transportOpen && (
+                  <div className="absolute left-0 right-0 top-full z-50 mt-1.5 rounded-xl border border-edge bg-panel p-1 shadow-xl">
+                    {(['stdio', 'http'] as const).map((value) => {
+                      const selected = row.transport === value;
+                      return (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => {
+                            setTransportOpen(false);
+                            update({ transport: value });
+                          }}
+                          className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs ${
+                            selected
+                              ? 'bg-accent/10 text-accent'
+                              : 'text-dim hover:bg-panel2 hover:text-fg'
+                          }`}
+                        >
+                          <span>{value}</span>
+                          {selected && <Check size="0.8571rem" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+          <div>
+            <label
+              htmlFor="mcp-dialog-connection"
+              className="mb-1 block text-[0.7857rem] text-dim"
+            >
+              {row.transport === 'stdio'
+                ? t('config.mcpCommandLabel')
+                : t('config.mcpURLLabel')}
+            </label>
+            {row.transport === 'stdio' ? (
+              <input
+                id="mcp-dialog-connection"
+                value={row.command}
+                onChange={(e) => update({ command: e.target.value })}
+                placeholder={t('config.mcpCommand')}
+                className={fieldClass}
+              />
+            ) : (
+              <input
+                id="mcp-dialog-connection"
+                value={row.url}
+                onChange={(e) => update({ url: e.target.value })}
+                placeholder={t('config.mcpURL')}
+                className={fieldClass}
+              />
+            )}
+          </div>
+          <div>
+            <label
+              htmlFor="mcp-dialog-args"
+              className="mb-1 block text-[0.7857rem] text-dim"
+            >
+              {t('config.mcpArgsLabel')}
+            </label>
+            <input
+              id="mcp-dialog-args"
+              value={row.argsText}
+              onChange={(e) => update({ argsText: e.target.value })}
+              placeholder={t('config.mcpArgs')}
+              className={fieldClass}
+            />
+          </div>
+          <div className="space-y-2">
+            <div className="text-[0.7857rem] text-dim">
+              {t('config.mcpEnvLabel')}
+            </div>
+            {envRows.length > 0 && (
+              <div className="space-y-2">
+                {envRows.map((env, index) => (
+                  <div key={index} className="flex items-center gap-2">
+                    <input
+                      value={env.key}
+                      onChange={(e) =>
+                        updateEnvRow(index, { key: e.target.value })
+                      }
+                      placeholder={t('config.mcpEnvKeyPlaceholder')}
+                      aria-label={`${t('config.mcpEnvKeyLabel')} ${index + 1}`}
+                      className={`${envInputClass} w-40 shrink-0 font-mono`}
+                    />
+                    <span className="shrink-0 select-none text-xs text-dim">
+                      =
+                    </span>
+                    <input
+                      value={env.value}
+                      onChange={(e) =>
+                        updateEnvRow(index, { value: e.target.value })
+                      }
+                      placeholder={t('config.mcpEnvValuePlaceholder')}
+                      aria-label={`${t('config.mcpEnvValueLabel')} ${index + 1}`}
+                      className={`${envInputClass} min-w-0 flex-1`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => removeEnvRow(index)}
+                      aria-label={t('config.mcpEnvRemove')}
+                      title={t('config.mcpEnvRemove')}
+                      className="shrink-0 rounded-lg p-1 text-dim hover:bg-err/10 hover:text-err"
+                    >
+                      <X size="0.9286rem" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={addEnvRow}
+              className="flex items-center gap-1 rounded-lg border border-dashed border-edge px-2.5 py-1 text-xs text-dim hover:border-accent/40 hover:text-fg"
+            >
+              <Plus size="0.8571rem" />
+              {t('config.mcpEnvAdd')}
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => void runTest()}
+              disabled={testing || missingConnection}
+              className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim hover:text-fg disabled:opacity-40"
+            >
+              {testing ? (
+                <Loader2 size="0.8571rem" className="animate-spin" />
+              ) : (
+                <Zap size="0.8571rem" />
+              )}
+              {testing ? t('config.mcpTesting') : t('config.mcpTest')}
+            </button>
+            {testResult && (
+              <span
+                className={`max-w-full rounded-lg border px-2 py-1 text-xs break-words ${
+                  testResult.ok
+                    ? 'border-ok/30 bg-ok/10 text-ok'
+                    : 'border-err/30 bg-err/10 text-err'
+                }`}
+              >
+                {testResult.ok
+                  ? t('config.mcpTestSuccess')
+                  : t('config.mcpTestFailed', { error: testResult.msg })}
+              </span>
+            )}
+          </div>
+          {error && <p className="text-xs text-err break-words">{error}</p>}
+        </div>
+
+        <div className="flex shrink-0 items-center justify-between gap-2 border-t border-edge px-4 py-3">
+          {!isNew ? (
+            <button
+              onClick={onRemove}
+              className="flex items-center gap-1.5 rounded-lg border border-err/30 px-2.5 py-1.5 text-xs text-err hover:bg-err/10"
+            >
+              <Trash2 size="0.8571rem" />
+              {t('config.mcpRemove')}
+            </button>
+          ) : (
+            <span />
+          )}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={onClose}
+              className="rounded-lg px-3 py-1.5 text-xs text-dim hover:text-fg"
+            >
+              {t('config.cancel')}
+            </button>
+            <button
+              onClick={commit}
+              className="rounded-lg bg-accent px-3 py-1.5 text-xs text-white hover:opacity-90"
+            >
+              {t('config.mcpDone')}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// MCPSection manages the MCP tool-server list: load on mount, show a
+// searchable summary list, and open each server in the detail dialog.
+// Changes stay in the local rows until Save & apply persists them all.
 export function MCPSection() {
   const { t } = useTranslation();
   const [mcpRows, setMCPRows] = useState<MCPRow[]>([]);
   const [mcpError, setMCPError] = useState('');
   const [saving, setSaving] = useState(false);
   const [statuses, setStatuses] = useState<Record<string, MCPStatus>>({});
-  const [testing, setTesting] = useState<string | null>(null);
-  const [testResult, setTestResult] = useState<{
-    id: string;
-    ok: boolean;
-    msg: string;
-  } | null>(null);
   const [discoverOpen, setDiscoverOpen] = useState(false);
   const [addingRepo, setAddingRepo] = useState(false);
   const [mcpLoading, setMCPLoading] = useState(true);
+  const [query, setQuery] = useState('');
+  const [editing, setEditing] = useState<{
+    row: MCPRow;
+    isNew: boolean;
+  } | null>(null);
+  const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [menuPos, setMenuPos] = useState<{
+    top: number;
+    left: number;
+  } | null>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const toast = useStore((s) => s.toast);
   const addedNames = useMemo(
     () => new Set(mcpRows.map((r) => r.name.trim()).filter(Boolean)),
     [mcpRows],
   );
+  const filteredRows = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return mcpRows;
+    return mcpRows.filter((r) =>
+      [r.name, r.command, r.url, r.argsText, r.envText, r.source].some((v) =>
+        v?.toLowerCase().includes(q),
+      ),
+    );
+  }, [mcpRows, query]);
 
   useEffect(() => {
     void api
@@ -160,11 +595,26 @@ export function MCPSection() {
     };
   }, []);
 
-  const updateMCP = (id: string, patch: Partial<MCPRow>) => {
-    setMCPRows((prev) =>
-      prev.map((r) => (r.id === id ? { ...r, ...patch } : r)),
-    );
-  };
+  useEffect(() => {
+    if (!menuFor) return;
+    const close = () => {
+      setMenuFor(null);
+      setMenuPos(null);
+    };
+    const onDown = (e: PointerEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        close();
+      }
+    };
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => {
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
+    };
+  }, [menuFor]);
 
   const rowToServer = (r: MCPRow): MCPServer => {
     const srv: MCPServer = {
@@ -211,19 +661,6 @@ export function MCPSection() {
       setMCPError(String(err));
     } finally {
       setSaving(false);
-    }
-  };
-
-  const testRow = async (row: MCPRow) => {
-    setTesting(row.id);
-    setTestResult(null);
-    try {
-      await api.testMCP(rowToServer(row));
-      setTestResult({ id: row.id, ok: true, msg: '' });
-    } catch (err) {
-      setTestResult({ id: row.id, ok: false, msg: String(err) });
-    } finally {
-      setTesting(null);
     }
   };
 
@@ -305,12 +742,87 @@ export function MCPSection() {
     ]);
   };
 
+  const openNew = () => {
+    setMCPError('');
+    setEditing({ row: emptyMCPRow(), isNew: true });
+  };
+
+  const toggleRowMenu = (e: MouseEvent<HTMLButtonElement>, rowId: string) => {
+    if (menuFor === rowId) {
+      setMenuFor(null);
+      setMenuPos(null);
+      return;
+    }
+    const rect = e.currentTarget.getBoundingClientRect();
+    setMenuPos({ top: rect.bottom + 6, left: rect.right });
+    setMenuFor(rowId);
+  };
+
+  const openEdit = (row: MCPRow) => {
+    setMenuFor(null);
+    setMenuPos(null);
+    setEditing({ row: { ...row }, isNew: false });
+  };
+
+  const removeRow = (id: string) => {
+    setMenuFor(null);
+    setMenuPos(null);
+    setMCPRows((prev) => prev.filter((r) => r.id !== id));
+  };
+
+  const commitEdit = (row: MCPRow) => {
+    const isNew = editing?.isNew ?? false;
+    setMCPRows((prev) =>
+      isNew ? [...prev, row] : prev.map((r) => (r.id === row.id ? row : r)),
+    );
+    setEditing(null);
+  };
+
+  const removeEdit = () => {
+    if (!editing) return;
+    const rowId = editing.row.id;
+    setMCPRows((prev) => prev.filter((r) => r.id !== rowId));
+    setEditing(null);
+  };
+
   return (
     <div className="space-y-3">
-      <p className="text-xs text-dim">{t('config.mcpHint')}</p>
+      <div className="flex items-start justify-between gap-3">
+        <p className="min-w-0 flex-1 text-xs text-dim">{t('config.mcpHint')}</p>
+        <div className="flex shrink-0 items-center gap-2">
+          <button
+            onClick={openNew}
+            className="flex items-center gap-1.5 rounded-lg border border-edge bg-panel2 px-2.5 py-1 text-xs text-dim hover:text-fg"
+          >
+            <Plug size="0.8571rem" />
+            {t('config.mcpAdd')}
+          </button>
+          <button
+            onClick={() => void saveMCP()}
+            disabled={saving}
+            className="flex items-center gap-1.5 rounded-lg bg-accent px-2.5 py-1 text-xs text-white hover:opacity-90 disabled:opacity-50"
+          >
+            {saving && <Loader2 size="0.8571rem" className="animate-spin" />}
+            {t('setup.saveApply')}
+          </button>
+        </div>
+      </div>
       <div className="flex items-center gap-2 text-xs text-dim">
         <Plug size="0.9286rem" className="text-accent" />
         {t('config.mcpCount', { count: mcpRows.length })}
+      </div>
+      <div className="relative">
+        <Search
+          size="0.8571rem"
+          className="absolute left-2.5 top-1/2 -translate-y-1/2 text-dim"
+        />
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={t('config.mcpSearchConfigured')}
+          aria-label={t('config.mcpSearchConfigured')}
+          className="w-full rounded-lg border border-edge bg-panel pl-8 pr-3 py-1.5 text-sm outline-none focus:border-accent"
+        />
       </div>
       <div className="rounded-xl border border-edge bg-panel2">
         <button
@@ -371,188 +883,128 @@ export function MCPSection() {
           </div>
         )}
       </div>
+      {mcpError && <p className="text-xs text-err break-words">{mcpError}</p>}
       {mcpLoading && mcpRows.length === 0 ? (
         <div className="space-y-3">
           {[0, 1].map((i) => (
             <div
               key={i}
-              className="h-28 animate-pulse rounded-xl border border-edge bg-panel2"
+              className="h-16 animate-pulse rounded-xl border border-edge bg-panel2"
             />
           ))}
         </div>
       ) : mcpRows.length === 0 ? (
-        <p className="text-sm text-dim">{t('config.mcpEmpty')}</p>
-      ) : null}
-      <div className="space-y-3">
-        {mcpRows.map((row) => (
-          <div
-            key={row.id}
-            className="rounded-xl border border-edge bg-panel2 p-3 space-y-2"
-          >
-            <div className="flex items-center gap-2">
-              <Plug size="0.9286rem" className="text-accent shrink-0" />
-              <input
-                value={row.name}
-                onChange={(e) => updateMCP(row.id, { name: e.target.value })}
-                placeholder={t('config.mcpName')}
-                title={row.source ?? ''}
-                className="flex-1 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
-              />
-              {row.source && (
-                <button
-                  onClick={() =>
-                    void api
-                      .openExternal(row.source!)
-                      .catch((err) => setMCPError(String(err)))
-                  }
-                  className="text-dim hover:text-fg"
-                  title={t('config.mcpOpenRepo')}
-                >
-                  <ExternalLink size="0.9286rem" />
-                </button>
-              )}
-              <select
-                value={row.transport}
-                onChange={(e) =>
-                  updateMCP(row.id, { transport: e.target.value })
-                }
-                className="rounded-lg border border-edge bg-panel px-2 py-1.5 text-sm outline-none"
+        <div className="rounded-xl border border-edge bg-panel2 p-6 text-center text-sm text-dim">
+          {t('config.mcpEmpty')}
+        </div>
+      ) : filteredRows.length === 0 ? (
+        <div className="rounded-xl border border-edge bg-panel2 p-6 text-center text-sm text-dim">
+          {t('config.mcpSearchEmpty')}
+        </div>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {filteredRows.map((row) => {
+            const commandLine =
+              row.transport === 'http'
+                ? row.url.trim()
+                : [row.command.trim(), row.argsText.trim()]
+                    .filter(Boolean)
+                    .join(' ');
+            return (
+              <li
+                key={row.id}
+                className="[content-visibility:auto] [contain-intrinsic-size:auto_4.5rem] rounded-xl border border-edge bg-panel2 p-3 transition-colors hover:border-accent/40"
               >
-                <option value="stdio">stdio</option>
-                <option value="http">http</option>
-              </select>
-              {statusPill(row)}
-              <button
-                onClick={() =>
-                  setMCPRows((prev) => prev.filter((r) => r.id !== row.id))
-                }
-                className="text-dim hover:text-err"
-                title={t('config.mcpRemove')}
-                aria-label={t('config.mcpRemove')}
-              >
-                <Trash2 size="1.0000rem" />
-              </button>
-            </div>
-            <div className="space-y-2">
-              <div>
-                <div className="mb-1 text-[0.7857rem] text-dim">
-                  {t('config.mcpCommandLabel')}
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => openEdit(row)}
+                    className="flex min-w-0 flex-1 items-start gap-2 text-left"
+                    title={commandLine || row.name}
+                  >
+                    <Plug
+                      size="0.9286rem"
+                      className="mt-0.5 shrink-0 text-accent"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="flex flex-wrap items-center gap-1.5">
+                        <span className="min-w-0 truncate text-sm font-semibold">
+                          {row.name.trim() || t('config.mcpName')}
+                        </span>
+                        <code className="shrink-0 rounded border border-edge bg-panel px-1.5 py-0.5 text-[0.7143rem] text-dim">
+                          {row.transport}
+                        </code>
+                        {statusPill(row)}
+                      </span>
+                      {commandLine && (
+                        <span className="mt-1 block truncate font-mono text-xs text-dim">
+                          {commandLine}
+                        </span>
+                      )}
+                    </span>
+                  </button>
+                  {row.source && (
+                    <button
+                      onClick={() =>
+                        void api
+                          .openExternal(row.source!)
+                          .catch((err) => setMCPError(String(err)))
+                      }
+                      className="shrink-0 text-dim hover:text-fg"
+                      title={t('config.mcpOpenRepo')}
+                      aria-label={t('config.mcpOpenRepo')}
+                    >
+                      <ExternalLink size="0.9286rem" />
+                    </button>
+                  )}
+                  <div className="shrink-0">
+                    <button
+                      onPointerDown={(e) => e.stopPropagation()}
+                      onClick={(e) => toggleRowMenu(e, row.id)}
+                      aria-label={t('config.mcpMore')}
+                      title={t('config.mcpMore')}
+                      className="rounded-lg p-1.5 text-dim hover:bg-panel hover:text-fg"
+                    >
+                      <MoreHorizontal size="1.0000rem" />
+                    </button>
+                  </div>
+                  {menuFor === row.id &&
+                    menuPos &&
+                    createPortal(
+                      <div
+                        ref={menuRef}
+                        style={{ top: menuPos.top, left: menuPos.left }}
+                        className="fixed z-[100] w-48 -translate-x-full rounded-lg border border-edge bg-panel p-1 shadow-xl"
+                      >
+                        <button
+                          onClick={() => removeRow(row.id)}
+                          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-dim hover:bg-err/10 hover:text-err"
+                        >
+                          <Trash2 size="0.8571rem" className="shrink-0" />
+                          <span className="flex-1 text-left">
+                            {t('config.mcpRemove')}
+                          </span>
+                        </button>
+                      </div>,
+                      document.body,
+                    )}
                 </div>
-                {row.transport === 'stdio' ? (
-                  <input
-                    value={row.command}
-                    onChange={(e) =>
-                      updateMCP(row.id, { command: e.target.value })
-                    }
-                    placeholder={t('config.mcpCommand')}
-                    className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
-                  />
-                ) : (
-                  <input
-                    value={row.url}
-                    onChange={(e) => updateMCP(row.id, { url: e.target.value })}
-                    placeholder={t('config.mcpURL')}
-                    className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
-                  />
-                )}
-              </div>
-              <div>
-                <div className="mb-1 text-[0.7857rem] text-dim">
-                  {t('config.mcpArgsLabel')}
-                </div>
-                <input
-                  value={row.argsText}
-                  onChange={(e) =>
-                    updateMCP(row.id, { argsText: e.target.value })
-                  }
-                  placeholder={t('config.mcpArgs')}
-                  className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
-                />
-              </div>
-              <div>
-                <div className="mb-1 text-[0.7857rem] text-dim">
-                  {t('config.mcpEnvLabel')}
-                </div>
-                <textarea
-                  value={row.envText}
-                  onChange={(e) =>
-                    updateMCP(row.id, { envText: e.target.value })
-                  }
-                  placeholder={t('config.mcpEnv')}
-                  rows={2}
-                  className="w-full resize-none rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
-                />
-              </div>
-            </div>
-            <div className="flex items-center gap-2 border-t border-edge/60 pt-2">
-              <button
-                onClick={() => void testRow(row)}
-                disabled={
-                  testing === row.id ||
-                  !row.name.trim() ||
-                  (row.transport === 'stdio'
-                    ? !row.command.trim()
-                    : !row.url.trim())
-                }
-                className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim hover:text-fg disabled:opacity-40"
-              >
-                {testing === row.id ? (
-                  <Loader2 size="0.8571rem" className="animate-spin" />
-                ) : (
-                  <Zap size="0.8571rem" />
-                )}
-                {testing === row.id
-                  ? t('config.mcpTesting')
-                  : t('config.mcpTest')}
-              </button>
-              {testResult?.id === row.id && (
-                <span
-                  className={`max-w-[60%] truncate rounded-lg border px-2 py-1 text-xs ${
-                    testResult.ok
-                      ? 'border-ok/30 bg-ok/10 text-ok'
-                      : 'border-err/30 bg-err/10 text-err'
-                  }`}
-                  title={testResult.msg || undefined}
-                >
-                  {testResult.ok
-                    ? t('config.mcpTestSuccess')
-                    : t('config.mcpTestFailed', { error: testResult.msg })}
-                </span>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-      <div className="flex items-center gap-2">
-        <button
-          onClick={() =>
-            setMCPRows((prev) => [
-              ...prev,
-              {
-                id: newMCPID(),
-                name: '',
-                transport: 'stdio',
-                command: '',
-                url: '',
-                argsText: '',
-                envText: '',
-              },
-            ])
-          }
-          className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
-        >
-          <Plug size="1.0000rem" />
-          {t('config.mcpAdd')}
-        </button>
-        <button
-          onClick={() => void saveMCP()}
-          disabled={saving}
-          className="rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-50"
-        >
-          {t('setup.saveApply')}
-        </button>
-        {mcpError && <span className="text-xs text-err">{mcpError}</span>}
-      </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {editing && (
+        <MCPDetailDialog
+          key={editing.row.id}
+          draft={editing.row}
+          isNew={editing.isNew}
+          toServer={rowToServer}
+          onClose={() => setEditing(null)}
+          onCommit={commitEdit}
+          onRemove={removeEdit}
+        />
+      )}
     </div>
   );
 }
