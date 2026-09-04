@@ -115,6 +115,11 @@ export interface StatusBarContribution {
 export interface UIService {
   /** Shows a transient status message. Always available. */
   flash: (text: string) => void;
+  /**
+   * Opens a native directory picker. Resolves with the selected path,
+   * or an empty string when the user cancels. Always available.
+   */
+  pickFolder: (title: string) => Promise<string>;
 }
 
 // storage is injected with "storage:kv": the plugin's own namespaced
