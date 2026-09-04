@@ -8,6 +8,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/event"
+	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/core"
@@ -77,11 +78,15 @@ func (b *Conversation) StartTurn(
 		Backend:   b.core.Prompt,
 		Sink:      sink,
 		QueueSize: 256,
+		OnUsage: func(_ context.Context, usage inference.Usage) {
+			b.core.Shell.Emit("usage", core.NewUsageEvent(usage))
+		},
 	})
 	if err != nil {
 		return TurnStart{}, err
 	}
 	b.core.Conversation.TrackRun(contextID, run.RunID())
+	b.core.Shell.Emit("status", core.StatusEvent{Busy: true})
 	go b.waitTurn(ctx, run, contextID)
 	return TurnStart{
 		RunID:          run.RunID(),
@@ -108,13 +113,34 @@ func (b *Conversation) waitTurn(
 	if err != nil && errText == "" {
 		errText = err.Error()
 	}
-	b.core.Shell.Emit("turn_end", map[string]any{
-		"run_id":          run.RunID(),
-		"conversation_id": contextID,
-		"status":          status,
-		"error":           errText,
-		"finished_at":     time.Now().UTC().Format(time.RFC3339),
-	})
+	end := core.NewTurnEnd(
+		run.RunID(), contextID, status, errText,
+		lastAssistantOutput(res), time.Now(),
+	)
+	b.core.Shell.Emit("turn_end", end)
+	b.core.Shell.Emit("status", core.StatusEvent{})
+}
+
+// lastAssistantOutput returns the bounded text of the final assistant
+// message in a run result, or "" when there is none.
+func lastAssistantOutput(res *agent.Result) string {
+	if res == nil {
+		return ""
+	}
+	for i := len(res.Messages) - 1; i >= 0; i-- {
+		if res.Messages[i].Role != message.RoleAssistant {
+			continue
+		}
+		text := strings.TrimSpace(res.Messages[i].Content.Text())
+		if text == "" {
+			continue
+		}
+		if len(text) > 8000 {
+			text = text[len(text)-8000:]
+		}
+		return text
+	}
+	return ""
 }
 
 // streamRunID extracts the run id from a stream subject such as

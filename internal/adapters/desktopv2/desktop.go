@@ -5,8 +5,12 @@ package desktopv2
 
 import (
 	"context"
+	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/bindings"
@@ -57,6 +61,31 @@ func New(opts Options) (*Desktop, error) {
 	}
 	c := core.NewCore(opts.UserDir, opts.DataDir, opts.WorkDir)
 	c.Prompt.SetNotifier(c.Shell.Emit)
+	c.Prompt.SetRunConvResolver(c.Conversation.ConversationForRun)
+	c.Runtime.Manager().SetUsageObserver(func(_ context.Context, usage inference.Usage) {
+		c.Shell.Emit("usage", core.NewUsageEvent(usage))
+	})
+	c.Runtime.SetHostConfigurator(func(h *host.Host) {
+		h.SetArtifactObserver(func(ctx context.Context, path string, data []byte) {
+			if h != c.Runtime.Current() {
+				return
+			}
+			info, ok := agent.RunInfoFromContext(ctx)
+			if !ok || info.ConversationID == "" {
+				return
+			}
+			c.Shell.Emit("artifact", map[string]any{
+				"conversation_id": info.ConversationID,
+				"path":            path,
+				"bytes":           len(data),
+			})
+		})
+		h.SetSessionUpdated(func(_ context.Context, contextID string) {
+			if h == c.Runtime.Current() {
+				c.Shell.Emit("session_updated", map[string]string{"id": contextID})
+			}
+		})
+	})
 	c.SetWorkDir(c.InitialWorkDir(opts.WorkDir))
 	return &Desktop{
 		core:            c,
@@ -97,6 +126,12 @@ func (d *Desktop) startAutomations(ctx context.Context) {
 		Run:    d.runAutomation,
 		Window: 2 * time.Minute,
 		Limit:  4,
+		OnChange: func() {
+			d.core.Shell.Emit("automation_changed", map[string]any{})
+		},
+		OnRun: func(run automations.Run) {
+			d.core.Shell.Emit("automation_run", bindings.ToAutomationRunDTO(run))
+		},
 	})
 	if err != nil {
 		return
@@ -112,7 +147,9 @@ func (d *Desktop) runAutomation(
 	if mode == "" {
 		mode = sessions.ModeWorkspace
 	}
-	h, err := d.core.Runtime.Acquire(ctx, task.Workspace, interact.Auto{})
+	current := d.core.ActiveWorkDir() != "" &&
+		filepath.Clean(d.core.ActiveWorkDir()) == filepath.Clean(task.Workspace)
+	h, err := d.core.Runtime.AcquireBackground(ctx, task.Workspace, interact.Auto{})
 	if err != nil {
 		return automations.RunResult{Status: automations.RunFailed}, err
 	}
@@ -127,25 +164,99 @@ func (d *Desktop) runAutomation(
 	if err != nil {
 		return automations.RunResult{Status: automations.RunFailed}, err
 	}
+	runID := run.RunID()
+	contextID := run.ContextID()
+	if current {
+		d.core.Shell.Emit("automation_run_started", map[string]any{
+			"run_id":          runID,
+			"conversation_id": contextID,
+		})
+	}
 	res, waitErr := run.Wait(ctx)
+	finishedAt := time.Now().UTC()
 	result := automations.RunResult{
-		ConversationID: run.ContextID(),
-		RunID:          run.RunID(),
+		ConversationID: contextID,
+		RunID:          runID,
 	}
-	if waitErr != nil {
-		result.Status = automations.RunFailed
-		result.Error = waitErr.Error()
-		return result, waitErr
-	}
-	if res != nil && res.Status == "completed" {
-		result.Status = automations.RunCompleted
-	} else {
-		result.Status = automations.RunFailed
-		if res != nil && res.Err != nil {
-			result.Error = res.Err.Error()
+	status := "unknown"
+	errText := ""
+	if res != nil {
+		status = string(res.Status)
+		if res.Err != nil {
+			errText = res.Err.Error()
 		}
 	}
+	if waitErr != nil && errText == "" {
+		errText = waitErr.Error()
+	}
+	output := automationOutput(res)
+	if waitErr != nil {
+		result.Status = automations.RunFailed
+		result.Error = errText
+	} else {
+		if res != nil && status == string(agent.StatusCompleted) {
+			result.Status = automations.RunCompleted
+		} else {
+			result.Status = automations.RunFailed
+			result.Error = errText
+		}
+	}
+	notify := !suppressAutomationNotify(task, result.Status, errText)
+	if current {
+		end := core.NewTurnEnd(
+			runID, contextID, status, errText, output, finishedAt,
+		)
+		end.Notify = &notify
+		d.core.Shell.Emit("turn_end", end)
+	} else if notify {
+		d.core.Shell.Emit("automation_notify", map[string]any{
+			"task_id": task.ID,
+			"name":    task.Name,
+			"status":  string(result.Status),
+			"error":   result.Error,
+			"output":  output,
+		})
+	}
+	if waitErr != nil {
+		return result, waitErr
+	}
 	return result, nil
+}
+
+// automationOutput returns the bounded text of the run's final
+// assistant message for notifications outside the open workspace.
+func automationOutput(res *agent.Result) string {
+	if res == nil {
+		return ""
+	}
+	for i := len(res.Messages) - 1; i >= 0; i-- {
+		if res.Messages[i].Role != message.RoleAssistant {
+			continue
+		}
+		text := strings.TrimSpace(res.Messages[i].Content.Text())
+		if text == "" {
+			continue
+		}
+		if len(text) > 8000 {
+			text = text[len(text)-8000:]
+		}
+		return text
+	}
+	return ""
+}
+
+// suppressAutomationNotify applies the task's notification policy.
+func suppressAutomationNotify(
+	task automations.Task, status automations.RunStatus, errorText string,
+) bool {
+	switch task.Notify {
+	case automations.NotifyNever:
+		return true
+	case automations.NotifyFailed:
+		return status != automations.RunFailed && errorText == ""
+	default:
+		return false
+	}
 }
 
 // Bindings returns the Wails binding objects.

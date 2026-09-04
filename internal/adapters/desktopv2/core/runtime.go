@@ -34,14 +34,18 @@ type Runtime struct {
 	usage             *usage.Store
 	automations       *automations.Store
 	automationManager *automations.Manager
+
+	hostConfigured   map[*host.Host]bool
+	hostConfigurator func(*host.Host)
 }
 
 // NewRuntime creates the runtime service rooted at dataDir/userDir.
 func NewRuntime(dataDir, userDir string) *Runtime {
 	return &Runtime{
-		dataDir: dataDir,
-		userDir: userDir,
-		manager: host.NewManagerAt(dataDir, userDir),
+		dataDir:        dataDir,
+		userDir:        userDir,
+		manager:        host.NewManagerAt(dataDir, userDir),
+		hostConfigured: make(map[*host.Host]bool),
 	}
 }
 
@@ -74,6 +78,15 @@ func (r *Runtime) Current() *host.Host {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.current
+}
+
+// SetHostConfigurator installs a callback applied once to every Host
+// acquired from the manager. Adapters use it to wire UI observers
+// (artifacts, session updates) without re-registering on shared hosts.
+func (r *Runtime) SetHostConfigurator(fn func(*host.Host)) {
+	r.mu.Lock()
+	r.hostConfigurator = fn
+	r.mu.Unlock()
 }
 
 // Usage returns the user-level usage store after OpenUserDB.
@@ -155,10 +168,46 @@ func (r *Runtime) Acquire(
 	if err != nil {
 		return nil, err
 	}
+	r.configureHost(h)
 	r.mu.Lock()
 	r.current = h
 	r.mu.Unlock()
 	return h, nil
+}
+
+// AcquireBackground returns a shared Host without making it the
+// active workspace Host. Automation and headless-style runs use it so
+// opening or running a background workspace never steals the UI's
+// current Host.
+func (r *Runtime) AcquireBackground(
+	ctx context.Context,
+	workDir string,
+	backend interact.Backend,
+) (*host.Host, error) {
+	if r.manager == nil {
+		return nil, fmt.Errorf("runtime: host manager is not configured")
+	}
+	h, err := r.manager.Acquire(ctx, workDir, backend, nil)
+	if err != nil {
+		return nil, err
+	}
+	r.configureHost(h)
+	return h, nil
+}
+
+// configureHost runs the adapter host configurator once per Host.
+func (r *Runtime) configureHost(h *host.Host) {
+	r.mu.Lock()
+	if r.hostConfigured[h] {
+		r.mu.Unlock()
+		return
+	}
+	r.hostConfigured[h] = true
+	fn := r.hostConfigurator
+	r.mu.Unlock()
+	if fn != nil {
+		fn(h)
+	}
 }
 
 // Reload invalidates pooled hosts so the next Acquire rebuilds from

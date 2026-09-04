@@ -63,6 +63,19 @@ func (c *Conversation) Runs(conversationID string) map[string]bool {
 	return out
 }
 
+// ConversationForRun returns the conversation that minted runID, or
+// "" when the run is not attributed to any conversation.
+func (c *Conversation) ConversationForRun(runID string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for conversationID, runs := range c.runConvs {
+		if runs[runID] {
+			return conversationID
+		}
+	}
+	return ""
+}
+
 // ForgetConversation drops run attribution when a conversation is
 // deleted.
 func (c *Conversation) ForgetConversation(conversationID string) {
