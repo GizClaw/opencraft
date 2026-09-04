@@ -25,4 +25,21 @@ describe('StateRoot', () => {
     expect(root.registry.isDeleted('s-1')).toBe(false);
     expect(root.focusSnapshot.value).toBe('no-session');
   });
+
+  it('release removes one idle conversation without tombstoning it', () => {
+    const root = new StateRoot();
+    const actor = root.registry.ensure('s-1', {
+      workspaceGeneration: root.generation(),
+    });
+    root.registry.release('s-1');
+
+    expect(root.registry.size()).toBe(0);
+    expect(root.registry.isDeleted('s-1')).toBe(false);
+
+    const recreated = root.registry.ensure('s-1', {
+      workspaceGeneration: root.generation(),
+    });
+    expect(recreated).not.toBe(actor);
+    expect(root.registry.size()).toBe(1);
+  });
 });

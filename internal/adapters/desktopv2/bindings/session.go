@@ -194,6 +194,28 @@ func (b *Session) Turns(
 	return out, nil
 }
 
+// TurnByRunID returns the archived turn for one completed run. The
+// frontend uses it to reconcile a live transcript after turn_end so
+// coalesced or dropped stream deltas are replaced by the archive.
+func (b *Session) TurnByRunID(
+	conversationID, runID string,
+) (SessionTurnDTO, error) {
+	if runID == "" {
+		return SessionTurnDTO{},
+			fmt.Errorf("session: run id is required")
+	}
+	ctx := b.core.Shell.Context()
+	h := b.core.Runtime.Current()
+	if h == nil || h.Sessions() == nil {
+		return SessionTurnDTO{}, errNotReady("session")
+	}
+	turn, err := h.Sessions().TurnByRunID(ctx, conversationID, runID)
+	if err != nil {
+		return SessionTurnDTO{}, err
+	}
+	return toSessionTurnDTO(turn), nil
+}
+
 func (b *Session) exportsDir() (string, error) {
 	workDir := b.core.ActiveWorkDir()
 	if workDir == "" {

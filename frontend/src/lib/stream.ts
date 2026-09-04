@@ -1,4 +1,5 @@
 import type { AssistantItem, MessageView } from './store';
+import type { StreamDelta, UIEvent } from './types';
 
 export type ToolCallItem = Extract<AssistantItem, { kind: 'tool_call' }>;
 
@@ -48,4 +49,82 @@ export function groupToolCalls(
 // so item visibility never drifts between render paths.
 export function visibleStreamItems(messages: MessageView[]): AssistantItem[] {
   return messages.flatMap((m) => m.items).filter((it) => !isPlanCall(it));
+}
+
+// coalesceStreamEvents merges contiguous text/reasoning deltas of the
+// same stream into one wire event, so a high-token burst becomes one
+// immutable transcript fold per phase per flush instead of one fold
+// per token. Events from different runs/conversations are flushed in
+// their original arrival order instead of being reordered per group.
+export function coalesceStreamEvents(events: UIEvent[]): UIEvent[] {
+  const out: UIEvent[] = [];
+  const emitAccumulated = (
+    ev: UIEvent,
+    kind: 'text' | 'reasoning',
+    text: string,
+  ) => {
+    if (!text) return;
+    const data = ev.data as {
+      delta: StreamDelta;
+    };
+    out.push({
+      ...ev,
+      data: {
+        ...data,
+        delta: {
+          ...data.delta,
+          type: 'part',
+          part: { type: kind, text },
+        },
+      },
+    });
+  };
+  let activeKey = '';
+  let activeKind: 'text' | 'reasoning' | undefined;
+  let activeText = '';
+  let activeTemplate: UIEvent | undefined;
+  const flushActive = () => {
+    if (activeTemplate && activeKind && activeText) {
+      emitAccumulated(activeTemplate, activeKind, activeText);
+    }
+    activeKey = '';
+    activeKind = undefined;
+    activeText = '';
+    activeTemplate = undefined;
+  };
+  for (const ev of events) {
+    const data = ev.data as {
+      conversation_id?: string;
+      run_id?: string;
+      delta?: StreamDelta;
+    };
+    const key = `${data.conversation_id ?? ''}\u0000${data.run_id ?? ''}`;
+    const delta = data.delta;
+    const part = delta?.part;
+    const isText = delta?.type === 'part' && part?.type === 'text';
+    const isReasoning = delta?.type === 'part' && part?.type === 'reasoning';
+    if (!isText && !isReasoning) {
+      flushActive();
+      out.push(ev);
+      continue;
+    }
+    const kind: 'text' | 'reasoning' = isText ? 'text' : 'reasoning';
+    const text = (part as { text?: string }).text ?? '';
+    if (!text) {
+      // Empty deltas are ordering boundaries only for the renderer;
+      // keep them in place rather than folding them into a neighbor.
+      flushActive();
+      out.push(ev);
+      continue;
+    }
+    if (key !== activeKey || kind !== activeKind) {
+      flushActive();
+      activeKey = key;
+      activeKind = kind;
+      activeTemplate = ev;
+    }
+    activeText += text;
+  }
+  flushActive();
+  return out;
 }

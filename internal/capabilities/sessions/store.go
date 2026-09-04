@@ -545,36 +545,71 @@ func (s *Store) Turns(ctx context.Context, id string) ([]TurnRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	byTurn := make(map[int64][]message.Message)
+	byTurn := make(map[int64][]state.ArchiveMessage)
 	for _, m := range msgs {
-		byTurn[m.TurnID] = append(byTurn[m.TurnID], message.Message{
+		byTurn[m.TurnID] = append(byTurn[m.TurnID], m)
+	}
+	out := make([]TurnRecord, 0, len(turns))
+	for _, t := range turns {
+		out = append(out, archiveTurnRecord(ctx, id, t, byTurn[t.ID]))
+	}
+	return out, nil
+}
+
+// TurnByRunID returns one archived turn for a completed run, without
+// loading the rest of the conversation. It is the reconciliation
+// endpoint for live turn_end events whose streamed deltas may have
+// been coalesced or dropped.
+func (s *Store) TurnByRunID(
+	ctx context.Context, conversationID, runID string,
+) (TurnRecord, error) {
+	if err := requireID(conversationID); err != nil {
+		return TurnRecord{}, err
+	}
+	if runID == "" {
+		return TurnRecord{},
+			errdefs.Validationf("session store: run id is required")
+	}
+	turn, msgs, err := s.db.ArchiveTurnByRun(ctx, conversationID, runID)
+	if err != nil {
+		return TurnRecord{}, fmt.Errorf(
+			"sessions: turn by run %q: %w", runID, err)
+	}
+	return archiveTurnRecord(ctx, conversationID, turn, msgs), nil
+}
+
+// archiveTurnRecord lowers one SQLite turn row into the shared
+// TurnRecord shape used by the UI binding.
+func archiveTurnRecord(
+	ctx context.Context,
+	conversationID string,
+	turn state.ArchiveTurn,
+	msgs []state.ArchiveMessage,
+) TurnRecord {
+	rec := TurnRecord{
+		Seq:         turn.Seq,
+		At:          turn.At,
+		RequestedAt: turn.RequestedAt,
+		StartedAt:   turn.StartedAt,
+		FinishedAt:  turn.FinishedAt,
+		RunID:       turn.RunID,
+		Status:      turn.Status,
+		Error:       turn.Error,
+	}
+	for _, m := range msgs {
+		rec.Messages = append(rec.Messages, message.Message{
 			Role:    message.Role(m.Role),
 			Content: m.Content,
 		})
 	}
-	out := make([]TurnRecord, 0, len(turns))
-	for _, t := range turns {
-		rec := TurnRecord{
-			Seq:         t.Seq,
-			At:          t.At,
-			RequestedAt: t.RequestedAt,
-			StartedAt:   t.StartedAt,
-			FinishedAt:  t.FinishedAt,
-			RunID:       t.RunID,
-			Status:      t.Status,
-			Error:       t.Error,
-			Messages:    byTurn[t.ID],
+	if len(turn.ArtifactsJSON) > 0 {
+		if err := json.Unmarshal(turn.ArtifactsJSON, &rec.Artifacts); err != nil {
+			telemetry.WarnErr(ctx,
+				"sessions: decode turn artifacts failed", err,
+				otellog.String("conversation.id", conversationID))
 		}
-		if len(t.ArtifactsJSON) > 0 {
-			if err := json.Unmarshal(t.ArtifactsJSON, &rec.Artifacts); err != nil {
-				telemetry.WarnErr(ctx,
-					"sessions: decode turn artifacts failed", err,
-					otellog.String("conversation.id", id))
-			}
-		}
-		out = append(out, rec)
 	}
-	return out, nil
+	return rec
 }
 
 // RolloutPath returns the JSONL audit path for one conversation.

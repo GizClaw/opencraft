@@ -7,6 +7,15 @@ export interface MockConfig {
   workspace?: string;
   currentSession?: string;
   startTurn?: { run_id: string; context_id: string };
+  // Per-session turn ids, keyed by conversation id. Falls back to
+  // startTurn, then to an auto-incrementing id.
+  startTurns?: Record<string, { run_id: string; context_id?: string }>;
+  // NewChat responses consumed in order, then an auto-incrementing id.
+  newChatIds?: string[];
+  // Per-conversation archive and per-run archive responses used by
+  // resume and turn_end reconciliation.
+  sessionTurnsByID?: Record<string, unknown[]>;
+  turnByRunID?: Record<string, unknown>;
   listSessions?: unknown[];
   sessionTurns?: unknown[];
   automations?: unknown[];
@@ -19,6 +28,8 @@ export function mockBackend(cfg?: MockConfig) {
     __emit?: (name: string, data: unknown) => void;
   };
   const config: MockConfig = cfg ?? {};
+  let newChatSeq = 0;
+  let startTurnSeq = 0;
   const listeners: Record<string, Array<(data: unknown) => void>> = {};
 
   const emit = (name: string, data: unknown) => {
@@ -75,13 +86,29 @@ export function mockBackend(cfg?: MockConfig) {
     Conversation: {
       CancelTurn: noop,
       CurrentSession: async () => config.currentSession ?? 's-1',
-      NewChat: async () => 's-new',
+      NewChat: async () => {
+        const queued = config.newChatIds?.shift();
+        if (queued) return queued;
+        newChatSeq += 1;
+        return newChatSeq === 1 ? 's-new' : `s-new-${newChatSeq}`;
+      },
       ReplyPrompt: async () => true,
       ResumeSession: noop,
       SessionMode: async () => 'workspace',
       SetSessionMode: noop,
-      StartTurn: async () =>
-        config.startTurn ?? { run_id: 'r-1', context_id: 's-1' },
+      StartTurn: async (req: unknown) => {
+        const contextID =
+          (req as { context_id?: string } | undefined)?.context_id ??
+          config.currentSession ??
+          's-1';
+        const mapped = config.startTurns?.[contextID];
+        if (mapped) return { ...mapped, context_id: contextID };
+        if (config.startTurn) return config.startTurn;
+        return {
+          run_id: `r-${++startTurnSeq}`,
+          context_id: contextID,
+        };
+      },
     },
     Diagnostics: {
       ClearCaches: async () => ({ dirs: [], bytes: 0 }),
@@ -153,7 +180,15 @@ export function mockBackend(cfg?: MockConfig) {
       ImportBundle: async () => '',
       List: async () => config.listSessions ?? [],
       Rename: noop,
-      Turns: async () => config.sessionTurns ?? [],
+      Turns: async (id: string) =>
+        config.sessionTurnsByID?.[id] ?? config.sessionTurns ?? [],
+      TurnByRunID: async (_id: string, runID: string) => {
+        const turn = config.turnByRunID?.[runID];
+        if (!turn) {
+          throw new Error(`TurnByRunID: archive turn not found for ${runID}`);
+        }
+        return turn;
+      },
     },
     Settings: {
       AllowPermission: noop,

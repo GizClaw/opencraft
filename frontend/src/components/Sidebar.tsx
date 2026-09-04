@@ -20,7 +20,7 @@ import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { WindowToggleMaximise } from '../../wailsjs/runtime/runtime';
 import { api } from '../lib/api';
-import { useStore } from '../lib/store';
+import { pendingConversationIDs, useStore } from '../lib/store';
 import { useFocusState, useRunningConversations } from '../state/react';
 import type { SessionMeta } from '../lib/types';
 import type { ComponentType } from 'react';
@@ -53,13 +53,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   const openTools = useStore((s) => s.openTools);
   const closeTools = useStore((s) => s.closeTools);
   const deleteSession = useStore((s) => s.deleteSession);
-  const pendingInteractKey = useStore((s) => {
-    let key = '';
-    for (const [id, conv] of Object.entries(s.conversations)) {
-      if (conv.pendingInteracts.length > 0) key += `${id}\n`;
-    }
-    return key;
-  });
+  const pendingPromptConvs = useStore((s) => s.pendingPromptConvs);
   const flash = useStore((s) => s.flash);
   const loadSessions = useStore((s) => s.loadSessions);
   const loadWorkspaces = useStore((s) => s.loadWorkspaces);
@@ -197,9 +191,8 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   // list up to five entries total.
   const runningActors = useRunningConversations();
   const pendingInteractIds = useMemo(
-    () =>
-      pendingInteractKey ? pendingInteractKey.split('\n').filter(Boolean) : [],
-    [pendingInteractKey],
+    () => pendingConversationIDs(pendingPromptConvs),
+    [pendingPromptConvs],
   );
   const runningIds = useMemo(() => {
     const ids = new Set(

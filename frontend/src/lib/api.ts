@@ -98,6 +98,11 @@ export const api = {
     Session.History(id, -1) as unknown as Promise<HistoryMessage[]>,
   sessionTurns: (id: string) =>
     Session.Turns(id) as unknown as Promise<SessionTurn[]>,
+  turnByRunID: (conversationID: string, runID: string) =>
+    Session.TurnByRunID(
+      conversationID,
+      runID,
+    ) as unknown as Promise<SessionTurn>,
   workspaces: () => Workspace.List() as Promise<WorkspaceMeta[]>,
   openWorkspace: (path: string) => Workspace.Open(path),
   removeWorkspace: (id: string) => Workspace.Remove(id),

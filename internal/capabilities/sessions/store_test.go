@@ -603,6 +603,61 @@ func TestRecordTurnTimingPersistsWithArchivedTurn(t *testing.T) {
 	}
 }
 
+// TestTurnByRunIDLoadsOneCompletedTurn verifies the frontend
+// reconciliation endpoint returns exactly the turn for one run without
+// the rest of the conversation.
+func TestTurnByRunIDLoadsOneCompletedTurn(t *testing.T) {
+	store, err := newMigratedStore(t.TempDir(), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := message.NewTextMessage(message.RoleUser, "first")
+	if err := store.AppendTurnWithRunID(
+		context.Background(), id, "run-1",
+		[]message.Message{first},
+	); err != nil {
+		t.Fatal(err)
+	}
+	secondUser := message.NewTextMessage(message.RoleUser, "second")
+	secondAssistant := message.NewTextMessage(message.RoleAssistant, "done")
+	if err := store.AppendTurnWithRunID(
+		context.Background(), id, "run-2",
+		[]message.Message{secondUser, secondAssistant},
+	); err != nil {
+		t.Fatal(err)
+	}
+	finished := time.Now().UTC()
+	if err := store.RecordTurnEnd(id, "run-2", finished, "completed", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	turn, err := store.TurnByRunID(context.Background(), id, "run-2")
+	if err != nil {
+		t.Fatalf("TurnByRunID: %v", err)
+	}
+	if turn.Seq != 2 || turn.RunID != "run-2" ||
+		turn.Status != "completed" || !turn.FinishedAt.Equal(finished) {
+		t.Fatalf("turn = %+v", turn)
+	}
+	if len(turn.Messages) != 2 ||
+		turn.Messages[0].Content.Text() != "second" ||
+		turn.Messages[1].Content.Text() != "done" {
+		t.Fatalf("messages = %+v", turn.Messages)
+	}
+
+	if _, err := store.TurnByRunID(context.Background(), id, "missing"); err == nil {
+		t.Fatal("TurnByRunID accepted an unknown run")
+	}
+	if _, err := store.TurnByRunID(context.Background(), id, ""); err == nil {
+		t.Fatal("TurnByRunID accepted an empty run")
+	}
+}
+
 // TestLegacyJSONHistoryMigratedIntoSQLite verifies old history JSON is
 // imported once and then removed.
 func TestLegacyJSONHistoryMigratedIntoSQLite(t *testing.T) {

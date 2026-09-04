@@ -444,6 +444,75 @@ func (s *Store) ListArchiveMessages(
 	return out, rows.Err()
 }
 
+// ArchiveTurnByRun returns one archived turn and its messages for a
+// completed run. The run id is unique per conversation, so callers can
+// reconcile a single live turn without loading the whole session.
+func (s *Store) ArchiveTurnByRun(
+	ctx context.Context, conversationID, runID string,
+) (ArchiveTurn, []ArchiveMessage, error) {
+	if conversationID == "" || runID == "" {
+		return ArchiveTurn{}, nil,
+			fmt.Errorf("state: conversation/run ids are required")
+	}
+	var t ArchiveTurn
+	var convID string
+	var run sql.NullString
+	var at, requested, started, finished, status, errText, artifacts string
+	err := s.db.SQLDB().QueryRowContext(ctx, `
+		SELECT id, conversation_id, seq, run_id, at,
+			requested_at, started_at, finished_at,
+			status, error, artifacts_json
+		FROM archive_turns
+		WHERE conversation_id = ? AND run_id = ?`,
+		conversationID, runID,
+	).Scan(&t.ID, &convID, &t.Seq, &run, &at,
+		&requested, &started, &finished, &status, &errText, &artifacts)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ArchiveTurn{}, nil, ErrNotFound
+		}
+		return ArchiveTurn{}, nil,
+			fmt.Errorf("state: get archive turn by run: %w", err)
+	}
+	t.RunID = run.String
+	t.At = parseTime(at)
+	t.RequestedAt = parseTime(requested)
+	t.StartedAt = parseTime(started)
+	t.FinishedAt = parseTime(finished)
+	t.Status = status
+	t.Error = errText
+	t.ArtifactsJSON = []byte(artifacts)
+
+	rows, err := s.db.SQLDB().QueryContext(ctx, `
+		SELECT id, turn_id, seq, role, content_json, created_at
+		FROM archive_messages WHERE turn_id = ? ORDER BY seq`, t.ID)
+	if err != nil {
+		return ArchiveTurn{}, nil,
+			fmt.Errorf("state: list archive turn messages: %w", err)
+	}
+	defer func() {
+		telemetry.WarnErr(ctx,
+			"state: close archive turn message rows failed", rows.Close())
+	}()
+	var msgs []ArchiveMessage
+	for rows.Next() {
+		var m ArchiveMessage
+		var content, createdAt string
+		if err := rows.Scan(&m.ID, &m.TurnID, &m.Seq, &m.Role,
+			&content, &createdAt); err != nil {
+			return ArchiveTurn{}, nil,
+				fmt.Errorf("state: scan archive turn message: %w", err)
+		}
+		if err := json.Unmarshal([]byte(content), &m.Content); err != nil {
+			return ArchiveTurn{}, nil,
+				fmt.Errorf("state: decode archive turn message: %w", err)
+		}
+		m.CreatedAt = parseTime(createdAt)
+		msgs = append(msgs, m)
+	}
+	return t, msgs, rows.Err()
+}
+
 // UpdateArchiveTurnEnd records the terminal status/error and finish
 // time of one run. The status/error fields are written by the host
 // after the engine observer/committer has already inserted the turn,

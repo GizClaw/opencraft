@@ -194,6 +194,9 @@ export default function App() {
           notify?: boolean;
         };
         if (data.notify !== false) {
+          // Flush any deltas still waiting on the stream coalescer so
+          // the notification builds its snippet from the final answer.
+          useStore.getState().flushStreams();
           const { title, body } = turnEndNotification(data);
           void SendNotification({ id: 'turn-end', title, body });
         }

@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import i18n from '../i18n';
 import { api } from './api';
 import { sanitizeToolResult } from './ansi';
+import { coalesceStreamEvents } from './stream';
 import type {
   AgentSummary,
   AutomationRun,
@@ -81,6 +82,15 @@ export interface ToastItem {
   kind: ToastKind;
 }
 
+// pendingConversationIDs returns the unique conversations that own at
+// least one pending interact/prompt. The Sidebar uses this instead of
+// iterating every loaded conversation on each store update.
+export function pendingConversationIDs(
+  pendingPromptConvs: Record<string, string>,
+): string[] {
+  return [...new Set(Object.values(pendingPromptConvs))];
+}
+
 let msgSeq = 0;
 const newID = (prefix: string) => `${prefix}-${Date.now()}-${msgSeq++}`;
 let turnSeq = 0;
@@ -91,6 +101,13 @@ const newTurnID = () => `live-${++turnSeq}`;
 // re-opened via resume; keeping them in the store would grow memory
 // without bound on long-running sessions.
 const MAX_CONV_MESSAGES = 800;
+
+// STREAM_FLUSH_MAX_DELAY_MS bounds how long a burst of stream deltas
+// can stay queued when animation frames are paused (for example while
+// the webview is occluded). The rAF flush normally runs at frame rate;
+// this timer guarantees a commit still happens even when rAF is not
+// being driven.
+const STREAM_FLUSH_MAX_DELAY_MS = 50;
 
 // capConversation trims the oldest messages past the in-memory cap and
 // re-bases per-turn artifact strip indexes onto the trimmed array.
@@ -596,6 +613,10 @@ interface StoreState {
   automationRuns: Record<string, AutomationRun[]>;
   conversations: Record<string, ConversationState>;
   runConvs: Record<string, string>;
+  // pendingPromptConvs maps a pending interact/prompt id to the
+  // conversation that owns it, so routing and the sidebar never scan
+  // every conversation on each store update.
+  pendingPromptConvs: Record<string, string>;
   // subagentStreams folds live stream deltas of delegated subagent
   // runs (keyed by run id) for the SubagentSidebar; they never render
   // into a chat conversation. subagentStreamAt tracks the last delta
@@ -619,6 +640,7 @@ interface StoreState {
 
   init: () => Promise<void>;
   handleEvent: (ev: UIEvent) => void;
+  flushStreams: () => void;
   send: (text: string, attachments?: AttachmentView[]) => Promise<void>;
   retryLast: () => Promise<void>;
   clearLastFailed: () => void;
@@ -686,6 +708,9 @@ function applyTheme(theme: 'dark' | 'light' | 'auto') {
 
 export const useStore = create<StoreState>((set, get) => {
   let toastSeq = 0;
+  let pendingStreamEvents: UIEvent[] = [];
+  let streamFlushRAF: number | null = null;
+  let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
   // Session switches must land on the backend in the same order the
   // user requested them. Without this queue, an older resumeSession
   // can finish after a newer NewChat and move the backend context back
@@ -710,6 +735,47 @@ export const useStore = create<StoreState>((set, get) => {
         },
       };
     });
+
+  // syncPendingIndex rebuilds the prompt-id -> conversation map for one
+  // conversation after its pendingInteracts change. Stream deltas never
+  // touch this map, so sidebar/interact selectors stay O(1) instead of
+  // scanning every loaded conversation on each token.
+  const syncPendingIndex = (conversationID: string) => {
+    set((state) => {
+      const conv = state.conversations[conversationID];
+      const promptIDs = new Set(
+        (conv?.pendingInteracts ?? []).map((p) => p.id),
+      );
+      const pendingPromptConvs = { ...state.pendingPromptConvs };
+      let changed = false;
+      for (const [promptID, ownerID] of Object.entries(pendingPromptConvs)) {
+        if (ownerID !== conversationID) continue;
+        if (promptIDs.delete(promptID)) continue;
+        delete pendingPromptConvs[promptID];
+        changed = true;
+      }
+      for (const promptID of promptIDs) {
+        pendingPromptConvs[promptID] = conversationID;
+        changed = true;
+      }
+      if (!changed) return state;
+      return { pendingPromptConvs };
+    });
+  };
+
+  const clearPendingIndex = (conversationID: string) => {
+    set((state) => {
+      const pendingPromptConvs = { ...state.pendingPromptConvs };
+      let changed = false;
+      for (const [promptID, ownerID] of Object.entries(pendingPromptConvs)) {
+        if (ownerID !== conversationID) continue;
+        delete pendingPromptConvs[promptID];
+        changed = true;
+      }
+      if (!changed) return state;
+      return { pendingPromptConvs };
+    });
+  };
 
   // ensureConversation returns the conversation, creating a busy shell
   // when it is unknown (a live turn resumed after a frontend reload
@@ -818,6 +884,32 @@ export const useStore = create<StoreState>((set, get) => {
             delta: StreamDelta;
           };
           if (!data.run_id) break;
+          const actor = stateRoot.registry.get(conversationID);
+          if (actor) {
+            const snapshot = actor.getSnapshot();
+            const value = snapshot.value as unknown as { turn: string };
+            const context = snapshot.context as {
+              currentRunID?: string;
+              lastEndedRunID?: string;
+            };
+            if (value.turn === 'running') {
+              // A delayed delta from an earlier run must never be
+              // folded into a newer run's live transcript.
+              if (
+                context.currentRunID &&
+                data.run_id !== context.currentRunID
+              ) {
+                break;
+              }
+            } else if (
+              (value.turn === 'starting' || value.turn === 'idle') &&
+              data.run_id === context.lastEndedRunID
+            ) {
+              // The machine already ignores a stream for the last ended
+              // run; mirror it here so data never reaches the renderer.
+              break;
+            }
+          }
           const conv = ensureConversation(conversationID);
           if (!conv) break;
           updateConv(conversationID, {
@@ -834,6 +926,7 @@ export const useStore = create<StoreState>((set, get) => {
               pendingInteracts: [...conv.pendingInteracts, spec],
             });
           }
+          syncPendingIndex(conversationID);
           break;
         }
         case 'resolved': {
@@ -845,6 +938,7 @@ export const useStore = create<StoreState>((set, get) => {
                 (p) => p.id !== data.id,
               ),
             });
+            syncPendingIndex(conversationID);
           }
           break;
         }
@@ -990,6 +1084,7 @@ export const useStore = create<StoreState>((set, get) => {
               workspace: data.work_dir,
               conversations: {},
               runConvs: {},
+              pendingPromptConvs: {},
               subagentStreams: {},
               subagentStreamAt: {},
             });
@@ -1045,14 +1140,8 @@ export const useStore = create<StoreState>((set, get) => {
       if (data?.task_id) void get().loadAutomationRuns(data.task_id);
     },
     conversationForRunID: (runID) => get().runConvs[runID],
-    pendingInteractConversation: (promptID) => {
-      for (const [convID, conv] of Object.entries(get().conversations)) {
-        if (conv.pendingInteracts.some((p) => p.id === promptID)) {
-          return convID;
-        }
-      }
-      return undefined;
-    },
+    pendingInteractConversation: (promptID) =>
+      get().pendingPromptConvs[promptID],
   };
 
   const activeConversationID = () => {
@@ -1091,6 +1180,133 @@ export const useStore = create<StoreState>((set, get) => {
     }
   };
 
+  const clearStreamFlushHandles = () => {
+    if (streamFlushRAF !== null) cancelAnimationFrame(streamFlushRAF);
+    if (streamFlushTimer !== null) clearTimeout(streamFlushTimer);
+    streamFlushRAF = null;
+    streamFlushTimer = null;
+  };
+
+  const flushPendingStreams = () => {
+    clearStreamFlushHandles();
+    if (pendingStreamEvents.length === 0) return;
+    const events = pendingStreamEvents;
+    pendingStreamEvents = [];
+    for (const ev of coalesceStreamEvents(events)) {
+      routeBackendEvent(ev, { root: stateRoot, data: eventDataSink });
+    }
+  };
+
+  const scheduleStreamFlush = () => {
+    if (streamFlushRAF !== null || streamFlushTimer !== null) return;
+    const flush = () => flushPendingStreams();
+    streamFlushRAF =
+      typeof requestAnimationFrame === 'function'
+        ? requestAnimationFrame(flush)
+        : null;
+    streamFlushTimer = setTimeout(flush, STREAM_FLUSH_MAX_DELAY_MS);
+  };
+
+  // retainLiveConversations drops transcripts that are neither focused
+  // nor backed by a live run, so merely opening many sessions over time
+  // does not grow the in-memory store without bound. Resuming one of
+  // those sessions hydrates from the archive again.
+  const retainLiveConversations = (currentID: string) => {
+    const state = get();
+    const conversations: Record<string, ConversationState> = {};
+    const dropped: string[] = [];
+    for (const [id, conv] of Object.entries(state.conversations)) {
+      if (id === currentID) {
+        conversations[id] = conv;
+        continue;
+      }
+      const actor = stateRoot.registry.get(id);
+      const turnValue = actor?.getSnapshot().value as
+        { turn: string } | undefined;
+      const running =
+        turnValue?.turn === 'starting' || turnValue?.turn === 'running';
+      const mappedRun = Object.values(state.runConvs).includes(id);
+      const hasPendingPrompt = conv.pendingInteracts.length > 0;
+      if (running || mappedRun || hasPendingPrompt) {
+        conversations[id] = conv;
+      } else {
+        dropped.push(id);
+      }
+    }
+    if (dropped.length === 0) return;
+    set(() => ({ conversations }));
+    for (const id of dropped) stateRoot.registry.release(id);
+  };
+
+  // reconcileTurnFromArchive replaces a finished live turn with the
+  // archived copy. If stream deltas were coalesced too aggressively or
+  // the runtime sink detached under load, turn_end repairs the
+  // transcript instead of leaving a partial answer visible forever.
+  const reconcileTurnFromArchive = async (
+    conversationID: string,
+    runID: string,
+  ) => {
+    if (!conversationID || !runID) return;
+    const before = get().conversations[conversationID];
+    if (!before || before.messages.length === 0) return;
+    const workspace = get().workspace;
+    const generation = stateRoot.generation();
+    try {
+      const turn = await api.turnByRunID(conversationID, runID);
+      const state = get();
+      if (
+        state.workspace !== workspace ||
+        stateRoot.generation() !== generation ||
+        stateRoot.registry.isDeleted(conversationID)
+      ) {
+        return;
+      }
+      if (!state.conversations[conversationID]) return;
+      const actor = stateRoot.registry.get(conversationID);
+      if (!actor) return;
+      const turnValue = actor.getSnapshot().value as { turn: string };
+      if (turnValue.turn === 'starting' || turnValue.turn === 'running') {
+        return;
+      }
+      set((stateNow) => {
+        const conv = stateNow.conversations[conversationID];
+        if (!conv) return stateNow;
+        if (
+          conv.messages.length !== before.messages.length ||
+          conv.turnArtifacts.length !== before.turnArtifacts.length
+        ) {
+          return stateNow;
+        }
+        const idx = conv.turnArtifacts.findIndex(
+          (t) => t.runID && t.runID === runID,
+        );
+        if (idx < 0) return stateNow;
+        const start = conv.turnArtifacts[idx].start;
+        const rebuilt = historyTurnsToState([turn]);
+        const archived = rebuilt.turnArtifacts[0];
+        if (!archived) return stateNow;
+        return {
+          conversations: {
+            ...stateNow.conversations,
+            [conversationID]: capConversation({
+              ...conv,
+              messages: [...conv.messages.slice(0, start), ...rebuilt.messages],
+              turnArtifacts: [
+                ...conv.turnArtifacts.slice(0, idx),
+                { ...archived, start },
+                ...conv.turnArtifacts.slice(idx + 1),
+              ],
+            }),
+          },
+        };
+      });
+      retainLiveConversations(activeConversationID());
+    } catch {
+      // Archive reconciliation is best-effort: a failed turn_end must
+      // not leave the UI in a worse state or block the next turn.
+    }
+  };
+
   return {
     status: null,
     configured: false,
@@ -1105,6 +1321,7 @@ export const useStore = create<StoreState>((set, get) => {
     automationRuns: {},
     conversations: {},
     runConvs: {},
+    pendingPromptConvs: {},
     subagentStreams: {},
     subagentStreamAt: {},
     composerDraft: '',
@@ -1227,8 +1444,31 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     handleEvent: (ev) => {
+      if (ev.type === 'stream') {
+        pendingStreamEvents.push(ev);
+        scheduleStreamFlush();
+        return;
+      }
+      // Non-stream events are ordering boundaries: any buffered deltas
+      // must land before the terminal/global event that follows them.
+      flushPendingStreams();
+      const turnEndData =
+        ev.type === 'turn_end'
+          ? (ev.data as { run_id?: string; conversation_id?: string })
+          : undefined;
+      const turnEndConversationID =
+        turnEndData?.conversation_id ??
+        (turnEndData?.run_id ? get().runConvs[turnEndData.run_id] : undefined);
       routeBackendEvent(ev, { root: stateRoot, data: eventDataSink });
+      if (turnEndConversationID) {
+        void reconcileTurnFromArchive(
+          turnEndConversationID,
+          turnEndData?.run_id ?? '',
+        );
+      }
     },
+
+    flushStreams: () => flushPendingStreams(),
 
     send: async (text, attachments = []) => {
       const trimmed = text.trim();
@@ -1310,13 +1550,13 @@ export const useStore = create<StoreState>((set, get) => {
         set({ statusText: String(err) });
         return;
       }
-      for (const [convID, conv] of Object.entries(get().conversations)) {
-        if (conv.pendingInteracts.some((p) => p.id === id)) {
-          updateConv(convID, {
-            pendingInteracts: conv.pendingInteracts.filter((p) => p.id !== id),
-          });
-          break;
-        }
+      const convID = get().pendingPromptConvs[id];
+      const conv = convID ? get().conversations[convID] : undefined;
+      if (conv && conv.pendingInteracts.some((p) => p.id === id)) {
+        updateConv(convID, {
+          pendingInteracts: conv.pendingInteracts.filter((p) => p.id !== id),
+        });
+        syncPendingIndex(convID);
       }
     },
 
@@ -1371,6 +1611,7 @@ export const useStore = create<StoreState>((set, get) => {
           workspaceGeneration: stateRoot.generation(),
           readyEmpty: true,
         });
+        retainLiveConversations(id);
       } catch (err) {
         stateRoot.sendFocus({
           type: 'OPEN_FAILED',
@@ -1483,6 +1724,7 @@ export const useStore = create<StoreState>((set, get) => {
             generation,
             empty: existing.messages.length === 0,
           });
+          retainLiveConversations(resolvedID);
           return;
         }
         let turns: Awaited<ReturnType<typeof api.sessionTurns>>;
@@ -1526,15 +1768,20 @@ export const useStore = create<StoreState>((set, get) => {
               model: snapshot.model,
               messages: mergedMessages,
               turnArtifacts,
+              pendingInteracts: existing?.pendingInteracts ?? [],
             }),
           },
         }));
+        if (existing?.pendingInteracts.length) {
+          syncPendingIndex(resolvedID);
+        }
         actor?.send({
           type: 'HYDRATE_OK',
           request: hydrateRequest,
           generation,
           empty: turns.length === 0 && !keepLive,
         });
+        retainLiveConversations(resolvedID);
       } catch (err) {
         stateRoot.sendFocus({
           type: 'OPEN_FAILED',
@@ -1546,6 +1793,9 @@ export const useStore = create<StoreState>((set, get) => {
 
     deleteSession: async (id) => {
       try {
+        // Settle any queued deltas before deleting so a late flush
+        // cannot resurrect the conversation after the tombstone.
+        flushPendingStreams();
         await api.deleteSession(id);
         stateRoot.registry.get(id)?.send({
           type: 'SESSION_DELETED',
@@ -1557,6 +1807,7 @@ export const useStore = create<StoreState>((set, get) => {
           delete conversations[id];
           return { conversations };
         });
+        clearPendingIndex(id);
         if (activeConversationID() === id) {
           // The active conversation is gone: switch to a fresh one so
           // the chat never points at a deleted session.
