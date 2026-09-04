@@ -17,6 +17,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/undo"
+	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 )
 
@@ -116,6 +117,7 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 			}
 		}
 	}
+	think = reasoningCapableThink(h.userDir, model, think)
 	if fresh {
 		if mint {
 			contextID = ocsessions.NewID()
@@ -134,6 +136,13 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 			}
 		}
 	}
+	parts, err := persistUserAttachments(
+		store, contextID, opts.Message.Content.Parts,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("host: persist attachments: %w", err)
+	}
+	opts.Message.Content.Parts = parts
 
 	h.fireUserPromptSubmit(ctx, contextID, opts.Message.Content.Text())
 
@@ -207,6 +216,18 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 		RunID:          turn.RunID(),
 	}, "turn started")
 	return run, nil
+}
+
+// reasoningCapableThink drops the reasoning-effort knob when the
+// effective model does not declare a reasoning capability. Drivers
+// reject reasoning_effort for such models; an empty model hint resolves
+// to the router default like the rest of the runtime.
+func reasoningCapableThink(userDir, model, think string) string {
+	if cfg, err := config.LoadInference(userDir); err == nil &&
+		!cfg.ModelReasoning(model) {
+		return ""
+	}
+	return think
 }
 
 func validateUserMessage(msg message.Message) error {

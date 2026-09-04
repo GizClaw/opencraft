@@ -248,32 +248,32 @@ type Attachment struct {
 
 // ReadAttachment returns preview metadata; images include a data URL.
 func (b *File) ReadAttachment(path string) (Attachment, error) {
-	full, err := b.resolve(path)
-	if err != nil {
-		return Attachment{}, err
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return Attachment{}, errors.New("attachment path is required")
 	}
-	info, err := os.Stat(full)
+	info, err := os.Stat(path)
 	if err != nil {
 		return Attachment{}, err
 	}
 	if !info.Mode().IsRegular() {
-		return Attachment{}, fmt.Errorf("%s is not a regular file", full)
+		return Attachment{}, fmt.Errorf("%s is not a regular file", path)
 	}
 	if info.Size() > 10<<20 {
 		return Attachment{}, fmt.Errorf("attachment too large to preview")
 	}
-	mediaType := mime.TypeByExtension(filepath.Ext(full))
+	mediaType := mime.TypeByExtension(filepath.Ext(path))
 	if i := strings.IndexByte(mediaType, ';'); i >= 0 {
 		mediaType = mediaType[:i]
 	}
 	dto := Attachment{
-		Name:      filepath.Base(full),
-		Path:      full,
+		Name:      filepath.Base(path),
+		Path:      path,
 		Size:      info.Size(),
 		MediaType: mediaType,
 	}
 	if strings.HasPrefix(mediaType, "image/") {
-		data, err := os.ReadFile(full)
+		data, err := os.ReadFile(path)
 		if err != nil {
 			return Attachment{}, err
 		}

@@ -106,14 +106,14 @@ func (c *Core) RemoveWorkspace(id string) (next string, active bool, err error) 
 	if current == "" || config.WorkspaceID(current) != id {
 		return "", false, config.RemoveWorkspace(c.DataDir, id)
 	}
-	next, ok, err := c.nextWorkspaceAfterRemoval(id)
+	next, _, err = c.nextWorkspaceAfterRemoval(id)
 	if err != nil {
 		return "", false, err
 	}
 	if err := config.RemoveWorkspace(c.DataDir, id); err != nil {
 		return "", false, err
 	}
-	return next, ok, nil
+	return next, true, nil
 }
 
 func (c *Core) nextWorkspaceAfterRemoval(

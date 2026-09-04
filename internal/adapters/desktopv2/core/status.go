@@ -44,3 +44,11 @@ func (c *Core) ConfigStatus() ConfigStatus {
 	}
 	return st
 }
+
+// EmitReady broadcasts the current configuration state to the UI.
+// Runtime reloads and workspace switches call this after their host
+// state has settled so the frontend can refresh sessions, model
+// options and the active workspace in one pass.
+func (c *Core) EmitReady() {
+	c.Shell.Emit("ready", c.ConfigStatus())
+}

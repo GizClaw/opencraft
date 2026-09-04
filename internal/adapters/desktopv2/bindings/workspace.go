@@ -1,9 +1,13 @@
 package bindings
 
 import (
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+
 	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/core"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
-	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -29,12 +33,22 @@ func (b *Workspace) Active() string {
 
 // Open acquires a Host for workDir and records it in history.
 func (b *Workspace) Open(workDir string) error {
-	ctx := b.core.Shell.Context()
-	_, err := b.core.Runtime.Acquire(ctx, workDir, interact.Auto{})
+	workDir = strings.TrimSpace(workDir)
+	if workDir == "" {
+		return errors.New("workspace path is required")
+	}
+	info, err := os.Stat(workDir)
 	if err != nil {
 		return err
 	}
+	if !info.IsDir() {
+		return fmt.Errorf("%s is not a directory", workDir)
+	}
+	ctx := b.core.Shell.Context()
 	b.core.SetWorkDir(workDir)
+	if err := b.core.ReloadRuntime(ctx); err != nil {
+		return err
+	}
 	b.core.RecordWorkspace(workDir)
 	return nil
 }
@@ -52,9 +66,9 @@ func (b *Workspace) Remove(id string) error {
 	if next != "" {
 		return b.Open(next)
 	}
+	ctx := b.core.Shell.Context()
 	b.core.SetWorkDir("")
-	b.core.Runtime.Close()
-	return nil
+	return b.core.ReloadRuntime(ctx)
 }
 
 // ChooseWorkspace opens a native picker and opens the selection.

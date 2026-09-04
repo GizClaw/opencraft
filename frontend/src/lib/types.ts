@@ -264,7 +264,7 @@ export interface SkillDTO {
 
 export interface TurnStart {
   run_id: string;
-  context_id: string;
+  conversation_id: string;
   requested_at?: string;
   started_at?: string;
 }
@@ -344,7 +344,6 @@ export interface FileNode {
   path: string;
   is_dir: boolean;
   size: number;
-  children?: FileNode[];
 }
 
 export interface SearchFileHit {

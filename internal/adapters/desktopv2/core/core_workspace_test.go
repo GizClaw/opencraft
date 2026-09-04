@@ -67,3 +67,20 @@ func TestSetWorkDirPublishesPluginEnv(t *testing.T) {
 		t.Fatalf("OPEN_CRAFT_WORKDIR = %q after clearing, want empty", got)
 	}
 }
+
+func TestRemoveLastActiveWorkspaceReturnsToPicker(t *testing.T) {
+	dataDir := t.TempDir()
+	workDir := t.TempDir()
+	c := NewCore(dataDir, dataDir, "")
+	if err := config.SaveWorkspace(dataDir, workDir); err != nil {
+		t.Fatal(err)
+	}
+	c.SetWorkDir(workDir)
+	next, active, err := c.RemoveWorkspace(config.WorkspaceID(workDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !active || next != "" {
+		t.Fatalf("remove last active = (next=%q active=%v), want active with no next", next, active)
+	}
+}

@@ -50,3 +50,21 @@ func TestRenderPatchNeverReturnsNilLines(t *testing.T) {
 		t.Fatal("RenderPatch must return an empty lines slice, not null")
 	}
 }
+
+func TestReadAttachmentOutsideWorkspace(t *testing.T) {
+	workDir := t.TempDir()
+	outside := t.TempDir()
+	src := filepath.Join(outside, "photo.png")
+	if err := os.WriteFile(src, []byte("png-bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := core.NewCore(t.TempDir(), t.TempDir(), workDir)
+	b := NewFileBinding(c)
+	att, err := b.ReadAttachment(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if att.Path != src || att.DataURL == "" {
+		t.Fatalf("attachment = %+v", att)
+	}
+}
