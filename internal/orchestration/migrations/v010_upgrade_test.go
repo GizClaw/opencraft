@@ -2,6 +2,7 @@ package migrations
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -46,8 +47,42 @@ func TestWorkspaceUpgradesV010(t *testing.T) {
 		)`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := handle.SQLDB().ExecContext(ctx, `
+		CREATE TABLE items (
+			id TEXT PRIMARY KEY,
+			thread_id TEXT NOT NULL,
+			turn_id TEXT NOT NULL,
+			seq INTEGER NOT NULL,
+			item_type TEXT NOT NULL,
+			role TEXT,
+			payload TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handle.SQLDB().ExecContext(ctx, `
+		INSERT INTO items(
+			id, thread_id, turn_id, seq, item_type, role, payload, created_at
+		) VALUES ('s-legacy:turn-1:0', 's-legacy', 'turn-1', 0, 'text', 'user',
+		          '{"text":"legacy memory"}', '2026-01-01T00:00:00Z')`,
+	); err != nil {
+		t.Fatal(err)
+	}
 
-	if err := Workspace(ctx, handle, filepath.Join(t.TempDir(), "sessions")); err != nil {
+	sessionsRoot := filepath.Join(t.TempDir(), "sessions")
+	historyDir := filepath.Join(sessionsRoot, "s-legacy", "history")
+	if err := os.MkdirAll(historyDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(historyDir, "000001.json"),
+		[]byte(`{"seq":1,"at":"2026-01-01T00:00:00Z","messages":[{"role":"user","content":{"parts":[{"type":"text","text":"legacy hello"}]}}]}`),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Workspace(ctx, handle, sessionsRoot); err != nil {
 		t.Fatalf("Workspace upgrade from v0.1.0: %v", err)
 	}
 
@@ -69,5 +104,38 @@ func TestWorkspaceUpgradesV010(t *testing.T) {
 	}
 	if applied8 != 1 {
 		t.Fatal("migration 8 was not recorded")
+	}
+
+	var copied int
+	if err := handle.SQLDB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM memory_items WHERE thread_id = 's-legacy'`,
+	).Scan(&copied); err != nil {
+		t.Fatal(err)
+	}
+	if copied != 1 {
+		t.Fatalf("memory_items rows = %d, want 1 after v0.1.0 upgrade", copied)
+	}
+	var oldItems int
+	if err := handle.SQLDB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master
+		 WHERE type = 'table' AND name = 'items'`,
+	).Scan(&oldItems); err != nil {
+		t.Fatal(err)
+	}
+	if oldItems != 0 {
+		t.Fatal("old items table was not dropped by migration 009")
+	}
+	var archived int
+	if err := handle.SQLDB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM archive_messages
+		 WHERE conversation_id = 's-legacy'`,
+	).Scan(&archived); err != nil {
+		t.Fatal(err)
+	}
+	if archived != 1 {
+		t.Fatalf("archive messages = %d, want 1 after JSON import", archived)
+	}
+	if _, err := os.Stat(historyDir); !os.IsNotExist(err) {
+		t.Fatalf("legacy history dir was not removed: %v", err)
 	}
 }

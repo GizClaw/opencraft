@@ -210,6 +210,8 @@ export interface SessionTurn {
   finished_at?: string;
   duration_ms?: number;
   run_id?: string;
+  status?: string;
+  error?: string;
   messages: HistoryMessage[];
   artifacts?: ArtifactDTO[];
 }

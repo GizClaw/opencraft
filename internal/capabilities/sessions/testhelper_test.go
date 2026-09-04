@@ -15,7 +15,7 @@ func newMigratedStore(root string, window int) (*Store, error) {
 		return nil, err
 	}
 	if err := migrations.Workspace(context.Background(), store.Database(), root); err != nil {
-		_ = store.Close()
+		_ = store.CloseDB()
 		return nil, err
 	}
 	return store, nil

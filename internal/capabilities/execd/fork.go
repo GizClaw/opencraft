@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"time"
+
+	"github.com/GizClaw/flowcraft/core/telemetry"
 )
 
 // stopGrace is how long stop waits for the execd child to shut down
@@ -48,7 +50,9 @@ func LaunchExe(
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("execd socket path: %w", err)
 	}
-	_ = os.Remove(sock)
+	if err := os.Remove(sock); err != nil && !os.IsNotExist(err) {
+		telemetry.WarnErr(ctx, "execd: remove stale socket failed", err)
+	}
 
 	var policyFile string
 	if policyJSON != "" {
@@ -58,17 +62,22 @@ func LaunchExe(
 		}
 		policyFile = f.Name()
 		if err := f.Chmod(0o600); err != nil {
-			_ = f.Close()
-			_ = os.Remove(policyFile)
+			telemetry.WarnErr(ctx, "execd: close policy file after chmod failure",
+				f.Close())
+			telemetry.WarnErr(ctx, "execd: remove policy file after chmod failure",
+				os.Remove(policyFile))
 			return nil, sock, nil, fmt.Errorf("execd policy file mode: %w", err)
 		}
 		if _, err := f.WriteString(policyJSON); err != nil {
-			_ = f.Close()
-			_ = os.Remove(policyFile)
+			telemetry.WarnErr(ctx, "execd: close policy file after write failure",
+				f.Close())
+			telemetry.WarnErr(ctx, "execd: remove policy file after write failure",
+				os.Remove(policyFile))
 			return nil, sock, nil, fmt.Errorf("execd policy write: %w", err)
 		}
 		if err := f.Close(); err != nil {
-			_ = os.Remove(policyFile)
+			telemetry.WarnErr(ctx, "execd: remove policy file after close failure",
+				os.Remove(policyFile))
 			return nil, sock, nil, fmt.Errorf("execd policy close: %w", err)
 		}
 	}
@@ -87,7 +96,8 @@ func LaunchExe(
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		if policyFile != "" {
-			_ = os.Remove(policyFile)
+			telemetry.WarnErr(ctx, "execd: remove policy file after start failure",
+				os.Remove(policyFile))
 		}
 		return nil, sock, nil, fmt.Errorf("execd launch: %w", err)
 	}
@@ -98,24 +108,33 @@ func LaunchExe(
 		// belt-and-braces alongside SIGTERM; on Windows it is the
 		// graceful shutdown trigger (SIGTERM is not deliverable there).
 		if dialed != nil {
-			_ = dialed.Close()
+			telemetry.WarnErr(ctx, "execd: close client during stop failed",
+				dialed.Close())
 		}
 		// SIGTERM on unix, no-op on Windows (EOF close above).
-		_ = terminateExecd(cmd)
+		telemetry.WarnErr(ctx, "execd: terminate child during stop failed",
+			terminateExecd(cmd))
 		waited := make(chan struct{})
 		go func() {
-			_ = cmd.Wait()
+			telemetry.WarnErr(ctx, "execd: wait child during stop failed",
+				cmd.Wait())
 			close(waited)
 		}()
 		select {
 		case <-waited:
 		case <-time.After(stopGrace):
-			_ = cmd.Process.Kill()
+			telemetry.WarnErr(ctx, "execd: kill child during stop failed",
+				cmd.Process.Kill())
 			<-waited
 		}
-		_ = os.Remove(sock)
+		if err := os.Remove(sock); err != nil && !os.IsNotExist(err) {
+			telemetry.WarnErr(ctx, "execd: remove socket during stop failed", err)
+		}
 		if policyFile != "" {
-			_ = os.Remove(policyFile)
+			if err := os.Remove(policyFile); err != nil && !os.IsNotExist(err) {
+				telemetry.WarnErr(ctx,
+					"execd: remove policy file during stop failed", err)
+			}
 		}
 	}
 
@@ -128,7 +147,8 @@ func LaunchExe(
 		if err == nil {
 			client, err := Dial(ctx, conn)
 			if err != nil {
-				_ = conn.Close()
+				telemetry.WarnErr(ctx, "execd: close connection after dial failure",
+					conn.Close())
 				stop()
 				return nil, sock, stop, fmt.Errorf("execd handshake: %w", err)
 			}

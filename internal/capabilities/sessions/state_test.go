@@ -19,7 +19,7 @@ func TestStoreOwnsSQLite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = store.CloseDB() }()
 
 	if _, err := os.Stat(filepath.Join(root, "session.db")); err != nil {
 		t.Fatalf("session.db: %v", err)
@@ -53,7 +53,7 @@ func TestStoreOwnsSQLite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = reopened.Close() }()
+	defer func() { _ = reopened.CloseDB() }()
 	if _, err := reopened.State().Load(ctx, "run-1"); err != nil {
 		t.Fatalf("reopened load: %v", err)
 	}

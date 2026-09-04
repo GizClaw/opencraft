@@ -72,6 +72,22 @@ export class ConversationRegistry {
     this.emit();
   }
 
+  /**
+   * release stops and removes one idle conversation actor without
+   * tombstoning its id. The host store calls this when a finished
+   * background conversation is evicted, so re-opening the conversation
+   * hydrates through the normal transcript loading path again.
+   */
+  release(conversationID: string): void {
+    const actor = this.actors.get(conversationID);
+    if (!actor) return;
+    this.actorUnsubs.get(conversationID)?.unsubscribe();
+    actor.stop();
+    this.actors.delete(conversationID);
+    this.actorUnsubs.delete(conversationID);
+    this.emit();
+  }
+
   resetWorkspace(): void {
     for (const actor of this.actors.values()) {
       actor.stop();

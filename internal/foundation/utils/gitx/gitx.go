@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/GizClaw/flowcraft/core/telemetry"
 )
 
 // Root walks upward from dir looking for a .git marker. Empty means
@@ -47,24 +49,30 @@ func RunBounded(
 	cmd := exec.CommandContext(runCtx, "git", append([]string{"-C", root}, args...)...)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
+		telemetry.WarnErr(ctx, "gitx: create stdout pipe failed", err)
 		return "", false
 	}
 	if err := cmd.Start(); err != nil {
+		telemetry.WarnErr(ctx, "gitx: start git failed", err)
 		return "", false
 	}
 	data, err := io.ReadAll(io.LimitReader(stdout, limit+1))
 	if err != nil {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		telemetry.WarnErr(ctx, "gitx: read git output failed", err)
+		telemetry.WarnErr(ctx, "gitx: kill git after read failure",
+			cmd.Process.Kill())
+		telemetry.WarnErr(ctx, "gitx: wait git after read failure", cmd.Wait())
 		return "", false
 	}
 	truncated := int64(len(data)) > limit
 	if truncated {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		telemetry.WarnErr(ctx, "gitx: kill truncated git output",
+			cmd.Process.Kill())
+		telemetry.WarnErr(ctx, "gitx: wait truncated git output", cmd.Wait())
 		return "", true
 	}
 	if err := cmd.Wait(); err != nil {
+		telemetry.WarnErr(ctx, "gitx: git command failed", err)
 		return "", false
 	}
 	return strings.TrimRight(string(data), "\n"), false

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { latestPlan } from './plan';
+import { latestPlan, planNeedsRefresh } from './plan';
 import type { AssistantItem, MessageView } from './store';
 
 function planCall(
@@ -105,5 +105,34 @@ describe('latestPlan', () => {
       planCall('p', JSON.stringify({ plan: [{ step: 'a' }] })),
     ]);
     expect(latestPlan([m])?.plan).toEqual({ items: [{ step: 'a' }] });
+  });
+});
+
+describe('planNeedsRefresh', () => {
+  it('skips plain text deltas that do not touch a plan call', () => {
+    const plan = planCall('p', validArgs, 'running');
+    const before = msg('m1', [plan]);
+    const after: MessageView = {
+      ...before,
+      items: [...before.items, { kind: 'text', id: 't1', text: 'streaming' }],
+    };
+    expect(planNeedsRefresh([before], [after])).toBe(false);
+  });
+
+  it('refreshes when a plan call transitions from running to done', () => {
+    const before = msg('m1', [planCall('p', validArgs, 'running')]);
+    const after = msg('m1', [planCall('p', validArgs)]);
+    expect(planNeedsRefresh([before], [after])).toBe(true);
+  });
+
+  it('refreshes when a new plan call appears', () => {
+    const before = msg('m1', []);
+    const after = msg('m1', [planCall('p', validArgs)]);
+    expect(planNeedsRefresh([before], [after])).toBe(true);
+  });
+
+  it('refreshes when a plan-bearing message is truncated away', () => {
+    const before = msg('m1', [planCall('p', validArgs)]);
+    expect(planNeedsRefresh([before], [])).toBe(true);
   });
 });

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 )
 
 // Install scopes for the skill_install tool.
@@ -66,7 +67,10 @@ func (s *Service) Install(
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = os.RemoveAll(tmp) }()
+	defer func() {
+		telemetry.WarnErr(ctx, "skills: remove install temp failed",
+			os.RemoveAll(tmp))
+	}()
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	// "--" ends option parsing so a repo that merely starts with "-"
@@ -92,7 +96,8 @@ func (s *Service) Install(
 		return "", fmt.Errorf("skills: move %q to %q: %w", src, dst, err)
 	}
 	if _, err := validateTree(dst); err != nil {
-		_ = os.RemoveAll(dst)
+		telemetry.WarnErr(ctx, "skills: remove invalid installed skill failed",
+			os.RemoveAll(dst))
 		return "", err
 	}
 	s.Reload()

@@ -109,6 +109,9 @@ describe('conversation machine', () => {
 
     endTurn(actor, 'r-1', 'canceled');
     expect(regions(actor).turn).toBe('failed');
+    expect(actor.getSnapshot().context).toMatchObject({
+      failureStatus: 'canceled',
+    });
 
     actor.send({ type: 'DISMISS_FAILURE' });
     expect(regions(actor).turn).toBe('idle');

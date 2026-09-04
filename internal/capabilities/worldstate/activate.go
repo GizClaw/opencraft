@@ -2,6 +2,8 @@ package worldstate
 
 import (
 	"context"
+	"errors"
+	"os"
 	"sync"
 
 	"github.com/GizClaw/flowcraft/core/agent"
@@ -90,6 +92,12 @@ func (o *activateObserver) OnRunEnd(ctx context.Context, id agent.Identity, res 
 	defer o.mu.Unlock()
 	byAgent := map[string][]string{}
 	if err := o.store.ReadState(id.ConversationID, activationsStateKey, &byAgent); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			telemetry.WarnErr(ctx,
+				"worldstate: load skill activations failed", err,
+				otellog.String("conversation.id", id.ConversationID),
+				otellog.String("agent.id", id.AgentID))
+		}
 		byAgent = map[string][]string{}
 	}
 	byAgent[id.AgentID] = append(byAgent[id.AgentID], names...)
@@ -103,12 +111,19 @@ func (o *activateObserver) OnRunEnd(ctx context.Context, id agent.Identity, res 
 
 // consumeActivations reads and clears the model-requested skill names
 // for one agent/session pair.
-func (s *Service) consumeActivations(agentID, contextID string) []string {
+func (s *Service) consumeActivations(
+	ctx context.Context, agentID, contextID string,
+) []string {
 	if s.sessionStore == nil {
 		return nil
 	}
 	var byAgent map[string][]string
 	if err := s.sessionStore.ReadState(contextID, activationsStateKey, &byAgent); err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			telemetry.WarnErr(ctx, "worldstate: read skill activations failed", err,
+				otellog.String("conversation.id", contextID),
+				otellog.String("agent.id", agentID))
+		}
 		return nil
 	}
 	names := byAgent[agentID]
@@ -116,7 +131,10 @@ func (s *Service) consumeActivations(agentID, contextID string) []string {
 		return nil
 	}
 	byAgent[agentID] = nil // consume-on-read
-	_ = s.sessionStore.WriteState(contextID, activationsStateKey, byAgent)
+	telemetry.WarnErr(ctx, "worldstate: clear consumed skill activations failed",
+		s.sessionStore.WriteState(contextID, activationsStateKey, byAgent),
+		otellog.String("conversation.id", contextID),
+		otellog.String("agent.id", agentID))
 	if len(names) > maxModelActivations {
 		names = names[:maxModelActivations]
 	}

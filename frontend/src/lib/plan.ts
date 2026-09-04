@@ -15,6 +15,36 @@ export interface PlanPanelState {
   live: boolean;
 }
 
+const isPlanCall = (
+  item: MessageView['items'][number],
+): item is Extract<MessageView['items'][number], { kind: 'tool_call' }> =>
+  item.kind === 'tool_call' && item.tool.name === 'update_plan';
+
+// planNeedsRefresh reports whether a messages update can change the
+// cached plan snapshot. Plain text deltas keep every update_plan item
+// reference intact, so callers can skip the full latestPlan scan until
+// a new plan call arrives, a tool result settles one, or the message
+// layout changes (retry/history).
+export function planNeedsRefresh(
+  prev: MessageView[],
+  next: MessageView[],
+): boolean {
+  if (prev.length !== next.length) return true;
+  const prevById = new Map(prev.map((m) => [m.id, m]));
+  const nextIds = new Set(next.map((m) => m.id));
+  for (const msg of next) {
+    const old = prevById.get(msg.id);
+    if (old === msg) continue;
+    const prevPlan = old?.items.find(isPlanCall);
+    const nextPlan = msg.items.find(isPlanCall);
+    if (prevPlan !== nextPlan) return true;
+  }
+  for (const old of prev) {
+    if (!nextIds.has(old.id) && old.items.some(isPlanCall)) return true;
+  }
+  return false;
+}
+
 // latestPlan scans the transcript for update_plan calls and returns
 // the newest non-empty snapshot, so the top-left panel tracks the
 // current plan across live turns and resumed sessions alike. When the

@@ -21,7 +21,11 @@ func Open(t *testing.T, root string, window int) (*sessions.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	t.Cleanup(func() { _ = store.Close() })
+	t.Cleanup(func() {
+		if err := store.CloseDB(); err != nil {
+			t.Errorf("sessionstore: close store: %v", err)
+		}
+	})
 	if err := migrations.Workspace(context.Background(), store.Database(), root); err != nil {
 		return nil, err
 	}

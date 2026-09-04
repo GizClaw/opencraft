@@ -26,8 +26,8 @@ github.com/GizClaw/flowcraft/driver/kimi v0.2.2 h1:4QAZp4WjYvIM7nPjWvJq2LzB9aYdT
 github.com/GizClaw/flowcraft/driver/kimi v0.2.2/go.mod h1:LI9bQ+IGE6eAVL40IbtULdmhWebA6S005jdGjfyw1kM=
 github.com/GizClaw/flowcraft/driver/minimax v0.2.2 h1:6dfwT3tu5/7j1JGwVyWDEbX7xUdd+z7WviHeQbdtEt0=
 github.com/GizClaw/flowcraft/driver/minimax v0.2.2/go.mod h1:k+QO5qlRTjkgGGTqOTbic9dsF6s7T1j0XKGhnuRA2pU=
-github.com/GizClaw/flowcraft/driver/openai v0.2.2 h1:JqrxWcrRxOp1NSAHZMk2hrNM1R5p5ZSJaZo3pWw4mEg=
-github.com/GizClaw/flowcraft/driver/openai v0.2.2/go.mod h1:k5qugu1slDGid6R3HMtO/a6ZboCqcoL3doIHnLackss=
+github.com/GizClaw/flowcraft/driver/openai v0.2.3 h1:hXANgv1CHBQMAjspJYhWlRN08mFkQS0Zwxz0Jk+E090=
+github.com/GizClaw/flowcraft/driver/openai v0.2.3/go.mod h1:k5qugu1slDGid6R3HMtO/a6ZboCqcoL3doIHnLackss=
 github.com/GizClaw/flowcraft/driver/qwen v0.2.2 h1:s8X7YNFDOWj3NZEHa2RhMPK1ky8sZQU/hUCSy6eHJSY=
 github.com/GizClaw/flowcraft/driver/qwen v0.2.2/go.mod h1:cYMV6kUa4bURIHn9aamZ/ZaUxjON8a6K+DspGOrdGE0=
 github.com/Masterminds/semver v1.5.0 h1:H65muMkzWKEuNDnfl9d70GUjFniHKHRbFPGBuZ3QEww=

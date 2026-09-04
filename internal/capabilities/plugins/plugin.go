@@ -6,6 +6,7 @@
 package plugins
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -19,6 +20,8 @@ import (
 	"strings"
 	"sync"
 	"unicode/utf8"
+
+	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins/runtime"
 )
@@ -428,11 +431,13 @@ func (s *Store) Install(src string) (PluginSummary, error) {
 			"plugins: check destination: %w", err)
 	}
 	if err := copyDir(src, dst); err != nil {
-		_ = os.RemoveAll(dst)
+		telemetry.WarnErr(context.Background(),
+			"plugins: remove partial install failed", os.RemoveAll(dst))
 		return PluginSummary{}, fmt.Errorf("plugins: install: %w", err)
 	}
 	if err := preparePluginDir(dst, m); err != nil {
-		_ = os.RemoveAll(dst)
+		telemetry.WarnErr(context.Background(),
+			"plugins: remove invalid install failed", os.RemoveAll(dst))
 		return PluginSummary{}, err
 	}
 	return s.withBuiltinInfo(summaryFromManifest(m, dst, false)), nil
@@ -625,7 +630,10 @@ func (s *Store) Update(id, src string) (PluginSummary, error) {
 	if err != nil {
 		return PluginSummary{}, fmt.Errorf("plugins: update temp dir: %w", err)
 	}
-	defer func() { _ = os.RemoveAll(tmp) }()
+	defer func() {
+		telemetry.WarnErr(context.Background(),
+			"plugins: remove update temp failed", os.RemoveAll(tmp))
+	}()
 	if err := copyDir(src, tmp); err != nil {
 		return PluginSummary{}, fmt.Errorf("plugins: stage update: %w", err)
 	}
@@ -641,17 +649,23 @@ func (s *Store) Update(id, src string) (PluginSummary, error) {
 	// previous rollback snapshot is only replaced after the new version
 	// is live, so a failed swap never loses the last good rollback.
 	pending := backup + ".pending"
-	_ = os.RemoveAll(pending)
+	telemetry.WarnErr(context.Background(),
+		"plugins: clear pending rollback snapshot failed",
+		os.RemoveAll(pending))
 	if err := os.Rename(dir, pending); err != nil {
 		return PluginSummary{}, fmt.Errorf("plugins: backup %q: %w", id, err)
 	}
 	if err := os.Rename(tmp, dir); err != nil {
 		restoreErr := os.Rename(pending, dir)
+		telemetry.WarnErr(context.Background(),
+			"plugins: restore current plugin after update swap failure", restoreErr)
 		return PluginSummary{}, fmt.Errorf(
 			"plugins: replace %q: %w (restore: %v)", id, err, restoreErr)
 	}
 	old := backup + ".old"
-	_ = os.RemoveAll(old)
+	telemetry.WarnErr(context.Background(),
+		"plugins: clear previous rollback snapshot failed",
+		os.RemoveAll(old))
 	if _, statErr := os.Stat(backup); statErr == nil {
 		if err := os.Rename(backup, old); err != nil {
 			return PluginSummary{}, fmt.Errorf(
@@ -663,11 +677,14 @@ func (s *Store) Update(id, src string) (PluginSummary, error) {
 	}
 	if err := os.Rename(pending, backup); err != nil {
 		restoreErr := os.Rename(old, backup)
+		telemetry.WarnErr(context.Background(),
+			"plugins: restore previous rollback snapshot failed", restoreErr)
 		return PluginSummary{}, fmt.Errorf(
 			"plugins: commit rollback snapshot %q: %w (restore previous snapshot: %v)",
 			id, err, restoreErr)
 	}
-	_ = os.RemoveAll(old)
+	telemetry.WarnErr(context.Background(),
+		"plugins: remove old rollback snapshot failed", os.RemoveAll(old))
 
 	sum := summaryFromManifest(m, dir, true)
 	if state, err := s.readState(); err == nil {
@@ -726,7 +743,8 @@ func (s *Store) Rollback(id string) (PluginSummary, error) {
 	}
 	dir := filepath.Join(s.root, id)
 	pending := filepath.Join(s.root, ".backups", id+".discard")
-	_ = os.RemoveAll(pending)
+	telemetry.WarnErr(context.Background(),
+		"plugins: clear discard snapshot failed", os.RemoveAll(pending))
 	if _, err := os.Stat(dir); err == nil {
 		if err := os.Rename(dir, pending); err != nil {
 			return PluginSummary{}, fmt.Errorf(
@@ -737,10 +755,13 @@ func (s *Store) Rollback(id string) (PluginSummary, error) {
 	}
 	if err := os.Rename(backup, dir); err != nil {
 		restoreErr := os.Rename(pending, dir)
+		telemetry.WarnErr(context.Background(),
+			"plugins: restore current plugin after rollback failure", restoreErr)
 		return PluginSummary{}, fmt.Errorf(
 			"plugins: restore %q: %w (restore current: %v)", id, err, restoreErr)
 	}
-	_ = os.RemoveAll(pending)
+	telemetry.WarnErr(context.Background(),
+		"plugins: remove discard snapshot failed", os.RemoveAll(pending))
 	sum := summaryFromManifest(m, dir, false)
 	if state, err := s.readState(); err == nil {
 		if enabled, ok := state[id]; ok {
@@ -1045,7 +1066,9 @@ func (s *Store) Uninstall(id string) error {
 	if err := os.RemoveAll(filepath.Join(s.root, id)); err != nil {
 		return fmt.Errorf("plugins: remove %q: %w", id, err)
 	}
-	_ = os.RemoveAll(filepath.Join(s.root, ".backups", id))
+	telemetry.WarnErr(context.Background(),
+		"plugins: remove plugin backups failed",
+		os.RemoveAll(filepath.Join(s.root, ".backups", id)))
 	state, err := s.readState()
 	if err != nil {
 		return err

@@ -32,16 +32,30 @@ func (f *fakeHost) Invoke(
 	return nil, errors.New("not implemented")
 }
 
+type countingRegistrar struct {
+	adds int
+}
+
+func (c *countingRegistrar) Add(tool.Tool) error {
+	c.adds++
+	return nil
+}
+
+func (c *countingRegistrar) Remove(string) {}
+
+func capabilitySpec() agent.ToolSpec {
+	return agent.ToolSpec{
+		PluginID:    "hello",
+		Name:        "ping",
+		Description: "Ping the plugin",
+		Method:      "ping",
+		InputSchema: json.RawMessage(`{"type":"object"}`),
+	}
+}
+
 func TestSourceExposesCapabilityTools(t *testing.T) {
 	host := &fakeHost{
-		specs: []agent.ToolSpec{{
-			PluginID:     "hello",
-			Name:         "ping",
-			Description:  "Ping the plugin",
-			Method:       "ping",
-			InputSchema:  json.RawMessage(`{"type":"object"}`),
-			MutatesState: false,
-		}},
+		specs: []agent.ToolSpec{capabilitySpec()},
 		invokeFn: func(
 			_ context.Context, pluginID, method string, _ json.RawMessage,
 		) (json.RawMessage, error) {
@@ -73,6 +87,37 @@ func TestSourceExposesCapabilityTools(t *testing.T) {
 	res, err := got.Execute(t.Context(), `{"x":1}`)
 	if err != nil || res != "pong" {
 		t.Fatalf("Execute = (%q, %v)", res, err)
+	}
+}
+
+func TestSourceAttachDoesNotReRegisterCapabilityTools(t *testing.T) {
+	src, err := newSource(t.Context(), &fakeHost{
+		specs: []agent.ToolSpec{capabilitySpec()},
+	})
+	if err != nil {
+		t.Fatalf("newSource: %v", err)
+	}
+	reg := &countingRegistrar{}
+	src.Attach(reg)
+	if reg.adds != 0 {
+		t.Fatalf("Attach registered %d capability tools, want 0", reg.adds)
+	}
+}
+
+func TestSourceAssemblyExposesCapabilityToolsOnce(t *testing.T) {
+	src, err := newSource(t.Context(), &fakeHost{
+		specs: []agent.ToolSpec{capabilitySpec()},
+	})
+	if err != nil {
+		t.Fatalf("newSource: %v", err)
+	}
+	asm, err := tool.NewAssembly([]tool.Source{src})
+	if err != nil {
+		t.Fatalf("NewAssembly: %v", err)
+	}
+	defs := asm.Catalog().Definitions()
+	if len(defs) != 1 || defs[0].Name != "hello__ping" {
+		t.Fatalf("assembly definitions = %+v, want one hello__ping", defs)
 	}
 }
 

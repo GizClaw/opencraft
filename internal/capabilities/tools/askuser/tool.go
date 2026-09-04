@@ -10,6 +10,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/tool"
 
 	"github.com/GizClaw/opencraft/internal/foundation/interact"
@@ -108,7 +109,10 @@ func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
 		return "", errdefs.NotAvailablef(
 			"ask_user: no host in tool context")
 	}
-	rawOpts, _ := json.Marshal(opts)
+	rawOpts, err := json.Marshal(opts)
+	if err != nil {
+		return "", errdefs.Validationf("ask_user: marshal options: %v", err)
+	}
 	meta := map[string]string{
 		interact.MetaKind:    string(kind),
 		interact.MetaTitle:   args.Question,
@@ -130,7 +134,9 @@ func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
 	}
 	var choices []string
 	if raw := reply.Metadata[interact.MetaChoices]; raw != "" {
-		_ = json.Unmarshal([]byte(raw), &choices)
+		if err := json.Unmarshal([]byte(raw), &choices); err != nil {
+			telemetry.WarnErr(ctx, "ask_user: decode reply choices failed", err)
+		}
 	}
 	out := map[string]any{
 		"cancelled": reply.Metadata[interact.MetaStatus] ==

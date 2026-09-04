@@ -1,10 +1,12 @@
 package agents
 
 import (
+	"context"
 	"encoding/json"
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/resource"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 )
 
 // toolAssemblyResource is the deploy-document resource name the
@@ -19,13 +21,17 @@ const toolAssemblyResource = "tools"
 // hook keeps the same basic context (workdir, permissions, skills) the
 // main agent gets.
 func agentDefinition(spec AgentSpec) agent.Definition {
-	engineSettings, _ := json.Marshal(map[string]any{
+	engineSettings, err := json.Marshal(map[string]any{
 		"graph": spec.Graph,
 		"build": map[string]any{
 			"timeout":        "1h",
 			"max_iterations": 400,
 		},
 	})
+	if err != nil {
+		telemetry.WarnErr(context.Background(),
+			"agents: marshal engine settings failed", err)
+	}
 	return agent.Definition{
 		Card: agent.AgentCard{
 			Name:        spec.Name,
@@ -51,12 +57,16 @@ func agentDefinition(spec AgentSpec) agent.Definition {
 // prepareHook mirrors the assistant's worldstate hook so subagents
 // receive the same basic context (workdir, permissions, skills).
 func prepareHook() agent.Hook {
-	settings, _ := json.Marshal(map[string]string{
+	settings, err := json.Marshal(map[string]string{
 		"work_dir":           "${env:OPEN_CRAFT_WORKDIR}",
 		"user_dir":           "${env:OPEN_CRAFT_DATA_DIR}",
 		"collaboration_mode": "default",
 		"permission_profile": "workspace",
 	})
+	if err != nil {
+		telemetry.WarnErr(context.Background(),
+			"agents: marshal prepare hook settings failed", err)
+	}
 	return agent.Hook{
 		Type: "opencraft.prepare",
 		Deps: resource.Deps{

@@ -25,10 +25,13 @@ func Confirm(ctx context.Context, title, body string) (bool, error) {
 		return false, errdefs.NotAvailablef(
 			"no host in tool context; user confirmation unavailable")
 	}
-	rawOpts, _ := json.Marshal([]interact.Option{
+	rawOpts, err := json.Marshal([]interact.Option{
 		{Label: "Yes", Value: "yes"},
 		{Label: "No", Value: "no"},
 	})
+	if err != nil {
+		return false, errdefs.Validationf("confirm: marshal options: %v", err)
+	}
 	reply, err := host.AskUser(ctx, agent.UserPrompt{
 		Parts:  []message.Part{message.TextPart{Text: body}},
 		Source: "opencraft.confirm",

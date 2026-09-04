@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/telemetry"
+
 	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/core"
 	patchutil "github.com/GizClaw/opencraft/internal/foundation/utils/patch"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
@@ -94,7 +96,8 @@ func (b *File) Search(query string, limit int) ([]SearchFileHit, error) {
 	}
 	q := strings.ToLower(query)
 	var hits []SearchFileHit
-	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+	ctx := b.core.Shell.Context()
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil || path == root {
 			return nil
 		}
@@ -107,6 +110,7 @@ func (b *File) Search(query string, limit int) ([]SearchFileHit, error) {
 		}
 		rel, err := filepath.Rel(root, path)
 		if err != nil {
+			telemetry.WarnErr(ctx, "file: resolve search hit failed", err)
 			return nil
 		}
 		if strings.Contains(strings.ToLower(filepath.ToSlash(rel)), q) {
@@ -120,6 +124,10 @@ func (b *File) Search(query string, limit int) ([]SearchFileHit, error) {
 		}
 		return nil
 	})
+	telemetry.WarnErr(ctx, "file: search workspace failed", err)
+	if hits == nil {
+		hits = []SearchFileHit{}
+	}
 	return hits, nil
 }
 
@@ -188,7 +196,8 @@ func (b *File) OpenPath(path string) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	_ = cmd.Process.Release()
+	telemetry.WarnErr(b.core.Shell.Context(),
+		"file: release open command failed", cmd.Process.Release())
 	return nil
 }
 
@@ -210,7 +219,8 @@ func (b *File) Reveal(path string) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	_ = cmd.Process.Release()
+	telemetry.WarnErr(b.core.Shell.Context(),
+		"file: release reveal command failed", cmd.Process.Release())
 	return nil
 }
 
@@ -367,7 +377,10 @@ func (b *File) SaveArtifactAs(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = in.Close() }()
+	defer func() {
+		telemetry.WarnErr(b.core.Shell.Context(),
+			"file: close source after artifact copy failed", in.Close())
+	}()
 	out, err := os.OpenFile(
 		dest, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
 	if err != nil {

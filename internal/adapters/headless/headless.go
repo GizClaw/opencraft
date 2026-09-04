@@ -21,11 +21,15 @@ import (
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/event"
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
+	"github.com/GizClaw/opencraft/internal/capabilities/usage"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/foundation/db"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
+	"github.com/GizClaw/opencraft/internal/orchestration/migrations"
 )
 
 // Options configures one headless run.
@@ -44,6 +48,31 @@ type Result struct {
 	ConversationID string
 	Error          string
 	ExitCode       int
+}
+
+// openUserUsage opens the shared user-level database and attaches the
+// usage store. It is best-effort: the headless run itself must not fail
+// because usage accounting is unavailable.
+func openUserUsage(
+	ctx context.Context,
+	dataDir string,
+) (*db.DB, *usage.Store, error) {
+	handle, err := db.Open(filepath.Join(dataDir, "user.db"))
+	if err != nil {
+		return nil, nil, fmt.Errorf("headless: open user db: %w", err)
+	}
+	if err := migrations.User(ctx, handle); err != nil {
+		telemetry.WarnErr(ctx, "headless: close user db after migration failure",
+			handle.Close())
+		return nil, nil, fmt.Errorf("headless: migrate user db: %w", err)
+	}
+	store, err := usage.Attach(handle)
+	if err != nil {
+		telemetry.WarnErr(ctx, "headless: close user db after usage attach failure",
+			handle.Close())
+		return nil, nil, fmt.Errorf("headless: attach usage: %w", err)
+	}
+	return handle, store, nil
 }
 
 // Run assembles a runtime for WorkDir, starts one ephemeral session
@@ -71,12 +100,26 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		}
 	}
 
-	hostMgr := host.NewManagerAt(filepath.Dir(configDir), configDir)
+	dataDir := filepath.Dir(configDir)
+	hostMgr := host.NewManagerAt(dataDir, configDir)
+	if udb, usageStore, usageErr := openUserUsage(ctx, dataDir); usageErr != nil {
+		telemetry.WarnErr(ctx,
+			"headless: user usage accounting unavailable; continuing without it",
+			usageErr)
+	} else {
+		hostMgr.SetUsageRecorder(usageStore.RecordSessionUsage)
+		defer func() {
+			telemetry.WarnErr(context.Background(),
+				"headless: close user db failed", udb.Close())
+		}()
+	}
 	h, err := hostMgr.Acquire(ctx, workDir, interact.Auto{}, nil)
 	if err != nil {
 		return Result{}, fmt.Errorf("headless: acquire host: %w", err)
 	}
-	defer func() { _ = h.Close() }()
+	defer func() {
+		telemetry.WarnErr(ctx, "headless: close host failed", h.Close())
+	}()
 
 	var enc *json.Encoder
 	if opts.Out != nil {
@@ -86,6 +129,10 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	run, err := h.StartRun(ctx, host.RunOptions{
 		Message: message.NewTextMessage(message.RoleUser, opts.Prompt),
 		Sink:    agent.StreamSinkFunc(rec.record),
+		// One-shot CLI runs return as soon as the turn ends; do not
+		// start a background title generation that would add an extra
+		// model call or delay teardown.
+		SkipAutoTitle: true,
 	})
 	if err != nil {
 		return Result{}, fmt.Errorf("headless: start run: %w", err)
@@ -211,5 +258,6 @@ func (r *streamRecorder) encode(ev rollout.Event) {
 	if ev.Time == "" {
 		ev.Time = time.Now().UTC().Format(time.RFC3339Nano)
 	}
-	_ = r.enc.Encode(ev)
+	telemetry.WarnErr(context.Background(),
+		"headless: encode rollout event failed", r.enc.Encode(ev))
 }

@@ -15,6 +15,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/errdefs"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/foundation/db"
 )
@@ -123,7 +124,9 @@ func (s *Store) List(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("state: list checkpoints: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		telemetry.WarnErr(ctx, "state: close checkpoint rows failed", rows.Close())
+	}()
 	ids := make([]string, 0)
 	for rows.Next() {
 		var id string

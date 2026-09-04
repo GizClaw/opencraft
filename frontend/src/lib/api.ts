@@ -81,6 +81,8 @@ export const api = {
       model: '',
     } as SessionSnapshot;
   },
+  forkTurn: (contextID: string, runID: string) =>
+    Conversation.ForkTurn(contextID, runID),
   listSessions: () => Session.List() as unknown as Promise<SessionMeta[]>,
   currentSession: () => Conversation.CurrentSession(),
   activeRun: async (id: string) =>
@@ -98,6 +100,11 @@ export const api = {
     Session.History(id, -1) as unknown as Promise<HistoryMessage[]>,
   sessionTurns: (id: string) =>
     Session.Turns(id) as unknown as Promise<SessionTurn[]>,
+  turnByRunID: (conversationID: string, runID: string) =>
+    Session.TurnByRunID(
+      conversationID,
+      runID,
+    ) as unknown as Promise<SessionTurn>,
   workspaces: () => Workspace.List() as Promise<WorkspaceMeta[]>,
   openWorkspace: (path: string) => Workspace.Open(path),
   removeWorkspace: (id: string) => Workspace.Remove(id),

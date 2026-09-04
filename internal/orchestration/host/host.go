@@ -13,6 +13,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/inference"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	ocsagents "github.com/GizClaw/opencraft/internal/capabilities/agents"
 	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
@@ -25,6 +26,16 @@ import (
 	"github.com/GizClaw/opencraft/internal/orchestration/migrations"
 )
 
+// UsageRecorder receives one finished turn's aggregated usage so
+// adapters can persist user-level accounting rows. workspaceID and
+// sessionID are explicit; the recorder must not re-derive them from
+// process state. Errors are logged by the host and never fail the turn.
+type UsageRecorder func(
+	ctx context.Context,
+	workspaceID, sessionID string,
+	usage sessions.Usage,
+) error
+
 // Manager pools Hosts by workspace and keeps one sessions.Store per
 // workspace root.
 type Manager struct {
@@ -32,10 +43,12 @@ type Manager struct {
 	dataDir string
 
 	mu            sync.Mutex
+	openMu        sync.Mutex
 	hosts         map[string]*hostRef
 	stores        map[string]*storeRef
 	engineOptFunc func() []engine.Option
 	usageObserver func(context.Context, inference.Usage)
+	usageRecorder UsageRecorder
 }
 
 type hostRef struct {
@@ -83,6 +96,15 @@ func (m *Manager) SetUsageObserver(fn func(context.Context, inference.Usage)) {
 	m.mu.Unlock()
 }
 
+// SetUsageRecorder installs the user-level usage sink called once per
+// finished turn with the run's aggregated usage. UI and automation
+// turns share the Host, so one recorder covers both paths.
+func (m *Manager) SetUsageRecorder(fn UsageRecorder) {
+	m.mu.Lock()
+	m.usageRecorder = fn
+	m.mu.Unlock()
+}
+
 // InvalidateAll drops every pooled Host. Idle hosts close immediately;
 // hosts with active runs finish on the old runtime and close after the
 // last run ends.
@@ -121,13 +143,18 @@ func (m *Manager) Acquire(
 		return nil, err
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if ref := m.hosts[workDir]; ref != nil {
-		_ = h.Close()
 		ref.refs++
-		return ref.host, nil
+		existing := ref.host
+		m.mu.Unlock()
+		// The freshly assembled host never reached the pool and has no
+		// runs; close it outside the manager lock so it can release its
+		// own session-store reference.
+		h.doClose()
+		return existing, nil
 	}
 	m.hosts[workDir] = &hostRef{host: h, refs: 1}
+	m.mu.Unlock()
 	return h, nil
 }
 
@@ -145,7 +172,8 @@ func (m *Manager) Invalidate(workDir string) {
 	delete(m.hosts, workDir)
 	h := ref.host
 	m.mu.Unlock()
-	_ = h.Close()
+	telemetry.WarnErr(context.Background(), "host: invalidate close failed",
+		h.Close())
 }
 
 // CloseAll invalidates every pooled Host.
@@ -158,7 +186,8 @@ func (m *Manager) CloseAll() {
 	}
 	m.mu.Unlock()
 	for _, h := range hosts {
-		_ = h.Close()
+		telemetry.WarnErr(context.Background(), "host: close all failed",
+			h.Close())
 	}
 }
 
@@ -187,6 +216,7 @@ func (m *Manager) assemble(
 	m.mu.Lock()
 	engineOptFunc := m.engineOptFunc
 	usageObserver := m.usageObserver
+	usageRecorder := m.usageRecorder
 	m.mu.Unlock()
 	var engineOptions []engine.Option
 	if engineOptFunc != nil {
@@ -200,13 +230,18 @@ func (m *Manager) assemble(
 		}
 	}
 	if dataDir == "" {
-		dataDir, _ = config.UserDataDir()
+		var err error
+		dataDir, err = config.UserDataDir()
+		if err != nil {
+			telemetry.WarnErr(ctx, "host: resolve user data dir failed", err)
+		}
 	}
 	layout, err := config.ResolveWorkspace(dataDir, workDir)
 	if err != nil {
 		return nil, err
 	}
-	_ = layout.Ensure()
+	telemetry.WarnErr(ctx, "host: ensure workspace layout failed",
+		layout.Ensure())
 	mgr, err := config.Open(config.Options{
 		UserDir: userDir,
 	})
@@ -218,19 +253,30 @@ func (m *Manager) assemble(
 		return nil, err
 	}
 	h := &Host{
-		workDir:  workDir,
-		userDir:  userDir,
-		manager:  m,
-		usage:    usageObserver,
-		runs:     make(map[RunID]*runDetail),
-		rollouts: make(map[ConversationID]*rollout.Recorder),
-		titling:  make(map[ConversationID]bool),
+		workDir:       workDir,
+		userDir:       userDir,
+		workspaceID:   layout.ID,
+		manager:       m,
+		usage:         usageObserver,
+		usageRecorder: usageRecorder,
+		runs:          make(map[RunID]*runDetail),
+		rollouts:      make(map[ConversationID]*rollout.Recorder),
+		titling:       make(map[ConversationID]bool),
 	}
+	var sessionStore *sessions.Store
 	buildOpts := append([]engine.Option{
 		engine.WithConfigBase(userDir),
 		engine.WithWorkBase(workDir),
 		engine.WithWorkspaceLayout(&layout),
-		engine.WithSessionStore(m.acquireStore),
+		engine.WithSessionStore(func(
+			ctx context.Context, root string, window int,
+		) (*sessions.Store, error) {
+			store, err := m.acquireStore(ctx, workDir, root, window)
+			if err == nil {
+				sessionStore = store
+			}
+			return store, err
+		}),
 		engine.WithUsageObserver(func(ctx context.Context, usage inference.Usage) {
 			if _, ok := agent.RunInfoFromContext(ctx); ok {
 				h.reportUsage(ctx, usage)
@@ -243,6 +289,9 @@ func (m *Manager) assemble(
 	}, engineOptions...)
 	rt, err := engine.BuildRuntime(ctx, view.Document, buildOpts...)
 	if err != nil {
+		if sessionStore != nil {
+			m.releaseStore(sessionStore)
+		}
 		return nil, err
 	}
 	ctrl := engine.NewController(rt)
@@ -251,14 +300,22 @@ func (m *Manager) assemble(
 	}
 	broker := interact.NewWithBackendResolver(rt, fallback, resolver)
 	if err := broker.Attach(ctx); err != nil {
-		_ = ctrl.Close()
+		telemetry.WarnErr(ctx, "host: close controller after broker attach failure",
+			ctrl.Close())
+		if sessionStore != nil {
+			m.releaseStore(sessionStore)
+		}
 		return nil, err
 	}
 	value, ok := rt.Resource("sessions")
 	store, ok2 := value.(*sessions.Store)
 	if !ok || !ok2 || store == nil {
 		broker.Close()
-		_ = ctrl.Close()
+		telemetry.WarnErr(ctx, "host: close controller after session resource failure",
+			ctrl.Close())
+		if sessionStore != nil {
+			m.releaseStore(sessionStore)
+		}
 		return nil, errors.New("host: session store resource missing")
 	}
 	h.store = store
@@ -294,26 +351,52 @@ func (h *Host) reportUsage(ctx context.Context, usage inference.Usage) {
 		h.mu.Unlock()
 		return
 	}
-	d.usage.TotalTokens += usage.TotalTokens
-	d.usage.InputTokens += usage.InputTokens
-	d.usage.OutputTokens += usage.OutputTokens
-	if usage.Model.ID.Provider != "" && usage.Model.ID.Name != "" {
-		d.usage.Model = usage.Model.ID.Provider + "/" + usage.Model.ID.Name
-	}
-	if usage.Output.ReasoningTokens != nil {
-		d.usage.ReasoningTokens += *usage.Output.ReasoningTokens
-	}
-	if usage.Input.CacheReadTokens != nil {
-		d.usage.CacheReadTokens += *usage.Input.CacheReadTokens
-	}
-	if usage.Input.CacheWriteTokens != nil {
-		d.usage.CacheWriteTokens += *usage.Input.CacheWriteTokens
-	}
+	d.usage = addSessionUsage(d.usage, usageFromReport(usage))
 	fn := d.notify
 	h.mu.Unlock()
 	if fn != nil {
 		fn(ctx, usage)
 	}
+}
+
+// usageFromReport maps one inference usage report to the session usage
+// delta shape used by the Host and sessions.Store.
+func usageFromReport(u inference.Usage) sessions.Usage {
+	out := sessions.Usage{
+		InputTokens:  u.InputTokens,
+		OutputTokens: u.OutputTokens,
+		TotalTokens:  u.TotalTokens,
+		LatencyMs:    u.LatencyMs,
+	}
+	if u.Model.ID.Provider != "" && u.Model.ID.Name != "" {
+		out.Model = u.Model.ID.Provider + "/" + u.Model.ID.Name
+	}
+	if u.Output.ReasoningTokens != nil {
+		out.ReasoningTokens = *u.Output.ReasoningTokens
+	}
+	if u.Input.CacheReadTokens != nil {
+		out.CacheReadTokens = *u.Input.CacheReadTokens
+	}
+	if u.Input.CacheWriteTokens != nil {
+		out.CacheWriteTokens = *u.Input.CacheWriteTokens
+	}
+	return out
+}
+
+// addSessionUsage accumulates one usage delta onto a session's running
+// total, keeping the most recent non-empty model attribution.
+func addSessionUsage(base, delta sessions.Usage) sessions.Usage {
+	base.InputTokens += delta.InputTokens
+	base.OutputTokens += delta.OutputTokens
+	base.TotalTokens += delta.TotalTokens
+	base.CacheReadTokens += delta.CacheReadTokens
+	base.CacheWriteTokens += delta.CacheWriteTokens
+	base.ReasoningTokens += delta.ReasoningTokens
+	base.LatencyMs += delta.LatencyMs
+	if delta.Model != "" {
+		base.Model = delta.Model
+	}
+	return base
 }
 
 func (h *Host) takeUsage(runID string) sessions.Usage {
@@ -327,9 +410,25 @@ func (h *Host) takeUsage(runID string) sessions.Usage {
 	return sessions.Usage{}
 }
 
+// OpenSessions returns the shared Store for one workspace without
+// assembling a Host. It runs the same first-open adoption and
+// migration path as Host acquisition. Callers must ReleaseSessions.
+func (m *Manager) OpenSessions(
+	ctx context.Context, workDir string, layout config.WorkspaceLayout, window int,
+) (*sessions.Store, error) {
+	return m.acquireStore(ctx, workDir, layout.SessionsDir, window)
+}
+
+// ReleaseSessions drops one caller's reference to a shared Store.
+func (m *Manager) ReleaseSessions(store *sessions.Store) {
+	m.releaseStore(store)
+}
+
 // acquireStore opens one Store per root and reference-counts it.
+// workDir supplies the v0.1.x project-local session location that is
+// adopted into the new layout on first open.
 func (m *Manager) acquireStore(
-	ctx context.Context, root string, window int,
+	ctx context.Context, workDir, root string, window int,
 ) (*sessions.Store, error) {
 	root = filepath.Clean(root)
 	m.mu.Lock()
@@ -341,22 +440,46 @@ func (m *Manager) acquireStore(
 	}
 	m.mu.Unlock()
 
+	// Serialize first-open adoption/schema work across Host assembly
+	// and adapter-only store opens for every workspace.
+	m.openMu.Lock()
+	defer m.openMu.Unlock()
+
+	m.mu.Lock()
+	if ref := m.stores[root]; ref != nil {
+		ref.refs++
+		s := ref.store
+		m.mu.Unlock()
+		return s, nil
+	}
+	m.mu.Unlock()
+
+	if err := migrations.AdoptLegacySessions(
+		ctx, migrations.LegacySessionsDir(workDir), root,
+	); err != nil {
+		return nil, err
+	}
+
 	store, err := sessions.New(root, window)
 	if err != nil {
 		return nil, err
 	}
 	if err := migrations.Workspace(ctx, store.Database(), root); err != nil {
-		_ = store.Close()
+		telemetry.WarnErr(ctx, "host: close store after workspace migration failure",
+			store.CloseDB())
 		return nil, err
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if ref := m.stores[root]; ref != nil {
-		_ = store.Close()
+		telemetry.WarnErr(ctx, "host: close duplicate session store",
+			store.CloseDB())
 		ref.refs++
-		return ref.store, nil
+		s := ref.store
+		m.mu.Unlock()
+		return s, nil
 	}
 	m.stores[root] = &storeRef{store: store, refs: 1}
+	m.mu.Unlock()
 	return store, nil
 }
 
@@ -371,7 +494,8 @@ func (m *Manager) releaseStore(store *sessions.Store) {
 		ref.refs--
 		if ref.refs == 0 {
 			delete(m.stores, root)
-			_ = store.Close()
+			telemetry.WarnErr(context.Background(),
+				"host: close released session store failed", store.CloseDB())
 		}
 		return
 	}
@@ -379,20 +503,23 @@ func (m *Manager) releaseStore(store *sessions.Store) {
 
 // Host is one shared workspace runtime.
 type Host struct {
-	workDir string
-	userDir string
-	store   *sessions.Store
-	ctrl    *engine.Controller
-	broker  *interact.Broker
-	manager *Manager
-	agents  *ocsagents.Lifecycle
-	hooks   *hooks.Manager
-	usage   func(context.Context, inference.Usage)
+	workDir       string
+	userDir       string
+	workspaceID   string
+	store         *sessions.Store
+	ctrl          *engine.Controller
+	broker        *interact.Broker
+	manager       *Manager
+	agents        *ocsagents.Lifecycle
+	hooks         *hooks.Manager
+	usage         func(context.Context, inference.Usage)
+	usageRecorder UsageRecorder
 
 	mu         sync.Mutex
 	runs       map[RunID]*runDetail
 	rollouts   map[ConversationID]*rollout.Recorder
 	titling    map[ConversationID]bool
+	titleWG    sync.WaitGroup
 	artifact   func(context.Context, string, []byte)
 	sessionUpd func(context.Context, string)
 	closing    bool
@@ -570,9 +697,14 @@ func (h *Host) doClose() {
 	}
 	h.closed = true
 	h.mu.Unlock()
+	// Auto-titles borrow the runtime and shared session store after a
+	// turn ends. Wait for them before tearing either down so a title
+	// never races the DB close.
+	h.titleWG.Wait()
 	h.closeRollouts()
 	h.broker.Close()
-	_ = h.ctrl.Close()
+	telemetry.WarnErr(context.Background(), "host: close controller failed",
+		h.ctrl.Close())
 	if h.manager != nil {
 		h.manager.releaseStore(h.store)
 	}

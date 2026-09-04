@@ -6,8 +6,6 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/automations"
-	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
-	"github.com/GizClaw/opencraft/internal/orchestration/migrations"
 )
 
 // AutomationScheduleDTO is the wire form of one schedule.
@@ -144,14 +142,17 @@ func (b *Automation) AutomationSessions(
 	if err != nil {
 		return nil, err
 	}
-	store, err := ocsessions.New(layout.SessionsDir, 40)
+	mgr := b.core.Runtime.Manager()
+	if mgr == nil {
+		return nil, errNotReady("runtime")
+	}
+	store, err := mgr.OpenSessions(ctx, workspace, layout, 40)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = store.Close() }()
-	if err := migrations.Workspace(ctx, store.Database(), layout.SessionsDir); err != nil {
-		return nil, err
-	}
+	defer func() {
+		mgr.ReleaseSessions(store)
+	}()
 	metas, err := store.List()
 	if err != nil {
 		return nil, err

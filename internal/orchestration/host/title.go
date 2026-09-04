@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"errors"
+	"os"
 	"strings"
 	"text/template"
 
@@ -25,32 +27,56 @@ type titlePromptData struct {
 	MaxWords int
 }
 
-// AutoTitle generates a short conversation title once after a turn
-// finishes. A manual title (conversation_state "title") always wins.
-func (h *Host) AutoTitle(ctx context.Context, contextID string) {
+// launchAutoTitle starts one background title generation. It is the
+// only entry point for asynchronous titles: it registers the job with
+// Host.titleWG before spawning the goroutine so Host.doClose waits for
+// it instead of closing the shared store underneath it.
+func (h *Host) launchAutoTitle(ctx context.Context, contextID string) {
+	if h == nil {
+		return
+	}
 	id := ConversationID(contextID)
 	h.mu.Lock()
-	store := h.store
-	ctrl := h.ctrl
+	if h.closed {
+		h.mu.Unlock()
+		return
+	}
 	if h.titling[id] {
 		h.mu.Unlock()
 		return
 	}
 	h.titling[id] = true
+	h.titleWG.Add(1)
 	h.mu.Unlock()
-	defer func() {
-		h.mu.Lock()
-		delete(h.titling, id)
-		h.mu.Unlock()
+	go func() {
+		defer func() {
+			h.mu.Lock()
+			delete(h.titling, id)
+			h.mu.Unlock()
+			h.titleWG.Done()
+		}()
+		h.autoTitle(ctx, contextID)
 	}()
+}
 
+// autoTitle generates a short conversation title once after a turn
+// finishes. A manual title (conversation_state "title") always wins.
+func (h *Host) autoTitle(ctx context.Context, contextID string) {
+	h.mu.Lock()
+	store := h.store
+	ctrl := h.ctrl
+	h.mu.Unlock()
 	if store == nil || ctrl == nil || ctrl.Runtime() == nil {
 		return
 	}
 	var custom string
-	if store.ReadState(contextID, "title", &custom) == nil &&
-		strings.TrimSpace(custom) != "" {
-		return
+	if err := store.ReadState(contextID, "title", &custom); err == nil {
+		if strings.TrimSpace(custom) != "" {
+			return
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		telemetry.WarnErr(ctx, "host: read custom title failed", err,
+			otellog.String("session", contextID))
 	}
 	first, err := store.FirstUserMessage(contextID)
 	if err != nil {
@@ -94,11 +120,17 @@ func (h *Host) AutoTitle(ctx context.Context, contextID string) {
 		},
 	})
 	if err != nil {
+		telemetry.WarnErr(ctx, "host: auto title generation failed", err,
+			otellog.String("session", contextID))
 		return
 	}
 	if h.usage != nil {
 		h.usage(ctx, response.Usage)
 	}
+	// Title generation is a real model call against this session: feed
+	// its usage into the session total and the user-level model_usage
+	// tables instead of only showing it as a transient UI event.
+	h.persistTurnUsage(ctx, contextID, usageFromReport(response.Usage))
 	title := strings.TrimSpace(response.Message.Content.Text())
 	title = strings.Join(strings.Fields(title), " ")
 	if title == "" {
@@ -109,17 +141,20 @@ func (h *Host) AutoTitle(ctx context.Context, contextID string) {
 	if len(runes) > maxTitle {
 		title = string(runes[:maxTitle]) + "…"
 	}
-	if err := store.WriteState(contextID, "title", title); err == nil {
-		h.mu.Lock()
-		fn := h.sessionUpd
-		h.mu.Unlock()
-		if fn != nil {
-			fn(ctx, contextID)
-		}
-		telemetry.Info(ctx, "host: auto title generated",
-			otellog.String("session", contextID),
-			otellog.Int("title_chars", len(title)))
+	if err := store.WriteState(contextID, "title", title); err != nil {
+		telemetry.WarnErr(ctx, "host: persist auto title failed", err,
+			otellog.String("session", contextID))
+		return
 	}
+	h.mu.Lock()
+	fn := h.sessionUpd
+	h.mu.Unlock()
+	if fn != nil {
+		fn(ctx, contextID)
+	}
+	telemetry.Info(ctx, "host: auto title generated",
+		otellog.String("session", contextID),
+		otellog.Int("title_chars", len(title)))
 }
 
 func titleSystemContent() message.Content {

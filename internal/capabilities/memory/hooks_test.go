@@ -25,7 +25,7 @@ func TestCommitHookAtomicMemory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = store.CloseDB() }()
 	adapter := &sqliteTurnStore{db: store.Database()}
 	res := &memoryResource{
 		Assembly: summary.NewAssembly(adapter),
@@ -374,7 +374,7 @@ func TestCommitHookDropsReplayedHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = store.CloseDB() }()
 	adapter := &sqliteTurnStore{db: store.Database()}
 	res := &memoryResource{
 		Assembly: summary.NewAssembly(adapter),

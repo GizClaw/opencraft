@@ -25,6 +25,8 @@ func TestConversationArchiveCommitRoundTrip(t *testing.T) {
 		RequestedAt: time.Now().UTC(),
 		StartedAt:   time.Now().UTC(),
 		FinishedAt:  time.Now().UTC(),
+		Status:      "canceled",
+		Error:       "context canceled",
 	}, []state.ArchiveMessage{
 		{Role: string(message.RoleUser), Content: message.Content{
 			Parts: []message.Part{message.TextPart{Text: "hi"}},
@@ -45,7 +47,9 @@ func TestConversationArchiveCommitRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(turns) != 1 || turns[0].RunID != "run-1" {
+	if len(turns) != 1 || turns[0].RunID != "run-1" ||
+		turns[0].Status != "canceled" ||
+		turns[0].Error != "context canceled" {
 		t.Fatalf("turns = %+v", turns)
 	}
 	msgs, err := s.ListArchiveMessages(ctx, "s-1")
@@ -68,6 +72,52 @@ func TestConversationArchiveCommitRoundTrip(t *testing.T) {
 	raw, err := s.GetConversationState(ctx, "s-1", "plans")
 	if err != nil || string(raw) != `{"ok":true}` {
 		t.Fatalf("state = %q, %v", raw, err)
+	}
+}
+
+func TestArchiveTurnByRunReturnsOneTurnAndMessages(t *testing.T) {
+	s := openState(t, filepath.Join(t.TempDir(), "session.db"))
+	ctx := context.Background()
+	conv := state.Conversation{ID: "s-1"}
+	if err := s.CommitConversationTurn(ctx, conv, state.ArchiveTurn{
+		RunID:  "run-1",
+		Status: "completed",
+	}, []state.ArchiveMessage{
+		{Role: string(message.RoleUser), Content: message.Content{
+			Parts: []message.Part{message.TextPart{Text: "one"}},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CommitConversationTurn(ctx, conv, state.ArchiveTurn{
+		RunID:  "run-2",
+		Status: "failed",
+		Error:  "boom",
+	}, []state.ArchiveMessage{
+		{Role: string(message.RoleUser), Content: message.Content{
+			Parts: []message.Part{message.TextPart{Text: "two"}},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	turn, msgs, err := s.ArchiveTurnByRun(ctx, "s-1", "run-2")
+	if err != nil {
+		t.Fatalf("ArchiveTurnByRun: %v", err)
+	}
+	if turn.RunID != "run-2" || turn.Status != "failed" ||
+		turn.Error != "boom" {
+		t.Fatalf("turn = %+v", turn)
+	}
+	if len(msgs) != 1 || msgs[0].Content.Text() != "two" {
+		t.Fatalf("messages = %+v", msgs)
+	}
+
+	if _, _, err := s.ArchiveTurnByRun(ctx, "s-1", "missing"); err != state.ErrNotFound {
+		t.Fatalf("missing run error = %v, want ErrNotFound", err)
+	}
+	if _, _, err := s.ArchiveTurnByRun(ctx, "s-1", ""); err == nil {
+		t.Fatal("ArchiveTurnByRun accepted an empty run id")
 	}
 }
 

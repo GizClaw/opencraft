@@ -17,6 +17,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/telemetry"
+
 	"github.com/GizClaw/opencraft/internal/capabilities/execd"
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
@@ -51,7 +53,8 @@ func runExecServer() {
 		policyJSON = string(data)
 		// The policy is only needed at startup; remove it so it does
 		// not linger on disk (and is never visible through argv).
-		_ = os.Remove(*sandboxPolicyFile)
+		telemetry.WarnErr(ctx, "execd main: remove sandbox policy file failed",
+			os.Remove(*sandboxPolicyFile))
 	} else {
 		policyJSON = *sandboxPolicy
 	}
@@ -76,7 +79,8 @@ func runExecServer() {
 		if err := srv.Serve(ctx); err != nil {
 			execdFatal(1, "opencraft execd: %v", err)
 		}
-		_ = runner.Close()
+		telemetry.WarnErr(ctx, "execd main: close stdio runner failed",
+			runner.Close())
 		return
 	}
 	// Create the socket user-only from the start: chmod after Listen
@@ -87,9 +91,16 @@ func runExecServer() {
 	if err != nil {
 		execdFatal(1, "opencraft execd: listen: %v", err)
 	}
-	defer func() { _ = listener.Close() }()
-	defer func() { _ = os.Remove(*listen) }()
-	_ = os.Chmod(*listen, 0o600)
+	defer func() {
+		telemetry.WarnErr(context.Background(),
+			"execd main: close listener failed", listener.Close())
+	}()
+	defer func() {
+		telemetry.WarnErr(context.Background(),
+			"execd main: remove listen socket failed", os.Remove(*listen))
+	}()
+	telemetry.WarnErr(context.Background(),
+		"execd main: secure listen socket failed", os.Chmod(*listen, 0o600))
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -104,10 +115,14 @@ func runExecServer() {
 	stopAccepting := func() {
 		shutdownOnce.Do(func() {
 			close(shutdown)
-			_ = listener.Close()
+			telemetry.WarnErr(context.Background(),
+				"execd main: close listener during shutdown failed",
+				listener.Close())
 			connMu.Lock()
 			for c := range conns {
-				_ = c.Close()
+				telemetry.WarnErr(context.Background(),
+					"execd main: close connection during shutdown failed",
+					c.Close())
 			}
 			connMu.Unlock()
 		})
@@ -142,7 +157,8 @@ func runExecServer() {
 				connMu.Lock()
 				delete(conns, conn)
 				connMu.Unlock()
-				_ = conn.Close()
+				telemetry.WarnErr(ctx,
+					"execd main: close connection failed", conn.Close())
 			}()
 			srv := execd.New(runner, conn, conn)
 			srv.DefaultEnv = policy
@@ -151,7 +167,8 @@ func runExecServer() {
 				execdFatal(1, "opencraft execd: %v", err)
 			}
 			srv.SetUnconfinedBackend(unconfined)
-			_ = srv.Serve(ctx)
+			telemetry.WarnErr(ctx, "execd main: serve connection failed",
+				srv.Serve(ctx))
 		}()
 	}
 	servesDone := make(chan struct{})
@@ -163,7 +180,8 @@ func runExecServer() {
 	case <-servesDone:
 	case <-time.After(serveGrace):
 	}
-	_ = runner.Close()
+	telemetry.WarnErr(ctx, "execd main: close socket runner failed",
+		runner.Close())
 }
 
 func execdFatal(code int, format string, args ...any) {

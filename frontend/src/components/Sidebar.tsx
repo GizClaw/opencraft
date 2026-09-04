@@ -20,7 +20,7 @@ import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { WindowToggleMaximise } from '../../wailsjs/runtime/runtime';
 import { api } from '../lib/api';
-import { useStore } from '../lib/store';
+import { pendingConversationIDs, useStore } from '../lib/store';
 import { useFocusState, useRunningConversations } from '../state/react';
 import type { SessionMeta } from '../lib/types';
 import type { ComponentType } from 'react';
@@ -53,7 +53,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   const openTools = useStore((s) => s.openTools);
   const closeTools = useStore((s) => s.closeTools);
   const deleteSession = useStore((s) => s.deleteSession);
-  const conversations = useStore((s) => s.conversations);
+  const pendingPromptConvs = useStore((s) => s.pendingPromptConvs);
   const flash = useStore((s) => s.flash);
   const loadSessions = useStore((s) => s.loadSessions);
   const loadWorkspaces = useStore((s) => s.loadWorkspaces);
@@ -190,15 +190,17 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   // Running conversations always stay visible; stored sessions fill the
   // list up to five entries total.
   const runningActors = useRunningConversations();
+  const pendingInteractIds = useMemo(
+    () => pendingConversationIDs(pendingPromptConvs),
+    [pendingPromptConvs],
+  );
   const runningIds = useMemo(() => {
     const ids = new Set(
       runningActors.map(({ conversationID }) => conversationID),
     );
-    for (const [id, conv] of Object.entries(conversations)) {
-      if (conv.pendingInteracts.length > 0) ids.add(id);
-    }
+    for (const id of pendingInteractIds) ids.add(id);
     return [...ids];
-  }, [runningActors, conversations]);
+  }, [runningActors, pendingInteractIds]);
   const visibleSessions = useMemo<SessionRow[]>(() => {
     const running = runningIds.map((id) => {
       const meta = sessions.find((s) => s.id === id);
@@ -244,11 +246,15 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   ).length;
   const showMoreSessions = sessions.length + runningOnly > 5;
 
-  const renameSession = (id: string, title: string) => {
-    void api
-      .renameSession(id, title)
-      .then(loadSessions)
-      .then(() => setRenameId(null));
+  const renameSession = async (id: string, title: string) => {
+    try {
+      await api.renameSession(id, title);
+      await loadSessions();
+      setRenameId(null);
+    } catch (err) {
+      flash(String(err));
+      setRenameId(null);
+    }
   };
 
   const renderSessionRow = (row: SessionRow) => (
@@ -324,7 +330,8 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                     setMenuOpenId(null);
                     void api
                       .exportSession(row.id)
-                      .then((path) => flash(t('sidebar.exportedTo', { path })));
+                      .then((path) => flash(t('sidebar.exportedTo', { path })))
+                      .catch((err) => flash(String(err)));
                   }}
                   className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
                 >
@@ -336,7 +343,8 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                     setMenuOpenId(null);
                     void api
                       .exportSessionBundle(row.id)
-                      .then((path) => flash(t('sidebar.exportedTo', { path })));
+                      .then((path) => flash(t('sidebar.exportedTo', { path })))
+                      .catch((err) => flash(String(err)));
                   }}
                   className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
                 >
@@ -578,28 +586,40 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
       </div>
 
       {confirmDelete && (
-        <div className="mt-2 mx-3 rounded-lg border border-err/40 bg-panel2 p-2 text-xs">
-          <p>
-            {t('sidebar.deleteSessionConfirm', {
-              title: sessions.find((s) => s.id === confirmDelete)?.title ?? '',
-            })}
-          </p>
-          <div className="mt-2 flex gap-2">
-            <button
-              onClick={() => setConfirmDelete(null)}
-              className="rounded border border-edge px-2 py-0.5 text-dim hover:text-fg"
-            >
-              {t('interact.cancel')}
-            </button>
-            <button
-              onClick={() => {
-                void deleteSession(confirmDelete);
-                setConfirmDelete(null);
-              }}
-              className="rounded bg-err px-2 py-0.5 text-white hover:opacity-90"
-            >
-              {t('sidebar.deleteSession')}
-            </button>
+        <div
+          className="fixed bottom-0 top-11 left-0 right-0 z-50 grid place-items-center bg-black/60 p-6"
+          onClick={() => setConfirmDelete(null)}
+        >
+          <div
+            className="w-[26.0000rem] rounded-2xl border border-edge bg-panel p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-base font-semibold">
+              {t('sidebar.deleteSessionTitle', {
+                title:
+                  sessions.find((s) => s.id === confirmDelete)?.title ?? '',
+              })}
+            </h3>
+            <p className="mt-2 text-sm leading-relaxed text-dim">
+              {t('sidebar.deleteSessionBody')}
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmDelete(null)}
+                className="rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
+              >
+                {t('interact.cancel')}
+              </button>
+              <button
+                onClick={() => {
+                  void deleteSession(confirmDelete);
+                  setConfirmDelete(null);
+                }}
+                className="rounded-lg bg-err px-3 py-1.5 text-sm text-white hover:opacity-90"
+              >
+                {t('sidebar.deleteSession')}
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -706,13 +726,13 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
             className="w-[26.0000rem] rounded-2xl border border-edge bg-panel p-5 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <p className="text-sm">
-              {t(
-                removingWorkspace.path === workspace
-                  ? 'sidebar.removeWorkspaceConfirmActive'
-                  : 'sidebar.removeWorkspaceConfirm',
-                { title: removingWorkspace.title },
-              )}
+            <h3 className="text-base font-semibold">
+              {t('sidebar.removeWorkspaceTitle', {
+                title: removingWorkspace.title,
+              })}
+            </h3>
+            <p className="mt-2 text-sm leading-relaxed text-dim">
+              {t('sidebar.removeWorkspaceBody')}
             </p>
             <div className="mt-4 flex justify-end gap-2">
               <button

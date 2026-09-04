@@ -5,18 +5,23 @@ package desktopv2
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/bindings"
 	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/automations"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	octelemetry "github.com/GizClaw/opencraft/internal/capabilities/telemetry"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
@@ -37,6 +42,7 @@ type Desktop struct {
 	core            *core.Core
 	trayIcon        []byte
 	trayIconWindows []byte
+	otelShutdown    func(context.Context) error
 }
 
 // New resolves the user data/config directories and builds the core
@@ -87,17 +93,51 @@ func New(opts Options) (*Desktop, error) {
 		})
 	})
 	c.SetWorkDir(c.InitialWorkDir(opts.WorkDir))
+	shutdown, err := initTelemetry(opts.DataDir)
+	if err != nil {
+		// Telemetry is best-effort for the desktop app: a failed
+		// pipeline must not block the window.
+		fmt.Fprintf(os.Stderr, "opencraft: telemetry: %v\n", err)
+		shutdown = nil
+	}
 	return &Desktop{
 		core:            c,
 		trayIcon:        opts.TrayIcon,
 		trayIconWindows: opts.TrayIconWindows,
+		otelShutdown:    shutdown,
 	}, nil
+}
+
+// initTelemetry wires the OTel pipelines (rotating log file under
+// ~/.opencraft/logs plus optional OTLP export) and returns the
+// flush/shutdown function.
+func initTelemetry(dataDir string) (func(context.Context) error, error) {
+	logPath := filepath.Join(dataDir, "logs", "opencraft.log")
+	otelEndpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	otelInsecure := false
+	if v := os.Getenv("OTEL_EXPORTER_OTLP_INSECURE"); v != "" {
+		parsed, err := strconv.ParseBool(v)
+		if err != nil {
+			fmt.Fprintf(os.Stderr,
+				"opencraft: telemetry: invalid OTEL_EXPORTER_OTLP_INSECURE %q: %v\n",
+				v, err)
+		} else {
+			otelInsecure = parsed
+		}
+	}
+	return octelemetry.InitOtel(context.Background(), octelemetry.TelemetryOptions{
+		OTLPEndpoint: otelEndpoint,
+		OTLPInsecure: otelInsecure,
+		LogFile:      logPath,
+	})
 }
 
 // Startup wires the Wails context into the core shell.
 func (d *Desktop) Startup(ctx context.Context) {
 	d.core.Shell.SetContext(ctx)
-	if err := d.core.Runtime.OpenUserDB(ctx); err == nil {
+	if err := d.core.Runtime.OpenUserDB(ctx); err != nil {
+		telemetry.WarnErr(ctx, "desktop: open user db failed", err)
+	} else {
 		d.startAutomations(ctx)
 	}
 	if err := d.core.ReloadRuntime(ctx); err != nil {
@@ -108,13 +148,24 @@ func (d *Desktop) Startup(ctx context.Context) {
 
 // Shutdown releases runtime-owned resources. Runtime service teardown
 // is added as the runtime domain migrates.
-func (d *Desktop) Shutdown(context.Context) {
+func (d *Desktop) Shutdown(ctx context.Context) {
 	d.core.Shell.StopTray()
 	if mgr := d.core.Runtime.AutomationManager(); mgr != nil {
 		mgr.Stop()
 	}
 	d.core.Runtime.Close()
 	d.core.Plugin.Close()
+	if d.otelShutdown != nil {
+		// The Wails shutdown context may already be canceled by the
+		// time this runs; derive the flush deadline from a fresh
+		// context so telemetry still gets its full drain window.
+		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := d.otelShutdown(flushCtx); err != nil {
+			telemetry.WarnErr(context.Background(),
+				"desktop: telemetry shutdown failed", err)
+		}
+	}
 }
 
 func (d *Desktop) startAutomations(ctx context.Context) {

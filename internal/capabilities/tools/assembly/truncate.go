@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/tool"
 )
 
@@ -47,16 +48,30 @@ func truncateMiddleware(cfg TruncateSettings) tool.Middleware {
 			}
 			path := filepath.Join(cfg.Dir, res.CallID+".output")
 			if err := os.MkdirAll(cfg.Dir, 0o700); err == nil {
-				_ = os.Chmod(cfg.Dir, 0o700)
+				telemetry.WarnErr(ctx,
+					"tool assembly: secure truncation directory failed",
+					os.Chmod(cfg.Dir, 0o700))
 				tmp := path + ".tmp"
 				if err := os.WriteFile(tmp, []byte(res.Content), 0o600); err == nil {
-					_ = os.Rename(tmp, path)
+					telemetry.WarnErr(ctx,
+						"tool assembly: persist truncated output failed",
+						os.Rename(tmp, path))
+				} else {
+					telemetry.WarnErr(ctx,
+						"tool assembly: write truncated output failed", err)
 				}
+			} else {
+				telemetry.WarnErr(ctx,
+					"tool assembly: create truncation directory failed", err)
 			}
 			ref := path
 			if cfg.WorkDir != "" {
 				if rel, err := filepath.Rel(cfg.WorkDir, path); err == nil {
 					ref = rel
+				} else {
+					telemetry.WarnErr(ctx,
+						"tool assembly: resolve relative truncation path failed",
+						err)
 				}
 			}
 			markerRunes := []rune(fmt.Sprintf("\n…[truncated; full output: %s]", ref))

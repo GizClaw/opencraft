@@ -20,6 +20,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/telemetry"
+
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
 )
 
@@ -64,7 +66,10 @@ func CheckWithPolicy(
 	if err != nil {
 		return plugins.UpdateInfo{}, fmt.Errorf("plugin update: fetch %s: %w", u.Redacted(), err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		telemetry.WarnErr(ctx, "plugin update: close manifest response failed",
+			resp.Body.Close())
+	}()
 	if resp.StatusCode != http.StatusOK {
 		return plugins.UpdateInfo{}, fmt.Errorf(
 			"plugin update: %s returned %s", u.Redacted(), resp.Status)
@@ -108,7 +113,10 @@ func FetchZip(
 	if err != nil {
 		return "", nil, fmt.Errorf("plugin update: download %s: %w", u.Redacted(), err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer func() {
+		telemetry.WarnErr(ctx, "plugin update: close zip response failed",
+			resp.Body.Close())
+	}()
 	if resp.StatusCode != http.StatusOK {
 		return "", nil, fmt.Errorf(
 			"plugin update: download %s returned %s", u.Redacted(), resp.Status)
@@ -118,8 +126,9 @@ func FetchZip(
 		return "", nil, fmt.Errorf("plugin update: temp file: %w", err)
 	}
 	cleanup := func() {
-		_ = tmp.Close()
-		_ = os.Remove(tmp.Name())
+		telemetry.WarnErr(ctx, "plugin update: close zip temp failed", tmp.Close())
+		telemetry.WarnErr(ctx, "plugin update: remove zip temp failed",
+			os.Remove(tmp.Name()))
 	}
 	hash := sha256.New()
 	written, err := io.Copy(
@@ -235,11 +244,10 @@ func parseChecksum(s string) (string, error) {
 	if len(hexPart) != sha256.Size*2 {
 		return "", errors.New("plugin update: checksum must be sha256:<64 hex chars>")
 	}
-	raw, err := hex.DecodeString(hexPart)
+	_, err := hex.DecodeString(hexPart)
 	if err != nil {
 		return "", errors.New("plugin update: checksum is not valid hex")
 	}
-	_ = raw
 	return strings.ToLower(hexPart), nil
 }
 

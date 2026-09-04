@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/telemetry"
+	otellog "go.opentelemetry.io/otel/log"
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 )
@@ -20,7 +22,10 @@ func BufferObservedArtifact(
 	if !ok || info.ConversationID == "" || store == nil {
 		return
 	}
-	_ = store.BufferArtifact(info.ConversationID, path, len(data))
+	telemetry.WarnErr(ctx, "host: buffer observed artifact failed",
+		store.BufferArtifact(info.ConversationID, path, len(data)),
+		otellog.String("conversation.id", info.ConversationID),
+		otellog.String("path", path))
 }
 
 // onArtifactWrite notifies the external observer and buffers the write

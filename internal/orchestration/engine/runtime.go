@@ -34,7 +34,7 @@ func (c *Controller) Close() error {
 	current := c.current
 	c.mu.Unlock()
 	if current != nil {
-		_ = current.Close()
+		return current.Close()
 	}
 	return nil
 }

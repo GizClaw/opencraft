@@ -1,6 +1,7 @@
 import {
   Fragment,
   memo,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -12,6 +13,7 @@ import {
   Archive,
   ArrowLeft,
   ArrowUp,
+  Ban,
   Bot,
   Check,
   ChevronDown,
@@ -28,6 +30,7 @@ import {
   Flame,
   FolderOpen,
   Globe,
+  GitFork,
   Lock,
   Loader2,
   Music2,
@@ -46,7 +49,7 @@ import { useTranslation } from 'react-i18next';
 import { OnFileDrop, OnFileDropOff } from '../../wailsjs/runtime/runtime';
 import { api } from '../lib/api';
 import { COMPACT_SUMMARY_PREFIX } from '../lib/compact';
-import { useStore } from '../lib/store';
+import { friendlyFailure, friendlyInterruption, useStore } from '../lib/store';
 import { useConversationState, useFocusState } from '../state/react';
 import type { AttachmentView } from '../lib/types';
 import type {
@@ -54,8 +57,15 @@ import type {
   MessageView,
   TurnArtifacts,
   TurnDoc,
+  TurnStatus,
 } from '../lib/store';
+import type { TurnEndKind } from '../state/types';
 import { InteractionCard } from './InteractionCard';
+import {
+  MessagePeek,
+  MAX_PEEK_MARKDOWN_CHARS,
+  MAX_PEEK_USER_CHARS,
+} from './MessagePeek';
 import {
   MarkdownComposer,
   type MarkdownComposerHandle,
@@ -64,7 +74,7 @@ import { Markdown } from './Markdown';
 import { PlanPanel } from './PlanPanel';
 import { ToolCard } from './ToolCard';
 import { StreamItemView } from './StreamItemView';
-import { latestPlan } from '../lib/plan';
+import { latestPlan, planNeedsRefresh } from '../lib/plan';
 import { groupToolCalls, type ToolCallItem } from '../lib/stream';
 
 const isCommandTool = (name: string) =>
@@ -76,6 +86,22 @@ const isCommandTool = (name: string) =>
 // once.
 const RENDER_WINDOW = 200;
 const RENDER_STEP = 100;
+
+// assistantPreviewText builds the hover preview without ever copying
+// the full assistant answer: it stops as soon as the preview budget is
+// used, so one huge markdown reply stays cheap to peek.
+function assistantPreviewText(items: AssistantItem[], limit: number): string {
+  let out = '';
+  for (const item of items) {
+    if (item.kind !== 'text' || !item.text) continue;
+    if (out.length >= limit) break;
+    const sep = out ? '\n' : '';
+    const remaining = Math.max(0, limit - out.length - sep.length);
+    out += sep + item.text.slice(0, remaining);
+    if (out.length >= limit) break;
+  }
+  return out.trim();
+}
 
 // ToolGroupView renders a burst of consecutive tool calls as one
 // collapsible block ("Ran 4 commands"), defaulting to collapsed; the
@@ -164,6 +190,103 @@ function sameToolGroup(a: ToolCallItem[], b: ToolCallItem[]): boolean {
   return true;
 }
 
+function archivedTurnEndKind(status?: TurnStatus): TurnEndKind | undefined {
+  switch (status) {
+    case 'failed':
+    case 'aborted':
+    case 'canceled':
+    case 'interrupted':
+      return status;
+    default:
+      return undefined;
+  }
+}
+
+// TurnEndNotice explains why a turn stopped without embedding an error
+// into the assistant message. It renders after the turn's last message
+// and only exposes a live Dismiss action while that turn is still
+// the current XState failure; resumed history stays static.
+function TurnEndNotice({
+  status,
+  error,
+  live = false,
+  onDismiss,
+}: {
+  status: TurnEndKind;
+  error?: string;
+  live?: boolean;
+  onDismiss?: () => void;
+}) {
+  const { t } = useTranslation();
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
+  const failure = status === 'failed' || status === 'aborted';
+  const container = failure
+    ? 'border-err/40 bg-err/10'
+    : status === 'interrupted'
+      ? 'border-warn/40 bg-warn/10'
+      : 'border-edge bg-panel2';
+  const iconBox = failure
+    ? 'border-err/30 bg-err/10 text-err'
+    : status === 'interrupted'
+      ? 'border-warn/30 bg-warn/10 text-warn'
+      : 'border-edge bg-panel text-dim';
+  const Icon = status === 'canceled' ? Ban : AlertTriangle;
+  const friendlyError = error ? friendlyFailure(error) : null;
+  let title: string;
+  let detail: string;
+  if (status === 'aborted') {
+    title = t('chat.lastAborted');
+    detail = friendlyError || error || t('chat.lastAbortedDetail');
+  } else if (status === 'canceled') {
+    title = t('chat.lastCancelled');
+    detail = t('chat.lastCancelledDetail');
+  } else if (status === 'interrupted') {
+    title = t('chat.lastInterrupted');
+    detail =
+      (error ? friendlyInterruption(error) : null) ??
+      t('chat.lastInterruptedDetail');
+  } else {
+    title = t('chat.lastFailed');
+    detail = friendlyError || error || t('chat.lastFailedDetail');
+  }
+  return (
+    <div
+      role={failure ? 'alert' : 'status'}
+      className={`flex items-start gap-3 rounded-xl border px-4 py-3 text-sm ${container}`}
+    >
+      <span
+        className={`mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg border ${iconBox}`}
+      >
+        <Icon size="0.9286rem" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="font-medium text-fg">{title}</p>
+        {detail && (
+          <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-dim">
+            {detail}
+          </p>
+        )}
+      </div>
+      <div className="flex shrink-0 items-center gap-1.5">
+        {live && (
+          <button
+            onClick={() => {
+              setDismissed(true);
+              onDismiss?.();
+            }}
+            title={t('chat.dismiss')}
+            aria-label={t('chat.dismiss')}
+            className="grid h-7 w-7 place-items-center rounded-lg text-dim hover:bg-panel2 hover:text-fg"
+          >
+            <X size="0.9286rem" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // MessageRow renders one conversation message. Memoized so stream
 // deltas only re-render the message that changed instead of reparsing
 // every completed message on each token.
@@ -172,6 +295,11 @@ const MessageRow = memo(function MessageRow({
   busy,
   streaming,
   isTurnLast,
+  msgIndex,
+  turnIndex,
+  turnStart,
+  forkable,
+  onFork,
   requestedAt,
   startedAt,
 }: {
@@ -179,6 +307,11 @@ const MessageRow = memo(function MessageRow({
   busy: boolean;
   streaming: boolean;
   isTurnLast: boolean;
+  msgIndex: number;
+  turnIndex: number;
+  turnStart: boolean;
+  forkable?: boolean;
+  onFork?: () => void;
   requestedAt?: string;
   startedAt?: string;
 }) {
@@ -186,13 +319,25 @@ const MessageRow = memo(function MessageRow({
   const [copied, setCopied] = useState(false);
   if (msg.role === 'user') {
     if (msg.text.startsWith(COMPACT_SUMMARY_PREFIX)) {
-      return <CompactCard text={msg.text} />;
+      return (
+        <CompactCard
+          text={msg.text}
+          msgIndex={msgIndex}
+          turnIndex={turnIndex}
+          turnStart={turnStart}
+        />
+      );
     }
     const attachments = msg.attachments ?? [];
     const images = attachments.filter((a) => a.kind === 'image');
     const files = attachments.filter((a) => a.kind !== 'image');
     return (
-      <div className="flex justify-end">
+      <div
+        data-msg-index={msgIndex}
+        data-turn-index={turnIndex >= 0 ? turnIndex : undefined}
+        data-turn-start={turnStart ? 'true' : undefined}
+        className="flex justify-end"
+      >
         <div className="group flex w-fit max-w-[80%] flex-col items-end gap-1">
           <div className="rounded-2xl rounded-br-sm border border-accent/30 bg-accent/15 px-4 py-2.5 text-sm">
             {images.length > 0 && (
@@ -253,6 +398,7 @@ const MessageRow = memo(function MessageRow({
     .join('\n')
     .trim();
   const copyable = isTurnLast && !streaming && finalText.length > 0;
+  const showActions = copyable || Boolean(forkable && onFork);
   const copyFinal = async () => {
     if (!finalText) return;
     try {
@@ -269,7 +415,12 @@ const MessageRow = memo(function MessageRow({
   const groups = groupToolCalls(msg.items);
   if (groups.length === 0) return null;
   return (
-    <div className="group flex flex-col gap-1">
+    <div
+      data-msg-index={msgIndex}
+      data-turn-index={turnIndex >= 0 ? turnIndex : undefined}
+      data-turn-start={turnStart ? 'true' : undefined}
+      className="group flex flex-col gap-1"
+    >
       {groups.map((group, gi) => {
         if (Array.isArray(group)) {
           return group.length === 1 ? (
@@ -292,16 +443,29 @@ const MessageRow = memo(function MessageRow({
           />
         );
       })}
-      {copyable && (
+      {showActions && (
         <div className="pointer-events-none invisible flex items-center justify-start gap-1.5 pl-1 group-hover:pointer-events-auto group-hover:visible">
-          <button
-            onClick={() => void copyFinal()}
-            className="flex items-center rounded border border-edge p-1 text-dim hover:text-fg"
-            aria-label={copied ? t('chat.copied') : t('chat.copyOutput')}
-            tabIndex={-1}
-          >
-            {copied ? <Check size="0.7857rem" /> : <Copy size="0.7857rem" />}
-          </button>
+          {forkable && onFork && (
+            <button
+              onClick={onFork}
+              className="flex items-center rounded border border-edge p-1 text-dim hover:text-accent"
+              aria-label={t('chat.forkTurn')}
+              title={t('chat.forkTurn')}
+              tabIndex={-1}
+            >
+              <GitFork size="0.7857rem" />
+            </button>
+          )}
+          {copyable && (
+            <button
+              onClick={() => void copyFinal()}
+              className="flex items-center rounded border border-edge p-1 text-dim hover:text-fg"
+              aria-label={copied ? t('chat.copied') : t('chat.copyOutput')}
+              tabIndex={-1}
+            >
+              {copied ? <Check size="0.7857rem" /> : <Copy size="0.7857rem" />}
+            </button>
+          )}
           {startedAt && (
             <span className="text-xs text-dim tabular-nums">
               {formatChatTime(startedAt)}
@@ -342,21 +506,45 @@ function turnForIndex(
   turnArtifacts: TurnArtifacts[],
   index: number,
 ): TurnArtifacts | undefined {
-  for (let ti = turnArtifacts.length - 1; ti >= 0; ti--) {
-    if (turnArtifacts[ti].start <= index) return turnArtifacts[ti];
+  let lo = 0;
+  let hi = turnArtifacts.length - 1;
+  let best: TurnArtifacts | undefined;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (turnArtifacts[mid].start <= index) {
+      best = turnArtifacts[mid];
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
   }
-  return undefined;
+  return best;
 }
 
 // CompactCard renders a compaction summary (a user message marked with
 // COMPACT_SUMMARY_PREFIX) as a tool-style card instead of a chat
 // bubble, so auto-compaction is visible in the transcript.
-function CompactCard({ text }: { text: string }) {
+function CompactCard({
+  text,
+  msgIndex,
+  turnIndex,
+  turnStart,
+}: {
+  text: string;
+  msgIndex: number;
+  turnIndex: number;
+  turnStart: boolean;
+}) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(true);
   const body = text.slice(COMPACT_SUMMARY_PREFIX.length).trim();
   return (
-    <div className="overflow-hidden rounded-lg border border-edge bg-panel2 my-1.5">
+    <div
+      data-msg-index={msgIndex}
+      data-turn-index={turnIndex >= 0 ? turnIndex : undefined}
+      data-turn-start={turnStart ? 'true' : undefined}
+      className="overflow-hidden rounded-lg border border-edge bg-panel2 my-1.5"
+    >
       <button
         onClick={() => setOpen(!open)}
         className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-panel2/70"
@@ -522,6 +710,7 @@ const ArtifactStrip = memo(function ArtifactStrip({
 }) {
   const { t } = useTranslation();
   const workspace = useStore((s) => s.workspace);
+  const flash = useStore((s) => s.flash);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{
     doc: TurnDoc;
@@ -577,7 +766,9 @@ const ArtifactStrip = memo(function ArtifactStrip({
           return (
             <button
               key={doc.path}
-              onClick={() => void api.openPath(doc.path)}
+              onClick={() =>
+                void api.openPath(doc.path).catch((err) => flash(String(err)))
+              }
               onContextMenu={(e) => openMenu(e, doc)}
               title={t('chat.openArtifact', { path: doc.path })}
               aria-haspopup="menu"
@@ -755,16 +946,36 @@ export function ChatView() {
   const turnArtifacts = conv?.turnArtifacts ?? [];
   const [visibleCount, setVisibleCount] = useState(RENDER_WINDOW);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
+  const [peekCurrent, setPeekCurrent] = useState(-1);
+  const planCacheRef = useRef<{
+    messages: MessageView[];
+    plan: ReturnType<typeof latestPlan>;
+  } | null>(null);
   // A conversation switch resets the window to the tail; a resumed
   // session starts with the newest messages visible.
   useEffect(() => {
     setVisibleCount(RENDER_WINDOW);
     setLoadingEarlier(false);
+    setPeekCurrent(-1);
+    planCacheRef.current = null;
   }, [current]);
   const truncated = messages.length > visibleCount;
   const start = truncated ? messages.length - visibleCount : 0;
   const visibleMessages = truncated ? messages.slice(start) : messages;
-  const planState = useMemo(() => latestPlan(messages), [messages]);
+  const turnIndexById = useMemo(
+    () => new Map(turnArtifacts.map((turn, ti) => [turn, ti] as const)),
+    [turnArtifacts],
+  );
+  const planState = useMemo(() => {
+    const cached = planCacheRef.current;
+    if (cached && !planNeedsRefresh(cached.messages, messages)) {
+      planCacheRef.current = { messages, plan: cached.plan };
+      return cached.plan;
+    }
+    const plan = latestPlan(messages);
+    planCacheRef.current = { messages, plan };
+    return plan;
+  }, [messages]);
   const [planDismissed, setPlanDismissed] = useState(false);
   const planItemsKey = planState
     ? planState.plan.items.map((s) => `${s.status}|${s.step}`).join('\n')
@@ -782,6 +993,7 @@ export function ChatView() {
   const status = useStore((s) => s.status);
   const pendingInteracts = conv?.pendingInteracts ?? [];
   const send = useStore((s) => s.send);
+  const forkTurn = useStore((s) => s.forkTurn);
   const newChat = useStore((s) => s.newChat);
   const resume = useStore((s) => s.resume);
   const retryTranscript = useStore((s) => s.retryTranscript);
@@ -791,7 +1003,6 @@ export function ChatView() {
   const subagentCards = useStore((s) => s.subagentCards);
   const subagentPanelOpen = useStore((s) => s.subagentPanelOpen);
   const toggleSubagentPanel = useStore((s) => s.toggleSubagentPanel);
-  const retryLast = useStore((s) => s.retryLast);
   const mode = conv?.mode ?? 'workspace';
   const setMode = useStore((s) => s.setMode);
   const think = conv?.think ?? 'medium';
@@ -806,11 +1017,81 @@ export function ChatView() {
   const thinkSupported = model
     ? (modelOptions.find((o) => o.id === model)?.reasoning ?? false)
     : (modelOptions[0]?.reasoning ?? status?.default_reasoning ?? false);
-  const lastFailed = turnState?.name === 'failed';
+  const failedTurn = turnState?.name === 'failed' ? turnState : undefined;
+  const lastTurn = turnArtifacts[turnArtifacts.length - 1];
+  // MessagePeek only needs the turn boundaries while rendering ticks.
+  // Preview text is fetched lazily on hover from refs, so token
+  // streaming does not force us to re-extract every turn's answer on
+  // every stream flush.
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+  const turnArtifactsRef = useRef(turnArtifacts);
+  turnArtifactsRef.current = turnArtifacts;
+  const lastTurnRef = useRef(lastTurn);
+  lastTurnRef.current = lastTurn;
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
+  const startRef = useRef(start);
+  startRef.current = start;
+  const peekTicks = useMemo(
+    () => turnArtifacts.map((_, index) => ({ index })),
+    [turnArtifacts],
+  );
+  const peekPreview = useCallback((index: number) => {
+    const turns = turnArtifactsRef.current;
+    const currentMessages = messagesRef.current;
+    if (index < 0 || index >= turns.length) {
+      return { user: '', answer: '', running: false };
+    }
+    const turn = turns[index];
+    const nextStart =
+      index + 1 < turns.length
+        ? turns[index + 1].start
+        : currentMessages.length;
+    let user = '';
+    for (
+      let mi = turn.start;
+      mi < Math.min(nextStart, currentMessages.length);
+      mi++
+    ) {
+      const m = currentMessages[mi];
+      if (m.role === 'user' && !m.text.startsWith(COMPACT_SUMMARY_PREFIX)) {
+        user = m.text;
+        break;
+      }
+    }
+    let answer = '';
+    for (
+      let mi = Math.min(nextStart, currentMessages.length) - 1;
+      mi >= turn.start;
+      mi--
+    ) {
+      const m = currentMessages[mi];
+      if (m.role !== 'assistant') continue;
+      const text = assistantPreviewText(m.items, MAX_PEEK_MARKDOWN_CHARS);
+      if (text) {
+        answer = text;
+        break;
+      }
+    }
+    if (user.length >= MAX_PEEK_USER_CHARS) {
+      user = `${user.slice(0, MAX_PEEK_USER_CHARS).trimEnd()}\n\n…`;
+    }
+    if (answer.length >= MAX_PEEK_MARKDOWN_CHARS) {
+      answer = `${answer.trimEnd()}\n\n…`;
+    }
+    return {
+      user,
+      answer,
+      running: busyRef.current && turn === lastTurnRef.current,
+    };
+  }, []);
   const openConfig = useStore((s) => s.openConfig);
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<AttachmentView[]>([]);
   const [confirmYolo, setConfirmYolo] = useState(false);
+  const [forkTarget, setForkTarget] = useState<TurnArtifacts | null>(null);
+  const [forking, setForking] = useState(false);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const composerDraft = useStore((s) => s.composerDraft);
@@ -836,6 +1117,53 @@ export function ChatView() {
   // captured from an earlier render — that race is what made the view
   // jump back to the bottom right after the user scrolled away.
   const stickRef = useRef(true);
+  // refreshPeekCurrent derives the "current turn" from the message
+  // rows currently visible in the transcript. Rows carry the turn they
+  // belong to even when the transcript window starts in the middle of
+  // a long turn, so the ruler follows the content actually on screen.
+  // It only writes when the resolved turn changes, so stream flushes
+  // do not cause an extra render for a stationary viewport.
+  const refreshPeekCurrent = useCallback(() => {
+    const scroller = scrollRef.current;
+    if (!scroller || turnArtifactsRef.current.length === 0) {
+      setPeekCurrent(-1);
+      return;
+    }
+    const view = scroller.getBoundingClientRect();
+    const rows = scroller.querySelectorAll<HTMLElement>('[data-turn-index]');
+    let found = -1;
+    for (const row of rows) {
+      const index = Number(row.dataset.turnIndex);
+      if (!Number.isInteger(index)) continue;
+      const rect = row.getBoundingClientRect();
+      if (rect.bottom <= view.top + 1) {
+        found = index;
+        continue;
+      }
+      if (rect.top >= view.bottom - 1) break;
+      found = index;
+      break;
+    }
+    let next = found;
+    if (next < 0) {
+      if (rows.length === 0) return;
+      const first = Number(rows[0].dataset.turnIndex);
+      const last = Number(rows[rows.length - 1].dataset.turnIndex);
+      next = scroller.scrollTop <= 1 ? first : last;
+    }
+    setPeekCurrent((prev) => (prev === next ? prev : next));
+  }, []);
+  // schedulePeekRefresh coalesces scroll-driven current-turn lookups
+  // into one pass per animation frame instead of scanning the mounted
+  // transcript on every scroll event.
+  const peekRefreshRafRef = useRef<number | null>(null);
+  const schedulePeekRefresh = useCallback(() => {
+    if (peekRefreshRafRef.current != null) return;
+    peekRefreshRafRef.current = requestAnimationFrame(() => {
+      peekRefreshRafRef.current = null;
+      refreshPeekCurrent();
+    });
+  }, [refreshPeekCurrent]);
   const loadEarlier = () => {
     if (!truncated || loadingEarlier) return;
     const el = scrollRef.current;
@@ -854,9 +1182,48 @@ export function ChatView() {
       if (!current) return;
       const addedAbove = current.scrollHeight - prevScrollHeight;
       current.scrollTop = prevScrollTop + addedAbove;
+      schedulePeekRefresh();
     });
     window.setTimeout(() => setLoadingEarlier(false), 250);
   };
+  const jumpToTurn = useCallback(
+    (index: number) => {
+      const turn = turnArtifactsRef.current[index];
+      if (!turn) return;
+      const target = turn.start;
+      const expanding = target < startRef.current;
+      if (expanding) {
+        setVisibleCount((prev) =>
+          Math.max(prev, messagesRef.current.length - target),
+        );
+        setLoadingEarlier(false);
+      }
+      // A jump is an explicit navigation: never snap back to the newest
+      // output afterwards.
+      stickRef.current = false;
+      setStick(false);
+      const runScroll = () => {
+        const scroller = scrollRef.current;
+        if (!scroller) return;
+        const exact = scroller.querySelector<HTMLElement>(
+          `[data-msg-index="${target}"]`,
+        );
+        const row =
+          exact ??
+          scroller.querySelector<HTMLElement>(`[data-turn-index="${index}"]`);
+        if (!row) return;
+        const containerRect = scroller.getBoundingClientRect();
+        const top =
+          row.getBoundingClientRect().top -
+          containerRect.top +
+          scroller.scrollTop;
+        scroller.scrollTop = Math.max(0, top - 12);
+        schedulePeekRefresh();
+      };
+      requestAnimationFrame(() => requestAnimationFrame(runScroll));
+    },
+    [schedulePeekRefresh],
+  );
   const { t } = useTranslation();
   const thinkLevels = [
     { value: 'minimal', label: t('chat.thinkMinimal') },
@@ -947,6 +1314,20 @@ export function ChatView() {
   }, [messages, pendingInteracts, stick]);
 
   useEffect(() => {
+    const frame = requestAnimationFrame(refreshPeekCurrent);
+    return () => cancelAnimationFrame(frame);
+  }, [current, refreshPeekCurrent, turnArtifacts, visibleCount]);
+
+  useEffect(
+    () => () => {
+      if (peekRefreshRafRef.current != null) {
+        cancelAnimationFrame(peekRefreshRafRef.current);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
     const onVisibility = () => {
       if (document.visibilityState === 'visible' && stickRef.current) {
         const el = scrollRef.current;
@@ -969,10 +1350,12 @@ export function ChatView() {
     void send(text, staged);
   };
 
-  const retry = () => {
-    setInput('');
-    composerRef.current?.clear();
-    void retryLast();
+  const confirmFork = () => {
+    const target = forkTarget;
+    if (!target?.runID || forking) return;
+    setForkTarget(null);
+    setForking(true);
+    void forkTurn(target.runID).finally(() => setForking(false));
   };
 
   const sessionTitle = sessions.find((s) => s.id === current)?.title;
@@ -1145,6 +1528,7 @@ export function ChatView() {
             if (!pinned && el.scrollTop <= 8 && truncated && !loadingEarlier) {
               loadEarlier();
             }
+            schedulePeekRefresh();
           }}
           data-testid="chat-scroll"
           className="flex-1 overflow-y-auto [overflow-anchor:none] px-6 py-4"
@@ -1187,7 +1571,9 @@ export function ChatView() {
                 // The turn's artifact card and worked-for line render
                 // after its last message: before the next user bubble
                 // (or at the transcript end).
-                const turnIdx = turn ? turnArtifacts.indexOf(turn) : -1;
+                const turnIdx = turn ? (turnIndexById.get(turn) ?? -1) : -1;
+                const turnStart =
+                  turnIdx >= 0 && turnArtifacts[turnIdx].start === i;
                 const isTurnEnd =
                   turnIdx >= 0 &&
                   i ===
@@ -1197,23 +1583,40 @@ export function ChatView() {
                 const showArtifacts = isTurnEnd && (turn?.docs.length ?? 0) > 0;
                 const showWorked =
                   isTurnEnd && msg.role === 'assistant' && !!turn;
+                const archivedEnd = isTurnEnd
+                  ? archivedTurnEndKind(turn?.status)
+                  : undefined;
+                const liveEnd = isTurnEnd && failedTurn && turn === lastTurn;
+                const endStatus =
+                  archivedEnd ?? (liveEnd ? failedTurn.status : undefined);
+                const isAssistantTurnLast =
+                  msg.role === 'assistant' &&
+                  (i === messages.length - 1 ||
+                    messages[i + 1]?.role === 'user');
+                const assistantStreaming =
+                  busy && msg.role === 'assistant' && i === messages.length - 1;
+                const canFork =
+                  isAssistantTurnLast &&
+                  !assistantStreaming &&
+                  !forking &&
+                  !endStatus &&
+                  Boolean(turn?.runID);
                 return (
                   <Fragment key={msg.id}>
                     <MessageRow
                       msg={msg}
                       busy={busy}
-                      isTurnLast={
-                        msg.role === 'assistant' &&
-                        (i === messages.length - 1 ||
-                          messages[i + 1]?.role === 'user')
+                      isTurnLast={isAssistantTurnLast}
+                      msgIndex={i}
+                      turnIndex={turnIdx}
+                      turnStart={turnStart}
+                      forkable={canFork}
+                      onFork={
+                        canFork && turn ? () => setForkTarget(turn) : undefined
                       }
                       requestedAt={turn?.requestedAt}
                       startedAt={turn?.startedAt}
-                      streaming={
-                        busy &&
-                        msg.role === 'assistant' &&
-                        i === messages.length - 1
-                      }
+                      streaming={assistantStreaming}
                     />
                     {showArtifacts && turn && (
                       <>
@@ -1232,34 +1635,34 @@ export function ChatView() {
                         durationMs={turn?.durationMs}
                       />
                     )}
+                    {endStatus && turn && (
+                      <TurnEndNotice
+                        status={endStatus}
+                        error={
+                          liveEnd
+                            ? (turn.error ?? failedTurn?.error)
+                            : turn.error
+                        }
+                        live={Boolean(liveEnd)}
+                        onDismiss={liveEnd ? clearLastFailed : undefined}
+                      />
+                    )}
                   </Fragment>
                 );
               })}
               {pendingInteracts.map((spec) => (
                 <InteractionCard key={spec.id} spec={spec} />
               ))}
-              {lastFailed && !busy && (
-                <div className="flex items-center justify-between gap-3 rounded-xl border border-err/40 bg-err/10 px-4 py-3 text-sm">
-                  <span className="text-dim">{t('chat.lastFailed')}</span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={retry}
-                      className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-dim hover:text-accent"
-                    >
-                      <RotateCcw size="0.9286rem" /> {t('chat.retry')}
-                    </button>
-                    <button
-                      onClick={clearLastFailed}
-                      className="rounded-lg px-3 py-1.5 text-dim hover:text-fg"
-                    >
-                      {t('chat.dismiss')}
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
           )}
         </div>
+        <MessagePeek
+          items={peekTicks}
+          currentIndex={peekCurrent}
+          onJump={jumpToTurn}
+          getPreview={peekPreview}
+          revision={turnArtifacts}
+        />
         {planState && !planDismissed && (
           <PlanPanel
             plan={planState.plan}
@@ -1557,6 +1960,45 @@ export function ChatView() {
           </div>
         </div>
       </div>
+      {forkTarget && (
+        <div className="fixed bottom-0 top-11 left-0 right-0 z-40 grid place-items-center bg-black/60 p-6">
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            className="w-[34rem] max-w-[calc(100vw-3rem)] rounded-2xl border border-edge bg-panel p-5 shadow-2xl"
+          >
+            <div className="flex items-start gap-3">
+              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-accent/40 bg-accent/10 text-accent">
+                <GitFork size="1.1429rem" />
+              </div>
+              <div className="min-w-0">
+                <h2 className="text-sm font-semibold leading-snug text-fg">
+                  {t('chat.forkTurnTitle')}
+                </h2>
+                <p className="mt-1 text-xs leading-relaxed text-dim">
+                  {t('chat.forkTurnBody')}
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setForkTarget(null)}
+                className="rounded-lg border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg"
+              >
+                {t('interact.cancel')}
+              </button>
+              <button
+                onClick={confirmFork}
+                disabled={forking}
+                className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
+              >
+                <GitFork size="0.9286rem" />
+                {t('chat.forkTurnConfirm')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       {confirmYolo && (
         <div className="fixed bottom-0 top-11 left-0 right-0 z-40 grid place-items-center bg-black/60 p-6">
           <div

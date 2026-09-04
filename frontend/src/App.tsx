@@ -39,6 +39,16 @@ function truncate(text: string, max: number): string {
   return `${text.slice(0, max)}…`;
 }
 
+function notifyStatus(status: string): string {
+  if (status === 'completed') return i18n.t('notify.done');
+  if (status === 'failed' || status === 'aborted') {
+    return i18n.t('notify.failed');
+  }
+  if (status === 'canceled') return i18n.t('notify.cancelled');
+  if (status === 'interrupted') return i18n.t('notify.interrupted');
+  return status;
+}
+
 // turnEndNotification builds the macOS notification for one finished
 // turn: the title is the session title and the body is the status plus
 // the agent's latest text output (truncated), so the banner says more
@@ -51,12 +61,7 @@ function turnEndNotification(data: {
   const state = useStore.getState();
   const convID =
     (data.run_id && state.runConvs[data.run_id]) || data.conversation_id;
-  const statusText =
-    data.status === 'completed'
-      ? i18n.t('notify.done')
-      : data.status === 'failed' || data.status === 'aborted'
-        ? i18n.t('notify.failed')
-        : data.status;
+  const statusText = notifyStatus(data.status);
 
   // Session title: prefer the persisted/renamed title, fall back to
   // the conversation's first user message (the backend's auto-title
@@ -189,6 +194,9 @@ export default function App() {
           notify?: boolean;
         };
         if (data.notify !== false) {
+          // Flush any deltas still waiting on the stream coalescer so
+          // the notification builds its snippet from the final answer.
+          useStore.getState().flushStreams();
           const { title, body } = turnEndNotification(data);
           void SendNotification({ id: 'turn-end', title, body });
         }
@@ -199,12 +207,7 @@ export default function App() {
           error?: string;
           output?: string;
         };
-        const statusText =
-          data.status === 'completed'
-            ? i18n.t('notify.done')
-            : data.status === 'failed' || data.status === 'aborted'
-              ? i18n.t('notify.failed')
-              : (data.status ?? '');
+        const statusText = data.status ? notifyStatus(data.status) : '';
         const snippet = data.output?.trim()
           ? truncate(data.output, maxNotifySnippet)
           : data.error
@@ -249,11 +252,11 @@ export default function App() {
   // Keep the current conversation's delegation list fresh; the right
   // sidebar appears as soon as the conversation spawns a subagent.
   useEffect(() => {
-    if (!status) return;
+    if (!status || toolsView) return;
     void loadSubagentCards();
     const timer = setInterval(() => void loadSubagentCards(), 2000);
     return () => clearInterval(timer);
-  }, [status, current, loadSubagentCards]);
+  }, [status, current, loadSubagentCards, toolsView]);
 
   const startDrag = () => (e: React.MouseEvent) => {
     e.preventDefault();

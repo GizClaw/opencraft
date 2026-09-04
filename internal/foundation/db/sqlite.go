@@ -5,10 +5,13 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	_ "modernc.org/sqlite" // registers the "sqlite" driver.
 )
@@ -55,7 +58,8 @@ func OpenWithOptions(path string, opts OpenOptions) (*DB, error) {
 	}
 	for _, pragma := range pragmas {
 		if _, err := db.Exec(pragma); err != nil {
-			_ = db.Close()
+			telemetry.WarnErr(context.Background(),
+				"userdb: close database after pragma failure", db.Close())
 			return nil, fmt.Errorf("userdb: %s: %w", pragma, err)
 		}
 	}

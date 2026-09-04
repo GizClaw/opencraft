@@ -1,10 +1,13 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+
+	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 )
@@ -23,6 +26,9 @@ func LoadPrefs(userDir string) DesktopPrefs {
 	if userDir == "" {
 		if dir, err := config.UserConfigDir(); err == nil {
 			userDir = dir
+		} else {
+			telemetry.WarnErr(context.Background(),
+				"desktop prefs: resolve config dir failed", err)
 		}
 	}
 	data, err := os.ReadFile(filepath.Join(userDir, prefsFile))
@@ -30,17 +36,26 @@ func LoadPrefs(userDir string) DesktopPrefs {
 		return prefs
 	}
 	if err != nil {
+		telemetry.WarnErr(context.Background(),
+			"desktop prefs: read prefs failed", err)
 		return prefs
 	}
 	var stored map[string]any
 	if err := json.Unmarshal(data, &stored); err != nil {
+		telemetry.WarnErr(context.Background(),
+			"desktop prefs: decode prefs failed", err)
 		return prefs
 	}
 	raw, err := json.Marshal(stored)
 	if err != nil {
+		telemetry.WarnErr(context.Background(),
+			"desktop prefs: re-encode prefs failed", err)
 		return prefs
 	}
-	_ = json.Unmarshal(raw, &prefs)
+	if err := json.Unmarshal(raw, &prefs); err != nil {
+		telemetry.WarnErr(context.Background(),
+			"desktop prefs: decode typed prefs failed", err)
+	}
 	return prefs
 }
 
@@ -63,9 +78,15 @@ func SavePrefs(userDir string, prefs DesktopPrefs) error {
 		return err
 	}
 	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
+	defer func() {
+		if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
+			telemetry.WarnErr(context.Background(),
+				"desktop prefs: remove prefs temp failed", err)
+		}
+	}()
 	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
+		telemetry.WarnErr(context.Background(),
+			"desktop prefs: close prefs temp after write failure", tmp.Close())
 		return err
 	}
 	if err := tmp.Close(); err != nil {

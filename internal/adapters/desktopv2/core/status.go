@@ -1,6 +1,8 @@
 package core
 
 import (
+	flowtelemetry "github.com/GizClaw/flowcraft/core/telemetry"
+
 	"github.com/GizClaw/opencraft/internal/capabilities/telemetry"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 )
@@ -24,7 +26,12 @@ func (c *Core) ConfigStatus() ConfigStatus {
 	configured := false
 	if mgr, err := config.Open(config.Options{UserDir: c.UserDir}); err == nil {
 		if view, err := mgr.Load(c.Shell.Context()); err == nil {
-			configured, _ = config.RouterConfigured(view.Document)
+			var cfgErr error
+			configured, cfgErr = config.RouterConfigured(view.Document)
+			if cfgErr != nil {
+				flowtelemetry.WarnErr(c.Shell.Context(),
+					"desktop status: router config check failed", cfgErr)
+			}
 		}
 	}
 	defaultReasoning := false

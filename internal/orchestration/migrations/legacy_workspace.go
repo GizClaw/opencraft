@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/telemetry"
+	otellog "go.opentelemetry.io/otel/log"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
@@ -115,7 +117,10 @@ func importLegacyConversation(
 	if err != nil {
 		return err
 	}
-	usageJSON, _ := json.Marshal(meta.legacyWorkspaceUsage)
+	usageJSON, err := json.Marshal(meta.legacyWorkspaceUsage)
+	if err != nil {
+		return fmt.Errorf("migrations: marshal legacy usage: %w", err)
+	}
 	createdAt := meta.CreatedAt
 	updatedAt := meta.UpdatedAt
 	if createdAt.IsZero() {
@@ -176,7 +181,10 @@ func importLegacyConversation(
 		if finished.IsZero() {
 			finished = at
 		}
-		artifacts, _ := json.Marshal(turn.Artifacts)
+		artifacts, err := json.Marshal(turn.Artifacts)
+		if err != nil {
+			return fmt.Errorf("migrations: marshal legacy artifacts: %w", err)
+		}
 		archiveMsgs := make([]state.ArchiveMessage, 0, len(msgs))
 		for _, m := range msgs {
 			archiveMsgs = append(archiveMsgs, state.ArchiveMessage{
@@ -218,13 +226,16 @@ func importLegacyConversation(
 	if err := markLegacyMigrated(ctx, st, id); err != nil {
 		return err
 	}
-	_ = os.RemoveAll(historyDir)
+	telemetry.WarnErr(ctx, "migrations: remove legacy history failed",
+		os.RemoveAll(historyDir))
 	if entries, err := os.ReadDir(dir); err == nil {
 		for _, entry := range entries {
 			if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 				continue
 			}
-			_ = os.Remove(filepath.Join(dir, entry.Name()))
+			telemetry.WarnErr(ctx, "migrations: remove legacy session file failed",
+				os.Remove(filepath.Join(dir, entry.Name())),
+				otellog.String("session", id))
 		}
 	}
 	return nil

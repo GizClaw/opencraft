@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { groupToolCalls, isPlanCall, visibleStreamItems } from './stream';
+import {
+  coalesceStreamEvents,
+  groupToolCalls,
+  isPlanCall,
+  visibleStreamItems,
+} from './stream';
 import type { AssistantItem, MessageView } from './store';
+import type { UIEvent } from './types';
 
 function text(id: string, body = 'hello'): AssistantItem {
   return { kind: 'text', id, text: body };
@@ -128,5 +134,128 @@ describe('visibleStreamItems', () => {
 
   it('returns an empty list for an empty stream', () => {
     expect(visibleStreamItems([])).toEqual([]);
+  });
+});
+
+describe('coalesceStreamEvents', () => {
+  function textEvent(
+    conversationID: string,
+    runID: string,
+    text: string,
+  ): UIEvent {
+    return {
+      type: 'stream',
+      data: {
+        conversation_id: conversationID,
+        run_id: runID,
+        delta: {
+          type: 'part',
+          part: { type: 'text', text },
+        },
+      },
+    };
+  }
+
+  it('keeps text/reasoning/tool phase order inside one run', () => {
+    const events: UIEvent[] = [
+      textEvent('s-1', 'r-1', 'a'),
+      textEvent('s-1', 'r-1', 'b'),
+      {
+        type: 'stream',
+        data: {
+          conversation_id: 's-1',
+          run_id: 'r-1',
+          delta: {
+            type: 'part',
+            part: { type: 'reasoning', text: 'think' },
+          },
+        },
+      },
+      {
+        type: 'stream',
+        data: {
+          conversation_id: 's-1',
+          run_id: 'r-1',
+          delta: {
+            type: 'part',
+            part: {
+              type: 'tool_call',
+              call: { id: 'c-1', name: 'exec_command', arguments: {} },
+            },
+          },
+        },
+      },
+      textEvent('s-1', 'r-1', 'c'),
+      textEvent('s-1', 'r-1', 'd'),
+    ];
+
+    const out = coalesceStreamEvents(events);
+    const kinds = out.map((ev) => {
+      const part = (ev.data as { delta: { part: { type: string } } }).delta
+        .part;
+      return part.type;
+    });
+    expect(kinds).toEqual(['text', 'reasoning', 'tool_call', 'text']);
+    const textParts = out.filter((ev) => {
+      const part = (ev.data as { delta: { part: { type: string } } }).delta
+        .part;
+      return part.type === 'text';
+    });
+    expect(
+      textParts.map(
+        (ev) =>
+          (ev.data as { delta: { part: { text: string } } }).delta.part.text,
+      ),
+    ).toEqual(['ab', 'cd']);
+  });
+
+  it('stress-coalesces thousands of interleaved deltas without loss', () => {
+    const conversations = ['s-1', 's-2', 's-3', 's-4'];
+    const runs = ['r-1', 'r-2', 'r-3', 'r-4'];
+    const events: UIEvent[] = [];
+    const expected = new Map<string, string>();
+    const rounds = 20;
+    const chunksPerRun = 25;
+    for (let round = 0; round < rounds; round++) {
+      for (let i = 0; i < conversations.length; i++) {
+        const conversationID = conversations[i];
+        const runID = runs[i];
+        for (let c = 0; c < chunksPerRun; c++) {
+          const text = `${round}:${conversationID}:${c},`;
+          events.push(textEvent(conversationID, runID, text));
+          expected.set(
+            conversationID,
+            (expected.get(conversationID) ?? '') + text,
+          );
+        }
+      }
+    }
+
+    const out = coalesceStreamEvents(events);
+    const got = new Map<string, string>();
+    const order: string[] = [];
+    for (const ev of out) {
+      const data = ev.data as {
+        conversation_id: string;
+        delta: { type: string; part?: { type?: string; text?: string } };
+      };
+      if (data.delta.type !== 'part' || data.delta.part?.type !== 'text') {
+        continue;
+      }
+      const conversationID = data.conversation_id;
+      got.set(
+        conversationID,
+        (got.get(conversationID) ?? '') + (data.delta.part.text ?? ''),
+      );
+      order.push(conversationID);
+    }
+
+    expect(out).toHaveLength(rounds * conversations.length);
+    expect(order).toEqual(
+      Array.from({ length: rounds }, () => conversations).flat(),
+    );
+    for (const conversationID of conversations) {
+      expect(got.get(conversationID)).toBe(expected.get(conversationID));
+    }
   });
 });

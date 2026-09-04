@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import i18n from '../i18n';
 import { api } from './api';
 import { sanitizeToolResult } from './ansi';
+import { coalesceStreamEvents } from './stream';
 import type {
   AgentSummary,
   AutomationRun,
@@ -81,6 +82,15 @@ export interface ToastItem {
   kind: ToastKind;
 }
 
+// pendingConversationIDs returns the unique conversations that own at
+// least one pending interact/prompt. The Sidebar uses this instead of
+// iterating every loaded conversation on each store update.
+export function pendingConversationIDs(
+  pendingPromptConvs: Record<string, string>,
+): string[] {
+  return [...new Set(Object.values(pendingPromptConvs))];
+}
+
 let msgSeq = 0;
 const newID = (prefix: string) => `${prefix}-${Date.now()}-${msgSeq++}`;
 let turnSeq = 0;
@@ -91,6 +101,13 @@ const newTurnID = () => `live-${++turnSeq}`;
 // re-opened via resume; keeping them in the store would grow memory
 // without bound on long-running sessions.
 const MAX_CONV_MESSAGES = 800;
+
+// STREAM_FLUSH_MAX_DELAY_MS bounds how long a burst of stream deltas
+// can stay queued when animation frames are paused (for example while
+// the webview is occluded). The rAF flush normally runs at frame rate;
+// this timer guarantees a commit still happens even when rAF is not
+// being driven.
+const STREAM_FLUSH_MAX_DELAY_MS = 50;
 
 // capConversation trims the oldest messages past the in-memory cap and
 // re-bases per-turn artifact strip indexes onto the trimmed array.
@@ -135,6 +152,12 @@ export interface TurnDoc {
   bytes: number;
 }
 
+// TurnStatus is the persisted terminal state of an archived turn. It
+// mirrors the backend turn_end status so resumed sessions can render
+// failures/cancellations without embedding an error into message text.
+export type TurnStatus =
+  'completed' | 'failed' | 'aborted' | 'canceled' | 'interrupted';
+
 // TurnArtifacts is one turn's produced files plus the index of its
 // first message in the flattened transcript.
 export interface TurnArtifacts {
@@ -151,6 +174,10 @@ export interface TurnArtifacts {
   // runID is set once the live turn starts, so post-turn artifact
   // reconciliation ("artifact_sync") can target exactly this turn.
   runID?: string;
+  // status/error come from the live turn_end event and are persisted
+  // with the archived turn for resumed sessions.
+  status?: TurnStatus;
+  error?: string;
 }
 
 // attachmentPart lowers one staged attachment into the message wire
@@ -329,7 +356,8 @@ function historyTurnsToState(turns: SessionTurn[]): {
   const turnArtifacts: TurnArtifacts[] = [];
   for (const turn of turns) {
     const start = messages.length;
-    messages.push(...historyToMessages(turn.messages));
+    const cleaned = stripLegacyTurnMarker(historyToMessages(turn.messages));
+    messages.push(...cleaned.messages);
     turnArtifacts.push({
       id: `h-${turn.seq}`,
       start,
@@ -338,6 +366,8 @@ function historyTurnsToState(turns: SessionTurn[]): {
       startedAt: turn.started_at || turn.at,
       finishedAt: turn.finished_at || turn.at,
       durationMs: turn.duration_ms,
+      status: normalizeTurnStatus(turn.status) ?? cleaned.status,
+      error: turn.error,
       docs: (turn.artifacts ?? []).map((a) => ({
         path: a.path,
         bytes: a.bytes ?? 0,
@@ -369,6 +399,55 @@ function lastAssistant(messages: MessageView[]): {
   return { msg, messages: [...messages.slice(0, -1), msg] };
 }
 
+function normalizeTurnStatus(status?: string): TurnStatus | undefined {
+  switch (status) {
+    case 'completed':
+    case 'failed':
+    case 'aborted':
+    case 'canceled':
+    case 'interrupted':
+      return status;
+    default:
+      return undefined;
+  }
+}
+
+// stripLegacyTurnMarker removes the old `> ⛔/⏹/⚠️` text that older
+// versions appended inside assistant messages. New turns persist
+// status/error on the archive row instead, so the transcript stays
+// clean; the legacy marker still lets us recover a status for history
+// that predates the archive column.
+function stripLegacyTurnMarker(messages: MessageView[]): {
+  messages: MessageView[];
+  status?: TurnStatus;
+} {
+  let status: TurnStatus | undefined;
+  const next: MessageView[] = [];
+  for (const msg of messages) {
+    let changed = false;
+    const items: AssistantItem[] = [];
+    for (const item of msg.items) {
+      if (item.kind !== 'text') {
+        items.push(item);
+        continue;
+      }
+      const m = item.text.match(/(?:\n\n)?>\s*(⏹|⚠️|⛔)\s+[\s\S]*$/);
+      if (!m) {
+        items.push(item);
+        continue;
+      }
+      status =
+        m[1] === '⛔' ? 'failed' : m[1] === '⏹' ? 'canceled' : 'interrupted';
+      const text = item.text.slice(0, m.index ?? 0).trimEnd();
+      if (text) items.push({ ...item, text });
+      changed = true;
+    }
+    if (changed && items.length === 0) continue;
+    next.push(changed ? { ...msg, items } : msg);
+  }
+  return { messages: next, status };
+}
+
 function mergeAppend(
   msg: MessageView,
   kind: 'text' | 'reasoning',
@@ -390,7 +469,7 @@ function mergeAppend(
 // text so raw engine internals (e.g. "engine: interrupted
 // (host_shutdown)") never leak into the transcript. It returns null
 // when the error is not an interruption, so the original error stays.
-function friendlyInterruption(error: string): string | null {
+export function friendlyInterruption(error: string): string | null {
   const m = error.match(/^engine: interrupted(?: \(([a-z_]+)\))?(?:: (.+))?$/);
   if (!m) return null;
   const cause = m[1] ?? '';
@@ -406,6 +485,31 @@ function friendlyInterruption(error: string): string | null {
       return detail ?? i18n.t('chat.interrupted');
     default:
       return i18n.t('chat.interrupted');
+  }
+}
+
+// friendlyFailure maps flowcraft graph/inference errors to user-safe
+// text. The `graph "..." node "..."` prefix is internal plumbing; a
+// provider failure only needs to tell the user the model call did not
+// go through and that retrying is reasonable.
+export function friendlyFailure(error: string): string | null {
+  const m = error.match(
+    /^(?:graph "[^"]+" node "[^"]+": )?([a-z_]+)(?: during [a-z_]+)?(?: at [^:]+)?$/,
+  );
+  if (!m) return null;
+  switch (m[1]) {
+    case 'provider_failure':
+      return i18n.t('chat.providerFailure');
+    case 'invalid_provider_response':
+      return i18n.t('chat.invalidProviderResponse');
+    case 'unknown_provider':
+    case 'unknown_model':
+    case 'unknown_profile':
+      return i18n.t('chat.modelConfiguration');
+    case 'invalid_request':
+      return i18n.t('chat.invalidRequest');
+    default:
+      return i18n.t('chat.genericFailure');
   }
 }
 
@@ -509,6 +613,10 @@ interface StoreState {
   automationRuns: Record<string, AutomationRun[]>;
   conversations: Record<string, ConversationState>;
   runConvs: Record<string, string>;
+  // pendingPromptConvs maps a pending interact/prompt id to the
+  // conversation that owns it, so routing and the sidebar never scan
+  // every conversation on each store update.
+  pendingPromptConvs: Record<string, string>;
   // subagentStreams folds live stream deltas of delegated subagent
   // runs (keyed by run id) for the SubagentSidebar; they never render
   // into a chat conversation. subagentStreamAt tracks the last delta
@@ -532,8 +640,9 @@ interface StoreState {
 
   init: () => Promise<void>;
   handleEvent: (ev: UIEvent) => void;
+  flushStreams: () => void;
   send: (text: string, attachments?: AttachmentView[]) => Promise<void>;
-  retryLast: () => Promise<void>;
+  forkTurn: (runID: string) => Promise<void>;
   clearLastFailed: () => void;
   replyInteract: (id: string, req: ReplyRequest) => Promise<void>;
   cancelRun: () => Promise<void>;
@@ -553,6 +662,10 @@ interface StoreState {
   loadWorkspaces: () => Promise<void>;
   chooseWorkspace: () => Promise<void>;
   openWorkspace: (path: string) => Promise<void>;
+  openSessionInWorkspace: (
+    sessionID: string,
+    workspacePath: string,
+  ) => Promise<void>;
   removeWorkspace: (id: string) => Promise<void>;
   draftComposer: (text: string) => void;
   clearComposerDraft: () => void;
@@ -595,6 +708,9 @@ function applyTheme(theme: 'dark' | 'light' | 'auto') {
 
 export const useStore = create<StoreState>((set, get) => {
   let toastSeq = 0;
+  let pendingStreamEvents: UIEvent[] = [];
+  let streamFlushRAF: number | null = null;
+  let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
   // Session switches must land on the backend in the same order the
   // user requested them. Without this queue, an older resumeSession
   // can finish after a newer NewChat and move the backend context back
@@ -619,6 +735,47 @@ export const useStore = create<StoreState>((set, get) => {
         },
       };
     });
+
+  // syncPendingIndex rebuilds the prompt-id -> conversation map for one
+  // conversation after its pendingInteracts change. Stream deltas never
+  // touch this map, so sidebar/interact selectors stay O(1) instead of
+  // scanning every loaded conversation on each token.
+  const syncPendingIndex = (conversationID: string) => {
+    set((state) => {
+      const conv = state.conversations[conversationID];
+      const promptIDs = new Set(
+        (conv?.pendingInteracts ?? []).map((p) => p.id),
+      );
+      const pendingPromptConvs = { ...state.pendingPromptConvs };
+      let changed = false;
+      for (const [promptID, ownerID] of Object.entries(pendingPromptConvs)) {
+        if (ownerID !== conversationID) continue;
+        if (promptIDs.delete(promptID)) continue;
+        delete pendingPromptConvs[promptID];
+        changed = true;
+      }
+      for (const promptID of promptIDs) {
+        pendingPromptConvs[promptID] = conversationID;
+        changed = true;
+      }
+      if (!changed) return state;
+      return { pendingPromptConvs };
+    });
+  };
+
+  const clearPendingIndex = (conversationID: string) => {
+    set((state) => {
+      const pendingPromptConvs = { ...state.pendingPromptConvs };
+      let changed = false;
+      for (const [promptID, ownerID] of Object.entries(pendingPromptConvs)) {
+        if (ownerID !== conversationID) continue;
+        delete pendingPromptConvs[promptID];
+        changed = true;
+      }
+      if (!changed) return state;
+      return { pendingPromptConvs };
+    });
+  };
 
   // ensureConversation returns the conversation, creating a busy shell
   // when it is unknown (a live turn resumed after a frontend reload
@@ -649,9 +806,9 @@ export const useStore = create<StoreState>((set, get) => {
   ) => {
     const conv = get().conversations[convID];
     const requestedAt = new Date().toISOString();
-    // Keep completed turns' strips; trim anything that started at or
-    // beyond the (possibly retried) transcript, then open a new live
-    // turn entry at the user message just appended.
+    // Keep existing turn strips that still own messages in the new
+    // transcript, then open a new live turn entry at the user message
+    // just appended.
     const turnArtifacts = [
       ...conv.turnArtifacts.filter((t) => t.start < messages.length),
       {
@@ -707,11 +864,6 @@ export const useStore = create<StoreState>((set, get) => {
     } catch (err) {
       const conv = get().conversations[convID];
       if (conv) {
-        const { msg, messages: next } = lastAssistant(conv.messages);
-        mergeAppend(msg, 'text', `⛔ ${String(err)}`);
-        updateConv(convID, {
-          messages: next,
-        });
         startingActor?.send({
           type: 'TURN_ENDED',
           runID: '',
@@ -732,6 +884,32 @@ export const useStore = create<StoreState>((set, get) => {
             delta: StreamDelta;
           };
           if (!data.run_id) break;
+          const actor = stateRoot.registry.get(conversationID);
+          if (actor) {
+            const snapshot = actor.getSnapshot();
+            const value = snapshot.value as unknown as { turn: string };
+            const context = snapshot.context as {
+              currentRunID?: string;
+              lastEndedRunID?: string;
+            };
+            if (value.turn === 'running') {
+              // A delayed delta from an earlier run must never be
+              // folded into a newer run's live transcript.
+              if (
+                context.currentRunID &&
+                data.run_id !== context.currentRunID
+              ) {
+                break;
+              }
+            } else if (
+              (value.turn === 'starting' || value.turn === 'idle') &&
+              data.run_id === context.lastEndedRunID
+            ) {
+              // The machine already ignores a stream for the last ended
+              // run; mirror it here so data never reaches the renderer.
+              break;
+            }
+          }
           const conv = ensureConversation(conversationID);
           if (!conv) break;
           updateConv(conversationID, {
@@ -748,6 +926,7 @@ export const useStore = create<StoreState>((set, get) => {
               pendingInteracts: [...conv.pendingInteracts, spec],
             });
           }
+          syncPendingIndex(conversationID);
           break;
         }
         case 'resolved': {
@@ -759,6 +938,7 @@ export const useStore = create<StoreState>((set, get) => {
                 (p) => p.id !== data.id,
               ),
             });
+            syncPendingIndex(conversationID);
           }
           break;
         }
@@ -816,31 +996,6 @@ export const useStore = create<StoreState>((set, get) => {
           };
           const conv = ensureConversation(conversationID);
           if (!conv) break;
-          const failed =
-            data.status === 'failed' ||
-            data.status === 'aborted' ||
-            data.status === 'canceled' ||
-            data.status === 'interrupted';
-          let messages = conv.messages;
-          const note = failed
-            ? data.status === 'canceled'
-              ? i18n.t('chat.cancelled')
-              : data.status === 'interrupted'
-                ? i18n.t('chat.interrupted')
-                : i18n.t('chat.failed')
-            : '';
-          if (data.error || (failed && note)) {
-            const friendly = data.error
-              ? friendlyInterruption(data.error)
-              : null;
-            const { msg, messages: next } = lastAssistant(messages);
-            mergeAppend(
-              msg,
-              'text',
-              `\n\n> ⛔ ${friendly ?? data.error ?? note}`,
-            );
-            messages = next;
-          }
           const finishedAt = data.finished_at || new Date().toISOString();
           set((state) => {
             const runConvs = { ...state.runConvs };
@@ -848,7 +1003,14 @@ export const useStore = create<StoreState>((set, get) => {
             const conv = state.conversations[conversationID];
             if (!conv) return state;
             const turnArtifacts = conv.turnArtifacts.map((t) =>
-              t.runID && t.runID === data.run_id ? { ...t, finishedAt } : t,
+              t.runID && t.runID === data.run_id
+                ? {
+                    ...t,
+                    finishedAt,
+                    status: normalizeTurnStatus(data.status) ?? t.status,
+                    error: data.error ?? t.error,
+                  }
+                : t,
             );
             return {
               runConvs,
@@ -856,7 +1018,6 @@ export const useStore = create<StoreState>((set, get) => {
                 ...state.conversations,
                 [conversationID]: capConversation({
                   ...conv,
-                  messages,
                   turnArtifacts,
                 }),
               },
@@ -923,6 +1084,7 @@ export const useStore = create<StoreState>((set, get) => {
               workspace: data.work_dir,
               conversations: {},
               runConvs: {},
+              pendingPromptConvs: {},
               subagentStreams: {},
               subagentStreamAt: {},
             });
@@ -937,7 +1099,13 @@ export const useStore = create<StoreState>((set, get) => {
             configOpen: workChanged ? false : state.configOpen,
             fatal: null,
           }));
-          void api.modelOptions().then((modelOptions) => set({ modelOptions }));
+          void api
+            .modelOptions()
+            .then((modelOptions) => set({ modelOptions }))
+            .catch(() => {
+              // model list refresh is best-effort; the UI keeps the
+              // last known options until the next ready event.
+            });
           void get().refreshAgents();
           void get().loadWorkspaces();
           break;
@@ -972,14 +1140,8 @@ export const useStore = create<StoreState>((set, get) => {
       if (data?.task_id) void get().loadAutomationRuns(data.task_id);
     },
     conversationForRunID: (runID) => get().runConvs[runID],
-    pendingInteractConversation: (promptID) => {
-      for (const [convID, conv] of Object.entries(get().conversations)) {
-        if (conv.pendingInteracts.some((p) => p.id === promptID)) {
-          return convID;
-        }
-      }
-      return undefined;
-    },
+    pendingInteractConversation: (promptID) =>
+      get().pendingPromptConvs[promptID],
   };
 
   const activeConversationID = () => {
@@ -1018,6 +1180,133 @@ export const useStore = create<StoreState>((set, get) => {
     }
   };
 
+  const clearStreamFlushHandles = () => {
+    if (streamFlushRAF !== null) cancelAnimationFrame(streamFlushRAF);
+    if (streamFlushTimer !== null) clearTimeout(streamFlushTimer);
+    streamFlushRAF = null;
+    streamFlushTimer = null;
+  };
+
+  const flushPendingStreams = () => {
+    clearStreamFlushHandles();
+    if (pendingStreamEvents.length === 0) return;
+    const events = pendingStreamEvents;
+    pendingStreamEvents = [];
+    for (const ev of coalesceStreamEvents(events)) {
+      routeBackendEvent(ev, { root: stateRoot, data: eventDataSink });
+    }
+  };
+
+  const scheduleStreamFlush = () => {
+    if (streamFlushRAF !== null || streamFlushTimer !== null) return;
+    const flush = () => flushPendingStreams();
+    streamFlushRAF =
+      typeof requestAnimationFrame === 'function'
+        ? requestAnimationFrame(flush)
+        : null;
+    streamFlushTimer = setTimeout(flush, STREAM_FLUSH_MAX_DELAY_MS);
+  };
+
+  // retainLiveConversations drops transcripts that are neither focused
+  // nor backed by a live run, so merely opening many sessions over time
+  // does not grow the in-memory store without bound. Resuming one of
+  // those sessions hydrates from the archive again.
+  const retainLiveConversations = (currentID: string) => {
+    const state = get();
+    const conversations: Record<string, ConversationState> = {};
+    const dropped: string[] = [];
+    for (const [id, conv] of Object.entries(state.conversations)) {
+      if (id === currentID) {
+        conversations[id] = conv;
+        continue;
+      }
+      const actor = stateRoot.registry.get(id);
+      const turnValue = actor?.getSnapshot().value as
+        { turn: string } | undefined;
+      const running =
+        turnValue?.turn === 'starting' || turnValue?.turn === 'running';
+      const mappedRun = Object.values(state.runConvs).includes(id);
+      const hasPendingPrompt = conv.pendingInteracts.length > 0;
+      if (running || mappedRun || hasPendingPrompt) {
+        conversations[id] = conv;
+      } else {
+        dropped.push(id);
+      }
+    }
+    if (dropped.length === 0) return;
+    set(() => ({ conversations }));
+    for (const id of dropped) stateRoot.registry.release(id);
+  };
+
+  // reconcileTurnFromArchive replaces a finished live turn with the
+  // archived copy. If stream deltas were coalesced too aggressively or
+  // the runtime sink detached under load, turn_end repairs the
+  // transcript instead of leaving a partial answer visible forever.
+  const reconcileTurnFromArchive = async (
+    conversationID: string,
+    runID: string,
+  ) => {
+    if (!conversationID || !runID) return;
+    const before = get().conversations[conversationID];
+    if (!before || before.messages.length === 0) return;
+    const workspace = get().workspace;
+    const generation = stateRoot.generation();
+    try {
+      const turn = await api.turnByRunID(conversationID, runID);
+      const state = get();
+      if (
+        state.workspace !== workspace ||
+        stateRoot.generation() !== generation ||
+        stateRoot.registry.isDeleted(conversationID)
+      ) {
+        return;
+      }
+      if (!state.conversations[conversationID]) return;
+      const actor = stateRoot.registry.get(conversationID);
+      if (!actor) return;
+      const turnValue = actor.getSnapshot().value as { turn: string };
+      if (turnValue.turn === 'starting' || turnValue.turn === 'running') {
+        return;
+      }
+      set((stateNow) => {
+        const conv = stateNow.conversations[conversationID];
+        if (!conv) return stateNow;
+        if (
+          conv.messages.length !== before.messages.length ||
+          conv.turnArtifacts.length !== before.turnArtifacts.length
+        ) {
+          return stateNow;
+        }
+        const idx = conv.turnArtifacts.findIndex(
+          (t) => t.runID && t.runID === runID,
+        );
+        if (idx < 0) return stateNow;
+        const start = conv.turnArtifacts[idx].start;
+        const rebuilt = historyTurnsToState([turn]);
+        const archived = rebuilt.turnArtifacts[0];
+        if (!archived) return stateNow;
+        return {
+          conversations: {
+            ...stateNow.conversations,
+            [conversationID]: capConversation({
+              ...conv,
+              messages: [...conv.messages.slice(0, start), ...rebuilt.messages],
+              turnArtifacts: [
+                ...conv.turnArtifacts.slice(0, idx),
+                { ...archived, start },
+                ...conv.turnArtifacts.slice(idx + 1),
+              ],
+            }),
+          },
+        };
+      });
+      retainLiveConversations(activeConversationID());
+    } catch {
+      // Archive reconciliation is best-effort: a failed turn_end must
+      // not leave the UI in a worse state or block the next turn.
+    }
+  };
+
   return {
     status: null,
     configured: false,
@@ -1032,6 +1321,7 @@ export const useStore = create<StoreState>((set, get) => {
     automationRuns: {},
     conversations: {},
     runConvs: {},
+    pendingPromptConvs: {},
     subagentStreams: {},
     subagentStreamAt: {},
     composerDraft: '',
@@ -1154,8 +1444,31 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     handleEvent: (ev) => {
+      if (ev.type === 'stream') {
+        pendingStreamEvents.push(ev);
+        scheduleStreamFlush();
+        return;
+      }
+      // Non-stream events are ordering boundaries: any buffered deltas
+      // must land before the terminal/global event that follows them.
+      flushPendingStreams();
+      const turnEndData =
+        ev.type === 'turn_end'
+          ? (ev.data as { run_id?: string; conversation_id?: string })
+          : undefined;
+      const turnEndConversationID =
+        turnEndData?.conversation_id ??
+        (turnEndData?.run_id ? get().runConvs[turnEndData.run_id] : undefined);
       routeBackendEvent(ev, { root: stateRoot, data: eventDataSink });
+      if (turnEndConversationID) {
+        void reconcileTurnFromArchive(
+          turnEndConversationID,
+          turnEndData?.run_id ?? '',
+        );
+      }
     },
+
+    flushStreams: () => flushPendingStreams(),
 
     send: async (text, attachments = []) => {
       const trimmed = text.trim();
@@ -1187,35 +1500,17 @@ export const useStore = create<StoreState>((set, get) => {
       await beginTurn(convID, trimmed, messages, attachments);
     },
 
-    retryLast: async () => {
-      const state = get();
+    forkTurn: async (runID) => {
       const convID = activeConversationID();
-      const conv = convID ? state.conversations[convID] : undefined;
-      const turn = convID ? conversationTurnState(convID) : undefined;
-      if (
-        !convID ||
-        !conv ||
-        turn?.name === 'starting' ||
-        turn?.name === 'running'
-      ) {
-        return;
+      if (!convID || !runID) return;
+      try {
+        const newID = await runContextSwitch(() => api.forkTurn(convID, runID));
+        if (!newID) return;
+        await get().resume(newID);
+        void get().loadSessions();
+      } catch (err) {
+        set({ statusText: String(err) });
       }
-      let lastUserIdx = -1;
-      for (let i = conv.messages.length - 1; i >= 0; i--) {
-        if (conv.messages[i].role === 'user') {
-          lastUserIdx = i;
-          break;
-        }
-      }
-      if (lastUserIdx < 0) return;
-      const text = conv.messages[lastUserIdx].text;
-      const attachments = conv.messages[lastUserIdx].attachments ?? [];
-      await beginTurn(
-        convID,
-        text,
-        conv.messages.slice(0, lastUserIdx + 1),
-        attachments,
-      );
     },
 
     clearLastFailed: () => {
@@ -1237,13 +1532,13 @@ export const useStore = create<StoreState>((set, get) => {
         set({ statusText: String(err) });
         return;
       }
-      for (const [convID, conv] of Object.entries(get().conversations)) {
-        if (conv.pendingInteracts.some((p) => p.id === id)) {
-          updateConv(convID, {
-            pendingInteracts: conv.pendingInteracts.filter((p) => p.id !== id),
-          });
-          break;
-        }
+      const convID = get().pendingPromptConvs[id];
+      const conv = convID ? get().conversations[convID] : undefined;
+      if (conv && conv.pendingInteracts.some((p) => p.id === id)) {
+        updateConv(convID, {
+          pendingInteracts: conv.pendingInteracts.filter((p) => p.id !== id),
+        });
+        syncPendingIndex(convID);
       }
     },
 
@@ -1253,8 +1548,10 @@ export const useStore = create<StoreState>((set, get) => {
       if (turn?.name === 'running') {
         try {
           await api.cancelTurn(turn.runID);
-        } catch {
-          // turn_end settles the UI regardless
+        } catch (err) {
+          // Surface cancel failures instead of leaving the UI running
+          // silently; a real cancel still settles via turn_end.
+          set({ statusText: String(err) });
         }
       }
     },
@@ -1296,6 +1593,7 @@ export const useStore = create<StoreState>((set, get) => {
           workspaceGeneration: stateRoot.generation(),
           readyEmpty: true,
         });
+        retainLiveConversations(id);
       } catch (err) {
         stateRoot.sendFocus({
           type: 'OPEN_FAILED',
@@ -1408,6 +1706,7 @@ export const useStore = create<StoreState>((set, get) => {
             generation,
             empty: existing.messages.length === 0,
           });
+          retainLiveConversations(resolvedID);
           return;
         }
         let turns: Awaited<ReturnType<typeof api.sessionTurns>>;
@@ -1451,15 +1750,20 @@ export const useStore = create<StoreState>((set, get) => {
               model: snapshot.model,
               messages: mergedMessages,
               turnArtifacts,
+              pendingInteracts: existing?.pendingInteracts ?? [],
             }),
           },
         }));
+        if (existing?.pendingInteracts.length) {
+          syncPendingIndex(resolvedID);
+        }
         actor?.send({
           type: 'HYDRATE_OK',
           request: hydrateRequest,
           generation,
           empty: turns.length === 0 && !keepLive,
         });
+        retainLiveConversations(resolvedID);
       } catch (err) {
         stateRoot.sendFocus({
           type: 'OPEN_FAILED',
@@ -1471,6 +1775,9 @@ export const useStore = create<StoreState>((set, get) => {
 
     deleteSession: async (id) => {
       try {
+        // Settle any queued deltas before deleting so a late flush
+        // cannot resurrect the conversation after the tombstone.
+        flushPendingStreams();
         await api.deleteSession(id);
         stateRoot.registry.get(id)?.send({
           type: 'SESSION_DELETED',
@@ -1482,6 +1789,7 @@ export const useStore = create<StoreState>((set, get) => {
           delete conversations[id];
           return { conversations };
         });
+        clearPendingIndex(id);
         if (activeConversationID() === id) {
           // The active conversation is gone: switch to a fresh one so
           // the chat never points at a deleted session.
@@ -1600,6 +1908,25 @@ export const useStore = create<StoreState>((set, get) => {
       } catch (err) {
         set({ statusText: String(err) });
       }
+    },
+
+    openSessionInWorkspace: async (sessionID, workspacePath) => {
+      const state = get();
+      if (workspacePath && workspacePath !== state.workspace) {
+        await api.openWorkspace(workspacePath);
+        // The backend emits "ready" asynchronously relative to the
+        // binding response; wait until the store has applied it so a
+        // pending newChat is queued before resume tries to open the
+        // target session in the new workspace.
+        const deadline = Date.now() + 5000;
+        while (get().workspace !== workspacePath && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        if (get().workspace !== workspacePath) {
+          throw new Error('workspace switch did not complete');
+        }
+      }
+      await get().resume(sessionID);
     },
 
     removeWorkspace: async (id) => {

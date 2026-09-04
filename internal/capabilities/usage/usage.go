@@ -8,9 +8,13 @@ package usage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/telemetry"
+
+	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
 )
 
@@ -50,7 +54,11 @@ func (s *Store) Record(
 	if err != nil {
 		return fmt.Errorf("usage: begin tx: %w", err)
 	}
-	defer func() { _ = tx.Rollback() }()
+	defer func() {
+		if err := tx.Rollback(); err != nil && !errors.Is(err, sql.ErrTxDone) {
+			telemetry.WarnErr(ctx, "usage: rollback record failed", err)
+		}
+	}()
 
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO model_usage (
@@ -99,6 +107,27 @@ func (s *Store) Record(
 	return nil
 }
 
+// RecordSessionUsage accumulates one session usage delta into the
+// user-level per-model tables. It is the adapter shared by the desktop
+// and headless Hosts, so turn usage and auto-title usage land in the
+// same model_usage rows regardless of which entry point ran the turn.
+func (s *Store) RecordSessionUsage(
+	ctx context.Context,
+	workspaceID, sessionID string,
+	u ocsessions.Usage,
+) error {
+	if u.Model == "" || u.TotalTokens <= 0 {
+		return nil
+	}
+	return s.Record(ctx, workspaceID, sessionID, u.Model, Usage{
+		InputTokens:     u.InputTokens,
+		OutputTokens:    u.OutputTokens,
+		CacheReadTokens: u.CacheReadTokens,
+		ReasoningTokens: u.ReasoningTokens,
+		LatencyMs:       u.LatencyMs,
+	})
+}
+
 // SummaryRow aggregates one model's usage across all workspaces and
 // sessions.
 type SummaryRow struct {
@@ -129,7 +158,9 @@ func (s *Store) Summary(ctx context.Context) ([]SummaryRow, error) {
 	if err != nil {
 		return nil, fmt.Errorf("usage: summary: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		telemetry.WarnErr(ctx, "usage: close summary rows failed", rows.Close())
+	}()
 	var out []SummaryRow
 	for rows.Next() {
 		var r SummaryRow
@@ -205,7 +236,9 @@ func (s *Store) Series(
 	if err != nil {
 		return nil, fmt.Errorf("usage: series: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	defer func() {
+		telemetry.WarnErr(ctx, "usage: close series rows failed", rows.Close())
+	}()
 	var out []Point
 	for rows.Next() {
 		var p Point

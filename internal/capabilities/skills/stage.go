@@ -1,11 +1,14 @@
 package skills
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/GizClaw/flowcraft/core/telemetry"
 )
 
 // maxStageBytes bounds one staged skill copy so a giant skill cannot
@@ -62,12 +65,14 @@ func (s *Service) Stage(sk SkillMetadata, dstDir string) (string, error) {
 		out, err := os.OpenFile(target,
 			os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
 		if err != nil {
-			_ = in.Close()
+			telemetry.WarnErr(context.Background(),
+				"skills: close staged source after output failure", in.Close())
 			return err
 		}
 		n, err := io.Copy(out, in)
 		closeErr := out.Close()
-		_ = in.Close()
+		telemetry.WarnErr(context.Background(),
+			"skills: close staged source failed", in.Close())
 		copied += n
 		if err != nil {
 			return err
@@ -75,7 +80,8 @@ func (s *Service) Stage(sk SkillMetadata, dstDir string) (string, error) {
 		return closeErr
 	})
 	if err != nil {
-		_ = os.RemoveAll(dst)
+		telemetry.WarnErr(context.Background(),
+			"skills: remove partial staged skill failed", os.RemoveAll(dst))
 		return "", err
 	}
 	return dst, nil

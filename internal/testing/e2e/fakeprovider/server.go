@@ -34,6 +34,56 @@ type Server struct {
 	mu      sync.Mutex
 	replies []Reply
 	calls   int
+	hold    *Gate
+}
+
+// Gate pauses the next completion request until Release. It lets
+// integration tests arrange deterministic ordering around an in-flight
+// provider call (for example closing a runtime while a run is active).
+type Gate struct {
+	ready       chan struct{}
+	release     chan struct{}
+	readyOnce   sync.Once
+	releaseOnce sync.Once
+}
+
+func newGate() *Gate {
+	return &Gate{
+		ready:   make(chan struct{}),
+		release: make(chan struct{}),
+	}
+}
+
+// Ready is closed once the gated request reaches the fake provider.
+func (g *Gate) Ready() <-chan struct{} {
+	if g == nil {
+		return nil
+	}
+	return g.ready
+}
+
+// Release unblocks the gated request.
+func (g *Gate) Release() {
+	if g == nil {
+		return
+	}
+	g.releaseOnce.Do(func() { close(g.release) })
+}
+
+func (g *Gate) markReady() {
+	if g == nil {
+		return
+	}
+	g.readyOnce.Do(func() { close(g.ready) })
+}
+
+// HoldNext returns a gate applied to the next completion request.
+func (s *Server) HoldNext() *Gate {
+	g := newGate()
+	s.mu.Lock()
+	s.hold = g
+	s.mu.Unlock()
+	return g
 }
 
 // New starts a fake provider serving the given reply sequence. The
@@ -66,7 +116,10 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Stream bool `json:"stream"`
 	}
-	_ = json.Unmarshal(body, &req)
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, "decode request", http.StatusBadRequest)
+		return
+	}
 
 	s.mu.Lock()
 	s.calls++
@@ -78,14 +131,24 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	if idx >= 0 {
 		reply = s.replies[idx]
 	}
+	hold := s.hold
+	s.hold = nil
+	if hold != nil {
+		hold.markReady()
+	}
 	s.mu.Unlock()
+	if hold != nil {
+		<-hold.release
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if req.Stream {
 		s.writeStream(w, reply)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(s.completion(reply))
+	if err := json.NewEncoder(w).Encode(s.completion(reply)); err != nil {
+		http.Error(w, "encode response", http.StatusInternalServerError)
+	}
 }
 
 func (s *Server) completion(reply Reply) map[string]any {
@@ -131,7 +194,11 @@ func (s *Server) writeStream(w http.ResponseWriter, reply Reply) {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
+	var writeErr error
 	chunk := func(delta map[string]any, finish any) {
+		if writeErr != nil {
+			return
+		}
 		payload := map[string]any{
 			"id":      "chatcmpl-fake",
 			"object":  "chat.completion.chunk",
@@ -143,8 +210,15 @@ func (s *Server) writeStream(w http.ResponseWriter, reply Reply) {
 				"finish_reason": finish,
 			}},
 		}
-		data, _ := json.Marshal(payload)
-		_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
+		data, err := json.Marshal(payload)
+		if err != nil {
+			writeErr = err
+			return
+		}
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
+			writeErr = err
+			return
+		}
 		flusher.Flush()
 	}
 	if len(reply.ToolCalls) > 0 {
@@ -168,7 +242,9 @@ func (s *Server) writeStream(w http.ResponseWriter, reply Reply) {
 		}
 		chunk(map[string]any{}, "stop")
 	}
-	_, _ = io.WriteString(w, "data: [DONE]\n\n")
+	if _, err := io.WriteString(w, "data: [DONE]\n\n"); err != nil {
+		return
+	}
 	flusher.Flush()
 }
 

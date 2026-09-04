@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MessageView } from './store';
 import { stateRoot } from '../state/app';
-import { useStore } from './store';
+import { friendlyFailure, pendingConversationIDs, useStore } from './store';
 
 const apiMock = vi.hoisted(() => ({
   configStatus: vi.fn(),
@@ -14,10 +14,12 @@ const apiMock = vi.hoisted(() => ({
   modelOptions: vi.fn(),
   listSessions: vi.fn(),
   sessionTurns: vi.fn(),
+  turnByRunID: vi.fn(),
   loadWorkspaces: vi.fn(),
   loadAutomations: vi.fn(),
   newChat: vi.fn(),
   startTurn: vi.fn(),
+  forkTurn: vi.fn(),
   cancelTurn: vi.fn(),
   deleteSession: vi.fn(),
   replyPrompt: vi.fn(),
@@ -63,6 +65,7 @@ function resetStore() {
       },
     },
     runConvs: {},
+    pendingPromptConvs: {},
     subagentStreams: {},
     subagentStreamAt: {},
     composerDraft: '',
@@ -114,6 +117,7 @@ beforeEach(() => {
     run_id: 'r-1',
     context_id: 's-1',
   });
+  apiMock.forkTurn.mockResolvedValue('s-fork');
   apiMock.deleteSession.mockRejectedValue(
     new Error('cannot delete the active conversation'),
   );
@@ -131,6 +135,7 @@ beforeEach(() => {
   });
   apiMock.listSessions.mockResolvedValue([]);
   apiMock.sessionTurns.mockResolvedValue([]);
+  apiMock.turnByRunID.mockRejectedValue(new Error('archive turn not found'));
 });
 
 describe('store: send and stream', () => {
@@ -166,6 +171,42 @@ describe('store: send and stream', () => {
 
     expect(useStore.getState().toolsView).toBeNull();
     expect(apiMock.resumeSession).not.toHaveBeenCalled();
+  });
+
+  it('forkTurn creates the fork and switches to its hydrated history', async () => {
+    apiMock.forkTurn.mockResolvedValue('s-fork');
+    apiMock.resumeSession.mockResolvedValue({
+      session_id: 's-fork',
+      mode: 'workspace',
+      think: 'medium',
+      model: '',
+    });
+    apiMock.sessionTurns.mockResolvedValue([
+      historyTurn(1, 'fork prompt', 'fork answer'),
+    ]);
+
+    await useStore.getState().forkTurn('r-fork');
+
+    expect(apiMock.forkTurn).toHaveBeenCalledWith('s-1', 'r-fork');
+    expect(apiMock.resumeSession).toHaveBeenCalledWith('s-fork');
+    expect(stateRoot.focusSnapshot.value).toBe('active');
+    expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-fork');
+    const conv = useStore.getState().conversations['s-fork'];
+    const texts = conv.messages.flatMap((m) =>
+      m.role === 'user'
+        ? [m.text]
+        : m.items
+            .filter(
+              (
+                it,
+              ): it is Extract<
+                MessageView['items'][number],
+                { kind: 'text' }
+              > => it.kind === 'text',
+            )
+            .map((it) => it.text),
+    );
+    expect(texts).toEqual(['fork prompt', 'fork answer']);
   });
 
   it('surfaces active-conversation deletion errors as a warning toast', async () => {
@@ -212,6 +253,33 @@ describe('store: send and stream', () => {
     expect(state.conversations['s-new'].messages).toEqual([]);
   });
 
+  it('evicts an idle background conversation after switching', async () => {
+    useStore.setState({
+      conversations: {
+        's-1': {
+          ...useStore.getState().conversations['s-1'],
+          messages: [
+            {
+              id: 'm-old',
+              role: 'user',
+              text: 'finished conversation',
+              items: [],
+              attachments: [],
+            },
+          ],
+        },
+      },
+    });
+
+    await useStore.getState().newChat();
+
+    const state = useStore.getState();
+    expect(state.conversations['s-1']).toBeUndefined();
+    expect(state.conversations['s-new']).toBeDefined();
+    expect(state.conversations['s-new'].messages).toEqual([]);
+    expect(stateRoot.registry.get('s-1')).toBeUndefined();
+  });
+
   it('serializes session switches so a stale resume cannot override new chat', async () => {
     let resolveOldResume!: () => void;
     apiMock.resumeSession.mockReturnValue(
@@ -256,6 +324,69 @@ describe('store: send and stream', () => {
     expect(conv.think).toBe('medium');
     expect(conv.messages.map((m) => m.text || '')).toContain('history user');
     expect(apiMock.sessionTurns).toHaveBeenCalledWith('s-2');
+  });
+
+  it('resume keeps archived turn status on the turn artifact', async () => {
+    apiMock.sessionTurns.mockResolvedValue([
+      {
+        ...historyTurn(1, 'history user', 'partial answer'),
+        status: 'failed',
+        error: 'engine boom',
+      },
+    ]);
+
+    await useStore.getState().resume('s-2');
+
+    const conv = useStore.getState().conversations['s-2'];
+    expect(conv.turnArtifacts[0]).toMatchObject({
+      status: 'failed',
+      error: 'engine boom',
+    });
+  });
+
+  it('resume strips legacy marker text from older failures', async () => {
+    apiMock.sessionTurns.mockResolvedValue([
+      {
+        seq: 1,
+        at: '2026-09-03T00:00:00Z',
+        messages: [
+          {
+            role: 'user',
+            content: { parts: [{ type: 'text', text: 'history user' }] },
+          },
+          {
+            role: 'assistant',
+            content: {
+              parts: [
+                {
+                  type: 'text',
+                  text: 'partial\n\n> ⛔ graph "opencraft-assistant" node "llm": provider_failure during generate',
+                },
+              ],
+            },
+          },
+        ],
+        artifacts: [],
+      },
+    ]);
+
+    await useStore.getState().resume('s-2');
+
+    const conv = useStore.getState().conversations['s-2'];
+    const assistantTexts = conv.messages
+      .filter((m) => m.role === 'assistant')
+      .flatMap((m) =>
+        m.items
+          .filter(
+            (
+              it,
+            ): it is Extract<MessageView['items'][number], { kind: 'text' }> =>
+              it.kind === 'text',
+          )
+          .map((it) => it.text),
+      );
+    expect(assistantTexts).toEqual(['partial']);
+    expect(conv.turnArtifacts[0].status).toBe('failed');
   });
 
   it('does not duplicate an archived assistant message', async () => {
@@ -443,6 +574,7 @@ describe('store: send and stream', () => {
         },
       },
     });
+    useStore.getState().flushStreams();
 
     const conv = useStore.getState().conversations['s-1'];
     expect(actorValue('s-1')?.turn).toBe('running');
@@ -458,6 +590,245 @@ describe('store: send and stream', () => {
       },
     });
     expect(items[2]).toMatchObject({ kind: 'text', text: 'done' });
+  });
+
+  it('coalesces queued text deltas into one store update per flush', () => {
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    useStore.setState({
+      runConvs: { 'r-1': 's-1' },
+    });
+    const handle = useStore.getState().handleEvent;
+    const storeEvent = (text: string) =>
+      handle({
+        type: 'stream',
+        data: {
+          run_id: 'r-1',
+          conversation_id: 's-1',
+          delta: {
+            type: 'part',
+            part: { type: 'text', text },
+          },
+        },
+      });
+
+    let storeUpdates = 0;
+    const unsubscribe = useStore.subscribe(() => {
+      storeUpdates += 1;
+    });
+    storeEvent('a');
+    storeEvent('b');
+    storeEvent('c');
+    expect(storeUpdates).toBe(0);
+
+    useStore.getState().flushStreams();
+    unsubscribe();
+
+    expect(storeUpdates).toBe(1);
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.messages[0].items).toEqual([
+      expect.objectContaining({ kind: 'text', text: 'abc' }),
+    ]);
+  });
+
+  it('stress-flushes a large burst as one transcript update', () => {
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    const handle = useStore.getState().handleEvent;
+    const chunks = 5000;
+    let storeUpdates = 0;
+    const unsubscribe = useStore.subscribe(() => {
+      storeUpdates += 1;
+    });
+    for (let i = 0; i < chunks; i++) {
+      handle({
+        type: 'stream',
+        data: {
+          run_id: 'r-1',
+          conversation_id: 's-1',
+          delta: { type: 'part', part: { type: 'text', text: 'x' } },
+        },
+      });
+    }
+    expect(storeUpdates).toBe(0);
+
+    useStore.getState().flushStreams();
+    unsubscribe();
+
+    expect(storeUpdates).toBe(1);
+    const items = useStore.getState().conversations['s-1']!.messages[0]!.items;
+    const text = items
+      .filter(
+        (
+          item,
+        ): item is Extract<MessageView['items'][number], { kind: 'text' }> =>
+          item.kind === 'text',
+      )
+      .map((item) => item.text)
+      .join('');
+    expect(text).toHaveLength(chunks);
+  });
+
+  it('maps pending prompt owners to unique conversation ids', () => {
+    expect(
+      pendingConversationIDs({
+        'p-1': 's-1',
+        'p-2': 's-1',
+        'p-3': 's-2',
+      }),
+    ).toEqual(['s-1', 's-2']);
+  });
+
+  it('flushes interleaved streams in arrival order', () => {
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    const handle = useStore.getState().handleEvent;
+    const streamEvent = (conversationID: string, runID: string, text: string) =>
+      handle({
+        type: 'stream',
+        data: {
+          run_id: runID,
+          conversation_id: conversationID,
+          delta: {
+            type: 'part',
+            part: { type: 'text', text },
+          },
+        },
+      });
+
+    const firstText = (conversationID: string) => {
+      const message =
+        useStore.getState().conversations[conversationID]?.messages[0];
+      return (
+        message?.items
+          .filter(
+            (
+              item,
+            ): item is Extract<
+              MessageView['items'][number],
+              { kind: 'text' }
+            > => item.kind === 'text',
+          )
+          .map((item) => item.text)
+          .join('') ?? ''
+      );
+    };
+    const seen: string[] = [];
+    let lastSeen = '';
+    const unsubscribe = useStore.subscribe(() => {
+      const pair = `${firstText('s-1')}|${firstText('s-2')}`;
+      if (pair !== lastSeen) {
+        seen.push(pair);
+        lastSeen = pair;
+      }
+    });
+
+    streamEvent('s-1', 'r-1', 'a');
+    streamEvent('s-2', 'r-2', 'x');
+    streamEvent('s-1', 'r-1', 'b');
+    useStore.getState().flushStreams();
+    unsubscribe();
+
+    expect(seen).toEqual(['a|', 'a|x', 'ab|x']);
+    expect(firstText('s-1')).toBe('ab');
+    expect(firstText('s-2')).toBe('x');
+  });
+
+  it('drops late stream deltas from a previous run while a newer run runs', () => {
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    actor?.send({
+      type: 'TURN_ENDED',
+      runID: 'r-old',
+      status: 'completed',
+    });
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-new' });
+
+    useStore.getState().handleEvent({
+      type: 'stream',
+      data: {
+        run_id: 'r-old',
+        conversation_id: 's-1',
+        delta: { type: 'part', part: { type: 'text', text: 'stale' } },
+      },
+    });
+    useStore.getState().flushStreams();
+
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.messages).toEqual([]);
+    expect(actorValue('s-1')?.turn).toBe('running');
+  });
+
+  it('reconciles a finished turn from the archive', async () => {
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    useStore.setState({
+      runConvs: { 'r-1': 's-1' },
+      conversations: {
+        's-1': {
+          ...useStore.getState().conversations['s-1'],
+          messages: [
+            {
+              id: 'm-user',
+              role: 'user',
+              text: 'hi',
+              items: [],
+              attachments: [],
+            },
+            {
+              id: 'm-partial',
+              role: 'assistant',
+              text: '',
+              items: [
+                {
+                  kind: 'text',
+                  id: 't-partial',
+                  text: 'partial answer',
+                },
+              ],
+              attachments: [],
+            },
+          ],
+          turnArtifacts: [{ id: 'live-1', start: 0, docs: [], runID: 'r-1' }],
+        },
+      },
+    });
+    apiMock.turnByRunID.mockResolvedValue({
+      ...historyTurn(1, 'hi', 'complete archived answer'),
+      run_id: 'r-1',
+      status: 'completed',
+    });
+
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-1',
+        conversation_id: 's-1',
+        status: 'completed',
+      },
+    });
+
+    await vi.waitFor(() => {
+      const conv = useStore.getState().conversations['s-1'];
+      expect(conv.turnArtifacts[0]).toMatchObject({
+        runID: 'r-1',
+        status: 'completed',
+      });
+      const texts = conv.messages
+        .filter((m) => m.role === 'assistant')
+        .flatMap((m) =>
+          m.items
+            .filter(
+              (
+                it,
+              ): it is Extract<
+                MessageView['items'][number],
+                { kind: 'text' }
+              > => it.kind === 'text',
+            )
+            .map((it) => it.text),
+        );
+      expect(texts).toContain('complete archived answer');
+      expect(texts).not.toContain('partial answer');
+    });
+    expect(actorValue('s-1')?.turn).toBe('succeeded');
   });
 
   it('turn_end clears busy and removes the run mapping', () => {
@@ -480,13 +851,14 @@ describe('store: send and stream', () => {
     expect(useStore.getState().runConvs['r-1']).toBeUndefined();
   });
 
-  it('failed turn_end appends an error marker and sets lastFailed', () => {
+  it('failed turn_end stores status on the turn without a message marker', () => {
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
     useStore.setState({
       runConvs: { 'r-1': 's-1' },
       conversations: {
         's-1': {
           ...useStore.getState().conversations['s-1'],
+          turnArtifacts: [{ id: 'live-1', start: 0, runID: 'r-1', docs: [] }],
           messages: [
             {
               id: 'a-1',
@@ -511,10 +883,67 @@ describe('store: send and stream', () => {
 
     const conv = useStore.getState().conversations['s-1'];
     expect(actorValue('s-1')?.turn).toBe('failed');
+    expect(conv.turnArtifacts[0]).toMatchObject({
+      status: 'failed',
+      error: 'engine boom',
+    });
     const text = conv.messages[0].items.find(
       (i) => i.kind === 'text',
     ) as Extract<MessageView['items'][number], { kind: 'text' }>;
-    expect(text.text).toContain('engine boom');
+    expect(text.text).toBe('partial');
+  });
+
+  it('canceled turn_end keeps the transcript clean and records the status', () => {
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    useStore.setState({
+      runConvs: { 'r-1': 's-1' },
+      conversations: {
+        's-1': {
+          ...useStore.getState().conversations['s-1'],
+          turnArtifacts: [{ id: 'live-1', start: 0, runID: 'r-1', docs: [] }],
+          messages: [
+            {
+              id: 'a-1',
+              role: 'assistant',
+              text: '',
+              items: [{ kind: 'text', id: 't-1', text: 'partial' }],
+              attachments: [],
+            },
+          ],
+        },
+      },
+    });
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-1',
+        conversation_id: 's-1',
+        status: 'canceled',
+        error: 'context canceled',
+      },
+    });
+
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.turnArtifacts[0]).toMatchObject({
+      status: 'canceled',
+    });
+    const text = conv.messages[0].items.find(
+      (i) => i.kind === 'text',
+    ) as Extract<MessageView['items'][number], { kind: 'text' }>;
+    expect(text.text).toBe('partial');
+    expect(text.text).not.toContain('context canceled');
+    expect(stateRoot.registry.get('s-1')?.getSnapshot().context).toMatchObject({
+      failureStatus: 'canceled',
+    });
+  });
+
+  it('friendlyFailure hides graph internals for provider errors', () => {
+    const friendly = friendlyFailure(
+      'graph "opencraft-assistant" node "llm": provider_failure during generate',
+    );
+    expect(friendly).toBeTruthy();
+    expect(friendly ?? '').not.toContain('graph "opencraft-assistant"');
+    expect(friendly ?? '').not.toContain('provider_failure');
   });
 });
 
@@ -539,11 +968,13 @@ describe('store: interactions and artifacts', () => {
     expect(
       useStore.getState().conversations['s-1'].pendingInteracts,
     ).toHaveLength(1);
+    expect(useStore.getState().pendingPromptConvs['p-1']).toBe('s-1');
 
     handle({ type: 'resolved', data: { id: 'p-1' } });
     expect(
       useStore.getState().conversations['s-1'].pendingInteracts,
     ).toHaveLength(0);
+    expect(useStore.getState().pendingPromptConvs['p-1']).toBeUndefined();
   });
 
   it('artifact events merge docs into the latest turn strip', () => {

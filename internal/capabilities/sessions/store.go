@@ -22,6 +22,8 @@ import (
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/resource"
+	"github.com/GizClaw/flowcraft/core/telemetry"
+	otellog "go.opentelemetry.io/otel/log"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
@@ -56,6 +58,8 @@ type TurnRecord struct {
 	StartedAt   time.Time         `json:"started_at,omitzero"`
 	FinishedAt  time.Time         `json:"finished_at,omitzero"`
 	RunID       string            `json:"run_id,omitempty"`
+	Status      string            `json:"status,omitempty"`
+	Error       string            `json:"error,omitempty"`
 	Messages    []message.Message `json:"messages"`
 	Artifacts   []Artifact        `json:"artifacts,omitempty"`
 }
@@ -107,7 +111,8 @@ func New(root string, window int) (*Store, error) {
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, err
 	}
-	_ = os.Chmod(root, 0o700)
+	telemetry.WarnErr(context.Background(),
+		"sessions: secure store root failed", os.Chmod(root, 0o700))
 	db, err := state.Open(filepath.Join(root, "session.db"))
 	if err != nil {
 		return nil, err
@@ -129,8 +134,12 @@ func (s *Store) State() *state.Store { return s.db }
 // Database returns the shared workspace DB handle.
 func (s *Store) Database() *db.DB { return s.db.Handle() }
 
-// Close closes the SQLite database handle.
-func (s *Store) Close() error {
+// CloseDB closes the SQLite database handle. Store intentionally does
+// not implement io.Closer: one workspace Store is shared by every
+// flowcraft runtime, so runtimes must not own its close. The
+// orchestration/host Manager owns the DB lifecycle and calls CloseDB
+// only after the last Host/store reference is released.
+func (s *Store) CloseDB() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
@@ -199,7 +208,8 @@ func (s *Store) Create() (string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
-	_ = os.Chmod(dir, 0o700)
+	telemetry.WarnErr(context.Background(),
+		"sessions: secure conversation dir failed", os.Chmod(dir, 0o700))
 	return id, nil
 }
 
@@ -327,9 +337,17 @@ func (s *Store) RecordTurnTiming(
 	return nil
 }
 
-// RecordTurnFinished records when a run finished.
-func (s *Store) RecordTurnFinished(
-	id, runID string, finishedAt time.Time,
+// RecordTurnEnd records when a run finished plus its terminal status
+// and error. Persisting status here keeps the archive in sync with the
+// same turn_end event the UI receives.
+func (s *Store) RecordTurnEnd(
+	id, runID string, finishedAt time.Time, status, errText string,
+) error {
+	return s.recordTurnEnd(id, runID, finishedAt, status, errText)
+}
+
+func (s *Store) recordTurnEnd(
+	id, runID string, finishedAt time.Time, status, errText string,
 ) error {
 	if err := requireID(id); err != nil {
 		return err
@@ -338,9 +356,9 @@ func (s *Store) RecordTurnFinished(
 		return errdefs.Validationf("sessions: timing run id is required")
 	}
 	finishedAt = finishedAt.UTC()
-	if err := s.db.UpdateArchiveTurnTimes(
+	if err := s.db.UpdateArchiveTurnEnd(
 		context.Background(), id, runID,
-		time.Time{}, time.Time{}, finishedAt,
+		finishedAt, status, errText,
 	); err != nil {
 		return err
 	}
@@ -459,13 +477,19 @@ func (s *Store) SaveAttachment(id, kind, srcPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = src.Close() }()
+	defer func() {
+		telemetry.WarnErr(context.Background(),
+			"sessions: close attachment source failed", src.Close())
+	}()
 	dir := filepath.Join(s.dir(id), kind)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
 	var suffix [4]byte
-	_, _ = rand.Read(suffix[:])
+	if _, err := rand.Read(suffix[:]); err != nil {
+		telemetry.WarnErr(context.Background(),
+			"sessions: generate attachment suffix failed", err)
+	}
 	name := fmt.Sprintf("%d-%x%s", time.Now().UnixNano(), suffix[:], filepath.Ext(srcPath))
 	dst := filepath.Join(dir, name)
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
@@ -473,12 +497,15 @@ func (s *Store) SaveAttachment(id, kind, srcPath string) (string, error) {
 		return "", err
 	}
 	if _, err := io.Copy(out, src); err != nil {
-		_ = out.Close()
-		_ = os.Remove(dst)
+		telemetry.WarnErr(context.Background(),
+			"sessions: close partial attachment failed", out.Close())
+		telemetry.WarnErr(context.Background(),
+			"sessions: remove partial attachment failed", os.Remove(dst))
 		return "", err
 	}
 	if err := out.Close(); err != nil {
-		_ = os.Remove(dst)
+		telemetry.WarnErr(context.Background(),
+			"sessions: remove attachment after close failure", os.Remove(dst))
 		return "", err
 	}
 	return dst, nil
@@ -522,30 +549,71 @@ func (s *Store) Turns(ctx context.Context, id string) ([]TurnRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	byTurn := make(map[int64][]message.Message)
+	byTurn := make(map[int64][]state.ArchiveMessage)
 	for _, m := range msgs {
-		byTurn[m.TurnID] = append(byTurn[m.TurnID], message.Message{
+		byTurn[m.TurnID] = append(byTurn[m.TurnID], m)
+	}
+	out := make([]TurnRecord, 0, len(turns))
+	for _, t := range turns {
+		out = append(out, archiveTurnRecord(ctx, id, t, byTurn[t.ID]))
+	}
+	return out, nil
+}
+
+// TurnByRunID returns one archived turn for a completed run, without
+// loading the rest of the conversation. It is the reconciliation
+// endpoint for live turn_end events whose streamed deltas may have
+// been coalesced or dropped.
+func (s *Store) TurnByRunID(
+	ctx context.Context, conversationID, runID string,
+) (TurnRecord, error) {
+	if err := requireID(conversationID); err != nil {
+		return TurnRecord{}, err
+	}
+	if runID == "" {
+		return TurnRecord{},
+			errdefs.Validationf("session store: run id is required")
+	}
+	turn, msgs, err := s.db.ArchiveTurnByRun(ctx, conversationID, runID)
+	if err != nil {
+		return TurnRecord{}, fmt.Errorf(
+			"sessions: turn by run %q: %w", runID, err)
+	}
+	return archiveTurnRecord(ctx, conversationID, turn, msgs), nil
+}
+
+// archiveTurnRecord lowers one SQLite turn row into the shared
+// TurnRecord shape used by the UI binding.
+func archiveTurnRecord(
+	ctx context.Context,
+	conversationID string,
+	turn state.ArchiveTurn,
+	msgs []state.ArchiveMessage,
+) TurnRecord {
+	rec := TurnRecord{
+		Seq:         turn.Seq,
+		At:          turn.At,
+		RequestedAt: turn.RequestedAt,
+		StartedAt:   turn.StartedAt,
+		FinishedAt:  turn.FinishedAt,
+		RunID:       turn.RunID,
+		Status:      turn.Status,
+		Error:       turn.Error,
+	}
+	for _, m := range msgs {
+		rec.Messages = append(rec.Messages, message.Message{
 			Role:    message.Role(m.Role),
 			Content: m.Content,
 		})
 	}
-	out := make([]TurnRecord, 0, len(turns))
-	for _, t := range turns {
-		rec := TurnRecord{
-			Seq:         t.Seq,
-			At:          t.At,
-			RequestedAt: t.RequestedAt,
-			StartedAt:   t.StartedAt,
-			FinishedAt:  t.FinishedAt,
-			RunID:       t.RunID,
-			Messages:    byTurn[t.ID],
+	if len(turn.ArtifactsJSON) > 0 {
+		if err := json.Unmarshal(turn.ArtifactsJSON, &rec.Artifacts); err != nil {
+			telemetry.WarnErr(ctx,
+				"sessions: decode turn artifacts failed", err,
+				otellog.String("conversation.id", conversationID))
 		}
-		if len(t.ArtifactsJSON) > 0 {
-			_ = json.Unmarshal(t.ArtifactsJSON, &rec.Artifacts)
-		}
-		out = append(out, rec)
 	}
-	return out, nil
+	return rec
 }
 
 // RolloutPath returns the JSONL audit path for one conversation.
@@ -569,7 +637,11 @@ func (s *Store) List() ([]Meta, error) {
 		}
 		var usage Usage
 		if len(c.UsageJSON) > 0 {
-			_ = json.Unmarshal(c.UsageJSON, &usage)
+			if err := json.Unmarshal(c.UsageJSON, &usage); err != nil {
+				telemetry.WarnErr(context.Background(),
+					"sessions: decode conversation usage failed", err,
+					otellog.String("conversation.id", c.ID))
+			}
 		}
 		if c.TurnCount == 0 && usage == (Usage{}) {
 			continue
@@ -645,7 +717,10 @@ func (s *Store) LoadUsage(ctx context.Context, id string) (Usage, error) {
 	}
 	var usage Usage
 	if len(c.UsageJSON) > 0 {
-		_ = json.Unmarshal(c.UsageJSON, &usage)
+		if err := json.Unmarshal(c.UsageJSON, &usage); err != nil {
+			telemetry.WarnErr(ctx, "sessions: decode usage failed", err,
+				otellog.String("conversation.id", id))
+		}
 	}
 	return usage, nil
 }
@@ -664,6 +739,58 @@ func (s *Store) RecordUsage(ctx context.Context, id string, usage Usage) error {
 	} else if err != nil {
 		return err
 	}
+	raw, err := json.Marshal(usage)
+	if err != nil {
+		return err
+	}
+	c.UsageJSON = raw
+	c.UpdatedAt = time.Now().UTC()
+	return s.db.UpsertConversation(ctx, c)
+}
+
+// AddUsage accumulates one usage delta onto the cumulative usage
+// already recorded for a session. Turn-end persistence and background
+// generations such as auto titles both feed deltas here, so a session's
+// total_tokens stays cumulative instead of reflecting only the last
+// call. It serializes on the store mutex to keep concurrent turn ends
+// from overwriting each other.
+func (s *Store) AddUsage(ctx context.Context, id string, delta Usage) error {
+	if err := requireID(id); err != nil {
+		return err
+	}
+	if delta.TotalTokens <= 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	c, err := s.db.Conversation(ctx, id)
+	if err == state.ErrNotFound {
+		c = state.Conversation{ID: id, CreatedAt: time.Now().UTC()}
+		if err := s.db.EnsureConversation(ctx, c); err != nil {
+			return err
+		}
+	} else if err != nil {
+		return err
+	}
+	var usage Usage
+	if len(c.UsageJSON) > 0 {
+		if err := json.Unmarshal(c.UsageJSON, &usage); err != nil {
+			telemetry.WarnErr(ctx, "sessions: decode usage before add failed", err,
+				otellog.String("conversation.id", id))
+		}
+	}
+	if delta.Model != "" {
+		usage.Model = delta.Model
+	}
+	usage.InputTokens += delta.InputTokens
+	usage.OutputTokens += delta.OutputTokens
+	usage.TotalTokens += delta.TotalTokens
+	usage.CacheReadTokens += delta.CacheReadTokens
+	usage.CacheWriteTokens += delta.CacheWriteTokens
+	usage.ReasoningTokens += delta.ReasoningTokens
+	usage.LatencyMs += delta.LatencyMs
+
 	raw, err := json.Marshal(usage)
 	if err != nil {
 		return err

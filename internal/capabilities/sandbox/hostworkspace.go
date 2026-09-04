@@ -12,6 +12,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/resource"
 	coresandbox "github.com/GizClaw/flowcraft/core/sandbox"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/workspace"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
@@ -282,7 +283,10 @@ func (w *hostWorkspace) ReadLimited(
 		}
 		return nil, fmt.Errorf("workspace: read %s: %w", path, err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		telemetry.WarnErr(context.Background(),
+			"workspace: close read file failed", f.Close())
+	}()
 	data, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("workspace: read %s: %w", path, err)
@@ -324,7 +328,10 @@ func (w *hostWorkspace) Append(
 	if err != nil {
 		return fmt.Errorf("workspace: append %s: %w", path, err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		telemetry.WarnErr(context.Background(),
+			"workspace: close append file failed", f.Close())
+	}()
 	if _, err := f.Write(data); err != nil {
 		return fmt.Errorf("workspace: append %s: %w", path, err)
 	}

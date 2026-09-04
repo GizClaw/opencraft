@@ -1,10 +1,13 @@
 package core
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 )
@@ -41,7 +44,8 @@ func (c *Core) publishWorkspaceEnv() {
 	}
 	if strings.TrimSpace(workDir) == "" {
 		for _, key := range envKeys {
-			_ = os.Unsetenv(key)
+			telemetry.WarnErr(context.Background(),
+				"desktop: unset workspace env failed", os.Unsetenv(key))
 		}
 		if c.Plugin != nil && c.Plugin.Capability != nil {
 			c.Plugin.Capability.StopAll()
@@ -51,11 +55,14 @@ func (c *Core) publishWorkspaceEnv() {
 	layout, err := config.ResolveWorkspace(c.DataDir, workDir)
 	if err != nil {
 		for _, key := range envKeys {
-			_ = os.Unsetenv(key)
+			telemetry.WarnErr(context.Background(),
+				"desktop: unset workspace env after resolve failure",
+				os.Unsetenv(key))
 		}
 		return
 	}
-	_ = layout.Ensure()
+	telemetry.WarnErr(context.Background(),
+		"desktop: ensure workspace layout failed", layout.Ensure())
 	cacheDir := filepath.Join(c.DataDir, "cache")
 	env := []string{
 		"OPEN_CRAFT_WORKDIR=" + workDir,
@@ -69,7 +76,8 @@ func (c *Core) publishWorkspaceEnv() {
 	}
 	for _, kv := range env {
 		key, value, _ := strings.Cut(kv, "=")
-		_ = os.Setenv(key, value)
+		telemetry.WarnErr(context.Background(),
+			"desktop: publish workspace env failed", os.Setenv(key, value))
 	}
 	if c.Plugin != nil && c.Plugin.Capability != nil {
 		c.Plugin.Capability.SetEnv(env)
@@ -90,7 +98,9 @@ func (c *Core) RecordWorkspace(path string) {
 	if path == "" {
 		return
 	}
-	_ = config.SaveWorkspace(c.DataDir, path)
+	telemetry.WarnErr(context.Background(),
+		"desktop: record workspace failed",
+		config.SaveWorkspace(c.DataDir, path))
 }
 
 // RemoveWorkspace removes one workspace from history. If it is the
@@ -140,7 +150,8 @@ func (c *Core) ResolveLayout(workDir string) (config.WorkspaceLayout, error) {
 	if err != nil {
 		return layout, err
 	}
-	_ = layout.Ensure()
+	telemetry.WarnErr(context.Background(),
+		"desktop: ensure workspace layout failed", layout.Ensure())
 	return layout, nil
 }
 
@@ -151,9 +162,13 @@ func startupWorkDirFromHistory(dataDir string) string {
 	if err != nil {
 		return ""
 	}
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		telemetry.WarnErr(context.Background(),
+			"desktop: resolve user home failed", err)
+	}
 	for _, m := range metas {
-		if home != "" && filepath.Clean(m.Path) == filepath.Clean(home) {
+		if err == nil && filepath.Clean(m.Path) == filepath.Clean(home) {
 			continue
 		}
 		if info, err := os.Stat(m.Path); err == nil && info.IsDir() {

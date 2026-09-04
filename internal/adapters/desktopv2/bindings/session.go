@@ -13,6 +13,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/delegation"
 	"github.com/GizClaw/flowcraft/core/delegation/kanban"
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
@@ -61,6 +62,8 @@ type SessionTurnDTO struct {
 	FinishedAt  string              `json:"finished_at,omitempty"`
 	DurationMs  int64               `json:"duration_ms,omitempty"`
 	RunID       string              `json:"run_id,omitempty"`
+	Status      string              `json:"status,omitempty"`
+	Error       string              `json:"error,omitempty"`
 	Messages    []message.Message   `json:"messages"`
 	Artifacts   []sessions.Artifact `json:"artifacts,omitempty"`
 }
@@ -91,6 +94,8 @@ func toSessionTurnDTO(t sessions.TurnRecord) SessionTurnDTO {
 		FinishedAt:  finishedAt.UTC().Format(time.RFC3339),
 		DurationMs:  durationMs,
 		RunID:       t.RunID,
+		Status:      t.Status,
+		Error:       t.Error,
 		Messages:    t.Messages,
 		Artifacts:   t.Artifacts,
 	}
@@ -125,7 +130,7 @@ func (b *Session) History(
 	ctx := b.core.Shell.Context()
 	h := b.core.Runtime.Current()
 	if h == nil || h.Sessions() == nil {
-		return nil, nil
+		return []message.Message{}, nil
 	}
 	return h.Sessions().History(ctx, id, n)
 }
@@ -187,6 +192,28 @@ func (b *Session) Turns(
 		out = append(out, toSessionTurnDTO(turn))
 	}
 	return out, nil
+}
+
+// TurnByRunID returns the archived turn for one completed run. The
+// frontend uses it to reconcile a live transcript after turn_end so
+// coalesced or dropped stream deltas are replaced by the archive.
+func (b *Session) TurnByRunID(
+	conversationID, runID string,
+) (SessionTurnDTO, error) {
+	if runID == "" {
+		return SessionTurnDTO{},
+			fmt.Errorf("session: run id is required")
+	}
+	ctx := b.core.Shell.Context()
+	h := b.core.Runtime.Current()
+	if h == nil || h.Sessions() == nil {
+		return SessionTurnDTO{}, errNotReady("session")
+	}
+	turn, err := h.Sessions().TurnByRunID(ctx, conversationID, runID)
+	if err != nil {
+		return SessionTurnDTO{}, err
+	}
+	return toSessionTurnDTO(turn), nil
 }
 
 func (b *Session) exportsDir() (string, error) {
@@ -325,7 +352,8 @@ func (b *Session) ImportBundle(
 	// mark the conversation complete immediately so List surfaces it
 	// in the session sidebar instead of leaving it pending forever.
 	if err := h.Sessions().CompleteImport(ctx, id); err != nil {
-		_ = h.Sessions().AbortImport(ctx, id)
+		telemetry.WarnErr(ctx, "desktop session: abort failed import failed",
+			h.Sessions().AbortImport(ctx, id))
 		return SessionImportDTO{}, err
 	}
 	messages := 0

@@ -50,6 +50,8 @@ func TestSessionTurnDTOFallsBackToTurnTime(t *testing.T) {
 		StartedAt:  started,
 		FinishedAt: now,
 		RunID:      "run-1",
+		Status:     "failed",
+		Error:      "boom",
 		Artifacts: []sessions.Artifact{{
 			Path:  "a.txt",
 			Bytes: 3,
@@ -64,6 +66,9 @@ func TestSessionTurnDTOFallsBackToTurnTime(t *testing.T) {
 	}
 	if dto.RequestedAt != now.Format(time.RFC3339) {
 		t.Fatalf("requested_at fallback = %q", dto.RequestedAt)
+	}
+	if dto.Status != "failed" || dto.Error != "boom" {
+		t.Fatalf("status/error = %q/%q", dto.Status, dto.Error)
 	}
 }
 

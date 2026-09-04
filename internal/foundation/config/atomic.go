@@ -1,9 +1,12 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/GizClaw/flowcraft/core/telemetry"
 )
 
 // writeFileAtomic writes data to path via a temp file in the same
@@ -21,17 +24,25 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 	}
 	tmpName := tmp.Name()
 	// No-op after a successful rename (the name no longer exists).
-	defer func() { _ = os.Remove(tmpName) }()
+	defer func() {
+		if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
+			telemetry.WarnErr(context.Background(),
+				"config: remove config temp failed", err)
+		}
+	}()
 	if err := tmp.Chmod(perm); err != nil {
-		_ = tmp.Close()
+		telemetry.WarnErr(context.Background(),
+			"config: close config temp after chmod failure", tmp.Close())
 		return fmt.Errorf("config: chmod temp file: %w", err)
 	}
 	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
+		telemetry.WarnErr(context.Background(),
+			"config: close config temp after write failure", tmp.Close())
 		return fmt.Errorf("config: write temp file: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
+		telemetry.WarnErr(context.Background(),
+			"config: close config temp after sync failure", tmp.Close())
 		return fmt.Errorf("config: sync temp file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {

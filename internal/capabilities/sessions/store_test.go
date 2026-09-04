@@ -141,7 +141,7 @@ func TestSessionFilePermissions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = store.CloseDB() }()
 	id, err := store.Create()
 	if err != nil {
 		t.Fatal(err)
@@ -175,7 +175,7 @@ func TestMetaIndexSurvivesUsageRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = store.CloseDB() }()
 	id, _ := store.Create()
 	if err := store.AppendTurn(context.Background(), id, []message.Message{
 		message.NewTextMessage(message.RoleUser, "first"),
@@ -206,12 +206,64 @@ func TestMetaIndexSurvivesUsageRecord(t *testing.T) {
 	}
 }
 
+func TestAddUsageAccumulatesAcrossTurns(t *testing.T) {
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.CloseDB() }()
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.AddUsage(context.Background(), id, Usage{
+		Model:           "openai-1/gpt-test",
+		InputTokens:     100,
+		OutputTokens:    50,
+		TotalTokens:     150,
+		CacheReadTokens: 20,
+		LatencyMs:       100,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddUsage(context.Background(), id, Usage{
+		Model:            "openai-1/gpt-test",
+		InputTokens:      30,
+		OutputTokens:     10,
+		TotalTokens:      40,
+		CacheWriteTokens: 5,
+		ReasoningTokens:  7,
+		LatencyMs:        200,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := store.LoadUsage(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := Usage{
+		Model:            "openai-1/gpt-test",
+		InputTokens:      130,
+		OutputTokens:     60,
+		TotalTokens:      190,
+		CacheReadTokens:  20,
+		CacheWriteTokens: 5,
+		ReasoningTokens:  7,
+		LatencyMs:        300,
+	}
+	if got != want {
+		t.Fatalf("usage = %+v, want %+v", got, want)
+	}
+}
+
 func TestListSkipsArchiveWithoutMeta(t *testing.T) {
 	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = store.CloseDB() }()
 	// A created-but-never-used conversation must not appear in the
 	// resume list.
 	_, _ = store.Create()
@@ -402,6 +454,9 @@ func TestAllIDMethodsRejectTraversal(t *testing.T) {
 	if err := store.RecordUsage(context.Background(), bad, Usage{TotalTokens: 1}); err == nil {
 		t.Error("RecordUsage accepted traversal id")
 	}
+	if err := store.AddUsage(context.Background(), bad, Usage{TotalTokens: 1}); err == nil {
+		t.Error("AddUsage accepted traversal id")
+	}
 	if err := store.WriteState(bad, "title", "x"); err == nil {
 		t.Error("WriteState accepted traversal id")
 	}
@@ -425,6 +480,9 @@ func TestAllIDMethodsRejectTraversal(t *testing.T) {
 	if err := store.RecordUsage(context.Background(), id, Usage{TotalTokens: 1}); err != nil {
 		t.Fatalf("RecordUsage valid id: %v", err)
 	}
+	if err := store.AddUsage(context.Background(), id, Usage{TotalTokens: 1}); err != nil {
+		t.Fatalf("AddUsage valid id: %v", err)
+	}
 	if err := store.WriteState(id, "title", "hi"); err != nil {
 		t.Fatalf("WriteState valid id: %v", err)
 	}
@@ -439,7 +497,7 @@ func TestListEmptyWhenRootMissing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = store.CloseDB() }()
 	if err := os.RemoveAll(store.root); err != nil {
 		t.Fatal(err)
 	}
@@ -463,7 +521,7 @@ func TestBufferArtifactMergesIntoTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = store.CloseDB() }()
 	id, err := store.Create()
 	if err != nil {
 		t.Fatal(err)
@@ -535,7 +593,7 @@ func TestRecordTurnTimingPersistsWithArchivedTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = store.CloseDB() }()
 	id, err := store.Create()
 	if err != nil {
 		t.Fatal(err)
@@ -567,11 +625,15 @@ func TestRecordTurnTimingPersistsWithArchivedTurn(t *testing.T) {
 		t.Fatalf("StartedAt = %v, want %v", turns[0].StartedAt, started)
 	}
 	finished := started.Add(4 * time.Second)
-	if err := store.RecordTurnFinished(id, "run-timed", finished); err != nil {
-		t.Fatalf("RecordTurnFinished: %v", err)
+	if err := store.RecordTurnEnd(
+		id, "run-timed", finished, "failed", "engine boom",
+	); err != nil {
+		t.Fatalf("RecordTurnEnd: %v", err)
 	}
-	if err := store.RecordTurnFinished("bad-id", "run-timed", finished); err == nil {
-		t.Fatal("RecordTurnFinished accepted invalid session id")
+	if err := store.RecordTurnEnd(
+		"bad-id", "run-timed", finished, "failed", "engine boom",
+	); err == nil {
+		t.Fatal("RecordTurnEnd accepted invalid session id")
 	}
 	turns, err = store.Turns(context.Background(), id)
 	if err != nil {
@@ -579,6 +641,9 @@ func TestRecordTurnTimingPersistsWithArchivedTurn(t *testing.T) {
 	}
 	if !turns[0].FinishedAt.Equal(finished) {
 		t.Fatalf("FinishedAt = %v, want %v", turns[0].FinishedAt, finished)
+	}
+	if turns[0].Status != "failed" || turns[0].Error != "engine boom" {
+		t.Fatalf("turn status/error = %q/%q", turns[0].Status, turns[0].Error)
 	}
 	// A retried commit for the same run id is idempotent: the turn is
 	// not archived twice.
@@ -593,6 +658,61 @@ func TestRecordTurnTimingPersistsWithArchivedTurn(t *testing.T) {
 	}
 	if len(turns) != 1 {
 		t.Fatalf("Turns = %d records, want 1 after idempotent retry", len(turns))
+	}
+}
+
+// TestTurnByRunIDLoadsOneCompletedTurn verifies the frontend
+// reconciliation endpoint returns exactly the turn for one run without
+// the rest of the conversation.
+func TestTurnByRunIDLoadsOneCompletedTurn(t *testing.T) {
+	store, err := newMigratedStore(t.TempDir(), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.CloseDB() }()
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := message.NewTextMessage(message.RoleUser, "first")
+	if err := store.AppendTurnWithRunID(
+		context.Background(), id, "run-1",
+		[]message.Message{first},
+	); err != nil {
+		t.Fatal(err)
+	}
+	secondUser := message.NewTextMessage(message.RoleUser, "second")
+	secondAssistant := message.NewTextMessage(message.RoleAssistant, "done")
+	if err := store.AppendTurnWithRunID(
+		context.Background(), id, "run-2",
+		[]message.Message{secondUser, secondAssistant},
+	); err != nil {
+		t.Fatal(err)
+	}
+	finished := time.Now().UTC()
+	if err := store.RecordTurnEnd(id, "run-2", finished, "completed", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	turn, err := store.TurnByRunID(context.Background(), id, "run-2")
+	if err != nil {
+		t.Fatalf("TurnByRunID: %v", err)
+	}
+	if turn.Seq != 2 || turn.RunID != "run-2" ||
+		turn.Status != "completed" || !turn.FinishedAt.Equal(finished) {
+		t.Fatalf("turn = %+v", turn)
+	}
+	if len(turn.Messages) != 2 ||
+		turn.Messages[0].Content.Text() != "second" ||
+		turn.Messages[1].Content.Text() != "done" {
+		t.Fatalf("messages = %+v", turn.Messages)
+	}
+
+	if _, err := store.TurnByRunID(context.Background(), id, "missing"); err == nil {
+		t.Fatal("TurnByRunID accepted an unknown run")
+	}
+	if _, err := store.TurnByRunID(context.Background(), id, ""); err == nil {
+		t.Fatal("TurnByRunID accepted an empty run")
 	}
 }
 
@@ -616,7 +736,7 @@ func TestLegacyJSONHistoryMigratedIntoSQLite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = store.CloseDB() }()
 	hist, err := store.History(context.Background(), id, -1)
 	if err != nil {
 		t.Fatal(err)
@@ -638,7 +758,7 @@ func TestAppendTurnArtifactsMergesIntoLatestTurn(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = store.Close() }()
+	defer func() { _ = store.CloseDB() }()
 	id, err := store.Create()
 	if err != nil {
 		t.Fatal(err)

@@ -6,10 +6,13 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/GizClaw/flowcraft/core/telemetry"
+
 	"github.com/GizClaw/opencraft/internal/capabilities/automations"
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
 	pluginagent "github.com/GizClaw/opencraft/internal/capabilities/plugins/agent"
 	pluginruntime "github.com/GizClaw/opencraft/internal/capabilities/plugins/runtime"
+	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/usage"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
 	"github.com/GizClaw/opencraft/internal/orchestration/engine"
@@ -41,12 +44,14 @@ type Runtime struct {
 
 // NewRuntime creates the runtime service rooted at dataDir/userDir.
 func NewRuntime(dataDir, userDir string) *Runtime {
-	return &Runtime{
+	r := &Runtime{
 		dataDir:        dataDir,
 		userDir:        userDir,
 		manager:        host.NewManagerAt(dataDir, userDir),
 		hostConfigured: make(map[*host.Host]bool),
 	}
+	r.manager.SetUsageRecorder(r.recordTurnUsage)
+	return r
 }
 
 // SetAgentPlugins wires the plugin registry into every runtime
@@ -132,17 +137,21 @@ func (r *Runtime) OpenUserDB(ctx context.Context) error {
 		return fmt.Errorf("runtime: open user db: %w", err)
 	}
 	if err := migrations.User(ctx, udb); err != nil {
-		_ = udb.Close()
+		telemetry.WarnErr(ctx, "desktop runtime: close user db after migration failure",
+			udb.Close())
 		return fmt.Errorf("runtime: migrate user db: %w", err)
 	}
 	usageStore, err := usage.Attach(udb)
 	if err != nil {
-		_ = udb.Close()
+		telemetry.WarnErr(ctx, "desktop runtime: close user db after usage attach failure",
+			udb.Close())
 		return fmt.Errorf("runtime: attach usage: %w", err)
 	}
 	automationStore, err := automations.Attach(udb)
 	if err != nil {
-		_ = udb.Close()
+		telemetry.WarnErr(ctx,
+			"desktop runtime: close user db after automations attach failure",
+			udb.Close())
 		return fmt.Errorf("runtime: attach automations: %w", err)
 	}
 
@@ -152,6 +161,24 @@ func (r *Runtime) OpenUserDB(ctx context.Context) error {
 	r.automations = automationStore
 	r.mu.Unlock()
 	return nil
+}
+
+// recordTurnUsage persists one finished turn's usage into the
+// user-level model_usage tables. It is installed as the shared Host
+// recorder when the Runtime is created; before OpenUserDB the store is
+// nil and calls are no-ops. UI and automation turns both count.
+func (r *Runtime) recordTurnUsage(
+	ctx context.Context,
+	workspaceID, sessionID string,
+	u sessions.Usage,
+) error {
+	r.mu.Lock()
+	store := r.usage
+	r.mu.Unlock()
+	if store == nil {
+		return nil
+	}
+	return store.RecordSessionUsage(ctx, workspaceID, sessionID, u)
 }
 
 // Acquire returns a shared Host for workDir. The prompt backend is
@@ -237,6 +264,7 @@ func (r *Runtime) Close() {
 	r.current = nil
 	r.mu.Unlock()
 	if udb != nil {
-		_ = udb.Close()
+		telemetry.WarnErr(context.Background(),
+			"desktop runtime: close user db failed", udb.Close())
 	}
 }

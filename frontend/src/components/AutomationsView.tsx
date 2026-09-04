@@ -288,6 +288,7 @@ export function AutomationsView() {
   const loadAutomations = useStore((s) => s.loadAutomations);
   const loadAutomationRuns = useStore((s) => s.loadAutomationRuns);
   const resume = useStore((s) => s.resume);
+  const openSessionInWorkspace = useStore((s) => s.openSessionInWorkspace);
   const closeTools = useStore((s) => s.closeTools);
   const newChat = useStore((s) => s.newChat);
   const draftComposer = useStore((s) => s.draftComposer);
@@ -471,8 +472,14 @@ export function AutomationsView() {
 
   const openRunSession = async (run: AutomationRun) => {
     if (!run.conversation_id) return;
-    await resume(run.conversation_id);
-    closeTools();
+    const task = automations.find((t) => t.id === run.task_id);
+    const taskWorkspace = task?.workspace ?? workspace;
+    try {
+      await openSessionInWorkspace(run.conversation_id, taskWorkspace);
+      closeTools();
+    } catch (err) {
+      flash(String(err));
+    }
   };
 
   const toggleDay = (d: string) => {

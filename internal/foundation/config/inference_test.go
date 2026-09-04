@@ -587,6 +587,70 @@ func TestInferenceYAMLDeepseekResponsesDerived(t *testing.T) {
 	}
 }
 
+func TestInferenceYAMLProviderSpecRoundTrip(t *testing.T) {
+	cfg := InferenceConfig{Instances: []Instance{{
+		StableID:  "inst-aaa",
+		Type:      "openai",
+		KeySource: KeyEnv,
+		API:       "chat",
+		ProviderSpec: map[string]any{
+			"chat_stream_options": map[string]any{
+				"include_usage": false,
+			},
+		},
+		Models:  []Model{{Name: "glm-5.3-flash"}},
+		Enabled: true,
+	}}}
+	data, err := cfg.InferenceYAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+	for _, want := range []string{
+		"api: 'chat'",
+		"chat_stream_options:",
+		"chat_stream_options:\n          include_usage: false",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Fatalf("provider spec doc missing %q:\n%s", want, doc)
+		}
+	}
+
+	dir := t.TempDir()
+	if err := WriteInference(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadInference(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Instances) != 1 {
+		t.Fatalf("round trip instances = %+v", loaded.Instances)
+	}
+	opts, ok := loaded.Instances[0].ProviderSpec["chat_stream_options"].(map[string]any)
+	if !ok || opts["include_usage"] != false {
+		t.Fatalf("round trip provider spec = %+v",
+			loaded.Instances[0].ProviderSpec)
+	}
+
+	// Host-managed spec keys must not leak back into the provider bag.
+	if _, ok := loaded.Instances[0].ProviderSpec["api"]; ok {
+		t.Fatalf("host-managed api leaked into provider spec: %+v",
+			loaded.Instances[0].ProviderSpec)
+	}
+
+	// Nil provider spec must not emit a chat_stream_options section.
+	plain := cfg
+	plain.Instances[0].ProviderSpec = nil
+	data, err = plain.InferenceYAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "chat_stream_options:") {
+		t.Fatalf("nil provider spec must not be emitted:\n%s", data)
+	}
+}
+
 func TestInferenceYAMLModelNormalization(t *testing.T) {
 	// Empty names fall back to the provider default.
 	cfg := InferenceConfig{Instances: []Instance{{

@@ -145,10 +145,18 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 		}
 	}
 	if o.ConfigBase == "" {
-		o.ConfigBase, _ = config.UserConfigDir()
+		var err error
+		o.ConfigBase, err = config.UserConfigDir()
+		if err != nil {
+			return nil, fmt.Errorf("engine: user config dir: %w", err)
+		}
 	}
 	if o.WorkBase == "" {
-		o.WorkBase, _ = os.Getwd()
+		var err error
+		o.WorkBase, err = os.Getwd()
+		if err != nil {
+			return nil, fmt.Errorf("engine: workdir: %w", err)
+		}
 	}
 	dataDir := ""
 	if o.WorkspaceLayout != nil {
@@ -173,14 +181,23 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 	// Scalar settings in the deploy document reference runtime paths
 	// through ${env:...}; publish them before resources are built.
 	// buildMu keeps concurrent assemblies from racing these values.
-	_ = os.Setenv("OPEN_CRAFT_WORKDIR", o.WorkBase)
-	_ = os.Setenv("OPEN_CRAFT_CACHE", cacheDir)
-	_ = os.Setenv("OPEN_CRAFT_DATA_DIR", dataDir)
-	_ = os.Setenv("OPEN_CRAFT_WORKSPACE_DIR", o.WorkspaceLayout.Root)
-	_ = os.Setenv("OPEN_CRAFT_SESSIONS_DIR", o.WorkspaceLayout.SessionsDir)
-	_ = os.Setenv("OPEN_CRAFT_APPROVALS", o.WorkspaceLayout.ApprovalsFile)
-	_ = os.Setenv("OPEN_CRAFT_TOOL_CACHE", o.WorkspaceLayout.CacheDir)
-	_ = os.Setenv("OPEN_CRAFT_AUDIT_DIR", o.WorkspaceLayout.AuditDir)
+	envVars := []struct {
+		name  string
+		value string
+	}{
+		{"OPEN_CRAFT_WORKDIR", o.WorkBase},
+		{"OPEN_CRAFT_CACHE", cacheDir},
+		{"OPEN_CRAFT_DATA_DIR", dataDir},
+		{"OPEN_CRAFT_WORKSPACE_DIR", o.WorkspaceLayout.Root},
+		{"OPEN_CRAFT_SESSIONS_DIR", o.WorkspaceLayout.SessionsDir},
+		{"OPEN_CRAFT_APPROVALS", o.WorkspaceLayout.ApprovalsFile},
+		{"OPEN_CRAFT_TOOL_CACHE", o.WorkspaceLayout.CacheDir},
+		{"OPEN_CRAFT_AUDIT_DIR", o.WorkspaceLayout.AuditDir},
+	}
+	for _, kv := range envVars {
+		telemetry.WarnErr(ctx, "engine: publish runtime env failed",
+			os.Setenv(kv.name, kv.value), log.String("name", kv.name))
+	}
 
 	loader := resource.NewLoader(
 		resource.WithBaseDir(o.ConfigBase),

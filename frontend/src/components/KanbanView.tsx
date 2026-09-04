@@ -88,7 +88,14 @@ function CardView({
       {cancellable && (
         <div className="flex gap-2 pt-1">
           <button
-            onClick={() => void api.cancelCard(card.id).then(onChanged)}
+            onClick={() =>
+              void api
+                .cancelCard(card.id)
+                .then(onChanged)
+                .catch(() => {
+                  // board refresh/polling reconciles cancel failures
+                })
+            }
             className="flex items-center gap-1 rounded border border-edge px-2 py-0.5 text-xs text-dim hover:text-err"
             aria-label={t('kanban.cancel')}
           >

@@ -1,11 +1,14 @@
 package skills
 
 import (
+	"context"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	patchutil "github.com/GizClaw/opencraft/internal/foundation/utils/patch"
 
@@ -63,17 +66,25 @@ func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
 		return fmt.Errorf("skills: create temp file: %w", err)
 	}
 	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }() // no-op after a successful rename
+	defer func() {
+		if err := os.Remove(tmpName); err != nil && !os.IsNotExist(err) {
+			telemetry.WarnErr(context.Background(),
+				"skills: remove skill temp file failed", err)
+		}
+	}() // no-op after a successful rename
 	if err := tmp.Chmod(perm); err != nil {
-		_ = tmp.Close()
+		telemetry.WarnErr(context.Background(),
+			"skills: close skill temp after chmod failure", tmp.Close())
 		return fmt.Errorf("skills: chmod temp file: %w", err)
 	}
 	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
+		telemetry.WarnErr(context.Background(),
+			"skills: close skill temp after write failure", tmp.Close())
 		return fmt.Errorf("skills: write temp file: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
+		telemetry.WarnErr(context.Background(),
+			"skills: close skill temp after sync failure", tmp.Close())
 		return fmt.Errorf("skills: sync temp file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
@@ -197,7 +208,10 @@ func (s *Service) Create(name string, doc SkillDocument, scope string) (string, 
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = os.RemoveAll(tmp) }()
+	defer func() {
+		telemetry.WarnErr(context.Background(),
+			"skills: remove create temp failed", os.RemoveAll(tmp))
+	}()
 	if err := writeFileAtomic(filepath.Join(tmp, "SKILL.md"), data, 0o644); err != nil {
 		return "", err
 	}
@@ -274,7 +288,10 @@ func (s *Service) Patch(name, patch, scope string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = os.RemoveAll(tmp) }()
+	defer func() {
+		telemetry.WarnErr(context.Background(),
+			"skills: remove patch temp failed", os.RemoveAll(tmp))
+	}()
 	if err := copyTree(dir, tmp); err != nil {
 		return nil, fmt.Errorf("skills: stage skill for patch: %w", err)
 	}
@@ -296,7 +313,10 @@ func (s *Service) Patch(name, patch, scope string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("skills: create backup dir: %w", err)
 	}
-	defer func() { _ = os.RemoveAll(backup) }()
+	defer func() {
+		telemetry.WarnErr(context.Background(),
+			"skills: remove patch backup failed", os.RemoveAll(backup))
+	}()
 	if err := os.RemoveAll(backup); err != nil {
 		return nil, fmt.Errorf("skills: prepare backup dir: %w", err)
 	}
@@ -305,6 +325,9 @@ func (s *Service) Patch(name, patch, scope string) ([]string, error) {
 	}
 	if err := patchRename(tmp, dir); err != nil {
 		if restoreErr := patchRename(backup, dir); restoreErr != nil {
+			telemetry.WarnErr(context.Background(),
+				"skills: restore original after patch replacement failure",
+				restoreErr)
 			return nil, fmt.Errorf(
 				"skills: replace %q: %w (original restore failed: %v)",
 				dir, err, restoreErr)
@@ -312,7 +335,9 @@ func (s *Service) Patch(name, patch, scope string) ([]string, error) {
 		return nil, fmt.Errorf(
 			"skills: replace %q: %w (original restored)", dir, err)
 	}
-	_ = os.RemoveAll(backup)
+	telemetry.WarnErr(context.Background(),
+		"skills: remove patch backup after successful swap failed",
+		os.RemoveAll(backup))
 	s.Reload()
 	paths := make([]string, 0, len(results))
 	for _, r := range results {
