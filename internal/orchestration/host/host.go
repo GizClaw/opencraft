@@ -33,6 +33,7 @@ type Manager struct {
 	dataDir string
 
 	mu            sync.Mutex
+	openMu        sync.Mutex
 	hosts         map[string]*hostRef
 	stores        map[string]*storeRef
 	engineOptFunc func() []engine.Option
@@ -239,7 +240,11 @@ func (m *Manager) assemble(
 		engine.WithConfigBase(userDir),
 		engine.WithWorkBase(workDir),
 		engine.WithWorkspaceLayout(&layout),
-		engine.WithSessionStore(m.acquireStore),
+		engine.WithSessionStore(func(
+			ctx context.Context, root string, window int,
+		) (*sessions.Store, error) {
+			return m.acquireStore(ctx, workDir, root, window)
+		}),
 		engine.WithUsageObserver(func(ctx context.Context, usage inference.Usage) {
 			if _, ok := agent.RunInfoFromContext(ctx); ok {
 				h.reportUsage(ctx, usage)
@@ -338,9 +343,25 @@ func (h *Host) takeUsage(runID string) sessions.Usage {
 	return sessions.Usage{}
 }
 
+// OpenSessions returns the shared Store for one workspace without
+// assembling a Host. It runs the same first-open adoption and
+// migration path as Host acquisition. Callers must ReleaseSessions.
+func (m *Manager) OpenSessions(
+	ctx context.Context, workDir string, layout config.WorkspaceLayout, window int,
+) (*sessions.Store, error) {
+	return m.acquireStore(ctx, workDir, layout.SessionsDir, window)
+}
+
+// ReleaseSessions drops one caller's reference to a shared Store.
+func (m *Manager) ReleaseSessions(store *sessions.Store) {
+	m.releaseStore(store)
+}
+
 // acquireStore opens one Store per root and reference-counts it.
+// workDir supplies the v0.1.x project-local session location that is
+// adopted into the new layout on first open.
 func (m *Manager) acquireStore(
-	ctx context.Context, root string, window int,
+	ctx context.Context, workDir, root string, window int,
 ) (*sessions.Store, error) {
 	root = filepath.Clean(root)
 	m.mu.Lock()
@@ -352,6 +373,26 @@ func (m *Manager) acquireStore(
 	}
 	m.mu.Unlock()
 
+	// Serialize first-open adoption/schema work across Host assembly
+	// and adapter-only store opens for every workspace.
+	m.openMu.Lock()
+	defer m.openMu.Unlock()
+
+	m.mu.Lock()
+	if ref := m.stores[root]; ref != nil {
+		ref.refs++
+		s := ref.store
+		m.mu.Unlock()
+		return s, nil
+	}
+	m.mu.Unlock()
+
+	if err := migrations.AdoptLegacySessions(
+		ctx, migrations.LegacySessionsDir(workDir), root,
+	); err != nil {
+		return nil, err
+	}
+
 	store, err := sessions.New(root, window)
 	if err != nil {
 		return nil, err
@@ -362,14 +403,16 @@ func (m *Manager) acquireStore(
 		return nil, err
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if ref := m.stores[root]; ref != nil {
 		telemetry.WarnErr(ctx, "host: close duplicate session store",
 			store.Close())
 		ref.refs++
-		return ref.store, nil
+		s := ref.store
+		m.mu.Unlock()
+		return s, nil
 	}
 	m.stores[root] = &storeRef{store: store, refs: 1}
+	m.mu.Unlock()
 	return store, nil
 }
 

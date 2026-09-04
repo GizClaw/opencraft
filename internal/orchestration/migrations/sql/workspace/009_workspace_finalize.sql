@@ -62,6 +62,12 @@ CREATE TABLE IF NOT EXISTS memory_items (
 	created_at TEXT NOT NULL
 );
 
+INSERT OR IGNORE INTO memory_items (
+	id, thread_id, turn_id, seq, item_type, role, payload, created_at
+)
+SELECT id, thread_id, turn_id, seq, item_type, role, payload, created_at
+FROM items;
+
 CREATE INDEX IF NOT EXISTS idx_memory_items_thread_seq
 	ON memory_items(thread_id, seq);
 
