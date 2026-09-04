@@ -95,6 +95,8 @@ type Store struct {
 
 // New creates a Store rooted at root. The window is a convenience
 // default for History(0); model context is owned by the memory layer.
+// New opens the SQLite handle but does not migrate it: the workspace
+// caller must run orchestration/migrations.Workspace before use.
 func New(root string, window int) (*Store, error) {
 	if root == "" {
 		return nil, errdefs.Validationf("session store: root is required")
@@ -117,10 +119,6 @@ func New(root string, window int) (*Store, error) {
 		artifactBuf:   make(map[string][]Artifact),
 		turnTiming:    make(map[string]map[string]TurnTiming),
 		importPending: make(map[string]string),
-	}
-	if err := s.migrateLegacy(context.Background()); err != nil {
-		_ = db.Close()
-		return nil, fmt.Errorf("sessions: migrate legacy archives: %w", err)
 	}
 	return s, nil
 }
@@ -804,10 +802,12 @@ func (f Factory) New(ctx context.Context, in resource.Input) (any, error) {
 	if err != nil {
 		return nil, errdefs.Validationf("session store: %v", err)
 	}
-	if f.StoreFor != nil {
-		return f.StoreFor(ctx, s.Root, s.Window)
+	if f.StoreFor == nil {
+		return nil, errdefs.NotAvailablef(
+			"session store: StoreFor is required; schema migration is " +
+				"centralized in orchestration/migrations")
 	}
-	return New(s.Root, s.Window)
+	return f.StoreFor(ctx, s.Root, s.Window)
 }
 
 // Register adds the session store factory to r.

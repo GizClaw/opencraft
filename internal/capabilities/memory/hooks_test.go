@@ -14,7 +14,6 @@ import (
 	"github.com/GizClaw/flowcraft/core/resource"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/memory/summary"
-	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/summarytext"
 )
 
@@ -22,16 +21,11 @@ import (
 // appends archive and memory rows inside one transaction: both tables
 // are written by the same committer invocation.
 func TestCommitHookAtomicMemory(t *testing.T) {
-	store, err := sessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedSessions(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer func() { _ = store.Close() }()
-	if err := store.Database().Migrate(
-		context.Background(), Migrations(),
-	); err != nil {
-		t.Fatal(err)
-	}
 	adapter := &sqliteTurnStore{db: store.Database()}
 	res := &memoryResource{
 		Assembly: summary.NewAssembly(adapter),
@@ -82,7 +76,7 @@ func TestCommitHookAtomicMemory(t *testing.T) {
 // sink carrying the configured scope, the run id as idempotency key, and the
 // conversation id.
 func TestCommitHookFactoryCommitsTurn(t *testing.T) {
-	store, err := sessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedSessions(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +157,7 @@ func TestCommitHookFactoryCommitsTurn(t *testing.T) {
 // writes nothing: neither the archive (request alone would be noise) nor the
 // memory sink (CommitTurn requires at least one message).
 func TestCommitHookSkipsEmptyResult(t *testing.T) {
-	store, err := sessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedSessions(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +199,7 @@ func TestCommitHookSkipsEmptyResult(t *testing.T) {
 // ephemeral contexts instead of returning "sessions: invalid session id".
 func TestCommitHookSkipsEphemeralContext(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "sessions")
-	store, err := sessions.New(root, 40)
+	store, err := newMigratedSessions(root, 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +252,7 @@ func TestCommitHookSkipsEphemeralContext(t *testing.T) {
 // tool-call round, tool result, final reply — while excluding the
 // injected context sections, with tool activity rendered as text.
 func TestCommitHookPersistsFullConversation(t *testing.T) {
-	store, err := sessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedSessions(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +370,7 @@ func TestCommitHookPersistsFullConversation(t *testing.T) {
 // is kept out of both the session archive and the memory raw window:
 // it is derived context, not conversation.
 func TestCommitHookExcludesCompactionSummary(t *testing.T) {
-	store, err := sessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedSessions(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -477,7 +471,7 @@ func TestCommitHookExcludesCompactionSummary(t *testing.T) {
 // settings omit runtime/agent ids: runtime falls back to "opencraft" and the
 // agent id falls back to the run's identity.
 func TestCommitHookScopeFallbacks(t *testing.T) {
-	store, err := sessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedSessions(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -519,7 +513,7 @@ func TestCommitHookScopeFallbacks(t *testing.T) {
 // either required dependency is absent or mistyped.
 func TestCommitHookFactoryMissingDeps(t *testing.T) {
 	ctx := context.Background()
-	store, err := sessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedSessions(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}

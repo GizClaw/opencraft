@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,11 +7,7 @@ import (
 
 func TestSessionSettingsThinkLevel(t *testing.T) {
 	ctx := context.Background()
-	s, err := Open("file::memory:?cache=shared")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Close() }()
+	s := openState(t, "file::memory:?cache=shared")
 
 	// Missing row returns "" so the caller applies its default.
 	if level, err := s.ThinkLevel(ctx, "s-missing"); err != nil || level != "" {
@@ -36,11 +32,7 @@ func TestSessionSettingsThinkLevel(t *testing.T) {
 
 func TestSessionSettingsModel(t *testing.T) {
 	ctx := context.Background()
-	s, err := Open("file::memory:?cache=shared")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Close() }()
+	s := openState(t, "file::memory:?cache=shared")
 
 	// Missing row returns "" so the caller applies the default policy.
 	if model, err := s.Model(ctx, "s-missing"); err != nil || model != "" {
@@ -66,11 +58,7 @@ func TestSessionSettingsModel(t *testing.T) {
 
 func TestSessionSettingsMode(t *testing.T) {
 	ctx := context.Background()
-	s, err := Open("file::memory:?cache=shared")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Close() }()
+	s := openState(t, "file::memory:?cache=shared")
 
 	// Missing row returns "" so the caller applies the workspace
 	// default.
@@ -96,11 +84,7 @@ func TestSessionSettingsMode(t *testing.T) {
 
 func TestSessionSettingsRemove(t *testing.T) {
 	ctx := context.Background()
-	s, err := Open("file::memory:?cache=shared")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Close() }()
+	s := openState(t, "file::memory:?cache=shared")
 
 	if err := s.SetThinkLevel(ctx, "s-1", "high"); err != nil {
 		t.Fatal(err)

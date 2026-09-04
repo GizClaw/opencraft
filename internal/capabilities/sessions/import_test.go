@@ -32,7 +32,7 @@ func importFixture() ImportRequest {
 }
 
 func TestImportPersistsAndDedupes(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestImportPersistsAndDedupes(t *testing.T) {
 }
 
 func TestImportPendingReturnsSameIDWhileInFlight(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestImportPendingReturnsSameIDWhileInFlight(t *testing.T) {
 }
 
 func TestImportRequiresSourceAndArchiveableMessages(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}

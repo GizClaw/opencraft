@@ -319,7 +319,6 @@ func (a *App) Shutdown(ctx context.Context) {
 	a.closeRuntime()
 	a.mu.Lock()
 	udb := a.userDB
-	usageStore := a.usage
 	a.userDB = nil
 	a.usage = nil
 	a.automationStore = nil
@@ -327,8 +326,6 @@ func (a *App) Shutdown(ctx context.Context) {
 	a.mu.Unlock()
 	if udb != nil {
 		_ = udb.Close()
-	} else if usageStore != nil {
-		_ = usageStore.Close()
 	}
 	if a.otelShutdown != nil {
 		flushCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -429,15 +426,23 @@ func (a *App) rebuild() error {
 	a.mu.Unlock()
 	if usageStore == nil {
 		if dataDir, err := config.UserDataDir(); err == nil {
-			if store, err := usage.Open(filepath.Join(dataDir, "user.db")); err == nil {
-				a.mu.Lock()
-				if a.usage == nil {
-					a.usage = store
-					store = nil
-				}
-				a.mu.Unlock()
-				if store != nil {
-					_ = store.Close()
+			udb, err := db.Open(filepath.Join(dataDir, "user.db"))
+			if err == nil {
+				if migrErr := migrations.User(ctx, udb); migrErr != nil {
+					_ = udb.Close()
+				} else if store, attachErr := usage.Attach(udb); attachErr == nil {
+					a.mu.Lock()
+					if a.usage == nil {
+						a.usage = store
+						a.userDB = udb
+						udb = nil
+					}
+					a.mu.Unlock()
+					if udb != nil {
+						_ = udb.Close()
+					}
+				} else {
+					_ = udb.Close()
 				}
 			}
 		}

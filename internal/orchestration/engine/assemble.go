@@ -213,10 +213,12 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 			return opmemory.RegisterWithObserver(r, o.usageObserver)
 		},
 		func(r *resource.Registry) error {
-			if o.SessionStore != nil {
-				return r.Register(ocsessions.Factory{StoreFor: o.SessionStore})
+			if o.SessionStore == nil {
+				return fmt.Errorf(
+					"engine: session store requires WithSessionStore " +
+						"(schema migration is centralized in orchestration/migrations)")
 			}
-			return ocsessions.Register(r)
+			return r.Register(ocsessions.Factory{StoreFor: o.SessionStore})
 		},
 		opmedia.Register,
 		skills.Register,

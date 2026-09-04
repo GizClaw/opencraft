@@ -1,8 +1,8 @@
 // Package usage owns the user-level token usage tables in
 // ~/.opencraft/user.db: per-model usage across every workspace and
-// session, aggregated on demand. The desktop shell shares one
-// db.DB between usage and automations; New attaches to that
-// handle, while Open remains a convenience for standalone use/tests.
+// session, aggregated on demand. The desktop shell migrates user.db
+// through orchestration/migrations and then Attach binds this store
+// to the shared handle.
 package usage
 
 import (
@@ -16,61 +16,16 @@ import (
 
 // Store is the user-level usage database.
 type Store struct {
-	db      *sql.DB
-	closeFn func() error
-}
-
-// New attaches the usage store to an existing foundation/db handle and
-// registers the usage migrations.
-func New(handle *db.DB) (*Store, error) {
-	if handle == nil {
-		return nil, fmt.Errorf("usage: nil database")
-	}
-	if err := handle.Migrate(context.Background(), Migrations()); err != nil {
-		return nil, fmt.Errorf("usage: migrate schema: %w", err)
-	}
-	return &Store{db: handle.SQLDB()}, nil
+	db *sql.DB
 }
 
 // Attach binds the usage store to an existing foundation/db handle
-// without migrating. Callers that already ran the centralized user
-// migrations should use Attach; New remains for standalone use.
+// that orchestration/migrations.User already migrated.
 func Attach(handle *db.DB) (*Store, error) {
 	if handle == nil {
 		return nil, fmt.Errorf("usage: nil database")
 	}
 	return &Store{db: handle.SQLDB()}, nil
-}
-
-// Open opens (creating if necessary) the usage database at path. It
-// owns the connection and Close closes it. Desktop callers should
-// prefer New over a shared db.DB.
-func Open(path string) (*Store, error) {
-	udb, err := db.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	st, err := New(udb)
-	if err != nil {
-		_ = udb.Close()
-		return nil, err
-	}
-	st.closeFn = udb.Close
-	return st, nil
-}
-
-// Close closes the database handle.
-func (s *Store) Close() error {
-	if s == nil {
-		return nil
-	}
-	if s.closeFn != nil {
-		return s.closeFn()
-	}
-	if s.db != nil {
-		return s.db.Close()
-	}
-	return nil
 }
 
 // Usage is one recorded usage delta for a model in a session.

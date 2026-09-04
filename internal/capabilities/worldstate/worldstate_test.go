@@ -15,6 +15,7 @@ import (
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/plan"
+	"github.com/GizClaw/opencraft/internal/testing/sessionstore"
 )
 
 func write(t *testing.T, path, content string) {
@@ -29,7 +30,7 @@ func write(t *testing.T, path, content string) {
 
 func newSessionStore(t *testing.T) *ocsessions.Store {
 	t.Helper()
-	sess, err := ocsessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	sess, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +167,7 @@ func TestPermissionsSectionShowsLiveRules(t *testing.T) {
 }
 
 func TestPermissionsSectionShowsYOLOForSession(t *testing.T) {
-	store, err := ocsessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +198,7 @@ func TestPermissionsSectionShowsYOLOForSession(t *testing.T) {
 }
 
 func TestPermissionsSectionShowsReadOnlyForSession(t *testing.T) {
-	store, err := ocsessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}

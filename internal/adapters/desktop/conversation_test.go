@@ -14,7 +14,7 @@ import (
 )
 
 func TestResumeSessionAcceptsNewChatBeforePersist(t *testing.T) {
-	store, err := ocsessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := openMigratedSessions(t, filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestResumeSessionAcceptsNewChatBeforePersist(t *testing.T) {
 }
 
 func TestResumeSessionSnapshotPersistsSettings(t *testing.T) {
-	store, err := ocsessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := openMigratedSessions(t, filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestResumeSessionSnapshotPersistsSettings(t *testing.T) {
 }
 
 func TestStartTurnRejectsMissingContext(t *testing.T) {
-	store, err := ocsessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := openMigratedSessions(t, filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestStartTurnRejectsMissingContext(t *testing.T) {
 }
 
 func TestSessionTurnsAreIsolatedPerSession(t *testing.T) {
-	store, err := ocsessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := openMigratedSessions(t, filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestSessionTurnsAreIsolatedPerSession(t *testing.T) {
 }
 
 func TestSessionTurnsExposeRunID(t *testing.T) {
-	store, err := ocsessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := openMigratedSessions(t, filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestSessionTurnsExposeRunID(t *testing.T) {
 }
 
 func TestSessionBindingsRejectTraversalIDs(t *testing.T) {
-	store, err := ocsessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := openMigratedSessions(t, filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +227,7 @@ func TestSessionBindingsRejectTraversalIDs(t *testing.T) {
 }
 
 func TestExportSessionKeepsUserAndFinalAssistantOnly(t *testing.T) {
-	store, err := ocsessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := openMigratedSessions(t, filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}

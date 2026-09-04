@@ -10,6 +10,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/memory/summary"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
+	"github.com/GizClaw/opencraft/internal/orchestration/migrations"
 )
 
 // newSQLiteTurnStore opens a throwaway state DB and wraps it in the
@@ -21,7 +22,7 @@ func newSQLiteTurnStore(t *testing.T) (*sqliteTurnStore, *state.Store) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	if err := store.Handle().Migrate(context.Background(), Migrations()); err != nil {
+	if err := migrations.WorkspaceSchema(context.Background(), store.Handle()); err != nil {
 		t.Fatal(err)
 	}
 	return &sqliteTurnStore{db: store.Handle()}, store

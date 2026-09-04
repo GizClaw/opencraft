@@ -7,11 +7,13 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+
+	"github.com/GizClaw/opencraft/internal/testing/sessionstore"
 )
 
 func newSessionsStore(t *testing.T) *sessions.Store {
 	t.Helper()
-	store, err := sessions.New(t.TempDir(), 40)
+	store, err := sessionstore.Open(t, t.TempDir(), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -20,7 +22,7 @@ func newSessionsStore(t *testing.T) *sessions.Store {
 
 func mustSessions(t *testing.T, root string) *sessions.Store {
 	t.Helper()
-	store, err := sessions.New(root, 40)
+	store, err := sessionstore.Open(t, root, 40)
 	if err != nil {
 		t.Fatal(err)
 	}

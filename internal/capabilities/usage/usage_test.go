@@ -4,14 +4,30 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+
+	"github.com/GizClaw/opencraft/internal/foundation/db"
+	"github.com/GizClaw/opencraft/internal/orchestration/migrations"
 )
 
-func TestRecordAndSummary(t *testing.T) {
-	store, err := Open(filepath.Join(t.TempDir(), "user.db"))
+func newUsageStore(t *testing.T) (*Store, *db.DB) {
+	t.Helper()
+	handle, err := db.Open(filepath.Join(t.TempDir(), "user.db"))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("open user db: %v", err)
 	}
-	defer func() { _ = store.Close() }()
+	t.Cleanup(func() { _ = handle.Close() })
+	if err := migrations.User(context.Background(), handle); err != nil {
+		t.Fatalf("migrate user db: %v", err)
+	}
+	store, err := Attach(handle)
+	if err != nil {
+		t.Fatalf("attach usage store: %v", err)
+	}
+	return store, handle
+}
+
+func TestRecordAndSummary(t *testing.T) {
+	store, _ := newUsageStore(t)
 	ctx := context.Background()
 
 	// Same model across two workspaces and several sessions.
@@ -61,11 +77,7 @@ func TestRecordAndSummary(t *testing.T) {
 }
 
 func TestSeriesHourAndDay(t *testing.T) {
-	store, err := Open(filepath.Join(t.TempDir(), "user.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = store.Close() }()
+	store, _ := newUsageStore(t)
 	ctx := context.Background()
 
 	// Directly seed UTC hours around a day boundary: 15:00Z and 16:00Z

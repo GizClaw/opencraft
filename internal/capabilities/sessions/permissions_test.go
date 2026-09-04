@@ -7,7 +7,7 @@ import (
 )
 
 func TestSessionModePersists(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestSessionModePersists(t *testing.T) {
 	}
 
 	// A fresh store over the same root sees the persisted mode.
-	reopened, err := New(store.root, 40)
+	reopened, err := newMigratedStore(store.root, 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestSessionModePersists(t *testing.T) {
 }
 
 func TestSessionModeReadOnlyPersists(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestSessionModeReadOnlyPersists(t *testing.T) {
 }
 
 func TestSessionModeIsolatedPerSession(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +76,7 @@ func TestSessionModeIsolatedPerSession(t *testing.T) {
 }
 
 func TestSetModeRejectsUnknown(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}

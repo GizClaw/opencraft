@@ -26,97 +26,16 @@ const timeLayout = time.RFC3339
 // Store persists automation tasks and runs in the shared user
 // database (~/.opencraft/user.db).
 type Store struct {
-	db      *sql.DB
-	closeFn func() error
-}
-
-// New attaches the automation store to an existing foundation/db
-// handle and registers the automation migrations.
-func New(handle *db.DB) (*Store, error) {
-	if handle == nil {
-		return nil, fmt.Errorf("automations: nil database")
-	}
-	if err := handle.Migrate(context.Background(), Migrations()); err != nil {
-		return nil, fmt.Errorf("automations: migrate schema: %w", err)
-	}
-	return Attach(handle)
+	db *sql.DB
 }
 
 // Attach binds the automation store to an existing foundation/db
-// handle without migrating. Callers that already ran the centralized
-// user migrations should use Attach; New remains for standalone use.
+// handle that orchestration/migrations.User already migrated.
 func Attach(handle *db.DB) (*Store, error) {
 	if handle == nil {
 		return nil, fmt.Errorf("automations: nil database")
 	}
-	if err := ensureAutomationsColumn(handle.SQLDB(), "notify", "TEXT NOT NULL DEFAULT 'always'"); err != nil {
-		return nil, fmt.Errorf("automations: migrate schema: %w", err)
-	}
-	if err := ensureAutomationsColumn(handle.SQLDB(), "conversation_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		return nil, fmt.Errorf("automations: migrate schema: %w", err)
-	}
 	return &Store{db: handle.SQLDB()}, nil
-}
-
-// ensureAutomationsColumn adds a column to an existing automations
-// table when it predates the current schema (CREATE TABLE IF NOT
-// EXISTS leaves old tables untouched).
-func ensureAutomationsColumn(db *sql.DB, column, decl string) error {
-	rows, err := db.Query(`PRAGMA table_info(automations)`)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var (
-			cid     int
-			name    string
-			ctype   string
-			notnull int
-			dflt    sql.NullString
-			pk      int
-		)
-		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
-			return err
-		}
-		if name == column {
-			return nil
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	_, err = db.Exec(
-		`ALTER TABLE automations ADD COLUMN ` + column + ` ` + decl)
-	return err
-}
-
-// Open opens (creating if necessary) the automation store at the user
-// database path. It owns the connection; desktop callers should
-// prefer New over a shared db.DB.
-func Open(path string) (*Store, error) {
-	udb, err := db.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	st, err := New(udb)
-	if err != nil {
-		_ = udb.Close()
-		return nil, err
-	}
-	st.closeFn = udb.Close
-	return st, nil
-}
-
-// Close closes the connection when this store owns it (Open).
-func (s *Store) Close() error {
-	if s == nil {
-		return nil
-	}
-	if s.closeFn != nil {
-		return s.closeFn()
-	}
-	return nil
 }
 
 // ListTasks returns every task, ordered by name.

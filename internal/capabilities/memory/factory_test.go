@@ -9,15 +9,13 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference/route"
 	corememory "github.com/GizClaw/flowcraft/core/memory"
 	"github.com/GizClaw/flowcraft/core/resource"
-
-	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 )
 
 // TestFactoryWiresRouter verifies the memory assembly builds over a
 // router dep (the wiring used by the embedded deploy document) and
 // still assembles without one (buffer-fold-only deployments).
 func TestFactoryWiresRouter(t *testing.T) {
-	store, err := sessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedSessions(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}

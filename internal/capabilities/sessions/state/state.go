@@ -19,26 +19,30 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/db"
 )
 
-// Store is a SQLite-backed opencraft state store. Use Open to create or
-// open the database; the store owns the handle.
+// Store is a SQLite-backed opencraft state store. Open creates or
+// opens the database handle without applying migrations; the central
+// orchestration/migrations package owns every schema step and must run
+// Workspace before the store is used.
 type Store struct {
 	db     *db.DB
 	ownsDB bool
 }
 
-// Open opens (creating if necessary) the SQLite database at path and
-// applies sessions/state migrations.
+// Open opens (creating if necessary) the SQLite database at path.
+// Callers must apply orchestration/migrations.WorkspaceSchema before
+// using the returned store.
 func Open(path string) (*Store, error) {
 	handle, err := db.OpenWithOptions(path, db.OpenOptions{ForeignKeys: false})
 	if err != nil {
 		return nil, fmt.Errorf("state: open %s: %w", path, err)
 	}
-	s := &Store{db: handle, ownsDB: true}
-	if err := handle.Migrate(context.Background(), Migrations()); err != nil {
-		_ = handle.Close()
-		return nil, fmt.Errorf("state: migrate %s: %w", path, err)
-	}
-	return s, nil
+	return &Store{db: handle, ownsDB: true}, nil
+}
+
+// Attach wraps an already-migrated foundation/db handle. The caller
+// keeps ownership of the handle.
+func Attach(handle *db.DB) *Store {
+	return &Store{db: handle, ownsDB: false}
 }
 
 // Close closes the underlying database handle when owned.

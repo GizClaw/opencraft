@@ -19,6 +19,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/usage"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
+	"github.com/GizClaw/opencraft/internal/orchestration/migrations"
 )
 
 // AutomationScheduleDTO is the wire form of one task schedule.
@@ -241,7 +242,7 @@ func (a *App) AutomationSessions(workspace string) ([]SessionMeta, error) {
 	if info, err := os.Stat(root); err != nil || !info.IsDir() {
 		return []SessionMeta{}, nil
 	}
-	store, err := ocsessions.New(root, 40)
+	store, err := a.openSessionStore(context.Background(), root)
 	if err != nil {
 		return nil, err
 	}
@@ -271,12 +272,30 @@ func (a *App) sessionExistsInWorkspace(workspace, id string) (bool, error) {
 	if info, err := os.Stat(root); err != nil || !info.IsDir() {
 		return false, nil
 	}
-	store, err := ocsessions.New(root, 40)
+	store, err := a.openSessionStore(context.Background(), root)
 	if err != nil {
 		return false, err
 	}
 	defer func() { _ = store.Close() }()
 	return store.Exists(id), nil
+}
+
+// openSessionStore opens one workspace sessions.Store with the
+// centralized workspace migration (schema + legacy JSON import)
+// applied. It is used by the automation session picker, which reads
+// workspaces that are not necessarily open in the main UI.
+func (a *App) openSessionStore(
+	ctx context.Context, root string,
+) (*ocsessions.Store, error) {
+	store, err := ocsessions.New(root, 40)
+	if err != nil {
+		return nil, err
+	}
+	if err := migrations.Workspace(ctx, store.Database(), root); err != nil {
+		_ = store.Close()
+		return nil, err
+	}
+	return store, nil
 }
 
 // runAutomation executes one task on the shared Host for its

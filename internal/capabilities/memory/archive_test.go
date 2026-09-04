@@ -35,7 +35,7 @@ func (s *stubSink) count() int {
 
 func newArchiveObserver(t *testing.T) (*archiveObserver, *sessions.Store, *stubSink) {
 	t.Helper()
-	store, err := sessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedSessions(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}

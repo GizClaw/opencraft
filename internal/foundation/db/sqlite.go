@@ -1,7 +1,7 @@
 // Package db owns SQLite connection scaffolding shared by user-level
 // stores: one connection configured for WAL and a busy timeout.
-// It deliberately owns no tables; usage and automations register their
-// own schemas on the handle.
+// It deliberately owns no tables; orchestration/migrations defines and
+// executes every schema on the handle.
 package db
 
 import (

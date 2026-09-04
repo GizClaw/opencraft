@@ -6,7 +6,7 @@ import (
 )
 
 func TestThinkDefaultAndRoundTrip(t *testing.T) {
-	store, err := New(t.TempDir(), 40)
+	store, err := newMigratedStore(t.TempDir(), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestThinkDefaultAndRoundTrip(t *testing.T) {
 }
 
 func TestSetThinkRejectsInvalid(t *testing.T) {
-	store, err := New(t.TempDir(), 40)
+	store, err := newMigratedStore(t.TempDir(), 40)
 	if err != nil {
 		t.Fatal(err)
 	}

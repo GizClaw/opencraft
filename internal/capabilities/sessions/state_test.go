@@ -15,7 +15,7 @@ import (
 // store to memory, and serves agent checkpoints itself.
 func TestStoreOwnsSQLite(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "sessions")
-	store, err := New(root, 40)
+	store, err := newMigratedStore(root, 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestStoreOwnsSQLite(t *testing.T) {
 	}
 
 	// A fresh store over the same root sees the same SQLite data.
-	reopened, err := New(root, 40)
+	reopened, err := newMigratedStore(root, 40)
 	if err != nil {
 		t.Fatal(err)
 	}

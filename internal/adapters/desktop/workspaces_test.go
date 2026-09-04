@@ -195,8 +195,8 @@ func TestRemoveCurrentWorkspaceSwitchesToNext(t *testing.T) {
 	if len(metas) != 1 || metas[0].Path != next {
 		t.Fatalf("history after removal = %+v, want only %q", metas, next)
 	}
-	if a.usage != nil {
-		_ = a.usage.Close()
+	if a.userDB != nil {
+		_ = a.userDB.Close()
 	}
 }
 

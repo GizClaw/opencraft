@@ -9,6 +9,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/testing/sessionstore"
 )
 
 func TestDomainGateAllowDeny(t *testing.T) {
@@ -60,7 +61,7 @@ func TestDomainGateSSRFGuard(t *testing.T) {
 }
 
 func TestYOLOBypassGate(t *testing.T) {
-	store, err := ocsessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}

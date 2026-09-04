@@ -110,8 +110,8 @@ func TestRebuildUnconfiguredAfterRemovingLastProfile(t *testing.T) {
 	if a.currentHost != nil || a.sessions != nil {
 		t.Fatal("unconfigured rebuild must not leave a runtime assembled")
 	}
-	if a.usage != nil {
-		_ = a.usage.Close()
+	if a.userDB != nil {
+		_ = a.userDB.Close()
 	}
 }
 

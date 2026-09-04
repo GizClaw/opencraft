@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -11,28 +11,17 @@ import (
 
 func TestOpenMigrateAndReopen(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "session.db")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	s := openState(t, path)
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	s2, err := Open(path)
-	if err != nil {
-		t.Fatalf("reopen: %v", err)
-	}
-	defer func() { _ = s2.Close() }()
+	openState(t, path)
 }
 
 func TestStateServesCheckpointsAndSettings(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "sessions", "session.db")
-	s, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Close() }()
+	s := openState(t, path)
 
 	cp := agent.Checkpoint{
 		ExecID:    "run-1",

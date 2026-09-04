@@ -2,7 +2,6 @@ package automations
 
 import (
 	"context"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -14,11 +13,7 @@ func newTestManager(
 	run RunFunc,
 ) (*Manager, *Store, *time.Time) {
 	t.Helper()
-	store, err := Open(filepath.Join(t.TempDir(), "user.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
+	_, store := newUserStore(t)
 	now := time.Date(2026, 9, 1, 9, 0, 0, 0, time.Local)
 	m, err := NewManager(store, ManagerOptions{
 		Run: run,
@@ -174,11 +169,7 @@ func TestManagerConcurrencyLimit(t *testing.T) {
 		active.Add(-1)
 		return RunResult{Status: RunCompleted}, nil
 	}
-	store, err := Open(filepath.Join(t.TempDir(), "user.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = store.Close() }()
+	_, store := newUserStore(t)
 	m, err := NewManager(store, ManagerOptions{
 		Run:    run,
 		Now:    func() time.Time { return time.Now() },
@@ -234,11 +225,7 @@ func TestManagerDisabledTaskDoesNotTrigger(t *testing.T) {
 }
 
 func TestManagerStartReconcilesStaleRuns(t *testing.T) {
-	store, err := Open(filepath.Join(t.TempDir(), "user.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = store.Close() }()
+	_, store := newUserStore(t)
 	task := saveDailyTask(t, store, "brief")
 	if _, err := store.AppendRun(context.Background(), Run{
 		TaskID: task.ID,

@@ -1,0 +1,1 @@
+ALTER TABLE session_settings ADD COLUMN model TEXT NOT NULL DEFAULT '';

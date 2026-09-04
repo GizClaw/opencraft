@@ -8,8 +8,6 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/message/media"
-
-	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 )
 
 func TestDecodeMessage(t *testing.T) {
@@ -54,7 +52,7 @@ func TestDecodeMessageRejectsNonUser(t *testing.T) {
 }
 
 func TestPersistAttachments(t *testing.T) {
-	store, err := ocsessions.New(t.TempDir(), 40)
+	store, err := openMigratedSessions(t, t.TempDir(), 40)
 	if err != nil {
 		t.Fatalf("session store: %v", err)
 	}

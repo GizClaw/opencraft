@@ -340,7 +340,7 @@ func (m *Manager) acquireStore(
 	if err != nil {
 		return nil, err
 	}
-	if err := migrations.Workspace(ctx, store.Database()); err != nil {
+	if err := migrations.Workspace(ctx, store.Database(), root); err != nil {
 		_ = store.Close()
 		return nil, err
 	}

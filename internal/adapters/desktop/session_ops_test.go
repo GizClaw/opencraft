@@ -10,7 +10,7 @@ import (
 
 func newSessionOpsApp(t *testing.T) (*App, *ocsessions.Store) {
 	t.Helper()
-	store, err := ocsessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := openMigratedSessions(t, filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}

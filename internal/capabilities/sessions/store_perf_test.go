@@ -13,7 +13,7 @@ import (
 
 func benchStore(tb testing.TB, turns int) (*Store, string) {
 	tb.Helper()
-	store, err := New(tb.TempDir(), 40)
+	store, err := newMigratedStore(tb.TempDir(), 40)
 	if err != nil {
 		tb.Fatal(err)
 	}

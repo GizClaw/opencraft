@@ -17,7 +17,7 @@ import (
 // TestSaveAttachment verifies URL-sourced attachments land in the
 // session's media/files directories with the source extension.
 func TestSaveAttachment(t *testing.T) {
-	store, err := New(t.TempDir(), 40)
+	store, err := newMigratedStore(t.TempDir(), 40)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestSaveAttachment(t *testing.T) {
 // the archive in URL form (the session persists the stored path, not
 // the inline bytes), so /resume can re-render attachments.
 func TestAppendTurnKeepsMediaURL(t *testing.T) {
-	store, err := New(t.TempDir(), 40)
+	store, err := newMigratedStore(t.TempDir(), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func TestAppendTurnKeepsMediaURL(t *testing.T) {
 }
 
 func TestAppendAndHistory(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,7 +137,7 @@ func TestAppendAndHistory(t *testing.T) {
 
 func TestSessionFilePermissions(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "sessions")
-	store, err := New(root, 40)
+	store, err := newMigratedStore(root, 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +171,7 @@ func TestSessionFilePermissions(t *testing.T) {
 }
 
 func TestMetaIndexSurvivesUsageRecord(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestMetaIndexSurvivesUsageRecord(t *testing.T) {
 }
 
 func TestListSkipsArchiveWithoutMeta(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestListSkipsArchiveWithoutMeta(t *testing.T) {
 }
 
 func TestHistoryWindow(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +242,7 @@ func TestHistoryWindow(t *testing.T) {
 }
 
 func TestRemoveRejectsTraversalID(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func TestRemoveRejectsTraversalID(t *testing.T) {
 }
 
 func TestListMeta(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +311,7 @@ func TestListMeta(t *testing.T) {
 }
 
 func TestRecordAndLoadUsage(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,7 +357,7 @@ func TestRecordAndLoadUsage(t *testing.T) {
 }
 
 func TestAppendSkipsEmpty(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -374,7 +374,7 @@ func TestAppendSkipsEmpty(t *testing.T) {
 }
 
 func TestAllIDMethodsRejectTraversal(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -435,7 +435,7 @@ func TestAllIDMethodsRejectTraversal(t *testing.T) {
 // never receives a JSON null for the session list.
 func TestListEmptyWhenRootMissing(t *testing.T) {
 	dir := t.TempDir()
-	store, err := New(filepath.Join(dir, "sessions"), 40)
+	store, err := newMigratedStore(filepath.Join(dir, "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,7 +459,7 @@ func TestListEmptyWhenRootMissing(t *testing.T) {
 // attached to the next archived turn (deduped by path with the latest
 // byte count), cleared after append, and readable back through Turns.
 func TestBufferArtifactMergesIntoTurn(t *testing.T) {
-	store, err := New(t.TempDir(), 40)
+	store, err := newMigratedStore(t.TempDir(), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -531,7 +531,7 @@ func TestBufferArtifactMergesIntoTurn(t *testing.T) {
 // agent-start timestamps captured when a run begins are attached to the
 // matching archived turn and readable back through Turns.
 func TestRecordTurnTimingPersistsWithArchivedTurn(t *testing.T) {
-	store, err := New(t.TempDir(), 40)
+	store, err := newMigratedStore(t.TempDir(), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -612,7 +612,7 @@ func TestLegacyJSONHistoryMigratedIntoSQLite(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	store, err := New(root, 40)
+	store, err := newMigratedStore(root, 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -634,7 +634,7 @@ func TestLegacyJSONHistoryMigratedIntoSQLite(t *testing.T) {
 // just the latest file), refreshing matching paths in place, and is a
 // no-op without an archived turn.
 func TestAppendTurnArtifactsMergesIntoLatestTurn(t *testing.T) {
-	store, err := New(t.TempDir(), 40)
+	store, err := newMigratedStore(t.TempDir(), 40)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -16,6 +16,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/files"
+	"github.com/GizClaw/opencraft/internal/testing/sessionstore"
 )
 
 // sessionCtx wraps ctx with the RunInfo flowcraft injects during graph
@@ -85,7 +86,7 @@ func (r *captureOptsRunner) Terminate(context.Context, string) error { return ni
 
 func newTestStore(t *testing.T) *sessions.Store {
 	t.Helper()
-	store, err := sessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}

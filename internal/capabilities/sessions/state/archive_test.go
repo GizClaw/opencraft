@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,27 +7,25 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/message"
+
+	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
 )
 
 func TestConversationArchiveCommitRoundTrip(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "session.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Close() }()
+	s := openState(t, filepath.Join(t.TempDir(), "session.db"))
 	ctx := context.Background()
-	conv := Conversation{
+	conv := state.Conversation{
 		ID:        "s-1",
 		Title:     "hello",
 		CreatedAt: time.Now().UTC(),
 	}
-	if err := s.CommitConversationTurn(ctx, conv, ArchiveTurn{
+	if err := s.CommitConversationTurn(ctx, conv, state.ArchiveTurn{
 		RunID:       "run-1",
 		At:          time.Now().UTC(),
 		RequestedAt: time.Now().UTC(),
 		StartedAt:   time.Now().UTC(),
 		FinishedAt:  time.Now().UTC(),
-	}, []ArchiveMessage{
+	}, []state.ArchiveMessage{
 		{Role: string(message.RoleUser), Content: message.Content{
 			Parts: []message.Part{message.TextPart{Text: "hi"}},
 		}},
@@ -35,7 +33,7 @@ func TestConversationArchiveCommitRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Duplicate run id is a no-op.
-	if err := s.CommitConversationTurn(ctx, conv, ArchiveTurn{RunID: "run-1"}, []ArchiveMessage{
+	if err := s.CommitConversationTurn(ctx, conv, state.ArchiveTurn{RunID: "run-1"}, []state.ArchiveMessage{
 		{Role: string(message.RoleUser), Content: message.Content{
 			Parts: []message.Part{message.TextPart{Text: "again"}},
 		}},
@@ -74,15 +72,11 @@ func TestConversationArchiveCommitRoundTrip(t *testing.T) {
 }
 
 func TestConversationDeleteRemovesAllRows(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "session.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Close() }()
+	s := openState(t, filepath.Join(t.TempDir(), "session.db"))
 	ctx := context.Background()
-	if err := s.CommitConversationTurn(ctx, Conversation{ID: "s-1"}, ArchiveTurn{
+	if err := s.CommitConversationTurn(ctx, state.Conversation{ID: "s-1"}, state.ArchiveTurn{
 		RunID: "r1",
-	}, []ArchiveMessage{
+	}, []state.ArchiveMessage{
 		{Role: string(message.RoleUser), Content: message.Content{
 			Parts: []message.Part{message.TextPart{Text: "x"}},
 		}},
@@ -95,22 +89,18 @@ func TestConversationDeleteRemovesAllRows(t *testing.T) {
 	if err := s.DeleteConversationRows(ctx, "s-1"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Conversation(ctx, "s-1"); err != ErrNotFound {
+	if _, err := s.Conversation(ctx, "s-1"); err != state.ErrNotFound {
 		t.Fatalf("conversation after delete: %v", err)
 	}
-	if _, err := s.GetConversationState(ctx, "s-1", "plans"); err != ErrNotFound {
+	if _, err := s.GetConversationState(ctx, "s-1", "plans"); err != state.ErrNotFound {
 		t.Fatalf("state after delete: %v", err)
 	}
 }
 
 func TestConversationByImportSource(t *testing.T) {
-	s, err := Open(filepath.Join(t.TempDir(), "session.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = s.Close() }()
+	s := openState(t, filepath.Join(t.TempDir(), "session.db"))
 	ctx := context.Background()
-	c := Conversation{ID: "s-1", ImportSource: "src-a"}
+	c := state.Conversation{ID: "s-1", ImportSource: "src-a"}
 	if err := s.EnsureConversation(ctx, c); err != nil {
 		t.Fatal(err)
 	}

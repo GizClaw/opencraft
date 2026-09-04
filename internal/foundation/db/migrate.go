@@ -7,9 +7,9 @@ import (
 	"strings"
 )
 
-// Migration is one versioned schema step owned by a capability
-// package. The foundation db package executes migrations but never
-// defines any.
+// Migration is one versioned schema step owned by the centralized
+// orchestration/migrations package. The foundation db package executes
+// migrations but never defines any.
 type Migration struct {
 	Version    int
 	Name       string

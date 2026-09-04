@@ -8,7 +8,7 @@ import (
 )
 
 func TestWriteReadState(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +38,7 @@ func TestWriteReadState(t *testing.T) {
 }
 
 func TestReadStateMissing(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestReadStateMissing(t *testing.T) {
 }
 
 func TestStateNameRejected(t *testing.T) {
-	store, err := New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}

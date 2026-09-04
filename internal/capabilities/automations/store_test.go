@@ -2,20 +2,9 @@ package automations
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 	"time"
 )
-
-func newTestStore(t *testing.T) *Store {
-	t.Helper()
-	store, err := Open(filepath.Join(t.TempDir(), "user.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	return store
-}
 
 func testTask() Task {
 	return Task{

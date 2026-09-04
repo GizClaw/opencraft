@@ -6,7 +6,7 @@ import (
 )
 
 func TestModelDefaultAndRoundTrip(t *testing.T) {
-	store, err := New(t.TempDir(), 40)
+	store, err := newMigratedStore(t.TempDir(), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func TestModelDefaultAndRoundTrip(t *testing.T) {
 }
 
 func TestSetModelRejectsInvalidID(t *testing.T) {
-	store, err := New(t.TempDir(), 40)
+	store, err := newMigratedStore(t.TempDir(), 40)
 	if err != nil {
 		t.Fatal(err)
 	}

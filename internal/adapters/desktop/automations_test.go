@@ -7,21 +7,21 @@ import (
 	"testing"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/automations"
-	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 )
 
 func newAutomationTestApp(t *testing.T) (*App, *automations.Store) {
 	t.Helper()
 	wd := t.TempDir()
-	store, err := automations.Open(filepath.Join(t.TempDir(), "user.db"))
+	handle := openUserDB(t)
+	store, err := automations.Attach(handle)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
 	a := &App{
 		mu:              sync.Mutex{},
 		workDir:         wd,
 		automationStore: store,
+		userDB:          handle,
 	}
 	return a, store
 }
@@ -102,7 +102,7 @@ func TestSaveAutomationExistingSession(t *testing.T) {
 	}
 
 	root := filepath.Join(a.workDir, ".opencraft", "sessions")
-	store, err := ocsessions.New(root, 40)
+	store, err := openMigratedSessions(t, root, 40)
 	if err != nil {
 		t.Fatal(err)
 	}

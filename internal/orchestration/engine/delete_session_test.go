@@ -12,6 +12,7 @@ import (
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/testing/sessionstore"
 )
 
 // TestDeleteSessionClosesLiveSession verifies the desktop deletion path
@@ -50,12 +51,22 @@ func TestDeleteSessionClosesLiveSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load config: %v", err)
 	}
+	layout := testWorkspaceLayout(t, home, work)
+	sessionStore, err := sessionstore.Open(t, layout.SessionsDir, 40)
+	if err != nil {
+		t.Fatalf("open sessions: %v", err)
+	}
 	rt, err := BuildRuntime(
 		context.Background(),
 		view.Document,
 		WithWorkBase(work),
 		WithConfigBase(userDir),
-		WithWorkspaceLayout(testWorkspaceLayout(t, home, work)),
+		WithWorkspaceLayout(layout),
+		WithSessionStore(func(
+			context.Context, string, int,
+		) (*ocsessions.Store, error) {
+			return sessionStore, nil
+		}),
 	)
 	if err != nil {
 		t.Fatalf("BuildRuntime: %v", err)

@@ -10,8 +10,8 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/message"
 
-	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/summarytext"
+	"github.com/GizClaw/opencraft/internal/testing/sessionstore"
 )
 
 func patchSummary(t *testing.T, out string) string {
@@ -37,7 +37,7 @@ func convMsg(role, text string) string {
 }
 
 func TestExecuteCondensesAndPersistsArtifact(t *testing.T) {
-	store, err := sessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestExecuteCondensesAndPersistsArtifact(t *testing.T) {
 }
 
 func TestExecuteMergesNewMessagesWithArtifact(t *testing.T) {
-	store, err := sessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +159,7 @@ func TestExecuteMergesNewMessagesWithArtifact(t *testing.T) {
 // the persisted artifact without another LLM call, and a genuine new
 // message is condensed together with the stored summary.
 func TestExecuteSkipsSummaryMarkedMessages(t *testing.T) {
-	store, err := sessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,7 +234,7 @@ func TestExecuteSkipsSummaryMarkedMessages(t *testing.T) {
 // are rendered as tool_call / tool_result text lines instead of being
 // silently dropped.
 func TestExecuteRendersToolActivity(t *testing.T) {
-	store, err := sessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +304,7 @@ func TestRenderSystemPrompt(t *testing.T) {
 }
 
 func TestExecuteRejectsEmptyConversation(t *testing.T) {
-	store, err := sessions.New(filepath.Join(t.TempDir(), "sessions"), 40)
+	store, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
 	}
