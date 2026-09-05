@@ -92,9 +92,17 @@ export function mockBackend(cfg?: MockConfig) {
       ForkTurn: async () => `s-fork-${++forkSeq}`,
       NewChat: async () => {
         const queued = config.newChatIds?.shift();
-        if (queued) return queued;
         newChatSeq += 1;
-        return newChatSeq === 1 ? 's-new' : `s-new-${newChatSeq}`;
+        const id =
+          queued ?? (newChatSeq === 1 ? 's-new' : `s-new-${newChatSeq}`);
+        // Mirrors the NewChatResult binding: the id plus the effective
+        // session defaults applied at mint time.
+        return {
+          session_id: id,
+          mode: 'workspace',
+          think: 'medium',
+          model: '',
+        };
       },
       ReplyPrompt: async () => true,
       ResumeSession: noop,
@@ -203,12 +211,14 @@ export function mockBackend(cfg?: MockConfig) {
       CancelCard: async () => false,
       DeleteSkill: noop,
       DenyPermission: noop,
+      GetSessionDefaults: async () => ({ mode: 'workspace', think: 'medium' }),
       GetModel: async () => '',
       GetThink: async () => 'medium',
       InstallSkill: async () => '',
       Permissions: emptyList,
       ReadLog: async () => '',
       RenderSkillPatch: emptyList,
+      SetSessionDefaults: noop,
       SetModel: noop,
       SetThink: noop,
       SkillContent: async () => '',

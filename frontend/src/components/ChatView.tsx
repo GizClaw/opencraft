@@ -29,7 +29,6 @@ import {
   Film,
   Flame,
   FolderOpen,
-  Globe,
   GitFork,
   Lock,
   Loader2,
@@ -49,6 +48,7 @@ import { useTranslation } from 'react-i18next';
 import { OnFileDrop, OnFileDropOff } from '../../wailsjs/runtime/runtime';
 import { api } from '../lib/api';
 import { COMPACT_SUMMARY_PREFIX } from '../lib/compact';
+import { SESSION_MODES, type SessionModeOption } from '../lib/sessionModes';
 import {
   friendlyFailure,
   friendlyInterruption,
@@ -66,6 +66,7 @@ import type {
 } from '../lib/store';
 import type { TurnEndKind } from '../state/types';
 import { InteractionCard } from './InteractionCard';
+import { YoloConfirmDialog } from './YoloConfirmDialog';
 import {
   MessagePeek,
   MAX_PEEK_MARKDOWN_CHARS,
@@ -1114,6 +1115,17 @@ function AttachmentFiles({ attachments }: { attachments: AttachmentView[] }) {
   );
 }
 
+function modeMenuTint(option: SessionModeOption, active: boolean) {
+  if (option.value === 'yolo') {
+    return active
+      ? 'bg-yolo/15 text-yolo'
+      : 'text-yolo hover:bg-yolo/10 hover:text-yolo';
+  }
+  return active
+    ? 'bg-accent/10 text-accent'
+    : 'text-dim hover:bg-panel2 hover:text-fg';
+}
+
 export function ChatView() {
   const focus = useFocusState();
   const current = focus.name === 'active' ? focus.sessionID : '';
@@ -1214,15 +1226,21 @@ export function ChatView() {
   const backFromFailure = useStore((s) => s.backFromFailure);
   const cancelRun = useStore((s) => s.cancelRun);
   const clearLastFailed = useStore((s) => s.clearLastFailed);
+  const sessionDefaults = useStore((s) => s.sessionDefaults);
   // Draft pre-send preferences. A new chat has no session yet, so mode
   // / think / model edits stay local and are applied to the minted
   // session right before the first message starts.
-  const [draftMode, setDraftMode] = useState('workspace');
-  const [draftThink, setDraftThink] = useState('medium');
+  const [draftMode, setDraftMode] = useState(sessionDefaults.mode);
+  const [draftThink, setDraftThink] = useState(sessionDefaults.think);
   const [draftModel, setDraftModel] = useState('');
-  const mode = current ? (conv?.mode ?? 'workspace') : draftMode;
+  // A manual pick in the draft is an explicit pre-send choice and must
+  // not be overwritten by a later default change.
+  const [draftTouched, setDraftTouched] = useState(false);
+  const sessionDefaultsRef = useRef(sessionDefaults);
+  sessionDefaultsRef.current = sessionDefaults;
+  const mode = current ? (conv?.mode ?? sessionDefaults.mode) : draftMode;
   const setMode = useStore((s) => s.setMode);
-  const think = current ? (conv?.think ?? 'medium') : draftThink;
+  const think = current ? (conv?.think ?? sessionDefaults.think) : draftThink;
   const stage = turnState?.name === 'running' ? turnState.stage : '';
   const setThink = useStore((s) => s.setThink);
   const model = current ? (conv?.model ?? '') : draftModel;
@@ -1244,6 +1262,7 @@ export function ChatView() {
       void setMode(m);
     } else {
       setDraftMode(m);
+      setDraftTouched(true);
     }
   };
   const applyThink = (level: string) => {
@@ -1251,6 +1270,7 @@ export function ChatView() {
       void setThink(level);
     } else {
       setDraftThink(level);
+      setDraftTouched(true);
     }
   };
   const applyModel = (m: string) => {
@@ -1331,6 +1351,7 @@ export function ChatView() {
       running: busyRef.current && turn === lastTurnRef.current,
     };
   }, []);
+
   const openConfig = useStore((s) => s.openConfig);
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<AttachmentView[]>([]);
@@ -1361,16 +1382,26 @@ export function ChatView() {
     const prev = prevFocusName.current;
     prevFocusName.current = focus.name;
     if (focus.name === 'no-session' && prev !== null && prev !== 'no-session') {
+      const d = sessionDefaultsRef.current;
       setInput('');
       setAttachments([]);
       composerRef.current?.clear();
       setDraftWorkspace('');
       setWsPickerOpen(false);
-      setDraftMode('workspace');
-      setDraftThink('medium');
+      setDraftMode(d.mode);
+      setDraftThink(d.think);
       setDraftModel('');
+      setDraftTouched(false);
     }
   }, [focus.name]);
+  // A default change in Settings while the same draft stays open must
+  // reach the pre-send pills, but only until the user makes a manual
+  // choice for this draft.
+  useEffect(() => {
+    if (focus.name !== 'no-session' || draftTouched) return;
+    setDraftMode(sessionDefaults.mode);
+    setDraftThink(sessionDefaults.think);
+  }, [focus.name, draftTouched, sessionDefaults.mode, sessionDefaults.think]);
   useEffect(() => {
     if (!workspace) return;
     setDraftWorkspace('');
@@ -2132,55 +2163,37 @@ export function ChatView() {
                       onClick={() => setModeMenuOpen(false)}
                     />
                     <div className="absolute bottom-full left-0 z-40 mb-1.5 w-80 rounded-lg border border-edge bg-panel p-1 shadow-xl">
-                      <button
-                        onClick={() => applyMode('read-only')}
-                        className={`w-full rounded-md px-2 py-1.5 text-left text-xs ${
-                          readOnly
-                            ? 'bg-accent/10 text-accent'
-                            : 'text-dim hover:bg-panel2 hover:text-fg'
-                        }`}
-                      >
-                        <span className="flex items-center gap-2">
-                          <Lock size="0.8571rem" /> {t('chat.readOnlyMode')}
-                        </span>
-                        <span className="mt-0.5 block pl-5 text-[0.7143rem] leading-snug text-dim">
-                          {t('chat.readOnlyBanner')}
-                        </span>
-                      </button>
-                      <button
-                        onClick={() => applyMode('workspace')}
-                        className={`w-full rounded-md px-2 py-1.5 text-left text-xs ${
-                          !readOnly && !yolo
-                            ? 'bg-accent/10 text-accent'
-                            : 'text-dim hover:bg-panel2 hover:text-fg'
-                        }`}
-                      >
-                        <span className="flex items-center gap-2">
-                          <ShieldCheck size="0.8571rem" />{' '}
-                          {t('chat.workspaceMode')}
-                        </span>
-                        <span className="mt-0.5 block pl-5 text-[0.7143rem] leading-snug text-dim">
-                          {t('chat.workspaceBanner')}
-                        </span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setModeMenuOpen(false);
-                          setConfirmYolo(true);
-                        }}
-                        className={`w-full rounded-md px-2 py-1.5 text-left text-xs ${
-                          yolo
-                            ? 'bg-yolo/15 text-yolo'
-                            : 'text-yolo hover:bg-yolo/10 hover:text-yolo'
-                        }`}
-                      >
-                        <span className="flex items-center gap-2">
-                          <Flame size="0.8571rem" /> {t('chat.yoloMode')}
-                        </span>
-                        <span className="mt-0.5 block pl-5 text-[0.7143rem] leading-snug text-yolo/80">
-                          {t('chat.yoloBanner')}
-                        </span>
-                      </button>
+                      {SESSION_MODES.map((option) => {
+                        const Icon = option.icon;
+                        const active = mode === option.value;
+                        return (
+                          <button
+                            key={option.value}
+                            onClick={() => {
+                              setModeMenuOpen(false);
+                              if (option.value === 'yolo') {
+                                setConfirmYolo(true);
+                              } else {
+                                applyMode(option.value);
+                              }
+                            }}
+                            className={`w-full rounded-md px-2 py-1.5 text-left text-xs ${modeMenuTint(option, active)}`}
+                          >
+                            <span className="flex items-center gap-2">
+                              <Icon size="0.8571rem" /> {t(option.labelKey)}
+                            </span>
+                            <span
+                              className={`mt-0.5 block pl-5 text-[0.7143rem] leading-snug ${
+                                option.value === 'yolo'
+                                  ? 'text-yolo/80'
+                                  : 'text-dim'
+                              }`}
+                            >
+                              {t(option.bannerKey)}
+                            </span>
+                          </button>
+                        );
+                      })}
                     </div>
                   </>
                 )}
@@ -2406,87 +2419,17 @@ export function ChatView() {
         </div>
       )}
       {confirmYolo && (
-        <div className="fixed bottom-0 top-11 left-0 right-0 z-40 grid place-items-center bg-black/60 p-6">
-          <div
-            role="alertdialog"
-            aria-modal="true"
-            className="w-[34rem] max-w-[calc(100vw-3rem)] max-h-[calc(100vh-6rem)] overflow-y-auto rounded-2xl border border-yolo/50 bg-panel p-5 shadow-2xl"
-          >
-            <div className="flex items-start gap-3">
-              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-yolo/40 bg-yolo/15 text-yolo">
-                <AlertTriangle size="1.1429rem" />
-              </div>
-              <div className="min-w-0">
-                <h2 className="text-sm font-semibold leading-snug text-fg">
-                  {t('chat.yoloConfirmTitle')}
-                </h2>
-                <p className="mt-1 text-xs leading-relaxed text-dim">
-                  {t('chat.yoloConfirmIntro')}
-                </p>
-              </div>
-            </div>
-            <div className="mt-4 space-y-2">
-              {[
-                {
-                  icon: FolderOpen,
-                  title: t('chat.yoloConfirmFiles'),
-                  body: t('chat.yoloConfirmFilesBody'),
-                },
-                {
-                  icon: Terminal,
-                  title: t('chat.yoloConfirmTerminal'),
-                  body: t('chat.yoloConfirmTerminalBody'),
-                },
-                {
-                  icon: Globe,
-                  title: t('chat.yoloConfirmNetwork'),
-                  body: t('chat.yoloConfirmNetworkBody'),
-                },
-              ].map((risk) => {
-                const Icon = risk.icon;
-                return (
-                  <div
-                    key={risk.title}
-                    className="flex items-start gap-2.5 rounded-lg border border-edge/70 bg-panel2/60 px-3 py-2.5"
-                  >
-                    <Icon
-                      size="0.9286rem"
-                      className="mt-0.5 shrink-0 text-yolo"
-                    />
-                    <div className="min-w-0">
-                      <div className="text-xs font-medium text-fg">
-                        {risk.title}
-                      </div>
-                      <p className="mt-0.5 text-[0.7857rem] leading-snug text-dim">
-                        {risk.body}
-                      </p>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            <p className="mt-4 rounded-lg border border-yolo/25 bg-yolo/5 px-3 py-2 text-[0.7857rem] leading-snug text-dim">
-              {t('chat.yoloConfirmScope')}
-            </p>
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                onClick={() => setConfirmYolo(false)}
-                className="rounded-lg border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg"
-              >
-                {t('interact.cancel')}
-              </button>
-              <button
-                onClick={() => {
-                  setConfirmYolo(false);
-                  applyMode('yolo');
-                }}
-                className="rounded-lg bg-yolo px-4 py-1.5 text-sm font-medium text-white hover:opacity-90"
-              >
-                {t('chat.confirmSwitch')}
-              </button>
-            </div>
-          </div>
-        </div>
+        <YoloConfirmDialog
+          title={t('chat.yoloConfirmTitle')}
+          intro={t('chat.yoloConfirmIntro')}
+          scope={t('chat.yoloConfirmScope')}
+          confirmLabel={t('chat.confirmSwitch')}
+          onCancel={() => setConfirmYolo(false)}
+          onConfirm={() => {
+            setConfirmYolo(false);
+            applyMode('yolo');
+          }}
+        />
       )}
     </main>
   );

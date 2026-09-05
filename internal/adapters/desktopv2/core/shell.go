@@ -18,10 +18,9 @@ type Shell struct {
 
 	ctx           context.Context
 	userDir       string
-	closeToTray   bool
+	prefs         DesktopPrefs
 	quitting      bool
 	quitConfirmed bool
-	language      string
 	trayItems     *trayItems
 	trayEnd       func()
 }
@@ -30,9 +29,8 @@ type Shell struct {
 func NewShell(userDir string) *Shell {
 	prefs := LoadPrefs(userDir)
 	return &Shell{
-		userDir:     userDir,
-		closeToTray: prefs.CloseToTray,
-		language:    prefs.Language,
+		userDir: userDir,
+		prefs:   prefs,
 	}
 }
 
@@ -88,7 +86,7 @@ func (s *Shell) Emit(typ string, data any) {
 // CloseRequested is the single funnel for window-close paths.
 func (s *Shell) CloseRequested(ctx context.Context) bool {
 	s.mu.Lock()
-	closeToTray := s.closeToTray
+	closeToTray := s.prefs.CloseToTray
 	quitting := s.quitting
 	quitConfirmed := s.quitConfirmed
 	s.mu.Unlock()
@@ -200,37 +198,30 @@ func (s *Shell) QuitFromTray() {
 func (s *Shell) GetCloseToTray() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.closeToTray
+	return s.prefs.CloseToTray
 }
 
 // SetCloseToTray persists the close behavior.
 func (s *Shell) SetCloseToTray(closeToTray bool) error {
-	s.mu.Lock()
-	s.closeToTray = closeToTray
-	prefs := DesktopPrefs{CloseToTray: s.closeToTray, Language: s.language}
-	s.mu.Unlock()
-	if err := SavePrefs(s.userDir, prefs); err != nil {
-		return err
-	}
-	return nil
+	return s.commit(func(p *DesktopPrefs) {
+		p.CloseToTray = closeToTray
+	})
 }
 
 // Language returns the current desktop language.
 func (s *Shell) Language() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.language
+	return s.prefs.Language
 }
 
 // SetLanguage persists the UI language. Tray retitling is wired by the
 // desktopv2 root when tray support is added.
 func (s *Shell) SetLanguage(language string) error {
 	language = NormalizeLanguage(language)
-	s.mu.Lock()
-	s.language = language
-	prefs := DesktopPrefs{CloseToTray: s.closeToTray, Language: language}
-	s.mu.Unlock()
-	if err := SavePrefs(s.userDir, prefs); err != nil {
+	if err := s.commit(func(p *DesktopPrefs) {
+		p.Language = language
+	}); err != nil {
 		return err
 	}
 	s.updateTrayTexts()
@@ -240,7 +231,40 @@ func (s *Shell) SetLanguage(language string) error {
 // Texts returns the native desktop copy for the current language.
 func (s *Shell) Texts() DesktopTexts {
 	s.mu.Lock()
-	language := s.language
+	language := s.prefs.Language
 	s.mu.Unlock()
 	return TextsFor(language)
+}
+
+// SessionDefaults returns the mode/think level applied to newly
+// minted conversations.
+func (s *Shell) SessionDefaults() (mode, think string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.prefs.DefaultMode, s.prefs.DefaultThink
+}
+
+// SetSessionDefaults persists the default mode/think level. Values
+// must already be canonical.
+func (s *Shell) SetSessionDefaults(mode, think string) error {
+	return s.commit(func(p *DesktopPrefs) {
+		p.DefaultMode = mode
+		p.DefaultThink = think
+	})
+}
+
+// commit applies one mutation to the in-memory preference document and
+// writes it back under the same lock. Holding the lock across the write
+// serializes setters so concurrent updates cannot overwrite each
+// other's fields, and a failed write restores the previous document.
+func (s *Shell) commit(mutate func(*DesktopPrefs)) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prev := s.prefs
+	mutate(&s.prefs)
+	if err := SavePrefs(s.userDir, s.prefs); err != nil {
+		s.prefs = prev
+		return err
+	}
+	return nil
 }

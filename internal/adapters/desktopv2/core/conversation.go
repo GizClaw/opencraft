@@ -14,8 +14,10 @@ import (
 type Conversation struct {
 	mu sync.Mutex
 
-	byWID    map[string]*workspaceConv
-	runConvs map[string]map[string]bool
+	byWID        map[string]*workspaceConv
+	runConvs     map[string]map[string]bool
+	defaultMode  sessions.Mode
+	defaultThink string
 }
 
 type workspaceConv struct {
@@ -28,9 +30,12 @@ type workspaceConv struct {
 // NewConversation creates the conversation service with workspace mode
 // and medium reasoning defaults.
 func NewConversation() *Conversation {
+	defaultMode, defaultThink := defaultSessionDefaults()
 	return &Conversation{
-		byWID:    make(map[string]*workspaceConv),
-		runConvs: make(map[string]map[string]bool),
+		byWID:        make(map[string]*workspaceConv),
+		runConvs:     make(map[string]map[string]bool),
+		defaultMode:  defaultMode,
+		defaultThink: defaultThink,
 	}
 }
 
@@ -48,8 +53,8 @@ func (c *Conversation) stateLocked(workDir string) *workspaceConv {
 	st := c.byWID[id]
 	if st == nil {
 		st = &workspaceConv{
-			mode:  sessions.ModeWorkspace,
-			think: string(sessions.ThinkMedium),
+			mode:  c.defaultMode,
+			think: c.defaultThink,
 		}
 		c.byWID[id] = st
 	}
@@ -64,11 +69,28 @@ func (c *Conversation) New(workDir string) string {
 	c.mu.Lock()
 	st := c.stateLocked(workDir)
 	st.currentID = id
-	st.mode = sessions.ModeWorkspace
-	st.think = string(sessions.ThinkMedium)
+	st.mode = c.defaultMode
+	st.think = c.defaultThink
 	st.model = ""
 	c.mu.Unlock()
 	return id
+}
+
+// SetDefaults changes the mode/think level applied when the next new
+// conversation is minted. Existing workspaces/conversations are not
+// touched; mode and think must be canonical values.
+func (c *Conversation) SetDefaults(mode sessions.Mode, think string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.defaultMode = mode
+	c.defaultThink = think
+}
+
+// Defaults returns the current new-conversation mode/think level.
+func (c *Conversation) Defaults() (sessions.Mode, string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.defaultMode, c.defaultThink
 }
 
 // TrackRun remembers one run id minted per conversation.
@@ -145,7 +167,7 @@ func (c *Conversation) Mode(workDir string) sessions.Mode {
 	if st := c.byWID[workspaceKey(workDir)]; st != nil {
 		return st.mode
 	}
-	return sessions.ModeWorkspace
+	return c.defaultMode
 }
 
 // Think returns the current reasoning effort for one workspace.
@@ -155,7 +177,7 @@ func (c *Conversation) Think(workDir string) string {
 	if st := c.byWID[workspaceKey(workDir)]; st != nil {
 		return st.think
 	}
-	return string(sessions.ThinkMedium)
+	return c.defaultThink
 }
 
 // Model returns the current model hint for one workspace.

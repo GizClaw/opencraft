@@ -78,3 +78,30 @@ func TestConversationWorkspaceKeyUsesCanonicalPath(t *testing.T) {
 		t.Fatalf("alternate path spelling mode = %q, want yolo", got)
 	}
 }
+
+func TestConversationNewUsesConfiguredDefaults(t *testing.T) {
+	c := NewConversation()
+	c.SetDefaults(sessions.ModeReadOnly, "high")
+	c.New("/tmp/w")
+	if c.Mode("/tmp/w") != sessions.ModeReadOnly ||
+		c.Think("/tmp/w") != "high" ||
+		c.Model("/tmp/w") != "" {
+		t.Fatalf(
+			"minted settings = (%q, %q, %q)",
+			c.Mode("/tmp/w"), c.Think("/tmp/w"), c.Model("/tmp/w"),
+		)
+	}
+}
+
+func TestConversationGettersFallBackToConfiguredDefaults(t *testing.T) {
+	c := NewConversation()
+	// A workspace with no minted/resumed conversation yet must report
+	// the configured defaults, not the hardcoded first-run values.
+	c.SetDefaults(sessions.ModeYOLO, "minimal")
+	if got := c.Mode("/tmp/untouched"); got != sessions.ModeYOLO {
+		t.Fatalf("mode = %q, want yolo", got)
+	}
+	if got := c.Think("/tmp/untouched"); got != "minimal" {
+		t.Fatalf("think = %q, want minimal", got)
+	}
+}
