@@ -153,15 +153,7 @@ func (b *Automation) AutomationSessions(
 	defer func() {
 		mgr.ReleaseSessions(store)
 	}()
-	metas, err := store.List()
-	if err != nil {
-		return nil, err
-	}
-	out := make([]SessionMeta, 0, len(metas))
-	for _, m := range metas {
-		out = append(out, toSessionMeta(m))
-	}
-	return out, nil
+	return listStoredMetas(store)
 }
 
 // ToAutomationTaskDTO converts one stored task into its UI wire form.

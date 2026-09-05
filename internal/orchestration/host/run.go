@@ -361,7 +361,7 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 			r.lease.Close())
 	}
 	if host != nil {
-		host.finishCloseIfIdle()
+		host.awaitCloseIfClosing()
 	}
 	return res, err
 }
@@ -386,19 +386,6 @@ func (h *Host) persistTurnUsage(
 	if h.usageRecorder != nil {
 		telemetry.WarnErr(ctx, "host: record user-level usage failed",
 			h.usageRecorder(ctx, h.workspaceID, contextID, usage))
-	}
-}
-
-// Close cancels and releases an unfinished run.
-func (r *Run) Close() {
-	if r == nil || r.done {
-		return
-	}
-	// Wait already reports execution failures to telemetry with the
-	// error unwrapped; Close only needs to release the run.
-	_, waitErr := r.Wait(context.Background())
-	if waitErr != nil {
-		_ = waitErr // Already reported by Wait.
 	}
 }
 

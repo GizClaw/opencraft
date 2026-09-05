@@ -656,6 +656,37 @@ func instanceAPIKey(in Instance, prov Provider) string {
 // instances.
 const providerOwnersFileName = "plugin-provider-owners.json"
 
+// legacyPluginKeyRef reports whether keyValue points into the secret
+// namespace of the plugin whose id is stableID
+// ("auth/<stableID>/..."). Every plugin inference row written under
+// the pre-ownership contract had this shape because the host required
+// profile ids to equal the plugin id and key references to stay inside
+// the plugin's namespace.
+func legacyPluginKeyRef(stableID, keyValue string) bool {
+	return stableID != "" && strings.HasPrefix(keyValue, "auth/"+stableID+"/")
+}
+
+// adoptLegacyProviderOwners records ownership for inference rows
+// written under the single-instance plugin contract that predates the
+// ownership sidecar. In that scheme the host only accepted instance
+// ids equal to the calling plugin id and the key reference lived
+// inside the plugin's secret namespace, so a row matching both shapes
+// could only have been created by the plugin with that id. Rows like
+// this carry no sidecar record after an upgrade; without adoption the
+// plugin can neither replace nor remove its own stale deployment,
+// leaving duplicate inference entries behind.
+func adoptLegacyProviderOwners(cfg InferenceConfig, owners map[string]string) {
+	for _, in := range cfg.Instances {
+		if _, ok := owners[in.StableID]; ok {
+			continue
+		}
+		if in.KeySource == KeyKeychain &&
+			legacyPluginKeyRef(in.StableID, in.KeyValue) {
+			owners[in.StableID] = in.StableID
+		}
+	}
+}
+
 // inferenceStateMu serializes inference config + owner writes. Both
 // files together form one logical state (rows and their plugin owners);
 // a plugin upsert, settings save and plugin disable/uninstall can run
@@ -668,12 +699,23 @@ func providerOwnersPath(configDir string) string {
 	return filepath.Join(configDir, providerOwnersFileName)
 }
 
-// LoadProviderOwners returns the current plugin→instance ownership
-// sidecar. A missing file is an empty map, not an error.
+// LoadProviderOwners returns the current plugin→instance ownership,
+// including legacy rows created under the single-instance plugin
+// contract (see adoptLegacyProviderOwners). A missing sidecar file is
+// an empty map, not an error.
 func LoadProviderOwners(configDir string) (map[string]string, error) {
 	inferenceStateMu.Lock()
 	defer inferenceStateMu.Unlock()
-	return loadProviderOwnersLocked(configDir)
+	owners, err := loadProviderOwnersLocked(configDir)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := LoadInference(configDir)
+	if err != nil {
+		return nil, err
+	}
+	adoptLegacyProviderOwners(cfg, owners)
+	return owners, nil
 }
 
 func loadProviderOwnersLocked(configDir string) (map[string]string, error) {
@@ -847,6 +889,7 @@ func WriteInferenceOwned(
 			return err
 		}
 	}
+	adoptLegacyProviderOwners(cfg, owners)
 	return saveProviderOwnersLocked(
 		configDir,
 		reconcileProviderOwners(owners, cfg.Instances),
@@ -877,6 +920,7 @@ func UpdateInferenceState(
 	if err != nil {
 		return err
 	}
+	adoptLegacyProviderOwners(cfg, owners)
 	nextCfg, nextOwners, changed, err := update(cfg, owners)
 	if err != nil {
 		return err

@@ -15,6 +15,7 @@ interface FocusContext {
 
 export type FocusEvent =
   | { type: 'OPEN_NEW' }
+  | { type: 'OPEN_DRAFT' }
   | { type: 'OPEN_SESSION'; id: string }
   | { type: 'OPEN_SUCCEEDED'; request: number; sessionID: string }
   | { type: 'OPEN_FAILED'; request: number; error: string }
@@ -49,6 +50,7 @@ export const sessionFocusMachine = createMachine({
   states: {
     'no-session': {
       on: {
+        OPEN_DRAFT: {},
         OPEN_NEW: {
           target: 'opening',
           actions: assign({
@@ -81,6 +83,10 @@ export const sessionFocusMachine = createMachine({
     },
     opening: {
       on: {
+        OPEN_DRAFT: {
+          target: 'no-session',
+          actions: assign(reset),
+        },
         OPEN_NEW: {
           target: 'opening',
           actions: assign({
@@ -123,6 +129,19 @@ export const sessionFocusMachine = createMachine({
     },
     active: {
       on: {
+        OPEN_DRAFT: {
+          target: 'no-session',
+          actions: assign({
+            request: ({ context }) => context.request,
+            from: ({ context }) => ({
+              kind: 'session' as const,
+              id: context.sessionID,
+            }),
+            to: () => null,
+            sessionID: () => '',
+            error: () => '',
+          }),
+        },
         OPEN_NEW: {
           target: 'opening',
           actions: assign({
@@ -164,6 +183,16 @@ export const sessionFocusMachine = createMachine({
     },
     failed: {
       on: {
+        OPEN_DRAFT: {
+          target: 'no-session',
+          actions: assign({
+            request: ({ context }) => context.request,
+            from: ({ context }) => context.from,
+            to: () => null,
+            sessionID: () => '',
+            error: () => '',
+          }),
+        },
         OPEN_NEW: {
           target: 'opening',
           actions: assign({

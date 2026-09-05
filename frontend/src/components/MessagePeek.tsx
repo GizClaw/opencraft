@@ -39,13 +39,15 @@ function boundedMarkdown(text: string, max: number) {
 // with a wider accent tick instead of a separate indicator.
 export const MessagePeek = memo(function MessagePeek({
   items,
-  currentIndex,
+  activeRange,
   onJump,
   getPreview,
   revision,
 }: {
   items: MessagePeekItem[];
-  currentIndex: number;
+  // activeRange covers every turn whose rows intersect the current
+  // viewport; all of them are highlighted on the ruler.
+  activeRange: { start: number; end: number } | null;
   onJump: (turnIndex: number) => void;
   getPreview: (turnIndex: number) => MessagePeekPreview;
   // revision only exists to re-fetch a hovered preview when the turn
@@ -60,7 +62,21 @@ export const MessagePeek = memo(function MessagePeek({
   const [tooltipTop, setTooltipTop] = useState(0);
   const [preview, setPreview] = useState<MessagePeekPreview | null>(null);
   const dense = items.length > DENSE_TICK_THRESHOLD;
-  const activeIndex = currentIndex >= 0 ? currentIndex : 0;
+  // Preview markdown is expensive enough that rapid scrubber moves
+  // should not parse every crossed turn. Debounce the fetch and cache
+  // one preview per turn; the cache resets when the archive revision
+  // changes (turn_end, new turn, artifacts).
+  const previewCacheRef = useRef<Map<number, MessagePeekPreview>>(new Map());
+  const previewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const revisionRef = useRef<unknown>(revision);
+  const hasActiveRange =
+    activeRange !== null &&
+    activeRange.start >= 0 &&
+    activeRange.end >= 0 &&
+    activeRange.end < items.length &&
+    activeRange.start <= activeRange.end;
+  const focusTurn =
+    activeRange !== null && hasActiveRange ? activeRange.start : 0;
 
   useEffect(() => {
     if (hovered == null || !rootRef.current) return;
@@ -90,7 +106,30 @@ export const MessagePeek = memo(function MessagePeek({
       setPreview(null);
       return;
     }
-    setPreview(getPreview(hovered));
+    if (revisionRef.current !== revision) {
+      revisionRef.current = revision;
+      previewCacheRef.current.clear();
+    }
+    const cached = previewCacheRef.current.get(hovered);
+    if (cached) {
+      setPreview(cached);
+      return;
+    }
+    if (previewTimerRef.current != null) {
+      clearTimeout(previewTimerRef.current);
+    }
+    previewTimerRef.current = setTimeout(() => {
+      previewTimerRef.current = null;
+      const next = getPreview(hovered);
+      previewCacheRef.current.set(hovered, next);
+      setPreview(next);
+    }, 90);
+    return () => {
+      if (previewTimerRef.current != null) {
+        clearTimeout(previewTimerRef.current);
+        previewTimerRef.current = null;
+      }
+    };
   }, [getPreview, hovered, items.length, revision]);
 
   if (items.length === 0) return null;
@@ -113,7 +152,10 @@ export const MessagePeek = memo(function MessagePeek({
       {!dense && (
         <div className="flex flex-col items-center gap-1">
           {items.map((item) => {
-            const active = item.index === currentIndex;
+            const active =
+              activeRange !== null &&
+              item.index >= activeRange.start &&
+              item.index <= activeRange.end;
             return (
               <button
                 key={item.index}
@@ -156,9 +198,9 @@ export const MessagePeek = memo(function MessagePeek({
           aria-label={t('chat.messagePeekScrubber')}
           aria-valuemin={1}
           aria-valuemax={items.length}
-          aria-valuenow={Math.max(1, (hovered ?? activeIndex) + 1)}
+          aria-valuenow={Math.max(1, (hovered ?? focusTurn) + 1)}
           aria-valuetext={t('chat.messagePeekTurn', {
-            count: Math.max(1, (hovered ?? activeIndex) + 1),
+            count: Math.max(1, (hovered ?? focusTurn) + 1),
           })}
           onPointerMove={(event) => {
             const index = indexFromPointer(event.clientY);
@@ -174,13 +216,13 @@ export const MessagePeek = memo(function MessagePeek({
             onJump(index);
           }}
           onPointerLeave={() => setHovered(null)}
-          onFocus={() => setHovered(activeIndex)}
+          onFocus={() => setHovered(focusTurn)}
           onBlur={() => setHovered(null)}
           onKeyDown={(event) => {
             if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
               event.preventDefault();
               const direction = event.key === 'ArrowDown' ? 1 : -1;
-              const current = Math.max(0, hovered ?? activeIndex);
+              const current = Math.max(0, hovered ?? focusTurn);
               const next = Math.min(
                 items.length - 1,
                 Math.max(0, current + direction),
@@ -194,7 +236,7 @@ export const MessagePeek = memo(function MessagePeek({
               setHovered(items.length - 1);
             } else if (event.key === 'Enter') {
               event.preventDefault();
-              onJump(Math.max(0, hovered ?? activeIndex));
+              onJump(Math.max(0, hovered ?? focusTurn));
             }
           }}
           className="pointer-events-auto absolute inset-y-1.5 left-1/2 w-8 -translate-x-1/2 cursor-pointer rounded-full outline-none transition-colors hover:bg-accent/5 focus-visible:ring-2 focus-visible:ring-accent/50"
@@ -206,12 +248,17 @@ export const MessagePeek = memo(function MessagePeek({
           }}
         />
       )}
-      {dense && currentIndex >= 0 && currentIndex < items.length && (
+      {dense && hasActiveRange && (
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute left-1/2 h-[3px] w-5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent"
+          className="pointer-events-none absolute left-1/2 w-5 -translate-x-1/2 rounded-full bg-accent/25"
           style={{
-            top: `${((currentIndex + 0.5) / items.length) * 100}%`,
+            top: `${((activeRange!.start + 0.5) / items.length) * 100}%`,
+            height: `${Math.max(
+              1,
+              ((activeRange!.end - activeRange!.start + 1) / items.length) *
+                100,
+            )}%`,
           }}
         />
       )}

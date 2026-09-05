@@ -19,7 +19,10 @@ import (
 // store and seeds memory so a later turn can continue with the same
 // context. Store.Import dedupes by Source; when the conversation was
 // already imported and completed, the call returns the existing id
-// without touching memory.
+// without touching memory. Fresh imports also get the same
+// asynchronous LLM display-title generation as normal turns; the
+// bundle title remains the instant fallback when inference is not
+// configured or generation fails.
 func (h *Host) ImportSession(
 	ctx context.Context, req ocsessions.ImportRequest,
 ) (string, error) {
@@ -53,6 +56,7 @@ func (h *Host) ImportSession(
 		h.abortImport(ctx, id)
 		return "", fmt.Errorf("host: import complete %s: %w", id, err)
 	}
+	h.launchAutoTitle(context.WithoutCancel(ctx), id)
 	return id, nil
 }
 

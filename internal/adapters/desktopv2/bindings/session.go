@@ -106,14 +106,43 @@ func (b *Session) List() ([]SessionMeta, error) {
 	if h == nil || h.Sessions() == nil {
 		return []SessionMeta{}, nil
 	}
-	metas, err := h.Sessions().List()
+	return listStoredMetas(h.Sessions())
+}
+
+// ListInWorkspace returns stored conversation metadata for one
+// workspace without switching the active runtime. The sidebar history
+// tree uses it to show each workspace's sessions while it is expanded.
+func (b *Session) ListInWorkspace(
+	workspace string,
+) ([]SessionMeta, error) {
+	ctx := b.core.Shell.Context()
+	mgr := b.core.Runtime.Manager()
+	if mgr == nil {
+		return nil, errNotReady("runtime")
+	}
+	layout, err := b.core.ResolveLayout(workspace)
+	if err != nil {
+		return nil, err
+	}
+	store, err := mgr.OpenSessions(ctx, workspace, layout, 40)
+	if err != nil {
+		return nil, err
+	}
+	defer mgr.ReleaseSessions(store)
+	return listStoredMetas(store)
+}
+
+// listStoredMetas converts one workspace's stored conversations into
+// UI summaries, overlaying a custom display title when present.
+func listStoredMetas(store *sessions.Store) ([]SessionMeta, error) {
+	metas, err := store.List()
 	if err != nil {
 		return nil, err
 	}
 	out := make([]SessionMeta, 0, len(metas))
 	for i := range metas {
 		var custom string
-		if h.Sessions().ReadState(metas[i].ID, "title", &custom) == nil &&
+		if store.ReadState(metas[i].ID, "title", &custom) == nil &&
 			strings.TrimSpace(custom) != "" {
 			metas[i].Title = custom
 		}

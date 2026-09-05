@@ -182,6 +182,66 @@ func (s *Store) ConversationByImportSource(
 	return c, true, nil
 }
 
+// maxImportSourceQuery bounds one ImportReadyBySources call. Lists are
+// bounded by what a plugin can enumerate from Codex, so a few thousand
+// is more than enough; the cap keeps the SQLite IN clause reasonable.
+const maxImportSourceQuery = 1000
+
+// ImportReadyBySources returns the newest import-ready conversation id
+// for each of the given import sources that exists in this workspace.
+// Only conversations whose memory seed completed are reported, which
+// matches what the resume list shows.
+func (s *Store) ImportReadyBySources(
+	ctx context.Context, sources []string,
+) (map[string]string, error) {
+	out := make(map[string]string)
+	if len(sources) == 0 {
+		return out, nil
+	}
+	if len(sources) > maxImportSourceQuery {
+		return nil, fmt.Errorf(
+			"state: import source query exceeds %d sources",
+			maxImportSourceQuery)
+	}
+	seen := make(map[string]bool, len(sources))
+	placeholders := make([]string, 0, len(sources))
+	args := make([]any, 0, len(sources))
+	for _, raw := range sources {
+		src := strings.TrimSpace(raw)
+		if src == "" || seen[src] {
+			continue
+		}
+		seen[src] = true
+		placeholders = append(placeholders, "?")
+		args = append(args, src)
+	}
+	if len(placeholders) == 0 {
+		return out, nil
+	}
+	query := `
+		SELECT import_source, id FROM conversations
+		WHERE import_ready = 1
+		  AND import_source IN (` + strings.Join(placeholders, ", ") + `)
+		ORDER BY updated_at DESC`
+	rows, err := s.db.SQLDB().QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("state: query imported sources: %w", err)
+	}
+	defer func() {
+		telemetry.WarnErr(ctx, "state: close imported source rows failed", rows.Close())
+	}()
+	for rows.Next() {
+		var source, id string
+		if err := rows.Scan(&source, &id); err != nil {
+			return nil, fmt.Errorf("state: scan imported source: %w", err)
+		}
+		if _, ok := out[source]; !ok {
+			out[source] = id
+		}
+	}
+	return out, rows.Err()
+}
+
 // GetConversationState loads one per-conversation JSON document.
 func (s *Store) GetConversationState(
 	ctx context.Context, conversationID, name string,

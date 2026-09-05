@@ -2,10 +2,12 @@ package host_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GizClaw/flowcraft/core/message"
 
@@ -82,6 +84,60 @@ func TestHostImportSessionWritesArchiveAndSeedsMemory(t *testing.T) {
 	if got := countThreadMemory(t, h, id); got != memoryCount {
 		t.Fatalf("memory rows after duplicate import = %d, want %d",
 			got, memoryCount)
+	}
+}
+
+func TestHostImportSessionGeneratesLLMTitle(t *testing.T) {
+	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "summarized session"})
+	workDir := t.TempDir()
+	dataDir := t.TempDir()
+	t.Setenv("HOME", filepath.Join(dataDir, "home"))
+	configDir := filepath.Join(dataDir, "config")
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFakeConfig(t, configDir, provider.URL())
+
+	mgr := host.NewManagerAt(dataDir, configDir)
+	ctx := context.Background()
+	h, err := mgr.Acquire(ctx, workDir, interact.Auto{}, nil)
+	if err != nil {
+		t.Fatalf("acquire host: %v", err)
+	}
+	defer func() { _ = h.Close() }()
+
+	req := ocsessions.ImportRequest{
+		// The bundle title stays as the instant fallback; the
+		// asynchronous LLM title replaces the display title.
+		Title:  "codex fallback",
+		Source: "codex:title-session",
+		Turns: []ocsessions.ImportTurn{{
+			Messages: []message.Message{
+				message.NewTextMessage(message.RoleUser, "remember me"),
+				message.NewTextMessage(message.RoleAssistant, "noted"),
+			},
+		}},
+	}
+	id, err := h.ImportSession(ctx, req)
+	if err != nil {
+		t.Fatalf("ImportSession: %v", err)
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		var title string
+		if err := h.Sessions().ReadState(id, "title", &title); err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("read auto title: %v", err)
+			}
+		}
+		if title == "summarized session" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("auto title not generated within deadline (title = %q)", title)
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
 }
 

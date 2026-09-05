@@ -124,6 +124,96 @@ func TestPluginSessionImportWiresHostWritePath(t *testing.T) {
 	}
 }
 
+func TestPluginSessionImportedSourcesReportsExisting(t *testing.T) {
+	for _, key := range []string{
+		"OPEN_CRAFT_WORKDIR",
+		"OPEN_CRAFT_CACHE",
+		"OPEN_CRAFT_DATA_DIR",
+		"OPEN_CRAFT_WORKSPACE_DIR",
+		"OPEN_CRAFT_SESSIONS_DIR",
+		"OPEN_CRAFT_APPROVALS",
+		"OPEN_CRAFT_TOOL_CACHE",
+		"OPEN_CRAFT_AUDIT_DIR",
+	} {
+		t.Setenv(key, "")
+	}
+	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "imported"})
+	workDir := t.TempDir()
+	dataDir := t.TempDir()
+	configDir := t.TempDir()
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeProviderConfig(t, configDir, provider.URL())
+	writeTestPlugin(t, dataDir, "plug", []string{"sessions:import"})
+	writeTestPlugin(t, dataDir, "plug-no", nil)
+
+	c := NewCore(configDir, dataDir, "")
+	c.SetWorkDir(workDir)
+	ctx := context.Background()
+	h, err := c.Runtime.Acquire(ctx, workDir, interact.Auto{})
+	if err != nil {
+		t.Fatalf("acquire host: %v", err)
+	}
+	defer func() { _ = h.Close() }()
+
+	writeBundle := func(t *testing.T, source string) string {
+		t.Helper()
+		bundle := ocsessions.ImportRequest{
+			Title:  source,
+			Source: source,
+			Turns: []ocsessions.ImportTurn{{
+				Messages: []message.Message{
+					message.NewTextMessage(message.RoleUser, "remember me"),
+					message.NewTextMessage(message.RoleAssistant, "noted"),
+				},
+			}},
+		}
+		path := filepath.Join(t.TempDir(), strings.ReplaceAll(source, ":", "-")+".json")
+		data, err := json.Marshal(bundle)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+
+	importRes := func(t *testing.T, source string) string {
+		t.Helper()
+		res, err := c.handlePluginSessionImport("plug",
+			pluginruntime.SessionImportRequest{BundlePath: writeBundle(t, source)})
+		if err != nil {
+			t.Fatalf("import %s: %v", source, err)
+		}
+		return res.SessionID
+	}
+	id1 := importRes(t, "codex:conv-1")
+	id2 := importRes(t, "codex:conv-2")
+
+	got, err := c.handlePluginSessionImportedSources("plug",
+		pluginruntime.SessionImportStatusRequest{
+			Sources: []string{"codex:conv-1", "codex:conv-2", "codex:missing"},
+		})
+	if err != nil {
+		t.Fatalf("handlePluginSessionImportedSources: %v", err)
+	}
+	if got["codex:conv-1"] != id1 || got["codex:conv-2"] != id2 {
+		t.Fatalf("imported sources = %+v, want %s->%s, %s->%s",
+			got, "codex:conv-1", id1, "codex:conv-2", id2)
+	}
+	if _, ok := got["codex:missing"]; ok {
+		t.Fatalf("missing source reported: %+v", got)
+	}
+
+	if _, err := c.handlePluginSessionImportedSources("plug-no",
+		pluginruntime.SessionImportStatusRequest{Sources: []string{"codex:conv-1"}},
+	); err == nil || !strings.Contains(err.Error(), "lacks sessions:import") {
+		t.Fatalf("unpermissioned query error = %v", err)
+	}
+}
+
 func writeTestPlugin(t *testing.T, dataDir, id string, perms []string) {
 	t.Helper()
 	pluginDir := filepath.Join(dataDir, "plugins", id)

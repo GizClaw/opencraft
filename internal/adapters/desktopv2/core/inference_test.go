@@ -1,6 +1,8 @@
 package core
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -284,5 +286,73 @@ func TestPluginInferenceRequiresExplicitOwnership(t *testing.T) {
 	if err := c.upsertInferenceProfile("sso-haivivi", profile); err == nil ||
 		!strings.Contains(err.Error(), "not owned") {
 		t.Fatalf("unowned instance must not be claimed, got %v", err)
+	}
+}
+
+func TestPluginInferenceCleansLegacyPreOwnershipInstance(t *testing.T) {
+	dir := t.TempDir()
+	c := NewCore(dir, dir, "")
+
+	// Simulate an upgrade from the single-instance plugin contract
+	// (OpenCraft/plugin 0.1.x): the inference row uses the plugin id as
+	// the instance id and the key reference inside the plugin's secret
+	// namespace, and there is no owner sidecar.
+	if err := config.WriteInference(dir, config.InferenceConfig{
+		Instances: []config.Instance{{
+			StableID:  "sso-haivivi",
+			Type:      "deepseek",
+			Name:      "Haivivi SSO",
+			KeySource: config.KeyKeychain,
+			KeyValue:  "auth/sso-haivivi/token",
+			Enabled:   true,
+			Models:    []config.Model{{Name: "deepseek-v4-flash"}},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// A pre-sidecar deployment has no owner sidecar file at all; strip
+	// the sidecar the fixture write just migrated.
+	if err := os.Remove(filepath.Join(dir, "plugin-provider-owners.json")); err != nil {
+		t.Fatalf("strip sidecar: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "plugin-provider-owners.json")); !os.IsNotExist(err) {
+		t.Fatalf("legacy fixture must start without an owner sidecar, stat err = %v", err)
+	}
+
+	// The updated plugin syncs its new deployment layout, then removes
+	// the legacy instance id it no longer wants.
+	profile := pluginruntime.InferenceProfile{
+		ID:       "sso-haivivi-deepseek",
+		Type:     "deepseek",
+		Name:     "Haivivi SSO",
+		API:      "responses",
+		Endpoint: "https://ai.haivivi.cn/v1",
+		Models: []pluginruntime.ProfileModel{
+			{Name: "deepseek-v4-flash", Reasoning: "toggle"},
+		},
+		KeyRef: "auth/sso-haivivi/token",
+	}
+	if err := c.upsertInferenceProfile("sso-haivivi", profile); err != nil {
+		t.Fatalf("upsert new profile: %v", err)
+	}
+	if err := c.removeInferenceProfile("sso-haivivi", "sso-haivivi"); err != nil {
+		t.Fatalf("remove legacy instance after upgrade: %v", err)
+	}
+
+	cfg, err := config.LoadInference(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Instances) != 1 ||
+		cfg.Instances[0].StableID != "sso-haivivi-deepseek" {
+		t.Fatalf("instances after cleanup = %+v, want only the new profile",
+			cfg.Instances)
+	}
+	owners, err := config.LoadProviderOwners(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(owners) != 1 || owners["sso-haivivi-deepseek"] != "sso-haivivi" {
+		t.Fatalf("owners after cleanup = %+v", owners)
 	}
 }

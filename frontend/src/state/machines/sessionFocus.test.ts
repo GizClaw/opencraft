@@ -51,6 +51,14 @@ describe('sessionFocus machine', () => {
     expect(actor.getSnapshot().context.request).toBe(0);
   });
 
+  it('opens a new-chat draft without minting a session', () => {
+    const actor = start();
+    actor.send({ type: 'RESTORE_FOCUS', sessionID: 's-1' });
+    actor.send({ type: 'OPEN_DRAFT' });
+    expect(actor.getSnapshot().value).toBe('no-session');
+    expect(actor.getSnapshot().context.sessionID).toBe('');
+  });
+
   it('returns to the previous session after a failed switch', () => {
     const actor = start();
     actor.send({ type: 'RESTORE_FOCUS', sessionID: 's-1' });

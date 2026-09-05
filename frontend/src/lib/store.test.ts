@@ -17,6 +17,10 @@ const apiMock = vi.hoisted(() => ({
   turnByRunID: vi.fn(),
   loadWorkspaces: vi.fn(),
   loadAutomations: vi.fn(),
+  openWorkspace: vi.fn(),
+  setSessionMode: vi.fn(),
+  setThink: vi.fn(),
+  setModel: vi.fn(),
   newChat: vi.fn(),
   startTurn: vi.fn(),
   forkTurn: vi.fn(),
@@ -982,6 +986,81 @@ describe('store: send and stream', () => {
     expect(friendly).toBeTruthy();
     expect(friendly ?? '').not.toContain('graph "opencraft-assistant"');
     expect(friendly ?? '').not.toContain('provider_failure');
+  });
+});
+
+describe('store: first-message workspace attribution', () => {
+  it('openDraftChat enters the composer draft without minting', () => {
+    useStore.getState().openDraftChat();
+    expect(stateRoot.focusSnapshot.value).toBe('no-session');
+    expect(apiMock.newChat).not.toHaveBeenCalled();
+  });
+
+  it('mints the new session only when the first message sends', async () => {
+    apiMock.openWorkspace.mockResolvedValue(undefined);
+    await useStore.getState().sendFirstMessage('/tmp/w', 'hello');
+
+    expect(apiMock.openWorkspace).not.toHaveBeenCalled();
+    expect(apiMock.newChat).toHaveBeenCalledTimes(1);
+    expect(apiMock.startTurn).toHaveBeenCalledWith(
+      's-new',
+      expect.objectContaining({ role: 'user' }),
+    );
+    expect(stateRoot.focusSnapshot.value).toBe('active');
+    expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-new');
+    const conv = useStore.getState().conversations['s-new'];
+    expect(conv.messages[0]).toMatchObject({ role: 'user', text: 'hello' });
+  });
+
+  it('applies draft mode/think/model before the first run', async () => {
+    apiMock.openWorkspace.mockResolvedValue(undefined);
+    await useStore.getState().sendFirstMessage('/tmp/w', 'hello', [], {
+      mode: 'read-only',
+      think: 'high',
+      model: 'provider/m-1',
+    });
+
+    expect(apiMock.setSessionMode).toHaveBeenCalledWith('read-only');
+    expect(apiMock.setThink).toHaveBeenCalledWith('high');
+    expect(apiMock.setModel).toHaveBeenCalledWith('provider/m-1');
+    const conv = useStore.getState().conversations['s-new'];
+    expect(conv.mode).toBe('read-only');
+    expect(conv.think).toBe('high');
+    expect(conv.model).toBe('provider/m-1');
+  });
+
+  it('switches workspace before creating the session when the bookmark differs', async () => {
+    apiMock.currentSession.mockResolvedValue('');
+    apiMock.modelOptions.mockResolvedValue([]);
+    apiMock.openWorkspace.mockImplementation(async (path: string) => {
+      useStore.getState().handleEvent({
+        type: 'ready',
+        data: {
+          needed: false,
+          default_model: 'm',
+          default_reasoning: true,
+          work_dir: path,
+          user_dir: '/tmp/u',
+          version: 'test',
+          agents: 0,
+        },
+      });
+    });
+
+    useStore.setState({ workspace: '/tmp/a' });
+    stateRoot.resetWorkspace();
+    await useStore.getState().sendFirstMessage('/tmp/b', 'hello b');
+
+    expect(useStore.getState().workspace).toBe('/tmp/b');
+    expect(apiMock.currentSession).not.toHaveBeenCalled();
+    expect(apiMock.newChat).toHaveBeenCalledTimes(1);
+    expect(apiMock.startTurn).toHaveBeenCalledWith(
+      's-new',
+      expect.objectContaining({ role: 'user' }),
+    );
+    expect(stateRoot.focusSnapshot.value).toBe('active');
+    const conv = useStore.getState().conversations['s-new'];
+    expect(conv.messages[0]).toMatchObject({ role: 'user', text: 'hello b' });
   });
 });
 

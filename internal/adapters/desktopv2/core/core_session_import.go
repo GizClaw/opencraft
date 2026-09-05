@@ -29,7 +29,8 @@ func (c *Core) wirePluginSessionImport() {
 		return
 	}
 	c.Plugin.Capability.SetSessionImportHandler(pluginruntime.SessionImportHandler{
-		Import: c.handlePluginSessionImport,
+		Import:          c.handlePluginSessionImport,
+		ImportedSources: c.handlePluginSessionImportedSources,
 	})
 }
 
@@ -95,6 +96,41 @@ func (c *Core) handlePluginSessionImport(
 		Messages:  messages,
 		Turns:     turns,
 	}, nil
+}
+
+// handlePluginSessionImportedSources reports which of the requested
+// import sources already exist as import-ready sessions in the target
+// workspace. The host store is the only source of truth for import
+// state, so plugin lists can show "already imported" rows that stay
+// correct across rescans, restarts and session deletions.
+func (c *Core) handlePluginSessionImportedSources(
+	pluginID string,
+	req pluginruntime.SessionImportStatusRequest,
+) (map[string]string, error) {
+	if !c.pluginHasPermission(pluginID, "sessions:import") {
+		return nil, fmt.Errorf(
+			"session.imported_sources: plugin %q lacks sessions:import permission",
+			pluginID)
+	}
+	ctx := c.Shell.Context()
+	workDir, err := c.pluginImportWorkDir(req.Workspace)
+	if err != nil {
+		return nil, err
+	}
+	h, err := c.hostForPluginImport(ctx, workDir)
+	if err != nil {
+		return nil, err
+	}
+	store := h.Sessions()
+	if store == nil {
+		return nil, errors.New(
+			"session.imported_sources: session store is not ready")
+	}
+	imported, err := store.ImportedBySources(ctx, req.Sources)
+	if err != nil {
+		return nil, fmt.Errorf("session.imported_sources: %w", err)
+	}
+	return imported, nil
 }
 
 // pluginImportWorkDir resolves the session.import target: the

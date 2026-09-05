@@ -84,6 +84,8 @@ export const api = {
   forkTurn: (contextID: string, runID: string) =>
     Conversation.ForkTurn(contextID, runID),
   listSessions: () => Session.List() as unknown as Promise<SessionMeta[]>,
+  listSessionsInWorkspace: (workspace: string) =>
+    Session.ListInWorkspace(workspace) as unknown as Promise<SessionMeta[]>,
   currentSession: () => Conversation.CurrentSession(),
   activeRun: async (id: string) =>
     ({ run_id: await Session.ActiveRun(id) }) as ActiveRunDTO,

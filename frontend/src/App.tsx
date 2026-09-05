@@ -114,7 +114,7 @@ export default function App() {
   const subagentCards = useStore((s) => s.subagentCards);
   const subagentPanelOpen = useStore((s) => s.subagentPanelOpen);
   const loadSubagentCards = useStore((s) => s.loadSubagentCards);
-  const newChat = useStore((s) => s.newChat);
+  const openDraftChat = useStore((s) => s.openDraftChat);
   const openConfig = useStore((s) => s.openConfig);
   const { t } = useTranslation();
   const [sidebarW, setSidebarW] = useState(
@@ -236,7 +236,7 @@ export default function App() {
       const key = e.key.toLowerCase();
       if (key === 'n') {
         e.preventDefault();
-        void newChat();
+        void openDraftChat();
       } else if (key === ',') {
         e.preventDefault();
         openConfig();
@@ -247,7 +247,7 @@ export default function App() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [newChat, openConfig]);
+  }, [openDraftChat, openConfig]);
 
   // Keep the current conversation's delegation list fresh; the right
   // sidebar appears as soon as the conversation spawns a subagent.

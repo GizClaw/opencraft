@@ -211,6 +211,16 @@ func (s *Store) ImportReady(ctx context.Context, id string) (bool, error) {
 	return c.ImportSource != "" && c.ImportReady, nil
 }
 
+// ImportedBySources returns the import-ready conversation id for each
+// of the given import sources that exists in this workspace store. It
+// powers plugin UIs that want to show "already imported" state next to
+// a Codex rollout before the user imports it again.
+func (s *Store) ImportedBySources(
+	ctx context.Context, sources []string,
+) (map[string]string, error) {
+	return s.db.ImportReadyBySources(ctx, sources)
+}
+
 // AbortImport rolls back an import that failed before CompleteImport.
 func (s *Store) AbortImport(ctx context.Context, id string) error {
 	return s.Remove(ctx, id)
