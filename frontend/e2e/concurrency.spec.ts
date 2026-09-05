@@ -61,11 +61,7 @@ async function emit(page: Page, data: unknown) {
 }
 
 function sessionRow(page: Page, id: string) {
-  return page
-    .locator('li')
-    .filter({ has: page.locator(`[title="${id}"]`) })
-    .getByRole('button')
-    .first();
+  return page.locator(`[title="${id}"]`).getByRole('button').first();
 }
 
 test('runs two conversations concurrently and reconciles both from archive', async ({

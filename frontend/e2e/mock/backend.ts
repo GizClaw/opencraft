@@ -17,6 +17,8 @@ export interface MockConfig {
   sessionTurnsByID?: Record<string, unknown[]>;
   turnByRunID?: Record<string, unknown>;
   listSessions?: unknown[];
+  listSessionsInWorkspace?: Record<string, unknown[]>;
+  workspaces?: unknown[];
   sessionTurns?: unknown[];
   automations?: unknown[];
   // Per-method overrides, e.g. { ReadFile: async () => '...' }
@@ -181,6 +183,10 @@ export function mockBackend(cfg?: MockConfig) {
       History: emptyList,
       ImportBundle: async () => '',
       List: async () => config.listSessions ?? [],
+      ListInWorkspace: async (workspace: string) =>
+        config.listSessionsInWorkspace?.[workspace] ??
+        config.listSessions ??
+        [],
       Rename: noop,
       Turns: async (id: string) =>
         config.sessionTurnsByID?.[id] ?? config.sessionTurns ?? [],
@@ -211,7 +217,18 @@ export function mockBackend(cfg?: MockConfig) {
     Workspace: {
       Active: async () => config.workspace ?? '/workspace',
       ChooseWorkspace: async () => config.workspace ?? '/workspace',
-      List: emptyList,
+      List: async () => {
+        if (config.workspaces) return config.workspaces;
+        const workDir = config.workspace ?? '/workspace';
+        return [
+          {
+            id: 'ws-default',
+            path: workDir,
+            title: 'Workspace',
+            last_opened: '2026-01-01T00:00:00Z',
+          },
+        ];
+      },
       Open: noop,
       Remove: noop,
     },
