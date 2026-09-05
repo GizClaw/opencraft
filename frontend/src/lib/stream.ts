@@ -1,4 +1,4 @@
-import type { AssistantItem, MessageView } from './store';
+import type { AssistantItem } from './store';
 import type { StreamDelta, UIEvent } from './types';
 
 export type ToolCallItem = Extract<AssistantItem, { kind: 'tool_call' }>;
@@ -41,14 +41,6 @@ export function groupToolCalls(
   }
   if (cur) out.push(cur);
   return out;
-}
-
-// visibleStreamItems flattens a subagent stream into its renderable
-// items in arrival order, dropping plan calls (they render once in the
-// plan panel). Shared by the subagent sidebar and any other consumer
-// so item visibility never drifts between render paths.
-export function visibleStreamItems(messages: MessageView[]): AssistantItem[] {
-  return messages.flatMap((m) => m.items).filter((it) => !isPlanCall(it));
 }
 
 // coalesceStreamEvents merges contiguous text/reasoning deltas of the

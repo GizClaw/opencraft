@@ -11,7 +11,6 @@ export interface EventDataSink {
     actor: ConversationActor,
   ): void;
   writeConversationData(conversationID: string, ev: UIEvent): void;
-  writeSubagentStream(ev: UIEvent): void;
   writeGlobalData(ev: UIEvent): void;
   refreshSessionList(): void;
   refreshAutomations(): void;
@@ -200,10 +199,6 @@ export function routeBackendEvent(ev: UIEvent, deps: EventRouterDeps) {
         (data.run_id ? deps.data.conversationForRunID(data.run_id) : undefined);
       if (conversationID) {
         routeToConversation(conversationID, ev, deps);
-        return;
-      }
-      if (ev.type === 'stream' && data.run_id) {
-        deps.data.writeSubagentStream(ev);
       }
       return;
     }

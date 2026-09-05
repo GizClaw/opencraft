@@ -76,14 +76,10 @@ function resetStore() {
     },
     runConvs: {},
     pendingPromptConvs: {},
-    subagentStreams: {},
-    subagentStreamAt: {},
     composerDraft: '',
     statusText: '',
     lastUsage: null,
     cards: [],
-    subagentCards: [],
-    subagentPanelOpen: true,
     modelOptions: [],
     theme: 'dark',
     workspaces: [],
@@ -251,8 +247,6 @@ describe('store: send and stream', () => {
   it('new chat switches to an empty conversation without disturbing active runs', async () => {
     useStore.setState({
       runConvs: { 'r-old': 's-old' },
-      subagentStreams: { 'r-old': [] },
-      subagentStreamAt: { 'r-old': 123 },
       conversations: {
         's-old': {
           ...useStore.getState().conversations['s-1'],

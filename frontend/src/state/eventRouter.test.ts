@@ -7,7 +7,6 @@ function fakeSink() {
   const calls: string[] = [];
   const sink: EventDataSink = {
     writeConversationData: () => calls.push('conversation-data'),
-    writeSubagentStream: () => calls.push('subagent-stream'),
     writeGlobalData: () => calls.push('global-data'),
     refreshSessionList: vi.fn(),
     refreshAutomations: vi.fn(),
@@ -68,21 +67,6 @@ describe('event router', () => {
       turn: 'succeeded',
     });
     expect(calls.filter((c) => c === 'conversation-data')).toHaveLength(2);
-  });
-
-  it('keeps delegated subagent streams on the data path', () => {
-    const root = new StateRoot();
-    const { sink, calls } = fakeSink();
-    routeBackendEvent(
-      {
-        type: 'stream',
-        data: { run_id: 'r-sub' },
-      },
-      { root, data: sink },
-    );
-
-    expect(calls).toEqual(['subagent-stream']);
-    expect(root.registry.size()).toBe(0);
   });
 
   it('uses conversation_id from resolved before the pending index', () => {

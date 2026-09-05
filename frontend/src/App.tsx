@@ -11,12 +11,10 @@ import {
 import { ChatView } from './components/ChatView';
 import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
-import { SubagentSidebar } from './components/SubagentSidebar';
 import { TopBar } from './components/TopBar';
 import { Toaster } from './components/Toaster';
 import { WelcomeView } from './components/WelcomeView';
 import { firstMessageTitle, useStore, type AssistantItem } from './lib/store';
-import { useFocusState } from './state/react';
 import { usePluginStore } from './plugins/store';
 import type { UIEvent } from './lib/types';
 import { api } from './lib/api';
@@ -108,11 +106,6 @@ export default function App() {
   const configOpen = useStore((s) => s.configOpen);
   const toolsView = useStore((s) => s.toolsView);
   const workspace = useStore((s) => s.workspace);
-  const focus = useFocusState();
-  const current = focus.name === 'active' ? focus.sessionID : '';
-  const subagentCards = useStore((s) => s.subagentCards);
-  const subagentPanelOpen = useStore((s) => s.subagentPanelOpen);
-  const loadSubagentCards = useStore((s) => s.loadSubagentCards);
   const openDraftChat = useStore((s) => s.openDraftChat);
   const openConfig = useStore((s) => s.openConfig);
   const { t } = useTranslation();
@@ -248,15 +241,6 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [openDraftChat, openConfig]);
 
-  // Keep the current conversation's delegation list fresh; the right
-  // sidebar appears as soon as the conversation spawns a subagent.
-  useEffect(() => {
-    if (!status || toolsView) return;
-    void loadSubagentCards();
-    const timer = setInterval(() => void loadSubagentCards(), 2000);
-    return () => clearInterval(timer);
-  }, [status, current, loadSubagentCards, toolsView]);
-
   const startDrag = () => (e: React.MouseEvent) => {
     e.preventDefault();
     const startX = e.clientX;
@@ -324,13 +308,10 @@ export default function App() {
           >
             <ToolsPanel />
           </Suspense>
+        ) : workspace ? (
+          <ChatView />
         ) : (
-          <>
-            {workspace ? <ChatView /> : <WelcomeView />}
-            {subagentPanelOpen && subagentCards.length > 0 && (
-              <SubagentSidebar />
-            )}
-          </>
+          <WelcomeView />
         )}
       </div>
       <StatusBar />

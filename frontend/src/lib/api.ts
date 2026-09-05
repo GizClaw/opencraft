@@ -112,10 +112,6 @@ export const api = {
   removeWorkspace: (id: string) => Workspace.Remove(id),
   delegationCards: () =>
     Session.DelegationCards() as unknown as Promise<KanbanCard[]>,
-  conversationDelegationCards: (contextID: string) =>
-    Session.ConversationDelegationCards(contextID) as unknown as Promise<
-      KanbanCard[]
-    >,
   readFile: (path: string) => File.ReadText(path),
   fileDiff: (path: string) => File.Diff(path),
   getThink: () => Settings.GetThink(),

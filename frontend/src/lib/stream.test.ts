@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import {
-  coalesceStreamEvents,
-  groupToolCalls,
-  isPlanCall,
-  visibleStreamItems,
-} from './stream';
-import type { AssistantItem, MessageView } from './store';
+import { coalesceStreamEvents, groupToolCalls, isPlanCall } from './stream';
+import type { AssistantItem } from './store';
 import type { UIEvent } from './types';
 
 function text(id: string, body = 'hello'): AssistantItem {
@@ -27,10 +22,6 @@ function tool(
 
 function planCall(args: string, status: 'running' | 'done' = 'done') {
   return tool('plan', 'update_plan', status, args);
-}
-
-function msg(id: string, items: AssistantItem[]): MessageView {
-  return { id, role: 'assistant', text: '', items, attachments: [] };
 }
 
 describe('groupToolCalls', () => {
@@ -111,29 +102,6 @@ describe('isPlanCall', () => {
     expect(isPlanCall(planCall('{}'))).toBe(true);
     expect(isPlanCall(tool('x', 'exec_command'))).toBe(false);
     expect(isPlanCall(text('t'))).toBe(false);
-  });
-});
-
-describe('visibleStreamItems', () => {
-  it('flattens messages in arrival order', () => {
-    const stream = [
-      msg('m1', [text('a'), tool('b', 'exec_command')]),
-      msg('m2', [reasoning('c')]),
-    ];
-    expect(visibleStreamItems(stream).map((i) => i.id)).toEqual([
-      'a',
-      'b',
-      'c',
-    ]);
-  });
-
-  it('drops update_plan calls', () => {
-    const stream = [msg('m1', [planCall('{"plan":[]}'), text('a')])];
-    expect(visibleStreamItems(stream).map((i) => i.id)).toEqual(['a']);
-  });
-
-  it('returns an empty list for an empty stream', () => {
-    expect(visibleStreamItems([])).toEqual([]);
   });
 });
 
