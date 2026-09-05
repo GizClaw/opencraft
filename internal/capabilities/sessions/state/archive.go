@@ -413,7 +413,10 @@ func (s *Store) CommitConversationTurnWithHook(
 	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE conversations SET
-			title = CASE WHEN title = '' THEN ? ELSE title END,
+			title = CASE
+				WHEN title = '' OR turn_count = 0 THEN ?
+				ELSE title
+			END,
 			updated_at = ?,
 			turn_count = turn_count + 1,
 			message_count = message_count + ?

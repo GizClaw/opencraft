@@ -146,12 +146,7 @@ func (h *Host) autoTitle(ctx context.Context, contextID string) {
 			otellog.String("session", contextID))
 		return
 	}
-	h.mu.Lock()
-	fn := h.sessionUpd
-	h.mu.Unlock()
-	if fn != nil {
-		fn(ctx, contextID)
-	}
+	h.notifySessionUpdated(ctx, contextID)
 	telemetry.Info(ctx, "host: auto title generated",
 		otellog.String("session", contextID),
 		otellog.Int("title_chars", len(title)))

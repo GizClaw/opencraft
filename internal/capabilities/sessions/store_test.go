@@ -276,6 +276,76 @@ func TestListSkipsArchiveWithoutMeta(t *testing.T) {
 	}
 }
 
+func TestSeedStartTitleVisibleBeforeArchive(t *testing.T) {
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.CloseDB() }()
+	ctx := context.Background()
+	id := NewID()
+
+	if err := store.SeedStartTitle(ctx, id, []message.Message{
+		message.NewTextMessage(message.RoleUser, "fix the build\nand run tests"),
+	}); err != nil {
+		t.Fatalf("SeedStartTitle: %v", err)
+	}
+
+	list, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].ID != id || list[0].Turns != 0 {
+		t.Fatalf("list after seed = %+v, want one zero-turn conversation", list)
+	}
+	if list[0].Title != "fix the build" {
+		t.Fatalf("title after seed = %q, want first line", list[0].Title)
+	}
+
+	if err := store.AppendTurn(ctx, id, []message.Message{
+		message.NewTextMessage(message.RoleUser, "add tests\nand run them"),
+		message.NewTextMessage(message.RoleAssistant, "done"),
+	}); err != nil {
+		t.Fatalf("AppendTurn: %v", err)
+	}
+	list, err = store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Turns != 1 {
+		t.Fatalf("list after archive = %+v, want one turn", list)
+	}
+	if list[0].Title != "add tests" {
+		t.Fatalf("archived title = %q, want first archived message title", list[0].Title)
+	}
+}
+
+// TestFirstArchiveTitleDisplayRules pins the same fallback rules the
+// frontend mirrors in firstMessageTitle: first line of the first
+// non-empty user text, blank text skipped, 70-rune cap.
+func TestFirstArchiveTitleDisplayRules(t *testing.T) {
+	title := firstArchiveTitle([]message.Message{
+		message.NewTextMessage(message.RoleUser, "   "),
+		message.NewTextMessage(
+			message.RoleUser, "fix the typo\nand rerun the tests"),
+	})
+	if title != "fix the typo" {
+		t.Fatalf("title = %q, want first non-empty line", title)
+	}
+
+	title = firstArchiveTitle([]message.Message{
+		message.NewTextMessage(message.RoleUser, strings.Repeat("汉", 80)),
+	})
+	want := strings.Repeat("汉", 70) + "…"
+	if title != want {
+		t.Fatalf("title = %q, want capped %q", title, want)
+	}
+
+	if title := firstArchiveTitle(nil); title != "" {
+		t.Fatalf("empty archive title = %q, want empty", title)
+	}
+}
+
 func TestHistoryWindow(t *testing.T) {
 	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {

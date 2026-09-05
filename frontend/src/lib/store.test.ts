@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MessageView } from './store';
 import { stateRoot } from '../state/app';
-import { friendlyFailure, pendingConversationIDs, useStore } from './store';
+import {
+  firstMessageTitle,
+  friendlyFailure,
+  pendingConversationIDs,
+  useStore,
+} from './store';
 
 const apiMock = vi.hoisted(() => ({
   configStatus: vi.fn(),
@@ -224,6 +229,23 @@ describe('store: send and stream', () => {
         text: expect.any(String),
       },
     ]);
+  });
+
+  it('deletes the backend-current session after switching to a draft', async () => {
+    // The UI moved to an unsent draft, but the backend still refuses
+    // deletion because it tracks the previous conversation as current.
+    stateRoot.sendFocus({ type: 'OPEN_DRAFT' });
+    apiMock.deleteSession
+      .mockRejectedValueOnce(new Error('cannot delete the active conversation'))
+      .mockResolvedValueOnce(undefined);
+
+    await useStore.getState().deleteSession('s-1');
+
+    expect(apiMock.deleteSession).toHaveBeenCalledTimes(2);
+    expect(apiMock.newChat).toHaveBeenCalledTimes(1);
+    expect(useStore.getState().statusText).toBe('');
+    expect(useStore.getState().toasts).toEqual([]);
+    expect(useStore.getState().conversations['s-1']).toBeUndefined();
   });
 
   it('new chat switches to an empty conversation without disturbing active runs', async () => {
@@ -1424,5 +1446,39 @@ describe('store: workspace switch session restore', () => {
             .map((it) => it.text),
     );
     expect(texts).toContain('answer after switch');
+  });
+});
+
+describe('firstMessageTitle', () => {
+  const user = (text: string, attachments: unknown[] = []): MessageView => ({
+    id: 'm-1',
+    role: 'user',
+    text,
+    items: [],
+    attachments: attachments as MessageView['attachments'],
+  });
+
+  it('uses the first line of the first user message', () => {
+    expect(
+      firstMessageTitle([
+        user('fix the typo\nand rerun the tests'),
+        user('second prompt'),
+      ]),
+    ).toBe('fix the typo');
+  });
+
+  it('skips empty user text and falls back to [attachment]', () => {
+    expect(firstMessageTitle([user('  '), user('', [{}])])).toBe(
+      '[attachment]',
+    );
+  });
+
+  it('caps the title at 70 runes', () => {
+    const title = firstMessageTitle([user('汉'.repeat(80))]);
+    expect(title).toBe(`${'汉'.repeat(70)}…`);
+  });
+
+  it('returns an empty string without user messages', () => {
+    expect(firstMessageTitle([])).toBe('');
   });
 });

@@ -74,6 +74,23 @@ func TestHostRunWritesFileEndToEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("start run: %v", err)
 	}
+	metas, err := h.Sessions().List()
+	if err != nil {
+		t.Fatalf("list sessions after start: %v", err)
+	}
+	var seeded bool
+	for _, meta := range metas {
+		if meta.ID != run.ContextID() {
+			continue
+		}
+		if meta.Title != "write out.txt" || meta.Turns != 0 {
+			t.Fatalf("seeded session meta = %+v, want titled zero-turn row", meta)
+		}
+		seeded = true
+	}
+	if !seeded {
+		t.Fatalf("session %s missing from list after start", run.ContextID())
+	}
 	res, err := run.Wait(ctx)
 	if err != nil {
 		t.Fatalf("wait run: %v", err)

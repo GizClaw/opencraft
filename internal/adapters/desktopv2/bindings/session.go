@@ -34,6 +34,7 @@ type SessionMeta struct {
 	Title       string `json:"title"`
 	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
+	Turns       int    `json:"turns"`
 	Messages    int    `json:"messages"`
 	TotalTokens int64  `json:"total_tokens"`
 }
@@ -44,6 +45,7 @@ func toSessionMeta(m sessions.Meta) SessionMeta {
 		Title:       m.Title,
 		CreatedAt:   m.CreatedAt.UTC().Format(time.RFC3339),
 		UpdatedAt:   m.UpdatedAt.UTC().Format(time.RFC3339),
+		Turns:       m.Turns,
 		Messages:    m.Messages,
 		TotalTokens: m.Usage.TotalTokens,
 	}
@@ -149,6 +151,13 @@ func listStoredMetas(store *sessions.Store) ([]SessionMeta, error) {
 		out = append(out, toSessionMeta(metas[i]))
 	}
 	return out, nil
+}
+
+func requireArchivedTurns(turns []sessions.TurnRecord) error {
+	if len(turns) == 0 {
+		return errors.New("session has no archived turns to export")
+	}
+	return nil
 }
 
 // History returns the most recent n archived messages of a session.
@@ -269,6 +278,9 @@ func (b *Session) ExportMarkdown(
 	if err != nil {
 		return "", err
 	}
+	if err := requireArchivedTurns(turns); err != nil {
+		return "", err
+	}
 	var bld strings.Builder
 	fmt.Fprintf(&bld, "# %s\n\n", id)
 	var pending string
@@ -317,6 +329,9 @@ func (b *Session) ExportBundle(
 	}
 	turns, err := h.Sessions().Turns(ctx, id)
 	if err != nil {
+		return "", err
+	}
+	if err := requireArchivedTurns(turns); err != nil {
 		return "", err
 	}
 	bundle := sessions.ImportRequest{

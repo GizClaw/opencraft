@@ -77,6 +77,7 @@ type Meta struct {
 	Title     string
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	Turns     int
 	Messages  int
 	Usage     Usage
 }
@@ -264,8 +265,10 @@ func (s *Store) appendTurn(
 	if c.CreatedAt.IsZero() {
 		c.CreatedAt = now
 	}
-	if c.Title == "" {
-		c.Title = firstArchiveTitle(archived)
+	if c.Title == "" || c.TurnCount == 0 {
+		if title := firstArchiveTitle(archived); title != "" {
+			c.Title = title
+		}
 	}
 	turn, archiveMsgs := s.archiveTurn(id, runID, now, archived)
 	return s.db.CommitConversationTurnWithHook(
@@ -643,7 +646,12 @@ func (s *Store) List() ([]Meta, error) {
 					otellog.String("conversation.id", c.ID))
 			}
 		}
-		if c.TurnCount == 0 && usage == (Usage{}) {
+		// A conversation whose first turn started but has not archived
+		// yet carries only a title and zero turns. It must stay visible
+		// while the run is in flight (and after a crash), so skip only
+		// zero-turn rows with no title at all.
+		if c.TurnCount == 0 && usage == (Usage{}) &&
+			strings.TrimSpace(c.Title) == "" {
 			continue
 		}
 		m := Meta{
@@ -651,6 +659,7 @@ func (s *Store) List() ([]Meta, error) {
 			Title:     c.Title,
 			CreatedAt: c.CreatedAt,
 			UpdatedAt: c.UpdatedAt,
+			Turns:     c.TurnCount,
 			Messages:  c.MessageCount,
 			Usage:     usage,
 		}
@@ -701,6 +710,29 @@ func (s *Store) FirstUserMessage(id string) (string, error) {
 		}
 	}
 	return "", nil
+}
+
+// SeedStartTitle records the provisional archive fallback title on the
+// conversation row as soon as the session's first turn starts. The row
+// intentionally has zero archived turns until the turn commits, so List
+// must keep it visible. The first archive replaces this provisional
+// title with the archive's own first-user-message fallback (subsequent
+// archives preserve it), and the LLM auto-title stays free to overlay
+// conversation_state["title"] afterwards.
+func (s *Store) SeedStartTitle(
+	ctx context.Context, id string, msgs []message.Message,
+) error {
+	if err := requireID(id); err != nil {
+		return err
+	}
+	title := firstArchiveTitle(filterArchive(msgs))
+	if title == "" {
+		return nil
+	}
+	return s.db.EnsureConversation(ctx, state.Conversation{
+		ID:    id,
+		Title: title,
+	})
 }
 
 // LoadUsage returns the cumulative token usage for a session.
@@ -879,8 +911,10 @@ func firstArchiveTitle(msgs []message.Message) string {
 		if title := firstLine(m.Content.Text()); title != "" {
 			return title
 		}
-		if len(m.Content.Parts) > 0 {
-			return "[attachment]"
+		for _, part := range m.Content.Parts {
+			if _, ok := part.(message.TextPart); !ok {
+				return "[attachment]"
+			}
 		}
 	}
 	return ""

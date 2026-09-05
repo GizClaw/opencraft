@@ -61,7 +61,7 @@ async function emit(page: Page, data: unknown) {
 }
 
 function sessionRow(page: Page, id: string) {
-  return page.locator(`[title="${id}"]`).getByRole('button').first();
+  return page.locator(`[data-session-id="${id}"]`).getByRole('button').first();
 }
 
 test('runs two conversations concurrently and reconciles both from archive', async ({
@@ -87,12 +87,16 @@ test('runs two conversations concurrently and reconciles both from archive', asy
 
   await typeComposerMessage(page, 'active prompt');
   await page.getByRole('button', { name: 'Send' }).click();
-  await expect(page.getByText('active prompt')).toBeVisible();
+  await expect(
+    page.getByTestId('chat-scroll').getByText('active prompt'),
+  ).toBeVisible();
 
   await page.getByRole('button', { name: 'New Chat' }).click();
   await typeComposerMessage(page, 'background prompt');
   await page.getByRole('button', { name: 'Send' }).click();
-  await expect(page.getByText('background prompt')).toBeVisible();
+  await expect(
+    page.getByTestId('chat-scroll').getByText('background prompt'),
+  ).toBeVisible();
 
   // The focused background conversation renders its streamed answer;
   // the active conversation's deltas are still folded into the store.
