@@ -9,6 +9,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/foundation/profile"
 	"github.com/GizClaw/opencraft/internal/testing/sessionstore"
 )
 
@@ -73,11 +74,14 @@ func TestYOLOBypassGate(t *testing.T) {
 		t.Fatal("without RunInfo the gate must apply")
 	}
 
-	// Workspace mode: the gate applies.
+	// Workspace mode: the gate applies. The yoloonly build pins every
+	// session to yolo, so no confined mode exists to assert here.
 	ctx := agent.WithRunInfo(context.Background(),
 		agent.RunInfo{Identity: agent.Identity{ConversationID: "s-1"}})
-	if err := gate(ctx, "127.0.0.1"); err == nil {
-		t.Fatal("workspace mode must keep the gate")
+	if !profile.YoloOnly() {
+		if err := gate(ctx, "127.0.0.1"); err == nil {
+			t.Fatal("workspace mode must keep the gate")
+		}
 	}
 
 	// YOLO mode: the gate is skipped entirely (even deny lists).

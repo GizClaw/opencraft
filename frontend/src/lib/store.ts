@@ -650,6 +650,7 @@ interface StoreState {
   cards: KanbanCard[];
   modelOptions: ModelOption[];
   sessionDefaults: SessionDefaults;
+  yoloOnly: boolean;
   theme: 'dark' | 'light' | 'auto';
   workspaces: WorkspaceMeta[];
   toasts: ToastItem[];
@@ -1378,6 +1379,7 @@ export const useStore = create<StoreState>((set, get) => {
     cards: [],
     modelOptions: [],
     sessionDefaults: { mode: 'workspace', think: 'medium' },
+    yoloOnly: false,
     theme: 'dark',
     workspaces: [],
     toasts: [],
@@ -1398,6 +1400,7 @@ export const useStore = create<StoreState>((set, get) => {
           model,
           modelOptions,
           defaults,
+          profile,
         ] = await Promise.all([
           api.configStatus(),
           api.workspace(),
@@ -1407,6 +1410,7 @@ export const useStore = create<StoreState>((set, get) => {
           api.getModel(),
           api.modelOptions(),
           api.sessionDefaults(),
+          api.profile(),
         ]);
         set({
           status,
@@ -1427,9 +1431,12 @@ export const useStore = create<StoreState>((set, get) => {
               : {}),
           },
           modelOptions,
-          // Older runtimes / test doubles without the binding must not
-          // brick boot: fall back to the canonical defaults.
+          // A binding double may resolve without the new fields; fall
+          // back to the canonical defaults. A genuinely missing
+          // binding rejects the batch above and surfaces as fatal
+          // with a retry path (shell and backend ship together).
           sessionDefaults: defaults ?? { mode: 'workspace', think: 'medium' },
+          yoloOnly: profile?.yolo_only ?? false,
           theme,
         });
         if (currentSession !== '') {

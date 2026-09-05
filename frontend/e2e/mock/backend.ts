@@ -71,6 +71,7 @@ export function mockBackend(cfg?: MockConfig) {
         version: '0.1.0-test',
         agents: 0,
       }),
+      Profile: async () => ({ yolo_only: false }),
       MCPConfig: async () => [],
       MCPStatus: emptyList,
       MemoryConfig: async () => ({}),

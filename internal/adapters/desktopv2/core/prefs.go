@@ -11,6 +11,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/foundation/profile"
 )
 
 const prefsFile = "desktop.json"
@@ -19,6 +20,9 @@ const prefsFile = "desktop.json"
 // values shared by the preference document, the conversation service,
 // and normalization fallbacks.
 func defaultSessionDefaults() (sessions.Mode, string) {
+	if profile.YoloOnly() {
+		return sessions.ModeYOLO, string(sessions.ThinkMedium)
+	}
 	return sessions.ModeWorkspace, string(sessions.ThinkMedium)
 }
 
@@ -85,6 +89,12 @@ func DefaultPrefs() DesktopPrefs {
 // from older preference files) back to the canonical defaults.
 func normalizePrefs(prefs DesktopPrefs) DesktopPrefs {
 	defaults := DefaultPrefs()
+	// The yoloonly build has a single available mode: repair any
+	// preference document (possibly written by the regular build) so
+	// new sessions cannot start confined.
+	if profile.YoloOnly() {
+		prefs.DefaultMode = string(sessions.ModeYOLO)
+	}
 	switch sessions.Mode(prefs.DefaultMode) {
 	case sessions.ModeWorkspace, sessions.ModeReadOnly, sessions.ModeYOLO:
 	default:

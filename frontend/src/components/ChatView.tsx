@@ -1227,6 +1227,7 @@ export function ChatView() {
   const cancelRun = useStore((s) => s.cancelRun);
   const clearLastFailed = useStore((s) => s.clearLastFailed);
   const sessionDefaults = useStore((s) => s.sessionDefaults);
+  const yoloOnly = useStore((s) => s.yoloOnly);
   // Draft pre-send preferences. A new chat has no session yet, so mode
   // / think / model edits stay local and are applied to the minted
   // session right before the first message starts.
@@ -2130,74 +2131,84 @@ export function ChatView() {
               >
                 <Paperclip size="0.9286rem" />
               </button>
-              <div className="relative">
-                <button
-                  onClick={() => setModeMenuOpen((v) => !v)}
-                  className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs transition-colors ${
-                    yolo
-                      ? 'border-yolo/50 bg-yolo/15 text-yolo hover:bg-yolo/25'
-                      : readOnly
-                        ? 'border-accent/40 bg-accent/10 text-accent hover:bg-accent/20'
-                        : 'border-edge text-dim hover:text-fg'
-                  }`}
+              {yoloOnly ? (
+                <div
+                  className="flex items-center gap-1.5 rounded-lg border border-yolo/50 bg-yolo/15 px-2.5 py-1 text-xs text-yolo"
                   title={t('chat.sandboxMode')}
                 >
-                  {yolo ? (
-                    <Flame size="0.9286rem" />
-                  ) : readOnly ? (
-                    <Lock size="0.9286rem" />
-                  ) : (
-                    <ShieldCheck size="0.9286rem" />
-                  )}
-                  {yolo
-                    ? t('chat.yoloMode')
-                    : readOnly
-                      ? t('chat.readOnlyMode')
-                      : t('chat.workspaceMode')}
-                  <ChevronUp size="0.7857rem" />
-                </button>
-                {modeMenuOpen && (
-                  <>
-                    <div
-                      className="fixed inset-0 z-30"
-                      onClick={() => setModeMenuOpen(false)}
-                    />
-                    <div className="absolute bottom-full left-0 z-40 mb-1.5 w-80 rounded-lg border border-edge bg-panel p-1 shadow-xl">
-                      {SESSION_MODES.map((option) => {
-                        const Icon = option.icon;
-                        const active = mode === option.value;
-                        return (
-                          <button
-                            key={option.value}
-                            onClick={() => {
-                              setModeMenuOpen(false);
-                              if (option.value === 'yolo') {
-                                setConfirmYolo(true);
-                              } else {
-                                applyMode(option.value);
-                              }
-                            }}
-                            className={`w-full rounded-md px-2 py-1.5 text-left text-xs ${modeMenuTint(option, active)}`}
-                          >
-                            <span className="flex items-center gap-2">
-                              <Icon size="0.8571rem" /> {t(option.labelKey)}
-                            </span>
-                            <span
-                              className={`mt-0.5 block pl-5 text-[0.7143rem] leading-snug ${
-                                option.value === 'yolo'
-                                  ? 'text-yolo/80'
-                                  : 'text-dim'
-                              }`}
+                  <Flame size="0.9286rem" />
+                  {t('chat.yoloMode')}
+                </div>
+              ) : (
+                <div className="relative">
+                  <button
+                    onClick={() => setModeMenuOpen((v) => !v)}
+                    className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs transition-colors ${
+                      yolo
+                        ? 'border-yolo/50 bg-yolo/15 text-yolo hover:bg-yolo/25'
+                        : readOnly
+                          ? 'border-accent/40 bg-accent/10 text-accent hover:bg-accent/20'
+                          : 'border-edge text-dim hover:text-fg'
+                    }`}
+                    title={t('chat.sandboxMode')}
+                  >
+                    {yolo ? (
+                      <Flame size="0.9286rem" />
+                    ) : readOnly ? (
+                      <Lock size="0.9286rem" />
+                    ) : (
+                      <ShieldCheck size="0.9286rem" />
+                    )}
+                    {yolo
+                      ? t('chat.yoloMode')
+                      : readOnly
+                        ? t('chat.readOnlyMode')
+                        : t('chat.workspaceMode')}
+                    <ChevronUp size="0.7857rem" />
+                  </button>
+                  {modeMenuOpen && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-30"
+                        onClick={() => setModeMenuOpen(false)}
+                      />
+                      <div className="absolute bottom-full left-0 z-40 mb-1.5 w-80 rounded-lg border border-edge bg-panel p-1 shadow-xl">
+                        {SESSION_MODES.map((option) => {
+                          const Icon = option.icon;
+                          const active = mode === option.value;
+                          return (
+                            <button
+                              key={option.value}
+                              onClick={() => {
+                                setModeMenuOpen(false);
+                                if (option.value === 'yolo') {
+                                  setConfirmYolo(true);
+                                } else {
+                                  applyMode(option.value);
+                                }
+                              }}
+                              className={`w-full rounded-md px-2 py-1.5 text-left text-xs ${modeMenuTint(option, active)}`}
                             >
-                              {t(option.bannerKey)}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </>
-                )}
-              </div>
+                              <span className="flex items-center gap-2">
+                                <Icon size="0.8571rem" /> {t(option.labelKey)}
+                              </span>
+                              <span
+                                className={`mt-0.5 block pl-5 text-[0.7143rem] leading-snug ${
+                                  option.value === 'yolo'
+                                    ? 'text-yolo/80'
+                                    : 'text-dim'
+                                }`}
+                              >
+                                {t(option.bannerKey)}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
             <div className="flex items-center gap-2">
               {(thinkSupported || modelOptions.length > 0) && (

@@ -13,6 +13,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/foundation/profile"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
 
@@ -256,6 +257,12 @@ func (b *Conversation) SetSessionMode(mode string) error {
 	case sessions.ModeWorkspace, sessions.ModeReadOnly, sessions.ModeYOLO:
 	default:
 		return fmt.Errorf("unknown permission mode %q", mode)
+	}
+	// Defense in depth next to the sessions.Store guard: keep the
+	// per-session UI state and the persisted mode on the same page.
+	if profile.YoloOnly() && m != sessions.ModeYOLO {
+		return fmt.Errorf(
+			"conversation: only yolo sandbox mode is available in this build")
 	}
 	h := b.core.Runtime.Current()
 	if h != nil && h.Sessions() != nil {

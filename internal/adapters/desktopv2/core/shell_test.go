@@ -5,7 +5,18 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/GizClaw/opencraft/internal/foundation/profile"
 )
+
+// firstRunPrefsMode is the default mode written into fresh preference
+// documents in the current build profile.
+func firstRunPrefsMode() string {
+	if profile.YoloOnly() {
+		return "yolo"
+	}
+	return "workspace"
+}
 
 func TestShellPrefsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
@@ -65,10 +76,16 @@ func TestShellContextFallsBackBeforeStartup(t *testing.T) {
 func TestShellSessionDefaultsPersist(t *testing.T) {
 	dir := t.TempDir()
 	s := NewShell(dir)
-	if mode, think := s.SessionDefaults(); mode != "workspace" || think != "medium" {
+	if mode, think := s.SessionDefaults(); mode != firstRunPrefsMode() || think != "medium" {
 		t.Fatalf("defaults = (%q, %q)", mode, think)
 	}
-	if err := s.SetSessionDefaults("read-only", "high"); err != nil {
+	persistMode := "read-only"
+	if profile.YoloOnly() {
+		// The yoloonly build only stores yolo defaults; confined
+		// modes are repaired on load and rejected by the bindings.
+		persistMode = "yolo"
+	}
+	if err := s.SetSessionDefaults(persistMode, "high"); err != nil {
 		t.Fatal(err)
 	}
 	// Other setters must not wipe the new fields when they rewrite
@@ -81,7 +98,7 @@ func TestShellSessionDefaultsPersist(t *testing.T) {
 	}
 
 	reloaded := NewShell(dir)
-	if mode, think := reloaded.SessionDefaults(); mode != "read-only" || think != "high" {
+	if mode, think := reloaded.SessionDefaults(); mode != persistMode || think != "high" {
 		t.Fatalf("defaults after reload = (%q, %q)", mode, think)
 	}
 }
@@ -95,7 +112,7 @@ func TestLoadPrefsOldFileFallsBackToSessionDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	prefs := LoadPrefs(dir)
-	if prefs.DefaultMode != "workspace" || prefs.DefaultThink != "medium" {
+	if prefs.DefaultMode != firstRunPrefsMode() || prefs.DefaultThink != "medium" {
 		t.Fatalf("defaults = (%q, %q)", prefs.DefaultMode, prefs.DefaultThink)
 	}
 	if prefs.CloseToTray {
@@ -116,7 +133,7 @@ func TestLoadPrefsInvalidSessionDefaultsFallBack(t *testing.T) {
 		t.Fatal(err)
 	}
 	prefs := LoadPrefs(dir)
-	if prefs.DefaultMode != "workspace" || prefs.DefaultThink != "medium" {
+	if prefs.DefaultMode != firstRunPrefsMode() || prefs.DefaultThink != "medium" {
 		t.Fatalf(
 			"invalid values were not repaired: (%q, %q)",
 			prefs.DefaultMode, prefs.DefaultThink,

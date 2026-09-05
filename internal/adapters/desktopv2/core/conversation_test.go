@@ -5,7 +5,17 @@ import (
 	"testing"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/foundation/profile"
 )
+
+// firstRunMode is the mode a freshly minted conversation gets in the
+// current build profile (yolo in yoloonly builds, workspace otherwise).
+func firstRunMode() sessions.Mode {
+	if profile.YoloOnly() {
+		return sessions.ModeYOLO
+	}
+	return sessions.ModeWorkspace
+}
 
 func TestConversationNewAndSettings(t *testing.T) {
 	c := NewConversation()
@@ -13,7 +23,7 @@ func TestConversationNewAndSettings(t *testing.T) {
 	if len(id) < 3 || id[:2] != "s-" {
 		t.Fatalf("conversation id = %q", id)
 	}
-	if c.Mode("/tmp/w") != sessions.ModeWorkspace {
+	if c.Mode("/tmp/w") != firstRunMode() {
 		t.Fatalf("mode = %q", c.Mode("/tmp/w"))
 	}
 	c.SetMode("/tmp/w", sessions.ModeYOLO)
@@ -48,7 +58,7 @@ func TestConversationStateIsWorkspaceScoped(t *testing.T) {
 	c.SetMode(workA, sessions.ModeYOLO)
 	c.SetThink(workA, "high")
 	c.SetModel(workA, "deepseek/deepseek-v4")
-	if c.Mode(workB) != sessions.ModeWorkspace ||
+	if c.Mode(workB) != firstRunMode() ||
 		c.Think(workB) != string(sessions.ThinkMedium) ||
 		c.Model(workB) != "" {
 		t.Fatalf("workspace b picked up workspace a settings: %+v", c)

@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
+
+	"github.com/GizClaw/opencraft/internal/foundation/profile"
 )
 
 // Mode is the per-session sandbox permission mode.
@@ -37,6 +39,10 @@ func (s *Store) SetMode(ctx context.Context, id string, mode Mode) error {
 		return errdefs.Validationf(
 			"sessions: unknown permission mode %q", mode)
 	}
+	if profile.YoloOnly() && mode != ModeYOLO {
+		return errdefs.Validationf(
+			"sessions: only yolo sandbox mode is available in this build")
+	}
 	if s.db != nil {
 		if err := s.db.SetMode(ctx, id, string(mode)); err != nil {
 			return err
@@ -48,6 +54,12 @@ func (s *Store) SetMode(ctx context.Context, id string, mode Mode) error {
 // Mode returns the persisted sandbox mode for the session, defaulting
 // to workspace when the session has no stored mode.
 func (s *Store) Mode(ctx context.Context, id string) (Mode, error) {
+	// The yoloonly build pins the resolution point every sandbox and
+	// tool policy reads from: legacy rows and callers that still pass
+	// read-only/workspace must never produce a confined session.
+	if profile.YoloOnly() {
+		return ModeYOLO, nil
+	}
 	if s.db == nil {
 		return ModeWorkspace, nil
 	}

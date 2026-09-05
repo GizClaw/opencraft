@@ -17,6 +17,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/foundation/profile"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 )
 
@@ -141,6 +142,12 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 				}
 			}
 		}
+	}
+	// The yoloonly build rejects confined modes at the persistence
+	// boundary, so force the requested mode here before any caller
+	// (including legacy automation tasks) reaches Store.SetMode.
+	if profile.YoloOnly() {
+		mode = ocsessions.ModeYOLO
 	}
 	think = reasoningCapableThink(h.userDir, model, think)
 	if fresh {

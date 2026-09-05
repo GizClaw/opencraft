@@ -65,6 +65,7 @@ import type {
 
 export const api = {
   version: () => Config.Version(),
+  profile: () => Config.Profile(),
   configStatus: () => Config.ConfigStatus() as unknown as Promise<ConfigStatus>,
   providers: () => Config.Providers() as unknown as Promise<ProviderView[]>,
   configState: () => Config.ConfigState() as Promise<ConfigState>,

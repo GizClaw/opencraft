@@ -16,6 +16,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/files"
+	"github.com/GizClaw/opencraft/internal/foundation/profile"
 	"github.com/GizClaw/opencraft/internal/testing/sessionstore"
 )
 
@@ -93,7 +94,18 @@ func newTestStore(t *testing.T) *sessions.Store {
 	return store
 }
 
+// skipIfYoloOnly stops regular-build-only tests in the yoloonly
+// profile: confined session modes cannot exist there, so the confined
+// sandbox/workspace policies they assert are unreachable.
+func skipIfYoloOnly(t *testing.T) {
+	t.Helper()
+	if profile.YoloOnly() {
+		t.Skip("confined session modes do not exist in the yoloonly build")
+	}
+}
+
 func TestHostSandboxInjectsReadOnlyWritePolicy(t *testing.T) {
+	skipIfYoloOnly(t)
 	confined := &captureOptsRunner{}
 	unconfined := &recordRunner{}
 	store := newTestStore(t)
@@ -158,6 +170,7 @@ func TestHostSandboxInjectsReadOnlyWritePolicy(t *testing.T) {
 }
 
 func TestHostSandboxSwitchesBySessionMode(t *testing.T) {
+	skipIfYoloOnly(t)
 	confined := &recordRunner{}
 	unconfined := &recordRunner{}
 	store := newTestStore(t)
@@ -203,6 +216,7 @@ func TestHostSandboxSwitchesBySessionMode(t *testing.T) {
 }
 
 func TestHostWorkspaceSwitchesBySessionMode(t *testing.T) {
+	skipIfYoloOnly(t)
 	root := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "secret.txt")
 	confined, err := workspace.NewLocalWorkspace(root)
@@ -235,6 +249,7 @@ func TestHostWorkspaceSwitchesBySessionMode(t *testing.T) {
 }
 
 func TestHostWorkspaceReadonlyRoots(t *testing.T) {
+	skipIfYoloOnly(t)
 	root := t.TempDir()
 	readonlyDir := t.TempDir()
 	skillFile := filepath.Join(readonlyDir, "SKILL.md")
@@ -273,6 +288,7 @@ func TestHostWorkspaceReadonlyRoots(t *testing.T) {
 // and derives the host/YOLO resolution root from it, instead of a
 // settings.root override.
 func TestHostWorkspaceFactoryDerivesRootFromWorkspace(t *testing.T) {
+	skipIfYoloOnly(t)
 	root := t.TempDir()
 	ws, err := workspace.NewLocalWorkspace(root)
 	if err != nil {
@@ -320,6 +336,7 @@ func TestHostWorkspaceFactoryDerivesRootFromWorkspace(t *testing.T) {
 // through to the workspace, whose readonly skill roots are served
 // read-only in workspace mode, while everything else stays denied.
 func TestFilesToolReadsReadonlySkillRoot(t *testing.T) {
+	skipIfYoloOnly(t)
 	root := t.TempDir()
 	skillDir := t.TempDir()
 	refDir := filepath.Join(skillDir, "references")

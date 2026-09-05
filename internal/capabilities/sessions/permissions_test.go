@@ -4,7 +4,19 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+
+	"github.com/GizClaw/opencraft/internal/foundation/profile"
 )
+
+// freshSessionMode is the mode a newly created session resolves to in
+// the current build profile (yolo in yoloonly builds, workspace
+// otherwise).
+func freshSessionMode() Mode {
+	if profile.YoloOnly() {
+		return ModeYOLO
+	}
+	return ModeWorkspace
+}
 
 func TestSessionModePersists(t *testing.T) {
 	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
@@ -17,8 +29,8 @@ func TestSessionModePersists(t *testing.T) {
 	}
 
 	mode, err := store.Mode(context.Background(), id)
-	if err != nil || mode != ModeWorkspace {
-		t.Fatalf("fresh session mode = %q, %v; want workspace", mode, err)
+	if err != nil || mode != freshSessionMode() {
+		t.Fatalf("fresh session mode = %q, %v; want %q", mode, err, freshSessionMode())
 	}
 	if err := store.SetMode(context.Background(), id, ModeYOLO); err != nil {
 		t.Fatal(err)
@@ -40,6 +52,9 @@ func TestSessionModePersists(t *testing.T) {
 }
 
 func TestSessionModeReadOnlyPersists(t *testing.T) {
+	if profile.YoloOnly() {
+		t.Skip("read-only sessions do not exist in the yoloonly build")
+	}
 	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)
@@ -70,8 +85,8 @@ func TestSessionModeIsolatedPerSession(t *testing.T) {
 	if err := store.SetMode(context.Background(), id1, ModeYOLO); err != nil {
 		t.Fatal(err)
 	}
-	if mode, _ := store.Mode(context.Background(), id2); mode != ModeWorkspace {
-		t.Fatalf("other session mode = %q, want workspace", mode)
+	if mode, _ := store.Mode(context.Background(), id2); mode != freshSessionMode() {
+		t.Fatalf("other session mode = %q, want %q", mode, freshSessionMode())
 	}
 }
 

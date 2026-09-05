@@ -1,5 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, Minimize2, Power, Sparkles } from 'lucide-react';
+import {
+  Check,
+  ChevronDown,
+  Flame,
+  Minimize2,
+  Power,
+  Sparkles,
+} from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import { SESSION_MODES } from '../lib/sessionModes';
@@ -19,6 +26,7 @@ export function SettingsGeneral() {
   const toast = useStore((s) => s.toast);
   const setSessionDefaults = useStore((s) => s.setSessionDefaults);
   const storeDefaults = useStore((s) => s.sessionDefaults);
+  const yoloOnly = useStore((s) => s.yoloOnly);
   // null until the persisted value loads; the close-window row renders
   // once known so the highlighted option never flashes the default.
   const [closeToTray, setCloseToTray] = useState<boolean | null>(null);
@@ -164,83 +172,103 @@ export function SettingsGeneral() {
           </div>
         </div>
         <div className="mt-4 space-y-4">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="text-xs font-medium text-dim">
-                {t('config.generalDefaultMode')}
+          {yoloOnly ? (
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-xs font-medium text-dim">
+                  {t('config.generalDefaultMode')}
+                </div>
+                <p className="mt-0.5 text-[0.7857rem] text-dim/80">
+                  {t('config.generalDefaultModeHint')}
+                </p>
               </div>
-              <p className="mt-0.5 text-[0.7857rem] text-dim/80">
-                {t('config.generalDefaultModeHint')}
-              </p>
+              <div className="flex shrink-0 items-center gap-1.5 rounded-lg border border-yolo/50 bg-yolo/15 px-2.5 py-1.5 text-xs text-yolo">
+                <Flame size="0.9286rem" />
+                {t('chat.yoloMode')}
+              </div>
             </div>
-            <div className="relative shrink-0">
-              <button
-                onClick={() => setModeMenuOpen((v) => !v)}
-                aria-label={t('config.generalDefaultMode')}
-                aria-haspopup="menu"
-                aria-expanded={modeMenuOpen}
-                className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
-                  mode === 'yolo'
-                    ? 'border-yolo/50 bg-yolo/15 text-yolo hover:bg-yolo/25'
-                    : mode === 'read-only'
-                      ? 'border-accent/40 bg-accent/10 text-accent hover:bg-accent/20'
-                      : 'border-edge text-dim hover:text-fg'
-                }`}
-              >
-                <ModeIcon size="0.8571rem" />
-                <span>{activeMode.label}</span>
-                <ChevronDown
-                  size="0.7857rem"
-                  className={`text-dim transition-transform ${
-                    modeMenuOpen ? 'rotate-180' : ''
+          ) : (
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="text-xs font-medium text-dim">
+                  {t('config.generalDefaultMode')}
+                </div>
+                <p className="mt-0.5 text-[0.7857rem] text-dim/80">
+                  {t('config.generalDefaultModeHint')}
+                </p>
+              </div>
+              <div className="relative shrink-0">
+                <button
+                  onClick={() => setModeMenuOpen((v) => !v)}
+                  aria-label={t('config.generalDefaultMode')}
+                  aria-haspopup="menu"
+                  aria-expanded={modeMenuOpen}
+                  className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
+                    mode === 'yolo'
+                      ? 'border-yolo/50 bg-yolo/15 text-yolo hover:bg-yolo/25'
+                      : mode === 'read-only'
+                        ? 'border-accent/40 bg-accent/10 text-accent hover:bg-accent/20'
+                        : 'border-edge text-dim hover:text-fg'
                   }`}
-                />
-              </button>
-              {modeMenuOpen && (
-                <>
-                  <div
-                    className="fixed inset-0 z-30"
-                    onClick={() => setModeMenuOpen(false)}
+                >
+                  <ModeIcon size="0.8571rem" />
+                  <span>{activeMode.label}</span>
+                  <ChevronDown
+                    size="0.7857rem"
+                    className={`text-dim transition-transform ${
+                      modeMenuOpen ? 'rotate-180' : ''
+                    }`}
                   />
-                  <div
-                    role="menu"
-                    className="absolute right-0 top-full z-40 mt-1.5 w-80 rounded-xl border border-edge bg-panel p-1 shadow-xl"
-                  >
-                    {modes.map((m) => {
-                      const Icon = m.icon;
-                      const active = m.value === mode;
-                      return (
-                        <button
-                          key={m.value}
-                          role="menuitem"
-                          onClick={() => {
-                            setModeMenuOpen(false);
-                            chooseMode(m.value);
-                          }}
-                          className={`flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-xs ${
-                            active
-                              ? 'bg-accent/10 text-accent'
-                              : 'text-dim hover:bg-panel2 hover:text-fg'
-                          }`}
-                        >
-                          <Icon size="0.8571rem" className="mt-0.5 shrink-0" />
-                          <span className="min-w-0 flex-1">
-                            <span className="flex items-center gap-1.5 font-medium text-fg">
-                              {m.label}
-                              {active && <Check size="0.7857rem" />}
+                </button>
+                {modeMenuOpen && (
+                  <>
+                    <div
+                      className="fixed inset-0 z-30"
+                      onClick={() => setModeMenuOpen(false)}
+                    />
+                    <div
+                      role="menu"
+                      className="absolute right-0 top-full z-40 mt-1.5 w-80 rounded-xl border border-edge bg-panel p-1 shadow-xl"
+                    >
+                      {modes.map((m) => {
+                        const Icon = m.icon;
+                        const active = m.value === mode;
+                        return (
+                          <button
+                            key={m.value}
+                            role="menuitem"
+                            onClick={() => {
+                              setModeMenuOpen(false);
+                              chooseMode(m.value);
+                            }}
+                            className={`flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-xs ${
+                              active
+                                ? 'bg-accent/10 text-accent'
+                                : 'text-dim hover:bg-panel2 hover:text-fg'
+                            }`}
+                          >
+                            <Icon
+                              size="0.8571rem"
+                              className="mt-0.5 shrink-0"
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="flex items-center gap-1.5 font-medium text-fg">
+                                {m.label}
+                                {active && <Check size="0.7857rem" />}
+                              </span>
+                              <span className="mt-0.5 block leading-snug">
+                                {m.banner}
+                              </span>
                             </span>
-                            <span className="mt-0.5 block leading-snug">
-                              {m.banner}
-                            </span>
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </>
-              )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
             </div>
-          </div>
+          )}
           <div>
             <div className="flex items-center justify-between">
               <div>

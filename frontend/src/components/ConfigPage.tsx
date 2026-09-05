@@ -135,6 +135,7 @@ export function ConfigPage() {
   const configured = useStore((s) => s.configured);
   const closeConfig = useStore((s) => s.closeConfig);
   const configTab = useStore((s) => s.configTab);
+  const yoloOnly = useStore((s) => s.yoloOnly);
   const toast = useStore((s) => s.toast);
   const newID = () =>
     `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -722,7 +723,15 @@ export function ConfigPage() {
     { id: 'mcp', label: t('config.tabMCP'), icon: MCPLogo },
     { id: 'usage', label: t('config.tabUsage'), icon: BarChart3 },
     { id: 'memory', label: t('config.tabMemory'), icon: Database },
-    { id: 'permissions', label: t('config.tabPermissions'), icon: ShieldCheck },
+    ...(yoloOnly
+      ? []
+      : [
+          {
+            id: 'permissions' as const,
+            label: t('config.tabPermissions'),
+            icon: ShieldCheck,
+          },
+        ]),
     { id: 'logs', label: t('config.tabLogs'), icon: ScrollText },
     { id: 'diagnostics', label: t('config.tabDiagnostics'), icon: Stethoscope },
     { id: 'import', label: t('config.tabImport'), icon: Import },

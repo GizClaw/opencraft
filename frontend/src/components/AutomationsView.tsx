@@ -49,7 +49,7 @@ interface FormState {
 
 const WEEKDAYS = ['MO', 'TU', 'WE', 'TH', 'FR', 'SA', 'SU'];
 
-const emptyForm = (workspace: string): FormState => ({
+const emptyForm = (workspace: string, yoloOnly: boolean): FormState => ({
   id: '',
   name: '',
   prompt: '',
@@ -59,7 +59,7 @@ const emptyForm = (workspace: string): FormState => ({
   days: ['MO', 'TU', 'WE', 'TH', 'FR'],
   time: '09:00',
   workspace,
-  mode: 'workspace',
+  mode: yoloOnly ? 'yolo' : 'workspace',
   model: '',
   think: '',
   notify: 'always',
@@ -68,7 +68,7 @@ const emptyForm = (workspace: string): FormState => ({
   enabled: true,
 });
 
-const taskToForm = (task: AutomationTask): FormState => ({
+const taskToForm = (task: AutomationTask, yoloOnly: boolean): FormState => ({
   id: task.id,
   name: task.name,
   prompt: task.prompt,
@@ -78,7 +78,7 @@ const taskToForm = (task: AutomationTask): FormState => ({
   days: task.schedule.days ?? [],
   time: task.schedule.time ?? '09:00',
   workspace: task.workspace,
-  mode: task.mode || 'workspace',
+  mode: yoloOnly ? 'yolo' : task.mode || 'workspace',
   model: task.model ?? '',
   think: task.think ?? '',
   notify: task.notify || 'always',
@@ -285,6 +285,7 @@ export function AutomationsView() {
   const automations = useStore((s) => s.automations);
   const runs = useStore((s) => s.automationRuns);
   const modelOptions = useStore((s) => s.modelOptions);
+  const yoloOnly = useStore((s) => s.yoloOnly);
   const loadAutomations = useStore((s) => s.loadAutomations);
   const loadAutomationRuns = useStore((s) => s.loadAutomationRuns);
   const resume = useStore((s) => s.resume);
@@ -401,7 +402,7 @@ export function AutomationsView() {
 
   const openNew = () => {
     setError('');
-    setForm(emptyForm(workspace));
+    setForm(emptyForm(workspace, yoloOnly));
     setHistoryFor(null);
   };
 
@@ -416,7 +417,7 @@ export function AutomationsView() {
 
   const openEdit = (task: AutomationTask) => {
     setError('');
-    setForm(taskToForm(task));
+    setForm(taskToForm(task, yoloOnly));
     setHistoryFor(task.id);
     void loadAutomationRuns(task.id);
   };
@@ -860,7 +861,7 @@ export function AutomationsView() {
                   </Field>
                 )}
                 <div className="grid grid-cols-2 gap-3">
-                  {form.sessionMode === 'new' && (
+                  {form.sessionMode === 'new' && !yoloOnly && (
                     <Field label={t('automations.permission')}>
                       <CapsuleSelect
                         value={form.mode}
