@@ -191,3 +191,45 @@ func TestImportRequiresSourceAndArchiveableMessages(t *testing.T) {
 		t.Fatal("import with no archiveable content accepted")
 	}
 }
+
+func TestImportPersistsTurnTimestamps(t *testing.T) {
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.CloseDB() })
+	ctx := context.Background()
+
+	req := importFixture()
+	requested := time.Date(2026, 1, 2, 3, 4, 6, 0, time.UTC)
+	started := time.Date(2026, 1, 2, 3, 4, 7, 0, time.UTC)
+	finished := time.Date(2026, 1, 2, 3, 4, 30, 0, time.UTC)
+	req.Turns[0].RequestedAt = &requested
+	req.Turns[0].StartedAt = &started
+	req.Turns[0].FinishedAt = &finished
+
+	id, err := store.Import(ctx, req)
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	turns, err := store.Turns(ctx, id)
+	if err != nil {
+		t.Fatalf("Turns: %v", err)
+	}
+	if len(turns) != 2 {
+		t.Fatalf("turns = %d, want 2", len(turns))
+	}
+	first := turns[0]
+	if !first.At.Equal(req.Turns[0].At) ||
+		!first.RequestedAt.Equal(requested) ||
+		!first.StartedAt.Equal(started) ||
+		!first.FinishedAt.Equal(finished) {
+		t.Fatalf("turn 1 timing = at %v requested %v started %v finished %v",
+			first.At, first.RequestedAt, first.StartedAt, first.FinishedAt)
+	}
+	second := turns[1]
+	if !second.FinishedAt.Equal(second.At) ||
+		!second.FinishedAt.Equal(req.Turns[1].At) {
+		t.Fatalf("turn 2 without finished_at = %+v", second)
+	}
+}

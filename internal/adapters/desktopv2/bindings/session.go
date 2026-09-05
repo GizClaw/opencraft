@@ -160,6 +160,43 @@ func requireArchivedTurns(turns []sessions.TurnRecord) error {
 	return nil
 }
 
+// importRequestFromTurns lowers archived turns back into the neutral
+// bundle shape. Turn timestamps and the session usage ride along, so
+// an exported bundle re-imports with the same worked-for durations,
+// request/start anchors and token totals.
+func importRequestFromTurns(
+	source, title string,
+	usage sessions.Usage,
+	turns []sessions.TurnRecord,
+) sessions.ImportRequest {
+	bundle := sessions.ImportRequest{
+		Source: source,
+		Title:  title,
+	}
+	if usage.TotalTokens > 0 {
+		u := usage
+		bundle.Usage = &u
+	}
+	for _, turn := range turns {
+		bundle.Turns = append(bundle.Turns, sessions.ImportTurn{
+			At:          turn.At,
+			RequestedAt: optionalTime(turn.RequestedAt),
+			StartedAt:   optionalTime(turn.StartedAt),
+			FinishedAt:  optionalTime(turn.FinishedAt),
+			Messages:    turn.Messages,
+		})
+	}
+	return bundle
+}
+
+func optionalTime(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	u := t.UTC()
+	return &u
+}
+
 // History returns the most recent n archived messages of a session.
 func (b *Session) History(
 	id string, n int,
@@ -334,16 +371,11 @@ func (b *Session) ExportBundle(
 	if err := requireArchivedTurns(turns); err != nil {
 		return "", err
 	}
-	bundle := sessions.ImportRequest{
-		Source: "opencraft:" + id,
-		Title:  id,
+	usage, err := h.Sessions().LoadUsage(ctx, id)
+	if err != nil {
+		return "", err
 	}
-	for _, turn := range turns {
-		bundle.Turns = append(bundle.Turns, sessions.ImportTurn{
-			At:       turn.At,
-			Messages: turn.Messages,
-		})
-	}
+	bundle := importRequestFromTurns("opencraft:"+id, id, usage, turns)
 	data, err := json.MarshalIndent(bundle, "", "  ")
 	if err != nil {
 		return "", err

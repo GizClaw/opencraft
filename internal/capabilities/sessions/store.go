@@ -780,6 +780,52 @@ func (s *Store) RecordUsage(ctx context.Context, id string, usage Usage) error {
 	return s.db.UpsertConversation(ctx, c)
 }
 
+// RecordUsageIfEmpty persists cumulative usage for a session only when
+// it has no recorded totals yet, returning whether the write happened.
+// The read-if-empty-and-set check runs under the store mutex, so
+// concurrent imports of the same source cannot double count imported
+// token totals.
+func (s *Store) RecordUsageIfEmpty(
+	ctx context.Context,
+	id string,
+	usage Usage,
+) (bool, error) {
+	if err := requireID(id); err != nil {
+		return false, err
+	}
+	if usage.TotalTokens <= 0 {
+		return false, nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	c, err := s.db.Conversation(ctx, id)
+	if err == state.ErrNotFound {
+		c = state.Conversation{ID: id, CreatedAt: time.Now().UTC()}
+		if err := s.db.EnsureConversation(ctx, c); err != nil {
+			return false, err
+		}
+	} else if err != nil {
+		return false, err
+	}
+	if len(c.UsageJSON) > 0 {
+		var existing Usage
+		if err := json.Unmarshal(c.UsageJSON, &existing); err != nil {
+			telemetry.WarnErr(ctx, "sessions: decode usage before empty-seed failed", err,
+				otellog.String("conversation.id", id))
+		} else if existing.TotalTokens > 0 {
+			return false, nil
+		}
+	}
+	raw, err := json.Marshal(usage)
+	if err != nil {
+		return false, err
+	}
+	c.UsageJSON = raw
+	c.UpdatedAt = time.Now().UTC()
+	return true, s.db.UpsertConversation(ctx, c)
+}
+
 // AddUsage accumulates one usage delta onto the cumulative usage
 // already recorded for a session. Turn-end persistence and background
 // generations such as auto titles both feed deltas here, so a session's
