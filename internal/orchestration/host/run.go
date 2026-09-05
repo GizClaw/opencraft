@@ -426,10 +426,7 @@ func (h *Host) persistTurnUsage(
 		telemetry.WarnErr(ctx, "host: add session usage failed",
 			h.store.AddUsage(ctx, contextID, usage))
 	}
-	if h.usageRecorder != nil {
-		telemetry.WarnErr(ctx, "host: record user-level usage failed",
-			h.usageRecorder(ctx, h.workspaceID, contextID, usage))
-	}
+	h.forwardUsageRecorder(ctx, contextID, usage)
 }
 
 // unwrapErrForTelemetry strips one wrapper so telemetry stores the

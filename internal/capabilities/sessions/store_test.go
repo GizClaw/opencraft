@@ -478,6 +478,70 @@ func TestRecordAndLoadUsage(t *testing.T) {
 	}
 }
 
+func TestRecordUsageIfEmptySeedsOnce(t *testing.T) {
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.CloseDB() }()
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	want := Usage{
+		Model:           "deepseek-v4-flash",
+		InputTokens:     1000,
+		OutputTokens:    200,
+		TotalTokens:     1200,
+		CacheReadTokens: 700,
+		ReasoningTokens: 50,
+	}
+	recorded, err := store.RecordUsageIfEmpty(ctx, id, want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !recorded {
+		t.Fatal("first empty-seed write was skipped")
+	}
+	got, err := store.LoadUsage(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("usage = %+v, want %+v", got, want)
+	}
+
+	// A second seed must not overwrite or double count.
+	recorded, err = store.RecordUsageIfEmpty(ctx, id, Usage{TotalTokens: 900})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recorded {
+		t.Fatal("second empty-seed write was not skipped")
+	}
+	got, err = store.LoadUsage(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Fatalf("usage after second seed = %+v, want %+v", got, want)
+	}
+
+	// Zero totals never seed.
+	if err := store.RecordUsage(ctx, id, Usage{}); err != nil {
+		t.Fatal(err)
+	}
+	recorded, err = store.RecordUsageIfEmpty(ctx, id, Usage{TotalTokens: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recorded {
+		t.Fatal("zero-token seed was recorded")
+	}
+}
+
 func TestAppendSkipsEmpty(t *testing.T) {
 	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
@@ -523,6 +587,11 @@ func TestAllIDMethodsRejectTraversal(t *testing.T) {
 	}
 	if err := store.RecordUsage(context.Background(), bad, Usage{TotalTokens: 1}); err == nil {
 		t.Error("RecordUsage accepted traversal id")
+	}
+	if _, err := store.RecordUsageIfEmpty(
+		context.Background(), bad, Usage{TotalTokens: 1},
+	); err == nil {
+		t.Error("RecordUsageIfEmpty accepted traversal id")
 	}
 	if err := store.AddUsage(context.Background(), bad, Usage{TotalTokens: 1}); err == nil {
 		t.Error("AddUsage accepted traversal id")

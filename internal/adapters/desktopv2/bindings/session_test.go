@@ -2,6 +2,7 @@ package bindings
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,6 +81,63 @@ func TestRequireArchivedTurnsRejectsEmpty(t *testing.T) {
 	}
 	if err := requireArchivedTurns(nil); err == nil {
 		t.Fatal("empty turns accepted for export")
+	}
+}
+
+func TestImportRequestFromTurnsCarriesTimingAndUsage(t *testing.T) {
+	at := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
+	requested := at.Add(-90 * time.Second)
+	started := at.Add(-85 * time.Second)
+	usage := sessions.Usage{
+		Model:           "deepseek-v4-flash",
+		InputTokens:     1000,
+		OutputTokens:    200,
+		TotalTokens:     1200,
+		CacheReadTokens: 700,
+		ReasoningTokens: 50,
+	}
+	turns := []sessions.TurnRecord{
+		{
+			At:          at,
+			RequestedAt: requested,
+			StartedAt:   started,
+			FinishedAt:  at,
+		},
+		{At: at.Add(5 * time.Minute)},
+	}
+
+	req := importRequestFromTurns("opencraft:s-1", "s-1", usage, turns)
+	if req.Source != "opencraft:s-1" || req.Title != "s-1" {
+		t.Fatalf("source/title = %q/%q", req.Source, req.Title)
+	}
+	if req.Usage == nil || *req.Usage != usage {
+		t.Fatalf("usage = %+v, want %+v", req.Usage, usage)
+	}
+	if len(req.Turns) != 2 {
+		t.Fatalf("turns = %d, want 2", len(req.Turns))
+	}
+	first := req.Turns[0]
+	if first.RequestedAt == nil || !first.RequestedAt.Equal(requested) ||
+		first.StartedAt == nil || !first.StartedAt.Equal(started) ||
+		first.FinishedAt == nil || !first.FinishedAt.Equal(at) {
+		t.Fatalf("turn 1 timestamps = %+v", first)
+	}
+	second := req.Turns[1]
+	if second.RequestedAt != nil || second.StartedAt != nil ||
+		second.FinishedAt != nil {
+		t.Fatalf("legacy turn should omit optional timestamps: %+v", second)
+	}
+
+	raw, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{
+		"usage", "requested_at", "started_at", "finished_at",
+	} {
+		if !strings.Contains(string(raw), key) {
+			t.Fatalf("export JSON missing %q: %s", key, raw)
+		}
 	}
 }
 

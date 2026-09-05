@@ -23,15 +23,29 @@ const (
 
 // ImportRequest is the neutral session-import payload.
 type ImportRequest struct {
-	Title  string       `json:"title"`
-	Source string       `json:"source"`
-	Turns  []ImportTurn `json:"turns"`
+	Title  string `json:"title"`
+	Source string `json:"source"`
+	// Usage is the optional cumulative token accounting recorded by the
+	// source client (e.g. Codex token_count totals). Import keeps the
+	// bundle write path usage-agnostic: Store.Import never writes it,
+	// and the Host persists it once per fresh import so live-turn
+	// AddUsage semantics stay the single write path.
+	Usage *Usage       `json:"usage,omitempty"`
+	Turns []ImportTurn `json:"turns"`
 }
 
 // ImportTurn is one archived turn of an imported conversation.
 type ImportTurn struct {
-	At       time.Time         `json:"at"`
-	Messages []message.Message `json:"messages"`
+	At time.Time `json:"at"`
+	// RequestedAt/StartedAt/FinishedAt are optional turn timestamps
+	// exported by OpenCraft or recorded by a source client. Each one
+	// falls back to At when absent, so legacy and plugin-written
+	// bundles (which only carry At and optionally FinishedAt) import
+	// exactly as before while OpenCraft bundles round-trip losslessly.
+	RequestedAt *time.Time        `json:"requested_at,omitempty"`
+	StartedAt   *time.Time        `json:"started_at,omitempty"`
+	FinishedAt  *time.Time        `json:"finished_at,omitempty"`
+	Messages    []message.Message `json:"messages"`
 }
 
 // Import writes a new conversation from a neutral request into SQLite
@@ -61,8 +75,11 @@ func (s *Store) Import(ctx context.Context, req ImportRequest) (string, error) {
 	}
 
 	var archives []struct {
-		At       time.Time
-		Messages []message.Message
+		At        time.Time
+		Requested time.Time
+		Started   time.Time
+		Finished  time.Time
+		Messages  []message.Message
 	}
 	now := time.Now().UTC()
 	for _, turn := range req.Turns {
@@ -81,13 +98,29 @@ func (s *Store) Import(ctx context.Context, req ImportRequest) (string, error) {
 		at := turn.At
 		if at.IsZero() {
 			at = now
-		} else if !at.Equal(at.UTC()) {
+		} else {
 			at = at.UTC()
 		}
+		requested := at
+		started := at
+		finished := at
+		if turn.RequestedAt != nil && !turn.RequestedAt.IsZero() {
+			requested = turn.RequestedAt.UTC()
+		}
+		if turn.StartedAt != nil && !turn.StartedAt.IsZero() {
+			started = turn.StartedAt.UTC()
+		}
+		if turn.FinishedAt != nil && !turn.FinishedAt.IsZero() {
+			finished = turn.FinishedAt.UTC()
+		}
 		archives = append(archives, struct {
-			At       time.Time
-			Messages []message.Message
-		}{At: at, Messages: msgs})
+			At        time.Time
+			Requested time.Time
+			Started   time.Time
+			Finished  time.Time
+			Messages  []message.Message
+		}{At: at, Requested: requested, Started: started,
+			Finished: finished, Messages: msgs})
 	}
 	if len(archives) == 0 {
 		return "", errdefs.Validationf(
@@ -141,9 +174,9 @@ func (s *Store) Import(ctx context.Context, req ImportRequest) (string, error) {
 		if err := s.db.CommitConversationTurn(ctx, conv, state.ArchiveTurn{
 			RunID:       fmt.Sprintf("import-%d", i),
 			At:          arch.At,
-			RequestedAt: arch.At,
-			StartedAt:   arch.At,
-			FinishedAt:  arch.At,
+			RequestedAt: arch.Requested,
+			StartedAt:   arch.Started,
+			FinishedAt:  arch.Finished,
 		}, turnMsgs); err != nil {
 			telemetry.WarnErr(ctx,
 				"sessions: rollback failed import turn failed",

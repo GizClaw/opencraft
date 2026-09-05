@@ -45,7 +45,13 @@ func (h *Host) ImportSession(
 		h.abortImport(ctx, id)
 		return "", fmt.Errorf("host: import readiness %s: %w", id, err)
 	}
+	// Account the source-reported token totals exactly once. An import
+	// arrives as a pre-aggregated cumulative total, so it is written
+	// only when the session has no recorded usage yet: fresh imports
+	// record after memory seeding and CompleteImport succeed, and a
+	// ready legacy import gets a backfill when no usage was captured.
 	if ready {
+		h.recordImportUsage(ctx, id, req.Usage)
 		return id, nil
 	}
 	if err := h.seedImportMemory(ctx, id, req); err != nil {
@@ -56,8 +62,45 @@ func (h *Host) ImportSession(
 		h.abortImport(ctx, id)
 		return "", fmt.Errorf("host: import complete %s: %w", id, err)
 	}
+	h.recordImportUsage(ctx, id, req.Usage)
 	h.launchAutoTitle(context.WithoutCancel(ctx), id)
 	return id, nil
+}
+
+// recordImportUsage persists an imported session's source-recorded
+// totals through the store's atomic empty-seed write and forwards them
+// to the user-level recorder installed on the Host's manager.
+func (h *Host) recordImportUsage(
+	ctx context.Context,
+	id string,
+	usage *ocsessions.Usage,
+) {
+	if h == nil || h.store == nil || usage == nil || usage.TotalTokens <= 0 {
+		return
+	}
+	recorded, err := h.store.RecordUsageIfEmpty(ctx, id, *usage)
+	if err != nil {
+		telemetry.WarnErr(ctx, "host: record imported session usage failed", err,
+			otellog.String("conversation.id", id))
+		return
+	}
+	if recorded {
+		h.forwardUsageRecorder(ctx, id, *usage)
+	}
+}
+
+// forwardUsageRecorder sends one usage delta to the user-level recorder
+// installed on the Host's manager.
+func (h *Host) forwardUsageRecorder(
+	ctx context.Context,
+	contextID string,
+	usage ocsessions.Usage,
+) {
+	if h == nil || h.usageRecorder == nil {
+		return
+	}
+	telemetry.WarnErr(ctx, "host: record user-level usage failed",
+		h.usageRecorder(ctx, h.workspaceID, contextID, usage))
 }
 
 func (h *Host) abortImport(ctx context.Context, id string) {
