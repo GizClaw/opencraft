@@ -1427,7 +1427,9 @@ export const useStore = create<StoreState>((set, get) => {
               : {}),
           },
           modelOptions,
-          sessionDefaults: defaults,
+          // Older runtimes / test doubles without the binding must not
+          // brick boot: fall back to the canonical defaults.
+          sessionDefaults: defaults ?? { mode: 'workspace', think: 'medium' },
           theme,
         });
         if (currentSession !== '') {
