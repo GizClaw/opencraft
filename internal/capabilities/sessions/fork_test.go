@@ -11,6 +11,8 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/message/media"
+
+	"github.com/GizClaw/opencraft/internal/foundation/profile"
 )
 
 func TestForkCopiesHistoryThroughRun(t *testing.T) {
@@ -49,7 +51,14 @@ func TestForkCopiesHistoryThroughRun(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetMode(ctx, sourceID, ModeReadOnly); err != nil {
+	// Fork copies the source session's resolved mode. The yoloonly
+	// build pins every session to yolo, so confined sources cannot
+	// exist there.
+	sourceMode := ModeReadOnly
+	if profile.YoloOnly() {
+		sourceMode = ModeYOLO
+	}
+	if err := store.SetMode(ctx, sourceID, sourceMode); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.SetThink(ctx, sourceID, ThinkHigh); err != nil {
@@ -100,8 +109,8 @@ func TestForkCopiesHistoryThroughRun(t *testing.T) {
 	if len(sourceTurns) != 2 {
 		t.Fatalf("source turns = %d, want 2", len(sourceTurns))
 	}
-	if mode, err := store.Mode(ctx, forked.ID); err != nil || mode != ModeReadOnly {
-		t.Fatalf("fork mode = %q, %v; want read-only", mode, err)
+	if mode, err := store.Mode(ctx, forked.ID); err != nil || mode != sourceMode {
+		t.Fatalf("fork mode = %q, %v; want %q", mode, err, sourceMode)
 	}
 	if think, err := store.Think(ctx, forked.ID); err != nil || think != ThinkHigh {
 		t.Fatalf("fork think = %q, %v; want high", think, err)

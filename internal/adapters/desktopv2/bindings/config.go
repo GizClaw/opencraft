@@ -21,6 +21,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/secrets"
 	"github.com/GizClaw/opencraft/internal/capabilities/usage"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/foundation/profile"
 	"github.com/GizClaw/opencraft/internal/foundation/version"
 )
 
@@ -37,6 +38,18 @@ func NewConfig(c *core.Core) *Config {
 // Version returns the application version.
 func (b *Config) Version() string {
 	return version.ServiceVersion
+}
+
+// BuildProfile reports immutable flags selected by Go build tags (see
+// foundation/profile). The desktop shell reads this once at startup;
+// the Go binary remains the single source of truth for the profile.
+type BuildProfile struct {
+	YoloOnly bool `json:"yolo_only"`
+}
+
+// Profile returns the active build profile.
+func (b *Config) Profile() BuildProfile {
+	return BuildProfile{YoloOnly: profile.YoloOnly()}
 }
 
 // ConfigStatus is the binding-side alias of the core status DTO.

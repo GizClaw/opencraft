@@ -9,6 +9,7 @@ import {
 } from './store';
 
 const apiMock = vi.hoisted(() => ({
+  profile: vi.fn(),
   configStatus: vi.fn(),
   workspace: vi.fn(),
   sessionMode: vi.fn(),
@@ -84,6 +85,7 @@ function resetStore() {
     cards: [],
     modelOptions: [],
     sessionDefaults: { mode: 'workspace', think: 'medium' },
+    yoloOnly: false,
     theme: 'dark',
     workspaces: [],
     toasts: [],
@@ -122,6 +124,7 @@ function actorValue(conversationID: string) {
 beforeEach(() => {
   resetStore();
   vi.clearAllMocks();
+  apiMock.profile.mockResolvedValue({ yolo_only: false });
   apiMock.sessionDefaults.mockResolvedValue({
     mode: 'workspace',
     think: 'medium',

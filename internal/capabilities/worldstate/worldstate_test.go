@@ -15,6 +15,7 @@ import (
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/plan"
+	"github.com/GizClaw/opencraft/internal/foundation/profile"
 	"github.com/GizClaw/opencraft/internal/testing/sessionstore"
 )
 
@@ -178,12 +179,16 @@ func TestPermissionsSectionShowsYOLOForSession(t *testing.T) {
 	svc := New(Options{WorkBase: t.TempDir()})
 	svc.SetSessions(store)
 
-	sec, err := svc.permissionsSection(context.Background(), id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if contains(sec.Text, "yolo") {
-		t.Fatalf("workspace session must not show yolo: %q", sec.Text)
+	// The yoloonly build resolves every session to yolo up front, so
+	// there is no confined state before the mode switch.
+	if !profile.YoloOnly() {
+		sec, err := svc.permissionsSection(context.Background(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if contains(sec.Text, "yolo") {
+			t.Fatalf("workspace session must not show yolo: %q", sec.Text)
+		}
 	}
 	if err := store.SetMode(context.Background(), id, ocsessions.ModeYOLO); err != nil {
 		t.Fatal(err)
@@ -198,6 +203,9 @@ func TestPermissionsSectionShowsYOLOForSession(t *testing.T) {
 }
 
 func TestPermissionsSectionShowsReadOnlyForSession(t *testing.T) {
+	if profile.YoloOnly() {
+		t.Skip("read-only sessions do not exist in the yoloonly build")
+	}
 	store, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {
 		t.Fatal(err)

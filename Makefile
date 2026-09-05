@@ -1,4 +1,6 @@
-.PHONY: all fmt fmt-check lint test gen-bindings build-macos build-macos-universal build-linux
+.PHONY: all fmt fmt-check lint test test-yoloonly gen-bindings build-macos \
+	build-macos-universal build-linux build-yolo-macos build-yolo-macos-universal \
+	build-yolo-linux build-yolo-windows
 
 all: fmt lint test
 
@@ -25,6 +27,12 @@ gen-bindings:
 
 test:
 	go test ./...
+
+# test-yoloonly runs the suite under the yoloonly build profile tag.
+# Keep it green before releasing any of the build-yolo-* desktop
+# targets; confined-mode tests are skipped by design in that profile.
+test-yoloonly:
+	go test -tags yoloonly ./...
 
 # Release version injected into the binary via -X. Prefer the nearest
 # git tag (v-prefix stripped); fall back to the code default 0.1.0
@@ -83,4 +91,29 @@ build-windows-installer:
 	rm -f OpenCraft-res.syso
 	wails build -platform windows/amd64 -nsis -trimpath -upx \
 		-ldflags "$(WINDOWS_LDFLAGS)"
+	rm -f OpenCraft-res.syso
+
+# yoloonly desktop builds: Go `-tags yoloonly` forces every session to
+# the YOLO sandbox mode (no read-only/workspace can surface or run).
+# The desktop shell reads the profile through the Config binding and
+# renders the fixed YOLO state / hides approval surfaces itself.
+# Headless builds keep every mode.
+build-yolo-macos:
+	GOTOOLCHAIN=$(GO_TOOLCHAIN) \
+		CGO_LDFLAGS="$(MACOS_CGO_LDFLAGS)" \
+		wails build -tags yoloonly
+
+build-yolo-macos-universal:
+	GOTOOLCHAIN=$(GO_TOOLCHAIN) \
+		CGO_LDFLAGS="$(MACOS_CGO_LDFLAGS)" \
+		wails build -platform darwin/universal -clean -tags yoloonly \
+		-ldflags "$(MACOS_LDFLAGS)"
+
+build-yolo-linux:
+	wails build -platform linux/amd64 -tags "yoloonly webkit2_41"
+
+build-yolo-windows:
+	rm -f OpenCraft-res.syso
+	wails build -platform windows/amd64 -trimpath -upx \
+		-tags yoloonly -ldflags "$(WINDOWS_LDFLAGS)"
 	rm -f OpenCraft-res.syso

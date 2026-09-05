@@ -13,6 +13,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/execpolicy"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
+	"github.com/GizClaw/opencraft/internal/foundation/profile"
 	patchutil "github.com/GizClaw/opencraft/internal/foundation/utils/patch"
 )
 
@@ -47,6 +48,13 @@ func (b *Settings) SetSessionDefaults(d SessionDefaults) error {
 	case sessions.ModeWorkspace, sessions.ModeReadOnly, sessions.ModeYOLO:
 	default:
 		return fmt.Errorf("unknown permission mode %q", d.Mode)
+	}
+	// Defense in depth next to the sessions.Store guard: reject
+	// confined defaults here so the preference document is never
+	// rewritten with a mode the yoloonly build cannot honor.
+	if profile.YoloOnly() && mode != sessions.ModeYOLO {
+		return fmt.Errorf(
+			"only yolo sandbox mode is available in this build")
 	}
 	think := sessions.ThinkLevel(strings.TrimSpace(d.Think))
 	if !think.Valid() {
