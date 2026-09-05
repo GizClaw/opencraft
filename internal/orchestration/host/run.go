@@ -388,10 +388,10 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 				}
 			}
 		}
-		host.dropRun(RunID(r.RunID()))
 		if !r.skipAutoTitle {
 			host.launchAutoTitle(context.WithoutCancel(ctx), detail.contextID)
 		}
+		host.dropRun(RunID(r.RunID()))
 		host.fireTurnEnd(
 			persistCtx, detail.contextID, r.RunID(),
 			status, errText, turnUsage)

@@ -256,6 +256,7 @@ func (m *Manager) assemble(
 		titling:       make(map[ConversationID]bool),
 		closeDone:     make(chan struct{}),
 	}
+	h.runsCond = sync.NewCond(&h.mu)
 	var sessionStore *sessions.Store
 	buildOpts := append([]engine.Option{
 		engine.WithConfigBase(userDir),
@@ -510,6 +511,7 @@ type Host struct {
 
 	mu       sync.Mutex
 	runs     map[RunID]*runDetail
+	runsCond *sync.Cond
 	rollouts map[ConversationID]*rollout.Recorder
 	titling  map[ConversationID]bool
 	titleWG  sync.WaitGroup
@@ -549,6 +551,7 @@ type runDetail struct {
 func (h *Host) dropRun(runID RunID) {
 	h.mu.Lock()
 	delete(h.runs, runID)
+	h.runsCond.Broadcast()
 	h.mu.Unlock()
 }
 
@@ -738,6 +741,16 @@ func (h *Host) doClose() {
 	if h.closed {
 		h.mu.Unlock()
 		return
+	}
+	// Run.Wait registers the post-run auto-title before it drops the
+	// run from the active set, so waiting for the set to drain here
+	// guarantees titleWG.Wait below can never observe an empty group
+	// before that registration happens. flowcraft's drain returns as
+	// soon as the engine turn ends, which can precede Run.Wait's own
+	// bookkeeping; titleWG.Wait alone would then tear the shared store
+	// down under the late title write.
+	for len(h.runs) > 0 {
+		h.runsCond.Wait()
 	}
 	h.closed = true
 	closeDone := h.closeDone
