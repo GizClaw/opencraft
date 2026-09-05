@@ -199,13 +199,25 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 			AckMode:    coresession.AckOnDelivery,
 		}))
 	}
+	inputs := map[string]any{
+		"think_level": think,
+		"model":       model,
+	}
+	// The assistant graph attaches provider-side web search through
+	// board:llm_extensions. The bag is computed from the inference
+	// config (every enabled deployment whose generate models declare
+	// hosted web search), not from this turn's model choice: flowcraft
+	// strips entries whose deployment id is not selected, so seeding
+	// the full bag keeps search available whichever deployment the
+	// router picks. Leave the key unset (the graph defaults to an
+	// empty bag) when nothing is eligible or config cannot be read.
+	if exts := hostedWebSearchExtensions(h.userDir); len(exts) > 0 {
+		inputs["llm_extensions"] = exts
+	}
 	turn, err := lease.Session().StartWithOptions(ctx, agent.Request{
 		ContextID: contextID,
 		Message:   opts.Message,
-		Inputs: map[string]any{
-			"think_level": think,
-			"model":       model,
-		},
+		Inputs:    inputs,
 	}, optsList...)
 	if err != nil {
 		telemetry.WarnErr(ctx, "host: close session lease after start failure",
@@ -277,6 +289,20 @@ func reasoningCapableThink(userDir, model, think string) string {
 		return ""
 	}
 	return think
+}
+
+// hostedWebSearchExtensions builds the board extension bag for the
+// assistant graph from the current inference configuration. A config
+// read failure degrades to an empty bag (search stays off) instead of
+// failing the turn.
+func hostedWebSearchExtensions(userDir string) []config.HostedWebSearchExtension {
+	cfg, err := config.LoadInference(userDir)
+	if err != nil {
+		telemetry.WarnErr(context.Background(),
+			"host: load inference config for hosted web search failed", err)
+		return nil
+	}
+	return cfg.WebSearchExtensions()
 }
 
 func validateUserMessage(msg message.Message) error {

@@ -64,35 +64,20 @@ nodes:
         text:
           reasoning_effort: ${board:think_level:}
       system_prompt: { embed: assets/graphs/prompts/system.md }
-      # Hosted web_search extensions (provider-side search). Every
-      # provider that is ALWAYS registered and exposes one is declared
-      # here: the router's selected provider activates its own
-      # extension while ignoring the others. Azure also exposes
-      # generate_options/web_search but is only registered when the
-      # user configures it (endpoint + deployment required), so its
-      # extension cannot live in this static graph — azure setups get
-      # web_search via a setup-generated graph override (future work).
-      # Each provider uses the knobs its own schema supports:
-      # deepseek/openai accept tool_choice (auto, the model decides
-      # when to search); bytedance does not, so it stays empty.
-      # Deployment-specific knobs (allowed_domains, user_location,
-      # search_context_size) are intentionally not set as global
-      # defaults.
-      extensions:
-        - provider: deepseek
-          id: generate_options
-          fields:
-            web_search:
-              tool_choice: { required: false }
-        - provider: openai
-          id: generate_options
-          fields:
-            web_search:
-              tool_choice: { required: false }
-        - provider: bytedance
-          id: generate_options
-          fields:
-            web_search: {}
+      # Hosted web_search extensions (provider-side search). Flowcraft
+      # addresses extensions by deployment provider id (settings.id,
+      # e.g. deepseek-inst-0a1b2c3d), which a shared static graph
+      # cannot enumerate. The host therefore seeds the per-run
+      # extension bag as board:llm_extensions — one generate_options
+      # entry per configured deployment whose generate models declare
+      # hosted web search; the empty default keeps search off for
+      # callers that do not seed the bag. The router's selected
+      # provider activates its own entry while the others stay inert.
+      # tool_choice auto (the model decides when to search) is set by
+      # the host seed; deployment-specific knobs (allowed_domains,
+      # user_location, search_context_size) are intentionally not
+      # global defaults.
+      extensions: ${board:llm_extensions:[]}
   - id: tools
     type: tool
     config:
