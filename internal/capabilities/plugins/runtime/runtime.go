@@ -173,6 +173,7 @@ type Manager struct {
 	handshakeTimeout time.Duration
 	callTimeout      time.Duration
 	env              []string
+	hostVersion      string
 
 	mu    sync.Mutex
 	procs map[string]*process
@@ -228,6 +229,16 @@ func (m *Manager) SetWorkspaceHandler(h WorkspaceHandler) {
 // (testing helpers, locale overrides, ...).
 func (m *Manager) SetEnv(env []string) {
 	m.env = append([]string(nil), env...)
+}
+
+// SetHostVersion records the host application version reported in the
+// capability handshake reply. Plugins use it for feature detection and
+// compatibility; the same value gates manifest minHostVersion at
+// install time (plugins.Store). Empty disables reporting (tests/CLI).
+func (m *Manager) SetHostVersion(v string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.hostVersion = v
 }
 
 // Invoke calls method on the capability plugin id with args (JSON
@@ -583,6 +594,16 @@ func (p *process) handleRequest(line []byte) {
 		p.respond(req, result))
 }
 
+// handshakeResult is the host's reply to a capability plugin's
+// handshake. HostVersion carries the running host application version
+// ("" when unknown, e.g. tests/CLI) so plugins can feature-detect
+// without extra round trips; protocol compatibility is enforced before
+// this reply is produced.
+type handshakeResult struct {
+	Ok          bool   `json:"ok"`
+	HostVersion string `json:"hostVersion"`
+}
+
 func (p *process) handleHandshake(req rpcRequest) {
 	var hs struct {
 		ID       string `json:"id"`
@@ -608,9 +629,12 @@ func (p *process) handleHandshake(req rpcRequest) {
 		return
 	}
 	close(p.ready)
+	p.manager.mu.Lock()
+	hostVersion := p.manager.hostVersion
+	p.manager.mu.Unlock()
 	telemetry.WarnErr(p.manager.baseCtx,
 		"plugin runtime: send handshake response failed",
-		p.respond(req, map[string]any{"ok": true}))
+		p.respond(req, handshakeResult{Ok: true, HostVersion: hostVersion}))
 }
 
 func (p *process) respond(req rpcRequest, result any) error {

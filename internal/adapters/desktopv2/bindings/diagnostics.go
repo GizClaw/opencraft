@@ -16,9 +16,9 @@ import (
 	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/execpolicy"
 	ocsandbox "github.com/GizClaw/opencraft/internal/capabilities/sandbox"
-	"github.com/GizClaw/opencraft/internal/capabilities/telemetry"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/gitx"
+	"github.com/GizClaw/opencraft/internal/foundation/version"
 )
 
 // Diagnostics exposes environment/health information.
@@ -57,7 +57,7 @@ type Report struct {
 func (b *Diagnostics) Diagnostics() Report {
 	ctx := b.core.Shell.Context()
 	rep := Report{
-		Version:     telemetry.ServiceVersion,
+		Version:     version.ServiceVersion,
 		GoVersion:   goruntime.Version(),
 		NodeVersion: commandVersion(ctx, 3*time.Second, "node", "--version"),
 		GitVersion:  commandVersion(ctx, 3*time.Second, "git", "--version"),

@@ -27,11 +27,6 @@ import (
 // (service.name resource attribute).
 const ServiceName = "opencraft"
 
-// ServiceVersion is a deprecated alias kept for callers that have not
-// migrated to foundation/version yet. New code must use
-// version.ServiceVersion directly.
-var ServiceVersion = version.ServiceVersion
-
 // TelemetryOptions configures the telemetry pipelines. All fields are
 // optional; a zero TelemetryOptions installs a working no-op setup
 // (valid trace IDs are

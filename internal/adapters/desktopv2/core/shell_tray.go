@@ -8,7 +8,7 @@ import (
 	"fyne.io/systray"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/mainthread"
-	"github.com/GizClaw/opencraft/internal/capabilities/telemetry"
+	appversion "github.com/GizClaw/opencraft/internal/foundation/version"
 )
 
 type trayItems struct {
@@ -48,7 +48,7 @@ func (s *Shell) trayReady(icon, iconWindows []byte) {
 	systray.SetTooltip(texts.TrayTooltip)
 
 	version := systray.AddMenuItem(
-		fmt.Sprintf(texts.VersionFormat, telemetry.ServiceVersion),
+		fmt.Sprintf(texts.VersionFormat, appversion.ServiceVersion),
 		texts.VersionTooltip,
 	)
 	version.Disable()
@@ -97,7 +97,7 @@ func (s *Shell) updateTrayTexts() {
 	if items == nil {
 		return
 	}
-	items.version.SetTitle(fmt.Sprintf(texts.VersionFormat, telemetry.ServiceVersion))
+	items.version.SetTitle(fmt.Sprintf(texts.VersionFormat, appversion.ServiceVersion))
 	items.version.SetTooltip(texts.VersionTooltip)
 	items.about.SetTitle(texts.About)
 	items.show.SetTitle(texts.Show)

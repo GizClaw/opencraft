@@ -22,12 +22,13 @@ assembles it into a Cordis plugin (`{ name, inject, apply }`) and
 mounts it with `ctx.plugin()`:
 
 ```js
-export const name = 'hello';
-export const inject = ['storage', 'react'];
+export const name = "hello";
+export const inject = ["storage", "react"];
 
 export function apply(ctx) {
   // ctx.react              host React runtime for building components
   // ctx.ui.flash(text)     transient status message (always available)
+  // ctx.host.version       host app version (always available, read-only)
   // ctx.storage            KV service (needs "storage:kv")
   // ctx.settingsPanels.add / ctx.sidebarEntries.add / ctx.commands.add /
   // ctx.statusBar.add      contribution registrars (return disposers)

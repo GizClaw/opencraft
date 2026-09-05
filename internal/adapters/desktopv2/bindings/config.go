@@ -19,9 +19,9 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/secrets"
-	"github.com/GizClaw/opencraft/internal/capabilities/telemetry"
 	"github.com/GizClaw/opencraft/internal/capabilities/usage"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/foundation/version"
 )
 
 // Config is the settings/config binding object.
@@ -36,7 +36,7 @@ func NewConfig(c *core.Core) *Config {
 
 // Version returns the application version.
 func (b *Config) Version() string {
-	return telemetry.ServiceVersion
+	return version.ServiceVersion
 }
 
 // ConfigStatus is the binding-side alias of the core status DTO.
