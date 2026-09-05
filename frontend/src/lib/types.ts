@@ -166,6 +166,7 @@ export interface SessionMeta {
   title: string;
   created_at: string;
   updated_at: string;
+  turns: number;
   messages: number;
   total_tokens: number;
 }

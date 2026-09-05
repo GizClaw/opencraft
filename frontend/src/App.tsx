@@ -15,7 +15,7 @@ import { SubagentSidebar } from './components/SubagentSidebar';
 import { TopBar } from './components/TopBar';
 import { Toaster } from './components/Toaster';
 import { WelcomeView } from './components/WelcomeView';
-import { useStore, type AssistantItem } from './lib/store';
+import { firstMessageTitle, useStore, type AssistantItem } from './lib/store';
 import { useFocusState } from './state/react';
 import { usePluginStore } from './plugins/store';
 import type { UIEvent } from './lib/types';
@@ -70,8 +70,7 @@ function turnEndNotification(data: {
   if (convID) {
     title =
       state.sessions.find((s) => s.id === convID)?.title ??
-      state.conversations[convID]?.messages.find((m) => m.role === 'user')
-        ?.text ??
+      firstMessageTitle(state.conversations[convID]?.messages ?? []) ??
       '';
   }
   title = truncate(title.trim(), maxNotifyTitle) || 'OpenCraft';

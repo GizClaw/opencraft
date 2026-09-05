@@ -599,6 +599,19 @@ func (h *Host) SetSessionUpdated(fn func(context.Context, string)) {
 	h.mu.Unlock()
 }
 
+// notifySessionUpdated fires the installed session-title callback
+// without holding h.mu while the callback runs.
+func (h *Host) notifySessionUpdated(
+	ctx context.Context, contextID string,
+) {
+	h.mu.Lock()
+	fn := h.sessionUpd
+	h.mu.Unlock()
+	if fn != nil {
+		fn(ctx, contextID)
+	}
+}
+
 // rolloutBuffer accumulates one run's assistant text/reasoning until
 // the stream finish delta.
 type rolloutBuffer struct {

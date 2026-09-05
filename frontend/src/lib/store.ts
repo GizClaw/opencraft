@@ -142,6 +142,26 @@ const emptyConv = (): ConversationState => ({
   pendingInteracts: [],
 });
 
+// firstMessageTitle mirrors the backend's archive-title fallback: a
+// conversation displays the first line of its first user message until
+// a real title (manual rename or the LLM auto-title) replaces it.
+// New sessions have no stored record while their first turn is still
+// running, so the running row and chat header use this local copy.
+export function firstMessageTitle(messages: MessageView[]): string {
+  for (const m of messages) {
+    if (m.role !== 'user') continue;
+    const text = m.text.trim();
+    if (text) {
+      const line = text.split('\n', 1)[0].trim();
+      const runes = Array.from(line);
+      if (runes.length <= 70) return line;
+      return `${runes.slice(0, 70).join('')}…`;
+    }
+    if (m.attachments.length > 0) return '[attachment]';
+  }
+  return '';
+}
+
 const errorMessage = (err: unknown) =>
   err instanceof Error ? err.message : String(err);
 
@@ -1843,11 +1863,35 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     deleteSession: async (id) => {
+      const deleteOnce = async () => {
+        try {
+          await api.deleteSession(id);
+        } catch (err) {
+          const message = String(err);
+          // New chats mint lazily: after the UI switches to an unsent
+          // draft the backend still tracks the previous conversation as
+          // current, so deleting it is refused. Promote the draft to a
+          // fresh (discarded) backend conversation first — but never
+          // bypass the guard while the session still has a live turn.
+          if (
+            /cannot delete the active conversation/i.test(message) &&
+            stateRoot.focusSnapshot.value === 'no-session'
+          ) {
+            const turn = conversationTurnState(id);
+            if (turn.name !== 'starting' && turn.name !== 'running') {
+              await api.newChat();
+              await api.deleteSession(id);
+              return;
+            }
+          }
+          throw err;
+        }
+      };
       try {
         // Settle any queued deltas before deleting so a late flush
         // cannot resurrect the conversation after the tombstone.
         flushPendingStreams();
-        await api.deleteSession(id);
+        await deleteOnce();
         stateRoot.registry.get(id)?.send({
           type: 'SESSION_DELETED',
           deletedAt: new Date().toISOString(),

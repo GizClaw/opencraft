@@ -49,7 +49,12 @@ import { useTranslation } from 'react-i18next';
 import { OnFileDrop, OnFileDropOff } from '../../wailsjs/runtime/runtime';
 import { api } from '../lib/api';
 import { COMPACT_SUMMARY_PREFIX } from '../lib/compact';
-import { friendlyFailure, friendlyInterruption, useStore } from '../lib/store';
+import {
+  friendlyFailure,
+  friendlyInterruption,
+  firstMessageTitle,
+  useStore,
+} from '../lib/store';
 import { useConversationState, useFocusState } from '../state/react';
 import type { AttachmentView } from '../lib/types';
 import type {
@@ -1733,10 +1738,11 @@ export function ChatView() {
   };
 
   const sessionTitle = sessions.find((s) => s.id === current)?.title;
+  const liveTitle = firstMessageTitle(messages);
   const headerTitle =
     sessionTitle && sessionTitle !== '(empty)'
       ? sessionTitle
-      : t('chat.newSession');
+      : liveTitle || t('chat.newSession');
   const yolo = mode === 'yolo';
   const readOnly = mode === 'read-only';
   const centerComposer = messages.length === 0 && configured;

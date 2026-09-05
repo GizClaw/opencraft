@@ -18,6 +18,7 @@ func TestSessionMetaJSONShape(t *testing.T) {
 		Title:     "hello",
 		CreatedAt: now,
 		UpdatedAt: now,
+		Turns:     2,
 		Messages:  2,
 		Usage:     sessions.Usage{TotalTokens: 42},
 	})
@@ -30,7 +31,8 @@ func TestSessionMetaJSONShape(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, key := range []string{
-		"id", "title", "created_at", "updated_at", "messages", "total_tokens",
+		"id", "title", "created_at", "updated_at", "turns", "messages",
+		"total_tokens",
 	} {
 		if _, ok := got[key]; !ok {
 			t.Fatalf("session meta JSON missing %q: %s", key, raw)
@@ -69,6 +71,15 @@ func TestSessionTurnDTOFallsBackToTurnTime(t *testing.T) {
 	}
 	if dto.Status != "failed" || dto.Error != "boom" {
 		t.Fatalf("status/error = %q/%q", dto.Status, dto.Error)
+	}
+}
+
+func TestRequireArchivedTurnsRejectsEmpty(t *testing.T) {
+	if err := requireArchivedTurns([]sessions.TurnRecord{{Seq: 1}}); err != nil {
+		t.Fatalf("non-empty turns rejected: %v", err)
+	}
+	if err := requireArchivedTurns(nil); err == nil {
+		t.Fatal("empty turns accepted for export")
 	}
 }
 

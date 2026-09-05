@@ -1,10 +1,12 @@
 import {
   Bot,
+  ChevronDown,
   Clock,
   Download,
+  FolderClosed,
   FolderOpen,
   Loader2,
-  MessageSquareText,
+  MessagesSquare,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -19,7 +21,11 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { WindowToggleMaximise } from '../../wailsjs/runtime/runtime';
 import { api } from '../lib/api';
-import { pendingConversationIDs, useStore } from '../lib/store';
+import {
+  firstMessageTitle,
+  pendingConversationIDs,
+  useStore,
+} from '../lib/store';
 import {
   conversationWorkspace,
   useFocusState,
@@ -41,6 +47,7 @@ interface SessionRow {
   running: boolean;
   tokens?: string;
   time?: string;
+  turns?: number;
   meta?: SessionMeta;
   workspacePath: string;
 }
@@ -96,6 +103,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   const openConfig = useStore((s) => s.openConfig);
   const openWorkspace = useStore((s) => s.openWorkspace);
   const sessions = useStore((s) => s.sessions);
+  const conversations = useStore((s) => s.conversations);
   const focus = useFocusState();
   const currentSession = focus.name === 'active' ? focus.sessionID : '';
   const resume = useStore((s) => s.resume);
@@ -110,7 +118,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   const workspaces = useStore((s) => s.workspaces);
   const openSessionInWorkspace = useStore((s) => s.openSessionInWorkspace);
   const removeWorkspace = useStore((s) => s.removeWorkspace);
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
 
   const [expandedWorkspaces, setExpandedWorkspaces] = useState<Set<string>>(
     readExpandedWorkspaces,
@@ -136,6 +144,14 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   const [workspacePath, setWorkspacePath] = useState('');
   const [workspaceError, setWorkspaceError] = useState('');
   const [confirmWorkspace, setConfirmWorkspace] = useState<string | null>(null);
+  // hoverCard pins a read-only summary beside a session row. It shows
+  // details too wide for the row (tokens, absolute timestamps, full
+  // name); pointer events stay off so it never steals the row hover.
+  const [hoverCard, setHoverCard] = useState<{
+    row: SessionRow;
+    left: number;
+    top: number;
+  } | null>(null);
 
   const persistExpanded = (next: Set<string>) => {
     setExpandedWorkspaces(next);
@@ -270,8 +286,9 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   };
 
   const fmtTokens = (n: number) => {
-    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-    if (n >= 1_000) return `${(n / 1_000).toFixed(2)}k`;
+    const trim = (s: string) => s.replace(/\.?0+$/, '');
+    if (n >= 1_000_000) return `${trim((n / 1_000_000).toFixed(2))}M`;
+    if (n >= 1_000) return `${trim((n / 1_000).toFixed(1))}k`;
     return n > 0 ? String(n) : '';
   };
 
@@ -356,15 +373,17 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
         w.path === workspace
           ? sessions.find((s) => s.id === id)
           : (wsLists[w.path] ?? []).find((s) => s.id === id);
+      const liveTitle = firstMessageTitle(conversations[id]?.messages ?? []);
       return {
         id,
         title:
           meta?.title && meta.title !== '(empty)'
             ? meta.title
-            : t('sidebar.newSession'),
+            : liveTitle || t('sidebar.newSession'),
         running: true,
         tokens: meta ? fmtTokens(meta.total_tokens) : '',
         time: meta ? fmtTime(meta.updated_at) : '',
+        turns: meta?.turns,
         meta,
         workspacePath: w.path,
       };
@@ -377,6 +396,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
         running: false,
         tokens: fmtTokens(s.total_tokens),
         time: fmtTime(s.updated_at),
+        turns: s.turns,
         meta: s,
         workspacePath: w.path,
       }));
@@ -404,133 +424,210 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
     }
   };
 
-  const renderSessionRow = (row: SessionRow, actionsAllowed: boolean) => (
-    <div key={row.id}>
-      <div
-        className={`group relative flex items-center gap-1 rounded-lg px-1.5 py-1 text-left text-sm ${
-          row.id === currentSession
-            ? 'bg-accent/15 border border-accent/40'
-            : 'border border-transparent hover:bg-panel2'
-        }`}
-        title={row.id}
-      >
-        <button
-          onClick={() => openSession(row)}
-          className="flex flex-1 min-w-0 items-center gap-2"
+  const fmtCardTime = (iso: string) => {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return '';
+    const locale = i18n.language?.startsWith('zh') ? 'zh-CN' : 'en-US';
+    return d.toLocaleString(locale, {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    });
+  };
+
+  const openHoverCard =
+    (row: SessionRow) => (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!row.meta) {
+        setHoverCard(null);
+        return;
+      }
+      const rect = e.currentTarget.getBoundingClientRect();
+      const cardWidth = 288;
+      const cardHeight = 152;
+      const left = Math.max(
+        8,
+        Math.min(rect.right + 8, window.innerWidth - cardWidth - 8),
+      );
+      const top = Math.max(
+        8,
+        Math.min(rect.top - 4, window.innerHeight - cardHeight - 8),
+      );
+      setHoverCard({ row, left, top });
+    };
+
+  // Session meta becomes the second line of each history row: recency
+  // and scale are visible without hovering. Running sessions without a
+  // persisted record yet fall back to a plain "running" label.
+  const renderSessionMeta = (row: SessionRow) => {
+    if (row.running && !row.time && !row.turns && !row.tokens) {
+      return t('sidebar.running');
+    }
+    const parts: string[] = [];
+    if (row.time) parts.push(row.time);
+    if (row.turns && row.turns > 0) {
+      parts.push(t('sidebar.turnCount', { count: row.turns }));
+    }
+    return parts.join(' · ');
+  };
+
+  const renderSessionRow = (row: SessionRow, actionsAllowed: boolean) => {
+    const isActive = row.id === currentSession;
+    const meta = renderSessionMeta(row);
+    return (
+      <div key={row.id}>
+        <div
+          className={`group relative rounded-lg text-left ${
+            isActive
+              ? 'bg-accent/15 border border-accent/40'
+              : 'border border-transparent hover:bg-panel2'
+          }`}
+          data-session-id={row.id}
+          onMouseEnter={renameId === row.id ? undefined : openHoverCard(row)}
+          onMouseLeave={() => setHoverCard(null)}
         >
-          {row.running ? (
-            <Loader2
-              size="0.9286rem"
-              className="text-accent animate-spin shrink-0"
-            />
-          ) : (
-            <MessageSquareText size="0.9286rem" className="text-dim shrink-0" />
-          )}
           {renameId === row.id ? (
-            <input
-              autoFocus
-              value={renameValue}
-              onChange={(e) => setRenameValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  renameSession(row.id, renameValue);
-                } else if (e.key === 'Escape') {
-                  setRenameId(null);
-                }
-              }}
-              onBlur={() => setRenameId(null)}
-              className="flex-1 min-w-0 rounded border border-accent bg-panel px-1 py-0 text-xs outline-none"
-            />
+            <div className="flex items-center gap-2 px-1.5 py-1">
+              <MessagesSquare size="0.9286rem" className="text-dim shrink-0" />
+              <input
+                autoFocus
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    renameSession(row.id, renameValue);
+                  } else if (e.key === 'Escape') {
+                    setRenameId(null);
+                  }
+                }}
+                onBlur={() => setRenameId(null)}
+                className="flex-1 min-w-0 rounded border border-accent bg-panel px-1 py-0 text-xs outline-none"
+              />
+            </div>
           ) : (
-            <span className="flex-1 truncate">{row.title}</span>
-          )}
-        </button>
-        {actionsAllowed && (
-          <div className="relative shrink-0">
-            <button
-              onClick={() =>
-                setMenuOpenId(menuOpenId === row.id ? null : row.id)
-              }
-              className="text-dim opacity-0 group-hover:opacity-100 hover:text-fg rounded p-0.5"
-              title={t('sidebar.sessionActions')}
-              aria-label={t('sidebar.sessionActions')}
-            >
-              <MoreHorizontal size="1.0000rem" />
-            </button>
-            {menuOpenId === row.id && (
-              <>
+            <>
+              <button
+                onClick={() => openSession(row)}
+                className="flex w-full min-w-0 items-center gap-2 px-2 py-1.5"
+                aria-label={row.title}
+              >
+                {row.running ? (
+                  <Loader2
+                    size="0.9286rem"
+                    className="text-accent animate-spin shrink-0"
+                  />
+                ) : (
+                  <MessagesSquare
+                    size="0.9286rem"
+                    className={`shrink-0 ${
+                      isActive ? 'text-accent' : 'text-dim'
+                    }`}
+                  />
+                )}
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate text-sm leading-5 text-fg">
+                    {row.title}
+                  </span>
+                  <span className="mt-px truncate text-[0.7143rem] leading-4 text-dim">
+                    {meta}
+                  </span>
+                </span>
+              </button>
+              {actionsAllowed && (
                 <div
-                  className="fixed inset-0 z-20"
-                  onClick={() => setMenuOpenId(null)}
-                />
-                <div className="absolute right-0 top-6 z-30 w-44 rounded-lg border border-edge bg-panel shadow-xl py-1">
+                  className={`absolute inset-y-0 right-0 flex items-center pr-0.5 transition-opacity ${
+                    menuOpenId === row.id
+                      ? 'opacity-100'
+                      : 'invisible opacity-0 group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100'
+                  }`}
+                >
                   <button
                     onClick={() => {
-                      setMenuOpenId(null);
-                      setRenameId(row.id);
-                      setRenameValue(row.meta?.title ?? row.title);
+                      setHoverCard(null);
+                      setMenuOpenId(menuOpenId === row.id ? null : row.id);
                     }}
-                    className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
+                    className="rounded-md bg-panel/90 p-1 text-dim hover:bg-panel2 hover:text-fg"
+                    title={t('sidebar.sessionActions')}
+                    aria-label={t('sidebar.sessionActions')}
                   >
-                    <Pencil size="0.8571rem" className="text-dim" />
-                    {t('sidebar.renameSession')}
+                    <MoreHorizontal size="1.0000rem" />
                   </button>
-                  <button
-                    onClick={() => {
-                      setMenuOpenId(null);
-                      void api
-                        .exportSession(row.id)
-                        .then((path) =>
-                          flash(t('sidebar.exportedTo', { path })),
-                        )
-                        .catch((err) => flash(String(err)));
-                    }}
-                    className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
-                  >
-                    <Download size="0.8571rem" className="text-dim" />
-                    {t('sidebar.exportSession')}
-                  </button>
-                  <button
-                    onClick={() => {
-                      setMenuOpenId(null);
-                      void api
-                        .exportSessionBundle(row.id)
-                        .then((path) =>
-                          flash(t('sidebar.exportedTo', { path })),
-                        )
-                        .catch((err) => flash(String(err)));
-                    }}
-                    className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
-                  >
-                    <Download size="0.8571rem" className="text-dim" />
-                    {t('sidebar.exportSessionBundle')}
-                  </button>
-                  <button
-                    onClick={() => {
-                      setMenuOpenId(null);
-                      setConfirmDelete(row.id);
-                    }}
-                    className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-err hover:bg-panel2"
-                  >
-                    <Trash2 size="0.8571rem" className="text-err" />
-                    {t('sidebar.deleteSession')}
-                  </button>
+                  {menuOpenId === row.id && (
+                    <>
+                      <div
+                        className="fixed inset-0 z-20"
+                        onClick={() => setMenuOpenId(null)}
+                      />
+                      <div className="absolute right-0 top-full z-30 mt-1 w-44 rounded-lg border border-edge bg-panel py-1 shadow-xl">
+                        <button
+                          onClick={() => {
+                            setMenuOpenId(null);
+                            setRenameId(row.id);
+                            setRenameValue(row.meta?.title ?? row.title);
+                          }}
+                          className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
+                        >
+                          <Pencil size="0.8571rem" className="text-dim" />
+                          {t('sidebar.renameSession')}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setMenuOpenId(null);
+                            void api
+                              .exportSession(row.id)
+                              .then((path) =>
+                                flash(t('sidebar.exportedTo', { path })),
+                              )
+                              .catch((err) => flash(String(err)));
+                          }}
+                          className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
+                        >
+                          <Download size="0.8571rem" className="text-dim" />
+                          {t('sidebar.exportSession')}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setMenuOpenId(null);
+                            void api
+                              .exportSessionBundle(row.id)
+                              .then((path) =>
+                                flash(t('sidebar.exportedTo', { path })),
+                              )
+                              .catch((err) => flash(String(err)));
+                          }}
+                          className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
+                        >
+                          <Download size="0.8571rem" className="text-dim" />
+                          {t('sidebar.exportSessionBundle')}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setMenuOpenId(null);
+                            setConfirmDelete(row.id);
+                          }}
+                          className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-err hover:bg-panel2"
+                        >
+                          <Trash2 size="0.8571rem" className="text-err" />
+                          {t('sidebar.deleteSession')}
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
-              </>
-            )}
-          </div>
-        )}
-        {(row.tokens || row.time) && (
-          <div className="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1.5 z-10 hidden group-hover:block whitespace-nowrap rounded-md border border-edge bg-panel2 px-2 py-1 text-[0.7143rem] text-dim shadow-lg">
-            {[row.tokens, row.time].filter(Boolean).join(' · ')}
-          </div>
-        )}
+              )}
+            </>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const renderWorkspaceHeader = (w: WorkspaceMeta) => {
     const isCurrent = w.path === workspace;
+    const expanded = expandedWorkspaces.has(w.path);
+    const FolderIcon = expanded ? FolderOpen : FolderClosed;
     return (
       <div
         role="button"
@@ -549,11 +646,17 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
         }`}
         title={w.path}
       >
-        <FolderOpen
+        <FolderIcon
           size="0.9286rem"
           className={`shrink-0 ${isCurrent ? 'text-accent' : 'text-dim'}`}
         />
-        <span className="flex-1 truncate">{w.title || basename(w.path)}</span>
+        <span
+          className={`flex-1 truncate font-medium ${
+            isCurrent ? 'text-fg' : 'text-dim group-hover:text-fg'
+          }`}
+        >
+          {w.title || basename(w.path)}
+        </span>
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -640,11 +743,12 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
     workspaces,
     wsLists,
     wsLoading,
+    conversations,
   ]);
   const virtualizer = useVirtualizer({
     count: historyItems.length,
     getScrollElement: () => historyScrollRef.current,
-    estimateSize: () => 30,
+    estimateSize: () => 44,
     overscan: 10,
     getItemKey: (index) => historyItems[index]?.key ?? String(index),
   });
@@ -663,28 +767,32 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
         return renderWorkspaceHeader(item.w);
       case 'session':
         return (
-          <div className="ml-1 pt-1">
+          <div className="ml-3 pt-1">
             {renderSessionRow(item.row, item.actionsAllowed)}
           </div>
         );
       case 'loading':
         return (
-          <div className="ml-1 pt-1">
-            <div className="h-6 animate-pulse rounded-lg bg-panel2" />
+          <div className="ml-3 pt-1">
+            <div className="h-9 animate-pulse rounded-lg bg-panel2" />
           </div>
         );
       case 'empty':
-        return <p className="ml-1 pt-1 pb-0.5 text-xs text-dim">—</p>;
+        return (
+          <p className="ml-3 pt-1 pb-0.5 text-xs text-dim">
+            {t('sidebar.noSessions')}
+          </p>
+        );
       case 'more':
         return (
-          <div className="ml-1 pt-1">
+          <div className="ml-3 pt-1">
             <button
               onClick={() => expandWorkspaceSessions(item.workspacePath)}
-              className="flex w-full items-center gap-1.5 rounded-md border border-edge bg-panel2 px-2 py-1 text-xs text-dim hover:text-fg transition-colors"
+              className="flex w-full items-center gap-1 rounded-md px-1.5 py-1 text-xs text-dim hover:bg-panel2 hover:text-fg transition-colors"
             >
-              <MoreHorizontal size="0.8571rem" className="shrink-0" />
+              <ChevronDown size="0.8571rem" className="shrink-0" />
               {t('sidebar.moreSessions')}
-              <span className="ml-auto tabular-nums text-[0.7143rem] text-dim">
+              <span className="ml-auto tabular-nums text-[0.7143rem] text-dim/80">
                 +{item.count}
               </span>
             </button>
@@ -714,6 +822,43 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
     persistExpanded(next);
     setConfirmWorkspace(null);
     void removeWorkspace(target.id);
+  };
+
+  const renderHoverCard = () => {
+    const card = hoverCard;
+    if (!card) return null;
+    const meta = card.row.meta;
+    const updated = meta ? fmtCardTime(meta.updated_at) : '';
+    const created = meta ? fmtCardTime(meta.created_at) : '';
+    const rows = [
+      card.row.tokens
+        ? { label: t('sidebar.hoverTokens'), value: card.row.tokens }
+        : null,
+      updated ? { label: t('sidebar.hoverUpdated'), value: updated } : null,
+      created ? { label: t('sidebar.hoverCreated'), value: created } : null,
+    ].filter((r): r is { label: string; value: string } => r !== null);
+    if (rows.length === 0) return null;
+    return (
+      <div
+        className="pointer-events-none fixed z-[70] rounded-lg border border-edge bg-panel2/95 p-3 shadow-xl backdrop-blur"
+        style={{ left: card.left, top: card.top, width: 288 }}
+      >
+        <p className="break-words text-sm font-medium leading-5 text-fg line-clamp-3">
+          {card.row.title}
+        </p>
+        <dl className="mt-2 flex flex-col gap-1">
+          {rows.map((r) => (
+            <div
+              key={r.label}
+              className="flex items-baseline justify-between gap-4 text-xs leading-4"
+            >
+              <dt className="shrink-0 text-dim">{r.label}</dt>
+              <dd className="min-w-0 text-right text-fg">{r.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    );
   };
 
   return (
@@ -947,6 +1092,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
           </div>
         </div>
       )}
+      {renderHoverCard()}
     </aside>
   );
 }

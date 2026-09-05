@@ -212,6 +212,23 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 			lease.Close())
 		return nil, fmt.Errorf("host: start turn: %w", err)
 	}
+	if fresh {
+		// Persist the first-message fallback title now so a crash
+		// before the first archive leaves a titled conversation behind
+		// instead of nothing (or a titleless "new session"). Fail the
+		// start when the seed itself fails: silently continuing would
+		// break the start-persistence guarantee.
+		if err := store.SeedStartTitle(
+			ctx, contextID, []message.Message{opts.Message},
+		); err != nil {
+			turn.Cancel()
+			telemetry.WarnErr(ctx,
+				"host: close session lease after title seed failure",
+				lease.Close())
+			return nil, fmt.Errorf("host: seed session start title: %w", err)
+		}
+		h.notifySessionUpdated(ctx, contextID)
+	}
 	startedAt := time.Now().UTC()
 	telemetry.WarnErr(ctx, "host: record turn timing failed",
 		store.RecordTurnTiming(

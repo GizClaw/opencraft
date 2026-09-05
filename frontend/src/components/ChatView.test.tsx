@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useStore } from '../lib/store';
@@ -69,12 +69,12 @@ describe('ChatView transcript windowing', () => {
     setConversation(manyMessages(250));
     render(<ChatView />);
 
-    // Oldest messages are not mounted; the tail is.
-    expect(screen.queryByText('message-0')).not.toBeInTheDocument();
-    expect(screen.getByText('message-50')).toBeInTheDocument();
-    expect(screen.getByText('message-249')).toBeInTheDocument();
-
     const scroller = screen.getByTestId('chat-scroll');
+    // Oldest messages are not mounted; the tail is.
+    expect(within(scroller).queryByText('message-0')).not.toBeInTheDocument();
+    expect(within(scroller).getByText('message-50')).toBeInTheDocument();
+    expect(within(scroller).getByText('message-249')).toBeInTheDocument();
+
     Object.defineProperty(scroller, 'scrollHeight', {
       configurable: true,
       value: 10_000,
@@ -90,16 +90,17 @@ describe('ChatView transcript windowing', () => {
     });
     fireEvent.scroll(scroller);
 
-    expect(screen.getByText('message-0')).toBeInTheDocument();
-    expect(screen.queryByText('message-249')).toBeInTheDocument();
+    expect(within(scroller).getByText('message-0')).toBeInTheDocument();
+    expect(within(scroller).queryByText('message-249')).toBeInTheDocument();
   });
 
   it('keeps the full transcript when it fits in the window', () => {
     setConversation(manyMessages(10));
     render(<ChatView />);
 
-    expect(screen.getByText('message-0')).toBeInTheDocument();
-    expect(screen.getByText('message-9')).toBeInTheDocument();
+    const scroller = screen.getByTestId('chat-scroll');
+    expect(within(scroller).getByText('message-0')).toBeInTheDocument();
+    expect(within(scroller).getByText('message-9')).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: /earlier messages/i }),
     ).not.toBeInTheDocument();
