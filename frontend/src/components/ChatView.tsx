@@ -438,7 +438,6 @@ const MessageRow = memo(function MessageRow({
             <StreamItemView
               key={group[0].id}
               item={group[0]}
-              variant="chat"
               streaming={streaming}
             />
           ) : (
@@ -446,12 +445,7 @@ const MessageRow = memo(function MessageRow({
           );
         }
         return (
-          <StreamItemView
-            key={group.id}
-            item={group}
-            variant="chat"
-            streaming={streaming}
-          />
+          <StreamItemView key={group.id} item={group} streaming={streaming} />
         );
       })}
       {showActions && (
@@ -1220,9 +1214,6 @@ export function ChatView() {
   const backFromFailure = useStore((s) => s.backFromFailure);
   const cancelRun = useStore((s) => s.cancelRun);
   const clearLastFailed = useStore((s) => s.clearLastFailed);
-  const subagentCards = useStore((s) => s.subagentCards);
-  const subagentPanelOpen = useStore((s) => s.subagentPanelOpen);
-  const toggleSubagentPanel = useStore((s) => s.toggleSubagentPanel);
   // Draft pre-send preferences. A new chat has no session yet, so mode
   // / think / model edits stay local and are applied to the minted
   // session right before the first message starts.
@@ -1857,26 +1848,6 @@ export function ChatView() {
           </span>
         )}
         <span className="flex-1" />
-        <div
-          className="flex items-center"
-          style={{ ['--wails-draggable' as string]: 'no-drag' }}
-        >
-          {subagentCards.length > 0 && (
-            <button
-              onClick={toggleSubagentPanel}
-              className={`ml-1.5 flex items-center gap-1.5 rounded-lg border px-2 py-1 text-xs transition-colors ${
-                subagentPanelOpen
-                  ? 'border-subagent/40 bg-subagent/10 text-subagent'
-                  : 'border-edge text-dim hover:text-fg'
-              }`}
-              title={t('subagent.toggle')}
-              aria-label={t('subagent.toggle')}
-            >
-              <Bot size="0.9286rem" />
-              {subagentCards.length}
-            </button>
-          )}
-        </div>
       </header>
 
       <div className="relative flex min-h-0 flex-1 flex-col">

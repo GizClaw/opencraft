@@ -38,8 +38,8 @@ export interface ToolView {
 
 // AssistantItem preserves the stream arrival order of one assistant
 // block (reasoning trace, tool call, or text), so renderers can show
-// output in the exact order the model produced it. The chat transcript
-// drops reasoning traces; the subagent sidebar keeps them visible.
+// output in the exact order the model produced it. Reasoning traces
+// are hidden from the chat transcript.
 export type AssistantItem =
   | { kind: 'reasoning'; id: string; text: string }
   | { kind: 'tool_call'; id: string; tool: ToolView }
@@ -639,21 +639,12 @@ interface StoreState {
   // conversation that owns it, so routing and the sidebar never scan
   // every conversation on each store update.
   pendingPromptConvs: Record<string, string>;
-  // subagentStreams folds live stream deltas of delegated subagent
-  // runs (keyed by run id) for the SubagentSidebar; they never render
-  // into a chat conversation. subagentStreamAt tracks the last delta
-  // timestamp so stale runs can be pruned once their kanban card is
-  // gone.
-  subagentStreams: Record<string, MessageView[]>;
-  subagentStreamAt: Record<string, number>;
   // composerDraft is a one-shot draft injected into the chat composer
   // (used by the automations "create with OpenCraft" flow).
   composerDraft: string;
   statusText: string;
   lastUsage: UsageDTO | null;
   cards: KanbanCard[];
-  subagentCards: KanbanCard[];
-  subagentPanelOpen: boolean;
   modelOptions: ModelOption[];
   theme: 'dark' | 'light' | 'auto';
   workspaces: WorkspaceMeta[];
@@ -708,8 +699,6 @@ interface StoreState {
   loadAutomations: () => Promise<void>;
   loadAutomationRuns: (taskId: string) => Promise<void>;
   loadCards: () => Promise<void>;
-  loadSubagentCards: () => Promise<void>;
-  toggleSubagentPanel: () => void;
   flash: (text: string) => void;
   toast: (text: string, kind?: ToastKind) => void;
   dismissToast: (id: number) => void;
@@ -1114,26 +1103,6 @@ export const useStore = create<StoreState>((set, get) => {
       }
     },
 
-    writeSubagentStream: (ev) => {
-      if (ev.type !== 'stream') return;
-      const data = ev.data as {
-        run_id?: string;
-        delta: StreamDelta;
-      };
-      if (!data.run_id) return;
-      const runID = data.run_id;
-      set((state) => ({
-        subagentStreams: {
-          ...state.subagentStreams,
-          [runID]: applyStream(state.subagentStreams[runID] ?? [], data.delta),
-        },
-        subagentStreamAt: {
-          ...state.subagentStreamAt,
-          [runID]: Date.now(),
-        },
-      }));
-    },
-
     writeGlobalData: (ev) => {
       switch (ev.type) {
         case 'ready': {
@@ -1150,8 +1119,6 @@ export const useStore = create<StoreState>((set, get) => {
               workspace: data.work_dir,
               toolsView: null,
               configOpen: false,
-              subagentStreams: {},
-              subagentStreamAt: {},
             });
             void get().loadSessions();
             const restoreFor = suppressRestoreFor;
@@ -1400,14 +1367,10 @@ export const useStore = create<StoreState>((set, get) => {
     conversations: {},
     runConvs: {},
     pendingPromptConvs: {},
-    subagentStreams: {},
-    subagentStreamAt: {},
     composerDraft: '',
     statusText: '',
     lastUsage: null,
     cards: [],
-    subagentCards: [],
-    subagentPanelOpen: true,
     modelOptions: [],
     theme: 'dark',
     workspaces: [],
@@ -1661,8 +1624,6 @@ export const useStore = create<StoreState>((set, get) => {
         const id = snapshot.session_id;
         set((state) => ({
           toolsView: null,
-          subagentStreams: {},
-          subagentStreamAt: {},
           conversations: {
             ...state.conversations,
             [id]: emptyConv(),
@@ -2153,60 +2114,6 @@ export const useStore = create<StoreState>((set, get) => {
         // best-effort
       }
     },
-
-    loadSubagentCards: async () => {
-      const convID = activeConversationID();
-      if (!convID) return;
-      try {
-        const cards = (await api.conversationDelegationCards(convID)) ?? [];
-        set((state) => {
-          // Auto-show the panel when the conversation starts spawning
-          // subagents; a manual close sticks while cards are present.
-          const open =
-            state.subagentPanelOpen ||
-            (cards.length > 0 && state.subagentCards.length === 0);
-          // Skip re-render when nothing changed (2s polling otherwise
-          // sets a fresh array every tick).
-          const same =
-            state.subagentCards.length === cards.length &&
-            cards.every(
-              (c, i) =>
-                state.subagentCards[i]?.id === c.id &&
-                state.subagentCards[i]?.status === c.status &&
-                state.subagentCards[i]?.updated_at === c.updated_at,
-            );
-          if (same && state.subagentPanelOpen === open) return state;
-          // Prune sidebar streams whose run is no longer on any card
-          // and has been silent for a while (claim lag is seconds).
-          const cardRuns = new Set(
-            cards.map((c) => c.run_id).filter(Boolean) as string[],
-          );
-          const now = Date.now();
-          const subagentStreams = { ...state.subagentStreams };
-          const subagentStreamAt = { ...state.subagentStreamAt };
-          for (const runID of Object.keys(subagentStreams)) {
-            if (
-              !cardRuns.has(runID) &&
-              now - (subagentStreamAt[runID] ?? 0) > 60_000
-            ) {
-              delete subagentStreams[runID];
-              delete subagentStreamAt[runID];
-            }
-          }
-          return {
-            subagentCards: cards,
-            subagentPanelOpen: open,
-            subagentStreams,
-            subagentStreamAt,
-          };
-        });
-      } catch {
-        // best-effort; the sidebar polls again shortly
-      }
-    },
-
-    toggleSubagentPanel: () =>
-      set((state) => ({ subagentPanelOpen: !state.subagentPanelOpen })),
 
     flash: (text) => get().toast(text),
     toast: (text, kind = 'info') => {

@@ -81,24 +81,6 @@
   "tools": {
     "close": "Close"
   },
-  "subagent": {
-    "title": "Subagents",
-    "toggle": "Toggle subagent panel",
-    "close": "Close panel",
-    "collapseAll": "Collapse all",
-    "detailTarget": "Target",
-    "detailCaller": "Caller",
-    "detailRun": "Run ID",
-    "detailParent": "Parent run",
-    "detailCall": "Tool call",
-    "detailCreated": "Created",
-    "detailUpdated": "Updated",
-    "detailInput": "Input",
-    "detailOutput": "Output",
-    "error": "Error",
-    "stream": "Live activity",
-    "reasoning": "Reasoning"
-  },
   "config": {
     "title": "Settings",
     "saved": "Settings saved",
