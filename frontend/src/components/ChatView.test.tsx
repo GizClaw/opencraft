@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useStore } from '../lib/store';
@@ -434,7 +434,8 @@ describe('ChatView transcript windowing', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('renders message-peek ticks with user/answer previews', () => {
+  it('renders message-peek ticks with user/answer previews', async () => {
+    vi.useFakeTimers();
     setConversation(
       [
         {
@@ -471,10 +472,14 @@ describe('ChatView transcript windowing', () => {
       name: 'Jump to turn 1',
     });
     fireEvent.mouseEnter(firstTick);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
 
     const tooltip = screen.getByRole('tooltip');
     expect(tooltip).toHaveTextContent('build search');
     expect(tooltip).toHaveTextContent('search built');
+    vi.useRealTimers();
   });
 });
 
@@ -500,12 +505,14 @@ describe('ChatView projections', () => {
     expect(screen.getByText('Medium')).toBeInTheDocument();
   });
 
-  it('renders no-session with a start action', () => {
+  it('renders a new-chat draft composer when no session is open', () => {
     stateRoot.resetWorkspace();
     render(<ChatView />);
+    expect(screen.getByText('What shall we craft today?')).toBeInTheDocument();
     expect(
-      screen.getByRole('button', { name: 'Start a new conversation' }),
+      screen.getByRole('button', { name: 'Choose workspace' }),
     ).toBeInTheDocument();
+    expect(screen.getByText('Workspace mode')).toBeInTheDocument();
   });
 
   it('renders an opening placeholder while focus is switching', () => {

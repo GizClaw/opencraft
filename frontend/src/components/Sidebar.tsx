@@ -4,19 +4,18 @@ import {
   Download,
   FolderOpen,
   Loader2,
-  MessageSquare,
+  MessageSquareText,
   MoreHorizontal,
   Pencil,
   Plus,
   Puzzle,
-  Search,
   Settings,
   Sparkles,
   Trash2,
   Upload,
-  X,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { WindowToggleMaximise } from '../../wailsjs/runtime/runtime';
 import { api } from '../lib/api';
@@ -26,15 +25,16 @@ import {
   useFocusState,
   useRunningConversations,
 } from '../state/react';
-import type { SessionMeta } from '../lib/types';
 import type { ComponentType } from 'react';
+import type { SessionMeta, WorkspaceMeta } from '../lib/types';
 
 function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 }
 
 // SessionRow is one rendered session: a running conversation (which may
-// not have a history record yet) or a stored session filling the list.
+// not have a history record yet) or a stored session in a workspace
+// list. workspacePath is the workspace the row belongs to.
 interface SessionRow {
   id: string;
   title: string;
@@ -42,14 +42,60 @@ interface SessionRow {
   tokens?: string;
   time?: string;
   meta?: SessionMeta;
+  workspacePath: string;
+}
+
+// HistoryItem flattens the workspace/session tree into one ordered list
+// the sidebar virtualizer can window, so expanding many workspaces never
+// mounts thousands of session rows at once.
+type HistoryItem =
+  | {
+      key: string;
+      kind: 'workspace';
+      w: WorkspaceMeta;
+    }
+  | {
+      key: string;
+      kind: 'session';
+      row: SessionRow;
+      actionsAllowed: boolean;
+    }
+  | {
+      key: string;
+      kind: 'loading';
+      workspacePath: string;
+    }
+  | {
+      key: string;
+      kind: 'empty';
+      workspacePath: string;
+    }
+  | {
+      key: string;
+      kind: 'more';
+      workspacePath: string;
+      count: number;
+    };
+
+const expandedStorageKey = 'oc.sidebarExpandedWorkspaces';
+
+function readExpandedWorkspaces(): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(expandedStorageKey);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw);
+    return new Set(Array.isArray(parsed) ? parsed : []);
+  } catch {
+    return new Set();
+  }
 }
 
 export function Sidebar({ isMac }: { isMac: boolean }) {
   const workspace = useStore((s) => s.workspace);
-  const newChat = useStore((s) => s.newChat);
+  const openDraftChat = useStore((s) => s.openDraftChat);
   const openConfig = useStore((s) => s.openConfig);
+  const openWorkspace = useStore((s) => s.openWorkspace);
   const sessions = useStore((s) => s.sessions);
-  const sessionsLoading = useStore((s) => s.sessionsLoading);
   const focus = useFocusState();
   const currentSession = focus.name === 'active' ? focus.sessionID : '';
   const resume = useStore((s) => s.resume);
@@ -62,13 +108,25 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   const loadSessions = useStore((s) => s.loadSessions);
   const loadWorkspaces = useStore((s) => s.loadWorkspaces);
   const workspaces = useStore((s) => s.workspaces);
-  const openWorkspace = useStore((s) => s.openWorkspace);
+  const openSessionInWorkspace = useStore((s) => s.openSessionInWorkspace);
   const removeWorkspace = useStore((s) => s.removeWorkspace);
   const { t } = useTranslation();
 
-  const [sessionsOpen, setSessionsOpen] = useState(false);
-  const [workspacesOpen, setWorkspacesOpen] = useState(false);
-  const [sessionQuery, setSessionQuery] = useState('');
+  const [expandedWorkspaces, setExpandedWorkspaces] = useState<Set<string>>(
+    readExpandedWorkspaces,
+  );
+  // wsLists caches one fetched session list per non-active workspace.
+  // The active workspace always renders the store's live list instead.
+  const [wsLists, setWsLists] = useState<Record<string, SessionMeta[]>>({});
+  const [wsLoading, setWsLoading] = useState<Record<string, boolean>>({});
+  // showAllSessions keeps one per-workspace flag for expanding past the
+  // default 10 most recent sessions inline.
+  const [showAllSessions, setShowAllSessions] = useState<Set<string>>(
+    () => new Set(),
+  );
+  // attemptedFetch prevents an infinite refetch loop when a workspace
+  // list fails to load; collapse/expand clears the entry to retry.
+  const attemptedFetch = useRef<Set<string>>(new Set());
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -78,6 +136,32 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   const [workspacePath, setWorkspacePath] = useState('');
   const [workspaceError, setWorkspaceError] = useState('');
   const [confirmWorkspace, setConfirmWorkspace] = useState<string | null>(null);
+
+  const persistExpanded = (next: Set<string>) => {
+    setExpandedWorkspaces(next);
+    try {
+      window.localStorage.setItem(
+        expandedStorageKey,
+        JSON.stringify([...next]),
+      );
+    } catch {
+      // storage is best-effort; the in-memory tree still works
+    }
+  };
+
+  // The workspace holding the active session is expanded by default so
+  // the current conversation stays reachable after every switch.
+  const lastWorkspace = useRef<string | null>(null);
+  useEffect(() => {
+    if (!workspace || lastWorkspace.current === workspace) return;
+    lastWorkspace.current = workspace;
+    if (!expandedWorkspaces.has(workspace)) {
+      const next = new Set(expandedWorkspaces);
+      next.add(workspace);
+      persistExpanded(next);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspace]);
 
   const toolButtons: {
     id: string;
@@ -139,6 +223,16 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
     await loadWorkspaces();
   };
 
+  const handleOpenPath = async () => {
+    const path = workspacePath.trim();
+    if (!path) return;
+    setWorkspaceInputOpen(false);
+    setWorkspaceError('');
+    setWorkspacePath('');
+    await openWorkspace(path);
+    await loadWorkspaces();
+  };
+
   const handleImportSession = async () => {
     let path = '';
     try {
@@ -164,16 +258,6 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
     }
   };
 
-  const handleOpenPath = async () => {
-    const path = workspacePath.trim();
-    if (!path) return;
-    setWorkspaceInputOpen(false);
-    setWorkspaceError('');
-    setWorkspacePath('');
-    await openWorkspace(path);
-    await loadWorkspaces();
-  };
-
   const fmtTime = (iso: string) => {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return '';
@@ -191,26 +275,87 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
     return n > 0 ? String(n) : '';
   };
 
-  // Running conversations always stay visible; stored sessions fill the
-  // list up to five entries total.
-  const runningActors = useRunningConversations(workspace);
-  const pendingInteractIds = useMemo(
-    () =>
-      pendingConversationIDs(pendingPromptConvs).filter(
-        (id) => conversationWorkspace(id) === workspace,
-      ),
-    [pendingPromptConvs, workspace],
-  );
-  const runningIds = useMemo(() => {
-    const ids = new Set(
-      runningActors.map(({ conversationID }) => conversationID),
+  // Running conversations stay visible under the workspace that owns
+  // them even when the app is focused elsewhere (a stream from a
+  // previous workspace or an automation host keeps flowing).
+  const runningActors = useRunningConversations();
+  const runningIdsByWorkspace = useMemo(() => {
+    const byPath: Record<string, string[]> = {};
+    for (const { conversationID } of runningActors) {
+      const path = conversationWorkspace(conversationID);
+      if (!path) continue;
+      (byPath[path] ??= []).push(conversationID);
+    }
+    for (const id of pendingConversationIDs(pendingPromptConvs)) {
+      const path = conversationWorkspace(id);
+      if (!path || byPath[path]?.includes(id)) continue;
+      (byPath[path] ??= []).push(id);
+    }
+    return byPath;
+  }, [runningActors, pendingPromptConvs]);
+
+  const ensureWorkspaceSessions = async (w: WorkspaceMeta) => {
+    if (
+      w.path === workspace ||
+      wsLoading[w.path] ||
+      wsLists[w.path] ||
+      attemptedFetch.current.has(w.path)
+    ) {
+      return;
+    }
+    attemptedFetch.current.add(w.path);
+    setWsLoading((prev) => ({ ...prev, [w.path]: true }));
+    try {
+      const list = (await api.listSessionsInWorkspace(w.path)) ?? [];
+      setWsLists((prev) => ({ ...prev, [w.path]: list }));
+    } catch (err) {
+      flash(String(err));
+    } finally {
+      setWsLoading((prev) => ({ ...prev, [w.path]: false }));
+    }
+  };
+
+  // Expanded non-active workspaces whose session lists were not loaded
+  // yet (for example right after a UI refresh remounts the sidebar)
+  // refetch automatically instead of showing an empty history until
+  // the user collapses and re-expands the node.
+  useEffect(() => {
+    const missing = workspaces.filter(
+      (w) =>
+        expandedWorkspaces.has(w.path) &&
+        w.path !== workspace &&
+        !wsLists[w.path] &&
+        !wsLoading[w.path],
     );
-    for (const id of pendingInteractIds) ids.add(id);
-    return [...ids];
-  }, [runningActors, pendingInteractIds]);
-  const visibleSessions = useMemo<SessionRow[]>(() => {
+    for (const w of missing) {
+      void ensureWorkspaceSessions(w);
+    }
+    // ensureWorkspaceSessions is recreated per render; its guards read
+    // fresh state through the effect's dependencies above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandedWorkspaces, workspace, workspaces, wsLists, wsLoading]);
+
+  const toggleWorkspace = (w: WorkspaceMeta) => {
+    const next = new Set(expandedWorkspaces);
+    const expanding = !next.has(w.path);
+    if (expanding) {
+      attemptedFetch.current.delete(w.path);
+      next.add(w.path);
+      void ensureWorkspaceSessions(w);
+    } else {
+      next.delete(w.path);
+    }
+    persistExpanded(next);
+  };
+
+  const sessionRowsFor = (w: WorkspaceMeta): SessionRow[] => {
+    const stored = w.path === workspace ? sessions : (wsLists[w.path] ?? []);
+    const runningIds = runningIdsByWorkspace[w.path] ?? [];
     const running = runningIds.map((id) => {
-      const meta = sessions.find((s) => s.id === id);
+      const meta =
+        w.path === workspace
+          ? sessions.find((s) => s.id === id)
+          : (wsLists[w.path] ?? []).find((s) => s.id === id);
       return {
         id,
         title:
@@ -221,37 +366,32 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
         tokens: meta ? fmtTokens(meta.total_tokens) : '',
         time: meta ? fmtTime(meta.updated_at) : '',
         meta,
+        workspacePath: w.path,
       };
     });
-    const fill = sessions
+    const fills = stored
       .filter((s) => !runningIds.includes(s.id))
-      .slice(0, Math.max(0, 5 - running.length));
-    return [
-      ...running,
-      ...fill.map((s) => ({
+      .map((s) => ({
         id: s.id,
         title: s.title,
         running: false,
         tokens: fmtTokens(s.total_tokens),
         time: fmtTime(s.updated_at),
         meta: s,
-      })),
-    ];
-  }, [runningIds, sessions, t]);
+        workspacePath: w.path,
+      }));
+    return [...running, ...fills];
+  };
 
-  const filteredSessions = useMemo(
-    () =>
-      sessions.filter((s) =>
-        s.title.toLowerCase().includes(sessionQuery.toLowerCase()),
-      ),
-    [sessions, sessionQuery],
-  );
-  const visibleWorkspaces = workspaces.slice(0, 5);
-  const removingWorkspace = workspaces.find((w) => w.id === confirmWorkspace);
-  const runningOnly = runningIds.filter(
-    (id) => !sessions.some((s) => s.id === id),
-  ).length;
-  const showMoreSessions = sessions.length + runningOnly > 5;
+  const openSession = (row: SessionRow) => {
+    if (row.workspacePath === workspace) {
+      void resume(row.id);
+    } else {
+      void openSessionInWorkspace(row.id, row.workspacePath).catch((err) =>
+        flash(String(err)),
+      );
+    }
+  };
 
   const renameSession = async (id: string, title: string) => {
     try {
@@ -264,8 +404,8 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
     }
   };
 
-  const renderSessionRow = (row: SessionRow) => (
-    <li key={row.id}>
+  const renderSessionRow = (row: SessionRow, actionsAllowed: boolean) => (
+    <div key={row.id}>
       <div
         className={`group relative flex items-center gap-1 rounded-lg px-1.5 py-1 text-left text-sm ${
           row.id === currentSession
@@ -275,7 +415,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
         title={row.id}
       >
         <button
-          onClick={() => void resume(row.id)}
+          onClick={() => openSession(row)}
           className="flex flex-1 min-w-0 items-center gap-2"
         >
           {row.running ? (
@@ -284,7 +424,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
               className="text-accent animate-spin shrink-0"
             />
           ) : (
-            <MessageSquare size="0.9286rem" className="text-dim shrink-0" />
+            <MessageSquareText size="0.9286rem" className="text-dim shrink-0" />
           )}
           {renameId === row.id ? (
             <input
@@ -305,116 +445,275 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
             <span className="flex-1 truncate">{row.title}</span>
           )}
         </button>
-        <div className="relative shrink-0">
-          <button
-            onClick={() => setMenuOpenId(menuOpenId === row.id ? null : row.id)}
-            className="text-dim opacity-0 group-hover:opacity-100 hover:text-fg rounded p-0.5"
-            title={t('sidebar.sessionActions')}
-            aria-label={t('sidebar.sessionActions')}
-          >
-            <MoreHorizontal size="1.0000rem" />
-          </button>
-          {menuOpenId === row.id && (
-            <>
-              <div
-                className="fixed inset-0 z-20"
-                onClick={() => setMenuOpenId(null)}
-              />
-              <div className="absolute right-0 top-6 z-30 w-44 rounded-lg border border-edge bg-panel shadow-xl py-1">
-                <button
-                  onClick={() => {
-                    setMenuOpenId(null);
-                    setRenameId(row.id);
-                    setRenameValue(row.meta?.title ?? row.title);
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
-                >
-                  <Pencil size="0.8571rem" className="text-dim" />
-                  {t('sidebar.renameSession')}
-                </button>
-                <button
-                  onClick={() => {
-                    setMenuOpenId(null);
-                    void api
-                      .exportSession(row.id)
-                      .then((path) => flash(t('sidebar.exportedTo', { path })))
-                      .catch((err) => flash(String(err)));
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
-                >
-                  <Download size="0.8571rem" className="text-dim" />
-                  {t('sidebar.exportSession')}
-                </button>
-                <button
-                  onClick={() => {
-                    setMenuOpenId(null);
-                    void api
-                      .exportSessionBundle(row.id)
-                      .then((path) => flash(t('sidebar.exportedTo', { path })))
-                      .catch((err) => flash(String(err)));
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
-                >
-                  <Download size="0.8571rem" className="text-dim" />
-                  {t('sidebar.exportSessionBundle')}
-                </button>
-                <button
-                  onClick={() => {
-                    setMenuOpenId(null);
-                    setConfirmDelete(row.id);
-                  }}
-                  className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-err hover:bg-panel2"
-                >
-                  <Trash2 size="0.8571rem" className="text-err" />
-                  {t('sidebar.deleteSession')}
-                </button>
-              </div>
-            </>
-          )}
-        </div>
+        {actionsAllowed && (
+          <div className="relative shrink-0">
+            <button
+              onClick={() =>
+                setMenuOpenId(menuOpenId === row.id ? null : row.id)
+              }
+              className="text-dim opacity-0 group-hover:opacity-100 hover:text-fg rounded p-0.5"
+              title={t('sidebar.sessionActions')}
+              aria-label={t('sidebar.sessionActions')}
+            >
+              <MoreHorizontal size="1.0000rem" />
+            </button>
+            {menuOpenId === row.id && (
+              <>
+                <div
+                  className="fixed inset-0 z-20"
+                  onClick={() => setMenuOpenId(null)}
+                />
+                <div className="absolute right-0 top-6 z-30 w-44 rounded-lg border border-edge bg-panel shadow-xl py-1">
+                  <button
+                    onClick={() => {
+                      setMenuOpenId(null);
+                      setRenameId(row.id);
+                      setRenameValue(row.meta?.title ?? row.title);
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
+                  >
+                    <Pencil size="0.8571rem" className="text-dim" />
+                    {t('sidebar.renameSession')}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setMenuOpenId(null);
+                      void api
+                        .exportSession(row.id)
+                        .then((path) =>
+                          flash(t('sidebar.exportedTo', { path })),
+                        )
+                        .catch((err) => flash(String(err)));
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
+                  >
+                    <Download size="0.8571rem" className="text-dim" />
+                    {t('sidebar.exportSession')}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setMenuOpenId(null);
+                      void api
+                        .exportSessionBundle(row.id)
+                        .then((path) =>
+                          flash(t('sidebar.exportedTo', { path })),
+                        )
+                        .catch((err) => flash(String(err)));
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
+                  >
+                    <Download size="0.8571rem" className="text-dim" />
+                    {t('sidebar.exportSessionBundle')}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setMenuOpenId(null);
+                      setConfirmDelete(row.id);
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-err hover:bg-panel2"
+                  >
+                    <Trash2 size="0.8571rem" className="text-err" />
+                    {t('sidebar.deleteSession')}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
         {(row.tokens || row.time) && (
           <div className="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1.5 z-10 hidden group-hover:block whitespace-nowrap rounded-md border border-edge bg-panel2 px-2 py-1 text-[0.7143rem] text-dim shadow-lg">
             {[row.tokens, row.time].filter(Boolean).join(' · ')}
           </div>
         )}
       </div>
-    </li>
+    </div>
   );
 
-  const renderWorkspaceRow = (w: {
-    id: string;
-    title: string;
-    path: string;
-  }) => {
-    const active = w.path === workspace;
+  const renderWorkspaceHeader = (w: WorkspaceMeta) => {
+    const isCurrent = w.path === workspace;
     return (
-      <li key={w.id}>
-        <div
-          className={`group flex items-center gap-1 rounded-lg px-1.5 py-1 text-left text-sm ${
-            active
-              ? 'bg-accent/15 border border-accent/40'
-              : 'border border-transparent hover:bg-panel2'
-          }`}
-          title={w.path}
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => toggleWorkspace(w)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            toggleWorkspace(w);
+          }
+        }}
+        className={`group flex items-center gap-1 rounded-lg px-1.5 py-1 text-left text-sm cursor-pointer select-none ${
+          isCurrent
+            ? 'bg-accent/10 border border-accent/25'
+            : 'border border-transparent hover:bg-panel2'
+        }`}
+        title={w.path}
+      >
+        <FolderOpen
+          size="0.9286rem"
+          className={`shrink-0 ${isCurrent ? 'text-accent' : 'text-dim'}`}
+        />
+        <span className="flex-1 truncate">{w.title || basename(w.path)}</span>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setConfirmWorkspace(w.id);
+          }}
+          className="text-dim opacity-0 group-hover:opacity-100 hover:text-err shrink-0"
+          title={t('sidebar.removeWorkspace')}
+          aria-label={t('sidebar.removeWorkspace')}
         >
-          <button
-            onClick={() => void openWorkspace(w.path)}
-            className="flex flex-1 min-w-0 items-center gap-2"
-          >
-            <FolderOpen size="0.9286rem" className="text-dim shrink-0" />
-            <span className="flex-1 truncate">{w.title}</span>
-          </button>
-          <button
-            onClick={() => setConfirmWorkspace(w.id)}
-            className="text-dim opacity-0 group-hover:opacity-100 hover:text-err shrink-0"
-            title={t('sidebar.removeWorkspace')}
-            aria-label={t('sidebar.removeWorkspace')}
-          >
-            <Trash2 size="0.8571rem" />
-          </button>
-        </div>
-      </li>
+          <Trash2 size="0.8571rem" />
+        </button>
+      </div>
     );
+  };
+
+  // historyScrollRef + historyItems flatten the tree into one
+  // windowed list. Only the workspace rows and sessions near the
+  // sidebar viewport are mounted, no matter how many workspaces and
+  // sessions are expanded.
+  const historyScrollRef = useRef<HTMLDivElement | null>(null);
+  const historyItems = useMemo<HistoryItem[]>(() => {
+    const items: HistoryItem[] = [];
+    for (const w of workspaces) {
+      items.push({ key: `ws:${w.id}`, kind: 'workspace', w });
+      if (!expandedWorkspaces.has(w.path)) continue;
+      const isCurrent = w.path === workspace;
+      if (!isCurrent && !wsLists[w.path]) {
+        const failed = attemptedFetch.current.has(w.path) && !wsLoading[w.path];
+        items.push(
+          failed
+            ? { key: `empty:${w.path}`, kind: 'empty', workspacePath: w.path }
+            : {
+                key: `loading:${w.path}`,
+                kind: 'loading',
+                workspacePath: w.path,
+              },
+        );
+        continue;
+      }
+      const rows = sessionRowsFor(w);
+      const runningCount = runningIdsByWorkspace[w.path]?.length ?? 0;
+      const storedCount = Math.max(0, rows.length - runningCount);
+      const visibleStored = showAllSessions.has(w.path)
+        ? storedCount
+        : Math.min(storedCount, 10);
+      const visible = rows.slice(0, runningCount + visibleStored);
+      if (visible.length === 0) {
+        items.push({
+          key: `empty:${w.path}`,
+          kind: 'empty',
+          workspacePath: w.path,
+        });
+        continue;
+      }
+      for (const row of visible) {
+        items.push({
+          key: `${w.path}:${row.id}`,
+          kind: 'session',
+          row,
+          actionsAllowed: isCurrent,
+        });
+      }
+      const hidden = storedCount - visibleStored;
+      if (hidden > 0) {
+        items.push({
+          key: `more:${w.path}`,
+          kind: 'more',
+          workspacePath: w.path,
+          count: hidden,
+        });
+      }
+    }
+    return items;
+    // sessionRowsFor is a local render helper; its inputs are all in
+    // the dependency list above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    expandedWorkspaces,
+    runningIdsByWorkspace,
+    sessions,
+    showAllSessions,
+    t,
+    workspace,
+    workspaces,
+    wsLists,
+    wsLoading,
+  ]);
+  const virtualizer = useVirtualizer({
+    count: historyItems.length,
+    getScrollElement: () => historyScrollRef.current,
+    estimateSize: () => 30,
+    overscan: 10,
+    getItemKey: (index) => historyItems[index]?.key ?? String(index),
+  });
+
+  const expandWorkspaceSessions = (workspacePath: string) => {
+    setShowAllSessions((prev) => {
+      const next = new Set(prev);
+      next.add(workspacePath);
+      return next;
+    });
+  };
+
+  const renderHistoryItem = (item: HistoryItem) => {
+    switch (item.kind) {
+      case 'workspace':
+        return renderWorkspaceHeader(item.w);
+      case 'session':
+        return (
+          <div className="ml-1 pt-1">
+            {renderSessionRow(item.row, item.actionsAllowed)}
+          </div>
+        );
+      case 'loading':
+        return (
+          <div className="ml-1 pt-1">
+            <div className="h-6 animate-pulse rounded-lg bg-panel2" />
+          </div>
+        );
+      case 'empty':
+        return <p className="ml-1 pt-1 pb-0.5 text-xs text-dim">—</p>;
+      case 'more':
+        return (
+          <div className="ml-1 pt-1">
+            <button
+              onClick={() => expandWorkspaceSessions(item.workspacePath)}
+              className="flex w-full items-center gap-1.5 rounded-md border border-edge bg-panel2 px-2 py-1 text-xs text-dim hover:text-fg transition-colors"
+            >
+              <MoreHorizontal size="0.8571rem" className="shrink-0" />
+              {t('sidebar.moreSessions')}
+              <span className="ml-auto tabular-nums text-[0.7143rem] text-dim">
+                +{item.count}
+              </span>
+            </button>
+          </div>
+        );
+    }
+  };
+
+  const removingWorkspace = workspaces.find((w) => w.id === confirmWorkspace);
+
+  const confirmRemoveWorkspace = () => {
+    if (!removingWorkspace) return;
+    const target = removingWorkspace;
+    setWsLists((prev) => {
+      const next = { ...prev };
+      delete next[target.path];
+      return next;
+    });
+    setWsLoading((prev) => {
+      const next = { ...prev };
+      delete next[target.path];
+      return next;
+    });
+    attemptedFetch.current.delete(target.path);
+    const next = new Set(expandedWorkspaces);
+    next.delete(target.path);
+    persistExpanded(next);
+    setConfirmWorkspace(null);
+    void removeWorkspace(target.id);
   };
 
   return (
@@ -442,7 +741,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
 
       <div className="px-3 pt-1">
         <button
-          onClick={newChat}
+          onClick={openDraftChat}
           className="w-full flex items-center gap-2 rounded-lg border border-edge bg-panel2 px-3 py-2 text-sm hover:border-accent/50 transition-colors"
         >
           <Plus size="1.0714rem" className="text-accent" />
@@ -470,12 +769,12 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
         })}
       </div>
 
-      <div className="flex-1 overflow-y-auto px-3 py-4 space-y-4">
-        <section>
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-xs uppercase tracking-wider text-dim">
-              {t('sidebar.sessions')}
-            </h3>
+      <div className="px-3 pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <h3 className="text-xs uppercase tracking-wider text-dim">
+            {t('sidebar.history')}
+          </h3>
+          <div className="flex items-center gap-1.5">
             <button
               onClick={() => void handleImportSession()}
               disabled={!workspace || importing}
@@ -489,30 +788,6 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                 <Upload size="0.9286rem" />
               )}
             </button>
-          </div>
-          {visibleSessions.length === 0 ? (
-            <p className="text-xs text-dim">—</p>
-          ) : (
-            <ul className="space-y-1">
-              {visibleSessions.map(renderSessionRow)}
-            </ul>
-          )}
-          {showMoreSessions && (
-            <button
-              onClick={() => setSessionsOpen(true)}
-              className="w-full mt-2 flex items-center gap-2 rounded-lg border border-edge bg-panel2 px-3 py-2 text-sm hover:border-accent/50 transition-colors"
-            >
-              <Search size="1.0000rem" className="text-dim" />
-              {t('sidebar.moreSessions')}
-            </button>
-          )}
-        </section>
-
-        <section>
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-xs uppercase tracking-wider text-dim">
-              {t('sidebar.workspaces')}
-            </h3>
             <button
               onClick={() => void handleAddWorkspace()}
               className="text-dim hover:text-fg"
@@ -522,64 +797,71 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
               <Plus size="0.9286rem" />
             </button>
           </div>
-          {workspaceInputOpen && (
-            <div className="mb-2 flex flex-col gap-1.5 rounded-lg border border-edge bg-panel2 p-2">
-              {workspaceError && (
-                <p className="text-[0.7857rem] text-red-400 break-words">
-                  {workspaceError}
-                </p>
-              )}
-              <p className="text-[0.7857rem] text-dim">
-                {t('sidebar.pickerFallback')}
+        </div>
+        {workspaceInputOpen && (
+          <div className="mb-2 flex flex-col gap-1.5 rounded-lg border border-edge bg-panel2 p-2">
+            {workspaceError && (
+              <p className="text-[0.7857rem] text-red-400 break-words">
+                {workspaceError}
               </p>
-              <input
-                value={workspacePath}
-                onChange={(e) => setWorkspacePath(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void handleOpenPath();
-                  if (e.key === 'Escape') setWorkspaceInputOpen(false);
-                }}
-                placeholder="/path/to/workspace"
-                className="w-full rounded-md border border-edge bg-panel px-2 py-1 text-xs text-fg outline-none focus:border-accent"
-                autoFocus
-              />
-              <div className="flex gap-2">
-                <button
-                  onClick={() => void handleOpenPath()}
-                  className="rounded-md bg-accent px-2 py-1 text-xs text-white hover:opacity-90"
-                >
-                  {t('sidebar.open')}
-                </button>
-                <button
-                  onClick={() => setWorkspaceInputOpen(false)}
-                  className="rounded-md px-2 py-1 text-xs text-dim hover:text-fg"
-                >
-                  {t('sidebar.cancel')}
-                </button>
-              </div>
-            </div>
-          )}
-          {workspaces.length === 0 ? (
-            <p className="text-xs text-dim">
-              {workspace ? '—' : t('sidebar.workspaceEmpty')}
+            )}
+            <p className="text-[0.7857rem] text-dim">
+              {t('sidebar.pickerFallback')}
             </p>
-          ) : (
-            <>
-              <ul className="space-y-1">
-                {visibleWorkspaces.map(renderWorkspaceRow)}
-              </ul>
-              {workspaces.length > 5 && (
-                <button
-                  onClick={() => setWorkspacesOpen(true)}
-                  className="w-full mt-2 flex items-center gap-2 rounded-lg border border-edge bg-panel2 px-3 py-2 text-sm hover:border-accent/50 transition-colors"
+            <input
+              value={workspacePath}
+              onChange={(e) => setWorkspacePath(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void handleOpenPath();
+                if (e.key === 'Escape') setWorkspaceInputOpen(false);
+              }}
+              placeholder="/path/to/workspace"
+              className="w-full rounded-md border border-edge bg-panel px-2 py-1 text-xs text-fg outline-none focus:border-accent"
+              autoFocus
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={() => void handleOpenPath()}
+                className="rounded-md bg-accent px-2 py-1 text-xs text-white hover:opacity-90"
+              >
+                {t('sidebar.open')}
+              </button>
+              <button
+                onClick={() => setWorkspaceInputOpen(false)}
+                className="rounded-md px-2 py-1 text-xs text-dim hover:text-fg"
+              >
+                {t('sidebar.cancel')}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+      <div ref={historyScrollRef} className="flex-1 overflow-y-auto px-3 pb-4">
+        {workspaces.length === 0 ? (
+          <p className="pt-2 text-xs text-dim">
+            {workspace ? '—' : t('sidebar.workspaceEmpty')}
+          </p>
+        ) : (
+          <div
+            className="relative"
+            style={{ height: `${virtualizer.getTotalSize()}px` }}
+          >
+            {virtualizer.getVirtualItems().map((virtualItem) => {
+              const item = historyItems[virtualItem.index];
+              return (
+                <div
+                  key={item.key}
+                  data-index={virtualItem.index}
+                  ref={virtualizer.measureElement}
+                  className="absolute left-0 right-0"
+                  style={{ top: virtualItem.start }}
                 >
-                  <FolderOpen size="1.0000rem" className="text-dim" />
-                  {t('sidebar.moreWorkspaces')}
-                </button>
-              )}
-            </>
-          )}
-        </section>
+                  {renderHistoryItem(item)}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div className="border-t border-edge p-3 space-y-2">
@@ -631,99 +913,6 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
         </div>
       )}
 
-      {sessionsOpen && (
-        <div
-          className="fixed bottom-0 top-11 left-0 right-0 z-40 grid place-items-center bg-black/60 p-6"
-          onClick={() => setSessionsOpen(false)}
-        >
-          <div
-            className="w-[40.0000rem] max-h-[80vh] flex flex-col rounded-2xl border border-edge bg-panel shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center gap-2 px-4 py-3 border-b border-edge">
-              <Search size="1.0000rem" className="text-dim shrink-0" />
-              <input
-                autoFocus
-                value={sessionQuery}
-                onChange={(e) => setSessionQuery(e.target.value)}
-                placeholder={t('sidebar.searchSessions')}
-                className="flex-1 min-w-0 bg-transparent outline-none text-sm"
-              />
-              <button
-                onClick={() => setSessionsOpen(false)}
-                className="text-dim hover:text-fg shrink-0"
-              >
-                <X size="1.1429rem" />
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-2">
-              {filteredSessions.length === 0 ? (
-                sessionsLoading ? (
-                  <div className="space-y-2 p-2">
-                    {[0, 1, 2].map((i) => (
-                      <div
-                        key={i}
-                        className="h-8 animate-pulse rounded-lg bg-panel2"
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-xs text-dim p-3">—</p>
-                )
-              ) : (
-                <ul className="space-y-1">
-                  {filteredSessions.map((s) =>
-                    renderSessionRow({
-                      id: s.id,
-                      title: s.title,
-                      running: runningIds.includes(s.id),
-                      tokens: fmtTokens(s.total_tokens),
-                      time: fmtTime(s.updated_at),
-                      meta: s,
-                    }),
-                  )}
-                </ul>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {workspacesOpen && (
-        <div
-          className="fixed bottom-0 top-11 left-0 right-0 z-40 grid place-items-center bg-black/60 p-6"
-          onClick={() => setWorkspacesOpen(false)}
-        >
-          <div
-            className="w-[30.0000rem] max-h-[70vh] flex flex-col rounded-2xl border border-edge bg-panel shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-4 py-3 border-b border-edge">
-              <h3 className="text-sm font-semibold">
-                {t('sidebar.workspaces')}
-              </h3>
-              <button
-                onClick={() => setWorkspacesOpen(false)}
-                className="text-dim hover:text-fg"
-              >
-                <X size="1.1429rem" />
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-2">
-              {workspaces.length === 0 ? (
-                <p className="text-xs text-dim p-3">
-                  {workspace ? '—' : t('sidebar.workspaceEmpty')}
-                </p>
-              ) : (
-                <ul className="space-y-1">
-                  {workspaces.map(renderWorkspaceRow)}
-                </ul>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
       {confirmWorkspace && removingWorkspace && (
         <div
           className="fixed bottom-0 top-11 left-0 right-0 z-50 grid place-items-center bg-black/60 p-6"
@@ -749,12 +938,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                 {t('interact.cancel')}
               </button>
               <button
-                onClick={() => {
-                  const id = confirmWorkspace;
-                  setConfirmWorkspace(null);
-                  setWorkspacesOpen(false);
-                  void removeWorkspace(id);
-                }}
+                onClick={confirmRemoveWorkspace}
                 className="rounded bg-err px-3 py-1.5 text-sm text-white hover:opacity-90"
               >
                 {t('sidebar.removeWorkspace')}

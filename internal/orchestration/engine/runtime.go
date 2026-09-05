@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"context"
 	"sync"
 
 	runtimecore "github.com/GizClaw/flowcraft/core/runtime"
@@ -37,4 +38,18 @@ func (c *Controller) Close() error {
 		return current.Close()
 	}
 	return nil
+}
+
+// Drain waits for active session turns to finish naturally without
+// interrupting them, then leaves the runtime drained so Close can tear
+// it down once its replacement is ready. Host uses it when an old
+// runtime is invalidated but still owns in-flight turns.
+func (c *Controller) Drain(ctx context.Context) error {
+	c.mu.Lock()
+	current := c.current
+	c.mu.Unlock()
+	if current == nil {
+		return nil
+	}
+	return current.Drain(ctx)
 }

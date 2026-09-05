@@ -92,6 +92,56 @@ func TestImportPersistsAndDedupes(t *testing.T) {
 	}
 }
 
+func TestImportedBySources(t *testing.T) {
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.CloseDB() })
+	ctx := context.Background()
+
+	first := importFixture()
+	id1, err := store.Import(ctx, first)
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	second := importFixture()
+	second.Source = "codex:conv-2"
+	id2, err := store.Import(ctx, second)
+	if err != nil {
+		t.Fatalf("Import: %v", err)
+	}
+	sources := []string{"codex:conv-1", "codex:conv-2", "codex:conv-1"}
+
+	// Pending imports (memory seed not complete) are not reported as
+	// importable duplicates.
+	got, err := store.ImportedBySources(ctx, sources)
+	if err != nil {
+		t.Fatalf("ImportedBySources: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("pending imports reported: %+v", got)
+	}
+
+	if err := store.CompleteImport(ctx, id1); err != nil {
+		t.Fatalf("CompleteImport: %v", err)
+	}
+	if err := store.CompleteImport(ctx, id2); err != nil {
+		t.Fatalf("CompleteImport: %v", err)
+	}
+	got, err = store.ImportedBySources(ctx, sources)
+	if err != nil {
+		t.Fatalf("ImportedBySources: %v", err)
+	}
+	if got["codex:conv-1"] != id1 || got["codex:conv-2"] != id2 {
+		t.Fatalf("imported sources = %+v, want %s->%s, %s->%s",
+			got, "codex:conv-1", id1, "codex:conv-2", id2)
+	}
+	if _, ok := got["codex:missing"]; ok {
+		t.Fatalf("missing source reported: %+v", got)
+	}
+}
+
 func TestImportPendingReturnsSameIDWhileInFlight(t *testing.T) {
 	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {

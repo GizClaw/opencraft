@@ -664,11 +664,22 @@ interface StoreState {
   loadWorkspaces: () => Promise<void>;
   chooseWorkspace: () => Promise<void>;
   openWorkspace: (path: string) => Promise<void>;
+  openDraftChat: () => void;
   restoreWorkspaceSession: (workDir: string) => Promise<void>;
   openSessionInWorkspace: (
     sessionID: string,
     workspacePath: string,
   ) => Promise<void>;
+  sendFirstMessage: (
+    workspacePath: string,
+    text: string,
+    attachments?: AttachmentView[],
+    options?: {
+      mode?: string;
+      think?: string;
+      model?: string;
+    },
+  ) => Promise<boolean>;
   removeWorkspace: (id: string) => Promise<void>;
   draftComposer: (text: string) => void;
   clearComposerDraft: () => void;
@@ -724,6 +735,11 @@ export const useStore = create<StoreState>((set, get) => {
   let workspaceSwitchSeq = 0;
   let workspaceRestoreInFlight = false;
   let workspaceRestorePromise: Promise<void> | null = null;
+  // suppressRestoreFor skips the automatic session restore after one
+  // workspace switch. The new-chat flow uses it while a first message
+  // is being sent to a different workspace: no previous session should
+  // flash on screen and no empty draft should be minted on the way.
+  let suppressRestoreFor: string | null = null;
   const waitForWorkspaceRestore = async () => {
     const deadline = Date.now() + 5000;
     while (Date.now() < deadline) {
@@ -1118,15 +1134,19 @@ export const useStore = create<StoreState>((set, get) => {
               subagentStreamAt: {},
             });
             void get().loadSessions();
-            const restore = get().restoreWorkspaceSession(data.work_dir);
-            workspaceRestoreInFlight = true;
-            workspaceRestorePromise = restore;
-            void restore.finally(() => {
-              if (workspaceRestorePromise === restore) {
-                workspaceRestorePromise = null;
-                workspaceRestoreInFlight = false;
-              }
-            });
+            const restoreFor = suppressRestoreFor;
+            suppressRestoreFor = null;
+            if (restoreFor !== data.work_dir) {
+              const restore = get().restoreWorkspaceSession(data.work_dir);
+              workspaceRestoreInFlight = true;
+              workspaceRestorePromise = restore;
+              void restore.finally(() => {
+                if (workspaceRestorePromise === restore) {
+                  workspaceRestorePromise = null;
+                  workspaceRestoreInFlight = false;
+                }
+              });
+            }
           }
           void get().loadSessions();
           void get().loadAutomations();
@@ -1644,6 +1664,13 @@ export const useStore = create<StoreState>((set, get) => {
       void get().loadSessions();
     },
 
+    openDraftChat: () => {
+      // A new chat starts as an unsent draft: no session is minted
+      // until the first message picks a workspace and sends.
+      stateRoot.sendFocus({ type: 'OPEN_DRAFT' });
+      set({ toolsView: null, configOpen: false });
+    },
+
     backFromFailure: () => {
       stateRoot.sendFocus({ type: 'BACK' });
     },
@@ -2001,6 +2028,61 @@ export const useStore = create<StoreState>((set, get) => {
         await waitForWorkspaceRestore();
       }
       await get().resume(sessionID);
+    },
+
+    sendFirstMessage: async (
+      workspacePath,
+      text,
+      attachments = [],
+      options,
+    ) => {
+      const trimmed = text.trim();
+      if ((!trimmed && attachments.length === 0) || !get().configured) {
+        return false;
+      }
+      const current = get().workspace;
+      const target =
+        workspacePath && workspacePath !== current ? workspacePath : current;
+      if (!target) return false;
+      if (target !== current) {
+        suppressRestoreFor = target;
+        try {
+          await api.openWorkspace(target);
+          const deadline = Date.now() + 8000;
+          while (get().workspace !== target && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 20));
+          }
+          if (get().workspace !== target) {
+            throw new Error('workspace switch did not complete');
+          }
+        } catch (err) {
+          suppressRestoreFor = null;
+          set({ statusText: String(err) });
+          return false;
+        }
+        suppressRestoreFor = null;
+      }
+      // The draft becomes a real conversation now: mint it in the
+      // selected workspace and send the staged first message.
+      await get().newChat();
+      if (stateRoot.focusSnapshot.value !== 'active') {
+        return false;
+      }
+      // Draft pre-send choices land on the fresh session before its
+      // first run starts. Defaults are already what newChat minted.
+      if (options) {
+        if (options.mode && options.mode !== 'workspace') {
+          await get().setMode(options.mode);
+        }
+        if (options.think && options.think !== 'medium') {
+          await get().setThink(options.think);
+        }
+        if (options.model) {
+          await get().setModel(options.model);
+        }
+      }
+      await get().send(trimmed, attachments);
+      return true;
     },
 
     removeWorkspace: async (id) => {

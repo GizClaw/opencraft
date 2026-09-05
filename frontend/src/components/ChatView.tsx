@@ -80,6 +80,12 @@ import { groupToolCalls, type ToolCallItem } from '../lib/stream';
 const isCommandTool = (name: string) =>
   name === 'exec_command' || name === 'exec_session';
 
+// pathBase shortens an absolute workspace path to its folder name for
+// the new-chat workspace bookmark.
+function pathBase(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+}
+
 // RENDER_WINDOW bounds the number of transcript messages mounted in the
 // DOM. Older messages remain in the store/archive; "load earlier"
 // grows the window in steps instead of rendering a long session at
@@ -1123,7 +1129,10 @@ export function ChatView() {
   const turnArtifacts = conv?.turnArtifacts ?? [];
   const [visibleCount, setVisibleCount] = useState(RENDER_WINDOW);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
-  const [peekCurrent, setPeekCurrent] = useState(-1);
+  const [peekRange, setPeekRange] = useState<{
+    start: number;
+    end: number;
+  } | null>(null);
   const planCacheRef = useRef<{
     messages: MessageView[];
     plan: ReturnType<typeof latestPlan>;
@@ -1133,7 +1142,7 @@ export function ChatView() {
   useEffect(() => {
     setVisibleCount(RENDER_WINDOW);
     setLoadingEarlier(false);
-    setPeekCurrent(-1);
+    setPeekRange(null);
     planCacheRef.current = null;
   }, [current]);
   const truncated = messages.length > visibleCount;
@@ -1195,6 +1204,7 @@ export function ChatView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [planItemsKey, planState?.live]);
   const configured = useStore((s) => s.configured);
+  const workspace = useStore((s) => s.workspace);
   const status = useStore((s) => s.status);
   const pendingInteracts = conv?.pendingInteracts ?? [];
   const send = useStore((s) => s.send);
@@ -1208,20 +1218,53 @@ export function ChatView() {
   const subagentCards = useStore((s) => s.subagentCards);
   const subagentPanelOpen = useStore((s) => s.subagentPanelOpen);
   const toggleSubagentPanel = useStore((s) => s.toggleSubagentPanel);
-  const mode = conv?.mode ?? 'workspace';
+  // Draft pre-send preferences. A new chat has no session yet, so mode
+  // / think / model edits stay local and are applied to the minted
+  // session right before the first message starts.
+  const [draftMode, setDraftMode] = useState('workspace');
+  const [draftThink, setDraftThink] = useState('medium');
+  const [draftModel, setDraftModel] = useState('');
+  const mode = current ? (conv?.mode ?? 'workspace') : draftMode;
   const setMode = useStore((s) => s.setMode);
-  const think = conv?.think ?? 'medium';
+  const think = current ? (conv?.think ?? 'medium') : draftThink;
   const stage = turnState?.name === 'running' ? turnState.stage : '';
   const setThink = useStore((s) => s.setThink);
-  const model = conv?.model ?? '';
+  const model = current ? (conv?.model ?? '') : draftModel;
   const setModel = useStore((s) => s.setModel);
   const modelOptions = useStore((s) => s.modelOptions);
+  const workspaces = useStore((s) => s.workspaces);
+  const sendFirstMessage = useStore((s) => s.sendFirstMessage);
   // The think picker is only meaningful when the effective model
   // (explicit per-conversation hint, or the default router target when
   // empty) declares a reasoning capability.
   const thinkSupported = model
     ? (modelOptions.find((o) => o.id === model)?.reasoning ?? false)
     : (modelOptions[0]?.reasoning ?? status?.default_reasoning ?? false);
+  // While a draft has no session the pills edit local pre-send values;
+  // with a live session they write straight through to the backend.
+  const applyMode = (m: string) => {
+    setModeMenuOpen(false);
+    if (current) {
+      void setMode(m);
+    } else {
+      setDraftMode(m);
+    }
+  };
+  const applyThink = (level: string) => {
+    if (current) {
+      void setThink(level);
+    } else {
+      setDraftThink(level);
+    }
+  };
+  const applyModel = (m: string) => {
+    setModelMenuOpen(false);
+    if (current) {
+      void setModel(m);
+    } else {
+      setDraftModel(m);
+    }
+  };
   const failedTurn = turnState?.name === 'failed' ? turnState : undefined;
   const lastTurn = turnArtifacts[turnArtifacts.length - 1];
   const usesTurnBlocks = completeTurnBlocks.length > 0 && !partialTurnVisible;
@@ -1295,6 +1338,11 @@ export function ChatView() {
   const openConfig = useStore((s) => s.openConfig);
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<AttachmentView[]>([]);
+  // New-chat workspace bookmark: an empty chat shows the workspace the
+  // first message will be created in. '' means the current workspace.
+  const [draftWorkspace, setDraftWorkspace] = useState('');
+  const [wsPickerOpen, setWsPickerOpen] = useState(false);
+  const [switchingWs, setSwitchingWs] = useState(false);
   const [confirmYolo, setConfirmYolo] = useState(false);
   const [forkTarget, setForkTarget] = useState<TurnArtifacts | null>(null);
   const [forking, setForking] = useState(false);
@@ -1309,6 +1357,36 @@ export function ChatView() {
     setInput(composerDraft);
     clearComposerDraft();
   }, [composerDraft, clearComposerDraft]);
+  // Entering a new-chat draft clears the previous composer content;
+  // switching workspaces resets the bookmark back to the new current
+  // workspace so a first message never targets a stale folder.
+  const prevFocusName = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevFocusName.current;
+    prevFocusName.current = focus.name;
+    if (focus.name === 'no-session' && prev !== null && prev !== 'no-session') {
+      setInput('');
+      setAttachments([]);
+      composerRef.current?.clear();
+      setDraftWorkspace('');
+      setWsPickerOpen(false);
+      setDraftMode('workspace');
+      setDraftThink('medium');
+      setDraftModel('');
+    }
+  }, [focus.name]);
+  useEffect(() => {
+    if (!workspace) return;
+    setDraftWorkspace('');
+    setWsPickerOpen(false);
+  }, [workspace]);
+  // Entering a concrete conversation also resets the bookmark, so an
+  // empty resumed session never inherits a stale workspace target.
+  useEffect(() => {
+    if (!current) return;
+    setDraftWorkspace('');
+    setWsPickerOpen(false);
+  }, [current]);
   const scrollRef = useRef<HTMLDivElement>(null);
   // Stick-to-bottom: while the agent streams, the view follows the
   // latest output with an instant snap. Smooth-scrolling on every
@@ -1323,41 +1401,78 @@ export function ChatView() {
   // captured from an earlier render — that race is what made the view
   // jump back to the bottom right after the user scrolled away.
   const stickRef = useRef(true);
-  // refreshPeekCurrent derives the "current turn" from the message
-  // rows currently visible in the transcript. Rows carry the turn they
-  // belong to even when the transcript window starts in the middle of
-  // a long turn, so the ruler follows the content actually on screen.
-  // It only writes when the resolved turn changes, so stream flushes
-  // do not cause an extra render for a stationary viewport.
+  // refreshPeekCurrent derives the range of turns whose message rows
+  // intersect the viewport, so every turn on screen is highlighted on
+  // the ruler. Rows carry the turn they belong to even when the
+  // transcript window starts in the middle of a long turn. It only
+  // writes when the range changes, so stream flushes do not cause an
+  // extra render for a stationary viewport.
   const refreshPeekCurrent = useCallback(() => {
     const scroller = scrollRef.current;
     if (!scroller || turnArtifactsRef.current.length === 0) {
-      setPeekCurrent(-1);
+      setPeekRange(null);
       return;
     }
     const view = scroller.getBoundingClientRect();
     const rows = scroller.querySelectorAll<HTMLElement>('[data-turn-index]');
-    let found = -1;
-    for (const row of rows) {
-      const index = Number(row.dataset.turnIndex);
-      if (!Number.isInteger(index)) continue;
-      const rect = row.getBoundingClientRect();
+    if (rows.length === 0) return;
+    const turnOf = (row: HTMLElement) => {
+      const value = Number(row.dataset.turnIndex);
+      return Number.isInteger(value) ? value : -1;
+    };
+    // Mounted rows are chronological, so binary search finds the first
+    // row intersecting (or below) the viewport top instead of reading
+    // every row above the scroll position.
+    let lo = 0;
+    let hi = rows.length - 1;
+    let first = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const rect = rows[mid].getBoundingClientRect();
       if (rect.bottom <= view.top + 1) {
-        found = index;
-        continue;
+        lo = mid + 1;
+      } else {
+        first = mid;
+        hi = mid - 1;
       }
-      if (rect.top >= view.bottom - 1) break;
-      found = index;
-      break;
     }
-    let next = found;
-    if (next < 0) {
-      if (rows.length === 0) return;
-      const first = Number(rows[0].dataset.turnIndex);
-      const last = Number(rows[rows.length - 1].dataset.turnIndex);
-      next = scroller.scrollTop <= 1 ? first : last;
+    let range: { start: number; end: number } | null = null;
+    if (first < 0) {
+      // Every row sits above the viewport; highlight the edge row.
+      const row = rows[rows.length - 1];
+      const index = turnOf(row);
+      if (index >= 0) range = { start: index, end: index };
+    } else {
+      // Walk forward from the first intersecting row until the next
+      // row starts below the viewport; every turn in between is
+      // visible and gets highlighted on the ruler.
+      let last = first;
+      let visible = false;
+      for (let i = first; i < rows.length; i++) {
+        const rect = rows[i].getBoundingClientRect();
+        if (rect.top >= view.bottom - 1) break;
+        last = i;
+        visible = true;
+      }
+      if (!visible) {
+        const row = scroller.scrollTop <= 1 ? rows[0] : rows[rows.length - 1];
+        const index = turnOf(row);
+        if (index >= 0) range = { start: index, end: index };
+      } else {
+        const start = turnOf(rows[first]);
+        const end = turnOf(rows[last]);
+        if (start >= 0 && end >= 0) {
+          range = start <= end ? { start, end } : { start: end, end: start };
+        }
+      }
     }
-    setPeekCurrent((prev) => (prev === next ? prev : next));
+    if (range) {
+      setPeekRange((prev) =>
+        prev && prev.start === range.start && prev.end === range.end
+          ? prev
+          : range,
+      );
+    }
   }, []);
   // schedulePeekRefresh coalesces scroll-driven current-turn lookups
   // into one pass per animation frame instead of scanning the mounted
@@ -1446,6 +1561,29 @@ export function ChatView() {
   const modelLabel = model
     ? (modelOptions.find((o) => o.id === model)?.label ?? model)
     : t('chat.modelAuto');
+  // The picker resolves '' to the current workspace. Workspace history
+  // is authoritative; the current folder is added defensively when it
+  // is not in the history yet.
+  const pickerWorkspace = draftWorkspace || workspace;
+  const pickerOptions = useMemo(() => {
+    const known = workspaces.some((w) => w.path === workspace)
+      ? workspaces
+      : [
+          ...workspaces,
+          {
+            id: '',
+            path: workspace,
+            title: pathBase(workspace),
+            last_opened: '',
+          },
+        ];
+    return known;
+  }, [workspaces, workspace]);
+  const pickerLabel =
+    pickerOptions.find((w) => w.path === pickerWorkspace)?.title ||
+    pathBase(pickerWorkspace);
+  const showWorkspacePicker =
+    messages.length === 0 && configured && workspace !== '';
 
   const addAttachmentPaths = async (paths: string[]) => {
     if (paths.length === 0) return;
@@ -1544,16 +1682,46 @@ export function ChatView() {
     return () => document.removeEventListener('visibilitychange', onVisibility);
   }, []);
 
-  const submit = () => {
+  const submit = async () => {
     const text = composerRef.current?.getMarkdown() ?? input;
-    if ((!text.trim() && attachments.length === 0) || busy) return;
+    if ((!text.trim() && attachments.length === 0) || busy || switchingWs) {
+      return;
+    }
     stickRef.current = true;
     setStick(true);
+    const staged = attachments;
+    const stagedText = text;
+    const firstMessage =
+      !current || (messages.length === 0 && pickerWorkspace !== workspace);
+    if (firstMessage) {
+      // A new chat has no session yet, or the bookmark points at a
+      // different workspace: mint (and switch) only when the user
+      // actually sends the first message.
+      const target = pickerWorkspace || workspace;
+      setInput('');
+      composerRef.current?.clear();
+      setAttachments([]);
+      setSwitchingWs(true);
+      try {
+        const ok = await sendFirstMessage(target, stagedText, staged, {
+          mode,
+          think,
+          model,
+        });
+        if (!ok) {
+          setInput(stagedText);
+          composerRef.current?.setMarkdown(stagedText);
+          setAttachments(staged);
+        }
+      } finally {
+        setSwitchingWs(false);
+      }
+      return;
+    }
     setInput('');
     composerRef.current?.clear();
-    const staged = attachments;
     setAttachments([]);
-    void send(text, staged);
+    void send(stagedText, staged);
   };
 
   const confirmFork = () => {
@@ -1581,22 +1749,6 @@ export function ChatView() {
       void newChat();
     }
   };
-
-  if (focus.name === 'no-session') {
-    return (
-      <main className="relative flex-1 min-w-0 grid place-items-center">
-        <div className="text-center space-y-3 px-6">
-          <p className="text-sm text-dim">{t('chat.noSession')}</p>
-          <button
-            onClick={() => void newChat()}
-            className="rounded-lg border border-edge px-4 py-1.5 text-sm text-fg hover:border-accent/50 transition-colors"
-          >
-            {t('chat.startNew')}
-          </button>
-        </div>
-      </main>
-    );
-  }
 
   if (focus.name === 'opening') {
     return (
@@ -1883,7 +2035,7 @@ export function ChatView() {
         </div>
         <MessagePeek
           items={peekTicks}
-          currentIndex={peekCurrent}
+          activeRange={peekRange}
           onJump={jumpToTurn}
           getPreview={peekPreview}
           revision={turnArtifacts}
@@ -2004,10 +2156,7 @@ export function ChatView() {
                     />
                     <div className="absolute bottom-full left-0 z-40 mb-1.5 w-80 rounded-lg border border-edge bg-panel p-1 shadow-xl">
                       <button
-                        onClick={() => {
-                          setModeMenuOpen(false);
-                          void setMode('read-only');
-                        }}
+                        onClick={() => applyMode('read-only')}
                         className={`w-full rounded-md px-2 py-1.5 text-left text-xs ${
                           readOnly
                             ? 'bg-accent/10 text-accent'
@@ -2022,10 +2171,7 @@ export function ChatView() {
                         </span>
                       </button>
                       <button
-                        onClick={() => {
-                          setModeMenuOpen(false);
-                          void setMode('workspace');
-                        }}
+                        onClick={() => applyMode('workspace')}
                         className={`w-full rounded-md px-2 py-1.5 text-left text-xs ${
                           !readOnly && !yolo
                             ? 'bg-accent/10 text-accent'
@@ -2093,10 +2239,7 @@ export function ChatView() {
                         </div>
                         <div className="max-h-52 overflow-y-auto">
                           <button
-                            onClick={() => {
-                              setModelMenuOpen(false);
-                              void setModel('');
-                            }}
+                            onClick={() => applyModel('')}
                             className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs ${
                               !model
                                 ? 'bg-accent/10 text-accent'
@@ -2109,10 +2252,7 @@ export function ChatView() {
                           {modelOptions.map((m) => (
                             <button
                               key={m.id}
-                              onClick={() => {
-                                setModelMenuOpen(false);
-                                void setModel(m.id);
-                              }}
+                              onClick={() => applyModel(m.id)}
                               className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs ${
                                 model === m.id
                                   ? 'bg-accent/10 text-accent'
@@ -2142,9 +2282,7 @@ export function ChatView() {
                                 value={thinkIndex}
                                 onChange={(e) => {
                                   const v = Number(e.target.value);
-                                  void setThink(
-                                    thinkLevels[v]?.value ?? 'medium',
-                                  );
+                                  applyThink(thinkLevels[v]?.value ?? 'medium');
                                 }}
                                 className="w-full accent-accent"
                               />
@@ -2161,7 +2299,16 @@ export function ChatView() {
                   )}
                 </div>
               )}
-              {busy ? (
+              {switchingWs ? (
+                <button
+                  disabled
+                  aria-label={t('chat.send')}
+                  title={t('chat.send')}
+                  className="grid h-8 w-8 place-items-center rounded-lg bg-accent text-white opacity-60"
+                >
+                  <Loader2 size="1.0000rem" className="animate-spin" />
+                </button>
+              ) : busy ? (
                 <button
                   onClick={() => void cancelRun()}
                   aria-label={t('chat.stop')}
@@ -2172,7 +2319,7 @@ export function ChatView() {
                 </button>
               ) : (
                 <button
-                  onClick={submit}
+                  onClick={() => void submit()}
                   disabled={!input.trim() && attachments.length === 0}
                   aria-label={t('chat.send')}
                   title={t('chat.send')}
@@ -2184,6 +2331,63 @@ export function ChatView() {
             </div>
           </div>
         </div>
+        {showWorkspacePicker && (
+          <div className="relative z-10 mx-auto -mt-2 flex items-center rounded-lg border border-edge bg-panel2/90 px-1.5 py-1.5 shadow-md">
+            <div className="relative">
+              <button
+                onClick={() => setWsPickerOpen((v) => !v)}
+                className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors ${
+                  pickerWorkspace !== workspace
+                    ? 'border-accent/50 bg-accent/10 text-accent hover:bg-accent/20'
+                    : 'border-transparent text-dim hover:text-fg hover:bg-panel2'
+                }`}
+                title={t('chat.newChatWorkspace')}
+                aria-label={t('chat.chooseWorkspace')}
+              >
+                <FolderOpen size="0.8571rem" className="shrink-0" />
+                <span className="max-w-56 truncate">{pickerLabel}</span>
+                <ChevronDown size="0.7857rem" />
+              </button>
+              {wsPickerOpen && (
+                <>
+                  <div
+                    className="fixed inset-0 z-30"
+                    onClick={() => setWsPickerOpen(false)}
+                  />
+                  <div className="absolute top-full left-0 z-40 mt-1.5 w-72 rounded-lg border border-edge bg-panel py-1 shadow-xl">
+                    {pickerOptions.map((w) => (
+                      <button
+                        key={w.path}
+                        onClick={() => {
+                          setDraftWorkspace(w.path);
+                          setWsPickerOpen(false);
+                        }}
+                        className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs ${
+                          w.path === pickerWorkspace
+                            ? 'bg-accent/10 text-accent'
+                            : 'text-dim hover:bg-panel2 hover:text-fg'
+                        }`}
+                      >
+                        <FolderOpen size="0.8571rem" className="shrink-0" />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate">
+                            {w.title || pathBase(w.path)}
+                          </span>
+                          <span className="block truncate text-[0.7143rem] text-dim">
+                            {w.path}
+                          </span>
+                        </span>
+                        {w.path === pickerWorkspace && (
+                          <Check size="0.8571rem" className="shrink-0" />
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
       </div>
       {forkTarget && (
         <div className="fixed bottom-0 top-11 left-0 right-0 z-40 grid place-items-center bg-black/60 p-6">
@@ -2297,7 +2501,7 @@ export function ChatView() {
               <button
                 onClick={() => {
                   setConfirmYolo(false);
-                  void setMode('yolo');
+                  applyMode('yolo');
                 }}
                 className="rounded-lg bg-yolo px-4 py-1.5 text-sm font-medium text-white hover:opacity-90"
               >

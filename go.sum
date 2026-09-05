@@ -12,8 +12,8 @@ github.com/Azure/azure-sdk-for-go/sdk/internal v1.12.0/go.mod h1:7dCRMLwisfRH3dB
 github.com/AzureAD/microsoft-authentication-library-for-go v1.7.2 h1:RHK7bS+HQMslb1sZpAokUt+zTVmue0hKSs2C791hhzU=
 github.com/AzureAD/microsoft-authentication-library-for-go v1.7.2/go.mod h1:HKpQxkWaGLJ+D/5H8QRpyQXA1eKjxkFlOMwck5+33Jk=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
-github.com/GizClaw/flowcraft/core v0.2.4 h1:LnBC7iKyr6v9AJTvbZCgBT5n0ifx4xb2zdNwCvs3mPE=
-github.com/GizClaw/flowcraft/core v0.2.4/go.mod h1:oM890ls+7bEtnG6LfBcDfrmKSm+hQPNzutRpQf3hscI=
+github.com/GizClaw/flowcraft/core v0.2.5 h1:1KN5d6Ctao67Ll9VG8PBT4IJCuWwlZswCYXgte29+ng=
+github.com/GizClaw/flowcraft/core v0.2.5/go.mod h1:oM890ls+7bEtnG6LfBcDfrmKSm+hQPNzutRpQf3hscI=
 github.com/GizClaw/flowcraft/driver/anthropic v0.2.2 h1:nsuurd64qwNiPTNBm/JsdDLt2DGHyaVlXcoenOXidX4=
 github.com/GizClaw/flowcraft/driver/anthropic v0.2.2/go.mod h1:fzy9LiY5WMpTmtGQRQu5G3wYDPt3Kzf37/5pOgWA1SY=
 github.com/GizClaw/flowcraft/driver/azure v0.2.2 h1:WMTqrowvoR7NMJUeElEvK+uaDWd3fWNJP66LqLCLbSQ=

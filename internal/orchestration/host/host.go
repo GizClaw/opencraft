@@ -176,19 +176,11 @@ func (m *Manager) Invalidate(workDir string) {
 		h.Close())
 }
 
-// CloseAll invalidates every pooled Host.
+// CloseAll invalidates every pooled Host. Active runs finish on their
+// old runtime in the background, so callers that must stop promptly
+// should CancelAll first.
 func (m *Manager) CloseAll() {
-	m.mu.Lock()
-	hosts := make([]*Host, 0, len(m.hosts))
-	for wd := range m.hosts {
-		hosts = append(hosts, m.hosts[wd].host)
-		delete(m.hosts, wd)
-	}
-	m.mu.Unlock()
-	for _, h := range hosts {
-		telemetry.WarnErr(context.Background(), "host: close all failed",
-			h.Close())
-	}
+	m.InvalidateAll()
 }
 
 // CancelAll cancels every live run on every pooled Host.
@@ -262,6 +254,7 @@ func (m *Manager) assemble(
 		runs:          make(map[RunID]*runDetail),
 		rollouts:      make(map[ConversationID]*rollout.Recorder),
 		titling:       make(map[ConversationID]bool),
+		closeDone:     make(chan struct{}),
 	}
 	var sessionStore *sessions.Store
 	buildOpts := append([]engine.Option{
@@ -527,6 +520,10 @@ type Host struct {
 	sessionUpd func(context.Context, string)
 	closing    bool
 	closed     bool
+	// closeDone is closed once a drained host has finished teardown;
+	// active runs wait on it before returning so the shared session
+	// store outlives every post-run write (including auto titles).
+	closeDone chan struct{}
 }
 
 // RunID identifies one engine run inside a Host.
@@ -656,7 +653,9 @@ func (h *Host) CancelAll() {
 }
 
 // Close releases the Host. When the last Host for a workspace closes,
-// its runtime and session store are torn down.
+// its runtime and session store are torn down; hosts with active runs
+// are drained in the background and only torn down after every turn
+// finishes naturally.
 func (h *Host) Close() error {
 	if h == nil {
 		return nil
@@ -681,15 +680,44 @@ func (h *Host) Close() error {
 	}
 	m.mu.Unlock()
 
+	h.beginClose()
+	return nil
+}
+
+// beginClose marks the Host as closing and starts teardown. Idle hosts
+// drain and close synchronously; hosts with active runs drain in the
+// background while the old runtime keeps serving their turns.
+func (h *Host) beginClose() {
 	h.mu.Lock()
-	if len(h.runs) > 0 {
-		h.closing = true
+	if h.closed || h.closing {
 		h.mu.Unlock()
+		return
+	}
+	h.closing = true
+	active := len(h.runs) > 0
+	h.mu.Unlock()
+	if active {
+		go h.closeWhenDrained()
+		return
+	}
+	h.closeWhenDrained()
+}
+
+// closeWhenDrained waits for active runtime sessions through
+// flowcraft's Drain API, then releases broker, runtime, and store.
+// Drain never interrupts turns, so background streams finish first.
+func (h *Host) closeWhenDrained() {
+	ctx := context.WithoutCancel(context.Background())
+	telemetry.WarnErr(ctx, "host: drain before close failed", h.drain(ctx))
+	h.doClose()
+}
+
+func (h *Host) drain(ctx context.Context) error {
+	ctrl := h.Controller()
+	if ctrl == nil {
 		return nil
 	}
-	h.mu.Unlock()
-	h.doClose()
-	return nil
+	return ctrl.Drain(ctx)
 }
 
 func (h *Host) doClose() {
@@ -699,6 +727,7 @@ func (h *Host) doClose() {
 		return
 	}
 	h.closed = true
+	closeDone := h.closeDone
 	h.mu.Unlock()
 	// Auto-titles borrow the runtime and shared session store after a
 	// turn ends. Wait for them before tearing either down so a title
@@ -711,13 +740,21 @@ func (h *Host) doClose() {
 	if h.manager != nil {
 		h.manager.releaseStore(h.store)
 	}
+	if closeDone != nil {
+		close(closeDone)
+	}
 }
 
-func (h *Host) finishCloseIfIdle() {
+// awaitCloseIfClosing blocks the final run wait on the host teardown
+// when the host was invalidated mid-turn. Returning before teardown
+// would let callers resume the workspace while the shared store was
+// still owned by this host's post-run writes.
+func (h *Host) awaitCloseIfClosing() {
 	h.mu.Lock()
-	closing := h.closing && len(h.runs) == 0
+	closing := h.closing && !h.closed
+	closeDone := h.closeDone
 	h.mu.Unlock()
-	if closing {
-		h.doClose()
+	if closing && closeDone != nil {
+		<-closeDone
 	}
 }

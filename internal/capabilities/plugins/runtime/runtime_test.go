@@ -306,6 +306,45 @@ func TestSessionImportPrimitive(t *testing.T) {
 	}
 }
 
+func TestSessionImportedSourcesPrimitive(t *testing.T) {
+	m, _ := newTestManager(t)
+	var gotPlugin string
+	var gotReq SessionImportStatusRequest
+	m.SetSessionImportHandler(SessionImportHandler{
+		ImportedSources: func(
+			pluginID string,
+			req SessionImportStatusRequest,
+		) (map[string]string, error) {
+			gotPlugin = pluginID
+			gotReq = req
+			return map[string]string{
+				"codex:conv-1": "s-imported-1",
+			}, nil
+		},
+	})
+
+	res, err := m.handleSessionImportedSources(&process{id: "importer"}, rpcRequest{
+		Method: "session.imported_sources",
+		Params: json.RawMessage(
+			`{"sources":["codex:conv-1","codex:conv-2"]}`),
+	})
+	if err != nil {
+		t.Fatalf("handleSessionImportedSources: %v", err)
+	}
+	if gotPlugin != "importer" ||
+		len(gotReq.Sources) != 2 ||
+		gotReq.Sources[0] != "codex:conv-1" {
+		t.Fatalf("handler got %q %+v", gotPlugin, gotReq)
+	}
+	data, err := json.Marshal(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"codex:conv-1":"s-imported-1"`) {
+		t.Fatalf("unexpected result: %s", data)
+	}
+}
+
 func TestWorkspaceCurrentPrimitive(t *testing.T) {
 	m, _ := newTestManager(t)
 	m.SetWorkspaceHandler(WorkspaceHandler{

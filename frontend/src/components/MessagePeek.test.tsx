@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { MessagePeek, type MessagePeekItem } from './MessagePeek';
 
@@ -15,7 +15,7 @@ describe('MessagePeek', () => {
     render(
       <MessagePeek
         items={turns}
-        currentIndex={0}
+        activeRange={{ start: 0, end: 0 }}
         onJump={vi.fn()}
         getPreview={previewFor}
       />,
@@ -30,12 +30,34 @@ describe('MessagePeek', () => {
     ).toBeInTheDocument();
   });
 
-  it('loads previews lazily on hover and renders markdown', () => {
+  it('highlights every turn visible in the viewport', () => {
+    const manyTurns = [{ index: 0 }, { index: 1 }, { index: 2 }];
+    render(
+      <MessagePeek
+        items={manyTurns}
+        activeRange={{ start: 0, end: 2 }}
+        onJump={vi.fn()}
+        getPreview={previewFor}
+      />,
+    );
+
+    for (const label of [
+      'Jump to turn 1',
+      'Jump to turn 2',
+      'Jump to turn 3',
+    ]) {
+      const button = screen.getByRole('button', { name: label });
+      expect(button.querySelector('span')?.className).toContain('bg-accent');
+    }
+  });
+
+  it('loads previews lazily on hover and renders markdown', async () => {
+    vi.useFakeTimers();
     const getPreview = vi.fn(previewFor);
     render(
       <MessagePeek
         items={turns}
-        currentIndex={0}
+        activeRange={{ start: 0, end: 0 }}
         onJump={vi.fn()}
         getPreview={getPreview}
       />,
@@ -46,6 +68,9 @@ describe('MessagePeek', () => {
       screen.getByRole('button', { name: 'Jump to turn 1' }),
     );
 
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
     expect(getPreview).toHaveBeenCalledWith(0);
     const tooltip = screen.getByRole('tooltip');
     expect(tooltip).toHaveTextContent('Add search');
@@ -58,6 +83,7 @@ describe('MessagePeek', () => {
       screen.getByRole('button', { name: 'Jump to turn 1' }),
     );
     expect(screen.queryByRole('tooltip')).not.toBeInTheDocument();
+    vi.useRealTimers();
   });
 
   it('calls onJump when a tick is clicked', () => {
@@ -65,7 +91,7 @@ describe('MessagePeek', () => {
     render(
       <MessagePeek
         items={turns}
-        currentIndex={0}
+        activeRange={{ start: 0, end: 0 }}
         onJump={onJump}
         getPreview={previewFor}
       />,
@@ -80,7 +106,7 @@ describe('MessagePeek', () => {
     render(
       <MessagePeek
         items={[]}
-        currentIndex={-1}
+        activeRange={null}
         onJump={vi.fn()}
         getPreview={previewFor}
       />,
@@ -89,7 +115,8 @@ describe('MessagePeek', () => {
     expect(screen.queryByTestId('message-peek')).not.toBeInTheDocument();
   });
 
-  it('switches to a keyboard-reachable scrubber for dense sessions', () => {
+  it('switches to a keyboard-reachable scrubber for dense sessions', async () => {
+    vi.useFakeTimers();
     const denseTurns = Array.from({ length: 70 }, (_, i) => ({ index: i }));
     const getPreview = vi.fn((index: number) => ({
       user: `user-${index}`,
@@ -100,7 +127,7 @@ describe('MessagePeek', () => {
     render(
       <MessagePeek
         items={denseTurns}
-        currentIndex={0}
+        activeRange={{ start: 0, end: 0 }}
         onJump={onJump}
         getPreview={getPreview}
       />,
@@ -110,6 +137,9 @@ describe('MessagePeek', () => {
       name: 'Message peek: turn scrubber',
     });
     fireEvent.keyDown(scrubber, { key: 'End' });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
     const tooltip = screen.getByRole('tooltip');
     expect(tooltip).toHaveTextContent('user-69');
     expect(tooltip).toHaveTextContent('answer-69');
@@ -117,5 +147,6 @@ describe('MessagePeek', () => {
 
     fireEvent.keyDown(scrubber, { key: 'Enter' });
     expect(onJump).toHaveBeenCalledWith(69);
+    vi.useRealTimers();
   });
 });

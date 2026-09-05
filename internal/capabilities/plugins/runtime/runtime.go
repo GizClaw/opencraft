@@ -108,11 +108,25 @@ type SessionImportResult struct {
 	Turns     int    `json:"turns"`
 }
 
+// SessionImportStatusRequest asks which of the given import sources
+// already exist as import-ready sessions in a workspace's store.
+type SessionImportStatusRequest struct {
+	// Sources are exact ImportRequest.Source values (for example
+	// "codex:<session-id>").
+	Sources []string `json:"sources"`
+	// Workspace optionally selects a previously opened workspace. When
+	// empty the host answers for the currently active workspace.
+	Workspace string `json:"workspace,omitempty"`
+}
+
 // SessionImportHandler is the host-side write path for session.import.
 type SessionImportHandler struct {
 	// Import imports bundlePath into the requested workspace and
 	// returns the new session id.
 	Import func(pluginID string, req SessionImportRequest) (SessionImportResult, error)
+	// ImportedSources reports which of the requested sources already
+	// exist, mapping each imported source to its session id.
+	ImportedSources func(pluginID string, req SessionImportStatusRequest) (map[string]string, error)
 }
 
 // WorkspaceHandler answers one capability plugin's question about the
@@ -644,6 +658,8 @@ func (m *Manager) handlePrimitive(p *process, req rpcRequest) (any, error) {
 		return m.handleInferenceRemove(p, req)
 	case "session.import":
 		return m.handleSessionImport(p, req)
+	case "session.imported_sources":
+		return m.handleSessionImportedSources(p, req)
 	case "workspace.current":
 		return m.handleWorkspaceCurrent()
 	case "emit.event":
@@ -677,6 +693,17 @@ func (m *Manager) handleSessionImport(p *process, req rpcRequest) (any, error) {
 		return nil, errors.New("runtime: session import handler unavailable")
 	}
 	return m.sessionImport.Import(p.id, args)
+}
+
+func (m *Manager) handleSessionImportedSources(p *process, req rpcRequest) (any, error) {
+	var args SessionImportStatusRequest
+	if err := json.Unmarshal(req.Params, &args); err != nil {
+		return nil, fmt.Errorf("runtime: session.imported_sources args: %w", err)
+	}
+	if m.sessionImport.ImportedSources == nil {
+		return nil, errors.New("runtime: session imported-sources handler unavailable")
+	}
+	return m.sessionImport.ImportedSources(p.id, args)
 }
 
 func (m *Manager) handleInferenceUpsert(p *process, req rpcRequest) (any, error) {
