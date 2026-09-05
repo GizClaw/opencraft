@@ -21,9 +21,44 @@ type Settings struct {
 	core *core.Core
 }
 
+// SessionDefaults is the mode/think level applied to conversations
+// minted after the preference is saved.
+type SessionDefaults struct {
+	Mode  string `json:"mode"`
+	Think string `json:"think"`
+}
+
 // NewSettingsBinding wires the settings binding.
 func NewSettingsBinding(c *core.Core) *Settings {
 	return &Settings{core: c}
+}
+
+// GetSessionDefaults returns the persisted new-session defaults.
+func (b *Settings) GetSessionDefaults() SessionDefaults {
+	mode, think := b.core.Shell.SessionDefaults()
+	return SessionDefaults{Mode: mode, Think: think}
+}
+
+// SetSessionDefaults persists the new-session defaults and applies
+// them to every conversation minted afterwards.
+func (b *Settings) SetSessionDefaults(d SessionDefaults) error {
+	mode := sessions.Mode(strings.TrimSpace(d.Mode))
+	switch mode {
+	case sessions.ModeWorkspace, sessions.ModeReadOnly, sessions.ModeYOLO:
+	default:
+		return fmt.Errorf("unknown permission mode %q", d.Mode)
+	}
+	think := sessions.ThinkLevel(strings.TrimSpace(d.Think))
+	if !think.Valid() {
+		return fmt.Errorf("unknown think level %q", d.Think)
+	}
+	if err := b.core.Shell.SetSessionDefaults(
+		string(mode), string(think),
+	); err != nil {
+		return err
+	}
+	b.core.Conversation.SetDefaults(mode, string(think))
+	return nil
 }
 
 // GetThink returns the current reasoning effort.

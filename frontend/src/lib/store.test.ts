@@ -17,6 +17,8 @@ const apiMock = vi.hoisted(() => ({
   getThink: vi.fn(),
   getModel: vi.fn(),
   modelOptions: vi.fn(),
+  sessionDefaults: vi.fn(),
+  saveSessionDefaults: vi.fn(),
   listSessions: vi.fn(),
   sessionTurns: vi.fn(),
   turnByRunID: vi.fn(),
@@ -57,7 +59,7 @@ function resetStore() {
     configured: true,
     fatal: null,
     configOpen: false,
-    configTab: 'ui',
+    configTab: 'general',
     toolsView: null,
     workspace: '/tmp/w',
     agents: [],
@@ -81,6 +83,7 @@ function resetStore() {
     lastUsage: null,
     cards: [],
     modelOptions: [],
+    sessionDefaults: { mode: 'workspace', think: 'medium' },
     theme: 'dark',
     workspaces: [],
     toasts: [],
@@ -119,6 +122,10 @@ function actorValue(conversationID: string) {
 beforeEach(() => {
   resetStore();
   vi.clearAllMocks();
+  apiMock.sessionDefaults.mockResolvedValue({
+    mode: 'workspace',
+    think: 'medium',
+  });
   apiMock.startTurn.mockResolvedValue({
     run_id: 'r-1',
     context_id: 's-1',
@@ -1045,6 +1052,28 @@ describe('store: first-message workspace attribution', () => {
     expect(conv.model).toBe('provider/m-1');
   });
 
+  it('uses configured session defaults for a fresh mint', async () => {
+    useStore
+      .getState()
+      .setSessionDefaults({ mode: 'read-only', think: 'high' });
+    apiMock.newChat.mockResolvedValue({
+      session_id: 's-new',
+      mode: 'read-only',
+      think: 'high',
+      model: '',
+    });
+    apiMock.openWorkspace.mockResolvedValue(undefined);
+
+    await useStore.getState().sendFirstMessage('/tmp/w', 'hello');
+
+    const conv = useStore.getState().conversations['s-new'];
+    expect(conv.mode).toBe('read-only');
+    expect(conv.think).toBe('high');
+    expect(conv.model).toBe('');
+    expect(apiMock.setSessionMode).not.toHaveBeenCalled();
+    expect(apiMock.setThink).not.toHaveBeenCalled();
+  });
+
   it('switches workspace before creating the session when the bookmark differs', async () => {
     apiMock.currentSession.mockResolvedValue('');
     apiMock.modelOptions.mockResolvedValue([]);
@@ -1204,6 +1233,10 @@ describe('store: init session bootstrap', () => {
     expect(stateRoot.focusSnapshot.value).toBe('active');
     expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-new');
     expect(useStore.getState().conversations['s-new']).toBeDefined();
+    expect(useStore.getState().sessionDefaults).toEqual({
+      mode: 'workspace',
+      think: 'medium',
+    });
   });
 
   it('does not mint twice when init runs concurrently', async () => {

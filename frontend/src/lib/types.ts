@@ -279,6 +279,11 @@ export interface SessionSnapshot {
   model: string;
 }
 
+export interface SessionDefaults {
+  mode: string;
+  think: string;
+}
+
 // ActiveRunDTO mirrors App.ActiveRun: the run id currently executing
 // in one conversation, or empty when the conversation is idle.
 export interface ActiveRunDTO {

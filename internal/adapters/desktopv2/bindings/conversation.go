@@ -160,9 +160,24 @@ func streamRunID(subject event.Subject) string {
 	return ""
 }
 
+// NewChatResult reports a freshly minted conversation with the
+// effective session defaults applied at mint time.
+type NewChatResult struct {
+	SessionID string `json:"session_id"`
+	Mode      string `json:"mode"`
+	Think     string `json:"think"`
+	Model     string `json:"model"`
+}
+
 // NewChat mints a fresh conversation id.
-func (b *Conversation) NewChat() string {
-	return b.core.Conversation.New(b.core.ActiveWorkDir())
+func (b *Conversation) NewChat() NewChatResult {
+	workDir := b.core.ActiveWorkDir()
+	return NewChatResult{
+		SessionID: b.core.Conversation.New(workDir),
+		Mode:      string(b.core.Conversation.Mode(workDir)),
+		Think:     b.core.Conversation.Think(workDir),
+		Model:     b.core.Conversation.Model(workDir),
+	}
 }
 
 // CurrentSession returns the active conversation id.

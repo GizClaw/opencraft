@@ -556,3 +556,43 @@ describe('ChatView projections', () => {
     expect(screen.getByText('Loading history…')).toBeInTheDocument();
   });
 });
+
+describe('ChatView draft session defaults', () => {
+  it('follows changed defaults until the user picks a mode manually', async () => {
+    const user = userEvent.setup();
+    stateRoot.resetWorkspace();
+    useStore.setState({
+      configured: true,
+      workspace: '/tmp/w',
+      conversations: {},
+      sessionDefaults: { mode: 'workspace', think: 'medium' },
+    });
+    render(<ChatView />);
+    expect(
+      screen.getByRole('button', { name: 'Workspace mode' }),
+    ).toBeInTheDocument();
+
+    // Defaults changed in Settings while the same draft stays open:
+    // the pre-send pill must follow when untouched.
+    act(() => {
+      useStore.setState({
+        sessionDefaults: { mode: 'read-only', think: 'high' },
+      });
+    });
+    expect(
+      screen.getByRole('button', { name: 'Read-only' }),
+    ).toBeInTheDocument();
+
+    // A manual pick for this draft survives a later default change.
+    await user.click(screen.getByRole('button', { name: 'Read-only' }));
+    await user.click(screen.getByText('Workspace mode'));
+    act(() => {
+      useStore.setState({
+        sessionDefaults: { mode: 'yolo', think: 'high' },
+      });
+    });
+    expect(
+      screen.getByRole('button', { name: 'Workspace mode' }),
+    ).toBeInTheDocument();
+  });
+});

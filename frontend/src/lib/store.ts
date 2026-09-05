@@ -15,6 +15,7 @@ import type {
   HistoryMessage,
   ModelOption,
   ReplyRequest,
+  SessionDefaults,
   SessionMeta,
   SessionTurn,
   StreamDelta,
@@ -133,12 +134,14 @@ function normalizeArgs(args: unknown): string {
   }
 }
 
-const emptyConv = (): ConversationState => ({
+const emptyConv = (
+  over?: Partial<Pick<ConversationState, 'mode' | 'think' | 'model'>>,
+): ConversationState => ({
   messages: [],
   turnArtifacts: [],
-  mode: 'workspace',
-  think: 'medium',
-  model: '',
+  mode: over?.mode ?? 'workspace',
+  think: over?.think ?? 'medium',
+  model: over?.model ?? '',
   pendingInteracts: [],
 });
 
@@ -646,6 +649,7 @@ interface StoreState {
   lastUsage: UsageDTO | null;
   cards: KanbanCard[];
   modelOptions: ModelOption[];
+  sessionDefaults: SessionDefaults;
   theme: 'dark' | 'light' | 'auto';
   workspaces: WorkspaceMeta[];
   toasts: ToastItem[];
@@ -672,6 +676,7 @@ interface StoreState {
   setThink: (level: string) => Promise<void>;
   setModel: (model: string) => Promise<void>;
   setTheme: (theme: 'dark' | 'light' | 'auto') => void;
+  setSessionDefaults: (d: SessionDefaults) => void;
   loadWorkspaces: () => Promise<void>;
   chooseWorkspace: () => Promise<void>;
   openWorkspace: (path: string) => Promise<void>;
@@ -1357,7 +1362,7 @@ export const useStore = create<StoreState>((set, get) => {
     configured: false,
     fatal: null,
     configOpen: false,
-    configTab: 'ui',
+    configTab: 'general',
     toolsView: null,
     workspace: '',
     agents: [],
@@ -1372,6 +1377,7 @@ export const useStore = create<StoreState>((set, get) => {
     lastUsage: null,
     cards: [],
     modelOptions: [],
+    sessionDefaults: { mode: 'workspace', think: 'medium' },
     theme: 'dark',
     workspaces: [],
     toasts: [],
@@ -1391,6 +1397,7 @@ export const useStore = create<StoreState>((set, get) => {
           think,
           model,
           modelOptions,
+          defaults,
         ] = await Promise.all([
           api.configStatus(),
           api.workspace(),
@@ -1399,6 +1406,7 @@ export const useStore = create<StoreState>((set, get) => {
           api.getThink(),
           api.getModel(),
           api.modelOptions(),
+          api.sessionDefaults(),
         ]);
         set({
           status,
@@ -1419,6 +1427,7 @@ export const useStore = create<StoreState>((set, get) => {
               : {}),
           },
           modelOptions,
+          sessionDefaults: defaults,
           theme,
         });
         if (currentSession !== '') {
@@ -1598,7 +1607,7 @@ export const useStore = create<StoreState>((set, get) => {
       }
     },
 
-    openConfig: (tab) => set({ configOpen: true, configTab: tab ?? 'ui' }),
+    openConfig: (tab) => set({ configOpen: true, configTab: tab ?? 'general' }),
     closeConfig: () => set({ configOpen: false }),
 
     openTools: (view) => set({ toolsView: view, configOpen: false }),
@@ -1626,7 +1635,11 @@ export const useStore = create<StoreState>((set, get) => {
           toolsView: null,
           conversations: {
             ...state.conversations,
-            [id]: emptyConv(),
+            [id]: emptyConv({
+              mode: snapshot.mode,
+              think: snapshot.think,
+              model: snapshot.model,
+            }),
           },
         }));
         stateRoot.registry.ensure(id, {
@@ -1916,6 +1929,8 @@ export const useStore = create<StoreState>((set, get) => {
       set({ theme });
     },
 
+    setSessionDefaults: (d) => set({ sessionDefaults: d }),
+
     refreshAgents: async () => {
       try {
         set({ agents: (await api.listAgents()) ?? [] });
@@ -2074,17 +2089,16 @@ export const useStore = create<StoreState>((set, get) => {
         return false;
       }
       // Draft pre-send choices land on the fresh session before its
-      // first run starts. Defaults are already what newChat minted.
+      // first run starts. Without explicit options the minted
+      // conversation already carries the configured session defaults.
       if (options) {
-        if (options.mode && options.mode !== 'workspace') {
+        if (options.mode) {
           await get().setMode(options.mode);
         }
-        if (options.think && options.think !== 'medium') {
+        if (options.think) {
           await get().setThink(options.think);
         }
-        if (options.model) {
-          await get().setModel(options.model);
-        }
+        await get().setModel(options.model ?? '');
       }
       await get().send(trimmed, attachments);
       return true;

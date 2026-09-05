@@ -44,6 +44,7 @@ import type {
   ReplyRequest,
   SandboxProbeResult,
   SearchFileHit,
+  SessionDefaults,
   SessionMeta,
   SessionSnapshot,
   SessionImportDTO,
@@ -73,12 +74,15 @@ export const api = {
   reload: () => Config.Reload(),
   workspace: () => Workspace.Active(),
   newChat: async () => {
-    const id = await Conversation.NewChat();
+    // The binding reports the values actually applied when the
+    // conversation was minted, so the UI snapshot can never drift
+    // from the backend state.
+    const minted = await Conversation.NewChat();
     return {
-      session_id: id,
-      mode: 'workspace',
-      think: 'medium',
-      model: '',
+      session_id: minted.session_id,
+      mode: minted.mode,
+      think: minted.think,
+      model: minted.model,
     } as SessionSnapshot;
   },
   forkTurn: (contextID: string, runID: string) =>
@@ -118,6 +122,10 @@ export const api = {
   setThink: (level: string) => Settings.SetThink(level),
   getModel: () => Settings.GetModel(),
   setModel: (model: string) => Settings.SetModel(model),
+  sessionDefaults: () =>
+    Settings.GetSessionDefaults() as unknown as Promise<SessionDefaults>,
+  saveSessionDefaults: (d: SessionDefaults) =>
+    Settings.SetSessionDefaults(d as unknown as gen.SessionDefaults),
   modelOptions: () =>
     Config.ModelOptions() as unknown as Promise<ModelOption[]>,
   modelUsage: () => Config.ModelUsage() as unknown as Promise<ModelUsageStat[]>,

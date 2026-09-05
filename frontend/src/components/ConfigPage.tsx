@@ -7,27 +7,20 @@ import {
   ArrowUpFromLine,
   BarChart3,
   Brain,
-  Check,
-  ChevronDown,
   Cpu,
   Database,
   Import,
   Kanban,
-  Languages,
   Loader2,
-  Minimize2,
-  Monitor,
-  Moon,
   Palette,
   Plus,
-  Power,
   RefreshCw,
   ScrollText,
   Settings,
   ShieldCheck,
   ShieldPlus,
+  SlidersHorizontal,
   Stethoscope,
-  Sun,
   Terminal,
   Trash2,
   X,
@@ -56,6 +49,8 @@ import { MCPLogo, MCPSection } from './ToolsPanel';
 import { PluginPanels } from '../plugins/components/PluginPanels';
 import { usePluginStore } from '../plugins/store';
 import { EventsOn } from '../../wailsjs/runtime/runtime';
+import { SettingsGeneral } from './SettingsGeneral';
+import { SettingsDisplay } from './SettingsDisplay';
 
 // InstanceRow is one editable inference instance in the settings page.
 interface RowModel {
@@ -88,7 +83,8 @@ interface InstanceRow {
 }
 
 type Tab =
-  | 'ui'
+  | 'general'
+  | 'display'
   | 'inference'
   | 'mcp'
   | 'usage'
@@ -140,16 +136,9 @@ export function ConfigPage() {
   const closeConfig = useStore((s) => s.closeConfig);
   const configTab = useStore((s) => s.configTab);
   const toast = useStore((s) => s.toast);
-  const theme = useStore((s) => s.theme);
-  const setTheme = useStore((s) => s.setTheme);
   const newID = () =>
     `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const { t, i18n } = useTranslation();
-  const lang = i18n.resolvedLanguage?.startsWith('zh') ? 'zh' : 'en';
-  const [langMenuOpen, setLangMenuOpen] = useState(false);
-  // null until the persisted value loads; the row renders once known so
-  // the highlighted option never flashes the default.
-  const [closeToTray, setCloseToTray] = useState<boolean | null>(null);
+  const { t } = useTranslation();
 
   const [tab, setTab] = useState<Tab>(configTab as Tab);
   const importPanelCount = usePluginStore((s) =>
@@ -158,19 +147,6 @@ export function ConfigPage() {
       0,
     ),
   );
-
-  useEffect(() => {
-    let alive = true;
-    void api
-      .getCloseToTray()
-      .then((v) => {
-        if (alive) setCloseToTray(v);
-      })
-      .catch(() => {});
-    return () => {
-      alive = false;
-    };
-  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -740,7 +716,8 @@ export function ConfigPage() {
     label: string;
     icon: ComponentType<{ className?: string; size?: string | number }>;
   }[] = [
-    { id: 'ui', label: t('config.tabUi'), icon: Palette },
+    { id: 'general', label: t('config.tabGeneral'), icon: SlidersHorizontal },
+    { id: 'display', label: t('config.tabDisplay'), icon: Palette },
     { id: 'inference', label: t('config.tabInference'), icon: Cpu },
     { id: 'mcp', label: t('config.tabMCP'), icon: MCPLogo },
     { id: 'usage', label: t('config.tabUsage'), icon: BarChart3 },
@@ -800,182 +777,8 @@ export function ConfigPage() {
           </nav>
 
           <div className="min-w-0 flex-1 overflow-y-auto px-5 py-4">
-            {tab === 'ui' && (
-              <div className="space-y-3">
-                <PluginPanels tab="ui" />
-                <div className="rounded-xl border border-edge bg-panel2 p-4">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <div className="flex items-center gap-2 text-sm font-medium">
-                        <Languages size="1.0714rem" className="text-accent" />
-                        {t('config.uiLanguage')}
-                      </div>
-                      <p className="mt-1 text-xs text-dim">
-                        {t('config.uiLanguageHint')}
-                      </p>
-                    </div>
-                    <div className="relative shrink-0">
-                      <button
-                        onClick={() => setLangMenuOpen((v) => !v)}
-                        className="flex items-center gap-1.5 rounded-lg border border-edge bg-panel px-2.5 py-1.5 text-sm text-fg transition-colors hover:border-accent/50"
-                      >
-                        <Languages size="0.8571rem" className="text-dim" />
-                        {lang === 'zh' ? '中文' : 'English'}
-                        <ChevronDown
-                          size="0.8571rem"
-                          className={`text-dim transition-transform ${
-                            langMenuOpen ? 'rotate-180' : ''
-                          }`}
-                        />
-                      </button>
-                      {langMenuOpen && (
-                        <>
-                          <div
-                            className="fixed inset-0 z-30"
-                            onClick={() => setLangMenuOpen(false)}
-                          />
-                          <div className="absolute right-0 top-full z-40 mt-1.5 w-40 rounded-xl border border-edge bg-panel p-1 shadow-xl">
-                            <button
-                              onClick={() => {
-                                setLangMenuOpen(false);
-                                void i18n.changeLanguage('zh');
-                              }}
-                              className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm ${
-                                lang === 'zh'
-                                  ? 'bg-accent/10 text-accent'
-                                  : 'text-dim hover:bg-panel2 hover:text-fg'
-                              }`}
-                            >
-                              <span>中文</span>
-                              {lang === 'zh' && <Check size="0.8571rem" />}
-                            </button>
-                            <button
-                              onClick={() => {
-                                setLangMenuOpen(false);
-                                void i18n.changeLanguage('en');
-                              }}
-                              className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm ${
-                                lang === 'en'
-                                  ? 'bg-accent/10 text-accent'
-                                  : 'text-dim hover:bg-panel2 hover:text-fg'
-                              }`}
-                            >
-                              <span>English</span>
-                              {lang === 'en' && <Check size="0.8571rem" />}
-                            </button>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                </div>
-                <div className="rounded-xl border border-edge bg-panel2 p-4">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <div className="flex items-center gap-2 text-sm font-medium">
-                        <Palette size="1.0714rem" className="text-accent" />
-                        {t('config.uiTheme')}
-                      </div>
-                      <p className="mt-1 text-xs text-dim">
-                        {t('config.uiThemeHint')}
-                      </p>
-                    </div>
-                    <div className="flex shrink-0 overflow-hidden rounded-lg border border-edge text-sm">
-                      <button
-                        onClick={() => setTheme('dark')}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
-                          theme === 'dark'
-                            ? 'bg-accent text-white'
-                            : 'text-dim hover:bg-panel hover:text-fg'
-                        }`}
-                      >
-                        <Moon size="0.9286rem" />
-                        {t('config.uiThemeDark')}
-                      </button>
-                      <button
-                        onClick={() => setTheme('light')}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
-                          theme === 'light'
-                            ? 'bg-accent text-white'
-                            : 'text-dim hover:bg-panel hover:text-fg'
-                        }`}
-                      >
-                        <Sun size="0.9286rem" />
-                        {t('config.uiThemeLight')}
-                      </button>
-                      <button
-                        onClick={() => setTheme('auto')}
-                        className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
-                          theme === 'auto'
-                            ? 'bg-accent text-white'
-                            : 'text-dim hover:bg-panel hover:text-fg'
-                        }`}
-                      >
-                        <Monitor size="0.9286rem" />
-                        {t('config.uiThemeAuto')}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                {closeToTray !== null && (
-                  <div className="rounded-xl border border-edge bg-panel2 p-4">
-                    <div className="flex items-start justify-between gap-4">
-                      <div>
-                        <div className="flex items-center gap-2 text-sm font-medium">
-                          <Minimize2 size="1.0714rem" className="text-accent" />
-                          {t('config.uiCloseToTray')}
-                        </div>
-                        <p className="mt-1 text-xs text-dim">
-                          {t('config.uiCloseToTrayHint')}
-                        </p>
-                      </div>
-                      <div className="flex shrink-0 overflow-hidden rounded-lg border border-edge text-sm">
-                        <button
-                          onClick={() => {
-                            const next = true;
-                            setCloseToTray(next);
-                            void api.setCloseToTray(next).catch(() => {
-                              setCloseToTray((cur) =>
-                                cur === null ? null : !next,
-                              );
-                              toast(t('config.saveFailed'));
-                            });
-                          }}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
-                            closeToTray
-                              ? 'bg-accent text-white'
-                              : 'text-dim hover:bg-panel hover:text-fg'
-                          }`}
-                        >
-                          <Minimize2 size="0.9286rem" />
-                          {t('config.uiCloseToTrayHide')}
-                        </button>
-                        <button
-                          onClick={() => {
-                            const next = false;
-                            setCloseToTray(next);
-                            void api.setCloseToTray(next).catch(() => {
-                              setCloseToTray((cur) =>
-                                cur === null ? null : !next,
-                              );
-                              toast(t('config.saveFailed'));
-                            });
-                          }}
-                          className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
-                            !closeToTray
-                              ? 'bg-accent text-white'
-                              : 'text-dim hover:bg-panel hover:text-fg'
-                          }`}
-                        >
-                          <Power size="0.9286rem" />
-                          {t('config.uiCloseToTrayQuit')}
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
+            {tab === 'general' && <SettingsGeneral />}
+            {tab === 'display' && <SettingsDisplay />}
 
             {tab === 'inference' && (
               <div className="space-y-3">
