@@ -10,7 +10,9 @@ test('sends a message and renders the streamed tool call', async ({ page }) => {
 
   await typeComposerMessage(page, 'hello world');
   await page.getByRole('button', { name: 'Send' }).click();
-  await expect(page.getByText('hello world')).toBeVisible();
+  await expect(
+    page.getByTestId('chat-scroll').getByText('hello world'),
+  ).toBeVisible();
 
   const emit = (data: unknown) =>
     page.evaluate(

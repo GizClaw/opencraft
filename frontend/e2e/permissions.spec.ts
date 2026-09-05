@@ -9,7 +9,9 @@ test('renders an approval prompt and submits the choice', async ({ page }) => {
   await page.goto('/');
   await typeComposerMessage(page, 'run a command');
   await page.getByRole('button', { name: 'Send' }).click();
-  await expect(page.getByText('run a command')).toBeVisible();
+  await expect(
+    page.getByTestId('chat-scroll').getByText('run a command'),
+  ).toBeVisible();
   // The approval prompt arrives mid-turn, after a user message exists.
   await page.waitForTimeout(300);
 
