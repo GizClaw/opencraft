@@ -6,7 +6,7 @@ package core
 import (
 	"sync"
 
-	"github.com/GizClaw/opencraft/internal/capabilities/telemetry"
+	"github.com/GizClaw/opencraft/internal/foundation/version"
 )
 
 // Core is the composition root of the desktopv2 services. It only
@@ -31,7 +31,7 @@ type Core struct {
 // required; workDir may be empty until a workspace is selected.
 func NewCore(userDir, dataDir, workDir string) *Core {
 	runtime := NewRuntime(dataDir, userDir)
-	plugin := NewPluginService(dataDir, telemetry.ServiceVersion)
+	plugin := NewPluginService(dataDir, version.ServiceVersion)
 	c := &Core{
 		Shell:        NewShell(userDir),
 		Runtime:      runtime,

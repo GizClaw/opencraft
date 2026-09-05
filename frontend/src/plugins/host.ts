@@ -29,11 +29,24 @@ const PERMISSION_GATED: Partial<Record<PluginServiceKey, string>> = {
 const ALWAYS_SERVICES: PluginServiceKey[] = [
   'react',
   'ui',
+  'host',
   'settingsPanels',
   'sidebarEntries',
   'commands',
   'statusBar',
 ];
+
+// Host application version reported to plugins as ctx.host.version.
+// Read once per load cycle; it never changes while the app runs.
+let hostVersion = '';
+
+async function readHostVersion(): Promise<string> {
+  try {
+    return await api.version();
+  } catch {
+    return '';
+  }
+}
 
 const KNOWN_SERVICES = new Set<PluginServiceKey>([
   ...(Object.keys(PERMISSION_GATED) as PluginServiceKey[]),
@@ -145,6 +158,8 @@ function provideServices(ctx: Context, c: ContributionState) {
     } satisfies UIService,
     true,
   );
+  // host exposes read-only host metadata; always available.
+  ctx.provide('host', { version: hostVersion }, true);
   ctx.provide('settingsPanels', makeRegistrar(c.settingsPanels), true);
   ctx.provide('sidebarEntries', makeRegistrar(c.sidebarEntries), true);
   ctx.provide('commands', makeRegistrar(c.commands), true);
@@ -184,6 +199,7 @@ function provideServices(ctx: Context, c: ContributionState) {
  * the start of every plugin load cycle.
  */
 export async function resetHost() {
+  hostVersion = await readHostVersion();
   if (app) {
     for (const key of [...app.registry.keys()]) {
       if (key) app.registry.delete(key);

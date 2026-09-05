@@ -34,6 +34,7 @@ func NewPluginService(dataDir, version string) *PluginService {
 		},
 		sec,
 	)
+	cap.SetHostVersion(version)
 	return &PluginService{
 		Store:      store,
 		KV:         plugins.NewKVStore(pluginDir),

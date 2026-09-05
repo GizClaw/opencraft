@@ -112,6 +112,12 @@ export interface StatusBarContribution {
 
 // ---- host-provided services ----
 
+// host is always available: read-only metadata about the host app.
+export interface HostService {
+  /** Version of the running OpenCraft host ("" when unknown). */
+  version: string;
+}
+
 export interface UIService {
   /** Shows a transient status message. Always available. */
   flash: (text: string) => void;
@@ -147,6 +153,7 @@ export type PluginServiceKey =
   // always available
   | 'react'
   | 'ui'
+  | 'host'
   // permission-gated
   | 'storage'
   | 'secrets'
@@ -180,6 +187,8 @@ declare module '@cordisjs/core' {
     /** The host React runtime — the same instance that renders the app. */
     react: typeof import('react');
     ui: UIService;
+    /** Read-only host metadata (application version). Always available. */
+    host: HostService;
     storage: KVService;
     secrets: SecretsService;
     settingsPanels: Registrar<SettingsPanelContribution>;

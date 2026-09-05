@@ -422,3 +422,88 @@ func (l *lockedBuffer) String() string {
 	defer l.mu.Unlock()
 	return l.b.String()
 }
+
+// stubWriter is a write-only sink capturing what the host sends to a
+// (simulated) capability process.
+type stubWriter struct {
+	buf bytes.Buffer
+}
+
+func (w *stubWriter) Write(p []byte) (int, error) { return w.buf.Write(p) }
+
+func (w *stubWriter) Close() error { return nil }
+
+func TestHandshakeReplyCarriesHostVersion(t *testing.T) {
+	m, _ := newTestManager(t)
+	m.SetHostVersion("1.2.3-rc.1")
+
+	out := &stubWriter{}
+	p := &process{
+		manager: m,
+		id:      "test-plugin",
+		stdin:   out,
+		ready:   make(chan struct{}),
+		done:    make(chan struct{}),
+	}
+	p.handleHandshake(rpcRequest{
+		ID:     json.RawMessage(`1`),
+		Params: json.RawMessage(`{"id":"test-plugin","protocol":1}`),
+	})
+
+	var line []byte
+	if sc := bufio.NewScanner(&out.buf); sc.Scan() {
+		line = sc.Bytes()
+	} else {
+		t.Fatal("host did not answer the handshake")
+	}
+	var resp struct {
+		Result json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(line, &resp); err != nil {
+		t.Fatalf("decode handshake reply: %v (%s)", err, line)
+	}
+	var hs handshakeResult
+	if err := json.Unmarshal(resp.Result, &hs); err != nil {
+		t.Fatalf("decode handshake result: %v (%s)", err, resp.Result)
+	}
+	if !hs.Ok || hs.HostVersion != "1.2.3-rc.1" {
+		t.Fatalf("unexpected handshake result: %+v", hs)
+	}
+}
+
+func TestHandshakeReplyReportsUnknownHostVersion(t *testing.T) {
+	m, _ := newTestManager(t) // host version is never recorded
+
+	out := &stubWriter{}
+	p := &process{
+		manager: m,
+		id:      "test-plugin",
+		stdin:   out,
+		ready:   make(chan struct{}),
+		done:    make(chan struct{}),
+	}
+	p.handleHandshake(rpcRequest{
+		ID:     json.RawMessage(`1`),
+		Params: json.RawMessage(`{"id":"test-plugin","protocol":1}`),
+	})
+
+	var line []byte
+	if sc := bufio.NewScanner(&out.buf); sc.Scan() {
+		line = sc.Bytes()
+	} else {
+		t.Fatal("host did not answer the handshake")
+	}
+	var resp struct {
+		Result json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(line, &resp); err != nil {
+		t.Fatalf("decode handshake reply: %v (%s)", err, line)
+	}
+	var hs handshakeResult
+	if err := json.Unmarshal(resp.Result, &hs); err != nil {
+		t.Fatalf("decode handshake result: %v (%s)", err, resp.Result)
+	}
+	if !hs.Ok || hs.HostVersion != "" {
+		t.Fatalf("unexpected handshake result: %+v", hs)
+	}
+}

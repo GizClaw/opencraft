@@ -3,8 +3,8 @@ package core
 import (
 	flowtelemetry "github.com/GizClaw/flowcraft/core/telemetry"
 
-	"github.com/GizClaw/opencraft/internal/capabilities/telemetry"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/foundation/version"
 )
 
 // ConfigStatus is the application configuration state shared by the
@@ -44,7 +44,7 @@ func (c *Core) ConfigStatus() ConfigStatus {
 		DefaultReasoning: defaultReasoning,
 		WorkDir:          c.ActiveWorkDir(),
 		UserDir:          c.UserDir,
-		Version:          telemetry.ServiceVersion,
+		Version:          version.ServiceVersion,
 	}
 	if h := c.Runtime.Current(); h != nil && h.Agents() != nil {
 		st.Agents = len(h.Agents().List())
