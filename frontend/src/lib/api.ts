@@ -242,6 +242,8 @@ export const api = {
     } as unknown as gen.StartTurnRequest) as unknown as Promise<TurnStart>,
   readAttachment: (path: string) =>
     File.ReadAttachment(path) as unknown as Promise<AttachmentDTO>,
+  importPastedImage: (name: string, dataURL: string) =>
+    File.ImportPastedImage(name, dataURL) as unknown as Promise<AttachmentDTO>,
   replyPrompt: (promptID: string, reply: ReplyRequest) =>
     Conversation.ReplyPrompt(
       promptID,

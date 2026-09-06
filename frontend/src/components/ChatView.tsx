@@ -57,7 +57,7 @@ import {
   useStore,
 } from '../lib/store';
 import { useConversationState, useFocusState } from '../state/react';
-import type { AttachmentView } from '../lib/types';
+import type { AttachmentDTO, AttachmentView } from '../lib/types';
 import type {
   AssistantItem,
   MessageView,
@@ -1070,13 +1070,106 @@ function AttachmentImage({ att }: { att: AttachmentView }) {
   );
 }
 
+// officeAttachmentBadge maps common office and markup extensions to a
+// recognizable colored badge (PDF/DOC/XLS/PPT/MD). Lucide has no
+// brand icons for those formats, so the extension label reads better
+// than a generic file glyph.
+function officeAttachmentBadge(
+  ext: string,
+): { label: string; className: string } | null {
+  switch (ext) {
+    case 'pdf':
+      return { label: 'PDF', className: 'border-err/20 bg-err/10 text-err' };
+    case 'doc':
+    case 'docx':
+    case 'rtf':
+      return {
+        label: 'DOC',
+        className: 'border-accent/20 bg-accent/10 text-accent',
+      };
+    case 'xls':
+    case 'xlsx':
+      return { label: 'XLS', className: 'border-ok/20 bg-ok/10 text-ok' };
+    case 'csv':
+      return { label: 'CSV', className: 'border-ok/20 bg-ok/10 text-ok' };
+    case 'ppt':
+    case 'pptx':
+    case 'key':
+      return {
+        label: 'PPT',
+        className: 'border-warn/20 bg-warn/10 text-warn',
+      };
+    case 'md':
+    case 'markdown':
+      return { label: 'MD', className: 'border-edge bg-panel2 text-fg' };
+    default:
+      return null;
+  }
+}
+
+function attachmentExt(name: string) {
+  return name.split('.').pop()?.toLowerCase() ?? '';
+}
+
+// AttachmentFileGlyph renders the type mark for one non-image
+// attachment: office/markdown extensions get a colored badge, other
+// kinds keep their lucide icon.
+function AttachmentFileGlyph({
+  name,
+  kind,
+}: {
+  name: string;
+  kind: AttachmentView['kind'];
+}) {
+  const badge = officeAttachmentBadge(attachmentExt(name));
+  if (badge) {
+    return (
+      <span
+        className={`grid h-6 min-w-9 shrink-0 place-items-center rounded-md border px-1 text-[0.55rem] font-bold ${badge.className}`}
+      >
+        {badge.label}
+      </span>
+    );
+  }
+  const ext = attachmentExt(name);
+  const codeExts = [
+    'go',
+    'ts',
+    'tsx',
+    'js',
+    'jsx',
+    'py',
+    'rs',
+    'java',
+    'c',
+    'cpp',
+    'h',
+    'html',
+    'css',
+    'json',
+    'yaml',
+    'yml',
+    'sh',
+    'sql',
+  ];
+  const Icon =
+    kind === 'audio'
+      ? Music2
+      : kind === 'video'
+        ? Video
+        : ['zip', 'gz', 'tar', '7z', 'rar'].includes(ext)
+          ? FileArchive
+          : codeExts.includes(ext)
+            ? FileCode
+            : File;
+  return <Icon size="1.1429rem" className="shrink-0 text-dim" />;
+}
+
 // AttachmentFiles renders non-image attachments as a collapsed list
 // below the message text: one toggle reveals the file chips.
 function AttachmentFiles({ attachments }: { attachments: AttachmentView[] }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const FileIcon = (a: AttachmentView) =>
-    a.kind === 'audio' ? Music2 : a.kind === 'video' ? Video : File;
   return (
     <div className="mt-2">
       <button
@@ -1094,13 +1187,12 @@ function AttachmentFiles({ attachments }: { attachments: AttachmentView[] }) {
       {open && (
         <div className="mt-1.5 space-y-1">
           {attachments.map((a) => {
-            const Icon = FileIcon(a);
             return (
               <div
                 key={a.id}
                 className="flex items-center gap-1.5 rounded-md border border-edge bg-panel2 px-2 py-1 text-xs"
               >
-                <Icon size="0.8571rem" className="shrink-0 text-dim" />
+                <AttachmentFileGlyph name={a.name} kind={a.kind} />
                 <span className="min-w-0 truncate">{a.name}</span>
                 {a.size != null && (
                   <span className="shrink-0 text-dim tabular-nums">
@@ -1618,30 +1710,48 @@ export function ChatView() {
   const showWorkspacePicker =
     messages.length === 0 && configured && workspace !== '';
 
+  // attachmentFromDTO turns one backend preview DTO into the staged
+  // attachment view; key must be unique per attachment.
+  const attachmentFromDTO = (
+    dto: AttachmentDTO,
+    key: string,
+  ): AttachmentView | null => {
+    if (!dto.path) return null;
+    const mt = dto.media_type ?? '';
+    const kind: AttachmentView['kind'] = mt.startsWith('image/')
+      ? 'image'
+      : mt.startsWith('audio/')
+        ? 'audio'
+        : mt.startsWith('video/')
+          ? 'video'
+          : 'file';
+    return {
+      id: `att-${key}`,
+      kind,
+      path: dto.path,
+      name: dto.name,
+      media_type: dto.media_type,
+      size: dto.size,
+      data_url: dto.data_url,
+    };
+  };
+
+  const appendAttachments = (next: AttachmentView[]) => {
+    if (next.length === 0) return;
+    setAttachments((prev) => [...prev, ...next].slice(0, 8));
+  };
+
   const addAttachmentPaths = async (paths: string[]) => {
     if (paths.length === 0) return;
     const next: AttachmentView[] = [];
     for (const [i, p] of paths.slice(0, 8).entries()) {
       try {
         const dto = await api.readAttachment(p);
-        if (!dto.path) continue;
-        const mt = dto.media_type ?? '';
-        const kind: AttachmentView['kind'] = mt.startsWith('image/')
-          ? 'image'
-          : mt.startsWith('audio/')
-            ? 'audio'
-            : mt.startsWith('video/')
-              ? 'video'
-              : 'file';
-        next.push({
-          id: `att-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 7)}`,
-          kind,
-          path: dto.path,
-          name: dto.name,
-          media_type: dto.media_type,
-          size: dto.size,
-          data_url: dto.data_url,
-        });
+        const view = attachmentFromDTO(
+          dto,
+          `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 7)}`,
+        );
+        if (view) next.push(view);
       } catch {
         // Unreadable paths and images that cannot be normalized under
         // the preview cap are skipped. Supported large images preview
@@ -1649,9 +1759,56 @@ export function ChatView() {
         // preview or persistence size limit either.
       }
     }
-    if (next.length > 0) {
-      setAttachments((prev) => [...prev, ...next].slice(0, 8));
+    appendAttachments(next);
+  };
+
+  const pasteExtension = (mediaType: string) => {
+    const t0 = mediaType.toLowerCase();
+    if (t0.includes('jpeg')) return 'jpg';
+    if (t0.includes('gif')) return 'gif';
+    if (t0.includes('webp')) return 'webp';
+    if (t0.includes('bmp')) return 'bmp';
+    if (t0.includes('svg')) return 'svg';
+    return 'png';
+  };
+
+  const readFileAsDataURL = (file: File) =>
+    new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result ?? ''));
+      reader.onerror = () =>
+        reject(reader.error ?? new Error('clipboard file read failed'));
+      reader.readAsDataURL(file);
+    });
+
+  // handlePastedImages stages raster files pasted into the composer.
+  // The browser only hands over in-memory blobs, so each one is
+  // materialized through the backend before it enters the normal
+  // attachment pipeline (preview + session persistence).
+  const handlePastedImages = async (files: File[]) => {
+    const picked = files.slice(0, 8 - attachments.length);
+    const next: AttachmentView[] = [];
+    for (const [i, file] of picked.entries()) {
+      try {
+        const dataURL = await readFileAsDataURL(file);
+        if (!dataURL) continue;
+        const base = t('chat.pastedImage');
+        const name =
+          picked.length > 1
+            ? `${base} ${i + 1}.${pasteExtension(file.type)}`
+            : `${base}.${pasteExtension(file.type)}`;
+        const dto = await api.importPastedImage(name, dataURL);
+        const view = attachmentFromDTO(
+          dto,
+          `${Date.now()}-paste-${i}-${Math.random().toString(36).slice(2, 7)}`,
+        );
+        if (view) next.push(view);
+      } catch {
+        // A paste that cannot be staged is dropped silently; the rest
+        // of the clipboard images still attach.
+      }
     }
+    appendAttachments(next);
   };
 
   const removeAttachment = (id: string) => {
@@ -2142,7 +2299,7 @@ export function ChatView() {
                     />
                   ) : (
                     <div className="flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-lg border border-edge bg-panel2 p-1 text-[0.7143rem] text-dim">
-                      <File size="1.1429rem" className="shrink-0" />
+                      <AttachmentFileGlyph name={a.name} kind={a.kind} />
                       <span className="w-full truncate text-center">
                         {a.name}
                       </span>
@@ -2198,6 +2355,7 @@ export function ChatView() {
               onValueChange={setInput}
               onSubmit={() => void submitInterrupt()}
               onQueue={queueDraft}
+              onPasteImages={(files) => void handlePastedImages(files)}
             />
           </div>
           {showBusyKeyHint && (
