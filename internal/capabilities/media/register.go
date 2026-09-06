@@ -28,8 +28,9 @@ import (
 )
 
 // maxInlineBytes caps one local media file the prepare hook inlines.
-// The desktop caps persisted attachments at the same size, so this
-// only trips for custom graphs that inject their own URL sources.
+// Host-side attachment persistence normalizes supported images to
+// JPEG under this same cap, so this only trips for custom graphs that
+// inject their own URL sources.
 const maxInlineBytes = 10 << 20
 
 // Register adds the opencraft.media prepare hook factory to r.

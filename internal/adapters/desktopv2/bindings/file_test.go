@@ -1,8 +1,13 @@
 package bindings
 
 import (
+	"bytes"
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/core"
@@ -66,5 +71,76 @@ func TestReadAttachmentOutsideWorkspace(t *testing.T) {
 	}
 	if att.Path != src || att.DataURL == "" {
 		t.Fatalf("attachment = %+v", att)
+	}
+}
+
+func TestReadAttachmentAllowsLargeNonImage(t *testing.T) {
+	workDir := t.TempDir()
+	outside := t.TempDir()
+	src := filepath.Join(outside, "report.pdf")
+	size := (10 << 20) + 1
+	if err := os.WriteFile(src, make([]byte, size), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := core.NewCore(t.TempDir(), t.TempDir(), workDir)
+	b := NewFileBinding(c)
+
+	att, err := b.ReadAttachment(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if att.Size != int64(size) {
+		t.Fatalf("size = %d, want %d", att.Size, size)
+	}
+	if att.DataURL != "" {
+		t.Fatalf("non-image attachment must not carry a data URL")
+	}
+}
+
+func TestReadAttachmentRejectsOversizedImage(t *testing.T) {
+	workDir := t.TempDir()
+	outside := t.TempDir()
+	src := filepath.Join(outside, "photo.png")
+	size := (10 << 20) + 1
+	if err := os.WriteFile(src, make([]byte, size), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := core.NewCore(t.TempDir(), t.TempDir(), workDir)
+	b := NewFileBinding(c)
+
+	if _, err := b.ReadAttachment(src); err == nil {
+		t.Fatal("oversized image unexpectedly accepted for preview")
+	}
+}
+
+func TestReadAttachmentNormalizesImagePreviewToJPEG(t *testing.T) {
+	workDir := t.TempDir()
+	outside := t.TempDir()
+	src := filepath.Join(outside, "photo.png")
+	img := image.NewNRGBA(image.Rect(0, 0, 8, 8))
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 8; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 255, A: 255})
+		}
+	}
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, img); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(src, encoded.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c := core.NewCore(t.TempDir(), t.TempDir(), workDir)
+	b := NewFileBinding(c)
+
+	att, err := b.ReadAttachment(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if att.MediaType != "image/png" {
+		t.Fatalf("media type = %q, want image/png", att.MediaType)
+	}
+	if !strings.HasPrefix(att.DataURL, "data:image/jpeg;base64,") {
+		t.Fatalf("preview data URL is not a normalized jpeg: %.40s", att.DataURL)
 	}
 }

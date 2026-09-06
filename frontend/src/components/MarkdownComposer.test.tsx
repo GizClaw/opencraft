@@ -75,4 +75,26 @@ describe('MarkdownComposer', () => {
     });
     expect(apiMock.searchFiles).toHaveBeenCalledWith('');
   });
+
+  it('routes Tab to onQueue and Enter to onSubmit outside popups', async () => {
+    const ref = createRef<MarkdownComposerHandle>();
+    const onSubmit = vi.fn();
+    const onQueue = vi.fn(() => true);
+    const user = userEvent.setup();
+    render(
+      <MarkdownComposer
+        ref={ref}
+        placeholder="Write…"
+        onSubmit={onSubmit}
+        onQueue={onQueue}
+      />,
+    );
+
+    await user.type(screen.getByRole('textbox'), 'hello');
+    await user.keyboard('{Tab}');
+    expect(onQueue).toHaveBeenCalledTimes(1);
+
+    await user.keyboard('{Enter}');
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
 });

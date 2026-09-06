@@ -11,14 +11,17 @@ import (
 	"github.com/GizClaw/flowcraft/core/message/media"
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/imageutil"
 )
 
 // persistUserAttachments makes URL-sourced image attachments durable
-// for the session archive. Image bytes are copied into the session's
-// media/ directory and the part URL is rewritten to the stored path;
-// audio/video/file parts keep their original absolute path (the model
-// reads the live file, so the session stays light). Remote URLs and
-// inline bytes pass through untouched.
+// for the session archive. Supported still images are normalized to
+// JPEG q90 (EXIF applied, transparency flattened) before the bytes
+// land in the session's media/ directory and the part URL is
+// rewritten to the stored path; audio/video/file parts keep their
+// original absolute path (the model reads the live file, so the
+// session stays light). Remote URLs and inline bytes pass through
+// untouched.
 func persistUserAttachments(
 	store *ocsessions.Store,
 	id string,
@@ -37,12 +40,13 @@ func persistUserAttachments(
 		case message.ImagePart:
 			if p.Source.Kind() == media.SourceURL {
 				if src, ok := localFilePath(p.Source.URL()); ok {
-					dst, err := store.SaveAttachment(id, "media", src)
+					dst, resolvedType, err := saveUserImageAttachment(
+						store, id, src, p.Source.MediaType())
 					if err != nil {
 						return nil, err
 					}
 					source, err := newLocalURLSource(
-						dst, mediaTypeOr(src, p.Source.MediaType()),
+						dst, resolvedType,
 					)
 					if err != nil {
 						return nil, err
@@ -57,6 +61,39 @@ func persistUserAttachments(
 		}
 	}
 	return out, nil
+}
+
+// maxInlineImageBytes mirrors the media prepare hook's inline limit.
+// Normalized JPEGs below this are persisted; anything else (an
+// undecodable format, an animated GIF, or a compression result that
+// still does not fit the prompt budget) falls back to the original
+// copy path with its own 10 MiB cap.
+const maxInlineImageBytes = 10 << 20
+
+// saveUserImageAttachment persists one local image as session media.
+// Supported still images are re-encoded as JPEG q90 (EXIF orientation
+// applied, transparency flattened) so large PNG/TIFF/BMP attachments
+// no longer hit the original file-size gate. GIF/WebP/AVIF and other
+// formats the decoder cannot normalize keep the original bytes.
+func saveUserImageAttachment(
+	store *ocsessions.Store,
+	id, src, mediaType string,
+) (string, string, error) {
+	if mediaType != "image/gif" {
+		data, err := imageutil.NormalizeFileToJPEG(src)
+		if err == nil && len(data) <= maxInlineImageBytes {
+			if dst, saveErr := store.SaveAttachmentBytes(
+				id, "media", "image.jpg", data,
+			); saveErr == nil {
+				return dst, "image/jpeg", nil
+			}
+		}
+	}
+	dst, err := store.SaveAttachment(id, "media", src)
+	if err != nil {
+		return "", "", err
+	}
+	return dst, mediaTypeOr(src, mediaType), nil
 }
 
 // newLocalURLSource builds a URL-kind media source whose URL is a

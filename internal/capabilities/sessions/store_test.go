@@ -55,6 +55,96 @@ func TestSaveAttachment(t *testing.T) {
 	}
 }
 
+func TestSaveAttachmentFilesHasNoSizeLimit(t *testing.T) {
+	store, err := newMigratedStore(t.TempDir(), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(t.TempDir(), "big.pdf")
+	size := (10 << 20) + 1
+	if err := os.WriteFile(src, make([]byte, size), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	dst, err := store.SaveAttachment(id, "files", src)
+	if err != nil {
+		t.Fatalf("files attachment over 10 MiB rejected: %v", err)
+	}
+	info, err := os.Stat(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() != int64(size) {
+		t.Fatalf("stored size = %d, want %d", info.Size(), size)
+	}
+}
+
+func TestSaveAttachmentMediaKeepsInlineLimit(t *testing.T) {
+	store, err := newMigratedStore(t.TempDir(), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(t.TempDir(), "big.png")
+	size := (10 << 20) + 1
+	if err := os.WriteFile(src, make([]byte, size), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.SaveAttachment(id, "media", src); err == nil {
+		t.Fatal("media attachment over the inline limit unexpectedly accepted")
+	}
+}
+
+func TestSaveAttachmentBytes(t *testing.T) {
+	store, err := newMigratedStore(t.TempDir(), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dst, err := store.SaveAttachmentBytes(id, "media", "image.jpg", []byte("jpeg-bytes"))
+	if err != nil {
+		t.Fatalf("SaveAttachmentBytes: %v", err)
+	}
+	rel, err := filepath.Rel(store.dir(id), dst)
+	if err != nil || !strings.HasPrefix(rel, "media"+string(filepath.Separator)) {
+		t.Fatalf("stored path %q not under session media dir", dst)
+	}
+	if !strings.HasSuffix(dst, ".jpg") {
+		t.Errorf("stored name lost extension: %q", dst)
+	}
+	data, err := os.ReadFile(dst)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != "jpeg-bytes" {
+		t.Errorf("stored content = %q, want source bytes", data)
+	}
+
+	if _, err := store.SaveAttachmentBytes(id, "media", "../escape.jpg", []byte("x")); err == nil {
+		t.Error("SaveAttachmentBytes accepted a path-traversal name")
+	}
+	if _, err := store.SaveAttachmentBytes(
+		id, "media", "big.jpg", make([]byte, (10<<20)+1),
+	); err == nil {
+		t.Error("SaveAttachmentBytes accepted oversized media")
+	}
+	if _, err := store.SaveAttachmentBytes(id, "files", "big.bin", make([]byte, (10<<20)+1)); err != nil {
+		t.Fatalf("SaveAttachmentBytes files over 10 MiB rejected: %v", err)
+	}
+}
+
 // TestAppendTurnKeepsMediaURL verifies multimodal user parts survive
 // the archive in URL form (the session persists the stored path, not
 // the inline bytes), so /resume can re-render attachments.

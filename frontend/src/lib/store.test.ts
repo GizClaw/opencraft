@@ -181,6 +181,108 @@ describe('store: send and stream', () => {
     expect(apiMock.startTurn).not.toHaveBeenCalled();
   });
 
+  it('sendInterrupt barges in while a turn is running', async () => {
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    apiMock.startTurn.mockResolvedValue({
+      run_id: 'r-new',
+      context_id: 's-1',
+    });
+
+    const ok = await useStore.getState().sendInterrupt('second');
+
+    expect(ok).toBe(true);
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.messages.at(-1)).toMatchObject({
+      role: 'user',
+      text: 'second',
+    });
+    expect(useStore.getState().runConvs['r-new']).toBe('s-1');
+    expect(actorValue('s-1')?.turn).toBe('running');
+    expect(actor?.getSnapshot().context).toMatchObject({
+      currentRunID: 'r-new',
+    });
+
+    // The superseded run's terminal event stays inert.
+    actor?.send({
+      type: 'TURN_ENDED',
+      runID: 'r-old',
+      status: 'interrupted',
+    });
+    expect(actorValue('s-1')?.turn).toBe('running');
+    expect(actor?.getSnapshot().context).toMatchObject({
+      currentRunID: 'r-new',
+    });
+  });
+
+  it('queueInput stages one draft and drains it after turn_end', async () => {
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
+
+    expect(useStore.getState().queueInput('staged')).toBe(true);
+    expect(useStore.getState().conversations['s-1']?.queued).toMatchObject({
+      text: 'staged',
+      interrupt: false,
+    });
+    expect(apiMock.startTurn).not.toHaveBeenCalled();
+
+    apiMock.startTurn.mockResolvedValue({
+      run_id: 'r-new',
+      context_id: 's-1',
+    });
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-old',
+        conversation_id: 's-1',
+        status: 'completed',
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(useStore.getState().conversations['s-1']?.queued).toBeUndefined();
+    expect(
+      useStore.getState().conversations['s-1'].messages.at(-1),
+    ).toMatchObject({ role: 'user', text: 'staged' });
+    expect(useStore.getState().runConvs['r-new']).toBe('s-1');
+    expect(actorValue('s-1')?.turn).toBe('running');
+  });
+
+  it('an Enter during starting fires the draft when the run starts', async () => {
+    let resolveFirst!: (value: { run_id: string; context_id: string }) => void;
+    apiMock.startTurn
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveFirst = resolve;
+          }),
+      )
+      .mockResolvedValue({ run_id: 'r-second', context_id: 's-1' });
+
+    const first = useStore.getState().send('first');
+    expect(actorValue('s-1')?.turn).toBe('starting');
+
+    const ok = await useStore.getState().sendInterrupt('second');
+    expect(ok).toBe(true);
+    expect(useStore.getState().conversations['s-1']?.queued).toMatchObject({
+      text: 'second',
+      interrupt: true,
+    });
+
+    resolveFirst({ run_id: 'r-first', context_id: 's-1' });
+    await first;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.queued).toBeUndefined();
+    expect(conv.messages.map((m) => m.text)).toEqual(['first', 'second']);
+    expect(useStore.getState().runConvs['r-second']).toBe('s-1');
+    expect(actorValue('s-1')?.turn).toBe('running');
+    expect(actorValue('s-1')?.turn).not.toBe('starting');
+  });
+
   it('resuming the active session closes the tool page', async () => {
     useStore.setState({ toolsView: 'plugins' });
     await useStore.getState().resume('s-1');

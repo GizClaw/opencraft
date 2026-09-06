@@ -176,6 +176,32 @@ describe('ChatView transcript windowing', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('shows a staged queue draft above the composer and can cancel it', () => {
+    setConversation(
+      [
+        {
+          id: 'm-user',
+          role: 'user',
+          text: 'prompt',
+          items: [],
+          attachments: [],
+        },
+      ],
+      [{ id: 'turn-1', start: 0, docs: [], runID: 'r-1' }],
+    );
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    expect(useStore.getState().queueInput('staged question')).toBe(true);
+
+    render(<ChatView />);
+
+    expect(screen.getByText(/staged question/)).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Cancel queued message' }),
+    );
+    expect(useStore.getState().conversations['s-1']?.queued).toBeUndefined();
+    expect(screen.queryByText(/staged question/)).not.toBeInTheDocument();
+  });
+
   it('shows worked duration at the top of an artifact turn', () => {
     setConversation(
       [
