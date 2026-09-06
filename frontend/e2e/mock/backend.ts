@@ -21,6 +21,18 @@ export interface MockConfig {
   workspaces?: unknown[];
   sessionTurns?: unknown[];
   automations?: unknown[];
+  // viewerFile drives File.ResolveTarget/ReadPreview for the file
+  // viewer e2e flows. Handlers are plain data so the config survives
+  // addInitScript serialization.
+  viewerFile?: {
+    path: string;
+    rel: string;
+    name: string;
+    root?: string;
+    media_type?: string;
+    size?: number;
+    text?: string;
+  };
   // Per-method overrides, e.g. { ReadFile: async () => '...' }
   handlers?: Record<string, (...args: any[]) => Promise<unknown>>;
 }
@@ -133,13 +145,47 @@ export function mockBackend(cfg?: MockConfig) {
       Diff: async () => '',
       List: emptyList,
       OpenArtifactWith: noop,
-      OpenExternal: noop,
+      OpenExternal: async (url: string) => {
+        (globalThis as { __extUrl?: string }).__extUrl = String(url);
+      },
       OpenPath: noop,
       PickFile: async () => '',
       PickFolder: async () => '',
       ReadAttachment: async () => null,
-      ReadText: async () => '',
+      ReadPreview: async () =>
+        config.viewerFile
+          ? {
+              path: config.viewerFile.path,
+              rel: config.viewerFile.rel,
+              root: config.viewerFile.root ?? 'workspace',
+              name: config.viewerFile.name,
+              size: config.viewerFile.size ?? 0,
+              media_type: config.viewerFile.media_type ?? '',
+              kind: 'text' as const,
+              text: config.viewerFile.text ?? '',
+            }
+          : { kind: 'meta' as const, size: 0 },
       RenderPatch: emptyList,
+      ResolveTarget: async () =>
+        config.viewerFile
+          ? {
+              path: config.viewerFile.path,
+              rel: config.viewerFile.rel,
+              root: config.viewerFile.root ?? 'workspace',
+              name: config.viewerFile.name,
+              is_dir: false,
+              size: config.viewerFile.size ?? 0,
+              media_type: config.viewerFile.media_type ?? '',
+            }
+          : {
+              path: '',
+              rel: '',
+              root: 'workspace',
+              name: 'missing',
+              is_dir: false,
+              size: 0,
+              media_type: '',
+            },
       Reveal: noop,
       SaveArtifactAs: async () => '',
       Search: emptyList,
@@ -294,7 +340,6 @@ export function mockBackend(cfg?: MockConfig) {
     PluginUpdate: ['Plugin', 'Update'],
     PluginUpdateZip: ['Plugin', 'UpdateZip'],
     ReadAttachment: ['File', 'ReadAttachment'],
-    ReadFile: ['File', 'ReadText'],
     RemoveWorkspace: ['Workspace', 'Remove'],
     RenameSession: ['Session', 'Rename'],
     ReplyPrompt: ['Conversation', 'ReplyPrompt'],

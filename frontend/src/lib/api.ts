@@ -20,7 +20,6 @@ import type {
   ActiveRunDTO,
   AgentSummary,
   AgentDetail,
-  AgentUpdateResult,
   AutomationRun,
   AutomationTask,
   AttachmentDTO,
@@ -28,7 +27,9 @@ import type {
   ConfigState,
   ConfigStatus,
   DiagnosticsReport,
+  FilePreview,
   FileNode,
+  ResolvedTarget,
   HistoryMessage,
   KanbanCard,
   InferenceRequest,
@@ -49,18 +50,15 @@ import type {
   SessionSnapshot,
   SessionImportDTO,
   SessionTurn,
-  ProviderInstance,
   SkillDTO,
   TurnStart,
   TurnMessage,
-  UsagePoint,
   WorkspaceMeta,
 } from './types';
 import type {
   PluginKVEntry,
   PluginSummary,
   PluginToolDTO,
-  PluginUpdateInfo,
 } from '../plugins/types';
 
 export const api = {
@@ -117,7 +115,6 @@ export const api = {
   removeWorkspace: (id: string) => Workspace.Remove(id),
   delegationCards: () =>
     Session.DelegationCards() as unknown as Promise<KanbanCard[]>,
-  readFile: (path: string) => File.ReadText(path),
   fileDiff: (path: string) => File.Diff(path),
   getThink: () => Settings.GetThink(),
   setThink: (level: string) => Settings.SetThink(level),
@@ -258,6 +255,13 @@ export const api = {
   listDir: (dir: string) => File.List(dir) as unknown as Promise<FileNode[]>,
   searchFiles: (query: string, limit?: number) =>
     File.Search(query, limit ?? 50) as unknown as Promise<SearchFileHit[]>,
+  resolveTarget: (target: string, base?: string) =>
+    File.ResolveTarget(
+      target,
+      base ?? '',
+    ) as unknown as Promise<ResolvedTarget>,
+  readPreview: (path: string) =>
+    File.ReadPreview(path) as unknown as Promise<FilePreview>,
   openPath: (path: string) => File.OpenPath(path),
   saveArtifactAs: (path: string) => File.SaveArtifactAs(path),
   revealArtifact: (path: string) => File.Reveal(path),

@@ -35,6 +35,8 @@ import {
   Loader2,
   Music2,
   Package,
+  PanelRightClose,
+  PanelRightOpen,
   Paperclip,
   Presentation,
   RotateCcw,
@@ -67,6 +69,7 @@ import type {
 } from '../lib/store';
 import type { TurnEndKind } from '../state/types';
 import { InteractionCard } from './InteractionCard';
+import { FileViewer } from './FileViewer';
 import { YoloConfirmDialog } from './YoloConfirmDialog';
 import {
   MessagePeek,
@@ -330,6 +333,7 @@ const MessageRow = memo(function MessageRow({
 }) {
   const { t } = useTranslation();
   const [copied, setCopied] = useState(false);
+  const openFileTarget = useStore((s) => s.openFileTarget);
   if (msg.role === 'user') {
     if (msg.text.startsWith(COMPACT_SUMMARY_PREFIX)) {
       return (
@@ -362,7 +366,10 @@ const MessageRow = memo(function MessageRow({
             )}
             {msg.text && (
               <div className="prose-chat user-bubble-md text-sm">
-                <Markdown text={msg.text} />
+                <Markdown
+                  text={msg.text}
+                  onOpen={(href, base) => void openFileTarget(href, base ?? '')}
+                />
               </div>
             )}
             {files.length > 0 && <AttachmentFiles attachments={files} />}
@@ -718,7 +725,7 @@ const ArtifactStrip = memo(function ArtifactStrip({
 }) {
   const { t } = useTranslation();
   const workspace = useStore((s) => s.workspace);
-  const flash = useStore((s) => s.flash);
+  const openFileTarget = useStore((s) => s.openFileTarget);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{
     doc: TurnDoc;
@@ -774,9 +781,7 @@ const ArtifactStrip = memo(function ArtifactStrip({
           return (
             <button
               key={doc.path}
-              onClick={() =>
-                void api.openPath(doc.path).catch((err) => flash(String(err)))
-              }
+              onClick={() => void openFileTarget(doc.path)}
               onContextMenu={(e) => openMenu(e, doc)}
               title={t('chat.openArtifact', { path: doc.path })}
               aria-haspopup="menu"
@@ -804,6 +809,16 @@ const ArtifactStrip = memo(function ArtifactStrip({
             style={{ left: menu.x, top: menu.y }}
             onContextMenu={(e) => e.preventDefault()}
           >
+            <button
+              role="menuitem"
+              className="flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
+              onClick={() => {
+                void openFileTarget(menu.doc.path);
+                closeMenu();
+              }}
+            >
+              {t('files.openInViewer')}
+            </button>
             <button
               role="menuitem"
               className="flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
@@ -1034,6 +1049,7 @@ function TurnBlock({
 // cannot load file:// directly).
 function AttachmentImage({ att }: { att: AttachmentView }) {
   const [url, setUrl] = useState(att.data_url ?? '');
+  const openFileTarget = useStore((s) => s.openFileTarget);
   useEffect(() => {
     if (url) return;
     let live = true;
@@ -1049,11 +1065,18 @@ function AttachmentImage({ att }: { att: AttachmentView }) {
   }, [att.path, url]);
   if (url && url !== 'missing') {
     return (
-      <img
-        src={url}
-        alt={att.name}
-        className="max-h-44 max-w-64 rounded-lg border border-edge object-contain"
-      />
+      <button
+        type="button"
+        onClick={() => void openFileTarget(att.path)}
+        className="max-h-44 max-w-64 cursor-pointer rounded-lg border border-edge object-contain transition-colors hover:border-accent/60"
+        title={att.path}
+      >
+        <img
+          src={url}
+          alt={att.name}
+          className="max-h-44 max-w-64 rounded-lg object-contain"
+        />
+      </button>
     );
   }
   if (url === 'missing') {
@@ -1170,6 +1193,7 @@ function AttachmentFileGlyph({
 function AttachmentFiles({ attachments }: { attachments: AttachmentView[] }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const openFileTarget = useStore((s) => s.openFileTarget);
   return (
     <div className="mt-2">
       <button
@@ -1188,8 +1212,10 @@ function AttachmentFiles({ attachments }: { attachments: AttachmentView[] }) {
         <div className="mt-1.5 space-y-1">
           {attachments.map((a) => {
             return (
-              <div
+              <button
                 key={a.id}
+                onClick={() => void openFileTarget(a.path)}
+                title={a.path}
                 className="flex items-center gap-1.5 rounded-md border border-edge bg-panel2 px-2 py-1 text-xs"
               >
                 <AttachmentFileGlyph name={a.name} kind={a.kind} />
@@ -1199,7 +1225,7 @@ function AttachmentFiles({ attachments }: { attachments: AttachmentView[] }) {
                     {formatSize(a.size)}
                   </span>
                 )}
-              </div>
+              </button>
             );
           })}
         </div>
@@ -1227,6 +1253,14 @@ export function ChatView() {
   });
   const conversationState = useConversationState(current);
   const sessions = useStore((s) => s.sessions);
+  // The turn-scrubber overlay is hidden while the file viewer owns the
+  // right side of the transcript: its rail and hover tooltips overlap
+  // the narrower chat column and fight the viewer for mouse space.
+  const filesOpen = useStore((s) =>
+    current ? (s.viewers[current]?.filesOpen ?? false) : false,
+  );
+  const openFiles = useStore((s) => s.openFiles);
+  const closeFiles = useStore((s) => s.closeFiles);
   const messages = conv?.messages ?? [];
   const turnState = conversationState?.turn;
   const busy = turnState?.name === 'starting' || turnState?.name === 'running';
@@ -2094,544 +2128,574 @@ export function ChatView() {
           </span>
         )}
         <span className="flex-1" />
+        <button
+          onClick={() => (filesOpen ? closeFiles() : openFiles())}
+          title={t('files.togglePanel')}
+          aria-label={t('files.togglePanel')}
+          aria-pressed={filesOpen}
+          className="grid h-7 w-7 place-items-center rounded-lg text-dim hover:bg-panel2 hover:text-fg"
+        >
+          {filesOpen ? (
+            <PanelRightClose size="1.0000rem" />
+          ) : (
+            <PanelRightOpen size="1.0000rem" />
+          )}
+        </button>
       </header>
 
-      <div className="relative flex min-h-0 flex-1 flex-col">
-        <div
-          ref={scrollRef}
-          onScroll={() => {
-            const el = scrollRef.current;
-            if (!el) return;
-            const pinned =
-              el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-            stickRef.current = pinned;
-            setStick(pinned);
-            if (!pinned && el.scrollTop <= 8 && truncated && !loadingEarlier) {
-              loadEarlier();
-            }
-            schedulePeekRefresh();
-          }}
-          data-testid="chat-scroll"
-          className="flex-1 overflow-y-auto [overflow-anchor:none] px-6 py-4"
-        >
-          {loadingEarlier && (
-            <div className="pointer-events-none fixed left-1/2 top-14 z-20 -translate-x-1/2 rounded-full border border-edge bg-panel p-2 shadow-xl">
-              <Loader2 size="1.0000rem" className="animate-spin text-dim" />
-            </div>
-          )}
-          {historyWarning && (
-            <div className="mb-3 flex items-center gap-2 rounded-lg border border-edge bg-panel2/70 px-3 py-2 text-xs text-dim">
-              <AlertTriangle size="0.8571rem" className="text-accent" />
-              {t('chat.liveWithoutHistory')}
-            </div>
-          )}
-          {messages.length === 0 ? (
-            <div className="h-full grid place-items-center">
-              {!configured && (
-                <div className="text-center space-y-3">
-                  <div className="text-dim text-sm">
-                    {t('chat.emptyUnconfigured')}
+      <div className="flex min-h-0 min-w-0 flex-1">
+        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+          <div
+            ref={scrollRef}
+            onScroll={() => {
+              const el = scrollRef.current;
+              if (!el) return;
+              const pinned =
+                el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+              stickRef.current = pinned;
+              setStick(pinned);
+              if (
+                !pinned &&
+                el.scrollTop <= 8 &&
+                truncated &&
+                !loadingEarlier
+              ) {
+                loadEarlier();
+              }
+              schedulePeekRefresh();
+            }}
+            data-testid="chat-scroll"
+            className="flex-1 overflow-y-auto [overflow-anchor:none] px-6 py-4"
+          >
+            {loadingEarlier && (
+              <div className="pointer-events-none fixed left-1/2 top-14 z-20 -translate-x-1/2 rounded-full border border-edge bg-panel p-2 shadow-xl">
+                <Loader2 size="1.0000rem" className="animate-spin text-dim" />
+              </div>
+            )}
+            {historyWarning && (
+              <div className="mb-3 flex items-center gap-2 rounded-lg border border-edge bg-panel2/70 px-3 py-2 text-xs text-dim">
+                <AlertTriangle size="0.8571rem" className="text-accent" />
+                {t('chat.liveWithoutHistory')}
+              </div>
+            )}
+            {messages.length === 0 ? (
+              <div className="h-full grid place-items-center">
+                {!configured && (
+                  <div className="text-center space-y-3">
+                    <div className="text-dim text-sm">
+                      {t('chat.emptyUnconfigured')}
+                    </div>
+                    <button
+                      onClick={() => openConfig()}
+                      className="rounded-lg border border-edge px-3 py-1.5 text-sm text-fg hover:border-accent/50 transition-colors"
+                    >
+                      {t('chat.openSettings')}
+                    </button>
                   </div>
+                )}
+              </div>
+            ) : usesTurnBlocks ? (
+              <div className="max-w-4xl mx-auto space-y-4">
+                {completeTurnBlocks.map((block) => {
+                  const turn = block.turn;
+                  const running = busy && turn === lastTurn;
+                  const archivedEnd = archivedTurnEndKind(turn.status);
+                  const liveEnd = !busy && failedTurn && turn === lastTurn;
+                  const endStatus =
+                    archivedEnd ?? (liveEnd ? failedTurn.status : undefined);
+                  const endError =
+                    turn.error ??
+                    (liveEnd && failedTurn ? failedTurn.error : undefined);
+                  return (
+                    <TurnBlock
+                      key={turn.id}
+                      turn={turn}
+                      turnIdx={block.turnIdx}
+                      rows={block.rows}
+                      running={running}
+                      busy={busy}
+                      endStatus={endStatus}
+                      endError={endError}
+                      liveEnd={Boolean(liveEnd)}
+                      forking={forking}
+                      onFork={setForkTarget}
+                      onDismissFailure={clearLastFailed}
+                    />
+                  );
+                })}
+                {pendingInteracts.map((spec) => (
+                  <InteractionCard key={spec.id} spec={spec} />
+                ))}
+              </div>
+            ) : (
+              <div className="max-w-4xl mx-auto space-y-4">
+                {visibleMessages.map((msg, localI) => {
+                  const i = start + localI;
+                  const turn = turnForIndex(turnArtifacts, i);
+                  const turnIdx = turn ? (turnIndexById.get(turn) ?? -1) : -1;
+                  const turnStart =
+                    turnIdx >= 0 && turnArtifacts[turnIdx].start === i;
+                  const isTurnEnd =
+                    turnIdx >= 0 &&
+                    i ===
+                      (turnIdx + 1 < turnArtifacts.length
+                        ? turnArtifacts[turnIdx + 1].start - 1
+                        : messages.length - 1);
+                  const showArtifacts =
+                    isTurnEnd && (turn?.docs.length ?? 0) > 0;
+                  const showWorked =
+                    isTurnEnd && msg.role === 'assistant' && !!turn;
+                  const archivedEnd = isTurnEnd
+                    ? archivedTurnEndKind(turn?.status)
+                    : undefined;
+                  const liveEnd = isTurnEnd && failedTurn && turn === lastTurn;
+                  const endStatus =
+                    archivedEnd ?? (liveEnd ? failedTurn.status : undefined);
+                  const isAssistantTurnLast =
+                    msg.role === 'assistant' &&
+                    (i === messages.length - 1 ||
+                      messages[i + 1]?.role === 'user');
+                  const assistantStreaming =
+                    busy &&
+                    msg.role === 'assistant' &&
+                    i === messages.length - 1;
+                  const canFork =
+                    isAssistantTurnLast &&
+                    !assistantStreaming &&
+                    !forking &&
+                    !endStatus &&
+                    Boolean(turn?.runID);
+                  return (
+                    <Fragment key={msg.id}>
+                      <MessageRow
+                        msg={msg}
+                        busy={busy}
+                        isTurnLast={isAssistantTurnLast}
+                        msgIndex={i}
+                        turnIndex={turnIdx}
+                        turnStart={turnStart}
+                        forkable={canFork}
+                        onFork={
+                          canFork && turn
+                            ? () => setForkTarget(turn)
+                            : undefined
+                        }
+                        requestedAt={turn?.requestedAt}
+                        startedAt={turn?.startedAt}
+                        streaming={assistantStreaming}
+                      />
+                      {showArtifacts && turn && (
+                        <>
+                          <ArtifactStrip docs={turn.docs} />
+                          <TurnStatusLine durationMs={turn.durationMs} />
+                        </>
+                      )}
+                      {showWorked && !showArtifacts && (
+                        <TurnStatusLine durationMs={turn?.durationMs} />
+                      )}
+                      {endStatus && turn && (
+                        <TurnEndNotice
+                          status={endStatus}
+                          error={
+                            liveEnd
+                              ? (turn.error ?? failedTurn?.error)
+                              : turn.error
+                          }
+                          live={Boolean(liveEnd)}
+                          onDismiss={liveEnd ? clearLastFailed : undefined}
+                        />
+                      )}
+                    </Fragment>
+                  );
+                })}
+                {pendingInteracts.map((spec) => (
+                  <InteractionCard key={spec.id} spec={spec} />
+                ))}
+              </div>
+            )}
+          </div>
+          {!filesOpen && (
+            <MessagePeek
+              items={peekTicks}
+              activeRange={peekRange}
+              onJump={jumpToTurn}
+              getPreview={peekPreview}
+              revision={turnArtifacts}
+            />
+          )}
+          {planState && !planDismissed && (
+            <PlanPanel
+              plan={planState.plan}
+              live={planState.live}
+              onClose={() => setPlanDismissed(true)}
+            />
+          )}
+          <div
+            className={
+              centerComposer
+                ? 'absolute inset-x-0 top-[calc(50%+1.375rem)] z-10 mx-auto w-full max-w-4xl -translate-y-1/2 px-6'
+                : 'shrink-0 px-6 pb-4'
+            }
+          >
+            {centerComposer && (
+              <div className="pointer-events-none absolute inset-x-6 bottom-full mb-3 text-center">
+                <div className="text-lg font-semibold text-fg">
+                  {t('chat.empty')}
+                </div>
+              </div>
+            )}
+            <div className="max-w-4xl mx-auto rounded-xl border border-edge bg-panel focus-within:border-accent/60 transition-colors">
+              {attachments.length > 0 && (
+                <div className="flex flex-wrap gap-2 px-3 pt-2">
+                  {attachments.map((a) => (
+                    <div key={a.id} className="group relative">
+                      {a.kind === 'image' && a.data_url ? (
+                        <img
+                          src={a.data_url}
+                          alt={a.name}
+                          className="h-16 w-16 rounded-lg border border-edge object-cover"
+                        />
+                      ) : (
+                        <div className="flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-lg border border-edge bg-panel2 p-1 text-[0.7143rem] text-dim">
+                          <AttachmentFileGlyph name={a.name} kind={a.kind} />
+                          <span className="w-full truncate text-center">
+                            {a.name}
+                          </span>
+                        </div>
+                      )}
+                      <button
+                        onClick={() => removeAttachment(a.id)}
+                        aria-label={t('chat.removeAttachment')}
+                        className="absolute -right-1.5 -top-1.5 rounded-full bg-err p-0.5 text-white opacity-80 hover:opacity-100"
+                      >
+                        <X size="0.7143rem" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {queued && (
+                <div className="flex items-center gap-2 border-b border-edge px-3 py-1.5 text-xs text-dim">
+                  <Clock size="0.8571rem" className="shrink-0 text-accent" />
+                  <span className="min-w-0 truncate">
+                    {t(busy ? 'chat.queued' : 'chat.queuedReady', {
+                      preview:
+                        queued.text.trim() ||
+                        queued.attachments[0]?.name ||
+                        t('chat.queuedFiles'),
+                    })}
+                  </span>
                   <button
-                    onClick={() => openConfig()}
-                    className="rounded-lg border border-edge px-3 py-1.5 text-sm text-fg hover:border-accent/50 transition-colors"
+                    type="button"
+                    onClick={clearQueued}
+                    aria-label={t('chat.queuedCancel')}
+                    title={t('chat.queuedCancel')}
+                    className="ml-auto shrink-0 rounded-md px-1.5 py-0.5 text-dim hover:bg-panel2 hover:text-fg"
                   >
-                    {t('chat.openSettings')}
+                    <X size="0.8571rem" />
                   </button>
                 </div>
               )}
-            </div>
-          ) : usesTurnBlocks ? (
-            <div className="max-w-4xl mx-auto space-y-4">
-              {completeTurnBlocks.map((block) => {
-                const turn = block.turn;
-                const running = busy && turn === lastTurn;
-                const archivedEnd = archivedTurnEndKind(turn.status);
-                const liveEnd = !busy && failedTurn && turn === lastTurn;
-                const endStatus =
-                  archivedEnd ?? (liveEnd ? failedTurn.status : undefined);
-                const endError =
-                  turn.error ??
-                  (liveEnd && failedTurn ? failedTurn.error : undefined);
-                return (
-                  <TurnBlock
-                    key={turn.id}
-                    turn={turn}
-                    turnIdx={block.turnIdx}
-                    rows={block.rows}
-                    running={running}
-                    busy={busy}
-                    endStatus={endStatus}
-                    endError={endError}
-                    liveEnd={Boolean(liveEnd)}
-                    forking={forking}
-                    onFork={setForkTarget}
-                    onDismissFailure={clearLastFailed}
-                  />
-                );
-              })}
-              {pendingInteracts.map((spec) => (
-                <InteractionCard key={spec.id} spec={spec} />
-              ))}
-            </div>
-          ) : (
-            <div className="max-w-4xl mx-auto space-y-4">
-              {visibleMessages.map((msg, localI) => {
-                const i = start + localI;
-                const turn = turnForIndex(turnArtifacts, i);
-                const turnIdx = turn ? (turnIndexById.get(turn) ?? -1) : -1;
-                const turnStart =
-                  turnIdx >= 0 && turnArtifacts[turnIdx].start === i;
-                const isTurnEnd =
-                  turnIdx >= 0 &&
-                  i ===
-                    (turnIdx + 1 < turnArtifacts.length
-                      ? turnArtifacts[turnIdx + 1].start - 1
-                      : messages.length - 1);
-                const showArtifacts = isTurnEnd && (turn?.docs.length ?? 0) > 0;
-                const showWorked =
-                  isTurnEnd && msg.role === 'assistant' && !!turn;
-                const archivedEnd = isTurnEnd
-                  ? archivedTurnEndKind(turn?.status)
-                  : undefined;
-                const liveEnd = isTurnEnd && failedTurn && turn === lastTurn;
-                const endStatus =
-                  archivedEnd ?? (liveEnd ? failedTurn.status : undefined);
-                const isAssistantTurnLast =
-                  msg.role === 'assistant' &&
-                  (i === messages.length - 1 ||
-                    messages[i + 1]?.role === 'user');
-                const assistantStreaming =
-                  busy && msg.role === 'assistant' && i === messages.length - 1;
-                const canFork =
-                  isAssistantTurnLast &&
-                  !assistantStreaming &&
-                  !forking &&
-                  !endStatus &&
-                  Boolean(turn?.runID);
-                return (
-                  <Fragment key={msg.id}>
-                    <MessageRow
-                      msg={msg}
-                      busy={busy}
-                      isTurnLast={isAssistantTurnLast}
-                      msgIndex={i}
-                      turnIndex={turnIdx}
-                      turnStart={turnStart}
-                      forkable={canFork}
-                      onFork={
-                        canFork && turn ? () => setForkTarget(turn) : undefined
-                      }
-                      requestedAt={turn?.requestedAt}
-                      startedAt={turn?.startedAt}
-                      streaming={assistantStreaming}
-                    />
-                    {showArtifacts && turn && (
-                      <>
-                        <ArtifactStrip docs={turn.docs} />
-                        <TurnStatusLine durationMs={turn.durationMs} />
-                      </>
-                    )}
-                    {showWorked && !showArtifacts && (
-                      <TurnStatusLine durationMs={turn?.durationMs} />
-                    )}
-                    {endStatus && turn && (
-                      <TurnEndNotice
-                        status={endStatus}
-                        error={
-                          liveEnd
-                            ? (turn.error ?? failedTurn?.error)
-                            : turn.error
-                        }
-                        live={Boolean(liveEnd)}
-                        onDismiss={liveEnd ? clearLastFailed : undefined}
-                      />
-                    )}
-                  </Fragment>
-                );
-              })}
-              {pendingInteracts.map((spec) => (
-                <InteractionCard key={spec.id} spec={spec} />
-              ))}
-            </div>
-          )}
-        </div>
-        <MessagePeek
-          items={peekTicks}
-          activeRange={peekRange}
-          onJump={jumpToTurn}
-          getPreview={peekPreview}
-          revision={turnArtifacts}
-        />
-        {planState && !planDismissed && (
-          <PlanPanel
-            plan={planState.plan}
-            live={planState.live}
-            onClose={() => setPlanDismissed(true)}
-          />
-        )}
-      </div>
-
-      <div
-        className={
-          centerComposer
-            ? 'absolute inset-x-0 top-[calc(50%+1.375rem)] z-10 mx-auto w-full max-w-4xl -translate-y-1/2 px-6'
-            : 'shrink-0 px-6 pb-4'
-        }
-      >
-        {centerComposer && (
-          <div className="pointer-events-none absolute inset-x-6 bottom-full mb-3 text-center">
-            <div className="text-lg font-semibold text-fg">
-              {t('chat.empty')}
-            </div>
-          </div>
-        )}
-        <div className="max-w-4xl mx-auto rounded-xl border border-edge bg-panel focus-within:border-accent/60 transition-colors">
-          {attachments.length > 0 && (
-            <div className="flex flex-wrap gap-2 px-3 pt-2">
-              {attachments.map((a) => (
-                <div key={a.id} className="group relative">
-                  {a.kind === 'image' && a.data_url ? (
-                    <img
-                      src={a.data_url}
-                      alt={a.name}
-                      className="h-16 w-16 rounded-lg border border-edge object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-lg border border-edge bg-panel2 p-1 text-[0.7143rem] text-dim">
-                      <AttachmentFileGlyph name={a.name} kind={a.kind} />
-                      <span className="w-full truncate text-center">
-                        {a.name}
-                      </span>
-                    </div>
-                  )}
-                  <button
-                    onClick={() => removeAttachment(a.id)}
-                    aria-label={t('chat.removeAttachment')}
-                    className="absolute -right-1.5 -top-1.5 rounded-full bg-err p-0.5 text-white opacity-80 hover:opacity-100"
-                  >
-                    <X size="0.7143rem" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-          {queued && (
-            <div className="flex items-center gap-2 border-b border-edge px-3 py-1.5 text-xs text-dim">
-              <Clock size="0.8571rem" className="shrink-0 text-accent" />
-              <span className="min-w-0 truncate">
-                {t(busy ? 'chat.queued' : 'chat.queuedReady', {
-                  preview:
-                    queued.text.trim() ||
-                    queued.attachments[0]?.name ||
-                    t('chat.queuedFiles'),
-                })}
-              </span>
-              <button
-                type="button"
-                onClick={clearQueued}
-                aria-label={t('chat.queuedCancel')}
-                title={t('chat.queuedCancel')}
-                className="ml-auto shrink-0 rounded-md px-1.5 py-0.5 text-dim hover:bg-panel2 hover:text-fg"
-              >
-                <X size="0.8571rem" />
-              </button>
-            </div>
-          )}
-          {/* The top gap lives outside the scroll container (pt-3 here)
+              {/* The top gap lives outside the scroll container (pt-3 here)
               so it stays visible even when the editor is scrolled to
               the bottom; padding inside the editor would scroll away
               with the content. */}
-          <div className="pt-3">
-            <MarkdownComposer
-              ref={composerRef}
-              initialMarkdown={input}
-              placeholder={
-                configured
-                  ? t('chat.placeholder')
-                  : t('chat.placeholderUnconfigured')
-              }
-              disabled={!configured}
-              onValueChange={setInput}
-              onSubmit={() => void submitInterrupt()}
-              onQueue={queueDraft}
-              onPasteImages={(files) => void handlePastedImages(files)}
-            />
-          </div>
-          {showBusyKeyHint && (
-            <div className="mt-1.5 px-4 text-right text-[0.7143rem] leading-relaxed text-dim">
-              {t('chat.busyKeyHint')}
-            </div>
-          )}
-          <div className="mt-3 flex items-center justify-between px-3 pb-2.5">
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => void pickAttachment()}
-                disabled={!configured || busy}
-                title={t('chat.attach')}
-                aria-label={t('chat.attach')}
-                className="flex items-center gap-1 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim hover:text-fg disabled:opacity-50"
-              >
-                <Paperclip size="0.9286rem" />
-              </button>
-              {yoloOnly ? (
-                <div
-                  className="flex items-center gap-1.5 rounded-lg border border-yolo/50 bg-yolo/15 px-2.5 py-1 text-xs text-yolo"
-                  title={t('chat.sandboxMode')}
-                >
-                  <Flame size="0.9286rem" />
-                  {t('chat.yoloMode')}
-                </div>
-              ) : (
-                <div className="relative">
-                  <button
-                    onClick={() => setModeMenuOpen((v) => !v)}
-                    className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs transition-colors ${
-                      yolo
-                        ? 'border-yolo/50 bg-yolo/15 text-yolo hover:bg-yolo/25'
-                        : readOnly
-                          ? 'border-accent/40 bg-accent/10 text-accent hover:bg-accent/20'
-                          : 'border-edge text-dim hover:text-fg'
-                    }`}
-                    title={t('chat.sandboxMode')}
-                  >
-                    {yolo ? (
-                      <Flame size="0.9286rem" />
-                    ) : readOnly ? (
-                      <Lock size="0.9286rem" />
-                    ) : (
-                      <ShieldCheck size="0.9286rem" />
-                    )}
-                    {yolo
-                      ? t('chat.yoloMode')
-                      : readOnly
-                        ? t('chat.readOnlyMode')
-                        : t('chat.workspaceMode')}
-                    <ChevronUp size="0.7857rem" />
-                  </button>
-                  {modeMenuOpen && (
-                    <>
-                      <div
-                        className="fixed inset-0 z-30"
-                        onClick={() => setModeMenuOpen(false)}
-                      />
-                      <div className="absolute bottom-full left-0 z-40 mb-1.5 w-80 rounded-lg border border-edge bg-panel p-1 shadow-xl">
-                        {SESSION_MODES.map((option) => {
-                          const Icon = option.icon;
-                          const active = mode === option.value;
-                          return (
-                            <button
-                              key={option.value}
-                              onClick={() => {
-                                setModeMenuOpen(false);
-                                if (option.value === 'yolo') {
-                                  setConfirmYolo(true);
-                                } else {
-                                  applyMode(option.value);
-                                }
-                              }}
-                              className={`w-full rounded-md px-2 py-1.5 text-left text-xs ${modeMenuTint(option, active)}`}
-                            >
-                              <span className="flex items-center gap-2">
-                                <Icon size="0.8571rem" /> {t(option.labelKey)}
-                              </span>
-                              <span
-                                className={`mt-0.5 block pl-5 text-[0.7143rem] leading-snug ${
-                                  option.value === 'yolo'
-                                    ? 'text-yolo/80'
-                                    : 'text-dim'
-                                }`}
-                              >
-                                {t(option.bannerKey)}
-                              </span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </>
-                  )}
+              <div className="pt-3">
+                <MarkdownComposer
+                  ref={composerRef}
+                  initialMarkdown={input}
+                  placeholder={
+                    configured
+                      ? t('chat.placeholder')
+                      : t('chat.placeholderUnconfigured')
+                  }
+                  disabled={!configured}
+                  onValueChange={setInput}
+                  onSubmit={() => void submitInterrupt()}
+                  onQueue={queueDraft}
+                  onPasteImages={(files) => void handlePastedImages(files)}
+                />
+              </div>
+              {showBusyKeyHint && (
+                <div className="mt-1.5 px-4 text-right text-[0.7143rem] leading-relaxed text-dim">
+                  {t('chat.busyKeyHint')}
                 </div>
               )}
+              <div className="mt-3 flex items-center justify-between px-3 pb-2.5">
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => void pickAttachment()}
+                    disabled={!configured || busy}
+                    title={t('chat.attach')}
+                    aria-label={t('chat.attach')}
+                    className="flex items-center gap-1 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim hover:text-fg disabled:opacity-50"
+                  >
+                    <Paperclip size="0.9286rem" />
+                  </button>
+                  {yoloOnly ? (
+                    <div
+                      className="flex items-center gap-1.5 rounded-lg border border-yolo/50 bg-yolo/15 px-2.5 py-1 text-xs text-yolo"
+                      title={t('chat.sandboxMode')}
+                    >
+                      <Flame size="0.9286rem" />
+                      {t('chat.yoloMode')}
+                    </div>
+                  ) : (
+                    <div className="relative">
+                      <button
+                        onClick={() => setModeMenuOpen((v) => !v)}
+                        className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs transition-colors ${
+                          yolo
+                            ? 'border-yolo/50 bg-yolo/15 text-yolo hover:bg-yolo/25'
+                            : readOnly
+                              ? 'border-accent/40 bg-accent/10 text-accent hover:bg-accent/20'
+                              : 'border-edge text-dim hover:text-fg'
+                        }`}
+                        title={t('chat.sandboxMode')}
+                      >
+                        {yolo ? (
+                          <Flame size="0.9286rem" />
+                        ) : readOnly ? (
+                          <Lock size="0.9286rem" />
+                        ) : (
+                          <ShieldCheck size="0.9286rem" />
+                        )}
+                        {yolo
+                          ? t('chat.yoloMode')
+                          : readOnly
+                            ? t('chat.readOnlyMode')
+                            : t('chat.workspaceMode')}
+                        <ChevronUp size="0.7857rem" />
+                      </button>
+                      {modeMenuOpen && (
+                        <>
+                          <div
+                            className="fixed inset-0 z-30"
+                            onClick={() => setModeMenuOpen(false)}
+                          />
+                          <div className="absolute bottom-full left-0 z-40 mb-1.5 w-80 rounded-lg border border-edge bg-panel p-1 shadow-xl">
+                            {SESSION_MODES.map((option) => {
+                              const Icon = option.icon;
+                              const active = mode === option.value;
+                              return (
+                                <button
+                                  key={option.value}
+                                  onClick={() => {
+                                    setModeMenuOpen(false);
+                                    if (option.value === 'yolo') {
+                                      setConfirmYolo(true);
+                                    } else {
+                                      applyMode(option.value);
+                                    }
+                                  }}
+                                  className={`w-full rounded-md px-2 py-1.5 text-left text-xs ${modeMenuTint(option, active)}`}
+                                >
+                                  <span className="flex items-center gap-2">
+                                    <Icon size="0.8571rem" />{' '}
+                                    {t(option.labelKey)}
+                                  </span>
+                                  <span
+                                    className={`mt-0.5 block pl-5 text-[0.7143rem] leading-snug ${
+                                      option.value === 'yolo'
+                                        ? 'text-yolo/80'
+                                        : 'text-dim'
+                                    }`}
+                                  >
+                                    {t(option.bannerKey)}
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  {(thinkSupported || modelOptions.length > 0) && (
+                    <div className="relative">
+                      <button
+                        onClick={() => setModelMenuOpen((v) => !v)}
+                        title={t('chat.modelLabel')}
+                        className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim hover:text-fg"
+                      >
+                        <Sparkles size="0.8571rem" className="text-accent" />
+                        <span className="max-w-32 truncate">{modelLabel}</span>
+                        {thinkSupported && (
+                          <>
+                            <span className="text-edge">·</span>
+                            <span>{thinkLabel}</span>
+                          </>
+                        )}
+                        <ChevronUp size="0.7857rem" />
+                      </button>
+                      {modelMenuOpen && (
+                        <>
+                          <div
+                            className="fixed inset-0 z-30"
+                            onClick={() => setModelMenuOpen(false)}
+                          />
+                          <div className="absolute bottom-full right-0 z-40 mb-1.5 w-64 rounded-xl border border-edge bg-panel p-1.5 shadow-xl">
+                            <div className="px-2 pb-1 pt-1.5 text-[0.7143rem] uppercase tracking-wider text-dim">
+                              {t('chat.modelLabel')}
+                            </div>
+                            <div className="max-h-52 overflow-y-auto">
+                              <button
+                                onClick={() => applyModel('')}
+                                className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs ${
+                                  !model
+                                    ? 'bg-accent/10 text-accent'
+                                    : 'text-dim hover:bg-panel2 hover:text-fg'
+                                }`}
+                              >
+                                <span>{t('chat.modelAuto')}</span>
+                                {!model && <Check size="0.8571rem" />}
+                              </button>
+                              {modelOptions.map((m) => (
+                                <button
+                                  key={m.id}
+                                  onClick={() => applyModel(m.id)}
+                                  className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs ${
+                                    model === m.id
+                                      ? 'bg-accent/10 text-accent'
+                                      : 'text-dim hover:bg-panel2 hover:text-fg'
+                                  }`}
+                                >
+                                  <span className="truncate">{m.label}</span>
+                                  {model === m.id && <Check size="0.8571rem" />}
+                                </button>
+                              ))}
+                            </div>
+                            {thinkSupported && (
+                              <>
+                                <div className="my-1 border-t border-edge" />
+                                <div className="flex items-center justify-between px-2 pt-1.5 text-xs">
+                                  <span className="text-dim">
+                                    {t('chat.thinkLabel')}
+                                  </span>
+                                  <span className="text-fg">{thinkLabel}</span>
+                                </div>
+                                <div className="px-2 pt-1.5">
+                                  <input
+                                    type="range"
+                                    min={0}
+                                    max={thinkLevels.length - 1}
+                                    step={1}
+                                    value={thinkIndex}
+                                    onChange={(e) => {
+                                      const v = Number(e.target.value);
+                                      applyThink(
+                                        thinkLevels[v]?.value ?? 'medium',
+                                      );
+                                    }}
+                                    className="w-full accent-accent"
+                                  />
+                                </div>
+                                <div className="flex justify-between px-2 pb-1.5 text-[0.7143rem] text-dim">
+                                  {thinkLevels.map((l) => (
+                                    <span key={l.value}>{l.label}</span>
+                                  ))}
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  )}
+                  {switchingWs ? (
+                    <button
+                      disabled
+                      aria-label={t('chat.send')}
+                      title={t('chat.send')}
+                      className="grid h-8 w-8 place-items-center rounded-lg bg-accent text-white opacity-60"
+                    >
+                      <Loader2 size="1.0000rem" className="animate-spin" />
+                    </button>
+                  ) : busy ? (
+                    <button
+                      onClick={() => void cancelRun()}
+                      aria-label={t('chat.stop')}
+                      title={t('chat.stop')}
+                      className="grid h-8 w-8 place-items-center rounded-lg border border-edge text-err hover:bg-panel2"
+                    >
+                      <Square size="0.9286rem" />
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => void submit()}
+                      disabled={!input.trim() && attachments.length === 0}
+                      aria-label={t('chat.send')}
+                      title={t('chat.send')}
+                      className="grid h-8 w-8 place-items-center rounded-lg bg-accent text-white hover:opacity-90 disabled:opacity-40"
+                    >
+                      <ArrowUp size="1.1429rem" />
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              {(thinkSupported || modelOptions.length > 0) && (
+            {showWorkspacePicker && (
+              <div className="relative z-10 mx-auto -mt-2 flex items-center rounded-lg border border-edge bg-panel2/90 px-1.5 py-1.5 shadow-md">
                 <div className="relative">
                   <button
-                    onClick={() => setModelMenuOpen((v) => !v)}
-                    title={t('chat.modelLabel')}
-                    className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim hover:text-fg"
+                    onClick={() => setWsPickerOpen((v) => !v)}
+                    className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors ${
+                      pickerWorkspace !== workspace
+                        ? 'border-accent/50 bg-accent/10 text-accent hover:bg-accent/20'
+                        : 'border-transparent text-dim hover:text-fg hover:bg-panel2'
+                    }`}
+                    title={t('chat.newChatWorkspace')}
+                    aria-label={t('chat.chooseWorkspace')}
                   >
-                    <Sparkles size="0.8571rem" className="text-accent" />
-                    <span className="max-w-32 truncate">{modelLabel}</span>
-                    {thinkSupported && (
-                      <>
-                        <span className="text-edge">·</span>
-                        <span>{thinkLabel}</span>
-                      </>
-                    )}
-                    <ChevronUp size="0.7857rem" />
+                    <FolderOpen size="0.8571rem" className="shrink-0" />
+                    <span className="max-w-56 truncate">{pickerLabel}</span>
+                    <ChevronDown size="0.7857rem" />
                   </button>
-                  {modelMenuOpen && (
+                  {wsPickerOpen && (
                     <>
                       <div
                         className="fixed inset-0 z-30"
-                        onClick={() => setModelMenuOpen(false)}
+                        onClick={() => setWsPickerOpen(false)}
                       />
-                      <div className="absolute bottom-full right-0 z-40 mb-1.5 w-64 rounded-xl border border-edge bg-panel p-1.5 shadow-xl">
-                        <div className="px-2 pb-1 pt-1.5 text-[0.7143rem] uppercase tracking-wider text-dim">
-                          {t('chat.modelLabel')}
-                        </div>
-                        <div className="max-h-52 overflow-y-auto">
+                      <div className="absolute top-full left-0 z-40 mt-1.5 w-72 rounded-lg border border-edge bg-panel py-1 shadow-xl">
+                        {pickerOptions.map((w) => (
                           <button
-                            onClick={() => applyModel('')}
-                            className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs ${
-                              !model
+                            key={w.path}
+                            onClick={() => {
+                              setDraftWorkspace(w.path);
+                              setWsPickerOpen(false);
+                            }}
+                            className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs ${
+                              w.path === pickerWorkspace
                                 ? 'bg-accent/10 text-accent'
                                 : 'text-dim hover:bg-panel2 hover:text-fg'
                             }`}
                           >
-                            <span>{t('chat.modelAuto')}</span>
-                            {!model && <Check size="0.8571rem" />}
-                          </button>
-                          {modelOptions.map((m) => (
-                            <button
-                              key={m.id}
-                              onClick={() => applyModel(m.id)}
-                              className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs ${
-                                model === m.id
-                                  ? 'bg-accent/10 text-accent'
-                                  : 'text-dim hover:bg-panel2 hover:text-fg'
-                              }`}
-                            >
-                              <span className="truncate">{m.label}</span>
-                              {model === m.id && <Check size="0.8571rem" />}
-                            </button>
-                          ))}
-                        </div>
-                        {thinkSupported && (
-                          <>
-                            <div className="my-1 border-t border-edge" />
-                            <div className="flex items-center justify-between px-2 pt-1.5 text-xs">
-                              <span className="text-dim">
-                                {t('chat.thinkLabel')}
+                            <FolderOpen size="0.8571rem" className="shrink-0" />
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate">
+                                {w.title || pathBase(w.path)}
                               </span>
-                              <span className="text-fg">{thinkLabel}</span>
-                            </div>
-                            <div className="px-2 pt-1.5">
-                              <input
-                                type="range"
-                                min={0}
-                                max={thinkLevels.length - 1}
-                                step={1}
-                                value={thinkIndex}
-                                onChange={(e) => {
-                                  const v = Number(e.target.value);
-                                  applyThink(thinkLevels[v]?.value ?? 'medium');
-                                }}
-                                className="w-full accent-accent"
-                              />
-                            </div>
-                            <div className="flex justify-between px-2 pb-1.5 text-[0.7143rem] text-dim">
-                              {thinkLevels.map((l) => (
-                                <span key={l.value}>{l.label}</span>
-                              ))}
-                            </div>
-                          </>
-                        )}
+                              <span className="block truncate text-[0.7143rem] text-dim">
+                                {w.path}
+                              </span>
+                            </span>
+                            {w.path === pickerWorkspace && (
+                              <Check size="0.8571rem" className="shrink-0" />
+                            )}
+                          </button>
+                        ))}
                       </div>
                     </>
                   )}
                 </div>
-              )}
-              {switchingWs ? (
-                <button
-                  disabled
-                  aria-label={t('chat.send')}
-                  title={t('chat.send')}
-                  className="grid h-8 w-8 place-items-center rounded-lg bg-accent text-white opacity-60"
-                >
-                  <Loader2 size="1.0000rem" className="animate-spin" />
-                </button>
-              ) : busy ? (
-                <button
-                  onClick={() => void cancelRun()}
-                  aria-label={t('chat.stop')}
-                  title={t('chat.stop')}
-                  className="grid h-8 w-8 place-items-center rounded-lg border border-edge text-err hover:bg-panel2"
-                >
-                  <Square size="0.9286rem" />
-                </button>
-              ) : (
-                <button
-                  onClick={() => void submit()}
-                  disabled={!input.trim() && attachments.length === 0}
-                  aria-label={t('chat.send')}
-                  title={t('chat.send')}
-                  className="grid h-8 w-8 place-items-center rounded-lg bg-accent text-white hover:opacity-90 disabled:opacity-40"
-                >
-                  <ArrowUp size="1.1429rem" />
-                </button>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         </div>
-        {showWorkspacePicker && (
-          <div className="relative z-10 mx-auto -mt-2 flex items-center rounded-lg border border-edge bg-panel2/90 px-1.5 py-1.5 shadow-md">
-            <div className="relative">
-              <button
-                onClick={() => setWsPickerOpen((v) => !v)}
-                className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors ${
-                  pickerWorkspace !== workspace
-                    ? 'border-accent/50 bg-accent/10 text-accent hover:bg-accent/20'
-                    : 'border-transparent text-dim hover:text-fg hover:bg-panel2'
-                }`}
-                title={t('chat.newChatWorkspace')}
-                aria-label={t('chat.chooseWorkspace')}
-              >
-                <FolderOpen size="0.8571rem" className="shrink-0" />
-                <span className="max-w-56 truncate">{pickerLabel}</span>
-                <ChevronDown size="0.7857rem" />
-              </button>
-              {wsPickerOpen && (
-                <>
-                  <div
-                    className="fixed inset-0 z-30"
-                    onClick={() => setWsPickerOpen(false)}
-                  />
-                  <div className="absolute top-full left-0 z-40 mt-1.5 w-72 rounded-lg border border-edge bg-panel py-1 shadow-xl">
-                    {pickerOptions.map((w) => (
-                      <button
-                        key={w.path}
-                        onClick={() => {
-                          setDraftWorkspace(w.path);
-                          setWsPickerOpen(false);
-                        }}
-                        className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs ${
-                          w.path === pickerWorkspace
-                            ? 'bg-accent/10 text-accent'
-                            : 'text-dim hover:bg-panel2 hover:text-fg'
-                        }`}
-                      >
-                        <FolderOpen size="0.8571rem" className="shrink-0" />
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate">
-                            {w.title || pathBase(w.path)}
-                          </span>
-                          <span className="block truncate text-[0.7143rem] text-dim">
-                            {w.path}
-                          </span>
-                        </span>
-                        {w.path === pickerWorkspace && (
-                          <Check size="0.8571rem" className="shrink-0" />
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        )}
+        {filesOpen && current ? <FileViewer sessionID={current} /> : null}
       </div>
       {forkTarget && (
         <div className="fixed bottom-0 top-11 left-0 right-0 z-40 grid place-items-center bg-black/60 p-6">

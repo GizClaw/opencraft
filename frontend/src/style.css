@@ -531,3 +531,37 @@ textarea:focus-visible {
   border: 1px solid var(--color-edge);
   padding: 0.2857rem 0.7143rem;
 }
+
+/* File viewer CodeMirror host: pin the editor to the visible area so
+   its own scroller handles overflow instead of growing to the full
+   document height (which made code files impossible to scroll). */
+.oc-editor-host,
+.oc-editor-host > .cm-theme,
+.oc-editor-host > .cm-theme-dark,
+.oc-editor-host > .cm-theme-light,
+.oc-editor-host .cm-editor {
+  height: 100%;
+}
+
+.oc-editor-host .cm-scroller {
+  overflow: auto;
+}
+
+/* PDF preview: page rows are laid out by the virtualizer in PdfPane;
+   this file only pins the sheet look. display:block on the canvas
+   removes the inline baseline whitespace that used to show up as a
+   large blank band between pages. */
+.pdf-host .react-pdf__Document {
+  display: block;
+}
+
+.pdf-host .react-pdf__Page {
+  line-height: 0;
+  background: #fff;
+  border-radius: 2px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+}
+
+.pdf-host .react-pdf__Page canvas {
+  display: block;
+}

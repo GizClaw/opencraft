@@ -35,6 +35,8 @@ const apiMock = vi.hoisted(() => ({
   cancelTurn: vi.fn(),
   deleteSession: vi.fn(),
   replyPrompt: vi.fn(),
+  resolveTarget: vi.fn(),
+  openExternal: vi.fn(),
 }));
 
 vi.mock('../lib/api', () => ({ api: apiMock }));
@@ -486,6 +488,109 @@ describe('store: send and stream', () => {
     expect(useStore.getState().statusText).toBe('');
     expect(useStore.getState().toasts).toEqual([]);
     expect(useStore.getState().conversations['s-1']).toBeUndefined();
+  });
+
+  it('deleting a session prunes its file viewer state', async () => {
+    apiMock.deleteSession.mockResolvedValue(undefined);
+    useStore.setState({
+      viewers: {
+        's-1': {
+          filesOpen: true,
+          fileTabs: [
+            {
+              key: '/tmp/w/a.go',
+              path: '/tmp/w/a.go',
+              rel: 'a.go',
+              root: 'workspace',
+              name: 'a.go',
+              media_type: 'text/plain',
+            },
+          ],
+          fileActive: '/tmp/w/a.go',
+          fileTreeDir: '.',
+        },
+      },
+    });
+
+    await useStore.getState().deleteSession('s-1');
+
+    expect(useStore.getState().viewers['s-1']).toBeUndefined();
+  });
+
+  it('treats Windows drive paths as local viewer targets', async () => {
+    apiMock.resolveTarget.mockResolvedValue({
+      path: 'C:\\Users\\me\\report.md',
+      rel: '',
+      root: 'workspace',
+      name: 'report.md',
+      is_dir: false,
+      size: 10,
+      media_type: 'text/markdown',
+    });
+
+    await useStore.getState().openFileTarget('C:\\Users\\me\\report.md');
+
+    expect(apiMock.resolveTarget).toHaveBeenCalledWith(
+      'C:\\Users\\me\\report.md',
+      '',
+    );
+    expect(apiMock.openExternal).not.toHaveBeenCalled();
+    const viewer = useStore.getState().viewers['s-1'];
+    expect(viewer?.fileActive).toBe('C:\\Users\\me\\report.md');
+  });
+
+  it('routes url-like targets to the system browser instead of the viewer', async () => {
+    await useStore.getState().openFileTarget('https://example.com');
+
+    expect(apiMock.openExternal).toHaveBeenCalledWith('https://example.com');
+    expect(apiMock.resolveTarget).not.toHaveBeenCalled();
+  });
+
+  it('replaces only the active placeholder tab when a file opens', () => {
+    useStore.setState({
+      viewers: {
+        's-1': {
+          filesOpen: true,
+          fileTabs: [
+            {
+              key: 'blank-1',
+              path: '',
+              rel: '',
+              root: 'workspace',
+              name: 'New file',
+              media_type: '',
+            },
+            {
+              key: 'blank-2',
+              path: '',
+              rel: '',
+              root: 'workspace',
+              name: 'New file',
+              media_type: '',
+            },
+          ],
+          fileActive: 'blank-1',
+          fileTreeDir: '.',
+        },
+      },
+    });
+
+    useStore.getState().openResolvedTarget({
+      path: '/tmp/w/a.go',
+      rel: 'a.go',
+      root: 'workspace',
+      name: 'a.go',
+      is_dir: false,
+      size: 10,
+      media_type: 'text/plain',
+    });
+
+    const viewer = useStore.getState().viewers['s-1'];
+    expect(viewer?.fileTabs.map((t) => t.key)).toEqual([
+      'blank-2',
+      '/tmp/w/a.go',
+    ]);
+    expect(viewer?.fileActive).toBe('/tmp/w/a.go');
   });
 
   it('new chat switches to an empty conversation without disturbing active runs', async () => {
@@ -1111,7 +1216,6 @@ describe('store: send and stream', () => {
       data: { run_id: 'r-1', conversation_id: 's-1', status: 'completed' },
     });
 
-    const conv = useStore.getState().conversations['s-1'];
     expect(actorValue('s-1')?.turn).toBe('succeeded');
     expect(useStore.getState().runConvs['r-1']).toBeUndefined();
   });

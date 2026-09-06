@@ -5,6 +5,40 @@ import tailwindcss from '@tailwindcss/vite';
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // The file viewer's code/PDF panes are lazy chunks that pull in
+  // dependencies Vite discovers late (CodeMirror languages, pdf.js).
+  // Pre-optimizing them at startup keeps `wails dev` from failing with
+  // "Importing a module script failed" when a chunk is first clicked
+  // after the deps were installed mid-session.
+  optimizeDeps: {
+    include: [
+      '@uiw/react-codemirror',
+      '@codemirror/state',
+      '@codemirror/view',
+      '@codemirror/language',
+      '@codemirror/commands',
+      '@codemirror/search',
+      '@codemirror/lang-javascript',
+      '@codemirror/lang-python',
+      '@codemirror/lang-java',
+      '@codemirror/lang-cpp',
+      '@codemirror/lang-html',
+      '@codemirror/lang-css',
+      '@codemirror/lang-json',
+      '@codemirror/lang-sql',
+      '@codemirror/lang-markdown',
+      '@codemirror/lang-xml',
+      // legacy-modes has no top-level "." export; only its mode/*
+      // subpaths can be resolved (and optimized) individually.
+      '@codemirror/legacy-modes/mode/go',
+      '@codemirror/legacy-modes/mode/rust',
+      '@codemirror/legacy-modes/mode/shell',
+      '@codemirror/legacy-modes/mode/yaml',
+      '@codemirror/legacy-modes/mode/toml',
+      'react-pdf',
+      'pdfjs-dist',
+    ],
+  },
   build: {
     rollupOptions: {
       output: {

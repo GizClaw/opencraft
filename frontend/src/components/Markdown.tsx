@@ -7,14 +7,18 @@ import { Check, Copy } from 'lucide-react';
 // Markdown renders assistant content with GFM. Code blocks get a copy
 // button, syntax highlighting via rehype-highlight, and tables are
 // wrapped so they scroll instead of overflowing the chat column.
-// disableNavigation keeps anchors clickable but suppresses the default
-// navigation for surfaces where local references must not leave the app.
+// Anchors never navigate the webview: onOpen routes every click
+// through the central link resolver (system browser for URLs, the file
+// viewer for local targets). Callers that render markdown without a
+// handler keep the anchors inert.
 export const Markdown = memo(function Markdown({
   text,
-  disableNavigation = false,
+  basePath,
+  onOpen,
 }: {
   text: string;
-  disableNavigation?: boolean;
+  basePath?: string;
+  onOpen?: (href: string, basePath?: string) => void;
 }) {
   return (
     <ReactMarkdown
@@ -24,9 +28,12 @@ export const Markdown = memo(function Markdown({
         a: ({ href, children }) => (
           <a
             href={href}
-            onClick={
-              disableNavigation ? (event) => event.preventDefault() : undefined
-            }
+            onClick={(event) => {
+              event.preventDefault();
+              if (onOpen && href) {
+                onOpen(href, basePath);
+              }
+            }}
           >
             {children}
           </a>

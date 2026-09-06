@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { SessionController, type SessionControllerDeps } from './controller';
+import { SessionController } from './controller';
 import { StateRoot } from './root';
 import type { SessionSnapshot } from '../lib/types';
 

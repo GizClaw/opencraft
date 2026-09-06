@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Markdown } from './Markdown';
 
 describe('Markdown', () => {
@@ -25,10 +25,8 @@ describe('Markdown', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('keeps links clickable without navigating when disabled', () => {
-    render(
-      <Markdown text="[deploy.md](references/deploy.md)" disableNavigation />,
-    );
+  it('keeps links inert when no handler is provided', () => {
+    render(<Markdown text="[deploy.md](references/deploy.md)" />);
 
     const link = screen.getByRole('link', { name: 'deploy.md' });
     expect(link).toHaveAttribute('href', 'references/deploy.md');
@@ -36,6 +34,25 @@ describe('Markdown', () => {
     fireEvent.click(link);
 
     expect(screen.getByRole('link', { name: 'deploy.md' })).toBeInTheDocument();
+  });
+
+  it('routes link clicks through onOpen without navigating', () => {
+    const onOpen = vi.fn();
+    render(
+      <Markdown
+        text="[web](https://example.com) and [local](refs/guide.md)"
+        onOpen={onOpen}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('link', { name: 'web' }));
+    expect(onOpen).toHaveBeenCalledWith('https://example.com', undefined);
+
+    fireEvent.click(screen.getByRole('link', { name: 'local' }));
+    expect(onOpen).toHaveBeenLastCalledWith('refs/guide.md', undefined);
+
+    // The webview never navigated: the anchors are still mounted.
+    expect(screen.getByRole('link', { name: 'web' })).toBeInTheDocument();
   });
 
   it('renders code fences with GFM', () => {
