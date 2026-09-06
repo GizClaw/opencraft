@@ -11,7 +11,10 @@ var BUDGET = cfg.budget_chars || 4096;
 var RATIO = cfg.threshold_ratio || 0.85;
 var MAX_COMPACTIONS = cfg.max_compactions || 3;
 var MAX_INPUT = cfg.max_input_tokens || 0;
-var SYS_PROMPT_TOKENS = cfg.system_prompt_tokens || 2000;
+// The default graph carries no static system_prompt: base instructions
+// are world-state sections counted below. system_prompt_tokens is kept
+// for custom graphs that still configure a static prompt.
+var SYS_PROMPT_TOKENS = cfg.system_prompt_tokens || 0;
 var channel = board.channel(board.MAIN_CHANNEL) || [];
 var count = Number(board.getVar("world.sections.count") || 0);
 var compactCount = Number(board.getVar("world.compact.count") || 0);
@@ -46,7 +49,7 @@ function renderText(m) {
 }
 
 function estimateTokens(msgs) {
-  var tokens = SYS_PROMPT_TOKENS;
+  var tokens = 0;
   for (var i = 0; i < msgs.length; i++) {
     var s = renderText(msgs[i]);
     var cjk = 0;
@@ -133,10 +136,13 @@ if (board.getVar("world.compact.pending")) {
 }
 
 // Check mode: compact only when estimated usage exceeds the model cap.
+var worldPrefix = channel.slice(0, count);
 var conversation = channel.slice(count);
 var maxTokens = resolveMaxInputTokens() || MAX_INPUT;
 var shouldCompact = maxTokens > 0 &&
-  estimateTokens(conversation) > Math.floor(maxTokens * RATIO) &&
+  SYS_PROMPT_TOKENS + estimateTokens(worldPrefix) +
+    estimateTokens(conversation) >
+    Math.floor(maxTokens * RATIO) &&
   compactCount < MAX_COMPACTIONS;
 
 if (shouldCompact) {

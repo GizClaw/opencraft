@@ -2,6 +2,7 @@ package summary
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -743,5 +744,125 @@ func TestAssemblyReplayFullHistoryContext(t *testing.T) {
 	if len(bounded.Items) != 2 || !bounded.Truncated {
 		t.Fatalf("bounded replay = %d items, truncated=%v; want 2/true",
 			len(bounded.Items), bounded.Truncated)
+	}
+}
+
+func TestAssemblyContextExtendsBoundaryForToolPair(t *testing.T) {
+	ctx := context.Background()
+	store := &fakeTurnStore{msgs: map[string][]message.Message{
+		"c1": {
+			message.NewTextMessage(message.RoleUser, "hello"),
+			{
+				Role: message.RoleAssistant,
+				Content: message.Content{Parts: []message.Part{
+					message.ToolCallPart{Call: message.ToolCall{
+						ID: "c1", Name: "fetch",
+						Arguments: json.RawMessage(`{}`),
+					}},
+				}},
+			},
+			{
+				Role: message.RoleTool,
+				Content: message.Content{Parts: []message.Part{
+					message.ToolResultPart{Result: message.ToolResult{
+						CallID: "c1", Content: "ok",
+					}},
+				}},
+			},
+			message.NewTextMessage(message.RoleUser, "next"),
+			message.NewTextMessage(message.RoleAssistant, "done"),
+		},
+	}}
+	// MaxRawMessages 2 + PreserveRecent 1 = window 3: without pair
+	// awareness the boundary would land at index 2, cutting the
+	// assistant call at index 1 from its tool result.
+	a := NewAssembly(store, WithAssemblyPolicy(Policy{
+		MaxRawMessages: 2, PreserveRecent: 1,
+	}))
+	res, err := a.Context(ctx, memory.ContextRequest{
+		Scope:          memory.Scope{RuntimeID: "rt"},
+		ConversationID: "c1",
+		Budget:         memory.Budget{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Items) != 4 {
+		t.Fatalf("items = %d, want 4 (call + result + 2 raw tail)", len(res.Items))
+	}
+	wantRoles := []message.Role{
+		message.RoleAssistant, message.RoleTool,
+		message.RoleUser, message.RoleAssistant,
+	}
+	for i, want := range wantRoles {
+		if res.Items[i].Kind != memory.ContextRawMessage ||
+			res.Items[i].MessageRole != want {
+			t.Fatalf("item %d = %+v, want raw %s",
+				i, res.Items[i], want)
+		}
+	}
+	if len(res.Items[0].Content.Parts) != 1 {
+		t.Fatalf("call item parts = %d, want one tool_call",
+			len(res.Items[0].Content.Parts))
+	}
+}
+
+func TestAssemblyFoldKeepsToolPairRaw(t *testing.T) {
+	ctx := context.Background()
+	store := &fakeTurnStore{msgs: map[string][]message.Message{
+		"c1": {
+			message.NewTextMessage(message.RoleUser, "hello"),
+			{
+				Role: message.RoleAssistant,
+				Content: message.Content{Parts: []message.Part{
+					message.ToolCallPart{Call: message.ToolCall{
+						ID: "c1", Name: "fetch",
+						Arguments: json.RawMessage(`{}`),
+					}},
+				}},
+			},
+			{
+				Role: message.RoleTool,
+				Content: message.Content{Parts: []message.Part{
+					message.ToolResultPart{Result: message.ToolResult{
+						CallID: "c1", Content: "ok",
+					}},
+				}},
+			},
+			message.NewTextMessage(message.RoleUser, "next"),
+			message.NewTextMessage(message.RoleAssistant, "done"),
+		},
+	}}
+	a := NewAssembly(store, WithAssemblyPolicy(Policy{
+		MaxRawMessages: 2, PreserveRecent: 1,
+	}))
+	if err := a.FoldOnly(ctx, "c1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.nodes) != 1 {
+		t.Fatalf("nodes = %d, want one rolling summary", len(store.nodes))
+	}
+	res, err := a.Context(ctx, memory.ContextRequest{
+		Scope:          memory.Scope{RuntimeID: "rt"},
+		ConversationID: "c1",
+		Budget:         memory.Budget{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raws []memory.ContextItem
+	for _, item := range res.Items {
+		if item.Kind == memory.ContextRawMessage {
+			raws = append(raws, item)
+		}
+	}
+	if len(raws) != 4 {
+		t.Fatalf("raw items = %d, want 4 (call+result+tail)",
+			len(raws))
+	}
+	if raws[0].MessageRole != message.RoleAssistant ||
+		raws[1].MessageRole != message.RoleTool {
+		t.Fatalf("roles = %s/%s, want assistant/tool pair preserved",
+			raws[0].MessageRole, raws[1].MessageRole)
 	}
 }

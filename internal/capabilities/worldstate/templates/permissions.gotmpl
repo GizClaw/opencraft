@@ -1,15 +1,20 @@
 Permission profile: {{.Profile}}
 {{if .YOLO}}Sandbox mode: yolo — commands run unconfined with the full host
 environment and no approval prompts; file tools may reach any path.
-{{end}}
-{{if .ReadOnly}}Sandbox mode: read-only — the workspace root is not writable
-(OS-enforced; writes outside the explicit writable paths fail). Known
-read-only commands (ls, cat, grep, git status/diff/log, ...) run without
-approval; every other command asks the user.
+This mode is user-selected and stays active for the session.
+{{else}}Sandbox mode: {{if .ReadOnly}}read-only — the workspace root is not
+writable (OS-enforced); writes outside the explicit writable paths fail.
+Known read-only commands (ls, cat, grep, git status/diff/log, ...) run
+without approval.
+{{else}}workspace — commands run in the workspace-rooted sandbox.
 {{end}}
 {{if .ApprovedPrefixes}}Approved command prefixes: {{.ApprovedPrefixes}}
 {{end}}Commands outside the approved allowlist ask the user for approval
-(allow once / always allow / deny; "always allow" rules are persisted to
-the project .opencraft/approvals.yaml).
+(allow once / always allow / deny). "Always allow" rules persist to the
+workspace approvals.yaml in the user data dir
+(~/.opencraft/workspaces/<wid>/approvals.yaml), never inside the project.
+When a command is denied, do not retry it: adapt with an allowed command
+or ask the user.
 File reads and writes are confined to the workspace root; paths outside
 it are rejected without asking.
+{{end}}

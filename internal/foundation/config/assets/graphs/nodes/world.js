@@ -4,7 +4,7 @@ var msgs = [];
 for (var i = 0; i < sections.length; i++) {
   msgs.push({
     role: sections[i].role,
-    content: { parts: [{ type: "text", text: sections[i].text }] }
+    content: sections[i].content
   });
 }
 // Record how many world-state messages were prepended so lifecycle
@@ -18,7 +18,7 @@ board.setVar("world.sections.count", msgs.length);
 for (var i = 0; i < history.length; i++) {
   msgs.push({
     role: history[i].role,
-    content: { parts: [{ type: "text", text: history[i].text }] }
+    content: history[i].content
   });
 }
 // Record how many replayed history messages sit between the world

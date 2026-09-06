@@ -6,14 +6,13 @@ import (
 	"text/template"
 )
 
-//go:embed templates/*.gotmpl
+//go:embed templates/*.gotmpl templates/base/*.md templates/modes/*.md templates/personality/*.md
 var templateFS embed.FS
 
 var (
 	permissionsTmpl = template.Must(template.ParseFS(templateFS, "templates/permissions.gotmpl"))
 	environmentTmpl = template.Must(template.ParseFS(templateFS, "templates/environment.gotmpl"))
 	planTmpl        = template.Must(template.ParseFS(templateFS, "templates/plan.gotmpl"))
-	gitTmpl         = template.Must(template.ParseFS(templateFS, "templates/git.gotmpl"))
 	skillActivTmpl  = template.Must(template.ParseFS(templateFS, "templates/skill_activation.gotmpl"))
 )
 
@@ -41,16 +40,6 @@ type planItemData struct {
 type planData struct {
 	Items       []planItemData
 	Explanation string
-}
-
-// gitData is the view for git.gotmpl. Each text field arrives
-// pre-bounded by the collector.
-type gitData struct {
-	Branch   string
-	Status   string
-	DiffStat string
-	Diff     string
-	DiffHint string
 }
 
 // skillActivationData is the view for skill_activation.gotmpl.

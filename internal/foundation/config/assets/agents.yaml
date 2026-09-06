@@ -45,6 +45,10 @@ agents:
           work_dir: ${env:OPEN_CRAFT_WORKDIR}
           user_dir: ${env:OPEN_CRAFT_DATA_DIR}
           collaboration_mode: default
+          # Optional personality overlay for the worldstate instruction
+          # layer: "friendly" or "pragmatic". Empty keeps the neutral
+          # default; unknown values degrade to neutral with a warning.
+          personality: ""
           permission_profile: workspace
     commit:
       - type: opencraft.commit

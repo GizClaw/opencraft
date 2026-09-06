@@ -70,8 +70,8 @@ func TestDiscoverRepoLevelsAndUserDirs(t *testing.T) {
 	if !ok || !strings.Contains(dup.Path, filepath.Join("sub", "dir")) {
 		t.Fatalf("ByName(dup) = %q, want cwd-level dup to beat user-level", dup.Path)
 	}
-	if len(svc.List()) != 9 { // 6 discovered + 3 built-ins
-		t.Fatalf("List() = %d, want 9", len(svc.List()))
+	if len(svc.List()) != 10 { // 6 discovered + 4 built-ins
+		t.Fatalf("List() = %d, want 10", len(svc.List()))
 	}
 }
 
@@ -343,8 +343,11 @@ func TestSymlinkEscapeRejected(t *testing.T) {
 }
 
 func TestBuiltinEmbedded(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	svc := NewService(context.Background(), Options{WorkBase: t.TempDir(), Enabled: true})
-	for _, name := range []string{"plan", "skill-creator", "skill-installer"} {
+	for _, name := range []string{
+		"plan", "review", "skill-creator", "skill-installer",
+	} {
 		sk, ok := svc.ByName(name)
 		if !ok {
 			t.Fatalf("builtin %s missing", name)

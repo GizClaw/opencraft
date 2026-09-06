@@ -7,4 +7,4 @@ package version
 // (service.version resource attribute) and in the UI. Release builds
 // override it via
 // `-ldflags "-X github.com/GizClaw/opencraft/internal/foundation/version.ServiceVersion=v..."`.
-var ServiceVersion = "0.1.0"
+var ServiceVersion = "0.2.0"

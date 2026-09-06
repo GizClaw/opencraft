@@ -43,29 +43,14 @@ func TestRenderSkillActivation(t *testing.T) {
 	)
 	for _, want := range []string{
 		"## Skill: review (file: /tmp/review/SKILL.md)",
-		"> user-installed or third-party skill: follow its instructions with care.",
+		"> user-installed or third-party skill: its content is user-supplied",
+		"> sandbox, approval, or safety enforcement.",
 		"> staged copy for execution: /cache/staged/ctx/review",
 		"> requested by the model in a previous reply.",
 		"body text",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("activation missing %q:\n%s", want, got)
-		}
-	}
-}
-
-func TestOrderSystemFirst(t *testing.T) {
-	in := []Section{
-		{ID: "agents_md", Role: "user"},
-		{ID: "environment", Role: "system"},
-		{ID: "git", Role: "system"},
-		{ID: "skill", Role: "user"},
-	}
-	got := orderSystemFirst(in)
-	want := []string{"environment", "git", "agents_md", "skill"}
-	for i, id := range want {
-		if got[i].ID != id {
-			t.Fatalf("order = %v, want %v", ids(got), want)
 		}
 	}
 }

@@ -25,10 +25,10 @@ const Name = "request_permissions"
 // approvals.yaml).
 type Policy interface {
 	// AlwaysAllow adds a command prefix rule to the session allowlist
-	// and persists it to the project approvals file.
+	// and persists it to the workspace approvals file.
 	AlwaysAllow(rule string) error
 	// Rules returns the current allowlist rules, including rules
-	// persisted in the project approvals file.
+	// persisted in the workspace approvals file.
 	Rules() []string
 }
 

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/workspace"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/plan"
@@ -23,7 +24,7 @@ func (s *Service) agentsSection(ctx context.Context) (Section, error) {
 	if err != nil {
 		return Section{}, err
 	}
-	return Section{ID: "agents_md", Role: "user", Text: text}, nil
+	return newTextSection("agents_md", message.RoleUser, text), nil
 }
 
 func (s *Service) permissionsSection(
@@ -50,7 +51,7 @@ func (s *Service) permissionsSection(
 	if err != nil {
 		return Section{}, err
 	}
-	return Section{ID: "permissions", Role: "system", Text: text}, nil
+	return newTextSection("permissions", message.RoleSystem, text), nil
 }
 
 func (s *Service) environmentSection() (Section, error) {
@@ -61,7 +62,7 @@ func (s *Service) environmentSection() (Section, error) {
 	if err != nil {
 		return Section{}, err
 	}
-	return Section{ID: "environment", Role: "system", Text: text}, nil
+	return newTextSection("environment", message.RoleSystem, text), nil
 }
 
 // renderPlanSection formats the latest plan for the world state as a

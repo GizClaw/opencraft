@@ -56,6 +56,7 @@ type prepareSettings struct {
 	WorkDir           string `json:"work_dir"`
 	UserDir           string `json:"user_dir"`
 	CollaborationMode string `json:"collaboration_mode,omitempty"`
+	Personality       string `json:"personality,omitempty"`
 	PermissionProfile string `json:"permission_profile,omitempty"`
 	MemoryMaxItems    int    `json:"memory_max_items,omitempty"`
 	MemoryMaxChars    int    `json:"memory_max_chars,omitempty"`
@@ -79,6 +80,7 @@ func (prepareFactory) New(ctx context.Context, in resource.Input) (any, error) {
 		WorkBase:          settings.WorkDir,
 		UserDir:           settings.UserDir,
 		CollaborationMode: settings.CollaborationMode,
+		Personality:       settings.Personality,
 		PermissionProfile: settings.PermissionProfile,
 		MemoryMaxItems:    settings.MemoryMaxItems,
 		MemoryMaxChars:    settings.MemoryMaxChars,

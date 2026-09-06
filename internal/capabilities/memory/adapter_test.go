@@ -2,6 +2,7 @@ package memory
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
@@ -82,6 +83,52 @@ func TestSQLiteTurnStoreAppendLoadRange(t *testing.T) {
 	}
 	if empty != nil {
 		t.Errorf("empty range = %+v, want nil", empty)
+	}
+}
+
+func TestSQLiteTurnStoreRoundTripsToolParts(t *testing.T) {
+	adapter, _ := newSQLiteTurnStore(t)
+	ctx := context.Background()
+	const conv = "s-tool"
+	raw := []message.Message{
+		{
+			Role: message.RoleAssistant,
+			Content: message.Content{Parts: []message.Part{
+				message.ToolCallPart{Call: message.ToolCall{
+					ID: "c1", Name: "fetch",
+					Arguments: json.RawMessage(`{}`),
+				}},
+			}},
+		},
+		{
+			Role: message.RoleTool,
+			Content: message.Content{Parts: []message.Part{
+				message.ToolResultPart{Result: message.ToolResult{
+					CallID: "c1", Content: "ok",
+				}},
+			}},
+		},
+	}
+	if err := adapter.AppendMessages(ctx, conv, "turn-1",
+		renderConversation(raw)); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := adapter.LoadMessages(ctx, conv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded) != 2 {
+		t.Fatalf("loaded = %d, want 2", len(loaded))
+	}
+	calls := loaded[0].ToolCalls()
+	if loaded[0].Role != message.RoleAssistant || len(calls) != 1 ||
+		calls[0].ID != "c1" {
+		t.Fatalf("call message = %+v, want assistant c1 preserved", loaded[0])
+	}
+	results := loaded[1].ToolResults()
+	if loaded[1].Role != message.RoleTool || len(results) != 1 ||
+		results[0].CallID != "c1" {
+		t.Fatalf("result message = %+v, want tool c1 preserved", loaded[1])
 	}
 }
 

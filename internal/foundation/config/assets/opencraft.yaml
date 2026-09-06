@@ -57,7 +57,7 @@ resources:
       # metadata from the router (azure 未声明窗口元数据，开启前请确认);
       # keep false for bounded per-turn cost.
       replay_full_history: false
-  # Sandbox exec policy: static allowed_commands plus the project
+  # Sandbox exec policy: static allowed_commands plus the workspace
   # approvals file merge into one allowlist. The sandbox runner, the
   # worldstate permissions section, and request_permissions all depend
   # on this resource.
@@ -71,13 +71,12 @@ resources:
       # before running. Rules are token prefixes; "*" matches any
       # remaining arguments.
       allowed_commands: []
-      # Path of the project approvals file (env-expanded); commands
+      # Path of the workspace approvals file (env-expanded); commands
       # approved via "Always allow" / request_permissions land here.
       approvals_path: ${env:OPEN_CRAFT_APPROVALS}
-  # Project-scoped session store: per-session JSON (history, usage,
-  # permissions, plans) under .opencraft/sessions/<id>/, plus the
-  # SQLite session.db it opens at <root>/session.db (conversation
-  # state tables + agent checkpoints).
+  # Workspace session store: SQLite at the injected data root
+  # (OPEN_CRAFT_SESSIONS_DIR); conversation/checkpoint tables live in
+  # the workspace session.db, media/rollout stay on the filesystem.
   sessions:
     kind: session.Store
     impl: opencraft

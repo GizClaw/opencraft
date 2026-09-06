@@ -64,7 +64,11 @@ func (a *sqliteTurnStore) appendMessagesTx(
 		if text == "" {
 			continue
 		}
-		payload, err := json.Marshal(map[string]any{"text": text})
+		// Persist the full content (canonical parts), not just the text
+		// projection: tool_call / tool_result parts carry the call ids
+		// structured history replay needs. Text-only rows from older
+		// versions remain readable via the legacy fallback in loadRange.
+		payload, err := json.Marshal(msg.Content)
 		if err != nil {
 			return fmt.Errorf("memory: marshal message payload: %w", err)
 		}
@@ -145,18 +149,23 @@ func (a *sqliteTurnStore) loadRange(
 		if err := rows.Scan(&role, &payload); err != nil {
 			return nil, fmt.Errorf("memory: scan message: %w", err)
 		}
-		var obj struct {
-			Text string `json:"text"`
-		}
-		if err := json.Unmarshal([]byte(payload), &obj); err != nil {
+		var content message.Content
+		if err := json.Unmarshal([]byte(payload), &content); err != nil {
 			telemetry.WarnErr(ctx, "memory: decode message payload failed", err,
 				otellog.String("conversation.id", conversationID))
 			continue
 		}
-		if obj.Text == "" {
+		if len(content.Parts) == 0 {
+			// Migration 011 rewrites all legacy text-only rows; any
+			// remaining part-less payload is not readable here.
+			telemetry.Warn(ctx, "memory: skipping part-less message payload",
+				otellog.String("conversation.id", conversationID))
 			continue
 		}
-		out = append(out, message.NewTextMessage(message.Role(role), obj.Text))
+		out = append(out, message.Message{
+			Role:    message.Role(role),
+			Content: content,
+		})
 	}
 	return out, rows.Err()
 }
