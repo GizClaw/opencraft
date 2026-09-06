@@ -63,25 +63,32 @@ func persistUserAttachments(
 	return out, nil
 }
 
-// maxInlineImageBytes mirrors the media prepare hook's inline limit.
-// Normalized JPEGs below this are persisted; anything else (an
-// undecodable format, an animated GIF, or a compression result that
-// still does not fit the prompt budget) falls back to the original
-// copy path with its own 10 MiB cap.
-const maxInlineImageBytes = 10 << 20
-
 // saveUserImageAttachment persists one local image as session media.
 // Supported still images are re-encoded as JPEG q90 (EXIF orientation
 // applied, transparency flattened) so large PNG/TIFF/BMP attachments
-// no longer hit the original file-size gate. GIF/WebP/AVIF and other
-// formats the decoder cannot normalize keep the original bytes.
+// no longer hit the original file-size gate. Upright JPEGs under the
+// inline cap are copied byte-for-byte instead of being decoded again
+// (each round trip would cost quality for no benefit). GIF/WebP/AVIF
+// and other formats the decoder cannot normalize keep the original
+// bytes.
 func saveUserImageAttachment(
 	store *ocsessions.Store,
 	id, src, mediaType string,
 ) (string, string, error) {
+	if mediaType == "image/jpeg" {
+		if info, err := os.Stat(src); err == nil &&
+			info.Size() <= imageutil.MaxInlineImageBytes &&
+			imageutil.JPEGUpright(src) {
+			if dst, saveErr := store.SaveAttachment(
+				id, "media", src,
+			); saveErr == nil {
+				return dst, "image/jpeg", nil
+			}
+		}
+	}
 	if mediaType != "image/gif" {
 		data, err := imageutil.NormalizeFileToJPEG(src)
-		if err == nil && len(data) <= maxInlineImageBytes {
+		if err == nil && len(data) <= imageutil.MaxInlineImageBytes {
 			if dst, saveErr := store.SaveAttachmentBytes(
 				id, "media", "image.jpg", data,
 			); saveErr == nil {

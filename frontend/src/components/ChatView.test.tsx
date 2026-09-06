@@ -202,6 +202,48 @@ describe('ChatView transcript windowing', () => {
     expect(screen.queryByText(/staged question/)).not.toBeInTheDocument();
   });
 
+  it('Enter with an empty composer delivers a draft kept after a failed turn', async () => {
+    setConversation([], []);
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    const conv = useStore.getState().conversations['s-1'];
+    useStore.setState({
+      conversations: {
+        's-1': {
+          ...conv,
+          queued: { text: 'staged after fail', attachments: [], interrupt: false },
+        },
+      },
+    });
+    actor?.send({
+      type: 'TURN_ENDED',
+      runID: 'r-old',
+      status: 'failed',
+      error: 'engine boom',
+    });
+    apiMock.startTurn.mockResolvedValue({
+      run_id: 'r-queued',
+      context_id: 's-1',
+    });
+
+    render(<ChatView />);
+    expect(screen.getByText(/press Enter to send/i)).toBeInTheDocument();
+
+    await userEvent.setup().click(screen.getByRole('textbox'));
+    await userEvent.keyboard('{Enter}');
+
+    expect(useStore.getState().conversations['s-1']?.queued).toBeUndefined();
+    expect(apiMock.startTurn).toHaveBeenCalledWith(
+      's-1',
+      expect.objectContaining({
+        content: {
+          parts: [expect.objectContaining({ type: 'text', text: 'staged after fail' })],
+        },
+      }),
+    );
+  });
+
   it('shows worked duration at the top of an artifact turn', () => {
     setConversation(
       [

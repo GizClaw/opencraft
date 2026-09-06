@@ -426,6 +426,7 @@
     "files_other": "{{count}} files",
     "removeAttachment": "Remove attachment",
     "queued": "Queued — “{{preview}}” sends when the current reply ends",
+    "queuedReady": "Queued — “{{preview}}” (reply ended; press Enter to send)",
     "queuedFiles": "attachment",
     "queuedCancel": "Cancel queued message",
     "mentionSearchHint": "Type to search workspace files…",

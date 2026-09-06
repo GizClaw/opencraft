@@ -59,7 +59,10 @@ export interface ProviderModelCatalog {
 
 // AttachmentDTO mirrors the desktop binding's preview metadata for one
 // local attachment. DataURL is present only for images (the preview
-// channel WKWebView can render without file:// access).
+// channel WKWebView can render without file:// access). media_type
+// describes the source file, while data_url may carry a re-encoded
+// preview (e.g. large PNG normalized to JPEG), so callers must not
+// assume the two media types agree.
 export interface AttachmentDTO {
   name: string;
   path: string;
@@ -70,7 +73,9 @@ export interface AttachmentDTO {
 
 // AttachmentView is one attachment attached to a user message or
 // staged in the composer. Images preview inline; everything else
-// renders as a file chip.
+// renders as a file chip. media_type identifies the file that is sent
+// to the backend; data_url is only for inline preview and may use a
+// different (normalized) type.
 export interface AttachmentView {
   id: string;
   kind: 'image' | 'file' | 'audio' | 'video';

@@ -248,7 +248,10 @@ func (b *File) Diff(path string) (string, error) {
 	return string(out), nil
 }
 
-// Attachment preview metadata.
+// Attachment preview metadata. MediaType describes the source file;
+// DataURL may carry a different media type when the preview was
+// normalized (see imagePreviewDataURL), so consumers must not assume
+// the two agree.
 type Attachment struct {
 	Name      string `json:"name"`
 	Path      string `json:"path"`
@@ -256,13 +259,6 @@ type Attachment struct {
 	MediaType string `json:"media_type"`
 	DataURL   string `json:"data_url,omitempty"`
 }
-
-// maxImagePreviewBytes caps the base64 data URL embedded for image
-// previews. Supported still images are re-encoded as JPEG q90 before
-// embedding, so the cap applies to the normalized bytes rather than
-// the original file. Non-image attachments are metadata only (no
-// bytes are read), so they carry no size limit here.
-const maxImagePreviewBytes = 10 << 20
 
 // ReadAttachment returns preview metadata; images include a data URL.
 func (b *File) ReadAttachment(path string) (Attachment, error) {
@@ -298,28 +294,31 @@ func (b *File) ReadAttachment(path string) (Attachment, error) {
 }
 
 // imagePreviewDataURL returns the base64 data URL shown for one local
-// image. Decodable still images are normalized to JPEG q90 first so a
-// large PNG/TIFF/BMP can still preview. Formats that cannot be
-// normalized (WebP/AVIF/GIF, corrupt files) fall back to the original
-// bytes when they fit the preview cap.
+// image. Sources that already fit the preview cap are embedded
+// byte-for-byte, so small images never go through a lossy round trip
+// and browsers keep applying EXIF orientation themselves. Larger
+// decodable still images are normalized to JPEG q90 (EXIF applied,
+// transparency flattened) so a big PNG/TIFF/BMP can still preview.
+// Formats that cannot be normalized (WebP/AVIF, animated GIF, corrupt
+// files) are rejected once they exceed the cap.
 func imagePreviewDataURL(path, mediaType string, size int64) (string, error) {
+	if size <= imageutil.MaxInlineImageBytes {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+		return "data:" + mediaType + ";base64," +
+			base64.StdEncoding.EncodeToString(data), nil
+	}
 	if mediaType != "image/gif" {
 		if data, err := imageutil.NormalizeFileToJPEG(path); err == nil &&
-			int64(len(data)) <= maxImagePreviewBytes {
+			int64(len(data)) <= imageutil.MaxInlineImageBytes {
 			return "data:image/jpeg;base64," +
 				base64.StdEncoding.EncodeToString(data), nil
 		}
 	}
-	if size > maxImagePreviewBytes {
-		return "", fmt.Errorf(
-			"image too large to preview (%d bytes)", size)
-	}
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	return "data:" + mediaType + ";base64," +
-		base64.StdEncoding.EncodeToString(data), nil
+	return "", fmt.Errorf(
+		"image too large to preview (%d bytes)", size)
 }
 
 // PatchFile is one changed file in a rendered codex patch.

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/disintegration/imaging"
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 )
@@ -98,5 +99,56 @@ func TestPersistUserAttachmentsNormalizesSupportedImageToJPEG(t *testing.T) {
 	}
 	if len(data) < 2 || data[0] != 0xff || data[1] != 0xd8 {
 		t.Fatalf("stored bytes are not a JPEG: %x", data[:min(len(data), 4)])
+	}
+}
+
+func TestPersistUserAttachmentsKeepsUprightJPEGBytes(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "photo.jpg")
+	img := image.NewNRGBA(image.Rect(0, 0, 8, 8))
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 8; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 255, A: 255})
+		}
+	}
+	var encoded bytes.Buffer
+	if err := imaging.Encode(
+		&encoded, img, imaging.JPEG, imaging.JPEGQuality(90),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(src, encoded.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := ocsessions.New(t.TempDir(), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.CloseDB() }()
+
+	source, err := newLocalURLSource(src, "image/jpeg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := ocsessions.NewID()
+	parts, err := persistUserAttachments(
+		store, id, []message.Part{message.ImagePart{Source: source}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imgPart := parts[0].(message.ImagePart)
+	stored := imgPart.Source.URL()
+	if !strings.HasSuffix(stored, ".jpg") {
+		t.Fatalf("stored path = %q, want .jpg", stored)
+	}
+	if imgPart.Source.MediaType() != "image/jpeg" {
+		t.Fatalf("media type = %q, want image/jpeg", imgPart.Source.MediaType())
+	}
+	data, err := os.ReadFile(stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(data, encoded.Bytes()) {
+		t.Fatal("upright JPEG must be copied byte-for-byte, not re-encoded")
 	}
 }

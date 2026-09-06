@@ -27,6 +27,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/imageutil"
 )
 
 // ResourceKind is the deploy resource kind implemented by this package.
@@ -477,7 +478,7 @@ func (s *Store) SaveAttachment(id, kind, srcPath string) (string, error) {
 	// referenced/copied on disk (forks, future generic attachments)
 	// and stays unlimited: a huge PDF or archive must never block a
 	// session just because it cannot be embedded in a prompt.
-	if kind == "media" && info.Size() > maxMediaAttachmentBytes {
+	if kind == "media" && info.Size() > imageutil.MaxInlineImageBytes {
 		return "", errdefs.Validationf(
 			"sessions: attachment too large (%d bytes)", info.Size())
 	}
@@ -540,7 +541,7 @@ func (s *Store) SaveAttachmentBytes(
 		return "", errdefs.Validationf(
 			"sessions: invalid attachment name %q", name)
 	}
-	if kind == "media" && int64(len(data)) > maxMediaAttachmentBytes {
+	if kind == "media" && int64(len(data)) > imageutil.MaxInlineImageBytes {
 		return "", errdefs.Validationf(
 			"sessions: attachment too large (%d bytes)", len(data))
 	}
@@ -1038,10 +1039,6 @@ func firstLine(s string) string {
 	}
 	return s
 }
-
-// maxMediaAttachmentBytes mirrors the media prepare hook's inline
-// limit: images above this are not base64-embedded for the model.
-const maxMediaAttachmentBytes = 10 << 20
 
 // ---------- deploy resource ----------
 

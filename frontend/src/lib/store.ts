@@ -916,6 +916,58 @@ export const useStore = create<StoreState>((set, get) => {
     void startTurnFor(convID, queued.text, queued.attachments);
   };
 
+  // supersededEndState reports whether a superseded run already hit
+  // its terminal event while the replacement was still starting. The
+  // runConvs entry disappears exactly when turn_end is processed, so
+  // its absence (with the status recorded on the artifact) means the
+  // old run is no longer alive and must not be "restored".
+  const supersededEndState = (
+    convID: string,
+    runID: string,
+  ):
+    | { status: TurnStatus; error?: string }
+    | undefined => {
+    if (get().runConvs[runID] === convID) return undefined;
+    const artifact = get()
+      .conversations[convID]?.turnArtifacts.find((t) => t.runID === runID);
+    const status = artifact?.status
+      ? normalizeTurnStatus(artifact.status)
+      : undefined;
+    if (!artifact || !status) return { status: 'interrupted' };
+    return { status, error: artifact.error };
+  };
+
+  // markFailedSend marks the live turn entry of a send that never
+  // produced a run. Used when a failed barge-in leaves the previous
+  // run running: the conversation has to resume that run, so the only
+  // place to surface the failed send is its own turn artifact.
+  const markFailedSend = (convID: string, error: string) => {
+    set((state) => {
+      const conv = state.conversations[convID];
+      if (!conv || conv.turnArtifacts.length === 0) return state;
+      const list = conv.turnArtifacts;
+      const idx = list.length - 1;
+      return {
+        conversations: {
+          ...state.conversations,
+          [convID]: {
+            ...conv,
+            turnArtifacts: [
+              ...list.slice(0, idx),
+              {
+                ...list[idx],
+                status: 'failed',
+                error,
+                finishedAt: new Date().toISOString(),
+              },
+              ...list.slice(idx + 1),
+            ],
+          },
+        },
+      };
+    });
+  };
+
   const beginTurn = async (
     convID: string,
     text: string,
@@ -990,14 +1042,47 @@ export const useStore = create<StoreState>((set, get) => {
       }
     } catch (err) {
       const conv = get().conversations[convID];
-      if (conv) {
+      if (!conv) return;
+      const error = String(err);
+      const snapshot = startingActor?.getSnapshot();
+      const turnValue = (snapshot?.value as { turn?: string } | undefined)
+        ?.turn;
+      const context = (snapshot?.context ?? {}) as {
+        supersededRunID?: string;
+      };
+      if (turnValue === 'starting' && context.supersededRunID) {
+        // The barge-in start failed. If the superseded run is still
+        // live, resume watching it (its late streams and terminal
+        // event must keep driving the conversation); if its terminal
+        // event already passed while this send was starting, absorb
+        // that status instead of reporting a fresh failure.
+        const superseded = context.supersededRunID;
+        const ended = supersededEndState(convID, superseded);
         startingActor?.send({
-          type: 'TURN_ENDED',
-          runID: '',
-          status: 'failed',
-          error: String(err),
+          type: 'START_FAILED',
+          error,
+          ...(ended
+            ? {
+                supersededEndedStatus: ended.status,
+                supersededEndedError: ended.error,
+              }
+            : {}),
         });
+        markFailedSend(convID, error);
+        // Tab drafts stay staged for the resumed run; interrupt
+        // intents aimed at the start that just failed are dropped.
+        const queued = conv.queued;
+        if (queued?.interrupt) {
+          updateConv(convID, { queued: undefined });
+        }
+        return;
       }
+      startingActor?.send({
+        type: 'TURN_ENDED',
+        runID: '',
+        status: 'failed',
+        error,
+      });
       // A staged draft no longer has a run to wait for. Interrupt
       // intents were aimed at the failed start, so drop them; Tab
       // queues still fire after the failed send settles.
@@ -1174,12 +1259,26 @@ export const useStore = create<StoreState>((set, get) => {
             };
           });
           void get().loadSessions();
-          // A Tab-staged draft waits for this terminal event. Drain it
-          // here, before the actor applies TURN_ENDED: beginTurn marks
-          // the just-ended run as superseded so the pending terminal
-          // event stays inert and the next turn starts cleanly.
+          // A Tab-staged draft fires only when the run it was waiting
+          // for completes. Drain before the actor applies TURN_ENDED:
+          // beginTurn marks the just-ended run as superseded so the
+          // pending terminal event stays inert and the next turn
+          // starts cleanly. Failed/cancelled/aborted endings keep the
+          // draft staged (the composer shows how to send it), and a
+          // terminal event from a superseded run must never drain a
+          // draft that is waiting for the replacement.
           const staged = get().conversations[conversationID]?.queued;
-          if (staged && !staged.interrupt) {
+          if (staged && !staged.interrupt && data.status === 'completed') {
+            const actor = stateRoot.registry.get(conversationID);
+            const snapshot = actor?.getSnapshot();
+            const turn = (snapshot?.value as { turn?: string } | undefined)
+              ?.turn;
+            const context = (snapshot?.context ?? {}) as {
+              currentRunID?: string;
+            };
+            const isWatchedRun =
+              turn === 'running' && context.currentRunID === data.run_id;
+            if (!isWatchedRun) break;
             drainQueued(conversationID);
           }
           break;
@@ -1649,6 +1748,9 @@ export const useStore = create<StoreState>((set, get) => {
       ) {
         return;
       }
+      // Any fresh manual send supersedes a draft that is still staged
+      // (for example after the turn it was queued behind failed).
+      updateConv(convID, { queued: undefined });
       await startTurnFor(convID, text, attachments);
     },
 

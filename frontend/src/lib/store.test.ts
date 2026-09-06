@@ -283,6 +283,138 @@ describe('store: send and stream', () => {
     expect(actorValue('s-1')?.turn).not.toBe('starting');
   });
 
+  it('keeps a Tab draft staged when the turn it waited for fails', async () => {
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    useStore.setState({ runConvs: { 'r-old': 's-1' } });
+
+    expect(useStore.getState().queueInput('staged')).toBe(true);
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-old',
+        conversation_id: 's-1',
+        status: 'failed',
+        error: 'engine boom',
+      },
+    });
+
+    expect(actorValue('s-1')?.turn).toBe('failed');
+    expect(useStore.getState().conversations['s-1']?.queued).toMatchObject({
+      text: 'staged',
+      interrupt: false,
+    });
+    expect(apiMock.startTurn).not.toHaveBeenCalled();
+
+    // A fresh manual send supersedes the stale draft.
+    apiMock.startTurn.mockResolvedValue({
+      run_id: 'r-new',
+      context_id: 's-1',
+    });
+    await useStore.getState().send('next');
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.queued).toBeUndefined();
+    expect(conv.messages.at(-1)).toMatchObject({
+      role: 'user',
+      text: 'next',
+    });
+  });
+
+  it('restores the superseded run when a barge-in start fails', async () => {
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    useStore.setState({ runConvs: { 'r-old': 's-1' } });
+    apiMock.startTurn.mockRejectedValueOnce(new Error('start boom'));
+
+    const ok = await useStore.getState().sendInterrupt('second');
+
+    expect(ok).toBe(true);
+    expect(actorValue('s-1')?.turn).toBe('running');
+    expect(actor?.getSnapshot().context).toMatchObject({
+      currentRunID: 'r-old',
+      supersededRunID: undefined,
+    });
+    const conv = useStore.getState().conversations['s-1'];
+    expect(conv.messages.at(-1)).toMatchObject({
+      role: 'user',
+      text: 'second',
+    });
+    expect(conv.turnArtifacts.at(-1)).toMatchObject({
+      status: 'failed',
+      error: 'Error: start boom',
+    });
+
+    // The restored run's own terminal event still ends the turn.
+    actor?.send({ type: 'TURN_ENDED', runID: 'r-old', status: 'completed' });
+    expect(actorValue('s-1')?.turn).toBe('succeeded');
+  });
+
+  it('absorbs the superseded terminal when a barge-in start fails after it ended', async () => {
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    const base = useStore.getState().conversations['s-1'];
+    useStore.setState({
+      runConvs: { 'r-old': 's-1' },
+      conversations: {
+        's-1': {
+          ...base,
+          messages: [
+            {
+              id: 'm-old',
+              role: 'user',
+              text: 'old',
+              items: [],
+              attachments: [],
+            },
+          ],
+          turnArtifacts: [
+            { id: 't-old', start: 0, runID: 'r-old', docs: [] },
+          ],
+        },
+      },
+    });
+    let rejectStart!: (err: Error) => void;
+    apiMock.startTurn.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectStart = reject;
+        }),
+    );
+
+    const pending = useStore.getState().sendInterrupt('second');
+    expect(actorValue('s-1')?.turn).toBe('starting');
+    // The old run ends while the replacement is still starting.
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-old',
+        conversation_id: 's-1',
+        status: 'interrupted',
+        error: 'engine boom',
+      },
+    });
+    expect(useStore.getState().runConvs['r-old']).toBeUndefined();
+
+    rejectStart(new Error('start boom'));
+    await pending;
+
+    expect(actorValue('s-1')?.turn).toBe('failed');
+    expect(actor?.getSnapshot().context).toMatchObject({
+      currentRunID: undefined,
+      supersededRunID: undefined,
+      lastEndedRunID: 'r-old',
+      failureStatus: 'interrupted',
+      turnError: 'engine boom',
+    });
+    expect(useStore.getState().conversations['s-1'].turnArtifacts.at(-1)).toMatchObject({
+      status: 'failed',
+      error: 'Error: start boom',
+    });
+  });
+
   it('resuming the active session closes the tool page', async () => {
     useStore.setState({ toolsView: 'plugins' });
     await useStore.getState().resume('s-1');

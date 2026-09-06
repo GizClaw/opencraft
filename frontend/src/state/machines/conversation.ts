@@ -32,16 +32,32 @@ export type ConversationEvent =
   | { type: 'HYDRATE_FAIL'; request: number; generation: number; error: string }
   | { type: 'NEW_CHAT_READY' }
   | { type: 'SEND_STARTED' }
+  | {
+      type: 'START_FAILED';
+      error: string;
+      // supersededEndedStatus is set when the superseded run's
+      // terminal event was already consumed while the barge-in was
+      // still starting. Its absence means the old run is still live.
+      supersededEndedStatus?: TurnEndStatus;
+      supersededEndedError?: string;
+    }
   | { type: 'RUN_STARTED'; runID: string }
   | { type: 'STREAM'; runID: string; stage?: string }
   | {
       type: 'TURN_ENDED';
       runID: string;
-      status: 'completed' | 'failed' | 'aborted' | 'canceled' | 'interrupted';
+      status: TurnEndStatus;
       error?: string;
     }
   | { type: 'DISMISS_FAILURE' }
   | { type: 'SESSION_DELETED'; deletedAt?: string };
+
+type TurnEndStatus =
+  | 'completed'
+  | 'failed'
+  | 'aborted'
+  | 'canceled'
+  | 'interrupted';
 
 export const conversationMachine = createMachine({
   id: 'conversation',
@@ -182,6 +198,61 @@ export const conversationMachine = createMachine({
         },
         starting: {
           on: {
+            // The send that was supposed to replace a running turn
+            // failed. If the superseded run is still alive, resume
+            // watching it so its streams and terminal event keep
+            // driving the conversation; if its terminal event already
+            // arrived, absorb that status instead of inventing a
+            // fresh failure for the old run.
+            START_FAILED: [
+              {
+                guard: ({ context, event }) =>
+                  !context.deletedAt &&
+                  context.supersededRunID !== undefined &&
+                  event.supersededEndedStatus === undefined,
+                target: 'running',
+                actions: assign({
+                  currentRunID: ({ context }) => context.supersededRunID,
+                  supersededRunID: () => undefined,
+                  turnStage: () => '',
+                  failureStatus: () => undefined,
+                  turnError: () => undefined,
+                }),
+              },
+              {
+                guard: ({ context, event }) =>
+                  !context.deletedAt &&
+                  context.supersededRunID !== undefined &&
+                  event.supersededEndedStatus === 'completed',
+                target: 'succeeded',
+                actions: assign({
+                  currentRunID: () => undefined,
+                  supersededRunID: () => undefined,
+                  lastEndedRunID: ({ context }) => context.supersededRunID,
+                  failureStatus: () => undefined,
+                  turnError: () => undefined,
+                }),
+              },
+              {
+                guard: ({ context }) =>
+                  !context.deletedAt && context.supersededRunID !== undefined,
+                target: 'failed',
+                actions: assign({
+                  currentRunID: () => undefined,
+                  supersededRunID: () => undefined,
+                  lastEndedRunID: ({ context }) => context.supersededRunID,
+                  failureStatus: ({ event }) =>
+                    event.supersededEndedStatus === 'failed' ||
+                    event.supersededEndedStatus === 'aborted' ||
+                    event.supersededEndedStatus === 'canceled' ||
+                    event.supersededEndedStatus === 'interrupted'
+                      ? event.supersededEndedStatus
+                      : 'failed',
+                  turnError: ({ event }) =>
+                    event.supersededEndedError ?? event.error,
+                }),
+              },
+            ],
             RUN_STARTED: {
               guard: ({ context, event }) =>
                 !context.deletedAt &&

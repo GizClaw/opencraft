@@ -16,6 +16,18 @@ import (
 	"github.com/disintegration/imaging"
 )
 
+// MaxInlineImageBytes is the shared per-image prompt inline budget.
+// Preview data URLs, host-side attachment persistence, the media
+// prepare hook, and the sessions media kind all enforce the same cap
+// so "attaches today" stays true all the way into the model prompt.
+const MaxInlineImageBytes = 10 << 20
+
+// MaxDecodePixels bounds the pixel budget of images that are fully
+// decoded for normalization. Decoding a huge-but-compressed image
+// (a decompression bomb) would otherwise allocate hundreds of MB
+// per working buffer in the desktop process.
+const MaxDecodePixels = 40_000_000
+
 // JPEGQuality is the quality used for normalized attachment images.
 const JPEGQuality = 90
 
@@ -23,7 +35,10 @@ const JPEGQuality = 90
 // orientation applied), flattens transparency onto white, and
 // re-encodes the result as a JPEG at JPEGQuality. Formats the decoder
 // does not understand (for example WebP/AVIF) return an error so
-// callers can fall back to the original bytes.
+// callers can fall back to the original bytes. The pixel budget guard
+// lives in NormalizeFileToJPEG, which is the production entry point;
+// this reader variant is used by tests and callers that already
+// validated the input.
 func NormalizeToJPEG(r io.Reader) ([]byte, error) {
 	img, err := imaging.Decode(r, imaging.AutoOrientation(true))
 	if err != nil {
@@ -39,7 +54,9 @@ func NormalizeToJPEG(r io.Reader) ([]byte, error) {
 	return out.Bytes(), nil
 }
 
-// NormalizeFileToJPEG is NormalizeToJPEG for a local path.
+// NormalizeFileToJPEG is NormalizeToJPEG for a local path. It checks
+// the pixel budget before decoding, so a sparse image with enormous
+// dimensions is rejected without a full-size allocation.
 func NormalizeFileToJPEG(path string) (out []byte, err error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -50,6 +67,19 @@ func NormalizeFileToJPEG(path string) (out []byte, err error) {
 			err = closeErr
 		}
 	}()
+	cfg, _, err := image.DecodeConfig(f)
+	if err != nil {
+		return nil, err
+	}
+	pixels := int64(cfg.Width) * int64(cfg.Height)
+	if cfg.Width <= 0 || cfg.Height <= 0 || pixels > MaxDecodePixels {
+		return nil, fmt.Errorf(
+			"imageutil: %s is %dx%d and exceeds the %d-pixel decode limit",
+			path, cfg.Width, cfg.Height, MaxDecodePixels)
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("imageutil: rewind %s: %w", path, err)
+	}
 	out, err = NormalizeToJPEG(f)
 	return out, err
 }

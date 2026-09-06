@@ -1767,12 +1767,23 @@ export function ChatView() {
   // replacement as soon as the old one has been finalized.
   const submitInterrupt = async () => {
     const text = composerRef.current?.getMarkdown() ?? input;
-    if ((!text.trim() && attachments.length === 0) || switchingWs) {
-      return;
-    }
+    const emptyComposer = !text.trim() && attachments.length === 0;
+    if (switchingWs) return;
     if (!busy) {
+      if (emptyComposer && queued) {
+        // The turn a Tab draft was queued behind ended without
+        // success, so it stayed staged. Enter with an empty composer
+        // delivers it now.
+        const stagedText = queued.text;
+        const staged = queued.attachments;
+        clearQueued();
+        void send(stagedText, staged);
+        return;
+      }
+      if (emptyComposer) return;
       return void submit();
     }
+    if (emptyComposer) return;
     const staged = attachments;
     const stagedText = text;
     clearDraft();
@@ -2147,7 +2158,7 @@ export function ChatView() {
             <div className="flex items-center gap-2 border-b border-edge px-3 py-1.5 text-xs text-dim">
               <Clock size="0.8571rem" className="shrink-0 text-accent" />
               <span className="min-w-0 truncate">
-                {t('chat.queued', {
+                {t(busy ? 'chat.queued' : 'chat.queuedReady', {
                   preview:
                     queued.text.trim() ||
                     queued.attachments[0]?.name ||
