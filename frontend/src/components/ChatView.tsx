@@ -1804,6 +1804,11 @@ export function ChatView() {
     return true;
   };
 
+  // While a turn is running, Enter and Tab switch from their usual
+  // meaning to interrupt/queue; show the hint once the user starts
+  // typing so the shortcut is discoverable.
+  const showBusyKeyHint = busy && input.trim().length > 0;
+
   const confirmFork = () => {
     const target = forkTarget;
     if (!target?.runID || forking) return;
@@ -2195,6 +2200,11 @@ export function ChatView() {
               onQueue={queueDraft}
             />
           </div>
+          {showBusyKeyHint && (
+            <div className="mt-1.5 px-4 text-right text-[0.7143rem] leading-relaxed text-dim">
+              {t('chat.busyKeyHint')}
+            </div>
+          )}
           <div className="mt-3 flex items-center justify-between px-3 pb-2.5">
             <div className="flex items-center gap-3">
               <button

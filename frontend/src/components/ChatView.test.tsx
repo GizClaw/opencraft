@@ -253,6 +253,33 @@ describe('ChatView transcript windowing', () => {
     );
   });
 
+  it('hints Enter/Tab behavior while typing during a running turn', async () => {
+    setConversation([], []);
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    render(<ChatView />);
+
+    await userEvent.setup().click(screen.getByRole('textbox'));
+    await userEvent.keyboard('next question');
+    expect(
+      screen.getByText(/Enter interrupts the reply · Tab queues the message/i),
+    ).toBeInTheDocument();
+
+    // Tab stages the draft and clears the composer, which hides the
+    // hint and surfaces the queue banner instead.
+    await userEvent.keyboard('{Tab}');
+    expect(
+      screen.queryByText(
+        /Enter interrupts the reply · Tab queues the message/i,
+      ),
+    ).not.toBeInTheDocument();
+    expect(useStore.getState().conversations['s-1']?.queued).toMatchObject({
+      text: 'next question',
+      interrupt: false,
+    });
+  });
+
   it('shows worked duration at the top of an artifact turn', () => {
     setConversation(
       [

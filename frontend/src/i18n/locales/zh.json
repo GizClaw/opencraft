@@ -427,6 +427,7 @@
     "queuedReady": "已排队 — “{{preview}}”（回复已结束，按 Enter 发送）",
     "queuedFiles": "附件",
     "queuedCancel": "取消排队消息",
+    "busyKeyHint": "Enter 打断当前回复 · Tab 排队消息",
     "mentionSearchHint": "输入以搜索工作区文件…",
     "mentionNoMatch": "无匹配结果",
     "mentionSkillHint": "输入以筛选技能…",
