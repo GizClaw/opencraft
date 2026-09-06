@@ -370,9 +370,7 @@ describe('store: send and stream', () => {
               attachments: [],
             },
           ],
-          turnArtifacts: [
-            { id: 't-old', start: 0, runID: 'r-old', docs: [] },
-          ],
+          turnArtifacts: [{ id: 't-old', start: 0, runID: 'r-old', docs: [] }],
         },
       },
     });
@@ -409,7 +407,9 @@ describe('store: send and stream', () => {
       failureStatus: 'interrupted',
       turnError: 'engine boom',
     });
-    expect(useStore.getState().conversations['s-1'].turnArtifacts.at(-1)).toMatchObject({
+    expect(
+      useStore.getState().conversations['s-1'].turnArtifacts.at(-1),
+    ).toMatchObject({
       status: 'failed',
       error: 'Error: start boom',
     });

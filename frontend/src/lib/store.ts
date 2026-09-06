@@ -924,12 +924,11 @@ export const useStore = create<StoreState>((set, get) => {
   const supersededEndState = (
     convID: string,
     runID: string,
-  ):
-    | { status: TurnStatus; error?: string }
-    | undefined => {
+  ): { status: TurnStatus; error?: string } | undefined => {
     if (get().runConvs[runID] === convID) return undefined;
-    const artifact = get()
-      .conversations[convID]?.turnArtifacts.find((t) => t.runID === runID);
+    const artifact = get().conversations[convID]?.turnArtifacts.find(
+      (t) => t.runID === runID,
+    );
     const status = artifact?.status
       ? normalizeTurnStatus(artifact.status)
       : undefined;

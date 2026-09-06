@@ -53,11 +53,7 @@ export type ConversationEvent =
   | { type: 'SESSION_DELETED'; deletedAt?: string };
 
 type TurnEndStatus =
-  | 'completed'
-  | 'failed'
-  | 'aborted'
-  | 'canceled'
-  | 'interrupted';
+  'completed' | 'failed' | 'aborted' | 'canceled' | 'interrupted';
 
 export const conversationMachine = createMachine({
   id: 'conversation',

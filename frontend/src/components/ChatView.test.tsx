@@ -212,7 +212,11 @@ describe('ChatView transcript windowing', () => {
       conversations: {
         's-1': {
           ...conv,
-          queued: { text: 'staged after fail', attachments: [], interrupt: false },
+          queued: {
+            text: 'staged after fail',
+            attachments: [],
+            interrupt: false,
+          },
         },
       },
     });
@@ -238,7 +242,12 @@ describe('ChatView transcript windowing', () => {
       's-1',
       expect.objectContaining({
         content: {
-          parts: [expect.objectContaining({ type: 'text', text: 'staged after fail' })],
+          parts: [
+            expect.objectContaining({
+              type: 'text',
+              text: 'staged after fail',
+            }),
+          ],
         },
       }),
     );
