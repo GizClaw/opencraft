@@ -6,12 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
-	"github.com/GizClaw/flowcraft/core/delegation"
-	"github.com/GizClaw/flowcraft/core/delegation/kanban"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/core"
@@ -448,129 +445,4 @@ func (b *Session) ActiveRun(conversationID string) string {
 		}
 	}
 	return ""
-}
-
-// DelegationCard is one delegation board entry.
-type DelegationCard struct {
-	ID          string `json:"id"`
-	Producer    string `json:"producer,omitempty"`
-	Consumer    string `json:"consumer,omitempty"`
-	Status      string `json:"status"`
-	Target      string `json:"target"`
-	Input       string `json:"input,omitempty"`
-	Output      string `json:"output,omitempty"`
-	Caller      string `json:"caller,omitempty"`
-	Depth       int    `json:"depth"`
-	Error       string `json:"error,omitempty"`
-	RunID       string `json:"run_id,omitempty"`
-	ParentRunID string `json:"parent_run_id,omitempty"`
-	CallID      string `json:"call_id,omitempty"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
-}
-
-func cardDTO(c *kanban.Card) (DelegationCard, bool) {
-	if c == nil || c.Task == nil {
-		return DelegationCard{}, false
-	}
-	req := c.Task.Request.Request
-	dto := DelegationCard{
-		ID:        c.ID,
-		Producer:  c.Producer,
-		Consumer:  c.Consumer,
-		Status:    string(c.Status),
-		RunID:     c.RunID,
-		CreatedAt: c.CreatedAt.UTC().Format(time.RFC3339),
-		UpdatedAt: c.UpdatedAt.UTC().Format(time.RFC3339),
-	}
-	dto.Target = req.Target
-	dto.Input = truncateDisplay(req.Input, 200)
-	dto.Caller = c.Task.Request.Caller
-	dto.Depth = c.Task.Request.Depth
-	dto.ParentRunID = c.Task.Request.ParentRunID
-	dto.CallID = c.Task.Request.CallID
-	if dto.ParentRunID == "" {
-		dto.ParentRunID = req.Metadata[delegation.ParentRunMetadataKey]
-	}
-	if dto.CallID == "" {
-		dto.CallID = req.Metadata[delegation.CallIDMetadataKey]
-	}
-	if c.Result != nil {
-		dto.Output = truncateDisplay(c.Result.Response.Output, 400)
-		dto.Error = c.Result.Response.Error
-	}
-	return dto, true
-}
-
-func sortCardsNewestFirst(cards []DelegationCard) {
-	sort.SliceStable(cards, func(i, j int) bool {
-		return cards[i].CreatedAt > cards[j].CreatedAt
-	})
-}
-
-func truncateDisplay(s string, n int) string {
-	s = strings.TrimSpace(s)
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
-}
-
-func (b *Session) board() (*kanban.Board, error) {
-	h := b.core.Runtime.Current()
-	if h == nil || h.Controller() == nil || h.Controller().Runtime() == nil {
-		return nil, errNotReady("delegation")
-	}
-	value, ok := h.Controller().Runtime().Resource("delegate.backend")
-	if !ok {
-		return nil, errNotReady("delegation")
-	}
-	board, ok := value.(*kanban.Board)
-	if !ok {
-		return nil, errNotReady("delegation")
-	}
-	return board, nil
-}
-
-// DelegationCards snapshots the delegation board.
-func (b *Session) DelegationCards() ([]DelegationCard, error) {
-	board, err := b.board()
-	if err != nil {
-		return []DelegationCard{}, nil
-	}
-	out := make([]DelegationCard, 0)
-	for _, c := range board.Query(kanban.Filter{}) {
-		if dto, ok := cardDTO(c); ok {
-			out = append(out, dto)
-		}
-	}
-	sortCardsNewestFirst(out)
-	return out, nil
-}
-
-// ConversationDelegationCards snapshots cards owned by one
-// conversation's caller runs.
-func (b *Session) ConversationDelegationCards(
-	conversationID string,
-) ([]DelegationCard, error) {
-	runs := b.core.Conversation.Runs(conversationID)
-	if len(runs) == 0 {
-		return []DelegationCard{}, nil
-	}
-	board, err := b.board()
-	if err != nil {
-		return []DelegationCard{}, nil
-	}
-	out := make([]DelegationCard, 0)
-	for _, c := range board.Query(kanban.Filter{}) {
-		dto, ok := cardDTO(c)
-		if !ok {
-			continue
-		}
-		if runs[dto.ParentRunID] {
-			out = append(out, dto)
-		}
-	}
-	sortCardsNewestFirst(out)
-	return out, nil
 }

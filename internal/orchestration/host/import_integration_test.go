@@ -30,12 +30,15 @@ func TestHostImportSessionWritesArchiveAndSeedsMemory(t *testing.T) {
 
 	mgr := host.NewManagerAt(dataDir, configDir)
 	recorded := make(chan ocsessions.Usage, 8)
+	recordedAt := make(chan time.Time, 8)
 	mgr.SetUsageRecorder(func(
 		_ context.Context,
 		_, _ string,
 		usage ocsessions.Usage,
+		at time.Time,
 	) error {
 		recorded <- usage
+		recordedAt <- at
 		return nil
 	})
 	ctx := context.Background()
@@ -99,6 +102,11 @@ func TestHostImportSessionWritesArchiveAndSeedsMemory(t *testing.T) {
 	firstRecorded := receiveUsage(t, recorded)
 	if firstRecorded != wantUsage {
 		t.Fatalf("first recorded usage = %+v, want %+v", firstRecorded, wantUsage)
+	}
+	firstRecordedAt := receiveTime(t, recordedAt)
+	if !firstRecordedAt.Equal(at) {
+		t.Fatalf("first recorded at = %v, want earliest turn %v",
+			firstRecordedAt, at)
 	}
 	memoryCount := countThreadMemory(t, h, id)
 	if memoryCount == 0 {
@@ -230,6 +238,17 @@ func receiveUsage(t *testing.T, ch chan ocsessions.Usage) ocsessions.Usage {
 	}
 }
 
+func receiveTime(t *testing.T, ch chan time.Time) time.Time {
+	t.Helper()
+	select {
+	case at := <-ch:
+		return at
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for usage recorder timestamp")
+		return time.Time{}
+	}
+}
+
 func drainUsageRecorder(ch chan ocsessions.Usage) []ocsessions.Usage {
 	var out []ocsessions.Usage
 	for {
@@ -253,6 +272,7 @@ func sumUsage(total, delta ocsessions.Usage) ocsessions.Usage {
 	total.CacheWriteTokens += delta.CacheWriteTokens
 	total.ReasoningTokens += delta.ReasoningTokens
 	total.LatencyMs += delta.LatencyMs
+	total.Calls += delta.Calls
 	return total
 }
 

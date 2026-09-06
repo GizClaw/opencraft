@@ -112,11 +112,14 @@ export interface ConfigState {
 
 export interface ModelUsageStat {
   model: string;
+  total_tokens: number;
   input_tokens: number;
   output_tokens: number;
   cache_read_tokens: number;
+  cache_write_tokens: number;
   reasoning_tokens: number;
   latency_ms: number;
+  calls: number;
   workspaces: number;
   sessions: number;
   updated_at: string;
@@ -127,6 +130,7 @@ export interface UsagePoint {
   input_tokens: number;
   output_tokens: number;
   cache_read_tokens: number;
+  cache_write_tokens: number;
   reasoning_tokens: number;
 }
 
@@ -242,24 +246,6 @@ export type HistoryPart =
     }
   | { type: 'video'; source?: MediaSourceWire }
   | { type: 'file'; uri?: string; media_type?: string; name?: string };
-
-export interface KanbanCard {
-  id: string;
-  producer: string;
-  consumer: string;
-  status: string;
-  target: string;
-  input: string;
-  output: string;
-  caller: string;
-  depth: number;
-  error: string;
-  run_id?: string;
-  parent_run_id?: string;
-  call_id?: string;
-  created_at: string;
-  updated_at: string;
-}
 
 export interface SkillDTO {
   name: string;

@@ -8,8 +8,10 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/inference"
@@ -26,15 +28,27 @@ import (
 	"github.com/GizClaw/opencraft/internal/orchestration/migrations"
 )
 
-// UsageRecorder receives one finished turn's aggregated usage so
-// adapters can persist user-level accounting rows. workspaceID and
-// sessionID are explicit; the recorder must not re-derive them from
-// process state. Errors are logged by the host and never fail the turn.
+// UsageRecorder receives one model usage delta (a finished turn, one
+// auto-title call, or an imported session) so adapters can persist
+// user-level accounting rows. workspaceID and sessionID are explicit;
+// the recorder must not re-derive them from process state. at is the
+// moment the engine reported the usage (report-arrival time) and
+// drives the user-level hourly bucket. Errors are logged by the host
+// and never fail the turn.
 type UsageRecorder func(
 	ctx context.Context,
 	workspaceID, sessionID string,
 	usage sessions.Usage,
+	at time.Time,
 ) error
+
+// usageDelta is one model usage slice with the moment it was reported.
+// A turn can span several models and hours; each engine report becomes
+// its own bucket so statistics keep both dimensions accurate.
+type usageDelta struct {
+	usage sessions.Usage
+	at    time.Time
+}
 
 // Manager pools Hosts by workspace and keeps one sessions.Store per
 // workspace root.
@@ -96,9 +110,10 @@ func (m *Manager) SetUsageObserver(fn func(context.Context, inference.Usage)) {
 	m.mu.Unlock()
 }
 
-// SetUsageRecorder installs the user-level usage sink called once per
-// finished turn with the run's aggregated usage. UI and automation
-// turns share the Host, so one recorder covers both paths.
+// SetUsageRecorder installs the user-level usage sink. A finished turn
+// may deliver several deltas (one per model + hour bucket), plus one
+// for each auto-title/background generation. UI and automation turns
+// share the Host, so one recorder covers both paths.
 func (m *Manager) SetUsageRecorder(fn UsageRecorder) {
 	m.mu.Lock()
 	m.usageRecorder = fn
@@ -339,13 +354,19 @@ func (h *Host) reportUsage(ctx context.Context, usage inference.Usage) {
 	if info, ok := agent.RunInfoFromContext(ctx); ok {
 		runID = info.RunID
 	}
+	delta := usageFromReport(usage)
 	h.mu.Lock()
 	d := h.runs[RunID(runID)]
 	if d == nil {
 		h.mu.Unlock()
 		return
 	}
-	d.usage = addSessionUsage(d.usage, usageFromReport(usage))
+	d.usage = addSessionUsage(d.usage, delta)
+	if delta.Model != "" && d.usageHours != nil {
+		hour := time.Now().UTC().Truncate(time.Hour).Format(time.RFC3339)
+		key := modelHourKey(delta.Model, hour)
+		d.usageHours[key] = addSessionUsage(d.usageHours[key], delta)
+	}
 	fn := d.notify
 	h.mu.Unlock()
 	if fn != nil {
@@ -353,17 +374,23 @@ func (h *Host) reportUsage(ctx context.Context, usage inference.Usage) {
 	}
 }
 
+func modelHourKey(model, hour string) string {
+	return model + "\x00" + hour
+}
+
 // usageFromReport maps one inference usage report to the session usage
-// delta shape used by the Host and sessions.Store.
+// delta shape used by the Host and sessions.Store. Model statistics
+// bucket by model name only, so the provider prefix is dropped.
 func usageFromReport(u inference.Usage) sessions.Usage {
 	out := sessions.Usage{
 		InputTokens:  u.InputTokens,
 		OutputTokens: u.OutputTokens,
 		TotalTokens:  u.TotalTokens,
 		LatencyMs:    u.LatencyMs,
+		Calls:        1,
 	}
-	if u.Model.ID.Provider != "" && u.Model.ID.Name != "" {
-		out.Model = u.Model.ID.Provider + "/" + u.Model.ID.Name
+	if u.Model.ID.Name != "" {
+		out.Model = u.Model.ID.Name
 	}
 	if u.Output.ReasoningTokens != nil {
 		out.ReasoningTokens = *u.Output.ReasoningTokens
@@ -387,6 +414,7 @@ func addSessionUsage(base, delta sessions.Usage) sessions.Usage {
 	base.CacheWriteTokens += delta.CacheWriteTokens
 	base.ReasoningTokens += delta.ReasoningTokens
 	base.LatencyMs += delta.LatencyMs
+	base.Calls += delta.Calls
 	if delta.Model != "" {
 		base.Model = delta.Model
 	}
@@ -402,6 +430,40 @@ func (h *Host) takeUsage(runID string) sessions.Usage {
 		return usage
 	}
 	return sessions.Usage{}
+}
+
+// takeUsageDeltas drains the per-model, per-hour usage buckets of one
+// run. Delays inside the run do not shift usage between hourly buckets
+// because each report's hour was captured when the report arrived.
+func (h *Host) takeUsageDeltas(runID string) []usageDelta {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	d := h.runs[RunID(runID)]
+	if d == nil || len(d.usageHours) == 0 {
+		return nil
+	}
+	out := make([]usageDelta, 0, len(d.usageHours))
+	for key, usage := range d.usageHours {
+		model, hour, ok := strings.Cut(key, "\x00")
+		if !ok || model == "" {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339, hour)
+		if err != nil {
+			// Bucket keys are only written by reportUsage, so the hour
+			// always parses. Ignore rather than silently mis-bucket.
+			continue
+		}
+		usage.Model = model
+		out = append(out, usageDelta{usage: usage, at: at})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].usage.Model != out[j].usage.Model {
+			return out[i].usage.Model < out[j].usage.Model
+		}
+		return out[i].at.Before(out[j].at)
+	})
+	return out
 }
 
 // OpenSessions returns the shared Store for one workspace without
@@ -540,10 +602,14 @@ type runDetail struct {
 
 	contextID string
 	usage     sessions.Usage
-	notify    func(context.Context, inference.Usage)
-	buffer    *rolloutBuffer
-	manifest  map[string]fileStat
-	backend   interact.Backend
+	// usageHours aggregates engine reports by model + UTC hour so a
+	// multi-model or long turn still lands in the right user-level
+	// statistics buckets.
+	usageHours map[string]sessions.Usage
+	notify     func(context.Context, inference.Usage)
+	buffer     *rolloutBuffer
+	manifest   map[string]fileStat
+	backend    interact.Backend
 }
 
 // dropRun removes an ended run from the active set. Usage for the run

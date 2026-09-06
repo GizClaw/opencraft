@@ -308,7 +308,7 @@ func TestAddUsageAccumulatesAcrossTurns(t *testing.T) {
 	}
 
 	if err := store.AddUsage(context.Background(), id, Usage{
-		Model:           "openai-1/gpt-test",
+		Model:           "gpt-test",
 		InputTokens:     100,
 		OutputTokens:    50,
 		TotalTokens:     150,
@@ -318,7 +318,7 @@ func TestAddUsageAccumulatesAcrossTurns(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := store.AddUsage(context.Background(), id, Usage{
-		Model:            "openai-1/gpt-test",
+		Model:            "gpt-test",
 		InputTokens:      30,
 		OutputTokens:     10,
 		TotalTokens:      40,
@@ -334,7 +334,7 @@ func TestAddUsageAccumulatesAcrossTurns(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := Usage{
-		Model:            "openai-1/gpt-test",
+		Model:            "gpt-test",
 		InputTokens:      130,
 		OutputTokens:     60,
 		TotalTokens:      190,
@@ -345,6 +345,67 @@ func TestAddUsageAccumulatesAcrossTurns(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("usage = %+v, want %+v", got, want)
+	}
+}
+
+func TestUsageModelKeysNormalizeLegacyProviderPrefix(t *testing.T) {
+	store, err := newMigratedStore(filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.CloseDB() }()
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+
+	// A pre-migration export keeps "provider/name" inside the usage
+	// JSON. Seeding such a bundle must not resurrect provider-prefixed
+	// keys: every read normalizes them to the name-only invariant.
+	legacy := Usage{
+		Model:           "openai-1/gpt-test",
+		InputTokens:     100,
+		OutputTokens:    50,
+		TotalTokens:     150,
+		CacheReadTokens: 20,
+	}
+	recorded, err := store.RecordUsageIfEmpty(ctx, id, legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !recorded {
+		t.Fatal("first empty-seed write was skipped")
+	}
+	got, err := store.LoadUsage(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Model != "gpt-test" || got.TotalTokens != 150 {
+		t.Fatalf("normalized LoadUsage = %+v", got)
+	}
+	list, err := store.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Usage.Model != "gpt-test" {
+		t.Fatalf("normalized list usage = %+v", list)
+	}
+
+	// A delta without a model keeps the normalized key; a later
+	// name-only delta overwrites it in the expected direction.
+	if err := store.AddUsage(ctx, id, Usage{
+		InputTokens: 10,
+		TotalTokens: 10,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = store.LoadUsage(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Model != "gpt-test" || got.TotalTokens != 160 {
+		t.Fatalf("usage after model-less add = %+v", got)
 	}
 }
 

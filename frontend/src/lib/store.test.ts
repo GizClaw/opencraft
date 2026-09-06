@@ -84,7 +84,6 @@ function resetStore() {
     composerDraft: '',
     statusText: '',
     lastUsage: null,
-    cards: [],
     modelOptions: [],
     sessionDefaults: { mode: 'workspace', think: 'medium' },
     yoloOnly: false,

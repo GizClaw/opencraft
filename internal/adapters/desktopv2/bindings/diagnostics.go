@@ -102,8 +102,13 @@ func (b *Diagnostics) Diagnostics() Report {
 	if store := b.core.Runtime.Usage(); store != nil {
 		if rows, err := store.Summary(ctx); err == nil {
 			for _, r := range rows {
-				rep.UsageTotalTokens += r.InputTokens + r.OutputTokens +
-					r.CacheReadTokens + r.ReasoningTokens
+				// Sum the provider-reported billed totals stored per
+				// record instead of reconstructing a total from the
+				// breakdown streams, whose inclusion rules differ by
+				// provider (reasoning/cache may be inside input+output
+				// or billed separately). Legacy rows rebuilt by
+				// migration 004 fall back to input + output.
+				rep.UsageTotalTokens += r.TotalTokens
 			}
 		}
 	}

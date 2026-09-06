@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/inference/route"
@@ -130,7 +131,11 @@ func (h *Host) autoTitle(ctx context.Context, contextID string) {
 	// Title generation is a real model call against this session: feed
 	// its usage into the session total and the user-level model_usage
 	// tables instead of only showing it as a transient UI event.
-	h.persistTurnUsage(ctx, contextID, usageFromReport(response.Usage))
+	titleUsage := usageFromReport(response.Usage)
+	h.persistTurnUsage(ctx, contextID, []usageDelta{{
+		usage: titleUsage,
+		at:    time.Now().UTC(),
+	}}, titleUsage)
 	title := strings.TrimSpace(response.Message.Content.Text())
 	title = strings.Join(strings.Fields(title), " ")
 	if title == "" {

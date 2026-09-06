@@ -264,11 +264,12 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 		startedAt:     startedAt,
 	}
 	run.detail = &runDetail{
-		run:       run,
-		contextID: contextID,
-		notify:    opts.OnUsage,
-		manifest:  manifest,
-		backend:   opts.Backend,
+		run:        run,
+		contextID:  contextID,
+		usageHours: make(map[string]ocsessions.Usage),
+		notify:     opts.OnUsage,
+		manifest:   manifest,
+		backend:    opts.Backend,
 	}
 	h.mu.Lock()
 	h.runs[RunID(turn.RunID())] = run.detail
@@ -347,6 +348,7 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 	detail := r.detail
 	if host != nil && detail != nil {
 		turnUsage := host.takeUsage(r.RunID())
+		usageDeltas := host.takeUsageDeltas(r.RunID())
 		persistCtx := context.WithoutCancel(ctx)
 		status := "unknown"
 		var errText string
@@ -380,7 +382,8 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 				store.RecordTurnEnd(
 					detail.contextID, r.RunID(), finishedAt, status, errText))
 		}
-		host.persistTurnUsage(persistCtx, detail.contextID, turnUsage)
+		host.persistTurnUsage(
+			persistCtx, detail.contextID, usageDeltas, turnUsage)
 		host.recordTurnEnd(
 			persistCtx, detail.contextID, r.RunID(),
 			typ, status, errText, turnUsage)
@@ -416,24 +419,32 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 	return res, err
 }
 
-// persistTurnUsage records one usage delta (a finished turn, an
-// auto-title generation, or another post-run model call) in the
-// workspace session store and forwards it to the user-level recorder
-// installed on the manager. Both writes are best-effort: failures are
-// logged and never fail the turn.
+// persistTurnUsage records one turn's usage in the workspace session
+// store and forwards each per-model/hour delta to the user-level
+// recorder installed on the manager. total is the run aggregate kept
+// by reportUsage: it includes reports whose model name is empty, which
+// cannot be bucketed per-model but must still count toward the session
+// total. Both writes are best-effort: failures are logged and never
+// fail the turn.
 func (h *Host) persistTurnUsage(
 	ctx context.Context,
 	contextID string,
-	usage ocsessions.Usage,
+	deltas []usageDelta,
+	total ocsessions.Usage,
 ) {
-	if h == nil || usage.TotalTokens <= 0 {
+	if h == nil || (len(deltas) == 0 && total.TotalTokens <= 0) {
 		return
 	}
-	if h.store != nil {
+	if h.store != nil && total.TotalTokens > 0 {
 		telemetry.WarnErr(ctx, "host: add session usage failed",
-			h.store.AddUsage(ctx, contextID, usage))
+			h.store.AddUsage(ctx, contextID, total))
 	}
-	h.forwardUsageRecorder(ctx, contextID, usage)
+	for _, d := range deltas {
+		if d.usage.TotalTokens <= 0 || d.usage.Model == "" {
+			continue
+		}
+		h.forwardUsageRecorder(ctx, contextID, d.usage, d.at)
+	}
 }
 
 // unwrapErrForTelemetry strips one wrapper so telemetry stores the

@@ -2,20 +2,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentType } from 'react';
 import {
   ArrowDown,
-  ArrowDownToLine,
   ArrowUp,
-  ArrowUpFromLine,
   BarChart3,
-  Brain,
   Cpu,
   Database,
   Import,
-  Kanban,
   Loader2,
   Palette,
   Plus,
   RefreshCw,
-  ScrollText,
   Settings,
   ShieldCheck,
   ShieldPlus,
@@ -28,8 +23,8 @@ import {
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
+import { alignUsageWindow } from '../lib/usageWindow';
 import { LogViewer } from './LogViewer';
-import { KanbanSection } from './KanbanView';
 import { useStore } from '../lib/store';
 import type {
   CacheClearResult,
@@ -45,6 +40,9 @@ import type {
   UsagePoint,
 } from '../lib/types';
 import { UsageChart } from './UsageChart';
+import { UsageHero } from './UsageHero';
+import { UsageModelSelect } from './UsageModelSelect';
+import { UsageRangePicker } from './UsageRangePicker';
 import { MCPLogo, MCPSection } from './ToolsPanel';
 import { PluginPanels } from '../plugins/components/PluginPanels';
 import { usePluginStore } from '../plugins/store';
@@ -65,6 +63,9 @@ interface RowModel {
   webSearch: boolean;
   endpoint: string;
 }
+
+type UsagePreset = 'today' | '1d' | '7d' | '14d' | '30d';
+type UsageRangeSelection = UsagePreset | 'custom';
 
 interface InstanceRow {
   id: string; // frontend key
@@ -90,10 +91,8 @@ type Tab =
   | 'usage'
   | 'memory'
   | 'permissions'
-  | 'logs'
   | 'diagnostics'
-  | 'import'
-  | 'kanban';
+  | 'import';
 
 // EFFORT_LEVELS is the canonical reasoning effort ladder flowcraft
 // exposes; each level maps to a provider-specific wire token.
@@ -213,27 +212,22 @@ export function ConfigPage() {
   const [cacheResult, setCacheResult] = useState<CacheClearResult | null>(null);
   const [diagBusy, setDiagBusy] = useState(false);
   const [usageRows, setUsageRows] = useState<ModelUsageStat[]>([]);
+  const [usageSessions, setUsageSessions] = useState(0);
   const [usageError, setUsageError] = useState('');
   const [usageModel, setUsageModel] = useState('');
-  const [usageRange, setUsageRange] = useState<
-    'today' | '1d' | '7d' | '14d' | '30d'
-  >('7d');
+  const [usageGranularity, setUsageGranularity] = useState<'hour' | 'day'>(
+    'hour',
+  );
+  const [usageRange, setUsageRange] = useState<UsageRangeSelection>('7d');
+  const [customStartMs, setCustomStartMs] = useState(0);
+  const [customEndMs, setCustomEndMs] = useState(0);
+  const [usageLiveEnd, setUsageLiveEnd] = useState(true);
+  const [usageSnapshotEndMs, setUsageSnapshotEndMs] = useState(0);
   const [usageSeries, setUsageSeries] = useState<UsagePoint[]>([]);
   const [usageStartMs, setUsageStartMs] = useState(0);
   const [usageEndMs, setUsageEndMs] = useState(0);
   const [usageLoading, setUsageLoading] = useState(false);
   const [usageReload, setUsageReload] = useState(0);
-  const usageTotals = useMemo(() => {
-    const t0 = { input: 0, output: 0, cache: 0, reasoning: 0, sessions: 0 };
-    for (const r of usageRows) {
-      t0.input += r.input_tokens;
-      t0.output += r.output_tokens;
-      t0.cache += r.cache_read_tokens;
-      t0.reasoning += r.reasoning_tokens;
-      t0.sessions += r.sessions;
-    }
-    return t0;
-  }, [usageRows]);
 
   const loadInference = useCallback(async () => {
     try {
@@ -396,9 +390,11 @@ export function ConfigPage() {
 
   useEffect(() => {
     if (tab !== 'usage') return;
-    void api
-      .modelUsage()
-      .then(setUsageRows)
+    void Promise.all([api.modelUsage(), api.modelUsageSessionCount()])
+      .then(([rows, sessions]) => {
+        setUsageRows(rows);
+        setUsageSessions(sessions);
+      })
       .catch((err) => setUsageError(String(err)));
   }, [tab]);
 
@@ -413,7 +409,7 @@ export function ConfigPage() {
   // same way cc-switch does: "today" and multi-day presets start at
   // local midnight, "1d" is the rolling 24h, and the end is always now.
   const resolveUsageRange = (
-    preset: 'today' | '1d' | '7d' | '14d' | '30d',
+    preset: UsagePreset,
   ): { startMs: number; endMs: number } => {
     const endMs = Date.now();
     const DAY = 86_400_000;
@@ -432,9 +428,12 @@ export function ConfigPage() {
   };
 
   // Load the selected model's time series whenever the model, range,
-  // tab, or an explicit refresh changes. Granularity follows the range
+  // tab, or an explicit refresh changes. Granularity follows the raw
   // duration like cc-switch: <= 24h buckets hourly, longer ranges
-  // bucket by local day.
+  // bucket by local day. The requested window is then snapped to
+  // bucket boundaries (whole hours / local days) with an exclusive
+  // end, and the same aligned window drives the backend query and the
+  // chart's zero-fill so the two can never disagree.
   useEffect(() => {
     if (tab !== 'usage' || !usageModel) {
       setUsageSeries([]);
@@ -442,18 +441,30 @@ export function ConfigPage() {
     }
     let cancelled = false;
     setUsageLoading(true);
-    const { startMs, endMs } = resolveUsageRange(usageRange);
+    let rawStartMs: number;
+    let rawEndMs: number;
+    if (usageRange === 'custom') {
+      rawEndMs = usageLiveEnd ? Date.now() : customEndMs || Date.now();
+      rawStartMs = customStartMs || rawEndMs - 7 * 86_400_000;
+    } else {
+      const window = resolveUsageRange(usageRange);
+      rawStartMs = window.startMs;
+      rawEndMs = window.endMs;
+    }
     const granularity: 'hour' | 'day' =
-      endMs - startMs <= 24 * 3_600_000 ? 'hour' : 'day';
-    setUsageStartMs(startMs);
-    setUsageEndMs(endMs);
+      rawEndMs - rawStartMs <= 24 * 3_600_000 ? 'hour' : 'day';
+    const window = alignUsageWindow(rawStartMs, rawEndMs, granularity);
+    setUsageGranularity(granularity);
+    setUsageStartMs(window.start);
+    setUsageEndMs(window.end);
+    setUsageSnapshotEndMs(rawEndMs);
     void api
       .modelUsageSeries(
         usageModel,
         granularity,
         -new Date().getTimezoneOffset(),
-        new Date(startMs).toISOString(),
-        new Date(endMs).toISOString(),
+        new Date(window.start).toISOString(),
+        new Date(window.end).toISOString(),
       )
       .then((pts) => {
         if (!cancelled) setUsageSeries(pts);
@@ -467,23 +478,15 @@ export function ConfigPage() {
     return () => {
       cancelled = true;
     };
-  }, [tab, usageModel, usageRange, usageReload]);
-
-  // Cache hit rate for the currently selected model + time range,
-  // derived from the same series the chart renders. cc-switch's formula
-  // (cache_read / fresh_input + cache_write + cache_read) reduces to
-  // cache_read / input for input-inclusive providers (DeepSeek/OpenAI).
-  const cacheHit = useMemo(() => {
-    let input = 0;
-    let read = 0;
-    for (const p of usageSeries) {
-      input += p.input_tokens;
-      read += p.cache_read_tokens;
-    }
-    const rate =
-      input > 0 ? Math.min(100, Math.max(0, (read / input) * 100)) : 0;
-    return { input, read, rate };
-  }, [usageSeries]);
+  }, [
+    tab,
+    usageModel,
+    usageRange,
+    usageReload,
+    customStartMs,
+    customEndMs,
+    usageLiveEnd,
+  ]);
 
   // enabledRows are the instances that participate in the router, in
   // priority order; only they can be reordered.
@@ -711,6 +714,39 @@ export function ConfigPage() {
     return d.toLocaleDateString();
   };
 
+  const fmtClock = (ms: number) => {
+    const d = new Date(ms);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(
+      d.getHours(),
+    )}:${pad(d.getMinutes())}`;
+  };
+
+  const usageRangeLabel = (): string => {
+    if (usageRange !== 'custom') {
+      if (usageRange === 'today') return t('config.usageRangeToday');
+      return usageRange;
+    }
+    const end =
+      usageLiveEnd || customEndMs === 0
+        ? fmtClock(usageSnapshotEndMs || Date.now())
+        : fmtClock(customEndMs);
+    return customStartMs > 0
+      ? `${fmtClock(customStartMs)} → ${end}`
+      : t('config.usageCustom');
+  };
+
+  const applyUsageCustomRange = (
+    startMs: number,
+    endMs: number,
+    liveEnd: boolean,
+  ) => {
+    setCustomStartMs(startMs);
+    setCustomEndMs(endMs);
+    setUsageLiveEnd(liveEnd);
+    setUsageRange('custom');
+  };
+
   const tabs: {
     id: Tab;
     label: string;
@@ -720,7 +756,6 @@ export function ConfigPage() {
     { id: 'display', label: t('config.tabDisplay'), icon: Palette },
     { id: 'inference', label: t('config.tabInference'), icon: Cpu },
     { id: 'mcp', label: t('config.tabMCP'), icon: MCPLogo },
-    { id: 'usage', label: t('config.tabUsage'), icon: BarChart3 },
     { id: 'memory', label: t('config.tabMemory'), icon: Database },
     ...(yoloOnly
       ? []
@@ -731,10 +766,9 @@ export function ConfigPage() {
             icon: ShieldCheck,
           },
         ]),
-    { id: 'logs', label: t('config.tabLogs'), icon: ScrollText },
+    { id: 'usage', label: t('config.tabUsage'), icon: BarChart3 },
     { id: 'diagnostics', label: t('config.tabDiagnostics'), icon: Stethoscope },
     { id: 'import', label: t('config.tabImport'), icon: Import },
-    { id: 'kanban', label: t('kanban.title'), icon: Kanban },
   ];
 
   return (
@@ -1418,9 +1452,14 @@ export function ConfigPage() {
                   <p className="text-xs text-dim">{t('config.usageHint')}</p>
                   <button
                     onClick={() => {
-                      void api
-                        .modelUsage()
-                        .then(setUsageRows)
+                      void Promise.all([
+                        api.modelUsage(),
+                        api.modelUsageSessionCount(),
+                      ])
+                        .then(([rows, sessions]) => {
+                          setUsageRows(rows);
+                          setUsageSessions(sessions);
+                        })
                         .catch((err) => setUsageError(String(err)));
                       setUsageReload((n) => n + 1);
                     }}
@@ -1438,95 +1477,51 @@ export function ConfigPage() {
                 </div>
                 {usageError && <p className="text-xs text-err">{usageError}</p>}
                 {usageLoading && usageRows.length === 0 ? (
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                    {[0, 1, 2, 3].map((i) => (
-                      <div
-                        key={i}
-                        className="h-[5.1429rem] animate-pulse rounded-xl bg-panel2"
-                      />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                    <div className="rounded-xl border border-edge bg-panel2 p-3">
-                      <div className="flex items-center gap-1.5 text-xs text-dim">
-                        <ArrowDownToLine
-                          size="0.9286rem"
-                          className="text-accent"
-                        />
-                        {t('config.usageInput')}
-                      </div>
-                      <p className="mt-1.5 text-lg font-semibold tabular-nums text-accent">
-                        {fmtUsageTokens(usageTotals.input)}
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-edge bg-panel2 p-3">
-                      <div className="flex items-center gap-1.5 text-xs text-dim">
-                        <ArrowUpFromLine size="0.9286rem" className="text-ok" />
-                        {t('config.usageOutput')}
-                      </div>
-                      <p className="mt-1.5 text-lg font-semibold tabular-nums text-ok">
-                        {fmtUsageTokens(usageTotals.output)}
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-edge bg-panel2 p-3">
-                      <div className="flex items-center gap-1.5 text-xs text-dim">
-                        <Database size="0.9286rem" className="text-subagent" />
-                        {t('config.usageCache')}
-                      </div>
-                      <p className="mt-1.5 text-lg font-semibold tabular-nums text-subagent">
-                        {fmtUsageTokens(usageTotals.cache)}
-                      </p>
-                    </div>
-                    <div className="rounded-xl border border-edge bg-panel2 p-3">
-                      <div className="flex items-center gap-1.5 text-xs text-dim">
-                        <Brain size="0.9286rem" className="text-warn" />
-                        {t('config.usageReasoning')}
-                      </div>
-                      <p className="mt-1.5 text-lg font-semibold tabular-nums text-warn">
-                        {fmtUsageTokens(usageTotals.reasoning)}
-                      </p>
-                    </div>
-                  </div>
-                )}
+                  <div className="h-72 animate-pulse rounded-xl border border-edge/70 bg-panel/70" />
+                ) : usageRows.length > 0 ? (
+                  <UsageHero rows={usageRows} sessions={usageSessions} />
+                ) : null}
                 {usageRows.length === 0 ? (
                   <p className="text-sm text-dim">{t('config.usageEmpty')}</p>
                 ) : (
                   <>
                     <div className="flex flex-wrap items-center gap-2">
-                      <select
+                      <UsageModelSelect
                         value={usageModel}
-                        onChange={(e) => setUsageModel(e.target.value)}
-                        className="max-w-[24.2857rem] rounded-lg border border-edge bg-panel px-2 py-1.5 text-xs font-mono outline-none"
+                        options={usageRows.map((r) => r.model)}
+                        onChange={setUsageModel}
                         title={t('config.usageModel')}
-                      >
-                        {usageRows.map((r) => (
-                          <option key={r.model} value={r.model}>
-                            {r.model}
-                          </option>
+                      />
+                      <div className="flex items-center rounded-lg border border-edge/70 bg-panel/40 p-1 backdrop-blur-sm">
+                        {(
+                          [
+                            ['today', t('config.usageRangeToday')],
+                            ['1d', '1d'],
+                            ['7d', '7d'],
+                            ['14d', '14d'],
+                            ['30d', '30d'],
+                          ] as const
+                        ).map(([value, label]) => (
+                          <button
+                            key={value}
+                            onClick={() => setUsageRange(value)}
+                            className={`h-7 rounded-md px-2.5 text-xs transition-all ${
+                              usageRange === value
+                                ? 'bg-panel text-accent shadow-sm'
+                                : 'text-dim hover:bg-panel/60 hover:text-fg'
+                            }`}
+                          >
+                            {label}
+                          </button>
                         ))}
-                      </select>
-                      {(
-                        [
-                          ['today', t('config.usageRangeToday')],
-                          ['1d', '1d'],
-                          ['7d', '7d'],
-                          ['14d', '14d'],
-                          ['30d', '30d'],
-                        ] as const
-                      ).map(([value, label]) => (
-                        <button
-                          key={value}
-                          onClick={() => setUsageRange(value)}
-                          className={`rounded-lg border px-2.5 py-1.5 text-xs ${
-                            usageRange === value
-                              ? 'border-accent bg-accent/15 text-fg'
-                              : 'border-edge text-dim hover:text-fg'
-                          }`}
-                        >
-                          {label}
-                        </button>
-                      ))}
+                      </div>
+                      <UsageRangePicker
+                        active={usageRange === 'custom'}
+                        startMs={customStartMs}
+                        endMs={customEndMs}
+                        liveEnd={usageLiveEnd}
+                        onApply={applyUsageCustomRange}
+                      />
                       {usageLoading && (
                         <Loader2
                           size="1.0000rem"
@@ -1534,45 +1529,14 @@ export function ConfigPage() {
                         />
                       )}
                     </div>
-                    <div
-                      className="rounded-xl border border-edge bg-panel2 p-3"
-                      title={t('config.usageCacheHitHint')}
-                    >
-                      <div className="mb-2 flex items-center justify-between text-xs">
-                        <span className="text-dim">
-                          {t('config.usageCacheHitRate')}
-                        </span>
-                        <span className="font-bold text-ok tabular-nums">
-                          {cacheHit.rate.toFixed(1)}%
-                        </span>
-                      </div>
-                      <div className="h-1.5 overflow-hidden rounded-full bg-panel">
-                        <div
-                          className="h-full rounded-full bg-ok transition-all duration-300"
-                          style={{ width: `${cacheHit.rate}%` }}
-                        />
-                      </div>
-                      <div className="mt-1.5 text-[0.7143rem] text-dim tabular-nums">
-                        {fmtUsageTokens(cacheHit.read)} /{' '}
-                        {fmtUsageTokens(cacheHit.input)}
-                      </div>
-                    </div>
                     <UsageChart
                       points={usageSeries}
-                      granularity={
-                        usageEndMs - usageStartMs <= 24 * 3_600_000
-                          ? 'hour'
-                          : 'day'
-                      }
+                      granularity={usageGranularity}
                       startMs={usageStartMs}
                       endMs={usageEndMs}
-                      rangeLabel={
-                        usageRange === 'today'
-                          ? t('config.usageRangeToday')
-                          : usageRange
-                      }
+                      rangeLabel={usageRangeLabel()}
                     />
-                    <div className="rounded-xl border border-edge bg-panel2 overflow-x-auto">
+                    <div className="overflow-x-auto rounded-xl border border-edge/60 bg-panel/60 shadow-sm backdrop-blur-sm">
                       <table className="w-full text-xs">
                         <thead>
                           <tr className="text-left text-dim border-b border-edge">
@@ -1587,6 +1551,9 @@ export function ConfigPage() {
                             </th>
                             <th className="px-3 py-2 font-medium text-right">
                               {t('config.usageCache')}
+                            </th>
+                            <th className="px-3 py-2 font-medium text-right">
+                              {t('config.usageCacheWrite')}
                             </th>
                             <th className="px-3 py-2 font-medium text-right">
                               {t('config.usageReasoning')}
@@ -1606,7 +1573,7 @@ export function ConfigPage() {
                           {usageRows.map((r) => (
                             <tr
                               key={r.model}
-                              className="border-b border-edge/50 last:border-0 hover:bg-panel2"
+                              className="border-b border-edge/40 last:border-0 hover:bg-panel"
                             >
                               <td className="px-3 py-2 font-mono text-fg">
                                 {r.model}
@@ -1624,6 +1591,9 @@ export function ConfigPage() {
                               >
                                 {fmtUsageTokens(r.cache_read_tokens)}
                               </td>
+                              <td className="px-3 py-2 text-right tabular-nums">
+                                {fmtUsageTokens(r.cache_write_tokens)}
+                              </td>
                               <td
                                 className={`px-3 py-2 text-right tabular-nums ${
                                   r.reasoning_tokens === 0 ? 'text-dim/60' : ''
@@ -1632,11 +1602,20 @@ export function ConfigPage() {
                                 {fmtUsageTokens(r.reasoning_tokens)}
                               </td>
                               <td
-                                className={`px-3 py-2 text-right tabular-nums ${
-                                  r.latency_ms === 0 ? 'text-dim/60' : ''
-                                }`}
+                                className="px-3 py-2 text-right tabular-nums"
+                                title={
+                                  r.calls === 0 && r.latency_ms > 0
+                                    ? t('config.usageLatencyLegacyHint')
+                                    : undefined
+                                }
                               >
-                                {fmtUsageTokens(r.latency_ms)}ms
+                                {r.calls > 0
+                                  ? `${fmtUsageTokens(
+                                      Math.round(r.latency_ms / r.calls),
+                                    )}ms`
+                                  : r.latency_ms > 0
+                                    ? `${fmtUsageTokens(r.latency_ms)}ms`
+                                    : '—'}
                               </td>
                               <td className="px-3 py-2 text-right tabular-nums">
                                 {r.sessions}
@@ -1856,13 +1835,6 @@ export function ConfigPage() {
               </div>
             )}
 
-            {tab === 'logs' && (
-              <div className="h-full flex flex-col gap-3">
-                <p className="text-xs text-dim">{t('config.logsHint')}</p>
-                <LogViewer fetchLogs={() => api.readLog(300)} />
-              </div>
-            )}
-
             {tab === 'diagnostics' && (
               <div className="space-y-4">
                 <p className="text-xs text-dim">{t('config.diagHint')}</p>
@@ -2050,6 +2022,13 @@ export function ConfigPage() {
                     </p>
                   )}
                 </div>
+
+                <div className="space-y-2 border-t border-edge pt-3">
+                  <p className="text-xs text-dim">{t('config.logsHint')}</p>
+                  <div className="h-[22rem]">
+                    <LogViewer fetchLogs={() => api.readLog(300)} />
+                  </div>
+                </div>
               </div>
             )}
 
@@ -2071,7 +2050,6 @@ export function ConfigPage() {
               </div>
             )}
             {tab === 'mcp' && <MCPSection />}
-            {tab === 'kanban' && <KanbanSection />}
           </div>
         </div>
 

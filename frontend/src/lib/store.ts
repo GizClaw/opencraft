@@ -11,7 +11,6 @@ import type {
   ConfigStatus,
   FileTab,
   InteractDTO,
-  KanbanCard,
   HistoryPart,
   HistoryMessage,
   ModelOption,
@@ -74,8 +73,8 @@ export interface MessageView {
   // their ordered items instead.
   text: string;
   items: AssistantItem[];
-  // attachments renders user message media: images above the text,
-  // other files in a collapsed list below it.
+  // attachments renders user message media: images above the bubble,
+  // other files in a floating list below it.
   attachments: AttachmentView[];
 }
 
@@ -682,7 +681,6 @@ interface StoreState {
   composerDraft: string;
   statusText: string;
   lastUsage: UsageDTO | null;
-  cards: KanbanCard[];
   modelOptions: ModelOption[];
   sessionDefaults: SessionDefaults;
   yoloOnly: boolean;
@@ -763,7 +761,6 @@ interface StoreState {
   loadSessions: () => Promise<void>;
   loadAutomations: () => Promise<void>;
   loadAutomationRuns: (taskId: string) => Promise<void>;
-  loadCards: () => Promise<void>;
   flash: (text: string) => void;
   toast: (text: string, kind?: ToastKind) => void;
   dismissToast: (id: number) => void;
@@ -1623,7 +1620,6 @@ export const useStore = create<StoreState>((set, get) => {
     composerDraft: '',
     statusText: '',
     lastUsage: null,
-    cards: [],
     modelOptions: [],
     sessionDefaults: { mode: 'workspace', think: 'medium' },
     yoloOnly: false,
@@ -2576,14 +2572,6 @@ export const useStore = create<StoreState>((set, get) => {
 
     clearComposerDraft: () => {
       set({ composerDraft: '' });
-    },
-
-    loadCards: async () => {
-      try {
-        set({ cards: (await api.delegationCards()) ?? [] });
-      } catch {
-        // best-effort
-      }
     },
 
     flash: (text) => get().toast(text),

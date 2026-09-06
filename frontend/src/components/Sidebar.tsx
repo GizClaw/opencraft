@@ -6,7 +6,6 @@ import {
   FolderClosed,
   FolderOpen,
   Loader2,
-  MessagesSquare,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -17,7 +16,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { WindowToggleMaximise } from '../../wailsjs/runtime/runtime';
 import { api } from '../lib/api';
@@ -36,6 +35,60 @@ import type { SessionMeta, WorkspaceMeta } from '../lib/types';
 
 function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+}
+
+// SessionTitle renders a history row's single-line label. Normally it
+// truncates; hovering an overlong title plays one scroll pass from the
+// beginning until the tail is visible, then stops.
+function SessionTitle({ title }: { title: string }) {
+  const holderRef = useRef<HTMLSpanElement | null>(null);
+  const [hovered, setHovered] = useState(false);
+  const [overflow, setOverflow] = useState(0);
+  const [duration, setDuration] = useState(8);
+
+  useLayoutEffect(() => {
+    const holder = holderRef.current;
+    if (!holder) return;
+    const check = () => {
+      const next = Math.max(0, holder.scrollWidth - holder.clientWidth);
+      setOverflow(next);
+      if (next > 0) {
+        // ~40px/s keeps a long title legible without racing it.
+        setDuration(Math.max(2, Math.ceil(next / 40)));
+      }
+    };
+    check();
+    const observer = new ResizeObserver(check);
+    observer.observe(holder);
+    return () => observer.disconnect();
+  }, [title]);
+
+  const scrolling = hovered && overflow > 0;
+
+  return (
+    <span
+      ref={holderRef}
+      className={`min-w-0 flex-1 overflow-hidden whitespace-nowrap text-sm leading-5 text-fg ${
+        scrolling ? '' : 'truncate'
+      }`}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
+      {scrolling ? (
+        <span
+          className="sidebar-title-scroll-once"
+          style={{
+            ['--sidebar-title-scroll-distance' as string]: `-${overflow}px`,
+            ['--sidebar-title-scroll-duration' as string]: `${duration}s`,
+          }}
+        >
+          {title}
+        </span>
+      ) : (
+        title
+      )}
+    </span>
+  );
 }
 
 // SessionRow is one rendered session: a running conversation (which may
@@ -135,6 +188,10 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   // attemptedFetch prevents an infinite refetch loop when a workspace
   // list fails to load; collapse/expand clears the entry to retry.
   const attemptedFetch = useRef<Set<string>>(new Set());
+  // wsListGen invalidates in-flight workspace fetches when the cache
+  // entry is dropped (workspace switch / removal); a stale response
+  // must not repopulate the cache after the workspace was touched.
+  const wsListGen = useRef<Record<string, number>>({});
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
@@ -170,11 +227,34 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   const lastWorkspace = useRef<string | null>(null);
   useEffect(() => {
     if (!workspace || lastWorkspace.current === workspace) return;
+    const previous = lastWorkspace.current;
     lastWorkspace.current = workspace;
     if (!expandedWorkspaces.has(workspace)) {
       const next = new Set(expandedWorkspaces);
       next.add(workspace);
       persistExpanded(next);
+    }
+    // Sessions of the active workspace always render from the store's
+    // live list; every other workspace renders a snapshot fetched when
+    // it was expanded. Drop the snapshot of the workspace we just left
+    // so leaving it cannot surface a stale history (for example
+    // sessions deleted while that workspace was still active) — the
+    // next expansion/refetch reads the current list from disk.
+    if (previous) {
+      setWsLists((prev) => {
+        if (!(previous in prev)) return prev;
+        const next = { ...prev };
+        delete next[previous];
+        return next;
+      });
+      setWsLoading((prev) => {
+        if (!(previous in prev)) return prev;
+        const next = { ...prev };
+        delete next[previous];
+        return next;
+      });
+      attemptedFetch.current.delete(previous);
+      wsListGen.current[previous] = (wsListGen.current[previous] ?? 0) + 1;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspace]);
@@ -321,14 +401,19 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
       return;
     }
     attemptedFetch.current.add(w.path);
+    const generation = (wsListGen.current[w.path] ?? 0) + 1;
+    wsListGen.current[w.path] = generation;
     setWsLoading((prev) => ({ ...prev, [w.path]: true }));
     try {
       const list = (await api.listSessionsInWorkspace(w.path)) ?? [];
+      if (wsListGen.current[w.path] !== generation) return;
       setWsLists((prev) => ({ ...prev, [w.path]: list }));
     } catch (err) {
-      flash(String(err));
+      if (wsListGen.current[w.path] === generation) flash(String(err));
     } finally {
-      setWsLoading((prev) => ({ ...prev, [w.path]: false }));
+      if (wsListGen.current[w.path] === generation) {
+        setWsLoading((prev) => ({ ...prev, [w.path]: false }));
+      }
     }
   };
 
@@ -446,7 +531,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
       }
       const rect = e.currentTarget.getBoundingClientRect();
       const cardWidth = 288;
-      const cardHeight = 152;
+      const cardHeight = 190;
       const left = Math.max(
         8,
         Math.min(rect.right + 8, window.innerWidth - cardWidth - 8),
@@ -458,24 +543,8 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
       setHoverCard({ row, left, top });
     };
 
-  // Session meta becomes the second line of each history row: recency
-  // and scale are visible without hovering. Running sessions without a
-  // persisted record yet fall back to a plain "running" label.
-  const renderSessionMeta = (row: SessionRow) => {
-    if (row.running && !row.time && !row.turns && !row.tokens) {
-      return t('sidebar.running');
-    }
-    const parts: string[] = [];
-    if (row.time) parts.push(row.time);
-    if (row.turns && row.turns > 0) {
-      parts.push(t('sidebar.turnCount', { count: row.turns }));
-    }
-    return parts.join(' · ');
-  };
-
   const renderSessionRow = (row: SessionRow, actionsAllowed: boolean) => {
     const isActive = row.id === currentSession;
-    const meta = renderSessionMeta(row);
     return (
       <div key={row.id}>
         <div
@@ -489,8 +558,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
           onMouseLeave={() => setHoverCard(null)}
         >
           {renameId === row.id ? (
-            <div className="flex items-center gap-2 px-1.5 py-1">
-              <MessagesSquare size="0.9286rem" className="text-dim shrink-0" />
+            <div className="px-1.5 py-1">
               <input
                 autoFocus
                 value={renameValue}
@@ -503,37 +571,34 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                   }
                 }}
                 onBlur={() => setRenameId(null)}
-                className="flex-1 min-w-0 rounded border border-accent bg-panel px-1 py-0 text-xs outline-none"
+                className="w-full min-w-0 rounded border border-accent bg-panel px-1 py-0 text-xs outline-none"
               />
             </div>
           ) : (
             <>
               <button
                 onClick={() => openSession(row)}
-                className="flex w-full min-w-0 items-center gap-2 px-2 py-1.5"
+                className="flex w-full min-w-0 items-center text-left px-2 py-1.5"
                 aria-label={row.title}
               >
-                {row.running ? (
-                  <Loader2
-                    size="0.9286rem"
-                    className="text-accent animate-spin shrink-0"
-                  />
-                ) : (
-                  <MessagesSquare
-                    size="0.9286rem"
-                    className={`shrink-0 ${
-                      isActive ? 'text-accent' : 'text-dim'
+                <SessionTitle title={row.title} />
+                {row.running && (
+                  <span
+                    aria-hidden="true"
+                    className={`shrink-0 transition-opacity ${
+                      actionsAllowed && menuOpenId === row.id
+                        ? 'opacity-0'
+                        : actionsAllowed
+                          ? 'group-hover:opacity-0'
+                          : ''
                     }`}
-                  />
+                  >
+                    <Loader2
+                      size="0.9286rem"
+                      className="animate-spin text-accent"
+                    />
+                  </span>
                 )}
-                <span className="flex min-w-0 flex-1 flex-col">
-                  <span className="truncate text-sm leading-5 text-fg">
-                    {row.title}
-                  </span>
-                  <span className="mt-px truncate text-[0.7143rem] leading-4 text-dim">
-                    {meta}
-                  </span>
-                </span>
               </button>
               {actionsAllowed && (
                 <div
@@ -817,6 +882,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
       return next;
     });
     attemptedFetch.current.delete(target.path);
+    wsListGen.current[target.path] = (wsListGen.current[target.path] ?? 0) + 1;
     const next = new Set(expandedWorkspaces);
     next.delete(target.path);
     persistExpanded(next);
@@ -833,6 +899,9 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
     const rows = [
       card.row.tokens
         ? { label: t('sidebar.hoverTokens'), value: card.row.tokens }
+        : null,
+      card.row.turns && card.row.turns > 0
+        ? { label: t('sidebar.hoverTurns'), value: String(card.row.turns) }
         : null,
       updated ? { label: t('sidebar.hoverUpdated'), value: updated } : null,
       created ? { label: t('sidebar.hoverCreated'), value: created } : null,

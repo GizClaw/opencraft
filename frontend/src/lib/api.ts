@@ -31,7 +31,6 @@ import type {
   FileNode,
   ResolvedTarget,
   HistoryMessage,
-  KanbanCard,
   InferenceRequest,
   MCPServer,
   MCPStatus,
@@ -113,8 +112,6 @@ export const api = {
   workspaces: () => Workspace.List() as Promise<WorkspaceMeta[]>,
   openWorkspace: (path: string) => Workspace.Open(path),
   removeWorkspace: (id: string) => Workspace.Remove(id),
-  delegationCards: () =>
-    Session.DelegationCards() as unknown as Promise<KanbanCard[]>,
   fileDiff: (path: string) => File.Diff(path),
   getThink: () => Settings.GetThink(),
   setThink: (level: string) => Settings.SetThink(level),
@@ -127,6 +124,7 @@ export const api = {
   modelOptions: () =>
     Config.ModelOptions() as unknown as Promise<ModelOption[]>,
   modelUsage: () => Config.ModelUsage() as unknown as Promise<ModelUsageStat[]>,
+  modelUsageSessionCount: () => Config.ModelUsageSessionCount(),
   modelUsageSeries: (
     model: string,
     granularity: 'hour' | 'day',
@@ -173,7 +171,6 @@ export const api = {
     ) as unknown as Promise<PolicyDecision>,
   clearCaches: () =>
     Diagnostics.ClearCaches() as unknown as Promise<CacheClearResult>,
-  cancelCard: (id: string) => Settings.CancelCard(id),
   chooseWorkspace: () =>
     Workspace.ChooseWorkspace(i18n.t('sidebar.chooseWorkspaceTitle')),
   pluginList: () => Plugin.List() as Promise<PluginSummary[]>,

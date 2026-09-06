@@ -196,15 +196,18 @@ func (b *Config) ModelOptions() ([]ModelOption, error) {
 
 // ModelUsageStat is one model's cumulative user-level usage.
 type ModelUsageStat struct {
-	Model           string `json:"model"`
-	InputTokens     int64  `json:"input_tokens"`
-	OutputTokens    int64  `json:"output_tokens"`
-	CacheReadTokens int64  `json:"cache_read_tokens"`
-	ReasoningTokens int64  `json:"reasoning_tokens"`
-	LatencyMs       int64  `json:"latency_ms"`
-	Workspaces      int    `json:"workspaces"`
-	Sessions        int    `json:"sessions"`
-	UpdatedAt       string `json:"updated_at"`
+	Model            string `json:"model"`
+	TotalTokens      int64  `json:"total_tokens"`
+	InputTokens      int64  `json:"input_tokens"`
+	OutputTokens     int64  `json:"output_tokens"`
+	CacheReadTokens  int64  `json:"cache_read_tokens"`
+	CacheWriteTokens int64  `json:"cache_write_tokens"`
+	ReasoningTokens  int64  `json:"reasoning_tokens"`
+	LatencyMs        int64  `json:"latency_ms"`
+	Calls            int64  `json:"calls"`
+	Workspaces       int    `json:"workspaces"`
+	Sessions         int    `json:"sessions"`
+	UpdatedAt        string `json:"updated_at"`
 }
 
 // ModelUsage returns per-model token usage.
@@ -221,27 +224,48 @@ func (b *Config) ModelUsage() ([]ModelUsageStat, error) {
 	out := make([]ModelUsageStat, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, ModelUsageStat{
-			Model:           r.Model,
-			InputTokens:     r.InputTokens,
-			OutputTokens:    r.OutputTokens,
-			CacheReadTokens: r.CacheReadTokens,
-			ReasoningTokens: r.ReasoningTokens,
-			LatencyMs:       r.LatencyMs,
-			Workspaces:      r.Workspaces,
-			Sessions:        r.Sessions,
-			UpdatedAt:       r.UpdatedAt,
+			Model:            r.Model,
+			TotalTokens:      r.TotalTokens,
+			InputTokens:      r.InputTokens,
+			OutputTokens:     r.OutputTokens,
+			CacheReadTokens:  r.CacheReadTokens,
+			CacheWriteTokens: r.CacheWriteTokens,
+			ReasoningTokens:  r.ReasoningTokens,
+			LatencyMs:        r.LatencyMs,
+			Calls:            r.Calls,
+			Workspaces:       r.Workspaces,
+			Sessions:         r.Sessions,
+			UpdatedAt:        r.UpdatedAt,
 		})
 	}
 	return out, nil
 }
 
+// ModelUsageSessionCount returns the number of distinct
+// (workspace, session) pairs with any recorded usage. One session
+// that used several models counts once, unlike the per-model Sessions
+// field of ModelUsageStat.
+func (b *Config) ModelUsageSessionCount() (int, error) {
+	ctx := b.core.Shell.Context()
+	store := b.core.Runtime.Usage()
+	if store == nil {
+		return 0, errNotReady("usage")
+	}
+	n, err := store.SessionCount(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 // UsagePoint is one time-bucketed usage sample.
 type UsagePoint struct {
-	Time            string `json:"time"`
-	InputTokens     int64  `json:"input_tokens"`
-	OutputTokens    int64  `json:"output_tokens"`
-	CacheReadTokens int64  `json:"cache_read_tokens"`
-	ReasoningTokens int64  `json:"reasoning_tokens"`
+	Time             string `json:"time"`
+	InputTokens      int64  `json:"input_tokens"`
+	OutputTokens     int64  `json:"output_tokens"`
+	CacheReadTokens  int64  `json:"cache_read_tokens"`
+	CacheWriteTokens int64  `json:"cache_write_tokens"`
+	ReasoningTokens  int64  `json:"reasoning_tokens"`
 }
 
 // ModelUsageSeries returns one model's bucketed usage.
@@ -272,11 +296,12 @@ func (b *Config) ModelUsageSeries(
 	out := make([]UsagePoint, 0, len(rows))
 	for _, p := range rows {
 		out = append(out, UsagePoint{
-			Time:            p.Time,
-			InputTokens:     p.InputTokens,
-			OutputTokens:    p.OutputTokens,
-			CacheReadTokens: p.CacheReadTokens,
-			ReasoningTokens: p.ReasoningTokens,
+			Time:             p.Time,
+			InputTokens:      p.InputTokens,
+			OutputTokens:     p.OutputTokens,
+			CacheReadTokens:  p.CacheReadTokens,
+			CacheWriteTokens: p.CacheWriteTokens,
+			ReasoningTokens:  p.ReasoningTokens,
 		})
 	}
 	return out, nil
