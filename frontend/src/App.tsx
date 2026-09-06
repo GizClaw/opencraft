@@ -233,9 +233,6 @@ export default function App() {
       } else if (key === ',') {
         e.preventDefault();
         openConfig();
-      } else if (key === 'k') {
-        e.preventDefault();
-        openConfig('kanban');
       } else if (key === 'o') {
         e.preventDefault();
         openFiles();

@@ -229,8 +229,6 @@ export function mockBackend(cfg?: MockConfig) {
     },
     Session: {
       ActiveRun: async () => '',
-      ConversationDelegationCards: emptyList,
-      DelegationCards: emptyList,
       Delete: noop,
       Exists: async () => false,
       ExportBundle: async () => '',
@@ -255,7 +253,6 @@ export function mockBackend(cfg?: MockConfig) {
     },
     Settings: {
       AllowPermission: noop,
-      CancelCard: async () => false,
       DeleteSkill: noop,
       DenyPermission: noop,
       GetSessionDefaults: async () => ({ mode: 'workspace', think: 'medium' }),
@@ -300,9 +297,7 @@ export function mockBackend(cfg?: MockConfig) {
     CancelTurn: ['Conversation', 'CancelTurn'],
     ConfigState: ['Config', 'ConfigState'],
     ConfigStatus: ['Config', 'ConfigStatus'],
-    ConversationDelegationCards: ['Session', 'ConversationDelegationCards'],
     CurrentSession: ['Conversation', 'CurrentSession'],
-    DelegationCards: ['Session', 'DelegationCards'],
     DeleteAutomation: ['Automation', 'Delete'],
     DeleteSession: ['Session', 'Delete'],
     DeleteSkill: ['Settings', 'DeleteSkill'],

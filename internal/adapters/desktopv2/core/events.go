@@ -75,8 +75,8 @@ func NewUsageEvent(usage inference.Usage) UsageEvent {
 	if usage.Input.CacheWriteTokens != nil {
 		ev.CacheWriteTokens = *usage.Input.CacheWriteTokens
 	}
-	if usage.Model.ID.Provider != "" && usage.Model.ID.Name != "" {
-		ev.Model = usage.Model.ID.Provider + "/" + usage.Model.ID.Name
+	if usage.Model.ID.Name != "" {
+		ev.Model = usage.Model.ID.Name
 	}
 	return ev
 }

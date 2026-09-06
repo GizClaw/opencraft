@@ -6,9 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GizClaw/flowcraft/core/delegation"
-	"github.com/GizClaw/flowcraft/core/delegation/kanban"
-
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 )
 
@@ -138,43 +135,5 @@ func TestImportRequestFromTurnsCarriesTimingAndUsage(t *testing.T) {
 		if !strings.Contains(string(raw), key) {
 			t.Fatalf("export JSON missing %q: %s", key, raw)
 		}
-	}
-}
-
-func TestDelegationCardDTOCarriesDetails(t *testing.T) {
-	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
-	card := &kanban.Card{
-		ID:        "card-1",
-		Producer:  "producer",
-		Consumer:  "consumer",
-		Status:    kanban.StatusDone,
-		CreatedAt: now,
-		UpdatedAt: now.Add(time.Minute),
-		Task: &kanban.Task{Request: delegation.AsyncRequest{
-			Request: delegation.Request{
-				Target: "worker",
-				Input:  "do the thing",
-				Metadata: map[string]string{
-					delegation.ParentRunMetadataKey: "parent-run",
-					delegation.CallIDMetadataKey:    "call-1",
-				},
-			},
-			Caller: "caller",
-			Depth:  2,
-		}},
-		Result: &kanban.Result{Response: delegation.Response{
-			Output: "done",
-			Error:  "",
-		}},
-	}
-	dto, ok := cardDTO(card)
-	if !ok {
-		t.Fatal("cardDTO rejected a valid card")
-	}
-	if dto.Target != "worker" || dto.Input != "do the thing" ||
-		dto.Output != "done" || dto.Caller != "caller" ||
-		dto.Depth != 2 || dto.ParentRunID != "parent-run" ||
-		dto.CallID != "call-1" || dto.UpdatedAt == "" {
-		t.Fatalf("delegation card = %+v", dto)
 	}
 }

@@ -49,6 +49,21 @@ type Usage struct {
 	CacheWriteTokens int64  `json:"cache_write_tokens,omitempty"`
 	ReasoningTokens  int64  `json:"reasoning_tokens,omitempty"`
 	LatencyMs        int64  `json:"latency_ms,omitempty"`
+	Calls            int64  `json:"calls,omitempty"`
+}
+
+// NormalizeModelName reduces a recorded model key to its name only.
+// Legacy rows and exported bundles keyed usage by "provider/name";
+// user-level statistics intentionally bucket by model name across
+// providers, so any prefix up to the first "/" is dropped. Every
+// write and read of persisted usage goes through this rule so imports
+// of pre-normalization bundles cannot reintroduce provider-prefixed
+// keys.
+func NormalizeModelName(model string) string {
+	if i := strings.IndexByte(model, '/'); i >= 0 {
+		return model[i+1:]
+	}
+	return model
 }
 
 // TurnRecord is one archived turn.
@@ -707,6 +722,7 @@ func (s *Store) List() ([]Meta, error) {
 					otellog.String("conversation.id", c.ID))
 			}
 		}
+		usage.Model = NormalizeModelName(usage.Model)
 		// A conversation whose first turn started but has not archived
 		// yet carries only a title and zero turns. It must stay visible
 		// while the run is in flight (and after a crash), so skip only
@@ -815,6 +831,7 @@ func (s *Store) LoadUsage(ctx context.Context, id string) (Usage, error) {
 				otellog.String("conversation.id", id))
 		}
 	}
+	usage.Model = NormalizeModelName(usage.Model)
 	return usage, nil
 }
 
@@ -823,6 +840,7 @@ func (s *Store) RecordUsage(ctx context.Context, id string, usage Usage) error {
 	if err := requireID(id); err != nil {
 		return err
 	}
+	usage.Model = NormalizeModelName(usage.Model)
 	c, err := s.db.Conversation(ctx, id)
 	if err == state.ErrNotFound {
 		c = state.Conversation{ID: id, CreatedAt: time.Now().UTC()}
@@ -857,6 +875,7 @@ func (s *Store) RecordUsageIfEmpty(
 	if usage.TotalTokens <= 0 {
 		return false, nil
 	}
+	usage.Model = NormalizeModelName(usage.Model)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -919,6 +938,8 @@ func (s *Store) AddUsage(ctx context.Context, id string, delta Usage) error {
 				otellog.String("conversation.id", id))
 		}
 	}
+	usage.Model = NormalizeModelName(usage.Model)
+	delta.Model = NormalizeModelName(delta.Model)
 	if delta.Model != "" {
 		usage.Model = delta.Model
 	}
@@ -929,6 +950,7 @@ func (s *Store) AddUsage(ctx context.Context, id string, delta Usage) error {
 	usage.CacheWriteTokens += delta.CacheWriteTokens
 	usage.ReasoningTokens += delta.ReasoningTokens
 	usage.LatencyMs += delta.LatencyMs
+	usage.Calls += delta.Calls
 
 	raw, err := json.Marshal(usage)
 	if err != nil {

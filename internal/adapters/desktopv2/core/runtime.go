@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
@@ -171,6 +172,7 @@ func (r *Runtime) recordTurnUsage(
 	ctx context.Context,
 	workspaceID, sessionID string,
 	u sessions.Usage,
+	at time.Time,
 ) error {
 	r.mu.Lock()
 	store := r.usage
@@ -178,7 +180,7 @@ func (r *Runtime) recordTurnUsage(
 	if store == nil {
 		return nil
 	}
-	return store.RecordSessionUsage(ctx, workspaceID, sessionID, u)
+	return store.RecordSessionUsage(ctx, workspaceID, sessionID, u, at)
 }
 
 // Acquire returns a shared Host for workDir. The prompt backend is

@@ -24,6 +24,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
+	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/usage"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
@@ -107,7 +108,15 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 			"headless: user usage accounting unavailable; continuing without it",
 			usageErr)
 	} else {
-		hostMgr.SetUsageRecorder(usageStore.RecordSessionUsage)
+		hostMgr.SetUsageRecorder(func(
+			ctx context.Context,
+			workspaceID, sessionID string,
+			usage ocsessions.Usage,
+			at time.Time,
+		) error {
+			return usageStore.RecordSessionUsage(
+				ctx, workspaceID, sessionID, usage, at)
+		})
 		defer func() {
 			telemetry.WarnErr(context.Background(),
 				"headless: close user db failed", udb.Close())

@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/GizClaw/flowcraft/core/delegation/kanban"
-
 	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/execpolicy"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
@@ -303,21 +301,4 @@ func (b *Settings) ReadLog(n int) (string, error) {
 		lines = lines[len(lines)-n:]
 	}
 	return strings.Join(lines, "\n"), nil
-}
-
-// CancelCard cancels one delegation board card.
-func (b *Settings) CancelCard(id string) (bool, error) {
-	h := b.core.Runtime.Current()
-	if h == nil || h.Controller() == nil || h.Controller().Runtime() == nil {
-		return false, errors.New("settings: runtime is not ready")
-	}
-	value, ok := h.Controller().Runtime().Resource("delegate.backend")
-	if !ok {
-		return false, errors.New("settings: delegation backend is not wired")
-	}
-	board, ok := value.(*kanban.Board)
-	if !ok {
-		return false, errors.New("settings: delegation backend has an unexpected type")
-	}
-	return board.Cancel(id, "cancelled from the desktop board"), nil
 }

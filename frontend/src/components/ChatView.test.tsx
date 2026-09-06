@@ -281,6 +281,53 @@ describe('ChatView transcript windowing', () => {
     });
   });
 
+  it('shows Stop only for an empty composer and Send once a running-turn draft exists', async () => {
+    setConversation([], []);
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    apiMock.startTurn.mockResolvedValue({
+      run_id: 'r-next',
+      context_id: 's-1',
+    });
+    render(<ChatView />);
+
+    // While the agent runs with nothing typed, the primary action is Stop.
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Send' }),
+    ).not.toBeInTheDocument();
+
+    // Typing a draft restores Send; the button barges in like Enter.
+    await userEvent.setup().click(screen.getByRole('textbox'));
+    await userEvent.keyboard('next question');
+    expect(
+      screen.queryByRole('button', { name: 'Stop' }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Send' })).toBeInTheDocument();
+
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Send' }));
+    await vi.waitFor(() => expect(apiMock.startTurn).toHaveBeenCalled());
+    expect(apiMock.startTurn).toHaveBeenCalledWith(
+      's-1',
+      expect.objectContaining({
+        content: {
+          parts: [
+            expect.objectContaining({
+              type: 'text',
+              text: 'next question',
+            }),
+          ],
+        },
+      }),
+    );
+    // The draft was cleared by the interrupt, so Stop is primary again.
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Send' }),
+    ).not.toBeInTheDocument();
+  });
+
   it('renders recognizable badges for common document attachments', async () => {
     const attachments: MessageView['attachments'] = [
       {
@@ -342,6 +389,64 @@ describe('ChatView transcript windowing', () => {
     for (const badge of ['PDF', 'DOC', 'XLS', 'PPT', 'MD']) {
       expect(screen.getByText(badge)).toBeInTheDocument();
     }
+  });
+
+  it('renders images above the bubble and opens files in a floating list', async () => {
+    const attachments: MessageView['attachments'] = [
+      {
+        id: 'att-img',
+        kind: 'image',
+        path: '/tmp/pic.png',
+        name: 'pic.png',
+        media_type: 'image/png',
+        data_url: 'data:image/png;base64,AAAA',
+      },
+      ...Array.from({ length: 5 }, (_, i) => ({
+        id: `att-f${i}`,
+        kind: 'file' as const,
+        path: `/tmp/file-${i}.md`,
+        name: `file-${i}.md`,
+        media_type: 'text/markdown',
+      })),
+    ];
+    setConversation(
+      [
+        {
+          id: 'm-user',
+          role: 'user',
+          text: 'check these',
+          items: [],
+          attachments,
+        },
+      ],
+      [],
+    );
+    render(<ChatView />);
+
+    const user = userEvent.setup();
+    const text = document.querySelector('.rounded-2xl p');
+    expect(text).not.toBeNull();
+    const bubble = text!.closest('.rounded-2xl');
+    expect(bubble).not.toBeNull();
+
+    // Images render above the bubble, the file chip below it, and
+    // neither keeps a bubble background behind it.
+    const image = screen.getByRole('img', { name: 'pic.png' });
+    expect(image.closest('.rounded-2xl')).toBeNull();
+    expect(
+      image.compareDocumentPosition(text!) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    const fileChip = screen.getByRole('button', { name: '5 files' });
+    expect(fileChip.closest('.rounded-2xl')).toBeNull();
+    expect(
+      text!.compareDocumentPosition(fileChip) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+
+    await user.click(fileChip);
+    expect(screen.getAllByRole('menuitem')).toHaveLength(5);
+    await user.click(document.body);
+    expect(screen.queryByRole('menuitem')).not.toBeInTheDocument();
   });
 
   it('shows worked duration at the top of an artifact turn', () => {

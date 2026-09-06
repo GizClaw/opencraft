@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 )
@@ -35,7 +36,7 @@ func TestRuntimeRecordTurnUsagePersistsModelRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	err := rt.recordTurnUsage(context.Background(), "ws-a", "s-1", sessions.Usage{
-		Model:            "openai-1/gpt-test",
+		Model:            "gpt-test",
 		InputTokens:      100,
 		OutputTokens:     50,
 		TotalTokens:      150,
@@ -43,7 +44,7 @@ func TestRuntimeRecordTurnUsagePersistsModelRows(t *testing.T) {
 		CacheWriteTokens: 10,
 		ReasoningTokens:  5,
 		LatencyMs:        456,
-	})
+	}, time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("record turn usage: %v", err)
 	}
@@ -56,12 +57,13 @@ func TestRuntimeRecordTurnUsagePersistsModelRows(t *testing.T) {
 		t.Fatalf("summary rows = %d, want 1", len(rows))
 	}
 	row := rows[0]
-	if row.Model != "openai-1/gpt-test" {
+	if row.Model != "gpt-test" {
 		t.Fatalf("model = %q", row.Model)
 	}
 	if row.InputTokens != 100 || row.OutputTokens != 50 ||
-		row.CacheReadTokens != 20 || row.ReasoningTokens != 5 ||
-		row.LatencyMs != 456 {
+		row.CacheReadTokens != 20 || row.CacheWriteTokens != 10 ||
+		row.ReasoningTokens != 5 || row.LatencyMs != 456 ||
+		row.Calls != 1 {
 		t.Fatalf("summary row = %+v", row)
 	}
 	if row.Workspaces != 1 || row.Sessions != 1 {

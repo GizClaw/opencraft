@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	fcmemory "github.com/GizClaw/flowcraft/core/memory"
 	"github.com/GizClaw/flowcraft/core/message"
@@ -51,7 +52,7 @@ func (h *Host) ImportSession(
 	// record after memory seeding and CompleteImport succeed, and a
 	// ready legacy import gets a backfill when no usage was captured.
 	if ready {
-		h.recordImportUsage(ctx, id, req.Usage)
+		h.recordImportUsage(ctx, id, req.Usage, importUsageAt(req))
 		return id, nil
 	}
 	if err := h.seedImportMemory(ctx, id, req); err != nil {
@@ -62,18 +63,22 @@ func (h *Host) ImportSession(
 		h.abortImport(ctx, id)
 		return "", fmt.Errorf("host: import complete %s: %w", id, err)
 	}
-	h.recordImportUsage(ctx, id, req.Usage)
+	h.recordImportUsage(ctx, id, req.Usage, importUsageAt(req))
 	h.launchAutoTitle(context.WithoutCancel(ctx), id)
 	return id, nil
 }
 
 // recordImportUsage persists an imported session's source-recorded
 // totals through the store's atomic empty-seed write and forwards them
-// to the user-level recorder installed on the Host's manager.
+// to the user-level recorder installed on the Host's manager. at is
+// the earliest turn time when the bundle carries turns, so historical
+// imports land in their own hourly buckets instead of being attributed
+// to the import moment.
 func (h *Host) recordImportUsage(
 	ctx context.Context,
 	id string,
 	usage *ocsessions.Usage,
+	at time.Time,
 ) {
 	if h == nil || h.store == nil || usage == nil || usage.TotalTokens <= 0 {
 		return
@@ -85,8 +90,28 @@ func (h *Host) recordImportUsage(
 		return
 	}
 	if recorded {
-		h.forwardUsageRecorder(ctx, id, *usage)
+		h.forwardUsageRecorder(ctx, id, *usage, at)
 	}
+}
+
+// importUsageAt picks the timestamp that best represents when an
+// imported bundle's tokens were consumed: the earliest turn time in
+// the bundle. Bundles without turn timestamps fall back to the import
+// moment.
+func importUsageAt(req ocsessions.ImportRequest) time.Time {
+	var earliest time.Time
+	for _, turn := range req.Turns {
+		if turn.At.IsZero() {
+			continue
+		}
+		if earliest.IsZero() || turn.At.Before(earliest) {
+			earliest = turn.At
+		}
+	}
+	if earliest.IsZero() {
+		return time.Now().UTC()
+	}
+	return earliest.UTC()
 }
 
 // forwardUsageRecorder sends one usage delta to the user-level recorder
@@ -95,12 +120,13 @@ func (h *Host) forwardUsageRecorder(
 	ctx context.Context,
 	contextID string,
 	usage ocsessions.Usage,
+	at time.Time,
 ) {
 	if h == nil || h.usageRecorder == nil {
 		return
 	}
 	telemetry.WarnErr(ctx, "host: record user-level usage failed",
-		h.usageRecorder(ctx, h.workspaceID, contextID, usage))
+		h.usageRecorder(ctx, h.workspaceID, contextID, usage, at))
 }
 
 func (h *Host) abortImport(ctx context.Context, id string) {

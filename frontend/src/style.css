@@ -565,3 +565,59 @@ textarea:focus-visible {
 .pdf-host .react-pdf__Page canvas {
   display: block;
 }
+
+/* Hovered sidebar sessions with an overlong title scroll once from
+   the start until the tail is visible. The distance and duration are
+   set per row in Sidebar.tsx. */
+@keyframes sidebar-title-scroll-once {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(var(--sidebar-title-scroll-distance));
+  }
+}
+
+.sidebar-title-scroll-once {
+  display: inline-block;
+  white-space: nowrap;
+  animation: sidebar-title-scroll-once var(--sidebar-title-scroll-duration, 8s)
+    linear forwards;
+  will-change: transform;
+}
+
+/* Usage stats (cc-switch-style hero + chart) ------------------------- */
+@keyframes uc-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes uc-hit-grow {
+  from {
+    width: 0;
+  }
+  to {
+    width: var(--uc-hit-width);
+  }
+}
+
+/* cc-switch-style hero card: soft rise-in on entry. */
+.usage-hero {
+  animation: uc-fade-in 420ms ease-out both;
+}
+
+.usage-hit-fill {
+  width: var(--uc-hit-width, 0);
+  animation: uc-hit-grow 800ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .usage-hero,
+  .usage-hit-fill {
+    animation: none !important;
+  }
+}

@@ -8,6 +8,7 @@ import {
   useState,
   type MouseEvent,
 } from 'react';
+import { createPortal } from 'react-dom';
 import {
   AlertTriangle,
   Archive,
@@ -356,24 +357,24 @@ const MessageRow = memo(function MessageRow({
         className="flex justify-end"
       >
         <div className="group flex w-fit max-w-[80%] flex-col items-end gap-1">
-          <div className="rounded-2xl rounded-br-sm border border-accent/30 bg-accent/15 px-4 py-2.5 text-sm">
-            {images.length > 0 && (
-              <div className="mb-2 flex flex-wrap justify-end gap-2">
-                {images.map((a) => (
-                  <AttachmentImage key={a.id} att={a} />
-                ))}
-              </div>
-            )}
-            {msg.text && (
+          {images.length > 0 && (
+            <div className="flex flex-wrap justify-end gap-2">
+              {images.map((a) => (
+                <AttachmentImage key={a.id} att={a} />
+              ))}
+            </div>
+          )}
+          {msg.text && (
+            <div className="rounded-2xl rounded-br-sm border border-accent/30 bg-accent/15 px-4 py-2.5 text-sm">
               <div className="prose-chat user-bubble-md text-sm">
                 <Markdown
                   text={msg.text}
                   onOpen={(href, base) => void openFileTarget(href, base ?? '')}
                 />
               </div>
-            )}
-            {files.length > 0 && <AttachmentFiles attachments={files} />}
-          </div>
+            </div>
+          )}
+          {files.length > 0 && <AttachmentFiles attachments={files} />}
           <div className="pointer-events-none invisible flex items-center gap-1.5 pr-1 group-hover:pointer-events-auto group-hover:visible">
             {requestedAt && (
               <span className="text-xs text-dim tabular-nums">
@@ -1188,49 +1189,136 @@ function AttachmentFileGlyph({
   return <Icon size="1.1429rem" className="shrink-0 text-dim" />;
 }
 
-// AttachmentFiles renders non-image attachments as a collapsed list
-// below the message text: one toggle reveals the file chips.
+// AttachmentFiles renders non-image attachments below the user bubble.
+// Clicking the count chip opens a floating menu (portaled to body so
+// the transcript scroll container cannot clip it) that shows at most
+// three rows at once and scrolls for the rest.
+const FILE_ROW_H = 36; // h-9 per row
+const FILE_MENU_W = 288; // w-72
+const FILE_MENU_VPAD = 10; // p-1 + 1px borders
+
 function AttachmentFiles({ attachments }: { attachments: AttachmentView[] }) {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
   const openFileTarget = useStore((s) => s.openFileTarget);
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const panelH = Math.min(attachments.length, 3) * FILE_ROW_H + FILE_MENU_VPAD;
+
+  const close = useCallback(() => {
+    setOpen(false);
+    setPos(null);
+  }, []);
+
+  const toggle = () => {
+    if (open) return close();
+    const button = buttonRef.current;
+    if (!button) return;
+    const rect = button.getBoundingClientRect();
+    const gap = 6;
+    const margin = 8;
+    // Open below the chip when the viewport has room for the whole
+    // menu; otherwise flip above it so a file chip on the last
+    // transcript row still gets a fully visible list.
+    const belowTop = rect.bottom + gap;
+    const fitsBelow = belowTop + panelH <= window.innerHeight - margin;
+    const top = fitsBelow
+      ? belowTop
+      : Math.max(margin, rect.top - gap - panelH);
+    const maxLeft = Math.max(margin, window.innerWidth - FILE_MENU_W - margin);
+    const left = Math.min(Math.max(margin, rect.right - FILE_MENU_W), maxLeft);
+    setPos({ top, left });
+    setOpen(true);
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const el = event.target;
+      if (
+        el instanceof Node &&
+        (menuRef.current?.contains(el) || buttonRef.current?.contains(el))
+      ) {
+        return;
+      }
+      close();
+    };
+    // Scrolling anywhere outside the floating list closes it (the
+    // transcript scrolls under the chip); scrolling inside the list
+    // keeps working.
+    const onScroll = (event: Event) => {
+      const el = event.target;
+      if (el instanceof Node && menuRef.current?.contains(el)) return;
+      close();
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close();
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    document.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', close);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', close);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open, close]);
+
   return (
-    <div className="mt-2">
+    <>
       <button
-        onClick={() => setOpen(!open)}
+        ref={buttonRef}
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={toggle}
         className="flex items-center gap-1.5 rounded-md border border-edge bg-panel2/70 px-2 py-1 text-xs text-dim hover:text-fg"
       >
         <Paperclip size="0.8571rem" />
         {t('chat.files', { count: attachments.length })}
-        {open ? (
-          <ChevronUp size="0.8571rem" />
-        ) : (
-          <ChevronDown size="0.8571rem" />
-        )}
+        <ChevronDown
+          size="0.8571rem"
+          className={`transition-transform ${open ? 'rotate-180' : ''}`}
+        />
       </button>
-      {open && (
-        <div className="mt-1.5 space-y-1">
-          {attachments.map((a) => {
-            return (
-              <button
-                key={a.id}
-                onClick={() => void openFileTarget(a.path)}
-                title={a.path}
-                className="flex items-center gap-1.5 rounded-md border border-edge bg-panel2 px-2 py-1 text-xs"
-              >
-                <AttachmentFileGlyph name={a.name} kind={a.kind} />
-                <span className="min-w-0 truncate">{a.name}</span>
-                {a.size != null && (
-                  <span className="shrink-0 text-dim tabular-nums">
-                    {formatSize(a.size)}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
+      {open &&
+        createPortal(
+          <div
+            ref={menuRef}
+            role="menu"
+            className="fixed z-[70] w-72 rounded-xl border border-edge bg-panel p-1 shadow-xl"
+            style={pos ?? { visibility: 'hidden' }}
+          >
+            <div className="max-h-[6.75rem] overflow-y-auto">
+              {attachments.map((a) => (
+                <button
+                  key={a.id}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    close();
+                    void openFileTarget(a.path);
+                  }}
+                  title={a.path}
+                  className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-xs hover:bg-panel2"
+                >
+                  <AttachmentFileGlyph name={a.name} kind={a.kind} />
+                  <span className="min-w-0 flex-1 truncate">{a.name}</span>
+                  {a.size != null && (
+                    <span className="shrink-0 text-dim tabular-nums">
+                      {formatSize(a.size)}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>,
+          document.body,
+        )}
+    </>
   );
 }
 
@@ -1998,6 +2086,7 @@ export function ChatView() {
   // While a turn is running, Enter and Tab switch from their usual
   // meaning to interrupt/queue; show the hint once the user starts
   // typing so the shortcut is discoverable.
+  const composerEmpty = !input.trim() && attachments.length === 0;
   const showBusyKeyHint = busy && input.trim().length > 0;
 
   const confirmFork = () => {
@@ -2613,19 +2702,22 @@ export function ChatView() {
                     >
                       <Loader2 size="1.0000rem" className="animate-spin" />
                     </button>
-                  ) : busy ? (
+                  ) : busy && composerEmpty ? (
                     <button
                       onClick={() => void cancelRun()}
                       aria-label={t('chat.stop')}
                       title={t('chat.stop')}
                       className="grid h-8 w-8 place-items-center rounded-lg border border-edge text-err hover:bg-panel2"
                     >
-                      <Square size="0.9286rem" />
+                      <Square size="0.9286rem" fill="currentColor" />
                     </button>
                   ) : (
+                    // While a turn runs with a draft, the button sends
+                    // and interrupts the active reply, matching Enter;
+                    // Stop is only shown when the composer is empty.
                     <button
-                      onClick={() => void submit()}
-                      disabled={!input.trim() && attachments.length === 0}
+                      onClick={() => void submitInterrupt()}
+                      disabled={composerEmpty && !busy}
                       aria-label={t('chat.send')}
                       title={t('chat.send')}
                       className="grid h-8 w-8 place-items-center rounded-lg bg-accent text-white hover:opacity-90 disabled:opacity-40"
