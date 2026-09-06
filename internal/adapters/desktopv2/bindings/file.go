@@ -321,6 +321,112 @@ func imagePreviewDataURL(path, mediaType string, size int64) (string, error) {
 		"image too large to preview (%d bytes)", size)
 }
 
+// maxPastedImageBytes caps one clipboard image materialized by
+// ImportPastedImage. Screenshots are far below this; the cap keeps
+// the IPC payload and the temporary staging file bounded.
+const maxPastedImageBytes = 20 << 20
+
+// pasteImageExts maps clipboard media types to staging file
+// extensions. Everything outside this set is rejected up front, so a
+// pasted blob can never be staged under a misleading extension.
+var pasteImageExts = map[string]string{
+	"image/avif":    "avif",
+	"image/bmp":     "bmp",
+	"image/gif":     "gif",
+	"image/heic":    "heic",
+	"image/jpeg":    "jpg",
+	"image/png":     "png",
+	"image/svg+xml": "svg",
+	"image/tiff":    "tiff",
+	"image/webp":    "webp",
+}
+
+// ImportPastedImage materializes an image pasted from the system
+// clipboard (base64 data URL) into a temporary local file. The rest
+// of the attachment pipeline (preview, session persistence, prompt
+// inlining) then treats it exactly like a picked file.
+func (b *File) ImportPastedImage(name, dataURL string) (Attachment, error) {
+	data, mediaType, err := decodeImageDataURL(dataURL)
+	if err != nil {
+		return Attachment{}, err
+	}
+	ext, ok := pasteImageExts[mediaType]
+	if !ok {
+		return Attachment{}, fmt.Errorf(
+			"file: unsupported clipboard image type %q", mediaType)
+	}
+	f, err := os.CreateTemp("", "opencraft-paste-*."+ext)
+	if err != nil {
+		return Attachment{}, fmt.Errorf(
+			"file: create pasted image temp file: %w", err)
+	}
+	path := f.Name()
+	remove := func() {
+		telemetry.WarnErr(context.Background(),
+			"file: remove failed pasted image", os.Remove(path))
+	}
+	if _, err := f.Write(data); err != nil {
+		closeErr := f.Close()
+		telemetry.WarnErr(context.Background(),
+			"file: close failed pasted image", closeErr)
+		remove()
+		return Attachment{}, fmt.Errorf("file: write pasted image: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		remove()
+		return Attachment{}, fmt.Errorf("file: close pasted image: %w", err)
+	}
+	att, err := b.ReadAttachment(path)
+	if err != nil {
+		remove()
+		return Attachment{}, err
+	}
+	att.Name = pastedAttachmentName(name, ext)
+	return att, nil
+}
+
+// decodeImageDataURL parses a base64 image data URL and enforces the
+// decoded-size cap before anything is written to disk.
+func decodeImageDataURL(dataURL string) ([]byte, string, error) {
+	const dataPrefix = "data:"
+	const base64Marker = ";base64,"
+	if !strings.HasPrefix(dataURL, dataPrefix) {
+		return nil, "", fmt.Errorf("file: pasted image must be a data URL")
+	}
+	rest := dataURL[len(dataPrefix):]
+	marker := strings.Index(rest, base64Marker)
+	if marker < 0 {
+		return nil, "", fmt.Errorf(
+			"file: pasted image must be base64 encoded")
+	}
+	mediaType := strings.ToLower(strings.TrimSpace(rest[:marker]))
+	if !strings.HasPrefix(mediaType, "image/") {
+		return nil, "", fmt.Errorf(
+			"file: pasted payload is not an image (%q)", mediaType)
+	}
+	data, err := base64.StdEncoding.DecodeString(rest[marker+len(base64Marker):])
+	if err != nil {
+		return nil, "", fmt.Errorf("file: decode pasted image: %w", err)
+	}
+	if len(data) > maxPastedImageBytes {
+		return nil, "", fmt.Errorf(
+			"file: pasted image too large (%d bytes)", len(data))
+	}
+	return data, mediaType, nil
+}
+
+// pastedAttachmentName returns the display name for a pasted image:
+// the caller-supplied name when sane, otherwise "clipboard.<ext>".
+// The stored extension always matches the actual media type.
+func pastedAttachmentName(name, ext string) string {
+	name = strings.TrimSpace(name)
+	name = filepath.Base(filepath.FromSlash(name))
+	if name == "" || name == "." || name == ".." {
+		name = "clipboard." + ext
+	}
+	return name
+}
+
 // PatchFile is one changed file in a rendered codex patch.
 type PatchFile struct {
 	Path    string      `json:"path"`

@@ -180,3 +180,70 @@ func TestReadAttachmentNormalizesOversizedStillImageToJPEG(t *testing.T) {
 		t.Fatalf("preview data URL is not a normalized jpeg: %.40s", att.DataURL)
 	}
 }
+
+func TestImportPastedImagePNG(t *testing.T) {
+	c := core.NewCore(t.TempDir(), t.TempDir(), t.TempDir())
+	b := NewFileBinding(c)
+	img := image.NewNRGBA(image.Rect(0, 0, 4, 4))
+	for y := 0; y < 4; y++ {
+		for x := 0; x < 4; x++ {
+			img.SetNRGBA(x, y, color.NRGBA{R: 255, A: 255})
+		}
+	}
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, img); err != nil {
+		t.Fatal(err)
+	}
+	dataURL := "data:image/png;base64," +
+		base64.StdEncoding.EncodeToString(encoded.Bytes())
+
+	att, err := b.ImportPastedImage("Pasted image.png", dataURL)
+	if err != nil {
+		t.Fatalf("ImportPastedImage: %v", err)
+	}
+	defer os.Remove(att.Path)
+	if att.Name != "Pasted image.png" {
+		t.Fatalf("name = %q", att.Name)
+	}
+	if att.MediaType != "image/png" {
+		t.Fatalf("media type = %q, want image/png", att.MediaType)
+	}
+	data, err := os.ReadFile(att.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(data, encoded.Bytes()) {
+		t.Fatal("staged paste bytes differ from the clipboard payload")
+	}
+	if !strings.HasPrefix(att.DataURL, "data:image/png;base64,") {
+		t.Fatalf("preview missing: %.40s", att.DataURL)
+	}
+}
+
+func TestImportPastedImageRejectsInvalidPayloads(t *testing.T) {
+	c := core.NewCore(t.TempDir(), t.TempDir(), t.TempDir())
+	b := NewFileBinding(c)
+	for _, tc := range []struct {
+		name, dataURL string
+	}{
+		{name: "not a data URL", dataURL: "/tmp/paste.png"},
+		{name: "not an image", dataURL: "data:text/plain;base64,AA=="},
+		{name: "invalid base64", dataURL: "data:image/png;base64,!!!"},
+		{name: "unsupported image type",
+			dataURL: "data:image/x-icon;base64,AA=="},
+	} {
+		if _, err := b.ImportPastedImage("p.png", tc.dataURL); err == nil {
+			t.Fatalf("%s unexpectedly accepted", tc.name)
+		}
+	}
+}
+
+func TestImportPastedImageEnforcesSizeCap(t *testing.T) {
+	c := core.NewCore(t.TempDir(), t.TempDir(), t.TempDir())
+	b := NewFileBinding(c)
+	payload := make([]byte, maxPastedImageBytes+1)
+	dataURL := "data:image/png;base64," + base64.StdEncoding.EncodeToString(payload)
+	if _, err := b.ImportPastedImage("big.png", dataURL); err == nil {
+		t.Fatal("oversized pasted image unexpectedly accepted")
+	}
+}

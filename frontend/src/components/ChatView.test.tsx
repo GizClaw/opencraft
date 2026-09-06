@@ -280,6 +280,69 @@ describe('ChatView transcript windowing', () => {
     });
   });
 
+  it('renders recognizable badges for common document attachments', async () => {
+    const attachments: MessageView['attachments'] = [
+      {
+        id: 'att-pdf',
+        kind: 'file',
+        path: '/tmp/report.pdf',
+        name: 'report.pdf',
+        media_type: 'application/pdf',
+      },
+      {
+        id: 'att-doc',
+        kind: 'file',
+        path: '/tmp/note.docx',
+        name: 'note.docx',
+        media_type:
+          'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      },
+      {
+        id: 'att-xls',
+        kind: 'file',
+        path: '/tmp/table.xlsx',
+        name: 'table.xlsx',
+        media_type:
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      },
+      {
+        id: 'att-ppt',
+        kind: 'file',
+        path: '/tmp/deck.pptx',
+        name: 'deck.pptx',
+        media_type:
+          'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      },
+      {
+        id: 'att-md',
+        kind: 'file',
+        path: '/tmp/readme.md',
+        name: 'readme.md',
+        media_type: 'text/markdown',
+      },
+    ];
+    setConversation(
+      [
+        {
+          id: 'm-user',
+          role: 'user',
+          text: 'summarize these',
+          items: [],
+          attachments,
+        },
+      ],
+      [],
+    );
+    render(<ChatView />);
+
+    await userEvent
+      .setup()
+      .click(screen.getByRole('button', { name: '5 files' }));
+    for (const badge of ['PDF', 'DOC', 'XLS', 'PPT', 'MD']) {
+      expect(screen.getByText(badge)).toBeInTheDocument();
+    }
+  });
+
   it('shows worked duration at the top of an artifact turn', () => {
     setConversation(
       [

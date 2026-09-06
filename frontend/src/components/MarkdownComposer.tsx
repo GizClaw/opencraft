@@ -420,6 +420,10 @@ interface MarkdownComposerProps {
   // the draft was staged, so the editor suppresses the default Tab
   // behavior (focus move / indentation).
   onQueue?: () => boolean;
+  // onPasteImages receives raster files pasted into the composer so
+  // the parent can stage them as attachments. Pasting an image never
+  // inserts into the markdown document itself.
+  onPasteImages?: (files: File[]) => void;
 }
 
 function serializeEditor(editor: Editor | null): string {
@@ -451,6 +455,7 @@ export const MarkdownComposer = forwardRef<
     onValueChange,
     onSubmit,
     onQueue,
+    onPasteImages,
   },
   ref,
 ) {
@@ -460,6 +465,7 @@ export const MarkdownComposer = forwardRef<
   const onChangeRef = useRef(onValueChange);
   const onSubmitRef = useRef(onSubmit);
   const onQueueRef = useRef(onQueue);
+  const onPasteImagesRef = useRef(onPasteImages);
   useEffect(() => {
     onChangeRef.current = onValueChange;
   }, [onValueChange]);
@@ -469,6 +475,9 @@ export const MarkdownComposer = forwardRef<
   useEffect(() => {
     onQueueRef.current = onQueue;
   }, [onQueue]);
+  useEffect(() => {
+    onPasteImagesRef.current = onPasteImages;
+  }, [onPasteImages]);
 
   const extensions = useMemo(
     () => [
@@ -572,6 +581,22 @@ export const MarkdownComposer = forwardRef<
           return true;
         }
         return false;
+      },
+      handlePaste: (_view, event) => {
+        const clipboard = event.clipboardData;
+        if (!clipboard) return false;
+        const images: File[] = [];
+        for (const item of Array.from(clipboard.items ?? [])) {
+          if (item.kind !== 'file' || !item.type.startsWith('image/')) {
+            continue;
+          }
+          const file = item.getAsFile();
+          if (file) images.push(file);
+        }
+        if (images.length === 0) return false;
+        event.preventDefault();
+        onPasteImagesRef.current?.(images);
+        return true;
       },
     },
     onUpdate: ({ editor: current }) => {

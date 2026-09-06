@@ -1,5 +1,5 @@
 import { createRef } from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -96,5 +96,33 @@ describe('MarkdownComposer', () => {
 
     await user.keyboard('{Enter}');
     expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it('surfaces pasted image files through onPasteImages', () => {
+    const onPasteImages = vi.fn();
+    render(
+      <MarkdownComposer
+        placeholder="Write…"
+        onSubmit={vi.fn()}
+        onPasteImages={onPasteImages}
+      />,
+    );
+    const file = new File(['png-bytes'], 'clip.png', { type: 'image/png' });
+    const clipboardItem = {
+      kind: 'file',
+      type: 'image/png',
+      getAsFile: () => file,
+    };
+    const clipboardData = {
+      items: [clipboardItem],
+      files: [file],
+      types: ['Files'],
+      getData: () => '',
+      setData: () => undefined,
+      clearData: () => undefined,
+    } as unknown as DataTransfer;
+    fireEvent.paste(screen.getByRole('textbox'), { clipboardData });
+
+    expect(onPasteImages).toHaveBeenCalledWith([file]);
   });
 });
