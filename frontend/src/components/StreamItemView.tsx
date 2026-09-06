@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import type { AssistantItem } from '../lib/store';
+import { useStore, type AssistantItem } from '../lib/store';
 import { Markdown } from './Markdown';
 import { ApplyPatchView, ToolCard, WriteView } from './ToolCard';
 
@@ -14,12 +14,16 @@ const AssistantText = memo(function AssistantText({
   text: string;
   streaming: boolean;
 }) {
+  const openFileTarget = useStore((s) => s.openFileTarget);
   if (streaming) {
     return <div className="prose-chat whitespace-pre-wrap text-sm">{text}</div>;
   }
   return (
     <div className="prose-chat text-sm">
-      <Markdown text={text} />
+      <Markdown
+        text={text}
+        onOpen={(href, base) => void openFileTarget(href, base ?? '')}
+      />
     </div>
   );
 });

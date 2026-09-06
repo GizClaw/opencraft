@@ -119,23 +119,6 @@ const formToTask = (f: FormState): AutomationTask => {
   };
 };
 
-function scheduleLabel(s: AutomationSchedule): string {
-  switch (s.type) {
-    case 'hourly':
-      return s.days && s.days.length > 0
-        ? `${s.interval_hours}h · ${s.days.join(',')}`
-        : `${s.interval_hours}h`;
-    case 'daily':
-      return `daily ${s.time}`;
-    case 'weekdays':
-      return `weekdays ${s.time}`;
-    case 'weekly':
-      return `weekly ${(s.days ?? []).join(',')} ${s.time}`;
-    default:
-      return s.type;
-  }
-}
-
 function statusClass(status: string): string {
   switch (status) {
     case 'completed':
@@ -288,7 +271,6 @@ export function AutomationsView() {
   const yoloOnly = useStore((s) => s.yoloOnly);
   const loadAutomations = useStore((s) => s.loadAutomations);
   const loadAutomationRuns = useStore((s) => s.loadAutomationRuns);
-  const resume = useStore((s) => s.resume);
   const openSessionInWorkspace = useStore((s) => s.openSessionInWorkspace);
   const closeTools = useStore((s) => s.closeTools);
   const newChat = useStore((s) => s.newChat);

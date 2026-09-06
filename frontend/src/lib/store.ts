@@ -9,12 +9,14 @@ import type {
   AutomationTask,
   AttachmentView,
   ConfigStatus,
+  FileTab,
   InteractDTO,
   KanbanCard,
   HistoryPart,
   HistoryMessage,
   ModelOption,
   ReplyRequest,
+  ResolvedTarget,
   SessionDefaults,
   SessionMeta,
   SessionTurn,
@@ -35,6 +37,25 @@ export interface ToolView {
   args: string;
   status: 'running' | 'done' | 'error';
   result?: string;
+}
+
+// FileViewerState is the memory-only file viewer state of one
+// conversation. Visibility, tabs and tree position are all scoped to
+// the session, so switching chats restores exactly that chat's panel.
+export interface FileViewerState {
+  filesOpen: boolean;
+  fileTabs: FileTab[];
+  fileActive: string | null;
+  fileTreeDir: string;
+}
+
+function viewerDefaults(): FileViewerState {
+  return {
+    filesOpen: false,
+    fileTabs: [] as FileTab[],
+    fileActive: null as string | null,
+    fileTreeDir: '.',
+  };
 }
 
 // AssistantItem preserves the stream arrival order of one assistant
@@ -643,6 +664,8 @@ interface StoreState {
   configOpen: boolean;
   configTab: string;
   toolsView: ToolPage | null;
+  // viewers keeps one file-viewer state per conversation id.
+  viewers: Record<string, FileViewerState>;
   workspace: string;
   agents: AgentSummary[];
   sessions: SessionMeta[];
@@ -691,6 +714,19 @@ interface StoreState {
   closeConfig: () => void;
   openTools: (view: ToolPage) => void;
   closeTools: () => void;
+  openFiles: () => void;
+  closeFiles: () => void;
+  // openFileTarget is the single link/file opening router: URL
+  // schemes go to the system browser; local targets resolve under the
+  // document base and open in the viewer.
+  openFileTarget: (target: string, base?: string) => Promise<void>;
+  openResolvedTarget: (res: ResolvedTarget) => void;
+  closeFileTab: (key: string) => void;
+  activateFileTab: (key: string) => void;
+  showFileDir: (rel: string) => void;
+  // newEmptyTab opens a blank placeholder tab with the file tree
+  // visible, so the user can pick a file without an extra "+" row.
+  newEmptyTab: () => void;
   newChat: () => Promise<void>;
   resume: (id: string) => Promise<void>;
   retryTranscript: (id: string) => Promise<void>;
@@ -1558,6 +1594,16 @@ export const useStore = create<StoreState>((set, get) => {
     }
   };
 
+  const viewerPatch = (id: string | null, patch: Partial<FileViewerState>) => {
+    if (!id) return;
+    set((state) => ({
+      viewers: {
+        ...state.viewers,
+        [id]: { ...(state.viewers[id] ?? viewerDefaults()), ...patch },
+      },
+    }));
+  };
+
   return {
     status: null,
     configured: false,
@@ -1565,6 +1611,7 @@ export const useStore = create<StoreState>((set, get) => {
     configOpen: false,
     configTab: 'general',
     toolsView: null,
+    viewers: {},
     workspace: '',
     agents: [],
     sessions: [],
@@ -1874,6 +1921,153 @@ export const useStore = create<StoreState>((set, get) => {
     openTools: (view) => set({ toolsView: view, configOpen: false }),
     closeTools: () => set({ toolsView: null }),
 
+    openFiles: () => viewerPatch(activeConversationID(), { filesOpen: true }),
+    closeFiles: () => viewerPatch(activeConversationID(), { filesOpen: false }),
+
+    // openFileTarget is the single link/file opening router. Leading
+    // schemes are external by definition (http(s) reaches the system
+    // browser through the validated binding); everything else is a
+    // local target resolved under the document base into the viewer.
+    openFileTarget: async (target, base = '') => {
+      const sessionID = activeConversationID();
+      const raw = target.trim();
+      if (!raw || raw.startsWith('#')) return;
+      // Windows absolute paths start with a drive letter and must be
+      // treated as local targets, not URL schemes.
+      if (
+        !/^[A-Za-z]:[\\/]/.test(raw) &&
+        /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(raw)
+      ) {
+        try {
+          await api.openExternal(raw);
+        } catch (err) {
+          get().flash(String(err));
+        }
+        return;
+      }
+      try {
+        const res = await api.resolveTarget(raw, base);
+        if (res.is_dir) {
+          if (res.root === 'workspace') {
+            viewerPatch(sessionID, {
+              filesOpen: true,
+              fileTreeDir: res.rel || '.',
+            });
+          } else {
+            // Non-workspace roots have no tree; reveal the directory
+            // in the system file manager instead.
+            try {
+              await api.revealArtifact(res.path);
+            } catch (err) {
+              get().flash(String(err));
+            }
+          }
+          return;
+        }
+        if (!sessionID) return;
+        get().openResolvedTarget(res);
+      } catch (err) {
+        const message = String(err);
+        get().flash(
+          message.includes('outside the readable roots')
+            ? i18n.t('files.outsideRoots')
+            : message,
+        );
+      }
+    },
+
+    openResolvedTarget: (res) =>
+      set((state) => {
+        const id = activeConversationID();
+        if (!id) return {};
+        const viewer = state.viewers[id] ?? viewerDefaults();
+        // Placeholder tabs are transient: picking a real file from the
+        // tree replaces the active blank tab instead of stacking next
+        // to it. Other placeholder tabs (if any) stay untouched.
+        const tabs = viewer.fileTabs.filter(
+          (t) =>
+            t.key !== res.path &&
+            !(t.path === '' && t.key === viewer.fileActive),
+        );
+        tabs.push({
+          key: res.path,
+          path: res.path,
+          rel: res.rel,
+          root: res.root,
+          name:
+            res.name ||
+            (res.rel ? (res.rel.split('/').pop() ?? res.rel) : res.path),
+          media_type: res.media_type ?? '',
+        });
+        return {
+          viewers: {
+            ...state.viewers,
+            [id]: {
+              ...viewer,
+              filesOpen: true,
+              fileTabs: tabs,
+              fileActive: res.path,
+            },
+          },
+        };
+      }),
+
+    closeFileTab: (key) =>
+      set((state) => {
+        const id = activeConversationID();
+        if (!id) return {};
+        const viewer = state.viewers[id] ?? viewerDefaults();
+        const tabs = viewer.fileTabs.filter((t) => t.key !== key);
+        const active =
+          viewer.fileActive === key
+            ? (tabs[tabs.length - 1]?.key ?? null)
+            : viewer.fileActive;
+        return {
+          viewers: {
+            ...state.viewers,
+            [id]: { ...viewer, fileTabs: tabs, fileActive: active },
+          },
+        };
+      }),
+
+    activateFileTab: (key) =>
+      viewerPatch(activeConversationID(), { fileActive: key }),
+    showFileDir: (rel) =>
+      viewerPatch(activeConversationID(), {
+        fileTreeDir: rel || '.',
+        filesOpen: true,
+      }),
+
+    newEmptyTab: () => {
+      const id = activeConversationID();
+      if (!id) return;
+      set((state) => {
+        const viewer = state.viewers[id] ?? viewerDefaults();
+        const key = `untitled-${Date.now()}-${Math.random()
+          .toString(36)
+          .slice(2, 7)}`;
+        const tab: FileTab = {
+          key,
+          path: '',
+          rel: '',
+          root: 'workspace',
+          name: i18n.t('files.newFile'),
+          media_type: '',
+        };
+        return {
+          viewers: {
+            ...state.viewers,
+            [id]: {
+              ...viewer,
+              filesOpen: true,
+              fileTabs: [...viewer.fileTabs, tab],
+              fileActive: key,
+            },
+          },
+        };
+      });
+    },
+
     newChat: async () => {
       stateRoot.sendFocus({ type: 'OPEN_NEW' });
       const request = stateRoot.focusSnapshot.context.request;
@@ -2135,7 +2329,9 @@ export const useStore = create<StoreState>((set, get) => {
         set((state) => {
           const conversations = { ...state.conversations };
           delete conversations[id];
-          return { conversations };
+          const viewers = { ...state.viewers };
+          delete viewers[id];
+          return { conversations, viewers };
         });
         clearPendingIndex(id);
         if (activeConversationID() === id) {

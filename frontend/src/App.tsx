@@ -108,6 +108,7 @@ export default function App() {
   const workspace = useStore((s) => s.workspace);
   const openDraftChat = useStore((s) => s.openDraftChat);
   const openConfig = useStore((s) => s.openConfig);
+  const openFiles = useStore((s) => s.openFiles);
   const { t } = useTranslation();
   const [sidebarW, setSidebarW] = useState(
     () => Number(localStorage.getItem('oc.sidebarW')) || 240,
@@ -235,11 +236,14 @@ export default function App() {
       } else if (key === 'k') {
         e.preventDefault();
         openConfig('kanban');
+      } else if (key === 'o') {
+        e.preventDefault();
+        openFiles();
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [openDraftChat, openConfig]);
+  }, [openDraftChat, openConfig, openFiles]);
 
   const startDrag = () => (e: React.MouseEvent) => {
     e.preventDefault();

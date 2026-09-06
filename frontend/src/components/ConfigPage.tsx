@@ -132,7 +132,6 @@ function templateFor(
 }
 
 export function ConfigPage() {
-  const configured = useStore((s) => s.configured);
   const closeConfig = useStore((s) => s.closeConfig);
   const configTab = useStore((s) => s.configTab);
   const yoloOnly = useStore((s) => s.yoloOnly);

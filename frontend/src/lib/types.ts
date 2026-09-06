@@ -360,6 +360,45 @@ export interface FileNode {
   size: number;
 }
 
+// ResolvedTarget mirrors the File.ResolveTarget binding result: one
+// containment-checked local file or directory.
+export interface ResolvedTarget {
+  path: string;
+  rel: string;
+  root: string;
+  name: string;
+  is_dir: boolean;
+  size: number;
+  media_type?: string;
+}
+
+// FilePreview mirrors the File.ReadPreview binding result. Kind tells
+// the viewer how to render: text/image/pdf, or meta for files that
+// fall back to the system app.
+export interface FilePreview {
+  path: string;
+  rel: string;
+  root: string;
+  name: string;
+  size: number;
+  media_type: string;
+  kind: 'text' | 'image' | 'pdf' | 'meta';
+  text?: string;
+  data_url?: string;
+  too_large?: boolean;
+}
+
+// FileTab is one open file viewer tab. Viewer state is memory-only
+// and scoped per conversation; it lives until the app reloads.
+export interface FileTab {
+  key: string;
+  path: string;
+  rel: string;
+  root: string;
+  name: string;
+  media_type: string;
+}
+
 export interface SearchFileHit {
   path: string;
   is_dir: boolean;

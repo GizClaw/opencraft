@@ -7,6 +7,7 @@ import type { InteractDTO } from '../lib/types';
 
 export function InteractionCard({ spec }: { spec: InteractDTO }) {
   const replyInteract = useStore((s) => s.replyInteract);
+  const openFileTarget = useStore((s) => s.openFileTarget);
   const [text, setText] = useState('');
   const [selected, setSelected] = useState<string[]>([]);
   const [other, setOther] = useState('');
@@ -53,7 +54,10 @@ export function InteractionCard({ spec }: { spec: InteractDTO }) {
       </div>
       {bodyText && (
         <div className="prose-chat text-sm mt-2">
-          <Markdown text={bodyText} />
+          <Markdown
+            text={bodyText}
+            onOpen={(href, base) => void openFileTarget(href, base ?? '')}
+          />
         </div>
       )}
 

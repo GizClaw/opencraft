@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2, Sparkles, X } from 'lucide-react';
 import { api } from '../lib/api';
+import { useStore } from '../lib/store';
 import type { SkillDTO } from '../lib/types';
 import { Markdown } from './Markdown';
 
@@ -16,6 +17,9 @@ export function SkillDetailDrawer({
   onClose: () => void;
 }) {
   const { t } = useTranslation();
+  const openFileTarget = useStore((s) => s.openFileTarget);
+  const slash = skill.path.lastIndexOf('/');
+  const skillDir = slash > 0 ? skill.path.slice(0, slash) : skill.path;
   const [body, setBody] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -114,7 +118,11 @@ export function SkillDetailDrawer({
               </p>
             ) : (
               <div className="prose-chat text-sm">
-                <Markdown text={body} disableNavigation />
+                <Markdown
+                  text={body}
+                  basePath={skillDir}
+                  onOpen={(href, base) => void openFileTarget(href, base ?? '')}
+                />
               </div>
             )}
           </section>

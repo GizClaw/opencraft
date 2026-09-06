@@ -28,7 +28,7 @@ import {
   parseUnifiedDiff,
   recoverJsonContent,
 } from '../lib/diff';
-import type { ToolView } from '../lib/store';
+import { useStore, type ToolView } from '../lib/store';
 import type { PatchFileDTO, PatchLineDTO } from '../lib/types';
 
 function parseArgs(tool: ToolView): Record<string, unknown> | null {
@@ -2304,7 +2304,16 @@ function ToolSearchView({ tool }: { tool: ToolView }) {
   );
 }
 
-function DirTree({ nodes, depth }: { nodes: DirNode[]; depth: number }) {
+function DirTree({
+  nodes,
+  depth,
+  base = '',
+}: {
+  nodes: DirNode[];
+  depth: number;
+  base?: string;
+}) {
+  const openFileTarget = useStore((s) => s.openFileTarget);
   return (
     <ul className={depth === 0 ? '' : 'ml-3 border-l border-edge pl-2'}>
       {nodes.map((node) => (
@@ -2315,9 +2324,17 @@ function DirTree({ nodes, depth }: { nodes: DirNode[]; depth: number }) {
             ) : (
               <File size="0.8571rem" className="text-dim shrink-0" />
             )}
-            <span className="min-w-0 truncate font-mono text-xs text-fg">
+            <button
+              type="button"
+              onClick={() => {
+                const rel = base ? `${base}/${node.name}` : node.name;
+                void openFileTarget(rel);
+              }}
+              className="min-w-0 truncate text-left font-mono text-xs text-fg hover:text-accent"
+              title={base ? `${base}/${node.name}` : node.name}
+            >
               {node.name}
-            </span>
+            </button>
             {node.type === 'file' && fmtSize(node.size) && (
               <span className="ml-auto shrink-0 text-[0.7143rem] text-dim tabular-nums">
                 {fmtSize(node.size)}
@@ -2325,7 +2342,11 @@ function DirTree({ nodes, depth }: { nodes: DirNode[]; depth: number }) {
             )}
           </div>
           {node.children.length > 0 && (
-            <DirTree nodes={node.children} depth={depth + 1} />
+            <DirTree
+              nodes={node.children}
+              depth={depth + 1}
+              base={base ? `${base}/${node.name}` : node.name}
+            />
           )}
         </li>
       ))}
@@ -2473,6 +2494,7 @@ function FileHeader({
   onToggle: () => void;
   collapsible: boolean;
 }) {
+  const openFileTarget = useStore((s) => s.openFileTarget);
   return (
     <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-edge bg-panel px-2 py-1.5">
       {collapsible && (
@@ -2488,9 +2510,14 @@ function FileHeader({
           )}
         </button>
       )}
-      <span className="min-w-0 truncate font-mono text-xs text-fg">
+      <button
+        type="button"
+        onClick={() => void openFileTarget(file.path)}
+        className="min-w-0 truncate text-left font-mono text-xs text-fg hover:text-accent"
+        title={file.path}
+      >
         {file.path}
-      </span>
+      </button>
       <span className="flex-1" />
       <span className="text-[0.7143rem] text-ok tabular-nums">
         +{file.added}
@@ -2603,9 +2630,9 @@ export const ApplyPatchView = memo(function ApplyPatchView({
   tool: ToolView;
 }) {
   const { t } = useTranslation();
+  const openFileTarget = useStore((s) => s.openFileTarget);
   const running = tool.status === 'running';
   const { files, failed, patch } = usePatchFiles(tool);
-  const errored = tool.status === 'error';
   const resultFiles =
     tool.result !== undefined
       ? (() => {
@@ -2645,7 +2672,15 @@ export const ApplyPatchView = memo(function ApplyPatchView({
           {resultFiles.map((f, i) => (
             <div key={i} className="flex items-center gap-1.5 font-mono">
               <Check size="0.8571rem" className="shrink-0 text-ok" />
-              <span className="min-w-0 truncate text-fg">{f.path ?? ''}</span>
+              {f.path ? (
+                <button
+                  type="button"
+                  onClick={() => void openFileTarget(f.path!)}
+                  className="min-w-0 truncate text-left text-fg hover:text-accent"
+                >
+                  {f.path}
+                </button>
+              ) : null}
               {f.action && (
                 <span className="shrink-0 rounded bg-panel px-1 py-0.5 text-[0.7143rem] text-dim">
                   {f.action}

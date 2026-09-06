@@ -161,10 +161,11 @@ describe('ChatView transcript windowing', () => {
     ).toBeInTheDocument();
     expect(screen.getByRole('separator')).toBeInTheDocument();
     const items = screen.getAllByRole('menuitem');
-    expect(items[0]).toHaveTextContent('Open With…');
-    expect(items[1]).toHaveTextContent('Save As…');
-    expect(items[2]).toHaveTextContent('Copy Path');
-    expect(items[3]).toHaveTextContent(/File Manager/i);
+    expect(items[0]).toHaveTextContent('Open in viewer');
+    expect(items[1]).toHaveTextContent('Open With…');
+    expect(items[2]).toHaveTextContent('Save As…');
+    expect(items[3]).toHaveTextContent('Copy Path');
+    expect(items[4]).toHaveTextContent(/File Manager/i);
 
     await userEvent
       .setup()
