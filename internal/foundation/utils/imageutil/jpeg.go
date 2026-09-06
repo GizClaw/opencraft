@@ -22,12 +22,19 @@ const (
 // transform fall back to full decode + JPEG q90 normalization. A
 // missing or unreadable EXIF block counts as upright, matching how
 // imaging.AutoOrientation treats "no orientation metadata".
-func JPEGUpright(path string) bool {
+func JPEGUpright(path string) (upright bool) {
 	f, err := os.Open(path)
 	if err != nil {
 		return false
 	}
-	defer f.Close()
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil && upright {
+			// A failed close can mean a failed read: treat the
+			// orientation as unknown so callers normalize instead of
+			// trusting bytes that may be incomplete.
+			upright = false
+		}
+	}()
 	return jpegUpright(f)
 }
 
