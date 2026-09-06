@@ -14,6 +14,7 @@ require (
 	github.com/GizClaw/flowcraft/driver/openai v0.2.3
 	github.com/GizClaw/flowcraft/driver/qwen v0.2.2
 	github.com/PuerkitoBio/goquery v1.12.0
+	github.com/disintegration/imaging v1.6.2
 	github.com/go-shiori/go-readability v0.0.0-20251205110129-5db1dc9836f0
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/modelcontextprotocol/go-sdk v1.7.0
@@ -110,6 +111,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
 	golang.org/x/crypto v0.54.0 // indirect
+	golang.org/x/image v0.43.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/text v0.40.0 // indirect

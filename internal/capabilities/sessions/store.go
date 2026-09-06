@@ -27,6 +27,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/imageutil"
 )
 
 // ResourceKind is the deploy resource kind implemented by this package.
@@ -472,7 +473,12 @@ func (s *Store) SaveAttachment(id, kind, srcPath string) (string, error) {
 	if !info.Mode().IsRegular() {
 		return "", errdefs.Validationf("sessions: attachment is not a regular file")
 	}
-	if info.Size() > maxAttachmentBytes {
+	// The media kind is inlined into the model prompt (base64), so it
+	// shares the prepare hook's inline cap. The files kind is only
+	// referenced/copied on disk (forks, future generic attachments)
+	// and stays unlimited: a huge PDF or archive must never block a
+	// session just because it cannot be embedded in a prompt.
+	if kind == "media" && info.Size() > imageutil.MaxInlineImageBytes {
 		return "", errdefs.Validationf(
 			"sessions: attachment too large (%d bytes)", info.Size())
 	}
@@ -502,6 +508,61 @@ func (s *Store) SaveAttachment(id, kind, srcPath string) (string, error) {
 	if _, err := io.Copy(out, src); err != nil {
 		telemetry.WarnErr(context.Background(),
 			"sessions: close partial attachment failed", out.Close())
+		telemetry.WarnErr(context.Background(),
+			"sessions: remove partial attachment failed", os.Remove(dst))
+		return "", err
+	}
+	if err := out.Close(); err != nil {
+		telemetry.WarnErr(context.Background(),
+			"sessions: remove attachment after close failure", os.Remove(dst))
+		return "", err
+	}
+	return dst, nil
+}
+
+// SaveAttachmentBytes persists one in-memory attachment, used for
+// normalized image bytes (for example JPEG q90 output). The same kind
+// policy and per-kind limits apply as SaveAttachment.
+func (s *Store) SaveAttachmentBytes(
+	id, kind, name string, data []byte,
+) (string, error) {
+	if err := requireID(id); err != nil {
+		return "", err
+	}
+	if kind != "media" && kind != "files" {
+		return "", errdefs.Validationf("sessions: unknown attachment kind %q", kind)
+	}
+	if strings.ContainsAny(name, "/\\") {
+		return "", errdefs.Validationf(
+			"sessions: invalid attachment name %q", name)
+	}
+	base := filepath.Base(filepath.FromSlash(name))
+	if base == "" || base == "." || base == ".." {
+		return "", errdefs.Validationf(
+			"sessions: invalid attachment name %q", name)
+	}
+	if kind == "media" && int64(len(data)) > imageutil.MaxInlineImageBytes {
+		return "", errdefs.Validationf(
+			"sessions: attachment too large (%d bytes)", len(data))
+	}
+	dir := filepath.Join(s.dir(id), kind)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	var suffix [4]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return "", err
+	}
+	name = fmt.Sprintf("%d-%x%s", time.Now().UnixNano(), suffix[:], filepath.Ext(base))
+	dst := filepath.Join(dir, name)
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return "", err
+	}
+	if _, err := out.Write(data); err != nil {
+		closeErr := out.Close()
+		telemetry.WarnErr(context.Background(),
+			"sessions: close partial attachment failed", closeErr)
 		telemetry.WarnErr(context.Background(),
 			"sessions: remove partial attachment failed", os.Remove(dst))
 		return "", err
@@ -978,8 +1039,6 @@ func firstLine(s string) string {
 	}
 	return s
 }
-
-const maxAttachmentBytes = 10 << 20
 
 // ---------- deploy resource ----------
 

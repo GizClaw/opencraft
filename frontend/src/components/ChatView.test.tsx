@@ -176,6 +176,110 @@ describe('ChatView transcript windowing', () => {
     ).not.toBeInTheDocument();
   });
 
+  it('shows a staged queue draft above the composer and can cancel it', () => {
+    setConversation(
+      [
+        {
+          id: 'm-user',
+          role: 'user',
+          text: 'prompt',
+          items: [],
+          attachments: [],
+        },
+      ],
+      [{ id: 'turn-1', start: 0, docs: [], runID: 'r-1' }],
+    );
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    expect(useStore.getState().queueInput('staged question')).toBe(true);
+
+    render(<ChatView />);
+
+    expect(screen.getByText(/staged question/)).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Cancel queued message' }),
+    );
+    expect(useStore.getState().conversations['s-1']?.queued).toBeUndefined();
+    expect(screen.queryByText(/staged question/)).not.toBeInTheDocument();
+  });
+
+  it('Enter with an empty composer delivers a draft kept after a failed turn', async () => {
+    setConversation([], []);
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    const conv = useStore.getState().conversations['s-1'];
+    useStore.setState({
+      conversations: {
+        's-1': {
+          ...conv,
+          queued: {
+            text: 'staged after fail',
+            attachments: [],
+            interrupt: false,
+          },
+        },
+      },
+    });
+    actor?.send({
+      type: 'TURN_ENDED',
+      runID: 'r-old',
+      status: 'failed',
+      error: 'engine boom',
+    });
+    apiMock.startTurn.mockResolvedValue({
+      run_id: 'r-queued',
+      context_id: 's-1',
+    });
+
+    render(<ChatView />);
+    expect(screen.getByText(/press Enter to send/i)).toBeInTheDocument();
+
+    await userEvent.setup().click(screen.getByRole('textbox'));
+    await userEvent.keyboard('{Enter}');
+
+    expect(useStore.getState().conversations['s-1']?.queued).toBeUndefined();
+    expect(apiMock.startTurn).toHaveBeenCalledWith(
+      's-1',
+      expect.objectContaining({
+        content: {
+          parts: [
+            expect.objectContaining({
+              type: 'text',
+              text: 'staged after fail',
+            }),
+          ],
+        },
+      }),
+    );
+  });
+
+  it('hints Enter/Tab behavior while typing during a running turn', async () => {
+    setConversation([], []);
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    render(<ChatView />);
+
+    await userEvent.setup().click(screen.getByRole('textbox'));
+    await userEvent.keyboard('next question');
+    expect(
+      screen.getByText(/Enter interrupts the reply · Tab queues the message/i),
+    ).toBeInTheDocument();
+
+    // Tab stages the draft and clears the composer, which hides the
+    // hint and surfaces the queue banner instead.
+    await userEvent.keyboard('{Tab}');
+    expect(
+      screen.queryByText(
+        /Enter interrupts the reply · Tab queues the message/i,
+      ),
+    ).not.toBeInTheDocument();
+    expect(useStore.getState().conversations['s-1']?.queued).toMatchObject({
+      text: 'next question',
+      interrupt: false,
+    });
+  });
+
   it('shows worked duration at the top of an artifact turn', () => {
     setConversation(
       [

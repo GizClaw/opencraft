@@ -19,6 +19,7 @@ import {
   ChevronDown,
   ChevronRight,
   ChevronUp,
+  Clock,
   Copy,
   File,
   FileArchive,
@@ -1218,7 +1219,11 @@ export function ChatView() {
   const workspace = useStore((s) => s.workspace);
   const status = useStore((s) => s.status);
   const pendingInteracts = conv?.pendingInteracts ?? [];
+  const queued = conv?.queued;
   const send = useStore((s) => s.send);
+  const sendInterrupt = useStore((s) => s.sendInterrupt);
+  const queueInput = useStore((s) => s.queueInput);
+  const clearQueued = useStore((s) => s.clearQueued);
   const forkTurn = useStore((s) => s.forkTurn);
   const newChat = useStore((s) => s.newChat);
   const resume = useStore((s) => s.resume);
@@ -1638,8 +1643,10 @@ export function ChatView() {
           data_url: dto.data_url,
         });
       } catch {
-        // Unreadable / too large files are skipped; the backend rejects
-        // them again at send time.
+        // Unreadable paths and images that cannot be normalized under
+        // the preview cap are skipped. Supported large images preview
+        // as q90 JPEG (no original-size gate); non-image files have no
+        // preview or persistence size limit either.
       }
     }
     if (next.length > 0) {
@@ -1710,6 +1717,13 @@ export function ChatView() {
     return () => document.removeEventListener('visibilitychange', onVisibility);
   }, []);
 
+  const clearDraft = () => {
+    setInput('');
+    composerRef.current?.clear();
+    setAttachments([]);
+    composerRef.current?.focus();
+  };
+
   const submit = async () => {
     const text = composerRef.current?.getMarkdown() ?? input;
     if ((!text.trim() && attachments.length === 0) || busy || switchingWs) {
@@ -1726,9 +1740,7 @@ export function ChatView() {
       // different workspace: mint (and switch) only when the user
       // actually sends the first message.
       const target = pickerWorkspace || workspace;
-      setInput('');
-      composerRef.current?.clear();
-      setAttachments([]);
+      clearDraft();
       setSwitchingWs(true);
       try {
         const ok = await sendFirstMessage(target, stagedText, staged, {
@@ -1746,11 +1758,56 @@ export function ChatView() {
       }
       return;
     }
-    setInput('');
-    composerRef.current?.clear();
-    setAttachments([]);
+    clearDraft();
     void send(stagedText, staged);
   };
+
+  // Enter while a turn is running submits immediately: the backend's
+  // session start interrupts the active turn and starts the
+  // replacement as soon as the old one has been finalized.
+  const submitInterrupt = async () => {
+    const text = composerRef.current?.getMarkdown() ?? input;
+    const emptyComposer = !text.trim() && attachments.length === 0;
+    if (switchingWs) return;
+    if (!busy) {
+      if (emptyComposer && queued) {
+        // The turn a Tab draft was queued behind ended without
+        // success, so it stayed staged. Enter with an empty composer
+        // delivers it now.
+        const stagedText = queued.text;
+        const staged = queued.attachments;
+        clearQueued();
+        void send(stagedText, staged);
+        return;
+      }
+      if (emptyComposer) return;
+      return void submit();
+    }
+    if (emptyComposer) return;
+    const staged = attachments;
+    const stagedText = text;
+    clearDraft();
+    void sendInterrupt(stagedText, staged);
+  };
+
+  // Tab while a turn is running stages the draft in the single queue
+  // slot; it fires automatically when the current turn ends. Returns
+  // whether the draft was staged so the editor can suppress Tab.
+  const queueDraft = () => {
+    const text = composerRef.current?.getMarkdown() ?? input;
+    if ((!text.trim() && attachments.length === 0) || !busy || switchingWs) {
+      return false;
+    }
+    const staged = attachments;
+    if (!queueInput(text, staged)) return false;
+    clearDraft();
+    return true;
+  };
+
+  // While a turn is running, Enter and Tab switch from their usual
+  // meaning to interrupt/queue; show the hint once the user starts
+  // typing so the shortcut is discoverable.
+  const showBusyKeyHint = busy && input.trim().length > 0;
 
   const confirmFork = () => {
     const target = forkTarget;
@@ -2102,6 +2159,28 @@ export function ChatView() {
               ))}
             </div>
           )}
+          {queued && (
+            <div className="flex items-center gap-2 border-b border-edge px-3 py-1.5 text-xs text-dim">
+              <Clock size="0.8571rem" className="shrink-0 text-accent" />
+              <span className="min-w-0 truncate">
+                {t(busy ? 'chat.queued' : 'chat.queuedReady', {
+                  preview:
+                    queued.text.trim() ||
+                    queued.attachments[0]?.name ||
+                    t('chat.queuedFiles'),
+                })}
+              </span>
+              <button
+                type="button"
+                onClick={clearQueued}
+                aria-label={t('chat.queuedCancel')}
+                title={t('chat.queuedCancel')}
+                className="ml-auto shrink-0 rounded-md px-1.5 py-0.5 text-dim hover:bg-panel2 hover:text-fg"
+              >
+                <X size="0.8571rem" />
+              </button>
+            </div>
+          )}
           {/* The top gap lives outside the scroll container (pt-3 here)
               so it stays visible even when the editor is scrolled to
               the bottom; padding inside the editor would scroll away
@@ -2117,9 +2196,15 @@ export function ChatView() {
               }
               disabled={!configured}
               onValueChange={setInput}
-              onSubmit={submit}
+              onSubmit={() => void submitInterrupt()}
+              onQueue={queueDraft}
             />
           </div>
+          {showBusyKeyHint && (
+            <div className="mt-1.5 px-4 text-right text-[0.7143rem] leading-relaxed text-dim">
+              {t('chat.busyKeyHint')}
+            </div>
+          )}
           <div className="mt-3 flex items-center justify-between px-3 pb-2.5">
             <div className="flex items-center gap-3">
               <button

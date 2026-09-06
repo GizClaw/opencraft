@@ -58,6 +58,17 @@ export interface MessageView {
   attachments: AttachmentView[];
 }
 
+// QueuedInput is the single draft a user staged with Tab while a turn
+// is still running. It fires after that turn ends. interrupt=true is
+// the starting-phase variant: the draft was staged because a barge-in
+// send arrived before the previous run had a run id, so it fires as
+// soon as that run starts.
+export interface QueuedInput {
+  text: string;
+  attachments: AttachmentView[];
+  interrupt: boolean;
+}
+
 // ConversationState is the live UI state of one conversation. Each
 // conversation owns its transcript, turn state, permission mode,
 // think level, and pending prompts, so turns in different
@@ -73,6 +84,7 @@ export interface ConversationState {
   think: string;
   model: string;
   pendingInteracts: InteractDTO[];
+  queued?: QueuedInput;
 }
 
 export type ToastKind = 'info' | 'warning';
@@ -660,6 +672,17 @@ interface StoreState {
   handleEvent: (ev: UIEvent) => void;
   flushStreams: () => void;
   send: (text: string, attachments?: AttachmentView[]) => Promise<void>;
+  // sendInterrupt submits while a turn is running: the backend's
+  // session start interrupts the active turn (barge-in) and starts
+  // the replacement as soon as the old one has been finalized.
+  sendInterrupt: (
+    text: string,
+    attachments?: AttachmentView[],
+  ) => Promise<boolean>;
+  // queueInput stages the single draft that fires after the current
+  // turn ends. Returns false when nothing was queued.
+  queueInput: (text: string, attachments?: AttachmentView[]) => boolean;
+  clearQueued: () => void;
   forkTurn: (runID: string) => Promise<void>;
   clearLastFailed: () => void;
   replyInteract: (id: string, req: ReplyRequest) => Promise<void>;
@@ -848,6 +871,102 @@ export const useStore = create<StoreState>((set, get) => {
     return conv;
   };
 
+  // startTurnFor is the shared low-level send: it validates the
+  // draft, appends the optimistic user message, and starts one turn
+  // in the given conversation. Busy-state policy lives in its callers
+  // (send refuses while busy; sendInterrupt barges in; the queue
+  // drain fires after a terminal event).
+  const startTurnFor = async (
+    convID: string,
+    text: string,
+    attachments: AttachmentView[],
+  ): Promise<boolean> => {
+    const trimmed = text.trim();
+    if (
+      (!trimmed && attachments.length === 0) ||
+      !convID ||
+      !get().configured
+    ) {
+      return false;
+    }
+    const conv = get().conversations[convID];
+    if (!conv) return false;
+    const messages = [
+      ...conv.messages,
+      {
+        id: newID('msg'),
+        role: 'user' as const,
+        text: trimmed,
+        items: [],
+        attachments,
+      },
+    ];
+    await beginTurn(convID, trimmed, messages, attachments);
+    return true;
+  };
+
+  // drainQueued sends the single staged draft for a conversation. It
+  // is invoked when that conversation's turn reaches its terminal
+  // event (Tab queue) or, for interrupt=true, as soon as the awaited
+  // run starts.
+  const drainQueued = (convID: string) => {
+    const queued = get().conversations[convID]?.queued;
+    if (!queued) return;
+    updateConv(convID, { queued: undefined });
+    void startTurnFor(convID, queued.text, queued.attachments);
+  };
+
+  // supersededEndState reports whether a superseded run already hit
+  // its terminal event while the replacement was still starting. The
+  // runConvs entry disappears exactly when turn_end is processed, so
+  // its absence (with the status recorded on the artifact) means the
+  // old run is no longer alive and must not be "restored".
+  const supersededEndState = (
+    convID: string,
+    runID: string,
+  ): { status: TurnStatus; error?: string } | undefined => {
+    if (get().runConvs[runID] === convID) return undefined;
+    const artifact = get().conversations[convID]?.turnArtifacts.find(
+      (t) => t.runID === runID,
+    );
+    const status = artifact?.status
+      ? normalizeTurnStatus(artifact.status)
+      : undefined;
+    if (!artifact || !status) return { status: 'interrupted' };
+    return { status, error: artifact.error };
+  };
+
+  // markFailedSend marks the live turn entry of a send that never
+  // produced a run. Used when a failed barge-in leaves the previous
+  // run running: the conversation has to resume that run, so the only
+  // place to surface the failed send is its own turn artifact.
+  const markFailedSend = (convID: string, error: string) => {
+    set((state) => {
+      const conv = state.conversations[convID];
+      if (!conv || conv.turnArtifacts.length === 0) return state;
+      const list = conv.turnArtifacts;
+      const idx = list.length - 1;
+      return {
+        conversations: {
+          ...state.conversations,
+          [convID]: {
+            ...conv,
+            turnArtifacts: [
+              ...list.slice(0, idx),
+              {
+                ...list[idx],
+                status: 'failed',
+                error,
+                finishedAt: new Date().toISOString(),
+              },
+              ...list.slice(idx + 1),
+            ],
+          },
+        },
+      };
+    });
+  };
+
   const beginTurn = async (
     convID: string,
     text: string,
@@ -912,15 +1031,65 @@ export const useStore = create<StoreState>((set, get) => {
       }));
       startingActor?.send({ type: 'RUN_STARTED', runID: start.run_id });
       void get().loadSessions();
+      // An Enter pressed while the previous send was still "starting"
+      // staged interrupt=true. The run just started, so fire it now;
+      // the replacement barges in through the same send path.
+      const queued = get().conversations[convID]?.queued;
+      if (queued?.interrupt) {
+        updateConv(convID, { queued: undefined });
+        void startTurnFor(convID, queued.text, queued.attachments);
+      }
     } catch (err) {
       const conv = get().conversations[convID];
-      if (conv) {
+      if (!conv) return;
+      const error = String(err);
+      const snapshot = startingActor?.getSnapshot();
+      const turnValue = (snapshot?.value as { turn?: string } | undefined)
+        ?.turn;
+      const context = (snapshot?.context ?? {}) as {
+        supersededRunID?: string;
+      };
+      if (turnValue === 'starting' && context.supersededRunID) {
+        // The barge-in start failed. If the superseded run is still
+        // live, resume watching it (its late streams and terminal
+        // event must keep driving the conversation); if its terminal
+        // event already passed while this send was starting, absorb
+        // that status instead of reporting a fresh failure.
+        const superseded = context.supersededRunID;
+        const ended = supersededEndState(convID, superseded);
         startingActor?.send({
-          type: 'TURN_ENDED',
-          runID: '',
-          status: 'failed',
-          error: String(err),
+          type: 'START_FAILED',
+          error,
+          ...(ended
+            ? {
+                supersededEndedStatus: ended.status,
+                supersededEndedError: ended.error,
+              }
+            : {}),
         });
+        markFailedSend(convID, error);
+        // Tab drafts stay staged for the resumed run; interrupt
+        // intents aimed at the start that just failed are dropped.
+        const queued = conv.queued;
+        if (queued?.interrupt) {
+          updateConv(convID, { queued: undefined });
+        }
+        return;
+      }
+      startingActor?.send({
+        type: 'TURN_ENDED',
+        runID: '',
+        status: 'failed',
+        error,
+      });
+      // A staged draft no longer has a run to wait for. Interrupt
+      // intents were aimed at the failed start, so drop them; Tab
+      // queues still fire after the failed send settles.
+      const queued = get().conversations[convID]?.queued;
+      if (queued?.interrupt) {
+        updateConv(convID, { queued: undefined });
+      } else if (queued) {
+        drainQueued(convID);
       }
     }
   };
@@ -942,7 +1111,16 @@ export const useStore = create<StoreState>((set, get) => {
             const context = snapshot.context as {
               currentRunID?: string;
               lastEndedRunID?: string;
+              supersededRunID?: string;
             };
+            if (
+              context.supersededRunID &&
+              data.run_id === context.supersededRunID
+            ) {
+              // A barge-in is replacing this run; its late deltas must
+              // never land after the replacement's user message.
+              break;
+            }
             if (value.turn === 'running') {
               // A delayed delta from an earlier run must never be
               // folded into a newer run's live transcript.
@@ -1080,6 +1258,28 @@ export const useStore = create<StoreState>((set, get) => {
             };
           });
           void get().loadSessions();
+          // A Tab-staged draft fires only when the run it was waiting
+          // for completes. Drain before the actor applies TURN_ENDED:
+          // beginTurn marks the just-ended run as superseded so the
+          // pending terminal event stays inert and the next turn
+          // starts cleanly. Failed/cancelled/aborted endings keep the
+          // draft staged (the composer shows how to send it), and a
+          // terminal event from a superseded run must never drain a
+          // draft that is waiting for the replacement.
+          const staged = get().conversations[conversationID]?.queued;
+          if (staged && !staged.interrupt && data.status === 'completed') {
+            const actor = stateRoot.registry.get(conversationID);
+            const snapshot = actor?.getSnapshot();
+            const turn = (snapshot?.value as { turn?: string } | undefined)
+              ?.turn;
+            const context = (snapshot?.context ?? {}) as {
+              currentRunID?: string;
+            };
+            const isWatchedRun =
+              turn === 'running' && context.currentRunID === data.run_id;
+            if (!isWatchedRun) break;
+            drainQueued(conversationID);
+          }
           break;
         }
         case 'automation_run_started': {
@@ -1547,17 +1747,69 @@ export const useStore = create<StoreState>((set, get) => {
       ) {
         return;
       }
-      const messages = [
-        ...conv.messages,
-        {
-          id: newID('msg'),
-          role: 'user' as const,
-          text: trimmed,
-          items: [],
-          attachments,
-        },
-      ];
-      await beginTurn(convID, trimmed, messages, attachments);
+      // Any fresh manual send supersedes a draft that is still staged
+      // (for example after the turn it was queued behind failed).
+      updateConv(convID, { queued: undefined });
+      await startTurnFor(convID, text, attachments);
+    },
+
+    sendInterrupt: async (text, attachments = []) => {
+      const trimmed = text.trim();
+      const state = get();
+      const convID = activeConversationID();
+      const conv = convID ? state.conversations[convID] : undefined;
+      if (
+        (!trimmed && attachments.length === 0) ||
+        !convID ||
+        !conv ||
+        !state.configured
+      ) {
+        return false;
+      }
+      const turn = conversationTurnState(convID);
+      if (turn.name === 'starting') {
+        // No run id exists yet to interrupt; stage the input and fire
+        // it as a barge-in the moment the awaited run starts.
+        updateConv(convID, {
+          queued: { text: trimmed, attachments, interrupt: true },
+        });
+        return true;
+      }
+      // Enter is "answer me now": drop anything staged with Tab and
+      // start immediately. While a turn is running the engine
+      // interrupts it; otherwise this is a normal send.
+      updateConv(convID, { queued: undefined });
+      await startTurnFor(convID, text, attachments);
+      return true;
+    },
+
+    queueInput: (text, attachments = []) => {
+      const trimmed = text.trim();
+      const state = get();
+      const convID = activeConversationID();
+      const conv = convID ? state.conversations[convID] : undefined;
+      if (
+        (!trimmed && attachments.length === 0) ||
+        !convID ||
+        !conv ||
+        !state.configured
+      ) {
+        return false;
+      }
+      const turn = conversationTurnState(convID);
+      if (turn.name !== 'starting' && turn.name !== 'running') {
+        return false;
+      }
+      // A single queue slot: a later Tab replaces the staged draft.
+      updateConv(convID, {
+        queued: { text: trimmed, attachments, interrupt: false },
+      });
+      return true;
+    },
+
+    clearQueued: () => {
+      const convID = activeConversationID();
+      if (convID) updateConv(convID, { queued: undefined });
     },
 
     forkTurn: async (runID) => {

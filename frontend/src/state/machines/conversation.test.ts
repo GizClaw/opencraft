@@ -128,6 +128,122 @@ describe('conversation machine', () => {
     expect(regions(actor).turn).toBe('succeeded');
   });
 
+  it('a barge-in send supersedes the old run while it is starting', () => {
+    const actor = start();
+    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    actor.send({ type: 'STREAM', runID: 'r-old', stage: 'text' });
+    expect(regions(actor).turn).toBe('running');
+
+    // The replacement send moves back to starting and marks the old
+    // run as superseded.
+    actor.send({ type: 'SEND_STARTED' });
+    expect(regions(actor).turn).toBe('starting');
+    expect(actor.getSnapshot().context).toMatchObject({
+      supersededRunID: 'r-old',
+    });
+
+    // Late deltas and the terminal event of the superseded run must
+    // not disturb the starting state.
+    actor.send({ type: 'STREAM', runID: 'r-old', stage: 'tool:x' });
+    endTurn(actor, 'r-old', 'interrupted');
+    expect(regions(actor).turn).toBe('starting');
+    expect(actor.getSnapshot().context).not.toMatchObject({
+      failureStatus: 'interrupted',
+    });
+
+    actor.send({ type: 'RUN_STARTED', runID: 'r-new' });
+    expect(regions(actor).turn).toBe('running');
+    expect(actor.getSnapshot().context).toMatchObject({
+      currentRunID: 'r-new',
+      supersededRunID: undefined,
+    });
+  });
+
+  it('accepts the replacement run before the superseded turn ends', () => {
+    const actor = start();
+    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'RUN_STARTED', runID: 'r-new' });
+
+    expect(regions(actor).turn).toBe('running');
+    expect(actor.getSnapshot().context).toMatchObject({
+      currentRunID: 'r-new',
+    });
+
+    // A terminal event for the old run is inert once the replacement
+    // owns the running state.
+    endTurn(actor, 'r-old', 'interrupted');
+    expect(regions(actor).turn).toBe('running');
+    expect(actor.getSnapshot().context).toMatchObject({
+      currentRunID: 'r-new',
+    });
+  });
+
+  it('a failed barge-in resumes the superseded run when it is alive', () => {
+    const actor = start();
+    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    actor.send({ type: 'SEND_STARTED' });
+    expect(actor.getSnapshot().context).toMatchObject({
+      supersededRunID: 'r-old',
+    });
+
+    actor.send({ type: 'START_FAILED', error: 'start boom' });
+    expect(regions(actor).turn).toBe('running');
+    expect(actor.getSnapshot().context).toMatchObject({
+      currentRunID: 'r-old',
+      supersededRunID: undefined,
+      failureStatus: undefined,
+    });
+
+    // The restored run's own terminal event still drives the state.
+    endTurn(actor, 'r-old', 'completed');
+    expect(regions(actor).turn).toBe('succeeded');
+  });
+
+  it('a failed barge-in absorbs the superseded run interrupted ending', () => {
+    const actor = start();
+    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    actor.send({ type: 'SEND_STARTED' });
+
+    actor.send({
+      type: 'START_FAILED',
+      error: 'start boom',
+      supersededEndedStatus: 'interrupted',
+      supersededEndedError: 'engine boom',
+    });
+    expect(regions(actor).turn).toBe('failed');
+    expect(actor.getSnapshot().context).toMatchObject({
+      currentRunID: undefined,
+      supersededRunID: undefined,
+      lastEndedRunID: 'r-old',
+      failureStatus: 'interrupted',
+      turnError: 'engine boom',
+    });
+  });
+
+  it('a failed barge-in absorbs a completed superseded run', () => {
+    const actor = start();
+    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    actor.send({ type: 'SEND_STARTED' });
+
+    actor.send({
+      type: 'START_FAILED',
+      error: 'start boom',
+      supersededEndedStatus: 'completed',
+    });
+    expect(regions(actor).turn).toBe('succeeded');
+    expect(actor.getSnapshot().context).toMatchObject({
+      currentRunID: undefined,
+      supersededRunID: undefined,
+      lastEndedRunID: 'r-old',
+    });
+  });
+
   it('restores an idle conversation from the first stream after reload', () => {
     const actor = start();
     actor.send({ type: 'STREAM', runID: 'r-1', stage: 'text' });

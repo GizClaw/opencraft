@@ -18,6 +18,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/core"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/imageutil"
 	patchutil "github.com/GizClaw/opencraft/internal/foundation/utils/patch"
 	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -247,7 +248,10 @@ func (b *File) Diff(path string) (string, error) {
 	return string(out), nil
 }
 
-// Attachment preview metadata.
+// Attachment preview metadata. MediaType describes the source file;
+// DataURL may carry a different media type when the preview was
+// normalized (see imagePreviewDataURL), so consumers must not assume
+// the two agree.
 type Attachment struct {
 	Name      string `json:"name"`
 	Path      string `json:"path"`
@@ -269,9 +273,6 @@ func (b *File) ReadAttachment(path string) (Attachment, error) {
 	if !info.Mode().IsRegular() {
 		return Attachment{}, fmt.Errorf("%s is not a regular file", path)
 	}
-	if info.Size() > 10<<20 {
-		return Attachment{}, fmt.Errorf("attachment too large to preview")
-	}
 	mediaType := mime.TypeByExtension(filepath.Ext(path))
 	if i := strings.IndexByte(mediaType, ';'); i >= 0 {
 		mediaType = mediaType[:i]
@@ -283,14 +284,41 @@ func (b *File) ReadAttachment(path string) (Attachment, error) {
 		MediaType: mediaType,
 	}
 	if strings.HasPrefix(mediaType, "image/") {
-		data, err := os.ReadFile(path)
+		dataURL, err := imagePreviewDataURL(path, mediaType, info.Size())
 		if err != nil {
 			return Attachment{}, err
 		}
-		dto.DataURL = "data:" + mediaType + ";base64," +
-			base64.StdEncoding.EncodeToString(data)
+		dto.DataURL = dataURL
 	}
 	return dto, nil
+}
+
+// imagePreviewDataURL returns the base64 data URL shown for one local
+// image. Sources that already fit the preview cap are embedded
+// byte-for-byte, so small images never go through a lossy round trip
+// and browsers keep applying EXIF orientation themselves. Larger
+// decodable still images are normalized to JPEG q90 (EXIF applied,
+// transparency flattened) so a big PNG/TIFF/BMP can still preview.
+// Formats that cannot be normalized (WebP/AVIF, animated GIF, corrupt
+// files) are rejected once they exceed the cap.
+func imagePreviewDataURL(path, mediaType string, size int64) (string, error) {
+	if size <= imageutil.MaxInlineImageBytes {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return "", err
+		}
+		return "data:" + mediaType + ";base64," +
+			base64.StdEncoding.EncodeToString(data), nil
+	}
+	if mediaType != "image/gif" {
+		if data, err := imageutil.NormalizeFileToJPEG(path); err == nil &&
+			int64(len(data)) <= imageutil.MaxInlineImageBytes {
+			return "data:image/jpeg;base64," +
+				base64.StdEncoding.EncodeToString(data), nil
+		}
+	}
+	return "", fmt.Errorf(
+		"image too large to preview (%d bytes)", size)
 }
 
 // PatchFile is one changed file in a rendered codex patch.

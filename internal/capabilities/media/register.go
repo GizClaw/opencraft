@@ -25,12 +25,9 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/message/media"
 	"github.com/GizClaw/flowcraft/core/resource"
-)
 
-// maxInlineBytes caps one local media file the prepare hook inlines.
-// The desktop caps persisted attachments at the same size, so this
-// only trips for custom graphs that inject their own URL sources.
-const maxInlineBytes = 10 << 20
+	"github.com/GizClaw/opencraft/internal/foundation/utils/imageutil"
+)
 
 // Register adds the opencraft.media prepare hook factory to r.
 func Register(r *resource.Registry) error {
@@ -265,9 +262,10 @@ func checkSize(path string) error {
 	if err != nil {
 		return err
 	}
-	if info.Size() > maxInlineBytes {
+	if info.Size() > imageutil.MaxInlineImageBytes {
 		return fmt.Errorf(
-			"media: %s exceeds the %d-byte inline limit", path, maxInlineBytes)
+			"media: %s exceeds the %d-byte inline limit",
+			path, imageutil.MaxInlineImageBytes)
 	}
 	return nil
 }

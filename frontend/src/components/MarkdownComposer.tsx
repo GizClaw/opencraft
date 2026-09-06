@@ -416,6 +416,10 @@ interface MarkdownComposerProps {
   disabled?: boolean;
   onValueChange?: (markdown: string) => void;
   onSubmit?: () => void;
+  // onQueue handles Tab while a turn is running. It returns true when
+  // the draft was staged, so the editor suppresses the default Tab
+  // behavior (focus move / indentation).
+  onQueue?: () => boolean;
 }
 
 function serializeEditor(editor: Editor | null): string {
@@ -446,6 +450,7 @@ export const MarkdownComposer = forwardRef<
     disabled = false,
     onValueChange,
     onSubmit,
+    onQueue,
   },
   ref,
 ) {
@@ -454,12 +459,16 @@ export const MarkdownComposer = forwardRef<
   const suggestionOpenRef = useRef(false);
   const onChangeRef = useRef(onValueChange);
   const onSubmitRef = useRef(onSubmit);
+  const onQueueRef = useRef(onQueue);
   useEffect(() => {
     onChangeRef.current = onValueChange;
   }, [onValueChange]);
   useEffect(() => {
     onSubmitRef.current = onSubmit;
   }, [onSubmit]);
+  useEffect(() => {
+    onQueueRef.current = onQueue;
+  }, [onQueue]);
 
   const extensions = useMemo(
     () => [
@@ -520,6 +529,15 @@ export const MarkdownComposer = forwardRef<
         // While a mention popup is open its own keymap owns Enter/arrows;
         // let the plugin handle them instead of submitting the message.
         if (suggestionOpenRef.current) return false;
+        if (
+          event.key === 'Tab' &&
+          !event.isComposing &&
+          event.keyCode !== 229 &&
+          onQueueRef.current?.()
+        ) {
+          event.preventDefault();
+          return true;
+        }
         if (event.key === 'Home' || event.key === 'End') {
           event.preventDefault();
           const edge = event.key === 'Home' ? 'start' : 'end';
