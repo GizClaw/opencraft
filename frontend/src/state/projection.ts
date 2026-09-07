@@ -80,6 +80,7 @@ export function projectConversation(snapshot: {
     transcriptError?: string;
     currentRunID?: string;
     turnStage?: string;
+    supersededRunID?: string;
     failureStatus?: 'failed' | 'aborted' | 'canceled' | 'interrupted';
     turnError?: string;
   };
@@ -113,7 +114,10 @@ export function projectConversation(snapshot: {
   let turn: TurnState;
   switch (snapshot.value.turn) {
     case 'starting':
-      turn = { name: 'starting' };
+      turn = {
+        name: 'starting',
+        supersededRunID: snapshot.context.supersededRunID,
+      };
       break;
     case 'running':
       turn = {

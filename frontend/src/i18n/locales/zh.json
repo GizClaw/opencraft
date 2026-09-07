@@ -431,6 +431,8 @@
     "queuedReady": "已排队 — “{{preview}}”（回复已结束，按 Enter 发送）",
     "queuedFiles": "附件",
     "queuedCancel": "取消排队消息",
+    "queuedInterrupt": "已排队 — “{{preview}}” 将在新回复启动后立即打断并发送",
+    "bargeWaiting": "正在中断当前回复 — “{{preview}}” 将随后发送",
     "busyKeyHint": "Enter 打断当前回复 · Tab 排队消息",
     "mentionSearchHint": "输入以搜索工作区文件…",
     "mentionNoMatch": "无匹配结果",

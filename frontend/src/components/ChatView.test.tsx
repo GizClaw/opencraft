@@ -1,4 +1,11 @@
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useStore } from '../lib/store';
@@ -15,6 +22,7 @@ const apiMock = vi.hoisted(() => ({
   revealArtifact: vi.fn(async () => undefined),
   openArtifactWith: vi.fn(async () => undefined),
   startTurn: vi.fn(),
+  cancelTurn: vi.fn(async () => undefined),
 }));
 
 vi.mock('../lib/api', () => ({ api: apiMock }));
@@ -182,7 +190,7 @@ describe('ChatView transcript windowing', () => {
     ).not.toBeInTheDocument();
   });
 
-  it('shows a staged queue draft above the composer and can cancel it', () => {
+  it('shows a staged queue draft and cancelling it restores the draft', async () => {
     setConversation(
       [
         {
@@ -200,12 +208,42 @@ describe('ChatView transcript windowing', () => {
 
     render(<ChatView />);
 
-    expect(screen.getByText(/staged question/)).toBeInTheDocument();
+    const banner = screen.getByTestId('chat-staged-banner');
+    expect(within(banner).getByText(/staged question/)).toBeInTheDocument();
     fireEvent.click(
-      screen.getByRole('button', { name: 'Cancel queued message' }),
+      within(banner).getByRole('button', {
+        name: 'Cancel queued message',
+      }),
     );
     expect(useStore.getState().conversations['s-1']?.queued).toBeUndefined();
-    expect(screen.queryByText(/staged question/)).not.toBeInTheDocument();
+    expect(screen.queryByTestId('chat-staged-banner')).not.toBeInTheDocument();
+    // The X returns the draft to the composer instead of discarding it.
+    await waitFor(() =>
+      expect(screen.getByRole('textbox')).toHaveTextContent('staged question'),
+    );
+  });
+
+  it('force-cancels the superseded run while a barge-in waits', async () => {
+    setConversation([]);
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    // A barge-in Enter leaves the conversation starting while the
+    // backend interrupts r-old; the banner must offer a force-cancel.
+    actor?.send({ type: 'SEND_STARTED' });
+    expect(actor?.getSnapshot().context).toMatchObject({
+      supersededRunID: 'r-old',
+    });
+
+    render(<ChatView />);
+
+    const banner = screen.getByTestId('chat-staged-banner');
+    expect(
+      within(banner).getByText(/Interrupting the current reply/i),
+    ).toBeInTheDocument();
+    fireEvent.click(within(banner).getByRole('button', { name: 'Stop' }));
+
+    expect(apiMock.cancelTurn).toHaveBeenCalledWith('r-old');
   });
 
   it('Enter with an empty composer delivers a draft kept after a failed turn', async () => {
