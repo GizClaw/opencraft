@@ -6,33 +6,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- The built-in `code-review` skill was removed; review behavior is left
-  to installed user/repo skills and the agent's review guidance.
-- flowcraft upgraded to core v0.2.3 and drivers v0.2.1. Reasoning
-  capabilities now use the new `ReasoningCapability` object (kind +
-  canonical-to-wire effort map) end to end: config writes the object
-  form, the settings page edits each model's canonical-to-wire effort
-  map, and OpenAI/Azure `effort_none` is editable there too. Thinking
-  effort gains the canonical `minimal` and `xhigh` levels in chat and
-  automations.
-- The inference settings page now offers each driver's built-in model
-  catalog as a combobox: picking a built-in prefills the model's
-  capabilities (inputs/outputs, reasoning kind + effort map,
-  dimensions, effort_none), with a one-click reset to catalog
-  defaults; free-form custom model names stay supported. Deprecated
-  catalog models are marked with ⚠️ and their replacement. Provider
-  default models now come from the first non-deprecated catalog entry
-  instead of hardcoded names.
-- Desktop exit polish: real quits (tray Quit, macOS Cmd+Q/Dock Quit,
-  and the "Quit" close mode) now ask for confirmation first because
-  exiting stops scheduled tasks. The tray/menu-bar icon uses the
-  full-colour app icon on every platform, and the tray menu shows the
-  app version and a short about line. Native tray/exit copy follows
-  the UI's zh/en language, synced from the frontend and persisted in
-  desktop preferences.
-
 ## [0.3.0] - 2026-09-07
 
 ### Added
@@ -74,6 +47,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replayed structurally, so resumed turns rebuild the same prompt
   shape. (#94)
 - The subagent right-sidebar panel was removed from the chat UI. (#86)
+
+## [0.2.0] - 2026-09-04
+
+### Added
+
+- Automations: scheduled tasks stored in user.db with a recurrence
+  engine, a background runtime pool, a task list UI, and an agent tool
+  flow with preview-confirm and guided creation. (#58)
+- Plugin agent capabilities: skills, MCP, hooks, and tools exposed to
+  agents (namespaced with `__`), a plugin detail drawer with
+  environment editing, and read-only plugin skills. (#56, #62)
+- Plugin update/rollback with remote update checks. (#57)
+- Session import, a settings Import tab, and `pickFolder` exposed to
+  plugin UI services. (#66, #79, #80)
+- Conversation fork: a turn can be forked into a fresh session
+  together with its memory.
+- Chat history artifacts, timestamps, and tool grouping, with earlier
+  history auto-loading at the top of the transcript. (#67, #69)
+- Skill drawer, workspace removal/close UX, and unconfigured-inference
+  state. (#63)
+- Headless `opencraft run` mode with JSONL output, plus the M1–M4 test
+  infrastructure. (#61)
+- Lazy, compressed language/toolchain runtimes without a bundled Go;
+  background prep shows progress in the status bar. (#70, #72, #73)
+
+### Changed
+
+- The built-in `code-review` skill was removed; review behavior is
+  left to installed user/repo skills and the agent's review guidance.
+- flowcraft upgraded to core v0.2.3/v0.2.4 and drivers v0.2.1.
+  Reasoning capabilities use the new `ReasoningCapability` object
+  (kind + canonical-to-wire effort map) end to end, including
+  `effort_none` for OpenAI/Azure; thinking effort gains the canonical
+  `minimal` and `xhigh` levels in chat and automations. (#59, #66)
+- The inference settings page offers each driver's built-in model
+  catalog as a combobox: capabilities prefill from the built-in with
+  one-click reset, deprecated models show ⚠️ plus their replacement,
+  and provider default models come from the first non-deprecated
+  catalog entry. (#59)
+- Desktop exit polish: real quits ask for confirmation first, the
+  tray/menu-bar icon uses the full-colour app icon and shows the app
+  version, and the chat composer gained markdown editing and UI
+  warnings. (#64)
+- Artifact context menus and stream rendering polish. (#67)
+- The desktop backend was consolidated onto a shared Host, session and
+  conversation state moved to an XState layer, and turn/plugin state
+  plus stream reconciliation were hardened. (#74, #75, #76)
+- Tooling, secrets, and long-session handling hardened; ANSI escape
+  sequences are stripped from tool results. (#55, #60)
+
+### Fixed
+
+- macOS amd64 terminate-flag conversion made portable across cgo
+  architectures. (#68)
+- Switching workspaces restores the previously active session;
+  `turn_end` carries the authoritative turn duration. (#77, #78)
 
 ## [0.1.0] - 2026-09-01
 
