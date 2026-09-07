@@ -211,44 +211,27 @@ func (r *streamRecorder) record(
 ) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	for _, ev := range rollout.ItemEventsFromStream(
+		r.conversID, r.runID, delta,
+	) {
+		r.encode(ev)
+	}
 	switch delta.Type {
 	case agent.StreamDeltaPart:
 		switch p := delta.Part.(type) {
-		case message.ToolCallPart:
-			r.encode(rollout.Event{
-				Type:  rollout.TypeItemToolCall,
-				RunID: r.runID, ConversationID: r.conversID,
-				ItemID: p.Call.ID, Tool: p.Call.Name,
-				CallID: p.Call.ID, Arguments: p.Call.Arguments,
-			})
-		case message.ToolResultPart:
-			r.encode(rollout.Event{
-				Type:  rollout.TypeItemToolResult,
-				RunID: r.runID, ConversationID: r.conversID,
-				CallID: p.Result.CallID, Content: p.Result.Content,
-				IsError: p.Result.IsError,
-			})
 		case message.ReasoningPart:
 			r.reasoning.WriteString(p.Text)
 		case message.TextPart:
 			r.text.WriteString(p.Text)
 		}
 	case agent.StreamDeltaFinish:
-		if r.reasoning.Len() > 0 {
-			r.encode(rollout.Event{
-				Type:  rollout.TypeItemReasoning,
-				RunID: r.runID, ConversationID: r.conversID,
-				Content: r.reasoning.String(),
-			})
-			r.reasoning.Reset()
-		}
-		if r.text.Len() > 0 {
-			r.encode(rollout.Event{
-				Type:  rollout.TypeItemAssistantMsg,
-				RunID: r.runID, ConversationID: r.conversID,
-				Content: r.text.String(),
-			})
-			r.text.Reset()
+		reasoning, text := r.reasoning.String(), r.text.String()
+		r.reasoning.Reset()
+		r.text.Reset()
+		for _, ev := range rollout.FlushItemEvents(
+			r.conversID, r.runID, reasoning, text,
+		) {
+			r.encode(ev)
 		}
 	}
 	return nil

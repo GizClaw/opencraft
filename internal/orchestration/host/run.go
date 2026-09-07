@@ -350,10 +350,10 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 		turnUsage := host.takeUsage(r.RunID())
 		usageDeltas := host.takeUsageDeltas(r.RunID())
 		persistCtx := context.WithoutCancel(ctx)
-		status := "unknown"
+		status := agent.Status("unknown")
 		var errText string
 		if res != nil {
-			status = string(res.Status)
+			status = res.Status
 			if res.Err != nil {
 				errText = res.Err.Error()
 			}
@@ -370,23 +370,24 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 				unwrapErrForTelemetry(execErr),
 				otellog.String("conversation.id", detail.contextID),
 				otellog.String("run.id", r.RunID()),
-				otellog.String("status", status))
+				otellog.String("status", string(status)))
 		}
 		typ := rollout.TypeTurnCompleted
-		if errText != "" || status == "failed" {
+		if errText != "" || status == agent.StatusFailed {
 			typ = rollout.TypeTurnFailed
 		}
 		store := host.store
 		if store != nil {
 			telemetry.WarnErr(persistCtx, "host: record turn end failed",
 				store.RecordTurnEnd(
-					detail.contextID, r.RunID(), finishedAt, status, errText))
+					detail.contextID, r.RunID(), finishedAt,
+					string(status), errText))
 		}
 		host.persistTurnUsage(
 			persistCtx, detail.contextID, usageDeltas, turnUsage)
 		host.recordTurnEnd(
 			persistCtx, detail.contextID, r.RunID(),
-			typ, status, errText, turnUsage)
+			typ, string(status), errText, turnUsage)
 		if store != nil && detail.manifest != nil {
 			if after, snapErr := manifestSnapshot(persistCtx, host.workDir); snapErr == nil {
 				docs := diffDocumentArtifacts(detail.manifest, after)
@@ -404,7 +405,7 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 		host.dropRun(RunID(r.RunID()))
 		host.fireTurnEnd(
 			persistCtx, detail.contextID, r.RunID(),
-			status, errText, turnUsage)
+			string(status), errText, turnUsage)
 	}
 	if r.host.Broker() != nil {
 		r.host.Broker().UnbindTurn(r.RunID())

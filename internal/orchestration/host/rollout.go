@@ -119,28 +119,12 @@ func (h *Host) onStreamRollout(
 	if rec == nil {
 		return
 	}
+	for _, ev := range rollout.ItemEventsFromStream(conv, runID, delta) {
+		h.recordRollout(ctx, rec, ev, "stream")
+	}
 	switch delta.Type {
 	case agent.StreamDeltaPart:
 		switch p := delta.Part.(type) {
-		case message.ToolCallPart:
-			h.recordRollout(ctx, rec, rollout.Event{
-				Type:           rollout.TypeItemToolCall,
-				ConversationID: conv,
-				RunID:          runID,
-				ItemID:         p.Call.ID,
-				Tool:           p.Call.Name,
-				CallID:         p.Call.ID,
-				Arguments:      p.Call.Arguments,
-			}, "tool call")
-		case message.ToolResultPart:
-			h.recordRollout(ctx, rec, rollout.Event{
-				Type:           rollout.TypeItemToolResult,
-				ConversationID: conv,
-				RunID:          runID,
-				CallID:         p.Result.CallID,
-				Content:        p.Result.Content,
-				IsError:        p.Result.IsError,
-			}, "tool result")
 		case message.ReasoningPart:
 			h.rolloutBufferAppend(runID, true, p.Text)
 		case message.TextPart:
@@ -151,17 +135,10 @@ func (h *Host) onStreamRollout(
 		if buf == nil {
 			return
 		}
-		if buf.reasoning.Len() > 0 {
-			h.recordRollout(ctx, rec, rollout.Event{
-				Type: rollout.TypeItemReasoning, ConversationID: conv,
-				RunID: runID, Content: buf.reasoning.String(),
-			}, "reasoning")
-		}
-		if buf.text.Len() > 0 {
-			h.recordRollout(ctx, rec, rollout.Event{
-				Type: rollout.TypeItemAssistantMsg, ConversationID: conv,
-				RunID: runID, Content: buf.text.String(),
-			}, "assistant message")
+		for _, ev := range rollout.FlushItemEvents(
+			conv, runID, buf.reasoning.String(), buf.text.String(),
+		) {
+			h.recordRollout(ctx, rec, ev, "stream finish")
 		}
 	}
 }
