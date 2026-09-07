@@ -30,7 +30,6 @@ type ModelTemplate struct {
 	Reasoning          string            `json:"reasoning"`
 	ReasoningEffortMap map[string]string `json:"reasoning_effort_map,omitempty"`
 	WebSearch          bool              `json:"web_search"`
-	EffortNone         bool              `json:"effort_none,omitempty"`
 	Deprecated         bool              `json:"deprecated"`
 	Replacement        string            `json:"replacement,omitempty"`
 	MaxInputTokens     *int              `json:"max_input_tokens,omitempty"`
@@ -45,24 +44,6 @@ type ProviderModels struct {
 	// settings page can degrade to manual input instead of failing
 	// the whole config load.
 	Error string `json:"error,omitempty"`
-}
-
-// catalogControlFlags mirrors driver built-in control flags that are
-// not exposed on inference.ModelDescriptor.
-type catalogControlFlags struct {
-	EffortNone bool
-}
-
-// catalogControlOverrides documents the v0.2.1 driver built-in
-// effort_none flag (openai only; azure has no built-in catalog). These
-// are editor prefill facts only; the deployed config is still validated
-// by the driver.
-var catalogControlOverrides = map[string]map[string]catalogControlFlags{
-	"openai": {
-		"gpt-5.6-sol":   {EffortNone: true},
-		"gpt-5.6-terra": {EffortNone: true},
-		"gpt-5.6-luna":  {EffortNone: true},
-	},
 }
 
 // catalogDefaultOrder preserves each driver catalog's source
@@ -221,7 +202,7 @@ func buildProviderTemplates(providerID string) ([]ModelTemplate, error) {
 	if !ok {
 		return nil, fmt.Errorf("unexpected provider value %T", raw)
 	}
-	return templatesFromDefinition(providerID, def), nil
+	return templatesFromDefinition(def), nil
 }
 
 // templatesFromDefinition lowers a built provider definition into
@@ -229,14 +210,11 @@ func buildProviderTemplates(providerID string) ([]ModelTemplate, error) {
 // declared outputs, since descriptors do not carry the driver's
 // internal kind directly.
 func templatesFromDefinition(
-	providerID string,
 	def inference.ProviderDefinition,
 ) []ModelTemplate {
 	out := make([]ModelTemplate, 0, len(def.Models))
-	overrides := catalogControlOverrides[providerID]
 	for _, impl := range def.Models {
 		d := impl.Descriptor
-		flags := overrides[d.ID.Name]
 		kind := templateKind(impl.Openers, d.Capabilities)
 		if kind == "embed" {
 			// Embedding deployments are no longer configurable from
@@ -263,7 +241,6 @@ func templatesFromDefinition(
 			Reasoning:          string(d.Capabilities.Reasoning.Kind),
 			ReasoningEffortMap: EffortMapStrings(d.Capabilities.Reasoning.EffortMap),
 			WebSearch:          d.Capabilities.HostedWebSearch,
-			EffortNone:         flags.EffortNone,
 			Deprecated:         d.Lifecycle.Status == inference.ModelStatusDeprecated,
 			Replacement:        replacement,
 			MaxInputTokens:     d.Limits.MaxInputTokens,

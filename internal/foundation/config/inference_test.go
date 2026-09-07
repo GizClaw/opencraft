@@ -282,6 +282,95 @@ func TestInferenceYAMLAzureCapabilities(t *testing.T) {
 	}
 }
 
+func TestInferenceYAMLLimitsRoundTrip(t *testing.T) {
+	input, output := 1_000_000, 65_536
+	cfg := envKeyed(t, "deepseek")
+	cfg.Instances = append(cfg.Instances, Instance{
+		Type:      "azure",
+		KeySource: KeyEnv,
+		Endpoint:  "https://res.openai.azure.com",
+		Models: []Model{{
+			Name: "gpt-5.6-sol-deploy",
+			Limits: inference.ModelLimits{
+				MaxInputTokens:  &input,
+				MaxOutputTokens: &output,
+			},
+		}},
+		Enabled: true,
+	})
+	data, err := cfg.InferenceYAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+	for _, want := range []string{
+		"limits:",
+		"max_input_tokens: 1000000",
+		"max_output_tokens: 65536",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Fatalf("limits doc missing %q:\n%s", want, doc)
+		}
+	}
+
+	dir := t.TempDir()
+	if err := WriteInference(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadInference(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got *inference.ModelLimits
+	for _, in := range loaded.Instances {
+		if in.Type != "azure" || len(in.Models) != 1 {
+			continue
+		}
+		limits := in.Models[0].Limits
+		got = &limits
+	}
+	if got == nil || got.MaxInputTokens == nil ||
+		*got.MaxInputTokens != input ||
+		got.MaxOutputTokens == nil || *got.MaxOutputTokens != output {
+		t.Fatalf("round-tripped limits = %+v, want %d/%d", got, input, output)
+	}
+
+	// Catalog-default models without declared limits must stay silent so
+	// the driver keeps its built-in values.
+	plain := envKeyed(t, "deepseek")
+	plain.Instances = append(plain.Instances, Instance{
+		Type:      "deepseek",
+		KeySource: KeyEnv,
+		Models:    []Model{{Name: "deepseek-v4-flash"}},
+		Enabled:   true,
+	})
+	data, err = plain.InferenceYAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "limits:") {
+		t.Fatalf("default model must not declare limits:\n%s", data)
+	}
+
+	// Non-positive declared limits must fail generation, mirroring the
+	// driver-side ModelLimits validation.
+	zero := 0
+	bad := envKeyed(t, "deepseek")
+	bad.Instances = append(bad.Instances, Instance{
+		Type:      "azure",
+		KeySource: KeyEnv,
+		Endpoint:  "https://res.openai.azure.com",
+		Models: []Model{{
+			Name:   "gpt-5.6-sol-deploy",
+			Limits: inference.ModelLimits{MaxInputTokens: &zero},
+		}},
+		Enabled: true,
+	})
+	if _, err := bad.InferenceYAML(); err == nil {
+		t.Fatal("non-positive max input tokens unexpectedly accepted")
+	}
+}
+
 func TestInferenceYAMLReasoningEffortMap(t *testing.T) {
 	cfg := InferenceConfig{Instances: []Instance{{
 		StableID:  "inst-aaa",
@@ -340,53 +429,6 @@ func TestInferenceYAMLReasoningEffortMap(t *testing.T) {
 	if got.EffortMap[inference.ReasoningXHigh] != "max" ||
 		got.EffortMap[inference.ReasoningMedium] != "high" {
 		t.Fatalf("round trip effort map = %+v", got.EffortMap)
-	}
-}
-
-func TestInferenceYAMLEffortNone(t *testing.T) {
-	cfg := InferenceConfig{Instances: []Instance{{
-		StableID:  "inst-aaa",
-		Type:      "openai",
-		KeySource: KeyEnv,
-		Models: []Model{{
-			Name:       "gpt-5.6-sol",
-			EffortNone: true,
-			Capabilities: inference.ModelCapabilities{
-				Reasoning: inference.ReasoningCapability{
-					Kind: inference.ReasoningToggle,
-				},
-			},
-		}},
-		Enabled: true,
-	}}}
-	data, err := cfg.InferenceYAML()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(data), "effort_none: true") {
-		t.Fatalf("openai effort_none missing:\n%s", data)
-	}
-
-	dir := t.TempDir()
-	if err := WriteInference(dir, cfg); err != nil {
-		t.Fatal(err)
-	}
-	loaded, err := LoadInference(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(loaded.Instances) != 1 || !loaded.Instances[0].Models[0].EffortNone {
-		t.Fatalf("round trip effort_none = %+v", loaded.Instances)
-	}
-
-	// effort_none is a control capability only openai/azure expose.
-	bad := envKeyed(t, "deepseek")
-	bad.Instances[0].Models = []Model{{
-		Name:       "deepseek-v4-flash",
-		EffortNone: true,
-	}}
-	if _, err := bad.InferenceYAML(); err == nil {
-		t.Fatal("effort_none on deepseek must fail")
 	}
 }
 
@@ -550,9 +592,10 @@ func TestInferenceYAMLByTedanceEndpoints(t *testing.T) {
 	}
 }
 
-func TestInferenceYAMLDeepseekResponsesDerived(t *testing.T) {
-	// Responses mode must emit api + per-model responses: true so the
-	// deepseek driver accepts declared models.
+func TestInferenceYAMLDeepseekResponsesSurface(t *testing.T) {
+	// The responses surface is provider-level: api: responses is
+	// written and per-model responses flags are gone (the driver now
+	// serves every generate model on that surface).
 	cfg := InferenceConfig{Instances: []Instance{{
 		StableID:  "inst-aaa",
 		Type:      "deepseek",
@@ -566,13 +609,14 @@ func TestInferenceYAMLDeepseekResponsesDerived(t *testing.T) {
 		t.Fatal(err)
 	}
 	doc := string(data)
-	for _, want := range []string{"api: 'responses'", "responses: true"} {
-		if !strings.Contains(doc, want) {
-			t.Fatalf("deepseek responses doc missing %q:\n%s", want, doc)
-		}
+	if !strings.Contains(doc, "api: 'responses'") {
+		t.Fatalf("deepseek responses doc missing api surface:\n%s", doc)
+	}
+	if strings.Contains(doc, "responses:") {
+		t.Fatalf("deepseek responses mode must not declare per-model responses:\n%s", doc)
 	}
 
-	// Chat mode must not derive the responses flag.
+	// Chat mode must not emit the flag either.
 	chat := cfg
 	chat.Instances = []Instance{{
 		StableID: "inst-aaa", Type: "deepseek", KeySource: KeyEnv,
@@ -584,6 +628,63 @@ func TestInferenceYAMLDeepseekResponsesDerived(t *testing.T) {
 	}
 	if strings.Contains(string(data), "responses:") {
 		t.Fatalf("chat mode must not declare responses:\n%s", data)
+	}
+}
+
+func TestMigrateUserInferenceConfigDropsDeprecatedKeys(t *testing.T) {
+	cfg := envKeyed(t, "deepseek")
+	data, err := cfg.InferenceYAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale := strings.Replace(
+		string(data),
+		"kind: 'generate'",
+		"kind: 'generate'\n"+
+			"            effort_none: true\n"+
+			"            responses: true\n"+
+			"            dimensions: true",
+		1,
+	)
+	dir := t.TempDir()
+	if err := os.WriteFile(
+		filepath.Join(dir, "opencraft.yaml"),
+		[]byte(stale),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	changed, err := MigrateUserInferenceConfig(dir)
+	if err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	if !changed {
+		t.Fatal("stale document must report a migration")
+	}
+	doc, err := os.ReadFile(filepath.Join(dir, "opencraft.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"effort_none", "responses: true", "dimensions"} {
+		if strings.Contains(string(doc), key) {
+			t.Fatalf("migrated doc still contains %q:\n%s", key, doc)
+		}
+	}
+	if _, err := LoadInference(dir); err != nil {
+		t.Fatalf("migrated config must load: %v", err)
+	}
+
+	changed, err = MigrateUserInferenceConfig(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed {
+		t.Fatal("clean document must not rewrite")
+	}
+
+	if _, err := MigrateUserInferenceConfig(t.TempDir()); err != nil {
+		t.Fatalf("missing document must be a no-op: %v", err)
 	}
 }
 

@@ -6,6 +6,7 @@ package config
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -115,6 +116,9 @@ func (m *Manager) Load(ctx context.Context) (*View, error) {
 	// after a reset) it is absent and the embedded base alone has no
 	// inference wiring — the UI guides the user to the settings page.
 	if _, err := os.Stat(filepath.Join(m.userDir, "opencraft.yaml")); err == nil {
+		if _, err := MigrateUserInferenceConfig(m.userDir); err != nil {
+			return nil, fmt.Errorf("config: migrate user inference layer: %w", err)
+		}
 		layers = append(layers, deploy.Layer{
 			Priority: 10,
 			Name:     string(LayerUser),

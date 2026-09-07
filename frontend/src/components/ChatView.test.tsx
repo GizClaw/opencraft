@@ -88,6 +88,11 @@ describe('ChatView transcript windowing', () => {
       value: 0,
       writable: true,
     });
+    // Pin at the bottom first (the mount snap is async, so record a
+    // real scroll position), then jump to the top to read history.
+    scroller.scrollTop = 9500;
+    fireEvent.scroll(scroller);
+    scroller.scrollTop = 0;
     fireEvent.scroll(scroller);
 
     expect(within(scroller).getByText('message-0')).toBeInTheDocument();
@@ -754,6 +759,47 @@ describe('ChatView transcript windowing', () => {
     expect(tooltip).toHaveTextContent('build search');
     expect(tooltip).toHaveTextContent('search built');
     vi.useRealTimers();
+  });
+});
+
+describe('ChatView jump-to-latest pill', () => {
+  it('appears after scrolling away from the bottom and snaps back on click', () => {
+    setConversation(manyMessages(40));
+    render(<ChatView />);
+
+    const scroller = screen.getByTestId('chat-scroll');
+    Object.defineProperty(scroller, 'scrollHeight', {
+      configurable: true,
+      value: 8000,
+    });
+    Object.defineProperty(scroller, 'clientHeight', {
+      configurable: true,
+      value: 600,
+    });
+    Object.defineProperty(scroller, 'scrollTop', {
+      configurable: true,
+      writable: true,
+      value: 0,
+    });
+
+    // Hidden while pinned to the newest output.
+    expect(
+      screen.queryByRole('button', { name: 'Jump to latest' }),
+    ).not.toBeInTheDocument();
+
+    // Reach the real bottom once, then scroll up to read history.
+    scroller.scrollTop = 7400;
+    fireEvent.scroll(scroller);
+    scroller.scrollTop = 200;
+    fireEvent.scroll(scroller);
+
+    const jump = screen.getByRole('button', { name: 'Jump to latest' });
+    fireEvent.click(jump);
+
+    expect(scroller.scrollTop).toBe(8000);
+    expect(
+      screen.queryByRole('button', { name: 'Jump to latest' }),
+    ).not.toBeInTheDocument();
   });
 });
 

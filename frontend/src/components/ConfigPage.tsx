@@ -4,6 +4,8 @@ import {
   ArrowDown,
   ArrowUp,
   BarChart3,
+  Check,
+  ChevronDown,
   Cpu,
   Database,
   Import,
@@ -58,9 +60,11 @@ interface RowModel {
   outputs: string[];
   reasoning: string;
   reasoningEffortMap: Record<string, string>;
-  effortNone: boolean;
   webSearch: boolean;
   endpoint: string;
+  // '' means "auto": keep the driver catalog value / unknown.
+  maxInputTokens: number | '';
+  maxOutputTokens: number | '';
 }
 
 type UsagePreset = 'today' | '1d' | '7d' | '14d' | '30d';
@@ -93,6 +97,14 @@ type Tab =
   | 'diagnostics'
   | 'import';
 
+// AUTO_LIMIT is the row value for "no explicit limit": keep the driver
+// catalog value / unknown.
+const AUTO_LIMIT: number | '' = '';
+
+// ModelTemplateRow is modelFromTemplate's result: everything except the
+// per-deployment endpoint, which callers add when they have one.
+type ModelTemplateRow = Omit<RowModel, 'endpoint'> & { endpoint?: string };
+
 // EFFORT_LEVELS is the canonical reasoning effort ladder flowcraft
 // exposes; each level maps to a provider-specific wire token.
 const EFFORT_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh'] as const;
@@ -107,7 +119,11 @@ function effortMapComplete(m: RowModel): boolean {
 
 // modelFromTemplate lowers one driver built-in template into an
 // editable model row (capabilities are prefilled, not locked).
-function modelFromTemplate(t: ModelTemplate) {
+function limitToRow(v: number | undefined): number | '' {
+  return v === undefined || !Number.isFinite(v) || v <= 0 ? '' : v;
+}
+
+function modelFromTemplate(t: ModelTemplate): ModelTemplateRow {
   return {
     name: t.name,
     kind: t.kind,
@@ -115,8 +131,9 @@ function modelFromTemplate(t: ModelTemplate) {
     outputs: t.outputs ?? [],
     reasoning: t.reasoning,
     reasoningEffortMap: t.reasoning_effort_map ?? {},
-    effortNone: t.effort_none ?? false,
     webSearch: t.web_search,
+    maxInputTokens: limitToRow(t.max_input_tokens),
+    maxOutputTokens: '',
   };
 }
 
@@ -168,6 +185,8 @@ export function ConfigPage() {
     width: number;
   } | null>(null);
   const modelMenuRef = useRef<HTMLDivElement | null>(null);
+  const [fieldMenu, setFieldMenu] = useState<string | null>(null);
+  const fieldMenuRef = useRef<HTMLDivElement | null>(null);
 
   // The catalog dropdown is portaled to document.body so the provider
   // card's overflow-hidden cannot clip it. Scrolling or resizing
@@ -190,6 +209,46 @@ export function ConfigPage() {
       window.removeEventListener('resize', closeOnResize);
     };
   }, [modelMenu]);
+
+  // Field menus (outputs / inputs / kind / reasoning) reuse the same
+  // anchored, portaled list the catalog dropdown uses so every model
+  // control looks and behaves alike.
+  useEffect(() => {
+    if (!fieldMenu) return;
+    const close = (e: Event) => {
+      const target = e.target;
+      if (target instanceof Node) {
+        if (fieldMenuRef.current?.contains(target)) {
+          return;
+        }
+        const trigger = (target as HTMLElement).closest?.(
+          '[data-field]',
+        ) as HTMLElement | null;
+        if (trigger?.dataset.field === fieldMenu) {
+          return;
+        }
+      }
+      setFieldMenu(null);
+    };
+    const closeOnResize = () => setFieldMenu(null);
+    document.addEventListener('mousedown', close, true);
+    document.addEventListener('scroll', close, true);
+    window.addEventListener('resize', closeOnResize);
+    return () => {
+      document.removeEventListener('mousedown', close, true);
+      document.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', closeOnResize);
+    };
+  }, [fieldMenu]);
+
+  const openFieldMenu = (
+    e: { currentTarget: HTMLButtonElement },
+    key: string,
+  ) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    setMenuRect({ top: r.bottom + 4, left: r.left, width: r.width });
+    setFieldMenu(key);
+  };
   const [newType, setNewType] = useState('deepseek');
   const [defaultModel, setDefaultModel] = useState('');
   const [error, setError] = useState('');
@@ -255,9 +314,10 @@ export function ConfigPage() {
             outputs: m.outputs ?? [],
             reasoning: m.reasoning ?? '',
             reasoningEffortMap: m.reasoning_effort_map ?? {},
-            effortNone: m.effort_none ?? false,
             webSearch: m.web_search ?? false,
             endpoint: m.endpoint ?? '',
+            maxInputTokens: limitToRow(m.max_input_tokens),
+            maxOutputTokens: limitToRow(m.max_output_tokens),
           }));
           const defaultName = byType.get(s.type)?.default_model ?? '';
           const defaultTpl = templateFor(templates, s.type, defaultName);
@@ -284,9 +344,10 @@ export function ConfigPage() {
                           outputs: [],
                           reasoning: '',
                           reasoningEffortMap: {},
-                          effortNone: false,
                           webSearch: false,
                           endpoint: '',
+                          maxInputTokens: AUTO_LIMIT,
+                          maxOutputTokens: AUTO_LIMIT,
                         },
                   ],
             endpoint: s.endpoint ?? '',
@@ -517,9 +578,10 @@ export function ConfigPage() {
                 outputs: [],
                 reasoning: '',
                 reasoningEffortMap: {},
-                effortNone: false,
                 webSearch: false,
                 endpoint: '',
+                maxInputTokens: AUTO_LIMIT,
+                maxOutputTokens: AUTO_LIMIT,
               },
         ],
         endpoint: '',
@@ -582,9 +644,10 @@ export function ConfigPage() {
                   outputs: [],
                   reasoning: '',
                   reasoningEffortMap: {},
-                  effortNone: false,
                   webSearch: false,
                   endpoint: '',
+                  maxInputTokens: AUTO_LIMIT,
+                  maxOutputTokens: AUTO_LIMIT,
                 },
               ],
             }
@@ -663,9 +726,12 @@ export function ConfigPage() {
         outputs: m.outputs,
         reasoning: m.reasoning,
         reasoning_effort_map: m.reasoning === '' ? {} : m.reasoningEffortMap,
-        effort_none: m.effortNone,
         web_search: m.webSearch,
         endpoint: m.endpoint,
+        max_input_tokens:
+          m.maxInputTokens === '' ? undefined : m.maxInputTokens,
+        max_output_tokens:
+          m.maxOutputTokens === '' ? undefined : m.maxOutputTokens,
       })),
       endpoint: r.endpoint,
       enabled: r.enabled,
@@ -946,19 +1012,80 @@ export function ConfigPage() {
                               className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
                             />
                             <div className="flex items-center gap-2 text-xs text-dim">
-                              {t('setup.apiMode')}
-                              <select
-                                value={row.api}
+                              <span className="shrink-0 font-medium">
+                                {t('setup.apiMode')}
+                              </span>
+                              <button
+                                type="button"
+                                data-field={`${row.id}:api`}
                                 disabled={row.managed}
-                                onChange={(e) =>
-                                  update(row.id, { api: e.target.value })
+                                onFocus={(e) =>
+                                  openFieldMenu(e, `${row.id}:api`)
                                 }
-                                className="rounded border border-edge bg-panel px-2 py-1 outline-none"
+                                onClick={(e) => {
+                                  const key = `${row.id}:api`;
+                                  if (fieldMenu === key) {
+                                    setFieldMenu(null);
+                                  } else {
+                                    openFieldMenu(e, key);
+                                  }
+                                }}
+                                className="inline-flex max-w-56 min-w-0 flex-1 items-center gap-1.5 rounded-lg border border-edge bg-panel px-2 py-1 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
                               >
-                                <option value="responses">responses</option>
-                                <option value="chat">chat</option>
-                              </select>
+                                <span className="min-w-0 flex-1 truncate font-mono text-fg">
+                                  {row.api === '' ? 'auto' : row.api}
+                                </span>
+                                <ChevronDown
+                                  size="0.875rem"
+                                  className="shrink-0 text-dim"
+                                />
+                              </button>
                             </div>
+                            {!row.managed &&
+                              menuRect &&
+                              fieldMenu === `${row.id}:api` &&
+                              createPortal(
+                                <div
+                                  ref={fieldMenuRef}
+                                  style={{
+                                    top: menuRect.top,
+                                    left: menuRect.left,
+                                    width: menuRect.width,
+                                  }}
+                                  className="fixed z-[100] overflow-y-auto rounded-xl border border-edge bg-panel py-1 shadow-xl"
+                                >
+                                  {[
+                                    ['responses', 'responses'],
+                                    ['chat', 'chat'],
+                                  ].map(([value, label]) => (
+                                    <button
+                                      key={value}
+                                      type="button"
+                                      onMouseDown={(e) => e.preventDefault()}
+                                      onClick={() => {
+                                        update(row.id, { api: value });
+                                        setFieldMenu(null);
+                                      }}
+                                      className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-panel2 ${
+                                        row.api === value
+                                          ? 'text-fg'
+                                          : 'text-dim'
+                                      }`}
+                                    >
+                                      <Check
+                                        size="0.8rem"
+                                        className={`shrink-0 ${
+                                          row.api === value
+                                            ? 'text-accent'
+                                            : 'invisible'
+                                        }`}
+                                      />
+                                      <span className="font-mono">{label}</span>
+                                    </button>
+                                  ))}
+                                </div>,
+                                document.body,
+                              )}
                           </div>
                           <div className="space-y-2 pt-1">
                             <div className="flex items-center justify-between">
@@ -978,7 +1105,7 @@ export function ConfigPage() {
                             {row.models.map((m, mi) => (
                               <div
                                 key={mi}
-                                className="space-y-2 rounded-lg border border-edge bg-panel p-2.5"
+                                className="space-y-3 rounded-lg border border-edge bg-panel p-3"
                               >
                                 <div className="flex items-center gap-2">
                                   <div className="relative flex-1 min-w-36">
@@ -1125,197 +1252,449 @@ export function ConfigPage() {
                                     </button>
                                   )}
                                 </div>
-                                <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-dim">
-                                  <span className="flex items-center gap-1.5 whitespace-nowrap">
-                                    {t('setup.outputs')}
-                                    {['text', 'image', 'audio', 'video'].map(
-                                      (kind) => (
+                                <div className="space-y-3 text-xs">
+                                  <div className="grid grid-cols-1 gap-x-4 gap-y-2.5 sm:grid-cols-2 xl:grid-cols-4">
+                                    <div className="min-w-0 space-y-1">
+                                      <span className="block text-xs font-medium text-dim">
+                                        {t('setup.outputs')}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        data-field={`${row.id}:${mi}:outputs`}
+                                        disabled={row.managed}
+                                        onFocus={(e) =>
+                                          openFieldMenu(
+                                            e,
+                                            `${row.id}:${mi}:outputs`,
+                                          )
+                                        }
+                                        onClick={(e) => {
+                                          const key = `${row.id}:${mi}:outputs`;
+                                          if (fieldMenu === key) {
+                                            setFieldMenu(null);
+                                          } else {
+                                            openFieldMenu(e, key);
+                                          }
+                                        }}
+                                        className="flex min-w-0 w-full items-center gap-1.5 rounded-lg border border-edge bg-panel px-2 py-1.5 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
+                                      >
+                                        <span className="min-w-0 flex-1 truncate font-mono text-fg">
+                                          {m.outputs.length > 0
+                                            ? m.outputs.join(', ')
+                                            : '—'}
+                                        </span>
+                                        <ChevronDown
+                                          size="0.875rem"
+                                          className="shrink-0 text-dim"
+                                        />
+                                      </button>
+                                    </div>
+                                    <div className="min-w-0 space-y-1">
+                                      <span className="block text-xs font-medium text-dim">
+                                        {t('setup.inputs')}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        data-field={`${row.id}:${mi}:inputs`}
+                                        disabled={row.managed}
+                                        onFocus={(e) =>
+                                          openFieldMenu(
+                                            e,
+                                            `${row.id}:${mi}:inputs`,
+                                          )
+                                        }
+                                        onClick={(e) => {
+                                          const key = `${row.id}:${mi}:inputs`;
+                                          if (fieldMenu === key) {
+                                            setFieldMenu(null);
+                                          } else {
+                                            openFieldMenu(e, key);
+                                          }
+                                        }}
+                                        className="flex min-w-0 w-full items-center gap-1.5 rounded-lg border border-edge bg-panel px-2 py-1.5 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
+                                      >
+                                        <span className="min-w-0 flex-1 truncate font-mono text-fg">
+                                          {m.inputs.length > 0
+                                            ? m.inputs.join(', ')
+                                            : '—'}
+                                        </span>
+                                        <ChevronDown
+                                          size="0.875rem"
+                                          className="shrink-0 text-dim"
+                                        />
+                                      </button>
+                                    </div>
+                                    <div className="min-w-0 space-y-1">
+                                      <span className="block text-xs font-medium text-dim">
+                                        {t('setup.kind')}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        data-field={`${row.id}:${mi}:kind`}
+                                        disabled={row.managed}
+                                        onFocus={(e) =>
+                                          openFieldMenu(
+                                            e,
+                                            `${row.id}:${mi}:kind`,
+                                          )
+                                        }
+                                        onClick={(e) => {
+                                          const key = `${row.id}:${mi}:kind`;
+                                          if (fieldMenu === key) {
+                                            setFieldMenu(null);
+                                          } else {
+                                            openFieldMenu(e, key);
+                                          }
+                                        }}
+                                        className="flex min-w-0 w-full items-center gap-1.5 rounded-lg border border-edge bg-panel px-2 py-1.5 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
+                                      >
+                                        <span className="min-w-0 flex-1 truncate text-fg">
+                                          {m.kind === '' ? 'auto' : m.kind}
+                                        </span>
+                                        <ChevronDown
+                                          size="0.875rem"
+                                          className="shrink-0 text-dim"
+                                        />
+                                      </button>
+                                    </div>
+                                    <div className="min-w-0 space-y-1">
+                                      <span className="block text-xs font-medium text-dim">
+                                        {t('setup.reasoning')}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        data-field={`${row.id}:${mi}:reasoning`}
+                                        disabled={row.managed}
+                                        onFocus={(e) =>
+                                          openFieldMenu(
+                                            e,
+                                            `${row.id}:${mi}:reasoning`,
+                                          )
+                                        }
+                                        onClick={(e) => {
+                                          const key = `${row.id}:${mi}:reasoning`;
+                                          if (fieldMenu === key) {
+                                            setFieldMenu(null);
+                                          } else {
+                                            openFieldMenu(e, key);
+                                          }
+                                        }}
+                                        className="flex min-w-0 w-full items-center gap-1.5 rounded-lg border border-edge bg-panel px-2 py-1.5 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
+                                      >
+                                        <span className="min-w-0 flex-1 truncate text-fg">
+                                          {m.reasoning === ''
+                                            ? t('setup.reasoningOff')
+                                            : m.reasoning}
+                                        </span>
+                                        <ChevronDown
+                                          size="0.875rem"
+                                          className="shrink-0 text-dim"
+                                        />
+                                      </button>
+                                    </div>
+                                  </div>
+                                  {m.reasoning !== '' && (
+                                    <div className="rounded-lg border border-edge bg-panel2 px-3 py-2.5">
+                                      <div className="mb-2 flex items-center justify-between gap-2">
+                                        <span className="text-[11px] font-semibold tracking-wider text-dim uppercase">
+                                          {t('setup.effortMap')}
+                                        </span>
                                         <button
-                                          key={kind}
                                           type="button"
                                           disabled={row.managed}
                                           onClick={() =>
                                             updateModel(row.id, mi, {
-                                              outputs: m.outputs.includes(kind)
-                                                ? m.outputs.filter(
-                                                    (k) => k !== kind,
-                                                  )
-                                                : [...m.outputs, kind],
+                                              reasoningEffortMap: {},
                                             })
                                           }
-                                          className={`rounded border px-1.5 py-0.5 ${
-                                            m.outputs.includes(kind)
-                                              ? 'border-accent bg-panel2 text-fg'
-                                              : 'border-edge text-dim hover:text-fg'
-                                          }`}
+                                          className="rounded-md border border-edge px-2 py-0.5 text-xs text-dim transition-colors hover:text-fg disabled:opacity-50"
                                         >
-                                          {kind}
+                                          {t('setup.effortMapClear')}
                                         </button>
-                                      ),
-                                    )}
-                                  </span>
-                                  <span className="flex items-center gap-1.5 whitespace-nowrap">
-                                    {t('setup.inputs')}
-                                    {[
-                                      'text',
-                                      'image',
-                                      'audio',
-                                      'video',
-                                      'file',
-                                      'data',
-                                      'tool_call',
-                                      'tool_result',
-                                    ].map((kind) => (
-                                      <button
-                                        key={kind}
-                                        type="button"
-                                        disabled={row.managed}
-                                        onClick={() =>
-                                          updateModel(row.id, mi, {
-                                            inputs: m.inputs.includes(kind)
-                                              ? m.inputs.filter(
-                                                  (k) => k !== kind,
-                                                )
-                                              : [...m.inputs, kind],
-                                          })
-                                        }
-                                        className={`rounded border px-1.5 py-0.5 ${
-                                          m.inputs.includes(kind)
-                                            ? 'border-accent bg-panel2 text-fg'
-                                            : 'border-edge text-dim hover:text-fg'
-                                        }`}
-                                      >
-                                        {kind}
-                                      </button>
-                                    ))}
-                                  </span>
-                                  <label className="flex items-center gap-1.5 whitespace-nowrap">
-                                    {t('setup.reasoning')}
-                                    <select
-                                      value={m.reasoning}
-                                      disabled={row.managed}
-                                      onChange={(e) => {
-                                        const reasoning = e.target.value;
-                                        updateModel(row.id, mi, {
-                                          reasoning,
-                                          ...(reasoning === ''
-                                            ? { reasoningEffortMap: {} }
-                                            : {}),
-                                        });
-                                      }}
-                                      className="rounded border border-edge bg-panel px-2 py-1 outline-none"
-                                    >
-                                      <option value="">
-                                        {t('setup.reasoningOff')}
-                                      </option>
-                                      <option value="always">always</option>
-                                      <option value="toggle">toggle</option>
-                                    </select>
-                                  </label>
-                                  <label className="flex items-center gap-1.5 whitespace-nowrap">
-                                    {t('setup.kind')}
-                                    <select
-                                      value={m.kind}
-                                      disabled={row.managed}
-                                      onChange={(e) =>
-                                        updateModel(row.id, mi, {
-                                          kind: e.target.value,
-                                        })
-                                      }
-                                      className="rounded border border-edge bg-panel px-2 py-1 outline-none"
-                                    >
-                                      <option value="">auto</option>
-                                      <option value="generate">generate</option>
-                                      <option value="image">image</option>
-                                      <option value="video">video</option>
-                                      <option value="tts">tts</option>
-                                    </select>
-                                  </label>
-                                  {(row.type === 'openai' ||
-                                    row.type === 'azure') && (
-                                    <label className="flex items-center gap-1.5 whitespace-nowrap">
+                                      </div>
+                                      <div className="grid grid-cols-1 gap-x-8 gap-y-1.5 sm:grid-cols-2 lg:grid-cols-3">
+                                        {EFFORT_LEVELS.map((level) => (
+                                          <label
+                                            key={level}
+                                            className="flex items-center gap-1.5"
+                                          >
+                                            <span className="w-12 shrink-0 text-right font-mono text-dim">
+                                              {level}
+                                            </span>
+                                            <span className="shrink-0 text-dim">
+                                              →
+                                            </span>
+                                            <input
+                                              value={
+                                                m.reasoningEffortMap[level] ??
+                                                ''
+                                              }
+                                              disabled={row.managed}
+                                              placeholder={t(
+                                                'setup.effortMapPlaceholder',
+                                              )}
+                                              onChange={(e) => {
+                                                const next = {
+                                                  ...m.reasoningEffortMap,
+                                                };
+                                                const value = e.target.value;
+                                                if (value.trim() === '') {
+                                                  delete next[level];
+                                                } else {
+                                                  next[level] = value;
+                                                }
+                                                updateModel(row.id, mi, {
+                                                  reasoningEffortMap: next,
+                                                });
+                                              }}
+                                              className="min-w-0 flex-1 rounded-md border border-edge bg-panel px-1.5 py-1 text-xs outline-none focus:border-accent"
+                                            />
+                                          </label>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  )}
+                                  <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-edge pt-2.5">
+                                    <label className="flex items-center gap-1.5 whitespace-nowrap text-dim hover:text-fg">
                                       <input
                                         type="checkbox"
-                                        checked={m.effortNone}
+                                        checked={m.webSearch}
                                         disabled={row.managed}
                                         onChange={(e) =>
                                           updateModel(row.id, mi, {
-                                            effortNone: e.target.checked,
+                                            webSearch: e.target.checked,
                                           })
                                         }
                                         className="accent-[var(--color-accent)]"
                                       />
-                                      {t('setup.effortNone')}
+                                      {t('setup.webSearch')}
                                     </label>
-                                  )}
-                                  {m.reasoning !== '' && (
-                                    <span className="flex w-full flex-wrap items-center gap-1.5">
-                                      <span className="text-dim">
-                                        {t('setup.effortMap')}
+                                    <label className="flex items-center gap-2 whitespace-nowrap">
+                                      <span className="font-medium text-dim">
+                                        {t('setup.maxInputTokens')}
                                       </span>
-                                      {EFFORT_LEVELS.map((level) => (
-                                        <label
-                                          key={level}
-                                          className="flex items-center gap-1 text-xs"
-                                        >
-                                          <span className="text-dim">
-                                            {level}
-                                          </span>
-                                          <input
-                                            value={
-                                              m.reasoningEffortMap[level] ?? ''
-                                            }
-                                            disabled={row.managed}
-                                            placeholder={t(
-                                              'setup.effortMapPlaceholder',
-                                            )}
-                                            onChange={(e) => {
-                                              const next = {
-                                                ...m.reasoningEffortMap,
-                                              };
-                                              const value = e.target.value;
-                                              if (value.trim() === '') {
-                                                delete next[level];
-                                              } else {
-                                                next[level] = value;
-                                              }
-                                              updateModel(row.id, mi, {
-                                                reasoningEffortMap: next,
-                                              });
-                                            }}
-                                            className="w-20 rounded border border-edge bg-panel px-1.5 py-0.5 text-xs outline-none focus:border-accent"
-                                          />
-                                        </label>
-                                      ))}
-                                      <button
-                                        type="button"
+                                      <input
+                                        type="number"
+                                        min={1}
+                                        step={1000}
+                                        value={m.maxInputTokens}
                                         disabled={row.managed}
-                                        onClick={() =>
+                                        placeholder={t('setup.maxInputAuto')}
+                                        onChange={(e) => {
+                                          const next: number | '' =
+                                            e.target.value === ''
+                                              ? ''
+                                              : Number(e.target.value);
                                           updateModel(row.id, mi, {
-                                            reasoningEffortMap: {},
-                                          })
-                                        }
-                                        className="rounded border border-edge px-1.5 py-0.5 text-xs text-dim hover:text-fg disabled:opacity-50"
-                                      >
-                                        {t('setup.effortMapClear')}
-                                      </button>
-                                    </span>
-                                  )}
-                                  <label className="flex items-center gap-1.5 whitespace-nowrap">
-                                    <input
-                                      type="checkbox"
-                                      checked={m.webSearch}
-                                      disabled={row.managed}
-                                      onChange={(e) =>
-                                        updateModel(row.id, mi, {
-                                          webSearch: e.target.checked,
-                                        })
-                                      }
-                                      className="accent-[var(--color-accent)]"
-                                    />
-                                    {t('setup.webSearch')}
-                                  </label>
+                                            maxInputTokens:
+                                              next === '' ||
+                                              !Number.isFinite(next)
+                                                ? ''
+                                                : next,
+                                          });
+                                        }}
+                                        className="w-28 rounded-md border border-edge bg-panel px-2 py-1 outline-none focus:border-accent"
+                                      />
+                                    </label>
+                                  </div>
                                 </div>
+                                {!row.managed &&
+                                  menuRect &&
+                                  (fieldMenu === `${row.id}:${mi}:outputs` ||
+                                    fieldMenu === `${row.id}:${mi}:inputs`) &&
+                                  createPortal(
+                                    <div
+                                      ref={fieldMenuRef}
+                                      style={{
+                                        top: menuRect.top,
+                                        left: menuRect.left,
+                                        width: menuRect.width,
+                                      }}
+                                      className="fixed z-[100] max-h-56 overflow-y-auto rounded-xl border border-edge bg-panel py-1 shadow-xl"
+                                    >
+                                      {(fieldMenu === `${row.id}:${mi}:outputs`
+                                        ? ['text', 'image', 'audio', 'video']
+                                        : [
+                                            'text',
+                                            'image',
+                                            'audio',
+                                            'video',
+                                            'file',
+                                            'data',
+                                            'tool_call',
+                                            'tool_result',
+                                          ]
+                                      ).map((opt) => {
+                                        const active =
+                                          fieldMenu ===
+                                          `${row.id}:${mi}:outputs`
+                                            ? m.outputs.includes(opt)
+                                            : m.inputs.includes(opt);
+                                        return (
+                                          <button
+                                            key={opt}
+                                            type="button"
+                                            onMouseDown={(e) =>
+                                              e.preventDefault()
+                                            }
+                                            onClick={() => {
+                                              if (
+                                                fieldMenu ===
+                                                `${row.id}:${mi}:outputs`
+                                              ) {
+                                                updateModel(row.id, mi, {
+                                                  outputs: active
+                                                    ? m.outputs.filter(
+                                                        (k) => k !== opt,
+                                                      )
+                                                    : [...m.outputs, opt],
+                                                });
+                                              } else {
+                                                updateModel(row.id, mi, {
+                                                  inputs: active
+                                                    ? m.inputs.filter(
+                                                        (k) => k !== opt,
+                                                      )
+                                                    : [...m.inputs, opt],
+                                                });
+                                              }
+                                            }}
+                                            className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-panel2 ${
+                                              active ? 'text-fg' : 'text-dim'
+                                            }`}
+                                          >
+                                            <Check
+                                              size="0.8rem"
+                                              className={`shrink-0 ${
+                                                active
+                                                  ? 'text-accent'
+                                                  : 'invisible'
+                                              }`}
+                                            />
+                                            <span className="font-mono">
+                                              {opt}
+                                            </span>
+                                          </button>
+                                        );
+                                      })}
+                                    </div>,
+                                    document.body,
+                                  )}
+                                {!row.managed &&
+                                  menuRect &&
+                                  fieldMenu === `${row.id}:${mi}:kind` &&
+                                  createPortal(
+                                    <div
+                                      ref={fieldMenuRef}
+                                      style={{
+                                        top: menuRect.top,
+                                        left: menuRect.left,
+                                        width: menuRect.width,
+                                      }}
+                                      className="fixed z-[100] overflow-y-auto rounded-xl border border-edge bg-panel py-1 shadow-xl"
+                                    >
+                                      {[
+                                        ['', 'auto'],
+                                        ['generate', 'generate'],
+                                        ['image', 'image'],
+                                        ['video', 'video'],
+                                        ['tts', 'tts'],
+                                      ].map(([value, label]) => (
+                                        <button
+                                          key={value}
+                                          type="button"
+                                          onMouseDown={(e) =>
+                                            e.preventDefault()
+                                          }
+                                          onClick={() => {
+                                            updateModel(row.id, mi, {
+                                              kind: value,
+                                            });
+                                            setFieldMenu(null);
+                                          }}
+                                          className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-panel2 ${
+                                            m.kind === value
+                                              ? 'text-fg'
+                                              : 'text-dim'
+                                          }`}
+                                        >
+                                          <Check
+                                            size="0.8rem"
+                                            className={`shrink-0 ${
+                                              m.kind === value
+                                                ? 'text-accent'
+                                                : 'invisible'
+                                            }`}
+                                          />
+                                          <span className="font-mono">
+                                            {label}
+                                          </span>
+                                        </button>
+                                      ))}
+                                    </div>,
+                                    document.body,
+                                  )}
+                                {!row.managed &&
+                                  menuRect &&
+                                  fieldMenu === `${row.id}:${mi}:reasoning` &&
+                                  createPortal(
+                                    <div
+                                      ref={fieldMenuRef}
+                                      style={{
+                                        top: menuRect.top,
+                                        left: menuRect.left,
+                                        width: menuRect.width,
+                                      }}
+                                      className="fixed z-[100] overflow-y-auto rounded-xl border border-edge bg-panel py-1 shadow-xl"
+                                    >
+                                      {[
+                                        ['', t('setup.reasoningOff')],
+                                        ['always', 'always'],
+                                        ['toggle', 'toggle'],
+                                      ].map(([value, label]) => (
+                                        <button
+                                          key={value}
+                                          type="button"
+                                          onMouseDown={(e) =>
+                                            e.preventDefault()
+                                          }
+                                          onClick={() => {
+                                            updateModel(row.id, mi, {
+                                              reasoning: value,
+                                              ...(value === ''
+                                                ? { reasoningEffortMap: {} }
+                                                : {}),
+                                            });
+                                            setFieldMenu(null);
+                                          }}
+                                          className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-panel2 ${
+                                            m.reasoning === value
+                                              ? 'text-fg'
+                                              : 'text-dim'
+                                          }`}
+                                        >
+                                          <Check
+                                            size="0.8rem"
+                                            className={`shrink-0 ${
+                                              m.reasoning === value
+                                                ? 'text-accent'
+                                                : 'invisible'
+                                            }`}
+                                          />
+                                          <span
+                                            className={
+                                              value === ''
+                                                ? undefined
+                                                : 'font-mono'
+                                            }
+                                          >
+                                            {label}
+                                          </span>
+                                        </button>
+                                      ))}
+                                    </div>,
+                                    document.body,
+                                  )}
                                 {prov?.model_endpoint && (
                                   <input
                                     value={m.endpoint}

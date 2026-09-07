@@ -7,8 +7,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/GizClaw/flowcraft/core/inference"
-
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
 	pluginruntime "github.com/GizClaw/opencraft/internal/capabilities/plugins/runtime"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
@@ -250,24 +248,15 @@ func (c *Core) RemovePluginInference(pluginID string) (bool, error) {
 }
 
 // profileModel lowers one plugin profile model into the canonical
-// config model. Capabilities are declared as content-kind lists.
+// config model. Capabilities and limits are already the canonical
+// flowcraft DTOs, so no projection is needed.
 func profileModel(m pluginruntime.ProfileModel) config.Model {
 	model := config.Model{
-		Name:       strings.TrimSpace(m.Name),
-		Endpoint:   strings.TrimSpace(m.Endpoint),
-		EffortNone: m.EffortNone,
+		Name:         strings.TrimSpace(m.Name),
+		Kind:         strings.TrimSpace(m.Kind),
+		Capabilities: m.Capabilities,
+		Endpoint:     strings.TrimSpace(m.Endpoint),
+		Limits:       m.Limits,
 	}
-	caps := inference.ModelCapabilities{
-		Reasoning: inference.ReasoningCapability{
-			Kind:      inference.ReasoningKind(strings.TrimSpace(m.Reasoning)),
-			EffortMap: config.EffortMapEfforts(m.ReasoningEffortMap),
-		},
-		HostedWebSearch: m.WebSearch,
-	}
-	if len(m.Inputs) > 0 || len(m.Outputs) > 0 {
-		caps.Inputs = config.ToPartKinds(m.Inputs)
-		caps.Outputs = config.ToPartKinds(m.Outputs)
-	}
-	model.Capabilities = caps
 	return model
 }

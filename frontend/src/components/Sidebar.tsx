@@ -6,6 +6,7 @@ import {
   FolderClosed,
   FolderOpen,
   Loader2,
+  MessageSquarePlus,
   MoreHorizontal,
   Pencil,
   Plus,
@@ -844,9 +845,15 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
         );
       case 'empty':
         return (
-          <p className="ml-3 pt-1 pb-0.5 text-xs text-dim">
-            {t('sidebar.noSessions')}
-          </p>
+          <div className="ml-3 pt-1">
+            <div className="flex h-9 items-center justify-center gap-1.5 rounded-lg border border-dashed border-edge/70 bg-panel2/40 px-2 text-xs text-dim">
+              <MessageSquarePlus
+                size="0.9286rem"
+                className="shrink-0 text-dim/70"
+              />
+              {t('sidebar.noSessions')}
+            </div>
+          </div>
         );
       case 'more':
         return (

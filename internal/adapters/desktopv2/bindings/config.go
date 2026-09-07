@@ -101,9 +101,12 @@ type ModelView struct {
 	Outputs            []string          `json:"outputs"`
 	Reasoning          string            `json:"reasoning"`
 	ReasoningEffortMap map[string]string `json:"reasoning_effort_map,omitempty"`
-	EffortNone         bool              `json:"effort_none,omitempty"`
 	WebSearch          bool              `json:"web_search"`
 	Endpoint           string            `json:"endpoint"`
+	// MaxInputTokens / MaxOutputTokens carry the model's declared
+	// capacity limits; nil means "use the driver catalog / unknown".
+	MaxInputTokens  *int `json:"max_input_tokens,omitempty"`
+	MaxOutputTokens *int `json:"max_output_tokens,omitempty"`
 }
 
 // ProviderInstance is one inference instance in router priority order.
@@ -755,8 +758,6 @@ func sameInstanceContent(a, b config.Instance) bool {
 // capabilities and per-model endpoint.
 func sameModel(a, b config.Model) bool {
 	return a.Name == b.Name && a.Kind == b.Kind && a.Endpoint == b.Endpoint &&
-		a.Responses == b.Responses &&
-		a.EffortNone == b.EffortNone &&
 		slices.Equal(a.Capabilities.Inputs, b.Capabilities.Inputs) &&
 		slices.Equal(a.Capabilities.Outputs, b.Capabilities.Outputs) &&
 		a.Capabilities.Reasoning.Kind == b.Capabilities.Reasoning.Kind &&
@@ -793,9 +794,10 @@ func modelViews(models []config.Model) []ModelView {
 			Kind:               m.Kind,
 			Reasoning:          string(m.Capabilities.Reasoning.Kind),
 			ReasoningEffortMap: config.EffortMapStrings(m.Capabilities.Reasoning.EffortMap),
-			EffortNone:         m.EffortNone,
 			WebSearch:          m.Capabilities.HostedWebSearch,
 			Endpoint:           m.Endpoint,
+			MaxInputTokens:     cloneInt(m.Limits.MaxInputTokens),
+			MaxOutputTokens:    cloneInt(m.Limits.MaxOutputTokens),
 		})
 	}
 	return out
@@ -816,11 +818,24 @@ func configModels(views []ModelView) []config.Model {
 				},
 				HostedWebSearch: v.WebSearch,
 			},
-			Endpoint:   strings.TrimSpace(v.Endpoint),
-			EffortNone: v.EffortNone,
+			Endpoint: strings.TrimSpace(v.Endpoint),
+			Limits: inference.ModelLimits{
+				MaxInputTokens:  cloneInt(v.MaxInputTokens),
+				MaxOutputTokens: cloneInt(v.MaxOutputTokens),
+			},
 		})
 	}
 	return out
+}
+
+// cloneInt returns a defensive copy of a pointer so the binding never
+// shares config memory with its wire payload.
+func cloneInt(v *int) *int {
+	if v == nil {
+		return nil
+	}
+	cp := *v
+	return &cp
 }
 
 // requestModelNames extracts the non-empty model names of a request
