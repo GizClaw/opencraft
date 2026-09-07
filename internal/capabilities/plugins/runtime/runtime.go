@@ -75,7 +75,6 @@ type ProfileModel struct {
 	Outputs            []string          `json:"outputs,omitempty"`
 	Reasoning          string            `json:"reasoning,omitempty"`
 	ReasoningEffortMap map[string]string `json:"reasoning_effort_map,omitempty"`
-	EffortNone         bool              `json:"effort_none,omitempty"`
 	WebSearch          bool              `json:"web_search,omitempty"`
 	Endpoint           string            `json:"endpoint,omitempty"`
 }

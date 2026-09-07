@@ -233,7 +233,16 @@ func TestHostedWebSearchBoardBagReachesEveryDriverCompiler(t *testing.T) {
 // search fails the compile instead of degrading silently.
 func TestHostedWebSearchRejectsUnsupportedModel(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "test-key")
-	plain := config.Model{Name: "deepseek-v4-pro"}
+	// A catalog model may gain hosted web search in a driver upgrade, so
+	// the "unsupported" case is pinned with a declared model that never
+	// carries the capability.
+	plain := config.Model{
+		Name: "deepseek-custom",
+		Capabilities: inference.ModelCapabilities{
+			Inputs:  []message.PartKind{message.PartText},
+			Outputs: []message.PartKind{message.PartText},
+		},
+	}
 	inst := config.Instance{
 		StableID:  "inst-aaa",
 		Type:      "deepseek",
@@ -274,7 +283,7 @@ func TestHostedWebSearchRejectsUnsupportedModel(t *testing.T) {
 	ref := inference.ModelRef{
 		ID: inference.ModelID{
 			Provider: "deepseek-inst-aaa",
-			Name:     "deepseek-v4-pro",
+			Name:     "deepseek-custom",
 		},
 		Profile: "inst-aaa",
 	}

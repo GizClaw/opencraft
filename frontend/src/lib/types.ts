@@ -28,9 +28,10 @@ export interface ModelInstance {
   outputs: string[];
   reasoning: string;
   reasoning_effort_map?: Record<string, string>;
-  effort_none?: boolean;
   web_search: boolean;
   endpoint: string;
+  max_input_tokens?: number;
+  max_output_tokens?: number;
 }
 
 // ModelTemplate is one driver built-in model normalized for the
@@ -43,7 +44,6 @@ export interface ModelTemplate {
   reasoning: string;
   reasoning_effort_map?: Record<string, string>;
   web_search: boolean;
-  effort_none?: boolean;
   deprecated: boolean;
   replacement?: string;
   max_input_tokens?: number;

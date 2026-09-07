@@ -38,9 +38,6 @@ func TestModelCatalog(t *testing.T) {
 	if sol.Reasoning != "toggle" || len(sol.ReasoningEffortMap) != 5 {
 		t.Fatalf("gpt-5.6-sol template = %+v", sol)
 	}
-	if !sol.EffortNone {
-		t.Fatal("gpt-5.6-sol must carry effort_none from the driver catalog")
-	}
 	if _, ok := openai["text-embedding-3-small"]; ok {
 		t.Fatal("embedding models must not appear in the settings catalog")
 	}
@@ -95,10 +92,10 @@ func TestProviderDefaultsFromCatalog(t *testing.T) {
 }
 
 // TestCatalogTablesMatchDriverCatalog guards the hand-maintained
-// declaration-order and control-flag tables against driver catalog
-// drift: every name they reference must still exist in the built
-// catalog, or the next flowcraft upgrade fails here instead of
-// silently picking wrong defaults.
+// declaration-order table against driver catalog drift: every name it
+// references must still exist in the built catalog, or the next
+// flowcraft upgrade fails here instead of silently picking wrong
+// defaults.
 func TestCatalogTablesMatchDriverCatalog(t *testing.T) {
 	models, _, errs := providerCatalogs()
 	for id, order := range catalogDefaultOrder {
@@ -116,24 +113,5 @@ func TestCatalogTablesMatchDriverCatalog(t *testing.T) {
 					id, name)
 			}
 		}
-	}
-	for id, overrides := range catalogControlOverrides {
-		if errs[id] != "" {
-			t.Fatalf("provider %s catalog failed: %s", id, errs[id])
-		}
-		names := make(map[string]bool, len(models[id]))
-		for _, m := range models[id] {
-			names[m.Name] = true
-		}
-		for name := range overrides {
-			if !names[name] {
-				t.Errorf(
-					"catalogControlOverrides[%s] references %q, missing from driver catalog",
-					id, name)
-			}
-		}
-	}
-	if len(catalogControlOverrides["azure"]) != 0 {
-		t.Error("azure must not have control overrides (no built-in catalog)")
 	}
 }

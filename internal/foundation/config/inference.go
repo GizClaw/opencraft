@@ -107,13 +107,11 @@ type Model struct {
 	// (ByteDance Ark ep-xxx endpoint ids are account-scoped and map per
 	// model in the profile); empty addresses the model by catalog name.
 	Endpoint string
-	// Responses marks Responses-API support for deepseek declared
-	// models (required when the provider runs api: responses).
-	Responses bool
-	// EffortNone marks OpenAI/Azure generate models whose
-	// reasoning.effort accepts "none" to disable reasoning; models
-	// without it reject a reasoning_enabled=false request.
-	EffortNone bool
+	// Limits declares numeric capacity limits (input/output context in
+	// tokens) for this model. Nil fields leave the driver catalog value
+	// untouched for built-in models and publish nothing for deployments
+	// without a catalog (azure); declaring a value overrides it.
+	Limits inference.ModelLimits
 }
 
 // reasoningEffortOrder is the canonical effort ladder in ordinal order.
@@ -474,14 +472,17 @@ func (c InferenceConfig) InferenceYAML() ([]byte, error) {
 			if m.Capabilities.HostedWebSearch {
 				fmt.Fprintf(&b, "              hosted_web_search: true\n")
 			}
-			// DeepSeek's responses surface requires every declared model
-			// to assert Responses-API support; derive it from the
-			// provider's api mode so settings/plugin writes stay valid.
-			if m.Responses || (prov.Impl == "deepseek" && apiMode == "responses") {
-				fmt.Fprintf(&b, "            responses: true\n")
-			}
-			if m.EffortNone {
-				fmt.Fprintf(&b, "            effort_none: true\n")
+			if m.Limits.MaxInputTokens != nil ||
+				m.Limits.MaxOutputTokens != nil {
+				fmt.Fprintf(&b, "            limits:\n")
+				if m.Limits.MaxInputTokens != nil {
+					fmt.Fprintf(&b, "              max_input_tokens: %d\n",
+						*m.Limits.MaxInputTokens)
+				}
+				if m.Limits.MaxOutputTokens != nil {
+					fmt.Fprintf(&b, "              max_output_tokens: %d\n",
+						*m.Limits.MaxOutputTokens)
+				}
 			}
 		}
 		fmt.Fprintf(&b, "      profiles:\n")
@@ -621,10 +622,10 @@ func normalizeModels(in *Instance, prov Provider, n int) error {
 				"config: instance %d (%s): model %q reasoning: %w",
 				n, in.Type, m.Name, err)
 		}
-		if m.EffortNone && prov.ID != "openai" && prov.ID != "azure" {
+		if err := m.Limits.Validate(); err != nil {
 			return fmt.Errorf(
-				"config: instance %d (%s): model %q: effort_none is only supported by openai/azure",
-				n, in.Type, m.Name)
+				"config: instance %d (%s): model %q limits: %w",
+				n, in.Type, m.Name, err)
 		}
 		seen[m.Name] = true
 		models = append(models, m)
@@ -977,6 +978,58 @@ func RemoveInferenceConfig(configDir string) error {
 	return saveProviderOwnersLocked(configDir, map[string]string{})
 }
 
+// deprecatedInferenceKeys are provider model keys removed by flowcraft
+// core v0.2.7 / driver 0.2.4+: effort_none (reasoning off is implied by
+// reasoning: toggle), per-model responses (provider-level api owns the
+// surface), and top-level dimensions (embed custom dimensions moved into
+// capabilities). Strict driver decoding rejects them, so the user
+// document is rewritten canonically before it reaches the deploy layers.
+var deprecatedInferenceKeys = []string{
+	"effort_none:",
+	"responses:",
+	"dimensions:",
+}
+
+// MigrateUserInferenceConfig rewrites the user inference document when
+// it still contains provider model keys removed by the flowcraft 0.2.7
+// driver contract. The canonical writer drops those keys while preserving
+// the rest of the configuration; non-inference resources are untouched
+// by UpdateInferenceState. changed reports whether a rewrite happened.
+func MigrateUserInferenceConfig(configDir string) (changed bool, err error) {
+	path := filepath.Join(configDir, "opencraft.yaml")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, fmt.Errorf("config: read inference migration source: %w", err)
+	}
+	if !containsDeprecatedInferenceKeys(data) {
+		return false, nil
+	}
+	if err := UpdateInferenceState(configDir, func(
+		cfg InferenceConfig,
+		owners map[string]string,
+	) (InferenceConfig, map[string]string, bool, error) {
+		return cfg, owners, true, nil
+	}); err != nil {
+		return false, fmt.Errorf("config: migrate user inference document: %w", err)
+	}
+	return true, nil
+}
+
+func containsDeprecatedInferenceKeys(data []byte) bool {
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		for _, key := range deprecatedInferenceKeys {
+			if strings.HasPrefix(trimmed, key) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // KeyRequest is one request row that needs a stored literal key
 // ("leave empty to keep").
 type KeyRequest struct {
@@ -1094,14 +1147,13 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 				Models   []struct {
 					Name         string `json:"name"`
 					Kind         string `json:"kind"`
-					Responses    bool   `json:"responses"`
 					Capabilities struct {
 						Inputs          []string                      `json:"inputs"`
 						Outputs         []string                      `json:"outputs"`
 						Reasoning       inference.ReasoningCapability `json:"reasoning"`
 						HostedWebSearch bool                          `json:"hosted_web_search"`
 					} `json:"capabilities"`
-					EffortNone bool `json:"effort_none"`
+					Limits inference.ModelLimits `json:"limits"`
 				} `json:"models"`
 			} `json:"spec"`
 		} `json:"settings"`
@@ -1236,8 +1288,7 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 					Reasoning:       model.Capabilities.Reasoning,
 					HostedWebSearch: model.Capabilities.HostedWebSearch,
 				},
-				Responses:  model.Responses,
-				EffortNone: model.EffortNone,
+				Limits: model.Limits,
 			}
 			if endpoint := endpoints[m.Name]; endpoint != "" {
 				m.Endpoint = endpoint

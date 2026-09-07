@@ -1640,7 +1640,9 @@ export function ChatView() {
   // delta races when the window is occluded (switching screens) and
   // the viewport visibly scrambles until the stream stops, so the
   // animation is avoided entirely. Scrolling up unpins; scrolling
-  // back to the bottom re-pins.
+  // back to the actual bottom re-pins. The old 80px "near-bottom"
+  // band kept small upward scrolls pinned, so the next stream delta
+  // snapped the view back down.
   const [stick, setStick] = useState(true);
   // The ref is the source of truth for the pin decision inside the
   // scroll effect. Stream deltas and wheel events can land in the same
@@ -1648,6 +1650,12 @@ export function ChatView() {
   // captured from an earlier render — that race is what made the view
   // jump back to the bottom right after the user scrolled away.
   const stickRef = useRef(true);
+  // userScrolledAwayRef latches until the user reaches the actual
+  // bottom. Programmatic snaps never clear it; only a genuine bottom
+  // hit does, so a small upward scroll stays unpinned while deltas
+  // keep arriving.
+  const userScrolledAwayRef = useRef(false);
+  const lastScrollTopRef = useRef(0);
   // refreshPeekCurrent derives the range of turns whose message rows
   // intersect the viewport, so every turn on screen is highlighted on
   // the ruler. Rows carry the turn they belong to even when the
@@ -1744,6 +1752,7 @@ export function ChatView() {
     // the content that was already visible; the newly inserted history
     // then sits above it and can be read by continuing to scroll up.
     stickRef.current = false;
+    userScrolledAwayRef.current = true;
     setStick(false);
     requestAnimationFrame(() => {
       const current = scrollRef.current;
@@ -1769,6 +1778,7 @@ export function ChatView() {
       // A jump is an explicit navigation: never snap back to the newest
       // output afterwards.
       stickRef.current = false;
+      userScrolledAwayRef.current = true;
       setStick(false);
       const runScroll = () => {
         const scroller = scrollRef.current;
@@ -1792,6 +1802,16 @@ export function ChatView() {
     },
     [schedulePeekRefresh],
   );
+  const jumpToLatest = useCallback(() => {
+    const scroller = scrollRef.current;
+    // An explicit jump resumes the stream follow: the next delta pins
+    // instead of leaving the reader stranded mid-history.
+    stickRef.current = true;
+    userScrolledAwayRef.current = false;
+    setStick(true);
+    if (scroller) scroller.scrollTop = scroller.scrollHeight;
+    schedulePeekRefresh();
+  }, [schedulePeekRefresh]);
   const { t } = useTranslation();
   const thinkLevels = [
     { value: 'minimal', label: t('chat.thinkMinimal') },
@@ -2008,6 +2028,8 @@ export function ChatView() {
     if ((!text.trim() && attachments.length === 0) || busy || switchingWs) {
       return;
     }
+    userScrolledAwayRef.current = false;
+    lastScrollTopRef.current = 0;
     stickRef.current = true;
     setStick(true);
     const staged = attachments;
@@ -2106,6 +2128,7 @@ export function ChatView() {
   const yolo = mode === 'yolo';
   const readOnly = mode === 'read-only';
   const centerComposer = messages.length === 0 && configured;
+  const showJumpLatest = !stick && messages.length > 0;
 
   const retryFocusSwitch = () => {
     if (focus.name !== 'failed') return;
@@ -2238,24 +2261,38 @@ export function ChatView() {
             ref={scrollRef}
             onWheel={(e) => {
               // Intentional upward wheel/trackpad motion unpins
-              // immediately, even when still within the near-bottom
-              // band. Relying only on onScroll made small upward steps
-              // (< 80px from the bottom) stay "pinned" while the agent
-              // streamed, snapping the view back down.
+              // immediately; onScroll direction also covers scrollbar
+              // drags and keyboard scrolling.
               if (e.deltaY < 0 && stickRef.current) {
                 stickRef.current = false;
+                userScrolledAwayRef.current = true;
                 setStick(false);
               }
             }}
             onScroll={() => {
               const el = scrollRef.current;
               if (!el) return;
-              const pinned =
-                el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-              stickRef.current = pinned;
-              setStick(pinned);
+              const atBottom =
+                el.scrollHeight - el.scrollTop - el.clientHeight < 2;
+              const movedUp = el.scrollTop < lastScrollTopRef.current;
+              lastScrollTopRef.current = el.scrollTop;
+              if (atBottom) {
+                userScrolledAwayRef.current = false;
+                stickRef.current = true;
+                setStick(true);
+              } else if (movedUp) {
+                // A decreasing scrollTop means the user is reading
+                // history (scrollbar, touchpad, keyboard) — not a
+                // transient stream glitch.
+                userScrolledAwayRef.current = true;
+                stickRef.current = false;
+                setStick(false);
+              } else if (userScrolledAwayRef.current) {
+                stickRef.current = false;
+                setStick(false);
+              }
               if (
-                !pinned &&
+                !stickRef.current &&
                 el.scrollTop <= 8 &&
                 truncated &&
                 !loadingEarlier
@@ -2444,7 +2481,25 @@ export function ChatView() {
                 </div>
               </div>
             )}
-            <div className="max-w-4xl mx-auto rounded-xl border border-edge bg-panel focus-within:border-accent/60 transition-colors">
+            <div className="relative max-w-4xl mx-auto rounded-xl border border-edge bg-panel focus-within:border-accent/60 transition-colors">
+              {/* The pill floats above the composer while the reader is
+                  away from the newest output; reaching the bottom or
+                  clicking it pins the view again. */}
+              <button
+                type="button"
+                onClick={jumpToLatest}
+                aria-hidden={!showJumpLatest}
+                tabIndex={showJumpLatest ? 0 : -1}
+                aria-label={t('chat.jumpToLatest')}
+                title={t('chat.jumpToLatest')}
+                className={`absolute bottom-full left-1/2 z-30 mb-3 grid h-9 w-9 -translate-x-1/2 place-items-center rounded-full border border-edge bg-panel/95 text-dim shadow-xl backdrop-blur transition-all duration-200 hover:border-accent/50 hover:text-fg ${
+                  showJumpLatest
+                    ? 'translate-y-0 opacity-100'
+                    : 'pointer-events-none translate-y-1 opacity-0'
+                }`}
+              >
+                <ChevronDown size="1.0000rem" className="shrink-0" />
+              </button>
               {attachments.length > 0 && (
                 <div className="flex flex-wrap gap-2 px-3 pt-2">
                   {attachments.map((a) => (

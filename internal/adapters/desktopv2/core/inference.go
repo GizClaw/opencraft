@@ -253,9 +253,8 @@ func (c *Core) RemovePluginInference(pluginID string) (bool, error) {
 // config model. Capabilities are declared as content-kind lists.
 func profileModel(m pluginruntime.ProfileModel) config.Model {
 	model := config.Model{
-		Name:       strings.TrimSpace(m.Name),
-		Endpoint:   strings.TrimSpace(m.Endpoint),
-		EffortNone: m.EffortNone,
+		Name:     strings.TrimSpace(m.Name),
+		Endpoint: strings.TrimSpace(m.Endpoint),
 	}
 	caps := inference.ModelCapabilities{
 		Reasoning: inference.ReasoningCapability{
