@@ -84,7 +84,6 @@ type policySettings struct {
 	MaxRawMessages    int  `json:"max_raw_messages,omitempty"`
 	PreserveRecent    int  `json:"preserve_recent,omitempty"`
 	MaxSummaryBytes   int  `json:"max_summary_bytes,omitempty"`
-	RawUserTurns      int  `json:"raw_user_turns,omitempty"`
 	ReplayFullHistory bool `json:"replay_full_history,omitempty"`
 }
 
@@ -109,7 +108,6 @@ func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 			MaxRawMessages:  policy.MaxRawMessages,
 			PreserveRecent:  policy.PreserveRecent,
 			MaxSummaryBytes: policy.MaxSummaryBytes,
-			RawUserTurns:    policy.RawUserTurns,
 		}),
 		summary.WithReplayFullHistory(policy.ReplayFullHistory),
 	}

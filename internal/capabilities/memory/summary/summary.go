@@ -20,14 +20,9 @@ type Policy struct {
 	MaxRawMessages  int // default 32: raw window size
 	PreserveRecent  int // default 4: newest messages kept raw
 	MaxSummaryBytes int // default 4096
-	// RawUserTurns, when > 0, overrides the message-count window: the
-	// last N complete user turns (from the Nth-most-recent user message
-	// onward) stay raw and everything older folds. Zero keeps the
-	// legacy MaxRawMessages/PreserveRecent semantics.
-	RawUserTurns   int
-	CondenseFanout int // default 4: LLM condensed-group size
-	MaxLeafChars   int // default 6000: leaf chunk char cap
-	MaxDepth       int // default 4: condense level cap
+	CondenseFanout  int // default 4: LLM condensed-group size
+	MaxLeafChars    int // default 6000: leaf chunk char cap
+	MaxDepth        int // default 4: condense level cap
 }
 
 const (

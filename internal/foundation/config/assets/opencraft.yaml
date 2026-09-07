@@ -41,16 +41,15 @@ resources:
       # the same user-editable routing policy as agent turns.
       router: router
     settings:
-      # Recent conversation context: the worldstate hook injects the
-      # folded summary plus this raw window; the session archive is a
-      # durability store for resume/usage, never injected directly.
+      # Raw window (max_raw_messages + preserve_recent) is the single
+      # source of recent conversation context: the worldstate hook
+      # injects the folded summary plus this raw window, and the session
+      # archive is no longer injected into the model (it is a durability
+      # store for resume/usage). 40 keeps recency parity with the older
+      # session history window.
       max_raw_messages: 36
       preserve_recent: 4
       max_summary_bytes: 4096
-      # Keep the last complete user turns (including their tool rounds)
-      # raw; everything older folds into the memory summary. Zero keeps
-      # the legacy message-count window above.
-      raw_user_turns: 2
       # Experimental: replay the full conversation history instead of
       # injecting the folded summary + raw window. Folding is then owned
       # by the graph compact node, which folds only when estimated usage
