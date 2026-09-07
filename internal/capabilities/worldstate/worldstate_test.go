@@ -509,6 +509,51 @@ func TestRenderToBoardInjectsMemorySectionsNoHistory(t *testing.T) {
 	}
 }
 
+// TestRenderToBoardNormalizesRawToolContext locks the final world
+// sections for a dirty raw window: a call without a result must become
+// a synthetic aborted tool message, and an orphan result must not leak
+// into the model as text.
+func TestRenderToBoardNormalizesRawToolContext(t *testing.T) {
+	svc := New(Options{WorkBase: t.TempDir()})
+	svc.memory = stubMemory{items: []corememory.ContextItem{
+		toolCallItem("c-raw-1"),
+		toolResultItem("missing", "orphan output"),
+	}}
+	board := agent.NewBoard()
+	if err := svc.RenderToBoard(
+		context.Background(), "assistant", "s-c1", "continue", nil, board,
+	); err != nil {
+		t.Fatal(err)
+	}
+	sections := unmarshalSections(t, board)
+	var raws []Section
+	for _, sec := range sections {
+		if sec.ID == "memory_raw" {
+			raws = append(raws, sec)
+		}
+	}
+	if len(raws) != 2 {
+		t.Fatalf("memory_raw sections = %+v, want call + aborted result", raws)
+	}
+	if raws[0].Role != message.RoleAssistant {
+		t.Fatalf("first raw role = %s, want assistant", raws[0].Role)
+	}
+	if raws[1].Role != message.RoleTool {
+		t.Fatalf("second raw role = %s, want tool", raws[1].Role)
+	}
+	results := raws[1].ToolResults()
+	if len(results) != 1 || results[0].CallID != "c-raw-1" ||
+		results[0].Content != "aborted" {
+		t.Fatalf("synthetic result = %+v", results)
+	}
+	for _, sec := range raws {
+		if sec.Content.Text() == "orphan output" {
+			t.Fatalf("orphan output leaked into world sections: %+v", raws)
+		}
+	}
+	assertSystemFirst(t, sections)
+}
+
 func TestRenderToBoardReplayFullHistory(t *testing.T) {
 	svc := New(Options{WorkBase: t.TempDir()})
 	svc.memory = replayMemory{stubMemory: stubMemory{items: []corememory.ContextItem{
