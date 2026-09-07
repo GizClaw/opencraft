@@ -3,6 +3,7 @@ package worldstate
 import (
 	"context"
 	"strings"
+	"sync"
 
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
@@ -31,6 +32,10 @@ var baseFragmentOrder = []fragment{
 	{ID: "base_special", File: "base/special.md"},
 	{ID: "base_format", File: "base/format.md"},
 }
+
+// fragmentWarned deduplicates per-fragment telemetry warnings so a
+// broken embedded asset does not log on every turn of every session.
+var fragmentWarned sync.Map
 
 // modeFragments maps a collaboration mode (worldstate option value)
 // to its instruction fragment. "default" intentionally has no
@@ -131,12 +136,12 @@ func (s *Service) personalitySections(ctx context.Context) []Section {
 func (s *Service) readFragment(ctx context.Context, rel string) (string, bool) {
 	data, err := templateFS.ReadFile("templates/" + rel)
 	if err != nil {
-		telemetry.Warn(ctx, "worldstate: instruction fragment missing",
-			log.String("fragment.file", rel))
+		warnFragmentOnce(ctx, rel, "worldstate: instruction fragment missing")
 		return "", false
 	}
 	if len(data) > promptFragmentMaxBytes {
-		telemetry.Warn(ctx, "worldstate: instruction fragment exceeds size budget",
+		warnFragmentOnce(ctx, rel,
+			"worldstate: instruction fragment exceeds size budget",
 			log.String("fragment.file", rel),
 			log.Int("bytes", len(data)),
 			log.Int("budget_bytes", promptFragmentMaxBytes))
@@ -144,9 +149,20 @@ func (s *Service) readFragment(ctx context.Context, rel string) (string, bool) {
 	}
 	text := strings.TrimSpace(string(data))
 	if text == "" {
-		telemetry.Warn(ctx, "worldstate: instruction fragment is empty",
-			log.String("fragment.file", rel))
+		warnFragmentOnce(ctx, rel, "worldstate: instruction fragment is empty")
 		return "", false
 	}
 	return text, true
+}
+
+func warnFragmentOnce(
+	ctx context.Context, rel, msg string, attrs ...log.KeyValue,
+) {
+	if _, loaded := fragmentWarned.LoadOrStore(rel, struct{}{}); loaded {
+		return
+	}
+	all := append([]log.KeyValue{
+		log.String("fragment.file", rel),
+	}, attrs...)
+	telemetry.Warn(ctx, msg, all...)
 }

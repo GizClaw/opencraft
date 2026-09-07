@@ -162,6 +162,7 @@ func TestRankAndMention(t *testing.T) {
 // ranking surface the user copy once instead of showing two "review"
 // entries, and $mention still resolves to the user skill.
 func TestUserSkillShadowsBuiltinReviewAcrossListRankAndMention(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	root := t.TempDir()
 	scanRoot := filepath.Join(root, ".agents", "skills")
 	userPath := writeSkill(t, scanRoot, "review",
