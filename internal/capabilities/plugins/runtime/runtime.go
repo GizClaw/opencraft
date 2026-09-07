@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 )
 
@@ -67,16 +68,22 @@ type InferenceProfile struct {
 	ProviderSpec map[string]any `json:"provider_spec,omitempty"`
 }
 
-// ProfileModel is one model in an inference profile. Capabilities are
-// declared as canonical content-kind lists (inputs/outputs).
+// ProfileModel is one model in an inference profile. Capabilities,
+// limits, and kind use the canonical flowcraft DTOs so plugin
+// deployments carry the same capability/context-window metadata as
+// settings-configured models instead of a flattened subset.
 type ProfileModel struct {
-	Name               string            `json:"name"`
-	Inputs             []string          `json:"inputs,omitempty"`
-	Outputs            []string          `json:"outputs,omitempty"`
-	Reasoning          string            `json:"reasoning,omitempty"`
-	ReasoningEffortMap map[string]string `json:"reasoning_effort_map,omitempty"`
-	WebSearch          bool              `json:"web_search,omitempty"`
-	Endpoint           string            `json:"endpoint,omitempty"`
+	Name string `json:"name"`
+	// Kind is the model family ("generate" | "image" | "video" | "tts");
+	// empty derives from Outputs on write.
+	Kind string `json:"kind,omitempty"`
+	// Capabilities declares input/output content kinds, reasoning
+	// control, hosted web search, and other canonical capability bits.
+	Capabilities inference.ModelCapabilities `json:"capabilities,omitempty"`
+	Endpoint     string                      `json:"endpoint,omitempty"`
+	// Limits declares numeric capacity limits (input/output tokens).
+	// Nil fields let the driver catalog supply built-in model values.
+	Limits inference.ModelLimits `json:"limits,omitempty"`
 }
 
 // InferenceHandler is the host-side write path for inference profiles.

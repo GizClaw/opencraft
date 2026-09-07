@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GizClaw/flowcraft/core/inference"
+	"github.com/GizClaw/flowcraft/core/message"
+
 	pluginruntime "github.com/GizClaw/opencraft/internal/capabilities/plugins/runtime"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 )
@@ -21,7 +24,14 @@ func TestPluginInferenceUpsertAndRemove(t *testing.T) {
 		API:      "responses",
 		Endpoint: "https://ai.haivivi.cn/v1",
 		Models: []pluginruntime.ProfileModel{
-			{Name: "deepseek-v4-flash", Reasoning: "toggle"},
+			{
+				Name: "deepseek-v4-flash",
+				Capabilities: inference.ModelCapabilities{
+					Reasoning: inference.ReasoningCapability{
+						Kind: inference.ReasoningToggle,
+					},
+				},
+			},
 		},
 		KeyRef: "auth/sso-haivivi/token",
 	}
@@ -67,6 +77,55 @@ func TestPluginInferenceUpsertAndRemove(t *testing.T) {
 	}
 	if len(owners) != 0 {
 		t.Fatalf("owners after remove = %+v, want empty", owners)
+	}
+}
+
+func TestPluginInferencePreservesModelKindAndLimits(t *testing.T) {
+	dir := t.TempDir()
+	c := NewCore(dir, dir, "")
+	maxInput, maxOutput := 1_000_000, 65_536
+	profile := pluginruntime.InferenceProfile{
+		ID:   "plug-custom",
+		Type: "openai",
+		Name: "Custom gateway",
+		API:  "responses",
+		Models: []pluginruntime.ProfileModel{{
+			Name: "custom-llm",
+			Kind: "generate",
+			Capabilities: inference.ModelCapabilities{
+				Inputs:  []message.PartKind{message.PartText},
+				Outputs: []message.PartKind{message.PartText},
+				Reasoning: inference.ReasoningCapability{
+					Kind: inference.ReasoningToggle,
+				},
+			},
+			Limits: inference.ModelLimits{
+				MaxInputTokens:  &maxInput,
+				MaxOutputTokens: &maxOutput,
+			},
+		}},
+		KeyRef: "auth/plug/token",
+	}
+	if err := c.upsertInferenceProfile("plug", profile); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	cfg, err := config.LoadInference(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Instances) != 1 || len(cfg.Instances[0].Models) != 1 {
+		t.Fatalf("instances = %+v", cfg.Instances)
+	}
+	m := cfg.Instances[0].Models[0]
+	if m.Name != "custom-llm" || m.Kind != "generate" {
+		t.Fatalf("model = %+v, want custom-llm/generate", m)
+	}
+	if m.Limits.MaxInputTokens == nil ||
+		*m.Limits.MaxInputTokens != maxInput ||
+		m.Limits.MaxOutputTokens == nil ||
+		*m.Limits.MaxOutputTokens != maxOutput {
+		t.Fatalf("limits = %+v, want %d/%d", m.Limits, maxInput, maxOutput)
 	}
 }
 
@@ -152,7 +211,14 @@ func TestPluginInferenceProviderSpecWritesChatStreamOptions(t *testing.T) {
 		API:      "chat",
 		Endpoint: "https://ai.haivivi.cn/v1",
 		Models: []pluginruntime.ProfileModel{
-			{Name: "glm-5.3-flash", Reasoning: "always"},
+			{
+				Name: "glm-5.3-flash",
+				Capabilities: inference.ModelCapabilities{
+					Reasoning: inference.ReasoningCapability{
+						Kind: inference.ReasoningAlways,
+					},
+				},
+			},
 		},
 		KeyRef: "auth/sso-haivivi/token",
 		ProviderSpec: map[string]any{
@@ -328,7 +394,14 @@ func TestPluginInferenceCleansLegacyPreOwnershipInstance(t *testing.T) {
 		API:      "responses",
 		Endpoint: "https://ai.haivivi.cn/v1",
 		Models: []pluginruntime.ProfileModel{
-			{Name: "deepseek-v4-flash", Reasoning: "toggle"},
+			{
+				Name: "deepseek-v4-flash",
+				Capabilities: inference.ModelCapabilities{
+					Reasoning: inference.ReasoningCapability{
+						Kind: inference.ReasoningToggle,
+					},
+				},
+			},
 		},
 		KeyRef: "auth/sso-haivivi/token",
 	}
