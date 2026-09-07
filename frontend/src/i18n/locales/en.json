@@ -508,7 +508,6 @@
     "reasoning": "Reasoning",
     "reasoningOff": "Off",
     "kind": "Kind",
-    "dimensions": "custom dimensions",
     "effortNone": "effort none (allow reasoning off)",
     "effortMap": "effort map (canonical → wire)",
     "effortMapPlaceholder": "wire",

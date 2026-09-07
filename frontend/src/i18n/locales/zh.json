@@ -506,7 +506,6 @@
     "reasoning": "推理",
     "reasoningOff": "关闭",
     "kind": "类型",
-    "dimensions": "自定义维度",
     "effortNone": "effort none（允许关闭推理）",
     "effortMap": "effort map（标准档位 → 厂商档位）",
     "effortMapPlaceholder": "厂商档位",

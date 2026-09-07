@@ -41,8 +41,17 @@ func TestModelCatalog(t *testing.T) {
 	if !sol.EffortNone {
 		t.Fatal("gpt-5.6-sol must carry effort_none from the driver catalog")
 	}
-	if !openai["text-embedding-3-small"].Dimensions {
-		t.Fatal("text-embedding-3-small must carry dimensions")
+	if _, ok := openai["text-embedding-3-small"]; ok {
+		t.Fatal("embedding models must not appear in the settings catalog")
+	}
+	for provider, entry := range byID {
+		for _, m := range entry.Models {
+			if m.Kind == "embed" {
+				t.Fatalf(
+					"provider %s model %s: embedding kind must be filtered",
+					provider, m.Name)
+			}
+		}
 	}
 	if repl := openai["gpt-5.4-nano"].Replacement; repl != "gpt-5.6-luna" {
 		t.Fatalf("deprecated replacement = %q, want gpt-5.6-luna", repl)

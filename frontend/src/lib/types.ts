@@ -29,7 +29,6 @@ export interface ModelInstance {
   reasoning: string;
   reasoning_effort_map?: Record<string, string>;
   effort_none?: boolean;
-  dimensions?: boolean;
   web_search: boolean;
   endpoint: string;
 }
@@ -44,7 +43,6 @@ export interface ModelTemplate {
   reasoning: string;
   reasoning_effort_map?: Record<string, string>;
   web_search: boolean;
-  dimensions: boolean;
   effort_none?: boolean;
   deprecated: boolean;
   replacement?: string;

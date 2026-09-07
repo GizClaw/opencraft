@@ -94,9 +94,10 @@ const (
 // differ between models.
 type Model struct {
 	Name string // model name / Azure deployment name
-	// Kind is the driver model family: "" | "generate" | "embed" |
-	// "image" | "video" | "tts". Generation families are derived from
-	// Outputs on write (image/video/text); embed/tts need it explicit.
+	// Kind is the driver model family: "" | "generate" | "image" |
+	// "video" | "tts". Generation families are derived from
+	// Outputs on write (image/video/text); tts needs it explicit.
+	// Embedding models are no longer configurable.
 	Kind string
 	// Capabilities declares the model's input/output content kinds,
 	// reasoning control (kind plus the canonical-to-wire effort map),
@@ -109,8 +110,6 @@ type Model struct {
 	// Responses marks Responses-API support for deepseek declared
 	// models (required when the provider runs api: responses).
 	Responses bool
-	// Dimensions enables custom output dimensions (openai embed).
-	Dimensions bool
 	// EffortNone marks OpenAI/Azure generate models whose
 	// reasoning.effort accepts "none" to disable reasoning; models
 	// without it reject a reasoning_enabled=false request.
@@ -481,9 +480,6 @@ func (c InferenceConfig) InferenceYAML() ([]byte, error) {
 			if m.Responses || (prov.Impl == "deepseek" && apiMode == "responses") {
 				fmt.Fprintf(&b, "            responses: true\n")
 			}
-			if m.Dimensions {
-				fmt.Fprintf(&b, "            dimensions: true\n")
-			}
 			if m.EffortNone {
 				fmt.Fprintf(&b, "            effort_none: true\n")
 			}
@@ -613,7 +609,7 @@ func normalizeModels(in *Instance, prov Provider, n int) error {
 		}
 		if m.Kind != "" {
 			switch m.Kind {
-			case "generate", "embed", "image", "video", "tts":
+			case "generate", "image", "video", "tts":
 			default:
 				return fmt.Errorf(
 					"config: instance %d (%s): model %q has unknown kind %q",
@@ -1099,7 +1095,6 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 					Name         string `json:"name"`
 					Kind         string `json:"kind"`
 					Responses    bool   `json:"responses"`
-					Dimensions   bool   `json:"dimensions"`
 					Capabilities struct {
 						Inputs          []string                      `json:"inputs"`
 						Outputs         []string                      `json:"outputs"`
@@ -1242,7 +1237,6 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 					HostedWebSearch: model.Capabilities.HostedWebSearch,
 				},
 				Responses:  model.Responses,
-				Dimensions: model.Dimensions,
 				EffortNone: model.EffortNone,
 			}
 			if endpoint := endpoints[m.Name]; endpoint != "" {

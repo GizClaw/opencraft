@@ -30,7 +30,6 @@ type ModelTemplate struct {
 	Reasoning          string            `json:"reasoning"`
 	ReasoningEffortMap map[string]string `json:"reasoning_effort_map,omitempty"`
 	WebSearch          bool              `json:"web_search"`
-	Dimensions         bool              `json:"dimensions,omitempty"`
 	EffortNone         bool              `json:"effort_none,omitempty"`
 	Deprecated         bool              `json:"deprecated"`
 	Replacement        string            `json:"replacement,omitempty"`
@@ -51,21 +50,18 @@ type ProviderModels struct {
 // catalogControlFlags mirrors driver built-in control flags that are
 // not exposed on inference.ModelDescriptor.
 type catalogControlFlags struct {
-	Dimensions bool
 	EffortNone bool
 }
 
 // catalogControlOverrides documents the v0.2.1 driver built-in
-// dimensions / effort_none flags (openai only; azure has no built-in
-// catalog). These are editor prefill facts only; the deployed config
-// is still validated by the driver.
+// effort_none flag (openai only; azure has no built-in catalog). These
+// are editor prefill facts only; the deployed config is still validated
+// by the driver.
 var catalogControlOverrides = map[string]map[string]catalogControlFlags{
 	"openai": {
-		"gpt-5.6-sol":            {EffortNone: true},
-		"gpt-5.6-terra":          {EffortNone: true},
-		"gpt-5.6-luna":           {EffortNone: true},
-		"text-embedding-3-small": {Dimensions: true},
-		"text-embedding-3-large": {Dimensions: true},
+		"gpt-5.6-sol":   {EffortNone: true},
+		"gpt-5.6-terra": {EffortNone: true},
+		"gpt-5.6-luna":  {EffortNone: true},
 	},
 }
 
@@ -76,8 +72,7 @@ var catalogDefaultOrder = map[string][]string{
 	"openai": {
 		"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5",
 		"gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-4.1",
-		"gpt-4.1-mini", "gpt-4.1-nano", "text-embedding-3-small",
-		"text-embedding-3-large", "text-embedding-ada-002", "gpt-image-2",
+		"gpt-4.1-mini", "gpt-4.1-nano", "gpt-image-2",
 		"gpt-image-1", "gpt-4o-mini-tts", "tts-1", "tts-1-hd",
 	},
 	"deepseek": {
@@ -94,7 +89,6 @@ var catalogDefaultOrder = map[string][]string{
 		"doubao-seed-evolving", "doubao-seed-2-1-pro", "doubao-seed-2-1-turbo",
 		"doubao-seed-2-0-pro", "doubao-seed-2-0-lite", "doubao-seed-2-0-mini",
 		"doubao-seed-2-0-code", "doubao-seed-1-8", "doubao-seed-1-6-vision",
-		"doubao-embedding-large", "doubao-embedding-vision",
 		"doubao-seedream-5-0-pro", "doubao-seedream-5-0", "doubao-seedream-4-5",
 		"doubao-seedream-4-0", "doubao-seedance-2-5", "doubao-seedance-2-0",
 		"doubao-seedance-2-0-fast", "doubao-seedance-2-0-mini",
@@ -120,8 +114,7 @@ var catalogDefaultOrder = map[string][]string{
 	"qwen": {
 		"qwen3.8-max-preview", "qwen3.7-max", "qwen3.7-plus",
 		"qwen3.7-flash", "qwen3-vl-plus", "qwen3-vl-flash", "qwen-plus",
-		"qwen-turbo", "qwen-flash", "qwen-max", "text-embedding-v4",
-		"qwen3-vl-embedding",
+		"qwen-turbo", "qwen-flash", "qwen-max",
 	},
 }
 
@@ -244,6 +237,12 @@ func templatesFromDefinition(
 	for _, impl := range def.Models {
 		d := impl.Descriptor
 		flags := overrides[d.ID.Name]
+		kind := templateKind(impl.Openers, d.Capabilities)
+		if kind == "embed" {
+			// Embedding deployments are no longer configurable from
+			// opencraft; keep them out of the settings catalog.
+			continue
+		}
 		replacement := ""
 		if d.Lifecycle.Replacement != nil {
 			replacement = d.Lifecycle.Replacement.Name
@@ -258,13 +257,12 @@ func templatesFromDefinition(
 		}
 		out = append(out, ModelTemplate{
 			Name:               d.ID.Name,
-			Kind:               templateKind(impl.Openers, d.Capabilities),
+			Kind:               kind,
 			Inputs:             inputs,
 			Outputs:            outputs,
 			Reasoning:          string(d.Capabilities.Reasoning.Kind),
 			ReasoningEffortMap: EffortMapStrings(d.Capabilities.Reasoning.EffortMap),
 			WebSearch:          d.Capabilities.HostedWebSearch,
-			Dimensions:         flags.Dimensions,
 			EffortNone:         flags.EffortNone,
 			Deprecated:         d.Lifecycle.Status == inference.ModelStatusDeprecated,
 			Replacement:        replacement,
