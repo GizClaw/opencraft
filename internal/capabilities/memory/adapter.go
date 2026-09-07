@@ -62,12 +62,25 @@ func (a *sqliteTurnStore) appendMessagesTx(
 	for _, msg := range msgs {
 		text := msg.Content.Text()
 		if text == "" {
+			if len(msg.Content.Parts) > 0 {
+				// A message with parts but no rendered text would
+				// otherwise vanish without a trace: the raw window and
+				// the fold contract index text-bearing rows, so it
+				// cannot be persisted here. Surface the drop instead of
+				// silently losing history.
+				telemetry.Warn(ctx, "memory: skipping message with parts but no rendered text",
+					otellog.String("conversation.id", conversationID),
+					otellog.String("turn.id", turnID),
+					otellog.String("role", string(msg.Role)),
+					otellog.Int("parts", len(msg.Content.Parts)))
+			}
 			continue
 		}
 		// Persist the full content (canonical parts), not just the text
 		// projection: tool_call / tool_result parts carry the call ids
-		// structured history replay needs. Text-only rows from older
-		// versions remain readable via the legacy fallback in loadRange.
+		// structured history replay needs. Text-only rows written by
+		// older versions are upgraded to canonical parts by workspace
+		// migration 011 on startup.
 		payload, err := json.Marshal(msg.Content)
 		if err != nil {
 			return fmt.Errorf("memory: marshal message payload: %w", err)
@@ -156,8 +169,11 @@ func (a *sqliteTurnStore) loadRange(
 			continue
 		}
 		if len(content.Parts) == 0 {
-			// Migration 011 rewrites all legacy text-only rows; any
-			// remaining part-less payload is not readable here.
+			// Migration 011 rewrites legacy text-only rows to canonical
+			// parts. A row that still has no parts (interrupted write,
+			// foreign writer) is not part of the structured history and
+			// is skipped here, with a warning, rather than failing the
+			// turn or inventing content.
 			telemetry.Warn(ctx, "memory: skipping part-less message payload",
 				otellog.String("conversation.id", conversationID))
 			continue

@@ -159,9 +159,9 @@ func (a *Assembly) FoldOnly(ctx context.Context, conversationID string) error {
 }
 
 // fold loads only what the rolling fold needs and folds old messages into a
-// level-0 node. The cost is bounded by the byte budget plus one bounded
-// chunk — independent of conversation length — instead of scanning the whole
-// thread on every turn.
+// level-0 node. The cost is bounded by the byte budget plus bounded
+// backward chunks (fold tail and pair lookback) — independent of
+// conversation length — instead of scanning the whole thread on every turn.
 func (a *Assembly) fold(ctx context.Context, conversationID string) error {
 	p := a.policy.Normalize()
 	total, err := a.store.CountMessages(ctx, conversationID)
@@ -317,10 +317,15 @@ const foldTailChunk = 64
 
 // pairLookbackChunk bounds each backward range query when extending the
 // raw-window boundary across an assistant tool_call / tool result pair.
-// Providers require tool results to follow their call immediately, so a
-// short lookback is sufficient; a call further back is treated as folded
-// and the worldstate degrades that result to user text.
 const pairLookbackChunk = 32
+
+// pairLookbackMax caps the total distance pairPrefix may walk backward.
+// Providers require tool results to follow their call immediately, so a
+// required call is either in the current window or only a few messages
+// behind its result; anything older is already folded or missing. The cap
+// keeps one dangling tool result from turning every FoldOnly / Context
+// into a full-history scan while still covering far more than the window.
+const pairLookbackMax = 64
 
 // loadFoldTail loads only the newest foldable messages the rolling
 // window can keep, walking backward from end (the newest foldable
@@ -377,8 +382,10 @@ func (a *Assembly) loadFoldTail(
 // pairing that starts at or after boundary. It reports the adjusted
 // boundary (the earliest required assistant call) and the prefix
 // messages between the new and old boundaries. When a required call is
-// not found in the nearby past (already folded or missing) the original
-// boundary is kept and the worldstate degrades that result to user text.
+// not found within the bounded lookback (already folded or missing) the
+// original boundary is kept; worldstate normalization then drops the
+// orphaned result (or synthesizes an aborted output for an unmatched
+// call) instead of emitting an invalid tool message.
 func (a *Assembly) pairPrefix(
 	ctx context.Context,
 	conversationID string,
@@ -412,11 +419,16 @@ func (a *Assembly) pairPrefix(
 
 	found := map[string]bool{}
 	earliest := -1
+	scanned := 0
 	from := boundary - 1
-	for from >= 0 {
+	for from >= 0 && scanned < pairLookbackMax {
+		remaining := pairLookbackMax - scanned
 		lo := from - pairLookbackChunk + 1
 		if lo < 0 {
 			lo = 0
+		}
+		if from-lo+1 > remaining {
+			lo = from - remaining + 1
 		}
 		batch, err := a.store.LoadMessagesRange(ctx, conversationID, lo, from)
 		if err != nil {
@@ -447,6 +459,7 @@ func (a *Assembly) pairPrefix(
 		if lo == 0 {
 			break
 		}
+		scanned += from - lo + 1
 		from = lo - 1
 	}
 	return boundary, nil, nil
@@ -574,11 +587,11 @@ func (a *Assembly) Context(ctx context.Context, req memory.ContextRequest) (memo
 	// is eligible: messages older than the window that the rolling summary
 	// dropped are not covered, so without this bound they would leak back
 	// into context and crowd out genuinely recent messages. The window is
-	// loaded by original index (CountMessages + a single bounded range), so
-	// context costs O(raw window) instead of an O(n) full scan. The newest
-	// messages are kept first so a tight budget preserves the most relevant
-	// tail; the appended chunk is reversed afterwards to keep chronological
-	// order.
+	// loaded by original index (CountMessages + a single bounded range),
+	// so context costs O(raw window + bounded pair lookback) instead of
+	// an O(n) full scan. The newest messages are kept first so a tight
+	// budget preserves the most relevant tail; the appended chunk is
+	// reversed afterwards to keep chronological order.
 	p := a.policy.Normalize()
 	total, err := a.store.CountMessages(ctx, req.ConversationID)
 	if err != nil {

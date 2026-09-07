@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/message"
@@ -80,28 +81,81 @@ func TestSecondTurnReplaysStructuredToolPair(t *testing.T) {
 		t.Fatalf("LastMessages: %v", err)
 	}
 	var callID, resultID string
-	for _, m := range msgs {
+	callCount, toolCount := 0, 0
+	callIdx, resultIdx := -1, -1
+	for i, m := range msgs {
 		role, _ := m["role"].(string)
 		if role == "assistant" {
 			if ids := wireCallIDs(t, m); len(ids) > 0 {
 				callID = ids[0]
+				callCount++
+				callIdx = i
 			}
 		}
 		if role == "tool" {
 			if id, ok := m["tool_call_id"].(string); ok && id != "" {
 				resultID = id
+				toolCount++
+				resultIdx = i
 			}
 		}
 	}
-	if callID == "" || resultID == "" || callID != resultID {
+	if callID == "" || resultID == "" || callID != resultID ||
+		callCount != 1 || toolCount != 1 || callIdx >= resultIdx {
 		var dump string
 		for _, m := range msgs {
 			role, _ := m["role"].(string)
 			raw, _ := json.Marshal(m)
 			dump += "\n[" + role + "] " + string(raw)
 		}
-		t.Fatalf("second-turn request must pair tool_call %q with tool_call_id %q\n%s",
-			callID, resultID, dump)
+		t.Fatalf("second-turn request must pair tool_call %q with tool_call_id %q "+
+			"(calls=%d results=%d callIdx=%d resultIdx=%d)\n%s",
+			callID, resultID, callCount, toolCount, callIdx, resultIdx, dump)
+	}
+
+	// Full second-round channel shape: the base system prefix comes
+	// first and nothing system-role follows the first user-role content;
+	// the replayed first-turn request sits before the current turn, and
+	// the current user turn is last.
+	if first, ok := msgs[0]["role"].(string); !ok || first != "system" {
+		t.Fatalf("first message role = %#v, want system", msgs[0]["role"])
+	}
+	if !strings.Contains(messageText(t, msgs[0]), "You are opencraft") {
+		t.Fatalf("first system message must carry the base identity, got %q",
+			messageText(t, msgs[0]))
+	}
+	last := msgs[len(msgs)-1]
+	if role, _ := last["role"].(string); role != "user" ||
+		!strings.Contains(messageText(t, last), "continue") {
+		t.Fatalf("last message = %+v, want the current user turn", last)
+	}
+	sawUser := false
+	for i, m := range msgs {
+		role, _ := m["role"].(string)
+		if role == "user" {
+			sawUser = true
+		}
+		if role == "system" && sawUser {
+			t.Fatalf("system message follows user content at index %d: %q",
+				i, messageText(t, m))
+		}
+	}
+	firstTurnIdx, currentTurnIdx := -1, -1
+	for i, m := range msgs {
+		role, _ := m["role"].(string)
+		if role != "user" {
+			continue
+		}
+		switch text := messageText(t, m); {
+		case strings.Contains(text, "write out.txt"):
+			firstTurnIdx = i
+		case strings.Contains(text, "continue"):
+			currentTurnIdx = i
+		}
+	}
+	if firstTurnIdx < 0 || currentTurnIdx < 0 || firstTurnIdx >= currentTurnIdx {
+		t.Fatalf("replayed first turn (idx %d) must precede current turn (idx %d)",
+			firstTurnIdx, currentTurnIdx)
 	}
 }
 

@@ -11,7 +11,9 @@ import (
 // TestMemoryPayloadMigration011 verifies the text-only memory payloads
 // written before migration 011 are rewritten to canonical content
 // parts, that legacy tool rows degrade to user role (their call ids
-// were never stored), and that canonical rows are left untouched.
+// were never stored), that canonical rows are left untouched, and that
+// a canonical tool row with a text preamble before its tool_result keeps
+// the tool role (only rows without any tool_result part are demoted).
 func TestMemoryPayloadMigration011(t *testing.T) {
 	ctx := context.Background()
 	handle, err := db.Open(filepath.Join(t.TempDir(), "session.db"))
@@ -35,6 +37,12 @@ func TestMemoryPayloadMigration011(t *testing.T) {
 			 '{"text":"tool_result: ok"}', '2026-09-01T10:00:00Z'),
 			('canonical-tool', 's-1', 't-1', 2, 'text', 'tool',
 			 '{"parts":[{"type":"tool_result","result":{"call_id":"c1","content":"ok"}}]}',
+			 '2026-09-01T10:00:00Z'),
+			('canonical-text-first', 's-1', 't-1', 3, 'text', 'tool',
+			 '{"parts":[{"type":"text","text":"preface"},{"type":"tool_result","result":{"call_id":"c2","content":"ok"}}]}',
+			 '2026-09-01T10:00:00Z'),
+			('canonical-text-only', 's-1', 't-1', 4, 'text', 'tool',
+			 '{"parts":[{"type":"text","text":"tool_result: ok"}]}',
 			 '2026-09-01T10:00:00Z')`,
 	} {
 		if _, err := handle.SQLDB().ExecContext(ctx, stmt); err != nil {
@@ -65,6 +73,8 @@ func TestMemoryPayloadMigration011(t *testing.T) {
 		{"legacy-user", "user", "text", "hello", ""},
 		{"legacy-tool", "user", "text", "tool_result: ok", ""},
 		{"canonical-tool", "tool", "tool_result", "", "c1"},
+		{"canonical-text-first", "tool", "text", "preface", ""},
+		{"canonical-text-only", "user", "text", "tool_result: ok", ""},
 	}
 	for i := range want {
 		if !rows.Next() {

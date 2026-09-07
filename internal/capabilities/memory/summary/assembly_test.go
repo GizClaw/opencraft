@@ -609,6 +609,64 @@ func TestAssemblyFoldAndContextNeverFullLoad(t *testing.T) {
 	}
 }
 
+// TestAssemblyContextPairLookbackBoundedOnDanglingResult verifies a
+// dangling tool result (its call was never persisted) cannot turn
+// Context into a full-history scan: pairPrefix walks backward at most
+// pairLookbackMax rows and then gives up, keeping the context cost
+// independent of conversation length.
+func TestAssemblyContextPairLookbackBoundedOnDanglingResult(t *testing.T) {
+	ctx := context.Background()
+	msgs := make([]message.Message, 0, 200)
+	for i := 0; i < 199; i++ {
+		msgs = append(msgs, message.NewTextMessage(
+			message.RoleUser, fmt.Sprintf("m%03d", i)))
+	}
+	msgs = append(msgs, message.Message{
+		Role: message.RoleTool,
+		Content: message.Content{Parts: []message.Part{
+			message.ToolResultPart{Result: message.ToolResult{
+				CallID: "dangling", Content: "ok",
+			}},
+		}},
+	})
+	store := &recordingStore{fakeTurnStore: &fakeTurnStore{msgs: map[string][]message.Message{
+		"c1": msgs,
+	}}}
+	a := NewAssembly(store, WithAssemblyPolicy(Policy{
+		MaxRawMessages: 2, PreserveRecent: 1,
+	}))
+	res, err := a.Context(ctx, memory.ContextRequest{
+		Scope:          memory.Scope{RuntimeID: "rt", AgentID: "a"},
+		ConversationID: "c1",
+		Budget:         memory.Budget{MaxItems: 0, MaxChars: 1 << 20},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Items) == 0 {
+		t.Fatal("want context items")
+	}
+	if store.fullLoads != 0 {
+		t.Fatalf("context used %d full LoadMessages calls, want 0", store.fullLoads)
+	}
+	if len(store.ranges) == 0 {
+		t.Fatal("context must load a bounded raw window")
+	}
+	// The dangling result forces pairPrefix to walk backward; it must
+	// stop pairLookbackMax rows before the boundary instead of reaching
+	// index 0 and re-scanning the whole conversation on every turn.
+	minLo := store.ranges[0][0]
+	for _, r := range store.ranges[1:] {
+		if r[0] < minLo {
+			minLo = r[0]
+		}
+	}
+	if want := len(msgs) - pairLookbackMax - 3; minLo < want {
+		t.Fatalf("pair lookback walked to %d, want no farther than %d (ranges=%v)",
+			minLo, want, store.ranges)
+	}
+}
+
 func TestAssemblyFoldTailMatchesFullBufferFold(t *testing.T) {
 	ctx := context.Background()
 	pol := Policy{MaxRawMessages: 4, PreserveRecent: 2, MaxSummaryBytes: 128}

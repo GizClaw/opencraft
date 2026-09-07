@@ -75,10 +75,10 @@ func (s *Service) instructionSections(ctx context.Context) []Section {
 	return out
 }
 
-func renderFragments(s *Service, specs []fragment) []Section {
+func renderFragments(ctx context.Context, s *Service, specs []fragment) []Section {
 	out := make([]Section, 0, len(specs))
 	for _, spec := range specs {
-		text, ok := s.readFragment(spec.File)
+		text, ok := s.readFragment(ctx, spec.File)
 		if !ok {
 			continue
 		}
@@ -103,12 +103,7 @@ func (s *Service) modeSections(ctx context.Context) []Section {
 			log.String("mode", mode))
 		return nil
 	}
-	secs := renderFragments(s, []fragment{spec})
-	if len(secs) == 0 {
-		telemetry.Warn(ctx, "worldstate: mode fragment unavailable, using default instructions",
-			log.String("mode", mode), log.String("file", spec.File))
-	}
-	return secs
+	return renderFragments(ctx, s, []fragment{spec})
 }
 
 // personalitySections injects the personality fragment when one is
@@ -125,22 +120,33 @@ func (s *Service) personalitySections(ctx context.Context) []Section {
 			log.String("personality", name))
 		return nil
 	}
-	secs := renderFragments(s, []fragment{spec})
-	if len(secs) == 0 {
-		telemetry.Warn(ctx, "worldstate: personality fragment unavailable, using neutral default",
-			log.String("personality", name), log.String("file", spec.File))
-	}
-	return secs
+	return renderFragments(ctx, s, []fragment{spec})
 }
 
-// readFragment returns one embedded fragment's text. A missing or
-// oversized fragment is skipped (returns not-ok) rather than failing
-// the turn.
-func (s *Service) readFragment(rel string) (string, bool) {
+// readFragment returns one embedded fragment's text. A missing,
+// oversized, or empty fragment is skipped (returns not-ok) with a
+// telemetry warning rather than failing the turn, so an authoring
+// mistake in the embedded assets is visible instead of silently
+// removing a model-facing section.
+func (s *Service) readFragment(ctx context.Context, rel string) (string, bool) {
 	data, err := templateFS.ReadFile("templates/" + rel)
-	if err != nil || len(data) > promptFragmentMaxBytes {
+	if err != nil {
+		telemetry.Warn(ctx, "worldstate: instruction fragment missing",
+			log.String("fragment.file", rel))
+		return "", false
+	}
+	if len(data) > promptFragmentMaxBytes {
+		telemetry.Warn(ctx, "worldstate: instruction fragment exceeds size budget",
+			log.String("fragment.file", rel),
+			log.Int("bytes", len(data)),
+			log.Int("budget_bytes", promptFragmentMaxBytes))
 		return "", false
 	}
 	text := strings.TrimSpace(string(data))
-	return text, text != ""
+	if text == "" {
+		telemetry.Warn(ctx, "worldstate: instruction fragment is empty",
+			log.String("fragment.file", rel))
+		return "", false
+	}
+	return text, true
 }

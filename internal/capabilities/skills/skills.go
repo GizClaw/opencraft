@@ -134,6 +134,13 @@ func (s *Service) reload() {
 	outcome.Skills = filterDisabled(outcome.Skills, s.opts.Disabled)
 	outcome.Skills = append(outcome.Skills,
 		filterDisabled(builtinSkills(), s.opts.Disabled)...)
+	// A builtin skill loses to any same-named user/repo skill (higher
+	// Depth), matching ByName's $mention resolution. Without this a
+	// same-named user skill and its builtin twin both show up in List
+	// and can both rank into top-N. Same-name entries across repo/user
+	// layers are intentionally kept: ByName resolves by layer while
+	// List and ranking may show each path.
+	outcome.Skills = dropShadowedBuiltins(outcome.Skills)
 	byPath := make(map[string]SkillMetadata, len(outcome.Skills))
 	docs := make([]search.Doc, 0, len(outcome.Skills))
 	for _, s := range outcome.Skills {
@@ -178,6 +185,27 @@ func filterDisabled(skills []SkillMetadata, disabled []string) []SkillMetadata {
 	out := skills[:0]
 	for _, sk := range skills {
 		if names[sk.Name] || paths[filepath.Clean(sk.Path)] {
+			continue
+		}
+		out = append(out, sk)
+	}
+	return out
+}
+
+// dropShadowedBuiltins removes a builtin entry whenever a non-builtin
+// skill with the same name is discovered, so the builtin cannot crowd
+// a user/repo skill out of List or top-N ranking. Non-builtin
+// duplicates across layers are left untouched.
+func dropShadowedBuiltins(skills []SkillMetadata) []SkillMetadata {
+	hasUserCopy := make(map[string]bool, len(skills))
+	for _, sk := range skills {
+		if sk.Scope != "builtin" {
+			hasUserCopy[sk.Name] = true
+		}
+	}
+	out := skills[:0]
+	for _, sk := range skills {
+		if sk.Scope == "builtin" && hasUserCopy[sk.Name] {
 			continue
 		}
 		out = append(out, sk)

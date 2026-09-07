@@ -25,7 +25,7 @@ var instructionGroupOrder = []instructionGroupSpec{
 		ID:    "base",
 		Owner: "worldstate",
 		Render: func(ctx context.Context, s *Service) []Section {
-			return renderFragments(s, baseFragmentOrder)
+			return renderFragments(ctx, s, baseFragmentOrder)
 		},
 	},
 	{
