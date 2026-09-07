@@ -34,18 +34,6 @@ func Attach(handle *db.DB) (*Store, error) {
 	return &Store{db: handle.SQLDB()}, nil
 }
 
-// Usage is one recorded usage delta for a model in a session.
-type Usage struct {
-	TotalTokens      int64
-	InputTokens      int64
-	OutputTokens     int64
-	CacheReadTokens  int64
-	CacheWriteTokens int64
-	ReasoningTokens  int64
-	LatencyMs        int64
-	Calls            int64
-}
-
 // Record accumulates one usage delta for (workspace, session, model).
 // model is normalized to its name-only form, so a legacy
 // "provider/name" key from an imported bundle cannot be written back.
@@ -59,7 +47,7 @@ func (s *Store) Record(
 	ctx context.Context,
 	workspaceID, sessionID, model string,
 	at time.Time,
-	u Usage,
+	u ocsessions.Usage,
 ) error {
 	if model == "" || sessionID == "" {
 		return nil
@@ -155,20 +143,10 @@ func (s *Store) RecordSessionUsage(
 	if u.Model == "" || u.TotalTokens <= 0 {
 		return nil
 	}
-	calls := u.Calls
-	if calls <= 0 {
-		calls = 1
+	if u.Calls <= 0 {
+		u.Calls = 1
 	}
-	return s.Record(ctx, workspaceID, sessionID, u.Model, at, Usage{
-		TotalTokens:      u.TotalTokens,
-		InputTokens:      u.InputTokens,
-		OutputTokens:     u.OutputTokens,
-		CacheReadTokens:  u.CacheReadTokens,
-		CacheWriteTokens: u.CacheWriteTokens,
-		ReasoningTokens:  u.ReasoningTokens,
-		LatencyMs:        u.LatencyMs,
-		Calls:            calls,
-	})
+	return s.Record(ctx, workspaceID, sessionID, u.Model, at, u)
 }
 
 // SummaryRow aggregates one model's usage across all workspaces and

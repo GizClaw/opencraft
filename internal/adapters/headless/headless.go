@@ -44,7 +44,7 @@ type Options struct {
 
 // Result is the terminal outcome of a headless run.
 type Result struct {
-	Status         string
+	Status         agent.Status
 	RunID          string
 	ConversationID string
 	Error          string
@@ -160,10 +160,10 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	result := Result{
 		RunID:          runID,
 		ConversationID: contextID,
-		Status:         "unknown",
+		Status:         agent.Status("unknown"),
 	}
 	if res != nil {
-		result.Status = string(res.Status)
+		result.Status = res.Status
 		if res.Err != nil {
 			result.Error = res.Err.Error()
 		}
@@ -172,22 +172,22 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		result.Error = waitErr.Error()
 	}
 	if result.Error != "" {
-		result.Status = "failed"
+		result.Status = agent.StatusFailed
 	}
-	if result.Status == "completed" {
+	if result.Status == agent.StatusCompleted {
 		result.ExitCode = 0
 	} else {
 		result.ExitCode = 1
 	}
 	typ := rollout.TypeTurnCompleted
-	if result.Status != "completed" {
+	if result.Status != agent.StatusCompleted {
 		typ = rollout.TypeTurnFailed
 	}
 	rec.emit(rollout.Event{
 		Type:           typ,
 		ConversationID: contextID,
 		RunID:          runID,
-		Status:         result.Status,
+		Status:         string(result.Status),
 		Error:          result.Error,
 	})
 	return result, nil
