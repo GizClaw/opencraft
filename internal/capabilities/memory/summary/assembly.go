@@ -168,15 +168,18 @@ func (a *Assembly) fold(ctx context.Context, conversationID string) error {
 	if err != nil {
 		return memory.NewError(memory.KindInternal, "turn", err)
 	}
-	w := p.MaxRawMessages + p.PreserveRecent
+	foldBoundary, err := a.rawWindowStart(
+		ctx, conversationID, total, p)
+	if err != nil {
+		return memory.NewError(memory.KindInternal, "turn", err)
+	}
 	// Nothing has left the raw window yet: there is nothing to fold.
-	if total <= w {
+	if foldBoundary <= 0 {
 		return nil
 	}
 	// Pair-aware fold boundary: if the count-based boundary would fold
 	// an assistant tool_call whose result stays raw, leave the call raw
 	// too so structured history can replay the pair.
-	foldBoundary := total - w
 	rawTail, err := a.store.LoadMessagesRange(
 		ctx, conversationID, foldBoundary, total-1)
 	if err != nil {
@@ -452,6 +455,56 @@ func (a *Assembly) pairPrefix(
 	return boundary, nil, nil
 }
 
+// rawWindowStart returns the first index that should stay raw for the
+// current policy. When RawUserTurns is zero it preserves the legacy
+// message-count boundary; otherwise it walks backward until it has seen
+// RawUserTurns user messages and returns the index of the
+// Nth-most-recent one, keeping complete recent turns (including their
+// tool rounds) raw.
+func (a *Assembly) rawWindowStart(
+	ctx context.Context,
+	conversationID string,
+	total int,
+	p Policy,
+) (int, error) {
+	if p.RawUserTurns <= 0 {
+		boundary := total - p.MaxRawMessages - p.PreserveRecent
+		if boundary < 0 {
+			return 0, nil
+		}
+		return boundary, nil
+	}
+	if total <= 0 {
+		return 0, nil
+	}
+	seen := 0
+	from := total - 1
+	for from >= 0 {
+		lo := from - foldTailChunk + 1
+		if lo < 0 {
+			lo = 0
+		}
+		batch, err := a.store.LoadMessagesRange(ctx, conversationID, lo, from)
+		if err != nil {
+			return 0, err
+		}
+		for i := len(batch) - 1; i >= 0; i-- {
+			if batch[i].Role != message.RoleUser {
+				continue
+			}
+			seen++
+			if seen == p.RawUserTurns {
+				return lo + i, nil
+			}
+		}
+		if lo == 0 {
+			break
+		}
+		from = lo - 1
+	}
+	return 0, nil
+}
+
 // shouldCondense reports whether the folded buffer benefits from LLM
 // compaction: only once the rolling window actually dropped foldable
 // messages (the byte budget is full and the oldest content would be
@@ -584,9 +637,11 @@ func (a *Assembly) Context(ctx context.Context, req memory.ContextRequest) (memo
 	if err != nil {
 		return memory.ContextResult{}, memory.NewError(memory.KindInternal, "context", err)
 	}
-	boundary := total - p.MaxRawMessages - p.PreserveRecent
-	if boundary < 0 {
-		boundary = 0
+	boundary, err := a.rawWindowStart(
+		ctx, req.ConversationID, total, p)
+	if err != nil {
+		return memory.ContextResult{}, memory.NewError(
+			memory.KindInternal, "context", err)
 	}
 	var raw []message.Message
 	if boundary < total {

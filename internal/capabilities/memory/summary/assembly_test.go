@@ -866,3 +866,79 @@ func TestAssemblyFoldKeepsToolPairRaw(t *testing.T) {
 			raws[0].MessageRole, raws[1].MessageRole)
 	}
 }
+
+func TestAssemblyRawWindowKeepsCompleteUserTurns(t *testing.T) {
+	ctx := context.Background()
+	store := &fakeTurnStore{msgs: map[string][]message.Message{
+		"c1": {
+			message.NewTextMessage(message.RoleUser, "u1"),
+			message.NewTextMessage(message.RoleAssistant, "a1"),
+			message.NewTextMessage(message.RoleUser, "u2"),
+			message.NewTextMessage(message.RoleAssistant, "a2"),
+			message.NewTextMessage(message.RoleUser, "u3"),
+			message.NewTextMessage(message.RoleAssistant, "a3"),
+		},
+	}}
+	a := NewAssembly(store, WithAssemblyPolicy(Policy{
+		RawUserTurns: 2,
+	}))
+	res, err := a.Context(ctx, memory.ContextRequest{
+		Scope:          memory.Scope{RuntimeID: "rt"},
+		ConversationID: "c1",
+		Budget:         memory.Budget{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Items) != 4 {
+		t.Fatalf("raw items = %d, want last two user turns (4 messages)",
+			len(res.Items))
+	}
+	if res.Items[0].Content.Text() != "u2" ||
+		res.Items[len(res.Items)-1].Content.Text() != "a3" {
+		t.Fatalf("raw window = %+v, want u2..a3", res.Items)
+	}
+}
+
+func TestAssemblyFoldLeavesRecentUserTurnsRaw(t *testing.T) {
+	ctx := context.Background()
+	store := &fakeTurnStore{msgs: map[string][]message.Message{
+		"c1": {
+			message.NewTextMessage(message.RoleUser, "u1"),
+			message.NewTextMessage(message.RoleAssistant, "a1"),
+			message.NewTextMessage(message.RoleUser, "u2"),
+			message.NewTextMessage(message.RoleAssistant, "a2"),
+			message.NewTextMessage(message.RoleUser, "u3"),
+			message.NewTextMessage(message.RoleAssistant, "a3"),
+		},
+	}}
+	a := NewAssembly(store, WithAssemblyPolicy(Policy{
+		RawUserTurns: 2,
+	}))
+	if err := a.FoldOnly(ctx, "c1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(store.nodes) != 1 {
+		t.Fatalf("nodes = %d, want one summary", len(store.nodes))
+	}
+	res, err := a.Context(ctx, memory.ContextRequest{
+		Scope:          memory.Scope{RuntimeID: "rt"},
+		ConversationID: "c1",
+		Budget:         memory.Budget{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raws []memory.ContextItem
+	for _, item := range res.Items {
+		if item.Kind == memory.ContextRawMessage {
+			raws = append(raws, item)
+		}
+	}
+	if len(raws) != 4 {
+		t.Fatalf("raw items after fold = %d, want u2..a3", len(raws))
+	}
+	if raws[0].Content.Text() != "u2" {
+		t.Fatalf("first raw = %q, want u2", raws[0].Content.Text())
+	}
+}
