@@ -2236,6 +2236,17 @@ export function ChatView() {
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
           <div
             ref={scrollRef}
+            onWheel={(e) => {
+              // Intentional upward wheel/trackpad motion unpins
+              // immediately, even when still within the near-bottom
+              // band. Relying only on onScroll made small upward steps
+              // (< 80px from the bottom) stay "pinned" while the agent
+              // streamed, snapping the view back down.
+              if (e.deltaY < 0 && stickRef.current) {
+                stickRef.current = false;
+                setStick(false);
+              }
+            }}
             onScroll={() => {
               const el = scrollRef.current;
               if (!el) return;
