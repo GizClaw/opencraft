@@ -33,6 +33,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the UI's zh/en language, synced from the frontend and persisted in
   desktop preferences.
 
+## [0.3.0] - 2026-09-07
+
+### Added
+
+- Session history tree with per-turn grouping, plus a workspace picker
+  for new chats; session history polish with persistent start titles
+  for fresh conversations. (#82, #83)
+- Hosted web search is now effective per deployment through board
+  extensions seeded from the inference configuration. (#84)
+- The host app version is exposed to plugins. (#85)
+- Session import preserves per-turn timing and usage records. (#87)
+- Configurable new-session defaults, with general and display settings
+  split into separate pages. (#88)
+- A YOLO-only build profile that pins every session to YOLO mode. (#89)
+- Large image attachments: oversized PNG/TIFF/BMP images are normalized
+  to upright JPEG q90 for preview and persistence (40MP decode cap,
+  shared 10 MiB inline budget); non-image file attachments are no
+  longer size capped. (#90)
+- Queued/barge-in composer inputs: Enter while a turn runs interrupts
+  it at its next safe point and sends the new message afterwards; Tab
+  queues a draft that auto-sends when the current reply completes
+  successfully. (#90)
+- Barge-in wait UX: a banner above the composer shows the interrupt
+  wait and exposes a force-cancel that hard-cancels the superseded
+  run; cancelling a queued draft (X) restores it into the composer
+  instead of discarding it. (#97)
+- Clipboard image paste with per-type attachment badges. (#91)
+- Workspace file viewer with inline code and PDF previews. (#92)
+- Per-model usage dashboard with name-only accounting. (#93)
+
+### Changed
+
+- flowcraft upgraded to core v0.2.7: model declarations and inference
+  settings adopt the new reasoning capability model (canonical effort
+  maps per model), each driver's built-in model catalog is offered as
+  a combobox with deprecated-model markers and catalog-derived
+  defaults, and embedding model configuration is removed. (#95, #96)
+- Conversation prompts are serialized as fragments and tool history is
+  replayed structurally, so resumed turns rebuild the same prompt
+  shape. (#94)
+- The subagent right-sidebar panel was removed from the chat UI. (#86)
+
 ## [0.1.0] - 2026-09-01
 
 First release of the opencraft desktop workbench: a local-first workflow
