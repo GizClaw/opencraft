@@ -433,6 +433,8 @@
     "queuedReady": "Queued — “{{preview}}” (reply ended; press Enter to send)",
     "queuedFiles": "attachment",
     "queuedCancel": "Cancel queued message",
+    "queuedInterrupt": "Queued — “{{preview}}” will interrupt once the new reply starts",
+    "bargeWaiting": "Interrupting the current reply — “{{preview}}” will be sent next",
     "busyKeyHint": "Enter interrupts the reply · Tab queues the message",
     "mentionSearchHint": "Type to search workspace files…",
     "mentionNoMatch": "No matches",

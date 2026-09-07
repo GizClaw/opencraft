@@ -181,6 +181,34 @@ describe('conversation machine', () => {
     });
   });
 
+  it('a force-canceled superseded run still waits for the replacement', () => {
+    const actor = start();
+    actor.send({ type: 'SEND_STARTED' });
+    actor.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    actor.send({ type: 'SEND_STARTED' });
+    expect(regions(actor).turn).toBe('starting');
+
+    // Stop during the barge wait hard-cancels the superseded run; its
+    // canceled terminal event must not settle the conversation while
+    // the replacement is still starting.
+    endTurn(actor, 'r-old', 'canceled');
+    expect(regions(actor).turn).toBe('starting');
+    expect(actor.getSnapshot().context).toMatchObject({
+      supersededRunID: 'r-old',
+      currentRunID: undefined,
+    });
+    expect(actor.getSnapshot().context).not.toMatchObject({
+      failureStatus: 'canceled',
+    });
+
+    actor.send({ type: 'RUN_STARTED', runID: 'r-new' });
+    expect(regions(actor).turn).toBe('running');
+    expect(actor.getSnapshot().context).toMatchObject({
+      currentRunID: 'r-new',
+      supersededRunID: undefined,
+    });
+  });
+
   it('a failed barge-in resumes the superseded run when it is alive', () => {
     const actor = start();
     actor.send({ type: 'SEND_STARTED' });

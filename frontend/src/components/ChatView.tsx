@@ -1438,6 +1438,7 @@ export function ChatView() {
   const sendInterrupt = useStore((s) => s.sendInterrupt);
   const queueInput = useStore((s) => s.queueInput);
   const clearQueued = useStore((s) => s.clearQueued);
+  const takeQueued = useStore((s) => s.takeQueued);
   const forkTurn = useStore((s) => s.forkTurn);
   const newChat = useStore((s) => s.newChat);
   const resume = useStore((s) => s.resume);
@@ -2023,6 +2024,19 @@ export function ChatView() {
     composerRef.current?.focus();
   };
 
+  // Queue X pops the staged draft and returns it to the composer so
+  // the user can edit or drop it instead of losing the content.
+  const cancelQueued = () => {
+    const staged = takeQueued();
+    if (!staged) return;
+    if (staged.text) {
+      composerRef.current?.setMarkdown(staged.text);
+      setInput(staged.text);
+    }
+    setAttachments(staged.attachments);
+    composerRef.current?.focus();
+  };
+
   const submit = async () => {
     const text = composerRef.current?.getMarkdown() ?? input;
     if ((!text.trim() && attachments.length === 0) || busy || switchingWs) {
@@ -2110,6 +2124,31 @@ export function ChatView() {
   // typing so the shortcut is discoverable.
   const composerEmpty = !input.trim() && attachments.length === 0;
   const showBusyKeyHint = busy && input.trim().length > 0;
+  // A barge-in send is waiting for the superseded run to interrupt at
+  // its next safe point and fully finalize; the replacement starts
+  // only afterwards, so surface the wait with a force-cancel control.
+  const bargeWaiting =
+    turnState?.name === 'starting' && Boolean(turnState.supersededRunID);
+  let bannerPreviewMsg: MessageView | undefined;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') {
+      bannerPreviewMsg = messages[i];
+      break;
+    }
+  }
+  const bannerPreview =
+    queued?.text.trim() ||
+    queued?.attachments[0]?.name ||
+    bannerPreviewMsg?.text.trim() ||
+    bannerPreviewMsg?.attachments[0]?.name ||
+    t('chat.queuedFiles');
+  const queueBannerText = queued
+    ? queued.interrupt
+      ? t('chat.queuedInterrupt', { preview: bannerPreview })
+      : t(busy ? 'chat.queued' : 'chat.queuedReady', {
+          preview: bannerPreview,
+        })
+    : t('chat.bargeWaiting', { preview: bannerPreview });
 
   const confirmFork = () => {
     const target = forkTarget;
@@ -2529,26 +2568,37 @@ export function ChatView() {
                   ))}
                 </div>
               )}
-              {queued && (
-                <div className="flex items-center gap-2 border-b border-edge px-3 py-1.5 text-xs text-dim">
+              {(queued || bargeWaiting) && (
+                <div
+                  data-testid="chat-staged-banner"
+                  className="flex items-center gap-2 border-b border-edge px-3 py-1.5 text-xs text-dim"
+                >
                   <Clock size="0.8571rem" className="shrink-0 text-accent" />
-                  <span className="min-w-0 truncate">
-                    {t(busy ? 'chat.queued' : 'chat.queuedReady', {
-                      preview:
-                        queued.text.trim() ||
-                        queued.attachments[0]?.name ||
-                        t('chat.queuedFiles'),
-                    })}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={clearQueued}
-                    aria-label={t('chat.queuedCancel')}
-                    title={t('chat.queuedCancel')}
-                    className="ml-auto shrink-0 rounded-md px-1.5 py-0.5 text-dim hover:bg-panel2 hover:text-fg"
-                  >
-                    <X size="0.8571rem" />
-                  </button>
+                  <span className="min-w-0 truncate">{queueBannerText}</span>
+                  <div className="ml-auto flex shrink-0 items-center gap-1">
+                    {queued && (
+                      <button
+                        type="button"
+                        onClick={cancelQueued}
+                        aria-label={t('chat.queuedCancel')}
+                        title={t('chat.queuedCancel')}
+                        className="rounded-md px-1.5 py-0.5 text-dim hover:bg-panel2 hover:text-fg"
+                      >
+                        <X size="0.8571rem" />
+                      </button>
+                    )}
+                    {bargeWaiting && (
+                      <button
+                        type="button"
+                        onClick={() => void cancelRun()}
+                        aria-label={t('chat.stop')}
+                        title={t('chat.stop')}
+                        className="grid h-6 w-6 place-items-center rounded-md text-err hover:bg-panel2"
+                      >
+                        <Square size="0.7143rem" fill="currentColor" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
               {/* The top gap lives outside the scroll container (pt-3 here)
@@ -2768,7 +2818,7 @@ export function ChatView() {
                     >
                       <Loader2 size="1.0000rem" className="animate-spin" />
                     </button>
-                  ) : busy && composerEmpty ? (
+                  ) : busy && composerEmpty && !bargeWaiting ? (
                     <button
                       onClick={() => void cancelRun()}
                       aria-label={t('chat.stop')}
@@ -2781,9 +2831,11 @@ export function ChatView() {
                     // While a turn runs with a draft, the button sends
                     // and interrupts the active reply, matching Enter;
                     // Stop is only shown when the composer is empty.
+                    // A barge-in wait carries its own Stop in the
+                    // banner, so it stays available while typing.
                     <button
                       onClick={() => void submitInterrupt()}
-                      disabled={composerEmpty && !busy}
+                      disabled={composerEmpty && (!busy || bargeWaiting)}
                       aria-label={t('chat.send')}
                       title={t('chat.send')}
                       className="grid h-8 w-8 place-items-center rounded-lg bg-accent text-white hover:opacity-90 disabled:opacity-40"

@@ -78,11 +78,11 @@ export interface MessageView {
   attachments: AttachmentView[];
 }
 
-// QueuedInput is the single draft a user staged with Tab while a turn
-// is still running. It fires after that turn ends. interrupt=true is
-// the starting-phase variant: the draft was staged because a barge-in
-// send arrived before the previous run had a run id, so it fires as
-// soon as that run starts.
+// QueuedInput is the single draft a user staged while a turn is
+// starting or running. interrupt=false is the Tab queue: it fires
+// after the watched turn completes. interrupt=true is a barge-in send
+// that arrived before the awaited run had a run id, so it fires as
+// soon as that run starts (and barges it in).
 export interface QueuedInput {
   text: string;
   attachments: AttachmentView[];
@@ -703,6 +703,9 @@ interface StoreState {
   // queueInput stages the single draft that fires after the current
   // turn ends. Returns false when nothing was queued.
   queueInput: (text: string, attachments?: AttachmentView[]) => boolean;
+  // takeQueued pops the staged draft so the caller can restore it
+  // into the composer (the queue banner's X); clearQueued drops it.
+  takeQueued: () => QueuedInput | undefined;
   clearQueued: () => void;
   forkTurn: (runID: string) => Promise<void>;
   clearLastFailed: () => void;
@@ -1444,10 +1447,14 @@ export const useStore = create<StoreState>((set, get) => {
       turnStage?: string;
       turnError?: string;
       failureStatus?: string;
+      supersededRunID?: string;
     };
     switch (value.turn) {
       case 'starting':
-        return { name: 'starting' as const };
+        return {
+          name: 'starting' as const,
+          supersededRunID: context.supersededRunID,
+        };
       case 'running':
         return {
           name: 'running' as const,
@@ -1850,6 +1857,15 @@ export const useStore = create<StoreState>((set, get) => {
       return true;
     },
 
+    takeQueued: () => {
+      const convID = activeConversationID();
+      const conv = convID ? get().conversations[convID] : undefined;
+      if (!convID || !conv?.queued) return undefined;
+      const staged = conv.queued;
+      updateConv(convID, { queued: undefined });
+      return staged;
+    },
+
     clearQueued: () => {
       const convID = activeConversationID();
       if (convID) updateConv(convID, { queued: undefined });
@@ -1900,12 +1916,26 @@ export const useStore = create<StoreState>((set, get) => {
     cancelRun: async () => {
       const convID = activeConversationID();
       const turn = convID ? conversationTurnState(convID) : undefined;
+      let runID = '';
       if (turn?.name === 'running') {
-        try {
-          await api.cancelTurn(turn.runID);
-        } catch (err) {
-          // Surface cancel failures instead of leaving the UI running
-          // silently; a real cancel still settles via turn_end.
+        runID = turn.runID;
+      } else if (turn?.name === 'starting' && turn.supersededRunID) {
+        // A barge-in is waiting for the superseded run to finalize.
+        // Force-cancelling it lets the pending replacement start.
+        runID = turn.supersededRunID;
+      }
+      if (!runID) return;
+      try {
+        await api.cancelTurn(runID);
+      } catch (err) {
+        // The superseded run may already have settled while the
+        // replacement was starting; that is the happy path, so a
+        // "turn not found" failure must not surface as an error.
+        if (
+          !/not found|not active|already (ended|finished)/i.test(String(err))
+        ) {
+          // Surface real cancel failures instead of leaving the UI
+          // running silently; a real cancel settles via turn_end.
           set({ statusText: String(err) });
         }
       }

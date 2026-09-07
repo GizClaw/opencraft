@@ -416,6 +416,51 @@ describe('store: send and stream', () => {
     });
   });
 
+  it('cancelRun during a barge-in start cancels the superseded run', async () => {
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    // Enter again: the replacement is starting and waiting for r-old
+    // to finalize, so Stop must target the superseded run.
+    actor?.send({ type: 'SEND_STARTED' });
+    expect(actor?.getSnapshot().context).toMatchObject({
+      supersededRunID: 'r-old',
+    });
+
+    await useStore.getState().cancelRun();
+
+    expect(apiMock.cancelTurn).toHaveBeenCalledWith('r-old');
+    expect(useStore.getState().statusText).toBe('');
+  });
+
+  it('cancelRun ignores a not-found superseded run', async () => {
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    actor?.send({ type: 'SEND_STARTED' });
+    apiMock.cancelTurn.mockRejectedValue(new Error('host: turn not found'));
+
+    await useStore.getState().cancelRun();
+
+    expect(useStore.getState().statusText).toBe('');
+  });
+
+  it('takeQueued returns and clears the staged draft', () => {
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    expect(useStore.getState().queueInput('draft to restore')).toBe(true);
+
+    const staged = useStore.getState().takeQueued();
+
+    expect(staged).toMatchObject({
+      text: 'draft to restore',
+      attachments: [],
+      interrupt: false,
+    });
+    expect(useStore.getState().conversations['s-1']?.queued).toBeUndefined();
+  });
+
   it('resuming the active session closes the tool page', async () => {
     useStore.setState({ toolsView: 'plugins' });
     await useStore.getState().resume('s-1');

@@ -17,7 +17,9 @@ export type TurnEndKind = 'failed' | 'aborted' | 'canceled' | 'interrupted';
 
 export type TurnState =
   | { name: 'idle' }
-  | { name: 'starting' }
+  // supersededRunID names the run a barge-in send is replacing while
+  // the replacement is still waiting for the old turn to finalize.
+  | { name: 'starting'; supersededRunID?: string }
   | { name: 'running'; runID: string; stage: string }
   | { name: 'succeeded' }
   | { name: 'failed'; status: TurnEndKind; error?: string };
