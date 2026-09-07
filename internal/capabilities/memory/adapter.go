@@ -62,9 +62,26 @@ func (a *sqliteTurnStore) appendMessagesTx(
 	for _, msg := range msgs {
 		text := msg.Content.Text()
 		if text == "" {
+			if len(msg.Content.Parts) > 0 {
+				// A message with parts but no rendered text would
+				// otherwise vanish without a trace: the raw window and
+				// the fold contract index text-bearing rows, so it
+				// cannot be persisted here. Surface the drop instead of
+				// silently losing history.
+				telemetry.Warn(ctx, "memory: skipping message with parts but no rendered text",
+					otellog.String("conversation.id", conversationID),
+					otellog.String("turn.id", turnID),
+					otellog.String("role", string(msg.Role)),
+					otellog.Int("parts", len(msg.Content.Parts)))
+			}
 			continue
 		}
-		payload, err := json.Marshal(map[string]any{"text": text})
+		// Persist the full content (canonical parts), not just the text
+		// projection: tool_call / tool_result parts carry the call ids
+		// structured history replay needs. Text-only rows written by
+		// older versions are upgraded to canonical parts by workspace
+		// migration 011 on startup.
+		payload, err := json.Marshal(msg.Content)
 		if err != nil {
 			return fmt.Errorf("memory: marshal message payload: %w", err)
 		}
@@ -145,18 +162,26 @@ func (a *sqliteTurnStore) loadRange(
 		if err := rows.Scan(&role, &payload); err != nil {
 			return nil, fmt.Errorf("memory: scan message: %w", err)
 		}
-		var obj struct {
-			Text string `json:"text"`
-		}
-		if err := json.Unmarshal([]byte(payload), &obj); err != nil {
+		var content message.Content
+		if err := json.Unmarshal([]byte(payload), &content); err != nil {
 			telemetry.WarnErr(ctx, "memory: decode message payload failed", err,
 				otellog.String("conversation.id", conversationID))
 			continue
 		}
-		if obj.Text == "" {
+		if len(content.Parts) == 0 {
+			// Migration 011 rewrites legacy text-only rows to canonical
+			// parts. A row that still has no parts (interrupted write,
+			// foreign writer) is not part of the structured history and
+			// is skipped here, with a warning, rather than failing the
+			// turn or inventing content.
+			telemetry.Warn(ctx, "memory: skipping part-less message payload",
+				otellog.String("conversation.id", conversationID))
 			continue
 		}
-		out = append(out, message.NewTextMessage(message.Role(role), obj.Text))
+		out = append(out, message.Message{
+			Role:    message.Role(role),
+			Content: content,
+		})
 	}
 	return out, rows.Err()
 }

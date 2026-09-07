@@ -23,7 +23,7 @@ opencraft is a work partner that runs on your machine: it reads and edits
 files, executes shell commands with approval, coordinates subagents, and
 persists and resumes sessions. Built on flowcraft's config-driven graph
 engine, it helps with coding and beyond — orchestrating any local workflow.
-A local execd sandbox, SQLite session store, and per-project approval policy
+A local execd sandbox, SQLite session store, and per-workspace approval policy
 keep everything inside a macOS / Linux / Windows desktop app (Wails v2 + React).
 
 <p align="center">
@@ -43,12 +43,13 @@ keep everything inside a macOS / Linux / Windows desktop app (Wails v2 + React).
   protected by a middleware chain: truncation cache, 32k result cap, secret
   redaction, and a JSONL audit trail.
 - **Runtime & sandbox** — local execd (stdio + unix socket, self-fork,
-  parent-death cleanup), project-scoped SQLite store, buffer-fold memory
+  parent-death cleanup), workspace-scoped SQLite store, buffer-fold memory
   summary, AGENTS.md worldstate, layered config, and seatbelt/bwrap sandbox
-  with `.opencraft/approvals.yaml` approvals.
+  with approvals kept outside the project
+  (`~/.opencraft/workspaces/<wid>/approvals.yaml`).
 - **Multi-agent & skills** — persistent subagents with delegation kanban;
   skill discovery, git-based install, and authoring tools.
-- **Workflow** — git context in the worldstate, JSONL session rollout stream,
+- **Workflow** — JSONL session rollout stream,
   external lifecycle hooks, configurable network
   policy with a web_fetch SSRF gate, and a diagnostics tab.
 

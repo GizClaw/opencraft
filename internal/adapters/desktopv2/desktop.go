@@ -229,10 +229,10 @@ func (d *Desktop) runAutomation(
 		ConversationID: contextID,
 		RunID:          runID,
 	}
-	status := "unknown"
+	status := agent.Status("unknown")
 	errText := ""
 	if res != nil {
-		status = string(res.Status)
+		status = res.Status
 		if res.Err != nil {
 			errText = res.Err.Error()
 		}
@@ -245,7 +245,7 @@ func (d *Desktop) runAutomation(
 		result.Status = automations.RunFailed
 		result.Error = errText
 	} else {
-		if res != nil && status == string(agent.StatusCompleted) {
+		if res != nil && status == agent.StatusCompleted {
 			result.Status = automations.RunCompleted
 		} else {
 			result.Status = automations.RunFailed
@@ -255,7 +255,7 @@ func (d *Desktop) runAutomation(
 	notify := !suppressAutomationNotify(task, result.Status, errText)
 	if current {
 		end := core.NewTurnEnd(
-			runID, contextID, status, errText, output,
+			runID, contextID, string(status), errText, output,
 			finishedAt, durationMs,
 		)
 		end.Notify = &notify

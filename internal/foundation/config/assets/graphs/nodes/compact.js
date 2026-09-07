@@ -11,7 +11,16 @@ var BUDGET = cfg.budget_chars || 4096;
 var RATIO = cfg.threshold_ratio || 0.85;
 var MAX_COMPACTIONS = cfg.max_compactions || 3;
 var MAX_INPUT = cfg.max_input_tokens || 0;
-var SYS_PROMPT_TOKENS = cfg.system_prompt_tokens || 2000;
+// When neither the router nor the node config reports a model input
+// window (azure and manually-entered model rows), compaction falls back
+// to this conservative budget. Without a fallback, full-history replay
+// would keep growing past the provider's real cap with compaction
+// silently disabled.
+var FALLBACK_MAX_INPUT_TOKENS = 128000;
+// The default graph carries no static system_prompt: base instructions
+// are world-state sections counted below. system_prompt_tokens is kept
+// for custom graphs that still configure a static prompt.
+var SYS_PROMPT_TOKENS = cfg.system_prompt_tokens || 0;
 var channel = board.channel(board.MAIN_CHANNEL) || [];
 var count = Number(board.getVar("world.sections.count") || 0);
 var compactCount = Number(board.getVar("world.compact.count") || 0);
@@ -46,7 +55,7 @@ function renderText(m) {
 }
 
 function estimateTokens(msgs) {
-  var tokens = SYS_PROMPT_TOKENS;
+  var tokens = 0;
   for (var i = 0; i < msgs.length; i++) {
     var s = renderText(msgs[i]);
     var cjk = 0;
@@ -66,7 +75,9 @@ function estimateTokens(msgs) {
 // Resolve the selected model's max input tokens once per turn via the
 // inference bridge (Router.ExplainGenerate — local, no provider I/O)
 // and cache the result on the board for later rounds. Falls back to
-// the node config when the router is unavailable.
+// the node config, then to a conservative default, when the router is
+// unavailable or does not declare a window, so compaction always has a
+// budget to decide against.
 function resolveMaxInputTokens() {
   var cached = Number(board.getVar("world.compact.max_input_tokens") || 0);
   if (cached > 0) {
@@ -87,10 +98,11 @@ function resolveMaxInputTokens() {
       : 0;
     if (limit > 0) {
       board.setVar("world.compact.max_input_tokens", limit);
+      return limit;
     }
-    return limit;
+    return MAX_INPUT > 0 ? MAX_INPUT : FALLBACK_MAX_INPUT_TOKENS;
   } catch (e) {
-    return MAX_INPUT;
+    return MAX_INPUT > 0 ? MAX_INPUT : FALLBACK_MAX_INPUT_TOKENS;
   }
 }
 
@@ -133,10 +145,13 @@ if (board.getVar("world.compact.pending")) {
 }
 
 // Check mode: compact only when estimated usage exceeds the model cap.
+var worldPrefix = channel.slice(0, count);
 var conversation = channel.slice(count);
-var maxTokens = resolveMaxInputTokens() || MAX_INPUT;
+var maxTokens = resolveMaxInputTokens();
 var shouldCompact = maxTokens > 0 &&
-  estimateTokens(conversation) > Math.floor(maxTokens * RATIO) &&
+  SYS_PROMPT_TOKENS + estimateTokens(worldPrefix) +
+    estimateTokens(conversation) >
+    Math.floor(maxTokens * RATIO) &&
   compactCount < MAX_COMPACTIONS;
 
 if (shouldCompact) {

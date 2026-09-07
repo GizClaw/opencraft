@@ -12,6 +12,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/memory"
+	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/workspace"
 	"go.opentelemetry.io/otel/log"
@@ -22,12 +23,18 @@ import (
 )
 
 // Section is one world-state fragment written to the board for the
-// graph's world node to render. IDs: agents_md | permissions |
+// graph's world node to render. It is a labeled message: text
+// fragments carry a text part, raw history carries the original
+// tool_call / tool_result parts. IDs: agents_md | permissions |
 // environment | plan | memory_summary | memory_raw.
 type Section struct {
-	ID   string `json:"id"`
-	Role string `json:"role"` // user | system
-	Text string `json:"text"`
+	ID string `json:"id"`
+	message.Message
+}
+
+// newTextSection builds a plain-text world-state section.
+func newTextSection(id string, role message.Role, text string) Section {
+	return Section{ID: id, Message: message.NewTextMessage(role, text)}
 }
 
 // Options configures the service.
@@ -35,6 +42,7 @@ type Options struct {
 	WorkBase          string // sandbox/workspace root (runtime cwd)
 	UserDir           string // ~/.opencraft
 	CollaborationMode string
+	Personality       string // optional: friendly | pragmatic
 	PermissionProfile string
 	// MemoryMaxItems / MemoryMaxChars bound the memory context budget
 	// (folded summary + raw window) injected per turn. Zero uses the
@@ -95,11 +103,12 @@ func (s *Service) SetPrefixProvider(p PrefixProvider) { s.prefixes = p }
 func (s *Service) SetSessions(st *ocsessions.Store) { s.sessionStore = st }
 
 // RenderToBoard writes the world state into board vars:
-//   - world.sections: system-role context first (environment,
-//     permissions, git, plan, memory summary, skills list), then
-//     user-role context (AGENTS.md, raw memory, activated skills)
-//     immediately before the user's own message; always injected since
-//     each turn starts with a fresh board
+//   - world.sections: a fixed system-role prefix (base instructions,
+//     environment, permissions), then a user-role context block ordered
+//     from stable to volatile (AGENTS.md, memory summary, plan, skills
+//     list and activations, extras, raw history) immediately before the
+//     user's own message; always injected since each turn starts with
+//     a fresh board
 //   - world.workspace_root / world.collaboration_mode /
 //     world.permission_profile
 func (s *Service) RenderToBoard(
@@ -116,39 +125,27 @@ func (s *Service) RenderToBoard(
 	if err != nil {
 		return err
 	}
-
-	sections := make([]Section, 0, 16)
-	for _, sec := range []Section{agents, environment} {
-		if sec.Text != "" {
-			sections = append(sections, sec)
-		}
-	}
-	// Permissions are live state: the allowlist grows when the user
-	// approves commands, so render it on every turn instead of caching
-	// it with the static sections.
 	permissions, err := s.permissionsSection(ctx, contextID)
 	if err != nil {
 		return err
 	}
-	if permissions.Text != "" {
-		sections = append(sections, permissions)
-	}
-	if sec := s.gitSection(ctx); sec.Text != "" {
-		sections = append(sections, sec)
-	}
-	if s.sessionStore != nil {
-		// Inject only while there is still work: a fully completed
-		// plan is stale context, so it is dropped from the prompt.
-		if p, ok := plan.NewStore(s.sessionStore).Latest(
-			agentID, contextID,
-		); ok && !p.Done() {
-			sections = append(sections, Section{
-				ID:   "plan",
-				Role: "system",
-				Text: renderPlanSection(p),
-			})
+
+	sections := make([]Section, 0, len(baseFragmentOrder)+16)
+	// System-role prefix stays fixed within a session (modulo
+	// approvals): only opencraft rules and harness-owned session
+	// settings ride here, so the prefix remains cache-stable.
+	sections = append(sections, s.instructionSections(ctx)...)
+	for _, sec := range []Section{environment, permissions} {
+		if sec.Content.Text() != "" {
+			sections = append(sections, sec)
 		}
 	}
+
+	// Everything below is user-role context, ordered stable-first so
+	// the volatile conversation tail never invalidates longer-lived
+	// content: AGENTS.md, folded memory, plan, skills (list + bodies),
+	// extras, then raw history last.
+	var summaries, raw []Section
 	if s.memory != nil {
 		if rp, ok := s.memory.(interface {
 			ReplayFullHistory() bool
@@ -162,7 +159,27 @@ func (s *Service) RenderToBoard(
 				}
 			}
 		} else {
-			sections = append(sections, s.memorySections(ctx, contextID)...)
+			for _, sec := range s.memorySections(ctx, contextID) {
+				if sec.ID == "memory_summary" {
+					summaries = append(summaries, sec)
+				} else {
+					raw = append(raw, sec)
+				}
+			}
+		}
+	}
+	if agents.Content.Text() != "" {
+		sections = append(sections, agents)
+	}
+	sections = append(sections, summaries...)
+	if s.sessionStore != nil {
+		// Inject only while there is still work: a fully completed
+		// plan is stale context, so it is dropped from the prompt.
+		if p, ok := plan.NewStore(s.sessionStore).Latest(
+			agentID, contextID,
+		); ok && !p.Done() {
+			sections = append(sections, newTextSection(
+				"plan", message.RoleUser, renderPlanSection(p)))
 		}
 	}
 	if s.opts.Skills != nil && s.opts.Skills.Enabled() {
@@ -170,11 +187,7 @@ func (s *Service) RenderToBoard(
 			s.skillsSections(ctx, agentID, contextID, reqText)...)
 	}
 	sections = append(sections, extras...)
-	// Group user-role context after system-role context: AGENTS.md and
-	// activated skills are user-side instructions, not opencraft rules,
-	// so they read as "external input" right before the real user
-	// message instead of being interleaved among the system sections.
-	sections = orderSystemFirst(sections)
+	sections = append(sections, raw...)
 
 	data, err := json.Marshal(sections)
 	if err != nil {
@@ -187,26 +200,12 @@ func (s *Service) RenderToBoard(
 	return nil
 }
 
-// orderSystemFirst stably partitions sections so every system-role
-// section precedes every user-role section, preserving relative order
-// within each group.
-func orderSystemFirst(sections []Section) []Section {
-	sys := make([]Section, 0, len(sections))
-	user := make([]Section, 0, len(sections))
-	for _, sec := range sections {
-		if sec.Role == "user" {
-			user = append(user, sec)
-		} else {
-			sys = append(sys, sec)
-		}
-	}
-	return append(sys, user...)
-}
-
 // skillsSections renders the per-turn skills list (top-N by BM25 over
-// the user input, plus any $mention) and injects the full SKILL.md
-// body for explicitly mentioned skills. Rendered every turn like the
-// permissions section, never cached in sessionState.static.
+// the user input, plus any $mention) and the full SKILL.md body for
+// explicitly mentioned skills. Both are user-role content: skills are
+// user/project-supplied capabilities, so they never ride as system
+// instructions. Rendered every turn, never cached in
+// sessionState.static.
 func (s *Service) skillsSections(
 	ctx context.Context,
 	agentID, contextID, reqText string,
@@ -222,11 +221,8 @@ func (s *Service) skillsSections(
 	list := mergeSkillLists(mentioned, ranked)
 	var out []Section
 	if len(list) > 0 {
-		out = append(out, Section{
-			ID:   "skills",
-			Role: "system",
-			Text: skills.RenderSection(list),
-		})
+		out = append(out, newTextSection(
+			"skills", message.RoleUser, skills.RenderSection(list)))
 		// Never log the user's message text: reqText can contain
 		// anything the user typed. Only metadata is emitted.
 		attrs := []log.KeyValue{
@@ -242,36 +238,29 @@ func (s *Service) skillsSections(
 	for _, sk := range mentioned {
 		_, content, err := svc.ReadFull(sk.Name)
 		if err != nil {
-			out = append(out, Section{
-				ID:   "skill",
-				Role: "user",
-				Text: renderSkillActivation(
-					sk, "", "", "(load failed: "+err.Error()+")"),
-			})
+			out = append(out, newTextSection(
+				"skill", message.RoleUser,
+				renderSkillActivation(
+					sk, "", "", "(load failed: "+err.Error()+")")))
 			continue
 		}
-		out = append(out, Section{
-			ID:   "skill",
-			Role: "user",
-			Text: renderSkillActivation(
-				sk, s.stageSkill(sk, contextID), "", content),
-		})
+		out = append(out, newTextSection(
+			"skill", message.RoleUser,
+			renderSkillActivation(
+				sk, s.stageSkill(sk, contextID), "", content)))
 	}
 	for _, name := range modelRequested {
 		sk, content, err := svc.ReadFull(name)
 		if err != nil {
 			continue
 		}
-		out = append(out, Section{
-			ID:   "skill",
-			Role: "user",
-			Text: renderSkillActivation(
+		out = append(out, newTextSection(
+			"skill", message.RoleUser,
+			renderSkillActivation(
 				sk,
 				s.stageSkill(sk, contextID),
 				"requested by the model in a previous reply.",
-				content,
-			),
-		})
+				content)))
 		telemetry.Info(ctx, "skills: model-requested activation injected",
 			log.String("skill", sk.Name))
 	}
@@ -357,60 +346,34 @@ func (s *Service) memorySections(ctx context.Context, contextID string) []Sectio
 	if err != nil {
 		return nil
 	}
+	var raws []memory.ContextItem
 	sections := make([]Section, 0, len(res.Items))
 	for _, item := range res.Items {
-		text := item.Content.Text()
-		if text == "" {
-			continue
-		}
 		switch item.Kind {
 		case memory.ContextSummary:
-			sections = append(sections, Section{
-				ID:   "memory_summary",
-				Role: "system",
-				Text: text,
-			})
-		case memory.ContextRawMessage:
-			role := string(item.MessageRole)
-			switch role {
-			case "user", "assistant":
-				// keep
-			case "tool":
-				// Tool results are persisted as role=tool items, but the
-				// provider wire format requires a role=tool message to
-				// carry a tool_call_id paired with a preceding assistant
-				// call. Rendered as plain context, they read as
-				// user-supplied material, so inject them as user.
-				role = "user"
-			default:
-				role = "user"
+			text := item.Content.Text()
+			if text == "" {
+				continue
 			}
-			sections = append(sections, Section{
-				ID:   "memory_raw",
-				Role: role,
-				Text: text,
-			})
+			sections = append(sections, newTextSection(
+				"memory_summary", message.RoleUser, text))
+		case memory.ContextRawMessage:
+			raws = append(raws, item)
 		}
 	}
+	sections = append(sections, renderRawSections(raws)...)
 	return sections
 }
 
-// historyMessage is one replayed conversation message handed to the
-// graph's world node via the world.history board var.
-type historyMessage struct {
-	Role string `json:"role"`
-	Text string `json:"text"`
-}
-
-// replayHistory returns the full persisted conversation as plain-text
-// messages in chronological order. An unlimited budget is requested on
-// purpose: the graph compact node decides when to fold based on the
-// model's input window. Tool results are rendered as user-role text,
-// matching the memory raw-window mapping.
+// replayHistory returns the full persisted conversation in
+// chronological order, preserving assistant tool_call / tool result
+// pairing where the stored messages are complete. An unlimited budget
+// is requested on purpose: the graph compact node decides when to fold
+// based on the model's input window.
 func (s *Service) replayHistory(
 	ctx context.Context,
 	contextID string,
-) []historyMessage {
+) []message.Message {
 	res, err := s.memory.Context(ctx, memory.ContextRequest{
 		Scope:          memory.Scope{RuntimeID: "opencraft"},
 		ConversationID: contextID,
@@ -419,20 +382,11 @@ func (s *Service) replayHistory(
 	if err != nil {
 		return nil
 	}
-	out := make([]historyMessage, 0, len(res.Items))
+	var raws []memory.ContextItem
 	for _, item := range res.Items {
-		if item.Kind != memory.ContextRawMessage {
-			continue
+		if item.Kind == memory.ContextRawMessage {
+			raws = append(raws, item)
 		}
-		text := item.Content.Text()
-		if text == "" {
-			continue
-		}
-		role := string(item.MessageRole)
-		if role != "user" && role != "assistant" {
-			role = "user"
-		}
-		out = append(out, historyMessage{Role: role, Text: text})
 	}
-	return out
+	return renderHistoryMessages(raws)
 }

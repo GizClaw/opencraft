@@ -104,6 +104,154 @@ func TestRenderToBoardRefreshesAgentsMdEachTurn(t *testing.T) {
 	}
 }
 
+func TestRenderToBoardPlacesAgentsAfterPermissions(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, "AGENTS.md"), "project rules")
+	svc := New(Options{WorkBase: root})
+	board := agent.NewBoard()
+	if err := svc.RenderToBoard(
+		context.Background(), "assistant", "s-c1", "hi", nil, board,
+	); err != nil {
+		t.Fatal(err)
+	}
+	raw := board.GetVarString("world.sections")
+	var sections []Section
+	if err := json.Unmarshal([]byte(raw), &sections); err != nil {
+		t.Fatalf("sections = %q: %v", raw, err)
+	}
+	if len(sections) != len(baseFragmentOrder)+3 {
+		t.Fatalf("sections = %d (%v), want base(%d) + environment + permissions + agents_md",
+			len(sections), ids(sections), len(baseFragmentOrder))
+	}
+	got := ids(sections)
+	if got[len(baseFragmentOrder)] != "environment" ||
+		got[len(baseFragmentOrder)+1] != "permissions" ||
+		got[len(baseFragmentOrder)+2] != "agents_md" {
+		t.Fatalf("order after base = %v, want environment, permissions, agents_md",
+			got[len(baseFragmentOrder):])
+	}
+	if sections[len(sections)-1].Role != "user" {
+		t.Fatalf("agents_md role = %q, want user (user-authored guidance)",
+			sections[len(sections)-1].Role)
+	}
+	for _, sec := range sections {
+		if sec.ID == "git" {
+			t.Fatalf("git section must not be injected: %+v", sections)
+		}
+	}
+}
+
+func TestRenderToBoardGroupsAllSystemBeforeUserContent(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, "AGENTS.md"), "project rules")
+	svc := New(Options{WorkBase: root})
+	svc.memory = stubMemory{items: []corememory.ContextItem{
+		{
+			Kind: corememory.ContextSummary,
+			Content: message.Content{Parts: []message.Part{
+				message.TextPart{Text: "folded summary"},
+			}},
+		},
+		{
+			Kind:        corememory.ContextRawMessage,
+			MessageRole: message.RoleUser,
+			Content: message.Content{Parts: []message.Part{
+				message.TextPart{Text: "raw history"},
+			}},
+		},
+	}}
+	board := agent.NewBoard()
+	if err := svc.RenderToBoard(
+		context.Background(), "assistant", "s-c1", "hi", nil, board,
+	); err != nil {
+		t.Fatal(err)
+	}
+	rawBoard := board.GetVarString("world.sections")
+	var sections []Section
+	if err := json.Unmarshal([]byte(rawBoard), &sections); err != nil {
+		t.Fatalf("sections = %q: %v", rawBoard, err)
+	}
+	assertSystemFirst(t, sections)
+	var summaryAt, agentsAt, rawAt = -1, -1, -1
+	for i, sec := range sections {
+		switch sec.ID {
+		case "memory_summary":
+			summaryAt = i
+		case "agents_md":
+			agentsAt = i
+		case "memory_raw":
+			rawAt = i
+		}
+	}
+	if summaryAt < 0 || agentsAt < 0 || rawAt < 0 ||
+		agentsAt >= summaryAt || summaryAt >= rawAt {
+		t.Fatalf("order = %v, want agents_md < memory_summary < memory_raw",
+			ids(sections))
+	}
+}
+
+func TestRenderToBoardFullSectionOrder(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, "AGENTS.md"), "project rules")
+	writeSkillFile(t, root, "review", "review code and docs")
+	svc := skills.NewService(context.Background(), skills.Options{
+		WorkBase: root, Enabled: true, TopN: 5,
+	})
+	ws := New(Options{WorkBase: root})
+	ws.SetSkills(svc)
+	ws.memory = stubMemory{items: []corememory.ContextItem{
+		{
+			Kind: corememory.ContextSummary,
+			Content: message.Content{Parts: []message.Part{
+				message.TextPart{Text: "folded summary"},
+			}},
+		},
+		{
+			Kind:        corememory.ContextRawMessage,
+			MessageRole: message.RoleUser,
+			Content: message.Content{Parts: []message.Part{
+				message.TextPart{Text: "raw history"},
+			}},
+		},
+	}}
+	sess := newSessionStore(t)
+	store := plan.NewStore(sess)
+	if _, err := store.Update("assistant", "s-c1", plan.UpdatePlanArgs{
+		Plan: []plan.PlanItem{
+			{Step: "inspect", Status: plan.StatusInProgress},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ws.SetSessions(sess)
+
+	board := agent.NewBoard()
+	if err := ws.RenderToBoard(
+		context.Background(), "assistant", "s-c1", "use $review", nil, board,
+	); err != nil {
+		t.Fatal(err)
+	}
+	sections := unmarshalSections(t, board)
+	assertSystemFirst(t, sections)
+	want := []string{
+		"agents_md", "memory_summary", "plan", "skills", "skill", "memory_raw",
+	}
+	pos := -1
+	for _, id := range want {
+		next := -1
+		for i, sec := range sections {
+			if sec.ID == id && i > pos {
+				next = i
+				break
+			}
+		}
+		if next < 0 {
+			t.Fatalf("section %q missing or out of order in %v", id, ids(sections))
+		}
+		pos = next
+	}
+}
+
 func TestDiscoverAgentsViaWorkspace(t *testing.T) {
 	root := t.TempDir()
 	write(t, filepath.Join(root, ".git"), "")
@@ -149,11 +297,11 @@ func TestPermissionsSectionShowsLiveRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !contains(sec.Text, "go test") || !contains(sec.Text, "npm install") {
-		t.Fatalf("permissions section = %q, want approved prefixes", sec.Text)
+	if !contains(sec.Content.Text(), "go test") || !contains(sec.Content.Text(), "npm install") {
+		t.Fatalf("permissions section = %q, want approved prefixes", sec.Content.Text())
 	}
-	if !contains(sec.Text, "rejected without asking") {
-		t.Fatalf("permissions section = %q, want workspace confinement note", sec.Text)
+	if !contains(sec.Content.Text(), "rejected without asking") {
+		t.Fatalf("permissions section = %q, want workspace confinement note", sec.Content.Text())
 	}
 
 	// Without a provider the approved-prefix line is omitted entirely.
@@ -162,8 +310,8 @@ func TestPermissionsSectionShowsLiveRules(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if contains(sec2.Text, "Approved command prefixes") {
-		t.Fatalf("permissions section = %q, want no approved-prefix line", sec2.Text)
+	if contains(sec2.Content.Text(), "Approved command prefixes") {
+		t.Fatalf("permissions section = %q, want no approved-prefix line", sec2.Content.Text())
 	}
 }
 
@@ -186,8 +334,8 @@ func TestPermissionsSectionShowsYOLOForSession(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if contains(sec.Text, "yolo") {
-			t.Fatalf("workspace session must not show yolo: %q", sec.Text)
+		if contains(sec.Content.Text(), "yolo") {
+			t.Fatalf("workspace session must not show yolo: %q", sec.Content.Text())
 		}
 	}
 	if err := store.SetMode(context.Background(), id, ocsessions.ModeYOLO); err != nil {
@@ -197,8 +345,17 @@ func TestPermissionsSectionShowsYOLOForSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !contains(sec2.Text, "yolo") {
-		t.Fatalf("yolo session must show the marker: %q", sec2.Text)
+	if !contains(sec2.Content.Text(), "yolo") {
+		t.Fatalf("yolo session must show the marker: %q", sec2.Content.Text())
+	}
+	for _, forbidden := range []string{
+		"Commands outside the approved allowlist",
+		"File reads and writes are confined",
+	} {
+		if contains(sec2.Content.Text(), forbidden) {
+			t.Fatalf("yolo permissions section must not claim approvals/file confinement: %q",
+				sec2.Content.Text())
+		}
 	}
 }
 
@@ -221,8 +378,8 @@ func TestPermissionsSectionShowsReadOnlyForSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if contains(sec.Text, "read-only") {
-		t.Fatalf("workspace session must not show read-only: %q", sec.Text)
+	if contains(sec.Content.Text(), "read-only") {
+		t.Fatalf("workspace session must not show read-only: %q", sec.Content.Text())
 	}
 	if err := store.SetMode(context.Background(), id, ocsessions.ModeReadOnly); err != nil {
 		t.Fatal(err)
@@ -231,8 +388,8 @@ func TestPermissionsSectionShowsReadOnlyForSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !contains(sec2.Text, "read-only") {
-		t.Fatalf("read-only session must show the marker: %q", sec2.Text)
+	if !contains(sec2.Content.Text(), "read-only") {
+		t.Fatalf("read-only session must show the marker: %q", sec2.Content.Text())
 	}
 }
 
@@ -275,19 +432,19 @@ func TestMemorySectionsIncludeSummariesAndRaw(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("sections = %+v, want summary + raw", got)
 	}
-	if got[0].ID != "memory_summary" || got[0].Role != "system" || !contains(got[0].Text, "folded summary") {
+	if got[0].ID != "memory_summary" || got[0].Role != "user" || !contains(got[0].Content.Text(), "folded summary") {
 		t.Fatalf("summary section = %+v", got[0])
 	}
-	if got[1].ID != "memory_raw" || got[1].Role != string(message.RoleAssistant) || !contains(got[1].Text, "recent raw message") {
+	if got[1].ID != "memory_raw" || got[1].Role != message.RoleAssistant || !contains(got[1].Content.Text(), "recent raw message") {
 		t.Fatalf("raw section = %+v", got[1])
 	}
 }
 
-// TestMemorySectionsMapToolRoleToUser verifies persisted tool-result
-// messages are injected as user context: the provider wire format
-// requires role=tool messages to carry a tool_call_id paired with a
-// preceding assistant call, which rendered raw context does not have.
-func TestMemorySectionsMapToolRoleToUser(t *testing.T) {
+// TestMemorySectionsDropsToolTextWithoutPair verifies a text-only
+// role=tool row (no ToolResultPart and no matching call in the batch)
+// is treated as an orphan and omitted instead of becoming an invalid
+// tool message or a misleading user turn.
+func TestMemorySectionsDropsToolTextWithoutPair(t *testing.T) {
 	svc := New(Options{WorkBase: t.TempDir()})
 	svc.memory = stubMemory{items: []corememory.ContextItem{
 		{
@@ -299,11 +456,8 @@ func TestMemorySectionsMapToolRoleToUser(t *testing.T) {
 		},
 	}}
 	got := svc.memorySections(context.Background(), "s-c1")
-	if len(got) != 1 {
-		t.Fatalf("sections = %+v, want one raw section", got)
-	}
-	if got[0].ID != "memory_raw" || got[0].Role != string(message.RoleUser) || !contains(got[0].Text, "tool_result: build ok") {
-		t.Fatalf("tool raw section = %+v, want role user", got[0])
+	if len(got) != 0 {
+		t.Fatalf("sections = %+v, want orphan tool text dropped", got)
 	}
 }
 
@@ -347,12 +501,57 @@ func TestRenderToBoardInjectsMemorySectionsNoHistory(t *testing.T) {
 		}
 	}
 	assertSystemFirst(t, sections)
-	if summary == nil || !contains(summary.Text, "folded summary") {
+	if summary == nil || !contains(summary.Content.Text(), "folded summary") {
 		t.Fatalf("missing summary section in %+v", sections)
 	}
-	if rawMsg == nil || rawMsg.Role != string(message.RoleUser) || !contains(rawMsg.Text, "latest user turn") {
+	if rawMsg == nil || rawMsg.Role != message.RoleUser || !contains(rawMsg.Content.Text(), "latest user turn") {
 		t.Fatalf("missing raw section with role in %+v", sections)
 	}
+}
+
+// TestRenderToBoardNormalizesRawToolContext locks the final world
+// sections for a dirty raw window: a call without a result must become
+// a synthetic aborted tool message, and an orphan result must not leak
+// into the model as text.
+func TestRenderToBoardNormalizesRawToolContext(t *testing.T) {
+	svc := New(Options{WorkBase: t.TempDir()})
+	svc.memory = stubMemory{items: []corememory.ContextItem{
+		toolCallItem("c-raw-1"),
+		toolResultItem("missing", "orphan output"),
+	}}
+	board := agent.NewBoard()
+	if err := svc.RenderToBoard(
+		context.Background(), "assistant", "s-c1", "continue", nil, board,
+	); err != nil {
+		t.Fatal(err)
+	}
+	sections := unmarshalSections(t, board)
+	var raws []Section
+	for _, sec := range sections {
+		if sec.ID == "memory_raw" {
+			raws = append(raws, sec)
+		}
+	}
+	if len(raws) != 2 {
+		t.Fatalf("memory_raw sections = %+v, want call + aborted result", raws)
+	}
+	if raws[0].Role != message.RoleAssistant {
+		t.Fatalf("first raw role = %s, want assistant", raws[0].Role)
+	}
+	if raws[1].Role != message.RoleTool {
+		t.Fatalf("second raw role = %s, want tool", raws[1].Role)
+	}
+	results := raws[1].ToolResults()
+	if len(results) != 1 || results[0].CallID != "c-raw-1" ||
+		results[0].Content != "aborted" {
+		t.Fatalf("synthetic result = %+v", results)
+	}
+	for _, sec := range raws {
+		if sec.Content.Text() == "orphan output" {
+			t.Fatalf("orphan output leaked into world sections: %+v", raws)
+		}
+	}
+	assertSystemFirst(t, sections)
 }
 
 func TestRenderToBoardReplayFullHistory(t *testing.T) {
@@ -399,9 +598,10 @@ func TestRenderToBoardReplayFullHistory(t *testing.T) {
 	}
 }
 
-// assertSystemFirst fails when a user-role section precedes a
-// system-role section: the world block must read as system context
-// first, user-side instructions last.
+// assertSystemFirst fails when a user-role section precedes a later
+// system-role section: system context must be grouped first, and all
+// user-side content (AGENTS.md, raw history, activated skills) must
+// follow as a single trailing block.
 func assertSystemFirst(t *testing.T, sections []Section) {
 	t.Helper()
 	seenUser := false
@@ -450,10 +650,13 @@ func TestRenderToBoardInjectsLatestPlan(t *testing.T) {
 	if planSec == nil {
 		t.Fatalf("no plan section in %+v", sections)
 	}
-	if !contains(planSec.Text, "inspect") ||
-		!contains(planSec.Text, plan.StatusInProgress) ||
-		!contains(planSec.Text, "fix the bug") {
-		t.Fatalf("plan section = %q, want checklist with explanation", planSec.Text)
+	if planSec.Role != "user" {
+		t.Fatalf("plan role = %q, want user (plan is user-side state)", planSec.Role)
+	}
+	if !contains(planSec.Content.Text(), "inspect") ||
+		!contains(planSec.Content.Text(), plan.StatusInProgress) ||
+		!contains(planSec.Content.Text(), "fix the bug") {
+		t.Fatalf("plan section = %q, want checklist with explanation", planSec.Content.Text())
 	}
 
 	// An empty store injects no plan section.
@@ -551,10 +754,15 @@ func TestRenderToBoardInjectsRankedSkills(t *testing.T) {
 	if skillsSec == nil {
 		t.Fatalf("no skills section in %+v", sections)
 	}
-	if !contains(skillsSec.Text, "review") ||
-		contains(skillsSec.Text, "Do the review thing.") {
-		t.Fatalf("skills section = %q, want metadata only", skillsSec.Text)
+	if skillsSec.Role != "user" {
+		t.Fatalf("skills list role = %q, want user (skill content is not system rules)",
+			skillsSec.Role)
 	}
+	if !contains(skillsSec.Content.Text(), "review") ||
+		contains(skillsSec.Content.Text(), "Do the review thing.") {
+		t.Fatalf("skills section = %q, want metadata only", skillsSec.Content.Text())
+	}
+	assertSystemFirst(t, sections)
 }
 
 func TestRenderToBoardSkipsSkillsWhenNoMatch(t *testing.T) {
@@ -590,17 +798,29 @@ func TestRenderToBoardMentionInjectsFullText(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	var full *Section
-	for _, sec := range unmarshalSections(t, board) {
-		if sec.ID == "skill" {
-			full = &sec
+	var list, full *Section
+	listAt, fullAt := -1, -1
+	sections := unmarshalSections(t, board)
+	for i, sec := range sections {
+		switch sec.ID {
+		case "skills":
+			list, listAt = &sec, i
+		case "skill":
+			full, fullAt = &sec, i
 		}
 	}
 	if full == nil {
 		t.Fatalf("mention must inject a full-text skill section")
 	}
-	if full.Role != "user" || !contains(full.Text, "Do the review thing.") {
+	if full.Role != "user" || !contains(full.Content.Text(), "Do the review thing.") {
 		t.Fatalf("skill section = %+v, want user role with full body", full)
+	}
+	if list == nil || list.Role != "user" {
+		t.Fatalf("skills list = %+v, want user role next to its activation", list)
+	}
+	if fullAt <= listAt {
+		t.Fatalf("skill activation (%d) must follow the skills list (%d): %v",
+			fullAt, listAt, ids(sections))
 	}
 }
 
@@ -632,7 +852,7 @@ func TestMentionStagesSkillToCache(t *testing.T) {
 			full = &sec
 		}
 	}
-	if full == nil || !contains(full.Text, "staged copy for execution") {
+	if full == nil || !contains(full.Content.Text(), "staged copy for execution") {
 		t.Fatalf("mention must stage the skill: %+v", full)
 	}
 	staged := filepath.Join(userDir, "cache", "staged", "s-c1",
@@ -673,11 +893,11 @@ func TestModelRequestedActivation(t *testing.T) {
 	}
 	var injected *Section
 	for _, sec := range unmarshalSections(t, board) {
-		if sec.ID == "skill" && contains(sec.Text, "requested by the model") {
+		if sec.ID == "skill" && contains(sec.Content.Text(), "requested by the model") {
 			injected = &sec
 		}
 	}
-	if injected == nil || !contains(injected.Text, "Do the review thing.") {
+	if injected == nil || !contains(injected.Content.Text(), "Do the review thing.") {
 		t.Fatalf("model-requested activation missing: %+v",
 			unmarshalSections(t, board))
 	}
@@ -690,7 +910,7 @@ func TestModelRequestedActivation(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, sec := range unmarshalSections(t, board2) {
-		if sec.ID == "skill" && contains(sec.Text, "requested by the model") {
+		if sec.ID == "skill" && contains(sec.Content.Text(), "requested by the model") {
 			t.Fatalf("activation must be consumed after one turn: %+v", sec)
 		}
 	}

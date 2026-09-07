@@ -114,7 +114,9 @@ type foldMsg struct {
 func BufferFold(policy Policy, threadID string, messages []message.Message, prev *SummaryNode, now time.Time) (*SummaryNode, error) {
 	p := policy.Normalize()
 	candidates := foldCandidates(threadID, messages)
-	return bufferFoldCandidates(p, threadID, candidates, len(candidates), prev, now)
+	foldBoundary := len(candidates) - p.MaxRawMessages - p.PreserveRecent
+	return bufferFoldCandidates(
+		p, threadID, candidates, len(candidates), foldBoundary, prev, now)
 }
 
 // bufferFoldCandidates is the rolling fold over an explicit candidate list.
@@ -130,14 +132,15 @@ func bufferFoldCandidates(
 	threadID string,
 	candidates []foldMsg,
 	totalText int,
+	foldBoundary int,
 	prev *SummaryNode,
 	now time.Time,
 ) (*SummaryNode, error) {
-	// Messages older than the raw window plus the preserve-recent band are
-	// fold candidates; the rest stay raw in context.
-	foldBoundary := totalText - p.MaxRawMessages - p.PreserveRecent
 	if foldBoundary <= 0 {
 		return nil, nil
+	}
+	if foldBoundary > totalText {
+		foldBoundary = totalText
 	}
 	// Trim defensively to the foldable region (position-based; a caller may
 	// pass the full candidate list including raw-window messages). A suffix

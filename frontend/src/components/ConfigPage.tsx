@@ -696,6 +696,12 @@ export function ConfigPage() {
     return String(n);
   };
 
+  const usageHitLabel = (input: number, cacheRead: number) => {
+    if (input <= 0) return '—';
+    const rate = Math.min(100, Math.max(0, (cacheRead / input) * 100));
+    return `${rate.toFixed(rate >= 99.95 ? 0 : 1)}%`;
+  };
+
   const fmtBytes = (n: number) => {
     if (n >= 1 << 30) return `${(n / (1 << 30)).toFixed(2)} GB`;
     if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(1)} MB`;
@@ -1552,6 +1558,12 @@ export function ConfigPage() {
                             <th className="px-3 py-2 font-medium text-right">
                               {t('config.usageCache')}
                             </th>
+                            <th
+                              className="px-3 py-2 font-medium text-right"
+                              title={t('config.usageCacheHitHint')}
+                            >
+                              {t('config.usageCacheHitRate')}
+                            </th>
                             <th className="px-3 py-2 font-medium text-right">
                               {t('config.usageCacheWrite')}
                             </th>
@@ -1590,6 +1602,12 @@ export function ConfigPage() {
                                 }`}
                               >
                                 {fmtUsageTokens(r.cache_read_tokens)}
+                              </td>
+                              <td className="px-3 py-2 text-right tabular-nums">
+                                {usageHitLabel(
+                                  r.input_tokens,
+                                  r.cache_read_tokens,
+                                )}
                               </td>
                               <td className="px-3 py-2 text-right tabular-nums">
                                 {fmtUsageTokens(r.cache_write_tokens)}

@@ -1,6 +1,6 @@
-// Sandbox exec policy: layered static rules, a project-scoped approvals
-// file, and an approver that asks the user through the core prompt
-// protocol.
+// Sandbox exec policy: layered static rules, the workspace-owned
+// approvals file under ~/.opencraft/workspaces/<wid>/, and an approver
+// that asks the user through the core prompt protocol.
 package execpolicy
 
 import (
@@ -27,9 +27,8 @@ import (
 )
 
 // approvalsFile is the on-disk shape of the workspace-owned
-// approvals.yaml under ~/.opencraft/workspaces/<wid>/:
-// dynamically approved commands, stored per project so they can be
-// committed and shared with the team.
+// approvals.yaml under ~/.opencraft/workspaces/<wid>/: dynamically
+// approved commands, kept out of the project directory.
 type approvalsFile struct {
 	Version string   `json:"version"`
 	Allow   []string `json:"allow,omitempty"`
@@ -38,7 +37,7 @@ type approvalsFile struct {
 // approvalsVersion is the current approvals file schema version.
 const approvalsVersion = "v1"
 
-// Manager owns the dynamic command allowlist and its project-backed
+// Manager owns the dynamic command allowlist and its workspace-backed
 // approvals file. It is safe for concurrent use while Exec calls are
 // in flight.
 type Manager struct {
@@ -48,7 +47,7 @@ type Manager struct {
 	hooks     *hooks.Manager
 }
 
-// New loads static rules plus the project approvals file (when it
+// New loads static rules plus the workspace approvals file (when it
 // exists) into one allowlist. Invalid rules abort construction.
 func New(rules []string, approvalsPath string) (*Manager, error) {
 	a, err := sandbox.NewAllowlist(rules...)
@@ -162,7 +161,7 @@ func (m *Manager) Approve(
 }
 
 // AlwaysAllow adds a rule to the allowlist and persists it to the
-// project approvals file. The in-memory update and the file
+// workspace approvals file. The in-memory update and the file
 // read-modify-write share one lock so concurrent approvals cannot lose
 // each other's persisted rules.
 func (m *Manager) AlwaysAllow(rule string) error {

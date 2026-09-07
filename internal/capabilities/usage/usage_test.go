@@ -34,7 +34,7 @@ func TestRecordAndSummary(t *testing.T) {
 	at := time.Date(2026, 9, 1, 8, 30, 0, 0, time.UTC)
 
 	// Same model across two workspaces and several sessions.
-	if err := store.Record(ctx, "ws-a", "s-1", "deepseek-chat", at, Usage{
+	if err := store.Record(ctx, "ws-a", "s-1", "deepseek-chat", at, ocsessions.Usage{
 		InputTokens:      100,
 		OutputTokens:     20,
 		CacheReadTokens:  10,
@@ -43,27 +43,27 @@ func TestRecordAndSummary(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Record(ctx, "ws-a", "s-2", "deepseek-chat", at, Usage{
+	if err := store.Record(ctx, "ws-a", "s-2", "deepseek-chat", at, ocsessions.Usage{
 		InputTokens:  50,
 		OutputTokens: 10,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Record(ctx, "ws-b", "s-3", "deepseek-chat", at, Usage{
+	if err := store.Record(ctx, "ws-b", "s-3", "deepseek-chat", at, ocsessions.Usage{
 		InputTokens:     200,
 		OutputTokens:    40,
 		ReasoningTokens: 5,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Record(ctx, "ws-a", "s-1", "gpt-4o", at, Usage{
+	if err := store.Record(ctx, "ws-a", "s-1", "gpt-4o", at, ocsessions.Usage{
 		InputTokens:  30,
 		OutputTokens: 5,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	// Empty model is ignored.
-	if err := store.Record(ctx, "ws-a", "s-1", "", at, Usage{InputTokens: 1}); err != nil {
+	if err := store.Record(ctx, "ws-a", "s-1", "", at, ocsessions.Usage{InputTokens: 1}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -248,14 +248,14 @@ func TestRecordAttributionUsesReportTime(t *testing.T) {
 	if err := store.Record(
 		ctx, "ws-a", "s-1", "deepseek-chat",
 		time.Date(2026, 9, 1, 23, 50, 0, 0, time.UTC),
-		Usage{InputTokens: 100, OutputTokens: 20},
+		ocsessions.Usage{InputTokens: 100, OutputTokens: 20},
 	); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Record(
 		ctx, "ws-a", "s-1", "deepseek-chat",
 		time.Date(2026, 9, 2, 0, 10, 0, 0, time.UTC),
-		Usage{InputTokens: 50, OutputTokens: 10},
+		ocsessions.Usage{InputTokens: 50, OutputTokens: 10},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +291,7 @@ func TestRecordNormalizesProviderPrefixedModel(t *testing.T) {
 	// Legacy import bundles and pre-migration rows can still carry
 	// "provider/name" keys; both write paths must reduce them to the
 	// name-only invariant so the same model never splits across rows.
-	if err := store.Record(ctx, "ws-a", "s-1", "openai/gpt-test", at, Usage{
+	if err := store.Record(ctx, "ws-a", "s-1", "openai/gpt-test", at, ocsessions.Usage{
 		TotalTokens:  120,
 		InputTokens:  100,
 		OutputTokens: 20,
@@ -334,7 +334,7 @@ func TestSessionCountCountsSessionOnceAcrossModels(t *testing.T) {
 		{"ws-a", "s-2", "model-a"},
 		{"ws-b", "s-3", "model-a"},
 	} {
-		if err := store.Record(ctx, m.workspace, m.session, m.model, at, Usage{
+		if err := store.Record(ctx, m.workspace, m.session, m.model, at, ocsessions.Usage{
 			TotalTokens: 10,
 			InputTokens: 10,
 		}); err != nil {

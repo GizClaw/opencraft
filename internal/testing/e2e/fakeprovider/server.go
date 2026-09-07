@@ -35,6 +35,7 @@ type Server struct {
 	replies []Reply
 	calls   int
 	hold    *Gate
+	bodies  [][]byte
 }
 
 // Gate pauses the next completion request until Release. It lets
@@ -103,6 +104,25 @@ func (s *Server) Calls() int {
 	return s.calls
 }
 
+// LastMessages decodes and returns the `messages` array of the most
+// recent completion request, so integration tests can assert what
+// actually reached the provider (system prompt, world sections, and
+// the user turn).
+func (s *Server) LastMessages() ([]map[string]any, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.bodies) == 0 {
+		return nil, nil
+	}
+	var req struct {
+		Messages []map[string]any `json:"messages"`
+	}
+	if err := json.Unmarshal(s.bodies[len(s.bodies)-1], &req); err != nil {
+		return nil, err
+	}
+	return req.Messages, nil
+}
+
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/v1/chat/completions" {
 		http.NotFound(w, r)
@@ -123,6 +143,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	s.calls++
+	s.bodies = append(s.bodies, append([]byte(nil), body...))
 	idx := s.calls - 1
 	if idx >= len(s.replies) || len(s.replies) == 0 {
 		idx = len(s.replies) - 1

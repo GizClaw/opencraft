@@ -354,18 +354,18 @@ func (h *Host) reportUsage(ctx context.Context, usage inference.Usage) {
 	if info, ok := agent.RunInfoFromContext(ctx); ok {
 		runID = info.RunID
 	}
-	delta := usageFromReport(usage)
+	delta := sessions.UsageFromReport(usage)
 	h.mu.Lock()
 	d := h.runs[RunID(runID)]
 	if d == nil {
 		h.mu.Unlock()
 		return
 	}
-	d.usage = addSessionUsage(d.usage, delta)
+	d.usage = sessions.AddUsage(d.usage, delta)
 	if delta.Model != "" && d.usageHours != nil {
 		hour := time.Now().UTC().Truncate(time.Hour).Format(time.RFC3339)
 		key := modelHourKey(delta.Model, hour)
-		d.usageHours[key] = addSessionUsage(d.usageHours[key], delta)
+		d.usageHours[key] = sessions.AddUsage(d.usageHours[key], delta)
 	}
 	fn := d.notify
 	h.mu.Unlock()
@@ -376,49 +376,6 @@ func (h *Host) reportUsage(ctx context.Context, usage inference.Usage) {
 
 func modelHourKey(model, hour string) string {
 	return model + "\x00" + hour
-}
-
-// usageFromReport maps one inference usage report to the session usage
-// delta shape used by the Host and sessions.Store. Model statistics
-// bucket by model name only, so the provider prefix is dropped.
-func usageFromReport(u inference.Usage) sessions.Usage {
-	out := sessions.Usage{
-		InputTokens:  u.InputTokens,
-		OutputTokens: u.OutputTokens,
-		TotalTokens:  u.TotalTokens,
-		LatencyMs:    u.LatencyMs,
-		Calls:        1,
-	}
-	if u.Model.ID.Name != "" {
-		out.Model = u.Model.ID.Name
-	}
-	if u.Output.ReasoningTokens != nil {
-		out.ReasoningTokens = *u.Output.ReasoningTokens
-	}
-	if u.Input.CacheReadTokens != nil {
-		out.CacheReadTokens = *u.Input.CacheReadTokens
-	}
-	if u.Input.CacheWriteTokens != nil {
-		out.CacheWriteTokens = *u.Input.CacheWriteTokens
-	}
-	return out
-}
-
-// addSessionUsage accumulates one usage delta onto a session's running
-// total, keeping the most recent non-empty model attribution.
-func addSessionUsage(base, delta sessions.Usage) sessions.Usage {
-	base.InputTokens += delta.InputTokens
-	base.OutputTokens += delta.OutputTokens
-	base.TotalTokens += delta.TotalTokens
-	base.CacheReadTokens += delta.CacheReadTokens
-	base.CacheWriteTokens += delta.CacheWriteTokens
-	base.ReasoningTokens += delta.ReasoningTokens
-	base.LatencyMs += delta.LatencyMs
-	base.Calls += delta.Calls
-	if delta.Model != "" {
-		base.Model = delta.Model
-	}
-	return base
 }
 
 func (h *Host) takeUsage(runID string) sessions.Usage {

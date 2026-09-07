@@ -22,7 +22,6 @@ nodes:
         threshold_ratio: 0.85
         max_compactions: 3
         max_input_tokens: 0
-        system_prompt_tokens: 2000
   - id: llm
     type: inference
     config:
@@ -63,7 +62,6 @@ nodes:
       intent:
         text:
           reasoning_effort: ${board:think_level:}
-      system_prompt: { embed: assets/graphs/prompts/system.md }
       # Hosted web_search extensions (provider-side search). Flowcraft
       # addresses extensions by deployment provider id (settings.id,
       # e.g. deepseek-inst-0a1b2c3d), which a shared static graph

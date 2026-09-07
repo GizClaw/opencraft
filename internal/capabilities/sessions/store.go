@@ -802,7 +802,8 @@ func (s *Store) SeedStartTitle(
 	if err := requireID(id); err != nil {
 		return err
 	}
-	title := firstArchiveTitle(filterArchive(msgs))
+	archived := filterArchive(msgs)
+	title := firstArchiveTitle(archived)
 	if title == "" {
 		return nil
 	}
@@ -988,37 +989,17 @@ func (s *Store) dir(id string) string {
 	return filepath.Join(s.root, id)
 }
 
-// filterArchive keeps the parts the archive understands.
+// filterArchive keeps every message that carries content. Archive rows
+// persist canonical message.Content JSON, so part kinds are preserved
+// verbatim instead of being whitelisted: dropping unknown parts would
+// lose data, and erroring here would fail an otherwise completed turn.
 func filterArchive(msgs []message.Message) []message.Message {
 	var archived []message.Message
 	for _, m := range msgs {
-		var parts []message.Part
-		for _, p := range m.Content.Parts {
-			switch part := p.(type) {
-			case message.TextPart:
-				parts = append(parts, part)
-			case message.ReasoningPart:
-				parts = append(parts, part)
-			case message.ToolCallPart:
-				parts = append(parts, part)
-			case message.ToolResultPart:
-				parts = append(parts, part)
-			case message.ImagePart:
-				parts = append(parts, part)
-			case message.AudioPart:
-				parts = append(parts, part)
-			case message.VideoPart:
-				parts = append(parts, part)
-			case message.FilePart:
-				parts = append(parts, part)
-			case message.DataPart:
-				parts = append(parts, part)
-			}
-		}
-		if len(parts) > 0 {
+		if len(m.Content.Parts) > 0 {
 			archived = append(archived, message.Message{
 				Role:    m.Role,
-				Content: message.Content{Parts: parts},
+				Content: m.Content.Clone(),
 			})
 		}
 	}

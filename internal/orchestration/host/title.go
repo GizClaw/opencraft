@@ -16,6 +16,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	otellog "go.opentelemetry.io/otel/log"
 
+	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 )
 
@@ -131,7 +132,7 @@ func (h *Host) autoTitle(ctx context.Context, contextID string) {
 	// Title generation is a real model call against this session: feed
 	// its usage into the session total and the user-level model_usage
 	// tables instead of only showing it as a transient UI event.
-	titleUsage := usageFromReport(response.Usage)
+	titleUsage := sessions.UsageFromReport(response.Usage)
 	h.persistTurnUsage(ctx, contextID, []usageDelta{{
 		usage: titleUsage,
 		at:    time.Now().UTC(),

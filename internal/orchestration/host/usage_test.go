@@ -156,7 +156,7 @@ func TestUsageFromReportMapsInferenceFields(t *testing.T) {
 	reasoning := int64(7)
 	cacheRead := int64(3)
 	cacheWrite := int64(2)
-	got := usageFromReport(inference.Usage{
+	got := ocsessions.UsageFromReport(inference.Usage{
 		InputTokens:  100,
 		OutputTokens: 50,
 		TotalTokens:  150,

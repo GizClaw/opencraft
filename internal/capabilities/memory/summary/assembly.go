@@ -159,20 +159,42 @@ func (a *Assembly) FoldOnly(ctx context.Context, conversationID string) error {
 }
 
 // fold loads only what the rolling fold needs and folds old messages into a
-// level-0 node. The cost is bounded by the byte budget plus one bounded
-// chunk — independent of conversation length — instead of scanning the whole
-// thread on every turn.
+// level-0 node. The cost is bounded by the byte budget plus bounded
+// backward chunks (fold tail and pair lookback) — independent of
+// conversation length — instead of scanning the whole thread on every turn.
 func (a *Assembly) fold(ctx context.Context, conversationID string) error {
 	p := a.policy.Normalize()
 	total, err := a.store.CountMessages(ctx, conversationID)
 	if err != nil {
 		return memory.NewError(memory.KindInternal, "turn", err)
 	}
+	w := p.MaxRawMessages + p.PreserveRecent
 	// Nothing has left the raw window yet: there is nothing to fold.
-	if total <= p.MaxRawMessages+p.PreserveRecent {
+	if total <= w {
 		return nil
 	}
-	candidates, err := a.loadFoldTail(ctx, conversationID, total)
+	// Pair-aware fold boundary: if the count-based boundary would fold
+	// an assistant tool_call whose result stays raw, leave the call raw
+	// too so structured history can replay the pair.
+	foldBoundary := total - w
+	rawTail, err := a.store.LoadMessagesRange(
+		ctx, conversationID, foldBoundary, total-1)
+	if err != nil {
+		return memory.NewError(memory.KindInternal, "turn", err)
+	}
+	if safe, _, err := a.pairPrefix(
+		ctx, conversationID, foldBoundary, rawTail,
+	); err != nil {
+		return memory.NewError(memory.KindInternal, "turn", err)
+	} else if safe < foldBoundary {
+		foldBoundary = safe
+	}
+	if foldBoundary <= 0 {
+		// Everything would be folded or a pair reaches the start of the
+		// thread: keep the whole conversation raw for this turn.
+		return nil
+	}
+	candidates, err := a.loadFoldTail(ctx, conversationID, foldBoundary-1)
 	if err != nil {
 		return memory.NewError(memory.KindInternal, "turn", err)
 	}
@@ -180,7 +202,9 @@ func (a *Assembly) fold(ctx context.Context, conversationID string) error {
 	if err != nil {
 		return memory.NewError(memory.KindInternal, "turn", err)
 	}
-	node, err := bufferFoldCandidates(p, conversationID, candidates, total, latestNode(nodes), a.now())
+	node, err := bufferFoldCandidates(
+		p, conversationID, candidates, total, foldBoundary,
+		latestNode(nodes), a.now())
 	if err != nil {
 		return memory.NewError(memory.KindInternal, "turn", err)
 	}
@@ -291,18 +315,31 @@ func (a *Assembly) runCondense(ctx context.Context, job *condenseJob) {
 // independent of conversation length.
 const foldTailChunk = 64
 
-// loadFoldTail loads only the newest foldable messages the rolling window
-// can keep, walking backward from the fold boundary in bounded chunks until
-// the loaded foldable content exceeds the byte budget (the budget is then
-// provably full within the loaded tail) or the start of the conversation is
-// reached. Messages older than the loaded tail are provably dropped by the
-// budget, so they never need to be loaded: a fold costs O(budget) instead of
-// an O(n) full scan. The returned candidates carry their original indices
-// so stable source IDs stay identical to a full load.
-func (a *Assembly) loadFoldTail(ctx context.Context, conversationID string, total int) ([]foldMsg, error) {
+// pairLookbackChunk bounds each backward range query when extending the
+// raw-window boundary across an assistant tool_call / tool result pair.
+const pairLookbackChunk = 32
+
+// pairLookbackMax caps the total distance pairPrefix may walk backward.
+// Providers require tool results to follow their call immediately, so a
+// required call is either in the current window or only a few messages
+// behind its result; anything older is already folded or missing. The cap
+// keeps one dangling tool result from turning every FoldOnly / Context
+// into a full-history scan while still covering far more than the window.
+const pairLookbackMax = 64
+
+// loadFoldTail loads only the newest foldable messages the rolling
+// window can keep, walking backward from end (the newest foldable
+// message index, inclusive) in bounded chunks until the loaded foldable
+// content exceeds the byte budget (the budget is then provably full
+// within the loaded tail) or the start of the conversation is reached.
+// Messages older than the loaded tail are provably dropped by the
+// budget, so they never need to be loaded: a fold costs O(budget)
+// instead of an O(n) full scan. The returned candidates carry their
+// original indices so stable source IDs stay identical to a full load.
+func (a *Assembly) loadFoldTail(
+	ctx context.Context, conversationID string, end int,
+) ([]foldMsg, error) {
 	p := a.policy.Normalize()
-	w := p.MaxRawMessages + p.PreserveRecent
-	end := total - w - 1 // newest foldable message index (inclusive)
 	if end < 0 {
 		return nil, nil
 	}
@@ -339,6 +376,93 @@ func (a *Assembly) loadFoldTail(ctx context.Context, conversationID string, tota
 		out[i] = foldMsg{index: idx, id: stableMessageID(conversationID, idx, msg), msg: msg}
 	}
 	return out, nil
+}
+
+// pairPrefix returns the messages needed to complete every tool
+// pairing that starts at or after boundary. It reports the adjusted
+// boundary (the earliest required assistant call) and the prefix
+// messages between the new and old boundaries. When a required call is
+// not found within the bounded lookback (already folded or missing) the
+// original boundary is kept; worldstate normalization then drops the
+// orphaned result (or synthesizes an aborted output for an unmatched
+// call) instead of emitting an invalid tool message.
+func (a *Assembly) pairPrefix(
+	ctx context.Context,
+	conversationID string,
+	boundary int,
+	raw []message.Message,
+) (int, []message.Message, error) {
+	if boundary <= 0 {
+		return boundary, nil, nil
+	}
+	required := map[string]bool{}
+	for _, msg := range raw {
+		if msg.Role != message.RoleTool {
+			continue
+		}
+		for _, result := range msg.ToolResults() {
+			required[result.CallID] = true
+		}
+	}
+	if len(required) == 0 {
+		return boundary, nil, nil
+	}
+	// Calls already inside the window need no lookback.
+	for _, msg := range raw {
+		for _, call := range msg.ToolCalls() {
+			delete(required, call.ID)
+		}
+	}
+	if len(required) == 0 {
+		return boundary, nil, nil
+	}
+
+	found := map[string]bool{}
+	earliest := -1
+	scanned := 0
+	from := boundary - 1
+	for from >= 0 && scanned < pairLookbackMax {
+		remaining := pairLookbackMax - scanned
+		lo := from - pairLookbackChunk + 1
+		if lo < 0 {
+			lo = 0
+		}
+		if from-lo+1 > remaining {
+			lo = from - remaining + 1
+		}
+		batch, err := a.store.LoadMessagesRange(ctx, conversationID, lo, from)
+		if err != nil {
+			return boundary, nil, err
+		}
+		for i := len(batch) - 1; i >= 0; i-- {
+			idx := lo + i
+			for _, call := range batch[i].ToolCalls() {
+				if !required[call.ID] || found[call.ID] {
+					continue
+				}
+				found[call.ID] = true
+				if earliest < 0 || idx < earliest {
+					earliest = idx
+				}
+			}
+		}
+		if len(found) == len(required) {
+			// Load exactly [earliest, boundary) so the window grows by
+			// only the messages needed to complete the pair.
+			prefix, err := a.store.LoadMessagesRange(
+				ctx, conversationID, earliest, boundary-1)
+			if err != nil {
+				return boundary, nil, err
+			}
+			return earliest, prefix, nil
+		}
+		if lo == 0 {
+			break
+		}
+		scanned += from - lo + 1
+		from = lo - 1
+	}
+	return boundary, nil, nil
 }
 
 // shouldCondense reports whether the folded buffer benefits from LLM
@@ -463,11 +587,11 @@ func (a *Assembly) Context(ctx context.Context, req memory.ContextRequest) (memo
 	// is eligible: messages older than the window that the rolling summary
 	// dropped are not covered, so without this bound they would leak back
 	// into context and crowd out genuinely recent messages. The window is
-	// loaded by original index (CountMessages + a single bounded range), so
-	// context costs O(raw window) instead of an O(n) full scan. The newest
-	// messages are kept first so a tight budget preserves the most relevant
-	// tail; the appended chunk is reversed afterwards to keep chronological
-	// order.
+	// loaded by original index (CountMessages + a single bounded range),
+	// so context costs O(raw window + bounded pair lookback) instead of
+	// an O(n) full scan. The newest messages are kept first so a tight
+	// budget preserves the most relevant tail; the appended chunk is
+	// reversed afterwards to keep chronological order.
 	p := a.policy.Normalize()
 	total, err := a.store.CountMessages(ctx, req.ConversationID)
 	if err != nil {
@@ -483,6 +607,19 @@ func (a *Assembly) Context(ctx context.Context, req memory.ContextRequest) (memo
 		if err != nil {
 			return memory.ContextResult{}, memory.NewError(memory.KindInternal, "context", err)
 		}
+	}
+	// Never cut an assistant tool_call from its tool result: extend the
+	// window start backward when the count-based boundary splits a pair,
+	// so structured tool history can replay with its tool role.
+	newBoundary, prefix, err := a.pairPrefix(
+		ctx, req.ConversationID, boundary, raw)
+	if err != nil {
+		return memory.ContextResult{}, memory.NewError(
+			memory.KindInternal, "context", err)
+	}
+	if len(prefix) > 0 {
+		boundary = newBoundary
+		raw = append(prefix, raw...)
 	}
 	// raw[i] carries original index boundary+i.
 	type rawCandidate struct {

@@ -70,8 +70,8 @@ func TestDiscoverRepoLevelsAndUserDirs(t *testing.T) {
 	if !ok || !strings.Contains(dup.Path, filepath.Join("sub", "dir")) {
 		t.Fatalf("ByName(dup) = %q, want cwd-level dup to beat user-level", dup.Path)
 	}
-	if len(svc.List()) != 9 { // 6 discovered + 3 built-ins
-		t.Fatalf("List() = %d, want 9", len(svc.List()))
+	if len(svc.List()) != 10 { // 6 discovered + 4 built-ins
+		t.Fatalf("List() = %d, want 10", len(svc.List()))
 	}
 }
 
@@ -154,6 +154,50 @@ func TestRankAndMention(t *testing.T) {
 	// Duplicate mentions are de-duplicated; unknown names ignored.
 	if got := svc.Mentioned("$plan $plan $nope"); len(got) != 1 {
 		t.Fatalf("Mentioned dup = %+v, want one", got)
+	}
+}
+
+// TestUserSkillShadowsBuiltinReviewAcrossListRankAndMention ensures a
+// same-named user skill replaces its builtin twin everywhere: List and
+// ranking surface the user copy once instead of showing two "review"
+// entries, and $mention still resolves to the user skill.
+func TestUserSkillShadowsBuiltinReviewAcrossListRankAndMention(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	scanRoot := filepath.Join(root, ".agents", "skills")
+	userPath := writeSkill(t, scanRoot, "review",
+		"name: review\ndescription: user review skill for my team\n")
+	svc := NewService(context.Background(), Options{
+		WorkBase: root, Enabled: true, TopN: 5,
+	})
+
+	var named []SkillMetadata
+	for _, sk := range svc.List() {
+		if sk.Name == "review" {
+			named = append(named, sk)
+		}
+	}
+	if len(named) != 1 {
+		t.Fatalf("List has %d review entries (%+v), want exactly the user skill",
+			len(named), named)
+	}
+	if named[0].Path != userPath || named[0].Scope == "builtin" {
+		t.Fatalf("review entry = %+v, want user path %s", named[0], userPath)
+	}
+
+	for _, sc := range svc.RankScored("review my code", svc.TopN(), 0) {
+		if sc.Skill.Name == "review" && sc.Skill.Path != userPath {
+			t.Fatalf("ranked review = %+v, want user skill", sc.Skill)
+		}
+	}
+
+	sk, ok := svc.ByName("review")
+	if !ok || sk.Path != userPath {
+		t.Fatalf("ByName(review) = %+v, want user skill", sk)
+	}
+	m := svc.Mentioned("$review this diff")
+	if len(m) != 1 || m[0].Path != userPath {
+		t.Fatalf("Mentioned($review) = %+v, want user skill", m)
 	}
 }
 
@@ -343,8 +387,11 @@ func TestSymlinkEscapeRejected(t *testing.T) {
 }
 
 func TestBuiltinEmbedded(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	svc := NewService(context.Background(), Options{WorkBase: t.TempDir(), Enabled: true})
-	for _, name := range []string{"plan", "skill-creator", "skill-installer"} {
+	for _, name := range []string{
+		"plan", "review", "skill-creator", "skill-installer",
+	} {
 		sk, ok := svc.ByName(name)
 		if !ok {
 			t.Fatalf("builtin %s missing", name)

@@ -2,10 +2,12 @@ package memory
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
 
+	corememory "github.com/GizClaw/flowcraft/core/memory"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/memory/summary"
@@ -85,6 +87,52 @@ func TestSQLiteTurnStoreAppendLoadRange(t *testing.T) {
 	}
 }
 
+func TestSQLiteTurnStoreRoundTripsToolParts(t *testing.T) {
+	adapter, _ := newSQLiteTurnStore(t)
+	ctx := context.Background()
+	const conv = "s-tool"
+	raw := []message.Message{
+		{
+			Role: message.RoleAssistant,
+			Content: message.Content{Parts: []message.Part{
+				message.ToolCallPart{Call: message.ToolCall{
+					ID: "c1", Name: "fetch",
+					Arguments: json.RawMessage(`{}`),
+				}},
+			}},
+		},
+		{
+			Role: message.RoleTool,
+			Content: message.Content{Parts: []message.Part{
+				message.ToolResultPart{Result: message.ToolResult{
+					CallID: "c1", Content: "ok",
+				}},
+			}},
+		},
+	}
+	if err := adapter.AppendMessages(ctx, conv, "turn-1",
+		renderConversation(raw)); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := adapter.LoadMessages(ctx, conv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded) != 2 {
+		t.Fatalf("loaded = %d, want 2", len(loaded))
+	}
+	calls := loaded[0].ToolCalls()
+	if loaded[0].Role != message.RoleAssistant || len(calls) != 1 ||
+		calls[0].ID != "c1" {
+		t.Fatalf("call message = %+v, want assistant c1 preserved", loaded[0])
+	}
+	results := loaded[1].ToolResults()
+	if loaded[1].Role != message.RoleTool || len(results) != 1 ||
+		results[0].CallID != "c1" {
+		t.Fatalf("result message = %+v, want tool c1 preserved", loaded[1])
+	}
+}
+
 // TestSQLiteTurnStoreSkipsEmptyText verifies AppendMessages drops messages
 // with empty text so the seq index space contains only text-bearing messages
 // (the contract summary folding relies on for stable source IDs).
@@ -97,6 +145,13 @@ func TestSQLiteTurnStoreSkipsEmptyText(t *testing.T) {
 		message.NewTextMessage(message.RoleUser, "kept"),
 		{Role: message.RoleAssistant, Content: message.Content{}}, // empty text
 		message.NewTextMessage(message.RoleUser, ""),              // empty text
+		// Parts-only rows carry no rendered text; they cannot join the
+		// text-indexed raw window and are skipped with a warning.
+		{Role: message.RoleTool, Content: message.Content{Parts: []message.Part{
+			message.ToolResultPart{Result: message.ToolResult{
+				CallID: "c1", Content: "ok",
+			}},
+		}}},
 		message.NewTextMessage(message.RoleAssistant, "kept-2"),
 	}
 	if err := adapter.AppendMessages(ctx, conv, "turn-1", msgs); err != nil {
@@ -116,6 +171,90 @@ func TestSQLiteTurnStoreSkipsEmptyText(t *testing.T) {
 	}
 	if len(all) != 2 || all[0].Content.Text() != "kept" || all[1].Content.Text() != "kept-2" {
 		t.Errorf("messages = %+v", all)
+	}
+}
+
+// TestAssemblyPairAwareFoldOnSQLiteTurnStore drives the pair-aware fold
+// boundary through the real SQLite append/load path: messages are
+// rendered like the commit hook before Append, FoldOnly advances a
+// boundary that splits an assistant tool_call from its tool result, and
+// the pair still replays with real roles. This covers the round-trip
+// semantics (render-then-append, contiguous seqs, bounded range loads)
+// that fake-store pair tests cannot see.
+func TestAssemblyPairAwareFoldOnSQLiteTurnStore(t *testing.T) {
+	adapter, _ := newSQLiteTurnStore(t)
+	ctx := context.Background()
+	const conv = "s-pair"
+	a := summary.NewAssembly(adapter, summary.WithAssemblyPolicy(summary.Policy{
+		MaxRawMessages: 1, PreserveRecent: 1, MaxSummaryBytes: 4096,
+	}))
+	raw := []message.Message{
+		message.NewTextMessage(message.RoleUser, "hello"),
+		message.NewTextMessage(message.RoleUser, "context one"),
+		message.NewTextMessage(message.RoleUser, "context two"),
+		{Role: message.RoleAssistant, Content: message.Content{Parts: []message.Part{
+			message.ToolCallPart{Call: message.ToolCall{
+				ID: "c1", Name: "fetch",
+				Arguments: json.RawMessage(`{}`),
+			}},
+		}}},
+		{Role: message.RoleTool, Content: message.Content{Parts: []message.Part{
+			message.ToolResultPart{Result: message.ToolResult{
+				CallID: "c1", Content: "ok",
+			}},
+		}}},
+		message.NewTextMessage(message.RoleUser, "next"),
+	}
+	if err := adapter.AppendMessages(ctx, conv, "t-1",
+		renderConversation(raw)); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.FoldOnly(ctx, conv); err != nil {
+		t.Fatalf("FoldOnly: %v", err)
+	}
+
+	// Real append persisted every rendered message, including the tool
+	// pair (no silent empty-text drop).
+	loaded, err := adapter.LoadMessages(ctx, conv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded) != len(raw) {
+		t.Fatalf("loaded = %d messages, want %d", len(loaded), len(raw))
+	}
+
+	res, err := a.Context(ctx, corememory.ContextRequest{
+		Scope:          corememory.Scope{RuntimeID: "rt", AgentID: "a"},
+		ConversationID: conv,
+		Budget:         corememory.Budget{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var raws []corememory.ContextItem
+	for _, item := range res.Items {
+		if item.Kind == corememory.ContextRawMessage {
+			raws = append(raws, item)
+		}
+	}
+	if len(raws) != 3 {
+		t.Fatalf("raw items = %d, want call + result + tail (%+v)",
+			len(raws), res.Items)
+	}
+	wantRoles := []message.Role{
+		message.RoleAssistant, message.RoleTool, message.RoleUser,
+	}
+	for i, want := range wantRoles {
+		if raws[i].MessageRole != want {
+			t.Fatalf("raw item %d role = %q, want %q", i, raws[i].MessageRole, want)
+		}
+	}
+	calls := loaded[3].ToolCalls()
+	results := loaded[4].ToolResults()
+	if len(calls) != 1 || calls[0].ID != "c1" ||
+		len(results) != 1 || results[0].CallID != "c1" {
+		t.Fatalf("persisted pair = %d calls/%d results, want c1/c1",
+			len(calls), len(results))
 	}
 }
 
