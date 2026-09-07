@@ -189,14 +189,8 @@ func (h *Host) recordTurnEnd(
 		Status: status, Error: errText,
 	}
 	if usage.TotalTokens > 0 {
-		ev.Usage = &rollout.Usage{
-			InputTokens:     usage.InputTokens,
-			OutputTokens:    usage.OutputTokens,
-			CacheReadTokens: usage.CacheReadTokens,
-			ReasoningTokens: usage.ReasoningTokens,
-			TotalTokens:     usage.TotalTokens,
-			LatencyMs:       usage.LatencyMs,
-		}
+		u := rollout.FromUsage(usage)
+		ev.Usage = &u
 	}
 	h.recordRollout(ctx, rec, ev, "turn end")
 }

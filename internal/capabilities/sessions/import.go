@@ -91,7 +91,11 @@ func (s *Store) Import(ctx context.Context, req ImportRequest) (string, error) {
 				}
 			}
 		}
-		msgs := filterArchive(turn.Messages)
+		msgs, err := filterArchive(turn.Messages)
+		if err != nil {
+			return "", errdefs.Validationf(
+				"sessions: filter archive: %w", err)
+		}
 		if len(msgs) == 0 {
 			continue
 		}

@@ -262,7 +262,10 @@ func (s *Store) appendTurn(
 	if err := requireID(id); err != nil {
 		return err
 	}
-	archived := filterArchive(msgs)
+	archived, err := filterArchive(msgs)
+	if err != nil {
+		return fmt.Errorf("sessions: filter archive: %w", err)
+	}
 	if len(archived) == 0 {
 		return nil
 	}
@@ -802,7 +805,11 @@ func (s *Store) SeedStartTitle(
 	if err := requireID(id); err != nil {
 		return err
 	}
-	title := firstArchiveTitle(filterArchive(msgs))
+	archived, err := filterArchive(msgs)
+	if err != nil {
+		return fmt.Errorf("sessions: filter archive title: %w", err)
+	}
+	title := firstArchiveTitle(archived)
 	if title == "" {
 		return nil
 	}
@@ -988,8 +995,9 @@ func (s *Store) dir(id string) string {
 	return filepath.Join(s.root, id)
 }
 
-// filterArchive keeps the parts the archive understands.
-func filterArchive(msgs []message.Message) []message.Message {
+// filterArchive keeps the parts the archive understands and rejects
+// future part kinds explicitly instead of silently dropping them.
+func filterArchive(msgs []message.Message) ([]message.Message, error) {
 	var archived []message.Message
 	for _, m := range msgs {
 		var parts []message.Part
@@ -1013,6 +1021,10 @@ func filterArchive(msgs []message.Message) []message.Message {
 				parts = append(parts, part)
 			case message.DataPart:
 				parts = append(parts, part)
+			default:
+				return nil, fmt.Errorf(
+					"sessions: archive does not support part kind %q",
+					part.Kind())
 			}
 		}
 		if len(parts) > 0 {
@@ -1022,7 +1034,7 @@ func filterArchive(msgs []message.Message) []message.Message {
 			})
 		}
 	}
-	return archived
+	return archived, nil
 }
 
 func requireID(id string) error {

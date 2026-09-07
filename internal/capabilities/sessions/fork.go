@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/message/media"
@@ -59,7 +60,8 @@ func (s *Store) Fork(
 		return ForkResult{}, errdefs.Validationf(
 			"sessions: fork source run %q not found in %s", sourceRunID, sourceID)
 	}
-	if status := turns[targetIdx].Status; status != "" && status != "completed" {
+	if status := turns[targetIdx].Status; status != "" &&
+		agent.Status(status) != agent.StatusCompleted {
 		return ForkResult{}, errdefs.Validationf(
 			"sessions: cannot fork %s turn %q (status %q)",
 			sourceID, sourceRunID, status)
