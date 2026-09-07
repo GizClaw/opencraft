@@ -85,8 +85,8 @@ func TestWebSearchExtensionsIgnoresNonGenerateModels(t *testing.T) {
 		webSearchInstance("openai", "inst-aaa", "responses", true),
 	}}
 	cfg.Instances[0].Models = append(cfg.Instances[0].Models, Model{
-		Name: "text-embedding-3-small",
-		Kind: "embed",
+		Name: "gpt-image-2",
+		Kind: "image",
 	})
 	out := cfg.WebSearchExtensions()
 	if len(out) != 1 || out[0].Provider != "openai-inst-aaa" {

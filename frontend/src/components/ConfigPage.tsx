@@ -59,7 +59,6 @@ interface RowModel {
   reasoning: string;
   reasoningEffortMap: Record<string, string>;
   effortNone: boolean;
-  dimensions: boolean;
   webSearch: boolean;
   endpoint: string;
 }
@@ -117,7 +116,6 @@ function modelFromTemplate(t: ModelTemplate) {
     reasoning: t.reasoning,
     reasoningEffortMap: t.reasoning_effort_map ?? {},
     effortNone: t.effort_none ?? false,
-    dimensions: t.dimensions,
     webSearch: t.web_search,
   };
 }
@@ -258,7 +256,6 @@ export function ConfigPage() {
             reasoning: m.reasoning ?? '',
             reasoningEffortMap: m.reasoning_effort_map ?? {},
             effortNone: m.effort_none ?? false,
-            dimensions: m.dimensions ?? false,
             webSearch: m.web_search ?? false,
             endpoint: m.endpoint ?? '',
           }));
@@ -288,7 +285,6 @@ export function ConfigPage() {
                           reasoning: '',
                           reasoningEffortMap: {},
                           effortNone: false,
-                          dimensions: false,
                           webSearch: false,
                           endpoint: '',
                         },
@@ -522,7 +518,6 @@ export function ConfigPage() {
                 reasoning: '',
                 reasoningEffortMap: {},
                 effortNone: false,
-                dimensions: false,
                 webSearch: false,
                 endpoint: '',
               },
@@ -588,7 +583,6 @@ export function ConfigPage() {
                   reasoning: '',
                   reasoningEffortMap: {},
                   effortNone: false,
-                  dimensions: false,
                   webSearch: false,
                   endpoint: '',
                 },
@@ -670,7 +664,6 @@ export function ConfigPage() {
         reasoning: m.reasoning,
         reasoning_effort_map: m.reasoning === '' ? {} : m.reasoningEffortMap,
         effort_none: m.effortNone,
-        dimensions: m.dimensions,
         web_search: m.webSearch,
         endpoint: m.endpoint,
       })),
@@ -1233,28 +1226,11 @@ export function ConfigPage() {
                                     >
                                       <option value="">auto</option>
                                       <option value="generate">generate</option>
-                                      <option value="embed">embed</option>
                                       <option value="image">image</option>
                                       <option value="video">video</option>
                                       <option value="tts">tts</option>
                                     </select>
                                   </label>
-                                  {m.kind === 'embed' && (
-                                    <label className="flex items-center gap-1.5 whitespace-nowrap">
-                                      <input
-                                        type="checkbox"
-                                        checked={m.dimensions}
-                                        disabled={row.managed}
-                                        onChange={(e) =>
-                                          updateModel(row.id, mi, {
-                                            dimensions: e.target.checked,
-                                          })
-                                        }
-                                        className="accent-[var(--color-accent)]"
-                                      />
-                                      {t('setup.dimensions')}
-                                    </label>
-                                  )}
                                   {(row.type === 'openai' ||
                                     row.type === 'azure') && (
                                     <label className="flex items-center gap-1.5 whitespace-nowrap">

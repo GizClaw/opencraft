@@ -102,7 +102,6 @@ type ModelView struct {
 	Reasoning          string            `json:"reasoning"`
 	ReasoningEffortMap map[string]string `json:"reasoning_effort_map,omitempty"`
 	EffortNone         bool              `json:"effort_none,omitempty"`
-	Dimensions         bool              `json:"dimensions,omitempty"`
 	WebSearch          bool              `json:"web_search"`
 	Endpoint           string            `json:"endpoint"`
 }
@@ -756,7 +755,7 @@ func sameInstanceContent(a, b config.Instance) bool {
 // capabilities and per-model endpoint.
 func sameModel(a, b config.Model) bool {
 	return a.Name == b.Name && a.Kind == b.Kind && a.Endpoint == b.Endpoint &&
-		a.Responses == b.Responses && a.Dimensions == b.Dimensions &&
+		a.Responses == b.Responses &&
 		a.EffortNone == b.EffortNone &&
 		slices.Equal(a.Capabilities.Inputs, b.Capabilities.Inputs) &&
 		slices.Equal(a.Capabilities.Outputs, b.Capabilities.Outputs) &&
@@ -795,7 +794,6 @@ func modelViews(models []config.Model) []ModelView {
 			Reasoning:          string(m.Capabilities.Reasoning.Kind),
 			ReasoningEffortMap: config.EffortMapStrings(m.Capabilities.Reasoning.EffortMap),
 			EffortNone:         m.EffortNone,
-			Dimensions:         m.Dimensions,
 			WebSearch:          m.Capabilities.HostedWebSearch,
 			Endpoint:           m.Endpoint,
 		})
@@ -820,7 +818,6 @@ func configModels(views []ModelView) []config.Model {
 			},
 			Endpoint:   strings.TrimSpace(v.Endpoint),
 			EffortNone: v.EffortNone,
-			Dimensions: v.Dimensions,
 		})
 	}
 	return out
