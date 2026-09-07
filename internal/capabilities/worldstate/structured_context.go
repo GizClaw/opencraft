@@ -1,9 +1,16 @@
 package worldstate
 
 import (
+	"strings"
+
 	"github.com/GizClaw/flowcraft/core/memory"
 	"github.com/GizClaw/flowcraft/core/message"
 )
+
+// abortedToolResult is the short, provider-valid marker inserted for an
+// assistant tool_call that has no result in the retained window,
+// mirroring codex-rs' ensure_call_outputs_present.
+const abortedToolResult = "aborted"
 
 // rawContext carries one stored conversation message as a real
 // message.Message, plus the pairing metadata worldstate needs to keep
@@ -15,10 +22,6 @@ type rawContext struct {
 	// needs are tool_result call ids this message requires to stay a
 	// valid tool message.
 	needs []string
-	// fallbackText preserves the original rendered text of a tool
-	// message whose pairing is lost (or whose result part is absent),
-	// so it can degrade to a user-role text message.
-	fallbackText string
 }
 
 // rawContextFor lowers one raw memory item into a message.Message.
@@ -30,7 +33,7 @@ type rawContext struct {
 //   - plain user/assistant messages stay text.
 func rawContextFor(item memory.ContextItem) rawContext {
 	role := string(item.MessageRole)
-	rc := rawContext{fallbackText: item.Content.Text()}
+	var rc rawContext
 	switch role {
 	case "assistant":
 		var calls []message.Part
@@ -39,8 +42,7 @@ func rawContextFor(item memory.ContextItem) rawContext {
 			if err != nil {
 				continue
 			}
-			switch value := normalized.(type) {
-			case message.ToolCallPart:
+			if value, ok := normalized.(message.ToolCallPart); ok {
 				calls = append(calls, value)
 				rc.calls = append(rc.calls, value.Call.ID)
 			}
@@ -61,6 +63,7 @@ func rawContextFor(item memory.ContextItem) rawContext {
 				continue
 			}
 			if value, ok := normalized.(message.ToolResultPart); ok {
+				value.Result = sanitizeToolResult(value.Result)
 				results = append(results, value)
 				rc.needs = append(rc.needs, value.Result.CallID)
 			}
@@ -79,6 +82,16 @@ func rawContextFor(item memory.ContextItem) rawContext {
 	return rc
 }
 
+// sanitizeToolResult replaces an empty aborted/error payload with a
+// short marker so the model sees the tool did not produce usable
+// output without carrying a giant partial payload.
+func sanitizeToolResult(r message.ToolResult) message.ToolResult {
+	if r.IsError && strings.TrimSpace(r.Content) == "" {
+		r.Content = abortedToolResult
+	}
+	return r
+}
+
 // allAvailable reports whether every required call id was seen in an
 // earlier assistant tool_call message of the same batch.
 func allAvailable(needs []string, available map[string]bool) bool {
@@ -90,42 +103,97 @@ func allAvailable(needs []string, available map[string]bool) bool {
 	return true
 }
 
-// finalizeRaw applies pair tracking: assistant calls make their ids
-// available, and a tool message keeps its tool role only when its
-// result ids were seen earlier in the same batch. Unpaired or empty
-// tool messages fall back to user text.
-func finalizeRaw(rc rawContext, available map[string]bool) (message.Message, bool) {
-	msg := rc.msg
-	switch msg.Role {
-	case message.RoleAssistant:
-		for _, id := range rc.calls {
-			available[id] = true
-		}
-	case message.RoleTool:
-		if len(msg.Content.Parts) == 0 || !allAvailable(rc.needs, available) {
-			if rc.fallbackText == "" {
-				return message.Message{}, false
+// pendingCall tracks an assistant tool_call that has not yet been
+// paired with a tool result in the current batch.
+type pendingCall struct {
+	id string
+	// at is the index of the assistant call message in out.
+	at int
+}
+
+// normalizeRawItems converts stored raw messages into provider-valid
+// message.Message history:
+//   - valid tool pairs keep their real roles;
+//   - tool results without a matching call in the batch are dropped
+//     (orphan outputs, matching codex-rs remove_orphan_outputs);
+//   - assistant calls that never receive a result get a synthetic
+//     short "aborted" tool message right after the call, matching
+//     codex-rs ensure_call_outputs_present.
+func normalizeRawItems(items []memory.ContextItem) []message.Message {
+	available := map[string]bool{}
+	out := make([]message.Message, 0, len(items))
+	var pending []pendingCall
+	for _, item := range items {
+		rc := rawContextFor(item)
+		switch rc.msg.Role {
+		case message.RoleAssistant:
+			if len(rc.calls) == 0 {
+				if rc.msg.Content.Text() == "" {
+					continue
+				}
+				out = append(out, rc.msg)
+				continue
 			}
-			return message.NewTextMessage(message.RoleUser, rc.fallbackText), true
+			for _, id := range rc.calls {
+				available[id] = true
+				pending = append(pending, pendingCall{id: id, at: len(out)})
+			}
+			out = append(out, rc.msg)
+		case message.RoleTool:
+			if len(rc.msg.Content.Parts) == 0 ||
+				!allAvailable(rc.needs, available) {
+				// Orphan tool output: no matching call in this batch.
+				continue
+			}
+			for _, id := range rc.needs {
+				removePending(&pending, id)
+			}
+			out = append(out, rc.msg)
+		default:
+			if rc.msg.Content.Text() == "" {
+				continue
+			}
+			out = append(out, rc.msg)
 		}
 	}
-	if len(msg.Content.Parts) == 0 && msg.Content.Text() == "" {
-		return message.Message{}, false
+
+	// Insert synthetic aborted results immediately after their call.
+	for i := len(pending) - 1; i >= 0; i-- {
+		p := pending[i]
+		insertAt := p.at + 1
+		if insertAt > len(out) {
+			insertAt = len(out)
+		}
+		synthetic := message.Message{
+			Role: message.RoleTool,
+			Content: message.Content{Parts: []message.Part{
+				message.ToolResultPart{Result: message.ToolResult{
+					CallID:  p.id,
+					Content: abortedToolResult,
+				}},
+			}},
+		}
+		out = append(out[:insertAt],
+			append([]message.Message{synthetic}, out[insertAt:]...)...)
 	}
-	return msg, true
+	return out
+}
+
+func removePending(pending *[]pendingCall, id string) {
+	kept := (*pending)[:0]
+	for _, p := range *pending {
+		if p.id != id {
+			kept = append(kept, p)
+		}
+	}
+	*pending = kept
 }
 
 // renderRawSections converts stored raw messages into memory_raw
-// sections that carry the original message.Message, preserving valid
-// assistant tool_call / tool result pairs.
+// sections using the shared normalizeRawItems pipeline.
 func renderRawSections(items []memory.ContextItem) []Section {
-	available := map[string]bool{}
 	out := make([]Section, 0, len(items))
-	for _, item := range items {
-		msg, ok := finalizeRaw(rawContextFor(item), available)
-		if !ok {
-			continue
-		}
+	for _, msg := range normalizeRawItems(items) {
 		out = append(out, Section{ID: "memory_raw", Message: msg})
 	}
 	return out
@@ -135,14 +203,5 @@ func renderRawSections(items []memory.ContextItem) []Section {
 // full-history replay: the same pairing rules apply, and output is the
 // message list world.js appends after the world sections.
 func renderHistoryMessages(items []memory.ContextItem) []message.Message {
-	available := map[string]bool{}
-	out := make([]message.Message, 0, len(items))
-	for _, item := range items {
-		msg, ok := finalizeRaw(rawContextFor(item), available)
-		if !ok {
-			continue
-		}
-		out = append(out, msg)
-	}
-	return out
+	return normalizeRawItems(items)
 }

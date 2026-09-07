@@ -52,16 +52,55 @@ func TestRawPairPreservesToolRoles(t *testing.T) {
 	}
 }
 
-func TestUnpairedToolFallsBackToUserText(t *testing.T) {
+func TestOrphanToolOutputDropped(t *testing.T) {
 	secs := renderRawSections([]memory.ContextItem{
 		toolResultItem("missing", "ok"),
 	})
-	if len(secs) != 1 {
-		t.Fatalf("sections = %+v, want one fallback", secs)
+	if len(secs) != 0 {
+		t.Fatalf("sections = %+v, want orphan tool output dropped", secs)
 	}
-	if secs[0].Role != "user" || secs[0].Content.Text() == "" ||
-		len(secs[0].Content.Parts) != 1 {
-		t.Fatalf("fallback = %+v, want user text message", secs[0])
+}
+
+func TestCallWithoutResultGetsAbortedSynthetic(t *testing.T) {
+	secs := renderRawSections([]memory.ContextItem{
+		toolCallItem("c3"),
+	})
+	if len(secs) != 2 {
+		t.Fatalf("sections = %d, want call + synthetic aborted", len(secs))
+	}
+	if secs[0].Role != message.RoleAssistant {
+		t.Fatalf("first section role = %s", secs[0].Role)
+	}
+	if secs[1].Role != message.RoleTool {
+		t.Fatalf("second section role = %s, want tool", secs[1].Role)
+	}
+	results := secs[1].ToolResults()
+	if len(results) != 1 || results[0].CallID != "c3" ||
+		results[0].Content != "aborted" {
+		t.Fatalf("synthetic result = %+v", results)
+	}
+}
+
+func TestEmptyErrorResultBecomesAborted(t *testing.T) {
+	item := memory.ContextItem{
+		Kind:        memory.ContextRawMessage,
+		MessageRole: message.RoleTool,
+		Content: message.Content{Parts: []message.Part{
+			message.TextPart{Text: "tool_result: "},
+			message.ToolResultPart{Result: message.ToolResult{
+				CallID: "c1", Content: "", IsError: true,
+			}},
+		}},
+	}
+	secs := renderRawSections([]memory.ContextItem{
+		toolCallItem("c1"), item,
+	})
+	if len(secs) != 2 || secs[1].Role != message.RoleTool {
+		t.Fatalf("sections = %+v", secs)
+	}
+	results := secs[1].ToolResults()
+	if len(results) != 1 || results[0].Content != "aborted" {
+		t.Fatalf("error result = %+v, want aborted marker", results)
 	}
 }
 

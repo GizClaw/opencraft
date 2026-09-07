@@ -440,11 +440,11 @@ func TestMemorySectionsIncludeSummariesAndRaw(t *testing.T) {
 	}
 }
 
-// TestMemorySectionsMapToolRoleToUser verifies persisted tool-result
-// messages are injected as user context: the provider wire format
-// requires role=tool messages to carry a tool_call_id paired with a
-// preceding assistant call, which rendered raw context does not have.
-func TestMemorySectionsMapToolRoleToUser(t *testing.T) {
+// TestMemorySectionsDropsToolTextWithoutPair verifies a text-only
+// role=tool row (no ToolResultPart and no matching call in the batch)
+// is treated as an orphan and omitted instead of becoming an invalid
+// tool message or a misleading user turn.
+func TestMemorySectionsDropsToolTextWithoutPair(t *testing.T) {
 	svc := New(Options{WorkBase: t.TempDir()})
 	svc.memory = stubMemory{items: []corememory.ContextItem{
 		{
@@ -456,11 +456,8 @@ func TestMemorySectionsMapToolRoleToUser(t *testing.T) {
 		},
 	}}
 	got := svc.memorySections(context.Background(), "s-c1")
-	if len(got) != 1 {
-		t.Fatalf("sections = %+v, want one raw section", got)
-	}
-	if got[0].ID != "memory_raw" || got[0].Role != message.RoleUser || !contains(got[0].Content.Text(), "tool_result: build ok") {
-		t.Fatalf("tool raw section = %+v, want role user", got[0])
+	if len(got) != 0 {
+		t.Fatalf("sections = %+v, want orphan tool text dropped", got)
 	}
 }
 
