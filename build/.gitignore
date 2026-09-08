@@ -1,4 +1,4 @@
-# Generated app bundles stay out of the repo; wails build reproduces them.
+# Generated app bundles stay out of the repo; wails3 tasks reproduce them.
 bin/
 bin/**
 # wails3 update build-assets generates mobile scaffolding and NSIS helper

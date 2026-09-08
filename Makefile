@@ -49,26 +49,10 @@ ifeq ($(strip $(VERSION)),)
 VERSION := 0.1.0
 endif
 
-# Shared Windows build flags: strip symbols (-s -w), pin the version,
-# strip local build paths (-trimpath), and UPX-compress the binary.
-# wails adds -s -w and -H windowsgui itself in production mode; the
-# explicit flags keep the intent visible and the version injection
-# works in every mode.
-WINDOWS_LDFLAGS := -s -w -X github.com/GizClaw/opencraft/internal/foundation/version.ServiceVersion=$(VERSION)
 MACOS_LDFLAGS := -s -w -X github.com/GizClaw/opencraft/internal/foundation/version.ServiceVersion=$(VERSION)
 
-# Local Go toolchains newer than the go.mod version (e.g. Homebrew Go
-# 1.27) link against macOS 13 while Wails still passes a 10.13 minimum,
-# producing "built for newer macOS" ld warnings. Pin macOS desktop builds
-# to the repository's Go version and silence the harmless duplicate
-# -lobjc warning emitted by newer Xcode linkers.
-GOMOD_GO_VERSION := $(shell awk '/^go /{print $$2; exit}' go.mod)
-GO_TOOLCHAIN ?= go$(GOMOD_GO_VERSION)
-MACOS_CGO_LDFLAGS ?= -Wl,-no_warn_duplicate_libraries
-
 # build-macos produces the v3 desktop binary for the current macOS
-# architecture. .app bundling / cross-platform packaging is re-added in
-# Phase 4 with the wails3 Taskfile tasks.
+# architecture. Use `wails3 task package` for .app bundling.
 build-macos:
 	npm --prefix frontend ci
 	npm --prefix frontend run build

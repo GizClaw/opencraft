@@ -1,4 +1,4 @@
-// Shared DTO types mirroring the desktopv2 bindings plus the flowcraft
+// Shared DTO types mirroring the Wails v3 desktop bindings plus the flowcraft
 // stream protocol wire shapes the frontend renders.
 
 export interface ConfigStatus {

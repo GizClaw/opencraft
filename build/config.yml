@@ -44,22 +44,3 @@ dev_mode:
       type: background
     - cmd: wails3 task run
       type: primary
-
-# File Associations
-# More information at: https://v3.wails.io/noit/done/yet
-fileAssociations:
-#  - ext: wails
-#    name: Wails
-#    description: Wails Application File
-#    iconName: wailsFileIcon
-#    role: Editor
-#  - ext: jpg
-#    name: JPEG
-#    description: Image File
-#    iconName: jpegFileIcon
-#    role: Editor
-#    mimeType: image/jpeg  # (optional)
-
-# Other data
-other:
-  - name: My Other Data

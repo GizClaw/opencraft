@@ -112,10 +112,16 @@ func (s *Shell) Emit(typ string, data any) {
 // asynchronously and returns false; the dialog callback retries the quit.
 func (s *Shell) ShouldQuit() bool {
 	s.mu.Lock()
-	confirmed := s.quitting && s.quitConfirmed
+	quitting := s.quitting
+	confirmed := quitting && s.quitConfirmed
 	s.mu.Unlock()
 	if confirmed {
 		return true
+	}
+	if quitting {
+		// A confirmation dialog is already pending; a second quit request
+		// must not open another one.
+		return false
 	}
 
 	app, _ := s.attached()

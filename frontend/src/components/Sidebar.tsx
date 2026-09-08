@@ -303,7 +303,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   ];
 
   // The native folder picker can fail or never return in some
-  // environments (e.g. wails dev running the bare binary). When it
+  // environments (e.g. wails3 dev running the bare binary). When it
   // errors, fall back to a typed path so adding a workspace always
   // works.
   const handleAddWorkspace = async () => {

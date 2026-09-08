@@ -87,6 +87,18 @@ func TestShellShouldQuitConfirmedRepeats(t *testing.T) {
 	}
 }
 
+func TestShellShouldQuitIgnoresRepeatedRequestWhileDialogPending(t *testing.T) {
+	s := NewShell(t.TempDir())
+	s.MarkQuitting()
+	if s.ShouldQuit() {
+		t.Fatal("pending unconfirmed quit must not open a second dialog")
+	}
+	if !s.quitting || s.quitConfirmed {
+		t.Fatalf("pending state changed to (%v,%v)",
+			s.quitting, s.quitConfirmed)
+	}
+}
+
 func TestShellConfirmQuitRequired(t *testing.T) {
 	s := NewShell(t.TempDir())
 	if !s.confirmQuitRequired(context.Background()) {

@@ -12,7 +12,7 @@ export default defineConfig({
   },
   // The file viewer's code/PDF panes are lazy chunks that pull in
   // dependencies Vite discovers late (CodeMirror languages, pdf.js).
-  // Pre-optimizing them at startup keeps `wails dev` from failing with
+  // Pre-optimizing them at startup keeps `wails3 dev` from failing with
   // "Importing a module script failed" when a chunk is first clicked
   // after the deps were installed mid-session.
   optimizeDeps: {

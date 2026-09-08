@@ -1,6 +1,5 @@
 node_modules
 dist
-wailsjs
 package-lock.json
 package.json.md5
 test-results/

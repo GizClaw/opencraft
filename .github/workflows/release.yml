@@ -62,6 +62,16 @@ jobs:
           npm ci --prefix frontend
           npm run build --prefix frontend
 
+      - name: Set release version in build assets
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+        run: |
+          ver="${TAG#v}"
+          sed -i.bak "s/version: \"0.1.0\"/version: \"$ver\"/" build/config.yml
+          rm build/config.yml.bak
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          wails3 task common:update:build-assets
+
       - name: Build macOS universal app
         env:
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
@@ -245,6 +255,16 @@ jobs:
           npm ci --prefix frontend
           npm run build --prefix frontend
 
+      - name: Set release version in build assets
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+        run: |
+          ver="${TAG#v}"
+          sed -i.bak "s/version: \"0.1.0\"/version: \"$ver\"/" build/config.yml
+          rm build/config.yml.bak
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          wails3 task common:update:build-assets
+
       - name: Build Linux binary
         env:
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
@@ -304,6 +324,18 @@ jobs:
           wails3 generate bindings -d frontend/bindings -ts -i -names ./...
           npm ci --prefix frontend
           npm run build --prefix frontend
+        shell: pwsh
+
+      - name: Set release version in build assets
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+        run: |
+          $ver = "$env:TAG".TrimStart('v')
+          $config = Get-Content -Raw build/config.yml
+          $config = $config -replace 'version: "0\.1\.0"', "version: `"$ver`""
+          Set-Content -Encoding utf8 build/config.yml $config
+          $env:PATH = "$(go env GOPATH)\bin;$env:PATH"
+          wails3 task common:update:build-assets
         shell: pwsh
 
       - name: Build Windows binary + installer

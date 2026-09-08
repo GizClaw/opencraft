@@ -126,7 +126,7 @@ export default function App() {
     void System.Environment().then((env) => {
       if (!alive) return;
       setIsMac(env.OS === 'darwin');
-      // Wails dev/debug builds always enable the native webview
+      // Wails v3 dev/debug builds always enable the native webview
       // context menu, which exposes Reload + Inspect Element to users.
       // Keep the app menu clean outside production; React's own
       // right-click menus still work because they prevent the default
