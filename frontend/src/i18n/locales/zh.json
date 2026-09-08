@@ -499,6 +499,7 @@
     "unmerged": "冲突",
     "stagedDiff": "暂存区 diff",
     "worktreeDiff": "工作区 diff",
+    "diffSide": "Diff 视图",
     "noDiffHint": "选择一个变更文件以预览其 diff。",
     "untrackedNoDiff": "未跟踪文件：暂无 diff。",
     "binaryNoDiff": "二进制文件：不显示 diff。",

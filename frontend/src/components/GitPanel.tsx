@@ -1,8 +1,12 @@
-// GitPanel is the Git view of the right rail. It shows the repository
-// change snapshot, an inline diff preview per path, commit history and
-// branch switching, and executes git write operations through the thin
-// Git binding. Writes are disabled while the conversation turn runs;
-// the backend also refuses writes while any run is active.
+// GitPanel is the Git view of the right rail. It shows the change
+// snapshot of the whole repository containing the active workspace
+// (not just the workspace subtree), an inline diff preview per path,
+// commit history and branch switching, and executes git write
+// operations through the thin Git binding. Writes are disabled while
+// the conversation turn runs; the backend also refuses writes while
+// any run is active on the current workspace's Host. The
+// in_workspace marker is informational: entries outside the workspace
+// subtree are shown and remain fully operable.
 import {
   useCallback,
   useEffect,
@@ -112,6 +116,10 @@ interface ConfirmSpec {
   action: () => Promise<void>;
 }
 
+// DiffSide picks which half of a dual-state file (both staged and
+// unstaged changes) the diff modal previews.
+type DiffSide = 'staged' | 'worktree';
+
 export function GitPanel({ sessionID }: { sessionID: string }) {
   const { t } = useTranslation();
   const workspace = useStore((s) => s.workspace);
@@ -138,6 +146,9 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
     message: string;
     error?: string;
   } | null>(null);
+  // diffSide remembers the user's staged/worktree choice while they
+  // navigate between changed files; single-state files ignore it.
+  const [diffSide, setDiffSide] = useState<DiffSide>('staged');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [branchOpen, setBranchOpen] = useState(false);
@@ -222,7 +233,8 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
   );
 
   // Refetch on mount and whenever the workspace changes; the Git view
-  // is workspace scoped even though it lives inside one chat's rail.
+  // is scoped to the whole repository of the active workspace even
+  // though it lives inside one chat's rail.
   useEffect(() => {
     void refresh();
   }, [refresh, workspace]);
@@ -329,8 +341,8 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
     [flash, refresh],
   );
 
-  const loadDiff = useCallback(async (e: GitChange) => {
-    setSelected(e);
+  const loadSide = useCallback(async (e: GitChange, side: DiffSide) => {
+    const cached = side === 'staged';
     setDetail(null);
     if (e.untracked || e.kind === 'untracked') {
       setDetail({ diff: null, label: '', message: 'untrackedNoDiff' });
@@ -344,7 +356,6 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
       setDetail({ diff: null, label: '', message: 'binaryNoDiff' });
       return;
     }
-    const cached = !e.unstaged;
     try {
       const diff = await api.gitDiff(e.path, cached);
       setDetail({
@@ -356,6 +367,31 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
       setDetail({ diff: null, label: '', message: '', error: String(err) });
     }
   }, []);
+
+  const loadDiff = useCallback(
+    async (e: GitChange) => {
+      setSelected(e);
+      setDetail(null);
+      if (e.untracked || e.kind === 'untracked') {
+        setDetail({ diff: null, label: '', message: 'untrackedNoDiff' });
+        return;
+      }
+      if (e.unmerged) {
+        setDetail({ diff: null, label: '', message: 'unmergedHint' });
+        return;
+      }
+      if (e.is_binary) {
+        setDetail({ diff: null, label: '', message: 'binaryNoDiff' });
+        return;
+      }
+      // Dual-state entries live under the Staged group; start on the
+      // staged half and let the modal toggle to the working tree.
+      const side: DiffSide =
+        e.staged && e.unstaged ? diffSide : e.staged ? 'staged' : 'worktree';
+      await loadSide(e, side);
+    },
+    [diffSide, loadSide],
+  );
 
   const openAt = useCallback(
     (index: number) => {
@@ -583,6 +619,17 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
           files={parsedFiles}
           index={selectedIndex}
           total={ordered.length}
+          side={diffSide}
+          dual={
+            selected.staged &&
+            selected.unstaged &&
+            !selected.is_binary &&
+            !selected.unmerged
+          }
+          onSide={(side) => {
+            setDiffSide(side);
+            void loadSide(selected, side);
+          }}
           onPrev={() => openAt(selectedIndex - 1)}
           onNext={() => openAt(selectedIndex + 1)}
           onClose={closeDiff}
@@ -1403,6 +1450,9 @@ function DiffModal({
   files,
   index,
   total,
+  side,
+  dual,
+  onSide,
   onPrev,
   onNext,
   onClose,
@@ -1417,6 +1467,9 @@ function DiffModal({
   files: ReturnType<typeof parseUnifiedDiff>;
   index: number;
   total: number;
+  side: DiffSide;
+  dual: boolean;
+  onSide: (side: DiffSide) => void;
   onPrev: () => void;
   onNext: () => void;
   onClose: () => void;
@@ -1436,11 +1489,42 @@ function DiffModal({
           <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg">
             {entry.path}
           </span>
-          {detail?.label && (
+          {dual ? (
+            <span
+              role="group"
+              aria-label={t('git.diffSide')}
+              className="flex shrink-0 items-center gap-0.5 rounded-lg border border-edge p-0.5"
+            >
+              <button
+                type="button"
+                aria-pressed={side === 'staged'}
+                onClick={() => onSide('staged')}
+                className={`rounded px-1.5 py-0.5 text-[0.7143rem] transition-colors ${
+                  side === 'staged'
+                    ? 'bg-accent/15 text-accent'
+                    : 'text-dim hover:bg-panel2 hover:text-fg'
+                }`}
+              >
+                {t('git.staged')}
+              </button>
+              <button
+                type="button"
+                aria-pressed={side === 'worktree'}
+                onClick={() => onSide('worktree')}
+                className={`rounded px-1.5 py-0.5 text-[0.7143rem] transition-colors ${
+                  side === 'worktree'
+                    ? 'bg-accent/15 text-accent'
+                    : 'text-dim hover:bg-panel2 hover:text-fg'
+                }`}
+              >
+                {t('git.workingTree')}
+              </button>
+            </span>
+          ) : detail?.label ? (
             <span className="shrink-0 text-[0.7143rem] text-dim">
               {t(`git.${detail.label}`)}
             </span>
-          )}
+          ) : null}
           {!entry.is_binary &&
             !entry.untracked &&
             (entry.additions > 0 || entry.deletions > 0) && (

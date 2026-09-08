@@ -62,10 +62,31 @@ export function WorkspacePanel({ sessionID }: { sessionID: string }) {
   }, [probeRepo]);
 
   // Repo membership can also change from outside the app (for example
-  // `git init` in an editor terminal); re-probe on a light interval.
+  // `git init` in an editor terminal); re-probe on a sparse interval.
+  // The interval is deliberately much slower than the Git panel's own
+  // status poll and skips hidden windows: git_changed/turn_end/focus
+  // events already carry the freshness when the Git segment is open.
   useEffect(() => {
-    const timer = window.setInterval(() => void probeRepo(), 5000);
+    const timer = window.setInterval(() => {
+      if (document.hidden) return;
+      void probeRepo();
+    }, 30_000);
     return () => window.clearInterval(timer);
+  }, [probeRepo]);
+
+  // Refocusing the app (or returning from a hidden tab) probes right
+  // away instead of waiting for the next 30s tick, so a `git init`
+  // done in an editor terminal shows the Git segment promptly.
+  useEffect(() => {
+    const probeWhenVisible = () => {
+      if (!document.hidden) void probeRepo();
+    };
+    window.addEventListener('focus', probeWhenVisible);
+    document.addEventListener('visibilitychange', probeWhenVisible);
+    return () => {
+      window.removeEventListener('focus', probeWhenVisible);
+      document.removeEventListener('visibilitychange', probeWhenVisible);
+    };
   }, [probeRepo]);
 
   const showGit = inRepo === true;

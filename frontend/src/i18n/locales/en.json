@@ -501,6 +501,7 @@
     "unmerged": "Unmerged",
     "stagedDiff": "Staged diff",
     "worktreeDiff": "Working tree diff",
+    "diffSide": "Diff view",
     "noDiffHint": "Select a changed file to preview its diff.",
     "untrackedNoDiff": "Untracked file: nothing to diff yet.",
     "binaryNoDiff": "Binary file: diff is not shown.",

@@ -19,6 +19,41 @@ index 1111111..2222222 100644
 +new line
 `;
 
+const defaultGitStatus = {
+  root: '/tmp/w',
+  workspace: '/tmp/w',
+  branch: 'main',
+  truncated: false,
+  entries: [
+    {
+      path: 'internal/a.go',
+      kind: 'modified',
+      staged: true,
+      unstaged: false,
+      untracked: false,
+      unmerged: false,
+      directory: false,
+      is_binary: false,
+      additions: 1,
+      deletions: 1,
+      in_workspace: true,
+    },
+    {
+      path: 'scratch/notes.txt',
+      kind: 'untracked',
+      staged: false,
+      unstaged: false,
+      untracked: true,
+      unmerged: false,
+      directory: false,
+      is_binary: false,
+      additions: 0,
+      deletions: 0,
+      in_workspace: false,
+    },
+  ],
+};
+
 const apiMock = vi.hoisted(() => ({
   gitRepo: vi.fn(async () => ({
     in_repo: true,
@@ -29,40 +64,7 @@ const apiMock = vi.hoisted(() => ({
     behind: 0,
     workspace: '/tmp/w',
   })),
-  gitStatus: vi.fn(async () => ({
-    root: '/tmp/w',
-    workspace: '/tmp/w',
-    branch: 'main',
-    truncated: false,
-    entries: [
-      {
-        path: 'internal/a.go',
-        kind: 'modified',
-        staged: true,
-        unstaged: false,
-        untracked: false,
-        unmerged: false,
-        directory: false,
-        is_binary: false,
-        additions: 1,
-        deletions: 1,
-        in_workspace: true,
-      },
-      {
-        path: 'scratch/notes.txt',
-        kind: 'untracked',
-        staged: false,
-        unstaged: false,
-        untracked: true,
-        unmerged: false,
-        directory: false,
-        is_binary: false,
-        additions: 0,
-        deletions: 0,
-        in_workspace: false,
-      },
-    ],
-  })),
+  gitStatus: vi.fn(async () => defaultGitStatus),
   gitLog: vi.fn(async () => [
     {
       oid: 'abc123',
@@ -180,6 +182,7 @@ vi.mock('../../wailsjs/runtime/runtime', () => ({
 describe('GitPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    apiMock.gitStatus.mockResolvedValue(defaultGitStatus);
     useStore.setState({
       workspace: '/tmp/w',
       viewers: {},
@@ -198,6 +201,80 @@ describe('GitPanel', () => {
       expect(apiMock.gitDiff).toHaveBeenCalledWith('internal/a.go', true),
     );
     expect(await screen.findByText('new line')).toBeInTheDocument();
+  });
+
+  it('toggles staged and working-tree halves of a dual-state file', async () => {
+    apiMock.gitStatus.mockResolvedValue({
+      root: '/tmp/w',
+      workspace: '/tmp/w',
+      branch: 'main',
+      truncated: false,
+      entries: [
+        {
+          path: 'internal/a.go',
+          kind: 'modified',
+          staged: true,
+          unstaged: true,
+          untracked: false,
+          unmerged: false,
+          directory: false,
+          is_binary: false,
+          additions: 2,
+          deletions: 1,
+          in_workspace: true,
+        },
+      ],
+    });
+    render(<GitPanel sessionID="s-1" />);
+
+    (await screen.findByText('internal/a.go')).click();
+    await waitFor(() =>
+      expect(apiMock.gitDiff).toHaveBeenCalledWith('internal/a.go', true),
+    );
+    const staged = await screen.findByRole('button', { name: 'Staged' });
+    const worktree = screen.getByRole('button', { name: 'Working tree' });
+    expect(staged).toHaveAttribute('aria-pressed', 'true');
+
+    fireEvent.click(worktree);
+    await waitFor(() =>
+      expect(apiMock.gitDiff).toHaveBeenLastCalledWith('internal/a.go', false),
+    );
+    expect(worktree).toHaveAttribute('aria-pressed', 'true');
+    expect(staged).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('keeps binary dual-state files on the no-diff hint without a toggle', async () => {
+    apiMock.gitStatus.mockResolvedValue({
+      root: '/tmp/w',
+      workspace: '/tmp/w',
+      branch: 'main',
+      truncated: false,
+      entries: [
+        {
+          path: 'bin.dat',
+          kind: 'modified',
+          staged: true,
+          unstaged: true,
+          untracked: false,
+          unmerged: false,
+          directory: false,
+          is_binary: true,
+          additions: 0,
+          deletions: 0,
+          in_workspace: true,
+        },
+      ],
+    });
+    render(<GitPanel sessionID="s-1" />);
+
+    (await screen.findByText('bin.dat')).click();
+    expect(
+      await screen.findByText('Binary file: diff is not shown.'),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Working tree' }),
+    ).not.toBeInTheDocument();
+    expect(apiMock.gitDiff).not.toHaveBeenCalled();
   });
 
   it('switches to commit history', async () => {
