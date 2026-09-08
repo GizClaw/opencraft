@@ -62,7 +62,7 @@ func main() {
 			ProgramName: "OpenCraft",
 		},
 		SingleInstance: &application.SingleInstanceOptions{
-			UniqueID: "com.gizclaw.opencraft",
+			UniqueID: "com.GizClaw.opencraft",
 			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
 				shell.Emit("second instance args=%v workingDir=%s", data.Args, data.WorkingDir)
 				shell.ShowMainWindow()

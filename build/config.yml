@@ -7,7 +7,7 @@ version: '3'
 info:
   companyName: "GizClaw" # The name of the company
   productName: "OpenCraft" # The name of the application
-  productIdentifier: "com.gizclaw.opencraft" # The unique product identifier
+  productIdentifier: "com.GizClaw.opencraft" # The unique product identifier
   description: "A local-first work partner built on flowcraft" # The application description
   copyright: "(c) 2026, GizClaw" # Copyright text
   comments: "OpenCraft desktop" # Comments

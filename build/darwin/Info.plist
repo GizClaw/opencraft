@@ -9,7 +9,7 @@
 		<key>CFBundleIconFile</key>
 		<string>icons</string>
 		<key>CFBundleIdentifier</key>
-		<string>com.gizclaw.opencraft</string>
+		<string>com.GizClaw.opencraft</string>
 		<key>CFBundleName</key>
 		<string>OpenCraft</string>
 		<key>CFBundleDisplayName</key>
