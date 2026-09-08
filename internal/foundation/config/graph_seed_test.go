@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/resource"
+	yamlv4 "go.yaml.in/yaml/v4"
 )
 
 // TestUserConfigAndGraphNotSeeded verifies EnsureUserConfig creates no
@@ -93,5 +94,58 @@ func TestUserConfigAndGraphNotSeeded(t *testing.T) {
 		if !bytes.Contains(graph, []byte(ref)) {
 			t.Fatalf("embedded graph does not reference %s via embed source", ref)
 		}
+	}
+}
+
+// TestAssistantGraphDiscardsFailedStreams guards the default graph's
+// stream failure policy: a streamed inference that fails mid-flight
+// (provider error or truncated stream) must discard its buffered
+// partial text so a user retry never replays half an assistant
+// message. Interrupts keep the default commit_partial behavior so
+// cancelled output is still available to the archive observer.
+func TestAssistantGraphDiscardsFailedStreams(t *testing.T) {
+	type failurePolicy struct {
+		OnError     string `yaml:"on_error"`
+		OnInterrupt string `yaml:"on_interrupt"`
+	}
+	type nodeSpec struct {
+		ID     string `yaml:"id"`
+		Type   string `yaml:"type"`
+		Config struct {
+			Stream              bool           `yaml:"stream"`
+			StreamFailurePolicy *failurePolicy `yaml:"stream_failure_policy"`
+		} `yaml:"config"`
+	}
+	var graph struct {
+		Nodes []nodeSpec `yaml:"nodes"`
+	}
+	data, err := FS().ReadFile("assets/graphs/assistant.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := yamlv4.Unmarshal(data, &graph); err != nil {
+		t.Fatalf("parse assistant.yaml: %v", err)
+	}
+	var llm *nodeSpec
+	for i := range graph.Nodes {
+		if graph.Nodes[i].ID == "llm" {
+			llm = &graph.Nodes[i]
+			break
+		}
+	}
+	if llm == nil || llm.Type != "inference" {
+		t.Fatalf("assistant graph has no inference node id=llm")
+	}
+	if !llm.Config.Stream {
+		t.Fatal("llm node must stream; the failure policy only applies to streamed calls")
+	}
+	if llm.Config.StreamFailurePolicy == nil {
+		t.Fatal("llm node must set stream_failure_policy")
+	}
+	if got := llm.Config.StreamFailurePolicy.OnError; got != "discard" {
+		t.Fatalf("stream_failure_policy.on_error = %q, want discard", got)
+	}
+	if got := llm.Config.StreamFailurePolicy.OnInterrupt; got != "" {
+		t.Fatalf("stream_failure_policy.on_interrupt = %q, want default (unset)", got)
 	}
 }
