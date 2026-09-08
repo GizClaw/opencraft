@@ -172,7 +172,9 @@ function DetailBody({ detail }: { detail: GitHubPRDetail }) {
 
       <div className="border-b border-edge px-4 py-3">
         {detail.body ? (
-          <Markdown text={detail.body} />
+          <div className="prose-chat text-sm">
+            <Markdown text={detail.body} />
+          </div>
         ) : (
           <span className="text-xs text-dim">{t('git.prNoBody')}</span>
         )}
