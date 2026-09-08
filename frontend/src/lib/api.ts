@@ -216,8 +216,7 @@ export const api = {
   gitStatus: async (): Promise<GitStatus> => toGitStatus(await Git.Status()),
   gitLog: async (limit: number): Promise<GitLogEntry[]> =>
     (await Git.Log(limit)) ?? [],
-  gitBranches: async (): Promise<GitBranch[]> =>
-    (await Git.Branches()) ?? [],
+  gitBranches: async (): Promise<GitBranch[]> => (await Git.Branches()) ?? [],
   gitDiff: async (path: string, cached: boolean): Promise<GitDiff> =>
     Git.Diff(path, cached),
   gitCommitFiles: async (oid: string): Promise<GitCommitFiles> =>
@@ -246,7 +245,10 @@ export const api = {
       ...d,
       state: pullStateOf(d.state),
       commits: d.commits ?? [],
-      checks: (d.checks ?? []).map((c) => ({ ...c, kind: checkKindOf(c.kind) })),
+      checks: (d.checks ?? []).map((c) => ({
+        ...c,
+        kind: checkKindOf(c.kind),
+      })),
       conversation: (d.conversation ?? []).map((item) => ({
         ...item,
         kind: timelineKindOf(item.kind),
@@ -278,7 +280,11 @@ export const api = {
     end: string,
   ) =>
     (await Config.ModelUsageSeries(
-      model, granularity, utcOffsetMinutes, start, end,
+      model,
+      granularity,
+      utcOffsetMinutes,
+      start,
+      end,
     )) ?? [],
   mcpConfig: () => Config.MCPConfig() as Promise<MCPServer[]>,
   saveMCP: (servers: MCPServer[]) =>
@@ -328,8 +334,7 @@ export const api = {
     Diagnostics.ClearCaches() as unknown as Promise<CacheClearResult>,
   chooseWorkspace: () =>
     Workspace.ChooseWorkspace(i18n.t('sidebar.chooseWorkspaceTitle')),
-  pluginList: async () =>
-    ((await Plugin.List()) ?? []).map(pluginSummaryOf),
+  pluginList: async () => ((await Plugin.List()) ?? []).map(pluginSummaryOf),
   pluginTools: (id: string) =>
     Plugin.Tools(id) as unknown as Promise<PluginToolDTO[]>,
   pluginSkills: (id: string) =>

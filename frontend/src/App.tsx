@@ -187,7 +187,11 @@ export default function App() {
           // the notification builds its snippet from the final answer.
           useStore.getState().flushStreams();
           const { title, body } = turnEndNotification(data);
-          void NotificationService.SendNotification({ id: 'turn-end', title, body });
+          void NotificationService.SendNotification({
+            id: 'turn-end',
+            title,
+            body,
+          });
         }
       } else if (ev.type === 'automation_notify') {
         const data = ev.data as {
@@ -215,10 +219,9 @@ export default function App() {
   }, [init, handleEvent]);
 
   useEffect(() => {
-    void NotificationService.RequestNotificationAuthorization()
-      .catch(() => {
-        // notifications are best-effort
-      });
+    void NotificationService.RequestNotificationAuthorization().catch(() => {
+      // notifications are best-effort
+    });
     const onKey = (e: KeyboardEvent) => {
       if (!e.metaKey && !e.ctrlKey) return;
       const key = e.key.toLowerCase();

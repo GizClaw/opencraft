@@ -49,8 +49,9 @@ export function mockBackend(cfg?: MockConfig) {
   let startTurnSeq = 0;
   let forkSeq = 0;
   const emit = (name: string, data: unknown) => {
-    const wails = (win as { _wails?: { dispatchWailsEvent?: (e: unknown) => void } })
-      ._wails;
+    const wails = (
+      win as { _wails?: { dispatchWailsEvent?: (e: unknown) => void } }
+    )._wails;
     if (typeof wails?.dispatchWailsEvent === 'function') {
       wails.dispatchWailsEvent({ name, data });
     }
