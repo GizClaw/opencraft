@@ -32,10 +32,15 @@ import type {
   FilePreview,
   FileNode,
   GitBranch,
+  GitChange,
+  GitChangeKind,
   GitCommitFiles,
   GitDiff,
+  GitHubCheck,
   GitHubPRDetail,
   GitHubPull,
+  GitHubReviewThread,
+  GitHubTimelineItem,
   GitLogEntry,
   GitRepo,
   GitStatus,
@@ -70,6 +75,81 @@ import type {
   PluginSummary,
   PluginToolDTO,
 } from '../plugins/types';
+
+// ---- Git/PR DTO adapters ----
+//
+// The Wails-generated models carry the exact Go DTO shapes, but their
+// enum-ish fields are plain strings. These adapters narrow those
+// strings to the domain unions in lib/types without `as unknown as`,
+// so a Go-side shape change fails the TypeScript check in exactly one
+// place instead of silencing every call site.
+
+function gitChangeKindOf(kind: string): GitChangeKind {
+  switch (kind) {
+    case 'modified':
+    case 'added':
+    case 'deleted':
+    case 'renamed':
+    case 'copied':
+    case 'typechange':
+    case 'untracked':
+    case 'unmerged':
+      return kind;
+    default:
+      // A future git status code degrades to the modified marker
+      // instead of rendering an unknown glyph.
+      return 'modified';
+  }
+}
+
+function gitChangeOf(dto: gen.GitChangeDTO): GitChange {
+  return { ...dto, kind: gitChangeKindOf(dto.kind) };
+}
+
+function toGitStatus(dto: gen.GitStatusDTO): GitStatus {
+  return {
+    root: dto.root,
+    workspace: dto.workspace,
+    branch: dto.branch,
+    truncated: dto.truncated,
+    entries: (dto.entries ?? []).map(gitChangeOf),
+  };
+}
+
+function toGitCommitFiles(dto: gen.GitCommitFilesDTO): GitCommitFiles {
+  return {
+    truncated: dto.truncated,
+    files: (dto.files ?? []).map((f) => ({
+      ...f,
+      kind: gitChangeKindOf(f.kind),
+    })),
+  };
+}
+
+function pullStateOf(state: string): GitHubPull['state'] {
+  switch (state) {
+    case 'open':
+    case 'closed':
+    case 'merged':
+      return state;
+    default:
+      // Unknown states render as closed (non-actionable) rather than
+      // being surfaced as an open pull request.
+      return 'closed';
+  }
+}
+
+function checkKindOf(kind: string): GitHubCheck['kind'] {
+  return kind === 'status' ? 'status' : 'check_run';
+}
+
+function timelineKindOf(kind: string): GitHubTimelineItem['kind'] {
+  return kind === 'review' ? 'review' : 'comment';
+}
+
+function threadSideOf(side: string | undefined): GitHubReviewThread['side'] {
+  return side === 'LEFT' || side === 'RIGHT' ? side : undefined;
+}
 
 export const api = {
   version: () => Config.Version(),
@@ -124,36 +204,48 @@ export const api = {
   openWorkspace: (path: string) => Workspace.Open(path),
   removeWorkspace: (id: string) => Workspace.Remove(id),
   fileDiff: (path: string) => File.Diff(path),
-  gitRepo: () => Git.Repo() as unknown as Promise<GitRepo>,
-  gitStatus: () => Git.Status() as unknown as Promise<GitStatus>,
-  gitLog: (limit: number) =>
-    Git.Log(limit) as unknown as Promise<GitLogEntry[]>,
-  gitBranches: () => Git.Branches() as unknown as Promise<GitBranch[]>,
-  gitDiff: (path: string, cached: boolean) =>
-    Git.Diff(path, cached) as unknown as Promise<GitDiff>,
-  gitCommitFiles: (oid: string) =>
-    Git.CommitFiles(oid) as unknown as Promise<GitCommitFiles>,
-  gitCommitDiff: (oid: string, path: string) =>
-    Git.CommitDiff(oid, path) as unknown as Promise<GitDiff>,
-  gitStage: (paths: string[]) => Git.Stage(paths) as unknown as Promise<string>,
-  gitUnstage: (paths: string[]) =>
-    Git.Unstage(paths) as unknown as Promise<string>,
-  gitCommit: (message: string) =>
-    Git.Commit(message) as unknown as Promise<string>,
-  gitCheckout: (branch: string) =>
-    Git.Checkout(branch) as unknown as Promise<string>,
-  gitNewBranch: (name: string) =>
-    Git.NewBranch(name) as unknown as Promise<string>,
-  gitDiscard: (paths: string[], staged: boolean) =>
-    Git.Discard(paths, staged) as unknown as Promise<string>,
-  gitClean: (paths: string[]) => Git.Clean(paths) as unknown as Promise<string>,
-  gitPull: () => Git.Pull() as unknown as Promise<string>,
-  gitPush: (force: boolean) => Git.Push(force) as unknown as Promise<string>,
-  gitHubAvailable: () =>
-    PullRequests.Availability() as unknown as Promise<PRAvailability>,
-  gitHubPRList: () => PullRequests.List() as unknown as Promise<GitHubPull[]>,
-  gitHubPRDetail: (number: number) =>
-    PullRequests.Detail(number) as unknown as Promise<GitHubPRDetail>,
+  gitRepo: (): Promise<GitRepo> => Git.Repo(),
+  gitStatus: async (): Promise<GitStatus> => toGitStatus(await Git.Status()),
+  gitLog: async (limit: number): Promise<GitLogEntry[]> => Git.Log(limit),
+  gitBranches: async (): Promise<GitBranch[]> => Git.Branches(),
+  gitDiff: async (path: string, cached: boolean): Promise<GitDiff> =>
+    Git.Diff(path, cached),
+  gitCommitFiles: async (oid: string): Promise<GitCommitFiles> =>
+    toGitCommitFiles(await Git.CommitFiles(oid)),
+  gitCommitDiff: async (oid: string, path: string): Promise<GitDiff> =>
+    Git.CommitDiff(oid, path),
+  gitStage: (paths: string[]) => Git.Stage(paths),
+  gitUnstage: (paths: string[]) => Git.Unstage(paths),
+  gitCommit: (message: string) => Git.Commit(message),
+  gitCheckout: (branch: string) => Git.Checkout(branch),
+  gitNewBranch: (name: string) => Git.NewBranch(name),
+  gitDiscard: (paths: string[], staged: boolean) => Git.Discard(paths, staged),
+  gitClean: (paths: string[]) => Git.Clean(paths),
+  gitPull: () => Git.Pull(),
+  gitPush: (force: boolean) => Git.Push(force),
+  gitHubAvailable: async (): Promise<PRAvailability> =>
+    PullRequests.Availability(),
+  gitHubPRList: async (): Promise<GitHubPull[]> =>
+    (await PullRequests.List()).map((p) => ({
+      ...p,
+      state: pullStateOf(p.state),
+    })),
+  gitHubPRDetail: async (number: number): Promise<GitHubPRDetail> => {
+    const d = await PullRequests.Detail(number);
+    return {
+      ...d,
+      state: pullStateOf(d.state),
+      checks: d.checks.map((c) => ({ ...c, kind: checkKindOf(c.kind) })),
+      conversation: d.conversation.map((item) => ({
+        ...item,
+        kind: timelineKindOf(item.kind),
+      })),
+      threads: d.threads.map((t) => ({
+        ...t,
+        side: threadSideOf(t.side),
+      })),
+    };
+  },
   getThink: () => Settings.GetThink(),
   setThink: (level: string) => Settings.SetThink(level),
   getModel: () => Settings.GetModel(),
