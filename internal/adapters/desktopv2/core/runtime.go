@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"sync"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/automations"
@@ -140,6 +141,27 @@ func (r *Runtime) AcquireBackground(
 	}
 	r.configureHost(h)
 	return h, nil
+}
+
+// EnsureUsableHost returns a Host for workDir that can accept new
+// turns. When the current Host already serves workDir and is live it
+// is returned untouched; otherwise the manager waits out any retiring
+// Host and assembles a fresh one, which becomes the current Host.
+// Adapters use it to recover from the transient host lifecycle guards
+// (runtime closing / not ready) inside one binding RPC.
+func (r *Runtime) EnsureUsableHost(
+	ctx context.Context,
+	workDir string,
+) (*host.Host, error) {
+	if r.manager == nil {
+		return nil, fmt.Errorf("runtime: host manager is not configured")
+	}
+	if h := r.Current(); h != nil &&
+		filepath.Clean(h.WorkDir()) == filepath.Clean(workDir) &&
+		!h.IsClosing() {
+		return h, nil
+	}
+	return r.Acquire(ctx, workDir, interact.Auto{})
 }
 
 // configureHost runs the adapter host configurator once per Host.
