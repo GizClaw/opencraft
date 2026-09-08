@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 
+	"github.com/GizClaw/flowcraft/core/telemetry"
+
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
@@ -90,7 +92,10 @@ func (s *Shell) OpenURL(url string) {
 	if app == nil {
 		return
 	}
-	_ = app.Browser.OpenURL(url)
+	if err := app.Browser.OpenURL(url); err != nil {
+		telemetry.WarnErr(context.Background(),
+			"desktop: open external url failed", err)
+	}
 }
 
 // Emit pushes one UI event to the frontend. Events before attachment are
