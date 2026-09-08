@@ -340,6 +340,8 @@ func (d *Desktop) Bindings() []interface{} {
 		bindings.NewSessionBinding(d.core),
 		bindings.NewAgentBinding(d.core),
 		bindings.NewFileBinding(d.core),
+		bindings.NewGitBinding(d.core),
+		bindings.NewPullRequestsBinding(d.core),
 		bindings.NewSettingsBinding(d.core),
 		bindings.NewDiagnosticsBinding(d.core),
 		bindings.NewPluginBinding(d.core),

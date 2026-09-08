@@ -22,6 +22,7 @@ type Core struct {
 	Conversation *Conversation
 	Plugin       *PluginService
 	Prompt       *Prompt
+	Git          *GitService
 
 	UserDir string
 	DataDir string
@@ -39,6 +40,7 @@ func NewCore(userDir, dataDir, workDir string) *Core {
 		Conversation: NewConversation(),
 		Plugin:       plugin,
 		Prompt:       NewPrompt(),
+		Git:          NewGitService(),
 		UserDir:      userDir,
 		DataDir:      dataDir,
 		WorkDir:      workDir,
