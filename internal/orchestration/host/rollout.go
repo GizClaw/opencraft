@@ -110,6 +110,10 @@ func (h *Host) onStreamRollout(
 ) {
 	h.mu.Lock()
 	d := h.runs[RunID(runID)]
+	if d != nil && delta.Type == agent.StreamDeltaFinish {
+		d.requestID = delta.RequestID
+		d.responseID = delta.ResponseID
+	}
 	conv := ""
 	if d != nil {
 		conv = d.contextID

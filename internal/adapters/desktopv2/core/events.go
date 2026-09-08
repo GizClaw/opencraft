@@ -15,7 +15,15 @@ type TurnEndEvent struct {
 	ConversationID string `json:"conversation_id,omitempty"`
 	Status         string `json:"status"`
 	Error          string `json:"error,omitempty"`
-	FinishedAt     string `json:"finished_at,omitempty"`
+	// RequestID is the provider request identifier of the terminal
+	// operation, when the provider reported one. It usually populates
+	// failed turns (carried by the error chain).
+	RequestID string `json:"request_id,omitempty"`
+	// ResponseID is the provider response identifier (chat/message
+	// id), when a response started. It usually populates successful
+	// turns and may be the only correlation id available there.
+	ResponseID string `json:"response_id,omitempty"`
+	FinishedAt string `json:"finished_at,omitempty"`
 	// DurationMs is the Host-measured run duration persisted with the
 	// archived turn. It is always present (even when zero) so the UI
 	// never has to estimate from second-precision timestamps.
@@ -32,7 +40,8 @@ type TurnEndEvent struct {
 // NewTurnEnd builds a wire turn-end event with the RFC3339 end time
 // and the duration the Host persisted for this run.
 func NewTurnEnd(
-	runID, conversationID, status, errorText, output string,
+	runID, conversationID, status, errorText, requestID, responseID string,
+	output string,
 	finishedAt time.Time, durationMs int64,
 ) TurnEndEvent {
 	return TurnEndEvent{
@@ -40,6 +49,8 @@ func NewTurnEnd(
 		ConversationID: conversationID,
 		Status:         status,
 		Error:          errorText,
+		RequestID:      requestID,
+		ResponseID:     responseID,
 		FinishedAt:     finishedAt.UTC().Format(time.RFC3339),
 		DurationMs:     durationMs,
 		Output:         output,

@@ -68,16 +68,24 @@ func NormalizeModelName(model string) string {
 
 // TurnRecord is one archived turn.
 type TurnRecord struct {
-	Seq         int               `json:"seq"`
-	At          time.Time         `json:"at"`
-	RequestedAt time.Time         `json:"requested_at,omitzero"`
-	StartedAt   time.Time         `json:"started_at,omitzero"`
-	FinishedAt  time.Time         `json:"finished_at,omitzero"`
-	RunID       string            `json:"run_id,omitempty"`
-	Status      string            `json:"status,omitempty"`
-	Error       string            `json:"error,omitempty"`
-	Messages    []message.Message `json:"messages"`
-	Artifacts   []Artifact        `json:"artifacts,omitempty"`
+	Seq         int       `json:"seq"`
+	At          time.Time `json:"at"`
+	RequestedAt time.Time `json:"requested_at,omitzero"`
+	StartedAt   time.Time `json:"started_at,omitzero"`
+	FinishedAt  time.Time `json:"finished_at,omitzero"`
+	RunID       string    `json:"run_id,omitempty"`
+	Status      string    `json:"status,omitempty"`
+	Error       string    `json:"error,omitempty"`
+	// RequestID is the provider request identifier of the terminal
+	// operation, surfaced in the UI warning box for correlation with
+	// provider-side logs. Empty when the provider reported none.
+	RequestID string `json:"request_id,omitempty"`
+	// ResponseID is the provider response identifier (chat/message
+	// id). It is usually only known once a response started, so
+	// successful turns may carry it while request id stays empty.
+	ResponseID string            `json:"response_id,omitempty"`
+	Messages   []message.Message `json:"messages"`
+	Artifacts  []Artifact        `json:"artifacts,omitempty"`
 }
 
 // TurnTiming carries the timestamps one turn should display.
@@ -356,17 +364,21 @@ func (s *Store) RecordTurnTiming(
 	return nil
 }
 
-// RecordTurnEnd records when a run finished plus its terminal status
-// and error. Persisting status here keeps the archive in sync with the
-// same turn_end event the UI receives.
+// RecordTurnEnd records when a run finished plus its terminal status,
+// error, and optional provider request/response identifiers.
+// Persisting status here keeps the archive in sync with the same
+// turn_end event the UI receives.
 func (s *Store) RecordTurnEnd(
-	id, runID string, finishedAt time.Time, status, errText string,
+	id, runID string, finishedAt time.Time,
+	status, errText, requestID, responseID string,
 ) error {
-	return s.recordTurnEnd(id, runID, finishedAt, status, errText)
+	return s.recordTurnEnd(
+		id, runID, finishedAt, status, errText, requestID, responseID)
 }
 
 func (s *Store) recordTurnEnd(
-	id, runID string, finishedAt time.Time, status, errText string,
+	id, runID string, finishedAt time.Time,
+	status, errText, requestID, responseID string,
 ) error {
 	if err := requireID(id); err != nil {
 		return err
@@ -377,7 +389,7 @@ func (s *Store) recordTurnEnd(
 	finishedAt = finishedAt.UTC()
 	if err := s.db.UpdateArchiveTurnEnd(
 		context.Background(), id, runID,
-		finishedAt, status, errText,
+		finishedAt, status, errText, requestID, responseID,
 	); err != nil {
 		return err
 	}
@@ -678,6 +690,8 @@ func archiveTurnRecord(
 		RunID:       turn.RunID,
 		Status:      turn.Status,
 		Error:       turn.Error,
+		RequestID:   turn.RequestID,
+		ResponseID:  turn.ResponseID,
 	}
 	for _, m := range msgs {
 		rec.Messages = append(rec.Messages, message.Message{

@@ -24,7 +24,13 @@ func TestMemoryPayloadMigration011(t *testing.T) {
 
 	all := workspaceMigrations()
 	// Reproduce a pre-011 database: schema only up to migration 010.
-	if err := handle.Migrate(ctx, all[:len(all)-1]); err != nil {
+	pre011 := make([]db.Migration, 0, len(all))
+	for _, m := range all {
+		if m.Version <= 10 {
+			pre011 = append(pre011, m)
+		}
+	}
+	if err := handle.Migrate(ctx, pre011); err != nil {
 		t.Fatalf("apply pre-011 migrations: %v", err)
 	}
 	for _, stmt := range []string{

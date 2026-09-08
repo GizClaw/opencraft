@@ -410,6 +410,8 @@
     "thinkLabel": "Thinking",
     "lastFailed": "Last reply failed",
     "lastFailedDetail": "This reply failed before it finished.",
+    "requestId": "Request ID",
+    "responseId": "Response ID",
     "providerFailure": "The model service couldn't complete this request. Try again or switch models.",
     "invalidProviderResponse": "The model returned an unexpected response. Try again or switch models.",
     "modelConfiguration": "The model configuration looks invalid. Check your model settings.",

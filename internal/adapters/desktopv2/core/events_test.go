@@ -17,7 +17,7 @@ func TestTurnEndEventCarriesDurationMs(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ev := NewTurnEnd(
-				"r-1", "s-1", "completed", "", "done",
+				"r-1", "s-1", "completed", "", "", "", "done",
 				now, tc.durationMs,
 			)
 			raw, err := json.Marshal(ev)

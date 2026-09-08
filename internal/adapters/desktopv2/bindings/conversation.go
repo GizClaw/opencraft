@@ -163,8 +163,10 @@ func (b *Conversation) waitTurn(
 		errText = err.Error()
 	}
 	finishedAt, durationMs := run.FinishedTiming()
+	requestID, responseID := run.FinishedIDs()
 	end := core.NewTurnEnd(
 		run.RunID(), contextID, status, errText,
+		requestID, responseID,
 		lastAssistantOutput(res), finishedAt, durationMs,
 	)
 	b.core.Shell.Emit("turn_end", end)

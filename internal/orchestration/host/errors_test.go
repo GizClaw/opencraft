@@ -5,6 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+
+	"github.com/GizClaw/flowcraft/core/errdefs"
+	"github.com/GizClaw/flowcraft/core/inference"
 )
 
 func TestIsRetryableStartError(t *testing.T) {
@@ -48,5 +51,42 @@ func TestSentinelsMatchPublicMessages(t *testing.T) {
 		if got := tt.err.Error(); got != tt.msg {
 			t.Errorf("sentinel message = %q, want %q", got, tt.msg)
 		}
+	}
+}
+
+// TestFailureRequestID extracts the provider request identifier from
+// wrapped engine failures, mirroring the chain a truncated stream
+// produces, and falls back to the inference error field for errors
+// that carry the id without an errdefs marker.
+func TestFailureRequestID(t *testing.T) {
+	truncated := fmt.Errorf(
+		"graph %q node %q: %w",
+		"opencraft-assistant", "llm",
+		inference.NewError(
+			inference.ProviderTruncated, inference.OperationGenerate, "",
+			errdefs.WithRequestID(
+				errdefs.NotAvailable(errors.New("stream ended early")),
+				"req-stream-1",
+			),
+		),
+	)
+	if got := FailureRequestID(truncated); got != "req-stream-1" {
+		t.Fatalf("FailureRequestID(truncated) = %q, want req-stream-1", got)
+	}
+
+	field := inference.NewError(
+		inference.ProviderFailure, inference.OperationGenerate, "",
+		errors.New("provider boom"),
+	)
+	field.RequestID = "req-field-1"
+	if got := FailureRequestID(field); got != "req-field-1" {
+		t.Fatalf("FailureRequestID(field) = %q, want req-field-1", got)
+	}
+
+	if got := FailureRequestID(nil); got != "" {
+		t.Fatalf("FailureRequestID(nil) = %q, want empty", got)
+	}
+	if got := FailureRequestID(errors.New("plain")); got != "" {
+		t.Fatalf("FailureRequestID(plain) = %q, want empty", got)
 	}
 }

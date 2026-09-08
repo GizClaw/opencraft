@@ -800,6 +800,55 @@ describe('ChatView transcript windowing', () => {
   });
 });
 
+describe('ChatView turn end notice diagnostics', () => {
+  it('shows the correlation id and raw detail for non-user failures', () => {
+    setConversation(
+      [{ id: 'm-1', role: 'user', text: 'hello', items: [], attachments: [] }],
+      [
+        {
+          id: 't-1',
+          start: 0,
+          docs: [],
+          status: 'failed',
+          error: 'provider_failure during generate',
+          requestID: 'req-xyz',
+          responseID: 'resp-xyz',
+        },
+      ],
+    );
+    render(<ChatView />);
+
+    expect(screen.getByText('Last reply failed')).toBeInTheDocument();
+    expect(screen.getByText(/Request ID: req-xyz/)).toBeInTheDocument();
+    // The friendly summary stays the primary detail; the raw engine
+    // reason renders beneath it in small text.
+    expect(
+      screen.getByText('provider_failure during generate'),
+    ).toBeInTheDocument();
+  });
+
+  it('keeps provider diagnostics out of user-stopped notices', () => {
+    setConversation(
+      [{ id: 'm-1', role: 'user', text: 'hello', items: [], attachments: [] }],
+      [
+        {
+          id: 't-1',
+          start: 0,
+          docs: [],
+          status: 'canceled',
+          error: 'context canceled',
+          requestID: 'req-xyz',
+        },
+      ],
+    );
+    render(<ChatView />);
+
+    expect(screen.getByText('Reply cancelled')).toBeInTheDocument();
+    expect(screen.queryByText(/req-xyz/)).not.toBeInTheDocument();
+    expect(screen.queryByText('context canceled')).not.toBeInTheDocument();
+  });
+});
+
 describe('ChatView jump-to-latest pill', () => {
   it('appears after scrolling away from the bottom and snaps back on click', () => {
     setConversation(manyMessages(40));

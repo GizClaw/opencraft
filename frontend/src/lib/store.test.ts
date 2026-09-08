@@ -301,6 +301,8 @@ describe('store: send and stream', () => {
         conversation_id: 's-1',
         status: 'failed',
         error: 'engine boom',
+        request_id: 'req-1',
+        response_id: 'resp-1',
       },
     });
 
@@ -1358,6 +1360,8 @@ describe('store: send and stream', () => {
         conversation_id: 's-1',
         status: 'failed',
         error: 'engine boom',
+        request_id: 'req-1',
+        response_id: 'resp-1',
       },
     });
 
@@ -1366,6 +1370,8 @@ describe('store: send and stream', () => {
     expect(conv.turnArtifacts[0]).toMatchObject({
       status: 'failed',
       error: 'engine boom',
+      requestID: 'req-1',
+      responseID: 'resp-1',
     });
     const text = conv.messages[0].items.find(
       (i) => i.kind === 'text',

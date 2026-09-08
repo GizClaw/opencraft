@@ -841,6 +841,11 @@ type runDetail struct {
 	buffer     *rolloutBuffer
 	manifest   map[string]fileStat
 	backend    interact.Backend
+	// requestID/responseID hold the provider correlation identifiers
+	// of the run's final generation, captured from the terminal
+	// stream finish delta. Guarded by Host.mu.
+	requestID  string
+	responseID string
 }
 
 // dropRun removes an ended run from the active set. Usage for the run

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/message"
 	coresession "github.com/GizClaw/flowcraft/core/runtime/session"
@@ -65,6 +66,8 @@ type Run struct {
 	startedAt     time.Time
 	finishedAt    time.Time
 	durationMs    int64
+	requestID     string
+	responseID    string
 }
 
 // ContextID returns the conversation id the run writes to.
@@ -391,12 +394,28 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 		if execErr == nil && res != nil {
 			execErr = res.Err
 		}
+		requestID := FailureRequestID(execErr)
+		responseID := ""
+		if execErr == nil && res != nil {
+			if requestID == "" {
+				requestID = detail.requestID
+			}
+			responseID = detail.responseID
+		}
+		r.requestID = requestID
+		r.responseID = responseID
 		if execErr != nil {
-			telemetry.WarnErr(persistCtx, "host: turn execution failed",
-				unwrapErrForTelemetry(execErr),
+			logAttrs := []otellog.KeyValue{
 				otellog.String("conversation.id", detail.contextID),
 				otellog.String("run.id", r.RunID()),
-				otellog.String("status", string(status)))
+				otellog.String("status", string(status)),
+			}
+			if requestID != "" {
+				logAttrs = append(
+					logAttrs, otellog.String("request.id", requestID))
+			}
+			telemetry.WarnErr(persistCtx, "host: turn execution failed",
+				unwrapErrForTelemetry(execErr), logAttrs...)
 		}
 		typ := rollout.TypeTurnCompleted
 		if errText != "" || status == agent.StatusFailed {
@@ -407,7 +426,7 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 			telemetry.WarnErr(persistCtx, "host: record turn end failed",
 				store.RecordTurnEnd(
 					detail.contextID, r.RunID(), finishedAt,
-					string(status), errText))
+					string(status), errText, requestID, responseID))
 		}
 		host.persistTurnUsage(
 			persistCtx, detail.contextID, usageDeltas, turnUsage)
@@ -444,6 +463,35 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 		host.awaitCloseIfClosing()
 	}
 	return res, err
+}
+
+// FinishedIDs returns the provider correlation identifiers attached
+// to the finished run: the request id when the provider reported one
+// and the response id when a response started. Both may be empty.
+func (r *Run) FinishedIDs() (requestID, responseID string) {
+	if r == nil {
+		return "", ""
+	}
+	return r.requestID, r.responseID
+}
+
+// FailureRequestID extracts the provider-assigned request identifier
+// from a terminal turn error, when the provider reported one. Stream
+// truncation and provider failures carry it through the flowcraft
+// error chain; the UI warning box renders it so a failed turn can be
+// correlated with provider-side logs.
+func FailureRequestID(err error) string {
+	if err == nil {
+		return ""
+	}
+	if id, ok := errdefs.RequestID(err); ok {
+		return id
+	}
+	var infErr *inference.Error
+	if errors.As(err, &infErr) {
+		return infErr.RequestID
+	}
+	return ""
 }
 
 // persistTurnUsage records one turn's usage in the workspace session
