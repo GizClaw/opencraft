@@ -67,6 +67,12 @@ func (f Factory) New(_ context.Context, _ resource.Input) (any, error) {
 // emptyHost reports that no desktop automation host is wired in.
 type emptyHost struct{}
 
+// EmptyHost returns a no-op automation host for runtimes without a
+// desktop automation surface (CLI/headless, tests). It satisfies the
+// Host contract and exposes no tools, matching the previous nil-host
+// Factory behavior now that the value is injected externally.
+func EmptyHost() Host { return emptyHost{} }
+
 func (emptyHost) AutomationsList(context.Context) ([]automations.Task, error) {
 	return nil, errdefs.NotAvailablef("automation: no host in this runtime")
 }

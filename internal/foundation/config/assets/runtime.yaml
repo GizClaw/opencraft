@@ -8,6 +8,16 @@ runtime:
   sessions:
     idle_timeout: 10m
     resume: false
+  # Caller-owned host values injected by the engine at assembly
+  # (plugin store/capability runtime and the automation manager). They
+  # are stable app objects that must survive in-place runtime reloads,
+  # so they are declared here as external dependencies instead of being
+  # rebuilt per generation from resource factories.
+  external_deps:
+    - name: plugin.host
+      contract: opencraft.plugins
+    - name: automation.host
+      contract: opencraft.automations
   dynamic_catalog:
     tools:
       assistant: tools

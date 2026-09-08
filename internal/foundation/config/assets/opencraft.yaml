@@ -140,17 +140,6 @@ resources:
       user_dir: ${ocraft:DATA_DIR}
       top_n: 5
       min_score: 0
-  # Plugin host: the desktop app injects the installed plugin store and
-  # capability runtime here; CLI/headless runtimes build an empty host.
-  plugin.host:
-    kind: opencraft.plugins
-    impl: local
-  # Automation host: the desktop app injects its scheduled-task store
-  # and manager here; CLI/headless runtimes build an empty host and the
-  # automation tool is not exposed to the agent.
-  automation.host:
-    kind: opencraft.automations
-    impl: local
   # Mode-aware workspace for the file tools: in workspace mode it
   # delegates to the shared ws resource (one underlying LocalWorkspace
   # for engine/system reads and tool writes) and derives its root from
