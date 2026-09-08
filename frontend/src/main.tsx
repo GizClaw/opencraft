@@ -4,6 +4,7 @@ import './style.css';
 import './i18n';
 import App from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { installMockBridge } from './lib/mockBridge';
 
 // Surface uncaught errors instead of failing silently: render errors
 // are caught by ErrorBoundary, event-handler errors and unhandled
@@ -14,6 +15,8 @@ window.addEventListener('error', (e) => {
 window.addEventListener('unhandledrejection', (e) => {
   console.error('opencraft unhandled rejection:', e.reason);
 });
+
+installMockBridge();
 
 const container = document.getElementById('root');
 

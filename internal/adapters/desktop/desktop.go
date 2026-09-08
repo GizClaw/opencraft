@@ -142,6 +142,12 @@ func (d *Desktop) Startup(ctx context.Context) {
 	}
 }
 
+// EmitUI is the single UI-event entry used by the v3 entry point outside the
+// domain services; everything else already routes through core.Shell.Emit.
+func (d *Desktop) EmitUI(typ string, data any) {
+	d.core.Shell.Emit(typ, data)
+}
+
 // hasScheduledTasks reports whether quitting would stop an enabled
 // scheduled task. It is the native quit funnel's condition: no
 // scheduler (user DB failed to open) means nothing can run, so exit

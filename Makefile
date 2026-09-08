@@ -27,8 +27,10 @@ check-boundaries:
 
 # gen-bindings regenerates the Wails v3 TS bindings (frontend/bindings)
 # for the desktop services registered in main.go and desktop.RegisterServices.
+# -names keeps the method name in the call payload so the Playwright mock can
+# route by service/method instead of numeric IDs.
 gen-bindings:
-	wails3 generate bindings -d frontend/bindings -ts -i ./...
+	wails3 generate bindings -d frontend/bindings -ts -i -names ./...
 
 test:
 	go test ./...

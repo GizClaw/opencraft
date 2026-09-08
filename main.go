@@ -113,10 +113,7 @@ func main() {
 		if len(files) == 0 {
 			return
 		}
-		app.Event.Emit("opencraft:ui", map[string]any{
-			"type": "files_dropped",
-			"data": files,
-		})
+		d.EmitUI("files_dropped", files)
 	})
 
 	// Dock reopen uses first-class mac events.
