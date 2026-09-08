@@ -175,8 +175,8 @@ const samplePRDetail = {
 };
 
 vi.mock('../lib/api', () => ({ api: apiMock }));
-vi.mock('../../wailsjs/runtime/runtime', () => ({
-  EventsOn: vi.fn(() => vi.fn()),
+vi.mock('@wailsio/runtime', () => ({
+  Events: { On: vi.fn(() => vi.fn()) },
 }));
 
 describe('GitPanel', () => {

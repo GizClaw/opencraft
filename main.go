@@ -19,7 +19,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
-//go:embed all:frontend-v3/dist
+//go:embed all:frontend/dist
 var assets embed.FS
 
 //go:embed build/appicon.png
@@ -104,6 +104,19 @@ func main() {
 		shell.Emit("cancel close; hiding main window")
 		e.Cancel()
 		mainW.Hide()
+	})
+
+	// v3 routes drops to the Go window event; forward paths into the shared
+	// UI bus so the chat attachment flow keeps its existing shape.
+	mainW.OnWindowEvent(events.Common.WindowFilesDropped, func(e *application.WindowEvent) {
+		files := e.Context().DroppedFiles()
+		if len(files) == 0 {
+			return
+		}
+		app.Event.Emit("opencraft:ui", map[string]any{
+			"type": "files_dropped",
+			"data": files,
+		})
 	})
 
 	// Dock reopen uses first-class mac events.

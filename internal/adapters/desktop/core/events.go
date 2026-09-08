@@ -1,4 +1,4 @@
-// Package core UI event DTOs shared by the desktopv2 bindings and the
+// Package core UI event DTOs shared by the desktop bindings and the
 // automation runner. Keeping the wire shapes next to Shell.Emit makes
 // the frontend event contract explicit instead of ad-hoc maps.
 package core

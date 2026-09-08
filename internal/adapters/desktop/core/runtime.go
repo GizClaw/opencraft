@@ -14,7 +14,7 @@ import (
 )
 
 // Runtime owns the shared workspace Host manager and the user-level
-// usage database. It is the desktopv2 replacement for the old App host
+// usage database. It is the desktop replacement for the old App host
 // wiring and is not a Wails binding. The user-level database itself is
 // opened and owned by host.Manager (OpenUserDB), which also installs
 // the default usage recorder; this type only forwards the accessors.

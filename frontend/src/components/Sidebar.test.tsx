@@ -16,9 +16,6 @@ const apiMock = vi.hoisted(() => ({
 }));
 
 vi.mock('../lib/api', () => ({ api: apiMock }));
-vi.mock('../../wailsjs/runtime/runtime', () => ({
-  WindowToggleMaximise: vi.fn(),
-}));
 
 const expandedKey = 'oc.sidebarExpandedWorkspaces';
 const workspaceA: WorkspaceMeta = {

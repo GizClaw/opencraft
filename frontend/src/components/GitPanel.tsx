@@ -46,7 +46,7 @@ import { api } from '../lib/api';
 import { parseUnifiedDiff } from '../lib/diff';
 import { useStore } from '../lib/store';
 import { useConversationState } from '../state/react';
-import { EventsOn } from '../../wailsjs/runtime/runtime';
+import { Events } from '@wailsio/runtime';
 import { dateLabel } from '../lib/format';
 import type {
   GitBranch,
@@ -243,11 +243,11 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
   // git_changed after every successful mutation, so refresh when the
   // workspace repository changes underneath this panel.
   useEffect(() => {
-    const off = EventsOn('opencraft:ui', (ev: unknown) => {
-      const msg = ev as { type?: string };
+    const off = Events.On('opencraft:ui', (e) => {
+      const ev = e.data as { type?: string } | undefined;
       // git_changed covers UI writes from any panel; turn_end covers
       // agent/automation turns that may have touched the repository.
-      if (msg?.type === 'git_changed' || msg?.type === 'turn_end') {
+      if (ev?.type === 'git_changed' || ev?.type === 'turn_end') {
         void refresh(true);
       }
     });

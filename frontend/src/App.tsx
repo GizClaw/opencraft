@@ -1,13 +1,8 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from './i18n';
-import {
-  Environment,
-  EventsOn,
-  InitializeNotifications,
-  RequestNotificationAuthorization,
-  SendNotification,
-} from '../wailsjs/runtime/runtime';
+import { Events, System } from '@wailsio/runtime';
+import * as NotificationService from '../bindings/github.com/wailsapp/wails/v3/pkg/services/notifications/notificationservice';
 import { ChatView } from './components/ChatView';
 import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
@@ -128,15 +123,15 @@ export default function App() {
     void init();
     let alive = true;
     let removeDebugContextMenu: (() => void) | null = null;
-    void Environment().then((env) => {
+    void System.Environment().then((env) => {
       if (!alive) return;
-      setIsMac(env.platform === 'darwin');
+      setIsMac(env.OS === 'darwin');
       // Wails dev/debug builds always enable the native webview
       // context menu, which exposes Reload + Inspect Element to users.
       // Keep the app menu clean outside production; React's own
       // right-click menus still work because they prevent the default
       // themselves and are not cancelled by this listener.
-      if (env.buildType !== 'production') {
+      if (env.Debug) {
         const onContextMenu = (event: MouseEvent) => {
           if (!event.defaultPrevented) event.preventDefault();
         };
@@ -171,10 +166,11 @@ export default function App() {
     // Load installed plugins once the shell mounts; the plugin host
     // registers its settings panels and sidebar entries afterwards.
     void usePluginStore.getState().load();
-    const off = EventsOn('opencraft:ui', (ev: UIEvent) => {
+    const off = Events.On('opencraft:ui', (e) => {
+      const ev = e.data as UIEvent;
       if (ev.type === 'interact') {
         const spec = ev.data as { title?: string };
-        void SendNotification({
+        void NotificationService.SendNotification({
           id: 'interact',
           title: 'OpenCraft',
           body: spec.title || i18n.t('notify.interact'),
@@ -191,7 +187,7 @@ export default function App() {
           // the notification builds its snippet from the final answer.
           useStore.getState().flushStreams();
           const { title, body } = turnEndNotification(data);
-          void SendNotification({ id: 'turn-end', title, body });
+          void NotificationService.SendNotification({ id: 'turn-end', title, body });
         }
       } else if (ev.type === 'automation_notify') {
         const data = ev.data as {
@@ -207,7 +203,7 @@ export default function App() {
             ? truncate(data.error, maxNotifySnippet)
             : '';
         const body = snippet ? `${statusText}\n${snippet}` : statusText;
-        void SendNotification({
+        void NotificationService.SendNotification({
           id: 'automation-turn-end',
           title: truncate(data.name || 'OpenCraft', maxNotifyTitle),
           body,
@@ -219,8 +215,7 @@ export default function App() {
   }, [init, handleEvent]);
 
   useEffect(() => {
-    void InitializeNotifications()
-      .then(() => RequestNotificationAuthorization())
+    void NotificationService.RequestNotificationAuthorization()
       .catch(() => {
         // notifications are best-effort
       });

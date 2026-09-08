@@ -18,8 +18,8 @@ const apiMock = vi.hoisted(() => ({
 }));
 
 vi.mock('../lib/api', () => ({ api: apiMock }));
-vi.mock('../../wailsjs/runtime/runtime', () => ({
-  EventsOn: vi.fn(() => vi.fn()),
+vi.mock('@wailsio/runtime', () => ({
+  Events: { On: vi.fn(() => vi.fn()) },
 }));
 
 function setState(mode: 'files' | 'git') {

@@ -1,4 +1,4 @@
-import { WindowToggleMaximise } from '../../wailsjs/runtime/runtime';
+import { Window } from '@wailsio/runtime';
 import { WindowControls } from './WindowControls';
 
 // TopBar is the full-width window title strip for the frameless
@@ -13,7 +13,7 @@ export function TopBar({ isMac }: { isMac: boolean }) {
     <div
       className="h-11 shrink-0 border-b border-edge bg-panel flex items-center select-none"
       style={{ ['--wails-draggable' as string]: 'drag' }}
-      onDoubleClick={() => WindowToggleMaximise()}
+      onDoubleClick={() => void Window.ToggleMaximise()}
     >
       <div className="ml-auto h-full">
         <WindowControls />

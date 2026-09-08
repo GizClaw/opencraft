@@ -26,10 +26,6 @@ const apiMock = vi.hoisted(() => ({
 }));
 
 vi.mock('../lib/api', () => ({ api: apiMock }));
-vi.mock('../../wailsjs/runtime/runtime', () => ({
-  OnFileDrop: vi.fn(),
-  OnFileDropOff: vi.fn(),
-}));
 
 function manyMessages(n: number): MessageView[] {
   return Array.from({ length: n }, (_, i) => ({

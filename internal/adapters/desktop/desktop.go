@@ -24,6 +24,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 )
 
 // Options configures the desktop application.
@@ -36,8 +37,9 @@ type Options struct {
 // Desktop is the desktop composition root. It is not a Wails binding
 // object; Bindings returns the per-domain API objects.
 type Desktop struct {
-	core         *core.Core
-	otelShutdown func(context.Context) error
+	core          *core.Core
+	notifications *notifications.NotificationService
+	otelShutdown  func(context.Context) error
 }
 
 // New resolves the user data/config directories and builds the core
@@ -96,8 +98,9 @@ func New(opts Options) (*Desktop, error) {
 		shutdown = nil
 	}
 	return &Desktop{
-		core:         c,
-		otelShutdown: shutdown,
+		core:          c,
+		notifications: notifications.New(),
+		otelShutdown:  shutdown,
 	}, nil
 }
 
@@ -344,4 +347,5 @@ func (d *Desktop) RegisterServices(app *application.App) {
 	reg(application.NewService(bindings.NewPluginBinding(d.core)))
 	reg(application.NewService(bindings.NewSecretBinding(d.core)))
 	reg(application.NewService(bindings.NewAutomationBinding(d.core)))
+	reg(application.NewService(d.notifications))
 }

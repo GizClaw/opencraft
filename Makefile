@@ -25,10 +25,10 @@ lint:
 check-boundaries:
 	./scripts/check-boundaries.sh
 
-# gen-bindings regenerates the Wails v3 TS bindings (frontend-v3/bindings)
+# gen-bindings regenerates the Wails v3 TS bindings (frontend/bindings)
 # for the desktop services registered in main.go and desktop.RegisterServices.
 gen-bindings:
-	wails3 generate bindings -d frontend-v3/bindings -ts -i ./...
+	wails3 generate bindings -d frontend/bindings -ts -i ./...
 
 test:
 	go test ./...
@@ -68,8 +68,8 @@ MACOS_CGO_LDFLAGS ?= -Wl,-no_warn_duplicate_libraries
 # architecture. .app bundling / cross-platform packaging is re-added in
 # Phase 4 with the wails3 Taskfile tasks.
 build-macos:
-	npm --prefix frontend-v3 ci
-	npm --prefix frontend-v3 run build
+	npm --prefix frontend ci
+	npm --prefix frontend run build
 	go build -tags production -trimpath -buildvcs=false \
 		-ldflags "$(MACOS_LDFLAGS)" \
 		-o build/bin/opencraft .

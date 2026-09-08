@@ -1,23 +1,21 @@
-// Typed wrappers over the desktopv2 Wails bindings.
+// Typed wrappers over the Wails v3 desktop services.
 import i18n from '../i18n';
-import * as Agent from '../../wailsjs/go/bindings/Agent';
-import * as Automation from '../../wailsjs/go/bindings/Automation';
-import * as Config from '../../wailsjs/go/bindings/Config';
-import * as Conversation from '../../wailsjs/go/bindings/Conversation';
-import * as Diagnostics from '../../wailsjs/go/bindings/Diagnostics';
-import * as File from '../../wailsjs/go/bindings/File';
-import * as Git from '../../wailsjs/go/bindings/Git';
-import * as Lifecycle from '../../wailsjs/go/bindings/Lifecycle';
-import * as Plugin from '../../wailsjs/go/bindings/Plugin';
-import * as PullRequests from '../../wailsjs/go/bindings/PullRequests';
-import * as Secret from '../../wailsjs/go/bindings/Secret';
-import * as Session from '../../wailsjs/go/bindings/Session';
-import * as Settings from '../../wailsjs/go/bindings/Settings';
-import * as Workspace from '../../wailsjs/go/bindings/Workspace';
-import type {
-  bindings as gen,
-  config as genConfig,
-} from '../../wailsjs/go/models';
+import * as Agent from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/agent';
+import * as Automation from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/automation';
+import * as Config from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/config';
+import * as Conversation from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/conversation';
+import * as Diagnostics from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/diagnostics';
+import * as File from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/file';
+import * as Git from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/git';
+import * as Lifecycle from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/lifecycle';
+import * as Plugin from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/plugin';
+import * as PullRequests from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/pullrequests';
+import * as Secret from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/secret';
+import * as Session from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/session';
+import * as Settings from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/settings';
+import * as Workspace from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/workspace';
+import type * as gen from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/models';
+import type * as genConfig from '../../bindings/github.com/GizClaw/opencraft/internal/foundation/config/models';
 import type {
   ActiveRunDTO,
   AgentSummary,
@@ -75,6 +73,16 @@ import type {
   PluginSummary,
   PluginToolDTO,
 } from '../plugins/types';
+import type * as genPlugin from '../../bindings/github.com/GizClaw/opencraft/internal/capabilities/plugins/models';
+
+function pluginSummaryOf(p: genPlugin.PluginSummary): PluginSummary {
+  return {
+    ...p,
+    permissions: p.permissions ?? [],
+    panels: p.panels ?? [],
+    entries: p.entries ?? [],
+  };
+}
 
 // ---- Git/PR DTO adapters ----
 //
@@ -206,8 +214,10 @@ export const api = {
   fileDiff: (path: string) => File.Diff(path),
   gitRepo: (): Promise<GitRepo> => Git.Repo(),
   gitStatus: async (): Promise<GitStatus> => toGitStatus(await Git.Status()),
-  gitLog: async (limit: number): Promise<GitLogEntry[]> => Git.Log(limit),
-  gitBranches: async (): Promise<GitBranch[]> => Git.Branches(),
+  gitLog: async (limit: number): Promise<GitLogEntry[]> =>
+    (await Git.Log(limit)) ?? [],
+  gitBranches: async (): Promise<GitBranch[]> =>
+    (await Git.Branches()) ?? [],
   gitDiff: async (path: string, cached: boolean): Promise<GitDiff> =>
     Git.Diff(path, cached),
   gitCommitFiles: async (oid: string): Promise<GitCommitFiles> =>
@@ -226,7 +236,7 @@ export const api = {
   gitHubAvailable: async (): Promise<PRAvailability> =>
     PullRequests.Availability(),
   gitHubPRList: async (): Promise<GitHubPull[]> =>
-    (await PullRequests.List()).map((p) => ({
+    ((await PullRequests.List()) ?? []).map((p) => ({
       ...p,
       state: pullStateOf(p.state),
     })),
@@ -235,14 +245,16 @@ export const api = {
     return {
       ...d,
       state: pullStateOf(d.state),
-      checks: d.checks.map((c) => ({ ...c, kind: checkKindOf(c.kind) })),
-      conversation: d.conversation.map((item) => ({
+      commits: d.commits ?? [],
+      checks: (d.checks ?? []).map((c) => ({ ...c, kind: checkKindOf(c.kind) })),
+      conversation: (d.conversation ?? []).map((item) => ({
         ...item,
         kind: timelineKindOf(item.kind),
       })),
-      threads: d.threads.map((t) => ({
+      threads: (d.threads ?? []).map((t) => ({
         ...t,
         side: threadSideOf(t.side),
+        comments: t.comments ?? [],
       })),
     };
   },
@@ -258,14 +270,16 @@ export const api = {
     Config.ModelOptions() as unknown as Promise<ModelOption[]>,
   modelUsage: () => Config.ModelUsage() as unknown as Promise<ModelUsageStat[]>,
   modelUsageSessionCount: () => Config.ModelUsageSessionCount(),
-  modelUsageSeries: (
+  modelUsageSeries: async (
     model: string,
     granularity: 'hour' | 'day',
     utcOffsetMinutes: number,
     start: string,
     end: string,
   ) =>
-    Config.ModelUsageSeries(model, granularity, utcOffsetMinutes, start, end),
+    (await Config.ModelUsageSeries(
+      model, granularity, utcOffsetMinutes, start, end,
+    )) ?? [],
   mcpConfig: () => Config.MCPConfig() as Promise<MCPServer[]>,
   saveMCP: (servers: MCPServer[]) =>
     Config.SaveMCP(servers as unknown as genConfig.MCPServer[]),
@@ -285,7 +299,7 @@ export const api = {
       model: res.model ?? '',
     } as SessionSnapshot;
   },
-  permissions: () => Settings.Permissions(),
+  permissions: async () => (await Settings.Permissions()) ?? [],
   allowPermission: (rule: string) => Settings.AllowPermission(rule),
   denyPermission: (rule: string) => Settings.DenyPermission(rule),
   skills: () => Settings.Skills() as unknown as Promise<SkillDTO[]>,
@@ -314,7 +328,8 @@ export const api = {
     Diagnostics.ClearCaches() as unknown as Promise<CacheClearResult>,
   chooseWorkspace: () =>
     Workspace.ChooseWorkspace(i18n.t('sidebar.chooseWorkspaceTitle')),
-  pluginList: () => Plugin.List() as Promise<PluginSummary[]>,
+  pluginList: async () =>
+    ((await Plugin.List()) ?? []).map(pluginSummaryOf),
   pluginTools: (id: string) =>
     Plugin.Tools(id) as unknown as Promise<PluginToolDTO[]>,
   pluginSkills: (id: string) =>
@@ -322,7 +337,8 @@ export const api = {
   pluginBundle: (id: string) => Plugin.Bundle(id),
   pluginInstall: (dir: string) => Plugin.Install(dir),
   pluginInstallZip: (zip: string) => Plugin.InstallZip(zip),
-  pluginInspect: (path: string) => Plugin.Inspect(path),
+  pluginInspect: async (path: string) =>
+    pluginSummaryOf(await Plugin.Inspect(path)),
   pluginUpdate: (id: string, dir: string) => Plugin.Update(id, dir),
   pluginUpdateZip: (id: string, zip: string) => Plugin.UpdateZip(id, zip),
   pluginRollback: (id: string) => Plugin.Rollback(id),

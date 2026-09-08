@@ -21,7 +21,7 @@ import (
 const maxSessionImportBundleBytes = 128 << 20 // 128 MiB
 
 // wirePluginSessionImport routes the capability-plugin session.import
-// primitive into the shared Host. It is the desktopv2 replacement for
+// primitive into the shared Host. It is the desktop replacement for
 // the old App.handleSessionImport wiring and is permission-gated: a
 // capability plugin must declare sessions:import in its manifest.
 func (c *Core) wirePluginSessionImport() {
