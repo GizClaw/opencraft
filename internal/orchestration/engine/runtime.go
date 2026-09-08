@@ -4,8 +4,10 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
+	"github.com/GizClaw/flowcraft/core/deploy"
 	runtimecore "github.com/GizClaw/flowcraft/core/runtime"
 )
 
@@ -52,4 +54,24 @@ func (c *Controller) Drain(ctx context.Context) error {
 		return nil
 	}
 	return current.Drain(ctx)
+}
+
+// Reload atomically swaps the deployment document inside the current
+// runtime. In-flight turns finish on the generation they started on;
+// the next Start uses the new generation, and the retired generation
+// closes once its turns drain. Callers that own host-level bindings
+// (artifact observer, agent lifecycle, hooks) must rebind them for the
+// new generation; Host does this through the runtime rebuild lifecycle
+// event.
+func (c *Controller) Reload(
+	ctx context.Context,
+	doc deploy.Document,
+) (*runtimecore.ReloadResult, error) {
+	c.mu.Lock()
+	current := c.current
+	c.mu.Unlock()
+	if current == nil {
+		return nil, fmt.Errorf("engine: runtime is not ready")
+	}
+	return current.Reload(ctx, doc)
 }

@@ -33,14 +33,14 @@ func (c *Core) wirePluginInference() {
 				return err
 			}
 			c.Shell.Emit("inference_changed", map[string]any{})
-			return c.ReloadRuntime(c.Shell.Context())
+			return c.RebuildRuntime(c.Shell.Context())
 		},
 		Remove: func(pluginID, id string) error {
 			if err := c.removeInferenceProfile(pluginID, id); err != nil {
 				return err
 			}
 			c.Shell.Emit("inference_changed", map[string]any{})
-			return c.ReloadRuntime(c.Shell.Context())
+			return c.RebuildRuntime(c.Shell.Context())
 		},
 	})
 }

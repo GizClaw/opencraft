@@ -21,6 +21,12 @@ import (
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 )
 
+// conversationDeleteTimeout bounds one conversation deletion: it must
+// cover cancel propagation, terminal persistence, and the flowcraft
+// session close. A timeout rolls the delete back without removing
+// rows, so the caller can retry once the turn stops.
+const conversationDeleteTimeout = 30 * time.Second
+
 // RunOptions configures one assistant run on a Host.
 type RunOptions struct {
 	// Message is the user message (text or multimodal parts) that
@@ -102,6 +108,17 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 		return nil, errors.New("host: runtime is closing")
 	}
 	h.mu.Unlock()
+	if opts.ContextID != "" {
+		h.mu.Lock()
+		gone := h.deleting[ConversationID(opts.ContextID)] ||
+			h.deleted[ConversationID(opts.ContextID)]
+		h.mu.Unlock()
+		if gone {
+			return nil, fmt.Errorf(
+				"host: session %q is deleted or being deleted",
+				opts.ContextID)
+		}
+	}
 	store := h.Sessions()
 	if store == nil {
 		return nil, errors.New("host: session store is not ready")
@@ -272,6 +289,15 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 		backend:    opts.Backend,
 	}
 	h.mu.Lock()
+	if h.deleting[ConversationID(contextID)] ||
+		h.deleted[ConversationID(contextID)] {
+		h.mu.Unlock()
+		turn.Cancel()
+		telemetry.WarnErr(ctx,
+			"host: close session lease after delete race", lease.Close())
+		return nil, fmt.Errorf(
+			"host: session %q is deleted or being deleted", contextID)
+	}
 	h.runs[RunID(turn.RunID())] = run.detail
 	h.mu.Unlock()
 	h.recordRollout(ctx, h.rolloutFor(ctx, contextID), rollout.Event{
@@ -446,6 +472,136 @@ func (h *Host) persistTurnUsage(
 		}
 		h.forwardUsageRecorder(ctx, contextID, d.usage, d.at)
 	}
+}
+
+// DeleteConversation atomically removes one conversation: it cancels
+// every live run for it, waits until their terminal persistence has
+// finished, closes the flowcraft session for the key, and only then
+// removes the archived rows and files. It is the single entry point
+// desktop deletion uses so a running session is stopped before its
+// data disappears. The delete is all-or-nothing until the store
+// removal: a timeout or flowcraft refusal leaves the conversation
+// intact for a retry, and a second call after success is a no-op.
+func (h *Host) DeleteConversation(ctx context.Context, id string) error {
+	if h == nil {
+		return nil
+	}
+	if !ocsessions.ValidID(id) {
+		return fmt.Errorf("host: invalid session id %q", id)
+	}
+	ctrl := h.Controller()
+	if ctrl == nil || ctrl.Runtime() == nil {
+		return errors.New("host: runtime is not ready")
+	}
+	store := h.Sessions()
+	if store == nil {
+		return errors.New("host: session store is not ready")
+	}
+	conv := ConversationID(id)
+
+	h.mu.Lock()
+	if h.closed || h.closing {
+		h.mu.Unlock()
+		return errors.New("host: runtime is closing")
+	}
+	if h.deleted[conv] {
+		h.mu.Unlock()
+		return nil
+	}
+	if h.deleting[conv] {
+		h.mu.Unlock()
+		return fmt.Errorf(
+			"host: deletion already in progress for session %q", id)
+	}
+	h.deleting[conv] = true
+	var live []*Run
+	for _, d := range h.runs {
+		if d != nil && d.contextID == id && d.run != nil {
+			live = append(live, d.run)
+		}
+	}
+	rec := h.rollouts[conv]
+	delete(h.rollouts, conv)
+	h.mu.Unlock()
+
+	// Close the recorder before rows/files go away: an open file can
+	// keep RemoveAll from succeeding on Windows.
+	if rec != nil {
+		telemetry.WarnErr(ctx, "host: close rollout recorder failed",
+			rec.Close())
+	}
+	// Cancel first: flowcraft DeleteSession only drains, so without an
+	// explicit cancel it would wait for a long turn to finish on its
+	// own. Cancel takes effect as soon as the engine notices it.
+	for _, r := range live {
+		if r != nil && r.turn != nil {
+			r.turn.Cancel()
+		}
+	}
+
+	drainCtx, cancel := context.WithTimeout(ctx, conversationDeleteTimeout)
+	defer cancel()
+	if err := h.waitConversationIdle(drainCtx, conv); err != nil {
+		h.clearDeleting(conv)
+		return fmt.Errorf("host: stop runs for session %q: %w", id, err)
+	}
+	key := coresession.Key{AgentID: "assistant", ContextID: id}
+	if err := ctrl.Runtime().Sessions().DeleteSession(drainCtx, key); err != nil {
+		h.clearDeleting(conv)
+		return fmt.Errorf("host: close runtime session %q: %w", id, err)
+	}
+	if err := store.Remove(ctx, id); err != nil {
+		h.clearDeleting(conv)
+		return fmt.Errorf("host: remove session %q: %w", id, err)
+	}
+	h.mu.Lock()
+	h.deleted[conv] = true
+	delete(h.deleting, conv)
+	h.mu.Unlock()
+	return nil
+}
+
+// waitConversationIdle blocks until the Host no longer owns a run for
+// one conversation. Runs leave the set only after Run.Wait persisted
+// their terminal turn state, so returning here means deleting the
+// store rows cannot race a late turn-end/usage write.
+func (h *Host) waitConversationIdle(
+	ctx context.Context, id ConversationID,
+) error {
+	for {
+		h.mu.Lock()
+		active := false
+		for _, d := range h.runs {
+			if d != nil && ConversationID(d.contextID) == id {
+				active = true
+				break
+			}
+		}
+		h.mu.Unlock()
+		if !active {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+}
+
+func (h *Host) clearDeleting(id ConversationID) {
+	h.mu.Lock()
+	delete(h.deleting, id)
+	h.mu.Unlock()
+}
+
+// conversationGone reports whether one conversation is being deleted
+// or already deleted, so post-turn writers (auto titles) can skip
+// late writes that would resurrect removed rows.
+func (h *Host) conversationGone(id ConversationID) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.deleting[id] || h.deleted[id]
 }
 
 // unwrapErrForTelemetry strips one wrapper so telemetry stores the

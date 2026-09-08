@@ -64,6 +64,11 @@ func (h *Host) launchAutoTitle(ctx context.Context, contextID string) {
 // autoTitle generates a short conversation title once after a turn
 // finishes. A manual title (conversation_state "title") always wins.
 func (h *Host) autoTitle(ctx context.Context, contextID string) {
+	// A deletion may have started while the title call was queued;
+	// drop the job instead of writing state for a removed chat.
+	if h.conversationGone(ConversationID(contextID)) {
+		return
+	}
 	h.mu.Lock()
 	store := h.store
 	ctrl := h.ctrl
@@ -129,6 +134,9 @@ func (h *Host) autoTitle(ctx context.Context, contextID string) {
 	if h.usage != nil {
 		h.usage(ctx, response.Usage)
 	}
+	if h.conversationGone(ConversationID(contextID)) {
+		return
+	}
 	// Title generation is a real model call against this session: feed
 	// its usage into the session total and the user-level model_usage
 	// tables instead of only showing it as a transient UI event.
@@ -140,6 +148,9 @@ func (h *Host) autoTitle(ctx context.Context, contextID string) {
 	title := strings.TrimSpace(response.Message.Content.Text())
 	title = strings.Join(strings.Fields(title), " ")
 	if title == "" {
+		return
+	}
+	if h.conversationGone(ConversationID(contextID)) {
 		return
 	}
 	const maxTitle = 70

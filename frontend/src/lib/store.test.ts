@@ -135,9 +135,12 @@ beforeEach(() => {
     context_id: 's-1',
   });
   apiMock.forkTurn.mockResolvedValue('s-fork');
-  apiMock.deleteSession.mockRejectedValue(
-    new Error('cannot delete the active conversation'),
-  );
+  apiMock.deleteSession.mockResolvedValue({
+    session_id: '',
+    mode: '',
+    think: '',
+    model: '',
+  });
   apiMock.newChat.mockResolvedValue({
     session_id: 's-new',
     mode: 'workspace',
@@ -505,37 +508,62 @@ describe('store: send and stream', () => {
     expect(texts).toEqual(['fork prompt', 'fork answer']);
   });
 
-  it('surfaces active-conversation deletion errors as a warning toast', async () => {
+  it('deletes the active conversation and opens the replacement minted by the backend', async () => {
+    apiMock.deleteSession.mockResolvedValue({
+      session_id: 's-next',
+      mode: 'workspace',
+      think: 'medium',
+      model: '',
+    });
+
     await useStore.getState().deleteSession('s-1');
 
+    expect(apiMock.deleteSession).toHaveBeenCalledTimes(1);
+    expect(apiMock.newChat).not.toHaveBeenCalled();
     expect(useStore.getState().statusText).toBe('');
-    expect(useStore.getState().toasts).toMatchObject([
-      {
-        kind: 'warning',
-        text: expect.any(String),
-      },
-    ]);
+    expect(useStore.getState().conversations['s-1']).toBeUndefined();
+    const focus = stateRoot.focusSnapshot as {
+      value: string;
+      context: { sessionID: string };
+    };
+    expect(focus.value).toBe('active');
+    expect(focus.context.sessionID).toBe('s-next');
+    expect(useStore.getState().conversations['s-next']).toMatchObject({
+      mode: 'workspace',
+      think: 'medium',
+      model: '',
+    });
   });
 
-  it('deletes the backend-current session after switching to a draft', async () => {
-    // The UI moved to an unsent draft, but the backend still refuses
-    // deletion because it tracks the previous conversation as current.
+  it('deletes the backend-current session while the UI stays on a draft', async () => {
+    // The UI is on an unsent draft, but the backend still tracks the
+    // previous conversation as current. The backend delete mints a
+    // replacement; since the draft never pointed at the deleted
+    // conversation, the UI stays in the draft state.
     stateRoot.sendFocus({ type: 'OPEN_DRAFT' });
-    apiMock.deleteSession
-      .mockRejectedValueOnce(new Error('cannot delete the active conversation'))
-      .mockResolvedValueOnce(undefined);
+    apiMock.deleteSession.mockResolvedValue({
+      session_id: 's-next',
+      mode: 'workspace',
+      think: 'medium',
+      model: '',
+    });
 
     await useStore.getState().deleteSession('s-1');
 
-    expect(apiMock.deleteSession).toHaveBeenCalledTimes(2);
-    expect(apiMock.newChat).toHaveBeenCalledTimes(1);
+    expect(apiMock.deleteSession).toHaveBeenCalledTimes(1);
+    expect(apiMock.newChat).not.toHaveBeenCalled();
+    expect(stateRoot.focusSnapshot.value).toBe('no-session');
     expect(useStore.getState().statusText).toBe('');
-    expect(useStore.getState().toasts).toEqual([]);
     expect(useStore.getState().conversations['s-1']).toBeUndefined();
   });
 
   it('deleting a session prunes its file viewer state', async () => {
-    apiMock.deleteSession.mockResolvedValue(undefined);
+    apiMock.deleteSession.mockResolvedValue({
+      session_id: 's-next',
+      mode: 'workspace',
+      think: 'medium',
+      model: '',
+    });
     useStore.setState({
       viewers: {
         's-1': {

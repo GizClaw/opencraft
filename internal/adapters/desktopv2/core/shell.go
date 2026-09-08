@@ -16,13 +16,14 @@ import (
 type Shell struct {
 	mu sync.Mutex
 
-	ctx           context.Context
-	userDir       string
-	prefs         DesktopPrefs
-	quitting      bool
-	quitConfirmed bool
-	trayItems     *trayItems
-	trayEnd       func()
+	ctx            context.Context
+	userDir        string
+	prefs          DesktopPrefs
+	quitting       bool
+	quitConfirmed  bool
+	scheduledTasks func(context.Context) bool
+	trayItems      *trayItems
+	trayEnd        func()
 }
 
 // NewShell creates the shell with preferences loaded from userDir.
@@ -38,6 +39,18 @@ func NewShell(userDir string) *Shell {
 func (s *Shell) SetContext(ctx context.Context) {
 	s.mu.Lock()
 	s.ctx = ctx
+	s.mu.Unlock()
+}
+
+// SetScheduledTasksChecker installs the check the quit funnel uses to
+// decide whether exiting would stop scheduled tasks. Passing nil
+// restores the historic always-confirm fallback used before the
+// desktop shell is wired.
+func (s *Shell) SetScheduledTasksChecker(
+	checker func(context.Context) bool,
+) {
+	s.mu.Lock()
+	s.scheduledTasks = checker
 	s.mu.Unlock()
 }
 
@@ -95,11 +108,13 @@ func (s *Shell) CloseRequested(ctx context.Context) bool {
 		return false
 	}
 	if quitting || !closeToTray {
-		if !s.confirmQuit(ctx) {
-			if quitting {
-				s.clearQuitRequest()
+		if s.confirmQuitRequired(ctx) {
+			if !s.confirmQuit(ctx) {
+				if quitting {
+					s.clearQuitRequest()
+				}
+				return true
 			}
-			return true
 		}
 		s.mu.Lock()
 		s.quitting = true
@@ -110,6 +125,23 @@ func (s *Shell) CloseRequested(ctx context.Context) bool {
 
 	wailsruntime.Hide(ctx)
 	return true
+}
+
+// confirmQuitRequired decides whether a real quit needs the native
+// confirmation dialog. With a checker wired, the dialog only appears
+// when scheduled tasks would stop running; without one the historical
+// always-confirm behavior stays until Startup wires the desktop.
+func (s *Shell) confirmQuitRequired(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	s.mu.Lock()
+	checker := s.scheduledTasks
+	s.mu.Unlock()
+	if checker == nil {
+		return true
+	}
+	return checker(ctx)
 }
 
 func (s *Shell) confirmQuit(ctx context.Context) bool {

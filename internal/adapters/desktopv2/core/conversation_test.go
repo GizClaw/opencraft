@@ -103,6 +103,37 @@ func TestConversationNewUsesConfiguredDefaults(t *testing.T) {
 	}
 }
 
+func TestConversationReplaceIfCurrentMintsOnlyWhenStillCurrent(t *testing.T) {
+	c := NewConversation()
+	work := filepath.Join(t.TempDir(), "w")
+	oldID := c.New(work)
+
+	fresh := c.ReplaceIfCurrent(work, oldID)
+	if fresh == "" || fresh == oldID {
+		t.Fatalf("ReplaceIfCurrent = %q, want a fresh id", fresh)
+	}
+	if got := c.Current(work); got != fresh {
+		t.Fatalf("current after replace = %q, want %q", got, fresh)
+	}
+
+	// A later selection must not be stomped: replacing the old id is a
+	// no-op and the current pointer stays on the newer selection.
+	newer := c.New(work)
+	if got := c.ReplaceIfCurrent(work, oldID); got != "" {
+		t.Fatalf("ReplaceIfCurrent after selection change = %q, want \"\"", got)
+	}
+	if got := c.Current(work); got != newer {
+		t.Fatalf("current after refused replace = %q, want %q", got, newer)
+	}
+}
+
+func TestConversationReplaceIfCurrentEmptyIDNoOp(t *testing.T) {
+	c := NewConversation()
+	if got := c.ReplaceIfCurrent("/tmp/w", ""); got != "" {
+		t.Fatalf("ReplaceIfCurrent with empty old id = %q, want \"\"", got)
+	}
+}
+
 func TestConversationGettersFallBackToConfiguredDefaults(t *testing.T) {
 	c := NewConversation()
 	// A workspace with no minted/resumed conversation yet must report

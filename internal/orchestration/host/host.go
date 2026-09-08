@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
@@ -58,7 +59,10 @@ type usageDelta struct {
 }
 
 // Manager pools Hosts by workspace and keeps one sessions.Store per
-// workspace root.
+// workspace root. Document-only configuration reloads go through
+// Host.ReloadDocument in place; Manager invalidation (and the
+// stale/retire machinery below) is reserved for engine-input changes
+// (plugin install/uninstall, workspace switches) and fallback rebuilds.
 type Manager struct {
 	userDir string
 	dataDir string
@@ -70,6 +74,15 @@ type Manager struct {
 	engineOptFunc func() []engine.Option
 	usageObserver func(context.Context, inference.Usage)
 	usageRecorder UsageRecorder
+	// retiring maps a workspace root to a Host that was removed from
+	// the pool and is draining its last runs. Acquire waits for these
+	// hosts to finish teardown instead of assembling a second Host for
+	// the same workspace, which would let two runtimes serve one
+	// conversation concurrently.
+	retiring map[string]*Host
+	// closeHost is the teardown entry point. It is a field so tests
+	// can substitute a fake close without spinning up a runtime.
+	closeHost func(*Host)
 
 	// User-level database state, opened on demand by OpenUserDB.
 	userDB          *db.DB
@@ -78,8 +91,9 @@ type Manager struct {
 }
 
 type hostRef struct {
-	host *Host
-	refs int
+	host  *Host
+	refs  int
+	stale bool
 }
 
 type storeRef struct {
@@ -95,6 +109,7 @@ func NewManager(userDir string) *Manager {
 		hosts:   make(map[string]*hostRef),
 		stores:  make(map[string]*storeRef),
 	}
+	m.closeHost = func(h *Host) { h.beginClose() }
 	m.usageRecorder = m.recordUserUsage
 	return m
 }
@@ -316,14 +331,24 @@ func (m *Manager) Acquire(
 	resolver func(runID string) interact.Backend,
 ) (*Host, error) {
 	workDir = filepath.Clean(workDir)
-	m.mu.Lock()
-	if ref := m.hosts[workDir]; ref != nil {
-		ref.refs++
-		h := ref.host
+	for {
+		m.mu.Lock()
+		if ref := m.hosts[workDir]; ref != nil {
+			ref.refs++
+			h := ref.host
+			m.mu.Unlock()
+			return h, nil
+		}
+		if h := m.retiring[workDir]; h != nil {
+			m.mu.Unlock()
+			if err := h.waitClosed(ctx); err != nil {
+				return nil, err
+			}
+			continue
+		}
 		m.mu.Unlock()
-		return h, nil
+		break
 	}
-	m.mu.Unlock()
 
 	h, err := m.assemble(ctx, workDir, fallback, resolver)
 	if err != nil {
@@ -345,9 +370,13 @@ func (m *Manager) Acquire(
 	return h, nil
 }
 
-// Invalidate drops one workspace's Host from the pool. If the Host is
-// idle it closes immediately; active runs finish on the old runtime
-// and close when the last run ends.
+// Invalidate marks one workspace's Host as stale (the rebuild path).
+// An idle Host closes immediately; a Host with active runs stays
+// pooled and keeps serving new turns on the old runtime until the last
+// run ends, then retires itself through hostIdle. This defers
+// engine-input swaps to idle so a second Host (and a second flowcraft
+// Session for the same conversation) is never assembled while the old
+// runtime still has live runs.
 func (m *Manager) Invalidate(workDir string) {
 	workDir = filepath.Clean(workDir)
 	m.mu.Lock()
@@ -356,11 +385,67 @@ func (m *Manager) Invalidate(workDir string) {
 		m.mu.Unlock()
 		return
 	}
-	delete(m.hosts, workDir)
+	ref.stale = true
 	h := ref.host
+	var closeNow bool
+	if !h.hasActiveRuns() {
+		delete(m.hosts, workDir)
+		closeNow = m.trackRetiringLocked(workDir, h)
+	}
 	m.mu.Unlock()
-	telemetry.WarnErr(context.Background(), "host: invalidate close failed",
-		h.Close())
+	if closeNow {
+		m.closeHost(h)
+	}
+}
+
+// hostIdle is called by a Host when its last active run ends. A stale
+// Host retires (and closes) here instead of at Invalidate time, which
+// keeps the pool free of duplicate Hosts across reload boundaries.
+func (m *Manager) hostIdle(h *Host) {
+	if m == nil || h == nil {
+		return
+	}
+	m.mu.Lock()
+	var closeNow bool
+	for workDir, ref := range m.hosts {
+		if ref.host != h || !ref.stale {
+			continue
+		}
+		delete(m.hosts, workDir)
+		closeNow = m.trackRetiringLocked(workDir, h)
+		break
+	}
+	m.mu.Unlock()
+	if closeNow {
+		m.closeHost(h)
+	}
+}
+
+// hostClosed forgets a fully torn-down Host so Acquire can assemble a
+// replacement. Host.doClose reports itself through this hook.
+func (m *Manager) hostClosed(workDir string, h *Host) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	if m.retiring != nil && m.retiring[workDir] == h {
+		delete(m.retiring, workDir)
+	}
+	m.mu.Unlock()
+}
+
+// trackRetiringLocked records a Host that is leaving the pool. The
+// caller must hold m.mu and must have removed the host from m.hosts.
+// It returns true when closeHost should be invoked after unlocking.
+func (m *Manager) trackRetiringLocked(workDir string, h *Host) bool {
+	if m.retiring == nil {
+		m.retiring = make(map[string]*Host)
+	}
+	if m.retiring[workDir] != nil {
+		return false
+	}
+	m.retiring[workDir] = h
+	return true
 }
 
 // CloseAll invalidates every pooled Host. Active runs finish on their
@@ -421,13 +506,7 @@ func (m *Manager) assemble(
 	}
 	telemetry.WarnErr(ctx, "host: ensure workspace layout failed",
 		layout.Ensure())
-	mgr, err := config.Open(config.Options{
-		UserDir: userDir,
-	})
-	if err != nil {
-		return nil, err
-	}
-	view, err := mgr.Load(ctx)
+	doc, err := engine.LoadDocument(ctx, userDir)
 	if err != nil {
 		return nil, err
 	}
@@ -441,6 +520,8 @@ func (m *Manager) assemble(
 		runs:          make(map[RunID]*runDetail),
 		rollouts:      make(map[ConversationID]*rollout.Recorder),
 		titling:       make(map[ConversationID]bool),
+		deleting:      make(map[ConversationID]bool),
+		deleted:       make(map[ConversationID]bool),
 		closeDone:     make(chan struct{}),
 	}
 	h.runsCond = sync.NewCond(&h.mu)
@@ -468,7 +549,7 @@ func (m *Manager) assemble(
 			}
 		}),
 	}, engineOptions...)
-	rt, err := engine.BuildRuntime(ctx, view.Document, buildOpts...)
+	rt, err := engine.BuildRuntime(ctx, doc, buildOpts...)
 	if err != nil {
 		if sessionStore != nil {
 			m.releaseStore(sessionStore)
@@ -504,12 +585,12 @@ func (m *Manager) assemble(
 	h.broker = broker
 	if value, ok := rt.Resource("agentlifecycle"); ok {
 		if lifecycle, ok := value.(*ocsagents.Lifecycle); ok && lifecycle != nil {
-			h.agents = lifecycle
+			h.agents.Store(lifecycle)
 		}
 	}
 	if value, ok := rt.Resource("hooks"); ok {
 		if mgr, ok := value.(*hooks.Manager); ok && mgr != nil {
-			h.hooks = mgr
+			h.hooks.Store(mgr)
 		}
 	}
 	if value, ok := rt.Resource("artifacts"); ok {
@@ -517,6 +598,7 @@ func (m *Manager) assemble(
 			obs.SetSink(h.onArtifactWrite)
 		}
 	}
+	h.attachRuntimeReloadObserver(ctx)
 	return h, nil
 }
 
@@ -695,8 +777,8 @@ type Host struct {
 	ctrl          *engine.Controller
 	broker        *interact.Broker
 	manager       *Manager
-	agents        *ocsagents.Lifecycle
-	hooks         *hooks.Manager
+	agents        atomic.Pointer[ocsagents.Lifecycle]
+	hooks         atomic.Pointer[hooks.Manager]
 	usage         func(context.Context, inference.Usage)
 	usageRecorder UsageRecorder
 
@@ -706,6 +788,20 @@ type Host struct {
 	rollouts map[ConversationID]*rollout.Recorder
 	titling  map[ConversationID]bool
 	titleWG  sync.WaitGroup
+	// rebindMu serializes onRuntimeReload. ReloadDocument rebinds
+	// synchronously before returning while the runtime event router
+	// may dispatch the same rebuild event concurrently, and both must
+	// never interleave resource Bind/LoadAll side effects for
+	// different generations.
+	rebindMu sync.Mutex
+	// deleting marks one conversation whose removal is in flight.
+	// StartRun refuses new runs for it and DeleteConversation cancels
+	// every run the Host already owns for it.
+	deleting map[ConversationID]bool
+	// deleted tombstones conversations whose rows were removed for the
+	// lifetime of this Host, so a stale explicit StartRun cannot mint
+	// the same conversation id again.
+	deleted map[ConversationID]bool
 	// importMu serializes archive write + memory seed across callers
 	// so a duplicate import with the same Source cannot double-seed.
 	importMu   sync.Mutex
@@ -746,8 +842,48 @@ type runDetail struct {
 func (h *Host) dropRun(runID RunID) {
 	h.mu.Lock()
 	delete(h.runs, runID)
+	idle := len(h.runs) == 0
 	h.runsCond.Broadcast()
 	h.mu.Unlock()
+	if idle {
+		if m := h.manager; m != nil {
+			m.hostIdle(h)
+		}
+	}
+}
+
+// hasActiveRuns reports whether the Host still owns live runs.
+func (h *Host) hasActiveRuns() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.runs) > 0
+}
+
+// WaitClosed blocks until the Host has fully torn down (or ctx is
+// canceled). A nil or already-closed Host returns immediately.
+func (h *Host) WaitClosed(ctx context.Context) error {
+	if h == nil {
+		return nil
+	}
+	for {
+		h.mu.Lock()
+		closed := h.closed
+		closeDone := h.closeDone
+		h.mu.Unlock()
+		if closed || closeDone == nil {
+			return nil
+		}
+		select {
+		case <-closeDone:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+func (h *Host) waitClosed(ctx context.Context) error {
+	return h.WaitClosed(ctx)
 }
 
 // RunView is the read-only identity of one active run.
@@ -831,7 +967,7 @@ func (h *Host) Broker() *interact.Broker { return h.broker }
 
 // Agents returns the runtime's agent lifecycle registry, or nil when
 // the runtime does not wire one.
-func (h *Host) Agents() *ocsagents.Lifecycle { return h.agents }
+func (h *Host) Agents() *ocsagents.Lifecycle { return h.agents.Load() }
 
 // CancelRun cancels one live engine turn. It returns an error when the
 // run is not active on this Host.
@@ -888,6 +1024,10 @@ func (h *Host) Close() error {
 			return nil
 		}
 		delete(m.hosts, h.workDir)
+		if m.retiring == nil {
+			m.retiring = make(map[string]*Host)
+		}
+		m.retiring[h.workDir] = h
 	}
 	m.mu.Unlock()
 
@@ -963,6 +1103,9 @@ func (h *Host) doClose() {
 	}
 	if closeDone != nil {
 		close(closeDone)
+	}
+	if h.manager != nil {
+		h.manager.hostClosed(h.workDir, h)
 	}
 }
 

@@ -20,7 +20,7 @@ func (h *Host) FireHook(ctx context.Context, event string, payload map[string]an
 	if h == nil {
 		return
 	}
-	mgr := h.hooks
+	mgr := h.hooks.Load()
 	if mgr == nil || mgr.Empty() {
 		return
 	}

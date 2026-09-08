@@ -60,6 +60,23 @@ func TestShellQuitState(t *testing.T) {
 	}
 }
 
+func TestShellConfirmQuitRequired(t *testing.T) {
+	s := NewShell(t.TempDir())
+	if !s.confirmQuitRequired(context.Background()) {
+		t.Fatal("unwired shell must keep the historic always-confirm behavior")
+	}
+
+	s.SetScheduledTasksChecker(func(context.Context) bool { return false })
+	if s.confirmQuitRequired(context.Background()) {
+		t.Fatal("no scheduled tasks should skip the quit dialog")
+	}
+
+	s.SetScheduledTasksChecker(func(context.Context) bool { return true })
+	if !s.confirmQuitRequired(context.Background()) {
+		t.Fatal("scheduled tasks present should keep the quit dialog")
+	}
+}
+
 func TestShellContextFallsBackBeforeStartup(t *testing.T) {
 	s := NewShell(t.TempDir())
 	if s.Context() == nil {

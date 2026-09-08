@@ -88,6 +88,25 @@ type Options struct {
 
 type Option func(*Options)
 
+// LoadDocument loads the merged deploy document for one user config
+// directory. Runtime assembly (Manager) and in-place reload (Host)
+// share this entry point so both always operate on the same layer
+// merge and cannot drift apart.
+func LoadDocument(
+	ctx context.Context,
+	userDir string,
+) (deploy.Document, error) {
+	mgr, err := config.Open(config.Options{UserDir: userDir})
+	if err != nil {
+		return deploy.Document{}, fmt.Errorf("engine: open config: %w", err)
+	}
+	view, err := mgr.Load(ctx)
+	if err != nil {
+		return deploy.Document{}, fmt.Errorf("engine: load config: %w", err)
+	}
+	return view.Document, nil
+}
+
 // WithConfigBase overrides the config reference base directory.
 func WithConfigBase(dir string) Option {
 	return func(o *Options) { o.ConfigBase = dir }
@@ -277,8 +296,6 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 	}
 	reg.MustRegister(hooks.Factory{})
 	reg.MustRegister(hooks.ObserverFactory{})
-	reg.MustRegister(pluginagent.Factory{Host: o.AgentHost})
-	reg.MustRegister(automationtool.Factory{Host: o.AutomationHost})
 
 	builder := runtimecore.NewBuilder(reg)
 	if err := builder.WithLoader(loader); err != nil {
@@ -286,6 +303,41 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 	}
 	if err := builder.WithResolver(ocraftResolver(&o, dataDir, cacheDir)); err != nil {
 		return nil, err
+	}
+	// plugin.host / automation.host are caller-owned values injected
+	// through flowcraft's external dependency mechanism instead of
+	// being built from registry factories. The deploy document declares
+	// them under runtime.external_deps (assets/runtime.yaml); flowcraft
+	// keeps these values across in-place Runtime.Reload generations, so
+	// stable app objects (plugin store/capability runtime, automation
+	// manager) never need re-registration on document reloads.
+	pluginHost := o.AgentHost
+	if pluginHost == nil {
+		pluginHost = pluginagent.NewEmpty()
+	}
+	automationHost := o.AutomationHost
+	if automationHost == nil {
+		automationHost = automationtool.EmptyHost()
+	}
+	for _, ext := range []runtimecore.ExternalResource{
+		{
+			ExternalDependency: runtimecore.ExternalDependency{
+				Name:     "plugin.host",
+				Contract: pluginagent.ResourceKind,
+			},
+			Value: pluginHost,
+		},
+		{
+			ExternalDependency: runtimecore.ExternalDependency{
+				Name:     "automation.host",
+				Contract: automationtool.ResourceKind,
+			},
+			Value: automationHost,
+		},
+	} {
+		if err := builder.WithExternalResource(ext); err != nil {
+			return nil, err
+		}
 	}
 	if err := builder.WithHostFactory(func(
 		base sessions.HostFactory,

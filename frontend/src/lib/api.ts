@@ -143,7 +143,15 @@ export const api = {
   mcpStatus: () => Config.MCPStatus() as unknown as Promise<MCPStatus[]>,
   testMCP: (server: MCPServer) =>
     Config.TestMCP(server as unknown as genConfig.MCPServer),
-  deleteSession: (id: string) => Session.Delete(id),
+  deleteSession: async (id: string) => {
+    const res = await Session.Delete(id);
+    return {
+      session_id: res.session_id ?? '',
+      mode: res.mode ?? '',
+      think: res.think ?? '',
+      model: res.model ?? '',
+    } as SessionSnapshot;
+  },
   permissions: () => Settings.Permissions(),
   allowPermission: (rule: string) => Settings.AllowPermission(rule),
   denyPermission: (rule: string) => Settings.DenyPermission(rule),

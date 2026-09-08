@@ -106,6 +106,46 @@ func TestHostDefaultSkillRoot(t *testing.T) {
 	}
 }
 
+// TestHostEntriesCacheFrozenUntilNewHost pins the M4 decision: a Host
+// caches its plugin scan on first use, so a plugin installed after the
+// runtime was assembled is invisible to the running runtime. Plugin
+// changes must therefore go through a full rebuild, which constructs a
+// fresh Host (SetAgentPlugins → engine.WithAgentPlugins).
+func TestHostEntriesCacheFrozenUntilNewHost(t *testing.T) {
+	root := t.TempDir()
+	store := plugins.NewStore(root)
+	host := NewHost(context.Background(), store, nil)
+
+	// Prime the cache while the store is empty.
+	if roots := host.SkillRoots(); len(roots) != 0 {
+		t.Fatalf("SkillRoots before install = %v, want empty", roots)
+	}
+
+	writePlugin(t, root, "late", map[string]any{
+		"id": "late", "name": "Late", "version": "0.1.0",
+		"entry": "dist/index.js", "permissions": []string{"skills:contribute"},
+	})
+	skillDir := filepath.Join(root, "late", "skills")
+	if err := os.MkdirAll(skillDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// The already-cached Host must not see the late plugin.
+	if roots := host.SkillRoots(); len(roots) != 0 {
+		t.Fatalf("cached Host SkillRoots = %v, want empty (cache is frozen)", roots)
+	}
+
+	// A fresh Host (what a rebuild produces) rescans and sees it.
+	fresh := NewHost(context.Background(), store, nil)
+	roots := fresh.SkillRoots()
+	if len(roots) != 1 || filepath.Clean(roots[0]) != filepath.Clean(skillDir) {
+		t.Fatalf("fresh Host SkillRoots = %v, want the late plugin skills dir", roots)
+	}
+}
+
 func TestHostMCPCommandResolution(t *testing.T) {
 	root := t.TempDir()
 	writePlugin(t, root, "mcp", map[string]any{
