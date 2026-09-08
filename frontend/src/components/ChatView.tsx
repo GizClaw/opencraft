@@ -56,6 +56,7 @@ import { SESSION_MODES, type SessionModeOption } from '../lib/sessionModes';
 import {
   friendlyFailure,
   friendlyInterruption,
+  isUserStop,
   firstMessageTitle,
   useStore,
 } from '../lib/store';
@@ -243,12 +244,9 @@ function TurnEndNotice({
   if (dismissed) return null;
   // User-stopped replies (cancel or barge-in) carry no provider
   // debugging detail worth surfacing; failed/aborted turns and
-  // non-user interruptions show the correlation id and the raw reason
+  // non-user interruptions show the correlation ids and the raw reason
   // beneath the friendly summary.
-  const userStop =
-    status === 'canceled' ||
-    (status === 'interrupted' &&
-      /^engine: interrupted \((?:user_cancel|user_input)\)/.test(error ?? ''));
+  const userStop = isUserStop(status, error);
   const failure = status === 'failed' || status === 'aborted';
   const container = failure
     ? 'border-err/40 bg-err/10'
@@ -279,10 +277,6 @@ function TurnEndNotice({
     title = t('chat.lastFailed');
     detail = friendlyError || error || t('chat.lastFailedDetail');
   }
-  const correlationID = requestID || responseID;
-  const correlationLabel = requestID
-    ? t('chat.requestId')
-    : t('chat.responseId');
   const showRawDetail = !userStop && Boolean(error) && error !== detail;
   return (
     <div
@@ -306,9 +300,14 @@ function TurnEndNotice({
             {error}
           </p>
         )}
-        {!userStop && correlationID && (
+        {!userStop && requestID && (
           <p className="mt-1 break-all font-mono text-[0.7143rem] leading-relaxed text-dim/70">
-            {correlationLabel}: {correlationID}
+            {t('chat.requestId')}: {requestID}
+          </p>
+        )}
+        {!userStop && responseID && (
+          <p className="mt-1 break-all font-mono text-[0.7143rem] leading-relaxed text-dim/70">
+            {t('chat.responseId')}: {responseID}
           </p>
         )}
       </div>

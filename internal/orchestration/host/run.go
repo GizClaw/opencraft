@@ -66,8 +66,11 @@ type Run struct {
 	startedAt     time.Time
 	finishedAt    time.Time
 	durationMs    int64
-	requestID     string
-	responseID    string
+	// requestID/responseID snapshot the provider correlation ids Wait
+	// persisted for this run. Guarded by Host.mu once the run starts;
+	// both stay empty until Wait snapshots them.
+	requestID  string
+	responseID string
 }
 
 // ContextID returns the conversation id the run writes to.
@@ -394,16 +397,24 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 		if execErr == nil && res != nil {
 			execErr = res.Err
 		}
-		requestID := FailureRequestID(execErr)
+		// Snapshot the correlation identifiers under Host.mu: the
+		// terminal stream finish delta is written by the sink
+		// goroutine (onStreamRollout) under the same lock, and the sink
+		// may still be draining when Wait returns on failure paths. The
+		// error chain's request id wins when present (it names the
+		// failing provider call); otherwise the last finish delta is the
+		// best correlation available, including for failures that land
+		// after a generation already completed (tool/engine errors).
+		requestID := failureRequestID(execErr)
+		host.mu.Lock()
 		responseID := ""
-		if execErr == nil && res != nil {
-			if requestID == "" {
-				requestID = detail.requestID
-			}
+		if requestID == "" {
+			requestID = detail.requestID
 			responseID = detail.responseID
 		}
 		r.requestID = requestID
 		r.responseID = responseID
+		host.mu.Unlock()
 		if execErr != nil {
 			logAttrs := []otellog.KeyValue{
 				otellog.String("conversation.id", detail.contextID),
@@ -468,19 +479,26 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 // FinishedIDs returns the provider correlation identifiers attached
 // to the finished run: the request id when the provider reported one
 // and the response id when a response started. Both may be empty.
+// Callers should read them after Wait returns; the values are the
+// snapshot Wait persisted for this run.
 func (r *Run) FinishedIDs() (requestID, responseID string) {
 	if r == nil {
 		return "", ""
 	}
+	if r.host == nil {
+		return r.requestID, r.responseID
+	}
+	r.host.mu.Lock()
+	defer r.host.mu.Unlock()
 	return r.requestID, r.responseID
 }
 
-// FailureRequestID extracts the provider-assigned request identifier
+// failureRequestID extracts the provider-assigned request identifier
 // from a terminal turn error, when the provider reported one. Stream
 // truncation and provider failures carry it through the flowcraft
 // error chain; the UI warning box renders it so a failed turn can be
 // correlated with provider-side logs.
-func FailureRequestID(err error) string {
+func failureRequestID(err error) string {
 	if err == nil {
 		return ""
 	}

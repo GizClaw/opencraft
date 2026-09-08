@@ -70,8 +70,8 @@ func TestFailureRequestID(t *testing.T) {
 			),
 		),
 	)
-	if got := FailureRequestID(truncated); got != "req-stream-1" {
-		t.Fatalf("FailureRequestID(truncated) = %q, want req-stream-1", got)
+	if got := failureRequestID(truncated); got != "req-stream-1" {
+		t.Fatalf("failureRequestID(truncated) = %q, want req-stream-1", got)
 	}
 
 	field := inference.NewError(
@@ -79,14 +79,14 @@ func TestFailureRequestID(t *testing.T) {
 		errors.New("provider boom"),
 	)
 	field.RequestID = "req-field-1"
-	if got := FailureRequestID(field); got != "req-field-1" {
-		t.Fatalf("FailureRequestID(field) = %q, want req-field-1", got)
+	if got := failureRequestID(field); got != "req-field-1" {
+		t.Fatalf("failureRequestID(field) = %q, want req-field-1", got)
 	}
 
-	if got := FailureRequestID(nil); got != "" {
-		t.Fatalf("FailureRequestID(nil) = %q, want empty", got)
+	if got := failureRequestID(nil); got != "" {
+		t.Fatalf("failureRequestID(nil) = %q, want empty", got)
 	}
-	if got := FailureRequestID(errors.New("plain")); got != "" {
-		t.Fatalf("FailureRequestID(plain) = %q, want empty", got)
+	if got := failureRequestID(errors.New("plain")); got != "" {
+		t.Fatalf("failureRequestID(plain) = %q, want empty", got)
 	}
 }

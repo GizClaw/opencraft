@@ -558,6 +558,20 @@ export function friendlyInterruption(error: string): string | null {
   }
 }
 
+// isUserStop reports whether a non-completed turn ended because the
+// user stopped it (the cancel button or a barge-in user message), so
+// the turn-end notice can stay concise and provider diagnostics can
+// be hidden.
+export function isUserStop(
+  status: TurnStatus | undefined,
+  error?: string,
+): boolean {
+  if (status === 'canceled') return true;
+  if (status !== 'interrupted' || !error) return false;
+  const cause = error.match(/^engine: interrupted(?: \(([a-z_]+)\))?/)?.[1];
+  return cause === 'user_cancel' || cause === 'user_input';
+}
+
 // friendlyFailure maps flowcraft graph/inference errors to user-safe
 // text. The `graph "..." node "..."` prefix is internal plumbing; a
 // provider failure only needs to tell the user the model call did not

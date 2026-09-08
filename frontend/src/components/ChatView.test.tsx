@@ -820,6 +820,7 @@ describe('ChatView turn end notice diagnostics', () => {
 
     expect(screen.getByText('Last reply failed')).toBeInTheDocument();
     expect(screen.getByText(/Request ID: req-xyz/)).toBeInTheDocument();
+    expect(screen.getByText(/Response ID: resp-xyz/)).toBeInTheDocument();
     // The friendly summary stays the primary detail; the raw engine
     // reason renders beneath it in small text.
     expect(
@@ -838,6 +839,7 @@ describe('ChatView turn end notice diagnostics', () => {
           status: 'canceled',
           error: 'context canceled',
           requestID: 'req-xyz',
+          responseID: 'resp-xyz',
         },
       ],
     );
@@ -845,6 +847,7 @@ describe('ChatView turn end notice diagnostics', () => {
 
     expect(screen.getByText('Reply cancelled')).toBeInTheDocument();
     expect(screen.queryByText(/req-xyz/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/resp-xyz/)).not.toBeInTheDocument();
     expect(screen.queryByText('context canceled')).not.toBeInTheDocument();
   });
 });

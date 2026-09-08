@@ -26,6 +26,18 @@ type ToolCall struct {
 type Reply struct {
 	Text      string
 	ToolCalls []ToolCall
+	// RequestID, when set, is echoed as the provider's x-request-id
+	// response header so drivers can capture it (errors carry it on the
+	// classified chain, streamed replies on the finish delta).
+	RequestID string
+	// ResponseID overrides the chat completion id echoed by the API
+	// ("chatcmpl-fake" otherwise). Streamed replies mirror it on every
+	// chunk.
+	ResponseID string
+	// Status, when non-zero, makes this reply an OpenAI-shaped HTTP
+	// error instead of a completion. Error carries the API message.
+	Status int
+	Error  string
 }
 
 // Server is a scripted chat-completions endpoint.
@@ -162,7 +174,23 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		<-hold.release
 	}
 
+	if reply.RequestID != "" {
+		w.Header().Set("x-request-id", reply.RequestID)
+	}
 	w.Header().Set("Content-Type", "application/json")
+	if reply.Status != 0 {
+		w.WriteHeader(reply.Status)
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]any{
+				"message": reply.Error,
+				"type":    "server_error",
+				"code":    "server_error",
+			},
+		}); err != nil {
+			return
+		}
+		return
+	}
 	if req.Stream {
 		s.writeStream(w, reply)
 		return
@@ -175,6 +203,10 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 func (s *Server) completion(reply Reply) map[string]any {
 	msg := map[string]any{"role": "assistant", "content": reply.Text}
 	finish := "stop"
+	responseID := reply.ResponseID
+	if responseID == "" {
+		responseID = "chatcmpl-fake"
+	}
 	if len(reply.ToolCalls) > 0 {
 		msg["content"] = nil
 		var calls []map[string]any
@@ -192,7 +224,7 @@ func (s *Server) completion(reply Reply) map[string]any {
 		finish = "tool_calls"
 	}
 	return map[string]any{
-		"id":      "chatcmpl-fake",
+		"id":      responseID,
 		"object":  "chat.completion",
 		"created": 1,
 		"model":   "fake-model",
@@ -215,13 +247,17 @@ func (s *Server) writeStream(w http.ResponseWriter, reply Reply) {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
+	responseID := reply.ResponseID
+	if responseID == "" {
+		responseID = "chatcmpl-fake"
+	}
 	var writeErr error
 	chunk := func(delta map[string]any, finish any) {
 		if writeErr != nil {
 			return
 		}
 		payload := map[string]any{
-			"id":      "chatcmpl-fake",
+			"id":      responseID,
 			"object":  "chat.completion.chunk",
 			"created": 1,
 			"model":   "fake-model",
