@@ -28,6 +28,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	automationtool "github.com/GizClaw/opencraft/internal/capabilities/tools/automation"
 	"github.com/GizClaw/opencraft/internal/capabilities/usage"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
@@ -67,13 +68,16 @@ type Manager struct {
 	userDir string
 	dataDir string
 
-	mu            sync.Mutex
-	openMu        sync.Mutex
-	hosts         map[string]*hostRef
-	stores        map[string]*storeRef
-	engineOptFunc func() []engine.Option
-	usageObserver func(context.Context, inference.Usage)
-	usageRecorder UsageRecorder
+	mu             sync.Mutex
+	openMu         sync.Mutex
+	hosts          map[string]*hostRef
+	stores         map[string]*storeRef
+	engineOptFunc  func() []engine.Option
+	pluginStore    *plugins.Store
+	pluginCap      *pluginruntime.Manager
+	automationHost automationtool.Host
+	usageObserver  func(context.Context, inference.Usage)
+	usageRecorder  UsageRecorder
 	// retiring maps a workspace root to a Host that was removed from
 	// the pool and is draining its last runs. Acquire waits for these
 	// hosts to finish teardown instead of assembling a second Host for
@@ -139,12 +143,39 @@ func (m *Manager) SetAgentPlugins(
 	store *plugins.Store,
 	cap *pluginruntime.Manager,
 ) {
+	m.mu.Lock()
+	m.pluginStore = store
+	m.pluginCap = cap
+	m.mu.Unlock()
+	m.refreshEngineOptions()
+}
+
+// SetAutomationHost wires the scheduled-task persistence host into every
+// runtime assembly. A nil host keeps the engine's empty-host fallback so
+// headless runtimes simply expose no automation tools.
+func (m *Manager) SetAutomationHost(h automationtool.Host) {
+	m.mu.Lock()
+	m.automationHost = h
+	m.mu.Unlock()
+	m.refreshEngineOptions()
+}
+
+// refreshEngineOptions reinstalls the engine option builder so plugin and
+// automation hosts are both injected into every runtime assembly.
+func (m *Manager) refreshEngineOptions() {
 	m.SetEngineOptionsFunc(func() []engine.Option {
-		return []engine.Option{
-			engine.WithAgentPlugins(
-				pluginagent.NewHost(context.Background(), store, cap),
-			),
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		var opts []engine.Option
+		if m.pluginCap != nil {
+			opts = append(opts, engine.WithAgentPlugins(
+				pluginagent.NewHost(context.Background(), m.pluginStore, m.pluginCap),
+			))
 		}
+		if m.automationHost != nil {
+			opts = append(opts, engine.WithAutomationHost(m.automationHost))
+		}
+		return opts
 	})
 }
 
