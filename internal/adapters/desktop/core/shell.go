@@ -19,6 +19,7 @@ type Shell struct {
 	ctx            context.Context
 	userDir        string
 	prefs          DesktopPrefs
+	dialogIcon     []byte
 	quitting       bool
 	quitConfirmed  bool
 	scheduledTasks func(context.Context) bool
@@ -38,6 +39,14 @@ func (s *Shell) Attach(app *application.App, main *application.WebviewWindow) {
 	s.mu.Lock()
 	s.app = app
 	s.main = main
+	s.mu.Unlock()
+}
+
+// SetDialogIcon supplies the application icon shown by native dialogs such as
+// the quit confirmation.
+func (s *Shell) SetDialogIcon(icon []byte) {
+	s.mu.Lock()
+	s.dialogIcon = icon
 	s.mu.Unlock()
 }
 
@@ -142,6 +151,12 @@ func (s *Shell) confirmQuitAsync(app *application.App) {
 	d := app.Dialog.Question().
 		SetTitle(texts.QuitDialogTitle).
 		SetMessage(texts.QuitDialogMessage)
+	s.mu.Lock()
+	icon := s.dialogIcon
+	s.mu.Unlock()
+	if len(icon) > 0 {
+		d.SetIcon(icon)
+	}
 	confirm := d.AddButton(texts.QuitDialogConfirm)
 	cancel := d.AddButton(texts.QuitDialogCancel)
 	confirm.SetAsDefault()

@@ -168,6 +168,11 @@ func (d *Desktop) CloseRequested() bool {
 	return d.core.Shell.CloseRequested(d.core.Shell.Context())
 }
 
+// SetDialogIcon forwards the app icon to the core shell for native dialogs.
+func (d *Desktop) SetDialogIcon(icon []byte) {
+	d.core.Shell.SetDialogIcon(icon)
+}
+
 // hasScheduledTasks reports whether quitting would stop an enabled
 // scheduled task. It is the native quit funnel's condition: no
 // scheduler (user DB failed to open) means nothing can run, so exit

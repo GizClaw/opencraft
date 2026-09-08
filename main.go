@@ -43,6 +43,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("opencraft: %v", err)
 	}
+	d.SetDialogIcon(trayIcon)
 
 	var quitRequested atomic.Bool
 	var shell *desktop.Shell
