@@ -56,6 +56,7 @@ import { SESSION_MODES, type SessionModeOption } from '../lib/sessionModes';
 import {
   friendlyFailure,
   friendlyInterruption,
+  isUserStop,
   firstMessageTitle,
   useStore,
 } from '../lib/store';
@@ -226,17 +227,26 @@ function archivedTurnEndKind(status?: TurnStatus): TurnEndKind | undefined {
 function TurnEndNotice({
   status,
   error,
+  requestID,
+  responseID,
   live = false,
   onDismiss,
 }: {
   status: TurnEndKind;
   error?: string;
+  requestID?: string;
+  responseID?: string;
   live?: boolean;
   onDismiss?: () => void;
 }) {
   const { t } = useTranslation();
   const [dismissed, setDismissed] = useState(false);
   if (dismissed) return null;
+  // User-stopped replies (cancel or barge-in) carry no provider
+  // debugging detail worth surfacing; failed/aborted turns and
+  // non-user interruptions show the correlation ids and the raw reason
+  // beneath the friendly summary.
+  const userStop = isUserStop(status, error);
   const failure = status === 'failed' || status === 'aborted';
   const container = failure
     ? 'border-err/40 bg-err/10'
@@ -267,6 +277,7 @@ function TurnEndNotice({
     title = t('chat.lastFailed');
     detail = friendlyError || error || t('chat.lastFailedDetail');
   }
+  const showRawDetail = !userStop && Boolean(error) && error !== detail;
   return (
     <div
       role={failure ? 'alert' : 'status'}
@@ -282,6 +293,21 @@ function TurnEndNotice({
         {detail && (
           <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-dim">
             {detail}
+          </p>
+        )}
+        {showRawDetail && (
+          <p className="mt-1 whitespace-pre-wrap break-words font-mono text-[0.7143rem] leading-relaxed text-dim/70">
+            {error}
+          </p>
+        )}
+        {!userStop && requestID && (
+          <p className="mt-1 break-all font-mono text-[0.7143rem] leading-relaxed text-dim/70">
+            {t('chat.requestId')}: {requestID}
+          </p>
+        )}
+        {!userStop && responseID && (
+          <p className="mt-1 break-all font-mono text-[0.7143rem] leading-relaxed text-dim/70">
+            {t('chat.responseId')}: {responseID}
           </p>
         )}
       </div>
@@ -931,6 +957,8 @@ function TurnBlock({
   busy,
   endStatus,
   endError,
+  requestID,
+  responseID,
   liveEnd,
   forking,
   onFork,
@@ -943,6 +971,8 @@ function TurnBlock({
   busy: boolean;
   endStatus?: TurnEndKind;
   endError?: string;
+  requestID?: string;
+  responseID?: string;
   liveEnd: boolean;
   forking: boolean;
   onFork: (turn: TurnArtifacts) => void;
@@ -998,6 +1028,8 @@ function TurnBlock({
       <TurnEndNotice
         status={endStatus}
         error={endError}
+        requestID={requestID}
+        responseID={responseID}
         live={liveEnd}
         onDismiss={liveEnd ? onDismissFailure : undefined}
       />
@@ -2392,6 +2424,8 @@ export function ChatView() {
                       busy={busy}
                       endStatus={endStatus}
                       endError={endError}
+                      requestID={turn.requestID}
+                      responseID={turn.responseID}
                       liveEnd={Boolean(liveEnd)}
                       forking={forking}
                       onFork={setForkTarget}

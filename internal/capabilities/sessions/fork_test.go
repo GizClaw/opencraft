@@ -39,7 +39,7 @@ func TestForkCopiesHistoryThroughRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := store.RecordTurnEnd(
-		sourceID, "run-1", time.Now().UTC(), "completed", "",
+		sourceID, "run-1", time.Now().UTC(), "completed", "", "", "",
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +47,7 @@ func TestForkCopiesHistoryThroughRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := store.RecordTurnEnd(
-		sourceID, "run-2", time.Now().UTC(), "completed", "",
+		sourceID, "run-2", time.Now().UTC(), "completed", "", "", "",
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +163,7 @@ func TestForkCopiesSessionAttachments(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := store.RecordTurnEnd(
-		sourceID, "run-img", time.Now().UTC(), "completed", "",
+		sourceID, "run-img", time.Now().UTC(), "completed", "", "", "",
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +226,7 @@ func TestForkRejectsUnfinishedSourceTurn(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := store.RecordTurnEnd(
-		sourceID, "run-fail", time.Now().UTC(), "failed", "boom",
+		sourceID, "run-fail", time.Now().UTC(), "failed", "boom", "", "",
 	); err != nil {
 		t.Fatal(err)
 	}

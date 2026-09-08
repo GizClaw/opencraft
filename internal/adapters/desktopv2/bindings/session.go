@@ -63,6 +63,8 @@ type SessionTurnDTO struct {
 	RunID       string              `json:"run_id,omitempty"`
 	Status      string              `json:"status,omitempty"`
 	Error       string              `json:"error,omitempty"`
+	RequestID   string              `json:"request_id,omitempty"`
+	ResponseID  string              `json:"response_id,omitempty"`
 	Messages    []message.Message   `json:"messages"`
 	Artifacts   []sessions.Artifact `json:"artifacts,omitempty"`
 }
@@ -107,6 +109,8 @@ func toSessionTurnDTO(t sessions.TurnRecord) SessionTurnDTO {
 		RunID:       t.RunID,
 		Status:      t.Status,
 		Error:       t.Error,
+		RequestID:   t.RequestID,
+		ResponseID:  t.ResponseID,
 		Messages:    t.Messages,
 		Artifacts:   t.Artifacts,
 	}

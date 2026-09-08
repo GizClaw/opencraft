@@ -239,6 +239,13 @@ export interface TurnArtifacts {
   // with the archived turn for resumed sessions.
   status?: TurnStatus;
   error?: string;
+  // requestID/responseID are the provider correlation identifiers of
+  // the terminal operation: the request id when the provider reported
+  // one (usually failures), and the response id once a response
+  // started (usually successful turns). The warning box renders them
+  // for provider-side correlation.
+  requestID?: string;
+  responseID?: string;
 }
 
 // attachmentPart lowers one staged attachment into the message wire
@@ -429,6 +436,8 @@ function historyTurnsToState(turns: SessionTurn[]): {
       durationMs: turn.duration_ms,
       status: normalizeTurnStatus(turn.status) ?? cleaned.status,
       error: turn.error,
+      requestID: turn.request_id,
+      responseID: turn.response_id,
       docs: (turn.artifacts ?? []).map((a) => ({
         path: a.path,
         bytes: a.bytes ?? 0,
@@ -547,6 +556,20 @@ export function friendlyInterruption(error: string): string | null {
     default:
       return i18n.t('chat.interrupted');
   }
+}
+
+// isUserStop reports whether a non-completed turn ended because the
+// user stopped it (the cancel button or a barge-in user message), so
+// the turn-end notice can stay concise and provider diagnostics can
+// be hidden.
+export function isUserStop(
+  status: TurnStatus | undefined,
+  error?: string,
+): boolean {
+  if (status === 'canceled') return true;
+  if (status !== 'interrupted' || !error) return false;
+  const cause = error.match(/^engine: interrupted(?: \(([a-z_]+)\))?/)?.[1];
+  return cause === 'user_cancel' || cause === 'user_input';
 }
 
 // friendlyFailure maps flowcraft graph/inference errors to user-safe
@@ -1262,6 +1285,8 @@ export const useStore = create<StoreState>((set, get) => {
             run_id?: string;
             status: string;
             error?: string;
+            request_id?: string;
+            response_id?: string;
             finished_at?: string;
             duration_ms?: number;
           };
@@ -1284,6 +1309,8 @@ export const useStore = create<StoreState>((set, get) => {
                         : t.durationMs,
                     status: normalizeTurnStatus(data.status) ?? t.status,
                     error: data.error ?? t.error,
+                    requestID: data.request_id ?? t.requestID,
+                    responseID: data.response_id ?? t.responseID,
                   }
                 : t,
             );

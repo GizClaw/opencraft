@@ -4,6 +4,7 @@ import { stateRoot } from '../state/app';
 import {
   firstMessageTitle,
   friendlyFailure,
+  isUserStop,
   pendingConversationIDs,
   useStore,
 } from './store';
@@ -301,6 +302,8 @@ describe('store: send and stream', () => {
         conversation_id: 's-1',
         status: 'failed',
         error: 'engine boom',
+        request_id: 'req-1',
+        response_id: 'resp-1',
       },
     });
 
@@ -1358,6 +1361,8 @@ describe('store: send and stream', () => {
         conversation_id: 's-1',
         status: 'failed',
         error: 'engine boom',
+        request_id: 'req-1',
+        response_id: 'resp-1',
       },
     });
 
@@ -1366,6 +1371,8 @@ describe('store: send and stream', () => {
     expect(conv.turnArtifacts[0]).toMatchObject({
       status: 'failed',
       error: 'engine boom',
+      requestID: 'req-1',
+      responseID: 'resp-1',
     });
     const text = conv.messages[0].items.find(
       (i) => i.kind === 'text',
@@ -1424,6 +1431,37 @@ describe('store: send and stream', () => {
     expect(friendly).toBeTruthy();
     expect(friendly ?? '').not.toContain('graph "opencraft-assistant"');
     expect(friendly ?? '').not.toContain('provider_failure');
+  });
+});
+
+describe('isUserStop', () => {
+  it('treats canceled turns as user stops regardless of error', () => {
+    expect(isUserStop('canceled', 'context canceled')).toBe(true);
+    expect(isUserStop('canceled')).toBe(true);
+  });
+
+  it('treats user_cancel and user_input interruptions as user stops', () => {
+    expect(isUserStop('interrupted', 'engine: interrupted (user_cancel)')).toBe(
+      true,
+    );
+    expect(
+      isUserStop(
+        'interrupted',
+        'engine: interrupted (user_input): new message arrived',
+      ),
+    ).toBe(true);
+  });
+
+  it('keeps non-user interruptions and failures out of the user-stop bucket', () => {
+    expect(
+      isUserStop('interrupted', 'engine: interrupted (host_shutdown)'),
+    ).toBe(false);
+    expect(isUserStop('interrupted', 'engine: interrupted')).toBe(false);
+    expect(isUserStop('interrupted')).toBe(false);
+    expect(isUserStop('failed', 'engine: interrupted (user_cancel)')).toBe(
+      false,
+    );
+    expect(isUserStop('aborted', 'boom')).toBe(false);
   });
 });
 

@@ -408,6 +408,8 @@
     "thinkLabel": "思考",
     "lastFailed": "上一条回复失败",
     "lastFailedDetail": "这次回复失败了，未能完成。",
+    "requestId": "请求 ID",
+    "responseId": "响应 ID",
     "providerFailure": "模型服务暂时无法完成请求，请稍后重试或切换模型。",
     "invalidProviderResponse": "模型返回了无法识别的响应，请重试或切换模型。",
     "modelConfiguration": "模型配置似乎无效，请检查模型设置。",

@@ -273,8 +273,10 @@ func (d *Desktop) runAutomation(
 	}
 	notify := !suppressAutomationNotify(task, result.Status, errText)
 	if current {
+		requestID, responseID := run.FinishedIDs()
 		end := core.NewTurnEnd(
-			runID, contextID, string(status), errText, output,
+			runID, contextID, string(status), errText,
+			requestID, responseID, output,
 			finishedAt, durationMs,
 		)
 		end.Notify = &notify

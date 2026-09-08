@@ -43,6 +43,14 @@ nodes:
         # bounded while giving the model room to correct.
         max_per_run: 20
       stream: true
+      # A streamed attempt that fails mid-flight (provider error or a
+      # truncated stream) discards its buffered partial text instead of
+      # committing half an assistant message, so a user-level retry of
+      # the failed turn starts from a clean transcript. Interrupts keep
+      # the default commit_partial so output cancelled by the user is
+      # still archived for resume context.
+      stream_failure_policy:
+        on_error: discard
       # Per-conversation model hint: the UI persists a "provider/name"
       # choice and injects it via agent.Request.Inputs (board.model).
       # The board-ref default keeps unset conversations on the default

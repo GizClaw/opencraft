@@ -17,7 +17,7 @@ func TestTurnEndEventCarriesDurationMs(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ev := NewTurnEnd(
-				"r-1", "s-1", "completed", "", "done",
+				"r-1", "s-1", "completed", "", "req-1", "resp-1", "done",
 				now, tc.durationMs,
 			)
 			raw, err := json.Marshal(ev)
@@ -36,6 +36,12 @@ func TestTurnEndEventCarriesDurationMs(t *testing.T) {
 			if got["finished_at"] != now.Format(time.RFC3339) {
 				t.Fatalf("finished_at = %v, want %q",
 					got["finished_at"], now.Format(time.RFC3339))
+			}
+			if got["request_id"] != "req-1" {
+				t.Fatalf("request_id = %v, want req-1", got["request_id"])
+			}
+			if got["response_id"] != "resp-1" {
+				t.Fatalf("response_id = %v, want resp-1", got["response_id"])
 			}
 		})
 	}
