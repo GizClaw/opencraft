@@ -68,6 +68,20 @@ func (s *Store) ListTasks(ctx context.Context) ([]Task, error) {
 	return out, nil
 }
 
+// HasEnabled reports whether at least one scheduled task is enabled.
+// Only enabled tasks are scanned by the scheduler, so this is the
+// condition the desktop shell uses to decide whether quitting stops a
+// task that would otherwise run again.
+func (s *Store) HasEnabled(ctx context.Context) (bool, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM automations WHERE enabled = 1`,
+	).Scan(&n); err != nil {
+		return false, fmt.Errorf("automations: count enabled tasks: %w", err)
+	}
+	return n > 0, nil
+}
+
 // GetTask returns one task by id.
 func (s *Store) GetTask(ctx context.Context, id string) (Task, error) {
 	row := s.db.QueryRowContext(ctx, `

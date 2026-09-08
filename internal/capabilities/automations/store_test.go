@@ -255,3 +255,43 @@ func TestStoreUpdateRun(t *testing.T) {
 		t.Fatalf("run not updated: %+v", got)
 	}
 }
+
+func TestStoreHasEnabled(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+
+	has, err := store.HasEnabled(ctx)
+	if err != nil {
+		t.Fatalf("HasEnabled on empty store: %v", err)
+	}
+	if has {
+		t.Fatal("HasEnabled on empty store = true, want false")
+	}
+
+	task := testTask()
+	task.Enabled = false
+	if _, err := store.SaveTask(ctx, task); err != nil {
+		t.Fatalf("save disabled task: %v", err)
+	}
+	has, err = store.HasEnabled(ctx)
+	if err != nil {
+		t.Fatalf("HasEnabled with disabled task: %v", err)
+	}
+	if has {
+		t.Fatal("HasEnabled with only disabled tasks = true, want false")
+	}
+
+	task.ID = ""
+	task.Name = "enabled-brief"
+	task.Enabled = true
+	if _, err := store.SaveTask(ctx, task); err != nil {
+		t.Fatalf("save enabled task: %v", err)
+	}
+	has, err = store.HasEnabled(ctx)
+	if err != nil {
+		t.Fatalf("HasEnabled with enabled task: %v", err)
+	}
+	if !has {
+		t.Fatal("HasEnabled with an enabled task = false, want true")
+	}
+}

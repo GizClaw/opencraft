@@ -135,6 +135,7 @@ func initTelemetry(dataDir string) (func(context.Context) error, error) {
 // Startup wires the Wails context into the core shell.
 func (d *Desktop) Startup(ctx context.Context) {
 	d.core.Shell.SetContext(ctx)
+	d.core.Shell.SetScheduledTasksChecker(d.hasScheduledTasks)
 	if err := d.core.Runtime.OpenUserDB(ctx); err != nil {
 		telemetry.WarnErr(ctx, "desktop: open user db failed", err)
 	} else {
@@ -144,6 +145,24 @@ func (d *Desktop) Startup(ctx context.Context) {
 		d.core.Shell.Emit("fatal", map[string]any{"error": err.Error()})
 	}
 	d.core.Shell.StartTray(d.trayIcon, d.trayIconWindows)
+}
+
+// hasScheduledTasks reports whether quitting would stop an enabled
+// scheduled task. It is the native quit funnel's condition: no
+// scheduler (user DB failed to open) means nothing can run, so exit
+// needs no confirmation; a query failure is treated conservatively as
+// "tasks exist" so users are never told the wrong thing before quit.
+func (d *Desktop) hasScheduledTasks(ctx context.Context) bool {
+	store := d.core.Runtime.Automations()
+	if store == nil {
+		return false
+	}
+	has, err := store.HasEnabled(ctx)
+	if err != nil {
+		telemetry.WarnErr(ctx, "desktop: query scheduled tasks failed", err)
+		return true
+	}
+	return has
 }
 
 // Shutdown releases runtime-owned resources. Runtime service teardown

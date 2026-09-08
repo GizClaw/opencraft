@@ -75,8 +75,8 @@ func main() {
 		// funnels through OnBeforeClose. macOS Cmd+Q / Dock Quit is
 		// detected first and recorded as a quit request; other closes
 		// consult the persisted "close to tray" setting. Real quits
-		// first ask for confirmation (scheduled tasks stop), then let
-		// Wails terminate.
+		// only ask for confirmation when enabled scheduled tasks would
+		// stop running, then let Wails terminate.
 		OnBeforeClose: func(ctx context.Context) bool {
 			if macConsumeTerminateRequest() {
 				app.Lifecycle().MarkQuitting()
