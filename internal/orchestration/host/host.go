@@ -387,6 +387,7 @@ func (m *Manager) Invalidate(workDir string) {
 	}
 	ref.stale = true
 	h := ref.host
+	h.markStale()
 	var closeNow bool
 	if !h.hasActiveRuns() {
 		delete(m.hosts, workDir)
@@ -807,8 +808,13 @@ type Host struct {
 	importMu   sync.Mutex
 	artifact   func(context.Context, string, []byte)
 	sessionUpd func(context.Context, string)
-	closing    bool
-	closed     bool
+	// stale records a Manager retirement on the Host itself. The pool
+	// entry carries the same flag while the Host is pooled; the
+	// Host-level copy survives pool removal so adapters can still tell
+	// a draining Host from a fresh replacement handed out by Acquire.
+	stale   atomic.Bool
+	closing bool
+	closed  bool
 	// closeDone is closed once a drained host has finished teardown;
 	// active runs wait on it before returning so the shared session
 	// store outlives every post-run write (including auto titles).
@@ -857,6 +863,34 @@ func (h *Host) hasActiveRuns() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return len(h.runs) > 0
+}
+
+// markStale records that the Manager retired this Host: it keeps
+// serving new turns on its old runtime until the last active run ends,
+// then closes itself through hostIdle.
+func (h *Host) markStale() {
+	h.stale.Store(true)
+}
+
+// IsStale reports whether the Manager retired this Host. Callers that
+// receive a stale Host from Acquire must schedule a replacement for
+// after teardown so the pool (and the adapter's current Host) never
+// stays pinned to a closed runtime.
+func (h *Host) IsStale() bool {
+	return h != nil && h.stale.Load()
+}
+
+// IsClosing reports whether the Host stopped accepting new turns: it
+// is either draining its live runs or already torn down. A closing
+// Host is never returned by Manager.Acquire, so adapters can treat
+// IsClosing on Runtime.current as "wait for the replacement Host".
+func (h *Host) IsClosing() bool {
+	if h == nil {
+		return true
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.closing || h.closed
 }
 
 // WaitClosed blocks until the Host has fully torn down (or ctx is

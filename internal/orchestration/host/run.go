@@ -100,12 +100,12 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 	}
 	ctrl := h.Controller()
 	if ctrl == nil || ctrl.Runtime() == nil {
-		return nil, errors.New("host: runtime is not ready")
+		return nil, ErrRuntimeNotReady
 	}
 	h.mu.Lock()
 	if h.closing || h.closed {
 		h.mu.Unlock()
-		return nil, errors.New("host: runtime is closing")
+		return nil, ErrRuntimeClosing
 	}
 	h.mu.Unlock()
 	if opts.ContextID != "" {
@@ -121,7 +121,7 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 	}
 	store := h.Sessions()
 	if store == nil {
-		return nil, errors.New("host: session store is not ready")
+		return nil, ErrSessionStoreNotReady
 	}
 
 	contextID := opts.ContextID
@@ -491,18 +491,18 @@ func (h *Host) DeleteConversation(ctx context.Context, id string) error {
 	}
 	ctrl := h.Controller()
 	if ctrl == nil || ctrl.Runtime() == nil {
-		return errors.New("host: runtime is not ready")
+		return ErrRuntimeNotReady
 	}
 	store := h.Sessions()
 	if store == nil {
-		return errors.New("host: session store is not ready")
+		return ErrSessionStoreNotReady
 	}
 	conv := ConversationID(id)
 
 	h.mu.Lock()
 	if h.closed || h.closing {
 		h.mu.Unlock()
-		return errors.New("host: runtime is closing")
+		return ErrRuntimeClosing
 	}
 	if h.deleted[conv] {
 		h.mu.Unlock()

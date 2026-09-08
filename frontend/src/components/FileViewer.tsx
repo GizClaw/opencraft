@@ -85,7 +85,15 @@ function pathParts(rel: string): string[] {
 // FileViewer is the session-scoped right-hand file panel. It lives
 // inside the chat page: visibility, open tabs and tree position are
 // all stored per conversation and restored when that chat is focused.
-export function FileViewer({ sessionID }: { sessionID: string }) {
+export function FileViewer({
+  sessionID,
+  embedded = false,
+}: {
+  sessionID: string;
+  // embedded makes the panel fill a parent right-rail shell (Files/Git
+  // segmented mode); standalone keeps its own width and left border.
+  embedded?: boolean;
+}) {
   const { t } = useTranslation();
   const viewer = useStore((s) => s.viewers[sessionID]);
   const tabs = viewer?.fileTabs ?? [];
@@ -105,8 +113,14 @@ export function FileViewer({ sessionID }: { sessionID: string }) {
 
   return (
     <div
-      className="relative flex h-full shrink-0 flex-col border-l border-edge bg-panel"
-      style={{ width: 'min(49.6vw, 896px)', minWidth: 448 }}
+      className={
+        embedded
+          ? 'relative flex h-full min-h-0 min-w-0 flex-1 flex-col bg-panel'
+          : 'relative flex h-full shrink-0 flex-col border-l border-edge bg-panel'
+      }
+      style={
+        embedded ? undefined : { width: 'min(49.6vw, 896px)', minWidth: 448 }
+      }
     >
       <div className="flex h-9 shrink-0 items-end gap-0 overflow-x-auto border-b border-edge bg-panel2/30 px-2 pt-1 text-xs">
         {tabs.map((tab) => (
