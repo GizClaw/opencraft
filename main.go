@@ -9,6 +9,7 @@ import (
 	"embed"
 	"log"
 	"os"
+	"runtime"
 	"sync/atomic"
 	"time"
 
@@ -57,6 +58,9 @@ func main() {
 		Mac: application.MacOptions{
 			ApplicationShouldTerminateAfterLastWindowClosed: false,
 		},
+		Linux: application.LinuxOptions{
+			ProgramName: "OpenCraft",
+		},
 		SingleInstance: &application.SingleInstanceOptions{
 			UniqueID: "com.gizclaw.opencraft",
 			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
@@ -77,14 +81,23 @@ func main() {
 		mainURL = "/#auto"
 	}
 	mainW := app.Window.NewWithOptions(application.WebviewWindowOptions{
-		Name:             "main",
-		Title:            "OpenCraft",
-		Width:            1440,
-		Height:           900,
-		MinWidth:         1024,
-		MinHeight:        700,
-		URL:              mainURL,
-		Mac:              application.MacWindow{TitleBar: application.MacTitleBarHiddenInset},
+		Name:      "main",
+		Title:     "OpenCraft",
+		Width:     1440,
+		Height:    900,
+		MinWidth:  1024,
+		MinHeight: 700,
+		URL:       mainURL,
+		Mac:       application.MacWindow{TitleBar: application.MacTitleBarHiddenInset},
+		// Windows/Linux keep the custom in-app title bar (frontend TopBar):
+		// frameless only there, never on macOS (native traffic lights).
+		Frameless: runtime.GOOS != "darwin",
+		Windows: application.WindowsWindow{
+			Theme: application.SystemDefault,
+		},
+		Linux: application.LinuxWindow{
+			WebviewGpuPolicy: application.WebviewGpuPolicyAlways,
+		},
 		BackgroundColour: application.NewRGB(15, 18, 24),
 		EnableFileDrop:   true,
 	})
