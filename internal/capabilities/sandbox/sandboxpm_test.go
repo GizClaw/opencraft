@@ -28,7 +28,7 @@ func TestSandboxRunnerEmptyPolicy(t *testing.T) {
 	for _, name := range policy.Allow {
 		allow[name] = true
 	}
-	for _, want := range []string{"PATH", "HOME", "OPEN_CRAFT_CACHE"} {
+	for _, want := range []string{"PATH", "HOME"} {
 		if !allow[want] {
 			t.Errorf("default allowlist missing %q: %v", want, policy.Allow)
 		}

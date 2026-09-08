@@ -28,19 +28,6 @@ import (
 // the watcher nothing reassembles A after teardown and StartRun keeps
 // failing with "host: runtime is closing" until an unrelated rebuild.
 func TestRebuildRuntimeReplacesRetiredHostAfterSwitchBack(t *testing.T) {
-	for _, key := range []string{
-		"OPEN_CRAFT_WORKDIR",
-		"OPEN_CRAFT_CACHE",
-		"OPEN_CRAFT_DATA_DIR",
-		"OPEN_CRAFT_WORKSPACE_DIR",
-		"OPEN_CRAFT_SESSIONS_DIR",
-		"OPEN_CRAFT_APPROVALS",
-		"OPEN_CRAFT_TOOL_CACHE",
-		"OPEN_CRAFT_AUDIT_DIR",
-	} {
-		t.Setenv(key, "")
-	}
-
 	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
 	workA := t.TempDir()
 	workB := t.TempDir()
@@ -158,19 +145,6 @@ func TestRebuildRuntimeReplacesRetiredHostAfterSwitchBack(t *testing.T) {
 // teardown and assemble a fresh Host for the original workspace that
 // immediately accepts new turns.
 func TestEnsureUsableHostRebuildsRetiredWorkspace(t *testing.T) {
-	for _, key := range []string{
-		"OPEN_CRAFT_WORKDIR",
-		"OPEN_CRAFT_CACHE",
-		"OPEN_CRAFT_DATA_DIR",
-		"OPEN_CRAFT_WORKSPACE_DIR",
-		"OPEN_CRAFT_SESSIONS_DIR",
-		"OPEN_CRAFT_APPROVALS",
-		"OPEN_CRAFT_TOOL_CACHE",
-		"OPEN_CRAFT_AUDIT_DIR",
-	} {
-		t.Setenv(key, "")
-	}
-
 	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
 	workA := t.TempDir()
 	workB := t.TempDir()

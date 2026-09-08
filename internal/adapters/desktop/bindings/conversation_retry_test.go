@@ -18,19 +18,6 @@ import (
 // StartRun, StartTurn waits for the replacement Host inside the same
 // RPC and succeeds without duplicating the user message's session.
 func TestStartTurnRetriesAfterHostRetirement(t *testing.T) {
-	for _, key := range []string{
-		"OPEN_CRAFT_WORKDIR",
-		"OPEN_CRAFT_CACHE",
-		"OPEN_CRAFT_DATA_DIR",
-		"OPEN_CRAFT_WORKSPACE_DIR",
-		"OPEN_CRAFT_SESSIONS_DIR",
-		"OPEN_CRAFT_APPROVALS",
-		"OPEN_CRAFT_TOOL_CACHE",
-		"OPEN_CRAFT_AUDIT_DIR",
-	} {
-		t.Setenv(key, "")
-	}
-
 	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
 	workDir := t.TempDir()
 	dataDir := t.TempDir()

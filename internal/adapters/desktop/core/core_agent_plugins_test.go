@@ -12,18 +12,6 @@ import (
 )
 
 func TestNewCoreWiresPluginSkillsIntoRuntime(t *testing.T) {
-	for _, key := range []string{
-		"OPEN_CRAFT_WORKDIR",
-		"OPEN_CRAFT_CACHE",
-		"OPEN_CRAFT_DATA_DIR",
-		"OPEN_CRAFT_WORKSPACE_DIR",
-		"OPEN_CRAFT_SESSIONS_DIR",
-		"OPEN_CRAFT_APPROVALS",
-		"OPEN_CRAFT_TOOL_CACHE",
-		"OPEN_CRAFT_AUDIT_DIR",
-	} {
-		t.Setenv(key, "")
-	}
 	t.Setenv("DEEPSEEK_API_KEY", "test-key")
 	workDir := t.TempDir()
 	dataDir := t.TempDir()

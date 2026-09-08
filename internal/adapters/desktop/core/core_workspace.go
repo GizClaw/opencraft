@@ -22,69 +22,6 @@ func (c *Core) SetWorkDir(workDir string) {
 	c.mu.Lock()
 	c.WorkDir = workDir
 	c.mu.Unlock()
-	c.publishWorkspaceEnv()
-}
-
-// publishWorkspaceEnv keeps the process and capability-plugin
-// environment aligned with the active workspace before any plugin
-// subprocess or sandboxed child starts. Runtime assembly does not
-// read these variables anymore (engine injects its path values
-// through the flowcraft resolver), so this publication is purely for
-// child processes: plugin UI invocations that happen before the
-// first Host is assembled, and the execd sandbox env allowlist.
-func (c *Core) publishWorkspaceEnv() {
-	workDir := c.ActiveWorkDir()
-	envKeys := []string{
-		"OPEN_CRAFT_WORKDIR",
-		"OPEN_CRAFT_CACHE",
-		"OPEN_CRAFT_DATA_DIR",
-		"OPEN_CRAFT_WORKSPACE_DIR",
-		"OPEN_CRAFT_SESSIONS_DIR",
-		"OPEN_CRAFT_APPROVALS",
-		"OPEN_CRAFT_TOOL_CACHE",
-		"OPEN_CRAFT_AUDIT_DIR",
-	}
-	if strings.TrimSpace(workDir) == "" {
-		for _, key := range envKeys {
-			telemetry.WarnErr(context.Background(),
-				"desktop: unset workspace env failed", os.Unsetenv(key))
-		}
-		if c.Plugin != nil && c.Plugin.Capability != nil {
-			c.Plugin.Capability.StopAll()
-		}
-		return
-	}
-	layout, err := config.ResolveWorkspace(c.DataDir, workDir)
-	if err != nil {
-		for _, key := range envKeys {
-			telemetry.WarnErr(context.Background(),
-				"desktop: unset workspace env after resolve failure",
-				os.Unsetenv(key))
-		}
-		return
-	}
-	telemetry.WarnErr(context.Background(),
-		"desktop: ensure workspace layout failed", layout.Ensure())
-	cacheDir := filepath.Join(c.DataDir, "cache")
-	env := []string{
-		"OPEN_CRAFT_WORKDIR=" + workDir,
-		"OPEN_CRAFT_CACHE=" + cacheDir,
-		"OPEN_CRAFT_DATA_DIR=" + c.DataDir,
-		"OPEN_CRAFT_WORKSPACE_DIR=" + layout.Root,
-		"OPEN_CRAFT_SESSIONS_DIR=" + layout.SessionsDir,
-		"OPEN_CRAFT_APPROVALS=" + layout.ApprovalsFile,
-		"OPEN_CRAFT_TOOL_CACHE=" + layout.CacheDir,
-		"OPEN_CRAFT_AUDIT_DIR=" + layout.AuditDir,
-	}
-	for _, kv := range env {
-		key, value, _ := strings.Cut(kv, "=")
-		telemetry.WarnErr(context.Background(),
-			"desktop: publish workspace env failed", os.Setenv(key, value))
-	}
-	if c.Plugin != nil && c.Plugin.Capability != nil {
-		c.Plugin.Capability.SetEnv(env)
-		c.Plugin.Capability.StopAll()
-	}
 }
 
 // ActiveWorkDir returns the active workspace directory.

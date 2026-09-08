@@ -1,7 +1,6 @@
 package core
 
 import (
-	"os"
 	"testing"
 
 	"github.com/GizClaw/opencraft/internal/foundation/config"
@@ -34,37 +33,6 @@ func TestWorkspaceHistory(t *testing.T) {
 	}
 	if !active || next != workB {
 		t.Fatalf("remove active = (next=%q active=%v), want %q", next, active, workB)
-	}
-}
-
-func TestSetWorkDirPublishesPluginEnv(t *testing.T) {
-	for _, key := range []string{
-		"OPEN_CRAFT_WORKDIR",
-		"OPEN_CRAFT_CACHE",
-		"OPEN_CRAFT_DATA_DIR",
-		"OPEN_CRAFT_WORKSPACE_DIR",
-		"OPEN_CRAFT_SESSIONS_DIR",
-		"OPEN_CRAFT_APPROVALS",
-		"OPEN_CRAFT_TOOL_CACHE",
-		"OPEN_CRAFT_AUDIT_DIR",
-	} {
-		t.Setenv(key, "")
-	}
-	dataDir := t.TempDir()
-	workDir := t.TempDir()
-	c := NewCore(dataDir, dataDir, "")
-
-	c.SetWorkDir(workDir)
-	if got := os.Getenv("OPEN_CRAFT_WORKDIR"); got != workDir {
-		t.Fatalf("OPEN_CRAFT_WORKDIR = %q, want %q", got, workDir)
-	}
-	if got := os.Getenv("OPEN_CRAFT_DATA_DIR"); got != dataDir {
-		t.Fatalf("OPEN_CRAFT_DATA_DIR = %q, want %q", got, dataDir)
-	}
-
-	c.SetWorkDir("")
-	if got := os.Getenv("OPEN_CRAFT_WORKDIR"); got != "" {
-		t.Fatalf("OPEN_CRAFT_WORKDIR = %q after clearing, want empty", got)
 	}
 }
 
