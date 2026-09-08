@@ -43,6 +43,9 @@ export interface ToolView {
 // the session, so switching chats restores exactly that chat's panel.
 export interface FileViewerState {
   filesOpen: boolean;
+  // panelMode picks which right-rail view is active: the file browser
+  // or the repository Git panel.
+  panelMode: 'files' | 'git';
   fileTabs: FileTab[];
   fileActive: string | null;
   fileTreeDir: string;
@@ -51,6 +54,7 @@ export interface FileViewerState {
 function viewerDefaults(): FileViewerState {
   return {
     filesOpen: false,
+    panelMode: 'files',
     fileTabs: [] as FileTab[],
     fileActive: null as string | null,
     fileTreeDir: '.',
@@ -724,6 +728,7 @@ interface StoreState {
   openResolvedTarget: (res: ResolvedTarget) => void;
   closeFileTab: (key: string) => void;
   activateFileTab: (key: string) => void;
+  setPanelMode: (mode: 'files' | 'git') => void;
   showFileDir: (rel: string) => void;
   // newEmptyTab opens a blank placeholder tab with the file tree
   // visible, so the user can pick a file without an extra "+" row.
@@ -2075,6 +2080,7 @@ export const useStore = create<StoreState>((set, get) => {
             [id]: {
               ...viewer,
               filesOpen: true,
+              panelMode: 'files',
               fileTabs: tabs,
               fileActive: res.path,
             },
@@ -2102,6 +2108,8 @@ export const useStore = create<StoreState>((set, get) => {
 
     activateFileTab: (key) =>
       viewerPatch(activeConversationID(), { fileActive: key }),
+    setPanelMode: (mode) =>
+      viewerPatch(activeConversationID(), { panelMode: mode }),
     showFileDir: (rel) =>
       viewerPatch(activeConversationID(), {
         fileTreeDir: rel || '.',

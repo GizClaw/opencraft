@@ -568,6 +568,7 @@ describe('store: send and stream', () => {
       viewers: {
         's-1': {
           filesOpen: true,
+          panelMode: 'files',
           fileTabs: [
             {
               key: '/tmp/w/a.go',
@@ -623,6 +624,7 @@ describe('store: send and stream', () => {
       viewers: {
         's-1': {
           filesOpen: true,
+          panelMode: 'files',
           fileTabs: [
             {
               key: 'blank-1',

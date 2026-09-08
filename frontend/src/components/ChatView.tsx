@@ -70,7 +70,7 @@ import type {
 } from '../lib/store';
 import type { TurnEndKind } from '../state/types';
 import { InteractionCard } from './InteractionCard';
-import { FileViewer } from './FileViewer';
+import { WorkspacePanel } from './WorkspacePanel';
 import { YoloConfirmDialog } from './YoloConfirmDialog';
 import {
   MessagePeek,
@@ -2905,7 +2905,7 @@ export function ChatView() {
             )}
           </div>
         </div>
-        {filesOpen && current ? <FileViewer sessionID={current} /> : null}
+        {filesOpen && current ? <WorkspacePanel sessionID={current} /> : null}
       </div>
       {forkTarget && (
         <div className="fixed bottom-0 top-11 left-0 right-0 z-40 grid place-items-center bg-black/60 p-6">

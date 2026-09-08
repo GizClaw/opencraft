@@ -6,8 +6,10 @@ import * as Config from '../../wailsjs/go/bindings/Config';
 import * as Conversation from '../../wailsjs/go/bindings/Conversation';
 import * as Diagnostics from '../../wailsjs/go/bindings/Diagnostics';
 import * as File from '../../wailsjs/go/bindings/File';
+import * as Git from '../../wailsjs/go/bindings/Git';
 import * as Lifecycle from '../../wailsjs/go/bindings/Lifecycle';
 import * as Plugin from '../../wailsjs/go/bindings/Plugin';
+import * as PullRequests from '../../wailsjs/go/bindings/PullRequests';
 import * as Secret from '../../wailsjs/go/bindings/Secret';
 import * as Session from '../../wailsjs/go/bindings/Session';
 import * as Settings from '../../wailsjs/go/bindings/Settings';
@@ -29,6 +31,14 @@ import type {
   DiagnosticsReport,
   FilePreview,
   FileNode,
+  GitBranch,
+  GitDiff,
+  GitHubPRDetail,
+  GitHubPull,
+  GitLogEntry,
+  GitRepo,
+  GitStatus,
+  PRAvailability,
   ResolvedTarget,
   HistoryMessage,
   InferenceRequest,
@@ -113,6 +123,32 @@ export const api = {
   openWorkspace: (path: string) => Workspace.Open(path),
   removeWorkspace: (id: string) => Workspace.Remove(id),
   fileDiff: (path: string) => File.Diff(path),
+  gitRepo: () => Git.Repo() as unknown as Promise<GitRepo>,
+  gitStatus: () => Git.Status() as unknown as Promise<GitStatus>,
+  gitLog: (limit: number) =>
+    Git.Log(limit) as unknown as Promise<GitLogEntry[]>,
+  gitBranches: () => Git.Branches() as unknown as Promise<GitBranch[]>,
+  gitDiff: (path: string, cached: boolean) =>
+    Git.Diff(path, cached) as unknown as Promise<GitDiff>,
+  gitStage: (paths: string[]) => Git.Stage(paths) as unknown as Promise<string>,
+  gitUnstage: (paths: string[]) =>
+    Git.Unstage(paths) as unknown as Promise<string>,
+  gitCommit: (message: string) =>
+    Git.Commit(message) as unknown as Promise<string>,
+  gitCheckout: (branch: string) =>
+    Git.Checkout(branch) as unknown as Promise<string>,
+  gitNewBranch: (name: string) =>
+    Git.NewBranch(name) as unknown as Promise<string>,
+  gitDiscard: (paths: string[], staged: boolean) =>
+    Git.Discard(paths, staged) as unknown as Promise<string>,
+  gitClean: (paths: string[]) => Git.Clean(paths) as unknown as Promise<string>,
+  gitPull: () => Git.Pull() as unknown as Promise<string>,
+  gitPush: (force: boolean) => Git.Push(force) as unknown as Promise<string>,
+  gitHubAvailable: () =>
+    PullRequests.Availability() as unknown as Promise<PRAvailability>,
+  gitHubPRList: () => PullRequests.List() as unknown as Promise<GitHubPull[]>,
+  gitHubPRDetail: (number: number) =>
+    PullRequests.Detail(number) as unknown as Promise<GitHubPRDetail>,
   getThink: () => Settings.GetThink(),
   setThink: (level: string) => Settings.SetThink(level),
   getModel: () => Settings.GetModel(),

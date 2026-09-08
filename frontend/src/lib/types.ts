@@ -388,6 +388,160 @@ export interface SearchFileHit {
   is_dir: boolean;
 }
 
+export interface GitRepo {
+  in_repo: boolean;
+  root?: string;
+  branch?: string;
+  upstream?: string;
+  ahead: number;
+  behind: number;
+  workspace?: string;
+}
+
+export type GitChangeKind =
+  | 'modified'
+  | 'added'
+  | 'deleted'
+  | 'renamed'
+  | 'copied'
+  | 'typechange'
+  | 'untracked'
+  | 'unmerged';
+
+export interface GitChange {
+  path: string;
+  orig_path?: string;
+  kind: GitChangeKind;
+  staged: boolean;
+  unstaged: boolean;
+  untracked: boolean;
+  unmerged: boolean;
+  directory: boolean;
+  is_binary: boolean;
+  additions: number;
+  deletions: number;
+  in_workspace: boolean;
+}
+
+export interface GitStatus {
+  root?: string;
+  workspace?: string;
+  branch?: string;
+  truncated: boolean;
+  entries: GitChange[];
+}
+
+export interface GitLogEntry {
+  oid: string;
+  short_oid: string;
+  author: string;
+  date: string;
+  subject: string;
+}
+
+export interface GitBranch {
+  name: string;
+  current: boolean;
+  upstream?: string;
+}
+
+export interface GitDiff {
+  content: string;
+  truncated: boolean;
+}
+
+export interface GitHubAuthor {
+  login: string;
+  avatar_url?: string;
+}
+
+export interface PRAvailability {
+  available: boolean;
+}
+
+export interface GitHubPull {
+  number: number;
+  title: string;
+  state: 'open' | 'closed' | 'merged';
+  draft: boolean;
+  author: GitHubAuthor;
+  base: string;
+  head: string;
+  updated_at: string;
+  html_url: string;
+}
+
+export interface GitHubPRCommit {
+  sha: string;
+  short_sha: string;
+  message: string;
+  author: string;
+  date: string;
+}
+
+export interface GitHubCheck {
+  name: string;
+  kind: 'check_run' | 'status';
+  state: string;
+  description?: string;
+  url?: string;
+}
+
+export interface GitHubComment {
+  id: number;
+  author: GitHubAuthor;
+  body: string;
+  created_at: string;
+  html_url: string;
+}
+
+export interface GitHubTimelineItem {
+  id: number;
+  kind: 'comment' | 'review';
+  author: GitHubAuthor;
+  body: string;
+  action?: string;
+  created_at: string;
+  html_url: string;
+}
+
+export interface GitHubReviewThread {
+  path: string;
+  side?: 'LEFT' | 'RIGHT';
+  line: number;
+  original_line: number;
+  start_line?: number;
+  original_start_line?: number;
+  diff_hunk: string;
+  comments: GitHubComment[];
+}
+
+export interface GitHubPRDetail {
+  number: number;
+  title: string;
+  state: 'open' | 'closed' | 'merged';
+  draft: boolean;
+  author: GitHubAuthor;
+  base: string;
+  head: string;
+  head_sha: string;
+  created_at: string;
+  updated_at: string;
+  html_url: string;
+  body: string;
+  mergeable: boolean;
+  mergeable_state: string;
+  changed_files: number;
+  additions: number;
+  deletions: number;
+  commits_count: number;
+  commits: GitHubPRCommit[];
+  checks: GitHubCheck[];
+  conversation: GitHubTimelineItem[];
+  threads: GitHubReviewThread[];
+  truncated: boolean;
+}
+
 export interface MemorySettings {
   max_raw_messages: number;
   preserve_recent: number;

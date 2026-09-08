@@ -31,6 +31,7 @@ describe('FileViewer', () => {
       viewers: {
         's-1': {
           filesOpen: true,
+          panelMode: 'files',
           fileTabs: [
             {
               key: '/tmp/w/internal/a.go',
@@ -75,6 +76,7 @@ describe('FileViewer', () => {
       viewers: {
         's-1': {
           filesOpen: true,
+          panelMode: 'files',
           fileTabs: [],
           fileActive: null,
           fileTreeDir: '.',
