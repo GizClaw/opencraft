@@ -6,6 +6,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-08
+
+### Added
+
+- The current conversation can now be deleted: any live turn is
+  cancelled, its terminal state is persisted, and only then are the
+  session rows and files removed. When the deleted chat is still the
+  active one a fresh session is minted in the same call. (#100)
+- Quitting the app only asks for confirmation when an enabled
+  scheduled task would stop running. (#100)
+
+### Changed
+
+- Saving memory, inference/router, MCP, or general config settings
+  reloads the running runtime in place through an atomic generation
+  swap instead of tearing it down. (#100)
+- Runtime rebuilds are deferred to idle: when a config or plugin
+  change lands during an active turn, the old runtime keeps serving
+  until the turn finishes, so no second runtime ever serves the same
+  conversation. (#100)
+- Engine assembly resolves workspace paths through a deploy-time
+  resolver instead of process environment variables, the user-level
+  database lifecycle (usage/automations) is owned by host.Manager,
+  and an import-boundary gate enforces internal layering. (#99)
+
 ## [0.3.0] - 2026-09-07
 
 ### Added
