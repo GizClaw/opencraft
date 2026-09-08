@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -31,7 +33,7 @@ func ghAuthToken(
 	ctx context.Context,
 	lookPath func(string) (string, error),
 ) (string, error) {
-	bin, err := lookPath("gh")
+	bin, err := ghExecutable(lookPath)
 	if err != nil {
 		return "", ErrNoProvider
 	}
@@ -52,6 +54,90 @@ func ghAuthToken(
 		return "", ErrNoProvider
 	}
 	return token, nil
+}
+
+// ghExecutable resolves the gh CLI binary. An explicit GH_PATH wins
+// (lazygit's convention), then PATH, then well-known per-platform
+// install locations. The candidate fallback keeps the PR view working
+// when the app is launched outside a login shell (for example a macOS
+// GUI app whose PATH is the launchd default) and the CLI lives in a
+// Homebrew or other user-local directory.
+func ghExecutable(lookPath func(string) (string, error)) (string, error) {
+	return ghExecutableFrom(
+		lookPath, os.Getenv("GH_PATH"), ghCandidatePaths())
+}
+
+// ghExecutableFrom is ghExecutable with the override and candidate list
+// injected so resolution can be tested without touching the host PATH.
+func ghExecutableFrom(
+	lookPath func(string) (string, error),
+	override string,
+	candidates []string,
+) (string, error) {
+	if override = strings.TrimSpace(override); override != "" &&
+		usableGHBinary(override) {
+		return override, nil
+	}
+	if bin, err := lookPath("gh"); err == nil {
+		return bin, nil
+	}
+	for _, candidate := range candidates {
+		if usableGHBinary(candidate) {
+			return candidate, nil
+		}
+	}
+	return "", ErrNoProvider
+}
+
+// ghCandidatePaths lists the standard gh install directories for each
+// platform, probed after PATH misses.
+func ghCandidatePaths() []string {
+	switch runtime.GOOS {
+	case "windows":
+		return []string{
+			// Official MSI / winget install.
+			filepath.Join(os.Getenv("ProgramFiles"), "GitHub CLI", "gh.exe"),
+			// Per-user installs (winget --scope user and friends).
+			filepath.Join(
+				os.Getenv("LOCALAPPDATA"), "Programs", "GitHub CLI", "gh.exe"),
+		}
+	default:
+		candidates := []string{
+			// Apple Silicon Homebrew.
+			"/opt/homebrew/bin/gh",
+			// Intel Homebrew and classic /usr/local installs.
+			"/usr/local/bin/gh",
+			// Linux distro packages.
+			"/usr/bin/gh",
+			// Linux snap installs.
+			"/snap/bin/gh",
+		}
+		if home, err := os.UserHomeDir(); err == nil {
+			candidates = append(candidates,
+				// Linuxbrew and user-local installs.
+				filepath.Join(home, ".linuxbrew", "bin", "gh"),
+				filepath.Join(home, ".local", "bin", "gh"),
+			)
+		}
+		return candidates
+	}
+}
+
+// usableGHBinary reports whether path names an existing gh executable
+// the process may run. Windows has no executable permission bit; every
+// other platform requires at least one execute bit.
+func usableGHBinary(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	if runtime.GOOS == "windows" {
+		return true
+	}
+	return info.Mode()&0o111 != 0
 }
 
 // stripTokenEnv removes token environment variables from the gh child

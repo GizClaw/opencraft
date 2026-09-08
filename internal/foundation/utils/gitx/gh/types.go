@@ -147,7 +147,11 @@ type Options struct {
 	BaseURL string
 	// Client is the HTTP client; a 20s client is created when nil.
 	Client *http.Client
-	// LookPath resolves the gh binary; defaults to exec.LookPath.
+	// LookPath resolves the gh binary; defaults to exec.LookPath. When
+	// PATH misses, well-known per-platform install locations (Homebrew,
+	// distro and snap dirs on Unix, the official GitHub CLI directories
+	// on Windows) are probed so GUI-launched apps without a login-shell
+	// PATH still find the CLI. GH_PATH pins the binary explicitly.
 	LookPath func(string) (string, error)
 	// TokenFn supplies a token without spawning gh; tests inject it.
 	// When nil the service runs `gh auth token --hostname github.com`.
