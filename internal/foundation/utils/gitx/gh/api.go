@@ -116,31 +116,35 @@ func (c *apiClient) firstURL(
 	return c.base + path + "?" + params.Encode()
 }
 
-// collect walks at most maxPages pages, decoding each into page.
+// collect walks at most maxPages pages, decoding each into page. The
+// bool result reports whether another page existed beyond the cap, so
+// callers can distinguish "fetched everything" from "hit the page
+// cap" instead of flagging truncation whenever the last fetched page
+// happened to be the cap-sized page count.
 func (c *apiClient) collect(
 	ctx context.Context,
 	path string,
 	params url.Values,
 	maxPages int,
 	page func([]byte) error,
-) error {
+) (bool, error) {
 	next := c.firstURL(path, params)
 	pages := 0
 	for next != "" {
 		if pages >= maxPages {
-			return nil
+			return true, nil
 		}
 		body, link, err := c.getBody(ctx, next)
 		if err != nil {
-			return err
+			return false, err
 		}
 		pages++
 		if err := page(body); err != nil {
-			return errf("decode response", err.Error())
+			return false, errf("decode response", err.Error())
 		}
 		next = link
 	}
-	return nil
+	return false, nil
 }
 
 var linkNextRe = regexp.MustCompile(`<([^>]+)>\s*;\s*rel="next"`)
@@ -269,7 +273,7 @@ func (c *apiClient) listPRs(
 	params.Set("direction", "desc")
 	params.Set("per_page", "100")
 	var pulls []ghPull
-	err := c.collect(ctx, path, params, 1,
+	_, err := c.collect(ctx, path, params, 1,
 		func(body []byte) error {
 			return json.Unmarshal(body, &pulls)
 		})
@@ -309,10 +313,8 @@ func (c *apiClient) commits(
 	params := url.Values{}
 	params.Set("per_page", "100")
 	var commits []ghCommit
-	pages := 0
-	err := c.collect(ctx, path, params, maxCommitPages,
+	hadMore, err := c.collect(ctx, path, params, maxCommitPages,
 		func(body []byte) error {
-			pages++
 			var batch []ghCommit
 			if err := json.Unmarshal(body, &batch); err != nil {
 				return err
@@ -323,10 +325,7 @@ func (c *apiClient) commits(
 	if err != nil {
 		return nil, err
 	}
-	// collect() cannot distinguish "hit the page cap" from "no next
-	// page", so the caller cross-checks against the PR-reported commit
-	// count; this flag only covers the hard page cap itself.
-	c.commitsTruncated = pages >= maxCommitPages
+	c.commitsTruncated = hadMore
 	return commits, nil
 }
 
@@ -339,10 +338,8 @@ func (c *apiClient) issueComments(
 	params := url.Values{}
 	params.Set("per_page", "100")
 	var comments []ghIssueComment
-	pages := 0
-	err := c.collect(ctx, path, params, maxCommentPages,
+	hadMore, err := c.collect(ctx, path, params, maxCommentPages,
 		func(body []byte) error {
-			pages++
 			var batch []ghIssueComment
 			if err := json.Unmarshal(body, &batch); err != nil {
 				return err
@@ -353,7 +350,7 @@ func (c *apiClient) issueComments(
 	if err != nil {
 		return nil, err
 	}
-	c.issueTruncated = pages >= maxCommentPages
+	c.issueTruncated = hadMore
 	return comments, nil
 }
 
@@ -366,7 +363,7 @@ func (c *apiClient) reviews(
 	params := url.Values{}
 	params.Set("per_page", "100")
 	var reviews []ghReview
-	err := c.collect(ctx, path, params, 1,
+	_, err := c.collect(ctx, path, params, 1,
 		func(body []byte) error {
 			return json.Unmarshal(body, &reviews)
 		})
@@ -385,10 +382,8 @@ func (c *apiClient) reviewComments(
 	params := url.Values{}
 	params.Set("per_page", "100")
 	var comments []ghReviewComment
-	pages := 0
-	err := c.collect(ctx, path, params, maxCommentPages,
+	hadMore, err := c.collect(ctx, path, params, maxCommentPages,
 		func(body []byte) error {
-			pages++
 			var batch []ghReviewComment
 			if err := json.Unmarshal(body, &batch); err != nil {
 				return err
@@ -399,7 +394,7 @@ func (c *apiClient) reviewComments(
 	if err != nil {
 		return nil, err
 	}
-	c.inlineTruncated = pages >= maxCommentPages
+	c.inlineTruncated = hadMore
 	return comments, nil
 }
 
@@ -414,7 +409,7 @@ func (c *apiClient) checks(
 	params := url.Values{}
 	params.Set("per_page", "100")
 	var runs ghChecks
-	err := c.collect(ctx, path, params, 1,
+	_, err := c.collect(ctx, path, params, 1,
 		func(body []byte) error {
 			return json.Unmarshal(body, &runs)
 		})
@@ -423,8 +418,15 @@ func (c *apiClient) checks(
 	}
 	for _, r := range runs.CheckRuns {
 		state := CheckPending
-		if r.Status == "completed" && r.Conclusion != nil {
-			state = CheckState(*r.Conclusion)
+		if r.Status == "completed" {
+			if r.Conclusion != nil {
+				state = CheckState(*r.Conclusion)
+			} else {
+				// GitHub leaves conclusion null on some completed
+				// runs; render neutral instead of an endless pending
+				// spinner.
+				state = CheckNeutral
+			}
 		}
 		out = append(out, Check{
 			Name:  r.Name,
@@ -437,7 +439,7 @@ func (c *apiClient) checks(
 	statusPath := fmt.Sprintf("/repos/%s/%s/commits/%s/status",
 		owner, repo, sha)
 	var st ghStatuses
-	err = c.collect(ctx, statusPath, nil, 1,
+	_, err = c.collect(ctx, statusPath, nil, 1,
 		func(body []byte) error {
 			return json.Unmarshal(body, &st)
 		})

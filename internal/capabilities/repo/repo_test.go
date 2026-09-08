@@ -214,6 +214,64 @@ func TestRunBlocksUnmergedAndBadInput(t *testing.T) {
 	}
 }
 
+func TestInvalidBranchNamesRejected(t *testing.T) {
+	for _, name := range []string{
+		"-evil",
+		"a/../b",
+		"a//b",
+		"a.lock",
+		"foo.lock/bar",
+		"a.b/.x",
+		"a@{b}",
+		"a/",
+		"a.",
+		"",
+		"has space",
+	} {
+		if _, err := buildArgs(Op{Kind: KindCheckout, Branch: name}); err == nil {
+			t.Errorf("checkout branch %q unexpectedly accepted", name)
+		}
+		if _, err := buildArgs(Op{Kind: KindNewBranch, Branch: name}); err == nil {
+			t.Errorf("new branch %q unexpectedly accepted", name)
+		}
+	}
+	for _, name := range []string{
+		"main",
+		"feat/panel",
+		"fix/1.2.3",
+		"renovate/updates",
+	} {
+		args, err := buildArgs(Op{Kind: KindCheckout, Branch: name})
+		if err != nil {
+			t.Errorf("valid checkout branch %q rejected: %v", name, err)
+			continue
+		}
+		if len(args) != 2 || args[0] != "switch" {
+			t.Errorf("checkout %q args = %v, want git switch", name, args)
+		}
+	}
+}
+
+// TestCheckoutNeverFallsBackToPathspec pins the fail-open regression
+// where `git checkout <file>` silently restores an existing path from
+// the index when no branch with that name exists. `git switch` rejects
+// the argument instead, so working-tree content survives.
+func TestCheckoutNeverFallsBackToPathspec(t *testing.T) {
+	root := t.TempDir()
+	initRepoPackage(t, root)
+	ctx := context.Background()
+	writeRepoFile(t, filepath.Join(root, "keep.txt"), "keep\nedited\n")
+
+	if _, err := Run(ctx, Request{Root: root, Op: Op{
+		Kind: KindCheckout, Branch: "keep.txt",
+	}}); err == nil {
+		t.Fatal("checkout of a path-shaped name unexpectedly succeeded")
+	}
+	if got := mustRead(t, filepath.Join(root, "keep.txt")); got != "keep\nedited\n" {
+		t.Fatalf("working-tree file was clobbered by checkout: %q", got)
+	}
+}
+
 func mustRead(t *testing.T, path string) string {
 	t.Helper()
 	data, err := os.ReadFile(path)

@@ -73,10 +73,40 @@ type Result struct {
 	Truncated bool
 }
 
-// branchNameRe is deliberately conservative: option injection (a
-// leading "-") and refs with spaces/control bytes are rejected before
-// git sees them. Slashes allow hierarchical names.
+// branchNameRe is the base charset gate for branch names: option
+// injection (a leading "-"), spaces, control bytes and shell
+// metacharacters are rejected before git sees them. Slashes allow
+// hierarchical names; validBranchName adds git's structural rules on
+// top.
 var branchNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
+
+// validBranchName applies git check-ref-format's structural rules on
+// top of branchNameRe: no empty segments ("//"), no ".." anywhere, no
+// "@{" (revision magic), no trailing slash or dot, no ".lock" suffix,
+// and no component that starts with "." or ends with ".lock". Git is
+// still the final authority when a name slips past these mirrors, but
+// `git switch` never falls back to a pathspec, so a file whose name
+// also looks like a branch can never be checked out silently.
+func validBranchName(name string) bool {
+	if !branchNameRe.MatchString(name) {
+		return false
+	}
+	if strings.Contains(name, "..") ||
+		strings.Contains(name, "@{") ||
+		strings.Contains(name, "//") ||
+		strings.HasSuffix(name, "/") ||
+		strings.HasSuffix(name, ".") ||
+		strings.HasSuffix(name, ".lock") {
+		return false
+	}
+	for _, segment := range strings.Split(name, "/") {
+		if strings.HasPrefix(segment, ".") ||
+			strings.HasSuffix(segment, ".lock") {
+			return false
+		}
+	}
+	return true
+}
 
 var (
 	lockMu sync.Mutex
@@ -162,15 +192,15 @@ func buildArgs(op Op) ([]string, error) {
 		}
 		return []string{"commit", "-m", op.Message}, nil
 	case KindCheckout:
-		if !branchNameRe.MatchString(op.Branch) {
+		if !validBranchName(op.Branch) {
 			return nil, errors.New("repo: invalid branch name")
 		}
-		return []string{"checkout", op.Branch}, nil
+		return []string{"switch", op.Branch}, nil
 	case KindNewBranch:
-		if !branchNameRe.MatchString(op.Branch) {
+		if !validBranchName(op.Branch) {
 			return nil, errors.New("repo: invalid branch name")
 		}
-		return []string{"checkout", "-b", op.Branch}, nil
+		return []string{"switch", "-c", op.Branch}, nil
 	case KindDiscardWorktree:
 		paths, err := checkedPaths(op.Paths)
 		if err != nil {

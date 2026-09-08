@@ -279,3 +279,209 @@ func TestServiceHTTPErrors(t *testing.T) {
 		t.Fatalf("Detail error = %v, want not-found message", err)
 	}
 }
+
+// TestThreadsFromGHGroupsNestedReplies pins reply-of-reply folding:
+// GitHub reports every reply with the id of the comment it directly
+// answers, so a nested reply whose parent is itself a reply must walk
+// up to the thread's root instead of becoming an orphan thread.
+func TestThreadsFromGHGroupsNestedReplies(t *testing.T) {
+	line := 12
+	rootID, replyID, nestedID := int64(501), int64(502), int64(503)
+	rootTime := "2026-09-01T10:00:00Z"
+	comments := []ghReviewComment{
+		{
+			ID: rootID, User: ghUser{Login: "alice"},
+			Body: "root comment", Path: "panel.go",
+			Side: "RIGHT", Line: &line, CreatedAt: rootTime,
+		},
+		{
+			ID: replyID, User: ghUser{Login: "bob"},
+			Body: "first reply", Path: "panel.go",
+			Side: "RIGHT", Line: &line, InReplyToID: &rootID,
+			CreatedAt: "2026-09-01T10:01:00Z",
+		},
+		{
+			ID: nestedID, User: ghUser{Login: "alice"},
+			Body: "reply to the reply", Path: "panel.go",
+			Side: "RIGHT", Line: &line, InReplyToID: &replyID,
+			CreatedAt: "2026-09-01T10:02:00Z",
+		},
+	}
+	threads := threadsFromGH(comments)
+	if len(threads) != 1 {
+		t.Fatalf("threads = %d, want 1 (nested reply must fold into its root)", len(threads))
+	}
+	got := threads[0].Comments
+	if len(got) != 3 {
+		t.Fatalf("thread comments = %d, want 3", len(got))
+	}
+	for i, want := range []string{"root comment", "first reply", "reply to the reply"} {
+		if got[i].Body != want {
+			t.Fatalf("comment %d body = %q, want %q", i, got[i].Body, want)
+		}
+	}
+}
+
+// TestThreadsFromGHKeepsUnresolvableReply tests the orphan fallback:
+// a reply whose parent appears in no page stays visible as its own
+// thread instead of being dropped.
+func TestThreadsFromGHKeepsUnresolvableReply(t *testing.T) {
+	line := 4
+	missing := int64(9001)
+	comments := []ghReviewComment{
+		{
+			ID: 600, User: ghUser{Login: "carol"},
+			Body: "orphan reply", Path: "other.go",
+			Side: "LEFT", Line: &line, InReplyToID: &missing,
+			CreatedAt: "2026-09-02T10:00:00Z",
+		},
+	}
+	threads := threadsFromGH(comments)
+	if len(threads) != 1 || len(threads[0].Comments) != 1 ||
+		threads[0].Comments[0].Body != "orphan reply" {
+		t.Fatalf("orphan reply threads = %+v, want one preserved comment", threads)
+	}
+}
+
+// TestChecksCompletedWithoutConclusionIsNeutral pins that a completed
+// check run with a null conclusion renders neutral (not an endless
+// pending spinner), while a genuinely in-progress run stays pending.
+func TestChecksCompletedWithoutConclusionIsNeutral(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/o/r/commits/abc/check-runs", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(t, w, `{"total_count": 2, "check_runs": [
+		  {"name": "null-done", "status": "completed", "conclusion": null,
+		   "details_url": ""},
+		  {"name": "still-going", "status": "in_progress", "conclusion": null,
+		   "details_url": ""}
+		]}`)
+	})
+	mux.HandleFunc("/repos/o/r/commits/abc/status", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(t, w, `{"state": "success", "statuses": []}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := &apiClient{base: srv.URL, http: srv.Client(), token: "tok"}
+	checks, err := c.checks(context.Background(), "o", "r", "abc")
+	if err != nil {
+		t.Fatalf("checks: %v", err)
+	}
+	var neutral, pending bool
+	for _, ch := range checks {
+		switch ch.Name {
+		case "null-done":
+			neutral = ch.State == CheckNeutral
+		case "still-going":
+			pending = ch.State == CheckPending
+		}
+	}
+	if !neutral || !pending {
+		t.Fatalf("checks = %+v, want null-done=neutral and still-going=pending", checks)
+	}
+}
+
+// TestChecksFallBackToLegacyStatuses covers the 404 degradation path:
+// repositories without check suites still surface their legacy commit
+// statuses instead of failing the PR page.
+func TestChecksFallBackToLegacyStatuses(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/o/r/commits/abc/check-runs", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprint(w, `{"message": "Not Found"}`)
+	})
+	mux.HandleFunc("/repos/o/r/commits/abc/status", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(t, w, `{"state": "failure", "statuses": [
+		  {"context": "ci-legacy", "state": "failure",
+		   "description": "integration failed", "target_url": ""}
+		]}`)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	c := &apiClient{base: srv.URL, http: srv.Client(), token: "tok"}
+	checks, err := c.checks(context.Background(), "o", "r", "abc")
+	if err != nil {
+		t.Fatalf("checks fallback: %v", err)
+	}
+	if len(checks) != 1 || checks[0].Kind != "status" ||
+		checks[0].Name != "ci-legacy" || checks[0].State != CheckFailure {
+		t.Fatalf("fallback checks = %+v, want one legacy failure status", checks)
+	}
+}
+
+// commitRows renders n commit JSON objects for a pagination fixture.
+func commitRows(n int) string {
+	out := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, fmt.Sprintf(
+			`{"sha": "%040d", "commit": {"author": {"name": "alice", `+
+				`"date": "2026-01-01T00:00:00Z"}, "message": "commit %d"}}`,
+			i, i))
+	}
+	return "[" + strings.Join(out, ",") + "]"
+}
+
+// newCommitPager serves totalPages pages of commits; moreOnLast adds a
+// Link header pointing at one further page so clients know more data
+// exists beyond the page cap.
+func newCommitPager(t *testing.T, totalPages int, moreOnLast bool) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	var srv *httptest.Server
+	mux.HandleFunc("/repos/o/r/pulls/1/commits", func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		num := 1
+		if page != "" {
+			if _, err := fmt.Sscanf(page, "%d", &num); err != nil {
+				t.Fatalf("parse page %q: %v", page, err)
+			}
+		}
+		if num > totalPages {
+			writeJSON(t, w, "[]")
+			return
+		}
+		if num < totalPages || moreOnLast {
+			w.Header().Set("Link", fmt.Sprintf(
+				`<%s/repos/o/r/pulls/1/commits?page=%d&per_page=100>; rel="next"`,
+				srv.URL, num+1))
+		}
+		writeJSON(t, w, commitRows(3))
+	})
+	srv = httptest.NewServer(mux)
+	return srv
+}
+
+func TestCommitsPaginationTruncationSemantics(t *testing.T) {
+	// Natural end after exactly maxCommitPages pages: nothing follows
+	// the third page, so the snapshot must not be flagged truncated.
+	srv := newCommitPager(t, 3, false)
+	defer srv.Close()
+	c := &apiClient{base: srv.URL, http: srv.Client(), token: "tok"}
+	commits, err := c.commits(context.Background(), "o", "r", 1)
+	if err != nil {
+		t.Fatalf("commits: %v", err)
+	}
+	if len(commits) != 9 {
+		t.Fatalf("commits = %d, want 9", len(commits))
+	}
+	if c.commitsTruncated {
+		t.Fatal("natural three-page end was flagged as truncated")
+	}
+
+	// A fourth page advertised after the cap: the fetch stops at three
+	// pages and must report truncation.
+	srv = newCommitPager(t, 4, true)
+	defer srv.Close()
+	c = &apiClient{base: srv.URL, http: srv.Client(), token: "tok"}
+	commits, err = c.commits(context.Background(), "o", "r", 1)
+	if err != nil {
+		t.Fatalf("commits capped: %v", err)
+	}
+	if len(commits) != 9 {
+		t.Fatalf("capped commits = %d, want 9 (three pages)", len(commits))
+	}
+	if !c.commitsTruncated {
+		t.Fatal("page cap hit with more pages advertised was not flagged")
+	}
+}

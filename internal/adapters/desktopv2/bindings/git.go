@@ -10,10 +10,13 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/utils/gitx"
 )
 
-// Git exposes read-only repository snapshots for the UI's Git panel.
-// The binding stays stateless: every call resolves the repository from
-// the active workspace and asks git itself (via gitx) so worktrees and
-// user configuration behave exactly like the CLI the agent runs.
+// Git exposes repository operations for the UI's Git panel. The panel
+// is deliberately repository-wide: the active workspace only locates
+// the containing repository (worktrees and nested workspaces
+// included), and every read/write below operates on that whole
+// repository rather than on the workspace subtree. The binding stays
+// stateless: every call asks git itself (via gitx/repo) so worktrees
+// and user configuration behave exactly like the CLI the agent runs.
 type Git struct {
 	core *core.Core
 }
@@ -59,18 +62,21 @@ func (b *Git) Repo() GitRepoDTO {
 
 // GitChangeDTO is one changed path in the status snapshot.
 type GitChangeDTO struct {
-	Path        string `json:"path"`
-	OrigPath    string `json:"orig_path,omitempty"`
-	Kind        string `json:"kind"`
-	Staged      bool   `json:"staged"`
-	Unstaged    bool   `json:"unstaged"`
-	Untracked   bool   `json:"untracked"`
-	Unmerged    bool   `json:"unmerged"`
-	Directory   bool   `json:"directory"`
-	IsBinary    bool   `json:"is_binary"`
-	Additions   int    `json:"additions"`
-	Deletions   int    `json:"deletions"`
-	InWorkspace bool   `json:"in_workspace"`
+	Path      string `json:"path"`
+	OrigPath  string `json:"orig_path,omitempty"`
+	Kind      string `json:"kind"`
+	Staged    bool   `json:"staged"`
+	Unstaged  bool   `json:"unstaged"`
+	Untracked bool   `json:"untracked"`
+	Unmerged  bool   `json:"unmerged"`
+	Directory bool   `json:"directory"`
+	IsBinary  bool   `json:"is_binary"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	// InWorkspace marks entries inside the active workspace subtree.
+	// It is informational only: the panel is a whole-repository tool,
+	// so entries outside the workspace stay fully operable.
+	InWorkspace bool `json:"in_workspace"`
 }
 
 // GitStatusDTO is one bounded status snapshot.
@@ -286,7 +292,12 @@ func (b *Git) repoRoot() (string, error) {
 
 // runWrite gates one repository mutation: the UI is disabled while a
 // turn runs, and the backend refuses writes when any active run still
-// exists in this workspace (including parallel turns or automations).
+// exists on the current workspace's Host (including parallel turns or
+// automations on that Host). Because the panel is repository-wide,
+// writes from another workspace of the same repository are not blocked
+// here: repo.Run's per-repository lock serializes desktop-originated
+// mutations, while agent/automation git calls (execd/sandbox) run
+// outside that lock and are not coordinated with this UI.
 func (b *Git) runWrite(op crepo.Op) (string, error) {
 	workDir := b.core.ActiveWorkDir()
 	if workDir == "" {

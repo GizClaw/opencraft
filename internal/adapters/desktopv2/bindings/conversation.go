@@ -134,8 +134,10 @@ func (b *Conversation) StartTurn(
 			b.core.ActiveWorkDir() != workDir {
 			return TurnStart{}, lastErr
 		}
-		if _, err := b.core.Runtime.EnsureUsableHost(ctx, workDir); err != nil {
-			return TurnStart{}, lastErr
+		if err := b.core.Runtime.EnsureUsableHostWithin(
+			ctx, deadline, workDir, lastErr,
+		); err != nil {
+			return TurnStart{}, err
 		}
 	}
 	return TurnStart{}, lastErr

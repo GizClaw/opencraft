@@ -292,8 +292,10 @@ func (b *Session) Delete(id string) (SessionDeleteResult, error) {
 			b.core.ActiveWorkDir() != workDir {
 			return SessionDeleteResult{}, lastErr
 		}
-		if _, err := b.core.Runtime.EnsureUsableHost(ctx, workDir); err != nil {
-			return SessionDeleteResult{}, lastErr
+		if err := b.core.Runtime.EnsureUsableHostWithin(
+			ctx, deadline, workDir, lastErr,
+		); err != nil {
+			return SessionDeleteResult{}, err
 		}
 	}
 	return SessionDeleteResult{}, lastErr

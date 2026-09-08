@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/automations"
 	"github.com/GizClaw/opencraft/internal/capabilities/usage"
@@ -30,6 +31,10 @@ type Runtime struct {
 
 	hostConfigured   map[*host.Host]bool
 	hostConfigurator func(*host.Host)
+	// ensureHost resolves a usable Host for one workspace. It defaults
+	// to EnsureUsableHost and is swappable in tests so deadline-window
+	// behaviour can be pinned without assembling a real engine.
+	ensureHost func(context.Context, string) (*host.Host, error)
 }
 
 // NewRuntime creates the runtime service rooted at dataDir/userDir.
@@ -41,12 +46,14 @@ func NewRuntime(dataDir, userDir string) *Runtime {
 	// If multi-window support is ever added, share this Runtime (and
 	// therefore this Manager) across windows instead of constructing
 	// a second one.
-	return &Runtime{
+	r := &Runtime{
 		dataDir:        dataDir,
 		userDir:        userDir,
 		manager:        host.NewManagerAt(dataDir, userDir),
 		hostConfigured: make(map[*host.Host]bool),
 	}
+	r.ensureHost = r.EnsureUsableHost
+	return r
 }
 
 // Manager returns the shared host manager.
@@ -162,6 +169,37 @@ func (r *Runtime) EnsureUsableHost(
 		return h, nil
 	}
 	return r.Acquire(ctx, workDir, interact.Auto{})
+}
+
+// EnsureUsableHostWithin waits for a replacement Host for workDir, but
+// only while the retry deadline still has time left. The wait itself
+// is bounded by the remaining window (not the caller's whole RPC), so
+// a slow rebuild cannot stretch one StartTurn/Delete call past its
+// advertised retry window. lastErr is returned unchanged when the
+// window expires or the ensure fails, mirroring the pre-ensure error
+// the caller should surface.
+func (r *Runtime) EnsureUsableHostWithin(
+	ctx context.Context,
+	deadline time.Time,
+	workDir string,
+	lastErr error,
+) error {
+	if r.ensureHost == nil {
+		return lastErr
+	}
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		return lastErr
+	}
+	attemptCtx, cancel := context.WithTimeout(ctx, remaining)
+	defer cancel()
+	if _, err := r.ensureHost(attemptCtx, workDir); err != nil {
+		return lastErr
+	}
+	if time.Now().After(deadline) {
+		return lastErr
+	}
+	return nil
 }
 
 // configureHost runs the adapter host configurator once per Host.

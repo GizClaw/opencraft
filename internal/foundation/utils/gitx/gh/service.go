@@ -342,13 +342,19 @@ func timelineFromGH(
 
 // threadsFromGH groups review comments into anchored discussions. Every
 // comment without in_reply_to_id starts a thread; replies are attached
-// to their root and sorted by creation time.
+// to their root and sorted by creation time. GitHub reports each reply
+// with the id of the comment it directly answers, so reply-of-reply
+// chains are walked up to their root instead of being dropped as
+// orphan threads.
 func threadsFromGH(comments []ghReviewComment) []Thread {
 	threadOf := make(map[int64]int, len(comments))
+	// parentOf links every reply to the comment it directly answers.
+	parentOf := make(map[int64]int64, len(comments))
 	var threads []Thread
 	for i := range comments {
 		c := &comments[i]
 		if c.InReplyToID != nil {
+			parentOf[c.ID] = *c.InReplyToID
 			continue
 		}
 		t := Thread{
@@ -382,10 +388,23 @@ func threadsFromGH(comments []ghReviewComment) []Thread {
 			CreatedAt: c.CreatedAt,
 			HTMLURL:   c.HTMLURL,
 		}
-		idx, ok := threadOf[*c.InReplyToID]
+		// Resolve the direct parent and walk nested replies up to the
+		// thread's root. The hop bound guards against a corrupt
+		// in_reply_to_id cycle.
+		parent := *c.InReplyToID
+		idx, ok := threadOf[parent]
+		for hops := 0; !ok && hops < len(comments); hops++ {
+			next, hasParent := parentOf[parent]
+			if !hasParent {
+				break
+			}
+			parent = next
+			idx, ok = threadOf[parent]
+		}
 		if !ok {
-			// Orphan reply (parent beyond page cap): keep the reply as
-			// its own thread so the content is never dropped silently.
+			// Orphan reply (parent beyond page cap or corrupt chain):
+			// keep the reply as its own thread so the content is never
+			// dropped silently.
 			threads = append(threads, Thread{
 				Path:              c.Path,
 				Side:              c.Side,
