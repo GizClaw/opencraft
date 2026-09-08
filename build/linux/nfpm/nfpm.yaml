@@ -12,7 +12,7 @@ priority: "extra"
 maintainer: ${GIT_COMMITTER_NAME} <${GIT_COMMITTER_EMAIL}>
 description: "A local-first work partner built on flowcraft"
 vendor: "GizClaw"
-homepage: "https://wails.io"
+homepage: "https://github.com/GizClaw/opencraft"
 license: "MIT"
 release: "1"
 
