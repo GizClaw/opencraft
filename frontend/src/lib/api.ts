@@ -32,6 +32,7 @@ import type {
   FilePreview,
   FileNode,
   GitBranch,
+  GitCommitFiles,
   GitDiff,
   GitHubPRDetail,
   GitHubPull,
@@ -130,6 +131,10 @@ export const api = {
   gitBranches: () => Git.Branches() as unknown as Promise<GitBranch[]>,
   gitDiff: (path: string, cached: boolean) =>
     Git.Diff(path, cached) as unknown as Promise<GitDiff>,
+  gitCommitFiles: (oid: string) =>
+    Git.CommitFiles(oid) as unknown as Promise<GitCommitFiles>,
+  gitCommitDiff: (oid: string, path: string) =>
+    Git.CommitDiff(oid, path) as unknown as Promise<GitDiff>,
   gitStage: (paths: string[]) => Git.Stage(paths) as unknown as Promise<string>,
   gitUnstage: (paths: string[]) =>
     Git.Unstage(paths) as unknown as Promise<string>,

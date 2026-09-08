@@ -11,6 +11,7 @@ package gitx
 import (
 	"context"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -269,6 +270,14 @@ func numstatCounts(
 	if out == "" {
 		return nil, truncated
 	}
+	return parseNumstatZ(out), truncated
+}
+
+// parseNumstatZ decodes git's -z numstat records. A rename record ends
+// its add/delete columns with an empty path and carries the original
+// then the destination path as the following two NUL records; counts
+// are attributed to the destination.
+func parseNumstatZ(out string) map[string]numstat {
 	tokens := strings.Split(out, "\x00")
 	counts := make(map[string]numstat)
 	for i := 0; i < len(tokens); {
@@ -286,7 +295,7 @@ func numstatCounts(
 		path := fields[2]
 		if path == "" && i+2 < len(tokens) {
 			// Rename pair: destination path is the second of the two
-			// following records. Counts are attributed to it.
+			// following records.
 			path = tokens[i+2]
 			i += 2
 		}
@@ -302,7 +311,7 @@ func numstatCounts(
 		prev.deleted += stat.deleted
 		counts[path] = prev
 	}
-	return counts, truncated
+	return counts
 }
 
 func parseNumstat(add, del string) numstat {
@@ -471,6 +480,215 @@ func Diff(
 	args = append(args, "--", filepath.FromSlash(path))
 	out, truncated := RunBounded(ctx, root, maxBytes, 15*time.Second, args...)
 	return out, truncated
+}
+
+// CommitFile is one path a commit changed.
+type CommitFile struct {
+	// Path is the repo-relative, slash-separated path (the destination
+	// of a rename).
+	Path string
+	// OrigPath is the rename/copy source when Kind is renamed/copied.
+	OrigPath string
+	Kind     ChangeKind
+	// Additions/Deletions count text lines changed (binary entries
+	// report neither).
+	Additions int
+	Deletions int
+	IsBinary  bool
+}
+
+// CommitFilesResult is one bounded commit change snapshot.
+type CommitFilesResult struct {
+	Files     []CommitFile
+	Truncated bool
+}
+
+// oidRe bounds commit identifiers passed to git: full/abbreviated hex
+// shas only, so no option or ref argument can reach the command line.
+var oidRe = regexp.MustCompile(`^[0-9a-fA-F]{4,64}$`)
+
+// commitParents resolves the direct parents of one commit, newest
+// first. Root commits report no parents; ok is false for unknown or
+// malformed objects.
+func commitParents(
+	ctx context.Context,
+	root, oid string,
+) ([]string, bool) {
+	out, truncated := RunBounded(ctx, root, 16<<10, 5*time.Second,
+		"rev-list", "--parents", "-n", "1", oid)
+	if truncated {
+		return nil, false
+	}
+	fields := strings.Fields(out)
+	if len(fields) == 0 {
+		return nil, false
+	}
+	return fields[1:], true
+}
+
+// CommitFiles lists the paths a commit changed against its first
+// parent. Merge commits compare against the first parent (what the
+// merge introduced relative to the mainline); root commits diff
+// against the empty tree.
+func CommitFiles(
+	ctx context.Context,
+	root, oid string,
+) CommitFilesResult {
+	if root == "" || !oidRe.MatchString(oid) {
+		return CommitFilesResult{}
+	}
+	parents, ok := commitParents(ctx, root, oid)
+	if !ok {
+		return CommitFilesResult{}
+	}
+
+	var kindArgs, numArgs []string
+	if len(parents) == 0 {
+		kindArgs = []string{
+			"-c", "core.quotepath=false",
+			"diff-tree", "-r", "--root", "--no-commit-id",
+			"--name-status", "-z", oid,
+		}
+		numArgs = []string{
+			"-c", "core.quotepath=false",
+			"diff-tree", "-r", "--root", "--no-commit-id",
+			"--numstat", "-z", oid,
+		}
+	} else {
+		base := parents[0]
+		kindArgs = []string{
+			"-c", "core.quotepath=false",
+			"diff", "--name-status", "-z",
+			base, oid,
+		}
+		numArgs = []string{
+			"-c", "core.quotepath=false",
+			"diff", "--numstat", "-z",
+			base, oid,
+		}
+	}
+
+	names, truncated := RunBounded(ctx, root, defaultStatusLimit,
+		10*time.Second, kindArgs...)
+	if truncated {
+		return CommitFilesResult{Truncated: true}
+	}
+	files, filesTruncated := parseCommitNames(names, defaultStatusPaths)
+	countsOut, countsTruncated := RunBounded(ctx, root, defaultStatusLimit,
+		10*time.Second, numArgs...)
+	if countsTruncated {
+		return CommitFilesResult{Truncated: true, Files: files}
+	}
+	counts := parseNumstatZ(countsOut)
+	for i := range files {
+		if stat, ok := counts[files[i].Path]; ok {
+			files[i].Additions = stat.added
+			files[i].Deletions = stat.deleted
+			files[i].IsBinary = stat.binary
+		}
+	}
+	return CommitFilesResult{
+		Files:     files,
+		Truncated: filesTruncated,
+	}
+}
+
+// parseCommitNames decodes `--name-status -z` output into ordered
+// CommitFile rows, stopping after max paths.
+func parseCommitNames(out string, max int) ([]CommitFile, bool) {
+	if max <= 0 {
+		max = defaultStatusPaths
+	}
+	tokens := strings.Split(out, "\x00")
+	files := make([]CommitFile, 0, 16)
+	truncated := false
+	for i := 0; i < len(tokens); {
+		status := tokens[i]
+		if status == "" {
+			i++
+			continue
+		}
+		kind := commitKind(status)
+		i++
+		if i >= len(tokens) {
+			break
+		}
+		f := CommitFile{Kind: kind}
+		if kind == KindRenamed || kind == KindCopied {
+			f.OrigPath = tokens[i]
+			i++
+			if i >= len(tokens) {
+				break
+			}
+		}
+		f.Path = tokens[i]
+		i++
+		if f.Path == "" {
+			continue
+		}
+		files = append(files, f)
+		if len(files) >= max {
+			truncated = true
+			break
+		}
+	}
+	return files, truncated
+}
+
+func commitKind(status string) ChangeKind {
+	if status == "" {
+		return KindModified
+	}
+	switch status[0] {
+	case 'A':
+		return KindAdded
+	case 'D':
+		return KindDeleted
+	case 'R':
+		return KindRenamed
+	case 'C':
+		return KindCopied
+	case 'T':
+		return KindTypeChange
+	default:
+		return KindModified
+	}
+}
+
+// CommitDiff returns a bounded unified diff for one path inside one
+// commit, using the same first-parent semantics as CommitFiles. The
+// second return value reports output truncation.
+func CommitDiff(
+	ctx context.Context,
+	root, oid, path string,
+	maxBytes int64,
+) (string, bool) {
+	if root == "" || !oidRe.MatchString(oid) ||
+		!isSafePath(path) {
+		return "", false
+	}
+	if maxBytes <= 0 {
+		maxBytes = defaultDiffLimit
+	}
+	parents, ok := commitParents(ctx, root, oid)
+	if !ok {
+		return "", false
+	}
+	var args []string
+	if len(parents) == 0 {
+		args = []string{
+			"-c", "core.quotepath=false",
+			"show", "--format=", "--no-color", oid, "--",
+			filepath.FromSlash(path),
+		}
+	} else {
+		args = []string{
+			"-c", "core.quotepath=false",
+			"diff", "--no-color", parents[0], oid, "--",
+			filepath.FromSlash(path),
+		}
+	}
+	return RunBounded(ctx, root, maxBytes, 15*time.Second, args...)
 }
 
 // isSafePath rejects paths that could escape the repository root when

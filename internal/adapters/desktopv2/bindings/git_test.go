@@ -141,6 +141,50 @@ func TestGitReadMethods(t *testing.T) {
 	}
 }
 
+func TestGitCommitFilesAndDiff(t *testing.T) {
+	root := t.TempDir()
+	initRepoInTest(t, root)
+	writeInTest(t, filepath.Join(root, "extra.txt"), "extra\n")
+	gitInTest(t, root, "add", "extra.txt")
+	gitInTest(t, root, "commit", "-qm", "add extra")
+	writeInTest(t, filepath.Join(root, "extra.txt"), "extra\nmore\n")
+	gitInTest(t, root, "commit", "-qam", "extend extra")
+
+	b := newGitBinding(t, root)
+	logs, err := b.Log(10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(logs) < 3 || logs[0].Subject != "extend extra" {
+		t.Fatalf("Log = %+v", logs)
+	}
+
+	files, err := b.CommitFiles(logs[0].OID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files.Files) != 1 || files.Files[0].Path != "extra.txt" ||
+		files.Files[0].Kind != "modified" ||
+		files.Files[0].Additions != 1 {
+		t.Fatalf("CommitFiles = %+v", files)
+	}
+	added, err := b.CommitFiles(logs[1].OID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(added.Files) != 1 || added.Files[0].Kind != "added" {
+		t.Fatalf("CommitFiles(add extra) = %+v", added)
+	}
+
+	diff, err := b.CommitDiff(logs[0].OID, "extra.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(diff.Content, "+more") {
+		t.Fatalf("CommitDiff = %q", diff.Content)
+	}
+}
+
 func TestGitWriteOperations(t *testing.T) {
 	root := t.TempDir()
 	initRepoInTest(t, root)

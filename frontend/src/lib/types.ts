@@ -439,6 +439,20 @@ export interface GitLogEntry {
   subject: string;
 }
 
+export interface GitCommitFile {
+  path: string;
+  orig_path?: string;
+  kind: GitChangeKind;
+  additions: number;
+  deletions: number;
+  is_binary: boolean;
+}
+
+export interface GitCommitFiles {
+  files: GitCommitFile[];
+  truncated: boolean;
+}
+
 export interface GitBranch {
   name: string;
   current: boolean;

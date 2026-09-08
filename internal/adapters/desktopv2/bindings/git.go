@@ -208,6 +208,69 @@ func (b *Git) Diff(path string, cached bool) (GitDiffDTO, error) {
 	return GitDiffDTO{Content: content, Truncated: truncated}, nil
 }
 
+// GitCommitFileDTO is one path changed by a commit.
+type GitCommitFileDTO struct {
+	Path      string `json:"path"`
+	OrigPath  string `json:"orig_path,omitempty"`
+	Kind      string `json:"kind"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+	IsBinary  bool   `json:"is_binary"`
+}
+
+// GitCommitFilesDTO is one bounded commit change snapshot.
+type GitCommitFilesDTO struct {
+	Files     []GitCommitFileDTO `json:"files"`
+	Truncated bool               `json:"truncated"`
+}
+
+// CommitFiles lists the files one commit changed (merge commits
+// compare against their first parent, like CommitDiff).
+func (b *Git) CommitFiles(
+	oid string,
+) (GitCommitFilesDTO, error) {
+	if strings.TrimSpace(oid) == "" {
+		return GitCommitFilesDTO{}, errors.New(
+			"git: commit id is required")
+	}
+	root, err := b.repoRoot()
+	if err != nil {
+		return GitCommitFilesDTO{}, err
+	}
+	res := gitx.CommitFiles(b.core.Shell.Context(), root, strings.TrimSpace(oid))
+	out := make([]GitCommitFileDTO, 0, len(res.Files))
+	for _, f := range res.Files {
+		out = append(out, GitCommitFileDTO{
+			Path:      f.Path,
+			OrigPath:  f.OrigPath,
+			Kind:      string(f.Kind),
+			Additions: f.Additions,
+			Deletions: f.Deletions,
+			IsBinary:  f.IsBinary,
+		})
+	}
+	return GitCommitFilesDTO{Files: out, Truncated: res.Truncated}, nil
+}
+
+// CommitDiff returns a bounded unified diff for one path inside one
+// commit, using the same first-parent semantics as CommitFiles.
+func (b *Git) CommitDiff(
+	oid, path string,
+) (GitDiffDTO, error) {
+	if strings.TrimSpace(oid) == "" || strings.TrimSpace(path) == "" {
+		return GitDiffDTO{}, errors.New(
+			"git: commit id and diff path are required")
+	}
+	root, err := b.repoRoot()
+	if err != nil {
+		return GitDiffDTO{}, err
+	}
+	content, truncated := gitx.CommitDiff(
+		b.core.Shell.Context(), root,
+		strings.TrimSpace(oid), strings.TrimSpace(path), 0)
+	return GitDiffDTO{Content: content, Truncated: truncated}, nil
+}
+
 // repoRoot resolves the repository root for the active workspace.
 func (b *Git) repoRoot() (string, error) {
 	workDir := b.core.ActiveWorkDir()

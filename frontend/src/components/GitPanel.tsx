@@ -54,6 +54,7 @@ import type {
   GitStatus,
 } from '../lib/types';
 import { PRView } from './PRView';
+import { CommitDetailModal } from './CommitDetailModal';
 import { GitDiffView } from './viewer/DiffView';
 
 const KIND_MARK: Record<GitChangeKind, string> = {
@@ -130,6 +131,7 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
   // disables the background poll (event-driven refreshes stay on).
   const [pollMs, setPollMs] = useState(5000);
   const [selected, setSelected] = useState<GitChange | null>(null);
+  const [commitEntry, setCommitEntry] = useState<GitLogEntry | null>(null);
   const [detail, setDetail] = useState<{
     diff: GitDiff | null;
     label: string;
@@ -555,7 +557,7 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
             }
           />
         ) : (
-          <HistoryView entries={logs} />
+          <HistoryView entries={logs} onPick={setCommitEntry} />
         )}
       </div>
 
@@ -614,6 +616,12 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
             setNewBranchName('');
             void runWrite('new_branch', () => api.gitNewBranch(name));
           }}
+        />
+      )}
+      {view === 'history' && commitEntry && (
+        <CommitDetailModal
+          entry={commitEntry}
+          onClose={() => setCommitEntry(null)}
         />
       )}
     </div>
@@ -1503,7 +1511,13 @@ function DiffModal({
   );
 }
 
-function HistoryView({ entries }: { entries: GitLogEntry[] }) {
+function HistoryView({
+  entries,
+  onPick,
+}: {
+  entries: GitLogEntry[];
+  onPick: (entry: GitLogEntry) => void;
+}) {
   const { t } = useTranslation();
   if (entries.length === 0) {
     return (
@@ -1515,9 +1529,12 @@ function HistoryView({ entries }: { entries: GitLogEntry[] }) {
   return (
     <div className="h-full overflow-y-auto pb-2">
       {entries.map((e) => (
-        <div
+        <button
           key={e.oid}
-          className="flex items-start gap-2 border-b border-edge/60 px-3 py-2"
+          type="button"
+          onClick={() => onPick(e)}
+          title={e.subject}
+          className="flex w-full items-start gap-2 border-b border-edge/60 px-3 py-2 text-left hover:bg-panel2/60"
         >
           <GitCommitHorizontal
             size="0.9286rem"
@@ -1530,7 +1547,7 @@ function HistoryView({ entries }: { entries: GitLogEntry[] }) {
               {dateLabel(e.date)}
             </div>
           </div>
-        </div>
+        </button>
       ))}
     </div>
   );

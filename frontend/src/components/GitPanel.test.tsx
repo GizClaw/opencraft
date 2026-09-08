@@ -74,6 +74,22 @@ const apiMock = vi.hoisted(() => ({
   ]),
   gitBranches: vi.fn(async () => []),
   gitDiff: vi.fn(async () => ({ content: sampleDiff, truncated: false })),
+  gitCommitFiles: vi.fn(async () => ({
+    files: [
+      {
+        path: 'internal/a.go',
+        kind: 'modified',
+        additions: 1,
+        deletions: 1,
+        is_binary: false,
+      },
+    ],
+    truncated: false,
+  })),
+  gitCommitDiff: vi.fn(async () => ({
+    content: sampleDiff,
+    truncated: false,
+  })),
   gitStage: vi.fn(async () => 'staged'),
   gitUnstage: vi.fn(async () => 'unstaged'),
   gitCommit: vi.fn(async () => 'committed'),
@@ -189,6 +205,26 @@ describe('GitPanel', () => {
     await screen.findByText('internal/a.go');
     (await screen.findByRole('button', { name: 'History' })).click();
     expect(await screen.findByText('feat: add panel')).toBeInTheDocument();
+  });
+
+  it('opens commit files and shows the selected file diff', async () => {
+    render(<GitPanel sessionID="s-1" />);
+    await screen.findByText('internal/a.go');
+    (await screen.findByRole('button', { name: 'History' })).click();
+    (await screen.findByText('feat: add panel')).click();
+
+    await waitFor(() =>
+      expect(apiMock.gitCommitFiles).toHaveBeenCalledWith('abc123'),
+    );
+    expect(await screen.findByText('Files changed · 1')).toBeInTheDocument();
+    expect(screen.getByText('internal/a.go')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(apiMock.gitCommitDiff).toHaveBeenCalledWith(
+        'abc123',
+        'internal/a.go',
+      ),
+    );
+    expect(await screen.findByText('new line')).toBeInTheDocument();
   });
 
   it('hides the PR segment when no GitHub provider exists', async () => {
