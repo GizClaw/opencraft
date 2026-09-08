@@ -50,6 +50,12 @@ VIAddVersionKey "ProductName"     "${INFO_PRODUCTNAME}"
 ManifestDPIAware true
 
 !include "MUI.nsh"
+!include "LogicLib.nsh"
+!include "Win\COM.nsh"
+!include "Win\Propkey.nsh"
+!ifndef STGM_READWRITE
+    !define STGM_READWRITE 2
+!endif
 
 !define MUI_ICON "..\icon.ico"
 !define MUI_UNICON "..\icon.ico"
@@ -84,6 +90,115 @@ Function .onInit
    !insertmacro wails.checkArchitecture
 FunctionEnd
 
+# setShortcutAppUserModelID stamps the System.AppUserModel.ID property onto
+# an existing shortcut. Windows toast notifications from unpackaged apps are
+# attributed through the AppID the notifications service sends with; the
+# Wails v3 service uses application.Options.Name ("OpenCraft"), so the
+# shortcuts created below must carry the same AppUserModelID or the toasts
+# land under a separate, unbranded entry. The write is best-effort: failures
+# only affect notification attribution and never abort the installation.
+#
+# Usage:
+#   Push "$SMPROGRAMS\OpenCraft.lnk" ; shortcut file
+#   Push "OpenCraft"                 ; AppUserModelID
+#   Call setShortcutAppUserModelID
+Function setShortcutAppUserModelID
+	Pop $R1 ; AppUserModelID
+	Pop $R0 ; shortcut path
+
+	System::Store S
+	; $0 HRESULT, $1 IShellLink, $2 IPersistFile, $3 IPropertyStore,
+	; $4 PROPERTYKEY, $5 PROPVARIANT, $6 wide-string AppID buffer
+	IntOp $0 0 - 1
+	IntOp $1 0 + 0
+	IntOp $2 0 + 0
+	IntOp $3 0 + 0
+	IntOp $4 0 + 0
+	IntOp $5 0 + 0
+	IntOp $6 0 + 0
+
+	!insertmacro ComHlpr_CreateInProcInstance ${CLSID_ShellLink} ${IID_IShellLink} r1 ".r0"
+	${If} $0 <> 0
+		DetailPrint "OpenCraft installer: create ShellLink failed ($0), skipping AppUserModelID"
+		Goto setShortcutAppUserModelIDFailed
+	${EndIf}
+
+	${IUnknown::QueryInterface} $1 '("${IID_IPersistFile}",.r2)i.r0'
+	${If} $0 <> 0
+		DetailPrint "OpenCraft installer: IPersistFile unavailable ($0), skipping AppUserModelID"
+		Goto setShortcutAppUserModelIDFailed
+	${EndIf}
+
+	${IPersistFile::Load} $2 '("$R0",${STGM_READWRITE})i.r0'
+	${If} $0 <> 0
+		DetailPrint "OpenCraft installer: cannot open $R0 ($0), skipping AppUserModelID"
+		Goto setShortcutAppUserModelIDFailed
+	${EndIf}
+
+	${IUnknown::QueryInterface} $1 '("${IID_IPropertyStore}",.r3)i.r0'
+	${If} $0 <> 0
+		DetailPrint "OpenCraft installer: IPropertyStore unavailable ($0), skipping AppUserModelID"
+		Goto setShortcutAppUserModelIDFailed
+	${EndIf}
+
+	System::Call '*${SYSSTRUCT_PROPERTYKEY}(${PKEY_AppUserModel_ID})p.r4'
+	StrLen $7 "$R1"
+	IntOp $7 $7 + 1 ; trailing NUL
+	IntOp $7 $7 * 2 ; UTF-16
+	System::Call "ole32::CoTaskMemAlloc(i $7)p.r6"
+	${If} $6 = 0
+		DetailPrint "OpenCraft installer: no memory for AppUserModelID, skipping"
+		Goto setShortcutAppUserModelIDFailed
+	${EndIf}
+	System::Call '*$6(&w$7 "$R1")'
+	System::Call '*${SYSSTRUCT_PROPVARIANT}(${VT_LPWSTR},,p r6)p.r5'
+
+	${IPropertyStore::SetValue} $3 '($4,$5)i.r0'
+	${If} $0 <> 0
+		DetailPrint "OpenCraft installer: set AppUserModelID failed ($0), skipping"
+		Goto setShortcutAppUserModelIDFailed
+	${EndIf}
+
+	${IPropertyStore::Commit} $3 "i.r0"
+	${If} $0 <> 0
+		DetailPrint "OpenCraft installer: commit AppUserModelID failed ($0), skipping"
+		Goto setShortcutAppUserModelIDFailed
+	${EndIf}
+
+	${IPersistFile::Save} $2 '("$R0",1)r.r0'
+	${If} $0 <> 0
+		DetailPrint "OpenCraft installer: save AppUserModelID failed ($0), skipping"
+		Goto setShortcutAppUserModelIDFailed
+	${EndIf}
+
+	DetailPrint "OpenCraft installer: AppUserModelID set on $R0"
+	Goto setShortcutAppUserModelIDDone
+
+setShortcutAppUserModelIDFailed:
+	DetailPrint "OpenCraft installer: could not set AppUserModelID on $R0; installation continues"
+
+setShortcutAppUserModelIDDone:
+	${If} $6 <> 0
+		System::Call "ole32::CoTaskMemFree(p r6)"
+	${EndIf}
+	${If} $5 <> 0
+		System::Free $5
+	${EndIf}
+	${If} $4 <> 0
+		System::Free $4
+	${EndIf}
+	${If} $3 <> 0
+		${IUnknown::Release} $3 ""
+	${EndIf}
+	${If} $2 <> 0
+		${IUnknown::Release} $2 ""
+	${EndIf}
+	${If} $1 <> 0
+		${IUnknown::Release} $1 ""
+	${EndIf}
+	System::Store L
+FunctionEnd
+
 Section
     !insertmacro wails.setShellContext
 
@@ -95,6 +210,12 @@ Section
 
     CreateShortcut "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
     CreateShortCut "$DESKTOP\${INFO_PRODUCTNAME}.lnk" "$INSTDIR\${PRODUCT_EXECUTABLE}"
+    Push "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
+    Push "${INFO_PRODUCTNAME}"
+    Call setShortcutAppUserModelID
+    Push "$DESKTOP\${INFO_PRODUCTNAME}.lnk"
+    Push "${INFO_PRODUCTNAME}"
+    Call setShortcutAppUserModelID
 
     !insertmacro wails.associateFiles
     !insertmacro wails.associateCustomProtocols
@@ -111,6 +232,7 @@ Section "uninstall"
 
     Delete "$SMPROGRAMS\${INFO_PRODUCTNAME}.lnk"
     Delete "$DESKTOP\${INFO_PRODUCTNAME}.lnk"
+    DeleteRegKey HKCU "Software\Classes\AppUserModelId\${INFO_PRODUCTNAME}"
 
     !insertmacro wails.unassociateFiles
     !insertmacro wails.unassociateCustomProtocols
