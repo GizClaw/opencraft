@@ -13,6 +13,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
 
 // Session exposes conversation archive/history operations.
@@ -249,26 +250,53 @@ func (b *Session) Rename(id, title string) error {
 func (b *Session) Delete(id string) (SessionDeleteResult, error) {
 	ctx := b.core.Shell.Context()
 	workDir := b.core.ActiveWorkDir()
-	h := b.core.Runtime.Current()
-	if h == nil || h.Sessions() == nil {
-		return SessionDeleteResult{}, errNotReady("session")
+	// DeleteConversation is idempotent, and its lifecycle guards run
+	// before any row/file removal, so a Host retirement between the UI
+	// action and the delete is safe to absorb here by waiting for the
+	// replacement Host and retrying inside this one RPC.
+	notReady := errNotReady("session")
+	deadline := time.Now().Add(startRetryWindow)
+	var lastErr error
+	for attempt := 0; attempt < maxStartAttempts; attempt++ {
+		h := b.core.Runtime.Current()
+		if h == nil || h.Sessions() == nil {
+			lastErr = notReady
+			if strings.TrimSpace(workDir) == "" {
+				return SessionDeleteResult{}, lastErr
+			}
+		} else {
+			err := h.DeleteConversation(ctx, id)
+			if err == nil {
+				b.core.Conversation.ForgetConversation(id)
+				// A selection made while the delete waited (it can
+				// take up to 30s to stop a live turn) wins and gets no
+				// replacement.
+				fresh := b.core.Conversation.ReplaceIfCurrent(workDir, id)
+				if fresh == "" {
+					return SessionDeleteResult{}, nil
+				}
+				return SessionDeleteResult{
+					SessionID: fresh,
+					Mode:      string(b.core.Conversation.Mode(workDir)),
+					Think:     b.core.Conversation.Think(workDir),
+					Model:     b.core.Conversation.Model(workDir),
+				}, nil
+			}
+			lastErr = err
+			if !host.IsRetryableStartError(lastErr) {
+				return SessionDeleteResult{}, lastErr
+			}
+		}
+		if time.Now().After(deadline) ||
+			ctx.Err() != nil ||
+			b.core.ActiveWorkDir() != workDir {
+			return SessionDeleteResult{}, lastErr
+		}
+		if _, err := b.core.Runtime.EnsureUsableHost(ctx, workDir); err != nil {
+			return SessionDeleteResult{}, lastErr
+		}
 	}
-	if err := h.DeleteConversation(ctx, id); err != nil {
-		return SessionDeleteResult{}, err
-	}
-	b.core.Conversation.ForgetConversation(id)
-	// A selection made while the delete waited (it can take up to 30s
-	// to stop a live turn) wins and gets no replacement.
-	fresh := b.core.Conversation.ReplaceIfCurrent(workDir, id)
-	if fresh == "" {
-		return SessionDeleteResult{}, nil
-	}
-	return SessionDeleteResult{
-		SessionID: fresh,
-		Mode:      string(b.core.Conversation.Mode(workDir)),
-		Think:     b.core.Conversation.Think(workDir),
-		Model:     b.core.Conversation.Model(workDir),
-	}, nil
+	return SessionDeleteResult{}, lastErr
 }
 
 // Turns returns every archived turn of one conversation.

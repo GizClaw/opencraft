@@ -18,6 +18,15 @@ import (
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 )
 
+const (
+	// startRetryWindow bounds how long StartTurn waits for a
+	// replacement Host after a transient lifecycle error before
+	// surfacing the original error.
+	startRetryWindow = 10 * time.Second
+	// maxStartAttempts caps StartRun retries inside one StartTurn RPC.
+	maxStartAttempts = 3
+)
+
 // Conversation exposes chat lifecycle methods over the active Host.
 type Conversation struct {
 	core *core.Core
@@ -42,16 +51,16 @@ type TurnStart struct {
 	StartedAt      string `json:"started_at,omitempty"`
 }
 
-// StartTurn starts one assistant turn and returns immediately.
+// StartTurn starts one assistant turn and returns immediately. When
+// the current Host retired between the UI action and StartRun, the
+// call waits for the replacement Host and retries internally, so the
+// frontend never sees the transient lifecycle failure and never
+// re-sends the user message.
 func (b *Conversation) StartTurn(
 	req StartTurnRequest,
 ) (TurnStart, error) {
 	ctx := b.core.Shell.Context()
 	workDir := b.core.ActiveWorkDir()
-	h := b.core.Runtime.Current()
-	if h == nil {
-		return TurnStart{}, fmt.Errorf("conversation: runtime is not ready")
-	}
 	contextID := req.ContextID
 	if contextID == "" {
 		contextID = b.core.Conversation.New(workDir)
@@ -72,7 +81,7 @@ func (b *Conversation) StartTurn(
 		})
 		return nil
 	})
-	run, err := h.StartRun(ctx, host.RunOptions{
+	opts := host.RunOptions{
 		Message:   req.Message,
 		ContextID: contextID,
 		Mode:      b.core.Conversation.Mode(workDir),
@@ -84,20 +93,52 @@ func (b *Conversation) StartTurn(
 		OnUsage: func(_ context.Context, usage inference.Usage) {
 			b.core.Shell.Emit("usage", core.NewUsageEvent(usage))
 		},
-	})
-	if err != nil {
-		return TurnStart{}, err
 	}
-	startedAt := time.Now().UTC()
-	b.core.Conversation.TrackRun(contextID, run.RunID())
-	b.core.Shell.Emit("status", core.StatusEvent{Busy: true})
-	go b.waitTurn(ctx, run, contextID)
-	return TurnStart{
-		RunID:          run.RunID(),
-		ConversationID: contextID,
-		RequestedAt:    requestedAt.Format(time.RFC3339),
-		StartedAt:      startedAt.Format(time.RFC3339),
-	}, nil
+	// A Host rebuild can retire the current Host between the frontend
+	// send and StartRun. Those lifecycle guards run before any turn
+	// side effect, so wait for the replacement Host and retry inside
+	// this one RPC instead of surfacing the transient failure. A
+	// workspace switch during the wait aborts the retry: the
+	// conversation belongs to the original workspace.
+	notReadyErr := fmt.Errorf("conversation: runtime is not ready")
+	deadline := time.Now().Add(startRetryWindow)
+	var lastErr error
+	for attempt := 0; attempt < maxStartAttempts; attempt++ {
+		h := b.core.Runtime.Current()
+		if h == nil {
+			lastErr = notReadyErr
+			if strings.TrimSpace(workDir) == "" {
+				return TurnStart{}, lastErr
+			}
+		} else {
+			run, err := h.StartRun(ctx, opts)
+			if err == nil {
+				startedAt := time.Now().UTC()
+				b.core.Conversation.TrackRun(contextID, run.RunID())
+				b.core.Shell.Emit("status", core.StatusEvent{Busy: true})
+				go b.waitTurn(ctx, run, contextID)
+				return TurnStart{
+					RunID:          run.RunID(),
+					ConversationID: contextID,
+					RequestedAt:    requestedAt.Format(time.RFC3339),
+					StartedAt:      startedAt.Format(time.RFC3339),
+				}, nil
+			}
+			lastErr = err
+			if !host.IsRetryableStartError(lastErr) {
+				return TurnStart{}, lastErr
+			}
+		}
+		if time.Now().After(deadline) ||
+			ctx.Err() != nil ||
+			b.core.ActiveWorkDir() != workDir {
+			return TurnStart{}, lastErr
+		}
+		if _, err := b.core.Runtime.EnsureUsableHost(ctx, workDir); err != nil {
+			return TurnStart{}, lastErr
+		}
+	}
+	return TurnStart{}, lastErr
 }
 
 // waitTurn blocks until the run finishes and emits the terminal
