@@ -12,8 +12,9 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-// Shell is the minimal v3 service. It is a placeholder for the domain
-// bindings that Phase 2 will migrate from desktopv2 one group at a time.
+// Shell is the v3 entry service. Domain services now live in the sibling
+// desktop/bindings package and are shared with the v2 shell; this service
+// only owns shell-level helpers that are not domain DTOs.
 type Shell struct {
 	app    *application.App
 	main   *application.WebviewWindow

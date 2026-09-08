@@ -1,6 +1,7 @@
-// Package desktopv2 is the clean-room successor to internal/adapters/
-// desktop. It keeps the old implementation untouched as a behavioral
-// reference until every domain has been migrated.
+// Package desktopv2 is the Wails v2 UI shell. During the v3 migration it
+// keeps the desktop app running while internal/adapters/desktop hosts the
+// shared core/bindings services; once the v3 line replaces this shell the
+// package is deleted.
 package desktopv2
 
 import (
@@ -17,8 +18,8 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
-	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/bindings"
-	"github.com/GizClaw/opencraft/internal/adapters/desktopv2/core"
+	"github.com/GizClaw/opencraft/internal/adapters/desktop/bindings"
+	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/automations"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	octelemetry "github.com/GizClaw/opencraft/internal/capabilities/telemetry"

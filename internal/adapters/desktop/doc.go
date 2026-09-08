@@ -1,10 +1,11 @@
-// Package desktop is the Wails v3 desktop adapter. During the migration it
-// deliberately carries no domain state yet: it only proves the new shell
-// lifecycle (application/window/service/event/tray) inside the same repository
-// as the still-active desktopv2 adapter. Files in this package are build-tagged
-// `wails3` except doc.go, so the default `go build ./...` keeps compiling the
-// v2 line; desktopv2 is removed once the domain migration completes.
+// Package desktop is the shared desktop adapter tree. It hosts:
+//   - core: the Wails-agnostic service composition root and domain services;
+//   - bindings: DTO/binding objects shared by the v2 and v3 UI shells;
+//   - mainthread: the darwin main-queue helper used while fyne systray remains;
+//   - the root Shell service for the Wails v3 entry (build-tagged `wails3`).
 //
-// Dependency direction is the same as desktopv2: this package may import
-// orchestration/capabilities/foundation but never the reverse.
+// desktopv2 keeps only the Wails v2 UI shell during the migration and is
+// removed once the v3 line replaces it. Dependency direction is the same as
+// desktopv2: this package tree may import orchestration/capabilities/
+// foundation but never the reverse.
 package desktop
