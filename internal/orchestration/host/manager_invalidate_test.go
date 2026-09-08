@@ -57,6 +57,9 @@ func TestInvalidateDefersBusyHost(t *testing.T) {
 	if !ref.stale {
 		t.Fatal("busy host was not marked stale")
 	}
+	if !h.IsStale() {
+		t.Fatal("busy host did not record its retirement flag")
+	}
 	select {
 	case <-closed:
 		t.Fatal("busy host was closed while still running")
@@ -98,6 +101,9 @@ func TestStaleHostRetiresWhenLastRunEnds(t *testing.T) {
 	if m.hosts[h.workDir] == nil {
 		t.Fatal("busy host left the pool at invalidate time")
 	}
+	if !h.IsStale() {
+		t.Fatal("busy host did not record its retirement flag")
+	}
 
 	var runID RunID
 	for id := range h.runs {
@@ -114,6 +120,9 @@ func TestStaleHostRetiresWhenLastRunEnds(t *testing.T) {
 	}
 	if !h.closed {
 		t.Fatal("stale host was not closed after becoming idle")
+	}
+	if !h.IsStale() {
+		t.Fatal("retired host lost its retirement flag")
 	}
 }
 

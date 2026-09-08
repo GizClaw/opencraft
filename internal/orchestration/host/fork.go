@@ -22,10 +22,10 @@ func (h *Host) ForkConversation(
 	ctx context.Context, sourceID, sourceRunID string,
 ) (string, error) {
 	if h == nil || h.store == nil {
-		return "", errors.New("host: session store is not ready")
+		return "", ErrSessionStoreNotReady
 	}
 	if h.ctrl == nil || h.ctrl.Runtime() == nil {
-		return "", errors.New("host: runtime is not ready")
+		return "", ErrRuntimeNotReady
 	}
 	forked, err := h.store.Fork(ctx, sourceID, sourceRunID)
 	if err != nil {

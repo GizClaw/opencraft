@@ -31,7 +31,7 @@ import (
 // installs, engine-input changes) must use the Manager path instead.
 func (h *Host) ReloadDocument(ctx context.Context) error {
 	if h == nil || h.ctrl == nil {
-		return errors.New("host: runtime is not ready")
+		return ErrRuntimeNotReady
 	}
 	doc, err := engine.LoadDocument(ctx, h.userDir)
 	if err != nil {
