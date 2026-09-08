@@ -141,7 +141,13 @@ func TestPullPushAndForce(t *testing.T) {
 	initRepoPackage(t, root)
 	ctx := context.Background()
 	bare := filepath.Join(t.TempDir(), "remote.git")
-	if err := exec.Command("git", "init", "-q", "--bare", bare).Run(); err != nil {
+	// Pin the bare remote's default branch to main: otherwise the peer
+	// clone below can start on the runner's configured default (master
+	// on some CI images), push a second branch, and the pull back in
+	// root would be a silent no-op.
+	if err := exec.Command(
+		"git", "init", "-q", "-b", "main", "--bare", bare,
+	).Run(); err != nil {
 		t.Fatal(err)
 	}
 	repoGit(t, root, "remote", "add", "origin", bare)
@@ -149,7 +155,7 @@ func TestPullPushAndForce(t *testing.T) {
 
 	// A second clone pushes a change the first repo pulls back.
 	peer := t.TempDir()
-	repoGit(t, root, "clone", "-q", bare, peer)
+	repoGit(t, root, "clone", "-q", "-b", "main", bare, peer)
 	writeRepoFile(t, filepath.Join(peer, "peer.txt"), "peer\n")
 	repoGit(t, peer, "add", "peer.txt")
 	repoGit(t, peer, "commit", "-qm", "peer change")
