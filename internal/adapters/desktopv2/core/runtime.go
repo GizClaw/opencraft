@@ -3,28 +3,19 @@ package core
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"sync"
-	"time"
-
-	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/automations"
-	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
-	pluginagent "github.com/GizClaw/opencraft/internal/capabilities/plugins/agent"
-	pluginruntime "github.com/GizClaw/opencraft/internal/capabilities/plugins/runtime"
-	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/usage"
-	"github.com/GizClaw/opencraft/internal/foundation/db"
-	"github.com/GizClaw/opencraft/internal/orchestration/engine"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
-	"github.com/GizClaw/opencraft/internal/orchestration/migrations"
 )
 
 // Runtime owns the shared workspace Host manager and the user-level
 // usage database. It is the desktopv2 replacement for the old App host
-// wiring and is not a Wails binding.
+// wiring and is not a Wails binding. The user-level database itself is
+// opened and owned by host.Manager (OpenUserDB), which also installs
+// the default usage recorder; this type only forwards the accessors.
 type Runtime struct {
 	mu sync.Mutex
 
@@ -34,9 +25,6 @@ type Runtime struct {
 	manager *host.Manager
 	current *host.Host
 
-	userDB            *db.DB
-	usage             *usage.Store
-	automations       *automations.Store
 	automationManager *automations.Manager
 
 	hostConfigured   map[*host.Host]bool
@@ -45,33 +33,12 @@ type Runtime struct {
 
 // NewRuntime creates the runtime service rooted at dataDir/userDir.
 func NewRuntime(dataDir, userDir string) *Runtime {
-	r := &Runtime{
+	return &Runtime{
 		dataDir:        dataDir,
 		userDir:        userDir,
 		manager:        host.NewManagerAt(dataDir, userDir),
 		hostConfigured: make(map[*host.Host]bool),
 	}
-	r.manager.SetUsageRecorder(r.recordTurnUsage)
-	return r
-}
-
-// SetAgentPlugins wires the plugin registry into every runtime
-// assembly: skills, MCP servers, hooks and capability tools contributed
-// by enabled plugins become runtime resources.
-func (r *Runtime) SetAgentPlugins(
-	store *plugins.Store,
-	cap *pluginruntime.Manager,
-) {
-	if r.manager == nil {
-		return
-	}
-	r.manager.SetEngineOptionsFunc(func() []engine.Option {
-		return []engine.Option{
-			engine.WithAgentPlugins(
-				pluginagent.NewHost(context.Background(), store, cap),
-			),
-		}
-	})
 }
 
 // Manager returns the shared host manager.
@@ -97,16 +64,12 @@ func (r *Runtime) SetHostConfigurator(fn func(*host.Host)) {
 
 // Usage returns the user-level usage store after OpenUserDB.
 func (r *Runtime) Usage() *usage.Store {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.usage
+	return r.manager.UsageStore()
 }
 
 // Automations returns the automation store after OpenUserDB.
 func (r *Runtime) Automations() *automations.Store {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.automations
+	return r.manager.AutomationsStore()
 }
 
 // AutomationManager returns the scheduler manager when wired.
@@ -123,64 +86,12 @@ func (r *Runtime) SetAutomationManager(m *automations.Manager) {
 	r.mu.Unlock()
 }
 
-// OpenUserDB opens ~/.opencraft/user.db once, applies user migrations
-// and attaches usage (automations attach in a later phase).
+// OpenUserDB opens ~/.opencraft/user.db once on the shared manager,
+// applies user migrations and attaches the usage and automations
+// stores. UI and automation turns both count toward the attached
+// usage store through the manager's default recorder.
 func (r *Runtime) OpenUserDB(ctx context.Context) error {
-	r.mu.Lock()
-	if r.userDB != nil {
-		r.mu.Unlock()
-		return nil
-	}
-	r.mu.Unlock()
-
-	udb, err := db.Open(filepath.Join(r.dataDir, "user.db"))
-	if err != nil {
-		return fmt.Errorf("runtime: open user db: %w", err)
-	}
-	if err := migrations.User(ctx, udb); err != nil {
-		telemetry.WarnErr(ctx, "desktop runtime: close user db after migration failure",
-			udb.Close())
-		return fmt.Errorf("runtime: migrate user db: %w", err)
-	}
-	usageStore, err := usage.Attach(udb)
-	if err != nil {
-		telemetry.WarnErr(ctx, "desktop runtime: close user db after usage attach failure",
-			udb.Close())
-		return fmt.Errorf("runtime: attach usage: %w", err)
-	}
-	automationStore, err := automations.Attach(udb)
-	if err != nil {
-		telemetry.WarnErr(ctx,
-			"desktop runtime: close user db after automations attach failure",
-			udb.Close())
-		return fmt.Errorf("runtime: attach automations: %w", err)
-	}
-
-	r.mu.Lock()
-	r.userDB = udb
-	r.usage = usageStore
-	r.automations = automationStore
-	r.mu.Unlock()
-	return nil
-}
-
-// recordTurnUsage persists one finished turn's usage into the
-// user-level model_usage tables. It is installed as the shared Host
-// recorder when the Runtime is created; before OpenUserDB the store is
-// nil and calls are no-ops. UI and automation turns both count.
-func (r *Runtime) recordTurnUsage(
-	ctx context.Context,
-	workspaceID, sessionID string,
-	u sessions.Usage,
-	at time.Time,
-) error {
-	r.mu.Lock()
-	store := r.usage
-	r.mu.Unlock()
-	if store == nil {
-		return nil
-	}
-	return store.RecordSessionUsage(ctx, workspaceID, sessionID, u, at)
+	return r.manager.OpenUserDB(ctx)
 }
 
 // Acquire returns a shared Host for workDir. The prompt backend is
@@ -251,22 +162,16 @@ func (r *Runtime) Reload(ctx context.Context) error {
 	return nil
 }
 
-// Close cancels hosts and closes the user database handle.
+// Close cancels hosts, closes pooled workspace stores and closes the
+// user database handle.
 func (r *Runtime) Close() {
 	if r.manager != nil {
 		r.manager.CancelAll()
 		r.manager.CloseAll()
+		r.manager.CloseUserDB()
 	}
 	r.mu.Lock()
-	udb := r.userDB
-	r.userDB = nil
-	r.usage = nil
-	r.automations = nil
 	r.automationManager = nil
 	r.current = nil
 	r.mu.Unlock()
-	if udb != nil {
-		telemetry.WarnErr(context.Background(),
-			"desktop runtime: close user db failed", udb.Close())
-	}
 }

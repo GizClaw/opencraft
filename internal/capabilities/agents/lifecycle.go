@@ -28,9 +28,20 @@ import (
 // subagent registry.
 const ResourceKind = "opencraft.agentlifecycle"
 
-// Settings configures the registry. dir is env-expanded by the loader.
+// Settings configures the registry. Paths are resolver-expanded from
+// the engine assembly values (${ocraft:...}) before the factory
+// decodes them.
 type Settings struct {
 	Dir string `json:"dir"`
+	// WorkDir/UserDir mirror the assistant's prepare-hook context.
+	// Subagent definitions embed them verbatim: dynamic registration
+	// (runtime.RegisterAgent) expands settings without the builder's
+	// custom resolver, so references cannot survive into the
+	// definition. The resource settings carry the same ${ocraft:...}
+	// references and are expanded during the deployment build, which
+	// keeps the values host-injected rather than self-derived.
+	WorkDir string `json:"work_dir,omitempty"`
+	UserDir string `json:"user_dir,omitempty"`
 }
 
 // AgentSpec is the persisted declaration of one subagent. It is the
@@ -120,20 +131,23 @@ type Summary struct {
 // reached through the injected registrar, so the same instance serves
 // every generation across reloads.
 type Lifecycle struct {
-	reg atomic.Pointer[registrar]
-	dir string
+	reg  atomic.Pointer[registrar]
+	dir  string
+	work string
+	user string
 }
 
 // New creates the lifecycle rooted at dir (usually
-// ~/.opencraft/agents).
-func New(dir string) (*Lifecycle, error) {
+// ~/.opencraft/agents). work/user are the assembly paths subagent
+// definitions embed into their prepare hook (see Settings).
+func New(dir, workDir, userDir string) (*Lifecycle, error) {
 	if strings.TrimSpace(dir) == "" {
 		return nil, errdefs.Validationf("agents: directory is required")
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("agents: create directory: %w", err)
 	}
-	return &Lifecycle{dir: dir}, nil
+	return &Lifecycle{dir: dir, work: workDir, user: userDir}, nil
 }
 
 // Bind installs the runtime registrar (Build's *runtimecore.Runtime).
@@ -169,7 +183,7 @@ func (l *Lifecycle) Create(ctx context.Context, spec AgentSpec) (CreateResult, e
 	if reg == nil {
 		return CreateResult{}, errdefs.NotAvailablef("agents: runtime not ready")
 	}
-	def := agentDefinition(spec)
+	def := l.agentDefinition(spec)
 	if _, err := reg.RegisterAgent(
 		ctx, spec.Name, def,
 		runtimecore.WithToolAssembly(toolAssemblyResource),
@@ -253,7 +267,7 @@ func (l *Lifecycle) Update(
 		return CreateResult{}, fmt.Errorf("agents: unregister %q for update: %w", name, err)
 	}
 	if _, err := reg.RegisterAgent(
-		ctx, name, agentDefinition(updated),
+		ctx, name, l.agentDefinition(updated),
 		runtimecore.WithToolAssembly(toolAssemblyResource),
 	); err != nil {
 		l.restoreAfterFailedUpdate(ctx, name, old, err)
@@ -314,7 +328,7 @@ func (l *Lifecycle) restoreAfterFailedUpdate(
 		return
 	}
 	if _, err := l.registrar().RegisterAgent(
-		rollbackCtx, old.Name, agentDefinition(old),
+		rollbackCtx, old.Name, l.agentDefinition(old),
 		runtimecore.WithToolAssembly(toolAssemblyResource),
 	); err != nil {
 		telemetry.Error(ctx, "agents: restore registration after update failure",
@@ -383,7 +397,7 @@ func (l *Lifecycle) LoadAll(ctx context.Context) []LoadError {
 			continue
 		}
 		if _, err := reg.RegisterAgent(
-			ctx, spec.Name, agentDefinition(spec),
+			ctx, spec.Name, l.agentDefinition(spec),
 			runtimecore.WithToolAssembly(toolAssemblyResource),
 		); err != nil {
 			failures = append(failures, LoadError{Name: spec.Name, Err: err})

@@ -105,7 +105,12 @@ resources:
     kind: opencraft.agentlifecycle
     impl: local
     settings:
-      dir: ${env:OPEN_CRAFT_DATA_DIR}/agents
+      dir: ${ocraft:DATA_DIR}/agents
+      # Assembly paths embedded into subagent prepare hooks: dynamic
+      # registration expands agent settings without the builder's
+      # resolver, so definitions carry the expanded values.
+      work_dir: ${ocraft:WORKDIR}
+      user_dir: ${ocraft:DATA_DIR}
   tool.agentlifecycle:
     kind: tool.Source
     impl: opencraft/agentlifecycle
@@ -144,8 +149,8 @@ resources:
         truncate:
           enabled: true
           max_chars: 8000
-          dir: ${env:OPEN_CRAFT_TOOL_CACHE}
-          work_dir: ${env:OPEN_CRAFT_WORKDIR}
+          dir: ${ocraft:TOOL_CACHE}
+          work_dir: ${ocraft:WORKDIR}
         # Hard ceiling on any single tool result that may reach the
         # model context. Truncate then turns oversized-but-bounded
         # outputs into a persisted head+tail excerpt; together they keep
@@ -174,7 +179,7 @@ resources:
         # with redacted copies of arguments and results.
         audit:
           enabled: true
-          dir: ${env:OPEN_CRAFT_AUDIT_DIR}
+          dir: ${ocraft:AUDIT_DIR}
       dynamic:
         default: deferred
         exposures:

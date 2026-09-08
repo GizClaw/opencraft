@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/event"
+
+	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 )
 
 func TestStartTurnRequestDecodesMessageObject(t *testing.T) {
@@ -32,13 +34,17 @@ func TestStartTurnRequestDecodesMessageObject(t *testing.T) {
 }
 
 func TestStreamRunIDExtractsFromSubject(t *testing.T) {
-	if got := streamRunID(event.Subject("agent.run.r-123.stream.assistant.delta")); got != "r-123" {
+	if got := interact.StreamRunID(
+		event.Subject("agent.run.r-123.stream.assistant.delta"),
+	); got != "r-123" {
 		t.Fatalf("streamRunID = %q, want r-123", got)
 	}
-	if got := streamRunID(event.Subject("agent.run.r-123.start")); got != "r-123" {
+	if got := interact.StreamRunID(
+		event.Subject("agent.run.r-123.start"),
+	); got != "r-123" {
 		t.Fatalf("streamRunID = %q, want r-123 for run events", got)
 	}
-	if got := streamRunID(event.Subject("agent.other.x")); got != "" {
+	if got := interact.StreamRunID(event.Subject("agent.other.x")); got != "" {
 		t.Fatalf("streamRunID = %q, want empty", got)
 	}
 }

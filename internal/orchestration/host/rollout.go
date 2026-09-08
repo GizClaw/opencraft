@@ -2,7 +2,6 @@ package host
 
 import (
 	"context"
-	"strings"
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/event"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 )
 
 func (h *Host) observeSink(next agent.StreamSink) agent.StreamSink {
@@ -24,20 +24,10 @@ func (h *Host) observeSink(next agent.StreamSink) agent.StreamSink {
 		delta agent.StreamDeltaPayload,
 	) error {
 		if agent.IsStreamDelta(env.Subject) {
-			h.onStreamRollout(ctx, streamRunID(env.Subject), delta)
+			h.onStreamRollout(ctx, interact.StreamRunID(env.Subject), delta)
 		}
 		return next.OnDelta(ctx, env, delta)
 	})
-}
-
-func streamRunID(subject event.Subject) string {
-	parts := strings.Split(string(subject), ".")
-	if len(parts) >= 3 &&
-		parts[1] == "run" &&
-		(parts[0] == "agent" || parts[0] == "engine") {
-		return parts[2]
-	}
-	return ""
 }
 
 func (h *Host) recordRollout(

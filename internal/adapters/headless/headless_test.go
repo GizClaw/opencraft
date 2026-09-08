@@ -6,16 +6,25 @@ import (
 	"time"
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/orchestration/host"
 )
 
+// TestOpenUserUsageRecordsSessionUsage verifies the manager-owned
+// user database path the headless run uses: OpenUserDB attaches the
+// usage store and the default recorder persists through it.
 func TestOpenUserUsageRecordsSessionUsage(t *testing.T) {
-	udb, store, err := openUserUsage(context.Background(), t.TempDir())
-	if err != nil {
-		t.Fatalf("open user usage: %v", err)
-	}
-	t.Cleanup(func() { _ = udb.Close() })
+	dir := t.TempDir()
+	mgr := host.NewManagerAt(dir, dir)
+	t.Cleanup(mgr.CloseUserDB)
 
-	if err := store.RecordSessionUsage(
+	if err := mgr.OpenUserDB(context.Background()); err != nil {
+		t.Fatalf("open user db: %v", err)
+	}
+	store := mgr.UsageStore()
+	if store == nil {
+		t.Fatal("usage store not attached")
+	}
+	if err := mgr.RecordUsage(
 		context.Background(), "ws-headless", "s-1", ocsessions.Usage{
 			Model:        "gpt-test",
 			InputTokens:  10,

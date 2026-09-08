@@ -33,7 +33,7 @@ agents:
     prepare:
       - type: opencraft.media
         settings:
-          work_dir: ${env:OPEN_CRAFT_WORKDIR}
+          work_dir: ${ocraft:WORKDIR}
       - type: opencraft.prepare
         deps:
           memory: mem
@@ -42,8 +42,8 @@ agents:
           sessions: sessions
           skills: skills
         settings:
-          work_dir: ${env:OPEN_CRAFT_WORKDIR}
-          user_dir: ${env:OPEN_CRAFT_DATA_DIR}
+          work_dir: ${ocraft:WORKDIR}
+          user_dir: ${ocraft:DATA_DIR}
           collaboration_mode: default
           # Optional personality overlay for the worldstate instruction
           # layer: "friendly" or "pragmatic". Empty keeps the neutral

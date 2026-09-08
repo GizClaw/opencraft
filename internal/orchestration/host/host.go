@@ -7,6 +7,7 @@ package host
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -18,11 +19,17 @@ import (
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	ocsagents "github.com/GizClaw/opencraft/internal/capabilities/agents"
+	"github.com/GizClaw/opencraft/internal/capabilities/automations"
 	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
+	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
+	pluginagent "github.com/GizClaw/opencraft/internal/capabilities/plugins/agent"
+	pluginruntime "github.com/GizClaw/opencraft/internal/capabilities/plugins/runtime"
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/capabilities/usage"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/foundation/db"
 	"github.com/GizClaw/opencraft/internal/orchestration/engine"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 	"github.com/GizClaw/opencraft/internal/orchestration/migrations"
@@ -63,6 +70,11 @@ type Manager struct {
 	engineOptFunc func() []engine.Option
 	usageObserver func(context.Context, inference.Usage)
 	usageRecorder UsageRecorder
+
+	// User-level database state, opened on demand by OpenUserDB.
+	userDB          *db.DB
+	userUsage       *usage.Store
+	userAutomations *automations.Store
 }
 
 type hostRef struct {
@@ -78,11 +90,13 @@ type storeRef struct {
 // NewManager creates a Host manager rooted at the global user config
 // directory.
 func NewManager(userDir string) *Manager {
-	return &Manager{
+	m := &Manager{
 		userDir: userDir,
 		hosts:   make(map[string]*hostRef),
 		stores:  make(map[string]*storeRef),
 	}
+	m.usageRecorder = m.recordUserUsage
+	return m
 }
 
 // NewManagerAt creates a manager with explicit user data and config
@@ -102,6 +116,23 @@ func (m *Manager) SetEngineOptionsFunc(fn func() []engine.Option) {
 	m.mu.Unlock()
 }
 
+// SetAgentPlugins wires the plugin registry into every runtime
+// assembly: skills, MCP servers, hooks and capability tools
+// contributed by enabled plugins become runtime resources. Adapters
+// do not need to import orchestration/engine for this.
+func (m *Manager) SetAgentPlugins(
+	store *plugins.Store,
+	cap *pluginruntime.Manager,
+) {
+	m.SetEngineOptionsFunc(func() []engine.Option {
+		return []engine.Option{
+			engine.WithAgentPlugins(
+				pluginagent.NewHost(context.Background(), store, cap),
+			),
+		}
+	})
+}
+
 // SetUsageObserver installs a host-level usage reporter for
 // non-run generations such as automatic titles.
 func (m *Manager) SetUsageObserver(fn func(context.Context, inference.Usage)) {
@@ -113,11 +144,152 @@ func (m *Manager) SetUsageObserver(fn func(context.Context, inference.Usage)) {
 // SetUsageRecorder installs the user-level usage sink. A finished turn
 // may deliver several deltas (one per model + hour bucket), plus one
 // for each auto-title/background generation. UI and automation turns
-// share the Host, so one recorder covers both paths.
+// share the Host, so one recorder covers both paths. A nil fn restores
+// the default recorder, which writes into the usage store attached by
+// OpenUserDB (a no-op before the store is attached).
 func (m *Manager) SetUsageRecorder(fn UsageRecorder) {
 	m.mu.Lock()
+	if fn == nil {
+		fn = m.recordUserUsage
+	}
 	m.usageRecorder = fn
 	m.mu.Unlock()
+}
+
+// OpenUserDB opens the user-level database (user.db under the manager
+// data root) once, applies user migrations and attaches the usage and
+// automations stores. It is idempotent and safe to call from several
+// adapters sharing the manager. The default usage recorder starts
+// persisting as soon as the usage store is attached.
+func (m *Manager) OpenUserDB(ctx context.Context) error {
+	m.mu.Lock()
+	if m.userDB != nil {
+		m.mu.Unlock()
+		return nil
+	}
+	dataDir := m.dataDir
+	m.mu.Unlock()
+	if dataDir == "" {
+		var err error
+		dataDir, err = config.UserDataDir()
+		if err != nil {
+			return fmt.Errorf("host: resolve user data dir: %w", err)
+		}
+	}
+
+	// Serialize first open so two adapters cannot migrate and attach
+	// the same database concurrently.
+	m.openMu.Lock()
+	defer m.openMu.Unlock()
+
+	m.mu.Lock()
+	if m.userDB != nil {
+		m.mu.Unlock()
+		return nil
+	}
+	m.mu.Unlock()
+
+	handle, err := db.Open(filepath.Join(dataDir, "user.db"))
+	if err != nil {
+		return fmt.Errorf("host: open user db: %w", err)
+	}
+	if err := migrations.User(ctx, handle); err != nil {
+		telemetry.WarnErr(ctx, "host: close user db after migration failure",
+			handle.Close())
+		return fmt.Errorf("host: migrate user db: %w", err)
+	}
+	usageStore, err := usage.Attach(handle)
+	if err != nil {
+		telemetry.WarnErr(ctx, "host: close user db after usage attach failure",
+			handle.Close())
+		return fmt.Errorf("host: attach usage: %w", err)
+	}
+	automationStore, err := automations.Attach(handle)
+	if err != nil {
+		telemetry.WarnErr(ctx,
+			"host: close user db after automations attach failure",
+			handle.Close())
+		return fmt.Errorf("host: attach automations: %w", err)
+	}
+	m.mu.Lock()
+	if m.userDB != nil {
+		m.mu.Unlock()
+		telemetry.WarnErr(ctx, "host: close duplicate user db", handle.Close())
+		return nil
+	}
+	m.userDB = handle
+	m.userUsage = usageStore
+	m.userAutomations = automationStore
+	m.mu.Unlock()
+	return nil
+}
+
+// CloseUserDB closes the user-level database handle opened by
+// OpenUserDB. Idempotent; safe to call even when OpenUserDB never
+// succeeded.
+func (m *Manager) CloseUserDB() {
+	m.mu.Lock()
+	handle := m.userDB
+	m.userDB = nil
+	m.userUsage = nil
+	m.userAutomations = nil
+	m.mu.Unlock()
+	if handle != nil {
+		telemetry.WarnErr(context.Background(),
+			"host: close user db failed", handle.Close())
+	}
+}
+
+// UsageStore returns the user-level usage store attached by
+// OpenUserDB, or nil before the database is open.
+func (m *Manager) UsageStore() *usage.Store {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.userUsage
+}
+
+// AutomationsStore returns the user-level automation store attached
+// by OpenUserDB, or nil before the database is open.
+func (m *Manager) AutomationsStore() *automations.Store {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.userAutomations
+}
+
+// RecordUsage invokes the currently installed user-level usage
+// recorder. It lets callers persist usage outside a run lifecycle
+// (imports, tests) through the same sink the hosts use.
+func (m *Manager) RecordUsage(
+	ctx context.Context,
+	workspaceID, sessionID string,
+	usage sessions.Usage,
+	at time.Time,
+) error {
+	m.mu.Lock()
+	fn := m.usageRecorder
+	m.mu.Unlock()
+	if fn == nil {
+		return nil
+	}
+	return fn(ctx, workspaceID, sessionID, usage, at)
+}
+
+// recordUserUsage is the default usage recorder: it writes into the
+// usage store attached by OpenUserDB and no-ops before then, so usage
+// accounting can never fail a turn when the database is unavailable.
+func (m *Manager) recordUserUsage(
+	ctx context.Context,
+	workspaceID, sessionID string,
+	usage sessions.Usage,
+	at time.Time,
+) error {
+	m.mu.Lock()
+	store := m.userUsage
+	m.mu.Unlock()
+	if store == nil {
+		return nil
+	}
+	return store.RecordSessionUsage(ctx, workspaceID, sessionID, usage, at)
 }
 
 // InvalidateAll drops every pooled Host. Idle hosts close immediately;

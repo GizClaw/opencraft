@@ -44,8 +44,8 @@ func (Factory) Spec() resource.Spec {
 	}
 }
 
-// Settings configures discovery. Paths are env-expanded by the loader
-// (${env:OPEN_CRAFT_WORKDIR}, ${env:OPEN_CRAFT_DATA_DIR}, ...).
+// Settings configures discovery. Paths are resolver-expanded from the
+// engine assembly values (${ocraft:WORKDIR}, ${ocraft:DATA_DIR}, ...).
 type Settings struct {
 	Enabled    *bool    `json:"enabled,omitempty"`
 	WorkDir    string   `json:"work_dir"`

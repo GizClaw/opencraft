@@ -35,16 +35,17 @@ func TestRuntimeRecordTurnUsagePersistsModelRows(t *testing.T) {
 	if err := rt.OpenUserDB(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	err := rt.recordTurnUsage(context.Background(), "ws-a", "s-1", sessions.Usage{
-		Model:            "gpt-test",
-		InputTokens:      100,
-		OutputTokens:     50,
-		TotalTokens:      150,
-		CacheReadTokens:  20,
-		CacheWriteTokens: 10,
-		ReasoningTokens:  5,
-		LatencyMs:        456,
-	}, time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC))
+	err := rt.Manager().RecordUsage(
+		context.Background(), "ws-a", "s-1", sessions.Usage{
+			Model:            "gpt-test",
+			InputTokens:      100,
+			OutputTokens:     50,
+			TotalTokens:      150,
+			CacheReadTokens:  20,
+			CacheWriteTokens: 10,
+			ReasoningTokens:  5,
+			LatencyMs:        456,
+		}, time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC))
 	if err != nil {
 		t.Fatalf("record turn usage: %v", err)
 	}

@@ -75,13 +75,9 @@ func (s HostSandboxSettings) SandboxPolicy() SandboxPolicy {
 	return pol
 }
 
-// SandboxRunner builds the platform sandbox runner for the execd child
-// (seatbelt on macOS, bwrap on Linux, local elsewhere). Writable paths
-// are the internal cache directory plus the project-configured
-// writable_paths; the environment policy is the configured policy
-// verbatim. Sandbox construction failures are fatal: silently falling
-// back to the local runner would let the parent believe commands are
-// isolated when they are not, so the child fails closed instead.
+// SandboxRunner builds the platform sandbox runner for the execd
+// child (seatbelt on macOS, bwrap on Linux, local elsewhere) against
+// the user-level cache directory.
 func SandboxRunner(
 	ctx context.Context,
 	workDir string,
@@ -96,9 +92,14 @@ func SandboxRunner(
 }
 
 // SandboxRunnerWithCache builds the platform sandbox runner with an
-// explicitly injected cache root. Hosts use this variant; the plain
-// SandboxRunner keeps the legacy global-cache fallback for adapters
-// that have not migrated yet.
+// explicitly injected cache root (seatbelt on macOS, bwrap on Linux,
+// local elsewhere). Writable paths are the injected cache root plus
+// the project-configured writable_paths; the environment policy is
+// the configured policy verbatim. Callers resolve the workspace
+// layout and pass its cache directory; sandbox construction failures
+// are fatal: silently falling back to the local runner would let the
+// parent believe commands are isolated when they are not, so the
+// child fails closed instead.
 func SandboxRunnerWithCache(
 	_ context.Context,
 	workDir, cacheDir string,
