@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Name=OpenCraft
+Comment=A local-first work partner built on flowcraft
+# The Exec line includes %u to pass the URL to the application
+Exec=/usr/local/bin/opencraft %u
+Terminal=false
+Type=Application
+Icon=opencraft
+Categories=Utility;
+StartupWMClass=opencraft
+
+ 
