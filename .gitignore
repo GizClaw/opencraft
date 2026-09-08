@@ -32,6 +32,7 @@
 
 # ── Wails desktop app ──
 !main.go
+!main_v3.go
 !execd_main.go
 !mac_window_*.go
 !execd_umask_*.go
@@ -39,6 +40,8 @@
 !wails.json
 !frontend/
 !frontend/**
+!frontend-v3/
+!frontend-v3/**
 # Frontend plugins ship in the repo as reference implementations.
 !plugins/
 !plugins/hello/

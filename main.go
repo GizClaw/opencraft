@@ -1,8 +1,11 @@
-// Command opencraft is the opencraft desktop application. It runs the
-// assembled flowcraft runtime behind a Wails shell: Go bindings drive
-// sessions, agents, and configuration, while the event bridge pushes
-// runtime streams (tokens, tool calls, interactions) into the React
-// frontend embedded in the binary.
+//go:build !wails3
+
+// Command opencraft is the opencraft desktop application (Wails v2 line).
+// It runs the assembled flowcraft runtime behind a Wails shell: Go bindings
+// drive sessions, agents, and configuration, while the event bridge pushes
+// runtime streams (tokens, tool calls, interactions) into the React frontend
+// embedded in the binary. The v3 migration skeleton lives in main_v3.go and
+// is selected with `-tags wails3`; both entries coexist on this branch.
 package main
 
 import (

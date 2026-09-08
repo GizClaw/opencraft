@@ -1,7 +1,7 @@
 .PHONY: all fmt fmt-check lint check-boundaries test test-yoloonly \
 	gen-bindings build-macos \
 	build-macos-universal build-linux build-yolo-macos build-yolo-macos-universal \
-	build-yolo-linux build-yolo-windows
+	build-yolo-linux build-yolo-windows gen-bindings-v3 build-v3-macos
 
 all: fmt lint check-boundaries test
 
@@ -32,6 +32,24 @@ check-boundaries:
 # generated files are not committed.
 gen-bindings:
 	wails generate module
+
+# gen-bindings-v3 regenerates the Wails v3 bindings for the migration shell
+# (frontend-v3/bindings). Requires the wails3 CLI pinned to the same version
+# as go.mod; generation scans the package under the `wails3` build tag so the
+# v2 entry in main.go stays out of scope.
+gen-bindings-v3:
+	wails3 generate bindings -d frontend-v3/bindings -ts -i \
+		-f '-tags wails3' .
+
+# build-v3-macos builds the v3 migration skeleton as a bare binary. Wrapping
+# it in an .app bundle (Info.plist + ad-hoc codesign) is needed to run on
+# macOS; the wails3 Taskfile/package tasks arrive in Phase 4.
+build-v3-macos:
+	npm --prefix frontend-v3 ci
+	npm --prefix frontend-v3 run build
+	go build -tags "wails3 production" -trimpath -buildvcs=false \
+		-ldflags "-s -w -X github.com/GizClaw/opencraft/internal/foundation/version.ServiceVersion=$(VERSION)" \
+		-o build/bin/opencraft-v3 .
 
 test:
 	go test ./...
