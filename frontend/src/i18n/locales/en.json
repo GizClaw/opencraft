@@ -37,7 +37,6 @@
     "deleteSession": "Delete session",
     "deleteSessionTitle": "Delete session {{title}}?",
     "deleteSessionBody": "This permanently removes this conversation from OpenCraft. Project files on your computer won't be deleted.",
-    "cannotDeleteActive": "Cannot delete the conversation that is currently open.",
     "searchSessions": "Search sessions…",
     "addWorkspace": "Add workspace",
     "chooseWorkspaceTitle": "Choose a workspace…",

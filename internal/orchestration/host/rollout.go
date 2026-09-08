@@ -58,6 +58,13 @@ func (h *Host) rolloutFor(
 		h.mu.Unlock()
 		return rec
 	}
+	// A delete may be in flight: reopening the recorder would recreate
+	// the file under the removal and can make RemoveAll fail (Windows
+	// refuses to delete open files).
+	if h.deleting[id] || h.deleted[id] {
+		h.mu.Unlock()
+		return nil
+	}
 	store := h.store
 	h.mu.Unlock()
 	if store == nil {
@@ -81,6 +88,12 @@ func (h *Host) rolloutFor(
 		telemetry.WarnErr(ctx, "rollout: close duplicate recorder failed",
 			rec.Close())
 		return existing
+	}
+	if h.deleting[id] || h.deleted[id] {
+		h.mu.Unlock()
+		telemetry.WarnErr(ctx, "rollout: close recorder after delete race",
+			rec.Close())
+		return nil
 	}
 	h.rollouts[id] = rec
 	h.mu.Unlock()

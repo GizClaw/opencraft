@@ -76,6 +76,30 @@ func (c *Conversation) New(workDir string) string {
 	return id
 }
 
+// ReplaceIfCurrent mints a fresh conversation id for one workspace and
+// makes it current, but only when oldID is still the workspace's
+// current conversation. It returns "" when another conversation was
+// selected while a slow operation (for example deletion) was settling,
+// so the later selection is never stomped by the replacement.
+func (c *Conversation) ReplaceIfCurrent(workDir, oldID string) string {
+	if oldID == "" {
+		return ""
+	}
+	id := sessions.NewID()
+	c.mu.Lock()
+	st := c.stateLocked(workDir)
+	if st.currentID != oldID {
+		c.mu.Unlock()
+		return ""
+	}
+	st.currentID = id
+	st.mode = c.defaultMode
+	st.think = c.defaultThink
+	st.model = ""
+	c.mu.Unlock()
+	return id
+}
+
 // SetDefaults changes the mode/think level applied when the next new
 // conversation is minted. Existing workspaces/conversations are not
 // touched; mode and think must be canonical values.

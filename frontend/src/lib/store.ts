@@ -1608,6 +1608,50 @@ export const useStore = create<StoreState>((set, get) => {
     }));
   };
 
+  // openMintedSession materializes a conversation the backend already
+  // minted: the current pointer moved server-side, so this only drives
+  // the focus machine and local shell state without another RPC.
+  const openMintedSession = (
+    snapshot: {
+      session_id: string;
+      mode: string;
+      think: string;
+      model: string;
+    },
+    request: number,
+  ) => {
+    stateRoot.sendFocus({
+      type: 'OPEN_SUCCEEDED',
+      request,
+      sessionID: snapshot.session_id,
+    });
+    const focus = stateRoot.focusSnapshot;
+    if (
+      focus.value !== 'active' ||
+      focus.context.sessionID !== snapshot.session_id
+    ) {
+      return;
+    }
+    const id = snapshot.session_id;
+    set((state) => ({
+      toolsView: null,
+      conversations: {
+        ...state.conversations,
+        [id]: emptyConv({
+          mode: snapshot.mode,
+          think: snapshot.think,
+          model: snapshot.model,
+        }),
+      },
+    }));
+    stateRoot.registry.ensure(id, {
+      workspaceGeneration: stateRoot.generation(),
+      readyEmpty: true,
+      workspace: get().workspace,
+    });
+    retainLiveConversations(id);
+  };
+
   return {
     status: null,
     configured: false,
@@ -2099,36 +2143,7 @@ export const useStore = create<StoreState>((set, get) => {
       const request = stateRoot.focusSnapshot.context.request;
       try {
         const snapshot = await runContextSwitch(() => api.newChat());
-        stateRoot.sendFocus({
-          type: 'OPEN_SUCCEEDED',
-          request,
-          sessionID: snapshot.session_id,
-        });
-        const focus = stateRoot.focusSnapshot;
-        if (
-          focus.value !== 'active' ||
-          focus.context.sessionID !== snapshot.session_id
-        ) {
-          return;
-        }
-        const id = snapshot.session_id;
-        set((state) => ({
-          toolsView: null,
-          conversations: {
-            ...state.conversations,
-            [id]: emptyConv({
-              mode: snapshot.mode,
-              think: snapshot.think,
-              model: snapshot.model,
-            }),
-          },
-        }));
-        stateRoot.registry.ensure(id, {
-          workspaceGeneration: stateRoot.generation(),
-          readyEmpty: true,
-          workspace: get().workspace,
-        });
-        retainLiveConversations(id);
+        openMintedSession(snapshot, request);
       } catch (err) {
         stateRoot.sendFocus({
           type: 'OPEN_FAILED',
@@ -2318,35 +2333,13 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     deleteSession: async (id) => {
-      const deleteOnce = async () => {
-        try {
-          await api.deleteSession(id);
-        } catch (err) {
-          const message = String(err);
-          // New chats mint lazily: after the UI switches to an unsent
-          // draft the backend still tracks the previous conversation as
-          // current, so deleting it is refused. Promote the draft to a
-          // fresh (discarded) backend conversation first — but never
-          // bypass the guard while the session still has a live turn.
-          if (
-            /cannot delete the active conversation/i.test(message) &&
-            stateRoot.focusSnapshot.value === 'no-session'
-          ) {
-            const turn = conversationTurnState(id);
-            if (turn.name !== 'starting' && turn.name !== 'running') {
-              await api.newChat();
-              await api.deleteSession(id);
-              return;
-            }
-          }
-          throw err;
-        }
-      };
       try {
         // Settle any queued deltas before deleting so a late flush
         // cannot resurrect the conversation after the tombstone.
         flushPendingStreams();
-        await deleteOnce();
+        // The backend stops any live run for the conversation and,
+        // when it was current, mints its replacement in the same call.
+        const next = await runContextSwitch(() => api.deleteSession(id));
         stateRoot.registry.get(id)?.send({
           type: 'SESSION_DELETED',
           deletedAt: new Date().toISOString(),
@@ -2360,19 +2353,18 @@ export const useStore = create<StoreState>((set, get) => {
           return { conversations, viewers };
         });
         clearPendingIndex(id);
-        if (activeConversationID() === id) {
-          // The active conversation is gone: switch to a fresh one so
-          // the chat never points at a deleted session.
-          await get().newChat();
+        // The backend only mints when the deleted chat was still the
+        // workspace's current conversation once the delete settled.
+        // Open that replacement only when this chat is still focused;
+        // a selection made while the delete waited wins and should not
+        // be stomped by an OPEN_NEW.
+        if (next.session_id && activeConversationID() === id) {
+          stateRoot.sendFocus({ type: 'OPEN_NEW' });
+          openMintedSession(next, stateRoot.focusSnapshot.context.request);
         }
         await get().loadSessions();
       } catch (err) {
-        const message = String(err);
-        if (/cannot delete the active conversation/i.test(message)) {
-          get().toast(i18n.t('sidebar.cannotDeleteActive'), 'warning');
-        } else {
-          set({ statusText: message });
-        }
+        set({ statusText: errorMessage(err) });
       }
     },
 

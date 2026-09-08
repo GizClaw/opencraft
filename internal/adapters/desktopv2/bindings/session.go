@@ -66,6 +66,18 @@ type SessionTurnDTO struct {
 	Artifacts   []sessions.Artifact `json:"artifacts,omitempty"`
 }
 
+// SessionDeleteResult reports a deleted conversation. When the deleted
+// conversation was still the workspace's current one once the removal
+// settled, the backend mints its replacement in the same call and
+// returns the fresh session so the UI can switch to it without a
+// second request.
+type SessionDeleteResult struct {
+	SessionID string `json:"session_id,omitempty"`
+	Mode      string `json:"mode,omitempty"`
+	Think     string `json:"think,omitempty"`
+	Model     string `json:"model,omitempty"`
+}
+
 func toSessionTurnDTO(t sessions.TurnRecord) SessionTurnDTO {
 	requestedAt := t.RequestedAt
 	if requestedAt.IsZero() {
@@ -228,21 +240,35 @@ func (b *Session) Rename(id, title string) error {
 	return h.Sessions().WriteState(id, "title", title)
 }
 
-// Delete removes one conversation. The active conversation is refused.
-func (b *Session) Delete(id string) error {
+// Delete removes one conversation and, when the deleted conversation
+// is still the workspace's current one once the removal settles,
+// atomically mints its replacement. Removing a conversation with a
+// live turn cancels the run and waits for its terminal persistence
+// before the rows go away, so the delete never races a running
+// session's final writes.
+func (b *Session) Delete(id string) (SessionDeleteResult, error) {
 	ctx := b.core.Shell.Context()
-	if id == b.core.Conversation.Current(b.core.ActiveWorkDir()) {
-		return errors.New("cannot delete the active conversation")
-	}
+	workDir := b.core.ActiveWorkDir()
 	h := b.core.Runtime.Current()
 	if h == nil || h.Sessions() == nil {
-		return errNotReady("session")
+		return SessionDeleteResult{}, errNotReady("session")
 	}
-	if err := h.Sessions().Remove(ctx, id); err != nil {
-		return err
+	if err := h.DeleteConversation(ctx, id); err != nil {
+		return SessionDeleteResult{}, err
 	}
 	b.core.Conversation.ForgetConversation(id)
-	return nil
+	// A selection made while the delete waited (it can take up to 30s
+	// to stop a live turn) wins and gets no replacement.
+	fresh := b.core.Conversation.ReplaceIfCurrent(workDir, id)
+	if fresh == "" {
+		return SessionDeleteResult{}, nil
+	}
+	return SessionDeleteResult{
+		SessionID: fresh,
+		Mode:      string(b.core.Conversation.Mode(workDir)),
+		Think:     b.core.Conversation.Think(workDir),
+		Model:     b.core.Conversation.Model(workDir),
+	}, nil
 }
 
 // Turns returns every archived turn of one conversation.

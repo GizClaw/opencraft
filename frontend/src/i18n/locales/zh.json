@@ -35,7 +35,6 @@
     "deleteSession": "删除会话",
     "deleteSessionTitle": "删除会话 {{title}}？",
     "deleteSessionBody": "这会从 OpenCraft 中永久删除该会话。你电脑上的项目文件不会被删除。",
-    "cannotDeleteActive": "当前会话正在使用中，无法删除。",
     "searchSessions": "搜索会话…",
     "addWorkspace": "添加工作区",
     "chooseWorkspaceTitle": "选择工作区…",
