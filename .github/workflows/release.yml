@@ -100,8 +100,8 @@ jobs:
             exit 1
           fi
           codesign --force --options runtime --timestamp \
-            --sign "$identity" bin/opencraft.app
-          codesign --verify --deep --strict bin/opencraft.app
+            --sign "$identity" bin/OpenCraft.app
+          codesign --verify --deep --strict bin/OpenCraft.app
 
       - name: Install create-dmg
         run: |
@@ -113,7 +113,7 @@ jobs:
         run: |
           rm -rf dmg-staging
           mkdir -p dmg-staging
-          cp -R bin/opencraft.app dmg-staging/OpenCraft.app
+          cp -R bin/OpenCraft.app dmg-staging/OpenCraft.app
           # Standard "drag to Applications" layout: branded background,
           # /Applications drop link, and Finder-generated .DS_Store.
           create-dmg \
@@ -200,7 +200,7 @@ jobs:
             echo "- notary submission id: ${sub_id}"
             echo
             echo "### codesign (app bundle)"
-            codesign --verify --deep --strict --verbose=2 bin/opencraft.app
+            codesign --verify --deep --strict --verbose=2 bin/OpenCraft.app
             echo
             echo "### spctl (dmg)"
             spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg"

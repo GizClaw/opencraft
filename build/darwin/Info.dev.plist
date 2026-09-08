@@ -12,6 +12,8 @@
 		<string>com.gizclaw.opencraft</string>
 		<key>CFBundleName</key>
 		<string>OpenCraft</string>
+		<key>CFBundleDisplayName</key>
+		<string>OpenCraft</string>
 		<key>CFBundlePackageType</key>
 		<string>APPL</string>
 		<key>CFBundleShortVersionString</key>
