@@ -33,6 +33,13 @@ type Runtime struct {
 
 // NewRuntime creates the runtime service rooted at dataDir/userDir.
 func NewRuntime(dataDir, userDir string) *Runtime {
+	// The desktop app is the single composition root of this process
+	// (one Desktop -> one Core -> one Runtime), so one Manager per
+	// process is guaranteed structurally: main.go creates exactly one
+	// Desktop and Wails' SingleInstanceLock prevents a second process.
+	// If multi-window support is ever added, share this Runtime (and
+	// therefore this Manager) across windows instead of constructing
+	// a second one.
 	return &Runtime{
 		dataDir:        dataDir,
 		userDir:        userDir,

@@ -29,7 +29,7 @@ func NewPluginBinding(c *core.Core) *Plugin {
 // refresh invalidates pooled runtimes so plugin-contributed skills,
 // MCP servers, hooks and tools are picked up by the next assembly.
 func (b *Plugin) refresh() error {
-	return b.core.ReloadRuntime(b.core.Shell.Context())
+	return b.core.RebuildRuntime(b.core.Shell.Context())
 }
 
 // List returns every installed plugin.

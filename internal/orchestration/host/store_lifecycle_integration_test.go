@@ -15,17 +15,19 @@ import (
 	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
-// TestReloadIdleHostKeepsSharedStoreOpenForActiveRun reproduces the
-// closed-session.db failure after a config/plugin reload:
+// TestReloadDefersUntilActiveRunFinishes pins the reload-during-run
+// semantics that keep one conversation on one runtime:
 //
 //  1. A run is active on Host A.
-//  2. Reload invalidates A (it finishes on the old runtime) and
-//     assembles Host B sharing the same sessions.Store.
-//  3. Host B is idle, so a second reload closes it immediately.
+//  2. Reload invalidates A, but A stays pooled and keeps serving the
+//     live run; Acquire must return the same Host instead of
+//     assembling a second runtime for the workspace.
+//  3. After the run ends, A retires itself at idle and the next
+//     Acquire assembles a fresh Host.
 //
-// The shared Store must survive B's runtime close until A's run ends;
-// otherwise A's commit fails with "sql: database is closed".
-func TestReloadIdleHostKeepsSharedStoreOpenForActiveRun(t *testing.T) {
+// The fresh Host must be able to read the persisted turn and its
+// auto-title from the shared workspace DB.
+func TestReloadDefersUntilActiveRunFinishes(t *testing.T) {
 	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
 	gate := provider.HoldNext()
 	defer gate.Release()
@@ -62,20 +64,19 @@ func TestReloadIdleHostKeepsSharedStoreOpenForActiveRun(t *testing.T) {
 	mgr.Invalidate(workDir)
 	hostB, err := mgr.Acquire(ctx, workDir, interact.Auto{}, nil)
 	if err != nil {
-		t.Fatalf("acquire replacement host B: %v", err)
+		t.Fatalf("acquire host during active run: %v", err)
 	}
-	if hostA == hostB {
-		t.Fatal("replacement host must be a fresh runtime sharing the store")
-	}
-	if err := hostB.Close(); err != nil {
-		t.Fatalf("close idle replacement host: %v", err)
+	if hostA != hostB {
+		t.Fatalf("reload assembled a second runtime (%p) while %p still had a live run",
+			hostB, hostA)
 	}
 
-	// The shared DB must still be usable while A's run is in flight.
+	// The old runtime must still be usable while the run is in
+	// flight; no teardown may happen under a live turn.
 	if err := hostA.Sessions().SetMode(
 		ctx, run.ContextID(), sessions.ModeYOLO,
 	); err != nil {
-		t.Fatalf("shared session store closed by idle host teardown: %v", err)
+		t.Fatalf("host torn down while a run was in flight: %v", err)
 	}
 
 	gate.Release()
@@ -88,13 +89,16 @@ func TestReloadIdleHostKeepsSharedStoreOpenForActiveRun(t *testing.T) {
 	}
 
 	// run.Wait must also wait for the post-run auto-title before the
-	// last Host closes the shared store; otherwise the title write is
+	// stale Host closes the shared store; otherwise the title write is
 	// lost to "sql: database is closed".
 	hostC, err := mgr.Acquire(ctx, workDir, interact.Auto{}, nil)
 	if err != nil {
 		t.Fatalf("acquire host C after teardown: %v", err)
 	}
 	defer func() { _ = hostC.Close() }()
+	if hostA == hostC {
+		t.Fatal("fresh host was not assembled after the stale host retired")
+	}
 	var title string
 	if err := hostC.Sessions().ReadState(
 		run.ContextID(), "title", &title,

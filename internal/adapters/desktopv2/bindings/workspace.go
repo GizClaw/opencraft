@@ -46,7 +46,7 @@ func (b *Workspace) Open(workDir string) error {
 	}
 	ctx := b.core.Shell.Context()
 	b.core.SetWorkDir(workDir)
-	if err := b.core.ReloadRuntime(ctx); err != nil {
+	if err := b.core.RebuildRuntime(ctx); err != nil {
 		return err
 	}
 	b.core.RecordWorkspace(workDir)
@@ -68,7 +68,7 @@ func (b *Workspace) Remove(id string) error {
 	}
 	ctx := b.core.Shell.Context()
 	b.core.SetWorkDir("")
-	return b.core.ReloadRuntime(ctx)
+	return b.core.RebuildRuntime(ctx)
 }
 
 // ChooseWorkspace opens a native picker and opens the selection.

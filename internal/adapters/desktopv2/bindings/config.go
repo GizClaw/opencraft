@@ -324,7 +324,7 @@ func (b *Config) SaveMemory(settings config.MemorySettings) error {
 	if err := config.WriteMemory(b.core.UserDir, settings); err != nil {
 		return err
 	}
-	return b.core.ReloadRuntime(b.core.Shell.Context())
+	return b.core.ApplyDocumentReload(b.core.Shell.Context())
 }
 
 // SaveInstances persists inference instances and invalidates pooled
@@ -333,7 +333,7 @@ func (b *Config) SaveInstances(req InferenceRequest) error {
 	if err := b.saveInference(req); err != nil {
 		return err
 	}
-	return b.core.ReloadRuntime(b.core.Shell.Context())
+	return b.core.ApplyDocumentReload(b.core.Shell.Context())
 }
 
 // MCPConfig returns configured MCP tool servers.
@@ -352,7 +352,7 @@ func (b *Config) SaveMCP(servers []config.MCPServer) error {
 	if err := config.WriteMCP(b.core.UserDir, servers); err != nil {
 		return err
 	}
-	return b.core.ReloadRuntime(ctx)
+	return b.core.ApplyDocumentReload(ctx)
 }
 
 // TestMCP verifies one MCP server can connect.
@@ -439,7 +439,7 @@ func mcpProbeStatus(err error) string {
 // Reload rebuilds the runtime from current configuration.
 func (b *Config) Reload() error {
 	ctx := b.core.Shell.Context()
-	return b.core.ReloadRuntime(ctx)
+	return b.core.ApplyDocumentReload(ctx)
 }
 
 func validateMCPServer(srv *config.MCPServer) error {

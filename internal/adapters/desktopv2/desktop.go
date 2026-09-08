@@ -141,7 +141,7 @@ func (d *Desktop) Startup(ctx context.Context) {
 	} else {
 		d.startAutomations(ctx)
 	}
-	if err := d.core.ReloadRuntime(ctx); err != nil {
+	if err := d.core.RebuildRuntime(ctx); err != nil {
 		d.core.Shell.Emit("fatal", map[string]any{"error": err.Error()})
 	}
 	d.core.Shell.StartTray(d.trayIcon, d.trayIconWindows)
