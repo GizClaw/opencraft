@@ -160,6 +160,7 @@ tasks:
   create:app:bundle:
     summary: Creates an `.app` bundle
     cmds:
+      - rm -rf "{{.BIN_DIR}}/{{.BUNDLE_NAME}}.app"
       - mkdir -p "{{.BIN_DIR}}/{{.BUNDLE_NAME}}.app/Contents/MacOS"
       - mkdir -p "{{.BIN_DIR}}/{{.BUNDLE_NAME}}.app/Contents/Resources"
       - cp build/darwin/icons.icns "{{.BIN_DIR}}/{{.BUNDLE_NAME}}.app/Contents/Resources"
@@ -181,6 +182,7 @@ tasks:
 
   run:
     cmds:
+      - rm -rf "{{.BIN_DIR}}/{{.BUNDLE_NAME}}.dev.app"
       - mkdir -p "{{.BIN_DIR}}/{{.BUNDLE_NAME}}.dev.app/Contents/MacOS"
       - mkdir -p "{{.BIN_DIR}}/{{.BUNDLE_NAME}}.dev.app/Contents/Resources"
       - cp build/darwin/icons.icns "{{.BIN_DIR}}/{{.BUNDLE_NAME}}.dev.app/Contents/Resources"
