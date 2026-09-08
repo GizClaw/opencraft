@@ -25,14 +25,9 @@
 !go.sum
 !internal/
 !internal/**
-!pkg/
-!pkg/**
-!tools/
-!tools/**
 
 # ── Wails desktop app ──
 !main.go
-!main_v3.go
 !execd_main.go
 !mac_window_*.go
 !execd_umask_*.go

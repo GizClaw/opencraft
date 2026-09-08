@@ -48,27 +48,26 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Install Wails
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+      - name: Install Wails3 CLI
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.17
+
+      - name: Generate bindings and build frontend
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+        run: |
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          mkdir -p frontend/dist
+          touch frontend/dist/.gitkeep
+          wails3 generate bindings -d frontend/bindings -ts -i -names ./...
+          npm ci --prefix frontend
+          npm run build --prefix frontend
 
       - name: Build macOS universal app
         env:
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
         run: |
           export PATH="$PATH:$(go env GOPATH)/bin"
-          jq --arg v "${TAG#v}" '.info.productVersion = $v' wails.json > wails.json.tmp
-          mv wails.json.tmp wails.json
-          make build-macos-universal VERSION="${TAG#v}"
-
-      - name: Prepare app bundle
-        run: |
-          # wails build -platform darwin/universal already produces
-          # build/bin/OpenCraft.app; this is a fallback in case the
-          # bundle is ever named after the lower-case output filename.
-          app="$(find build/bin -maxdepth 1 -name '*.app' ! -name 'OpenCraft.app' | head -1)"
-          if [ -n "$app" ]; then
-            mv "$app" build/bin/OpenCraft.app
-          fi
+          wails3 task darwin:package:universal VERSION="${TAG#v}"
 
       # Code signing and notarization are optional: they activate only
       # when the Apple secrets are configured (see the README for how to
@@ -91,8 +90,8 @@ jobs:
             exit 1
           fi
           codesign --force --options runtime --timestamp \
-            --sign "$identity" build/bin/OpenCraft.app
-          codesign --verify --deep --strict build/bin/OpenCraft.app
+            --sign "$identity" bin/opencraft.app
+          codesign --verify --deep --strict bin/opencraft.app
 
       - name: Install create-dmg
         run: |
@@ -104,7 +103,7 @@ jobs:
         run: |
           rm -rf dmg-staging
           mkdir -p dmg-staging
-          cp -R build/bin/OpenCraft.app dmg-staging/
+          cp -R bin/opencraft.app dmg-staging/OpenCraft.app
           # Standard "drag to Applications" layout: branded background,
           # /Applications drop link, and Finder-generated .DS_Store.
           create-dmg \
@@ -191,7 +190,7 @@ jobs:
             echo "- notary submission id: ${sub_id}"
             echo
             echo "### codesign (app bundle)"
-            codesign --verify --deep --strict --verbose=2 build/bin/OpenCraft.app
+            codesign --verify --deep --strict --verbose=2 bin/opencraft.app
             echo
             echo "### spctl (dmg)"
             spctl --assess --type open --context context:primary-signature --verbose=4 "$dmg"
@@ -232,24 +231,31 @@ jobs:
       - name: Install Wails Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
 
-      - name: Install Wails
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+      - name: Install Wails3 CLI
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.17
+
+      - name: Generate bindings and build frontend
+        run: |
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          mkdir -p frontend/dist
+          touch frontend/dist/.gitkeep
+          wails3 generate bindings -d frontend/bindings -ts -i -names ./...
+          npm ci --prefix frontend
+          npm run build --prefix frontend
 
       - name: Build Linux binary
         env:
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
         run: |
           export PATH="$PATH:$(go env GOPATH)/bin"
-          wails build -platform linux/amd64 -clean -tags webkit2_41 \
-            -ldflags "-s -w -X github.com/GizClaw/opencraft/internal/foundation/version.ServiceVersion=${TAG#v}"
+          wails3 task linux:build VERSION="${TAG#v}"
 
       - name: Package binary
         env:
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
-        run: tar -C build/bin -czf "opencraft-${TAG#v}-linux-amd64.tar.gz" opencraft
+        run: tar -C bin -czf "opencraft-${TAG#v}-linux-amd64.tar.gz" opencraft
 
       - uses: actions/upload-artifact@v6
         with:
@@ -274,8 +280,8 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Install Wails
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+      - name: Install Wails3 CLI
+        run: go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.17
 
       - name: Install NSIS
         run: |
@@ -288,19 +294,27 @@ jobs:
           }
           "$nsisDir" | Out-File -FilePath $env:GITHUB_PATH -Append
 
+      - name: Generate bindings and build frontend
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+        run: |
+          $env:PATH = "$(go env GOPATH)\bin;$env:PATH"
+          New-Item -ItemType Directory -Force frontend/dist | Out-Null
+          New-Item -ItemType File -Force frontend/dist/.gitkeep | Out-Null
+          wails3 generate bindings -d frontend/bindings -ts -i -names ./...
+          npm ci --prefix frontend
+          npm run build --prefix frontend
+        shell: pwsh
+
       - name: Build Windows binary + installer
         env:
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
         run: |
           $ver = "$env:TAG".TrimStart('v')
-          $cfg = Get-Content -Raw wails.json | ConvertFrom-Json
-          $cfg.info.productVersion = $ver
-          $cfg | ConvertTo-Json -Depth 10 | Set-Content -Encoding utf8 wails.json
           $env:PATH = "$(go env GOPATH)\bin;$env:PATH"
-          wails build -platform windows/amd64 -clean -nsis `
-            -ldflags "-s -w -X github.com/GizClaw/opencraft/internal/foundation/version.ServiceVersion=$ver"
-          if (-not (Get-ChildItem build/bin/*-amd64-installer.exe -ErrorAction SilentlyContinue)) {
-            throw "wails build did not produce the NSIS installer (makensis missing or failed)"
+          wails3 task windows:package ARCH=amd64 VERSION=$ver
+          if (-not (Get-ChildItem bin/opencraft-amd64-installer.exe -ErrorAction SilentlyContinue)) {
+            throw "wails3 task windows:package did not produce the NSIS installer (makensis missing or failed)"
           }
 
       - name: Package binaries
@@ -308,12 +322,9 @@ jobs:
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
         run: |
           $ver = "$env:TAG".TrimStart('v')
-          # wails names the NSIS installer after wails.json `name`
-          # (OpenCraft-amd64-installer.exe), not the binary output
-          # filename; the wildcard keeps the copy robust to renames.
-          Copy-Item build/bin/*-amd64-installer.exe `
+          Copy-Item bin/opencraft-amd64-installer.exe `
             "opencraft-$ver-windows-amd64-installer.exe"
-          Compress-Archive -Path build/bin/opencraft.exe `
+          Compress-Archive -Path bin/opencraft.exe `
             -DestinationPath "opencraft-$ver-windows-amd64.zip"
 
       - uses: actions/upload-artifact@v6
