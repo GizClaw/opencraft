@@ -27,9 +27,11 @@ func (c *Core) SetWorkDir(workDir string) {
 
 // publishWorkspaceEnv keeps the process and capability-plugin
 // environment aligned with the active workspace before any plugin
-// subprocess starts. engine.BuildRuntime publishes the same variables
-// during assembly; publishing here also covers plugin UI invocations
-// that happen before the first Host is assembled.
+// subprocess or sandboxed child starts. Runtime assembly does not
+// read these variables anymore (engine injects its path values
+// through the flowcraft resolver), so this publication is purely for
+// child processes: plugin UI invocations that happen before the
+// first Host is assembled, and the execd sandbox env allowlist.
 func (c *Core) publishWorkspaceEnv() {
 	workDir := c.ActiveWorkDir()
 	envKeys := []string{

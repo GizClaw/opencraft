@@ -1,8 +1,9 @@
-.PHONY: all fmt fmt-check lint test test-yoloonly gen-bindings build-macos \
+.PHONY: all fmt fmt-check lint check-boundaries test test-yoloonly \
+	gen-bindings build-macos \
 	build-macos-universal build-linux build-yolo-macos build-yolo-macos-universal \
 	build-yolo-linux build-yolo-windows
 
-all: fmt lint test
+all: fmt lint check-boundaries test
 
 fmt:
 	go fmt ./...
@@ -18,6 +19,13 @@ fmt-check:
 lint:
 	golangci-lint run ./...
 	staticcheck ./...
+
+# check-boundaries enforces the internal dependency-direction rules:
+# capabilities/foundation must not import orchestration/adapters, and
+# orchestration must not import adapters. Kept as its own target so CI
+# can gate on it without the full lint toolchain.
+check-boundaries:
+	./scripts/check-boundaries.sh
 
 # gen-bindings regenerates the wails TS bindings (frontend/wailsjs).
 # Required before a frontend-only build on a fresh checkout, since the

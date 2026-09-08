@@ -33,6 +33,7 @@ import {
 } from '../state/react';
 import type { ComponentType } from 'react';
 import type { SessionMeta, WorkspaceMeta } from '../lib/types';
+import { AppMark } from './AppMark';
 
 function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
@@ -951,12 +952,15 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
         />
       )}
 
-      <div className="px-4 pt-3 pb-2 select-none">
-        <div className="font-mono text-base leading-tight text-fg font-semibold">
-          Open
-        </div>
-        <div className="font-mono text-base leading-tight text-accent">
-          Craft&gt;_
+      <div className="flex items-center gap-2.5 px-4 pt-3 pb-2 select-none">
+        <AppMark className="h-[1.625rem] w-[1.625rem] shrink-0" />
+        <div>
+          <div className="font-mono text-base leading-tight text-fg font-semibold">
+            Open
+          </div>
+          <div className="font-mono text-base leading-tight text-accent">
+            Craft&gt;_
+          </div>
         </div>
       </div>
 

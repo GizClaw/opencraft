@@ -43,7 +43,7 @@ func NewCore(userDir, dataDir, workDir string) *Core {
 		DataDir:      dataDir,
 		WorkDir:      workDir,
 	}
-	runtime.SetAgentPlugins(plugin.Store, plugin.Capability)
+	runtime.Manager().SetAgentPlugins(plugin.Store, plugin.Capability)
 	plugin.Capability.SetOpenURL(c.Shell.OpenURL)
 	defaultMode, defaultThink := c.Shell.SessionDefaults()
 	c.Conversation.SetDefaults(

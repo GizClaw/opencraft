@@ -228,8 +228,15 @@ func (b *Diagnostics) RunSandboxProbe() SandboxProbeResult {
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	runner, _, err := ocsandbox.SandboxRunner(
-		probeCtx, workDir, ocsandbox.SandboxPolicy{},
+	// The probe exercises the same injected cache root the workspace
+	// runtime uses; fall back to the global cache only when the
+	// workspace layout cannot be resolved.
+	cacheDir := filepath.Join(b.core.DataDir, "cache")
+	if layout, err := b.core.ResolveLayout(workDir); err == nil {
+		cacheDir = filepath.Join(layout.Root, "cache")
+	}
+	runner, _, err := ocsandbox.SandboxRunnerWithCache(
+		probeCtx, workDir, cacheDir, ocsandbox.SandboxPolicy{},
 	)
 	if err != nil {
 		return SandboxProbeResult{Error: err.Error()}

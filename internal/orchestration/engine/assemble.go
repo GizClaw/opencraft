@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync"
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/agent/scriptrt"
@@ -128,16 +127,50 @@ func WithWorkspaceLayout(l *config.WorkspaceLayout) Option {
 	return func(o *Options) { o.WorkspaceLayout = l }
 }
 
-// buildMu serializes runtime assembly. The flowcraft resource builder
-// expands ${env:OPEN_CRAFT_*} paths from the process environment, so
-// assemblies for different workspaces must never overlap.
-var buildMu sync.Mutex
+// ocraftScheme names the resolver scheme carrying per-assembly path
+// values into the deploy document (${ocraft:<NAME>} references). It
+// replaces the historical ${env:OPEN_CRAFT_*} publishing: values now
+// travel with the flowcraft Builder instead of the process
+// environment, so assemblies for different workspaces never share
+// mutable expansion state and may run concurrently.
+const ocraftScheme = "ocraft"
+
+// ocraftResolver maps the assembly path values into the ocraftScheme.
+// The names mirror the retired OPEN_CRAFT_* environment variables;
+// WORKSPACE_DIR and friends are only resolvable when a workspace
+// layout is injected.
+func ocraftResolver(o *Options, dataDir, cacheDir string) *resource.ReferenceResolver {
+	values := map[string]string{
+		"WORKDIR":  o.WorkBase,
+		"CACHE":    cacheDir,
+		"DATA_DIR": dataDir,
+	}
+	if o.WorkspaceLayout != nil {
+		values["WORKSPACE_DIR"] = o.WorkspaceLayout.Root
+		values["SESSIONS_DIR"] = o.WorkspaceLayout.SessionsDir
+		values["APPROVALS"] = o.WorkspaceLayout.ApprovalsFile
+		values["TOOL_CACHE"] = o.WorkspaceLayout.CacheDir
+		values["AUDIT_DIR"] = o.WorkspaceLayout.AuditDir
+	}
+	return resource.NewResolver(resource.SchemeFunc{
+		SchemeName: ocraftScheme,
+		Fn: func(_ context.Context, ref resource.Reference) (any, error) {
+			value, ok := values[ref.Path]
+			if !ok {
+				return nil, fmt.Errorf(
+					"engine: deploy document references unknown %s value %q",
+					ocraftScheme, ref.Path)
+			}
+			return value, nil
+		},
+	})
+}
 
 // BuildRuntime assembles an opencraft runtime from a deploy document.
+// Assembly path values are injected through a per-build resolver (see
+// ocraftScheme), so concurrent calls for different workspaces do not
+// race shared process state.
 func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*runtimecore.Runtime, error) {
-	buildMu.Lock()
-	defer buildMu.Unlock()
-
 	o := Options{}
 	for _, opt := range opts {
 		if opt != nil {
@@ -177,26 +210,6 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 	}
 	if o.WorkspaceLayout == nil {
 		return nil, fmt.Errorf("engine: workspace layout is required")
-	}
-	// Scalar settings in the deploy document reference runtime paths
-	// through ${env:...}; publish them before resources are built.
-	// buildMu keeps concurrent assemblies from racing these values.
-	envVars := []struct {
-		name  string
-		value string
-	}{
-		{"OPEN_CRAFT_WORKDIR", o.WorkBase},
-		{"OPEN_CRAFT_CACHE", cacheDir},
-		{"OPEN_CRAFT_DATA_DIR", dataDir},
-		{"OPEN_CRAFT_WORKSPACE_DIR", o.WorkspaceLayout.Root},
-		{"OPEN_CRAFT_SESSIONS_DIR", o.WorkspaceLayout.SessionsDir},
-		{"OPEN_CRAFT_APPROVALS", o.WorkspaceLayout.ApprovalsFile},
-		{"OPEN_CRAFT_TOOL_CACHE", o.WorkspaceLayout.CacheDir},
-		{"OPEN_CRAFT_AUDIT_DIR", o.WorkspaceLayout.AuditDir},
-	}
-	for _, kv := range envVars {
-		telemetry.WarnErr(ctx, "engine: publish runtime env failed",
-			os.Setenv(kv.name, kv.value), log.String("name", kv.name))
 	}
 
 	loader := resource.NewLoader(
@@ -269,6 +282,9 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 
 	builder := runtimecore.NewBuilder(reg)
 	if err := builder.WithLoader(loader); err != nil {
+		return nil, err
+	}
+	if err := builder.WithResolver(ocraftResolver(&o, dataDir, cacheDir)); err != nil {
 		return nil, err
 	}
 	if err := builder.WithHostFactory(func(

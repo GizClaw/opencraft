@@ -24,7 +24,7 @@ resources:
     settings:
       id: keychain
       default: true
-      dir: ${env:OPEN_CRAFT_DATA_DIR}/keyring
+      dir: ${ocraft:DATA_DIR}/keyring
 
   # ------------------------------------------------------------------
   # Runtime foundations: event bus, memory, session store
@@ -73,17 +73,18 @@ resources:
       # before running. Rules are token prefixes; "*" matches any
       # remaining arguments.
       allowed_commands: []
-      # Path of the workspace approvals file (env-expanded); commands
-      # approved via "Always allow" / request_permissions land here.
-      approvals_path: ${env:OPEN_CRAFT_APPROVALS}
+      # Path of the workspace approvals file (assembly-expanded via
+      # ${ocraft:APPROVALS}); commands approved via "Always allow" /
+      # request_permissions land here.
+      approvals_path: ${ocraft:APPROVALS}
   # Workspace session store: SQLite at the injected data root
-  # (OPEN_CRAFT_SESSIONS_DIR); conversation/checkpoint tables live in
+  # (${ocraft:SESSIONS_DIR}); conversation/checkpoint tables live in
   # the workspace session.db, media/rollout stay on the filesystem.
   sessions:
     kind: session.Store
     impl: opencraft
     settings:
-      root: ${env:OPEN_CRAFT_SESSIONS_DIR}
+      root: ${ocraft:SESSIONS_DIR}
       window: 40
 
   # ------------------------------------------------------------------
@@ -123,7 +124,7 @@ resources:
     deps:
       observer: artifacts
     settings:
-      root: ${env:OPEN_CRAFT_WORKDIR}
+      root: ${ocraft:WORKDIR}
   # Shared skills registry: one discovery pass per process lifetime.
   # The worldstate prepare hook (per-turn top-5 injection + $mention
   # full-text activation) and tool.skills both consume it.
@@ -135,8 +136,8 @@ resources:
       plugin.host: plugin.host
     settings:
       enabled: true
-      work_dir: ${env:OPEN_CRAFT_WORKDIR}
-      user_dir: ${env:OPEN_CRAFT_DATA_DIR}
+      work_dir: ${ocraft:WORKDIR}
+      user_dir: ${ocraft:DATA_DIR}
       top_n: 5
       min_score: 0
   # Plugin host: the desktop app injects the installed plugin store and
@@ -173,7 +174,7 @@ resources:
     settings:
       # Staged skill copies live under the cache dir, which the exec
       # sandbox may write; file tools only need read access to it.
-      readonly_roots: ["${env:OPEN_CRAFT_DATA_DIR}/cache"]
+      readonly_roots: ["${ocraft:DATA_DIR}/cache"]
   # Network posture: exec sandbox mode (default = host networking) and
   # the web_fetch domain gate. exec.mode accepts default | deny-all |
   # allow-list | proxy; web_fetch.allow_private=false keeps the SSRF
@@ -200,7 +201,7 @@ resources:
     deps:
       plugin.host: plugin.host
     settings:
-      path: ${env:OPEN_CRAFT_DATA_DIR}/config/hooks.json
+      path: ${ocraft:DATA_DIR}/config/hooks.json
   # Subagent hook observer: subscribes to delegation kanban events and
   # fires SubagentStart / SubagentStop hooks.
   hooks.observer:
@@ -217,11 +218,11 @@ resources:
       sessions: sessions
       netpolicy: netpolicy
     settings:
-      root: ${env:OPEN_CRAFT_WORKDIR}
-      writable_paths: ["${env:OPEN_CRAFT_CACHE}"]
+      root: ${ocraft:WORKDIR}
+      writable_paths: ["${ocraft:CACHE}"]
       remote: true
       # Sandbox environment defaults to a curated allowlist (PATH,
-      # HOME, locale, toolchain, OPEN_CRAFT_* paths, ...), NOT the
+      # HOME, locale, toolchain, opencraft path vars, ...), NOT the
       # parent environment wholesale, so provider API keys never leak
       # into sandboxed project code. Projects that need more declare
       # env_policy in their config layer.

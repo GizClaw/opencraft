@@ -24,13 +24,9 @@ import (
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
-	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
-	"github.com/GizClaw/opencraft/internal/capabilities/usage"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
-	"github.com/GizClaw/opencraft/internal/foundation/db"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
-	"github.com/GizClaw/opencraft/internal/orchestration/migrations"
 )
 
 // Options configures one headless run.
@@ -49,31 +45,6 @@ type Result struct {
 	ConversationID string
 	Error          string
 	ExitCode       int
-}
-
-// openUserUsage opens the shared user-level database and attaches the
-// usage store. It is best-effort: the headless run itself must not fail
-// because usage accounting is unavailable.
-func openUserUsage(
-	ctx context.Context,
-	dataDir string,
-) (*db.DB, *usage.Store, error) {
-	handle, err := db.Open(filepath.Join(dataDir, "user.db"))
-	if err != nil {
-		return nil, nil, fmt.Errorf("headless: open user db: %w", err)
-	}
-	if err := migrations.User(ctx, handle); err != nil {
-		telemetry.WarnErr(ctx, "headless: close user db after migration failure",
-			handle.Close())
-		return nil, nil, fmt.Errorf("headless: migrate user db: %w", err)
-	}
-	store, err := usage.Attach(handle)
-	if err != nil {
-		telemetry.WarnErr(ctx, "headless: close user db after usage attach failure",
-			handle.Close())
-		return nil, nil, fmt.Errorf("headless: attach usage: %w", err)
-	}
-	return handle, store, nil
 }
 
 // Run assembles a runtime for WorkDir, starts one ephemeral session
@@ -103,24 +74,14 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 
 	dataDir := filepath.Dir(configDir)
 	hostMgr := host.NewManagerAt(dataDir, configDir)
-	if udb, usageStore, usageErr := openUserUsage(ctx, dataDir); usageErr != nil {
+	// Usage accounting is best-effort: the headless run itself must
+	// not fail because the user database is unavailable.
+	if usageErr := hostMgr.OpenUserDB(ctx); usageErr != nil {
 		telemetry.WarnErr(ctx,
 			"headless: user usage accounting unavailable; continuing without it",
 			usageErr)
 	} else {
-		hostMgr.SetUsageRecorder(func(
-			ctx context.Context,
-			workspaceID, sessionID string,
-			usage ocsessions.Usage,
-			at time.Time,
-		) error {
-			return usageStore.RecordSessionUsage(
-				ctx, workspaceID, sessionID, usage, at)
-		})
-		defer func() {
-			telemetry.WarnErr(context.Background(),
-				"headless: close user db failed", udb.Close())
-		}()
+		defer hostMgr.CloseUserDB()
 	}
 	h, err := hostMgr.Acquire(ctx, workDir, interact.Auto{}, nil)
 	if err != nil {

@@ -289,9 +289,9 @@ func renderSkillActivation(
 }
 
 // stageSkill copies an activated skill into the sandbox-writable
-// cache (OPEN_CRAFT_DATA_DIR/cache/staged/<contextID>/<name>) so its
-// scripts are executable under exec even when the skill root itself
-// is outside the workspace. Builtins ship no files and are skipped.
+// cache (<userDir>/cache/staged/<contextID>/<name>) so its scripts
+// are executable under exec even when the skill root itself is
+// outside the workspace. Builtins ship no files and are skipped.
 func (s *Service) stageSkill(sk skills.SkillMetadata, contextID string) string {
 	if sk.Scope == "builtin" || s.opts.UserDir == "" {
 		return ""

@@ -19,8 +19,11 @@ const toolAssemblyResource = "tools"
 // subagent: the caller-supplied graph definition is passed through as
 // the graph engine's settings verbatim, and the worldstate prepare
 // hook keeps the same basic context (workdir, permissions, skills) the
-// main agent gets.
-func agentDefinition(spec AgentSpec) agent.Definition {
+// main agent gets. The hook paths are the assembly values the
+// lifecycle received at build time (see Settings); the definition must
+// not carry ${...} references because runtime.RegisterAgent expands
+// agent settings without the builder's custom resolver.
+func (l *Lifecycle) agentDefinition(spec AgentSpec) agent.Definition {
 	engineSettings, err := json.Marshal(map[string]any{
 		"graph": spec.Graph,
 		"build": map[string]any{
@@ -50,16 +53,16 @@ func agentDefinition(spec AgentSpec) agent.Definition {
 			},
 			Settings: engineSettings,
 		},
-		Prepare: []agent.Hook{prepareHook()},
+		Prepare: []agent.Hook{l.prepareHook()},
 	}
 }
 
 // prepareHook mirrors the assistant's worldstate hook so subagents
 // receive the same basic context (workdir, permissions, skills).
-func prepareHook() agent.Hook {
+func (l *Lifecycle) prepareHook() agent.Hook {
 	settings, err := json.Marshal(map[string]string{
-		"work_dir":           "${env:OPEN_CRAFT_WORKDIR}",
-		"user_dir":           "${env:OPEN_CRAFT_DATA_DIR}",
+		"work_dir":           l.work,
+		"user_dir":           l.user,
 		"collaboration_mode": "default",
 		"permission_profile": "workspace",
 	})

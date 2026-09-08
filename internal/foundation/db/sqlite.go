@@ -24,8 +24,10 @@ type DB struct {
 // OpenOptions configures one SQLite connection.
 type OpenOptions struct {
 	// ForeignKeys enables PRAGMA foreign_keys=ON. User-scoped
-	// databases enable it; legacy workspace schemas keep it off until
-	// their cleanup migration removes dangling references.
+	// databases enable it from the start; workspace session databases
+	// open without it so cleanup migrations can drop legacy parent
+	// tables, and orchestration/migrations re-enables enforcement
+	// once the schema is clean (see SetForeignKeys).
 	ForeignKeys bool
 }
 
@@ -69,6 +71,21 @@ func OpenWithOptions(path string, opts OpenOptions) (*DB, error) {
 // SQLDB returns the underlying *sql.DB for store constructors.
 func (d *DB) SQLDB() *sql.DB {
 	return d.db
+}
+
+// SetForeignKeys toggles PRAGMA foreign_keys on this connection.
+// Workspace handles open without enforcement so legacy cleanup
+// migrations can drop parent tables; callers switch enforcement back
+// on after the schema no longer references dropped tables.
+func (d *DB) SetForeignKeys(on bool) error {
+	value := "OFF"
+	if on {
+		value = "ON"
+	}
+	if _, err := d.db.Exec("PRAGMA foreign_keys=" + value); err != nil {
+		return fmt.Errorf("userdb: PRAGMA foreign_keys=%s: %w", value, err)
+	}
+	return nil
 }
 
 // Close closes the shared handle. Callers must stop every store that

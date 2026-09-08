@@ -35,5 +35,11 @@ func (f Factory) New(ctx context.Context, in resource.Input) (any, error) {
 			"opencraft agentlifecycle: settings.dir is required " +
 				"(the Host injects the agents directory)")
 	}
-	return New(settings.Dir)
+	if settings.WorkDir == "" || settings.UserDir == "" {
+		return nil, errdefs.Validationf(
+			"opencraft agentlifecycle: settings.work_dir and settings.user_dir " +
+				"are required (subagent prepare-hook assembly values; the " +
+				"deploy document expands ${ocraft:...} into them)")
+	}
+	return New(settings.Dir, settings.WorkDir, settings.UserDir)
 }

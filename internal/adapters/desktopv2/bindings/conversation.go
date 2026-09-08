@@ -15,6 +15,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/profile"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
+	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 )
 
 // Conversation exposes chat lifecycle methods over the active Host.
@@ -65,7 +66,7 @@ func (b *Conversation) StartTurn(
 			return nil
 		}
 		b.core.Shell.Emit("stream", map[string]any{
-			"run_id":          streamRunID(env.Subject),
+			"run_id":          interact.StreamRunID(env.Subject),
 			"conversation_id": contextID,
 			"delta":           delta,
 		})
@@ -145,18 +146,6 @@ func lastAssistantOutput(res *agent.Result) string {
 			text = text[len(text)-8000:]
 		}
 		return text
-	}
-	return ""
-}
-
-// streamRunID extracts the run id from a stream subject such as
-// "agent.run.<runID>.stream.<actor>.delta".
-func streamRunID(subject event.Subject) string {
-	parts := strings.Split(string(subject), ".")
-	if len(parts) >= 3 &&
-		parts[1] == "run" &&
-		(parts[0] == "agent" || parts[0] == "engine") {
-		return parts[2]
 	}
 	return ""
 }

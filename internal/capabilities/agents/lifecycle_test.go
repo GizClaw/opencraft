@@ -84,7 +84,7 @@ func (f *fakeRegistrar) definitions() map[string]agent.Definition {
 func newTestLifecycle(t *testing.T, reg registrar) (*Lifecycle, string) {
 	t.Helper()
 	dir := t.TempDir()
-	lc, err := New(dir)
+	lc, err := New(dir, "", "")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
