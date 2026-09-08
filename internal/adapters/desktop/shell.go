@@ -126,6 +126,6 @@ func (s *Shell) ReportProbe(tag, value string) string {
 // Quit requests application shutdown through the v3 lifecycle.
 func (s *Shell) Quit() string {
 	s.Emit("quitting from UI")
-	s.app.Quit()
+	s.desktop.RequestQuit()
 	return "quit requested"
 }

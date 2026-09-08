@@ -60,6 +60,33 @@ func TestShellQuitState(t *testing.T) {
 	}
 }
 
+func TestShellShouldQuitWithoutConfirmation(t *testing.T) {
+	s := NewShell(t.TempDir())
+	s.SetScheduledTasksChecker(func(context.Context) bool { return false })
+	if !s.ShouldQuit() {
+		t.Fatal("quit with no scheduled tasks must proceed immediately")
+	}
+	if !s.quitting || !s.quitConfirmed {
+		t.Fatalf("quit state after ShouldQuit = (%v,%v)",
+			s.quitting, s.quitConfirmed)
+	}
+}
+
+func TestShellShouldQuitConfirmedRepeats(t *testing.T) {
+	s := NewShell(t.TempDir())
+	s.SetScheduledTasksChecker(func(context.Context) bool { return false })
+	if !s.ShouldQuit() {
+		t.Fatal("first ShouldQuit should confirm")
+	}
+	if !s.ShouldQuit() {
+		t.Fatal("confirmed quit must stay allowed on repeated calls")
+	}
+	s.clearQuitRequest()
+	if s.quitting || s.quitConfirmed {
+		t.Fatal("clearQuitRequest must reset both flags")
+	}
+}
+
 func TestShellConfirmQuitRequired(t *testing.T) {
 	s := NewShell(t.TempDir())
 	if !s.confirmQuitRequired(context.Background()) {

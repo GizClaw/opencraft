@@ -66,6 +66,9 @@ func main() {
 		OnShutdown: func() {
 			quitRequested.Store(true)
 		},
+		ShouldQuit: func() bool {
+			return d.QuitAllowed()
+		},
 	})
 
 	mainURL := "/"
@@ -101,9 +104,9 @@ func main() {
 		if quitRequested.Load() {
 			return
 		}
-		shell.Emit("cancel close; hiding main window")
-		e.Cancel()
-		mainW.Hide()
+		if d.CloseRequested() {
+			e.Cancel()
+		}
 	})
 
 	// v3 routes drops to the Go window event; forward paths into the shared
@@ -128,7 +131,7 @@ func main() {
 	})
 	menu.AddSeparator()
 	menu.Add("Quit").OnClick(func(*application.Context) {
-		app.Quit()
+		d.RequestQuit()
 	})
 	tray := app.SystemTray.New()
 	tray.SetIcon(trayIcon)

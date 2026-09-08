@@ -97,39 +97,69 @@ func (s *Shell) Emit(typ string, data any) {
 	})
 }
 
-// CloseRequested is the single funnel for window-close paths. It returns
-// true when the close must be cancelled (hide to tray) and false when the
-// application may terminate.
-func (s *Shell) CloseRequested(ctx context.Context) bool {
+// ShouldQuit is the synchronous gate for every real quit path (tray, Cmd+Q,
+// application menu). It returns true only when quitting may proceed. When the
+// scheduled-task check requires confirmation it opens the native v3 dialog
+// asynchronously and returns false; the dialog callback retries the quit.
+func (s *Shell) ShouldQuit() bool {
 	s.mu.Lock()
-	closeToTray := s.prefs.CloseToTray
-	quitting := s.quitting
-	quitConfirmed := s.quitConfirmed
+	confirmed := s.quitting && s.quitConfirmed
 	s.mu.Unlock()
-
-	if quitting && quitConfirmed {
-		return false
-	}
-	if quitting || !closeToTray {
-		// v3 native dialogs are asynchronous; the quit-confirmation flow is
-		// driven from the window close hook instead of this synchronous call.
-		s.mu.Lock()
-		s.quitting = true
-		s.quitConfirmed = true
-		s.mu.Unlock()
-		return false
+	if confirmed {
+		return true
 	}
 
-	_, main := s.attached()
-	if main != nil {
-		main.Hide()
+	app, _ := s.attached()
+	if !s.confirmQuitRequired(s.Context()) {
+		s.markQuitConfirmed()
+		return true
 	}
-	return true
+	if app == nil {
+		// No native shell yet; do not trap callers during startup/tests.
+		s.markQuitConfirmed()
+		return true
+	}
+
+	s.mu.Lock()
+	s.quitting = true
+	s.quitConfirmed = false
+	s.mu.Unlock()
+	s.confirmQuitAsync(app)
+	return false
 }
 
-// confirmQuitRequired decides whether a real quit needs confirmation. The
-// synchronous dialog is intentionally not used by the v3 shell; the method
-// remains for tests and for callers that only need the decision.
+func (s *Shell) markQuitConfirmed() {
+	s.mu.Lock()
+	s.quitting = true
+	s.quitConfirmed = true
+	s.mu.Unlock()
+}
+
+// confirmQuitAsync shows the native question dialog. v3 dialogs are
+// asynchronous: the buttons carry the quit/keep-running callbacks.
+func (s *Shell) confirmQuitAsync(app *application.App) {
+	texts := s.Texts()
+	d := app.Dialog.Question().
+		SetTitle(texts.QuitDialogTitle).
+		SetMessage(texts.QuitDialogMessage)
+	confirm := d.AddButton(texts.QuitDialogConfirm)
+	cancel := d.AddButton(texts.QuitDialogCancel)
+	confirm.SetAsDefault()
+	cancel.SetAsCancel()
+	confirm.OnClick(func() {
+		s.markQuitConfirmed()
+		app.Quit()
+	})
+	cancel.OnClick(func() {
+		s.clearQuitRequest()
+	})
+	if _, main := s.attached(); main != nil {
+		d.AttachToWindow(main)
+	}
+	d.Show()
+}
+
+// confirmQuitRequired decides whether a real quit needs confirmation.
 func (s *Shell) confirmQuitRequired(ctx context.Context) bool {
 	if ctx == nil {
 		return false
@@ -158,12 +188,62 @@ func (s *Shell) clearQuitRequest() {
 	s.mu.Unlock()
 }
 
-// RequestClose mirrors the native close path from the UI shell.
+// CloseRequested is the window-close funnel used by lifecycle bindings.
+// It returns true when the close must be cancelled (hide to tray or quit
+// dialog pending) and false when the application may terminate.
+func (s *Shell) CloseRequested(ctx context.Context) bool {
+	s.mu.Lock()
+	closeToTray := s.prefs.CloseToTray
+	quitting := s.quitting
+	quitConfirmed := s.quitConfirmed
+	s.mu.Unlock()
+
+	if quitting && quitConfirmed {
+		return false
+	}
+	if quitting {
+		// An unconfirmed quit dialog is already pending; cancel this close.
+		return true
+	}
+	if !closeToTray {
+		return !s.ShouldQuit()
+	}
+
+	_, main := s.attached()
+	if main != nil {
+		main.Hide()
+	}
+	return true
+}
+
+// RequestClose mirrors the custom title-bar close button.
 func (s *Shell) RequestClose() {
-	ctx := s.Context()
-	if s.CloseRequested(ctx) {
+	s.mu.Lock()
+	closeToTray := s.prefs.CloseToTray
+	quitting := s.quitting
+	quitConfirmed := s.quitConfirmed
+	s.mu.Unlock()
+
+	if quitting {
+		if quitConfirmed {
+			s.QuitApplication()
+		}
 		return
 	}
+	if closeToTray {
+		_, main := s.attached()
+		if main != nil {
+			main.Hide()
+		}
+		return
+	}
+	if s.ShouldQuit() {
+		s.QuitApplication()
+	}
+}
+
+// QuitApplication requests shutdown through the v3 lifecycle.
+func (s *Shell) QuitApplication() {
 	app, _ := s.attached()
 	if app != nil {
 		app.Quit()
@@ -182,10 +262,8 @@ func (s *Shell) ShowMainWindow() {
 
 // QuitFromTray terminates the application from the tray menu.
 func (s *Shell) QuitFromTray() {
-	s.MarkQuitting()
-	app, _ := s.attached()
-	if app != nil {
-		app.Quit()
+	if s.ShouldQuit() {
+		s.QuitApplication()
 	}
 }
 

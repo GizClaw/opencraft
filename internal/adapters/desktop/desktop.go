@@ -148,6 +148,26 @@ func (d *Desktop) EmitUI(typ string, data any) {
 	d.core.Shell.Emit(typ, data)
 }
 
+// QuitAllowed is the v3 quit gate: it returns true only when quitting may
+// proceed immediately and opens the async confirmation dialog otherwise.
+func (d *Desktop) QuitAllowed() bool {
+	return d.core.Shell.ShouldQuit()
+}
+
+// RequestQuit funnels every explicit quit (tray, UI service, Cmd+Q) through
+// the confirmation gate.
+func (d *Desktop) RequestQuit() {
+	if d.QuitAllowed() {
+		d.core.Shell.QuitApplication()
+	}
+}
+
+// CloseRequested funnels native window closes through the core close gate:
+// close-to-tray hides, a real quit runs the confirmation dialog.
+func (d *Desktop) CloseRequested() bool {
+	return d.core.Shell.CloseRequested(d.core.Shell.Context())
+}
+
 // hasScheduledTasks reports whether quitting would stop an enabled
 // scheduled task. It is the native quit funnel's condition: no
 // scheduler (user DB failed to open) means nothing can run, so exit
