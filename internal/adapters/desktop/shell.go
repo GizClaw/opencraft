@@ -1,8 +1,7 @@
-//go:build wails3
-
 package desktop
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"time"
@@ -12,28 +11,48 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-// Shell is the v3 entry service. Domain services now live in the sibling
-// desktop/bindings package and are shared with the v2 shell; this service
-// only owns shell-level helpers that are not domain DTOs.
+// Shell is the Wails v3 UI service for shell-level operations. Domain
+// services live in the sibling desktop/bindings package and are registered
+// alongside this service by the application entry.
 type Shell struct {
-	app    *application.App
-	main   *application.WebviewWindow
-	second *application.WebviewWindow
+	app     *application.App
+	main    *application.WebviewWindow
+	second  *application.WebviewWindow
+	desktop *Desktop
 }
 
-// NewShell wires the service to the application instance created by the v3
-// entry point. The main window is attached after creation so window managers
-// can be used by the service before Run starts.
-func NewShell(app *application.App) *Shell {
-	return &Shell{app: app}
+// NewShell wires the service to the v3 application and the shared desktop
+// composition root.
+func NewShell(app *application.App, d *Desktop) *Shell {
+	return &Shell{app: app, desktop: d}
 }
 
 // ServiceName keeps the generated binding name stable.
 func (s *Shell) ServiceName() string { return "Shell" }
 
+// ServiceStartup runs the shared composition-root startup with the v3
+// application context.
+func (s *Shell) ServiceStartup(ctx context.Context, _ application.ServiceOptions) error {
+	s.desktop.Startup(ctx)
+	return nil
+}
+
+// ServiceShutdown tears the composition root down in reverse service order.
+func (s *Shell) ServiceShutdown() error {
+	s.desktop.Shutdown(context.Background())
+	return nil
+}
+
 // SetMain records the main window handle after the entry point creates it.
 func (s *Shell) SetMain(w *application.WebviewWindow) {
 	s.main = w
+	s.desktop.core.Shell.Attach(s.app, w)
+}
+
+// Emit pushes one log line through the shared event bus used by the v3 UI.
+func (s *Shell) Emit(format string, args ...any) {
+	s.app.Event.Emit("v3:log", fmt.Sprintf("[%s] %s",
+		time.Now().Format("15:04:05"), fmt.Sprintf(format, args...)))
 }
 
 // ShowMainWindow restores the main window (tray, Dock reopen, second launch).
@@ -45,13 +64,7 @@ func (s *Shell) ShowMainWindow() {
 	s.main.Focus()
 }
 
-// Emit pushes one log line through the shared event bus used by the v3 UI.
-func (s *Shell) Emit(format string, args ...any) {
-	s.app.Event.Emit("v3:log", fmt.Sprintf("[%s] %s",
-		time.Now().Format("15:04:05"), fmt.Sprintf(format, args...)))
-}
-
-// Version reports the injected build version (same -X target as v2).
+// Version reports the injected build version.
 func (s *Shell) Version() string {
 	return version.ServiceVersion
 }
@@ -65,8 +78,7 @@ func (s *Shell) WindowInfo() string {
 	return out
 }
 
-// OpenSecondWindow opens a second webview window on demand (multi-window
-// smoke path for the migration skeleton).
+// OpenSecondWindow opens a second webview window on demand.
 func (s *Shell) OpenSecondWindow() string {
 	if s.second != nil {
 		s.second.Show()
@@ -75,7 +87,7 @@ func (s *Shell) OpenSecondWindow() string {
 	}
 	w := s.app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:             "second",
-		Title:            "OpenCraft v3 second window",
+		Title:            "OpenCraft second window",
 		Width:            680,
 		Height:           480,
 		URL:              "/#second",
@@ -99,15 +111,13 @@ func (s *Shell) CloseSecondWindow() string {
 	return "second window closed"
 }
 
-// Broadcast emits one application-wide event from Go so both windows can log
-// that they received it.
+// Broadcast emits one application-wide event from Go.
 func (s *Shell) Broadcast(msg string) string {
 	s.Emit("Go broadcast: %s", msg)
 	return "broadcast emitted"
 }
 
-// ReportProbe is the automation sink used by the self-driving frontend:
-// it lets non-UI runs assert that bindings and events work end to end.
+// ReportProbe is the automation sink used by the self-driving frontend.
 func (s *Shell) ReportProbe(tag, value string) string {
 	log.Printf("V3AUTO %s = %q", tag, value)
 	return "reported"

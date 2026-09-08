@@ -1,11 +1,8 @@
-// Package desktop is the shared desktop adapter tree. It hosts:
-//   - core: the Wails-agnostic service composition root and domain services;
-//   - bindings: DTO/binding objects shared by the v2 and v3 UI shells;
-//   - mainthread: the darwin main-queue helper used while fyne systray remains;
-//   - the root Shell service for the Wails v3 entry (build-tagged `wails3`).
+// Package desktop is the Wails v3 desktop adapter tree. It hosts:
+//   - core: the service composition root and domain services;
+//   - bindings: the DTO/binding objects registered as Wails v3 services;
+//   - the root Desktop composition and Shell service used by the entry point.
 //
-// desktopv2 keeps only the Wails v2 UI shell during the migration and is
-// removed once the v3 line replaces it. Dependency direction is the same as
-// desktopv2: this package tree may import orchestration/capabilities/
-// foundation but never the reverse.
+// Dependency direction: this package tree may import orchestration/
+// capabilities/foundation but never the reverse.
 package desktop

@@ -2,28 +2,26 @@ package core
 
 import (
 	"context"
-	"runtime"
 	"sync"
 
-	"github.com/GizClaw/flowcraft/core/telemetry"
-
-	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-// Shell owns the native window/tray lifecycle and persisted desktop
-// preferences. It is the desktopv2 replacement for the old App
-// lifecycle/close/tray fields.
+// Shell owns the v3 application-facing shell: event emission, external URL
+// opening, native dialogs and persisted desktop preferences. It is created
+// before the Wails application exists and is attached by the desktop entry
+// once app + main window are available, so all platform calls are nil-safe.
 type Shell struct {
 	mu sync.Mutex
 
+	app            *application.App
+	main           *application.WebviewWindow
 	ctx            context.Context
 	userDir        string
 	prefs          DesktopPrefs
 	quitting       bool
 	quitConfirmed  bool
 	scheduledTasks func(context.Context) bool
-	trayItems      *trayItems
-	trayEnd        func()
 }
 
 // NewShell creates the shell with preferences loaded from userDir.
@@ -35,7 +33,15 @@ func NewShell(userDir string) *Shell {
 	}
 }
 
-// SetContext is called by Startup.
+// Attach wires the live Wails v3 application and its main window.
+func (s *Shell) Attach(app *application.App, main *application.WebviewWindow) {
+	s.mu.Lock()
+	s.app = app
+	s.main = main
+	s.mu.Unlock()
+}
+
+// SetContext installs the application lifecycle context.
 func (s *Shell) SetContext(ctx context.Context) {
 	s.mu.Lock()
 	s.ctx = ctx
@@ -43,9 +49,7 @@ func (s *Shell) SetContext(ctx context.Context) {
 }
 
 // SetScheduledTasksChecker installs the check the quit funnel uses to
-// decide whether exiting would stop scheduled tasks. Passing nil
-// restores the historic always-confirm fallback used before the
-// desktop shell is wired.
+// decide whether exiting would stop scheduled tasks.
 func (s *Shell) SetScheduledTasksChecker(
 	checker func(context.Context) bool,
 ) {
@@ -54,9 +58,8 @@ func (s *Shell) SetScheduledTasksChecker(
 	s.mu.Unlock()
 }
 
-// Context returns the Wails context installed by Startup, falling back
-// to a background context before Startup so callers never need their
-// own Background fallback.
+// Context returns the installed application context, falling back to a
+// background context before startup so callers never handle nil.
 func (s *Shell) Context() context.Context {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -66,37 +69,37 @@ func (s *Shell) Context() context.Context {
 	return context.Background()
 }
 
-// OpenURL opens an http(s) URL in the system default browser. Before
-// Startup there is no Wails context, so the call is a no-op.
-func (s *Shell) OpenURL(url string) {
-	ctx := s.activeContext()
-	if ctx == nil {
-		return
-	}
-	wailsruntime.BrowserOpenURL(ctx, url)
-}
-
-// activeContext returns the real Wails context, or nil before Startup.
-func (s *Shell) activeContext() context.Context {
+func (s *Shell) attached() (*application.App, *application.WebviewWindow) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.ctx
+	return s.app, s.main
 }
 
-// Emit pushes one UI event to the frontend when a Wails context is
-// installed. Events before Startup are dropped.
-func (s *Shell) Emit(typ string, data any) {
-	ctx := s.activeContext()
-	if ctx == nil {
+// OpenURL opens an http(s) URL in the system default browser.
+func (s *Shell) OpenURL(url string) {
+	app, _ := s.attached()
+	if app == nil {
 		return
 	}
-	wailsruntime.EventsEmit(ctx, "opencraft:ui", map[string]any{
+	_ = app.Browser.OpenURL(url)
+}
+
+// Emit pushes one UI event to the frontend. Events before attachment are
+// dropped.
+func (s *Shell) Emit(typ string, data any) {
+	app, _ := s.attached()
+	if app == nil {
+		return
+	}
+	app.Event.Emit("opencraft:ui", map[string]any{
 		"type": typ,
 		"data": data,
 	})
 }
 
-// CloseRequested is the single funnel for window-close paths.
+// CloseRequested is the single funnel for window-close paths. It returns
+// true when the close must be cancelled (hide to tray) and false when the
+// application may terminate.
 func (s *Shell) CloseRequested(ctx context.Context) bool {
 	s.mu.Lock()
 	closeToTray := s.prefs.CloseToTray
@@ -108,14 +111,8 @@ func (s *Shell) CloseRequested(ctx context.Context) bool {
 		return false
 	}
 	if quitting || !closeToTray {
-		if s.confirmQuitRequired(ctx) {
-			if !s.confirmQuit(ctx) {
-				if quitting {
-					s.clearQuitRequest()
-				}
-				return true
-			}
-		}
+		// v3 native dialogs are asynchronous; the quit-confirmation flow is
+		// driven from the window close hook instead of this synchronous call.
 		s.mu.Lock()
 		s.quitting = true
 		s.quitConfirmed = true
@@ -123,14 +120,16 @@ func (s *Shell) CloseRequested(ctx context.Context) bool {
 		return false
 	}
 
-	wailsruntime.Hide(ctx)
+	_, main := s.attached()
+	if main != nil {
+		main.Hide()
+	}
 	return true
 }
 
-// confirmQuitRequired decides whether a real quit needs the native
-// confirmation dialog. With a checker wired, the dialog only appears
-// when scheduled tasks would stop running; without one the historical
-// always-confirm behavior stays until Startup wires the desktop.
+// confirmQuitRequired decides whether a real quit needs confirmation. The
+// synchronous dialog is intentionally not used by the v3 shell; the method
+// remains for tests and for callers that only need the decision.
 func (s *Shell) confirmQuitRequired(ctx context.Context) bool {
 	if ctx == nil {
 		return false
@@ -142,34 +141,6 @@ func (s *Shell) confirmQuitRequired(ctx context.Context) bool {
 		return true
 	}
 	return checker(ctx)
-}
-
-func (s *Shell) confirmQuit(ctx context.Context) bool {
-	if ctx == nil {
-		return true
-	}
-	texts := s.Texts()
-	buttons := []string{texts.QuitDialogConfirm, texts.QuitDialogCancel}
-	defaultButton := texts.QuitDialogCancel
-	cancelButton := texts.QuitDialogCancel
-	if runtime.GOOS != "darwin" {
-		buttons = []string{"Yes", "No"}
-		defaultButton = "No"
-		cancelButton = "No"
-	}
-	selection, err := wailsruntime.MessageDialog(ctx, wailsruntime.MessageDialogOptions{
-		Type:          wailsruntime.QuestionDialog,
-		Title:         texts.QuitDialogTitle,
-		Message:       texts.QuitDialogMessage,
-		Buttons:       buttons,
-		DefaultButton: defaultButton,
-		CancelButton:  cancelButton,
-	})
-	if err != nil {
-		telemetry.WarnErr(ctx, "desktop: exit confirmation dialog failed", err)
-		return false
-	}
-	return selection == texts.QuitDialogConfirm || selection == "Yes"
 }
 
 // MarkQuitting records an unconfirmed quit request.
@@ -187,43 +158,35 @@ func (s *Shell) clearQuitRequest() {
 	s.mu.Unlock()
 }
 
-// RequestClose mirrors the native close path from JS.
+// RequestClose mirrors the native close path from the UI shell.
 func (s *Shell) RequestClose() {
-	s.mu.Lock()
-	ctx := s.ctx
-	s.mu.Unlock()
-	if ctx == nil {
-		return
-	}
+	ctx := s.Context()
 	if s.CloseRequested(ctx) {
 		return
 	}
-	wailsruntime.Quit(ctx)
+	app, _ := s.attached()
+	if app != nil {
+		app.Quit()
+	}
 }
 
-// ShowMainWindow restores the main window.
+// ShowMainWindow restores and focuses the main window.
 func (s *Shell) ShowMainWindow() {
-	s.mu.Lock()
-	ctx := s.ctx
-	s.mu.Unlock()
-	if ctx == nil {
+	_, main := s.attached()
+	if main == nil {
 		return
 	}
-	wailsruntime.WindowUnminimise(ctx)
-	wailsruntime.WindowShow(ctx)
-	wailsruntime.Show(ctx)
+	main.Show()
+	main.Focus()
 }
 
-// QuitFromTray terminates the app from the tray menu.
+// QuitFromTray terminates the application from the tray menu.
 func (s *Shell) QuitFromTray() {
-	s.mu.Lock()
-	ctx := s.ctx
-	s.mu.Unlock()
-	if ctx == nil {
-		return
-	}
 	s.MarkQuitting()
-	wailsruntime.Quit(ctx)
+	app, _ := s.attached()
+	if app != nil {
+		app.Quit()
+	}
 }
 
 // GetCloseToTray reports the persisted close behavior.
@@ -247,17 +210,12 @@ func (s *Shell) Language() string {
 	return s.prefs.Language
 }
 
-// SetLanguage persists the UI language. Tray retitling is wired by the
-// desktopv2 root when tray support is added.
+// SetLanguage persists the UI language.
 func (s *Shell) SetLanguage(language string) error {
 	language = NormalizeLanguage(language)
-	if err := s.commit(func(p *DesktopPrefs) {
+	return s.commit(func(p *DesktopPrefs) {
 		p.Language = language
-	}); err != nil {
-		return err
-	}
-	s.updateTrayTexts()
-	return nil
+	})
 }
 
 // Texts returns the native desktop copy for the current language.
@@ -268,16 +226,77 @@ func (s *Shell) Texts() DesktopTexts {
 	return TextsFor(language)
 }
 
-// SessionDefaults returns the mode/think level applied to newly
-// minted conversations.
+// OpenDirectoryDialog opens a native folder picker.
+func (s *Shell) OpenDirectoryDialog(title, defaultDirectory string) (string, error) {
+	app, main := s.attached()
+	if app == nil {
+		return "", nil
+	}
+	d := app.Dialog.OpenFileWithOptions(&application.OpenFileDialogOptions{
+		Title:                title,
+		Directory:            defaultDirectory,
+		CanChooseDirectories: true,
+		CanChooseFiles:       false,
+		CanCreateDirectories: true,
+	})
+	if main != nil {
+		d.AttachToWindow(main)
+	}
+	return d.PromptForSingleSelection()
+}
+
+// OpenFileDialog opens a native file picker with one optional filter pattern.
+func (s *Shell) OpenFileDialog(title, defaultDirectory, pattern string) (string, error) {
+	app, main := s.attached()
+	if app == nil {
+		return "", nil
+	}
+	opts := &application.OpenFileDialogOptions{
+		Title:                title,
+		Directory:            defaultDirectory,
+		CanChooseFiles:       true,
+		CanChooseDirectories: false,
+	}
+	if pattern != "" {
+		opts.Filters = []application.FileFilter{{
+			DisplayName: "Files",
+			Pattern:     pattern,
+		}}
+	}
+	d := app.Dialog.OpenFileWithOptions(opts)
+	if main != nil {
+		d.AttachToWindow(main)
+	}
+	return d.PromptForSingleSelection()
+}
+
+// SaveFileDialog opens a native save dialog for one file.
+func (s *Shell) SaveFileDialog(defaultFilename, defaultDirectory string) (string, error) {
+	app, main := s.attached()
+	if app == nil {
+		return "", nil
+	}
+	d := app.Dialog.SaveFileWithOptions(&application.SaveFileDialogOptions{
+		Filename:             defaultFilename,
+		Directory:            defaultDirectory,
+		CanCreateDirectories: true,
+	})
+	if main != nil {
+		d.AttachToWindow(main)
+	}
+	return d.PromptForSingleSelection()
+}
+
+// SessionDefaults returns the mode/think level applied to newly minted
+// conversations.
 func (s *Shell) SessionDefaults() (mode, think string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.prefs.DefaultMode, s.prefs.DefaultThink
 }
 
-// SetSessionDefaults persists the default mode/think level. Values
-// must already be canonical.
+// SetSessionDefaults persists the default mode/think level. Values must
+// already be canonical.
 func (s *Shell) SetSessionDefaults(mode, think string) error {
 	return s.commit(func(p *DesktopPrefs) {
 		p.DefaultMode = mode
@@ -286,9 +305,7 @@ func (s *Shell) SetSessionDefaults(mode, think string) error {
 }
 
 // commit applies one mutation to the in-memory preference document and
-// writes it back under the same lock. Holding the lock across the write
-// serializes setters so concurrent updates cannot overwrite each
-// other's fields, and a failed write restores the previous document.
+// writes it back under the same lock.
 func (s *Shell) commit(mutate func(*DesktopPrefs)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

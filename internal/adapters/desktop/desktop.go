@@ -1,8 +1,4 @@
-// Package desktopv2 is the Wails v2 UI shell. During the v3 migration it
-// keeps the desktop app running while internal/adapters/desktop hosts the
-// shared core/bindings services; once the v3 line replaces this shell the
-// package is deleted.
-package desktopv2
+package desktop
 
 import (
 	"context"
@@ -26,24 +22,22 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
+
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-// Options configures the desktopv2 application.
+// Options configures the desktop application.
 type Options struct {
-	WorkDir         string
-	UserDir         string
-	DataDir         string
-	TrayIcon        []byte
-	TrayIconWindows []byte
+	WorkDir string
+	UserDir string
+	DataDir string
 }
 
-// Desktop is the desktopv2 composition root. It is not a Wails binding
+// Desktop is the desktop composition root. It is not a Wails binding
 // object; Bindings returns the per-domain API objects.
 type Desktop struct {
-	core            *core.Core
-	trayIcon        []byte
-	trayIconWindows []byte
-	otelShutdown    func(context.Context) error
+	core         *core.Core
+	otelShutdown func(context.Context) error
 }
 
 // New resolves the user data/config directories and builds the core
@@ -102,10 +96,8 @@ func New(opts Options) (*Desktop, error) {
 		shutdown = nil
 	}
 	return &Desktop{
-		core:            c,
-		trayIcon:        opts.TrayIcon,
-		trayIconWindows: opts.TrayIconWindows,
-		otelShutdown:    shutdown,
+		core:         c,
+		otelShutdown: shutdown,
 	}, nil
 }
 
@@ -133,7 +125,7 @@ func initTelemetry(dataDir string) (func(context.Context) error, error) {
 	})
 }
 
-// Startup wires the Wails context into the core shell.
+// Startup wires the application context into the core shell.
 func (d *Desktop) Startup(ctx context.Context) {
 	d.core.Shell.SetContext(ctx)
 	d.core.Shell.SetScheduledTasksChecker(d.hasScheduledTasks)
@@ -145,7 +137,6 @@ func (d *Desktop) Startup(ctx context.Context) {
 	if err := d.core.RebuildRuntime(ctx); err != nil {
 		d.core.Shell.Emit("fatal", map[string]any{"error": err.Error()})
 	}
-	d.core.Shell.StartTray(d.trayIcon, d.trayIconWindows)
 }
 
 // hasScheduledTasks reports whether quitting would stop an enabled
@@ -169,7 +160,6 @@ func (d *Desktop) hasScheduledTasks(ctx context.Context) bool {
 // Shutdown releases runtime-owned resources. Runtime service teardown
 // is added as the runtime domain migrates.
 func (d *Desktop) Shutdown(ctx context.Context) {
-	d.core.Shell.StopTray()
 	if mgr := d.core.Runtime.AutomationManager(); mgr != nil {
 		mgr.Stop()
 	}
@@ -333,28 +323,25 @@ func suppressAutomationNotify(
 	}
 }
 
-// Bindings returns the Wails binding objects.
-func (d *Desktop) Bindings() []interface{} {
-	return []interface{}{
-		bindings.NewLifecycle(d.core),
-		bindings.NewConfig(d.core),
-		bindings.NewWorkspace(d.core),
-		bindings.NewConversationBinding(d.core),
-		bindings.NewSessionBinding(d.core),
-		bindings.NewAgentBinding(d.core),
-		bindings.NewFileBinding(d.core),
-		bindings.NewGitBinding(d.core),
-		bindings.NewPullRequestsBinding(d.core),
-		bindings.NewSettingsBinding(d.core),
-		bindings.NewDiagnosticsBinding(d.core),
-		bindings.NewPluginBinding(d.core),
-		bindings.NewSecretBinding(d.core),
-		bindings.NewAutomationBinding(d.core),
+// RegisterServices registers every domain binding as a Wails v3 service.
+// Each call is written out explicitly so the v3 binding generator can infer
+// concrete service types from NewService.
+func (d *Desktop) RegisterServices(app *application.App) {
+	reg := func(s application.Service) {
+		app.RegisterService(s)
 	}
-}
-
-// Lifecycle exposes the lifecycle binding for main.go's window close
-// and second-instance handlers.
-func (d *Desktop) Lifecycle() *bindings.Lifecycle {
-	return bindings.NewLifecycle(d.core)
+	reg(application.NewService(bindings.NewLifecycle(d.core)))
+	reg(application.NewService(bindings.NewConfig(d.core)))
+	reg(application.NewService(bindings.NewWorkspace(d.core)))
+	reg(application.NewService(bindings.NewConversationBinding(d.core)))
+	reg(application.NewService(bindings.NewSessionBinding(d.core)))
+	reg(application.NewService(bindings.NewAgentBinding(d.core)))
+	reg(application.NewService(bindings.NewFileBinding(d.core)))
+	reg(application.NewService(bindings.NewGitBinding(d.core)))
+	reg(application.NewService(bindings.NewPullRequestsBinding(d.core)))
+	reg(application.NewService(bindings.NewSettingsBinding(d.core)))
+	reg(application.NewService(bindings.NewDiagnosticsBinding(d.core)))
+	reg(application.NewService(bindings.NewPluginBinding(d.core)))
+	reg(application.NewService(bindings.NewSecretBinding(d.core)))
+	reg(application.NewService(bindings.NewAutomationBinding(d.core)))
 }

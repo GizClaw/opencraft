@@ -1,7 +1,5 @@
 .PHONY: all fmt fmt-check lint check-boundaries test test-yoloonly \
-	gen-bindings build-macos \
-	build-macos-universal build-linux build-yolo-macos build-yolo-macos-universal \
-	build-yolo-linux build-yolo-windows gen-bindings-v3 build-v3-macos
+	gen-bindings build-macos
 
 all: fmt lint check-boundaries test
 
@@ -27,29 +25,10 @@ lint:
 check-boundaries:
 	./scripts/check-boundaries.sh
 
-# gen-bindings regenerates the wails TS bindings (frontend/wailsjs).
-# Required before a frontend-only build on a fresh checkout, since the
-# generated files are not committed.
+# gen-bindings regenerates the Wails v3 TS bindings (frontend-v3/bindings)
+# for the desktop services registered in main.go and desktop.RegisterServices.
 gen-bindings:
-	wails generate module
-
-# gen-bindings-v3 regenerates the Wails v3 bindings for the migration shell
-# (frontend-v3/bindings). Requires the wails3 CLI pinned to the same version
-# as go.mod; generation scans the package under the `wails3` build tag so the
-# v2 entry in main.go stays out of scope.
-gen-bindings-v3:
-	wails3 generate bindings -d frontend-v3/bindings -ts -i \
-		-f '-tags wails3' .
-
-# build-v3-macos builds the v3 migration skeleton as a bare binary. Wrapping
-# it in an .app bundle (Info.plist + ad-hoc codesign) is needed to run on
-# macOS; the wails3 Taskfile/package tasks arrive in Phase 4.
-build-v3-macos:
-	npm --prefix frontend-v3 ci
-	npm --prefix frontend-v3 run build
-	go build -tags "wails3 production" -trimpath -buildvcs=false \
-		-ldflags "-s -w -X github.com/GizClaw/opencraft/internal/foundation/version.ServiceVersion=$(VERSION)" \
-		-o build/bin/opencraft-v3 .
+	wails3 generate bindings -d frontend-v3/bindings -ts -i ./...
 
 test:
 	go test ./...
@@ -85,61 +64,12 @@ GOMOD_GO_VERSION := $(shell awk '/^go /{print $$2; exit}' go.mod)
 GO_TOOLCHAIN ?= go$(GOMOD_GO_VERSION)
 MACOS_CGO_LDFLAGS ?= -Wl,-no_warn_duplicate_libraries
 
-# build-macos produces the desktop binary for the current macOS
-# architecture (arm64 on Apple Silicon, amd64 on Intel).
+# build-macos produces the v3 desktop binary for the current macOS
+# architecture. .app bundling / cross-platform packaging is re-added in
+# Phase 4 with the wails3 Taskfile tasks.
 build-macos:
-	GOTOOLCHAIN=$(GO_TOOLCHAIN) CGO_LDFLAGS="$(MACOS_CGO_LDFLAGS)" wails build
-
-# build-macos-universal produces the Apple Silicon + Intel universal app
-# used by the release workflow.
-build-macos-universal:
-	GOTOOLCHAIN=$(GO_TOOLCHAIN) CGO_LDFLAGS="$(MACOS_CGO_LDFLAGS)" \
-		wails build -platform darwin/universal -clean \
-		-ldflags "$(MACOS_LDFLAGS)"
-
-# build-linux produces the desktop binary for Linux (requires the
-# GTK/WebKit development packages; see .github/workflows/ci.yml).
-build-linux:
-	wails build -platform linux/amd64 -tags webkit2_41
-
-# build-windows produces the desktop binary for Windows. Wails embeds
-# build/windows/icon.ico and cross-compiles the binary from any host.
-build-windows:
-	rm -f OpenCraft-res.syso
-	wails build -platform windows/amd64 -trimpath -upx \
-		-ldflags "$(WINDOWS_LDFLAGS)"
-	rm -f OpenCraft-res.syso
-
-# build-windows-installer produces the Windows NSIS installer in
-# addition to the binary (requires makensis on PATH; macOS/Linux:
-# `brew install nsis`).
-build-windows-installer:
-	rm -f OpenCraft-res.syso
-	wails build -platform windows/amd64 -nsis -trimpath -upx \
-		-ldflags "$(WINDOWS_LDFLAGS)"
-	rm -f OpenCraft-res.syso
-
-# yoloonly desktop builds: Go `-tags yoloonly` forces every session to
-# the YOLO sandbox mode (no read-only/workspace can surface or run).
-# The desktop shell reads the profile through the Config binding and
-# renders the fixed YOLO state / hides approval surfaces itself.
-# Headless builds keep every mode.
-build-yolo-macos:
-	GOTOOLCHAIN=$(GO_TOOLCHAIN) \
-		CGO_LDFLAGS="$(MACOS_CGO_LDFLAGS)" \
-		wails build -tags yoloonly
-
-build-yolo-macos-universal:
-	GOTOOLCHAIN=$(GO_TOOLCHAIN) \
-		CGO_LDFLAGS="$(MACOS_CGO_LDFLAGS)" \
-		wails build -platform darwin/universal -clean -tags yoloonly \
-		-ldflags "$(MACOS_LDFLAGS)"
-
-build-yolo-linux:
-	wails build -platform linux/amd64 -tags "yoloonly webkit2_41"
-
-build-yolo-windows:
-	rm -f OpenCraft-res.syso
-	wails build -platform windows/amd64 -trimpath -upx \
-		-tags yoloonly -ldflags "$(WINDOWS_LDFLAGS)"
-	rm -f OpenCraft-res.syso
+	npm --prefix frontend-v3 ci
+	npm --prefix frontend-v3 run build
+	go build -tags production -trimpath -buildvcs=false \
+		-ldflags "$(MACOS_LDFLAGS)" \
+		-o build/bin/opencraft .

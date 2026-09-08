@@ -8,7 +8,6 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
-	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // Workspace exposes workspace history/open/remove operations.
@@ -75,13 +74,8 @@ func (b *Workspace) Remove(id string) error {
 func (b *Workspace) ChooseWorkspace(
 	title string,
 ) (string, error) {
-	path, err := wailsruntime.OpenDirectoryDialog(
-		b.core.Shell.Context(),
-		wailsruntime.OpenDialogOptions{
-			Title:            title,
-			DefaultDirectory: b.core.ActiveWorkDir(),
-		},
-	)
+	path, err := b.core.Shell.OpenDirectoryDialog(
+		title, b.core.ActiveWorkDir())
 	if err != nil || path == "" {
 		return path, err
 	}

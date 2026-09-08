@@ -21,7 +21,6 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/imageutil"
 	patchutil "github.com/GizClaw/opencraft/internal/foundation/utils/patch"
-	wailsruntime "github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 // File exposes workspace file browsing operations.
@@ -813,14 +812,8 @@ func (b *File) SaveArtifactAs(path string) (string, error) {
 	if !info.Mode().IsRegular() {
 		return "", fmt.Errorf("%s is not a regular file", full)
 	}
-	dest, err := wailsruntime.SaveFileDialog(
-		b.core.Shell.Context(),
-		wailsruntime.SaveDialogOptions{
-			DefaultFilename:      filepath.Base(full),
-			DefaultDirectory:     filepath.Dir(full),
-			CanCreateDirectories: true,
-		},
-	)
+	dest, err := b.core.Shell.SaveFileDialog(
+		filepath.Base(full), filepath.Dir(full))
 	if err != nil || dest == "" || filepath.Clean(dest) == filepath.Clean(full) {
 		return dest, err
 	}
@@ -879,30 +872,10 @@ func (b *File) OpenArtifactWith(path string) error {
 
 // PickFolder opens a native directory picker.
 func (b *File) PickFolder(title string) (string, error) {
-	return wailsruntime.OpenDirectoryDialog(
-		b.core.Shell.Context(),
-		wailsruntime.OpenDialogOptions{
-			Title:            title,
-			DefaultDirectory: b.core.ActiveWorkDir(),
-		},
-	)
+	return b.core.Shell.OpenDirectoryDialog(title, b.core.ActiveWorkDir())
 }
 
 // PickFile opens a native file picker.
 func (b *File) PickFile(title, pattern string) (string, error) {
-	filters := []wailsruntime.FileFilter{}
-	if pattern != "" {
-		filters = append(filters, wailsruntime.FileFilter{
-			DisplayName: "Files",
-			Pattern:     pattern,
-		})
-	}
-	return wailsruntime.OpenFileDialog(
-		b.core.Shell.Context(),
-		wailsruntime.OpenDialogOptions{
-			Title:            title,
-			DefaultDirectory: b.core.ActiveWorkDir(),
-			Filters:          filters,
-		},
-	)
+	return b.core.Shell.OpenFileDialog(title, b.core.ActiveWorkDir(), pattern)
 }

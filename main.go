@@ -1,45 +1,33 @@
-//go:build !wails3
-
-// Command opencraft is the opencraft desktop application (Wails v2 line).
-// It runs the assembled flowcraft runtime behind a Wails shell: Go bindings
-// drive sessions, agents, and configuration, while the event bridge pushes
-// runtime streams (tokens, tool calls, interactions) into the React frontend
-// embedded in the binary. The v3 migration skeleton lives in main_v3.go and
-// is selected with `-tags wails3`; both entries coexist on this branch.
+// Command opencraft is the opencraft desktop application. It runs the
+// assembled flowcraft runtime behind a Wails v3 shell: Go services drive
+// sessions, agents, and configuration, while the event bridge pushes runtime
+// streams (tokens, tool calls, interactions) into the React frontend embedded
+// in the binary.
 package main
 
 import (
-	"context"
 	"embed"
 	"log"
 	"os"
-	"runtime"
+	"sync/atomic"
+	"time"
 
-	"github.com/GizClaw/opencraft/internal/adapters/desktopv2"
+	"github.com/GizClaw/opencraft/internal/adapters/desktop"
 	"github.com/GizClaw/opencraft/internal/adapters/headless"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/linux"
-	"github.com/wailsapp/wails/v2/pkg/options/mac"
-	"github.com/wailsapp/wails/v2/pkg/options/windows"
+	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
-//go:embed all:frontend/dist
+//go:embed all:frontend-v3/dist
 var assets embed.FS
 
 //go:embed build/appicon.png
-var appIcon []byte
-
-//go:embed build/windows/icon.ico
-var appIconWindows []byte
+var trayIcon []byte
 
 func main() {
-	// execd is the internal self-forked sandbox child (see
-	// execd_main.go). It must be handled before any GUI machinery
-	// starts: the desktop process forks itself with `opencraft execd`
-	// when a sandboxed command needs an isolated process server.
+	// execd is the internal self-forked sandbox child. It must be handled
+	// before any GUI machinery starts.
 	if len(os.Args) > 1 && os.Args[1] == "execd" {
 		runExecServer()
 		return
@@ -48,91 +36,110 @@ func main() {
 		os.Exit(headless.Main(os.Args[2:]))
 	}
 
-	app, err := desktopv2.New(desktopv2.Options{
-		TrayIcon:        appIcon,
-		TrayIconWindows: appIconWindows,
+	d, err := desktop.New(desktop.Options{
+		UserDir: os.Getenv("V3_USER_DIR"),
+		DataDir: os.Getenv("V3_DATA_DIR"),
 	})
 	if err != nil {
 		log.Fatalf("opencraft: %v", err)
 	}
 
-	opts := &options.App{
-		Title:     "OpenCraft",
-		Width:     1440,
-		Height:    900,
-		MinWidth:  1024,
-		MinHeight: 700,
-		AssetServer: &assetserver.Options{
-			Assets: assets,
+	var quitRequested atomic.Bool
+	var shell *desktop.Shell
+
+	app := application.New(application.Options{
+		Name:        "OpenCraft",
+		Description: "A local-first work partner built on flowcraft",
+		Assets: application.AssetOptions{
+			Handler: application.AssetFileServerFS(assets),
 		},
-		BackgroundColour: &options.RGBA{R: 15, G: 18, B: 24, A: 1},
-		OnStartup: func(ctx context.Context) {
-			app.Startup(ctx)
-			applyOpenCraftWindowStyle()
-			installOpenCraftReopenHandler()
-			installOpenCraftTerminateHandler()
+		Mac: application.MacOptions{
+			ApplicationShouldTerminateAfterLastWindowClosed: false,
 		},
-		OnShutdown: app.Shutdown,
-		// Close-to-background: every close path (native window close,
-		// the custom title-bar X button, Cmd+Q / Dock Quit on macOS)
-		// funnels through OnBeforeClose. macOS Cmd+Q / Dock Quit is
-		// detected first and recorded as a quit request; other closes
-		// consult the persisted "close to tray" setting. Real quits
-		// only ask for confirmation when enabled scheduled tasks would
-		// stop running, then let Wails terminate.
-		OnBeforeClose: func(ctx context.Context) bool {
-			if macConsumeTerminateRequest() {
-				app.Lifecycle().MarkQuitting()
-			}
-			return app.Lifecycle().CloseRequested()
-		},
-		SingleInstanceLock: &options.SingleInstanceLock{
-			// Stable reverse-DNS id; do not version it. It feeds the
-			// Windows mutex, the macOS lock file + distributed
-			// notification, and the Linux D-Bus name.
-			UniqueId: "com.gizclaw.opencraft",
-			OnSecondInstanceLaunch: func(options.SecondInstanceData) {
-				// Launcher/Dock/`open -a` while the app is already
-				// running: restore the main window instead of starting
-				// a second process.
-				app.Lifecycle().ShowMainWindow()
+		SingleInstance: &application.SingleInstanceOptions{
+			UniqueID: "com.gizclaw.opencraft",
+			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
+				shell.Emit("second instance args=%v workingDir=%s", data.Args, data.WorkingDir)
+				shell.ShowMainWindow()
 			},
 		},
-		Bind: app.Bindings(),
+		OnShutdown: func() {
+			quitRequested.Store(true)
+		},
+	})
+
+	mainURL := "/"
+	if os.Getenv("V3_AUTO") == "1" {
+		mainURL = "/#auto"
 	}
-	switch runtime.GOOS {
-	case "darwin":
-		// Hidden, inset title bar on macOS: the system frame (rounded
-		// corners, shadow, traffic lights) stays native while the
-		// content extends to the top; the traffic lights are nudged
-		// into alignment with the chat header by
-		// applyOpenCraftWindowStyle. Frameless must stay off here —
-		// Wails would strip the traffic lights entirely.
-		opts.Mac = &mac.Options{
-			TitleBar: mac.TitleBarHiddenInset(),
+	mainW := app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Name:             "main",
+		Title:            "OpenCraft",
+		Width:            1440,
+		Height:           900,
+		MinWidth:         1024,
+		MinHeight:        700,
+		URL:              mainURL,
+		Mac:              application.MacWindow{TitleBar: application.MacTitleBarHiddenInset},
+		BackgroundColour: application.NewRGB(15, 18, 24),
+		EnableFileDrop:   true,
+	})
+
+	shell = desktop.NewShell(app, d)
+	shell.SetMain(mainW)
+	app.RegisterService(application.NewService(shell))
+	d.RegisterServices(app)
+
+	// Mirror v3 events to the process log for automated runs.
+	app.Event.On("v3:log", func(e *application.CustomEvent) {
+		log.Printf("V3EVENT sender=%q data=%v", e.Sender, e.Data)
+	})
+
+	// Close-to-background: intercept native closes and hide the main window
+	// until a real quit is requested.
+	mainW.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
+		if quitRequested.Load() {
+			return
 		}
-	case "windows", "linux":
-		// Frameless + custom title bar on Windows/Linux to match the
-		// macOS look: the webview renders the brand strip and window
-		// controls, and Wails' built-in CSS drag/edge-resize handles
-		// the window chrome. macOS keeps its native traffic lights.
-		opts.Frameless = true
-		switch runtime.GOOS {
-		case "windows":
-			// Keep the Windows 11 rounded corners and Aero shadow;
-			// the theme follows the system (WebView2 UI chrome).
-			opts.Windows = &windows.Options{
-				Theme: windows.SystemDefault,
-			}
-		case "linux":
-			opts.Linux = &linux.Options{
-				ProgramName:      "OpenCraft",
-				WebviewGpuPolicy: linux.WebviewGpuPolicyAlways,
-			}
-		}
+		shell.Emit("cancel close; hiding main window")
+		e.Cancel()
+		mainW.Hide()
+	})
+
+	// Dock reopen uses first-class mac events.
+	app.Event.OnApplicationEvent(events.Mac.ApplicationShouldHandleReopen, func(*application.ApplicationEvent) {
+		shell.Emit("mac ApplicationShouldHandleReopen")
+		shell.ShowMainWindow()
+	})
+
+	menu := app.NewMenu()
+	menu.Add("Show OpenCraft").OnClick(func(*application.Context) {
+		shell.ShowMainWindow()
+	})
+	menu.AddSeparator()
+	menu.Add("Quit").OnClick(func(*application.Context) {
+		app.Quit()
+	})
+	tray := app.SystemTray.New()
+	tray.SetIcon(trayIcon)
+	tray.SetTooltip("OpenCraft")
+	tray.SetMenu(menu)
+
+	if os.Getenv("V3_AUTO") == "1" {
+		time.AfterFunc(1200*time.Millisecond, func() {
+			shell.Emit("auto app ready")
+		})
+		time.AfterFunc(3*time.Second, func() {
+			shell.Emit("auto: closing main to exercise close-to-tray")
+			mainW.Close()
+			time.AfterFunc(900*time.Millisecond, func() {
+				shell.Emit("auto: restoring main; visible=%v", mainW.IsVisible())
+				shell.ShowMainWindow()
+			})
+		})
 	}
-	err = wails.Run(opts)
-	if err != nil {
+
+	if err := app.Run(); err != nil {
 		log.Fatalf("opencraft: %v", err)
 	}
 }
