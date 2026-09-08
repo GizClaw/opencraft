@@ -42,6 +42,9 @@ func TestShellPrefsRoundTrip(t *testing.T) {
 
 func TestShellQuitState(t *testing.T) {
 	s := NewShell(t.TempDir())
+	if s.QuitRequested() {
+		t.Fatal("fresh shell must not report a quit flow")
+	}
 	s.MarkQuitting()
 	s.mu.Lock()
 	quitting := s.quitting
@@ -50,6 +53,9 @@ func TestShellQuitState(t *testing.T) {
 	if !quitting || confirmed {
 		t.Fatalf("quit state after MarkQuitting = (%v,%v)", quitting, confirmed)
 	}
+	if !s.QuitRequested() {
+		t.Fatal("MarkQuitting must be visible through QuitRequested")
+	}
 	s.clearQuitRequest()
 	s.mu.Lock()
 	quitting = s.quitting
@@ -57,6 +63,23 @@ func TestShellQuitState(t *testing.T) {
 	s.mu.Unlock()
 	if quitting || confirmed {
 		t.Fatalf("quit state after clear = (%v,%v)", quitting, confirmed)
+	}
+	if s.QuitRequested() {
+		t.Fatal("clearQuitRequest must also reset QuitRequested")
+	}
+}
+
+func TestShellLanguageChangedListener(t *testing.T) {
+	s := NewShell(t.TempDir())
+	var notified []string
+	s.SetLanguageChangedListener(func() {
+		notified = append(notified, s.Language())
+	})
+	if err := s.SetLanguage("zh-CN"); err != nil {
+		t.Fatal(err)
+	}
+	if len(notified) != 1 || notified[0] != "zh" {
+		t.Fatalf("language listener notified with %v, want [zh]", notified)
 	}
 }
 

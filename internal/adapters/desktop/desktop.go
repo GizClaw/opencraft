@@ -98,7 +98,11 @@ func New(opts Options) (*Desktop, error) {
 		shutdown = nil
 	}
 	return &Desktop{
-		core:          c,
+		core: c,
+		// Windows toast attribution keys off application.Options.Name
+		// ("OpenCraft"); the NSIS installer stamps the same AppUserModelID
+		// onto the shortcuts it creates. Keep main.go's Options.Name and
+		// build/config.yml's productName in sync with that value.
 		notifications: notifications.New(),
 		otelShutdown:  shutdown,
 	}, nil
@@ -152,6 +156,13 @@ func (d *Desktop) EmitUI(typ string, data any) {
 // proceed immediately and opens the async confirmation dialog otherwise.
 func (d *Desktop) QuitAllowed() bool {
 	return d.core.Shell.ShouldQuit()
+}
+
+// QuitRequested reports whether a quit flow is already under way (dialog
+// pending or confirmed). Window close events fired during that flow must not
+// trigger a second quit request.
+func (d *Desktop) QuitRequested() bool {
+	return d.core.Shell.QuitRequested()
 }
 
 // RequestQuit funnels every explicit quit (tray, UI service, Cmd+Q) through

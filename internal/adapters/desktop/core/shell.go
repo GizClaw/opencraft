@@ -25,6 +25,7 @@ type Shell struct {
 	quitting       bool
 	quitConfirmed  bool
 	scheduledTasks func(context.Context) bool
+	onLanguage     func()
 }
 
 // NewShell creates the shell with preferences loaded from userDir.
@@ -66,6 +67,14 @@ func (s *Shell) SetScheduledTasksChecker(
 ) {
 	s.mu.Lock()
 	s.scheduledTasks = checker
+	s.mu.Unlock()
+}
+
+// SetLanguageChangedListener wires a refresh hook for native surfaces that
+// mirror the persisted language (system tray labels, ...).
+func (s *Shell) SetLanguageChangedListener(fn func()) {
+	s.mu.Lock()
+	s.onLanguage = fn
 	s.mu.Unlock()
 }
 
@@ -207,6 +216,16 @@ func (s *Shell) MarkQuitting() {
 	s.mu.Unlock()
 }
 
+// QuitRequested reports whether a quit flow has started: either an
+// unconfirmed confirmation dialog is pending or the quit was already
+// confirmed. Window teardown that happens after this state must not trigger a
+// second quit request.
+func (s *Shell) QuitRequested() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.quitting
+}
+
 func (s *Shell) clearQuitRequest() {
 	s.mu.Lock()
 	s.quitting = false
@@ -317,9 +336,18 @@ func (s *Shell) Language() string {
 // SetLanguage persists the UI language.
 func (s *Shell) SetLanguage(language string) error {
 	language = NormalizeLanguage(language)
-	return s.commit(func(p *DesktopPrefs) {
+	if err := s.commit(func(p *DesktopPrefs) {
 		p.Language = language
-	})
+	}); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	fn := s.onLanguage
+	s.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
+	return nil
 }
 
 // Texts returns the native desktop copy for the current language.

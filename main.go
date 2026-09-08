@@ -112,15 +112,25 @@ func main() {
 		log.Printf("V3EVENT sender=%q data=%v", e.Sender, e.Data)
 	})
 
-	// Close-to-background: intercept native closes and hide the main window
-	// until a real quit is requested.
+	// Close-to-background: every native close funnels through the same gate as
+	// the v2 shell did. With "close to tray" enabled the close is cancelled
+	// and the window hides; otherwise the close becomes a real quit request
+	// that still runs the confirmation flow. Once a quit flow already owns
+	// the shutdown (tray Quit, Cmd+Q, UI quit), window teardown must not
+	// issue a second quit request.
 	mainW.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
 		if quitRequested.Load() {
 			return
 		}
+		quitInFlight := d.QuitRequested()
 		if d.CloseRequested() {
 			e.Cancel()
+			return
 		}
+		if quitInFlight {
+			return
+		}
+		d.RequestQuit()
 	})
 
 	// v3 routes drops to the Go window event; forward paths into the shared
@@ -139,18 +149,14 @@ func main() {
 		shell.ShowMainWindow()
 	})
 
-	menu := app.NewMenu()
-	menu.Add("Show OpenCraft").OnClick(func(*application.Context) {
-		shell.ShowMainWindow()
-	})
-	menu.AddSeparator()
-	menu.Add("Quit").OnClick(func(*application.Context) {
-		d.RequestQuit()
-	})
-	tray := app.SystemTray.New()
-	tray.SetIcon(trayIcon)
-	tray.SetTooltip("OpenCraft")
-	tray.SetMenu(menu)
+	d.SetupTray(app, trayIcon,
+		func() { shell.ShowMainWindow() },
+		func() { d.RequestQuit() },
+	)
+
+	// macOS polish (traffic-light alignment, scroll elasticity) after the
+	// first page load; no-op on Windows/Linux.
+	registerOpenCraftWindowStyleRefresh(mainW)
 
 	if os.Getenv("V3_AUTO") == "1" {
 		time.AfterFunc(1200*time.Millisecond, func() {
