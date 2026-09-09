@@ -1,11 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '../lib/api';
 import type { PetPack } from './pack';
-import {
-  base64ToArrayBuffer,
-  createPetRive,
-  type PetRiveHandle,
-} from './rive';
+import { base64ToArrayBuffer, createPetRive, type PetRiveHandle } from './rive';
 import { toPetView } from './state';
 
 /**
@@ -26,11 +22,7 @@ export function PetPreview({ pack }: { pack: PetPack }) {
         const base64 = await api.petPackAsset(pack.rivAsset);
         const canvas = canvasRef.current;
         if (!canvas || cancelled) return;
-        handle = await createPetRive(
-          canvas,
-          base64ToArrayBuffer(base64),
-          pack,
-        );
+        handle = await createPetRive(canvas, base64ToArrayBuffer(base64), pack);
         if (cancelled) {
           handle.destroy();
           return;

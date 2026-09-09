@@ -367,12 +367,9 @@ export const api = {
     Lifecycle.GetPetsSettings() as unknown as Promise<PetsSettings>,
   setPetSettings: (settings: PetsSettings) =>
     Lifecycle.SetPetsSettings(settings as unknown as gen.PetsSettings),
-  petListPacks: () =>
-    Pet.ListPacks() as unknown as Promise<PetPack[]>,
-  petActivities: () =>
-    Pet.Activities() as unknown as Promise<PetActivityDTO[]>,
-  petDiagnostics: () =>
-    Pet.Diagnostics() as unknown as Promise<PetMindDebug>,
+  petListPacks: () => Pet.ListPacks() as unknown as Promise<PetPack[]>,
+  petActivities: () => Pet.Activities() as unknown as Promise<PetActivityDTO[]>,
+  petDiagnostics: () => Pet.Diagnostics() as unknown as Promise<PetMindDebug>,
   petMoveBy: (dx: number, dy: number) => Pet.MoveBy(dx, dy),
   petSetPosition: (x: number, y: number) => Pet.SetPosition(x, y),
   petActivate: () => Pet.Activate(),

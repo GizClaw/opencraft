@@ -101,14 +101,10 @@ export function SubagentDock() {
             className="flex shrink-0 items-center gap-1.5 rounded-lg border border-edge bg-panel px-2 py-1 text-xs text-fg transition-colors hover:border-accent/50"
             title={`${row.phase}${row.toolName ? ` · ${row.toolName}` : ''}`}
           >
-            <span
-              className={`h-2 w-2 rounded-full ${phaseDot(row.phase)}`}
-            />
+            <span className={`h-2 w-2 rounded-full ${phaseDot(row.phase)}`} />
             <span className="font-medium">{row.name}</span>
             {row.toolName && (
-              <span className="max-w-28 truncate text-dim">
-                {row.toolName}
-              </span>
+              <span className="max-w-28 truncate text-dim">{row.toolName}</span>
             )}
           </button>
         ))}

@@ -45,10 +45,7 @@ describe('bindingForView', () => {
 
   it('falls back to the wildcard for unknown categories', () => {
     expect(
-      bindingForView(
-        pack,
-        view({ phase: 'tool', toolCategory: 'other' }),
-      ),
+      bindingForView(pack, view({ phase: 'tool', toolCategory: 'other' })),
     ).toEqual({ type: 'input', name: 'busy' });
   });
 
@@ -72,10 +69,7 @@ describe('bindingForView', () => {
 
   it('keeps work states ahead of walk', () => {
     expect(
-      bindingForView(
-        pack,
-        view({ phase: 'answering', walking: true }),
-      ),
+      bindingForView(pack, view({ phase: 'answering', walking: true })),
     ).toEqual({ type: 'input', name: 'talk' });
   });
 });

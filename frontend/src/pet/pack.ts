@@ -46,7 +46,5 @@ export function pickPack(
     const preferred = list.find((pack) => pack.id === preferredId);
     if (preferred) return preferred;
   }
-  return (
-    list.find((pack) => pack.id === BUILTIN_ASSISTANT_PACK_ID) ?? list[0]
-  );
+  return list.find((pack) => pack.id === BUILTIN_ASSISTANT_PACK_ID) ?? list[0];
 }

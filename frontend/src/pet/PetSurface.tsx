@@ -5,16 +5,8 @@ import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import type { PetPack } from './pack';
 import { pickPack } from './pack';
-import {
-  base64ToArrayBuffer,
-  createPetRive,
-  type PetRiveHandle,
-} from './rive';
-import {
-  toPetView,
-  type PetStatePayload,
-  type PetView,
-} from './state';
+import { base64ToArrayBuffer, createPetRive, type PetRiveHandle } from './rive';
+import { toPetView, type PetStatePayload, type PetView } from './state';
 import './pet.css';
 
 interface PendingRivePack {
@@ -89,8 +81,10 @@ export default function PetSurface() {
   useEffect(() => {
     return Events.On('opencraft:ui', (event) => {
       const ev = event.data as { type?: string } | null;
-      if (ev?.type === 'pet:packs_changed' ||
-          ev?.type === 'pet:settings_changed') {
+      if (
+        ev?.type === 'pet:packs_changed' ||
+        ev?.type === 'pet:settings_changed'
+      ) {
         setReloadToken((n) => n + 1);
       }
     });
@@ -196,20 +190,18 @@ export default function PetSurface() {
     }
   };
   const reactionBubble = reaction.bubble ?? bubbleForIntent(reaction.intent);
-  const bubbleText =
-    pet.disposition === 'ask' ? '…?' : reactionBubble;
+  const bubbleText = pet.disposition === 'ask' ? '…?' : reactionBubble;
 
   const onPointerMove = (event: React.PointerEvent) => {
     const drag = dragRef.current;
     if (!drag.active) return;
-    drag.moved += Math.abs(event.screenX - drag.startScreenX) +
+    drag.moved +=
+      Math.abs(event.screenX - drag.startScreenX) +
       Math.abs(event.screenY - drag.startScreenY);
     if (!drag.startWin) return;
     drag.desired = {
-      x: drag.startWin.x +
-        Math.round(event.screenX - drag.startScreenX),
-      y: drag.startWin.y +
-        Math.round(event.screenY - drag.startScreenY),
+      x: drag.startWin.x + Math.round(event.screenX - drag.startScreenX),
+      y: drag.startWin.y + Math.round(event.screenY - drag.startScreenY),
     };
     requestDragApply();
   };
@@ -250,7 +242,8 @@ export default function PetSurface() {
   const endDrag = (event: React.PointerEvent) => {
     const drag = dragRef.current;
     if (!drag.active) return;
-    const total = Math.abs(event.screenX - drag.startScreenX) +
+    const total =
+      Math.abs(event.screenX - drag.startScreenX) +
       Math.abs(event.screenY - drag.startScreenY);
     if (total < 6) {
       cancelDrag();

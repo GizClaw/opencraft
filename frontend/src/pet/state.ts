@@ -4,13 +4,7 @@
 // mapping stays trivially unit-testable.
 
 export type PetPhase =
-  | 'idle'
-  | 'thinking'
-  | 'tool'
-  | 'answering'
-  | 'asking'
-  | 'done'
-  | 'error';
+  'idle' | 'thinking' | 'tool' | 'answering' | 'asking' | 'done' | 'error';
 
 export type PetDisposition = 'roam' | 'sleep' | 'work' | 'ask';
 

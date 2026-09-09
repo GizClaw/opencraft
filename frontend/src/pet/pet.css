@@ -72,7 +72,6 @@ html[data-surface='pet'] #root {
   font-size: 10px;
 }
 
-
 .pet-preview {
   display: grid;
   place-items: center;

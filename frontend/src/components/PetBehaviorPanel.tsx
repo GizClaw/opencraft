@@ -3,10 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import type { PetMindDebug } from '../pet/state';
 
-function moodLabel(
-  mood: string,
-  t: (key: string) => string,
-): string {
+function moodLabel(mood: string, t: (key: string) => string): string {
   switch (mood) {
     case 'sleepy':
       return t('config.petMoodSleepy');
@@ -106,14 +103,14 @@ export function PetBehaviorPanel() {
             <div key={drive.key}>
               <div className="flex justify-between text-xs text-dim">
                 <span>{drive.key}</span>
-                <span className="font-mono">
-                  {Math.round(drive.value)}/100
-                </span>
+                <span className="font-mono">{Math.round(drive.value)}/100</span>
               </div>
               <div className="mt-1 h-1.5 overflow-hidden rounded bg-panel">
                 <div
                   className={`h-full rounded ${drive.bar}`}
-                  style={{ width: `${Math.max(0, Math.min(100, drive.value))}%` }}
+                  style={{
+                    width: `${Math.max(0, Math.min(100, drive.value))}%`,
+                  }}
                 />
               </div>
             </div>

@@ -32,12 +32,7 @@ interface PetPackSelectProps {
 // PetPackSelect is the character picker styled after the project's
 // custom dropdowns (UsageModelSelect / chat pickers): a trigger button
 // with a floating listbox and check mark instead of a native <select>.
-function PetPackSelect({
-  packs,
-  value,
-  onChange,
-  label,
-}: PetPackSelectProps) {
+function PetPackSelect({ packs, value, onChange, label }: PetPackSelectProps) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -550,11 +545,9 @@ export function SettingsGeneral() {
                     packs={petPacks}
                     value={
                       petCharacter ||
-                      (petPacks.find(
-                        (p) => p.id === BUILTIN_ASSISTANT_PACK_ID,
-                      )
+                      (petPacks.find((p) => p.id === BUILTIN_ASSISTANT_PACK_ID)
                         ? BUILTIN_ASSISTANT_PACK_ID
-                        : petPacks[0]?.id ?? '')
+                        : (petPacks[0]?.id ?? ''))
                     }
                     onChange={(value) => {
                       void setPetCharacterChoice(value);
