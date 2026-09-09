@@ -167,18 +167,6 @@ export type PluginServiceKey =
   | 'commands'
   | 'statusBar';
 
-/** Pet interaction surface exposed to plugins: register packs and fire
- *  scene intents (walk off-screen / walk back in). */
-export interface PetsService {
-  add: Registrar<PetPack>['add'];
-  /**
-   * Requests a scene transition for the roaming assistant pet:
-   * "exit" walks it off-screen, "enter" walks it back in. The actual
-   * animations are provided by the pack's intent bindings.
-   */
-  trigger: (intent: 'exit' | 'enter') => void;
-}
-
 // The exported module shape of a plugin bundle (ESM).
 export interface PluginModule {
   name?: string;
@@ -211,8 +199,8 @@ declare module '@cordisjs/core' {
     sidebarEntries: Registrar<SidebarEntryContribution>;
     commands: Registrar<CommandContribution>;
     statusBar: Registrar<StatusBarContribution>;
-    /** Declarative pet packs + scene triggers, see src/pet/pack. */
-    pets: PetsService;
+    /** Declarative pet packs; data only, see src/pet/pack. */
+    pets: Registrar<PetPack>;
     /**
      * Invokes a method on this plugin's capability subprocess (if the
      * manifest declares one). params and the result are JSON; the host

@@ -58,11 +58,6 @@ type Desktop struct {
 	petDirector    *petfeed.PetDirector
 	petRoamPaused  bool
 	petDebug       petfeed.MindDebug
-	petScene       string // "", "exiting", "off", "entering"
-	petSceneX      int
-	petSceneY      int
-	petSceneSide   string
-	petSceneIntent string
 }
 
 // New resolves the user data/config directories and builds the core

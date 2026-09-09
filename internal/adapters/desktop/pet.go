@@ -42,7 +42,6 @@ type petStatePayload struct {
 	Walking      bool   `json:"walking,omitempty"`
 	Intent       string `json:"intent,omitempty"`
 	Bubble       string `json:"bubble,omitempty"`
-	Scene        string `json:"scene,omitempty"`
 }
 
 func newPetStatePayload(st petfeed.PetSurfaceState) petStatePayload {
@@ -132,7 +131,6 @@ func (d *Desktop) startAssistantPet(ctx context.Context) {
 		d.pokePet,
 		d.setRoamPaused,
 		d.petDiagnostics,
-		d.triggerPetIntent,
 		d.petWindowPosition,
 	)
 
@@ -379,12 +377,6 @@ func (d *Desktop) roamAssistantPet(
 			d.petMu.Lock()
 			manual := d.petRoamPaused || now.Before(d.petManualUntil)
 			x, y = d.petX, d.petY
-			scene := d.petScene
-			sceneX, sceneY := d.petSceneX, d.petSceneY
-			sceneIntent := d.petSceneIntent
-			if sceneIntent != "" {
-				d.petSceneIntent = ""
-			}
 			d.petMu.Unlock()
 
 			// Re-anchor on the OS-reported position every few ticks.
@@ -401,67 +393,7 @@ func (d *Desktop) roamAssistantPet(
 				}
 			}
 
-			fireIntent := ""
-			if sceneIntent == "exit" && scene == "" {
-				centerX := (minX + maxX + assistantPetSize) / 2
-				side := "right"
-				if x < centerX {
-					side = "left"
-				}
-				sceneX = minX - assistantPetSize
-				if side == "right" {
-					sceneX = maxX + assistantPetSize
-				}
-				scene = "exiting"
-				sceneY = y
-				fireIntent = "exit"
-				d.petMu.Lock()
-				d.petScene = scene
-				d.petSceneX = sceneX
-				d.petSceneY = sceneY
-				d.petSceneSide = side
-				d.petMu.Unlock()
-			} else if sceneIntent == "enter" && scene == "off" {
-				sceneX = minX + (maxX-minX)/2
-				sceneY = y
-				scene = "entering"
-				fireIntent = "enter"
-				d.petMu.Lock()
-				d.petScene = scene
-				d.petSceneX = sceneX
-				d.petSceneY = sceneY
-				d.petMu.Unlock()
-			}
-
-			sceneActive := scene != ""
-			if sceneActive {
-				switch scene {
-				case "exiting":
-					x = petStep(x, sceneX, petRoamTick)
-					y = sceneY
-					if x == sceneX {
-						d.petMu.Lock()
-						d.petScene = "off"
-						d.petMu.Unlock()
-					}
-				case "off":
-					// Fully off-screen: wait for an enter trigger.
-				case "entering":
-					x = petStep(x, sceneX, petRoamTick)
-					y = sceneY
-					if x == sceneX {
-						d.petMu.Lock()
-						d.petScene = ""
-						d.petSceneIntent = ""
-						d.petMu.Unlock()
-						scene = ""
-						wasAttached = false
-						nextTargetAt = now.Add(petRoamDelay())
-					}
-				}
-			}
-
-			if !sceneActive && !manual {
+			if !manual {
 				switch state.Disposition {
 				case petfeed.PetDispositionSleep:
 					// Asleep: stay put.
@@ -542,13 +474,6 @@ func (d *Desktop) roamAssistantPet(
 				d.core.Shell.LastUserActive(),
 				moved,
 			)
-			if sceneActive {
-				state = petfeed.PetSurfaceState{
-					AgentID:     desktopcore.AssistantAgentID,
-					Phase:       state.Phase,
-					Disposition: petfeed.PetDispositionRoam,
-				}
-			}
 			debug := director.Debug(state)
 			debug.Walking = moved
 			d.petMu.Lock()
@@ -557,10 +482,6 @@ func (d *Desktop) roamAssistantPet(
 
 			payload := newPetStatePayload(state)
 			payload.Walking = moved
-			payload.Scene = scene
-			if fireIntent != "" {
-				payload.Intent = fireIntent
-			}
 			if payload == last {
 				continue
 			}
@@ -630,7 +551,7 @@ func (d *Desktop) stopPet() {
 		win.Close()
 	}
 	d.core.Shell.SetPetWindowControls(
-		nil, nil, nil, nil, nil, nil, nil, nil)
+		nil, nil, nil, nil, nil, nil, nil)
 }
 
 // petDiagnostics returns the latest rover/mind snapshot for bindings.
@@ -638,23 +559,6 @@ func (d *Desktop) petDiagnostics() petfeed.MindDebug {
 	d.petMu.Lock()
 	defer d.petMu.Unlock()
 	return d.petDebug
-}
-
-// triggerPetIntent accepts scene intents from the plugin/binding
-// surface: "exit" walks the pet off-screen, "enter" walks it back in.
-func (d *Desktop) triggerPetIntent(intent string) {
-	d.petMu.Lock()
-	defer d.petMu.Unlock()
-	switch intent {
-	case "exit":
-		if d.petScene == "" {
-			d.petSceneIntent = "exit"
-		}
-	case "enter":
-		if d.petScene == "off" {
-			d.petSceneIntent = "enter"
-		}
-	}
 }
 
 // petWindowPosition returns the rover-tracked absolute position.

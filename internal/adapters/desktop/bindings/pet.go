@@ -93,11 +93,6 @@ func (b *Pet) Diagnostics() pet.MindDebug {
 	return b.core.Shell.PetDiagnostics()
 }
 
-// TriggerIntent fires a plugin-requested pet scene intent.
-func (b *Pet) TriggerIntent(intent string) {
-	b.core.Shell.TriggerPetIntent(intent)
-}
-
 // PositionDTO is the current pet window anchor exposed for drag
 // gestures.
 type PositionDTO struct {

@@ -19,28 +19,27 @@ import (
 type Shell struct {
 	mu sync.Mutex
 
-	app             *application.App
-	main            *application.WebviewWindow
-	ctx             context.Context
-	userDir         string
-	prefs           DesktopPrefs
-	dialogIcon      []byte
-	quitting        bool
-	quitConfirmed   bool
-	scheduledTasks  func(context.Context) bool
-	onLanguage      func()
-	onPetsChanged   func()
-	petMove         func(dx, dy int)
-	petSetPosition  func(x, y int)
-	petActivate     func()
-	petPoke         func()
-	petRoamPause    func(paused bool)
-	petDiagnostics  func() petfeed.MindDebug
-	petSceneTrigger func(intent string)
-	petPosition     func() (x, y int, ok bool)
-	userActiveAt    time.Time
-	notifySink      func(typ string, data any)
-	petSink         func(typ string, data any)
+	app            *application.App
+	main           *application.WebviewWindow
+	ctx            context.Context
+	userDir        string
+	prefs          DesktopPrefs
+	dialogIcon     []byte
+	quitting       bool
+	quitConfirmed  bool
+	scheduledTasks func(context.Context) bool
+	onLanguage     func()
+	onPetsChanged  func()
+	petMove        func(dx, dy int)
+	petSetPosition func(x, y int)
+	petActivate    func()
+	petPoke        func()
+	petRoamPause   func(paused bool)
+	petDiagnostics func() petfeed.MindDebug
+	petPosition    func() (x, y int, ok bool)
+	userActiveAt   time.Time
+	notifySink     func(typ string, data any)
+	petSink        func(typ string, data any)
 }
 
 // NewShell creates the shell with preferences loaded from userDir.
@@ -111,7 +110,6 @@ func (s *Shell) SetPetWindowControls(
 	poke func(),
 	roamPause func(paused bool),
 	diagnostics func() petfeed.MindDebug,
-	sceneTrigger func(intent string),
 	position func() (x, y int, ok bool),
 ) {
 	s.mu.Lock()
@@ -121,7 +119,6 @@ func (s *Shell) SetPetWindowControls(
 	s.petPoke = poke
 	s.petRoamPause = roamPause
 	s.petDiagnostics = diagnostics
-	s.petSceneTrigger = sceneTrigger
 	s.petPosition = position
 	s.mu.Unlock()
 }
@@ -191,17 +188,6 @@ func (s *Shell) PetDiagnostics() petfeed.MindDebug {
 		return petfeed.MindDebug{}
 	}
 	return fn()
-}
-
-// TriggerPetIntent forwards a plugin-requested scene intent (exit /
-// enter) to the desktop root.
-func (s *Shell) TriggerPetIntent(intent string) {
-	s.mu.Lock()
-	fn := s.petSceneTrigger
-	s.mu.Unlock()
-	if fn != nil {
-		fn(intent)
-	}
 }
 
 // PetPosition returns the current pet window position when the rover

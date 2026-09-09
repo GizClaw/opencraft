@@ -9,7 +9,6 @@ import type {
   CommandContribution,
   KVService,
   PetPack,
-  PetsService,
   PluginModule,
   PluginServiceKey,
   Registrar,
@@ -196,16 +195,7 @@ function provideServices(ctx: Context, c: ContributionState) {
   ctx.provide('sidebarEntries', makeRegistrar(c.sidebarEntries), true);
   ctx.provide('commands', makeRegistrar(c.commands), true);
   ctx.provide('statusBar', makeRegistrar(c.statusBar), true);
-  {
-    const registrar = makePetsRegistrar(c.petPacks);
-    const petsService: PetsService = {
-      add: registrar.add,
-      trigger: (intent) => {
-        void api.petTriggerIntent(intent);
-      },
-    };
-    ctx.provide('pets', petsService, true);
-  }
+  ctx.provide('pets', makePetsRegistrar(c.petPacks), true);
   // invoke routes to this plugin's capability subprocess. It is an
   // accessor so the calling plugin's id is captured on access.
   ctx.accessor('invoke', {
