@@ -28,6 +28,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	metricstore "github.com/GizClaw/opencraft/internal/capabilities/telemetry/metric"
 	automationtool "github.com/GizClaw/opencraft/internal/capabilities/tools/automation"
 	"github.com/GizClaw/opencraft/internal/capabilities/usage"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
@@ -35,6 +36,8 @@ import (
 	"github.com/GizClaw/opencraft/internal/orchestration/engine"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 	"github.com/GizClaw/opencraft/internal/orchestration/migrations"
+
+	otellog "go.opentelemetry.io/otel/log"
 )
 
 // UsageRecorder receives one model usage delta (a finished turn, one
@@ -92,6 +95,7 @@ type Manager struct {
 	userDB          *db.DB
 	userUsage       *usage.Store
 	userAutomations *automations.Store
+	userMetrics     *metricstore.Store
 }
 
 type hostRef struct {
@@ -257,6 +261,13 @@ func (m *Manager) OpenUserDB(ctx context.Context) error {
 			handle.Close())
 		return fmt.Errorf("host: attach automations: %w", err)
 	}
+	metricStore, err := metricstore.Attach(handle)
+	if err != nil {
+		telemetry.WarnErr(ctx,
+			"host: close user db after metrics attach failure",
+			handle.Close())
+		return fmt.Errorf("host: attach metrics: %w", err)
+	}
 	m.mu.Lock()
 	if m.userDB != nil {
 		m.mu.Unlock()
@@ -266,6 +277,7 @@ func (m *Manager) OpenUserDB(ctx context.Context) error {
 	m.userDB = handle
 	m.userUsage = usageStore
 	m.userAutomations = automationStore
+	m.userMetrics = metricStore
 	m.mu.Unlock()
 	return nil
 }
@@ -279,6 +291,7 @@ func (m *Manager) CloseUserDB() {
 	m.userDB = nil
 	m.userUsage = nil
 	m.userAutomations = nil
+	m.userMetrics = nil
 	m.mu.Unlock()
 	if handle != nil {
 		telemetry.WarnErr(context.Background(),
@@ -300,6 +313,35 @@ func (m *Manager) AutomationsStore() *automations.Store {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.userAutomations
+}
+
+// MetricsStore returns the user-level local metric store attached by
+// OpenUserDB, or nil before the database is open.
+func (m *Manager) MetricsStore() *metricstore.Store {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.userMetrics
+}
+
+// RecordMetric persists one local metric sample through the attached store.
+// It is a no-op before OpenUserDB and never fails the caller: persistence is
+// best-effort and errors are logged.
+func (m *Manager) RecordMetric(
+	ctx context.Context,
+	name string,
+	value float64,
+	attrs map[string]string,
+) {
+	m.mu.Lock()
+	store := m.userMetrics
+	m.mu.Unlock()
+	if store == nil {
+		return
+	}
+	if err := store.Record(ctx, name, value, attrs); err != nil {
+		telemetry.WarnErr(ctx, "host: record local metric failed",
+			err, otellog.String("metric", name))
+	}
 }
 
 // RecordUsage invokes the currently installed user-level usage

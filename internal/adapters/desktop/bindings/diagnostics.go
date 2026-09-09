@@ -81,6 +81,10 @@ func (b *Diagnostics) ReportFrontendPerf(samples []FrontendPerfSample) {
 		flowtelemetry.Info(ctx, "frontend rum: "+sample.Name,
 			log.Float64("value", sample.Value),
 			log.String("unit", unit))
+		if mgr := b.core.Runtime.Manager(); mgr != nil {
+			mgr.RecordMetric(ctx, "frontend."+sample.Name,
+				sample.Value, map[string]string{"unit": unit})
+		}
 		if frontendDurationMetrics[sample.Name] {
 			frontendVitalsDuration.Record(ctx, sample.Value,
 				metric.WithAttributes(
@@ -91,6 +95,43 @@ func (b *Diagnostics) ReportFrontendPerf(samples []FrontendPerfSample) {
 			frontendVitalsScore.Record(ctx, sample.Value)
 		}
 	}
+}
+
+// MetricPoint is one local metric sample shown in the diagnostics panel.
+type MetricPoint struct {
+	Ts    int64             `json:"ts"`
+	Value float64           `json:"value"`
+	Attrs map[string]string `json:"attrs,omitempty"`
+}
+
+// MetricRange returns one local metric series from the user-level metric
+// store. fromMs/toMs are unix milliseconds (toMs 0 means no upper bound).
+// An empty result is returned when the user database is not open.
+func (b *Diagnostics) MetricRange(
+	name string,
+	fromMs, toMs int64,
+	limit int,
+) ([]MetricPoint, error) {
+	mgr := b.core.Runtime.Manager()
+	if mgr == nil {
+		return nil, nil
+	}
+	store := mgr.MetricsStore()
+	if store == nil {
+		return nil, nil
+	}
+	samples, err := store.RangeNewest(
+		b.core.Shell.Context(), name, fromMs, toMs, limit)
+	if err != nil {
+		return nil, err
+	}
+	points := make([]MetricPoint, 0, len(samples))
+	for _, sample := range samples {
+		points = append(points, MetricPoint{
+			Ts: sample.Ts, Value: sample.Value, Attrs: sample.Attrs,
+		})
+	}
+	return points, nil
 }
 
 // Report is the environment summary.

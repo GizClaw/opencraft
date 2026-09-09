@@ -37,9 +37,11 @@ type Options struct {
 // Desktop is the desktop composition root. It is not a Wails binding object;
 // RegisterServices exposes the per-domain API objects as Wails v3 services.
 type Desktop struct {
-	core          *core.Core
-	notifications *notifications.NotificationService
-	otelShutdown  func(context.Context) error
+	core               *core.Core
+	notifications      *notifications.NotificationService
+	otelShutdown       func(context.Context) error
+	runtimeMetricsStop chan struct{}
+	runtimeMetricsDone chan struct{}
 }
 
 // New resolves the user data/config directories and builds the core
@@ -139,6 +141,10 @@ func (d *Desktop) Startup(ctx context.Context) {
 		durationMs := time.Since(started).Milliseconds()
 		octelemetry.SampleHistogram(
 			ctx, "desktop.startup_ms", "ms", float64(durationMs))
+		if mgr := d.core.Runtime.Manager(); mgr != nil {
+			mgr.RecordMetric(ctx, "desktop.startup_ms",
+				float64(durationMs), nil)
+		}
 		telemetry.Info(ctx, fmt.Sprintf(
 			"desktop: startup completed in %d ms", durationMs))
 	}()
@@ -147,6 +153,7 @@ func (d *Desktop) Startup(ctx context.Context) {
 	if err := d.core.Runtime.OpenUserDB(ctx); err != nil {
 		telemetry.WarnErr(ctx, "desktop: open user db failed", err)
 	} else {
+		d.startRuntimeMetrics()
 		d.startAutomations(ctx)
 	}
 	if err := d.core.RebuildRuntime(ctx); err != nil {
@@ -213,6 +220,7 @@ func (d *Desktop) hasScheduledTasks(ctx context.Context) bool {
 // Shutdown releases runtime-owned resources. Runtime service teardown
 // is added as the runtime domain migrates.
 func (d *Desktop) Shutdown(ctx context.Context) {
+	d.stopRuntimeMetrics()
 	if mgr := d.core.Runtime.AutomationManager(); mgr != nil {
 		mgr.Stop()
 	}

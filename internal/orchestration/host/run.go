@@ -394,6 +394,11 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 			errText = err.Error()
 		}
 		recordTurnMetrics(persistCtx, string(status), r.durationMs)
+		if host.manager != nil {
+			host.manager.RecordMetric(persistCtx, "turn.duration_ms",
+				float64(r.durationMs),
+				map[string]string{"status": string(status)})
+		}
 		execErr := err
 		if execErr == nil && res != nil {
 			execErr = res.Err
