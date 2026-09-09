@@ -32,6 +32,16 @@ type DesktopPrefs struct {
 	Language     string `json:"language,omitempty"`
 	DefaultMode  string `json:"defaultMode,omitempty"`
 	DefaultThink string `json:"defaultThink,omitempty"`
+	// Pets carries the desktop pet surface preferences. The assistant
+	// character id is resolved against the pet pack registry at window
+	// creation time; unknown ids fall back to the builtin default.
+	Pets PetPrefs `json:"pets,omitempty"`
+}
+
+// PetPrefs is the desktop pet section of the preference document.
+type PetPrefs struct {
+	Enabled            bool   `json:"enabled"`
+	AssistantCharacter string `json:"assistantCharacter,omitempty"`
 }
 
 // LoadPrefs reads the desktop preference file with defaults.

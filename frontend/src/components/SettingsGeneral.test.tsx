@@ -10,6 +10,10 @@ const apiMock = vi.hoisted(() => ({
   sessionDefaults: vi.fn(),
   saveSessionDefaults: vi.fn(),
   setCloseToTray: vi.fn(),
+  petSettings: vi.fn(),
+  setPetSettings: vi.fn(),
+  petListPacks: vi.fn(),
+  petPackAsset: vi.fn(),
 }));
 
 vi.mock('../lib/api', () => ({ api: apiMock }));
@@ -30,6 +34,10 @@ beforeEach(() => {
   });
   apiMock.saveSessionDefaults.mockResolvedValue(undefined);
   apiMock.setCloseToTray.mockResolvedValue(undefined);
+  apiMock.petSettings.mockResolvedValue({ enabled: false });
+  apiMock.setPetSettings.mockResolvedValue(undefined);
+  apiMock.petListPacks.mockResolvedValue([]);
+  apiMock.petPackAsset.mockRejectedValue(new Error('no preview in tests'));
 });
 
 describe('SettingsGeneral', () => {
@@ -97,5 +105,52 @@ describe('SettingsGeneral', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('persists the desktop pet toggle', async () => {
+    const user = userEvent.setup();
+    render(<SettingsGeneral />);
+
+    await user.click(await screen.findByRole('button', { name: /On|开启/ }));
+    expect(apiMock.petSettings).toHaveBeenCalled();
+    expect(apiMock.setPetSettings).toHaveBeenCalledWith({ enabled: true });
+  });
+
+  it('persists the selected pet character', async () => {
+    apiMock.petListPacks.mockResolvedValue([
+      {
+        id: 'assistant-default',
+        displayName: 'Assistant',
+        version: '0.1.0',
+        stateMachine: 'PetSM',
+        rivAsset: 'builtin://assistant-default',
+        meta: { scale: 1, walkSpeed: 90, anchor: 'bottom-center' },
+        bindings: {},
+      },
+      {
+        id: 'neko',
+        displayName: 'Neko',
+        version: '1.0.0',
+        pluginId: 'pet-pack',
+        stateMachine: 'PetSM',
+        rivAsset: 'plugin://pet-pack/neko.riv',
+        meta: { scale: 1, walkSpeed: 90, anchor: 'bottom-center' },
+        bindings: {},
+      },
+    ]);
+    const user = userEvent.setup();
+    render(<SettingsGeneral />);
+
+    await user.click(await screen.findByRole('button', { name: /On|开启/ }));
+    await user.click(
+      await screen.findByRole('button', {
+        name: /Assistant pet character|宠物角色/,
+      }),
+    );
+    await user.click(await screen.findByRole('option', { name: /Neko/ }));
+    expect(apiMock.setPetSettings).toHaveBeenCalledWith({
+      enabled: true,
+      assistantCharacter: 'neko',
+    });
   });
 });

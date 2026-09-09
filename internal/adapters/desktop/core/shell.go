@@ -3,8 +3,11 @@ package core
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
+
+	petfeed "github.com/GizClaw/opencraft/internal/adapters/desktop/pet"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -16,17 +19,28 @@ import (
 type Shell struct {
 	mu sync.Mutex
 
-	app            *application.App
-	main           *application.WebviewWindow
-	ctx            context.Context
-	userDir        string
-	prefs          DesktopPrefs
-	dialogIcon     []byte
-	quitting       bool
-	quitConfirmed  bool
-	scheduledTasks func(context.Context) bool
-	onLanguage     func()
-	notifySink     func(typ string, data any)
+	app             *application.App
+	main            *application.WebviewWindow
+	ctx             context.Context
+	userDir         string
+	prefs           DesktopPrefs
+	dialogIcon      []byte
+	quitting        bool
+	quitConfirmed   bool
+	scheduledTasks  func(context.Context) bool
+	onLanguage      func()
+	onPetsChanged   func()
+	petMove         func(dx, dy int)
+	petSetPosition  func(x, y int)
+	petActivate     func()
+	petPoke         func()
+	petRoamPause    func(paused bool)
+	petDiagnostics  func() petfeed.MindDebug
+	petSceneTrigger func(intent string)
+	petPosition     func() (x, y int, ok bool)
+	userActiveAt    time.Time
+	notifySink      func(typ string, data any)
+	petSink         func(typ string, data any)
 }
 
 // NewShell creates the shell with preferences loaded from userDir.
@@ -79,6 +93,145 @@ func (s *Shell) SetLanguageChangedListener(fn func()) {
 	s.mu.Unlock()
 }
 
+// SetPetsChangedListener installs a callback fired whenever the pet
+// preference changes. The desktop root uses it to start/stop the pet
+// window without a restart.
+func (s *Shell) SetPetsChangedListener(fn func()) {
+	s.mu.Lock()
+	s.onPetsChanged = fn
+	s.mu.Unlock()
+}
+
+// SetPetWindowControls installs the desktop-root callbacks for pet
+// window manipulation (drag movement and click-to-activate).
+func (s *Shell) SetPetWindowControls(
+	move func(dx, dy int),
+	setPosition func(x, y int),
+	activate func(),
+	poke func(),
+	roamPause func(paused bool),
+	diagnostics func() petfeed.MindDebug,
+	sceneTrigger func(intent string),
+	position func() (x, y int, ok bool),
+) {
+	s.mu.Lock()
+	s.petMove = move
+	s.petSetPosition = setPosition
+	s.petActivate = activate
+	s.petPoke = poke
+	s.petRoamPause = roamPause
+	s.petDiagnostics = diagnostics
+	s.petSceneTrigger = sceneTrigger
+	s.petPosition = position
+	s.mu.Unlock()
+}
+
+// MovePetWindow asks the desktop root to move the pet window by a
+// relative offset (drag input from the pet surface).
+func (s *Shell) MovePetWindow(dx, dy int) {
+	s.mu.Lock()
+	fn := s.petMove
+	s.mu.Unlock()
+	if fn != nil {
+		fn(dx, dy)
+	}
+}
+
+// SetPetPosition asks the desktop root to move the pet window to an
+// absolute position (drag input from the pet surface).
+func (s *Shell) SetPetPosition(x, y int) {
+	s.mu.Lock()
+	fn := s.petSetPosition
+	s.mu.Unlock()
+	if fn != nil {
+		fn(x, y)
+	}
+}
+
+// ActivatePet brings the main window to the foreground (pet click).
+func (s *Shell) ActivatePet() {
+	s.mu.Lock()
+	fn := s.petActivate
+	s.mu.Unlock()
+	if fn != nil {
+		fn()
+		return
+	}
+	s.FocusMain()
+}
+
+// PokePet reports a click/pet interaction to the desktop root.
+func (s *Shell) PokePet() {
+	s.mu.Lock()
+	fn := s.petPoke
+	s.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
+}
+
+// SetPetRoamingPaused pauses/resumes the autonomous rover from the pet
+// surface context menu.
+func (s *Shell) SetPetRoamingPaused(paused bool) {
+	s.mu.Lock()
+	fn := s.petRoamPause
+	s.mu.Unlock()
+	if fn != nil {
+		fn(paused)
+	}
+}
+
+// PetDiagnostics returns the latest pet mind/rover snapshot for the
+// settings diagnostics panel.
+func (s *Shell) PetDiagnostics() petfeed.MindDebug {
+	s.mu.Lock()
+	fn := s.petDiagnostics
+	s.mu.Unlock()
+	if fn == nil {
+		return petfeed.MindDebug{}
+	}
+	return fn()
+}
+
+// TriggerPetIntent forwards a plugin-requested scene intent (exit /
+// enter) to the desktop root.
+func (s *Shell) TriggerPetIntent(intent string) {
+	s.mu.Lock()
+	fn := s.petSceneTrigger
+	s.mu.Unlock()
+	if fn != nil {
+		fn(intent)
+	}
+}
+
+// PetPosition returns the current pet window position when the rover
+// has a valid anchor.
+func (s *Shell) PetPosition() (x, y int, ok bool) {
+	s.mu.Lock()
+	fn := s.petPosition
+	s.mu.Unlock()
+	if fn == nil {
+		return 0, 0, false
+	}
+	return fn()
+}
+
+// MarkUserActive records the latest main-window user activity pulse
+// (pointer movement, keystrokes, window focus). The pet mind uses it to
+// tell "the user is here" from "the user walked away".
+func (s *Shell) MarkUserActive() {
+	s.mu.Lock()
+	s.userActiveAt = time.Now()
+	s.mu.Unlock()
+}
+
+// LastUserActive returns the latest main-window user activity time.
+func (s *Shell) LastUserActive() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.userActiveAt
+}
+
 // SetNotificationSink installs an optional observer invoked for every UI
 // event right after the frontend emit. The desktop adapter uses it to raise
 // native system notifications for interact/turn_end/automation events from
@@ -86,6 +239,17 @@ func (s *Shell) SetLanguageChangedListener(fn func()) {
 func (s *Shell) SetNotificationSink(fn func(typ string, data any)) {
 	s.mu.Lock()
 	s.notifySink = fn
+	s.mu.Unlock()
+}
+
+// SetPetSink installs an optional observer invoked for every UI event
+// right after the frontend emit (and the notification sink). The pet
+// activity feed uses it as its single event source: every stream,
+// turn_end and interact event funnels through Shell.Emit regardless of
+// whether it originated from a UI turn or an automation run.
+func (s *Shell) SetPetSink(fn func(typ string, data any)) {
+	s.mu.Lock()
+	s.petSink = fn
 	s.mu.Unlock()
 }
 
@@ -104,6 +268,30 @@ func (s *Shell) attached() (*application.App, *application.WebviewWindow) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.app, s.main
+}
+
+// App returns the attached Wails application, or nil before the shell
+// is attached by the entry point.
+func (s *Shell) App() *application.App {
+	app, _ := s.attached()
+	return app
+}
+
+// MainWindow returns the attached main window handle, or nil before
+// attachment.
+func (s *Shell) MainWindow() *application.WebviewWindow {
+	_, main := s.attached()
+	return main
+}
+
+// FocusMain shows and focuses the main window.
+func (s *Shell) FocusMain() {
+	app, main := s.attached()
+	if app == nil || main == nil {
+		return
+	}
+	main.Show()
+	main.Focus()
 }
 
 // OpenURL opens an http(s) URL in the system default browser.
@@ -131,9 +319,13 @@ func (s *Shell) Emit(typ string, data any) {
 	})
 	s.mu.Lock()
 	fn := s.notifySink
+	pet := s.petSink
 	s.mu.Unlock()
 	if fn != nil {
 		fn(typ, data)
+	}
+	if pet != nil {
+		pet(typ, data)
 	}
 }
 
@@ -425,6 +617,45 @@ func (s *Shell) SetSessionDefaults(mode, think string) error {
 	return s.commit(func(p *DesktopPrefs) {
 		p.DefaultMode = mode
 		p.DefaultThink = think
+	})
+}
+
+// PetsEnabled reports whether the desktop pet surface is enabled.
+func (s *Shell) PetsEnabled() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.prefs.Pets.Enabled
+}
+
+// SetPetsEnabled persists the desktop pet switch.
+func (s *Shell) SetPetsEnabled(enabled bool) error {
+	if err := s.commit(func(p *DesktopPrefs) {
+		p.Pets.Enabled = enabled
+	}); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	fn := s.onPetsChanged
+	s.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
+	return nil
+}
+
+// AssistantPetCharacter returns the pack id selected for the roaming
+// assistant pet, or "" when the builtin default applies.
+func (s *Shell) AssistantPetCharacter() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.prefs.Pets.AssistantCharacter
+}
+
+// SetAssistantPetCharacter persists the pack id for the assistant pet.
+// An empty id restores the builtin default pack.
+func (s *Shell) SetAssistantPetCharacter(id string) error {
+	return s.commit(func(p *DesktopPrefs) {
+		p.Pets.AssistantCharacter = id
 	})
 }
 

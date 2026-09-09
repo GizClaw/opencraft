@@ -77,6 +77,8 @@ func (b *Conversation) StartTurn(
 		b.core.Shell.Emit("stream", map[string]any{
 			"run_id":          interact.StreamRunID(env.Subject),
 			"conversation_id": contextID,
+			"agent_id":        agentIDOrAssistant(env),
+			"parent_run_id":   env.ParentRunID(),
 			"delta":           delta,
 		})
 		return nil
@@ -169,8 +171,19 @@ func (b *Conversation) waitTurn(
 		requestID, responseID,
 		lastAssistantOutput(res), finishedAt, durationMs,
 	)
+	end.AgentID = core.AssistantAgentID
 	b.core.Shell.Emit("turn_end", end)
 	b.core.Shell.Emit("status", core.StatusEvent{})
+}
+
+// agentIDOrAssistant returns the envelope agent header, falling back to
+// the desktop assistant identity when the engine did not stamp one
+// (older flowcraft engines or direct message streams).
+func agentIDOrAssistant(env event.Envelope) string {
+	if id := env.AgentID(); id != "" {
+		return id
+	}
+	return core.AssistantAgentID
 }
 
 // lastAssistantOutput returns the bounded text of the final assistant

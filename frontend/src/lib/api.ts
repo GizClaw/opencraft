@@ -9,6 +9,7 @@ import * as File from '../../bindings/github.com/GizClaw/opencraft/internal/adap
 import * as Git from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/git';
 import * as Lifecycle from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/lifecycle';
 import * as Plugin from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/plugin';
+import * as Pet from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/pet';
 import * as PullRequests from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/pullrequests';
 import * as Secret from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/secret';
 import * as Session from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/session';
@@ -54,6 +55,7 @@ import type {
   ProviderModelCatalog,
   PatchFileDTO,
   PolicyDecision,
+  PetsSettings,
   ProviderView,
   ReplyRequest,
   SandboxProbeResult,
@@ -73,7 +75,11 @@ import type {
   PluginSummary,
   PluginToolDTO,
 } from '../plugins/types';
+import type { PetPack } from '../pet/pack';
+import type { PetActivityDTO } from '../pet/state';
+import type { PetMindDebug } from '../pet/state';
 import type * as genPlugin from '../../bindings/github.com/GizClaw/opencraft/internal/capabilities/plugins/models';
+import type * as genPet from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/pet/models';
 
 function pluginSummaryOf(p: genPlugin.PluginSummary): PluginSummary {
   return {
@@ -357,6 +363,28 @@ export const api = {
   getCloseToTray: () => Lifecycle.GetCloseToTray(),
   setCloseToTray: (closeToTray: boolean) =>
     Lifecycle.SetCloseToTray(closeToTray),
+  petSettings: () =>
+    Lifecycle.GetPetsSettings() as unknown as Promise<PetsSettings>,
+  setPetSettings: (settings: PetsSettings) =>
+    Lifecycle.SetPetsSettings(settings as unknown as gen.PetsSettings),
+  petListPacks: () =>
+    Pet.ListPacks() as unknown as Promise<PetPack[]>,
+  petActivities: () =>
+    Pet.Activities() as unknown as Promise<PetActivityDTO[]>,
+  petDiagnostics: () =>
+    Pet.Diagnostics() as unknown as Promise<PetMindDebug>,
+  petMoveBy: (dx: number, dy: number) => Pet.MoveBy(dx, dy),
+  petSetPosition: (x: number, y: number) => Pet.SetPosition(x, y),
+  petActivate: () => Pet.Activate(),
+  petPoke: () => Pet.Poke(),
+  petTriggerIntent: (intent: string) => Pet.TriggerIntent(intent),
+  petSetRoamingPaused: (paused: boolean) => Pet.SetRoamingPaused(paused),
+  petGetPosition: () => Pet.Position(),
+  reportUserActivity: () => Lifecycle.ReportUserActivity(),
+  petPackAsset: (asset: string) => Pet.PackAsset(asset),
+  petRegisterPack: (pack: PetPack) =>
+    Pet.RegisterPack(pack as unknown as genPet.Pack),
+  petUnregisterPack: (id: string) => Pet.UnregisterPack(id),
   closeRequested: () => Lifecycle.RequestClose(),
   pickFolder: (title: string) => File.PickFolder(title),
   pickFile: (title: string, pattern: string) => File.PickFile(title, pattern),

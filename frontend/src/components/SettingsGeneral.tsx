@@ -4,11 +4,15 @@ import {
   ChevronDown,
   Flame,
   Minimize2,
+  PawPrint,
   Power,
   Sparkles,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
+import type { PetPack } from '../pet/pack';
+import { BUILTIN_ASSISTANT_PACK_ID } from '../pet/pack';
+import { PetPreview } from '../pet/PetPreview';
 import { SESSION_MODES } from '../lib/sessionModes';
 import { useStore } from '../lib/store';
 import { PluginPanels } from '../plugins/components/PluginPanels';
@@ -17,6 +21,116 @@ import { YoloConfirmDialog } from './YoloConfirmDialog';
 // The think slider persists on a short debounce so dragging across
 // several levels writes the file once instead of once per step.
 const THINK_SAVE_DELAY_MS = 400;
+
+interface PetPackSelectProps {
+  packs: PetPack[];
+  value: string;
+  onChange: (value: string) => void;
+  label: string;
+}
+
+// PetPackSelect is the character picker styled after the project's
+// custom dropdowns (UsageModelSelect / chat pickers): a trigger button
+// with a floating listbox and check mark instead of a native <select>.
+function PetPackSelect({
+  packs,
+  value,
+  onChange,
+  label,
+}: PetPackSelectProps) {
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(-1);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const index = packs.findIndex((pack) => pack.id === value);
+    setActive(index >= 0 ? index : 0);
+  }, [open, packs, value]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  const pick = (id: string) => {
+    onChange(id);
+    setOpen(false);
+  };
+
+  const selected = packs.find((pack) => pack.id === value);
+
+  return (
+    <div ref={rootRef} className="relative min-w-0">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label={label}
+        className="flex h-9 w-full items-center gap-2 rounded-lg border border-edge/70 bg-panel/70 px-3 text-xs text-fg backdrop-blur-sm transition-colors hover:bg-panel focus:border-accent"
+      >
+        <span className="truncate">{selected?.displayName ?? label}</span>
+        {selected?.pluginId && (
+          <span className="shrink-0 rounded bg-panel2 px-1.5 py-0.5 text-[0.65rem] text-dim">
+            {selected.pluginId}
+          </span>
+        )}
+        <ChevronDown
+          size={14}
+          className={`ml-auto shrink-0 text-dim transition-transform ${
+            open ? 'rotate-180' : ''
+          }`}
+        />
+      </button>
+      {open && (
+        <>
+          <div
+            className="fixed inset-0 z-30"
+            onMouseDown={() => setOpen(false)}
+          />
+          <div
+            role="listbox"
+            className="absolute left-0 top-full z-40 mt-1 w-full min-w-[16rem] rounded-lg border border-edge/80 bg-panel/95 p-1 shadow-xl backdrop-blur-md"
+          >
+            {packs.map((pack, i) => {
+              const selectedPack = pack.id === value;
+              return (
+                <button
+                  key={pack.id}
+                  type="button"
+                  role="option"
+                  aria-selected={selectedPack}
+                  onMouseEnter={() => setActive(i)}
+                  onClick={() => pick(pack.id)}
+                  className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors ${
+                    active === i
+                      ? 'bg-panel2 text-fg'
+                      : 'text-dim hover:text-fg'
+                  } ${selectedPack ? 'text-accent' : ''}`}
+                >
+                  <span className="truncate">{pack.displayName}</span>
+                  {pack.pluginId && (
+                    <span className="shrink-0 text-[0.65rem] opacity-70">
+                      {pack.pluginId}
+                    </span>
+                  )}
+                  {selectedPack && (
+                    <Check size={13} className="ml-auto shrink-0" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 // SettingsGeneral is the first settings tab: behavior that applies
 // app-wide (window close policy, new-session defaults) plus the
@@ -34,6 +148,11 @@ export function SettingsGeneral() {
   const [think, setThink] = useState(storeDefaults.think);
   const [confirmYolo, setConfirmYolo] = useState(false);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
+  // null until the persisted value loads; the pet row renders once the
+  // backend answered so the highlighted option never flashes.
+  const [petsEnabled, setPetsEnabled] = useState<boolean | null>(null);
+  const [petPacks, setPetPacks] = useState<PetPack[]>([]);
+  const [petCharacter, setPetCharacter] = useState('');
   // confirmedRef is the last value the backend accepted; it is the
   // rollback target when a save fails. pendingRef + timerRef drive the
   // debounced slider save and flush it if the tab closes early.
@@ -66,10 +185,18 @@ export function SettingsGeneral() {
 
   useEffect(() => {
     let alive = true;
-    void Promise.all([api.getCloseToTray(), api.sessionDefaults()])
-      .then(([close, defaults]) => {
+    void Promise.all([
+      api.getCloseToTray(),
+      api.sessionDefaults(),
+      api.petSettings(),
+      api.petListPacks(),
+    ])
+      .then(([close, defaults, pets, packs]) => {
         if (!alive) return;
         setCloseToTray(close);
+        setPetsEnabled(pets.enabled);
+        setPetCharacter(pets.assistantCharacter ?? '');
+        setPetPacks(packs ?? []);
         setMode(defaults.mode);
         setThink(defaults.think);
         confirmedRef.current = {
@@ -106,6 +233,37 @@ export function SettingsGeneral() {
     setMode(nextMode);
     setThink(nextThink);
     await persist(nextMode, nextThink);
+  };
+
+  const setPets = async (enabled: boolean) => {
+    if (petsEnabled === null) return;
+    const previous = petsEnabled;
+    setPetsEnabled(enabled);
+    try {
+      const body: { enabled: boolean; assistantCharacter?: string } = {
+        enabled,
+      };
+      if (petCharacter) body.assistantCharacter = petCharacter;
+      await api.setPetSettings(body);
+    } catch {
+      setPetsEnabled(previous);
+      toast(t('config.saveFailed'));
+    }
+  };
+
+  const setPetCharacterChoice = async (value: string) => {
+    if (petsEnabled === null) return;
+    const previous = petCharacter;
+    setPetCharacter(value);
+    try {
+      await api.setPetSettings({
+        enabled: petsEnabled,
+        assistantCharacter: value || undefined,
+      });
+    } catch {
+      setPetCharacter(previous);
+      toast(t('config.saveFailed'));
+    }
   };
 
   const scheduleThinkSave = (nextMode: string, nextThink: string) => {
@@ -342,6 +500,78 @@ export function SettingsGeneral() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+      {petsEnabled !== null && (
+        <div className="rounded-xl border border-edge bg-panel2 p-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <PawPrint size="1.0714rem" className="text-accent" />
+                {t('config.petEnabled')}
+              </div>
+              <p className="mt-1 text-xs text-dim">
+                {t('config.petEnabledHint')}
+              </p>
+            </div>
+            <div className="flex shrink-0 overflow-hidden rounded-lg border border-edge text-sm">
+              <button
+                onClick={() => void setPets(true)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
+                  petsEnabled
+                    ? 'bg-accent text-white'
+                    : 'text-dim hover:bg-panel hover:text-fg'
+                }`}
+              >
+                <PawPrint size="0.9286rem" />
+                {t('config.petOn')}
+              </button>
+              <button
+                onClick={() => void setPets(false)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
+                  !petsEnabled
+                    ? 'bg-accent text-white'
+                    : 'text-dim hover:bg-panel hover:text-fg'
+                }`}
+              >
+                <Power size="0.9286rem" />
+                {t('config.petOff')}
+              </button>
+            </div>
+          </div>
+          {petsEnabled && petPacks.length > 0 && (
+            <div className="mt-4 flex items-center gap-4 border-t border-edge pt-3">
+              <label className="min-w-0 flex-1">
+                <div className="text-xs font-medium text-dim">
+                  {t('config.petCharacter')}
+                </div>
+                <div className="mt-1.5">
+                  <PetPackSelect
+                    packs={petPacks}
+                    value={
+                      petCharacter ||
+                      (petPacks.find(
+                        (p) => p.id === BUILTIN_ASSISTANT_PACK_ID,
+                      )
+                        ? BUILTIN_ASSISTANT_PACK_ID
+                        : petPacks[0]?.id ?? '')
+                    }
+                    onChange={(value) => {
+                      void setPetCharacterChoice(value);
+                    }}
+                    label={t('config.petCharacter')}
+                  />
+                </div>
+              </label>
+              <PetPreview
+                pack={
+                  petPacks.find((p) => p.id === petCharacter) ??
+                  petPacks.find((p) => p.id === BUILTIN_ASSISTANT_PACK_ID) ??
+                  petPacks[0]
+                }
+              />
+            </div>
+          )}
         </div>
       )}
       {confirmYolo && (

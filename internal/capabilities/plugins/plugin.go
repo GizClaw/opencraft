@@ -45,9 +45,11 @@ const (
 	maxPluginHookCount        = 16
 	maxPluginMCPServerCount   = 16
 	maxPluginToolCount        = 64
+	maxPluginPetCount         = 8
 	maxPluginPathLen          = 256
 	maxPluginDescriptionChars = 1024
 	maxPluginInputSchemaBytes = 32 << 10 // 32 KiB
+	maxPluginAssetBytes       = 10 << 20 // 10 MiB
 	maxPluginMethodLen        = 128
 	maxPluginCommandLen       = 1024
 	maxPluginURLLen           = 2048
@@ -72,6 +74,7 @@ var AllowedPermissions = map[string]bool{
 	"events:subscribe":     true,
 	"commands:register":    true,
 	"statusbar:contribute": true,
+	"pets:contribute":      true,
 	"tools:expose":         true,
 	"sessions:import":      true,
 	"skills:contribute":    true,
@@ -180,6 +183,9 @@ type Manifest struct {
 			Title string `json:"title"`
 			Order int    `json:"order"`
 		} `json:"sidebarEntries"`
+		Pets []struct {
+			ID string `json:"id"`
+		} `json:"pets"`
 	} `json:"contributes"`
 	// Capability declares an optional subprocess runtime for the
 	// plugin (see internal/plugins/runtime).
@@ -342,6 +348,34 @@ func (s *Store) Bundle(id string) (string, error) {
 		return "", fmt.Errorf("plugins: read bundle: %w", err)
 	}
 	return string(data), nil
+}
+
+// Asset reads one plugin-relative binary asset (pet .riv packs, future
+// icons or sounds) with the same escape validation Bundle applies.
+// Reads are bounded to maxPluginAssetBytes so a malicious or broken
+// plugin cannot stream unbounded data into the UI process.
+func (s *Store) Asset(id, rel string) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dir, _, err := s.pluginDir(id)
+	if err != nil {
+		return nil, err
+	}
+	rel = filepath.Clean(rel)
+	if filepath.IsAbs(rel) ||
+		rel == ".." ||
+		strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("plugins: asset escapes plugin dir: %q", rel)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, rel))
+	if err != nil {
+		return nil, fmt.Errorf("plugins: read asset %q: %w", rel, err)
+	}
+	if len(data) > maxPluginAssetBytes {
+		return nil, fmt.Errorf(
+			"plugins: asset %q exceeds %d bytes", rel, maxPluginAssetBytes)
+	}
+	return data, nil
 }
 
 // Capability returns the declared subprocess runtime for an installed
@@ -1181,6 +1215,23 @@ func parseManifest(id string, raw []byte) (*Manifest, error) {
 				"plugins: duplicate or empty sidebar entry id %q", e.ID)
 		}
 		seenEntries[e.ID] = true
+	}
+	if len(m.Contributes.Pets) > maxPluginPetCount {
+		return nil, fmt.Errorf(
+			"plugins: pets exceed %d entries", maxPluginPetCount)
+	}
+	if len(m.Contributes.Pets) > 0 {
+		if err := requirePermission(&m, "pets:contribute", "pets"); err != nil {
+			return nil, err
+		}
+		seenPets := map[string]bool{}
+		for _, p := range m.Contributes.Pets {
+			if p.ID == "" || seenPets[p.ID] {
+				return nil, fmt.Errorf(
+					"plugins: duplicate or empty pet id %q", p.ID)
+			}
+			seenPets[p.ID] = true
+		}
 	}
 	if err := validateCapability(m.Capability); err != nil {
 		return nil, fmt.Errorf("plugins: %w", err)

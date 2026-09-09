@@ -31,3 +31,39 @@ func (b *Lifecycle) SetCloseToTray(closeToTray bool) error {
 func (b *Lifecycle) SetLanguage(language string) error {
 	return b.core.Shell.SetLanguage(language)
 }
+
+// PetsSettings is the app-wide desktop pet preference surface.
+type PetsSettings struct {
+	Enabled            bool   `json:"enabled"`
+	AssistantCharacter string `json:"assistantCharacter,omitempty"`
+}
+
+// GetPetsSettings returns the persisted pet preferences.
+func (b *Lifecycle) GetPetsSettings() PetsSettings {
+	return PetsSettings{
+		Enabled:            b.core.Shell.PetsEnabled(),
+		AssistantCharacter: b.core.Shell.AssistantPetCharacter(),
+	}
+}
+
+// SetPetsSettings persists the pet preferences. Toggling enabled
+// starts or stops the roaming pet window through the desktop root's
+// change listener.
+func (b *Lifecycle) SetPetsSettings(settings PetsSettings) error {
+	if err := b.core.Shell.SetPetsEnabled(settings.Enabled); err != nil {
+		return err
+	}
+	if err := b.core.Shell.SetAssistantPetCharacter(
+		settings.AssistantCharacter,
+	); err != nil {
+		return err
+	}
+	b.core.Shell.Emit("pet:settings_changed", settings)
+	return nil
+}
+
+// ReportUserActivity records main-window activity (pointer/keys/focus)
+// so the pet mind can tell when the user is around.
+func (b *Lifecycle) ReportUserActivity() {
+	b.core.Shell.MarkUserActive()
+}
