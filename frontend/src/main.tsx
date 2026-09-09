@@ -5,15 +5,20 @@ import './i18n';
 import App from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { installMockBridge } from './lib/mockBridge';
+import {
+  installConsoleErrorCapture,
+  reportFrontendError,
+} from './lib/frontendErrors';
 
 // Surface uncaught errors instead of failing silently: render errors
-// are caught by ErrorBoundary, event-handler errors and unhandled
-// rejections land on the console for diagnostics.
+// are caught by ErrorBoundary, event-handler errors and unhandled rejections
+// are forwarded to the Go telemetry pipeline (and printed for devtools).
+installConsoleErrorCapture();
 window.addEventListener('error', (e) => {
-  console.error('opencraft uncaught error:', e.error ?? e.message);
+  reportFrontendError('window-error', e.error ?? new Error(e.message));
 });
 window.addEventListener('unhandledrejection', (e) => {
-  console.error('opencraft unhandled rejection:', e.reason);
+  reportFrontendError('unhandled-rejection', e.reason);
 });
 
 installMockBridge();

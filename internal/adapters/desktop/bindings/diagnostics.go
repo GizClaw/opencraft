@@ -12,6 +12,7 @@ import (
 
 	coresandbox "github.com/GizClaw/flowcraft/core/sandbox"
 	flowtelemetry "github.com/GizClaw/flowcraft/core/telemetry"
+	"go.opentelemetry.io/otel/log"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/execpolicy"
@@ -296,4 +297,25 @@ func dirSize(dir string) int64 {
 	flowtelemetry.WarnErr(context.Background(),
 		"desktop diagnostics: walk cache directory failed", err)
 	return total
+}
+
+// maxFrontendErrorDetail bounds the message and stack payloads forwarded by
+// the renderer so a noisy page cannot inflate log records without limit.
+const maxFrontendErrorDetail = 8000
+
+func clipFrontendErrorDetail(s string) string {
+	if len(s) > maxFrontendErrorDetail {
+		return s[:maxFrontendErrorDetail]
+	}
+	return s
+}
+
+// ReportFrontendError records an uncaught renderer-side error (window error,
+// unhandled rejection, React render crash, or console.error) through the OTel
+// logger so frontend failures land in the same log file and OTLP sinks as Go
+// diagnostics.
+func (b *Diagnostics) ReportFrontendError(source, message, stack string) {
+	flowtelemetry.Error(b.core.Shell.Context(), "frontend: "+source,
+		log.String("message", clipFrontendErrorDetail(message)),
+		log.String("stack", clipFrontendErrorDetail(stack)))
 }

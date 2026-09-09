@@ -51,6 +51,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { Events } from '@wailsio/runtime';
 import { api } from '../lib/api';
+import { reportFrontendError } from '../lib/frontendErrors';
 import { COMPACT_SUMMARY_PREFIX } from '../lib/compact';
 import { SESSION_MODES, type SessionModeOption } from '../lib/sessionModes';
 import {
@@ -780,7 +781,7 @@ const ArtifactStrip = memo(function ArtifactStrip({
     try {
       await action();
     } catch (err) {
-      console.error('opencraft artifact action failed:', err);
+      reportFrontendError('artifact-action', err);
     } finally {
       closeMenu();
     }

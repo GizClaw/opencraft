@@ -145,6 +145,7 @@ export function mockBackend(cfg?: MockConfig) {
       ClearCaches: async () => ({ dirs: [], bytes: 0 }),
       Diagnostics: async () => ({}),
       EvaluateCommandPolicy: async () => ({ command: '', allowed: true }),
+      ReportFrontendError: noop,
       RunSandboxProbe: async () => ({ ok: true }),
     },
     File: {
