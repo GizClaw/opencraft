@@ -321,7 +321,9 @@ export function MetricsCharts() {
                 <p className="text-xs font-medium text-dim">
                   {t(section.labelKey)}
                 </p>
-                <div className="space-y-2">{defs.map(renderMetric)}</div>
+                <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                  {defs.map(renderMetric)}
+                </div>
               </div>
             );
           })}
