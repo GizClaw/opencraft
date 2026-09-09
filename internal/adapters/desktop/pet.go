@@ -45,44 +45,6 @@ type petStatePayload struct {
 	Scene        string `json:"scene,omitempty"`
 }
 
-// petScreenUnion is the DIP bounding box covering every screen's work
-// area. Coordinates may be negative (left/above primary on multi-
-// monitor setups).
-type petScreenUnion struct {
-	minX, minY int
-	maxX, maxY int
-	valid      bool
-}
-
-// unionWorkArea computes the bounding box across all screens.
-func unionWorkArea(screens []*application.Screen) petScreenUnion {
-	var union petScreenUnion
-	for _, screen := range screens {
-		if screen == nil {
-			continue
-		}
-		area := screen.WorkArea
-		if area.Width <= 0 || area.Height <= 0 {
-			continue
-		}
-		if !union.valid {
-			union = petScreenUnion{
-				minX:  area.X,
-				minY:  area.Y,
-				maxX:  area.X + area.Width,
-				maxY:  area.Y + area.Height,
-				valid: true,
-			}
-			continue
-		}
-		union.minX = min(union.minX, area.X)
-		union.minY = min(union.minY, area.Y)
-		union.maxX = max(union.maxX, area.X+area.Width)
-		union.maxY = max(union.maxY, area.Y+area.Height)
-	}
-	return union
-}
-
 func newPetStatePayload(st petfeed.PetSurfaceState) petStatePayload {
 	p := petStatePayload{
 		AgentID:     st.AgentID,
@@ -332,14 +294,15 @@ func (d *Desktop) roamAssistantPet(
 	x, y := d.petX, d.petY
 	d.petMu.Unlock()
 
-	union := unionWorkArea(app.Screen.GetAll())
-	if !union.valid {
+	screen := app.Screen.GetPrimary()
+	if screen == nil {
 		return
 	}
-	floorY := union.maxY - assistantPetSize - 8
-	minTop := union.minY + 24
-	minX := union.minX + 16
-	maxX := union.maxX - assistantPetSize - 16
+	area := screen.WorkArea
+	floorY := area.Y + area.Height - assistantPetSize - 8
+	minTop := area.Y + 24
+	minX := area.X + 16
+	maxX := area.X + area.Width - assistantPetSize - 16
 
 	targetX, targetY := x, y
 	nextTargetAt := time.Now().Add(petRoamDelay())
@@ -352,7 +315,6 @@ func (d *Desktop) roamAssistantPet(
 	perchTop, perchFloor := minTop, floorY
 	perchOK := false
 	lastRectRefresh := time.Now().Add(-time.Second)
-	lastScreenRefresh := time.Now().Add(-time.Hour)
 	wasAttached := false
 	ticker := time.NewTicker(petRoamTick)
 	defer ticker.Stop()
@@ -398,20 +360,15 @@ func (d *Desktop) roamAssistantPet(
 						perchFloor = area.Y + area.Height -
 							assistantPetSize - 8
 						perchOK = true
+						minX = perchMinX
+						maxX = perchMaxX
+						minTop = perchTop
+						floorY = perchFloor
 						break
 					}
 				} else {
 					mainVisible = false
 					perchOK = false
-				}
-				if now.Sub(lastScreenRefresh) >= 15*time.Second {
-					lastScreenRefresh = now
-					if screens := unionWorkArea(app.Screen.GetAll()); screens.valid {
-						minX = screens.minX + 16
-						maxX = screens.maxX - assistantPetSize - 16
-						minTop = screens.minY + 24
-						floorY = screens.maxY - assistantPetSize - 8
-					}
 				}
 			}
 			lastUser := d.core.Shell.LastUserActive()

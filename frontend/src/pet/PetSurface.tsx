@@ -39,8 +39,6 @@ export default function PetSurface() {
     intent?: string;
     bubble?: string;
   }>({});
-  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
-  const [roamPaused, setRoamPaused] = useState(false);
   const reactionTimer = useRef<number | undefined>(undefined);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const riveRef = useRef<PetRiveHandle | null>(null);
@@ -267,25 +265,6 @@ export default function PetSurface() {
     cancelDrag();
   };
 
-  const onContextMenu = (event: React.MouseEvent) => {
-    event.preventDefault();
-    setMenu({ x: event.clientX, y: event.clientY });
-  };
-
-  const closeMenu = () => setMenu(null);
-
-  const toggleRoamPaused = () => {
-    const next = !roamPaused;
-    setRoamPaused(next);
-    closeMenu();
-    void api.petSetRoamingPaused(next);
-  };
-
-  const disablePet = () => {
-    closeMenu();
-    void api.setPetSettings({ enabled: false });
-  };
-
   return (
     <main
       className="pet-surface"
@@ -298,7 +277,6 @@ export default function PetSurface() {
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
       onPointerLeave={onPointerLeave}
-      onContextMenu={onContextMenu}
     >
       <canvas ref={canvasRef} className="pet-canvas" />
       {bubbleText && <div className="pet-bubble">{bubbleText}</div>}
@@ -306,32 +284,6 @@ export default function PetSurface() {
         <div className="pet-tool-label" title={pet.toolName}>
           {pet.toolName}
         </div>
-      )}
-      {menu && (
-        <>
-          <div className="pet-menu-overlay" onClick={closeMenu} />
-          <div
-            className="pet-menu"
-            style={{ left: menu.x, top: menu.y }}
-            role="menu"
-          >
-            <button role="menuitem" onClick={toggleRoamPaused}>
-              {roamPaused
-                ? t('config.petMenuResume')
-                : t('config.petMenuPause')}
-            </button>
-            <button role="menuitem" onClick={() => { closeMenu(); void api.petActivate(); }}>
-              {t('config.petMenuOpenMain')}
-            </button>
-            <button
-              role="menuitem"
-              className="pet-menu-danger"
-              onClick={disablePet}
-            >
-              {t('config.petMenuDisable')}
-            </button>
-          </div>
-        </>
       )}
     </main>
   );

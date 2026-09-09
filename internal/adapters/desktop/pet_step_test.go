@@ -3,8 +3,6 @@ package desktop
 import (
 	"testing"
 	"time"
-
-	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 func TestPetStepMovesAndClamps(t *testing.T) {
@@ -50,26 +48,5 @@ func TestClampInt(t *testing.T) {
 	}
 	if got := clampInt(15, 0, 10); got != 10 {
 		t.Fatalf("high value = %d", got)
-	}
-}
-
-func TestUnionWorkAreaSpansScreens(t *testing.T) {
-	screens := []*application.Screen{
-		{WorkArea: application.Rect{X: 0, Y: 0, Width: 1920, Height: 1080}},
-		{WorkArea: application.Rect{X: 1920, Y: 0, Width: 1920, Height: 1080}},
-	}
-	union := unionWorkArea(screens)
-	if !union.valid || union.minX != 0 || union.minY != 0 ||
-		union.maxX != 3840 || union.maxY != 1080 {
-		t.Fatalf("union = %+v", union)
-	}
-	// A monitor left of the primary uses negative coordinates.
-	union = unionWorkArea([]*application.Screen{
-		{WorkArea: application.Rect{X: -1920, Y: 0, Width: 1920, Height: 1080}},
-		{WorkArea: application.Rect{X: 0, Y: 0, Width: 1920, Height: 1440}},
-	})
-	if union.minX != -1920 || union.minY != 0 ||
-		union.maxX != 1920 || union.maxY != 1440 {
-		t.Fatalf("negative union = %+v", union)
 	}
 }
