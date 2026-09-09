@@ -303,17 +303,17 @@ func (d *Desktop) roamAssistantPet(
 	maxX := area.X + area.Width - assistantPetSize - 16
 
 	targetX, targetY := x, y
-	nextTargetAt := time.Now().Add(petRoamDelay())
-	// Habitat tracking: while the main window is visible and the user
-	// is near, the pet perches on the window edge and follows it.
+	// Home is the pet's resting spot: it returns there after work and
+	// only makes short, occasional strolls around it (A+B behavior).
+	homeX, homeY := x, y
+	nextStrollAt := time.Now().Add(3 * time.Second)
 	mainX, mainY := x, y
 	mainW, mainH := assistantPetSize, assistantPetSize
-	mainVisible := false
 	perchMinX, perchMaxX := minX, maxX
 	perchTop, perchFloor := minTop, floorY
 	perchOK := false
 	lastRectRefresh := time.Now().Add(-time.Second)
-	wasAttached := false
+	wasManual := false
 	ticker := time.NewTicker(petRoamTick)
 	defer ticker.Stop()
 
@@ -334,7 +334,6 @@ func (d *Desktop) roamAssistantPet(
 				lastRectRefresh = now
 				main := d.core.Shell.MainWindow()
 				if main != nil {
-					mainVisible = main.IsVisible() && !main.IsMinimised()
 					mainX, mainY = main.Position()
 					mainW, mainH = main.Size()
 					perchOK = false
@@ -365,19 +364,32 @@ func (d *Desktop) roamAssistantPet(
 						break
 					}
 				} else {
-					mainVisible = false
 					perchOK = false
 				}
 			}
-			lastUser := d.core.Shell.LastUserActive()
-			userNear := !lastUser.IsZero() &&
-				now.Sub(lastUser) <= 10*time.Second
-			habitat := mainVisible && perchOK && userNear
-
 			d.petMu.Lock()
 			manual := d.petRoamPaused || now.Before(d.petManualUntil)
 			x, y = d.petX, d.petY
 			d.petMu.Unlock()
+
+			// Watch spot next to the main window; falls back to home
+			// when the window has no room beside it.
+			watchX, watchY := homeX, homeY
+			if perchOK {
+				watchY = mainY + mainH - assistantPetSize - 8
+				watchY = clampInt(watchY, perchTop, perchFloor)
+				rightX := mainX + mainW + 8
+				leftX := mainX - assistantPetSize - 8
+				switch {
+				case rightX+assistantPetSize <= perchMaxX:
+					watchX = rightX
+				case leftX >= perchMinX:
+					watchX = leftX
+				default:
+					watchX = homeX
+				}
+				watchX = clampInt(watchX, perchMinX, perchMaxX)
+			}
 
 			// Re-anchor on the OS-reported position every few ticks.
 			// Mixed-DPI displays can round window coordinates at the
@@ -393,67 +405,36 @@ func (d *Desktop) roamAssistantPet(
 				}
 			}
 
+			if wasManual && !manual {
+				// The user parked the pet somewhere: that spot
+				// becomes its new home.
+				homeX = clampInt(x, minX, maxX)
+				homeY = clampInt(y, minTop, floorY)
+			}
+			wasManual = manual
+
 			if !manual {
 				switch state.Disposition {
 				case petfeed.PetDispositionSleep:
 					// Asleep: stay put.
 				case petfeed.PetDispositionRoam:
-					if habitat {
-						// Perch on the outside of the main window's
-						// bottom-right corner: right side first, left
-						// side when the window hugs the screen edge.
-						targetY = mainY + mainH - assistantPetSize - 8
-						targetY = clampInt(targetY, perchTop, perchFloor)
-						rightX := mainX + mainW + 8
-						leftX := mainX - assistantPetSize - 8
-						rightFits := rightX+assistantPetSize <= perchMaxX
-						leftFits := leftX >= perchMinX
-						switch {
-						case rightFits:
-							targetX = rightX
-						case leftFits:
-							targetX = leftX
-						default:
-							// No perch beside the window on this screen:
-							// stop in place instead of jumping to a far
-							// corner or another monitor.
-							if !wasAttached {
-								wasAttached = true
-								targetX, targetY = x, y
-							}
+					if x == targetX && y == targetY {
+						if now.After(nextStrollAt) {
+							nextStrollAt = now.Add(petStrollDelay())
+							targetX, targetY = petStrollTarget(
+								homeX, homeY, minX, minTop, maxX, floorY)
 						}
-						targetX = clampInt(targetX, perchMinX, perchMaxX)
-						if !wasAttached {
-							wasAttached = true
-						}
-					} else {
-						if wasAttached {
-							// Leaving the habitat: pause on the spot
-							// before picking a fresh wander target.
-							wasAttached = false
-							targetX, targetY = x, y
-							nextTargetAt = now.Add(petRoamDelay())
-						}
-						if x == targetX && y == targetY &&
-							now.After(nextTargetAt) {
-							spanX := maxX - minX
-							spanY := floorY - minTop
-							if spanX > 0 {
-								targetX = minX + rand.Intn(spanX+1)
-							}
-							if spanY > 0 {
-								targetY = minTop + rand.Intn(spanY+1)
-							}
-							nextTargetAt = now.Add(petRoamDelay())
-						}
+					} else if petDistance(x, y, homeX, homeY) >
+						petStrollRange*2 {
+						// Way off leash (drag, screen change): go home.
+						targetX, targetY = homeX, homeY
 					}
 					x = petStep(x, targetX, petRoamTick)
 					y = petStep(y, targetY, petRoamTick)
-				default: // work / ask: stop in place and act
-					if x != targetX || y != targetY {
-						targetX, targetY = x, y
-						nextTargetAt = now.Add(petRoamDelay())
-					}
+				default: // work / ask: walk to the window and stay there
+					targetX, targetY = watchX, watchY
+					x = petStep(x, targetX, petRoamTick)
+					y = petStep(y, targetY, petRoamTick)
 				}
 			}
 
@@ -512,6 +493,34 @@ func absInt(value int) int {
 // between 3 and 10 seconds so movement does not feel mechanical.
 func petRoamDelay() time.Duration {
 	return time.Duration(3+rand.Intn(8)) * time.Second
+}
+
+// petStrollRange is how far (DIP) the pet may roam from home before it
+// wanders back.
+const petStrollRange = 360
+
+// petStrollDelay is the pause between short strolls from home.
+func petStrollDelay() time.Duration {
+	return time.Duration(8+rand.Intn(13)) * time.Second
+}
+
+// petDistance is a cheap Manhattan distance used for home-leash checks.
+func petDistance(x1, y1, x2, y2 int) int {
+	return absInt(x1-x2) + absInt(y1-y2)
+}
+
+// petStrollTarget picks a short stroll point around home (with a chance
+// to simply head home), clamped to the roamable area.
+func petStrollTarget(
+	homeX, homeY, xMin, yMin, xMax, yMax int,
+) (int, int) {
+	if rand.Intn(100) < 30 {
+		return homeX, homeY
+	}
+	dx := rand.Intn(2*petStrollRange+1) - petStrollRange
+	dy := rand.Intn(2*petStrollRange+1) - petStrollRange
+	return clampInt(homeX+dx, xMin, xMax),
+		clampInt(homeY+dy, yMin, yMax)
 }
 
 // petStep moves current toward target by the distance travelled in one
