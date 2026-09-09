@@ -18,6 +18,15 @@ func firstRunPrefsMode() string {
 	return "workspace"
 }
 
+// markQuittingPending drives the shell into the "quit requested, confirmation
+// dialog pending" state that production code reaches through ShouldQuit.
+func markQuittingPending(s *Shell) {
+	s.mu.Lock()
+	s.quitting = true
+	s.quitConfirmed = false
+	s.mu.Unlock()
+}
+
 func TestShellPrefsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	s := NewShell(dir)
@@ -45,16 +54,16 @@ func TestShellQuitState(t *testing.T) {
 	if s.QuitRequested() {
 		t.Fatal("fresh shell must not report a quit flow")
 	}
-	s.MarkQuitting()
+	markQuittingPending(s)
 	s.mu.Lock()
 	quitting := s.quitting
 	confirmed := s.quitConfirmed
 	s.mu.Unlock()
 	if !quitting || confirmed {
-		t.Fatalf("quit state after MarkQuitting = (%v,%v)", quitting, confirmed)
+		t.Fatalf("quit state after pending request = (%v,%v)", quitting, confirmed)
 	}
 	if !s.QuitRequested() {
-		t.Fatal("MarkQuitting must be visible through QuitRequested")
+		t.Fatal("pending quit state must be visible through QuitRequested")
 	}
 	s.clearQuitRequest()
 	s.mu.Lock()
@@ -112,7 +121,7 @@ func TestShellShouldQuitConfirmedRepeats(t *testing.T) {
 
 func TestShellShouldQuitIgnoresRepeatedRequestWhileDialogPending(t *testing.T) {
 	s := NewShell(t.TempDir())
-	s.MarkQuitting()
+	markQuittingPending(s)
 	if s.ShouldQuit() {
 		t.Fatal("pending unconfirmed quit must not open a second dialog")
 	}

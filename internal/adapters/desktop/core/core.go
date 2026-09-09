@@ -1,5 +1,5 @@
-// Package core owns the desktop internal services shared by the v2 and v3 UI
-// shells. It is not a Wails binding surface: bindings in the sibling package
+// Package core owns the desktop internal services behind the Wails v3 UI
+// shell. It is not a Wails binding surface: bindings in the sibling package
 // adapt these services for the UI shell.
 package core
 

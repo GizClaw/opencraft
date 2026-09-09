@@ -208,14 +208,6 @@ func (s *Shell) confirmQuitRequired(ctx context.Context) bool {
 	return checker(ctx)
 }
 
-// MarkQuitting records an unconfirmed quit request.
-func (s *Shell) MarkQuitting() {
-	s.mu.Lock()
-	s.quitting = true
-	s.quitConfirmed = false
-	s.mu.Unlock()
-}
-
 // QuitRequested reports whether a quit flow has started: either an
 // unconfirmed confirmation dialog is pending or the quit was already
 // confirmed. Window teardown that happens after this state must not trigger a
@@ -292,23 +284,6 @@ func (s *Shell) QuitApplication() {
 	app, _ := s.attached()
 	if app != nil {
 		app.Quit()
-	}
-}
-
-// ShowMainWindow restores and focuses the main window.
-func (s *Shell) ShowMainWindow() {
-	_, main := s.attached()
-	if main == nil {
-		return
-	}
-	main.Show()
-	main.Focus()
-}
-
-// QuitFromTray terminates the application from the tray menu.
-func (s *Shell) QuitFromTray() {
-	if s.ShouldQuit() {
-		s.QuitApplication()
 	}
 }
 

@@ -197,15 +197,10 @@ export function mockBackend(cfg?: MockConfig) {
       Search: emptyList,
     },
     Lifecycle: {
-      CloseRequested: async () => false,
       GetCloseToTray: async () => true,
-      GetLanguage: async () => 'zh-CN',
-      MarkQuitting: noop,
-      QuitFromTray: noop,
       RequestClose: noop,
       SetCloseToTray: noop,
       SetLanguage: noop,
-      ShowMainWindow: noop,
     },
     Plugin: {
       ApplyUpdate: async () => null,

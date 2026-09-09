@@ -34,8 +34,8 @@ type Options struct {
 	DataDir string
 }
 
-// Desktop is the desktop composition root. It is not a Wails binding
-// object; Bindings returns the per-domain API objects.
+// Desktop is the desktop composition root. It is not a Wails binding object;
+// RegisterServices exposes the per-domain API objects as Wails v3 services.
 type Desktop struct {
 	core          *core.Core
 	notifications *notifications.NotificationService

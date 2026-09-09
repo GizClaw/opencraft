@@ -11,7 +11,6 @@ import (
 	"os"
 	"runtime"
 	"sync/atomic"
-	"time"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop"
 	"github.com/GizClaw/opencraft/internal/adapters/headless"
@@ -64,8 +63,9 @@ func main() {
 		SingleInstance: &application.SingleInstanceOptions{
 			UniqueID: "com.GizClaw.opencraft",
 			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
-				shell.Emit("second instance args=%v workingDir=%s", data.Args, data.WorkingDir)
-				shell.ShowMainWindow()
+				desktop.EmitLog(shell, "second instance args=%v workingDir=%s",
+					data.Args, data.WorkingDir)
+				desktop.ShowMainWindow(shell)
 			},
 		},
 		OnShutdown: func() {
@@ -76,10 +76,6 @@ func main() {
 		},
 	})
 
-	mainURL := "/"
-	if os.Getenv("V3_AUTO") == "1" {
-		mainURL = "/#auto"
-	}
 	mainW := app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Name:      "main",
 		Title:     "OpenCraft",
@@ -87,7 +83,7 @@ func main() {
 		Height:    900,
 		MinWidth:  1024,
 		MinHeight: 700,
-		URL:       mainURL,
+		URL:       "/",
 		Mac:       application.MacWindow{TitleBar: application.MacTitleBarHiddenInset},
 		// Windows/Linux keep the custom in-app title bar (frontend TopBar):
 		// frameless only there, never on macOS (native traffic lights).
@@ -103,7 +99,7 @@ func main() {
 	})
 
 	shell = desktop.NewShell(app, d)
-	shell.SetMain(mainW)
+	desktop.SetMainWindow(shell, mainW)
 	app.RegisterService(application.NewService(shell))
 	d.RegisterServices(app)
 
@@ -145,32 +141,18 @@ func main() {
 
 	// Dock reopen uses first-class mac events.
 	app.Event.OnApplicationEvent(events.Mac.ApplicationShouldHandleReopen, func(*application.ApplicationEvent) {
-		shell.Emit("mac ApplicationShouldHandleReopen")
-		shell.ShowMainWindow()
+		desktop.EmitLog(shell, "mac ApplicationShouldHandleReopen")
+		desktop.ShowMainWindow(shell)
 	})
 
 	d.SetupTray(app, trayIcon,
-		func() { shell.ShowMainWindow() },
+		func() { desktop.ShowMainWindow(shell) },
 		func() { d.RequestQuit() },
 	)
 
 	// macOS polish (traffic-light alignment, scroll elasticity) after the
 	// first page load; no-op on Windows/Linux.
 	registerOpenCraftWindowStyleRefresh(mainW)
-
-	if os.Getenv("V3_AUTO") == "1" {
-		time.AfterFunc(1200*time.Millisecond, func() {
-			shell.Emit("auto app ready")
-		})
-		time.AfterFunc(3*time.Second, func() {
-			shell.Emit("auto: closing main to exercise close-to-tray")
-			mainW.Close()
-			time.AfterFunc(900*time.Millisecond, func() {
-				shell.Emit("auto: restoring main; visible=%v", mainW.IsVisible())
-				shell.ShowMainWindow()
-			})
-		})
-	}
 
 	if err := app.Run(); err != nil {
 		log.Fatalf("opencraft: %v", err)

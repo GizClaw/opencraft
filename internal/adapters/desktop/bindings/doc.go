@@ -1,5 +1,5 @@
-// Package bindings adapts the desktop core services for the Wails UI
-// shells (v2 today, v3 during the migration). It holds no domain state:
+// Package bindings adapts the desktop core services for the Wails v3 UI
+// shell. It holds no domain state:
 // every binding is a thin DTO adapter over core.Core services, and domain
 // logic lives in orchestration/host or the capabilities below it.
 //
