@@ -134,6 +134,14 @@ func initTelemetry(dataDir string) (func(context.Context) error, error) {
 
 // Startup wires the application context into the core shell.
 func (d *Desktop) Startup(ctx context.Context) {
+	started := time.Now()
+	defer func() {
+		durationMs := time.Since(started).Milliseconds()
+		octelemetry.SampleHistogram(
+			ctx, "desktop.startup_ms", "ms", float64(durationMs))
+		telemetry.Info(ctx, fmt.Sprintf(
+			"desktop: startup completed in %d ms", durationMs))
+	}()
 	d.core.Shell.SetContext(ctx)
 	d.core.Shell.SetScheduledTasksChecker(d.hasScheduledTasks)
 	if err := d.core.Runtime.OpenUserDB(ctx); err != nil {

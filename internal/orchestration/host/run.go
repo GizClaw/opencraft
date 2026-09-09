@@ -393,6 +393,7 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 		if err != nil && errText == "" {
 			errText = err.Error()
 		}
+		recordTurnMetrics(persistCtx, string(status), r.durationMs)
 		execErr := err
 		if execErr == nil && res != nil {
 			execErr = res.Err

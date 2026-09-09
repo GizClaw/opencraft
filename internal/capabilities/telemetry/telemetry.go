@@ -18,6 +18,8 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/telemetry/logfile"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/sdk/log"
 
 	"github.com/GizClaw/opencraft/internal/foundation/version"
@@ -106,6 +108,51 @@ func InitOtel(ctx context.Context, opts TelemetryOptions) (shutdown func(context
 	initOpts = append(initOpts, telemetry.LoggerOpts(logOpts...))
 	telemetry.SetLoggerName(ServiceName)
 	return telemetry.InitAll(ctx, initOpts...)
+}
+
+// Meter returns the application-scoped meter ("opencraft"). Instruments
+// created from it are no-ops until InitOtel installs a provider, and the
+// OpenTelemetry global meter delegates recreate pre-init instruments once the
+// SDK is set, so package-level instrumentation may safely be created early.
+func Meter() metric.Meter {
+	return otel.Meter("opencraft")
+}
+
+// MustFloat64Histogram builds a named histogram or panics; instrument names
+// and units are static, so an error here is a programming mistake that should
+// fail startup instead of silently disabling metrics.
+func MustFloat64Histogram(
+	name string, opts ...metric.Float64HistogramOption,
+) metric.Float64Histogram {
+	hist, err := Meter().Float64Histogram(name, opts...)
+	if err != nil {
+		panic(fmt.Sprintf("telemetry: create histogram %q: %v", name, err))
+	}
+	return hist
+}
+
+// MustInt64Counter builds a named counter or panics; see MustFloat64Histogram.
+func MustInt64Counter(
+	name string, opts ...metric.Int64CounterOption,
+) metric.Int64Counter {
+	counter, err := Meter().Int64Counter(name, opts...)
+	if err != nil {
+		panic(fmt.Sprintf("telemetry: create counter %q: %v", name, err))
+	}
+	return counter
+}
+
+// SampleHistogram records one value on a named opencraft histogram. It is a
+// convenience for one-off samples (for example desktop startup time) where a
+// persistent instrument is not worth caching; instruments are no-ops when no
+// OTLP metric pipeline is configured.
+func SampleHistogram(ctx context.Context, name, unit string, value float64) {
+	hist, err := Meter().Float64Histogram(
+		name, metric.WithUnit(unit))
+	if err != nil {
+		return
+	}
+	hist.Record(ctx, value)
 }
 
 // normalizeOTLP strips an optional scheme (http:// forces insecure,
