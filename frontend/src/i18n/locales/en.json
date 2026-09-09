@@ -683,7 +683,7 @@
     "compacted": "Auto-compacted",
     "searchedTools": "Searched tools",
     "hits": "hits",
-    "selected": "selected",
+    "exposed": "exposed",
     "query": "query",
     "limit": "limit",
     "select": "select",
