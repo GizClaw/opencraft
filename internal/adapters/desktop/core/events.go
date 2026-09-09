@@ -9,12 +9,22 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference"
 )
 
+// AssistantAgentID is the flowcraft agent identity that desktop
+// conversation and automation turns execute as. It is stamped onto UI
+// events so consumers (pet activity feed, per-agent projections) can
+// attribute work without re-deriving it from session keys.
+const AssistantAgentID = "assistant"
+
 // TurnEndEvent is the terminal turn event consumed by the frontend.
 type TurnEndEvent struct {
 	RunID          string `json:"run_id"`
 	ConversationID string `json:"conversation_id,omitempty"`
-	Status         string `json:"status"`
-	Error          string `json:"error,omitempty"`
+	// AgentID identifies the agent that produced the run. Desktop UI
+	// and automation turns both execute as AssistantAgentID today;
+	// delegated subagent turns will carry their own id.
+	AgentID string `json:"agent_id,omitempty"`
+	Status  string `json:"status"`
+	Error   string `json:"error,omitempty"`
 	// RequestID is the provider request identifier of the terminal
 	// operation, when the provider reported one. It usually populates
 	// failed turns (carried by the error chain).

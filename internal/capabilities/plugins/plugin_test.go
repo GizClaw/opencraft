@@ -99,6 +99,30 @@ func TestStoreBundleValidatesPath(t *testing.T) {
 	}
 }
 
+func TestStoreAssetReadsBoundedPluginFile(t *testing.T) {
+	root := t.TempDir()
+	writePlugin(t, root, "hello", map[string]any{
+		"id": "hello", "name": "Hello", "version": "0.1.0",
+		"entry": "dist/index.js", "permissions": []string{},
+	}, "")
+	dir := filepath.Join(root, "hello", "pets")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	raw := []byte("rive-bytes")
+	if err := os.WriteFile(filepath.Join(dir, "cat.riv"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := NewStore(root)
+	got, err := s.Asset("hello", "pets/cat.riv")
+	if err != nil || string(got) != "rive-bytes" {
+		t.Fatalf("Asset = (%q, %v)", got, err)
+	}
+	if _, err := s.Asset("hello", "../plugin.go"); err == nil {
+		t.Fatal("escaping asset path must fail")
+	}
+}
+
 func TestStoreSetEnabledTogglesState(t *testing.T) {
 	root := t.TempDir()
 	writePlugin(t, root, "hello", map[string]any{

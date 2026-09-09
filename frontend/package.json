@@ -27,6 +27,7 @@
     "@codemirror/lang-xml": "^6.1.0",
     "@codemirror/legacy-modes": "^6.5.4",
     "@cordisjs/core": "^3.18.1",
+    "@rive-app/canvas": "^2.42.0",
     "@tanstack/react-virtual": "^3.14.10",
     "@tiptap/extension-mention": "^3.31.0",
     "@tiptap/extension-placeholder": "^3.31.0",

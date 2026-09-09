@@ -28,6 +28,7 @@ import { api } from '../lib/api';
 import { alignUsageWindow } from '../lib/usageWindow';
 import { LogViewer } from './LogViewer';
 import { MetricsCharts } from './MetricsCharts';
+import { PetBehaviorPanel } from './PetBehaviorPanel';
 import { useStore } from '../lib/store';
 import type {
   CacheClearResult,
@@ -2213,6 +2214,7 @@ export function ConfigPage() {
             {tab === 'diagnostics' && (
               <div className="space-y-4">
                 <p className="text-xs text-dim">{t('config.diagHint')}</p>
+                <PetBehaviorPanel />
                 {diag && (
                   <div className="grid grid-cols-2 gap-3 text-sm">
                     <div className="rounded-lg border border-edge bg-panel2 px-3 py-2">

@@ -275,6 +275,12 @@ export interface SessionDefaults {
   think: string;
 }
 
+// PetsSettings mirrors the Go pet preference document (desktop.json).
+export interface PetsSettings {
+  enabled: boolean;
+  assistantCharacter?: string;
+}
+
 // ActiveRunDTO mirrors App.ActiveRun: the run id currently executing
 // in one conversation, or empty when the conversation is idle.
 export interface ActiveRunDTO {

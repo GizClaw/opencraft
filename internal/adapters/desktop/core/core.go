@@ -6,6 +6,7 @@ package core
 import (
 	"sync"
 
+	petfeed "github.com/GizClaw/opencraft/internal/adapters/desktop/pet"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/version"
 )
@@ -22,6 +23,11 @@ type Core struct {
 	Plugin       *PluginService
 	Prompt       *Prompt
 	Git          *GitService
+	// Pet is the desktop pet activity feed. It is attached as a Shell
+	// event observer so every UI/automation event flows through it.
+	Pet *petfeed.PetActivityFeed
+	// Packs is the shared pet pack registry (builtin + plugin packs).
+	Packs *petfeed.PackStore
 
 	UserDir string
 	DataDir string
@@ -33,6 +39,8 @@ type Core struct {
 func NewCore(userDir, dataDir, workDir string) *Core {
 	runtime := NewRuntime(dataDir, userDir)
 	plugin := NewPluginService(dataDir, version.ServiceVersion)
+	pet := petfeed.NewPetActivityFeed(AssistantAgentID)
+	packs := petfeed.NewPackStore(petfeed.BuiltinAssistantPack())
 	c := &Core{
 		Shell:        NewShell(userDir),
 		Runtime:      runtime,
@@ -40,10 +48,15 @@ func NewCore(userDir, dataDir, workDir string) *Core {
 		Plugin:       plugin,
 		Prompt:       NewPrompt(),
 		Git:          NewGitService(),
+		Pet:          pet,
+		Packs:        packs,
 		UserDir:      userDir,
 		DataDir:      dataDir,
 		WorkDir:      workDir,
 	}
+	c.Shell.SetPetSink(func(typ string, data any) {
+		pet.OnEvent(typ, data)
+	})
 	runtime.Manager().SetAgentPlugins(plugin.Store, plugin.Capability)
 	runtime.Manager().SetAutomationHost(NewAutomationHost(runtime))
 	plugin.Capability.SetOpenURL(c.Shell.OpenURL)

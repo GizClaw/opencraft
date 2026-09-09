@@ -22,8 +22,10 @@
 
 import type { ComponentType } from 'react';
 import type { Context } from '@cordisjs/core';
+import type { PetPack } from '../pet/pack';
 
 export type { Context };
+export type { PetPack } from '../pet/pack';
 
 export interface PluginKVEntry {
   key: string;
@@ -155,6 +157,7 @@ export type PluginServiceKey =
   | 'react'
   | 'ui'
   | 'host'
+  | 'pets'
   // permission-gated
   | 'storage'
   | 'secrets'
@@ -196,6 +199,8 @@ declare module '@cordisjs/core' {
     sidebarEntries: Registrar<SidebarEntryContribution>;
     commands: Registrar<CommandContribution>;
     statusBar: Registrar<StatusBarContribution>;
+    /** Declarative pet packs; data only, see src/pet/pack. */
+    pets: Registrar<PetPack>;
     /**
      * Invokes a method on this plugin's capability subprocess (if the
      * manifest declares one). params and the result are JSON; the host

@@ -5,6 +5,7 @@ import { Events, System } from '@wailsio/runtime';
 import { ChatView } from './components/ChatView';
 import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
+import { SubagentDock } from './components/SubagentDock';
 import { TopBar } from './components/TopBar';
 import { Toaster } from './components/Toaster';
 import { WelcomeView } from './components/WelcomeView';
@@ -109,6 +110,25 @@ export default function App() {
     return off;
   }, [init, handleEvent]);
 
+  // Feed the pet mind coarse "user is around" pulses from the main
+  // window. Throttled to 2s; the pet only needs to notice presence,
+  // not every mouse move.
+  useEffect(() => {
+    let last = 0;
+    const report = () => {
+      const now = Date.now();
+      if (now - last < 2000) return;
+      last = now;
+      void api.reportUserActivity();
+    };
+    window.addEventListener('pointermove', report);
+    window.addEventListener('keydown', report);
+    return () => {
+      window.removeEventListener('pointermove', report);
+      window.removeEventListener('keydown', report);
+    };
+  }, []);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!e.metaKey && !e.ctrlKey) return;
@@ -201,6 +221,7 @@ export default function App() {
           <WelcomeView />
         )}
       </div>
+      {workspace && !toolsView && <SubagentDock />}
       <StatusBar />
       {configOpen && (
         <Suspense fallback={null}>

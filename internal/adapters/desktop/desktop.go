@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/bindings"
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
+	petfeed "github.com/GizClaw/opencraft/internal/adapters/desktop/pet"
 	"github.com/GizClaw/opencraft/internal/capabilities/automations"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	octelemetry "github.com/GizClaw/opencraft/internal/capabilities/telemetry"
@@ -43,6 +45,19 @@ type Desktop struct {
 	otelShutdown       func(context.Context) error
 	runtimeMetricsStop chan struct{}
 	runtimeMetricsDone chan struct{}
+
+	petMu     sync.Mutex
+	petWindow *application.WebviewWindow
+	petStop   chan struct{}
+	petCtx    context.Context
+	// petX/petY track the window position so drag input from the pet
+	// surface and the autonomous rover share one source of truth.
+	petX, petY     int
+	petManualUntil time.Time
+	petReady       bool
+	petDirector    *petfeed.PetDirector
+	petRoamPaused  bool
+	petDebug       petfeed.MindDebug
 }
 
 // New resolves the user data/config directories and builds the core
@@ -153,6 +168,10 @@ func (d *Desktop) Startup(ctx context.Context) {
 	}()
 	d.core.Shell.SetContext(ctx)
 	d.core.Shell.SetScheduledTasksChecker(d.hasScheduledTasks)
+	d.petMu.Lock()
+	d.petCtx = ctx
+	d.petMu.Unlock()
+	d.core.Shell.SetPetsChangedListener(d.onPetsChanged)
 	if err := d.core.Runtime.OpenUserDB(ctx); err != nil {
 		telemetry.WarnErr(ctx, "desktop: open user db failed", err)
 	} else {
@@ -172,6 +191,7 @@ func (d *Desktop) Startup(ctx context.Context) {
 	if err := d.core.RebuildRuntime(ctx); err != nil {
 		d.core.Shell.Emit("fatal", map[string]any{"error": err.Error()})
 	}
+	d.ensureAssistantPet(ctx)
 }
 
 // EmitUI is the single UI-event entry used by the v3 entry point outside the
@@ -233,6 +253,7 @@ func (d *Desktop) hasScheduledTasks(ctx context.Context) bool {
 // Shutdown releases runtime-owned resources. Runtime service teardown
 // is added as the runtime domain migrates.
 func (d *Desktop) Shutdown(ctx context.Context) {
+	d.stopPet()
 	d.stopRuntimeMetrics()
 	if mgr := d.core.Runtime.AutomationManager(); mgr != nil {
 		mgr.Stop()
@@ -344,6 +365,7 @@ func (d *Desktop) runAutomation(
 			requestID, responseID, output,
 			finishedAt, durationMs,
 		)
+		end.AgentID = core.AssistantAgentID
 		end.Notify = &notify
 		d.core.Shell.Emit("turn_end", end)
 	} else if notify {
@@ -418,5 +440,6 @@ func (d *Desktop) RegisterServices(app *application.App) {
 	reg(application.NewService(bindings.NewPluginBinding(d.core)))
 	reg(application.NewService(bindings.NewSecretBinding(d.core)))
 	reg(application.NewService(bindings.NewAutomationBinding(d.core)))
+	reg(application.NewService(bindings.NewPetBinding(d.core)))
 	reg(application.NewService(d.notifications))
 }

@@ -8,6 +8,7 @@ import type { UIEvent } from '../lib/types';
 import type {
   CommandContribution,
   KVService,
+  PetPack,
   PluginModule,
   PluginServiceKey,
   Registrar,
@@ -30,6 +31,7 @@ const ALWAYS_SERVICES: PluginServiceKey[] = [
   'react',
   'ui',
   'host',
+  'pets',
   'settingsPanels',
   'sidebarEntries',
   'commands',
@@ -58,6 +60,7 @@ export interface ContributionState {
   sidebarEntries: SidebarEntryContribution[];
   commands: CommandContribution[];
   statusBar: StatusBarContribution[];
+  petPacks: PetPack[];
 }
 
 export interface PluginActivation {
@@ -144,6 +147,33 @@ function makeRegistrar<T>(arr: T[]): Registrar<T> {
   };
 }
 
+// makePetsRegistrar registers declarative pet packs with the Go
+// registry so pet windows (separate webviews) can consume them without
+// executing plugin code. Disposal unregisters and restores the builtin
+// when a user pack overrode it.
+function makePetsRegistrar(packs: PetPack[]): Registrar<PetPack> {
+  return {
+    add: function (this: unknown, item: PetPack) {
+      const ctx = callerOf.call(this);
+      const pluginId = (ctx.config as { id?: string }).id ?? '';
+      const id = item.id.trim();
+      if (!id) {
+        throw new Error('pets.register: pack id is required');
+      }
+      const tagged: PetPack = { ...item, id, pluginId };
+      packs.push(tagged);
+      void api.petRegisterPack(tagged);
+      const dispose = () => {
+        const i = packs.indexOf(tagged);
+        if (i >= 0) packs.splice(i, 1);
+        void api.petUnregisterPack(id);
+      };
+      ctx.effect(() => dispose);
+      return dispose;
+    },
+  };
+}
+
 function provideServices(ctx: Context, c: ContributionState) {
   // Builtin services are always available: plugins may use them
   // without declaring them in inject (no warning, no PENDING wait).
@@ -165,6 +195,7 @@ function provideServices(ctx: Context, c: ContributionState) {
   ctx.provide('sidebarEntries', makeRegistrar(c.sidebarEntries), true);
   ctx.provide('commands', makeRegistrar(c.commands), true);
   ctx.provide('statusBar', makeRegistrar(c.statusBar), true);
+  ctx.provide('pets', makePetsRegistrar(c.petPacks), true);
   // invoke routes to this plugin's capability subprocess. It is an
   // accessor so the calling plugin's id is captured on access.
   ctx.accessor('invoke', {
@@ -213,6 +244,7 @@ export async function resetHost() {
     sidebarEntries: [],
     commands: [],
     statusBar: [],
+    petPacks: [],
   };
   provideServices(app, contributions);
   attachEventBus();
