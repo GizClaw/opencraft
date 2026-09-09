@@ -8,7 +8,7 @@ const pack: PetPack = {
   displayName: 'test',
   version: '1',
   stateMachine: 'PetSM',
-  meta: { scale: 1, walkSpeed: 90, anchor: 'bottom-center' },
+  meta: { scale: 1, walkSpeed: 110, anchor: 'bottom-center' },
   bindings: {
     idle: { type: 'input', name: 'idle' },
     'tool:file': { type: 'input', name: 'busy' },

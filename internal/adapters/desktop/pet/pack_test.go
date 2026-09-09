@@ -10,7 +10,7 @@ func samplePack(id string) Pack {
 		PluginID:     "test-plugin",
 		StateMachine: "PetSM",
 		RivAsset:     "plugin://test-plugin/" + id + ".riv",
-		Meta:         PackMeta{Scale: 1, WalkSpeed: 90, Anchor: "bottom-center"},
+		Meta:         PackMeta{Scale: 1, WalkSpeed: 110, Anchor: "bottom-center"},
 		Bindings: map[string]PackBinding{
 			"idle": {Type: "input", Name: "idle"},
 		},

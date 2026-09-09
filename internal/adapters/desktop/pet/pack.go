@@ -16,9 +16,10 @@ type PackBinding struct {
 type PackMeta struct {
 	// Scale is the render scale relative to the 240px pet canvas.
 	Scale float64 `json:"scale"`
-	// WalkSpeed is the horizontal window speed in DIP/s used by the
-	// director when the pet walks; the Rive walk animation should be
-	// authored to match it.
+	// WalkSpeed is the horizontal window speed in DIP/s the director
+	// moves the pet at when walking (see petRoamSpeed in the desktop
+	// package); the Rive walk animation is authored to match it: one
+	// hop per 55 DIP of travel (2 hops/s at 110 DIP/s).
 	WalkSpeed float64 `json:"walkSpeed"`
 	// Anchor pins the character to the window: "bottom-center" today.
 	Anchor string `json:"anchor"`
@@ -56,7 +57,7 @@ func BuiltinAssistantPack() Pack {
 		RivAsset:     "builtin://assistant-default",
 		Meta: PackMeta{
 			Scale:     1,
-			WalkSpeed: 90,
+			WalkSpeed: 110,
 			Anchor:    "bottom-center",
 		},
 		Bindings: map[string]PackBinding{

@@ -124,7 +124,7 @@ describe('SettingsGeneral', () => {
         version: '0.1.0',
         stateMachine: 'PetSM',
         rivAsset: 'builtin://assistant-default',
-        meta: { scale: 1, walkSpeed: 90, anchor: 'bottom-center' },
+        meta: { scale: 1, walkSpeed: 110, anchor: 'bottom-center' },
         bindings: {},
       },
       {
@@ -134,7 +134,7 @@ describe('SettingsGeneral', () => {
         pluginId: 'pet-pack',
         stateMachine: 'PetSM',
         rivAsset: 'plugin://pet-pack/neko.riv',
-        meta: { scale: 1, walkSpeed: 90, anchor: 'bottom-center' },
+        meta: { scale: 1, walkSpeed: 110, anchor: 'bottom-center' },
         bindings: {},
       },
     ]);

@@ -8,7 +8,7 @@ function pack(id: string): PetPack {
     displayName: id,
     version: '1',
     stateMachine: 'PetSM',
-    meta: { scale: 1, walkSpeed: 90, anchor: 'bottom-center' },
+    meta: { scale: 1, walkSpeed: 110, anchor: 'bottom-center' },
     bindings: {},
   };
 }
