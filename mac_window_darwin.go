@@ -51,8 +51,8 @@ static void applyOpenCraftWindowStyleInner(void) {
 	}
 	// Disable the rubber-band bounce on every scroll view inside the
 	// webview so two-finger gestures on the trackpad never shake the whole
-	// UI. Walk the full content tree; the WKWebView nesting differs between
-	// Wails v2 and v3.
+	// UI. Walk the full content tree because the WKWebView nesting changes
+	// across OS and Wails runtime versions.
 	disableScrollElasticity([w contentView]);
 }
 

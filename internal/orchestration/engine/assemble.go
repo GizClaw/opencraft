@@ -82,7 +82,8 @@ type Options struct {
 		ctx context.Context, root string, window int,
 	) (*ocsessions.Store, error)
 	// WorkspaceLayout explicitly supplies the workspace state root.
-	// Nil keeps legacy project-local paths for current callers.
+	// Required: BuildRuntime rejects a nil layout so assemblies never
+	// fall back to project-local state.
 	WorkspaceLayout *config.WorkspaceLayout
 }
 

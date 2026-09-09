@@ -24,7 +24,7 @@ files, executes shell commands with approval, coordinates subagents, and
 persists and resumes sessions. Built on flowcraft's config-driven graph
 engine, it helps with coding and beyond — orchestrating any local workflow.
 A local execd sandbox, SQLite session store, and per-workspace approval policy
-keep everything inside a macOS / Linux / Windows desktop app (Wails v2 + React).
+keep everything inside a macOS / Linux / Windows desktop app (Wails v3 + React).
 
 <p align="center">
   <img src="build/screenshot.png" alt="opencraft desktop app" width="800">

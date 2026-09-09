@@ -102,9 +102,9 @@ func (r *Runtime) SetAutomationManager(m *automations.Manager) {
 }
 
 // OpenUserDB opens ~/.opencraft/user.db once on the shared manager,
-// applies user migrations and attaches the usage and automations
-// stores. UI and automation turns both count toward the attached
-// usage store through the manager's default recorder.
+// applies user migrations and attaches the usage, automations and
+// metric stores. UI and automation turns both count toward the
+// attached usage store through the manager's default recorder.
 func (r *Runtime) OpenUserDB(ctx context.Context) error {
 	return r.manager.OpenUserDB(ctx)
 }

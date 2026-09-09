@@ -103,7 +103,7 @@ func main() {
 	d.RegisterServices(app)
 
 	// Close-to-background: every native close funnels through the same gate as
-	// the v2 shell did. With "close to tray" enabled the close is cancelled
+	// an in-app close. With "close to tray" enabled the close is cancelled
 	// and the window hides; otherwise the close becomes a real quit request
 	// that still runs the confirmation flow. Once a quit flow already owns
 	// the shutdown (tray Quit, Cmd+Q, UI quit), window teardown must not
