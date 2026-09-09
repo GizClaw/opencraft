@@ -2203,6 +2203,9 @@ function ToolSearchView({ tool }: { tool: ToolView }) {
             if (v && typeof v === 'object' && Array.isArray(v.hits)) {
               return v as {
                 hits: { name?: string; description?: string }[];
+                // v0.3.1+ tool_search reports exposed names; older
+                // transcripts still carry the deprecated selected list.
+                exposed?: string[];
                 selected?: string[];
               };
             }
@@ -2214,7 +2217,7 @@ function ToolSearchView({ tool }: { tool: ToolView }) {
       : null;
   const running = tool.status === 'running';
   const failed = tool.status === 'error';
-  const selectedSet = new Set(parsed?.selected ?? []);
+  const exposedSet = new Set(parsed?.exposed ?? parsed?.selected ?? []);
 
   return (
     <div className="my-1.5">
@@ -2245,8 +2248,8 @@ function ToolSearchView({ tool }: { tool: ToolView }) {
         {parsed !== null && !running && (
           <span className="shrink-0 rounded bg-panel px-1.5 py-0.5 font-mono text-[0.7143rem] text-dim tabular-nums">
             {parsed.hits.length} {t('tool.hits')}
-            {selectedSet.size > 0
-              ? ` · ${selectedSet.size} ${t('tool.selected')}`
+            {exposedSet.size > 0
+              ? ` · ${exposedSet.size} ${t('tool.exposed')}`
               : ''}
           </span>
         )}
@@ -2273,17 +2276,17 @@ function ToolSearchView({ tool }: { tool: ToolView }) {
           {!running && parsed !== null && parsed.hits.length > 0 && (
             <div className="space-y-1.5">
               {parsed.hits.map((h) => {
-                const isSelected = selectedSet.has(h.name ?? '');
+                const isExposed = exposedSet.has(h.name ?? '');
                 return (
                   <div key={h.name} className="flex items-start gap-2">
                     <code
                       className={`shrink-0 font-mono text-xs ${
-                        isSelected ? 'text-ok' : 'text-fg'
+                        isExposed ? 'text-ok' : 'text-fg'
                       }`}
                     >
                       {h.name}
                     </code>
-                    {isSelected && (
+                    {isExposed && (
                       <Check
                         size="0.8571rem"
                         className="mt-0.5 shrink-0 text-ok"

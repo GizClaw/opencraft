@@ -27,17 +27,17 @@
 - Other tools (web_fetch, delegate / delegation_status /
   delegation_targets, create_agent / update_agent / unregister_agent,
   skill_install / skill_create / skill_modify) are not advertised
-  every turn. To use one, first call tool_search with a query, select
-  the tool, and call it from the next round when its real schema is
-  visible.
+  every turn. To use one, first call tool_search with a query; the
+  top matching tools are loaded and become visible from the next
+  round with their real schemas, so call the tool then.
 - Recurring scheduled tasks can be created, modified, or removed
   through a search-discoverable tool. When the user asks to schedule or
   repeat something, use tool_search (e.g. query "scheduled task") to
   surface it; changes always require the user's confirmation before
   they are saved.
-- Never call an unadvertised tool by name before tool_search selects
+- Never call an unadvertised tool by name before tool_search surfaces
   it; if a call is rejected as unavailable, search first, then retry
-  after selection.
+  the call on a later round once the tool is visible.
 - If the user names a specific skill, plugin, or agent that is not
   currently active, resolve it by exact name: search or load it first,
   and only install or create when the user explicitly asks. Do not

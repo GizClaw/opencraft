@@ -197,17 +197,19 @@ resources:
           request_permissions: always
           # Skill tools are advertised in the per-turn skills section,
           # so the model must be able to call them immediately; the
-          # tool_search select/next-round dance is too fragile for
+          # tool_search discovery/next-round dance is too fragile for
           # them. skill_install stays deferred (mutating, heavier).
           skill_search: always
           skill_read: always
           # Search-discoverable layers (everything not listed falls to
           # the default: deferred, which covers the delegate family,
           # agent lifecycle, and skill authoring tools):
-          # - direct: hidden until recently used or selected via
-          #   tool_search, then visible for recent_window rounds.
-          # - deferred: hidden until tool_search selects it, then
-          #   visible for selected_retention rounds.
+          # - direct: hidden until found via tool_search or used;
+          #   discovery-pool entries stay visible while used and are
+          #   swept after idle rounds.
+          # - deferred: hidden until tool_search discovers it; it stays
+          #   visible while used and is evicted after idle rounds or
+          #   when the discovery pool runs over budget.
           web_fetch: direct
           # Internal machinery: callable by exact name (the compact
           # graph node), never offered to the model.
