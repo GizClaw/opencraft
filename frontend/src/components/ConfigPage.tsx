@@ -27,6 +27,7 @@ import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import { alignUsageWindow } from '../lib/usageWindow';
 import { LogViewer } from './LogViewer';
+import { MetricsCharts } from './MetricsCharts';
 import { useStore } from '../lib/store';
 import type {
   CacheClearResult,
@@ -2403,6 +2404,7 @@ export function ConfigPage() {
                     <LogViewer fetchLogs={() => api.readLog(300)} />
                   </div>
                 </div>
+                <MetricsCharts />
               </div>
             )}
 
