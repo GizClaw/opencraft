@@ -2,17 +2,15 @@ package desktop
 
 import (
 	"context"
-	"fmt"
-	"time"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // Shell is the Wails v3 lifecycle service for the desktop composition root.
 // The entry point registers it with application.NewService so Startup and
-// Shutdown run inside the application lifecycle. Window and log helpers the
-// entry point needs are package-level functions below: they must never be
-// exposed as frontend-callable bindings.
+// Shutdown run inside the application lifecycle. The window helper the entry
+// point needs is a package-level function below: it must never be exposed as
+// a frontend-callable binding.
 type Shell struct {
 	app     *application.App
 	main    *application.WebviewWindow
@@ -58,17 +56,6 @@ func SetMainWindow(s *Shell, w *application.WebviewWindow) {
 		return
 	}
 	s.setMain(w)
-}
-
-// EmitLog pushes one log line through the event bus consumed by the process
-// log listener in the entry point. Package-level helper: logs originate in
-// Go callbacks (second-instance launch, Dock reopen), never from the UI.
-func EmitLog(s *Shell, format string, args ...any) {
-	if s == nil || s.app == nil {
-		return
-	}
-	s.app.Event.Emit("v3:log", fmt.Sprintf("[%s] %s",
-		time.Now().Format("15:04:05"), fmt.Sprintf(format, args...)))
 }
 
 // ShowMainWindow restores and focuses the main window for tray, Dock reopen

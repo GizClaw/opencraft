@@ -27,7 +27,7 @@ func (d *Desktop) SetupTray(
 	icon []byte,
 	onShow func(),
 	onQuit func(),
-) *desktopTray {
+) {
 	texts := d.core.Shell.Texts()
 	menu := app.NewMenu()
 	versionItem := menu.Add(
@@ -68,7 +68,6 @@ func (d *Desktop) SetupTray(
 		desktop: d,
 	}
 	d.core.Shell.SetLanguageChangedListener(t.refresh)
-	return t
 }
 
 // refresh copies the current locale into the tray labels.

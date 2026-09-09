@@ -10,7 +10,6 @@ import (
 	"log"
 	"os"
 	"runtime"
-	"sync/atomic"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop"
 	"github.com/GizClaw/opencraft/internal/adapters/headless"
@@ -45,7 +44,6 @@ func main() {
 	}
 	d.SetDialogIcon(trayIcon)
 
-	var quitRequested atomic.Bool
 	var shell *desktop.Shell
 
 	app := application.New(application.Options{
@@ -63,13 +61,10 @@ func main() {
 		SingleInstance: &application.SingleInstanceOptions{
 			UniqueID: "com.GizClaw.opencraft",
 			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
-				desktop.EmitLog(shell, "second instance args=%v workingDir=%s",
+				log.Printf("opencraft: second instance args=%v workingDir=%s",
 					data.Args, data.WorkingDir)
 				desktop.ShowMainWindow(shell)
 			},
-		},
-		OnShutdown: func() {
-			quitRequested.Store(true)
 		},
 		ShouldQuit: func() bool {
 			return d.QuitAllowed()
@@ -103,11 +98,6 @@ func main() {
 	app.RegisterService(application.NewService(shell))
 	d.RegisterServices(app)
 
-	// Mirror v3 events to the process log for automated runs.
-	app.Event.On("v3:log", func(e *application.CustomEvent) {
-		log.Printf("V3EVENT sender=%q data=%v", e.Sender, e.Data)
-	})
-
 	// Close-to-background: every native close funnels through the same gate as
 	// the v2 shell did. With "close to tray" enabled the close is cancelled
 	// and the window hides; otherwise the close becomes a real quit request
@@ -115,9 +105,6 @@ func main() {
 	// the shutdown (tray Quit, Cmd+Q, UI quit), window teardown must not
 	// issue a second quit request.
 	mainW.RegisterHook(events.Common.WindowClosing, func(e *application.WindowEvent) {
-		if quitRequested.Load() {
-			return
-		}
 		quitInFlight := d.QuitRequested()
 		if d.CloseRequested() {
 			e.Cancel()
@@ -141,7 +128,7 @@ func main() {
 
 	// Dock reopen uses first-class mac events.
 	app.Event.OnApplicationEvent(events.Mac.ApplicationShouldHandleReopen, func(*application.ApplicationEvent) {
-		desktop.EmitLog(shell, "mac ApplicationShouldHandleReopen")
+		log.Printf("opencraft: mac ApplicationShouldHandleReopen")
 		desktop.ShowMainWindow(shell)
 	})
 
