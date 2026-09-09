@@ -1045,6 +1045,15 @@ func (h *Host) SetSessionUpdated(fn func(context.Context, string)) {
 	h.mu.Unlock()
 }
 
+// SessionsStore returns the workspace conversation store backing this Host,
+// or nil when the Host is not bound yet.
+func (h *Host) SessionsStore() *sessions.Store {
+	if h == nil {
+		return nil
+	}
+	return h.store
+}
+
 // notifySessionUpdated fires the installed session-title callback
 // without holding h.mu while the callback runs.
 func (h *Host) notifySessionUpdated(

@@ -7,13 +7,6 @@
     "tryAgain": "Try again",
     "reload": "Reload"
   },
-  "notify": {
-    "done": "Task finished",
-    "failed": "Task failed",
-    "cancelled": "Task cancelled",
-    "interrupted": "Task interrupted",
-    "interact": "Input needed"
-  },
   "sidebar": {
     "newChat": "New chat",
     "subagents": "Subagents",

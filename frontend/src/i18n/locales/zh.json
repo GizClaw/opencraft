@@ -7,13 +7,6 @@
     "tryAgain": "重试",
     "reload": "重新加载"
   },
-  "notify": {
-    "done": "任务完成",
-    "failed": "任务失败",
-    "cancelled": "任务已取消",
-    "interrupted": "任务已中断",
-    "interact": "需要你的输入"
-  },
   "sidebar": {
     "newChat": "新会话",
     "subagents": "子代理",

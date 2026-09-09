@@ -2,14 +2,13 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from './i18n';
 import { Events, System } from '@wailsio/runtime';
-import * as NotificationService from '../bindings/github.com/wailsapp/wails/v3/pkg/services/notifications/notificationservice';
 import { ChatView } from './components/ChatView';
 import { Sidebar } from './components/Sidebar';
 import { StatusBar } from './components/StatusBar';
 import { TopBar } from './components/TopBar';
 import { Toaster } from './components/Toaster';
 import { WelcomeView } from './components/WelcomeView';
-import { firstMessageTitle, useStore, type AssistantItem } from './lib/store';
+import { useStore } from './lib/store';
 import { usePluginStore } from './plugins/store';
 import type { UIEvent } from './lib/types';
 import { api } from './lib/api';
@@ -20,78 +19,6 @@ const ConfigPage = lazy(() =>
 const ToolsPanel = lazy(() =>
   import('./components/ToolsPanel').then((m) => ({ default: m.ToolsPanel })),
 );
-
-// Notification copy limits: macOS banners truncate long text, so the
-// turn-end notification keeps the session title and the agent's final
-// output short enough to read at a glance.
-const maxNotifyTitle = 80;
-const maxNotifySnippet = 160;
-
-function truncate(text: string, max: number): string {
-  if (text.length <= max) return text;
-  return `${text.slice(0, max)}…`;
-}
-
-function notifyStatus(status: string): string {
-  if (status === 'completed') return i18n.t('notify.done');
-  if (status === 'failed' || status === 'aborted') {
-    return i18n.t('notify.failed');
-  }
-  if (status === 'canceled') return i18n.t('notify.cancelled');
-  if (status === 'interrupted') return i18n.t('notify.interrupted');
-  return status;
-}
-
-// turnEndNotification builds the macOS notification for one finished
-// turn: the title is the session title and the body is the status plus
-// the agent's latest text output (truncated), so the banner says more
-// than just "task finished".
-function turnEndNotification(data: {
-  run_id?: string;
-  conversation_id?: string;
-  status: string;
-}) {
-  const state = useStore.getState();
-  const convID =
-    (data.run_id && state.runConvs[data.run_id]) || data.conversation_id;
-  const statusText = notifyStatus(data.status);
-
-  // Session title: prefer the persisted/renamed title, fall back to
-  // the conversation's first user message (the backend's auto-title
-  // rule) and finally to the app name.
-  let title = '';
-  if (convID) {
-    title =
-      state.sessions.find((s) => s.id === convID)?.title ??
-      firstMessageTitle(state.conversations[convID]?.messages ?? []) ??
-      '';
-  }
-  title = truncate(title.trim(), maxNotifyTitle) || 'OpenCraft';
-
-  // Latest agent output: the last assistant message accumulates every
-  // text delta of the turn, so joining its text items yields the full
-  // final answer.
-  let snippet = '';
-  if (convID) {
-    const messages = state.conversations[convID]?.messages ?? [];
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const m = messages[i];
-      if (m.role !== 'assistant') continue;
-      snippet = m.items
-        .filter(
-          (it): it is AssistantItem & { kind: 'text' } => it.kind === 'text',
-        )
-        .map((it) => it.text)
-        .join('')
-        .trim();
-      break;
-    }
-  }
-  const body = snippet
-    ? `${statusText}\n${truncate(snippet, maxNotifySnippet)}`
-    : statusText;
-  return { title, body };
-}
 
 export default function App() {
   const init = useStore((s) => s.init);
@@ -168,50 +95,14 @@ export default function App() {
     void usePluginStore.getState().load();
     const off = Events.On('opencraft:ui', (e) => {
       const ev = e.data as UIEvent;
-      if (ev.type === 'interact') {
-        const spec = ev.data as { title?: string };
-        void NotificationService.SendNotification({
-          id: 'interact',
-          title: 'OpenCraft',
-          body: spec.title || i18n.t('notify.interact'),
-        });
-      } else if (ev.type === 'turn_end') {
-        const data = ev.data as {
-          run_id?: string;
-          conversation_id?: string;
-          status: string;
-          notify?: boolean;
-        };
-        if (data.notify !== false) {
-          // Flush any deltas still waiting on the stream coalescer so
-          // the notification builds its snippet from the final answer.
-          useStore.getState().flushStreams();
-          const { title, body } = turnEndNotification(data);
-          void NotificationService.SendNotification({
-            id: 'turn-end',
-            title,
-            body,
-          });
-        }
-      } else if (ev.type === 'automation_notify') {
-        const data = ev.data as {
-          name?: string;
-          status?: string;
-          error?: string;
-          output?: string;
-        };
-        const statusText = data.status ? notifyStatus(data.status) : '';
-        const snippet = data.output?.trim()
-          ? truncate(data.output, maxNotifySnippet)
-          : data.error
-            ? truncate(data.error, maxNotifySnippet)
-            : '';
-        const body = snippet ? `${statusText}\n${snippet}` : statusText;
-        void NotificationService.SendNotification({
-          id: 'automation-turn-end',
-          title: truncate(data.name || 'OpenCraft', maxNotifyTitle),
-          body,
-        });
+      // Interact prompts and finished turns still reach handleEvent below;
+      // their system notifications are raised Go-side so hidden windows do
+      // not lose them.
+      if (ev.type === 'turn_end') {
+        // Flush any deltas still waiting on the stream coalescer so the
+        // transcript settles. The system notification for finished turns
+        // is raised Go-side from the same event.
+        useStore.getState().flushStreams();
       }
       handleEvent(ev);
     });
@@ -219,9 +110,6 @@ export default function App() {
   }, [init, handleEvent]);
 
   useEffect(() => {
-    void NotificationService.RequestNotificationAuthorization().catch(() => {
-      // notifications are best-effort
-    });
     const onKey = (e: KeyboardEvent) => {
       if (!e.metaKey && !e.ctrlKey) return;
       const key = e.key.toLowerCase();
