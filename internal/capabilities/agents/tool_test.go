@@ -76,11 +76,7 @@ func TestCreateToolRejectsUnknownField(t *testing.T) {
 func TestRemoveToolExecute(t *testing.T) {
 	tool := testTool(t)
 	lc := tool.lifecycle
-	if _, err := lc.Create(context.Background(), AgentSpec{
-		Name:        "worker",
-		Description: "desc",
-		Graph:       testGraph,
-	}); err != nil {
+	if _, err := lc.Create(context.Background(), NewSpec("worker", "desc", testGraph)); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	got, err := tool.Tools()[2].Execute(confirmCtx(t, "yes", false),
@@ -99,11 +95,7 @@ func TestRemoveToolExecute(t *testing.T) {
 func TestUpdateToolDefinitionAndExecute(t *testing.T) {
 	tool := testTool(t)
 	lc := tool.lifecycle
-	if _, err := lc.Create(context.Background(), AgentSpec{
-		Name:        "worker",
-		Description: "old description",
-		Graph:       testGraph,
-	}); err != nil {
+	if _, err := lc.Create(context.Background(), NewSpec("worker", "old description", testGraph)); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 

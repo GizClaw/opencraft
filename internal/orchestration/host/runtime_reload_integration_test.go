@@ -83,6 +83,20 @@ func TestRuntimeInPlaceReloadGenerationSemantics(t *testing.T) {
 			sessionsBefore, artifactsBefore, agentsBefore, hooksBefore)
 	}
 
+	// A runtime-created persistent subagent must survive the in-place
+	// reload through flowcraft's dynamic-agent re-bind, not through a
+	// host-side LoadAll replay (which would conflict with the already
+	// registered entries).
+	if _, err := h.Agents().Create(ctx, ocsagents.NewSpec(
+		"researcher", "Reads and summarizes the codebase",
+		`{"name":"researcher","entry":"llm","nodes":[{"id":"llm","type":"inference","config":{"system_prompt":"Read-only researcher."}}],"edges":[{"from":"llm","to":"__end__"}]}`,
+	)); err != nil {
+		t.Fatalf("create persistent agent: %v", err)
+	}
+	if _, ok := rt.Agent("researcher"); !ok {
+		t.Fatal("persistent agent not registered before reload")
+	}
+
 	// Attach an external rebuild observer before reload. Broker uses
 	// the same rt.Attach mechanism, so this doubles as the broker
 	// cross-generation check.
@@ -171,6 +185,12 @@ func TestRuntimeInPlaceReloadGenerationSemantics(t *testing.T) {
 			t.Fatal("host did not rebind agent lifecycle to the new generation")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+	if _, ok := rt.Agent("researcher"); !ok {
+		t.Fatal("persistent agent lost across in-place reload")
+	}
+	if got := h.Agents().List(); len(got) != 1 || got[0].Name != "researcher" {
+		t.Fatalf("persistent agent list after reload = %+v, want [researcher]", got)
 	}
 
 	// Let the in-flight turn finish on the old generation.
