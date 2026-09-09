@@ -11,6 +11,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/tool"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/agents"
+	"github.com/GizClaw/opencraft/internal/capabilities/automations"
 	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
 	pluginagent "github.com/GizClaw/opencraft/internal/capabilities/plugins/agent"
@@ -19,6 +20,29 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/testing/sessionstore"
 )
+
+// automationStub is a non-empty host so the engine assembles the agent's
+// scheduled-task tool without requiring a real user database.
+type automationStub struct{}
+
+func (automationStub) AutomationsList(context.Context) ([]automations.Task, error) {
+	return nil, nil
+}
+func (automationStub) AutomationsGet(
+	context.Context, string,
+) (automations.Task, error) {
+	return automations.Task{}, nil
+}
+func (automationStub) AutomationsPreview(
+	context.Context, string, automations.Task,
+) (automations.Task, error) {
+	return automations.Task{}, nil
+}
+func (automationStub) AutomationsApply(
+	context.Context, string, automations.Task,
+) (automations.Task, error) {
+	return automations.Task{}, nil
+}
 
 func testWorkspaceLayout(
 	t *testing.T, home, work string,
@@ -100,6 +124,7 @@ func TestBuildRuntimeAssemblesNewTools(t *testing.T) {
 	rt, err := BuildRuntime(
 		context.Background(),
 		view.Document,
+		WithAutomationHost(automationStub{}),
 		WithWorkBase(work),
 		WithConfigBase(userDir),
 		WithWorkspaceLayout(layout),
@@ -176,6 +201,26 @@ func TestBuildRuntimeAssemblesNewTools(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("created agent missing from delegation targets: %+v", targets)
+	}
+
+	// The wired automation host exposes the scheduled-task tool.
+	toolsValue, ok := rt.Resource("tools")
+	if !ok {
+		t.Fatal("tools resource missing")
+	}
+	toolsAsm, ok := toolsValue.(*tool.Assembly)
+	if !ok || toolsAsm == nil {
+		t.Fatal("tools resource is not *tool.Assembly")
+	}
+	foundAutomation := false
+	for _, def := range toolsAsm.Catalog().Definitions() {
+		if def.Name == "automation" {
+			foundAutomation = true
+			break
+		}
+	}
+	if !foundAutomation {
+		t.Fatal("automation tool missing from tool catalog")
 	}
 }
 

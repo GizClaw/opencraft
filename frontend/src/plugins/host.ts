@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { Context } from '@cordisjs/core';
-import { EventsOn } from '../../wailsjs/runtime/runtime';
+import { Events } from '@wailsio/runtime';
 import i18n from '../i18n';
 import { api } from '../lib/api';
 import { useStore as useMainStore } from '../lib/store';
@@ -77,7 +77,8 @@ let eventBusAttached = false;
 function attachEventBus() {
   if (eventBusAttached) return;
   eventBusAttached = true;
-  EventsOn('opencraft:ui', (ev: UIEvent) => {
+  Events.On('opencraft:ui', (e) => {
+    const ev = e.data as UIEvent;
     (app?.emit as (type: string, data: unknown) => void)(ev.type, ev.data);
   });
 }

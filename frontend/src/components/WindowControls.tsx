@@ -1,10 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Copy, Minus, Square, X } from 'lucide-react';
-import {
-  WindowIsMaximised,
-  WindowMinimise,
-  WindowToggleMaximise,
-} from '../../wailsjs/runtime/runtime';
+import { Window } from '@wailsio/runtime';
 import { api } from '../lib/api';
 
 // WindowControls renders the custom minimize/maximize/close buttons for
@@ -18,7 +14,7 @@ export function WindowControls() {
 
   useEffect(() => {
     let alive = true;
-    void WindowIsMaximised()
+    void Window.IsMaximised()
       .then((m) => {
         if (alive) setMaximised(m);
       })
@@ -26,7 +22,7 @@ export function WindowControls() {
     // Reconcile the icon whenever the window is resized (double-click
     // maximize, Windows snap, keyboard shortcuts, …).
     const onResize = () => {
-      void WindowIsMaximised()
+      void Window.IsMaximised()
         .then(setMaximised)
         .catch(() => {});
     };
@@ -38,7 +34,7 @@ export function WindowControls() {
   }, []);
 
   const toggleMaximise = () => {
-    WindowToggleMaximise();
+    void Window.ToggleMaximise();
     // Optimistic flip; the resize listener reconciles afterwards.
     setMaximised((m) => !m);
   };
@@ -49,7 +45,7 @@ export function WindowControls() {
       style={{ ['--wails-draggable' as string]: 'no-drag' }}
     >
       <button
-        onClick={WindowMinimise}
+        onClick={() => void Window.Minimise()}
         aria-label="Minimize"
         className="grid w-12 place-items-center text-dim transition-colors hover:bg-panel2 hover:text-fg"
       >

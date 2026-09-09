@@ -49,8 +49,9 @@ import {
   X,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { OnFileDrop, OnFileDropOff } from '../../wailsjs/runtime/runtime';
+import { Events } from '@wailsio/runtime';
 import { api } from '../lib/api';
+import { reportFrontendError } from '../lib/frontendErrors';
 import { COMPACT_SUMMARY_PREFIX } from '../lib/compact';
 import { SESSION_MODES, type SessionModeOption } from '../lib/sessionModes';
 import {
@@ -780,7 +781,7 @@ const ArtifactStrip = memo(function ArtifactStrip({
     try {
       await action();
     } catch (err) {
-      console.error('opencraft artifact action failed:', err);
+      reportFrontendError('artifact-action', err);
     } finally {
       closeMenu();
     }
@@ -2006,13 +2007,14 @@ export function ChatView() {
         : t('chat.running');
 
   useEffect(() => {
-    OnFileDrop((_x, _y, paths) => {
-      if (!paths || paths.length === 0) return;
+    const off = Events.On('opencraft:ui', (e) => {
+      const ev = e.data as { type?: string; data?: unknown };
+      if (ev?.type !== 'files_dropped' || !Array.isArray(ev.data)) return;
+      const paths = ev.data as string[];
+      if (paths.length === 0) return;
       void addAttachmentPaths(paths);
-    }, true);
-    return () => {
-      OnFileDropOff();
-    };
+    });
+    return off;
   }, []);
 
   useEffect(() => {
@@ -2326,7 +2328,7 @@ export function ChatView() {
         </button>
       </header>
 
-      <div className="flex min-h-0 min-w-0 flex-1">
+      <div className="flex min-h-0 min-w-0 flex-1" data-file-drop-target>
         <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
           <div
             ref={scrollRef}

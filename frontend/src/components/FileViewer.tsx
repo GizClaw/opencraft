@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import i18n from '../i18n';
 import { api } from '../lib/api';
+import { reportFrontendError } from '../lib/frontendErrors';
 import { useStore } from '../lib/store';
 import type { FileNode, FilePreview, FileTab } from '../lib/types';
 import { Markdown } from './Markdown';
@@ -43,7 +44,7 @@ class LazyBoundary extends Component<
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error('opencraft file viewer chunk failed:', error, info);
+    reportFrontendError('file-viewer-chunk', error, info.componentStack ?? '');
   }
 
   render() {

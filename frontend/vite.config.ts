@@ -5,9 +5,14 @@ import tailwindcss from '@tailwindcss/vite';
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // wails3 dev proxies to 127.0.0.1; bind IPv4 so the proxy can reach Vite
+  // instead of dialing the IPv6-only default listener.
+  server: {
+    host: '127.0.0.1',
+  },
   // The file viewer's code/PDF panes are lazy chunks that pull in
   // dependencies Vite discovers late (CodeMirror languages, pdf.js).
-  // Pre-optimizing them at startup keeps `wails dev` from failing with
+  // Pre-optimizing them at startup keeps `wails3 dev` from failing with
   // "Importing a module script failed" when a chunk is first clicked
   // after the deps were installed mid-session.
   optimizeDeps: {

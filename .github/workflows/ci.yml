@@ -36,17 +36,22 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --prefix frontend
 
-      # frontend/wailsjs is generated, not committed. wails generate
-      # module compiles main.go, which embeds all:frontend/dist, so a
+      # frontend/bindings is generated, not committed. wails3 generate
+      # bindings scans main.go, which embeds all:frontend/dist, so a
       # placeholder dist must exist first; the real frontend build
       # below overwrites it.
+      - name: Install Linux desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
+
       - name: Generate Wails bindings
         run: |
-          go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.17
           export PATH="$PATH:$(go env GOPATH)/bin"
           mkdir -p frontend/dist
           touch frontend/dist/.gitkeep
-          wails generate module
+          wails3 generate bindings -d frontend/bindings -ts -i -names ./...
 
       - name: Build frontend assets
         run: npm run build --prefix frontend
@@ -78,7 +83,10 @@ jobs:
           version: v2.12.2
 
       - name: Vulnerability scan (govulncheck)
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        # Pinned: v1.8.0+ requires Go >= 1.26 while this repo builds on
+        # go.mod's 1.25 toolchain (GOTOOLCHAIN=local). Bump together with
+        # the Go version instead of tracking @latest.
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
 
       - name: Frontend dependency audit
         working-directory: frontend
@@ -129,7 +137,7 @@ jobs:
       # Timing-sensitive performance assertions are skipped under -race
       # (above), so run them once without the race detector.
       - name: Performance threshold assertions
-        run: go test -count=1 ./internal/capabilities/sessions ./internal/capabilities/tools/files ./internal/adapters/desktopv2 ./internal/capabilities/worldstate
+        run: go test -count=1 ./internal/capabilities/sessions ./internal/capabilities/tools/files ./internal/adapters/desktop ./internal/capabilities/worldstate
 
   frontend-e2e:
     name: frontend e2e (playwright)
@@ -151,14 +159,19 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci --prefix frontend
 
-      # wailsjs is generated, not committed; npm run build (tsc) needs it.
+      # bindings are generated, not committed; npm run build (tsc) needs them.
+      - name: Install Linux desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
+
       - name: Generate Wails bindings
         run: |
-          go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.17
           export PATH="$PATH:$(go env GOPATH)/bin"
           mkdir -p frontend/dist
           touch frontend/dist/.gitkeep
-          wails generate module
+          wails3 generate bindings -d frontend/bindings -ts -i -names ./...
 
       - name: Build frontend assets
         run: npm run build --prefix frontend
@@ -186,15 +199,15 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Generate Wails bindings
         run: |
-          go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.17
           export PATH="$PATH:$(go env GOPATH)/bin"
           mkdir -p frontend/dist
           touch frontend/dist/.gitkeep
-          wails generate module
+          wails3 generate bindings -d frontend/bindings -ts -i -names ./...
       - name: Build frontend assets
         run: npm ci --prefix frontend && npm run build --prefix frontend
       - name: Platform tests (sandbox/execd/desktop/sessions)
-        run: go test -count=1 ./internal/capabilities/sandbox ./internal/capabilities/execd ./internal/adapters/desktopv2 ./internal/capabilities/sessions
+        run: go test -count=1 ./internal/capabilities/sandbox ./internal/capabilities/execd ./internal/adapters/desktop ./internal/capabilities/sessions
 
   test-windows:
     name: test (windows)
@@ -212,11 +225,11 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Generate Wails bindings
         run: |
-          go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.17
           $env:PATH = "$(go env GOPATH)\bin;$env:PATH"
           New-Item -ItemType Directory -Force frontend/dist | Out-Null
           New-Item -ItemType File -Force frontend/dist/.gitkeep | Out-Null
-          wails generate module
+          wails3 generate bindings -d frontend/bindings -ts -i -names ./...
         shell: pwsh
       - name: Build frontend assets
         run: npm ci --prefix frontend; npm run build --prefix frontend
@@ -230,7 +243,7 @@ jobs:
         run: go test -count=1 ./internal/capabilities/sandbox -run TestSandboxRunnerContract
         shell: pwsh
       - name: Compile check (sandbox/desktop/sessions/secrets)
-        run: go vet ./internal/capabilities/sandbox ./internal/adapters/desktopv2 ./internal/capabilities/sessions ./internal/capabilities/secrets
+        run: go vet ./internal/capabilities/sandbox ./internal/adapters/desktop ./internal/capabilities/sessions ./internal/capabilities/secrets
         shell: pwsh
 
   desktop-linux:
@@ -253,18 +266,23 @@ jobs:
       - name: Install Wails Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev
+          sudo apt-get install -y libgtk-4-dev libwebkitgtk-6.0-dev
 
-      - name: Install Wails
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+      - name: Generate Wails bindings
+        run: |
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.17
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          mkdir -p frontend/dist
+          touch frontend/dist/.gitkeep
+          wails3 generate bindings -d frontend/bindings -ts -i -names ./...
+
+      - name: Build frontend assets
+        run: npm ci --prefix frontend && npm run build --prefix frontend
 
       - name: Build desktop binary
         run: |
           export PATH="$PATH:$(go env GOPATH)/bin"
-          # Ubuntu 24.04 ships webkit2gtk-4.1; the webkit2_41 tag switches
-          # wails to the 4.1 pkg-config/API (4.0 is the default).
-          wails build -platform linux/amd64 -tags webkit2_41
+          go build -tags production .
 
   desktop-macos:
     name: desktop build (macos)
@@ -283,13 +301,21 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Install Wails
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+      - name: Generate Wails bindings
+        run: |
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.17
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          mkdir -p frontend/dist
+          touch frontend/dist/.gitkeep
+          wails3 generate bindings -d frontend/bindings -ts -i -names ./...
+
+      - name: Build frontend assets
+        run: npm ci --prefix frontend && npm run build --prefix frontend
 
       - name: Build desktop binary
         run: |
           export PATH="$PATH:$(go env GOPATH)/bin"
-          make build-macos
+          go build -tags production .
 
   desktop-windows:
     name: desktop build (windows)
@@ -308,13 +334,21 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Install Wails
-        run: go install github.com/wailsapp/wails/v2/cmd/wails@v2.15.0
+      - name: Generate Wails bindings
+        run: |
+          go install github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-beta.17
+          $env:PATH = "$(go env GOPATH)\bin;$env:PATH"
+          New-Item -ItemType Directory -Force frontend/dist | Out-Null
+          New-Item -ItemType File -Force frontend/dist/.gitkeep | Out-Null
+          wails3 generate bindings -d frontend/bindings -ts -i -names ./...
+        shell: pwsh
 
-      - name: Install NSIS
-        run: choco install nsis -y --no-progress
+      - name: Build frontend assets
+        run: npm ci --prefix frontend; npm run build --prefix frontend
+        shell: pwsh
 
-      - name: Build desktop binary + installer
+      - name: Build desktop binary
         run: |
           $env:PATH = "$(go env GOPATH)\bin;$env:PATH"
-          wails build -platform windows/amd64,windows/arm64 -nsis
+          go build -tags production .
+        shell: pwsh

@@ -14,7 +14,7 @@ import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import { useStore } from '../lib/store';
 import { useConversationState } from '../state/react';
-import { EventsOn } from '../../wailsjs/runtime/runtime';
+import { Events } from '@wailsio/runtime';
 import { FileViewer } from './FileViewer';
 import { GitPanel } from './GitPanel';
 
@@ -52,9 +52,9 @@ export function WorkspacePanel({ sessionID }: { sessionID: string }) {
   }, [busy, probeRepo]);
 
   useEffect(() => {
-    const off = EventsOn('opencraft:ui', (ev: unknown) => {
-      const msg = ev as { type?: string };
-      if (msg?.type === 'git_changed' || msg?.type === 'turn_end') {
+    const off = Events.On('opencraft:ui', (e) => {
+      const ev = e.data as { type?: string } | undefined;
+      if (ev?.type === 'git_changed' || ev?.type === 'turn_end') {
         void probeRepo();
       }
     });

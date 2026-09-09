@@ -27,6 +27,7 @@ import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import { alignUsageWindow } from '../lib/usageWindow';
 import { LogViewer } from './LogViewer';
+import { MetricsCharts } from './MetricsCharts';
 import { useStore } from '../lib/store';
 import type {
   CacheClearResult,
@@ -48,7 +49,7 @@ import { UsageRangePicker } from './UsageRangePicker';
 import { MCPLogo, MCPSection } from './ToolsPanel';
 import { PluginPanels } from '../plugins/components/PluginPanels';
 import { usePluginStore } from '../plugins/store';
-import { EventsOn } from '../../wailsjs/runtime/runtime';
+import { Events } from '@wailsio/runtime';
 import { SettingsGeneral } from './SettingsGeneral';
 import { SettingsDisplay } from './SettingsDisplay';
 
@@ -369,7 +370,8 @@ export function ConfigPage() {
   // Refresh the inference config when a plugin upserts/removes a
   // gateway profile (e.g. after SSO login/logout).
   useEffect(() => {
-    const off = EventsOn('opencraft:ui', (ev: UIEvent) => {
+    const off = Events.On('opencraft:ui', (e) => {
+      const ev = e.data as UIEvent;
       if (ev.type === 'inference_changed') void loadInference();
     });
     return off;
@@ -2402,6 +2404,7 @@ export function ConfigPage() {
                     <LogViewer fetchLogs={() => api.readLog(300)} />
                   </div>
                 </div>
+                <MetricsCharts />
               </div>
             )}
 

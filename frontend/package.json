@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:dev": "tsc && vite build --mode development --minify false",
     "preview": "vite preview",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -35,6 +36,7 @@
     "@tiptap/starter-kit": "^3.31.0",
     "@tiptap/suggestion": "^3.31.0",
     "@uiw/react-codemirror": "^4.25.11",
+    "@wailsio/runtime": "3.0.0-beta.17",
     "@xyflow/react": "^12.11.5",
     "i18next": "^26.4.0",
     "i18next-browser-languagedetector": "^8.2.1",
@@ -47,6 +49,7 @@
     "recharts": "^3.10.1",
     "rehype-highlight": "^7.0.2",
     "remark-gfm": "^4.0.1",
+    "web-vitals": "^4.2.4",
     "xstate": "^5.32.6",
     "zustand": "^5.0.6"
   },
@@ -59,7 +62,7 @@
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^5.0.0",
-    "jsdom": "^30.0.1",
+    "jsdom": "^27.0.0",
     "prettier": "^3.9.6",
     "tailwindcss": "^4.1.7",
     "typescript": "^5.6.3",

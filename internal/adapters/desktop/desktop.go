@@ -1,0 +1,409 @@
+package desktop
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/inference"
+	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/telemetry"
+
+	"github.com/GizClaw/opencraft/internal/adapters/desktop/bindings"
+	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
+	"github.com/GizClaw/opencraft/internal/capabilities/automations"
+	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	octelemetry "github.com/GizClaw/opencraft/internal/capabilities/telemetry"
+	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/orchestration/host"
+	"github.com/GizClaw/opencraft/internal/orchestration/interact"
+
+	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/services/notifications"
+)
+
+// Options configures the desktop application.
+type Options struct {
+	WorkDir string
+	UserDir string
+	DataDir string
+}
+
+// Desktop is the desktop composition root. It is not a Wails binding object;
+// RegisterServices exposes the per-domain API objects as Wails v3 services.
+type Desktop struct {
+	core               *core.Core
+	notifications      *notifications.NotificationService
+	otelShutdown       func(context.Context) error
+	runtimeMetricsStop chan struct{}
+	runtimeMetricsDone chan struct{}
+}
+
+// New resolves the user data/config directories and builds the core
+// service composition.
+func New(opts Options) (*Desktop, error) {
+	if opts.DataDir == "" {
+		dir, err := config.UserDataDir()
+		if err != nil {
+			return nil, err
+		}
+		opts.DataDir = dir
+	}
+	if opts.UserDir == "" {
+		dir, err := config.UserConfigDir()
+		if err != nil {
+			return nil, err
+		}
+		opts.UserDir = dir
+	}
+	if _, err := config.EnsureUserConfig(); err != nil {
+		return nil, err
+	}
+	c := core.NewCore(opts.UserDir, opts.DataDir, opts.WorkDir)
+	c.Prompt.SetNotifier(c.Shell.Emit)
+	c.Prompt.SetRunConvResolver(c.Conversation.ConversationForRun)
+	c.Runtime.Manager().SetUsageObserver(func(_ context.Context, usage inference.Usage) {
+		c.Shell.Emit("usage", core.NewUsageEvent(usage))
+	})
+	c.Runtime.SetHostConfigurator(func(h *host.Host) {
+		h.SetArtifactObserver(func(ctx context.Context, path string, data []byte) {
+			if h != c.Runtime.Current() {
+				return
+			}
+			info, ok := agent.RunInfoFromContext(ctx)
+			if !ok || info.ConversationID == "" {
+				return
+			}
+			c.Shell.Emit("artifact", map[string]any{
+				"conversation_id": info.ConversationID,
+				"path":            path,
+				"bytes":           len(data),
+			})
+		})
+		h.SetSessionUpdated(func(_ context.Context, contextID string) {
+			if h == c.Runtime.Current() {
+				c.Shell.Emit("session_updated", map[string]string{"id": contextID})
+			}
+		})
+	})
+	c.SetWorkDir(c.InitialWorkDir(opts.WorkDir))
+	shutdown, err := initTelemetry(opts.DataDir)
+	if err != nil {
+		// Telemetry is best-effort for the desktop app: a failed
+		// pipeline must not block the window.
+		fmt.Fprintf(os.Stderr, "opencraft: telemetry: %v\n", err)
+		shutdown = nil
+	}
+	return &Desktop{
+		core: c,
+		// Windows toast attribution keys off application.Options.Name
+		// ("OpenCraft"); the NSIS installer stamps the same AppUserModelID
+		// onto the shortcuts it creates. Keep main.go's Options.Name and
+		// build/config.yml's productName in sync with that value.
+		notifications: notifications.New(),
+		otelShutdown:  shutdown,
+	}, nil
+}
+
+// initTelemetry wires the OTel pipelines (rotating log file under
+// ~/.opencraft/logs plus optional OTLP export) and returns the
+// flush/shutdown function.
+func initTelemetry(dataDir string) (func(context.Context) error, error) {
+	logPath := filepath.Join(dataDir, "logs", "opencraft.log")
+	otelEndpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	otelInsecure := false
+	if v := os.Getenv("OTEL_EXPORTER_OTLP_INSECURE"); v != "" {
+		parsed, err := strconv.ParseBool(v)
+		if err != nil {
+			fmt.Fprintf(os.Stderr,
+				"opencraft: telemetry: invalid OTEL_EXPORTER_OTLP_INSECURE %q: %v\n",
+				v, err)
+		} else {
+			otelInsecure = parsed
+		}
+	}
+	return octelemetry.InitOtel(context.Background(), octelemetry.TelemetryOptions{
+		OTLPEndpoint: otelEndpoint,
+		OTLPInsecure: otelInsecure,
+		LogFile:      logPath,
+	})
+}
+
+// Startup wires the application context into the core shell.
+func (d *Desktop) Startup(ctx context.Context) {
+	started := time.Now()
+	defer func() {
+		durationMs := time.Since(started).Milliseconds()
+		octelemetry.SampleHistogram(
+			ctx, "desktop.startup_ms", "ms", float64(durationMs))
+		if mgr := d.core.Runtime.Manager(); mgr != nil {
+			mgr.RecordMetric(ctx, "desktop.startup_ms",
+				float64(durationMs), nil)
+		}
+		telemetry.Info(ctx, fmt.Sprintf(
+			"desktop: startup completed in %d ms", durationMs))
+	}()
+	d.core.Shell.SetContext(ctx)
+	d.core.Shell.SetScheduledTasksChecker(d.hasScheduledTasks)
+	if err := d.core.Runtime.OpenUserDB(ctx); err != nil {
+		telemetry.WarnErr(ctx, "desktop: open user db failed", err)
+	} else {
+		d.startRuntimeMetrics()
+		d.startAutomations(ctx)
+	}
+	if err := d.core.RebuildRuntime(ctx); err != nil {
+		d.core.Shell.Emit("fatal", map[string]any{"error": err.Error()})
+	}
+}
+
+// EmitUI is the single UI-event entry used by the v3 entry point outside the
+// domain services; everything else already routes through core.Shell.Emit.
+func (d *Desktop) EmitUI(typ string, data any) {
+	d.core.Shell.Emit(typ, data)
+}
+
+// QuitAllowed is the v3 quit gate: it returns true only when quitting may
+// proceed immediately and opens the async confirmation dialog otherwise.
+func (d *Desktop) QuitAllowed() bool {
+	return d.core.Shell.ShouldQuit()
+}
+
+// QuitRequested reports whether a quit flow is already under way (dialog
+// pending or confirmed). Window close events fired during that flow must not
+// trigger a second quit request.
+func (d *Desktop) QuitRequested() bool {
+	return d.core.Shell.QuitRequested()
+}
+
+// RequestQuit funnels every explicit quit (tray, UI service, Cmd+Q) through
+// the confirmation gate.
+func (d *Desktop) RequestQuit() {
+	if d.QuitAllowed() {
+		d.core.Shell.QuitApplication()
+	}
+}
+
+// CloseRequested funnels native window closes through the core close gate:
+// close-to-tray hides, a real quit runs the confirmation dialog.
+func (d *Desktop) CloseRequested() bool {
+	return d.core.Shell.CloseRequested(d.core.Shell.Context())
+}
+
+// SetDialogIcon forwards the app icon to the core shell for native dialogs.
+func (d *Desktop) SetDialogIcon(icon []byte) {
+	d.core.Shell.SetDialogIcon(icon)
+}
+
+// hasScheduledTasks reports whether quitting would stop an enabled
+// scheduled task. It is the native quit funnel's condition: no
+// scheduler (user DB failed to open) means nothing can run, so exit
+// needs no confirmation; a query failure is treated conservatively as
+// "tasks exist" so users are never told the wrong thing before quit.
+func (d *Desktop) hasScheduledTasks(ctx context.Context) bool {
+	store := d.core.Runtime.Automations()
+	if store == nil {
+		return false
+	}
+	has, err := store.HasEnabled(ctx)
+	if err != nil {
+		telemetry.WarnErr(ctx, "desktop: query scheduled tasks failed", err)
+		return true
+	}
+	return has
+}
+
+// Shutdown releases runtime-owned resources. Runtime service teardown
+// is added as the runtime domain migrates.
+func (d *Desktop) Shutdown(ctx context.Context) {
+	d.stopRuntimeMetrics()
+	if mgr := d.core.Runtime.AutomationManager(); mgr != nil {
+		mgr.Stop()
+	}
+	d.core.Runtime.Close()
+	d.core.Plugin.Close()
+	if d.otelShutdown != nil {
+		// The Wails shutdown context may already be canceled by the
+		// time this runs; derive the flush deadline from a fresh
+		// context so telemetry still gets its full drain window.
+		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := d.otelShutdown(flushCtx); err != nil {
+			telemetry.WarnErr(context.Background(),
+				"desktop: telemetry shutdown failed", err)
+		}
+	}
+}
+
+func (d *Desktop) startAutomations(ctx context.Context) {
+	store := d.core.Runtime.Automations()
+	if store == nil {
+		return
+	}
+	mgr, err := automations.NewManager(store, automations.ManagerOptions{
+		Run:    d.runAutomation,
+		Window: 2 * time.Minute,
+		Limit:  4,
+		OnChange: func() {
+			d.core.Shell.Emit("automation_changed", map[string]any{})
+		},
+		OnRun: func(run automations.Run) {
+			d.core.Shell.Emit("automation_run", bindings.ToAutomationRunDTO(run))
+		},
+	})
+	if err != nil {
+		return
+	}
+	d.core.Runtime.SetAutomationManager(mgr)
+	mgr.Start()
+}
+
+func (d *Desktop) runAutomation(
+	ctx context.Context, task automations.Task,
+) (automations.RunResult, error) {
+	mode := sessions.Mode(task.Mode)
+	if mode == "" {
+		mode = sessions.ModeWorkspace
+	}
+	current := d.core.ActiveWorkDir() != "" &&
+		filepath.Clean(d.core.ActiveWorkDir()) == filepath.Clean(task.Workspace)
+	h, err := d.core.Runtime.AcquireBackground(ctx, task.Workspace, interact.Auto{})
+	if err != nil {
+		return automations.RunResult{Status: automations.RunFailed}, err
+	}
+	run, err := h.StartRun(ctx, host.RunOptions{
+		Message:   message.NewTextMessage(message.RoleUser, task.Prompt),
+		ContextID: task.ConversationID,
+		Mode:      mode,
+		Think:     task.Think,
+		Model:     task.Model,
+		Backend:   interact.Auto{},
+	})
+	if err != nil {
+		return automations.RunResult{Status: automations.RunFailed}, err
+	}
+	runID := run.RunID()
+	contextID := run.ContextID()
+	if current {
+		d.core.Shell.Emit("automation_run_started", map[string]any{
+			"run_id":          runID,
+			"conversation_id": contextID,
+		})
+	}
+	res, waitErr := run.Wait(ctx)
+	finishedAt, durationMs := run.FinishedTiming()
+	result := automations.RunResult{
+		ConversationID: contextID,
+		RunID:          runID,
+	}
+	status := agent.Status("unknown")
+	errText := ""
+	if res != nil {
+		status = res.Status
+		if res.Err != nil {
+			errText = res.Err.Error()
+		}
+	}
+	if waitErr != nil && errText == "" {
+		errText = waitErr.Error()
+	}
+	output := automationOutput(res)
+	if waitErr != nil {
+		result.Status = automations.RunFailed
+		result.Error = errText
+	} else {
+		if res != nil && status == agent.StatusCompleted {
+			result.Status = automations.RunCompleted
+		} else {
+			result.Status = automations.RunFailed
+			result.Error = errText
+		}
+	}
+	notify := !suppressAutomationNotify(task, result.Status, errText)
+	if current {
+		requestID, responseID := run.FinishedIDs()
+		end := core.NewTurnEnd(
+			runID, contextID, string(status), errText,
+			requestID, responseID, output,
+			finishedAt, durationMs,
+		)
+		end.Notify = &notify
+		d.core.Shell.Emit("turn_end", end)
+	} else if notify {
+		d.core.Shell.Emit("automation_notify", map[string]any{
+			"task_id": task.ID,
+			"name":    task.Name,
+			"status":  string(result.Status),
+			"error":   result.Error,
+			"output":  output,
+		})
+	}
+	if waitErr != nil {
+		return result, waitErr
+	}
+	return result, nil
+}
+
+// automationOutput returns the bounded text of the run's final
+// assistant message for notifications outside the open workspace.
+func automationOutput(res *agent.Result) string {
+	if res == nil {
+		return ""
+	}
+	for i := len(res.Messages) - 1; i >= 0; i-- {
+		if res.Messages[i].Role != message.RoleAssistant {
+			continue
+		}
+		text := strings.TrimSpace(res.Messages[i].Content.Text())
+		if text == "" {
+			continue
+		}
+		if len(text) > 8000 {
+			text = text[len(text)-8000:]
+		}
+		return text
+	}
+	return ""
+}
+
+// suppressAutomationNotify applies the task's notification policy.
+func suppressAutomationNotify(
+	task automations.Task, status automations.RunStatus, errorText string,
+) bool {
+	switch task.Notify {
+	case automations.NotifyNever:
+		return true
+	case automations.NotifyFailed:
+		return status != automations.RunFailed && errorText == ""
+	default:
+		return false
+	}
+}
+
+// RegisterServices registers every domain binding as a Wails v3 service.
+// Each call is written out explicitly so the v3 binding generator can infer
+// concrete service types from NewService.
+func (d *Desktop) RegisterServices(app *application.App) {
+	reg := func(s application.Service) {
+		app.RegisterService(s)
+	}
+	reg(application.NewService(bindings.NewLifecycle(d.core)))
+	reg(application.NewService(bindings.NewConfig(d.core)))
+	reg(application.NewService(bindings.NewWorkspace(d.core)))
+	reg(application.NewService(bindings.NewConversationBinding(d.core)))
+	reg(application.NewService(bindings.NewSessionBinding(d.core)))
+	reg(application.NewService(bindings.NewAgentBinding(d.core)))
+	reg(application.NewService(bindings.NewFileBinding(d.core)))
+	reg(application.NewService(bindings.NewGitBinding(d.core)))
+	reg(application.NewService(bindings.NewPullRequestsBinding(d.core)))
+	reg(application.NewService(bindings.NewSettingsBinding(d.core)))
+	reg(application.NewService(bindings.NewDiagnosticsBinding(d.core)))
+	reg(application.NewService(bindings.NewPluginBinding(d.core)))
+	reg(application.NewService(bindings.NewSecretBinding(d.core)))
+	reg(application.NewService(bindings.NewAutomationBinding(d.core)))
+	reg(application.NewService(d.notifications))
+}

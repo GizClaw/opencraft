@@ -19,7 +19,7 @@ import {
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { WindowToggleMaximise } from '../../wailsjs/runtime/runtime';
+import { Window } from '@wailsio/runtime';
 import { api } from '../lib/api';
 import {
   firstMessageTitle,
@@ -303,7 +303,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   ];
 
   // The native folder picker can fail or never return in some
-  // environments (e.g. wails dev running the bare binary). When it
+  // environments (e.g. wails3 dev running the bare binary). When it
   // errors, fall back to a typed path so adding a workspace always
   // works.
   const handleAddWorkspace = async () => {
@@ -948,7 +948,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
         <div
           className="h-11 shrink-0 border-b border-edge flex items-center select-none pl-[5.5714rem]"
           style={{ ['--wails-draggable' as string]: 'drag' }}
-          onDoubleClick={() => WindowToggleMaximise()}
+          onDoubleClick={() => void Window.ToggleMaximise()}
         />
       )}
 

@@ -25,10 +25,6 @@
 !go.sum
 !internal/
 !internal/**
-!pkg/
-!pkg/**
-!tools/
-!tools/**
 
 # ── Wails desktop app ──
 !main.go
@@ -36,7 +32,7 @@
 !mac_window_*.go
 !execd_umask_*.go
 !execd_watch_*.go
-!wails.json
+!Taskfile.yml
 !frontend/
 !frontend/**
 # Frontend plugins ship in the repo as reference implementations.

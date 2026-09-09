@@ -1,5 +1,8 @@
-// Tier-1 E2E backend mock: installs `window.go.bindings.*` and
-// `window.runtime` so the real frontend runs against a scriptable stub.
+// Tier-1 E2E backend mock for the Wails v3 runtime. The real frontend loads
+// @wailsio/runtime, whose mock transport (installed by src/lib/mockBridge)
+// routes binding calls to the module/method table installed here. UI events
+// are delivered through window._wails.dispatchWailsEvent, which the runtime
+// registers once its events module loads.
 // The function is deliberately self-contained (no module references) so
 // Playwright can serialize it into the page via addInitScript.
 
@@ -45,10 +48,13 @@ export function mockBackend(cfg?: MockConfig) {
   let newChatSeq = 0;
   let startTurnSeq = 0;
   let forkSeq = 0;
-  const listeners: Record<string, Array<(data: unknown) => void>> = {};
-
   const emit = (name: string, data: unknown) => {
-    for (const cb of listeners[name] ?? []) cb(data);
+    const wails = (
+      win as { _wails?: { dispatchWailsEvent?: (e: unknown) => void } }
+    )._wails;
+    if (typeof wails?.dispatchWailsEvent === 'function') {
+      wails.dispatchWailsEvent({ name, data });
+    }
   };
   win.__emit = emit;
 
@@ -139,6 +145,9 @@ export function mockBackend(cfg?: MockConfig) {
       ClearCaches: async () => ({ dirs: [], bytes: 0 }),
       Diagnostics: async () => ({}),
       EvaluateCommandPolicy: async () => ({ command: '', allowed: true }),
+      MetricRange: async () => [],
+      ReportFrontendError: noop,
+      ReportFrontendPerf: noop,
       RunSandboxProbe: async () => ({ ok: true }),
     },
     File: {
@@ -191,15 +200,10 @@ export function mockBackend(cfg?: MockConfig) {
       Search: emptyList,
     },
     Lifecycle: {
-      CloseRequested: async () => false,
       GetCloseToTray: async () => true,
-      GetLanguage: async () => 'zh-CN',
-      MarkQuitting: noop,
-      QuitFromTray: noop,
       RequestClose: noop,
       SetCloseToTray: noop,
       SetLanguage: noop,
-      ShowMainWindow: noop,
     },
     Plugin: {
       ApplyUpdate: async () => null,
@@ -393,55 +397,22 @@ export function mockBackend(cfg?: MockConfig) {
       },
     });
   }
-  win.go = { bindings: modules };
-
-  const runtimeBase = {
-    EventsOn: (name: string, cb: (data: unknown) => void) => {
-      (listeners[name] ??= []).push(cb);
-      return () => {
-        listeners[name] = (listeners[name] ?? []).filter((c) => c !== cb);
-      };
-    },
-    EventsOnMultiple: (name: string, cb: (data: unknown) => void) => {
-      (listeners[name] ??= []).push(cb);
-      return () => {};
-    },
-    EventsOnce: (name: string, cb: (data: unknown) => void) => {
-      const off = runtime.EventsOn(name, (data) => {
-        off();
-        cb(data);
-      });
-    },
-    EventsOff: (name: string) => {
-      delete listeners[name];
-    },
-    EventsOffAll: () => {
-      for (const k of Object.keys(listeners)) delete listeners[k];
-    },
-    EventsEmit: (name: string, data: unknown) => emit(name, data),
-    Environment: async () => ({
-      platform: 'darwin',
-      arch: 'arm64',
-      name: 'opencraft',
-      version: '0.1.0-test',
-    }),
-    SendNotification: async () => {},
-    SendNotificationWithActions: async () => {},
-    BrowserOpenURL: () => {},
-    OnFileDrop: () => {},
-    OnFileDropOff: () => {},
+  // Wails v3 mock transport table. Struct names match the generated binding
+  // modules (Settings, Session, ...); __ocCall is the browser-side entry used
+  // by src/lib/mockBridge.
+  const exposed = win as unknown as {
+    __ocMockByModule: typeof modules;
+    __ocCall: (qualified: string, args: unknown[]) => Promise<unknown>;
   };
-  // Any other runtime binding (notifications, window controls, logs)
-  // is a no-op so bootstrapping never rejects.
-  const runtime = new Proxy(runtimeBase, {
-    get(target, prop) {
-      if (typeof prop === 'string' && prop in target) {
-        return target[prop];
-      }
-      // Unknown runtime bindings (notifications, window controls, logs)
-      // are async no-ops so both sync and promise-based callers work.
-      return async () => {};
-    },
-  });
-  win.runtime = runtime;
+  exposed.__ocMockByModule = modules;
+  exposed.__ocCall = async (
+    qualified: string,
+    callArgs: unknown[],
+  ): Promise<unknown> => {
+    const match = /\.([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)$/.exec(qualified);
+    if (!match) return undefined;
+    const handler = modules[match[1]]?.[match[2]];
+    if (!handler) return undefined;
+    return handler(...(callArgs ?? []));
+  };
 }
