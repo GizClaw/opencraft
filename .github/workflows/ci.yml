@@ -83,7 +83,10 @@ jobs:
           version: v2.12.2
 
       - name: Vulnerability scan (govulncheck)
-        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        # Pinned: v1.8.0+ requires Go >= 1.26 while this repo builds on
+        # go.mod's 1.25 toolchain (GOTOOLCHAIN=local). Bump together with
+        # the Go version instead of tracking @latest.
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
 
       - name: Frontend dependency audit
         working-directory: frontend
