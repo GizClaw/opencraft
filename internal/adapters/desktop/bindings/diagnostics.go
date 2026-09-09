@@ -12,7 +12,11 @@ import (
 
 	coresandbox "github.com/GizClaw/flowcraft/core/sandbox"
 	flowtelemetry "github.com/GizClaw/flowcraft/core/telemetry"
+	octelemetry "github.com/GizClaw/opencraft/internal/capabilities/telemetry"
+
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/metric"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/execpolicy"
@@ -30,6 +34,63 @@ type Diagnostics struct {
 // NewDiagnosticsBinding wires the diagnostics binding.
 func NewDiagnosticsBinding(c *core.Core) *Diagnostics {
 	return &Diagnostics{core: c}
+}
+
+var (
+	frontendVitalsDuration = octelemetry.MustFloat64Histogram(
+		"frontend.vitals.duration_ms",
+		metric.WithUnit("ms"),
+		metric.WithDescription(
+			"Renderer web vitals and navigation durations"))
+	frontendVitalsScore = octelemetry.MustFloat64Histogram(
+		"frontend.vitals.cls",
+		metric.WithUnit("1"),
+		metric.WithDescription("Renderer cumulative layout shift"))
+)
+
+// FrontendPerfSample is one renderer performance measurement.
+type FrontendPerfSample struct {
+	Name  string  `json:"name"`
+	Value float64 `json:"value"`
+	Unit  string  `json:"unit,omitempty"`
+}
+
+// frontendDurationMetrics are the renderer samples recorded on the duration
+// histogram; everything else either maps to its own instrument or is only
+// logged so a compromised renderer cannot fabricate instrument names.
+var frontendDurationMetrics = map[string]bool{
+	"ttfb":               true,
+	"fid":                true,
+	"lcp":                true,
+	"inp":                true,
+	"dom_content_loaded": true,
+	"load":               true,
+}
+
+// ReportFrontendPerf records renderer web-vitals and navigation samples:
+// every sample is logged, and known samples are also recorded on the
+// opencraft frontend metric instruments so they join the same OTLP export as
+// backend metrics.
+func (b *Diagnostics) ReportFrontendPerf(samples []FrontendPerfSample) {
+	ctx := b.core.Shell.Context()
+	for _, sample := range samples {
+		unit := sample.Unit
+		if unit == "" {
+			unit = "1"
+		}
+		flowtelemetry.Info(ctx, "frontend rum: "+sample.Name,
+			log.Float64("value", sample.Value),
+			log.String("unit", unit))
+		if frontendDurationMetrics[sample.Name] {
+			frontendVitalsDuration.Record(ctx, sample.Value,
+				metric.WithAttributes(
+					attribute.String("metric", sample.Name)))
+			continue
+		}
+		if sample.Name == "cls" {
+			frontendVitalsScore.Record(ctx, sample.Value)
+		}
+	}
 }
 
 // Report is the environment summary.

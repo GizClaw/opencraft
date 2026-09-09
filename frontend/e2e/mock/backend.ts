@@ -146,6 +146,7 @@ export function mockBackend(cfg?: MockConfig) {
       Diagnostics: async () => ({}),
       EvaluateCommandPolicy: async () => ({ command: '', allowed: true }),
       ReportFrontendError: noop,
+      ReportFrontendPerf: noop,
       RunSandboxProbe: async () => ({ ok: true }),
     },
     File: {

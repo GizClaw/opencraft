@@ -9,11 +9,13 @@ import {
   installConsoleErrorCapture,
   reportFrontendError,
 } from './lib/frontendErrors';
+import { startRUM } from './lib/rum';
 
 // Surface uncaught errors instead of failing silently: render errors
 // are caught by ErrorBoundary, event-handler errors and unhandled rejections
 // are forwarded to the Go telemetry pipeline (and printed for devtools).
 installConsoleErrorCapture();
+startRUM();
 window.addEventListener('error', (e) => {
   reportFrontendError('window-error', e.error ?? new Error(e.message));
 });
