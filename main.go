@@ -6,11 +6,14 @@
 package main
 
 import (
+	"context"
 	"embed"
+	"fmt"
 	"log"
 	"os"
 	"runtime"
 
+	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/opencraft/internal/adapters/desktop"
 	"github.com/GizClaw/opencraft/internal/adapters/headless"
 
@@ -61,8 +64,9 @@ func main() {
 		SingleInstance: &application.SingleInstanceOptions{
 			UniqueID: "com.GizClaw.opencraft",
 			OnSecondInstanceLaunch: func(data application.SecondInstanceData) {
-				log.Printf("opencraft: second instance args=%v workingDir=%s",
-					data.Args, data.WorkingDir)
+				telemetry.Info(context.Background(),
+					fmt.Sprintf("desktop: second instance args=%v workingDir=%s",
+						data.Args, data.WorkingDir))
 				desktop.ShowMainWindow(shell)
 			},
 		},
@@ -128,7 +132,7 @@ func main() {
 
 	// Dock reopen uses first-class mac events.
 	app.Event.OnApplicationEvent(events.Mac.ApplicationShouldHandleReopen, func(*application.ApplicationEvent) {
-		log.Printf("opencraft: mac ApplicationShouldHandleReopen")
+		telemetry.Info(context.Background(), "desktop: mac application reopened")
 		desktop.ShowMainWindow(shell)
 	})
 
