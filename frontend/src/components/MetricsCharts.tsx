@@ -244,7 +244,9 @@ export function MetricsCharts() {
                     const num =
                       typeof value === 'number' ? value : Number(value ?? 0);
                     return [
-                      `${fmtAxisValue(num, def.unit)} ${def.unit}`.trim(),
+                      def.unit === 'B'
+                        ? fmtBytes(num)
+                        : `${fmtAxisValue(num, def.unit)} ${def.unit}`.trim(),
                       String(name ?? ''),
                     ];
                   }}
