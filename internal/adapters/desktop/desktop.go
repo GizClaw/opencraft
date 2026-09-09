@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -99,7 +100,7 @@ func New(opts Options) (*Desktop, error) {
 		fmt.Fprintf(os.Stderr, "opencraft: telemetry: %v\n", err)
 		shutdown = nil
 	}
-	return &Desktop{
+	d := &Desktop{
 		core: c,
 		// Windows toast attribution keys off application.Options.Name
 		// ("OpenCraft"); the NSIS installer stamps the same AppUserModelID
@@ -107,7 +108,9 @@ func New(opts Options) (*Desktop, error) {
 		// build/config.yml's productName in sync with that value.
 		notifications: notifications.New(),
 		otelShutdown:  shutdown,
-	}, nil
+	}
+	c.Shell.SetNotificationSink(d.handleDesktopNotification)
+	return d, nil
 }
 
 // initTelemetry wires the OTel pipelines (rotating log file under
@@ -155,6 +158,16 @@ func (d *Desktop) Startup(ctx context.Context) {
 	} else {
 		d.startRuntimeMetrics()
 		d.startAutomations(ctx)
+	}
+	if runtime.GOOS == "darwin" {
+		// macOS shows an authorization prompt once; ask after every
+		// service has started so the request cannot race startup.
+		time.AfterFunc(2*time.Second, func() {
+			if _, err := d.notifications.RequestNotificationAuthorization(); err != nil {
+				telemetry.WarnErr(context.Background(),
+					"desktop: request notification authorization failed", err)
+			}
+		})
 	}
 	if err := d.core.RebuildRuntime(ctx); err != nil {
 		d.core.Shell.Emit("fatal", map[string]any{"error": err.Error()})

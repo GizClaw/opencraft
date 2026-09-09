@@ -26,6 +26,7 @@ type Shell struct {
 	quitConfirmed  bool
 	scheduledTasks func(context.Context) bool
 	onLanguage     func()
+	notifySink     func(typ string, data any)
 }
 
 // NewShell creates the shell with preferences loaded from userDir.
@@ -78,6 +79,16 @@ func (s *Shell) SetLanguageChangedListener(fn func()) {
 	s.mu.Unlock()
 }
 
+// SetNotificationSink installs an optional observer invoked for every UI
+// event right after the frontend emit. The desktop adapter uses it to raise
+// native system notifications for interact/turn_end/automation events from
+// Go, so hidden or suspended windows never lose notifications.
+func (s *Shell) SetNotificationSink(fn func(typ string, data any)) {
+	s.mu.Lock()
+	s.notifySink = fn
+	s.mu.Unlock()
+}
+
 // Context returns the installed application context, falling back to a
 // background context before startup so callers never handle nil.
 func (s *Shell) Context() context.Context {
@@ -118,6 +129,12 @@ func (s *Shell) Emit(typ string, data any) {
 		"type": typ,
 		"data": data,
 	})
+	s.mu.Lock()
+	fn := s.notifySink
+	s.mu.Unlock()
+	if fn != nil {
+		fn(typ, data)
+	}
 }
 
 // ShouldQuit is the synchronous gate for every real quit path (tray, Cmd+Q,

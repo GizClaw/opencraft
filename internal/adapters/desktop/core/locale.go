@@ -17,6 +17,11 @@ type DesktopTexts struct {
 	QuitDialogMessage string
 	QuitDialogConfirm string
 	QuitDialogCancel  string
+	NotifyDone        string
+	NotifyFailed      string
+	NotifyCancelled   string
+	NotifyInterrupted string
+	NotifyInteract    string
 }
 
 var desktopLocales = map[string]DesktopTexts{
@@ -31,6 +36,11 @@ var desktopLocales = map[string]DesktopTexts{
 		QuitDialogMessage: "退出后，OpenCraft 的定时任务将不再执行。\n确定要退出吗？",
 		QuitDialogConfirm: "继续退出",
 		QuitDialogCancel:  "取消",
+		NotifyDone:        "任务完成",
+		NotifyFailed:      "任务失败",
+		NotifyCancelled:   "任务已取消",
+		NotifyInterrupted: "任务已中断",
+		NotifyInteract:    "需要你的输入",
 	},
 	"en": {
 		TrayTooltip:       "OpenCraft",
@@ -43,6 +53,11 @@ var desktopLocales = map[string]DesktopTexts{
 		QuitDialogMessage: "Scheduled tasks will stop running when OpenCraft exits.\nAre you sure you want to quit?",
 		QuitDialogConfirm: "Continue",
 		QuitDialogCancel:  "Cancel",
+		NotifyDone:        "Task finished",
+		NotifyFailed:      "Task failed",
+		NotifyCancelled:   "Task cancelled",
+		NotifyInterrupted: "Task interrupted",
+		NotifyInteract:    "Input needed",
 	},
 }
 
