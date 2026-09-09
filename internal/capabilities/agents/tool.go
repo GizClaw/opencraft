@@ -111,11 +111,8 @@ func (t createTool) Execute(
 	if !ok {
 		return `{"cancelled":true,"action":"create"}`, nil
 	}
-	result, err := t.lifecycle.Create(ctx, AgentSpec{
-		Name:        args.Name,
-		Description: args.Description,
-		Graph:       args.Graph,
-	})
+	result, err := t.lifecycle.Create(
+		ctx, NewSpec(args.Name, args.Description, args.Graph))
 	if err != nil {
 		return "", err
 	}

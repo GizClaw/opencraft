@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 )
@@ -17,32 +18,36 @@ const toolAssemblyResource = "tools"
 
 // agentDefinition assembles the agent.Definition for a persistent
 // subagent: the caller-supplied graph definition is passed through as
-// the graph engine's settings verbatim, and the worldstate prepare
-// hook keeps the same basic context (workdir, permissions, skills) the
-// main agent gets. The hook paths are the assembly values the
-// lifecycle received at build time (see Settings); the definition must
-// not carry ${...} references because runtime.RegisterAgent expands
-// agent settings without the builder's custom resolver.
-func (l *Lifecycle) agentDefinition(spec AgentSpec) agent.Definition {
+// the graph engine's settings, and the worldstate prepare hook keeps
+// the same basic context (workdir, permissions, skills) the main
+// agent gets. The hook paths are the assembly values the lifecycle
+// received at build time (see Settings); the definition must not
+// carry ${...} references because runtime.RegisterAgent expands agent
+// settings without the builder's custom resolver. Callers validate the
+// spec first, so the error path is defensive: a malformed declaration
+// must fail registration instead of being registered half-built.
+func (l *Lifecycle) agentDefinition(spec AgentSpec) (agent.Definition, error) {
+	graph, err := decodeGraphOnly(spec.Engine.Settings)
+	if err != nil {
+		return agent.Definition{}, errdefs.Validationf(
+			"agents: decode graph settings: %v", err)
+	}
 	engineSettings, err := json.Marshal(map[string]any{
-		"graph": spec.Graph,
+		"graph": graph,
 		"build": map[string]any{
 			"timeout":        "1h",
 			"max_iterations": 400,
 		},
 	})
 	if err != nil {
-		telemetry.WarnErr(context.Background(),
-			"agents: marshal engine settings failed", err)
+		return agent.Definition{}, errdefs.Internalf(
+			"agents: marshal engine settings: %v", err)
 	}
 	return agent.Definition{
-		Card: agent.AgentCard{
-			Name:        spec.Name,
-			Description: spec.Description,
-		},
+		Card: spec.Card,
 		Engine: agent.EngineRef{
-			Kind: "agent.Engine",
-			Impl: "graph",
+			Kind: spec.Engine.Kind,
+			Impl: spec.Engine.Impl,
 			Deps: resource.Deps{
 				"inference":      "infer",
 				"router":         "router",
@@ -54,7 +59,7 @@ func (l *Lifecycle) agentDefinition(spec AgentSpec) agent.Definition {
 			Settings: engineSettings,
 		},
 		Prepare: []agent.Hook{l.prepareHook()},
-	}
+	}, nil
 }
 
 // prepareHook mirrors the assistant's worldstate hook so subagents

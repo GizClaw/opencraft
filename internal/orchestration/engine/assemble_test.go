@@ -174,11 +174,10 @@ func TestBuildRuntimeAssemblesNewTools(t *testing.T) {
 	if !ok || lifecycle == nil {
 		t.Fatal("agentlifecycle is not a *agents.Lifecycle")
 	}
-	if _, err := lifecycle.Create(context.Background(), agents.AgentSpec{
-		Name:        "researcher",
-		Description: "Reads and summarizes the codebase",
-		Graph:       `{"name":"researcher","entry":"llm","nodes":[{"id":"llm","type":"inference","config":{"system_prompt":"Read-only researcher."}}],"edges":[{"from":"llm","to":"__end__"}]}`,
-	}); err != nil {
+	if _, err := lifecycle.Create(context.Background(),
+		agents.NewSpec("researcher", "Reads and summarizes the codebase",
+			`{"name":"researcher","entry":"llm","nodes":[{"id":"llm","type":"inference","config":{"system_prompt":"Read-only researcher."}}],"edges":[{"from":"llm","to":"__end__"}]}`),
+	); err != nil {
 		t.Fatalf("Create persistent agent: %v", err)
 	}
 	dirValue, ok := rt.Resource("delegate.directory")

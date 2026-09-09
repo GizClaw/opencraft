@@ -95,13 +95,17 @@ func (b *Agent) Detail(name string) (AgentDetail, error) {
 	if err != nil {
 		return AgentDetail{}, err
 	}
-	graph, err := parseAgentGraph(spec.Graph)
+	graphText, err := spec.GraphText()
+	if err != nil {
+		return AgentDetail{}, err
+	}
+	graph, err := parseAgentGraph(graphText)
 	if err != nil {
 		return AgentDetail{}, err
 	}
 	return AgentDetail{
-		Name:        spec.Name,
-		Description: spec.Description,
+		Name:        spec.Card.Name,
+		Description: spec.Card.Description,
 		Graph:       graph,
 		CreatedAt:   spec.CreatedAt.UTC().Format(time.RFC3339),
 	}, nil

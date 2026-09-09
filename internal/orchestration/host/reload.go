@@ -115,9 +115,14 @@ func (h *Host) onRuntimeReload(
 	h.rebindArtifactObserver()
 }
 
-// rebindAgents binds the new generation's agentlifecycle resource and
-// reloads persisted dynamic-agent declarations, mirroring the assembly
-// tail in Manager.assemble.
+// rebindAgents points the new generation's agentlifecycle resource at
+// the current runtime and replays declarations that are not already
+// live. flowcraft Runtime.Reload re-binds every previously registered
+// dynamic agent, so LoadMissing skips those (via AdoptKnown) and only
+// retries declarations that failed at cold start or appeared on disk
+// since — the repair path for hand-authored agent.yaml files. Binding
+// the new lifecycle is also required so tools on the new generation
+// resolve the registrar through this generation's resource instance.
 func (h *Host) rebindAgents(ctx context.Context) {
 	rt := h.Controller().Runtime()
 	if rt == nil {
@@ -128,7 +133,8 @@ func (h *Host) rebindAgents(ctx context.Context) {
 		if lc, ok := value.(*ocsagents.Lifecycle); ok && lc != nil {
 			lifecycle = lc
 			lifecycle.Bind(rt)
-			for _, failure := range lifecycle.LoadAll(ctx) {
+			lifecycle.AdoptKnown(h.agents.Load())
+			for _, failure := range lifecycle.LoadMissing(ctx) {
 				telemetry.Warn(ctx,
 					"host: reload agent declaration failed",
 					otellog.String("agent", failure.Name),

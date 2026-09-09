@@ -7,12 +7,15 @@
 package agents
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -27,6 +30,11 @@ import (
 // ResourceKind is the deployable resource kind of the persistent
 // subagent registry.
 const ResourceKind = "opencraft.agentlifecycle"
+
+// specVersion is the current on-disk declaration format. Declarations
+// carry the version explicitly so future format changes can migrate by
+// version instead of guessing from the field shape.
+const specVersion = 1
 
 // Settings configures the registry. Paths are resolver-expanded from
 // the engine assembly values (${ocraft:...}) before the factory
@@ -45,46 +53,224 @@ type Settings struct {
 }
 
 // AgentSpec is the persisted declaration of one subagent. It is the
-// source of truth for the agent: everything needed to rebuild the
-// runtime instance after a restart.
+// source of truth for the agent: the Card carries the delegation
+// identity, and Engine.Settings carries the graph source. Files store
+// the graph as an inline YAML object under engine.settings.graph so
+// they can be authored by hand; the shape mirrors the flowcraft
+// agent.Definition subset that lives under agents.<name> in a deploy
+// document. Host-owned wiring (engine deps, build knobs, the
+// worldstate prepare hook, and path injection) is never persisted:
+// agentDefinition rebuilds it on every registration, so a declaration
+// cannot override memory/workspace/execpolicy wiring.
 type AgentSpec struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	// Graph is the complete flowcraft graph definition (JSON or YAML)
-	// the agent runs on, including its system prompt. It is passed as
-	// engine settings.graph verbatim.
-	Graph     string    `json:"graph"`
-	CreatedAt time.Time `json:"created_at,omitempty"`
+	// Version is the on-disk declaration format. Version 1 stores the
+	// graph inline under engine.settings.graph; files without the
+	// field are pre-version declarations normalized on read.
+	Version int `json:"version,omitempty"`
+	// Card is the agent identity card: Name is the delegation id
+	// (lowercase letters, digits, hyphens) and Description is the
+	// summary shown in delegation targets.
+	Card agent.AgentCard `json:"card"`
+	// Engine mirrors the flowcraft engine reference. Only kind/impl
+	// ("agent.Engine"/"graph") and settings.graph are persisted; deps
+	// stay empty because the Host owns the binding.
+	Engine    agent.EngineRef `json:"engine"`
+	CreatedAt time.Time       `json:"created_at,omitempty"`
+}
+
+// NewSpec builds a declaration from the delegation identity and the
+// caller-supplied graph source (JSON or YAML text). It is the only
+// constructor callers should use: the engine reference is fixed to the
+// graph engine and carries the graph source exactly as the tool/UI
+// exchange it.
+func NewSpec(name, description, graph string) AgentSpec {
+	return AgentSpec{
+		Version: specVersion,
+		Card: agent.AgentCard{
+			Name:        name,
+			Description: description,
+		},
+		Engine: agent.EngineRef{
+			Kind:     "agent.Engine",
+			Impl:     "graph",
+			Settings: graphSettings(graph),
+		},
+	}
+}
+
+// graphSettings encodes the graph source as engine settings
+// (settings.graph). json.Marshal of a string map cannot fail.
+func graphSettings(graph string) json.RawMessage {
+	raw, err := json.Marshal(map[string]string{"graph": graph})
+	if err != nil {
+		// Unreachable: the value is one string field.
+		telemetry.WarnErr(context.Background(),
+			"agents: marshal graph settings failed", err)
+		return nil
+	}
+	return raw
+}
+
+// GraphText returns the graph source as text (inline objects are
+// rendered as YAML). It is what the desktop graph editor parses;
+// registration embeds the parsed graph directly into engine settings.
+func (s AgentSpec) GraphText() (string, error) {
+	graph, err := decodeGraphOnly(s.Engine.Settings)
+	if err != nil {
+		return "", err
+	}
+	text, err := graphText(graph)
+	if err != nil {
+		return "", err
+	}
+	return text, nil
 }
 
 // Validate checks the user-supplied fields of a spec.
 func (s AgentSpec) Validate() error {
-	if err := validateAgentName(s.Name); err != nil {
+	if s.Version != 0 && s.Version != specVersion {
+		return errdefs.Validationf(
+			"agents: unsupported declaration version %d (current is %d)",
+			s.Version, specVersion)
+	}
+	if err := validateAgentName(s.Card.Name); err != nil {
 		return err
 	}
-	if strings.TrimSpace(s.Description) == "" {
+	if strings.TrimSpace(s.Card.Description) == "" {
 		return errdefs.Validationf(
 			"agents: description is required (it identifies the agent in delegation targets)")
 	}
-	if strings.TrimSpace(s.Graph) == "" {
+	if s.Engine.Kind != "agent.Engine" || s.Engine.Impl != "graph" {
 		return errdefs.Validationf(
-			"agents: graph definition is required")
+			"agents: engine must be agent.Engine/graph (declarations cannot select another engine)")
 	}
-	if err := validateGraphSyntax(s.Graph); err != nil {
+	if len(s.Engine.Deps) > 0 {
+		return errdefs.Validationf(
+			"agents: engine deps are host-owned and must be empty in the declaration")
+	}
+	graph, err := decodeGraphOnly(s.Engine.Settings)
+	if err != nil {
+		return errdefs.Validationf("agents: %v", err)
+	}
+	if _, err := graphToMap(graph); err != nil {
 		return errdefs.Validationf("agents: graph: %v", err)
 	}
 	return nil
 }
 
-// validateGraphSyntax checks that the graph definition parses as
-// JSON/YAML. Structural validation (unique ids, entry presence, node
-// config semantics) happens when the runtime builds the definition.
-func validateGraphSyntax(graph string) error {
-	var probe map[string]any
-	if err := yaml.Unmarshal([]byte(graph), &probe); err != nil {
-		return fmt.Errorf("parse graph definition: %w", err)
+// decodeGraphOnly returns engine.settings.graph and rejects any other
+// settings key: graph is the only user-owned engine setting; build
+// knobs and other wiring stay Host-injected.
+func decodeGraphOnly(settings json.RawMessage) (json.RawMessage, error) {
+	if len(bytes.TrimSpace(settings)) == 0 {
+		return nil, errdefs.Validationf(
+			"engine.settings is required and may only contain graph")
 	}
-	return nil
+	var envelope struct {
+		Graph json.RawMessage `json:"graph"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(settings))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&envelope); err != nil {
+		return nil, errdefs.Validationf(
+			"engine.settings: %v", err)
+	}
+	if len(bytes.TrimSpace(envelope.Graph)) == 0 {
+		return nil, errdefs.Validationf(
+			"engine.settings.graph is required")
+	}
+	return envelope.Graph, nil
+}
+
+// graphToMap parses settings.graph, accepting either a JSON string of
+// graph text (JSON or YAML, the tool/UI wire shape) or an inline YAML
+// object (the hand-authored file shape). Numbers are decoded with
+// json.Number so integer literals beyond 2^53 survive the round trip
+// through normalization instead of being rounded via float64.
+func graphToMap(raw json.RawMessage) (map[string]any, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return nil, errdefs.Validationf("graph is empty")
+	}
+	var graph map[string]any
+	if trimmed[0] == '"' {
+		var text string
+		if err := json.Unmarshal(trimmed, &text); err != nil {
+			return nil, fmt.Errorf("decode graph source: %w", err)
+		}
+		data, err := yaml.YAMLToJSON([]byte(text))
+		if err != nil {
+			return nil, fmt.Errorf("parse graph definition: %w", err)
+		}
+		dec := json.NewDecoder(bytes.NewReader(data))
+		dec.UseNumber()
+		if err := dec.Decode(&graph); err != nil {
+			return nil, fmt.Errorf("parse graph definition: %w", err)
+		}
+	} else {
+		dec := json.NewDecoder(bytes.NewReader(trimmed))
+		dec.UseNumber()
+		if err := dec.Decode(&graph); err != nil {
+			return nil, fmt.Errorf("parse graph definition: %w", err)
+		}
+	}
+	if len(graph) == 0 {
+		return nil, errdefs.Validationf("graph definition is empty")
+	}
+	return graph, nil
+}
+
+// graphText renders settings.graph as text for the graph editor and
+// engine assembly: inline objects are emitted as YAML, string sources
+// pass through unchanged.
+func graphText(raw json.RawMessage) (string, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return "", nil
+	}
+	if trimmed[0] == '"' {
+		var text string
+		if err := json.Unmarshal(trimmed, &text); err != nil {
+			return "", err
+		}
+		return text, nil
+	}
+	graph, err := graphToMap(raw)
+	if err != nil {
+		return "", err
+	}
+	out, err := yaml.Marshal(graph)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+// normalizeSpec canonicalizes a declaration for registration and
+// storage: the graph is parsed into an inline object under
+// engine.settings.graph and the format version is stamped.
+func normalizeSpec(spec AgentSpec) (AgentSpec, error) {
+	graph, err := decodeGraphOnly(spec.Engine.Settings)
+	if err != nil {
+		return spec, err
+	}
+	object, err := graphToMap(graph)
+	if err != nil {
+		return spec, err
+	}
+	objectJSON, err := json.Marshal(object)
+	if err != nil {
+		return spec, err
+	}
+	settings, err := json.Marshal(map[string]json.RawMessage{
+		"graph": objectJSON,
+	})
+	if err != nil {
+		return spec, err
+	}
+	spec.Engine.Settings = settings
+	spec.Version = specVersion
+	return spec, nil
 }
 
 func validateAgentName(name string) error {
@@ -128,13 +314,22 @@ type Summary struct {
 
 // Lifecycle creates, removes, and loads persistent subagents. The
 // declaration directory is the source of truth; the runtime is only
-// reached through the injected registrar, so the same instance serves
-// every generation across reloads.
+// reached through the injected registrar. Assembly builds one
+// instance per runtime generation, so reloads hand a fresh instance
+// to the Host; AdoptKnown carries registration knowledge across
+// generations.
 type Lifecycle struct {
-	reg  atomic.Pointer[registrar]
-	dir  string
-	work string
-	user string
+	reg atomic.Pointer[registrar]
+	// known tracks every agent this process registered from disk or
+	// through create_agent. Reloads carry the set into the new
+	// generation's lifecycle so LoadMissing can retry broken/new
+	// declarations without replaying already-registered ones into the
+	// live registry (flowcraft Runtime.Reload re-binds those).
+	mu    sync.Mutex
+	known map[string]struct{}
+	dir   string
+	work  string
+	user  string
 }
 
 // New creates the lifecycle rooted at dir (usually
@@ -147,11 +342,17 @@ func New(dir, workDir, userDir string) (*Lifecycle, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("agents: create directory: %w", err)
 	}
-	return &Lifecycle{dir: dir, work: workDir, user: userDir}, nil
+	return &Lifecycle{
+		known: make(map[string]struct{}),
+		dir:   dir,
+		work:  workDir,
+		user:  userDir,
+	}, nil
 }
 
-// Bind installs the runtime registrar (Build's *runtimecore.Runtime).
-// Call once after Build; reloads keep the same registrar.
+// Bind installs the runtime registrar (Build's *runtimecore.Runtime)
+// on this instance. The Host binds each generation's lifecycle when
+// it is assembled and again after an in-place reload.
 func (l *Lifecycle) Bind(reg registrar) { l.reg.Store(&reg) }
 
 func (l *Lifecycle) registrar() registrar {
@@ -159,6 +360,42 @@ func (l *Lifecycle) registrar() registrar {
 		return *stored
 	}
 	return nil
+}
+
+func (l *Lifecycle) markKnown(name string) {
+	l.mu.Lock()
+	l.known[name] = struct{}{}
+	l.mu.Unlock()
+}
+
+func (l *Lifecycle) forgetKnown(name string) {
+	l.mu.Lock()
+	delete(l.known, name)
+	l.mu.Unlock()
+}
+
+func (l *Lifecycle) isKnown(name string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	_, ok := l.known[name]
+	return ok
+}
+
+// AdoptKnown carries the registration knowledge of the previous
+// generation's lifecycle into this one so LoadMissing does not replay
+// agents that flowcraft Runtime.Reload has already re-bound. Host
+// calls this on every in-place reload before LoadMissing.
+func (l *Lifecycle) AdoptKnown(from *Lifecycle) {
+	if from == nil || from == l {
+		return
+	}
+	from.mu.Lock()
+	defer from.mu.Unlock()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	for name := range from.known {
+		l.known[name] = struct{}{}
+	}
 }
 
 // CreateResult reports a successful creation.
@@ -176,6 +413,11 @@ func (l *Lifecycle) Create(ctx context.Context, spec AgentSpec) (CreateResult, e
 	if spec.CreatedAt.IsZero() {
 		spec.CreatedAt = time.Now().UTC()
 	}
+	spec, err := normalizeSpec(spec)
+	if err != nil {
+		return CreateResult{}, errdefs.Validationf(
+			"agents: normalize declaration: %v", err)
+	}
 	if err := spec.Validate(); err != nil {
 		return CreateResult{}, err
 	}
@@ -183,12 +425,16 @@ func (l *Lifecycle) Create(ctx context.Context, spec AgentSpec) (CreateResult, e
 	if reg == nil {
 		return CreateResult{}, errdefs.NotAvailablef("agents: runtime not ready")
 	}
-	def := l.agentDefinition(spec)
+	def, err := l.agentDefinition(spec)
+	if err != nil {
+		return CreateResult{}, fmt.Errorf(
+			"agents: assemble definition %q: %w", spec.Card.Name, err)
+	}
 	if _, err := reg.RegisterAgent(
-		ctx, spec.Name, def,
+		ctx, spec.Card.Name, def,
 		runtimecore.WithToolAssembly(toolAssemblyResource),
 	); err != nil {
-		return CreateResult{}, fmt.Errorf("agents: register %q: %w", spec.Name, err)
+		return CreateResult{}, fmt.Errorf("agents: register %q: %w", spec.Card.Name, err)
 	}
 	if err := l.writeSpec(spec); err != nil {
 		// Roll back the runtime registration: the disk never became
@@ -197,17 +443,20 @@ func (l *Lifecycle) Create(ctx context.Context, spec AgentSpec) (CreateResult, e
 			context.WithoutCancel(ctx), removeTimeout)
 		defer cancel()
 		if unregErr := reg.UnregisterAgent(
-			rollbackCtx, spec.Name,
+			rollbackCtx, spec.Card.Name,
 			runtimecore.WithRemoveTimeout(removeTimeout),
 		); unregErr != nil {
 			telemetry.Error(ctx, "agents: rollback registration after persist failure",
-				log.String("agent", spec.Name),
+				log.String("agent", spec.Card.Name),
 				log.String("persist_error", err.Error()),
 				log.String("rollback_error", unregErr.Error()))
+		} else {
+			l.forgetKnown(spec.Card.Name)
 		}
-		return CreateResult{}, fmt.Errorf("agents: persist %q: %w", spec.Name, err)
+		return CreateResult{}, fmt.Errorf("agents: persist %q: %w", spec.Card.Name, err)
 	}
-	return l.resultFor(l.agentDir(spec.Name), spec), nil
+	l.markKnown(spec.Card.Name)
+	return l.resultFor(l.agentDir(spec.Card.Name), spec), nil
 }
 
 // Update applies a partial change to an existing subagent: non-empty
@@ -245,18 +494,40 @@ func (l *Lifecycle) Update(
 
 	updated := old
 	if strings.TrimSpace(description) != "" {
-		updated.Description = description
+		updated.Card.Description = description
 	}
 	if strings.TrimSpace(graph) != "" {
-		updated.Graph = graph
+		updated.Engine.Settings = graphSettings(graph)
 	}
-	if updated == old {
+	normalized, err := normalizeSpec(updated)
+	if err != nil {
+		return CreateResult{}, errdefs.Validationf(
+			"agents: normalize declaration %q: %v", name, err)
+	}
+	updated = normalized
+	oldGraph, err := old.GraphText()
+	if err != nil {
+		return CreateResult{}, errdefs.Validationf(
+			"agents: render current graph of %q: %v", name, err)
+	}
+	updatedGraph, err := updated.GraphText()
+	if err != nil {
+		return CreateResult{}, errdefs.Validationf(
+			"agents: render updated graph of %q: %v", name, err)
+	}
+	if old.Card.Description == updated.Card.Description &&
+		oldGraph == updatedGraph {
 		// No field actually changed: the agent is already current, so
 		// skip the drain/swap/write entirely.
 		return l.resultFor(dir, updated), nil
 	}
 	if err := updated.Validate(); err != nil {
 		return CreateResult{}, err
+	}
+	def, err := l.agentDefinition(updated)
+	if err != nil {
+		return CreateResult{}, fmt.Errorf(
+			"agents: assemble definition %q: %w", name, err)
 	}
 
 	// Swap the live registration: drain in-flight delegations first,
@@ -267,7 +538,7 @@ func (l *Lifecycle) Update(
 		return CreateResult{}, fmt.Errorf("agents: unregister %q for update: %w", name, err)
 	}
 	if _, err := reg.RegisterAgent(
-		ctx, name, l.agentDefinition(updated),
+		ctx, name, def,
 		runtimecore.WithToolAssembly(toolAssemblyResource),
 	); err != nil {
 		l.restoreAfterFailedUpdate(ctx, name, old, err)
@@ -327,8 +598,16 @@ func (l *Lifecycle) restoreAfterFailedUpdate(
 			log.String("restore_error", err.Error()))
 		return
 	}
+	def, err := l.agentDefinition(old)
+	if err != nil {
+		telemetry.Error(ctx, "agents: assemble restored definition failed",
+			log.String("agent", name),
+			log.String("update_error", updateErr.Error()),
+			log.String("restore_error", err.Error()))
+		return
+	}
 	if _, err := l.registrar().RegisterAgent(
-		rollbackCtx, old.Name, l.agentDefinition(old),
+		rollbackCtx, old.Card.Name, def,
 		runtimecore.WithToolAssembly(toolAssemblyResource),
 	); err != nil {
 		telemetry.Error(ctx, "agents: restore registration after update failure",
@@ -340,8 +619,8 @@ func (l *Lifecycle) restoreAfterFailedUpdate(
 
 func (l *Lifecycle) resultFor(dir string, spec AgentSpec) CreateResult {
 	return CreateResult{
-		Name:        spec.Name,
-		Description: spec.Description,
+		Name:        spec.Card.Name,
+		Description: spec.Card.Description,
 		PersistedTo: dir,
 		CreatedAt:   spec.CreatedAt,
 	}
@@ -364,6 +643,7 @@ func (l *Lifecycle) Remove(ctx context.Context, name string) error {
 	); err != nil {
 		return fmt.Errorf("agents: unregister %q: %w", name, err)
 	}
+	l.forgetKnown(name)
 	dir := l.agentDir(name)
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf(
@@ -396,13 +676,69 @@ func (l *Lifecycle) LoadAll(ctx context.Context) []LoadError {
 			failures = append(failures, LoadError{Name: filepath.Base(dir), Err: err})
 			continue
 		}
-		if _, err := reg.RegisterAgent(
-			ctx, spec.Name, l.agentDefinition(spec),
-			runtimecore.WithToolAssembly(toolAssemblyResource),
-		); err != nil {
-			failures = append(failures, LoadError{Name: spec.Name, Err: err})
+		def, err := l.agentDefinition(spec)
+		if err != nil {
+			failures = append(failures, LoadError{Name: spec.Card.Name, Err: err})
 			continue
 		}
+		if _, err := reg.RegisterAgent(
+			ctx, spec.Card.Name, def,
+			runtimecore.WithToolAssembly(toolAssemblyResource),
+		); err != nil {
+			failures = append(failures, LoadError{Name: spec.Card.Name, Err: err})
+			continue
+		}
+		l.markKnown(spec.Card.Name)
+	}
+	return failures
+}
+
+// LoadMissing registers declarations that are not already live. Host
+// uses it after an in-place reload: AdoptKnown carries the previous
+// generation's registrations (which flowcraft Runtime.Reload re-binds
+// itself), so LoadMissing only retries declarations that failed at
+// cold start or appeared on disk since — the repair path for
+// hand-authored agent.yaml files. A declaration whose name is already
+// registered counts as live: flowcraft's reload re-bind (or a Create
+// that raced the known-set handoff) may have registered it after
+// AdoptKnown ran, so LoadMissing records it as known instead of
+// surfacing a conflict on every reload.
+func (l *Lifecycle) LoadMissing(ctx context.Context) []LoadError {
+	reg := l.registrar()
+	if reg == nil {
+		return []LoadError{{Err: errdefs.NotAvailablef("agents: runtime not ready")}}
+	}
+	var failures []LoadError
+	for _, dir := range l.scanDirs() {
+		spec, err := l.readSpec(dir)
+		if err != nil {
+			failures = append(failures, LoadError{Name: filepath.Base(dir), Err: err})
+			continue
+		}
+		if l.isKnown(spec.Card.Name) {
+			continue
+		}
+		def, err := l.agentDefinition(spec)
+		if err != nil {
+			failures = append(failures, LoadError{Name: spec.Card.Name, Err: err})
+			continue
+		}
+		if _, err := reg.RegisterAgent(
+			ctx, spec.Card.Name, def,
+			runtimecore.WithToolAssembly(toolAssemblyResource),
+		); err != nil {
+			if errdefs.IsConflict(err) {
+				// The declaration is already live in the runtime, so
+				// there is nothing to repair. Remember the name so
+				// later reloads (which adopt this lifecycle's known
+				// set) stop retrying it.
+				l.markKnown(spec.Card.Name)
+				continue
+			}
+			failures = append(failures, LoadError{Name: spec.Card.Name, Err: err})
+			continue
+		}
+		l.markKnown(spec.Card.Name)
 	}
 	return failures
 }
@@ -416,8 +752,8 @@ func (l *Lifecycle) List() []Summary {
 			continue
 		}
 		out = append(out, Summary{
-			Name:        spec.Name,
-			Description: spec.Description,
+			Name:        spec.Card.Name,
+			Description: spec.Card.Description,
 			CreatedAt:   spec.CreatedAt.Format(time.RFC3339),
 		})
 	}
@@ -448,11 +784,16 @@ func (l *Lifecycle) scanDirs() []string {
 const specFile = "agent.yaml"
 
 func (l *Lifecycle) writeSpec(spec AgentSpec) error {
+	normalized, err := normalizeSpec(spec)
+	if err != nil {
+		return err
+	}
+	spec = normalized
 	data, err := yaml.Marshal(spec)
 	if err != nil {
 		return err
 	}
-	dir := l.agentDir(spec.Name)
+	dir := l.agentDir(spec.Card.Name)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -498,13 +839,81 @@ func (l *Lifecycle) readSpec(dir string) (AgentSpec, error) {
 	if err != nil {
 		return spec, err
 	}
-	if err := yaml.Unmarshal(data, &spec); err != nil {
-		return spec, err
+	if legacy, ok, err := decodeLegacySpec(data); err != nil {
+		return spec, fmt.Errorf("agents: parse %s: %w", dir, err)
+	} else if ok {
+		// Pre-version declarations (name/description/graph at the top
+		// level) still load; the file is rewritten in the current
+		// format on the next update.
+		spec = legacy
+	} else {
+		// Hand-authored files are strict: unknown keys (prepare,
+		// policy, tools, observe, ...) are rejected instead of being
+		// silently dropped, so a declaration can never look like it
+		// controls Host-owned wiring.
+		if err := yaml.UnmarshalStrict(data, &spec); err != nil {
+			return spec, fmt.Errorf("agents: parse %s: %w", dir, err)
+		}
+		if spec.Version != 0 && spec.Version != specVersion {
+			return spec, fmt.Errorf(
+				"agents: %s: unsupported declaration version %d (current is %d)",
+				dir, spec.Version, specVersion)
+		}
+	}
+	spec, err = normalizeSpec(spec)
+	if err != nil {
+		return spec, fmt.Errorf("agents: normalize %s: %w", dir, err)
 	}
 	if err := spec.Validate(); err != nil {
-		return spec, err
+		return spec, fmt.Errorf("agents: validate %s: %w", dir, err)
+	}
+	if spec.Card.Name != filepath.Base(dir) {
+		return spec, errdefs.Validationf(
+			"agents: declaration %s names %q; the directory name is the identity",
+			dir, spec.Card.Name)
 	}
 	return spec, nil
+}
+
+// decodeLegacySpec converts a pre-Definition declaration (top-level
+// name/description/graph, written before the card/engine format) into
+// the current AgentSpec. ok=false means the file is not a legacy
+// declaration.
+func decodeLegacySpec(data []byte) (AgentSpec, bool, error) {
+	var probe map[string]any
+	if err := yaml.Unmarshal(data, &probe); err != nil {
+		return AgentSpec{}, false, err
+	}
+	if _, ok := probe["graph"].(string); !ok {
+		return AgentSpec{}, false, nil
+	}
+	if _, hasCard := probe["card"]; hasCard {
+		return AgentSpec{}, false, nil
+	}
+	if _, hasVersion := probe["version"]; hasVersion {
+		return AgentSpec{}, false, nil
+	}
+	var legacy struct {
+		Name        string    `json:"name"`
+		Description string    `json:"description"`
+		Graph       string    `json:"graph"`
+		CreatedAt   time.Time `json:"created_at,omitempty"`
+	}
+	if err := yaml.UnmarshalStrict(data, &legacy); err != nil {
+		return AgentSpec{}, false, err
+	}
+	return AgentSpec{
+		Card: agent.AgentCard{
+			Name:        legacy.Name,
+			Description: legacy.Description,
+		},
+		Engine: agent.EngineRef{
+			Kind:     "agent.Engine",
+			Impl:     "graph",
+			Settings: graphSettings(legacy.Graph),
+		},
+		CreatedAt: legacy.CreatedAt,
+	}, true, nil
 }
 
 // removeTimeout bounds UnregisterAgent drains from this package.
