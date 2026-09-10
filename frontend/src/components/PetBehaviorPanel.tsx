@@ -90,9 +90,14 @@ export function PetBehaviorPanel() {
   return (
     <div className="rounded-xl border border-edge bg-panel2 p-4">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-medium uppercase tracking-wide text-dim">
-          {t('config.petDiagTitle')}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium uppercase tracking-wide text-dim">
+            {t('config.petDiagTitle')}
+          </span>
+          <span className="rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[0.7rem] text-accent">
+            {t('config.petExperimental')}
+          </span>
+        </div>
         <span className="rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[0.7rem] text-accent">
           {moodLabel(debug.mood, t)}
         </span>

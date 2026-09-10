@@ -504,6 +504,9 @@ export function SettingsGeneral() {
               <div className="flex items-center gap-2 text-sm font-medium">
                 <PawPrint size="1.0714rem" className="text-accent" />
                 {t('config.petEnabled')}
+                <span className="rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[0.7rem] font-normal text-accent">
+                  {t('config.petExperimental')}
+                </span>
               </div>
               <p className="mt-1 text-xs text-dim">
                 {t('config.petEnabledHint')}
