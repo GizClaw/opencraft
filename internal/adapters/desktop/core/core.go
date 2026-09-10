@@ -69,3 +69,25 @@ func NewCore(userDir, dataDir, workDir string) *Core {
 	c.wirePluginWorkspace()
 	return c
 }
+
+// ActivePack resolves the character the pet window renders: the
+// preferred pack when it is still registered, the builtin otherwise.
+// Falling back to the builtin keeps the pet drivable when a plugin
+// character is uninstalled while it is selected.
+func (c *Core) ActivePack() petfeed.Pack {
+	if id := c.Shell.AssistantPetCharacter(); id != "" {
+		if pack, ok := c.Packs.Get(id); ok {
+			return pack
+		}
+	}
+	if pack, ok := c.Packs.Get(petfeed.BuiltinAssistantPackID); ok {
+		return pack
+	}
+	// Registry setups without the builtin (tests, mocks) still render
+	// something; this mirrors the frontend's pickPack fallback so both
+	// sides resolve the same character.
+	if first := c.Packs.List(); len(first) > 0 {
+		return first[0]
+	}
+	return petfeed.BuiltinAssistantPack()
+}

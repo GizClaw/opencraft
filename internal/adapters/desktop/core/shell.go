@@ -37,6 +37,8 @@ type Shell struct {
 	petRoamPause   func(paused bool)
 	petDiagnostics func() petfeed.MindDebug
 	petPosition    func() (x, y int, ok bool)
+	petRuntime     petfeed.RuntimeStatus
+	hasPetRuntime  bool
 	userActiveAt   time.Time
 	notifySink     func(typ string, data any)
 	petSink        func(typ string, data any)
@@ -200,6 +202,36 @@ func (s *Shell) PetPosition() (x, y int, ok bool) {
 		return 0, 0, false
 	}
 	return fn()
+}
+
+// SetPetRuntimeStatus stores the pet window's report about the pack it
+// mounted. The pet webview writes it; the settings diagnostics panel in
+// the main window reads it back.
+func (s *Shell) SetPetRuntimeStatus(status petfeed.RuntimeStatus) {
+	status.ReportedAt = time.Now()
+	s.mu.Lock()
+	s.petRuntime = status
+	s.hasPetRuntime = true
+	s.mu.Unlock()
+	s.Emit("pet:runtime_status", status)
+}
+
+// PetRuntimeStatus returns the last renderer report, and whether the
+// pet window has ever reported one.
+func (s *Shell) PetRuntimeStatus() (petfeed.RuntimeStatus, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.petRuntime, s.hasPetRuntime
+}
+
+// ClearPetRuntimeStatus drops the last renderer report so the
+// diagnostics panel stops showing a character from a pet window that
+// no longer exists.
+func (s *Shell) ClearPetRuntimeStatus() {
+	s.mu.Lock()
+	s.petRuntime = petfeed.RuntimeStatus{}
+	s.hasPetRuntime = false
+	s.mu.Unlock()
 }
 
 // MarkUserActive records the latest main-window user activity pulse
