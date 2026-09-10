@@ -26,10 +26,10 @@ agents:
           # flowcraft's loop guard counts node invocations, and each
           # tool round in this graph runs compact + llm + tools (3
           # nodes), so the default 100 ≈ 33 tool rounds — too tight
-          # for real implementation work. 400 ≈ 133 tool rounds; a
-          # genuinely stuck loop still trips the guard well before
-          # the 1h build timeout.
-          max_iterations: 400
+          # for real implementation work. 40000 ≈ 13000 tool rounds,
+          # which turns the guard into a pure cycle safety net: the
+          # 1h build timeout is what actually bounds a runaway turn.
+          max_iterations: 40000
     prepare:
       - type: opencraft.media
         settings:
