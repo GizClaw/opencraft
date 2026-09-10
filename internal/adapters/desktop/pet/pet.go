@@ -388,6 +388,10 @@ type PetSurfaceState struct {
 	Disposition  PetDisposition
 	Interactive  bool
 	LastActivity time.Time
+	// Sleeping mirrors Disposition == PetDispositionSleep as a value the
+	// renderer writes to the view model: the pose follows the value, not
+	// a separately fired one-shot.
+	Sleeping bool
 	// Intent and Bubble carry one-shot personality reactions decided
 	// by the Mind on top of the activity-driven surface state.
 	Intent PetIntent
@@ -439,46 +443,55 @@ func (d *PetDirector) Tick(
 		state.Intent = event.Intent
 		state.Bubble = event.Bubble
 	}
+	state.Sleeping = state.Disposition == PetDispositionSleep
 	return d.applyIntentHold(state, now)
 }
 
 // applyIntentHold re-emits the current reaction until its animation
-// had time to play. A nap is held for as long as the pet stays asleep;
-// any fresh intent or activity phase overrides it.
+// had time to play; any activity phase leaving idle ends the hold.
+// Sleeping is a value (see PetSurfaceState.Sleeping), so it needs no
+// hold: the renderer keeps the sleeping pose as long as the flag is up.
 func (d *PetDirector) applyIntentHold(
 	state PetSurfaceState,
 	now time.Time,
 ) PetSurfaceState {
 	if state.Intent != "" {
 		d.heldIntent = state.Intent
-		if state.Intent == PetIntentNap {
-			d.heldUntil = time.Time{}
-		} else {
-			d.heldUntil = now.Add(petIntentHoldFor)
-		}
+		d.heldUntil = now.Add(petIntentHoldFor)
 		return state
 	}
 	if state.Phase != PetPhaseIdle {
 		d.heldIntent = PetIntentNone
 		return state
 	}
-	switch d.heldIntent {
-	case PetIntentNone:
+	if d.heldIntent == PetIntentNone {
 		return state
-	case PetIntentNap:
-		if state.Disposition != PetDispositionSleep {
-			d.heldIntent = PetIntentNone
-			return state
-		}
-		state.Intent = PetIntentNap
-	default:
-		if now.After(d.heldUntil) {
-			d.heldIntent = PetIntentNone
-			return state
-		}
-		state.Intent = d.heldIntent
 	}
+	if now.After(d.heldUntil) {
+		d.heldIntent = PetIntentNone
+		return state
+	}
+	state.Intent = d.heldIntent
 	return state
+}
+
+// IntentSequencer stamps a monotonic sequence number on intent changes
+// so the renderer can tell a fresh reaction from the director's
+// repeated broadcast of the one it is already playing.
+type IntentSequencer struct {
+	last PetIntent
+	seq  uint64
+}
+
+// Observe returns the sequence number for one observed intent: it grows
+// only when the intent changes, and a re-emitted intent keeps its
+// number.
+func (s *IntentSequencer) Observe(intent PetIntent) uint64 {
+	if intent != s.last {
+		s.last = intent
+		s.seq++
+	}
+	return s.seq
 }
 
 // NotePoke records a user interaction (click/pet) with this pet.

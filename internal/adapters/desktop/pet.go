@@ -19,9 +19,6 @@ import (
 // are ignored.
 const assistantPetSize = 240
 
-// petRoamSpeed is the horizontal walking speed in DIP/s.
-const petRoamSpeed = 110
-
 // petRoamTick is the rover physics step. The state broadcast runs on a
 // slower cadence (see petStateBroadcastEvery).
 const petRoamTick = 60 * time.Millisecond
@@ -40,8 +37,13 @@ type petStatePayload struct {
 	Disposition  string `json:"disposition"`
 	Interactive  bool   `json:"interactive"`
 	Walking      bool   `json:"walking,omitempty"`
+	Sleeping     bool   `json:"sleeping,omitempty"`
 	Intent       string `json:"intent,omitempty"`
-	Bubble       string `json:"bubble,omitempty"`
+	// IntentSeq grows only when the intent changes, so the renderer
+	// fires a one-shot trigger once instead of on every repeated
+	// broadcast of the reaction it is already playing.
+	IntentSeq uint64 `json:"intent_seq"`
+	Bubble    string `json:"bubble,omitempty"`
 }
 
 func newPetStatePayload(st petfeed.PetSurfaceState) petStatePayload {
@@ -50,6 +52,7 @@ func newPetStatePayload(st petfeed.PetSurfaceState) petStatePayload {
 		Phase:       string(st.Phase),
 		Disposition: string(st.Disposition),
 		Interactive: st.Interactive,
+		Sleeping:    st.Sleeping,
 		Intent:      string(st.Intent),
 		Bubble:      st.Bubble,
 	}
@@ -321,6 +324,7 @@ func (d *Desktop) roamAssistantPet(
 	moved := false
 	var state petfeed.PetSurfaceState
 	tickCount := 0
+	var intents petfeed.IntentSequencer
 	for {
 		select {
 		case <-stop:
@@ -391,6 +395,11 @@ func (d *Desktop) roamAssistantPet(
 				watchX = clampInt(watchX, perchMinX, perchMaxX)
 			}
 
+			// The walk speed is a pack property: re-read it every
+			// tick so switching character applies without restarting
+			// the rover.
+			roamSpeed := d.core.ActivePack().Meta.WalkSpeed
+
 			// Re-anchor on the OS-reported position every few ticks.
 			// Mixed-DPI displays can round window coordinates at the
 			// boundary; following the OS instead of our accumulated
@@ -398,8 +407,7 @@ func (d *Desktop) roamAssistantPet(
 			tickCount++
 			if tickCount%5 == 0 {
 				osX, osY := win.Position()
-				maxDelta := 3*int(float64(petRoamSpeed)*
-					petRoamTick.Seconds()) + 8
+				maxDelta := 3*int(roamSpeed*petRoamTick.Seconds()) + 8
 				if absInt(x-osX) <= maxDelta && absInt(y-osY) <= maxDelta {
 					x, y = osX, osY
 				}
@@ -429,12 +437,12 @@ func (d *Desktop) roamAssistantPet(
 						// Way off leash (drag, screen change): go home.
 						targetX, targetY = homeX, homeY
 					}
-					x = petStep(x, targetX, petRoamTick)
-					y = petStep(y, targetY, petRoamTick)
+					x = petStep(x, targetX, petRoamTick, roamSpeed)
+					y = petStep(y, targetY, petRoamTick, roamSpeed)
 				default: // work / ask: walk to the window and stay there
 					targetX, targetY = watchX, watchY
-					x = petStep(x, targetX, petRoamTick)
-					y = petStep(y, targetY, petRoamTick)
+					x = petStep(x, targetX, petRoamTick, roamSpeed)
+					y = petStep(y, targetY, petRoamTick, roamSpeed)
 				}
 			}
 
@@ -463,6 +471,7 @@ func (d *Desktop) roamAssistantPet(
 
 			payload := newPetStatePayload(state)
 			payload.Walking = moved
+			payload.IntentSeq = intents.Observe(state.Intent)
 			if payload == last {
 				continue
 			}
@@ -487,12 +496,6 @@ func absInt(value int) int {
 		return -value
 	}
 	return value
-}
-
-// petRoamDelay returns the pause between idle wander targets, randomized
-// between 3 and 10 seconds so movement does not feel mechanical.
-func petRoamDelay() time.Duration {
-	return time.Duration(3+rand.Intn(8)) * time.Second
 }
 
 // petStrollRange is how far (DIP) the pet may roam from home before it
@@ -524,9 +527,13 @@ func petStrollTarget(
 }
 
 // petStep moves current toward target by the distance travelled in one
-// tick at petRoamSpeed, clamping at the target.
-func petStep(current, target int, tick time.Duration) int {
-	step := int(float64(petRoamSpeed) * tick.Seconds())
+// tick at speed DIP/s (the active pack's meta.walkSpeed), clamping at
+// the target.
+func petStep(current, target int, tick time.Duration, speed float64) int {
+	step := int(speed * tick.Seconds())
+	if step < 1 {
+		step = 1
+	}
 	if current < target {
 		current += step
 		if current > target {
@@ -559,6 +566,9 @@ func (d *Desktop) stopPet() {
 	if win != nil {
 		win.Close()
 	}
+	// The report describes a window that is gone; diagnostics must not
+	// keep presenting it as the live character.
+	d.core.Shell.ClearPetRuntimeStatus()
 	d.core.Shell.SetPetWindowControls(
 		nil, nil, nil, nil, nil, nil, nil)
 }

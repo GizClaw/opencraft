@@ -242,6 +242,73 @@ func TestPetDirectorTransitions(t *testing.T) {
 	}
 }
 
+// TestPetDirectorSleepingFlag covers the flag the renderer writes to the
+// view model: sleeping travels as a value (not a one-shot reaction), and
+// it has to follow the disposition in both directions.
+func TestPetDirectorSleepingFlag(t *testing.T) {
+	base := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	feed := NewPetActivityFeed("assistant")
+	now := base
+	feed.now = func() time.Time { return now }
+	director := NewPetDirector(feed)
+
+	if got := feed.OnEvent("stream", streamEvent(
+		"assistant", "r-1", "c-1", "reasoning", "", false, "think")); got == nil {
+		t.Fatal("reasoning event must emit")
+	}
+	now = base.Add(100 * time.Millisecond)
+	if state := director.Tick("assistant", now, base, false); state.Sleeping {
+		t.Fatalf("a working pet is awake, got %+v", state)
+	}
+
+	// Long feed silence with the user away: the pet naps.
+	now = base.Add(95 * time.Second)
+	state := director.Tick("assistant", now, base, false)
+	if state.Disposition != PetDispositionSleep || !state.Sleeping {
+		t.Fatalf("long idleness must set Sleeping, got %+v", state)
+	}
+	if state.Intent != PetIntentNone {
+		t.Fatalf("sleeping must not queue an intent, got %q", state.Intent)
+	}
+
+	// Fresh agent output wakes it back up.
+	now = base.Add(96 * time.Second)
+	if got := feed.OnEvent("stream", streamEvent(
+		"assistant", "r-1", "c-1", "text", "", false, "back")); got == nil {
+		t.Fatal("text event must emit")
+	}
+	if state := director.Tick("assistant", now.Add(50*time.Millisecond), base, false); state.Sleeping {
+		t.Fatalf("fresh activity must clear Sleeping, got %+v", state)
+	}
+}
+
+func TestIntentSequencerGrowsOnlyOnChange(t *testing.T) {
+	var seq IntentSequencer
+	if got := seq.Observe(PetIntentNone); got != 0 {
+		t.Fatalf("no intent yet = %d, want 0", got)
+	}
+	// The director re-broadcasts the reaction it is already playing;
+	// those repeats must keep the same sequence number.
+	if got := seq.Observe(PetIntentWave); got != 1 {
+		t.Fatalf("first intent = %d, want 1", got)
+	}
+	if got := seq.Observe(PetIntentWave); got != 1 {
+		t.Fatalf("repeated intent = %d, want 1", got)
+	}
+	if got := seq.Observe(PetIntentSulk); got != 2 {
+		t.Fatalf("changed intent = %d, want 2", got)
+	}
+	if got := seq.Observe(PetIntentNone); got != 3 {
+		t.Fatalf("cleared intent = %d, want 3", got)
+	}
+	if got := seq.Observe(PetIntentNone); got != 3 {
+		t.Fatalf("still cleared = %d, want 3", got)
+	}
+	if got := seq.Observe(PetIntentZoomies); got != 4 {
+		t.Fatalf("intent after a gap = %d, want 4", got)
+	}
+}
+
 func TestFeedPrunesStaleRuns(t *testing.T) {
 	base := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
 	feed := NewPetActivityFeed("assistant")

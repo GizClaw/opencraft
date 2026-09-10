@@ -11,7 +11,6 @@ const (
 	PetIntentNone    PetIntent = ""
 	PetIntentWelcome PetIntent = "welcome"
 	PetIntentLook    PetIntent = "look"
-	PetIntentNap     PetIntent = "nap"
 	PetIntentZoomies PetIntent = "zoomies"
 	PetIntentWave    PetIntent = "wave"
 	PetIntentSulk    PetIntent = "sulk"
@@ -34,8 +33,10 @@ type DriveSnapshot struct {
 
 // Mind is the pet's lightweight personality state. It tracks drives
 // (attention/energy/comfort), recent user attention, and decides both
-// one-shot reactions (welcome, look, wave, sulk, zoomies, nap) and
-// behavior overrides (sleep when exhausted or left alone). Short-term
+// one-shot reactions (welcome, look, wave, sulk, zoomies) and behavior
+// overrides (sleep when exhausted or left alone). Sleeping is a value
+// the renderer writes, not a fired reaction, so it is not in the intent
+// vocabulary. Short-term
 // interaction memory plugs into the same type later without touching
 // the activity feed.
 type Mind struct {
@@ -276,9 +277,6 @@ func (m *Mind) Step(
 			state.Disposition = PetDispositionRoam
 		case !m.sleeping:
 			m.sleeping = true
-			if state.Intent == "" {
-				state.Intent = PetIntentNap
-			}
 		}
 	}
 
@@ -289,7 +287,6 @@ func (m *Mind) Step(
 		m.sleeping = true
 		m.energySleep = true
 		state.Disposition = PetDispositionSleep
-		state.Intent = PetIntentNap
 	case m.sleeping && m.energy >= wakeAbove && m.energySleep:
 		m.sleeping = false
 		m.energySleep = false

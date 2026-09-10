@@ -7,35 +7,31 @@ import (
 
 func TestPetStepMovesAndClamps(t *testing.T) {
 	tick := 60 * time.Millisecond
-	step := int(float64(petRoamSpeed) * tick.Seconds())
-	if step <= 0 {
+	const speed = 110 // the builtin pack's meta.walkSpeed
+	if step := int(speed * tick.Seconds()); step <= 0 {
 		t.Fatalf("roam step must be positive, got %d", step)
 	}
-	left := petStep(100, 200, tick)
+	left := petStep(100, 200, tick, speed)
 	if left <= 100 || left > 200 {
 		t.Fatalf("forward step = %d, want (100, 200]", left)
 	}
-	right := petStep(200, 100, tick)
+	right := petStep(200, 100, tick, speed)
 	if right >= 200 || right < 100 {
 		t.Fatalf("backward step = %d, want [100, 200)", right)
 	}
-	if got := petStep(197, 200, tick); got != 200 {
+	if got := petStep(197, 200, tick, speed); got != 200 {
 		t.Fatalf("forward step must clamp at target, got %d", got)
 	}
-	if got := petStep(103, 100, tick); got != 100 {
+	if got := petStep(103, 100, tick, speed); got != 100 {
 		t.Fatalf("backward step must clamp at target, got %d", got)
 	}
-	if got := petStep(100, 100, tick); got != 100 {
+	if got := petStep(100, 100, tick, speed); got != 100 {
 		t.Fatalf("static step must stay put, got %d", got)
 	}
-}
-
-func TestPetRoamDelayStaysInWindow(t *testing.T) {
-	for i := 0; i < 50; i++ {
-		delay := petRoamDelay()
-		if delay < 3*time.Second || delay > 10*time.Second {
-			t.Fatalf("petRoamDelay = %v, want [3s, 10s]", delay)
-		}
+	// A slow pack still moves: sub-DIP steps would otherwise stall the
+	// rover at the same coordinate forever.
+	if got := petStep(100, 200, tick, 5); got != 101 {
+		t.Fatalf("slow pack step = %d, want 101", got)
 	}
 }
 
