@@ -119,6 +119,18 @@ func (m *Manager) Load(ctx context.Context) (*View, error) {
 		if _, err := MigrateUserInferenceConfig(m.userDir); err != nil {
 			return nil, fmt.Errorf("config: migrate user inference layer: %w", err)
 		}
+		// Retired ${env:OPEN_CRAFT_*} references survive upgrades in
+		// hand-authored layers (they were correct before the resolver
+		// swap) and cannot expand any more. Fail here, naming the file
+		// and the replacement, instead of letting deployment report an
+		// unset environment variable that points at neither.
+		refs, err := FindRetiredRefs(m.userDir)
+		if err != nil {
+			return nil, fmt.Errorf("config: inspect user layer: %w", err)
+		}
+		if len(refs) > 0 {
+			return nil, retiredRefsError(m.userDir, refs)
+		}
 		layers = append(layers, deploy.Layer{
 			Priority: 10,
 			Name:     string(LayerUser),

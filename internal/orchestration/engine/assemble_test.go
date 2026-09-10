@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	sdkdelegation "github.com/GizClaw/flowcraft/core/delegation"
@@ -385,4 +386,105 @@ func TestBuildRuntimeWithPluginHostExposesAgentCapabilities(t *testing.T) {
 	if !foundTool {
 		t.Fatal("plugin capability tool missing from tool catalog")
 	}
+}
+
+// TestRetiredPathRefsReportAndRepair covers the 0.4.0 upgrade path: a
+// hand-authored user layer can still name ${env:OPEN_CRAFT_*}, because
+// that was the only spelling a pre-resolver build understood. Loading
+// must fail with an error anchored to the file and the replacement
+// instead of an unset environment variable raised from inside
+// deployment, and the diagnostics repair must leave a layer that
+// assembles again (issue #115).
+func TestRetiredPathRefsReportAndRepair(t *testing.T) {
+	work := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	// The report only covers references that cannot resolve, so a
+	// developer shell exporting the retired name would mask the upgrade.
+	if previous, set := os.LookupEnv("OPEN_CRAFT_WORKDIR"); set {
+		if err := os.Unsetenv("OPEN_CRAFT_WORKDIR"); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			if err := os.Setenv("OPEN_CRAFT_WORKDIR", previous); err != nil {
+				t.Errorf("restore OPEN_CRAFT_WORKDIR: %v", err)
+			}
+		})
+	}
+
+	userDir := filepath.Join(home, ".opencraft", "config")
+	seedLocalSandboxConfig(t, userDir)
+	cfg := config.InferenceConfig{
+		Instances: []config.Instance{{
+			Type:      config.Providers[0].ID,
+			KeySource: config.KeyEnv,
+			Enabled:   true,
+		}},
+	}
+	if err := config.WriteInference(userDir, cfg); err != nil {
+		t.Fatalf("write inference config: %v", err)
+	}
+	// A block copied out of an older embedded document.
+	path := config.UserLayerFile(userDir)
+	stale, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale = append(stale, []byte(
+		"agents:\n  assistant:\n    prepare:\n"+
+			"      - type: opencraft.media\n"+
+			"        settings:\n"+
+			"          work_dir: ${env:OPEN_CRAFT_WORKDIR}\n")...)
+	if err := os.WriteFile(path, stale, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr, err := config.Open(config.Options{UserDir: userDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = mgr.Load(context.Background())
+	if err == nil {
+		t.Fatal("load succeeded with a retired reference in the layer")
+	}
+	for _, want := range []string{
+		path, "${env:OPEN_CRAFT_WORKDIR}", "${ocraft:WORKDIR}",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("load error %q does not mention %q", err, want)
+		}
+	}
+
+	repair, err := config.RepairRetiredRefs(userDir)
+	if err != nil {
+		t.Fatalf("RepairRetiredRefs: %v", err)
+	}
+	if len(repair.Removed) == 0 {
+		t.Fatal("repair removed nothing")
+	}
+
+	view, err := mgr.Load(context.Background())
+	if err != nil {
+		t.Fatalf("load after repair: %v", err)
+	}
+	layout := testWorkspaceLayout(t, home, work)
+	sessionStore := migratedSessionStore(t, layout)
+	rt, err := BuildRuntime(
+		context.Background(),
+		view.Document,
+		WithAutomationHost(automationStub{}),
+		WithWorkBase(work),
+		WithConfigBase(userDir),
+		WithWorkspaceLayout(layout),
+		WithSessionStore(func(
+			context.Context, string, int,
+		) (*ocsessions.Store, error) {
+			return sessionStore, nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("BuildRuntime after repair: %v", err)
+	}
+	defer func() { _ = rt.Close() }()
 }

@@ -436,6 +436,30 @@ export function ConfigPage() {
     }
   };
 
+  const repairConfigCompat = async () => {
+    setDiagBusy(true);
+    try {
+      const result = await api.repairConfigCompat();
+      // Wails marshals a nil Go slice as null, so read the list
+      // defensively: a layer with nothing to repair sends no list.
+      const removed = result.removed ?? [];
+      if (removed.length === 0) {
+        toast(t('config.diagRepairCompatNone'));
+      } else {
+        toast(
+          t('config.diagRepairCompatDone', {
+            count: removed.length,
+            paths: removed.join(', '),
+          }),
+        );
+      }
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setDiagBusy(false);
+    }
+  };
+
   const saveMemory = async () => {
     setMemorySaving(true);
     try {
@@ -2337,6 +2361,13 @@ export function ConfigPage() {
                     className="rounded-lg border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg"
                   >
                     {t('config.diagReload')}
+                  </button>
+                  <button
+                    onClick={() => void repairConfigCompat()}
+                    disabled={diagBusy}
+                    className="rounded-lg border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg disabled:opacity-40"
+                  >
+                    {t('config.diagRepairCompat')}
                   </button>
                 </div>
                 {probe && (

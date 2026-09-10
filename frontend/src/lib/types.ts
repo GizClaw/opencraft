@@ -609,6 +609,17 @@ export interface CacheClearResult {
   bytes: number;
 }
 
+// ConfigCompatRepair is the outcome of the diagnostics compatibility
+// repair: `removed` lists the user-layer declarations that referenced
+// retired assembly variables, `backup` is the pre-repair copy.
+export interface ConfigCompatRepair {
+  file: string;
+  backup: string;
+  // Null when the layer had nothing to repair: Go marshals a nil slice
+  // as null, so callers must default to an empty list.
+  removed: string[] | null;
+}
+
 export interface AgentSummary {
   name: string;
   description: string;
