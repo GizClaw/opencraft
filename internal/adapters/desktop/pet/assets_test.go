@@ -13,6 +13,10 @@ func TestBuiltinAssistantPackAsset(t *testing.T) {
 		t.Fatal("builtin assistant .riv is empty")
 	}
 	if !bytes.HasPrefix(asset, []byte("RIVE")) {
-		t.Fatalf("builtin assistant .riv has bad fingerprint: %q", asset[:4])
+		head := asset
+		if len(head) > 4 {
+			head = head[:4]
+		}
+		t.Fatalf("builtin assistant .riv has bad fingerprint: %q", head)
 	}
 }
