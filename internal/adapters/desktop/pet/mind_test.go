@@ -52,8 +52,11 @@ func TestMindSleepsWhenExhaustedAndWakes(t *testing.T) {
 	mind := NewMind()
 	mind.energy = 5
 	state := mind.Step(idleState(), base, base, false)
-	if state.Disposition != PetDispositionSleep || state.Intent != PetIntentNap {
-		t.Fatalf("low energy must nap, got %+v", state)
+	// Sleeping is a value (the director turns the sleep disposition into
+	// the renderer's sleeping flag), not a fired reaction, so the mind
+	// must not queue an intent for it.
+	if state.Disposition != PetDispositionSleep || state.Intent != PetIntentNone {
+		t.Fatalf("low energy must sleep without an intent, got %+v", state)
 	}
 
 	// Let energy regenerate above the wake threshold.

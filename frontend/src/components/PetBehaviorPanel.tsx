@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { Events } from '@wailsio/runtime';
 import { api } from '../lib/api';
 import type { PetMindDebug } from '../pet/state';
+import type { PetRuntimeStatus } from '../pet/validate';
 
 function moodLabel(mood: string, t: (key: string) => string): string {
   switch (mood) {
@@ -41,13 +43,22 @@ function dispositionLabel(
 export function PetBehaviorPanel() {
   const { t } = useTranslation();
   const [debug, setDebug] = useState<PetMindDebug | null>(null);
+  const [runtime, setRuntime] = useState<{
+    status: PetRuntimeStatus;
+    reported: boolean;
+  } | null>(null);
 
   useEffect(() => {
     let alive = true;
     const refresh = async () => {
       try {
-        const next = await api.petDiagnostics();
-        if (alive) setDebug(next);
+        const [next, status] = await Promise.all([
+          api.petDiagnostics(),
+          api.petRuntimeStatus(),
+        ]);
+        if (!alive) return;
+        setDebug(next);
+        setRuntime(status);
       } catch {
         // The pet may be disabled or the window not running; the panel
         // simply keeps its last snapshot.
@@ -55,9 +66,17 @@ export function PetBehaviorPanel() {
     };
     void refresh();
     const timer = window.setInterval(() => void refresh(), 2000);
+    // The pet window pushes its mount report the moment it mounts, so
+    // show it without waiting for the next poll.
+    const off = Events.On('pet:runtime_status', (event) => {
+      if (!alive) return;
+      const next = (event.data ?? null) as PetRuntimeStatus | null;
+      setRuntime(next ? { status: next, reported: true } : null);
+    });
     return () => {
       alive = false;
       window.clearInterval(timer);
+      off();
     };
   }, []);
 
@@ -143,6 +162,49 @@ export function PetBehaviorPanel() {
             <span className="font-mono text-fg">{debug.stats.poke_count}</span>
           </div>
         </div>
+      </div>
+      <div className="mt-3 border-t border-edge/60 pt-2 text-xs">
+        <div className="flex justify-between text-dim">
+          <span>{t('config.petDiagCharacter')}</span>
+          <span className="font-mono text-fg">
+            {runtime?.reported ? runtime.status.pack_id : '—'}
+          </span>
+        </div>
+        {runtime?.reported && (
+          <div className="mt-1 space-y-1">
+            <div className="flex justify-between text-dim">
+              <span>{t('config.petDiagMount')}</span>
+              <span
+                className={
+                  runtime.status.ok ? 'text-emerald-400' : 'text-red-400'
+                }
+              >
+                {runtime.status.ok
+                  ? t('config.petDiagMountOk')
+                  : t('config.petDiagMountDegraded')}
+              </span>
+            </div>
+            <div className="flex justify-between text-dim">
+              <span>{t('config.petDiagAsset')}</span>
+              <span className="font-mono text-fg">
+                {runtime.status.artboard}
+                {runtime.status.view_model
+                  ? ` / ${runtime.status.view_model}`
+                  : ''}
+              </span>
+            </div>
+            {runtime.status.error && (
+              <div className="text-red-400">{runtime.status.error}</div>
+            )}
+            {runtime.status.missing && runtime.status.missing.length > 0 && (
+              <ul className="list-disc pl-4 font-mono text-[0.7rem] text-red-400">
+                {runtime.status.missing.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

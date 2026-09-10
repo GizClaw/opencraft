@@ -36,8 +36,44 @@ export interface MockConfig {
     size?: number;
     text?: string;
   };
-  // Per-method overrides, e.g. { ReadFile: async () => '...' }
-  handlers?: Record<string, (...args: any[]) => Promise<unknown>>;
+  // Pet surface config: the pack list the renderer picks from, the
+  // base64 .riv the asset channel serves, the window position a drag
+  // anchors on, and the mount report the settings panel reads back.
+  // Pet bindings also log every call to window.__ocPetCalls and every
+  // report to window.__ocPetReports so specs can assert them.
+  petPacks?: unknown[];
+  petAsset?: string;
+  petPosition?: { x: number; y: number; ready: boolean };
+  petDiagnostics?: unknown;
+  petRuntimeStatus?: unknown;
+  assistantCharacter?: string;
+  petsEnabled?: boolean;
+  /**
+   * Per-method overrides, e.g. { 'File.ReadFile': async () => '...' }.
+   *
+   * Pass them through {@link handlerSources}: Playwright serializes the
+   * addInitScript argument as data and silently drops functions nested
+   * inside it, so a bare object literal here arrives empty. Source text
+   * survives, and the mock revives it inside the page. A revived handler
+   * is recompiled in the browser, so it cannot close over spec-file
+   * variables — build anything it needs from `window` or literal values.
+   */
+  handlers?: Record<string, Handler | string>;
+}
+
+/** One mocked binding method. */
+type Handler = (...args: any[]) => Promise<unknown>;
+
+/**
+ * Rewrites handler overrides as source text so they survive Playwright's
+ * argument serialization. See {@link MockConfig.handlers}.
+ */
+export function handlerSources(
+  handlers: Record<string, Handler>,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(handlers).map(([key, handler]) => [key, handler.toString()]),
+  );
 }
 
 export function mockBackend(cfg?: MockConfig) {
@@ -48,6 +84,13 @@ export function mockBackend(cfg?: MockConfig) {
   let newChatSeq = 0;
   let startTurnSeq = 0;
   let forkSeq = 0;
+  // Pet call log: the pet surface is driven by events, so the only way a
+  // spec can see "the drag called SetPosition" is this recording.
+  const petCalls: { method: string; args: unknown[] }[] = [];
+  const petReports: unknown[] = [];
+  const recordPet = (method: string, args: unknown[]) => {
+    petCalls.push({ method, args });
+  };
   const emit = (name: string, data: unknown) => {
     const wails = (
       win as { _wails?: { dispatchWailsEvent?: (e: unknown) => void } }
@@ -57,8 +100,6 @@ export function mockBackend(cfg?: MockConfig) {
     }
   };
   win.__emit = emit;
-
-  type Handler = (...args: any[]) => Promise<unknown>;
 
   const emptyList: Handler = async () => [];
   const noop: Handler = async () => undefined;
@@ -201,9 +242,55 @@ export function mockBackend(cfg?: MockConfig) {
     },
     Lifecycle: {
       GetCloseToTray: async () => true,
+      GetPetsSettings: async () => ({
+        enabled: config.petsEnabled ?? true,
+        assistantCharacter: config.assistantCharacter ?? 'assistant-default',
+      }),
+      ReportUserActivity: noop,
       RequestClose: noop,
       SetCloseToTray: noop,
       SetLanguage: noop,
+      SetPetsSettings: noop,
+    },
+    Pet: {
+      Activate: async () => recordPet('Activate', []),
+      Activities: emptyList,
+      Diagnostics: async () =>
+        config.petDiagnostics ?? {
+          drives: { attention: 60, energy: 40, comfort: 50 },
+          mood: 'content',
+          stats: { poke_count: 0 },
+          disposition: 'roam',
+          phase: 'idle',
+          walking: false,
+        },
+      ListPacks: async () => config.petPacks ?? [],
+      MoveBy: async (dx: number, dy: number) => recordPet('MoveBy', [dx, dy]),
+      PackAsset: async (asset: string) => {
+        recordPet('PackAsset', [asset]);
+        return config.petAsset ?? '';
+      },
+      Poke: async () => recordPet('Poke', []),
+      Position: async () =>
+        config.petPosition ?? { x: 100, y: 100, ready: true },
+      RegisterPack: noop,
+      ReportRuntimeStatus: async (status: unknown) => {
+        petReports.push(status);
+        recordPet('ReportRuntimeStatus', [status]);
+      },
+      RuntimeStatus: async () => {
+        if (config.petRuntimeStatus) {
+          return { status: config.petRuntimeStatus, reported: true };
+        }
+        return {
+          status: petReports[petReports.length - 1] ?? null,
+          reported: petReports.length > 0,
+        };
+      },
+      SetPosition: async (x: number, y: number) =>
+        recordPet('SetPosition', [x, y]),
+      SetRoamingPaused: noop,
+      UnregisterPack: noop,
     },
     Plugin: {
       ApplyUpdate: async () => null,
@@ -364,7 +451,15 @@ export function mockBackend(cfg?: MockConfig) {
   };
 
   const overrides: Record<string, Record<string, Handler>> = {};
-  for (const [key, fn] of Object.entries(config.handlers ?? {})) {
+  // Declared here, not at module scope: Playwright serializes this
+  // function by source, so anything it closes over from the module would
+  // be undefined inside the page.
+  const reviveHandler = (handler: Handler | string): Handler =>
+    typeof handler === 'string'
+      ? (new Function(`return (${handler})`)() as Handler)
+      : handler;
+  for (const [key, raw] of Object.entries(config.handlers ?? {})) {
+    const fn = reviveHandler(raw);
     if (key.includes('.')) {
       const [module, method] = key.split('.');
       (overrides[module] ??= {})[method] = fn;
@@ -403,8 +498,12 @@ export function mockBackend(cfg?: MockConfig) {
   const exposed = win as unknown as {
     __ocMockByModule: typeof modules;
     __ocCall: (qualified: string, args: unknown[]) => Promise<unknown>;
+    __ocPetCalls: typeof petCalls;
+    __ocPetReports: typeof petReports;
   };
   exposed.__ocMockByModule = modules;
+  exposed.__ocPetCalls = petCalls;
+  exposed.__ocPetReports = petReports;
   exposed.__ocCall = async (
     qualified: string,
     callArgs: unknown[],

@@ -161,12 +161,28 @@ function makePetsRegistrar(packs: PetPack[]): Registrar<PetPack> {
         throw new Error('pets.register: pack id is required');
       }
       const tagged: PetPack = { ...item, id, pluginId };
-      packs.push(tagged);
-      void api.petRegisterPack(tagged);
+      // The Go registry validates the pack (contract v2) and rejects
+      // definitions it cannot drive; a plugin author has no other signal
+      // than this, because a rejected pack simply never renders. Only
+      // track it locally once the registry accepted it, so the two
+      // sides cannot disagree about which characters exist.
+      const registered = api.petRegisterPack(tagged).then(
+        () => {
+          packs.push(tagged);
+        },
+        (err: unknown) => {
+          console.error(
+            `pet: plugin ${pluginId || '(unknown)'} pack ${id} was rejected`,
+            err,
+          );
+        },
+      );
       const dispose = () => {
         const i = packs.indexOf(tagged);
         if (i >= 0) packs.splice(i, 1);
-        void api.petUnregisterPack(id);
+        // Unregister after the registration settles so a teardown that
+        // races the add cannot win the race and leave the pack behind.
+        void registered.then(() => api.petUnregisterPack(id));
       };
       ctx.effect(() => dispose);
       return dispose;

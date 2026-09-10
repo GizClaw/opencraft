@@ -1,0 +1,63 @@
+{
+  "id": "assistant-default",
+  "displayName": "OpenCraft Assistant",
+  "version": "1.0.0",
+  "artboard": "Pet",
+  "stateMachine": "PetSM",
+  "viewModel": "PetVM",
+  "rivAsset": "builtin://assistant-default",
+  "meta": {
+    "scale": 1,
+    "walkSpeed": 110
+  },
+  "bindings": {
+    "phase": {
+      "type": "string",
+      "property": "phase",
+      "values": {
+        "idle": "Idle",
+        "thinking": "Thinking",
+        "tool": "Tool",
+        "answering": "Answering",
+        "asking": "Asking",
+        "done": "Done",
+        "error": "Error"
+      }
+    },
+    "tool": {
+      "type": "string",
+      "property": "tool",
+      "values": {
+        "exec": "Exec",
+        "file": "File",
+        "web": "Web",
+        "generate": "Generate"
+      },
+      "fallback": "Busy"
+    },
+    "walking": {
+      "type": "boolean",
+      "property": "walking"
+    },
+    "sleeping": {
+      "type": "boolean",
+      "property": "sleeping"
+    },
+    "intent:wave": {
+      "type": "trigger",
+      "property": "wave"
+    },
+    "intent:look": {
+      "type": "trigger",
+      "property": "look"
+    },
+    "intent:sulk": {
+      "type": "trigger",
+      "property": "sulk"
+    },
+    "intent:zoomies": {
+      "type": "trigger",
+      "property": "zoomies"
+    }
+  }
+}

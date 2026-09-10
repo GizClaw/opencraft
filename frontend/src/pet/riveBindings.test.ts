@@ -1,19 +1,35 @@
 import { describe, expect, it } from 'vitest';
 import type { PetPack } from './pack';
 import type { PetView } from './state';
-import { bindingForView } from './riveBindings';
+import {
+  intentWriteForView,
+  resolveBindingValue,
+  valueWritesForView,
+} from './riveBindings';
 
 const pack: PetPack = {
   id: 'test',
   displayName: 'test',
   version: '1',
+  artboard: 'Pet',
   stateMachine: 'PetSM',
-  meta: { scale: 1, walkSpeed: 110, anchor: 'bottom-center' },
+  viewModel: 'PetVM',
+  meta: { scale: 1, walkSpeed: 110 },
   bindings: {
-    idle: { type: 'input', name: 'idle' },
-    'tool:file': { type: 'input', name: 'busy' },
-    'tool:*': { type: 'input', name: 'busy' },
-    answering: { type: 'input', name: 'talk' },
+    phase: {
+      type: 'string',
+      property: 'phase',
+      values: { idle: 'Idle', tool: 'Tool', answering: 'Answering' },
+    },
+    tool: {
+      type: 'string',
+      property: 'tool',
+      values: { file: 'File' },
+      fallback: 'Busy',
+    },
+    walking: { type: 'boolean', property: 'walking' },
+    sleeping: { type: 'boolean', property: 'sleeping' },
+    'intent:wave': { type: 'trigger', property: 'wave' },
   },
 };
 
@@ -22,54 +38,124 @@ function view(overrides: Partial<PetView>): PetView {
     phase: 'idle',
     disposition: 'roam',
     interactive: false,
+    intentSeq: 0,
     ...overrides,
   };
 }
 
-describe('bindingForView', () => {
-  it('maps a phase to its direct binding', () => {
-    expect(bindingForView(pack, view({ phase: 'answering' }))).toEqual({
-      type: 'input',
-      name: 'talk',
-    });
+describe('valueWritesForView', () => {
+  it('writes the phase, walking and sleeping properties in order', () => {
+    expect(valueWritesForView(pack, view({ phase: 'answering' }))).toEqual([
+      { property: 'phase', type: 'string', value: 'Answering' },
+      { property: 'walking', type: 'boolean', value: false },
+      { property: 'sleeping', type: 'boolean', value: false },
+    ]);
   });
 
-  it('prefers a concrete tool category over the wildcard', () => {
+  it('writes the tool category alongside the tool phase', () => {
     expect(
-      bindingForView(
+      valueWritesForView(
         pack,
         view({ phase: 'tool', toolCategory: 'file', toolName: 'apply_patch' }),
       ),
-    ).toEqual({ type: 'input', name: 'busy' });
+    ).toEqual([
+      { property: 'phase', type: 'string', value: 'Tool' },
+      { property: 'tool', type: 'string', value: 'File' },
+      { property: 'walking', type: 'boolean', value: false },
+      { property: 'sleeping', type: 'boolean', value: false },
+    ]);
   });
 
-  it('falls back to the wildcard for unknown categories', () => {
+  it('falls back for unknown tool categories', () => {
     expect(
-      bindingForView(pack, view({ phase: 'tool', toolCategory: 'other' })),
-    ).toEqual({ type: 'input', name: 'busy' });
+      valueWritesForView(pack, view({ phase: 'tool', toolCategory: 'other' })),
+    ).toContainEqual({ property: 'tool', type: 'string', value: 'Busy' });
   });
 
-  it('returns undefined when the pack lacks a mapping', () => {
-    expect(bindingForView(pack, view({ phase: 'thinking' }))).toBeUndefined();
+  it('leaves the tool property alone outside the tool phase', () => {
+    expect(
+      valueWritesForView(pack, view({ phase: 'idle', toolCategory: 'file' })),
+    ).toEqual([
+      { property: 'phase', type: 'string', value: 'Idle' },
+      { property: 'walking', type: 'boolean', value: false },
+      { property: 'sleeping', type: 'boolean', value: false },
+    ]);
   });
 
-  it('prefers walk while the window is roaming idle', () => {
-    const p: PetPack = {
-      ...pack,
-      bindings: {
-        ...pack.bindings,
-        walk: { type: 'input', name: 'walk' },
-      },
-    };
-    expect(bindingForView(p, view({ phase: 'idle', walking: true }))).toEqual({
-      type: 'input',
-      name: 'walk',
+  it('carries the locomotion flags through', () => {
+    const writes = valueWritesForView(pack, view({ walking: true }));
+    expect(writes).toContainEqual({
+      property: 'walking',
+      type: 'boolean',
+      value: true,
+    });
+    expect(
+      valueWritesForView(pack, view({ sleeping: true, disposition: 'sleep' })),
+    ).toContainEqual({
+      property: 'sleeping',
+      type: 'boolean',
+      value: true,
     });
   });
 
-  it('keeps work states ahead of walk', () => {
+  it('skips properties the pack does not bind', () => {
+    const bare: PetPack = {
+      ...pack,
+      bindings: { walking: pack.bindings.walking },
+    };
+    expect(valueWritesForView(bare, view({ phase: 'tool' }))).toEqual([
+      { property: 'walking', type: 'boolean', value: false },
+    ]);
+  });
+});
+
+describe('intentWriteForView', () => {
+  it('fires the trigger of a bound intent', () => {
+    expect(intentWriteForView(pack, view({ intent: 'wave' }))).toEqual({
+      property: 'wave',
+      type: 'trigger',
+      value: 0,
+    });
+  });
+
+  it('has nothing to fire for unbound intents', () => {
+    // welcome greets through the bubble and nap is the sleeping value.
     expect(
-      bindingForView(pack, view({ phase: 'answering', walking: true })),
-    ).toEqual({ type: 'input', name: 'talk' });
+      intentWriteForView(pack, view({ intent: 'welcome' })),
+    ).toBeUndefined();
+    expect(intentWriteForView(pack, view({ intent: 'nap' }))).toBeUndefined();
+  });
+
+  it('has nothing to fire without an intent', () => {
+    expect(intentWriteForView(pack, view({}))).toBeUndefined();
+  });
+});
+
+describe('resolveBindingValue', () => {
+  it('prefers the table, then the fallback, then the raw string', () => {
+    expect(
+      resolveBindingValue(
+        { type: 'string', property: 'p', values: { a: 'A' } },
+        'a',
+      ),
+    ).toBe('A');
+    expect(
+      resolveBindingValue(
+        { type: 'string', property: 'p', values: { a: 'A' }, fallback: 'F' },
+        'b',
+      ),
+    ).toBe('F');
+    expect(resolveBindingValue({ type: 'string', property: 'p' }, 'b')).toBe(
+      'b',
+    );
+  });
+
+  it('does not invent a value for enum bindings', () => {
+    expect(
+      resolveBindingValue(
+        { type: 'enum', property: 'p', values: { a: 'A' } },
+        'b',
+      ),
+    ).toBeUndefined();
   });
 });

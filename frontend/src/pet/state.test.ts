@@ -8,6 +8,8 @@ describe('toPetView', () => {
       disposition: 'roam',
       interactive: false,
       walking: false,
+      sleeping: false,
+      intentSeq: 0,
     });
   });
 
@@ -26,6 +28,8 @@ describe('toPetView', () => {
       toolCategory: 'file',
       interactive: false,
       walking: false,
+      sleeping: false,
+      intentSeq: 0,
     });
   });
 
@@ -36,5 +40,18 @@ describe('toPetView', () => {
       interactive: true,
     };
     expect(toPetView(payload).interactive).toBe(true);
+  });
+
+  it('carries the sleep flag and the intent sequence', () => {
+    const payload: PetStatePayload = {
+      phase: 'idle',
+      disposition: 'sleep',
+      sleeping: true,
+      intent: 'wave',
+      intent_seq: 3,
+    };
+    const view = toPetView(payload);
+    expect(view.sleeping).toBe(true);
+    expect(view.intentSeq).toBe(3);
   });
 });

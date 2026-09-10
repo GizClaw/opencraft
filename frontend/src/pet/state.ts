@@ -16,7 +16,12 @@ export interface PetStatePayload {
   disposition: PetDisposition;
   interactive?: boolean;
   walking?: boolean;
+  /** True while the pet is asleep (disposition sleep). */
+  sleeping?: boolean;
   intent?: string;
+  /** Grows only when the intent changes; the renderer fires one-shots
+   *  on the transition so a repeated broadcast does not replay them. */
+  intent_seq?: number;
   bubble?: string;
 }
 
@@ -27,7 +32,9 @@ export interface PetView {
   toolCategory?: string;
   interactive: boolean;
   walking?: boolean;
+  sleeping?: boolean;
   intent?: string;
+  intentSeq: number;
   bubble?: string;
 }
 
@@ -69,6 +76,8 @@ export function toPetView(payload: PetStatePayload | null): PetView {
       disposition: 'roam',
       interactive: false,
       walking: false,
+      sleeping: false,
+      intentSeq: 0,
     };
   }
   return {
@@ -78,7 +87,9 @@ export function toPetView(payload: PetStatePayload | null): PetView {
     toolCategory: payload.tool_category,
     interactive: Boolean(payload.interactive),
     walking: Boolean(payload.walking),
+    sleeping: Boolean(payload.sleeping),
     intent: payload.intent,
+    intentSeq: payload.intent_seq ?? 0,
     bubble: payload.bubble,
   };
 }

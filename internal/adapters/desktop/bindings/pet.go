@@ -31,14 +31,8 @@ func (b *Pet) ListPacks() []pet.Pack {
 // builtins with the same id; unregistering restores the previous pack.
 func (b *Pet) RegisterPack(p pet.Pack) error {
 	p.ID = strings.TrimSpace(p.ID)
-	if p.ID == "" || len(p.ID) > 64 {
-		return fmt.Errorf("pet: invalid pack id %q", p.ID)
-	}
-	if p.StateMachine == "" {
-		return fmt.Errorf("pet: pack %q requires a state machine", p.ID)
-	}
-	if len(p.Bindings) > 64 {
-		return fmt.Errorf("pet: pack %q bindings exceed 64 entries", p.ID)
+	if err := p.Validate(); err != nil {
+		return err
 	}
 	b.core.Packs.Register(p)
 	b.core.Shell.Emit("pet:packs_changed", map[string]any{
@@ -54,6 +48,36 @@ func (b *Pet) UnregisterPack(id string) {
 	b.core.Shell.Emit("pet:packs_changed", map[string]any{
 		"pack_id": id,
 	})
+}
+
+// ReportRuntimeStatus records the pet window's report about the pack it
+// mounted (pack/artboard/state machine/view model plus what the asset
+// was missing). The renderer validates on mount, so the settings
+// diagnostics panel can show a character that failed to mount instead
+// of leaving a silently frozen sprite.
+func (b *Pet) ReportRuntimeStatus(status pet.RuntimeStatus) error {
+	status.PackID = strings.TrimSpace(status.PackID)
+	if status.PackID == "" {
+		return fmt.Errorf("pet: runtime status requires a pack id")
+	}
+	if len(status.Missing) > 64 {
+		status.Missing = status.Missing[:64]
+	}
+	b.core.Shell.SetPetRuntimeStatus(status)
+	return nil
+}
+
+// RuntimeStatusDTO pairs the last renderer report with whether a pet
+// window has ever reported one.
+type RuntimeStatusDTO struct {
+	Status   pet.RuntimeStatus `json:"status"`
+	Reported bool              `json:"reported"`
+}
+
+// RuntimeStatus returns the renderer's mount report for diagnostics.
+func (b *Pet) RuntimeStatus() RuntimeStatusDTO {
+	status, reported := b.core.Shell.PetRuntimeStatus()
+	return RuntimeStatusDTO{Status: status, Reported: reported}
 }
 
 // Activities returns the current per-agent pet activities. The main
