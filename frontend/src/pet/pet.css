@@ -28,6 +28,27 @@ html[data-surface='pet'] #root {
   width: 128px;
   height: 128px;
   display: block;
+  /* meta.scale of the active pack, applied to the drawn sprite. */
+  transform: scale(var(--pet-scale, 1));
+}
+
+/* The degraded marker is the only thing the surface draws when the
+ * active pack does not match its asset: a small, draggable badge that
+ * keeps the window from looking like a broken frozen pet. */
+.pet-degraded {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 9999px;
+  background: rgb(220 38 38 / 85%);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: help;
 }
 
 .pet-bubble {

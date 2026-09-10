@@ -7,8 +7,10 @@ function pack(id: string): PetPack {
     id,
     displayName: id,
     version: '1',
+    artboard: 'Pet',
     stateMachine: 'PetSM',
-    meta: { scale: 1, walkSpeed: 110, anchor: 'bottom-center' },
+    viewModel: 'PetVM',
+    meta: { scale: 1, walkSpeed: 110 },
     bindings: {},
   };
 }

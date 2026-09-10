@@ -78,6 +78,7 @@ import type {
 import type { PetPack } from '../pet/pack';
 import type { PetActivityDTO } from '../pet/state';
 import type { PetMindDebug } from '../pet/state';
+import type { PetRuntimeStatus } from '../pet/validate';
 import type * as genPlugin from '../../bindings/github.com/GizClaw/opencraft/internal/capabilities/plugins/models';
 import type * as genPet from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/pet/models';
 
@@ -381,6 +382,13 @@ export const api = {
   petRegisterPack: (pack: PetPack) =>
     Pet.RegisterPack(pack as unknown as genPet.Pack),
   petUnregisterPack: (id: string) => Pet.UnregisterPack(id),
+  petReportRuntimeStatus: (status: PetRuntimeStatus) =>
+    Pet.ReportRuntimeStatus(status as unknown as genPet.RuntimeStatus),
+  petRuntimeStatus: () =>
+    Pet.RuntimeStatus() as unknown as Promise<{
+      status: PetRuntimeStatus;
+      reported: boolean;
+    }>,
   closeRequested: () => Lifecycle.RequestClose(),
   pickFolder: (title: string) => File.PickFolder(title),
   pickFile: (title: string, pattern: string) => File.PickFile(title, pattern),
