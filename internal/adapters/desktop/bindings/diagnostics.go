@@ -294,6 +294,40 @@ type CacheClearResult struct {
 	Bytes int64    `json:"bytes"`
 }
 
+// ConfigCompatRepair reports one user-layer compatibility repair.
+type ConfigCompatRepair struct {
+	// File is the user configuration layer that was inspected.
+	File string `json:"file"`
+	// Backup is the pre-repair copy, empty when nothing was removed.
+	Backup string `json:"backup"`
+	// Removed lists the YAML paths dropped from the layer, so the user
+	// can see exactly which declarations fell away.
+	Removed []string `json:"removed"`
+}
+
+// RepairConfigCompat drops the user-layer declarations that reference
+// retired assembly variables (${env:OPEN_CRAFT_*}), so the built-in
+// layer supplies them again. It touches only the user configuration
+// layer, leaves a .bak copy behind, and reports what it removed; a layer
+// without obsolete references is left byte-for-byte untouched.
+func (b *Diagnostics) RepairConfigCompat() (ConfigCompatRepair, error) {
+	res, err := config.RepairRetiredRefs(b.core.UserDir)
+	if err != nil {
+		return ConfigCompatRepair{}, err
+	}
+	// A nil slice marshals to JSON null, which the frontend would have to
+	// guard against on every read; keep the wire shape an empty list.
+	removed := res.Removed
+	if removed == nil {
+		removed = []string{}
+	}
+	return ConfigCompatRepair{
+		File:    res.File,
+		Backup:  res.Backup,
+		Removed: removed,
+	}, nil
+}
+
 // ClearCaches removes cache directories and reports freed bytes.
 func (b *Diagnostics) ClearCaches() (CacheClearResult, error) {
 	dirs := []string{

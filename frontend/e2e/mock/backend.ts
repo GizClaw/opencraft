@@ -187,6 +187,13 @@ export function mockBackend(cfg?: MockConfig) {
       Diagnostics: async () => ({}),
       EvaluateCommandPolicy: async () => ({ command: '', allowed: true }),
       MetricRange: async () => [],
+      // Mirrors the wire shape of a Go nil slice: the repair reports no
+      // list when the layer has nothing to remove.
+      RepairConfigCompat: async () => ({
+        file: '',
+        backup: '',
+        removed: null,
+      }),
       ReportFrontendError: noop,
       ReportFrontendPerf: noop,
       RunSandboxProbe: async () => ({ ok: true }),

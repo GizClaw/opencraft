@@ -25,6 +25,7 @@ import type {
   AutomationTask,
   AttachmentDTO,
   CacheClearResult,
+  ConfigCompatRepair,
   ConfigState,
   ConfigStatus,
   DiagnosticsReport,
@@ -339,6 +340,8 @@ export const api = {
     ) as unknown as Promise<PolicyDecision>,
   clearCaches: () =>
     Diagnostics.ClearCaches() as unknown as Promise<CacheClearResult>,
+  repairConfigCompat: () =>
+    Diagnostics.RepairConfigCompat() as unknown as Promise<ConfigCompatRepair>,
   chooseWorkspace: () =>
     Workspace.ChooseWorkspace(i18n.t('sidebar.chooseWorkspaceTitle')),
   pluginList: async () => ((await Plugin.List()) ?? []).map(pluginSummaryOf),
