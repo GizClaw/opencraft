@@ -156,6 +156,7 @@
     "uiCloseToTrayQuit": "直接退出",
     "petEnabled": "桌面宠物",
     "petEnabledHint": "让主 agent 以桌面宠物的形式在你屏幕上游走，它会根据思考、工具执行、回答和提问做出反应。",
+    "petExperimental": "实验性",
     "petOn": "开启",
     "petOff": "关闭",
     "petCharacter": "宠物角色",

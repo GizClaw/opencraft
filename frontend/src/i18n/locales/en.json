@@ -158,6 +158,7 @@
     "uiCloseToTrayQuit": "Quit",
     "petEnabled": "Desktop pet",
     "petEnabledHint": "Show the assistant as a roaming pet on your desktop. It reacts to thinking, tool runs, answers, and prompts.",
+    "petExperimental": "Experimental",
     "petOn": "On",
     "petOff": "Off",
     "petCharacter": "Assistant pet character",

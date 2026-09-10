@@ -111,6 +111,7 @@ describe('SettingsGeneral', () => {
     const user = userEvent.setup();
     render(<SettingsGeneral />);
 
+    expect(await screen.findByText(/Experimental|实验性/)).toBeInTheDocument();
     await user.click(await screen.findByRole('button', { name: /On|开启/ }));
     expect(apiMock.petSettings).toHaveBeenCalled();
     expect(apiMock.setPetSettings).toHaveBeenCalledWith({ enabled: true });
