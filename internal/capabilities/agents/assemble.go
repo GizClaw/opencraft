@@ -35,8 +35,12 @@ func (l *Lifecycle) agentDefinition(spec AgentSpec) (agent.Definition, error) {
 	engineSettings, err := json.Marshal(map[string]any{
 		"graph": graph,
 		"build": map[string]any{
-			"timeout":        "1h",
-			"max_iterations": 400,
+			"timeout": "1h",
+			// Loop guard counts node invocations, and this graph spends
+			// about three nodes per tool round, so 2000 leaves room for
+			// long-horizon subagent work while the 1h build timeout still
+			// bounds wall clock.
+			"max_iterations": 2000,
 		},
 	})
 	if err != nil {
