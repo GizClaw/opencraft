@@ -129,6 +129,16 @@ func TestPackValidate(t *testing.T) {
 			wantErr: "unknown binding slot",
 		},
 		{
+			name: "slot that merely resembles facing",
+			pack: mutate(func(p *Pack) {
+				p.Bindings["facings"] = PackBinding{
+					Type:     PackBindingString,
+					Property: "facing",
+				}
+			}),
+			wantErr: "unknown binding slot",
+		},
+		{
 			name: "empty intent slot",
 			pack: mutate(func(p *Pack) {
 				p.Bindings["intent:"] = PackBinding{
@@ -241,6 +251,13 @@ func TestPackValidateAcceptsMappedTypes(t *testing.T) {
 			Type: PackBindingBoolean, Property: "sleeping"}},
 		{name: "trigger intent", slot: "intent:zoomies", binding: PackBinding{
 			Type: PackBindingTrigger, Property: "zoomies"}},
+		{name: "facing string", slot: "facing", binding: PackBinding{
+			Type: PackBindingString, Property: "facing"}},
+		{name: "facing enum with values", slot: "facing", binding: PackBinding{
+			Type:     PackBindingEnum,
+			Property: "facing",
+			Values:   map[string]string{"left": "TurnLeft", "right": "TurnRight"},
+		}},
 	}
 
 	for _, tc := range cases {

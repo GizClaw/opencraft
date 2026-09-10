@@ -37,8 +37,13 @@ type petStatePayload struct {
 	Disposition  string `json:"disposition"`
 	Interactive  bool   `json:"interactive"`
 	Walking      bool   `json:"walking,omitempty"`
-	Sleeping     bool   `json:"sleeping,omitempty"`
-	Intent       string `json:"intent,omitempty"`
+	// Facing is the horizontal walk direction ("left"/"right") the rover
+	// last stepped in. It stays empty until the pet walks and is held
+	// while the pet stands still, so a character never snaps back to a
+	// default pose between strolls.
+	Facing   string `json:"facing,omitempty"`
+	Sleeping bool   `json:"sleeping,omitempty"`
+	Intent   string `json:"intent,omitempty"`
 	// IntentSeq grows only when the intent changes, so the renderer
 	// fires a one-shot trigger once instead of on every repeated
 	// broadcast of the reaction it is already playing.
@@ -322,6 +327,9 @@ func (d *Desktop) roamAssistantPet(
 
 	var last petStatePayload
 	moved := false
+	// facing carries the last walk direction across ticks; petFacing
+	// keeps it when the pet does not move sideways.
+	facing := ""
 	var state petfeed.PetSurfaceState
 	tickCount := 0
 	var intents petfeed.IntentSequencer
@@ -421,6 +429,10 @@ func (d *Desktop) roamAssistantPet(
 			}
 			wasManual = manual
 
+			// Facing comes from the rover's own step, never from the OS
+			// re-anchor above or a user drag: those deltas are larger
+			// than one step and would flip the direction for a tick.
+			walkFromX := x
 			if !manual {
 				switch state.Disposition {
 				case petfeed.PetDispositionSleep:
@@ -445,6 +457,7 @@ func (d *Desktop) roamAssistantPet(
 					y = petStep(y, targetY, petRoamTick, roamSpeed)
 				}
 			}
+			facing = petFacing(facing, x-walkFromX)
 
 			moved = false
 			d.petMu.Lock()
@@ -471,6 +484,7 @@ func (d *Desktop) roamAssistantPet(
 
 			payload := newPetStatePayload(state)
 			payload.Walking = moved
+			payload.Facing = facing
 			payload.IntentSeq = intents.Observe(state.Intent)
 			if payload == last {
 				continue
@@ -548,6 +562,29 @@ func petStep(current, target int, tick time.Duration, speed float64) int {
 		}
 	}
 	return current
+}
+
+// Horizontal walk directions the rover reports. The vocabulary is
+// deliberately tiny: the desktop pet only walks along the bottom edge,
+// and packs translate these values into their own turn poses.
+const (
+	petFacingLeft  = "left"
+	petFacingRight = "right"
+)
+
+// petFacing returns the walk direction for a horizontal step of dx,
+// keeping prev when there was no sideways movement. dx is the rover's
+// own step delta, so standing still, sleeping, OS re-anchoring and user
+// drags all leave the last direction in place.
+func petFacing(prev string, dx int) string {
+	switch {
+	case dx > 0:
+		return petFacingRight
+	case dx < 0:
+		return petFacingLeft
+	default:
+		return prev
+	}
 }
 
 // stopPet tears the pet window down during desktop shutdown.

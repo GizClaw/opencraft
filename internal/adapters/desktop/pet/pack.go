@@ -26,10 +26,12 @@ const (
 
 // PackBinding maps one pet activity slot to a view model property.
 //
-// Slots are "phase", "tool", "walking", "sleeping" and "intent:<name>".
-// For enum/string slots Values translates the activity value into the
-// asset's vocabulary; Fallback is written when the activity carries a
-// value the table does not cover (an unknown tool category, say).
+// Slots are "phase", "tool", "walking", "sleeping", "facing" and
+// "intent:<name>". For enum/string slots Values translates the activity
+// value into the asset's vocabulary; Fallback is written when the
+// activity carries a value the table does not cover (an unknown tool
+// category, say). The facing slot carries "left"/"right", the direction
+// the rover is walking in.
 type PackBinding struct {
 	Type PackBindingType `json:"type"`
 	// Property is the view model property name.
@@ -125,6 +127,7 @@ const maxPackWalkSpeed = 1200
 func (b PackBinding) validate(packID, slot string) error {
 	known := slot == "phase" || slot == "tool" ||
 		slot == "walking" || slot == "sleeping" ||
+		slot == "facing" ||
 		(strings.HasPrefix(slot, "intent:") && len(slot) > len("intent:"))
 	if !known {
 		return fmt.Errorf("pet: pack %q has unknown binding slot %q",
