@@ -28,6 +28,11 @@ const pack: PetPack = {
       fallback: 'Busy',
     },
     walking: { type: 'boolean', property: 'walking' },
+    facing: {
+      type: 'string',
+      property: 'facing',
+      values: { left: 'TurnLeft', right: 'TurnRight' },
+    },
     sleeping: { type: 'boolean', property: 'sleeping' },
     'intent:wave': { type: 'trigger', property: 'wave' },
   },
@@ -96,6 +101,44 @@ describe('valueWritesForView', () => {
       type: 'boolean',
       value: true,
     });
+  });
+
+  it('writes the facing value only when the rover reports one', () => {
+    expect(
+      valueWritesForView(pack, view({ walking: true, facing: 'left' })),
+    ).toContainEqual({
+      property: 'facing',
+      type: 'string',
+      value: 'TurnLeft',
+    });
+    // Facing stays empty until the pet has walked: nothing to write.
+    expect(
+      valueWritesForView(pack, view({ walking: true })).some(
+        (write) => write.property === 'facing',
+      ),
+    ).toBe(false);
+  });
+
+  it('passes the raw facing through a values-less string binding', () => {
+    const raw: PetPack = {
+      ...pack,
+      bindings: { facing: { type: 'string', property: 'turn' } },
+    };
+    expect(valueWritesForView(raw, view({ facing: 'right' }))).toEqual([
+      { property: 'turn', type: 'string', value: 'right' },
+    ]);
+  });
+
+  it('leaves the facing property alone without a binding', () => {
+    const bare: PetPack = {
+      ...pack,
+      bindings: { walking: pack.bindings.walking },
+    };
+    expect(
+      valueWritesForView(bare, view({ walking: true, facing: 'left' })).some(
+        (write) => write.property === 'facing',
+      ),
+    ).toBe(false);
   });
 
   it('skips properties the pack does not bind', () => {

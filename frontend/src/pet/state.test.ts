@@ -54,4 +54,16 @@ describe('toPetView', () => {
     expect(view.sleeping).toBe(true);
     expect(view.intentSeq).toBe(3);
   });
+
+  it('carries the walk direction and leaves it unset before the first step', () => {
+    expect(toPetView(null).facing).toBeUndefined();
+    expect(
+      toPetView({
+        phase: 'idle',
+        disposition: 'roam',
+        walking: true,
+        facing: 'left',
+      }).facing,
+    ).toBe('left');
+  });
 });

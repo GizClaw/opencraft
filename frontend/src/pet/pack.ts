@@ -59,6 +59,8 @@ export const PET_PHASE_SLOT = 'phase';
 export const PET_TOOL_SLOT = 'tool';
 export const PET_WALKING_SLOT = 'walking';
 export const PET_SLEEPING_SLOT = 'sleeping';
+/** Horizontal walk direction; the value is "left" or "right". */
+export const PET_FACING_SLOT = 'facing';
 
 /** Intent slots are "intent:<name>", one per one-shot reaction. */
 export function petIntentSlot(intent: string): string {

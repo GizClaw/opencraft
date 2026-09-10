@@ -1,5 +1,6 @@
 import type { PetPack, PetPackBinding, PetPackBindingType } from './pack';
 import {
+  PET_FACING_SLOT,
   PET_PHASE_SLOT,
   PET_SLEEPING_SLOT,
   PET_TOOL_SLOT,
@@ -42,9 +43,9 @@ export function resolveBindingValue(
 }
 
 /**
- * Value writes for one surface state: the phase/tool/walking/sleeping
- * properties, in a stable order. Triggers are not included — the caller
- * fires those only when the intent actually changed (see
+ * Value writes for one surface state: the phase/tool/walking/facing/
+ * sleeping properties, in a stable order. Triggers are not included —
+ * the caller fires those only when the intent actually changed (see
  * {@link intentWriteForView}).
  */
 export function valueWritesForView(pack: PetPack, view: PetView): PetWrite[] {
@@ -75,6 +76,18 @@ export function valueWritesForView(pack: PetPack, view: PetView): PetWrite[] {
       type: walking.type,
       value: Boolean(view.walking),
     });
+  }
+
+  // Facing is derived from the walk direction: the rover holds the last
+  // value while the pet stands still, and reports nothing before the
+  // first step, so an unbound pack or a value-less view writes nothing
+  // and the property keeps its current state.
+  const facing = pack.bindings[PET_FACING_SLOT];
+  if (facing && view.facing) {
+    const value = resolveBindingValue(facing, view.facing);
+    if (value !== undefined) {
+      writes.push({ property: facing.property, type: facing.type, value });
+    }
   }
 
   const sleeping = pack.bindings[PET_SLEEPING_SLOT];

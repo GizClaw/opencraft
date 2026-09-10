@@ -8,6 +8,9 @@ export type PetPhase =
 
 export type PetDisposition = 'roam' | 'sleep' | 'work' | 'ask';
 
+/** Horizontal walk direction the rover reports; packs translate it. */
+export type PetFacing = 'left' | 'right';
+
 export interface PetStatePayload {
   agent_id?: string;
   phase: PetPhase;
@@ -16,6 +19,8 @@ export interface PetStatePayload {
   disposition: PetDisposition;
   interactive?: boolean;
   walking?: boolean;
+  /** Absent until the pet has walked at least once. */
+  facing?: PetFacing;
   /** True while the pet is asleep (disposition sleep). */
   sleeping?: boolean;
   intent?: string;
@@ -32,6 +37,7 @@ export interface PetView {
   toolCategory?: string;
   interactive: boolean;
   walking?: boolean;
+  facing?: PetFacing;
   sleeping?: boolean;
   intent?: string;
   intentSeq: number;
@@ -87,6 +93,7 @@ export function toPetView(payload: PetStatePayload | null): PetView {
     toolCategory: payload.tool_category,
     interactive: Boolean(payload.interactive),
     walking: Boolean(payload.walking),
+    facing: payload.facing,
     sleeping: Boolean(payload.sleeping),
     intent: payload.intent,
     intentSeq: payload.intent_seq ?? 0,

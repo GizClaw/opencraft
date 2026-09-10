@@ -46,3 +46,25 @@ func TestClampInt(t *testing.T) {
 		t.Fatalf("high value = %d", got)
 	}
 }
+
+func TestPetFacing(t *testing.T) {
+	if got := petFacing("", 6); got != petFacingRight {
+		t.Fatalf("step right = %q, want %q", got, petFacingRight)
+	}
+	if got := petFacing(petFacingLeft, 6); got != petFacingRight {
+		t.Fatalf("turn right = %q, want %q", got, petFacingRight)
+	}
+	if got := petFacing("", -6); got != petFacingLeft {
+		t.Fatalf("step left = %q, want %q", got, petFacingLeft)
+	}
+	if got := petFacing(petFacingRight, -6); got != petFacingLeft {
+		t.Fatalf("turn left = %q, want %q", got, petFacingLeft)
+	}
+	// No sideways movement means standing still, sleeping, a user drag
+	// or an OS re-anchor: the last direction has to stay put.
+	for _, prev := range []string{"", petFacingLeft, petFacingRight} {
+		if got := petFacing(prev, 0); got != prev {
+			t.Fatalf("hold %q = %q, want %q", prev, got, prev)
+		}
+	}
+}
