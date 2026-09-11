@@ -6,6 +6,135 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-11
+
+### Added
+
+- Desktop pet packs receive a `facing` value slot (`left` / `right`)
+  so a character can render turn-around poses; the direction comes
+  from the rover's own step delta, and standing still, sleeping,
+  dragging or OS re-anchoring keep the last direction. (#116)
+- The pet surface drives the pack's Rive view model instead of state
+  machine inputs: one value per activity slot, intents fired only
+  when the intent sequence moves, and a degraded marker plus a mount
+  report in Settings > Diagnostics when a character cannot be
+  driven. (#113)
+
+### Changed
+
+- The builtin assistant character moved to a view-model asset
+  (artboard `Pet`, state machine `PetSM`, view model `PetVM`) with
+  pack contract v2; the asset contract and the runtime accessors the
+  renderer drives are pinned by tests. (#113)
+- Sleeping is a persistent value instead of a re-fired `nap`
+  one-shot, and the pet surface parks its renderer while the window
+  is hidden or the character has been still. (#113)
+- flowcraft drivers bumped for the Responses API replay fixes:
+  assistant text rides an output message and replayed reasoning items
+  carry their required summary, so multi-turn OpenAI, Azure and
+  DeepSeek conversations no longer fail with HTTP 400 from the second
+  turn on. (#114)
+- The assistant graph's `build.max_iterations` rose from 400 to
+  40000, leaving the graph loop guard as a cycle safety net rather
+  than a budget long tool work can exhaust. (#112)
+
+### Fixed
+
+- A deploy layer that references a retired `OPEN_CRAFT_*` variable
+  now fails with an error anchored to the file, the line and the
+  `${ocraft:*}` replacement, and Settings > Diagnostics offers a
+  repair that removes the offending declarations, keeps a `.bak`
+  copy and reports the paths it removed. References that still
+  resolve, such as a name exported in the process environment, keep
+  working. (#117)
+
+## [0.4.0] - 2026-09-10
+
+### Added
+
+- Desktop shell migrated to Wails v3 (pinned to `v3.0.0-beta.17`):
+  `main.go` is the single v3 entry, `internal/adapters/desktop` holds
+  the `core` composition root, 14 binding services and the root
+  `Desktop`/`Shell`, and the shell gains multi-window, events, tray,
+  single-instance, Dock reopen, async quit confirmation and native
+  dialogs with the app icon. The v2 adapter, fyne systray and objc
+  window hacks are gone. (#106)
+- Roaming desktop pet: a transparent, frameless, always-on-top window
+  that wanders across screens, perches on the main window, reacts to
+  drags and clicks and exposes a pause/resume/disable menu, powered
+  by an event-driven activity feed and a declarative Rive pack
+  contract, plus a Subagent Dock in the main window. (#108)
+- System notifications for interact prompts, finished turns and
+  background automations are now raised from Go, so they still arrive
+  when the webview is suspended (window hidden, minimized or parked
+  in the tray). (#107)
+- Diagnostics tab with persisted local metric series: backend turn
+  and startup performance, renderer RUM and renderer errors, charted
+  with a refresh control. (#106)
+
+### Changed
+
+- Subagent declarations upgraded to a versioned, Definition-shaped v1
+  format with strict decoding, so hand-authored files cannot look
+  like they control host-owned wiring; legacy flat records still load
+  and are rewritten as v1, and unsupported versions fail loudly.
+  (#109)
+- flowcraft core upgraded to v0.3.1 and adapted to the reworked
+  dynamic tool discovery model: a discovery pool with
+  `max_tools`/`max_bytes`/`idle_rounds` and LRU eviction, and a
+  `tool_search` that auto-loads matches and reports
+  `hits`/`exposed`/`failed`/`evicted` instead of `selected`. (#110)
+- The desktop pet is labelled experimental in Settings > General and
+  Settings > Diagnostics. (#111)
+- Desktop packaging and CI moved to the wails3 Taskfile: Linux jobs
+  install GTK4 before generating bindings, and the macOS build cleans
+  stale `.app` bundles before rebuilding. (#106)
+
+### Fixed
+
+- macOS packaging restored the `com.GizClaw.opencraft` bundle
+  identifier and app-bundle naming, and the app icon is generated
+  from a PNG instead of the icon-composer template. (#106)
+- Windows installer shortcuts stamp the toast AppUserModelID, and
+  frameless window options were restored for Windows and Linux.
+  (#106)
+- The automation host is wired into engine runtime assembly again.
+  (#106)
+
+## [0.3.2] - 2026-09-08
+
+### Added
+
+- Workspace Git rail in the right panel (a Files | Git switcher that
+  appears when the workspace is a repository): staged, unstaged,
+  untracked and unmerged change groups with inline diff previews,
+  commit history with changed-file and diff drill-down, and a branch
+  list with create/checkout. Commit, stage/unstage, discard, clean,
+  pull and push (force behind a strong confirmation) are refused
+  while a turn is active in the workspace. (#103)
+- GitHub pull request review surface with the PR summary rendered as
+  styled markdown, comments and changed files. (#103)
+- Provider request and response ids are persisted on archived turns
+  and surfaced for correlation. (#104)
+
+### Changed
+
+- Git reads and writes go through bounded services: snapshots and PR
+  lookups are read-only, and writes are serialized and audited.
+  (#103)
+- flowcraft core upgraded to v0.3.0 with core-aligned drivers, and
+  the assistant graph sets `stream_failure_policy.on_error: discard`
+  so provider failures and truncated streams no longer commit a
+  half-written assistant message. Interrupts keep `commit_partial`
+  for archive/resume context. (#104)
+
+### Fixed
+
+- Turn start and delete retry transient lifecycle failures, retired
+  hosts are marked stale and surface retryable errors, and the
+  desktop rebuilds them after draining instead of reusing a stale
+  runtime. (#103)
+
 ## [0.3.1] - 2026-09-08
 
 ### Added
