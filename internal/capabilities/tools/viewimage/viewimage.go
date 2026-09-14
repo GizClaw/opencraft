@@ -117,16 +117,10 @@ func (t *Tool) Execute(
 			"%s: path is required", Name,
 		)
 	}
-	data, err := t.ws.Read(ctx, args.Path)
+	data, err := readSource(ctx, t.ws, args.Path)
 	if err != nil {
 		return message.Content{}, fmt.Errorf(
 			"%s: read %s: %w", Name, args.Path, err,
-		)
-	}
-	if len(data) > maxSourceBytes {
-		return message.Content{}, errdefs.Validationf(
-			"%s: %s is %d bytes, over the %d-byte limit",
-			Name, args.Path, len(data), maxSourceBytes,
 		)
 	}
 	encoded, width, height, err := imageutil.DownscaleToJPEG(
@@ -150,4 +144,39 @@ func (t *Tool) Execute(
 		)},
 		message.ImagePart{Source: source},
 	}}, nil
+}
+
+// readSource reads one workspace file under the per-image cap. A
+// workspace that supports bounded reads fails an oversized file instead
+// of materializing it; other workspaces fall back to a full read.
+func readSource(
+	ctx context.Context, ws workspace.Workspace, path string,
+) ([]byte, error) {
+	if lr, ok := ws.(workspace.LimitedReader); ok {
+		data, err := lr.ReadLimited(ctx, path, int64(maxSourceBytes))
+		if err != nil {
+			return nil, err
+		}
+		if len(data) > maxSourceBytes {
+			// Defensive: the interface rejects oversized files, but a
+			// backend that returns more than it was asked for must not
+			// reach the decoder either.
+			return nil, errdefs.Validationf(
+				"%s: %s is over the %d-byte limit",
+				Name, path, maxSourceBytes,
+			)
+		}
+		return data, nil
+	}
+	data, err := ws.Read(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxSourceBytes {
+		return nil, errdefs.Validationf(
+			"%s: %s is %d bytes, over the %d-byte limit",
+			Name, path, len(data), maxSourceBytes,
+		)
+	}
+	return data, nil
 }
