@@ -16,8 +16,8 @@ var goldenTime = time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
 // goldenFixture covers every branch the writer has: the OpenAI wire with
 // its full advanced block, ByteDance's flat transport fields and video
 // model facts, MiniMax's media origin, a disabled instance, per-model
-// endpoints, lifecycle, driver fields, an opaque provider bag, three key
-// sources, and the router retry policy.
+// endpoints, lifecycle, driver fields, three key sources, and the router
+// retry policy.
 func goldenFixture() InferenceConfig {
 	maxInput, maxOutput, retries := 1_000_000, 384_000, 3
 	return InferenceConfig{
@@ -46,14 +46,11 @@ func goldenFixture() InferenceConfig {
 					ExtraBody:              map[string]string{"custom_hint": `"prefer-a"`},
 					ReasoningChannel:       "text",
 					ReasoningSummary:       "auto",
+					ReasoningScope:         "gateway-2026",
 					Truncation:             "auto",
 					VideoInput:             true,
 					ChatIncludeUsage:       boolPtr(false),
 					ChatIncludeObfuscation: boolPtr(true),
-				},
-				ProviderSpec: map[string]any{
-					"custom_provider_key": "kept",
-					"api":                 "ignored-by-the-writer",
 				},
 				Models: []Model{
 					{

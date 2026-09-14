@@ -39,51 +39,6 @@ func TestWriteFileAtomic(t *testing.T) {
 	}
 }
 
-// TestMatchStoredKeysStableID pins the identity path: only persisted
-// stable ids inherit keys, so reordering AND editing a row still keeps
-// its own key, while a brand-new row (no stable id) gets no key.
-func TestMatchStoredKeysStableID(t *testing.T) {
-	existing := []Instance{
-		{StableID: "inst-a", Type: "openai", Name: "", Models: []Model{{Name: "m1"}}, API: "responses", KeySource: KeyLiteral, KeyValue: "k1"},
-		{StableID: "inst-b", Type: "openai", Name: "", Models: []Model{{Name: "m2"}}, API: "responses", KeySource: KeyLiteral, KeyValue: "k2"},
-	}
-
-	// Reorder + edit while keeping stable ids: each row keeps its own key.
-	idxs, ok := MatchStoredKeys(existing, []KeyRequest{
-		{StableID: "inst-b", Type: "openai", Models: []string{"m9"}, API: "responses"},
-		{StableID: "inst-a", Type: "openai", Models: []string{"m1"}, API: "responses"},
-	}, map[int]bool{})
-	if !ok {
-		t.Fatal("stable-id rows must match")
-	}
-	if existing[idxs[0]].KeyValue != "k2" || existing[idxs[1]].KeyValue != "k1" {
-		t.Fatalf("stable-id keys misattributed: row1 -> %q (idx %d), row2 -> %q (idx %d), want k2/k1",
-			existing[idxs[0]].KeyValue, idxs[0], existing[idxs[1]].KeyValue, idxs[1])
-	}
-
-	// A brand-new row (no stable id) never inherits an existing key,
-	// and a row whose stable id names a different type must not match.
-	idxs, ok = MatchStoredKeys(existing, []KeyRequest{
-		{StableID: "inst-b", Type: "openai", Models: []string{"m9"}, API: "responses"},
-		{Type: "openai", Models: []string{"m3"}, API: "responses"},
-	}, map[int]bool{})
-	if idxs[0] != 1 {
-		t.Fatalf("stable row idx = %d, want 1", idxs[0])
-	}
-	if idxs[1] != -1 {
-		t.Fatalf("new row idx = %d, want -1", idxs[1])
-	}
-	if ok {
-		t.Fatal("unmatched new row must report ok=false")
-	}
-
-	if _, ok := MatchStoredKeys(existing, []KeyRequest{
-		{StableID: "inst-a", Type: "anthropic", Models: []string{"g"}},
-	}, map[int]bool{}); ok {
-		t.Fatal("stable id must not match across provider types")
-	}
-}
-
 func TestNewStableID(t *testing.T) {
 	a, b := NewStableID(), NewStableID()
 	if a == "" || b == "" {

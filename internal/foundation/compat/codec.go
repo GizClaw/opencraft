@@ -9,40 +9,22 @@ import "strings"
 // retired spellings of a spec key live here next to the fold that
 // rewrites them.
 
-// RetiredProviderSpecKeys are provider spec keys retired by the drivers.
-// A document that still carries one is dropped rather than parked in the
-// opaque provider bag: the bag is re-emitted verbatim, so keeping the key
-// would fail every deployment build with a message about a field the
-// user never wrote.
-var RetiredProviderSpecKeys = map[string]bool{
-	// catalog selected a driver model namespace; core v0.4.0 ships no
-	// built-in line-up and rejects the key.
-	"catalog": true,
+// LegacyProviderSpec carries provider-spec leaves an older build wrote
+// at the top level of a deployment spec. The writer emits every leaf in
+// its current placement, and opencraft models the whole provider spec
+// with typed fields, so this type exists only to read a document written
+// before the fold moved.
+type LegacyProviderSpec struct {
+	// ChatStreamOptions moved under wire when the OpenAI wire family
+	// gained one driver; the loader folds it into the typed knobs.
+	ChatStreamOptions *LegacyChatStreamOptions `json:"chat_stream_options,omitempty"`
 }
 
-// NormalizeProviderSpec folds legacy top-level provider spec keys into
-// the shape the unified drivers expect. `chat_stream_options` moved
-// under `wire` when the OpenAI wire family gained one driver; a bag
-// written against the old layout is rewritten rather than left to be
-// rejected by flowcraft's strict provider decode.
-func NormalizeProviderSpec(spec map[string]any) map[string]any {
-	options, ok := spec["chat_stream_options"]
-	if !ok {
-		return spec
-	}
-	out := make(map[string]any, len(spec))
-	for key, value := range spec {
-		if key != "chat_stream_options" {
-			out[key] = value
-		}
-	}
-	wire, _ := out["wire"].(map[string]any)
-	if wire == nil {
-		wire = make(map[string]any, 1)
-	}
-	wire["chat_stream_options"] = options
-	out["wire"] = wire
-	return out
+// LegacyChatStreamOptions is the pre-wire placement of the OpenAI chat
+// stream options.
+type LegacyChatStreamOptions struct {
+	IncludeUsage       *bool `json:"include_usage,omitempty"`
+	IncludeObfuscation *bool `json:"include_obfuscation,omitempty"`
 }
 
 // LegacyPluginKeyRef reports whether keyValue points into the secret

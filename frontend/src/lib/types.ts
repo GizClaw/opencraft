@@ -23,22 +23,42 @@ export interface ProviderView {
   impl: string;
 }
 
-export interface ModelInstance {
-  name: string;
+/** ReasoningCapability mirrors flowcraft's canonical capability DTO. */
+export interface ReasoningCapability {
   kind?: string;
-  inputs: string[];
-  outputs: string[];
-  reasoning: string;
-  reasoning_effort_map?: Record<string, string>;
-  web_search: boolean;
-  endpoint: string;
+  effort_map?: Record<string, string>;
+}
+
+/** ModelCapabilities is the model's declared input/output/reasoning set. */
+export interface ModelCapabilities {
+  inputs?: string[];
+  outputs?: string[];
+  reasoning?: ReasoningCapability;
+  hosted_web_search?: boolean;
+  custom_embed_dimensions?: boolean;
+}
+
+export interface ModelLimits {
   max_input_tokens?: number;
   max_output_tokens?: number;
+}
+
+/**
+ * ModelSpec is one model declaration. It is the canonical row shape,
+ * shared by the settings page and by plugin-submitted deployments.
+ */
+export interface ModelSpec {
+  name: string;
+  kind?: string;
+  capabilities?: ModelCapabilities;
+  /** Per-model deployment address (ByteDance Ark ep-xxx ids). */
+  endpoint?: string;
+  limits?: ModelLimits;
   /** Discovery metadata; empty status means the model is active. */
   lifecycle?: ModelLifecycle;
   /** Driver-specific model leaves (resolution caps, wire-model aliases,
    * parameter matrices) as the JSON object the deployment declares. */
-  spec_json?: string;
+  driver_fields?: Record<string, unknown>;
 }
 
 export interface ModelLifecycle {
@@ -77,19 +97,39 @@ export interface AttachmentView {
   data_url?: string;
 }
 
-export interface ProviderInstance {
-  stable_id: string;
+/**
+ * InstanceSpec is one inference deployment as submitted by a save. It is
+ * the canonical row shape (config.InstanceSpec): a plugin submits the
+ * same fields over inference.upsert.
+ */
+export interface InstanceSpec {
+  stable_id?: string;
   type: string;
-  name: string;
-  api: string;
-  key: string;
+  name?: string;
+  /** Driver impl for a vendor outside the preset catalog. */
+  driver?: string;
+  api?: string;
+  endpoint?: string;
+  /** env | literal | keychain; empty means "unchanged". */
+  key_source?: string;
+  /** Credential-store account of a keychain row. */
+  key_ref?: string;
+  /** Literal key typed into the form; write-only, never returned. */
+  key_value?: string;
+  /** User-owned; a plugin row is always enabled. */
+  enabled?: boolean | null;
+  advanced: ProviderAdvanced;
+  models: ModelSpec[];
+}
+
+/**
+ * ProviderInstance is one instance as the settings page reads it: the
+ * canonical spec plus the computed credential/ownership flags.
+ */
+export interface ProviderInstance extends InstanceSpec {
   key_set: boolean;
   key_env: boolean;
   key_keychain?: boolean;
-  models: ModelInstance[];
-  endpoint: string;
-  advanced: ProviderAdvanced;
-  enabled: boolean;
   managed: boolean;
 }
 
@@ -118,6 +158,8 @@ export interface ProviderAdvanced {
   include_reasoning_payload?: boolean;
   reasoning_channel?: string;
   reasoning_summary?: string;
+  /** Verification scope of this deployment's reasoning traces. */
+  reasoning_scope?: string;
   truncation?: string;
   chat_include_usage?: boolean;
   chat_include_obfuscation?: boolean;
@@ -132,7 +174,7 @@ export interface RouterPolicy {
 }
 
 export interface InferenceRequest {
-  instances: ProviderInstance[];
+  instances: InstanceSpec[];
   router: RouterPolicy;
 }
 

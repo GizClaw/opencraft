@@ -160,6 +160,7 @@ export function AdvancedSection({
             'concise',
             'detailed',
           ])}
+          {text('reasoning_scope', t('config.advanced.reasoningScope'))}
           {choice('truncation', t('config.advanced.truncation'), [
             'disabled',
             'auto',
@@ -185,23 +186,27 @@ export function AdvancedSection({
         </>
       )}
       {anthropic && (
-        <label className="flex items-center gap-2 pt-4">
-          <input
-            type="checkbox"
-            checked={adv.video_input ?? false}
-            onChange={(e) => onUpdate('video_input', e.target.checked)}
-            className="accent-accent"
-          />
-          <span className="text-xs text-dim">
-            {t('config.advanced.videoInput')}
-          </span>
-        </label>
+        <>
+          <label className="flex items-center gap-2 pt-4">
+            <input
+              type="checkbox"
+              checked={adv.video_input ?? false}
+              onChange={(e) => onUpdate('video_input', e.target.checked)}
+              className="accent-accent"
+            />
+            <span className="text-xs text-dim">
+              {t('config.advanced.videoInput')}
+            </span>
+          </label>
+          {text('reasoning_scope', t('config.advanced.reasoningScope'))}
+        </>
       )}
       {bytedance && (
         <>
           {text('region', t('config.advanced.region'))}
           {text('project', t('config.advanced.project'))}
           {text('timeout', t('config.advanced.timeout'), '90s')}
+          {text('reasoning_scope', t('config.advanced.reasoningScope'))}
           {mapField('query', t('config.advanced.query'))}
           {mapField('headers', t('config.advanced.headers'))}
         </>

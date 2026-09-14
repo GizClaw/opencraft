@@ -226,13 +226,13 @@ func TestSecretScopeGuard(t *testing.T) {
 func TestInferencePrimitivesForwardPluginAndInstanceIDs(t *testing.T) {
 	m, _ := newTestManager(t)
 	var upsertedPlugin, upsertedID string
-	var upsertedSpec map[string]any
+	var upsertedScope string
 	var removedPlugin, removedID string
 	m.SetInferenceHandler(InferenceHandler{
 		Upsert: func(pluginID string, profile InferenceProfile) error {
 			upsertedPlugin = pluginID
-			upsertedID = profile.ID
-			upsertedSpec = profile.ProviderSpec
+			upsertedID = profile.StableID
+			upsertedScope = profile.Advanced.ReasoningScope
 			return nil
 		},
 		Remove: func(pluginID, id string) error {
@@ -244,9 +244,11 @@ func TestInferencePrimitivesForwardPluginAndInstanceIDs(t *testing.T) {
 
 	if _, err := m.handleInferenceUpsert(&process{id: "plug"}, rpcRequest{
 		Params: json.RawMessage(`{
-			"id": "plug-gateway",
-			"provider_spec": {
-				"chat_stream_options": {"include_usage": false}
+			"stable_id": "plug-gateway",
+			"type": "openai",
+			"key_ref": "auth/plug/token",
+			"advanced": {
+				"reasoning_scope": "gateway-2026"
 			}
 		}`),
 	}); err != nil {
@@ -255,9 +257,8 @@ func TestInferencePrimitivesForwardPluginAndInstanceIDs(t *testing.T) {
 	if upsertedPlugin != "plug" || upsertedID != "plug-gateway" {
 		t.Fatalf("upsert forwarded %q/%q", upsertedPlugin, upsertedID)
 	}
-	opts, ok := upsertedSpec["chat_stream_options"].(map[string]any)
-	if !ok || opts["include_usage"] != false {
-		t.Fatalf("upsert provider_spec = %#v", upsertedSpec)
+	if upsertedScope != "gateway-2026" {
+		t.Fatalf("upsert reasoning scope = %q", upsertedScope)
 	}
 	if _, err := m.handleInferenceRemove(&process{id: "plug"}, rpcRequest{
 		Params: json.RawMessage(`{"id":"plug-embed"}`),
@@ -505,5 +506,23 @@ func TestHandshakeReplyReportsUnknownHostVersion(t *testing.T) {
 	}
 	if !hs.Ok || hs.HostVersion != "" {
 		t.Fatalf("unexpected handshake result: %+v", hs)
+	}
+}
+
+// TestInferenceUpsertRejectsUnknownFields pins the strict decode: a
+// payload written against the previous contract fails loudly instead of
+// having its fields silently dropped.
+func TestInferenceUpsertRejectsUnknownFields(t *testing.T) {
+	m, _ := newTestManager(t)
+	m.SetInferenceHandler(InferenceHandler{
+		Upsert: func(string, InferenceProfile) error { return nil },
+	})
+	_, err := m.handleInferenceUpsert(&process{id: "plug"}, rpcRequest{
+		Params: json.RawMessage(
+			`{"id":"plug-gateway","type":"openai","key_ref":"auth/plug/token"}`,
+		),
+	})
+	if err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("stale payload accepted: %v", err)
 	}
 }

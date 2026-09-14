@@ -68,13 +68,13 @@ func TestConfigSaveInstances(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "test-key")
 	dir := t.TempDir()
 	b := NewConfig(core.NewCore(dir, dir, ""))
-	err := b.SaveInstances(InferenceRequest{Instances: []ProviderInstance{{
-		Type:    "openai",
-		Name:    "primary",
-		API:     "chat",
-		KeyEnv:  true,
-		Enabled: true,
-		Models:  []ModelView{{Name: "deepseek-v4-flash"}},
+	err := b.SaveInstances(InferenceRequest{Instances: []config.InstanceSpec{{
+		Type:      "openai",
+		Name:      "primary",
+		API:       "chat",
+		KeySource: config.KeySourceEnvName,
+		Enabled:   boolPtr(true),
+		Models:    []config.ModelSpec{{Name: "deepseek-v4-flash"}},
 	}}})
 	if err != nil {
 		t.Fatal(err)
@@ -143,6 +143,9 @@ func writePluginManifest(t *testing.T, dataDir, id string) {
 	}
 }
 
+// boolPtr returns a pointer to v for the optional spec fields.
+func boolPtr(v bool) *bool { return &v }
+
 func TestConfigStateMarksPluginManagedInstances(t *testing.T) {
 	dir := t.TempDir()
 	writePluginManifest(t, dir, "sso-haivivi")
@@ -199,10 +202,10 @@ func TestSaveInstancesRestoresManagedRows(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := InferenceRequest{Instances: []ProviderInstance{
+	req := InferenceRequest{Instances: []config.InstanceSpec{
 		{StableID: "user-1", Type: "openai", Name: "My OpenAI",
-			KeyEnv: true, Enabled: true,
-			Models: []ModelView{{Name: "gpt-5.6-sol"}}},
+			KeySource: config.KeySourceEnvName, Enabled: boolPtr(true),
+			Models: []config.ModelSpec{{Name: "gpt-5.6-sol"}}},
 	}}
 	if err := b.SaveInstances(req); err != nil {
 		t.Fatalf("save: %v", err)
@@ -226,44 +229,65 @@ func TestSaveInstancesRestoresManagedRows(t *testing.T) {
 	}
 }
 
-func TestRestoreManagedInstancesKeepsProviderSpec(t *testing.T) {
-	spec := map[string]any{
-		"chat_stream_options": map[string]any{
-			"include_usage": false,
-		},
-	}
-	glm := config.Model{Name: "glm-5.3-flash"}
-	existing := []config.Instance{{
-		StableID:     "sso-haivivi-glm",
-		Type:         "openai",
-		Name:         "Haivivi SSO · GLM",
-		API:          "chat",
-		KeySource:    config.KeyKeychain,
-		KeyValue:     "auth/sso-haivivi/token",
-		Models:       []config.Model{glm},
-		ProviderSpec: spec,
-		Enabled:      true,
-	}}
-	requested := []config.Instance{{
+// TestSaveInstancesRestoresManagedContent pins the plugin-owned row
+// guarantee at the binding level: an edit to a managed row does not
+// stick, its stored content (provider knobs included) comes back, and
+// the settings page can tell why.
+func TestSaveInstancesRestoresManagedContent(t *testing.T) {
+	dir := t.TempDir()
+	writePluginManifest(t, dir, "sso-haivivi")
+	b := NewConfig(core.NewCore(dir, dir, ""))
+
+	includeUsage := false
+	stored := config.Instance{
 		StableID:  "sso-haivivi-glm",
 		Type:      "openai",
 		Name:      "Haivivi SSO · GLM",
 		API:       "chat",
 		KeySource: config.KeyKeychain,
 		KeyValue:  "auth/sso-haivivi/token",
-		Models:    []config.Model{glm},
+		Advanced:  config.InstanceAdvanced{ChatIncludeUsage: &includeUsage},
+		Models:    []config.Model{{Name: "glm-5.3-flash"}},
 		Enabled:   true,
-	}}
-	out, restored := restoreManagedInstances(
-		existing, requested,
-		map[string]bool{"sso-haivivi-glm": true},
-	)
-	if len(out) != 1 || len(restored) != 0 {
-		t.Fatalf("out = %+v restored = %v", out, restored)
 	}
-	if out[0].ProviderSpec == nil ||
-		out[0].ProviderSpec["chat_stream_options"] == nil {
-		t.Fatalf("managed provider spec dropped: %+v", out[0])
+	user := config.Instance{
+		StableID: "user-1", Type: "openai", KeySource: config.KeyEnv,
+		Enabled: true, Models: []config.Model{{Name: "gpt-5.6-sol"}},
+	}
+	if err := config.WriteInferenceOwned(
+		dir,
+		config.InferenceConfig{Instances: []config.Instance{stored, user}},
+		map[string]string{"sso-haivivi-glm": "sso-haivivi"},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	// The page tries to edit the managed row's model.
+	spec := config.InstanceToSpec(stored)
+	spec.Models = []config.ModelSpec{{Name: "tampered"}}
+	if err := b.SaveInstances(InferenceRequest{
+		Instances: []config.InstanceSpec{spec},
+	}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	cfg, err := config.LoadInference(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var managed config.Instance
+	for _, in := range cfg.Instances {
+		if in.StableID == "sso-haivivi-glm" {
+			managed = in
+		}
+	}
+	if managed.StableID != "sso-haivivi-glm" ||
+		len(managed.Models) != 1 ||
+		managed.Models[0].Name != "glm-5.3-flash" {
+		t.Fatalf("managed row edit stuck: %+v", managed)
+	}
+	if managed.Advanced.ChatIncludeUsage == nil ||
+		*managed.Advanced.ChatIncludeUsage {
+		t.Fatalf("managed provider knobs dropped: %+v", managed.Advanced)
 	}
 }
 
@@ -334,10 +358,10 @@ func TestSaveInstancesRestoresMultipleManagedRows(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := InferenceRequest{Instances: []ProviderInstance{
+	req := InferenceRequest{Instances: []config.InstanceSpec{
 		{StableID: "user-1", Type: "openai", Name: "User",
-			KeyEnv: true, Enabled: true,
-			Models: []ModelView{{Name: "gpt-5.6-sol"}}},
+			KeySource: config.KeySourceEnvName, Enabled: boolPtr(true),
+			Models: []config.ModelSpec{{Name: "gpt-5.6-sol"}}},
 	}}
 	if err := b.SaveInstances(req); err != nil {
 		t.Fatalf("save: %v", err)
@@ -356,5 +380,63 @@ func TestSaveInstancesRestoresMultipleManagedRows(t *testing.T) {
 	if gotOwners["sso-haivivi-main"] != "sso-haivivi" ||
 		gotOwners["sso-haivivi-gateway"] != "sso-haivivi" {
 		t.Fatalf("owners = %+v", gotOwners)
+	}
+}
+
+// TestSaveInstancesKeepsPluginDeclaredVendorRow pins the settings page
+// round trip in the presence of a provider whose type is not in the
+// built-in catalog: a plugin-declared vendor (type + explicit driver)
+// must not block the user's save, and its identity must survive.
+func TestSaveInstancesKeepsPluginDeclaredVendorRow(t *testing.T) {
+	dir := t.TempDir()
+	writePluginManifest(t, dir, "vendorx")
+	b := NewConfig(core.NewCore(dir, dir, ""))
+
+	seed := config.InferenceConfig{Instances: []config.Instance{
+		{StableID: "vendorx-main", Type: "vendorx", Driver: "openai",
+			Name: "Vendor X", API: "chat",
+			Endpoint:  "https://api.vendorx.example/v1",
+			KeySource: config.KeyKeychain, KeyValue: "auth/vendorx/token",
+			Enabled: true,
+			Models:  []config.Model{{Name: "vendorx-pro"}}},
+		{StableID: "user-1", Type: "openai", Name: "My OpenAI",
+			KeySource: config.KeyKeychain, KeyValue: "provider/openai-1/1",
+			Enabled: true,
+			Models:  []config.Model{{Name: "gpt-5.6-sol"}}},
+	}}
+	if err := config.WriteInferenceOwned(dir, seed, map[string]string{
+		"vendorx-main": "vendorx",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The settings page round-trips exactly what ConfigState returned.
+	state, err := b.ConfigState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	specs := make([]config.InstanceSpec, 0, len(state.Instances))
+	for _, view := range state.Instances {
+		specs = append(specs, view.InstanceSpec)
+	}
+	req := InferenceRequest{Instances: specs, Router: state.Router}
+	if err := b.SaveInstances(req); err != nil {
+		t.Fatalf("save with plugin-declared vendor row: %v", err)
+	}
+	cfg, err := config.LoadInference(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var vendor *config.Instance
+	for i := range cfg.Instances {
+		if cfg.Instances[i].StableID == "vendorx-main" {
+			vendor = &cfg.Instances[i]
+		}
+	}
+	if vendor == nil {
+		t.Fatalf("plugin-declared row dropped: %+v", cfg.Instances)
+	}
+	if vendor.Type != "vendorx" || vendor.Driver != "openai" {
+		t.Fatalf("plugin-declared row degraded: %+v", vendor)
 	}
 }

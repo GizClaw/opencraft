@@ -2,18 +2,12 @@ package bindings
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
-	"os"
-	"reflect"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
-	"github.com/GizClaw/flowcraft/core/inference/model"
 	flowtelemetry "github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/tool/mcp"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -89,84 +83,24 @@ func (b *Config) Providers() []ProviderView {
 	return out
 }
 
-// ModelView is one model exposed by an inference instance.
-type ModelView struct {
-	Name               string            `json:"name"`
-	Kind               string            `json:"kind,omitempty"`
-	Inputs             []string          `json:"inputs"`
-	Outputs            []string          `json:"outputs"`
-	Reasoning          string            `json:"reasoning"`
-	ReasoningEffortMap map[string]string `json:"reasoning_effort_map,omitempty"`
-	WebSearch          bool              `json:"web_search"`
-	Endpoint           string            `json:"endpoint"`
-	// MaxInputTokens / MaxOutputTokens carry the model's declared
-	// capacity limits; nil means "use the driver catalog / unknown".
-	MaxInputTokens  *int `json:"max_input_tokens,omitempty"`
-	MaxOutputTokens *int `json:"max_output_tokens,omitempty"`
-	// Lifecycle is the model's discovery metadata: empty means active.
-	Lifecycle ModelLifecycleView `json:"lifecycle"`
-	// SpecJSON carries the driver-specific model leaves opencraft does
-	// not model (resolution caps, wire-model aliases, parameter
-	// matrices) as the JSON object the deployment declares.
-	SpecJSON string `json:"spec_json,omitempty"`
-}
-
-// ModelLifecycleView is one model's deprecation metadata.
-type ModelLifecycleView struct {
-	Status              string `json:"status,omitempty"`
-	ReplacementProvider string `json:"replacement_provider,omitempty"`
-	ReplacementName     string `json:"replacement_name,omitempty"`
-	Notes               string `json:"notes,omitempty"`
-}
-
-// ProviderInstance is one inference instance in router priority order.
-type ProviderInstance struct {
-	StableID    string      `json:"stable_id"`
-	Type        string      `json:"type"`
-	Name        string      `json:"name"`
-	API         string      `json:"api"`
-	Key         string      `json:"key"`
-	KeySet      bool        `json:"key_set"`
-	KeyEnv      bool        `json:"key_env"`
-	KeyKeychain bool        `json:"key_keychain"`
-	Models      []ModelView `json:"models"`
-	Endpoint    string      `json:"endpoint"`
-	// Advanced carries the provider-level spec knobs the settings page
-	// edits in its advanced section (endpoint transport, auth, wire
-	// dialect, request metadata, retries).
-	Advanced ProviderAdvancedView `json:"advanced"`
-	Enabled  bool                 `json:"enabled"`
-	Managed  bool                 `json:"managed"`
-}
-
-// ProviderAdvancedView mirrors config.InstanceAdvanced for the
-// settings page. Every field is optional: an empty value leaves the
-// driver default in place.
-type ProviderAdvancedView struct {
-	Routing          string            `json:"routing,omitempty"`
-	Query            map[string]string `json:"query,omitempty"`
-	Headers          map[string]string `json:"headers,omitempty"`
-	Organization     string            `json:"organization,omitempty"`
-	Project          string            `json:"project,omitempty"`
-	Timeout          string            `json:"timeout,omitempty"`
-	Region           string            `json:"region,omitempty"`
-	AuthScheme       string            `json:"auth_scheme,omitempty"`
-	AuthHeader       string            `json:"auth_header,omitempty"`
-	MetadataEnvelope string            `json:"metadata_envelope,omitempty"`
-	HTTPRetries      *int              `json:"http_retries,omitempty"`
-
-	Store                   string            `json:"store,omitempty"`
-	IncludeReasoningPayload *bool             `json:"include_reasoning_payload,omitempty"`
-	ReasoningChannel        string            `json:"reasoning_channel,omitempty"`
-	ReasoningSummary        string            `json:"reasoning_summary,omitempty"`
-	Truncation              string            `json:"truncation,omitempty"`
-	ExtraBody               map[string]string `json:"extra_body,omitempty"`
-	ChatIncludeUsage        *bool             `json:"chat_include_usage,omitempty"`
-	ChatIncludeObfuscation  *bool             `json:"chat_include_obfuscation,omitempty"`
-	VideoInput              bool              `json:"video_input,omitempty"`
-
-	MediaBaseURL            string `json:"media_base_url,omitempty"`
-	VideoPollIntervalMillis *int   `json:"video_poll_interval_millis,omitempty"`
+// ProviderInstanceView is one inference instance as the settings page
+// reads it: the canonical row shape (see config.InstanceSpec, which is
+// also what a plugin submits) plus the computed flags the page renders.
+// The embedded spec keeps the wire JSON flat, and the literal key is
+// never part of it.
+type ProviderInstanceView struct {
+	config.InstanceSpec
+	// KeySet reports that the row has a credential.
+	KeySet bool `json:"key_set"`
+	// KeyEnv reports that the credential is the provider's environment
+	// variable.
+	KeyEnv bool `json:"key_env"`
+	// KeyKeychain reports that the credential lives in the OS
+	// credential store.
+	KeyKeychain bool `json:"key_keychain"`
+	// Managed reports that an installed, enabled plugin owns the row;
+	// the settings page shows it read-only.
+	Managed bool `json:"managed"`
 }
 
 // RouterPolicyView is the router retry policy shown in the settings
@@ -178,8 +112,8 @@ type RouterPolicyView struct {
 
 // ConfigState is the full inference wiring the settings page edits.
 type ConfigState struct {
-	Model     string             `json:"model"`
-	Instances []ProviderInstance `json:"instances"`
+	Model     string                 `json:"model"`
+	Instances []ProviderInstanceView `json:"instances"`
 	// Router is the generate retry policy the page edits alongside the
 	// instance list.
 	Router RouterPolicyView `json:"router"`
@@ -208,20 +142,13 @@ func (b *Config) ConfigState() (ConfigState, error) {
 		},
 	}
 	for _, in := range cfg.Instances {
-		st.Instances = append(st.Instances, ProviderInstance{
-			StableID: in.StableID,
-			Type:     in.Type,
-			Name:     in.Name,
-			API:      in.API,
+		st.Instances = append(st.Instances, ProviderInstanceView{
+			InstanceSpec: config.InstanceToSpec(in),
 			KeySet: in.KeySource == config.KeyEnv ||
 				(in.KeySource == config.KeyLiteral && in.KeyValue != "") ||
 				(in.KeySource == config.KeyKeychain && in.KeyValue != ""),
 			KeyEnv:      in.KeySource == config.KeyEnv,
 			KeyKeychain: in.KeySource == config.KeyKeychain,
-			Models:      modelViews(in.Models),
-			Endpoint:    in.Endpoint,
-			Advanced:    advancedView(in.Advanced),
-			Enabled:     in.Enabled,
 			Managed:     managed[in.StableID],
 		})
 	}
@@ -229,86 +156,6 @@ func (b *Config) ConfigState() (ConfigState, error) {
 }
 
 // ModelOption is one selectable per-conversation model hint.
-// advancedView projects the config-layer advanced knobs onto the
-// settings-page DTO. The two structs are field-for-field mirrors; the
-// conversion exists so the config package keeps its own vocabulary
-// (and can grow driver-specific defaults) without the binding leaking
-// it into the wire format.
-func advancedView(adv config.InstanceAdvanced) ProviderAdvancedView {
-	return ProviderAdvancedView{
-		Routing:                 adv.Routing,
-		Query:                   adv.Query,
-		Headers:                 adv.Headers,
-		Organization:            adv.Organization,
-		Project:                 adv.Project,
-		Timeout:                 adv.Timeout,
-		Region:                  adv.Region,
-		AuthScheme:              adv.AuthScheme,
-		AuthHeader:              adv.AuthHeader,
-		MetadataEnvelope:        adv.MetadataEnvelope,
-		HTTPRetries:             adv.HTTPRetries,
-		Store:                   adv.Store,
-		ExtraBody:               adv.ExtraBody,
-		IncludeReasoningPayload: adv.IncludeReasoningPayload,
-		ReasoningChannel:        adv.ReasoningChannel,
-		ReasoningSummary:        adv.ReasoningSummary,
-		Truncation:              adv.Truncation,
-		ChatIncludeUsage:        adv.ChatIncludeUsage,
-		ChatIncludeObfuscation:  adv.ChatIncludeObfuscation,
-		VideoInput:              adv.VideoInput,
-		MediaBaseURL:            adv.MediaBaseURL,
-		VideoPollIntervalMillis: adv.VideoPollIntervalMillis,
-	}
-}
-
-// advancedConfig is the inverse of advancedView.
-func advancedConfig(view ProviderAdvancedView) config.InstanceAdvanced {
-	return config.InstanceAdvanced{
-		Routing:                 strings.TrimSpace(view.Routing),
-		Query:                   trimStringMap(view.Query),
-		Headers:                 trimStringMap(view.Headers),
-		Organization:            strings.TrimSpace(view.Organization),
-		Project:                 strings.TrimSpace(view.Project),
-		Timeout:                 strings.TrimSpace(view.Timeout),
-		Region:                  strings.TrimSpace(view.Region),
-		AuthScheme:              strings.TrimSpace(view.AuthScheme),
-		AuthHeader:              strings.TrimSpace(view.AuthHeader),
-		MetadataEnvelope:        strings.TrimSpace(view.MetadataEnvelope),
-		HTTPRetries:             view.HTTPRetries,
-		Store:                   strings.TrimSpace(view.Store),
-		ExtraBody:               trimStringMap(view.ExtraBody),
-		IncludeReasoningPayload: view.IncludeReasoningPayload,
-		ReasoningChannel:        strings.TrimSpace(view.ReasoningChannel),
-		ReasoningSummary:        strings.TrimSpace(view.ReasoningSummary),
-		Truncation:              strings.TrimSpace(view.Truncation),
-		ChatIncludeUsage:        view.ChatIncludeUsage,
-		ChatIncludeObfuscation:  view.ChatIncludeObfuscation,
-		VideoInput:              view.VideoInput,
-		MediaBaseURL:            strings.TrimSpace(view.MediaBaseURL),
-		VideoPollIntervalMillis: view.VideoPollIntervalMillis,
-	}
-}
-
-// trimStringMap drops blank entries so an empty form row never pins a
-// provider spec key.
-func trimStringMap(in map[string]string) map[string]string {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(in))
-	for key, value := range in {
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
-		if key == "" || value == "" {
-			continue
-		}
-		out[key] = value
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
 
 // ModelOption is one selectable per-conversation model hint.
 type ModelOption struct {
@@ -335,12 +182,20 @@ func (b *Config) ModelOptions() ([]ModelOption, error) {
 			}
 			out = append(out, ModelOption{
 				ID:        in.DeploymentID(i+1) + "/" + name,
-				Label:     instanceLabel(in, i+1) + " · " + name,
+				Label:     instanceLabelName(in) + " · " + name,
 				Reasoning: m.Capabilities.Reasoning.Kind != "",
 			})
 		}
 	}
 	return out, nil
+}
+
+// instanceLabelName names one instance for the model picker.
+func instanceLabelName(in config.Instance) string {
+	if in.Name != "" {
+		return in.Name
+	}
+	return in.Type
 }
 
 // ModelUsageStat is one model's cumulative user-level usage.
@@ -625,7 +480,10 @@ func mcpTransport(server config.MCPServer) (mcpsdk.Transport, error) {
 
 // InferenceRequest is the settings-page inference payload.
 type InferenceRequest struct {
-	Instances []ProviderInstance `json:"instances"`
+	// Instances is the canonical row shape, shared with the plugin
+	// write path (config.InstanceSpec); the config layer applies the
+	// settings-page source policy when it stores them.
+	Instances []config.InstanceSpec `json:"instances"`
 	// Router carries the generate retry policy the page edits.
 	Router RouterPolicyView `json:"router"`
 }
@@ -639,168 +497,20 @@ func (b *Config) saveInference(req InferenceRequest) error {
 	if err != nil {
 		return err
 	}
-	var restored []string
-	err = config.UpdateInferenceState(
+	policy := config.DefaultRouterPolicy()
+	if req.Router.MaxAttempts > 0 {
+		policy = config.RouterPolicy{
+			MaxAttempts:              req.Router.MaxAttempts,
+			FallbackOnRetryExhausted: req.Router.FallbackOnRetryExhausted,
+		}
+	}
+	restored, err := config.ApplySettingsSave(
 		b.core.UserDir,
-		func(
-			existing config.InferenceConfig,
-			_ map[string]string,
-		) (
-			next config.InferenceConfig,
-			_ map[string]string,
-			_ bool,
-			err error,
-		) {
-			claimed := make(map[int]bool)
-			type keyedRow struct {
-				idx      int    // position in instances
-				name     string // request display name (error messages)
-				typ      string // catalog id
-				required bool   // enabled rows must end up with a key
-			}
-			var pending []keyedRow
-			instances := make([]config.Instance, 0, len(req.Instances))
-			for _, p := range req.Instances {
-				prov, ok := providerByID(strings.TrimSpace(p.Type))
-				if !ok {
-					err = fmt.Errorf("unknown provider type %q", p.Type)
-					return
-				}
-				in := config.Instance{
-					StableID:  strings.TrimSpace(p.StableID),
-					Type:      prov.ID,
-					Name:      strings.TrimSpace(p.Name),
-					API:       strings.TrimSpace(p.API),
-					Models:    configModels(p.Models),
-					Endpoint:  strings.TrimSpace(p.Endpoint),
-					Advanced:  advancedConfig(p.Advanced),
-					Enabled:   p.Enabled,
-					KeySource: config.KeyLiteral,
-				}
-				if in.StableID == "" {
-					// A row without an identity is brand new in the
-					// settings page; give it one so the next save
-					// matches by id.
-					in.StableID = config.NewStableID()
-				}
-				switch {
-				case p.KeyEnv:
-					in.KeySource = config.KeyEnv
-					if os.Getenv(prov.EnvVar) == "" {
-						err = fmt.Errorf(
-							"environment variable %s is not set; cannot use the env key source",
-							prov.EnvVar)
-						return
-					}
-				case strings.TrimSpace(p.Key) != "":
-					key := strings.TrimSpace(p.Key)
-					// New keys go into the OS credential store when it
-					// is available; the config keeps only a
-					// ${secret:...} reference. A failed store write
-					// falls back to the literal 0600 config so the
-					// settings page stays usable.
-					if b.core.Plugin.Secrets != nil &&
-						b.core.Plugin.Secrets.Available() {
-						account := secrets.AccountFor(
-							in.DeploymentID(len(instances) + 1),
-						)
-						storeErr := b.core.Plugin.Secrets.Set(
-							b.core.Shell.Context(), account, key,
-						)
-						if storeErr == nil {
-							in.KeySource = config.KeyKeychain
-							in.KeyValue = account
-							break
-						}
-					}
-					in.KeyValue = key
-				case p.Enabled:
-					pending = append(pending, keyedRow{
-						idx:      len(instances),
-						name:     p.Name,
-						typ:      prov.ID,
-						required: true,
-					})
-				case strings.TrimSpace(p.StableID) != "":
-					// Disabled rows with a persisted identity keep
-					// their stored key too, so re-enabling needs no
-					// re-entry. Unlike enabled rows, a missing stored
-					// key is not an error: the row stays declared
-					// without one.
-					pending = append(pending, keyedRow{
-						idx:  len(instances),
-						name: p.Name,
-						typ:  prov.ID,
-					})
-				default:
-					// Disabled instances may be saved without a key;
-					// they are kept so re-enabling needs no re-entry.
-				}
-				instances = append(instances, in)
-			}
-			if len(pending) > 0 {
-				rows := make([]config.KeyRequest, len(pending))
-				for i, r := range pending {
-					rows[i] = config.KeyRequest{
-						StableID: strings.TrimSpace(
-							req.Instances[r.idx].StableID),
-						Type:     r.typ,
-						Name:     strings.TrimSpace(req.Instances[r.idx].Name),
-						Models:   requestModelNames(req.Instances[r.idx].Models),
-						Endpoint: strings.TrimSpace(req.Instances[r.idx].Endpoint),
-						API:      strings.TrimSpace(req.Instances[r.idx].API),
-					}
-				}
-				idxs, ok := config.MatchStoredKeys(
-					existing.Instances, rows, claimed,
-				)
-				if !ok {
-					for i, idx := range idxs {
-						if idx >= 0 || !pending[i].required {
-							continue
-						}
-						err = fmt.Errorf(
-							"instance %s (%s): an API key or the env key source is required",
-							pending[i].name, pending[i].typ)
-						return
-					}
-				}
-				for i, idx := range idxs {
-					if idx < 0 {
-						// Optional row (disabled, no stored key) stays
-						// keyless.
-						continue
-					}
-					dst := &instances[pending[i].idx]
-					dst.KeySource = existing.Instances[idx].KeySource
-					dst.KeyValue = existing.Instances[idx].KeyValue
-				}
-			}
-			// Plugin-managed deployments are owned by their capability
-			// plugin: content edits and removals from the settings page
-			// are rolled back to the stored config (order/priority
-			// stays user-controlled), and the frontend is reminded so
-			// the silent restore is visible.
-			instances, restored = restoreManagedInstances(
-				existing.Instances, instances, managed,
-			)
-			next = config.InferenceConfig{Instances: instances}
-			policy := config.DefaultRouterPolicy()
-			if req.Router.MaxAttempts > 0 {
-				policy.MaxAttempts = req.Router.MaxAttempts
-				policy.FallbackOnRetryExhausted =
-					req.Router.FallbackOnRetryExhausted
-			}
-			next.Router = config.RouterPolicy{
-				MaxAttempts:              policy.MaxAttempts,
-				FallbackOnRetryExhausted: policy.FallbackOnRetryExhausted,
-			}
-			if len(next.Enabled()) == 0 {
-				err = errors.New("enable at least one instance")
-				return
-			}
-			return next, nil, true, nil
+		config.SaveRequest{
+			Instances: b.stashLiteralKeys(req.Instances),
+			Router:    policy,
 		},
+		func(stableID string) bool { return managed[stableID] },
 	)
 	if err != nil {
 		return err
@@ -811,6 +521,45 @@ func (b *Config) saveInference(req InferenceRequest) error {
 		)
 	}
 	return nil
+}
+
+// stashLiteralKeys moves keys the user typed into the OS credential
+// store when it is available and keeps only the account reference in the
+// configuration; a failed store write leaves the literal key in the
+// 0600 config so the settings page stays usable.
+func (b *Config) stashLiteralKeys(
+	specs []config.InstanceSpec,
+) []config.InstanceSpec {
+	if b.core.Plugin == nil || b.core.Plugin.Secrets == nil ||
+		!b.core.Plugin.Secrets.Available() {
+		return specs
+	}
+	for i := range specs {
+		spec := &specs[i]
+		key := strings.TrimSpace(spec.KeyValue)
+		if key == "" {
+			continue
+		}
+		if spec.StableID == "" {
+			// The row is new; pin its identity before naming the store
+			// account so the reference survives the next save.
+			spec.StableID = config.NewStableID()
+		}
+		spec.KeySource = config.KeySourceLiteralName
+		account := secrets.AccountFor(config.Instance{
+			Type:     strings.TrimSpace(spec.Type),
+			StableID: spec.StableID,
+		}.DeploymentID(i + 1))
+		if err := b.core.Plugin.Secrets.Set(
+			b.core.Shell.Context(), account, key,
+		); err != nil {
+			continue
+		}
+		spec.KeySource = config.KeySourceKeychainName
+		spec.KeyRef = account
+		spec.KeyValue = ""
+	}
+	return specs
 }
 
 // managedInstanceIDs returns the stable ids of inference instances
@@ -843,211 +592,4 @@ func (b *Config) managedInstanceIDs() (map[string]bool, error) {
 		}
 	}
 	return ids, nil
-}
-
-// restoreManagedInstances reconciles the settings-page request against
-// plugin-managed deployments in the stored config. Managed rows keep
-// their request position (the user may reorder priority freely) but
-// their content is taken from the stored config whenever the request
-// edited or dropped them; the restored ids are returned for the
-// reminder toast.
-func restoreManagedInstances(
-	existing, requested []config.Instance,
-	managed map[string]bool,
-) ([]config.Instance, []string) {
-	if len(managed) == 0 {
-		return requested, nil
-	}
-	byID := make(map[string]config.Instance, len(existing))
-	for _, in := range existing {
-		if managed[in.StableID] {
-			byID[in.StableID] = in
-		}
-	}
-	if len(byID) == 0 {
-		return requested, nil
-	}
-	out := make([]config.Instance, 0, len(requested)+len(byID))
-	var restored []string
-	seen := make(map[string]bool, len(byID))
-	for _, in := range requested {
-		orig, ok := byID[in.StableID]
-		if !ok {
-			out = append(out, in)
-			continue
-		}
-		seen[in.StableID] = true
-		// The settings page has no UI for the provider_spec bag, so a
-		// managed row always keeps the stored provider options even
-		// when the round-trip request does not carry them.
-		in.ProviderSpec = orig.ProviderSpec
-		if !sameInstanceContent(orig, in) {
-			restored = append(restored, in.StableID)
-			out = append(out, orig)
-			continue
-		}
-		out = append(out, in)
-	}
-	for _, in := range existing {
-		if managed[in.StableID] && !seen[in.StableID] {
-			restored = append(restored, in.StableID)
-			out = append(out, in)
-		}
-	}
-	return out, restored
-}
-
-// sameInstanceContent compares the non-secret fields the settings page
-// may edit; key handling stays with the stored-key matching logic.
-func sameInstanceContent(a, b config.Instance) bool {
-	if a.StableID != b.StableID || a.Type != b.Type || a.Name != b.Name ||
-		a.API != b.API || a.Endpoint != b.Endpoint || a.Enabled != b.Enabled ||
-		len(a.Models) != len(b.Models) ||
-		!reflect.DeepEqual(a.ProviderSpec, b.ProviderSpec) {
-		return false
-	}
-	for i := range a.Models {
-		if !sameModel(a.Models[i], b.Models[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-// sameModel compares two model declarations including their declared
-// capabilities and per-model endpoint.
-func sameModel(a, b config.Model) bool {
-	return a.Name == b.Name && a.Kind == b.Kind && a.Endpoint == b.Endpoint &&
-		slices.Equal(a.Capabilities.Inputs, b.Capabilities.Inputs) &&
-		slices.Equal(a.Capabilities.Outputs, b.Capabilities.Outputs) &&
-		a.Capabilities.Reasoning.Kind == b.Capabilities.Reasoning.Kind &&
-		maps.Equal(
-			a.Capabilities.Reasoning.EffortMap,
-			b.Capabilities.Reasoning.EffortMap,
-		) &&
-		a.Capabilities.HostedWebSearch == b.Capabilities.HostedWebSearch
-}
-
-func providerByID(id string) (config.Provider, bool) {
-	for _, p := range config.Providers {
-		if p.ID == id {
-			return p, true
-		}
-	}
-	return config.Provider{}, false
-}
-
-func instanceLabel(in config.Instance, n int) string {
-	if in.Name != "" {
-		return in.Name
-	}
-	return fmt.Sprintf("%s-%d", in.Type, n)
-}
-
-func modelViews(models []config.Model) []ModelView {
-	out := make([]ModelView, 0, len(models))
-	for _, m := range models {
-		out = append(out, ModelView{
-			Name:               m.Name,
-			Inputs:             config.PartKindStrings(m.Capabilities.Inputs),
-			Outputs:            config.PartKindStrings(m.Capabilities.Outputs),
-			Kind:               m.Kind,
-			Reasoning:          string(m.Capabilities.Reasoning.Kind),
-			ReasoningEffortMap: config.EffortMapStrings(m.Capabilities.Reasoning.EffortMap),
-			WebSearch:          m.Capabilities.HostedWebSearch,
-			Endpoint:           m.Endpoint,
-			MaxInputTokens:     cloneInt(m.Limits.MaxInputTokens),
-			MaxOutputTokens:    cloneInt(m.Limits.MaxOutputTokens),
-			Lifecycle: ModelLifecycleView{
-				Status:              m.Lifecycle.Status,
-				ReplacementProvider: m.Lifecycle.ReplacementProvider,
-				ReplacementName:     m.Lifecycle.ReplacementName,
-				Notes:               m.Lifecycle.Notes,
-			},
-			SpecJSON: driverFieldsJSON(m.DriverFields),
-		})
-	}
-	return out
-}
-
-func configModels(views []ModelView) []config.Model {
-	out := make([]config.Model, 0, len(views))
-	for _, v := range views {
-		out = append(out, config.Model{
-			Name: strings.TrimSpace(v.Name),
-			Kind: strings.TrimSpace(v.Kind),
-			Capabilities: model.ModelCapabilities{
-				Inputs:  config.ToPartKinds(v.Inputs),
-				Outputs: config.ToPartKinds(v.Outputs),
-				Reasoning: model.ReasoningCapability{
-					Kind:      model.ReasoningKind(strings.TrimSpace(v.Reasoning)),
-					EffortMap: config.EffortMapEfforts(v.ReasoningEffortMap),
-				},
-				HostedWebSearch: v.WebSearch,
-			},
-			Endpoint: strings.TrimSpace(v.Endpoint),
-			Limits: model.ModelLimits{
-				MaxInputTokens:  cloneInt(v.MaxInputTokens),
-				MaxOutputTokens: cloneInt(v.MaxOutputTokens),
-			},
-			Lifecycle: config.ModelLifecycle{
-				Status:              strings.TrimSpace(v.Lifecycle.Status),
-				ReplacementProvider: strings.TrimSpace(v.Lifecycle.ReplacementProvider),
-				ReplacementName:     strings.TrimSpace(v.Lifecycle.ReplacementName),
-				Notes:               strings.TrimSpace(v.Lifecycle.Notes),
-			},
-			DriverFields: parseDriverFieldsJSON(v.SpecJSON),
-		})
-	}
-	return out
-}
-
-// driverFieldsJSON renders the driver-specific model leaves as the JSON
-// object the settings page edits; an empty bag stays an empty string.
-func driverFieldsJSON(fields map[string]any) string {
-	if len(fields) == 0 {
-		return ""
-	}
-	raw, err := json.Marshal(fields)
-	if err != nil {
-		return ""
-	}
-	return string(raw)
-}
-
-// parseDriverFieldsJSON reads the edited JSON object back. Invalid input
-// yields nil: the writer validates again and the settings page reports
-// the parse error before saving.
-func parseDriverFieldsJSON(text string) map[string]any {
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
-		return nil
-	}
-	out := map[string]any{}
-	if err := json.Unmarshal([]byte(trimmed), &out); err != nil {
-		return nil
-	}
-	return out
-}
-
-// cloneInt returns a defensive copy of a pointer so the binding never
-// shares config memory with its wire payload.
-func cloneInt(v *int) *int {
-	if v == nil {
-		return nil
-	}
-	cp := *v
-	return &cp
-}
-
-// requestModelNames extracts the non-empty model names of a request
-// row for stored-key fingerprinting.
-func requestModelNames(views []ModelView) []string {
-	var names []string
-	for _, v := range views {
-		if name := strings.TrimSpace(v.Name); name != "" {
-			names = append(names, name)
-		}
-	}
-	return names
 }
