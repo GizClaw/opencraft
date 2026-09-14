@@ -44,10 +44,15 @@ resources:
     deps:
       hostworkspace: hostws
     settings:
-      # Both targets stay at or below the tool-result part budget, or
-      # the middleware drops the image before the model sees it.
+      # The part budget below is metered on the canonical wire encoding
+      # (message.MarshalPart), so an inline image spends
+      # base64-expanded bytes (~4/3 of the raw JPEG) plus a small JSON
+      # envelope; max_bytes is that raw-byte target. Overrunning the
+      # budget makes result_limit drop the image before the model sees
+      # it; TestEmbeddedToolsViewImageFitsPartBudget pins the
+      # conversion.
       max_edge: 1568
-      max_bytes: 1048576
+      max_bytes: 786000
   # Text-to-image generation: routes an image-output request through the
   # inference router, which selects an image-capable model from the
   # user's generate targets; generated files land under generated/.
@@ -173,8 +178,9 @@ resources:
         result_limit:
           max_chars: 32768
           # Non-text parts (view_image output, structured data) share
-          # this byte budget; keep the view_image max_bytes target at or
-          # below it.
+          # this byte budget, metered on the canonical wire encoding
+          # (message.MarshalPart): an inline image spends base64 bytes,
+          # so view_image's raw max_bytes target stays below it.
           part_budget_bytes: 1048576
         # Best-effort secret stripping from tool results before the
         # model sees them. The same rules always apply to the audit

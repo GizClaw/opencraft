@@ -127,3 +127,49 @@ func TestViewImageRejectsNonImagesAndMissingFiles(t *testing.T) {
 		}
 	}
 }
+
+// limitedWorkspace records the bound the tool asks for, so a test can
+// pin that an oversized file is never materialized.
+type limitedWorkspace struct {
+	workspace.Workspace
+	reader workspace.LimitedReader
+	limit  int64
+}
+
+func (w *limitedWorkspace) ReadLimited(
+	ctx context.Context, path string, maxBytes int64,
+) ([]byte, error) {
+	w.limit = maxBytes
+	return w.reader.ReadLimited(ctx, path, maxBytes)
+}
+
+// TestViewImageReadsOversizedFilesBounded pins the read contract: a
+// workspace with bounded reads is asked for the source cap itself, so a
+// huge file is rejected without being read into memory.
+func TestViewImageReadsOversizedFilesBounded(t *testing.T) {
+	inner := newWorkspace(t)
+	reader, ok := inner.(workspace.LimitedReader)
+	if !ok {
+		t.Fatalf("test workspace %T does not support bounded reads", inner)
+	}
+	ws := &limitedWorkspace{Workspace: inner, reader: reader}
+	huge := make([]byte, maxSourceBytes+1024)
+	if err := inner.Write(context.Background(), "huge.png", huge); err != nil {
+		t.Fatal(err)
+	}
+	tool, err := New(ws, Settings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tool.Execute(
+		context.Background(), `{"path":"huge.png"}`,
+	); err == nil {
+		t.Fatal("oversized image must be rejected")
+	}
+	if ws.limit != int64(maxSourceBytes) {
+		t.Fatalf(
+			"bounded read limit = %d, want %d",
+			ws.limit, int64(maxSourceBytes),
+		)
+	}
+}

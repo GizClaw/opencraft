@@ -30,14 +30,22 @@ const MaxDecodePixels = 40_000_000
 
 // Prompt-side downscale targets. A tool result is replayed in every
 // later turn's context, so an image handed to the model is bounded on
-// both axes: longest edge in pixels and encoded size in bytes. The
-// defaults match what the wire providers document (~1568 px) and the
-// part budget flowcraft applies to non-text tool output (1 MiB).
+// both axes: longest edge in pixels and size in bytes. The edge target
+// matches what the wire providers document (~1568 px).
+//
+// The byte target is raw JPEG size, while the part budget flowcraft
+// applies to non-text tool output is metered on the canonical wire
+// encoding (message.MarshalPart): an inline image spends
+// base64-expanded bytes (~4/3 of the raw size) plus a small JSON
+// envelope. DefaultPromptImageBytes is therefore the raw size that
+// still fits the default 1 MiB budget, and the embedded deploy's
+// tools.yaml/view_image numbers are pinned by a wiring test.
 const (
 	// DefaultPromptImageEdge is the longest-edge target in pixels.
 	DefaultPromptImageEdge = 1568
-	// DefaultPromptImageBytes is the encoded-size target.
-	DefaultPromptImageBytes = 1 << 20
+	// DefaultPromptImageBytes is the raw-byte target; the marshalled
+	// image part stays under the default 1 MiB part budget.
+	DefaultPromptImageBytes = 786_000
 )
 
 // jpegQualities is the ladder DownscaleToJPEG walks before it scales
