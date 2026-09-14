@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
+
+	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
 
 const (
@@ -58,9 +60,7 @@ func extractPluginZip(zipPath string) (string, func(), error) {
 	manifestDir := ""
 	for _, f := range zr.File {
 		name := filepath.Clean(f.Name)
-		if name == ".." ||
-			strings.HasPrefix(name, ".."+string(filepath.Separator)) ||
-			filepath.IsAbs(name) {
+		if !pathsafe.RelRef(name) {
 			cleanup()
 			return "", nil, fmt.Errorf(
 				"plugins: zip entry escapes archive: %q", f.Name)

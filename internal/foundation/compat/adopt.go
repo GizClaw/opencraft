@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
+
+	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
 
 // LegacySessionsDir returns the project-local sessions root written by
@@ -43,14 +45,14 @@ func AdoptLegacySessions(
 	}
 	// Only migrate a real project-local tree. Never follow a symlinked
 	// .opencraft or sessions entry from an untrusted workspace.
-	realParent, err := isRealDirectory(filepath.Dir(legacyRoot))
+	realParent, err := pathsafe.RealDir(filepath.Dir(legacyRoot))
 	if err != nil {
 		return fmt.Errorf("compat: inspect legacy sessions parent: %w", err)
 	}
 	if !realParent {
 		return nil
 	}
-	realRoot, err := isRealDirectory(legacyRoot)
+	realRoot, err := pathsafe.RealDir(legacyRoot)
 	if err != nil {
 		return err
 	}
@@ -220,18 +222,4 @@ func removeEmptyDir(dir string) error {
 		return err
 	}
 	return nil
-}
-
-// isRealDirectory reports whether path exists, is a directory, and is
-// not a symlink. Only a real directory may be adopted: following a link
-// would move whatever it points at, which is outside the workspace.
-func isRealDirectory(path string) (bool, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return false, nil
-		}
-		return false, err
-	}
-	return info.IsDir() && info.Mode()&os.ModeSymlink == 0, nil
 }

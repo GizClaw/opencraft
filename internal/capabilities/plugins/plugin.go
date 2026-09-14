@@ -1,8 +1,8 @@
 // Package plugins is the pure core of the OpenCraft plugin system: the
 // on-disk plugin registry, manifest validation, per-plugin KV storage
 // and the device-authorization auth primitives. It has no dependency
-// on the desktop shell; wails bindings in internal/desktop delegate to
-// these types.
+// on the desktop shell; the wails bindings in
+// internal/adapters/desktop delegate to these types.
 package plugins
 
 import (
@@ -24,6 +24,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins/runtime"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
 
 // idRe constrains plugin/provider ids: lowercase start, then lowercase
@@ -149,7 +150,7 @@ type PluginMCPServer struct {
 
 // PluginUpdateSource declares where opencraft can check for a newer
 // version of the plugin. The URL must return the update manifest shape
-// described by internal/plugins/update.
+// described by internal/capabilities/plugins/update.
 type PluginUpdateSource struct {
 	URL string `json:"url"`
 }
@@ -188,7 +189,7 @@ type Manifest struct {
 		} `json:"pets"`
 	} `json:"contributes"`
 	// Capability declares an optional subprocess runtime for the
-	// plugin (see internal/plugins/runtime).
+	// plugin (see internal/capabilities/plugins/runtime).
 	Capability *runtime.Capability `json:"capability,omitempty"`
 	// Agent-facing capabilities. Each group requires its matching
 	// permission (skills:contribute, mcp:contribute, hooks:register,
@@ -338,9 +339,7 @@ func (s *Store) Bundle(id string) (string, error) {
 		return "", err
 	}
 	entry := filepath.Clean(m.Entry)
-	if filepath.IsAbs(entry) ||
-		entry == ".." ||
-		strings.HasPrefix(entry, ".."+string(filepath.Separator)) {
+	if !pathsafe.RelRef(entry) {
 		return "", fmt.Errorf("plugins: entry escapes plugin dir: %q", m.Entry)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, entry))
@@ -362,9 +361,7 @@ func (s *Store) Asset(id, rel string) ([]byte, error) {
 		return nil, err
 	}
 	rel = filepath.Clean(rel)
-	if filepath.IsAbs(rel) ||
-		rel == ".." ||
-		strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	if !pathsafe.RelRef(rel) {
 		return nil, fmt.Errorf("plugins: asset escapes plugin dir: %q", rel)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, rel))
@@ -1429,11 +1426,8 @@ func dirExists(path string) bool {
 // validateRelativePluginPath requires a non-empty path that stays
 // lexically inside the plugin directory.
 func validateRelativePluginPath(p string) error {
-	clean := filepath.Clean(p)
 	if strings.TrimSpace(p) == "" ||
-		filepath.IsAbs(clean) ||
-		clean == ".." ||
-		strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		!pathsafe.RelRef(p) {
 		return fmt.Errorf("path %q must be relative to the plugin directory", p)
 	}
 	return nil
@@ -1450,9 +1444,7 @@ func validateCapability(cap *runtime.Capability) error {
 		return fmt.Errorf("capability.binary is required")
 	}
 	bin := filepath.Clean(cap.Binary)
-	if filepath.IsAbs(bin) ||
-		bin == ".." ||
-		strings.HasPrefix(bin, ".."+string(filepath.Separator)) {
+	if !pathsafe.RelRef(bin) {
 		return fmt.Errorf("capability.binary escapes plugin dir: %q", cap.Binary)
 	}
 	if cap.Protocol <= 0 {

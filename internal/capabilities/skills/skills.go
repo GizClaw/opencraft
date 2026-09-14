@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"unicode/utf8"
 
+	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/search"
 
 	"github.com/GizClaw/flowcraft/core/workspace"
@@ -811,7 +812,7 @@ func truncateUTF8(s string, max int) string {
 
 func (c *collector) listDir(dir string) ([]fs.DirEntry, error) {
 	if c.ws != nil {
-		if rel, ok := withinRoot(dir, c.workBase); ok {
+		if rel, ok := pathsafe.Rel(c.workBase, dir); ok {
 			entries, err := c.ws.List(c.ctx, rel)
 			if err == nil {
 				return entries, nil
@@ -823,17 +824,4 @@ func (c *collector) listDir(dir string) ([]fs.DirEntry, error) {
 		}
 	}
 	return os.ReadDir(dir)
-}
-
-// withinRoot returns the workspace-relative path when dir is inside
-// root, else ok=false.
-func withinRoot(dir, root string) (string, bool) {
-	rel, err := filepath.Rel(root, dir)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", false
-	}
-	if rel == "." {
-		return ".", true
-	}
-	return rel, true
 }

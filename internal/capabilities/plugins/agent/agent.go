@@ -21,6 +21,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins/runtime"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
 
 // ResourceKind is the deploy resource kind of the shared plugin host.
@@ -287,9 +288,7 @@ func hasPerm(m *plugins.Manifest, perm string) bool {
 // lexical escapes and symlinks that leave the root.
 func resolveInside(root, rel string) (string, bool) {
 	clean := filepath.Clean(rel)
-	if filepath.IsAbs(clean) ||
-		clean == ".." ||
-		strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+	if !pathsafe.RelRef(clean) {
 		return "", false
 	}
 	abs := filepath.Join(root, clean)
