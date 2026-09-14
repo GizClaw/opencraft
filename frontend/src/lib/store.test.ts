@@ -791,14 +791,22 @@ describe('store: send and stream', () => {
     expect(conv.turnArtifacts[0]).toMatchObject({
       status: 'failed',
       error: 'engine boom',
+      interruptCause: 'host_shutdown',
+      errorKind: 'provider_failure',
     });
   });
 
-  it('resume strips legacy marker text from older failures', async () => {
+  // The renderer keeps no compatibility rules of its own: archived
+  // content is shown verbatim. The old `> ⛔ ...` failure marker this
+  // test used to strip was written into the message *view* by
+  // pre-archive-column builds and was never persisted, so there is no
+  // stored shape to clean up (see internal/foundation/compat).
+  it('resume renders archived text verbatim', async () => {
     apiMock.sessionTurns.mockResolvedValue([
       {
         seq: 1,
         at: '2026-09-03T00:00:00Z',
+        status: 'failed',
         messages: [
           {
             role: 'user',
@@ -835,7 +843,9 @@ describe('store: send and stream', () => {
           )
           .map((it) => it.text),
       );
-    expect(assistantTexts).toEqual(['partial']);
+    expect(assistantTexts).toEqual([
+      'partial\n\n> ⛔ graph "opencraft-assistant" node "llm": provider_failure during generate',
+    ]);
     expect(conv.turnArtifacts[0].status).toBe('failed');
   });
 

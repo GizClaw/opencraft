@@ -232,8 +232,8 @@ export interface TurnArtifacts {
   startedAt?: string;
   finishedAt?: string;
   durationMs?: number;
-  // runID is set once the live turn starts, so post-turn artifact
-  // reconciliation ("artifact_sync") can target exactly this turn.
+  // runID is set once the live turn starts, so post-turn reconciliation
+  // (the archived turn fetched by run id) can target exactly this turn.
   runID?: string;
   // status/error come from the live turn_end event and are persisted
   // with the archived turn for resumed sessions.
@@ -430,8 +430,7 @@ function historyTurnsToState(turns: SessionTurn[]): {
   const turnArtifacts: TurnArtifacts[] = [];
   for (const turn of turns) {
     const start = messages.length;
-    const cleaned = stripLegacyTurnMarker(historyToMessages(turn.messages));
-    messages.push(...cleaned.messages);
+    messages.push(...historyToMessages(turn.messages));
     turnArtifacts.push({
       id: `h-${turn.seq}`,
       start,
@@ -440,7 +439,7 @@ function historyTurnsToState(turns: SessionTurn[]): {
       startedAt: turn.started_at || turn.at,
       finishedAt: turn.finished_at || turn.at,
       durationMs: turn.duration_ms,
-      status: normalizeTurnStatus(turn.status) ?? cleaned.status,
+      status: normalizeTurnStatus(turn.status),
       error: turn.error,
       interruptCause: turn.interrupt_cause,
       errorKind: turn.error_kind,
@@ -488,42 +487,6 @@ function normalizeTurnStatus(status?: string): TurnStatus | undefined {
     default:
       return undefined;
   }
-}
-
-// stripLegacyTurnMarker removes the old `> ⛔/⏹/⚠️` text that older
-// versions appended inside assistant messages. New turns persist
-// status/error on the archive row instead, so the transcript stays
-// clean; the legacy marker still lets us recover a status for history
-// that predates the archive column.
-function stripLegacyTurnMarker(messages: MessageView[]): {
-  messages: MessageView[];
-  status?: TurnStatus;
-} {
-  let status: TurnStatus | undefined;
-  const next: MessageView[] = [];
-  for (const msg of messages) {
-    let changed = false;
-    const items: AssistantItem[] = [];
-    for (const item of msg.items) {
-      if (item.kind !== 'text') {
-        items.push(item);
-        continue;
-      }
-      const m = item.text.match(/(?:\n\n)?>\s*(⏹|⚠️|⛔)\s+[\s\S]*$/);
-      if (!m) {
-        items.push(item);
-        continue;
-      }
-      status =
-        m[1] === '⛔' ? 'failed' : m[1] === '⏹' ? 'canceled' : 'interrupted';
-      const text = item.text.slice(0, m.index ?? 0).trimEnd();
-      if (text) items.push({ ...item, text });
-      changed = true;
-    }
-    if (changed && items.length === 0) continue;
-    next.push(changed ? { ...msg, items } : msg);
-  }
-  return { messages: next, status };
 }
 
 function mergeAppend(
@@ -1253,30 +1216,6 @@ export const useStore = create<StoreState>((set, get) => {
           if (list.length === 0) break;
           const idx = list.length - 1;
           const docs = mergeTurnDoc(list[idx].docs, data.path, data.bytes ?? 0);
-          updateConv(conversationID, {
-            turnArtifacts: [
-              ...list.slice(0, idx),
-              { ...list[idx], docs },
-              ...list.slice(idx + 1),
-            ],
-          });
-          break;
-        }
-        case 'artifact_sync': {
-          const data = ev.data as {
-            run_id?: string;
-            artifacts?: { path: string; bytes?: number }[];
-          };
-          if (!Array.isArray(data.artifacts)) break;
-          const conv = ensureConversation(conversationID);
-          if (!conv) break;
-          const list = conv.turnArtifacts;
-          const idx = list.findIndex((t) => t.runID && t.runID === data.run_id);
-          if (idx < 0) break;
-          const docs = data.artifacts.map((a) => ({
-            path: a.path,
-            bytes: a.bytes ?? 0,
-          }));
           updateConv(conversationID, {
             turnArtifacts: [
               ...list.slice(0, idx),
