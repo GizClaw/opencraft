@@ -8,17 +8,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/deploy"
-	"github.com/GizClaw/flowcraft/core/inference"
+	"github.com/GizClaw/flowcraft/core/inference/model"
 	"github.com/GizClaw/flowcraft/core/message"
 	yamlv4 "go.yaml.in/yaml/v4"
 	"sigs.k8s.io/yaml"
+
+	"github.com/GizClaw/opencraft/internal/foundation/compat"
 )
 
 // Inference wiring lives in the user configuration layer
@@ -29,36 +30,33 @@ import (
 // have; the router policy lists the keyed providers in priority order
 // with retry fallback, so routing is automatic.
 
-// Provider is one supported inference provider.
+// Provider is one inference driver a deployment can use. It carries
+// only what identifies the driver and its conventional credential: how
+// a deployment is addressed (endpoint, API surface, wire dialect) and
+// which models it serves are deployment data, declared per instance.
 type Provider struct {
-	ID           string // deploy resource id (provider.<id>)
-	Impl         string // driver impl registered in the runtime
-	Name         string // display name
-	DefaultModel string // prefilled model / Azure deployment name
-	EnvVar       string // conventional API key environment variable
-	// API is the generate surface for OpenAI-compatible drivers
-	// ("responses" or "chat"); empty uses the driver default.
-	API string
-	// Azure routes by deployment name and needs an endpoint; the model
-	// input becomes the deployment name and the generated spec declares
-	// it explicitly.
-	Azure bool
-	// ModelEndpoint marks providers whose deployment binds models to
+	ID   string // deploy resource id (provider.<id>) and driver impl
+	Impl string // driver impl registered in the runtime
+	Name string // display name
+	// EnvVar is the conventional API key environment variable, used as
+	// the default for the env key source and as the hint shown next to
+	// the key field.
+	EnvVar string
+	// ModelEndpoint marks drivers whose deployment binds models to
 	// per-model endpoints (ByteDance Ark ep-xxx ids are account-scoped
 	// and live in the profile), so the settings UI surfaces the field.
 	ModelEndpoint bool
 }
 
-// Providers is the provider catalog, ordered by recommendation.
+// Providers lists the drivers a deployment can be built from. There is
+// deliberately no vendor table: which endpoint and which models a
+// provider serves is deployment configuration, so the settings page
+// asks for it per instance instead of shipping a list that goes stale.
 var Providers = []Provider{
-	{ID: "deepseek", Impl: "deepseek", Name: "DeepSeek", DefaultModel: "deepseek-v4-flash", EnvVar: "DEEPSEEK_API_KEY", API: "responses"},
-	{ID: "openai", Impl: "openai", Name: "OpenAI", DefaultModel: "gpt-5.6-sol", EnvVar: "OPENAI_API_KEY", API: "responses"},
-	{ID: "anthropic", Impl: "anthropic", Name: "Anthropic", DefaultModel: "claude-sonnet-5", EnvVar: "ANTHROPIC_API_KEY"},
-	{ID: "azure", Impl: "azure", Name: "Azure OpenAI", DefaultModel: "", EnvVar: "AZURE_OPENAI_API_KEY", Azure: true},
-	{ID: "bytedance", Impl: "bytedance", Name: "ByteDance (Ark)", DefaultModel: "doubao-seed-2-1-pro", EnvVar: "ARK_API_KEY", ModelEndpoint: true},
-	{ID: "kimi", Impl: "kimi", Name: "Kimi (Moonshot)", DefaultModel: "kimi-k3", EnvVar: "MOONSHOT_API_KEY"},
-	{ID: "minimax", Impl: "minimax", Name: "MiniMax", DefaultModel: "MiniMax-M3", EnvVar: "MINIMAX_API_KEY"},
-	{ID: "qwen", Impl: "qwen", Name: "Qwen (DashScope)", DefaultModel: "qwen3.7-max", EnvVar: "DASHSCOPE_API_KEY"},
+	{ID: "openai", Impl: "openai", Name: "OpenAI", EnvVar: "OPENAI_API_KEY"},
+	{ID: "anthropic", Impl: "anthropic", Name: "Anthropic", EnvVar: "ANTHROPIC_API_KEY"},
+	{ID: "bytedance", Impl: "bytedance", Name: "Bytedance", EnvVar: "ARK_API_KEY", ModelEndpoint: true},
+	{ID: "minimax", Impl: "minimax", Name: "Minimax Media", EnvVar: "MINIMAX_API_KEY"},
 }
 
 // ProviderByID resolves the catalog entry for one provider id.
@@ -70,6 +68,34 @@ func ProviderByID(id string) (Provider, bool) {
 	}
 	return Provider{}, false
 }
+
+// ProviderFor resolves the descriptor that serves one instance: the
+// catalog preset Type names, or — for a plugin-declared provider that
+// is not in the preset list — one synthesized from the instance's
+// explicit driver. A provider with neither a known Type nor a driver
+// cannot be written.
+func ProviderFor(in Instance) (Provider, bool) {
+	if prov, ok := ProviderByID(in.Type); ok {
+		return prov, true
+	}
+	if strings.TrimSpace(in.Driver) == "" {
+		return Provider{}, false
+	}
+	prov := Provider{
+		ID:   in.Type,
+		Impl: strings.TrimSpace(in.Driver),
+		Name: in.Name,
+	}
+	if prov.Name == "" {
+		prov.Name = in.Type
+	}
+	return prov, true
+}
+
+// OpenAIWire reports whether the provider is served by the OpenAI
+// wire-family driver, which owns the generate surface, the endpoint
+// object, the metadata envelope and the request-metadata lowering.
+func (p Provider) OpenAIWire() bool { return p.Impl == "openai" }
 
 // KeySource selects how the API key is stored.
 type KeySource int
@@ -87,7 +113,7 @@ const (
 )
 
 // Model is one model served by an inference instance. Capabilities
-// mirrors flowcraft's inference.ModelCapabilities verbatim so no
+// mirrors flowcraft's model.ModelCapabilities verbatim so no
 // capability is lost across the config boundary. A single instance may
 // expose several models (e.g. two DeepSeek models sharing one
 // endpoint/key); capabilities and endpoints are per-model because they
@@ -102,7 +128,7 @@ type Model struct {
 	// Capabilities declares the model's input/output content kinds,
 	// reasoning control (kind plus the canonical-to-wire effort map),
 	// and hosted web search.
-	Capabilities inference.ModelCapabilities
+	Capabilities model.ModelCapabilities
 	// Endpoint binds this model to a per-model deployment address
 	// (ByteDance Ark ep-xxx endpoint ids are account-scoped and map per
 	// model in the profile); empty addresses the model by catalog name.
@@ -111,17 +137,46 @@ type Model struct {
 	// tokens) for this model. Nil fields leave the driver catalog value
 	// untouched for built-in models and publish nothing for deployments
 	// without a catalog (azure); declaring a value overrides it.
-	Limits inference.ModelLimits
+	Limits model.ModelLimits
+	// Lifecycle is the model's discovery metadata: deprecation,
+	// retirement and the model that replaces it. Empty means active.
+	Lifecycle ModelLifecycle
+	// DriverFields carries driver-specific model leaves opencraft does
+	// not model, verbatim (ByteDance's max_resolution and Seedance
+	// parameter matrix, MiniMax's wire_model and video surface, ...).
+	// The keys a driver owns are the driver's business; the host only
+	// refuses the ones it writes itself.
+	DriverFields map[string]any
+}
+
+// ModelLifecycle is the settings-page view of one model's discovery
+// metadata. Only valid for deprecated or retired models: an active model
+// must not carry retirement facts.
+type ModelLifecycle struct {
+	// Status is "deprecated" or "retired"; empty means active and is
+	// never written.
+	Status string
+	// Replacement names the model that supersedes this one.
+	ReplacementProvider string
+	ReplacementName     string
+	// Notes is free-form guidance shown next to the deprecation.
+	Notes string
+}
+
+// IsZero reports whether the lifecycle carries nothing to write.
+func (l ModelLifecycle) IsZero() bool {
+	return l.Status == "" && l.ReplacementName == "" &&
+		l.ReplacementProvider == "" && l.Notes == ""
 }
 
 // reasoningEffortOrder is the canonical effort ladder in ordinal order.
 // The YAML writer uses it so effort maps serialize deterministically.
-var reasoningEffortOrder = []inference.ReasoningEffort{
-	inference.ReasoningMinimal,
-	inference.ReasoningLow,
-	inference.ReasoningMedium,
-	inference.ReasoningHigh,
-	inference.ReasoningXHigh,
+var reasoningEffortOrder = []model.ReasoningEffort{
+	model.ReasoningMinimal,
+	model.ReasoningLow,
+	model.ReasoningMedium,
+	model.ReasoningHigh,
+	model.ReasoningXHigh,
 }
 
 // Instance is one configured inference endpoint: a provider type from
@@ -133,6 +188,10 @@ type Instance struct {
 	StableID string // stable identity across saves/reorders
 	Type     string // catalog ID: deepseek | openai | ...
 	Name     string // display label; empty derives "<type>-<n>"
+	// Driver names the flowcraft driver impl for a provider that is not
+	// in the built-in preset list (a plugin-declared vendor). Empty uses
+	// the preset that Type names.
+	Driver   string
 	API      string // responses | chat (openai / openai-like)
 	Endpoint string // base URL override; empty uses the driver default
 	// ProviderSpec carries provider-owned spec options as an opaque
@@ -140,10 +199,72 @@ type Instance struct {
 	// interprets its contents; flowcraft's strict provider decode is
 	// the final validator.
 	ProviderSpec map[string]any
-	Models       []Model
-	KeySource    KeySource
-	KeyValue     string // literal key (KeyLiteral) or store account (KeyKeychain)
-	Enabled      bool
+	// Advanced carries the typed provider-level spec knobs the settings
+	// page edits in its advanced section. Every field is optional: an
+	// empty value leaves the driver default in place. The writer maps
+	// each knob into the driver's own shape, which is not uniform —
+	// OpenAI and Anthropic take an endpoint object, ByteDance takes
+	// flat transport fields, and MiniMax names its media origin
+	// separately.
+	Advanced  InstanceAdvanced
+	Models    []Model
+	KeySource KeySource
+	KeyValue  string // literal key (KeyLiteral) or store account (KeyKeychain)
+	Enabled   bool
+}
+
+// InstanceAdvanced is the typed view of one instance's provider-level
+// spec knobs — everything the settings page edits below the basic
+// endpoint + models + key flow. The zero value means "driver
+// defaults"; each field is only written when it is set, so a saved
+// document never pins a value the user did not choose. Fields are
+// grouped by the driver that consumes them.
+type InstanceAdvanced struct {
+	// Endpoint transport. Routing, Organization and the endpoint query
+	// belong to the OpenAI wire family (Azure deployment routing,
+	// OpenAI-Organization/Project headers); Query, Headers, Project,
+	// Timeout and Region belong to ByteDance, which takes them as flat
+	// provider-level fields.
+	Routing      string
+	Query        map[string]string
+	Headers      map[string]string
+	Organization string
+	Project      string
+	Timeout      string
+	Region       string
+	// Auth names the credential transport for the OpenAI wire (Azure
+	// authenticates with a header instead of a bearer token).
+	AuthScheme string
+	AuthHeader string
+	// MetadataEnvelope is the top-level request-body field that
+	// receives canonical request metadata; empty keeps the OpenAI wire
+	// default, and the literal "-" disables forwarding.
+	MetadataEnvelope string
+	// HTTPRetries bounds wire-level retries inside one logical attempt.
+	// Zero disables them; nil keeps the driver default.
+	HTTPRetries *int
+	// ExtraBody carries provider body fields the driver does not model
+	// (flowcraft's wire.extra_body): key to raw JSON value.
+	ExtraBody map[string]string
+	// OpenAI wire dialect.
+	// Store is the wire policy for the provider's server-side retention
+	// field: "" keeps the driver default, "true"/"false" send that value,
+	// and "omit" sends nothing for endpoints whose schema does not know
+	// the field.
+	Store                   string
+	IncludeReasoningPayload *bool
+	ReasoningChannel        string
+	ReasoningSummary        string
+	Truncation              string
+	ChatIncludeUsage        *bool
+	ChatIncludeObfuscation  *bool
+	// VideoInput accepts video content blocks on a compatible Messages
+	// endpoint (Anthropic's own schema has no video block).
+	VideoInput bool
+	// MiniMax names its media origin separately from the Messages
+	// endpoint.
+	MediaBaseURL            string
+	VideoPollIntervalMillis *int
 }
 
 // DeploymentID returns the provider resource id for this instance.
@@ -261,6 +382,38 @@ func NewStableID() string {
 // enabled instances, in router priority order.
 type InferenceConfig struct {
 	Instances []Instance
+	// Router is the generate retry policy the settings page owns. The
+	// zero value means "use the defaults": the writer then emits the
+	// historical shell (two attempts, fall back to the next target).
+	Router RouterPolicy
+}
+
+// RouterPolicy is the router's generate retry policy. It is the one
+// router knob the settings page owns; the targets themselves are
+// derived from the instance list, and the tier layout stays fixed
+// until there is a product need for more than one tier.
+type RouterPolicy struct {
+	// MaxAttempts bounds attempts per target, including the first. A
+	// value <= 0 means "use the default".
+	MaxAttempts int
+	// FallbackOnRetryExhausted moves on to the next target in the tier
+	// once a target's attempts are spent.
+	FallbackOnRetryExhausted bool
+}
+
+// DefaultRouterPolicy is the retry shell OpenCraft has always written.
+func DefaultRouterPolicy() RouterPolicy {
+	return RouterPolicy{MaxAttempts: 2, FallbackOnRetryExhausted: true}
+}
+
+// withDefaults fills in an unset attempt count. A policy that names an
+// attempt count keeps its fallback flag verbatim, so switching the
+// fallback off stays expressible.
+func (p RouterPolicy) withDefaults() RouterPolicy {
+	if p.MaxAttempts <= 0 {
+		return DefaultRouterPolicy()
+	}
+	return p
 }
 
 // Enabled returns the instances that participate in routing, in order.
@@ -274,9 +427,10 @@ func (c InferenceConfig) Enabled() []Instance {
 	return out
 }
 
-// InferenceNeeded reports whether the user configuration directory
-// lacks inference wiring, i.e. the user opencraft.yaml layer does not
-// declare a router.
+// InferenceNeeded reports whether the user configuration layer carries
+// no enabled inference wiring: no file at all, or a router with no
+// generate targets. It answers the same question RouterConfigured
+// answers on the merged document, from the user layer alone.
 func InferenceNeeded(configDir string) (bool, error) {
 	data, err := os.ReadFile(filepath.Join(configDir, "opencraft.yaml"))
 	if err != nil {
@@ -287,44 +441,57 @@ func InferenceNeeded(configDir string) (bool, error) {
 		return false, err
 	}
 	var doc struct {
-		Resources map[string]any `json:"resources"`
+		Resources map[string]json.RawMessage `json:"resources"`
 	}
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return false, fmt.Errorf(
 			"config: parse user config: %w", err)
 	}
-	// The embedded inference layer provides providers + infer + the
-	// router retry shell; the user-written layer is what adds the
-	// router's generate targets (and key profiles), so its presence
-	// marks a configured install.
-	if _, ok := doc.Resources["router"]; ok {
-		return false, nil
+	raw, ok := doc.Resources["router"]
+	if !ok {
+		return true, nil
 	}
-	return true, nil
+	var res struct {
+		Settings json.RawMessage `json:"settings"`
+	}
+	if err := json.Unmarshal(raw, &res); err != nil {
+		return false, fmt.Errorf("config: parse user router: %w", err)
+	}
+	targeted, err := routerHasTargets(res.Settings)
+	if err != nil {
+		return false, err
+	}
+	return !targeted, nil
 }
 
 // RouterConfigured reports whether the merged deployment document
-// carries at least one router generate target. The embedded inference
-// layer contributes a router retry shell with no pools until the user
-// layer declares targets, so this distinguishes "inference
-// is not configured yet" (an expected UI state) from a real router
-// validation failure at build time.
+// carries at least one router generate target. The generated user
+// layer always declares the router, so an empty target list
+// distinguishes "inference is not configured yet" (an expected UI
+// state) from a real router validation failure at build time.
 func RouterConfigured(doc deploy.Document) (bool, error) {
 	res, ok := doc.Resources["router"]
 	if !ok {
 		return false, nil
 	}
-	var settings struct {
+	return routerHasTargets(res.Settings)
+}
+
+// routerHasTargets reports whether one router settings document
+// declares at least one generate target.
+func routerHasTargets(settings json.RawMessage) (bool, error) {
+	if len(settings) == 0 {
+		return false, nil
+	}
+	var policy struct {
 		Generate []struct {
 			Targets []json.RawMessage `json:"targets"`
 		} `json:"generate"`
 	}
-	if len(res.Settings) > 0 {
-		if err := json.Unmarshal(res.Settings, &settings); err != nil {
-			return false, fmt.Errorf("config: decode merged router policy: %w", err)
-		}
+	if err := json.Unmarshal(settings, &policy); err != nil {
+		return false, fmt.Errorf("config: decode router policy: %w", err)
 	}
-	for _, pool := range settings.Generate {
+	for _, pool := range policy.Generate {
 		if len(pool.Targets) > 0 {
 			return true, nil
 		}
@@ -333,226 +500,315 @@ func RouterConfigured(doc deploy.Document) (bool, error) {
 }
 
 // InferenceYAML renders the user configuration layer
-// (~/.opencraft/config/opencraft.yaml). The FIXED inference wiring —
-// every provider resource, the infer assembly, and the router retry
-// shell — is embedded in the binary (assets/inference.yaml). This
-// document only carries the VARIABLE parts: credential profiles for
-// the keyed providers, an optional Azure provider (endpoint +
-// deployment are per-user), and the router's generate targets (keyed
-// providers in priority order; the router falls back on failure).
+// (~/.opencraft/config/opencraft.yaml). The whole inference wiring is
+// host-owned and generated here: one provider deployment per instance
+// (driver, endpoint, wire dialect, declared models, key profile), the
+// infer assembly over those providers, and the router — retry shell
+// plus the generate targets derived from the enabled instances in
+// priority order. Nothing about inference lives in the embedded
+// layers any more, so this document is the single description of what
+// the deployment serves.
 func (c InferenceConfig) InferenceYAML() ([]byte, error) {
-	if len(c.Instances) == 0 {
-		return nil, errors.New("config: at least one enabled instance is required")
+	return c.inferenceYAMLAt(time.Now())
+}
+
+// writeProviderSpec renders one provider's `spec:` body — the basic
+// endpoint plus every advanced knob the instance sets — and returns
+// the top-level spec keys it wrote. The shape follows the driver:
+// OpenAI and Anthropic take an endpoint object, ByteDance takes flat
+// transport fields, and MiniMax names its media origin separately.
+// Callers pass the returned set to writeProviderSpecYAML so the opaque
+// provider-spec bag can never duplicate a key this writer emitted.
+func writeProviderSpec(
+	b *strings.Builder, prov Provider, in Instance, apiMode string,
+) (map[string]bool, error) {
+	adv := in.Advanced
+	written := make(map[string]bool, 8)
+	if apiMode != "" && prov.OpenAIWire() {
+		fmt.Fprintf(b, "        api: %s\n", yamlQuote(apiMode))
+		written["api"] = true
 	}
-	instances := make([]Instance, len(c.Instances))
-	copy(instances, c.Instances)
-	for i := range instances {
-		in := &instances[i]
-		prov, ok := ProviderByID(in.Type)
-		if !ok {
-			return nil, fmt.Errorf("config: unknown provider type %q", in.Type)
+	baseURL := strings.TrimSpace(in.Endpoint)
+	switch prov.Impl {
+	case "bytedance":
+		if baseURL != "" {
+			fmt.Fprintf(b, "        base_url: %s\n", yamlQuote(baseURL))
+			written["base_url"] = true
 		}
-		if err := normalizeModels(in, prov, i+1); err != nil {
-			return nil, err
-		}
-		if prov.Azure && strings.TrimSpace(in.Endpoint) == "" {
-			return nil, fmt.Errorf(
-				"config: azure instance %d: endpoint is required", i+1)
-		}
-	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "# opencraft user configuration layer\n")
-	fmt.Fprintf(&b, "# (~/.opencraft/config/opencraft.yaml; edited through the\n")
-	fmt.Fprintf(&b, "# desktop settings page; last written %s).\n", time.Now().UTC().Format(time.RFC3339))
-	fmt.Fprintf(&b, "#\n")
-	fmt.Fprintf(&b, "# The FIXED inference wiring lives in the binary (embedded\n")
-	fmt.Fprintf(&b, "# inference.yaml): the infer assembly and the router retry\n")
-	fmt.Fprintf(&b, "# policy. This file carries the VARIABLE parts: one provider\n")
-	fmt.Fprintf(&b, "# deployment per enabled instance (type + models + endpoint +\n")
-	fmt.Fprintf(&b, "# capabilities + key), the infer dep wiring for those\n")
-	fmt.Fprintf(&b, "# instances, and the router's generate targets in the\n")
-	fmt.Fprintf(&b, "# enabled order (failures fall back to the next target).\n")
-	fmt.Fprintf(&b, "# Resources, deps, and settings merge deeply across layers, so\n")
-	fmt.Fprintf(&b, "# resources not managed here (MCP servers, sandbox policy,\n")
-	fmt.Fprintf(&b, "# custom graphs) are preserved across settings writes.\n")
-	fmt.Fprintf(&b, "version: v1\n")
-	fmt.Fprintf(&b, "resources:\n")
-	// One provider deployment per instance (disabled instances stay
-	// declared so re-enabling them needs no re-entry); only enabled
-	// instances join the infer deps and the router.
-	var deps []string
-	for i, in := range instances {
-		prov, _ := ProviderByID(in.Type)
-		id := in.DeploymentID(i + 1)
-		fmt.Fprintf(&b, "  provider.%s:\n", id)
-		fmt.Fprintf(&b, "    kind: inference.Provider\n")
-		fmt.Fprintf(&b, "    impl: %s\n", prov.Impl)
-		fmt.Fprintf(&b, "    settings:\n")
-		fmt.Fprintf(&b, "      id: %s\n", id)
-		fmt.Fprintf(&b, "      spec:\n")
-		if prov.Azure {
-			fmt.Fprintf(&b, "        endpoint: %s\n", yamlQuote(in.Endpoint))
-		} else if in.Endpoint != "" {
-			fmt.Fprintf(&b, "        base_url: %s\n", yamlQuote(in.Endpoint))
-		}
-		apiMode := in.API
-		if apiMode == "" {
-			apiMode = prov.API
-		}
-		if apiMode != "" && (prov.Impl == "openai" || prov.Impl == "deepseek") {
-			fmt.Fprintf(&b, "        api: %s\n", yamlQuote(apiMode))
-		}
-		if prov.Impl == "openai" || prov.Impl == "deepseek" || prov.Impl == "azure" {
-			fmt.Fprintf(&b, "        request_metadata:\n")
-			fmt.Fprintf(&b, "          envelope: client_metadata\n")
-		}
-		if len(in.ProviderSpec) > 0 {
-			if err := writeProviderSpecYAML(&b, in.ProviderSpec); err != nil {
-				return nil, fmt.Errorf(
-					"config: encode provider spec for %s: %w", id, err,
-				)
+		for _, key := range []struct {
+			name  string
+			value string
+		}{
+			{"region", adv.Region},
+			{"project", adv.Project},
+			{"timeout", adv.Timeout},
+		} {
+			if key.value == "" {
+				continue
 			}
+			fmt.Fprintf(b, "        %s: %s\n", key.name, yamlQuote(key.value))
+			written[key.name] = true
 		}
-		fmt.Fprintf(&b, "        models:\n")
-		for _, m := range in.Models {
-			kind := m.Kind
-			outputs := m.Capabilities.Outputs
-			if kind == "" {
-				switch {
-				case slices.Contains(outputs, message.PartVideo):
-					kind = "video"
-				case slices.Contains(outputs, message.PartImage):
-					kind = "image"
-				default:
-					kind = "generate"
+		writeStringMap(b, "        ", "headers", adv.Headers, written)
+		writeStringMap(b, "        ", "query", adv.Query, written)
+	case "minimax":
+		if baseURL != "" {
+			fmt.Fprintf(b, "        media_base_url: %s\n", yamlQuote(baseURL))
+			written["media_base_url"] = true
+		}
+	default:
+		// OpenAI wire family and Anthropic: one endpoint object.
+		routing := strings.TrimSpace(adv.Routing)
+		endpointKeys := baseURL != "" || routing != "" || adv.Organization != "" ||
+			adv.Project != "" || adv.Timeout != "" ||
+			len(adv.Query) > 0 || len(adv.Headers) > 0
+		if endpointKeys {
+			fmt.Fprintf(b, "        endpoint:\n")
+			written["endpoint"] = true
+			if baseURL != "" {
+				fmt.Fprintf(b, "          base_url: %s\n", yamlQuote(baseURL))
+			}
+			for _, key := range []struct {
+				name  string
+				value string
+			}{
+				{"routing", routing},
+				{"organization", adv.Organization},
+				{"project", adv.Project},
+				{"timeout", adv.Timeout},
+			} {
+				if key.value == "" {
+					continue
 				}
+				fmt.Fprintf(b, "          %s: %s\n", key.name, yamlQuote(key.value))
 			}
-			inputs := m.Capabilities.Inputs
-			if len(outputs) == 0 && kind == "generate" {
-				// Text output is the generate family default; declared
-				// models without it would fail driver validation.
-				outputs = []message.PartKind{message.PartText}
+			writeStringMap(b, "          ", "headers", adv.Headers, nil)
+			writeStringMap(b, "          ", "query", adv.Query, nil)
+		}
+		scheme := strings.TrimSpace(adv.AuthScheme)
+		if scheme != "" {
+			fmt.Fprintf(b, "        auth:\n")
+			written["auth"] = true
+			fmt.Fprintf(b, "          scheme: %s\n", yamlQuote(scheme))
+			header := strings.TrimSpace(adv.AuthHeader)
+			if header != "" {
+				fmt.Fprintf(b, "          header: %s\n", yamlQuote(header))
 			}
-			if len(inputs) == 0 &&
-				(kind == "generate" || kind == "image" || kind == "video") {
-				// Undeclared inputs on a generation family default to
-				// the base text modality (same rule as the text output
-				// default). Explicit declarations are preserved
-				// verbatim: capabilities are the declarer's truth, not
-				// something the writer may rewrite.
-				inputs = []message.PartKind{message.PartText}
+		}
+	}
+	// Wire dialect.
+	channel := strings.TrimSpace(adv.ReasoningChannel)
+	switch prov.Impl {
+	case "openai":
+		wireKeys := channel != "" || adv.VideoInput ||
+			adv.Store != "" ||
+			adv.IncludeReasoningPayload != nil || adv.ReasoningSummary != "" ||
+			adv.Truncation != "" || adv.ChatIncludeUsage != nil ||
+			adv.ChatIncludeObfuscation != nil
+		if wireKeys {
+			fmt.Fprintf(b, "        wire:\n")
+			written["wire"] = true
+			if adv.VideoInput {
+				fmt.Fprintf(b, "          video_input: true\n")
 			}
-			fmt.Fprintf(&b, "          - name: %s\n", yamlQuote(m.Name))
-			fmt.Fprintf(&b, "            kind: %s\n", yamlQuote(kind))
-			fmt.Fprintf(&b, "            capabilities:\n")
-			if len(outputs) > 0 {
-				fmt.Fprintf(&b, "              outputs: [%s]\n",
-					strings.Join(PartKindStrings(outputs), ", "))
+			if adv.Store != "" {
+				fmt.Fprintf(b, "          store: %s\n", adv.Store)
 			}
-			if len(inputs) > 0 {
-				fmt.Fprintf(&b, "              inputs: [%s]\n",
-					strings.Join(PartKindStrings(inputs), ", "))
+			if adv.IncludeReasoningPayload != nil {
+				fmt.Fprintf(b, "          include_reasoning_payload: %t\n",
+					*adv.IncludeReasoningPayload)
 			}
-			if !m.Capabilities.Reasoning.IsZero() {
-				fmt.Fprintf(&b, "              reasoning:\n")
-				fmt.Fprintf(&b, "                kind: %s\n",
-					yamlQuote(string(m.Capabilities.Reasoning.Kind)))
-				if len(m.Capabilities.Reasoning.EffortMap) > 0 {
-					fmt.Fprintf(&b, "                effort_map:\n")
-					for _, effort := range reasoningEffortOrder {
-						mode, ok := m.Capabilities.Reasoning.EffortMap[effort]
-						if !ok {
-							continue
-						}
-						fmt.Fprintf(&b, "                  %s: %s\n",
-							yamlQuote(string(effort)), yamlQuote(mode))
+			if channel != "" {
+				fmt.Fprintf(b, "          reasoning_channel: %s\n",
+					yamlQuote(channel))
+			}
+			if adv.ReasoningSummary != "" {
+				fmt.Fprintf(b, "          reasoning_summary: %s\n",
+					yamlQuote(adv.ReasoningSummary))
+			}
+			if adv.Truncation != "" {
+				fmt.Fprintf(b, "          truncation: %s\n",
+					yamlQuote(adv.Truncation))
+			}
+			if len(adv.ExtraBody) > 0 {
+				keys := make([]string, 0, len(adv.ExtraBody))
+				for key := range adv.ExtraBody {
+					keys = append(keys, key)
+				}
+				sort.Strings(keys)
+				fmt.Fprintf(b, "          extra_body:\n")
+				for _, key := range keys {
+					value := strings.TrimSpace(adv.ExtraBody[key])
+					if !json.Valid([]byte(value)) {
+						return nil, fmt.Errorf(
+							"config: wire.extra_body %q is not a JSON value",
+							key,
+						)
 					}
+					fmt.Fprintf(b, "            %s: %s\n",
+						yamlQuote(key), value)
 				}
 			}
-			if m.Capabilities.HostedWebSearch {
-				fmt.Fprintf(&b, "              hosted_web_search: true\n")
-			}
-			if m.Limits.MaxInputTokens != nil ||
-				m.Limits.MaxOutputTokens != nil {
-				fmt.Fprintf(&b, "            limits:\n")
-				if m.Limits.MaxInputTokens != nil {
-					fmt.Fprintf(&b, "              max_input_tokens: %d\n",
-						*m.Limits.MaxInputTokens)
+			if adv.ChatIncludeUsage != nil || adv.ChatIncludeObfuscation != nil {
+				fmt.Fprintf(b, "          chat_stream_options:\n")
+				if adv.ChatIncludeUsage != nil {
+					fmt.Fprintf(b, "            include_usage: %t\n",
+						*adv.ChatIncludeUsage)
 				}
-				if m.Limits.MaxOutputTokens != nil {
-					fmt.Fprintf(&b, "              max_output_tokens: %d\n",
-						*m.Limits.MaxOutputTokens)
+				if adv.ChatIncludeObfuscation != nil {
+					fmt.Fprintf(b, "            include_obfuscation: %t\n",
+						*adv.ChatIncludeObfuscation)
 				}
 			}
 		}
-		fmt.Fprintf(&b, "      profiles:\n")
-		fmt.Fprintf(&b, "        -")
-		if in.StableID != "" {
-			// The stable identity rides in the profile id: it is the
-			// only provider-resource field flowcraft's strict settings
-			// decode accepts that stays with the instance through
-			// reorders and edits.
-			fmt.Fprintf(&b, " id: %s\n", yamlQuote(in.StableID))
+	case "anthropic":
+		if adv.VideoInput {
+			fmt.Fprintf(b, "        wire:\n")
+			fmt.Fprintf(b, "          video_input: true\n")
+			written["wire"] = true
+		}
+	}
+	if prov.OpenAIWire() {
+		envelope := adv.MetadataEnvelope
+		if envelope == "" {
+			envelope = "client_metadata"
+		}
+		// The empty object disables metadata forwarding; "-" is the
+		// settings page's "off" choice, and the key is written even
+		// then so the opt-out round-trips instead of reading back as
+		// "use the default".
+		if envelope == "-" {
+			fmt.Fprintf(b, "        request_metadata: {}\n")
 		} else {
-			fmt.Fprintf(&b, "\n")
+			fmt.Fprintf(b, "        request_metadata:\n")
+			fmt.Fprintf(b, "          envelope: %s\n", yamlQuote(envelope))
 		}
-		if prov.Impl == "bytedance" {
-			var endpoints []Model
-			for _, m := range in.Models {
-				if strings.TrimSpace(m.Endpoint) != "" {
-					endpoints = append(endpoints, m)
-				}
-			}
-			if len(endpoints) > 0 {
-				// Ark endpoint ids (ep-xxx) are account-scoped and bind
-				// per model inside the profile, not at provider level.
-				fmt.Fprintf(&b, "          endpoints:\n")
-				for _, m := range endpoints {
-					fmt.Fprintf(&b, "            %s: %s\n",
-						yamlQuote(m.Name), yamlQuote(m.Endpoint))
-				}
-			}
-		}
-		fmt.Fprintf(&b, "          secrets:\n")
-		fmt.Fprintf(&b, "            api_key: %s\n", instanceAPIKey(in, prov))
-		if in.Enabled {
-			deps = append(deps, id)
-		}
+		written["request_metadata"] = true
 	}
-	if len(deps) > 0 {
-		fmt.Fprintf(&b, "  infer:\n")
-		fmt.Fprintf(&b, "    deps:\n")
-		for _, id := range deps {
-			fmt.Fprintf(&b, "      provider.%s: provider.%s\n", id, id)
-		}
+	if adv.HTTPRetries != nil {
+		fmt.Fprintf(b, "        http_retries: %d\n", *adv.HTTPRetries)
+		written["http_retries"] = true
 	}
-	fmt.Fprintf(&b, "  router:\n")
-	fmt.Fprintf(&b, "    settings:\n")
-	fmt.Fprintf(&b, "      generate:\n")
-	fmt.Fprintf(&b, "        - tier: default\n")
-	fmt.Fprintf(&b, "          targets:\n")
-	hasEnabled := false
-	for i, in := range instances {
-		if !in.Enabled {
+	if prov.Impl == "bytedance" && adv.VideoPollIntervalMillis != nil {
+		fmt.Fprintf(b, "        video_poll_interval_millis: %d\n",
+			*adv.VideoPollIntervalMillis)
+		written["video_poll_interval_millis"] = true
+	}
+	return written, nil
+}
+
+// writeStringMap renders one string map at the given indentation,
+// marking the key as written when it has entries.
+func writeStringMap(
+	b *strings.Builder,
+	indent, key string,
+	values map[string]string,
+	written map[string]bool,
+) {
+	if len(values) == 0 {
+		return
+	}
+	keys := make([]string, 0, len(values))
+	for k := range values {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	fmt.Fprintf(b, "%s%s:\n", indent, key)
+	for _, k := range keys {
+		fmt.Fprintf(b, "%s  %s: %s\n", indent, yamlQuote(k), yamlQuote(values[k]))
+	}
+	if written != nil {
+		written[key] = true
+	}
+}
+
+// modelDriverFieldKeys are the model-entry keys opencraft writes itself;
+// a driver-specific bag must not restate them.
+var modelDriverFieldKeys = map[string]bool{
+	"name":         true,
+	"kind":         true,
+	"capabilities": true,
+	"limits":       true,
+	"lifecycle":    true,
+}
+
+// modelDriverFieldsByImpl is the allowlist of driver-specific model
+// leaves opencraft round-trips. It is an allowlist rather than "keep
+// every unknown key" on purpose: the drivers decode strictly, so a
+// stale or misspelled key would otherwise be preserved forever and then
+// rejected at build time with a message about a field the user never
+// wrote. Adding a driver fact means adding it here.
+var modelDriverFieldsByImpl = map[string]map[string]bool{
+	"bytedance": {"max_resolution": true, "video": true},
+	"minimax":   {"wire_model": true, "video": true},
+}
+
+// allowedModelDriverField reports whether one driver-specific model leaf
+// survives the settings-page round trip for this driver.
+func allowedModelDriverField(impl, key string) bool {
+	return modelDriverFieldsByImpl[impl][key]
+}
+
+// writeModelDriverFields renders the driver-specific leaves of one model
+// entry verbatim, so a driver can grow declaration facts (resolution
+// caps, wire-model aliases, parameter matrices) without opencraft having
+// to model each one.
+func writeModelDriverFields(
+	b *strings.Builder, modelName, impl string, fields map[string]any,
+) error {
+	if len(fields) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(fields)
+	if err != nil {
+		return fmt.Errorf(
+			"config: encode driver fields for model %s: %w", modelName, err,
+		)
+	}
+	ordered := map[string]any{}
+	if err := json.Unmarshal(raw, &ordered); err != nil {
+		return fmt.Errorf(
+			"config: decode driver fields for model %s: %w", modelName, err,
+		)
+	}
+	keys := make([]string, 0, len(ordered))
+	for key := range ordered {
+		if modelDriverFieldKeys[key] {
+			return fmt.Errorf(
+				"config: model %s driver field %q is written by the host",
+				modelName, key,
+			)
+		}
+		if !allowedModelDriverField(impl, key) {
+			return fmt.Errorf(
+				"config: model %s driver field %q is not declared by the %s "+
+					"driver", modelName, key, impl,
+			)
+		}
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		value, err := yaml.Marshal(ordered[key])
+		if err != nil {
+			return fmt.Errorf(
+				"config: encode driver field %s of model %s: %w",
+				key, modelName, err,
+			)
+		}
+		lines := strings.Split(strings.TrimRight(string(value), "\n"), "\n")
+		if len(lines) == 1 {
+			fmt.Fprintf(b, "            %s: %s\n", key, lines[0])
 			continue
 		}
-		for _, m := range in.Models {
-			hasEnabled = true
-			fmt.Fprintf(&b, "            - model:\n")
-			fmt.Fprintf(&b, "                id:\n")
-			fmt.Fprintf(&b, "                  provider: %s\n", in.DeploymentID(i+1))
-			fmt.Fprintf(&b, "                  name: %s\n", yamlQuote(m.Name))
-			if in.StableID != "" {
-				fmt.Fprintf(&b, "                profile: %s\n", yamlQuote(in.StableID))
-			}
+		// A composite value nests one level under its key; the marshaled
+		// text carries no leading indent of its own.
+		fmt.Fprintf(b, "            %s:\n", key)
+		for _, line := range lines {
+			fmt.Fprintf(b, "              %s\n", line)
 		}
 	}
-	if !hasEnabled {
-		// Keep the router block parseable (empty targets) so the
-		// document stays valid while the user re-enables instances.
-		fmt.Fprintf(&b, "          targets: []\n")
-	}
-	return []byte(b.String()), nil
+	return nil
 }
 
 // writeProviderSpecYAML renders an opaque provider spec map under the
@@ -562,7 +818,21 @@ func (c InferenceConfig) InferenceYAML() ([]byte, error) {
 func writeProviderSpecYAML(
 	b *strings.Builder,
 	spec map[string]any,
+	skip map[string]bool,
 ) error {
+	if len(skip) > 0 {
+		filtered := make(map[string]any, len(spec))
+		for key, value := range spec {
+			if skip[key] {
+				continue
+			}
+			filtered[key] = value
+		}
+		spec = filtered
+	}
+	if len(spec) == 0 {
+		return nil
+	}
 	var buf bytes.Buffer
 	enc := yamlv4.NewEncoder(&buf)
 	enc.SetIndent(2)
@@ -583,23 +853,18 @@ func writeProviderSpecYAML(
 	return nil
 }
 
-// normalizeModels trims model names, fills empty ones with the
-// provider's default model, rejects duplicates, and guarantees every
-// instance declares at least one model. Empty names (the settings page
-// prefill) and a fully empty list fall back to the provider default so
-// the setup flow needs no explicit model entry; providers without a
-// default (Azure) require an explicit name.
+// normalizeModels trims model names, rejects duplicates, and guarantees
+// every instance declares at least one named model. There is no model
+// table to fall back on: the deployment says which models it serves, so
+// a nameless row is a validation error rather than a silent default.
 func normalizeModels(in *Instance, prov Provider, n int) error {
 	if len(in.Models) == 0 {
-		in.Models = []Model{{Name: prov.DefaultModel}}
+		in.Models = []Model{{}}
 	}
 	models := make([]Model, 0, len(in.Models))
 	seen := make(map[string]bool, len(in.Models))
 	for _, m := range in.Models {
 		m.Name = strings.TrimSpace(m.Name)
-		if m.Name == "" {
-			m.Name = prov.DefaultModel
-		}
 		if m.Name == "" {
 			return fmt.Errorf(
 				"config: instance %d (%s): model name is required", n, in.Type)
@@ -653,16 +918,6 @@ func instanceAPIKey(in Instance, prov Provider) string {
 // instances.
 const providerOwnersFileName = "plugin-provider-owners.json"
 
-// legacyPluginKeyRef reports whether keyValue points into the secret
-// namespace of the plugin whose id is stableID
-// ("auth/<stableID>/..."). Every plugin inference row written under
-// the pre-ownership contract had this shape because the host required
-// profile ids to equal the plugin id and key references to stay inside
-// the plugin's namespace.
-func legacyPluginKeyRef(stableID, keyValue string) bool {
-	return stableID != "" && strings.HasPrefix(keyValue, "auth/"+stableID+"/")
-}
-
 // adoptLegacyProviderOwners records ownership for inference rows
 // written under the single-instance plugin contract that predates the
 // ownership sidecar. In that scheme the host only accepted instance
@@ -678,7 +933,7 @@ func adoptLegacyProviderOwners(cfg InferenceConfig, owners map[string]string) {
 			continue
 		}
 		if in.KeySource == KeyKeychain &&
-			legacyPluginKeyRef(in.StableID, in.KeyValue) {
+			compat.LegacyPluginKeyRef(in.StableID, in.KeyValue) {
 			owners[in.StableID] = in.StableID
 		}
 	}
@@ -802,29 +1057,40 @@ func reconcileProviderOwners(
 var managedProviderSpecKeys = map[string]bool{
 	"api":              true,
 	"base_url":         true,
+	"auth":             true,
 	"endpoint":         true,
 	"models":           true,
 	"request_metadata": true,
+	"wire":             true,
+}
+
+// hostManagedSpecKey reports whether the host writes one provider spec
+// key itself. It merges the local write contract with the keys the
+// compat layer retired, so a stale key never rides the opaque bag back
+// into a document the drivers reject.
+func hostManagedSpecKey(key string) bool {
+	return managedProviderSpecKeys[key] || compat.RetiredProviderSpecKeys[key]
 }
 
 // ValidateProviderSpec checks an opaque plugin provider_spec bag
 // before it is written. Reserved host-managed keys are rejected and
 // provider-owned constraints (chat_stream_options is openai chat
 // only) fail early; the flowcraft strict decode remains the final
-// arbiter after the config is built.
-func ValidateProviderSpec(typ, api string, spec map[string]any) error {
+// arbiter after the config is built. prov is the descriptor that will
+// serve the profile, so a plugin-declared driver is judged by its own
+// impl rather than by a preset id.
+func ValidateProviderSpec(prov Provider, api string, spec map[string]any) error {
 	for key := range spec {
-		if managedProviderSpecKeys[key] {
+		if hostManagedSpecKey(key) {
 			return fmt.Errorf(
 				"provider spec key %q is managed by the host", key,
 			)
 		}
 	}
 	if _, ok := spec["chat_stream_options"]; ok {
-		if !strings.EqualFold(typ, "openai") ||
-			!strings.EqualFold(api, "chat") {
+		if !prov.OpenAIWire() || !strings.EqualFold(api, "chat") {
 			return fmt.Errorf(
-				"chat_stream_options requires an openai chat profile",
+				"chat_stream_options requires an OpenAI-wire chat profile",
 			)
 		}
 	}
@@ -978,23 +1244,12 @@ func RemoveInferenceConfig(configDir string) error {
 	return saveProviderOwnersLocked(configDir, map[string]string{})
 }
 
-// deprecatedInferenceKeys are provider model keys removed by flowcraft
-// core v0.2.7 / driver 0.2.4+: effort_none (reasoning off is implied by
-// reasoning: toggle), per-model responses (provider-level api owns the
-// surface), and top-level dimensions (embed custom dimensions moved into
-// capabilities). Strict driver decoding rejects them, so the user
-// document is rewritten canonically before it reaches the deploy layers.
-var deprecatedInferenceKeys = []string{
-	"effort_none:",
-	"responses:",
-	"dimensions:",
-}
-
 // MigrateUserInferenceConfig rewrites the user inference document when
-// it still contains provider model keys removed by the flowcraft 0.2.7
-// driver contract. The canonical writer drops those keys while preserving
-// the rest of the configuration; non-inference resources are untouched
-// by UpdateInferenceState. changed reports whether a rewrite happened.
+// it still carries a shape the canonical writer drops (see
+// compat.UserLayerShapes). The rewrite re-emits the document from the
+// typed configuration, so the rest of the configuration survives and
+// non-inference resources are untouched by UpdateInferenceState.
+// changed reports whether a rewrite happened.
 func MigrateUserInferenceConfig(configDir string) (changed bool, err error) {
 	path := filepath.Join(configDir, "opencraft.yaml")
 	data, err := os.ReadFile(path)
@@ -1004,7 +1259,7 @@ func MigrateUserInferenceConfig(configDir string) (changed bool, err error) {
 		}
 		return false, fmt.Errorf("config: read inference migration source: %w", err)
 	}
-	if !containsDeprecatedInferenceKeys(data) {
+	if len(compat.ShapeNeedsRewrite(data)) == 0 {
 		return false, nil
 	}
 	if err := UpdateInferenceState(configDir, func(
@@ -1016,18 +1271,6 @@ func MigrateUserInferenceConfig(configDir string) (changed bool, err error) {
 		return false, fmt.Errorf("config: migrate user inference document: %w", err)
 	}
 	return true, nil
-}
-
-func containsDeprecatedInferenceKeys(data []byte) bool {
-	for _, line := range strings.Split(string(data), "\n") {
-		trimmed := strings.TrimSpace(line)
-		for _, key := range deprecatedInferenceKeys {
-			if strings.HasPrefix(trimmed, key) {
-				return true
-			}
-		}
-	}
-	return false
 }
 
 // KeyRequest is one request row that needs a stored literal key
@@ -1103,6 +1346,211 @@ func managedResourceKeys() map[string]bool {
 }
 
 // LoadInference reads the user configuration layer back into an
+// providerSpecDoc is the on-disk provider spec, covering every shape
+// the writer emits: the OpenAI wire family and Anthropic use an
+// endpoint object, ByteDance takes flat transport fields, and MiniMax
+// names its media origin separately.
+type providerSpecDoc struct {
+	API      string `json:"api"`
+	BaseURL  string `json:"base_url"`
+	Endpoint struct {
+		BaseURL      string            `json:"base_url"`
+		Routing      string            `json:"routing"`
+		Query        map[string]string `json:"query"`
+		Headers      map[string]string `json:"headers"`
+		Organization string            `json:"organization"`
+		Project      string            `json:"project"`
+		Timeout      string            `json:"timeout"`
+	} `json:"endpoint"`
+	Auth struct {
+		Scheme string `json:"scheme"`
+		Header string `json:"header"`
+	} `json:"auth"`
+	Wire struct {
+		Store                   json.RawMessage            `json:"store"`
+		IncludeReasoningPayload *bool                      `json:"include_reasoning_payload"`
+		ReasoningChannel        string                     `json:"reasoning_channel"`
+		ReasoningSummary        string                     `json:"reasoning_summary"`
+		Truncation              string                     `json:"truncation"`
+		VideoInput              bool                       `json:"video_input"`
+		ExtraBody               map[string]json.RawMessage `json:"extra_body"`
+		ChatStreamOptions       struct {
+			IncludeUsage       *bool `json:"include_usage"`
+			IncludeObfuscation *bool `json:"include_obfuscation"`
+		} `json:"chat_stream_options"`
+	} `json:"wire"`
+	HTTPRetries  *int              `json:"http_retries"`
+	Region       string            `json:"region"`
+	Project      string            `json:"project"`
+	Timeout      string            `json:"timeout"`
+	Headers      map[string]string `json:"headers"`
+	Query        map[string]string `json:"query"`
+	MediaBaseURL string            `json:"media_base_url"`
+	VideoPollMS  *int              `json:"video_poll_interval_millis"`
+	// RequestMeta is a pointer so an explicit opt-out (`{}`) is
+	// distinguishable from an absent block: absent keeps the driver
+	// default, present-but-empty disables forwarding.
+	RequestMeta *struct {
+		Envelope string `json:"envelope"`
+	} `json:"request_metadata"`
+	Models []providerModelDoc `json:"models"`
+}
+
+// providerModelDoc is one declared model in a provider spec.
+type providerModelDoc struct {
+	Name         string `json:"name"`
+	Kind         string `json:"kind"`
+	Capabilities struct {
+		Inputs          []string                  `json:"inputs"`
+		Outputs         []string                  `json:"outputs"`
+		Reasoning       model.ReasoningCapability `json:"reasoning"`
+		HostedWebSearch bool                      `json:"hosted_web_search"`
+	} `json:"capabilities"`
+	Limits model.ModelLimits `json:"limits"`
+	// Lifecycle is the model's discovery metadata; empty means active.
+	Lifecycle model.ModelLifecycle `json:"lifecycle"`
+}
+
+// advancedFromSpec projects one parsed provider spec onto the typed
+// storePolicy reads the retention policy back out of one wire document.
+// The wire accepts a JSON boolean or the string "omit"; the settings page
+// edits the three values as one string.
+func storePolicy(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var value bool
+	if err := json.Unmarshal(raw, &value); err == nil {
+		if value {
+			return "true"
+		}
+		return "false"
+	}
+	var mode string
+	if err := json.Unmarshal(raw, &mode); err == nil && mode == "omit" {
+		return "omit"
+	}
+	return ""
+}
+
+// rawMapStrings renders one raw-JSON map as editable text, one entry per
+// key, so the settings page can round-trip values it does not model.
+func rawMapStrings(raw map[string]json.RawMessage) map[string]string {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(raw))
+	for key, value := range raw {
+		out[key] = string(value)
+	}
+	return out
+}
+
+// modelDriverFields lifts the model-entry keys opencraft does not model
+// back out of one provider resource, keyed by model name. Host-managed
+// keys are skipped so a hand-edited document cannot smuggle them into
+// the bag (the writer emits them from the typed fields).
+func modelDriverFields(
+	raw json.RawMessage, impl string,
+) (map[string]map[string]any, error) {
+	var doc struct {
+		Settings struct {
+			Spec struct {
+				Models []map[string]any `json:"models"`
+			} `json:"spec"`
+		} `json:"settings"`
+	}
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		return nil, err
+	}
+	out := make(map[string]map[string]any, len(doc.Settings.Spec.Models))
+	for _, entry := range doc.Settings.Spec.Models {
+		name, _ := entry["name"].(string)
+		if strings.TrimSpace(name) == "" {
+			continue
+		}
+		fields := map[string]any{}
+		for key, value := range entry {
+			if modelDriverFieldKeys[key] ||
+				!allowedModelDriverField(impl, key) {
+				continue
+			}
+			fields[key] = value
+		}
+		if len(fields) > 0 {
+			out[name] = fields
+		}
+	}
+	return out, nil
+}
+
+// lifecycleFromDoc projects a parsed model lifecycle onto the
+// settings-page view.
+func lifecycleFromDoc(
+	doc model.ModelLifecycle,
+) (ModelLifecycle, error) {
+	if doc.Status == "" && doc.Replacement == nil && doc.Notes == "" {
+		return ModelLifecycle{}, nil
+	}
+	out := ModelLifecycle{
+		Status: string(doc.Status),
+		Notes:  doc.Notes,
+	}
+	if doc.Replacement != nil {
+		out.ReplacementProvider = doc.Replacement.Provider
+		out.ReplacementName = doc.Replacement.Name
+	}
+	return out, nil
+}
+
+// advancedFromSpec projects one parsed provider spec onto the typed
+// advanced view.
+func advancedFromSpec(spec providerSpecDoc) InstanceAdvanced {
+	adv := InstanceAdvanced{
+		Routing:                 spec.Endpoint.Routing,
+		Query:                   spec.Endpoint.Query,
+		Headers:                 spec.Endpoint.Headers,
+		Organization:            spec.Endpoint.Organization,
+		Project:                 spec.Endpoint.Project,
+		Timeout:                 spec.Endpoint.Timeout,
+		AuthScheme:              spec.Auth.Scheme,
+		AuthHeader:              spec.Auth.Header,
+		HTTPRetries:             spec.HTTPRetries,
+		Store:                   storePolicy(spec.Wire.Store),
+		ExtraBody:               rawMapStrings(spec.Wire.ExtraBody),
+		IncludeReasoningPayload: spec.Wire.IncludeReasoningPayload,
+		ReasoningChannel:        spec.Wire.ReasoningChannel,
+		ReasoningSummary:        spec.Wire.ReasoningSummary,
+		Truncation:              spec.Wire.Truncation,
+		ChatIncludeUsage:        spec.Wire.ChatStreamOptions.IncludeUsage,
+		ChatIncludeObfuscation:  spec.Wire.ChatStreamOptions.IncludeObfuscation,
+		VideoInput:              spec.Wire.VideoInput,
+		MediaBaseURL:            spec.MediaBaseURL,
+		VideoPollIntervalMillis: spec.VideoPollMS,
+	}
+	// ByteDance takes these flat instead of under endpoint.
+	if spec.Region != "" || spec.Project != "" || spec.Timeout != "" ||
+		len(spec.Headers) > 0 || len(spec.Query) > 0 {
+		adv.Region = spec.Region
+		adv.Project = spec.Project
+		adv.Timeout = spec.Timeout
+		adv.Headers = spec.Headers
+		adv.Query = spec.Query
+	}
+	switch {
+	case spec.RequestMeta == nil:
+		// Absent: provider default.
+	case spec.RequestMeta.Envelope == "":
+		adv.MetadataEnvelope = "-"
+	default:
+		if spec.RequestMeta.Envelope != "client_metadata" {
+			adv.MetadataEnvelope = spec.RequestMeta.Envelope
+		}
+	}
+	return adv
+}
+
+// LoadInference reads the user configuration layer back into an
 // InferenceConfig so the settings page can prefill provider/model/key
 // edits instead of starting blank. It only understands the sections
 // the settings page writes (provider profiles, the Azure provider, and
@@ -1140,25 +1588,14 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 					APIKey string `json:"api_key"`
 				} `json:"secrets"`
 			} `json:"profiles"`
-			Spec struct {
-				API      string `json:"api"`
-				BaseURL  string `json:"base_url"`
-				Endpoint string `json:"endpoint"`
-				Models   []struct {
-					Name         string `json:"name"`
-					Kind         string `json:"kind"`
-					Capabilities struct {
-						Inputs          []string                      `json:"inputs"`
-						Outputs         []string                      `json:"outputs"`
-						Reasoning       inference.ReasoningCapability `json:"reasoning"`
-						HostedWebSearch bool                          `json:"hosted_web_search"`
-					} `json:"capabilities"`
-					Limits inference.ModelLimits `json:"limits"`
-				} `json:"models"`
-			} `json:"spec"`
+			Spec providerSpecDoc `json:"spec"`
 		} `json:"settings"`
 	}
-	providers := make(map[string]instanceSettings, len(doc.Resources))
+	type parsedProvider struct {
+		res instanceSettings
+		raw json.RawMessage
+	}
+	providers := make(map[string]parsedProvider, len(doc.Resources))
 	for id, raw := range doc.Resources {
 		if !strings.HasPrefix(id, "provider.") {
 			continue
@@ -1179,19 +1616,33 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 		}
 		extras := make(map[string]any)
 		for key, value := range specDoc.Settings.Spec {
-			if !managedProviderSpecKeys[key] {
+			if !hostManagedSpecKey(key) {
 				extras[key] = value
+			}
+		}
+		// chat_stream_options moved under wire when the OpenAI wire
+		// family gained one driver; surface it again as the flat
+		// provider-spec key the settings page round-trips.
+		if wire, ok := specDoc.Settings.Spec["wire"].(map[string]any); ok {
+			if options, ok := wire["chat_stream_options"]; ok {
+				extras["chat_stream_options"] = options
 			}
 		}
 		if len(extras) > 0 {
 			res.ProviderSpec = extras
 		}
-		providers[id] = res
+		providers[id] = parsedProvider{res: res, raw: raw}
 	}
 
 	// Router targets define provider priority order and model names.
 	var router struct {
 		Settings struct {
+			Retry struct {
+				Generate struct {
+					MaxAttempts              int  `json:"max_attempts"`
+					FallbackOnRetryExhausted bool `json:"fallback_on_retry_exhausted"`
+				} `json:"generate"`
+			} `json:"retry"`
 			Generate []struct {
 				Targets []struct {
 					Model struct {
@@ -1210,7 +1661,12 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 		}
 	}
 
-	cfg := InferenceConfig{}
+	cfg := InferenceConfig{
+		Router: RouterPolicy{
+			MaxAttempts:              router.Settings.Retry.Generate.MaxAttempts,
+			FallbackOnRetryExhausted: router.Settings.Retry.Generate.FallbackOnRetryExhausted,
+		},
+	}
 	type routerTarget struct {
 		provider string
 		model    string
@@ -1239,17 +1695,34 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 	sort.Strings(providerKeys)
 	var all []parsed
 	for _, key := range providerKeys {
-		raw := providers[key]
-		res := raw
+		entry := providers[key]
+		res := entry.res
 		instID := res.Settings.ID
 		if instID == "" {
 			instID = strings.TrimPrefix(key, "provider.")
 		}
-		instType := providerTypeFromImpl(res.Impl)
-		if instType == "" || instType != instanceTypeFromID(instID) {
-			continue
+		// The driver impl no longer identifies the provider: the whole
+		// OpenAI wire family shares one impl, so the deployment id is
+		// the authority. An id with no catalog prefix belongs to a
+		// plugin-declared provider: its type is whatever names the
+		// deployment, and the driver is explicit.
+		profileID := ""
+		if len(res.Settings.Profiles) > 0 {
+			profileID = res.Settings.Profiles[0].ID
+		}
+		instType := instanceTypeFromID(instID)
+		explicitDriver := ""
+		if instType == "" {
+			instType = strings.TrimSuffix(instID, "-"+profileID)
+			if instType == "" {
+				instType = instID
+			}
+			explicitDriver = res.Impl
 		}
 		in := Instance{Type: instType}
+		if explicitDriver != "" {
+			in.Driver = explicitDriver
+		}
 		// The stable identity lives in the profile id.
 		if len(res.Settings.Profiles) > 0 {
 			if pid := res.Settings.Profiles[0].ID; pid != "" {
@@ -1270,25 +1743,42 @@ func LoadInference(configDir string) (InferenceConfig, error) {
 		spec := res.Settings.Spec
 		in.API = spec.API
 		in.Endpoint = spec.BaseURL
-		if spec.Endpoint != "" {
-			in.Endpoint = spec.Endpoint
+		if spec.Endpoint.BaseURL != "" {
+			in.Endpoint = spec.Endpoint.BaseURL
 		}
+		if spec.MediaBaseURL != "" {
+			in.Endpoint = spec.MediaBaseURL
+		}
+		in.Advanced = advancedFromSpec(spec)
 		in.ProviderSpec = res.ProviderSpec
+		driverFields, err := modelDriverFields(entry.raw, res.Impl)
+		if err != nil {
+			return InferenceConfig{}, fmt.Errorf(
+				"config: %s model fields: %w", instID, err)
+		}
 		var endpoints map[string]string
 		if len(res.Settings.Profiles) > 0 {
 			endpoints = res.Settings.Profiles[0].Endpoints
 		}
-		for _, model := range spec.Models {
+		for _, declared := range spec.Models {
+			lifecycle, err := lifecycleFromDoc(declared.Lifecycle)
+			if err != nil {
+				return InferenceConfig{}, fmt.Errorf(
+					"config: %s model %s: %w", instID, declared.Name, err,
+				)
+			}
 			m := Model{
-				Name: model.Name,
-				Kind: model.Kind,
-				Capabilities: inference.ModelCapabilities{
-					Inputs:          ToPartKinds(model.Capabilities.Inputs),
-					Outputs:         ToPartKinds(model.Capabilities.Outputs),
-					Reasoning:       model.Capabilities.Reasoning,
-					HostedWebSearch: model.Capabilities.HostedWebSearch,
+				Name: declared.Name,
+				Kind: declared.Kind,
+				Capabilities: model.ModelCapabilities{
+					Inputs:          ToPartKinds(declared.Capabilities.Inputs),
+					Outputs:         ToPartKinds(declared.Capabilities.Outputs),
+					Reasoning:       declared.Capabilities.Reasoning,
+					HostedWebSearch: declared.Capabilities.HostedWebSearch,
 				},
-				Limits: model.Limits,
+				Limits:       declared.Limits,
+				Lifecycle:    lifecycle,
+				DriverFields: driverFields[declared.Name],
 			}
 			if endpoint := endpoints[m.Name]; endpoint != "" {
 				m.Endpoint = endpoint
@@ -1349,17 +1839,6 @@ func instanceTypeFromID(id string) string {
 		}
 	}
 	return best
-}
-
-// providerTypeFromImpl maps a driver impl back to its catalog type id,
-// or "" when the impl is not one of the catalog drivers.
-func providerTypeFromImpl(impl string) string {
-	for _, p := range Providers {
-		if p.Impl == impl {
-			return p.ID
-		}
-	}
-	return ""
 }
 
 // mergeUserLayer merges a freshly generated user document over the

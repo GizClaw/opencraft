@@ -33,13 +33,9 @@ import (
 	"github.com/GizClaw/flowcraft/core/tool/middleware"
 	"github.com/GizClaw/flowcraft/core/workspace"
 	"github.com/GizClaw/flowcraft/driver/anthropic"
-	"github.com/GizClaw/flowcraft/driver/azure"
 	"github.com/GizClaw/flowcraft/driver/bytedance"
-	"github.com/GizClaw/flowcraft/driver/deepseek"
-	"github.com/GizClaw/flowcraft/driver/kimi"
 	"github.com/GizClaw/flowcraft/driver/minimax"
 	"github.com/GizClaw/flowcraft/driver/openai"
-	"github.com/GizClaw/flowcraft/driver/qwen"
 	"go.opentelemetry.io/otel/log"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/agents"
@@ -138,7 +134,8 @@ func WithAutomationHost(h automationtool.Host) Option {
 // WithSessionStore overrides session store construction.
 func WithSessionStore(fn func(
 	ctx context.Context, root string, window int,
-) (*ocsessions.Store, error)) Option {
+) (*ocsessions.Store, error),
+) Option {
 	return func(o *Options) { o.SessionStore = fn }
 }
 
@@ -211,6 +208,28 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 			return nil, fmt.Errorf("engine: workdir: %w", err)
 		}
 	}
+	// Inference wiring is generated into the user configuration layer,
+	// so nothing declares the router before the setup page runs. Say
+	// that plainly instead of letting the graph fail on a missing
+	// resource reference.
+	configured, err := config.RouterConfigured(doc)
+	if err != nil {
+		return nil, fmt.Errorf("engine: check router configuration: %w", err)
+	}
+	if !configured {
+		return nil, fmt.Errorf(
+			"engine: inference is not configured: %s declares no router "+
+				"generate target (configure a provider in the settings page)",
+			filepath.Join(o.ConfigBase, "opencraft.yaml"))
+	}
+	// Tell the media hook which turns may carry a video part. A model
+	// that cannot take video rejects the request instead of ignoring the
+	// part, so the hook keeps flattening video to its path everywhere
+	// else. This reads only the deployment document, so it stays a
+	// build-time computation.
+	if doc, err = withVideoHints(doc); err != nil {
+		return nil, err
+	}
 	dataDir := ""
 	if o.WorkspaceLayout != nil {
 		dataDir = o.WorkspaceLayout.DataDir
@@ -252,13 +271,9 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 		bwrap.Register,
 		seatbelt.Register,
 		anthropic.Register,
-		azure.Register,
 		bytedance.Register,
-		deepseek.Register,
-		kimi.Register,
 		minimax.Register,
 		openai.Register,
-		qwen.Register,
 		func(r *resource.Registry) error {
 			return opmemory.RegisterWithObserver(r, o.usageObserver)
 		},
@@ -266,7 +281,7 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 			if o.SessionStore == nil {
 				return fmt.Errorf(
 					"engine: session store requires WithSessionStore " +
-						"(schema migration is centralized in orchestration/migrations)")
+						"(schema migration is centralized in internal/foundation/compat)")
 			}
 			return r.Register(ocsessions.Factory{StoreFor: o.SessionStore})
 		},

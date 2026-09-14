@@ -99,7 +99,7 @@ func TestStartReadClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, `"started":true`) {
+	if !strings.Contains(out.Text(), `"started":true`) {
 		t.Errorf("start = %s", out)
 	}
 	if runner.started.ID != "s1" || len(runner.started.Argv) != 1 ||
@@ -115,7 +115,7 @@ func TestStartReadClose(t *testing.T) {
 		Chunks []map[string]any `json:"chunks"`
 		EOF    bool             `json:"eof"`
 	}
-	if err := json.Unmarshal([]byte(out), &read); err != nil {
+	if err := json.Unmarshal([]byte(out.Text()), &read); err != nil {
 		t.Fatal(err)
 	}
 	if len(read.Chunks) != 1 || read.Chunks[0]["data"] != "hi" || !read.EOF {
@@ -126,7 +126,7 @@ func TestStartReadClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, `"closed":true`) {
+	if !strings.Contains(out.Text(), `"closed":true`) {
 		t.Errorf("close = %s", out)
 	}
 	if _, err := tool.Execute(ctx, `{"action":"read","process_id":"s1"}`); err == nil {
@@ -165,7 +165,7 @@ func TestWaitRemovesSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, `"exit_code":0`) {
+	if !strings.Contains(out.Text(), `"exit_code":0`) {
 		t.Errorf("wait = %s", out)
 	}
 

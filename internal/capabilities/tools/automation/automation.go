@@ -219,7 +219,18 @@ func (t *Tool) Definition() message.ToolDefinition {
 func (t *Tool) Metadata() tool.ToolMeta { return tool.ToolMeta{} }
 
 // Execute implements tool.Tool.
-func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
+// Execute implements tool.Tool. The tool result is a single text part;
+// the tool has no multimodal output.
+func (t *Tool) Execute(ctx context.Context, arguments string) (message.Content, error) {
+	out, err := t.execute(ctx, arguments)
+	if err != nil {
+		return message.Content{}, err
+	}
+	return message.NewTextContent(out), nil
+}
+
+// execute renders the tool's text result.
+func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 	var args struct {
 		Action string           `json:"action"`
 		Task   automations.Task `json:"task"`

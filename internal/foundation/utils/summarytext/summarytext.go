@@ -26,7 +26,7 @@ func ToolActivity(m message.Message) []string {
 			lines = append(lines,
 				"tool_call: "+part.Call.Name+" "+string(part.Call.Arguments))
 		case message.ToolResultPart:
-			lines = append(lines, "tool_result: "+part.Result.Content)
+			lines = append(lines, "tool_result: "+part.Result.Content.Text())
 		}
 	}
 	return lines

@@ -5,11 +5,12 @@ version: v1
 # foundations), assets/tools.yaml (tool containers + script runtime),
 # assets/agents.yaml, and assets/runtime.yaml; Manager.Load registers
 # each as its own embedded layer and deep-merges them in order.
-# Inference wiring (provider / infer assembly / router) lives in
-# assets/inference.yaml on purpose: the settings page writes the
-# variable parts to ~/.opencraft/config/opencraft.yaml. Configuration
-# is user-level only; workspace opencraft.yaml files are not loaded as
-# an override layer.
+# Inference wiring (providers / infer assembly / router) is generated
+# by the settings page into ~/.opencraft/config/opencraft.yaml: the
+# wire-family drivers carry no vendor facts, so the deployment is the
+# only place that can describe what a provider serves. Configuration is
+# user-level only; workspace opencraft.yaml files are not loaded as an
+# override layer.
 
 resources:
   # Credential storage: the file-backed secret store feeds the

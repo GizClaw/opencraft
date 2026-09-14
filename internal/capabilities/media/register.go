@@ -43,6 +43,14 @@ type prepareSettings struct {
 	// WorkDir is the workspace root; attachment paths under it are
 	// rendered relative to it in the flattened text.
 	WorkDir string `json:"work_dir"`
+	// VideoModels lists the router hints whose model accepts video
+	// input. A video attachment is passed through (inlined) for those
+	// turns and flattened to its path everywhere else, because a
+	// deployment without video support rejects the request rather than
+	// ignoring the part. The engine computes the list from the deployed
+	// providers; an entry whose value is the router's default target is
+	// stored as "". When the list is empty every video is flattened.
+	VideoModels []string `json:"video_models,omitempty"`
 }
 
 func (prepareFactory) Spec() resource.Spec {
@@ -72,7 +80,11 @@ func (prepareFactory) New(ctx context.Context, in resource.Input) (any, error) {
 		if len(channel) == 0 || channel[0].Role != message.RoleUser {
 			return prev, nil
 		}
-		parts, flattened := flattenNonImageMedia(channel[0].Content.Parts, settings.WorkDir)
+		parts, flattened := flattenNonImageMedia(
+			channel[0].Content.Parts,
+			settings.WorkDir,
+			videoCapable(req.Inputs["model"], settings.VideoModels),
+		)
 		parts, inlined, err := inlineLocalMedia(parts)
 		if err != nil {
 			return prev, err
@@ -172,13 +184,42 @@ func inlineLocalMedia(parts []message.Part) ([]message.Part, bool, error) {
 	return out, changed, nil
 }
 
-// flattenNonImageMedia rewrites audio/video/file parts in the
-// model-facing message into text lines carrying the stored workspace
-// path, so any driver can accept the turn. The archive keeps the
-// original typed parts (the commit hook restores req.Message), so
-// resume re-renders attachments with their real kind. Image and text
-// parts pass through untouched.
-func flattenNonImageMedia(parts []message.Part, workDir string) ([]message.Part, bool) {
+// videoCapable reports whether the turn's model accepts video input.
+// The hint is the router hint ("<deployment-id>/<model>") the turn
+// carries; an empty or unknown hint falls back to the entry the engine
+// recorded for the router's default target, which it stores as "".
+func videoCapable(hint any, models []string) bool {
+	if len(models) == 0 {
+		return false
+	}
+	name, _ := hint.(string)
+	name = strings.TrimSpace(name)
+	for _, model := range models {
+		if model == name {
+			return true
+		}
+	}
+	if name != "" {
+		return false
+	}
+	for _, model := range models {
+		if model == "" {
+			return true
+		}
+	}
+	return false
+}
+
+// flattenNonImageMedia rewrites audio/video/file parts the turn's model
+// cannot take into text lines carrying the stored workspace path, so any
+// driver can accept the turn. Video passes through when the model
+// declares video input (keepVideo); the archive keeps the original
+// typed parts (the commit hook restores req.Message), so resume
+// re-renders attachments with their real kind. Image and text parts
+// pass through untouched.
+func flattenNonImageMedia(
+	parts []message.Part, workDir string, keepVideo bool,
+) ([]message.Part, bool) {
 	out := make([]message.Part, 0, len(parts)+1)
 	changed := false
 	for _, part := range parts {
@@ -194,6 +235,10 @@ func flattenNonImageMedia(parts []message.Part, workDir string) ([]message.Part,
 				Text: "[音频文件] " + workspacePath(workDir, p.Source.URL()),
 			})
 		case message.VideoPart:
+			if keepVideo {
+				out = append(out, p)
+				continue
+			}
 			changed = true
 			out = append(out, message.TextPart{
 				Text: "[视频文件] " + workspacePath(workDir, p.Source.URL()),

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/profile"

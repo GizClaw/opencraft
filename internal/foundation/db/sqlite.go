@@ -1,6 +1,6 @@
 // Package db owns SQLite connection scaffolding shared by user-level
 // stores: one connection configured for WAL and a busy timeout.
-// It deliberately owns no tables; orchestration/migrations defines and
+// It deliberately owns no tables; internal/foundation/compat defines and
 // executes every schema on the handle.
 package db
 
@@ -26,7 +26,7 @@ type OpenOptions struct {
 	// ForeignKeys enables PRAGMA foreign_keys=ON. User-scoped
 	// databases enable it from the start; workspace session databases
 	// open without it so cleanup migrations can drop legacy parent
-	// tables, and orchestration/migrations re-enables enforcement
+	// tables, and internal/foundation/compat re-enables enforcement
 	// once the schema is clean (see SetForeignKeys).
 	ForeignKeys bool
 }

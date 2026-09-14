@@ -12,7 +12,7 @@ import (
 )
 
 func TestNewCoreWiresPluginSkillsIntoRuntime(t *testing.T) {
-	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("OPENAI_API_KEY", "test-key")
 	workDir := t.TempDir()
 	dataDir := t.TempDir()
 	configDir := t.TempDir()
@@ -28,9 +28,10 @@ func TestNewCoreWiresPluginSkillsIntoRuntime(t *testing.T) {
 	}
 	cfg := config.InferenceConfig{
 		Instances: []config.Instance{{
-			Type:      "deepseek",
+			Type:      "openai",
 			KeySource: config.KeyEnv,
 			Enabled:   true,
+			Models:    []config.Model{{Name: "test-model"}},
 		}},
 	}
 	if err := config.WriteInference(configDir, cfg); err != nil {

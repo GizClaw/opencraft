@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/GizClaw/opencraft/internal/foundation/compat"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
-	"github.com/GizClaw/opencraft/internal/orchestration/migrations"
 )
 
 func newUserStore(t *testing.T) (*db.DB, *Store) {
@@ -16,7 +16,7 @@ func newUserStore(t *testing.T) (*db.DB, *Store) {
 		t.Fatalf("open user db: %v", err)
 	}
 	t.Cleanup(func() { _ = handle.Close() })
-	if err := migrations.User(context.Background(), handle); err != nil {
+	if err := compat.User(context.Background(), handle); err != nil {
 		t.Fatalf("migrate user db: %v", err)
 	}
 	store, err := Attach(handle)

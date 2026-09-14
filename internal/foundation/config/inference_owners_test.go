@@ -12,9 +12,10 @@ func ownedTestConfig(stableIDs ...string) InferenceConfig {
 	for _, id := range stableIDs {
 		cfg.Instances = append(cfg.Instances, Instance{
 			StableID:  id,
-			Type:      "deepseek",
+			Type:      "openai",
 			KeySource: KeyEnv,
 			Enabled:   true,
+			Models:    []Model{{Name: "m-" + id}},
 		})
 	}
 	return cfg
@@ -99,11 +100,12 @@ func TestDropProviderOwnersScopedByPlugin(t *testing.T) {
 func legacyPluginInstance() Instance {
 	return Instance{
 		StableID:  "sso-haivivi",
-		Type:      "deepseek",
+		Type:      "openai",
 		Name:      "Haivivi SSO",
 		KeySource: KeyKeychain,
 		KeyValue:  "auth/sso-haivivi/token",
 		Enabled:   true,
+		Models:    []Model{{Name: "sso-model"}},
 	}
 }
 
@@ -181,11 +183,12 @@ func TestUserInstanceMatchingPluginIDIsNotAdopted(t *testing.T) {
 	if err := WriteInference(dir, InferenceConfig{
 		Instances: []Instance{{
 			StableID:  "sso-haivivi",
-			Type:      "deepseek",
+			Type:      "openai",
 			Name:      "user deepseek",
 			KeySource: KeyKeychain,
 			KeyValue:  "inference/deepseek-user-account",
 			Enabled:   true,
+			Models:    []Model{{Name: "user-model"}},
 		}},
 	}); err != nil {
 		t.Fatalf("WriteInference: %v", err)
@@ -225,9 +228,10 @@ func TestUpdateInferenceStateSerializesLoadModifyWrite(t *testing.T) {
 					}
 					cfg.Instances = append(cfg.Instances, Instance{
 						StableID:  id,
-						Type:      "deepseek",
+						Type:      "openai",
 						KeySource: KeyEnv,
 						Enabled:   true,
+						Models:    []Model{{Name: "m-" + id}},
 					})
 					owners[id] = owner
 					return cfg, owners, true, nil

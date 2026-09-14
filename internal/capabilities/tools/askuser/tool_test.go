@@ -45,7 +45,7 @@ func TestExecuteText(t *testing.T) {
 	var res struct {
 		Text string `json:"text"`
 	}
-	if err := json.Unmarshal([]byte(out), &res); err != nil || res.Text != "main.go" {
+	if err := json.Unmarshal([]byte(out.Text()), &res); err != nil || res.Text != "main.go" {
 		t.Errorf("out = %q err = %v", out, err)
 	}
 }
@@ -75,7 +75,7 @@ func TestExecuteSelectMapsChoice(t *testing.T) {
 	var res struct {
 		Choice string `json:"choice"`
 	}
-	if err := json.Unmarshal([]byte(out), &res); err != nil || res.Choice != "方案 B" {
+	if err := json.Unmarshal([]byte(out.Text()), &res); err != nil || res.Choice != "方案 B" {
 		t.Errorf("out = %q err = %v", out, err)
 	}
 }
@@ -125,7 +125,7 @@ func TestExecuteSelectMultiAndOther(t *testing.T) {
 		Choices []string `json:"choices"`
 		Other   string   `json:"other"`
 	}
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
+	if err := json.Unmarshal([]byte(out.Text()), &res); err != nil {
 		t.Fatal(err)
 	}
 	if len(res.Choices) != 2 || res.Other != "我的想法" {

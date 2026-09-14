@@ -28,6 +28,23 @@ const MaxInlineImageBytes = 10 << 20
 // per working buffer in the desktop process.
 const MaxDecodePixels = 40_000_000
 
+// Prompt-side downscale targets. A tool result is replayed in every
+// later turn's context, so an image handed to the model is bounded on
+// both axes: longest edge in pixels and encoded size in bytes. The
+// defaults match what the wire providers document (~1568 px) and the
+// part budget flowcraft applies to non-text tool output (1 MiB).
+const (
+	// DefaultPromptImageEdge is the longest-edge target in pixels.
+	DefaultPromptImageEdge = 1568
+	// DefaultPromptImageBytes is the encoded-size target.
+	DefaultPromptImageBytes = 1 << 20
+)
+
+// jpegQualities is the ladder DownscaleToJPEG walks before it scales
+// the image down again: quality first (cheap, no resolution loss),
+// then dimensions.
+var jpegQualities = []int{90, 80, 70, 60, 45}
+
 // JPEGQuality is the quality used for normalized attachment images.
 const JPEGQuality = 90
 
@@ -52,6 +69,75 @@ func NormalizeToJPEG(r io.Reader) ([]byte, error) {
 		return nil, fmt.Errorf("imageutil: encode jpeg: %w", err)
 	}
 	return out.Bytes(), nil
+}
+
+// NormalizeFileToJPEG is NormalizeToJPEG for a local path. It checks
+// DownscaleToJPEG decodes r (same formats and EXIF handling as
+// NormalizeToJPEG) and re-encodes it as a JPEG that fits both
+// maxEdge (longest side, pixels; <= 0 keeps the source size) and
+// maxBytes (encoded size; <= 0 keeps the smallest quality). Quality is
+// stepped down first and the image is scaled further only when the
+// lowest quality still does not fit, so a normal screenshot keeps its
+// resolution and a huge one still arrives. It returns the encoded
+// bytes and the dimensions that were actually encoded.
+func DownscaleToJPEG(
+	r io.Reader, maxEdge, maxBytes int,
+) (out []byte, width, height int, err error) {
+	raw, err := io.ReadAll(r)
+	if err != nil {
+		return nil, 0, 0, fmt.Errorf("imageutil: read source: %w", err)
+	}
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(raw))
+	if err != nil {
+		return nil, 0, 0, fmt.Errorf("imageutil: decode config: %w", err)
+	}
+	if cfg.Width*cfg.Height > MaxDecodePixels {
+		return nil, 0, 0, fmt.Errorf(
+			"imageutil: image is %dx%d pixels, over the %d-pixel budget",
+			cfg.Width, cfg.Height, MaxDecodePixels,
+		)
+	}
+	img, err := imaging.Decode(bytes.NewReader(raw), imaging.AutoOrientation(true))
+	if err != nil {
+		return nil, 0, 0, fmt.Errorf("imageutil: decode: %w", err)
+	}
+	img = flattenAlpha(img)
+	bounds := img.Bounds()
+	width, height = bounds.Dx(), bounds.Dy()
+	if maxEdge > 0 && (width > maxEdge || height > maxEdge) {
+		img = imaging.Fit(img, maxEdge, maxEdge, imaging.Lanczos)
+		bounds = img.Bounds()
+		width, height = bounds.Dx(), bounds.Dy()
+	}
+	for round := 0; round < 6; round++ {
+		for _, quality := range jpegQualities {
+			var buf bytes.Buffer
+			if err := imaging.Encode(
+				&buf, img, imaging.JPEG, imaging.JPEGQuality(quality),
+			); err != nil {
+				return nil, 0, 0, fmt.Errorf(
+					"imageutil: encode jpeg: %w", err,
+				)
+			}
+			out = buf.Bytes()
+			if maxBytes <= 0 || len(out) <= maxBytes {
+				return out, width, height, nil
+			}
+		}
+		// Every quality is over budget: trade resolution for size.
+		if width <= 64 && height <= 64 {
+			return out, width, height, nil
+		}
+		img = imaging.Resize(
+			img,
+			max(1, width*3/4),
+			max(1, height*3/4),
+			imaging.Lanczos,
+		)
+		bounds = img.Bounds()
+		width, height = bounds.Dx(), bounds.Dy()
+	}
+	return out, width, height, nil
 }
 
 // NormalizeFileToJPEG is NormalizeToJPEG for a local path. It checks

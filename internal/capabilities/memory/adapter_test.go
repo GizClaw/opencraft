@@ -12,7 +12,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/memory/summary"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
-	"github.com/GizClaw/opencraft/internal/orchestration/migrations"
+	"github.com/GizClaw/opencraft/internal/foundation/compat"
 )
 
 // newSQLiteTurnStore opens a throwaway state DB and wraps it in the
@@ -24,7 +24,7 @@ func newSQLiteTurnStore(t *testing.T) (*sqliteTurnStore, *state.Store) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	if err := migrations.WorkspaceSchema(context.Background(), store.Handle()); err != nil {
+	if err := compat.WorkspaceSchema(context.Background(), store.Handle()); err != nil {
 		t.Fatal(err)
 	}
 	return &sqliteTurnStore{db: store.Handle()}, store
@@ -105,7 +105,7 @@ func TestSQLiteTurnStoreRoundTripsToolParts(t *testing.T) {
 			Role: message.RoleTool,
 			Content: message.Content{Parts: []message.Part{
 				message.ToolResultPart{Result: message.ToolResult{
-					CallID: "c1", Content: "ok",
+					CallID: "c1", Content: message.NewTextContent("ok"),
 				}},
 			}},
 		},
@@ -149,7 +149,7 @@ func TestSQLiteTurnStoreSkipsEmptyText(t *testing.T) {
 		// text-indexed raw window and are skipped with a warning.
 		{Role: message.RoleTool, Content: message.Content{Parts: []message.Part{
 			message.ToolResultPart{Result: message.ToolResult{
-				CallID: "c1", Content: "ok",
+				CallID: "c1", Content: message.NewTextContent("ok"),
 			}},
 		}}},
 		message.NewTextMessage(message.RoleAssistant, "kept-2"),
@@ -200,7 +200,7 @@ func TestAssemblyPairAwareFoldOnSQLiteTurnStore(t *testing.T) {
 		}}},
 		{Role: message.RoleTool, Content: message.Content{Parts: []message.Part{
 			message.ToolResultPart{Result: message.ToolResult{
-				CallID: "c1", Content: "ok",
+				CallID: "c1", Content: message.NewTextContent("ok"),
 			}},
 		}}},
 		message.NewTextMessage(message.RoleUser, "next"),

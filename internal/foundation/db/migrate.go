@@ -12,7 +12,7 @@ import (
 )
 
 // Migration is one versioned schema step owned by the centralized
-// orchestration/migrations package. The foundation db package executes
+// internal/foundation/compat package. The foundation db package executes
 // migrations but never defines any.
 type Migration struct {
 	Version    int

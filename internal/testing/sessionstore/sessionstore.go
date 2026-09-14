@@ -9,7 +9,8 @@ import (
 	"testing"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
-	"github.com/GizClaw/opencraft/internal/orchestration/migrations"
+	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
+	"github.com/GizClaw/opencraft/internal/foundation/compat"
 )
 
 // Open opens one sessions.Store at root and runs the centralized
@@ -26,7 +27,9 @@ func Open(t *testing.T, root string, window int) (*sessions.Store, error) {
 			t.Errorf("sessionstore: close store: %v", err)
 		}
 	})
-	if err := migrations.Workspace(context.Background(), store.Database(), root); err != nil {
+	if err := compat.Workspace(
+		context.Background(), store.Database(), root, state.Importer(store.Database()),
+	); err != nil {
 		return nil, err
 	}
 	return store, nil

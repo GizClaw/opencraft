@@ -93,7 +93,7 @@ func TestBuildRuntimeAssemblesNewTools(t *testing.T) {
 	work := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("OPENAI_API_KEY", "test-key")
 
 	userDir := filepath.Join(home, ".opencraft", "config")
 	seedLocalSandboxConfig(t, userDir)
@@ -104,6 +104,7 @@ func TestBuildRuntimeAssemblesNewTools(t *testing.T) {
 			Type:      config.Providers[0].ID,
 			KeySource: config.KeyEnv,
 			Enabled:   true,
+			Models:    []config.Model{{Name: "test-model"}},
 		}},
 	}
 	if err := config.WriteInference(userDir, cfg); err != nil {
@@ -228,7 +229,7 @@ func TestBuildRuntimeWithPluginHostExposesAgentCapabilities(t *testing.T) {
 	work := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("OPENAI_API_KEY", "test-key")
 
 	userDir := filepath.Join(home, ".opencraft", "config")
 	seedLocalSandboxConfig(t, userDir)
@@ -237,6 +238,7 @@ func TestBuildRuntimeWithPluginHostExposesAgentCapabilities(t *testing.T) {
 			Type:      config.Providers[0].ID,
 			KeySource: config.KeyEnv,
 			Enabled:   true,
+			Models:    []config.Model{{Name: "test-model"}},
 		}},
 	}
 	if err := config.WriteInference(userDir, cfg); err != nil {
@@ -399,7 +401,7 @@ func TestRetiredPathRefsReportAndRepair(t *testing.T) {
 	work := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("OPENAI_API_KEY", "test-key")
 	// The report only covers references that cannot resolve, so a
 	// developer shell exporting the retired name would mask the upgrade.
 	if previous, set := os.LookupEnv("OPEN_CRAFT_WORKDIR"); set {
@@ -420,6 +422,7 @@ func TestRetiredPathRefsReportAndRepair(t *testing.T) {
 			Type:      config.Providers[0].ID,
 			KeySource: config.KeyEnv,
 			Enabled:   true,
+			Models:    []config.Model{{Name: "test-model"}},
 		}},
 	}
 	if err := config.WriteInference(userDir, cfg); err != nil {

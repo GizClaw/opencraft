@@ -1,4 +1,4 @@
-package migrations
+package compat
 
 import (
 	"context"
@@ -13,9 +13,6 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	otellog "go.opentelemetry.io/otel/log"
-
-	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
-	"github.com/GizClaw/opencraft/internal/foundation/db"
 )
 
 const (
@@ -67,47 +64,57 @@ type legacyWorkspaceTurn struct {
 }
 
 // WorkspaceData imports pre-SQLite JSON transcripts and per-session
-// state documents into an already-migrated workspace database. It is
-// idempotent: imported conversations are marked in conversation_state
-// and interrupted runs resume without duplicates.
-func WorkspaceData(ctx context.Context, root string, handle *db.DB) error {
-	st := state.Attach(handle)
+// state documents into an already-migrated workspace database, writing
+// through importer (the store that owns those rows). It carries no
+// schema_migrations row: the data it moves lives in the filesystem, so
+// each conversation records its own progress in conversation_state
+// instead, and interrupted runs resume without duplicates.
+func WorkspaceData(
+	ctx context.Context, root string, importer WorkspaceImporter,
+) error {
+	if importer == nil {
+		return fmt.Errorf("compat: workspace importer is required")
+	}
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return fmt.Errorf("migrations: read legacy sessions %s: %w", root, err)
+		return fmt.Errorf("compat: read legacy sessions %s: %w", root, err)
 	}
 	for _, entry := range entries {
 		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "s-") {
 			continue
 		}
 		id := entry.Name()
-		if err := importLegacyConversation(ctx, st, root, id); err != nil {
-			return fmt.Errorf("migrations: legacy session %s: %w", id, err)
+		if err := importLegacyConversation(ctx, importer, root, id); err != nil {
+			return fmt.Errorf("compat: legacy session %s: %w", id, err)
 		}
 	}
 	return nil
 }
 
+// importLegacyConversation reads one legacy session and hands it to the
+// importer. Reading and deciding live here; writing lives with the store.
 func importLegacyConversation(
-	ctx context.Context, st *state.Store, root, id string,
+	ctx context.Context, importer WorkspaceImporter, root, id string,
 ) error {
 	dir := filepath.Join(root, id)
 	historyDir := filepath.Join(dir, "history")
 	if _, err := os.Stat(historyDir); err != nil {
 		if os.IsNotExist(err) {
-			return markLegacyMigrated(ctx, st, id)
+			return markLegacyMigrated(ctx, importer, id)
 		}
 		return err
 	}
-	if _, err := st.GetConversationState(ctx, id, legacyMigratedKey); err == nil {
-		return nil
-	} else if err != state.ErrNotFound {
+	if _, found, err := importer.State(
+		ctx, id, legacyMigratedKey,
+	); err != nil {
 		return err
+	} else if found {
+		return nil
 	}
-	if err := st.SetConversationState(
+	if err := importer.SetState(
 		ctx, id, legacyMigratingKey, []byte("1"),
 	); err != nil {
 		return err
@@ -119,7 +126,7 @@ func importLegacyConversation(
 	}
 	usageJSON, err := json.Marshal(meta.legacyWorkspaceUsage)
 	if err != nil {
-		return fmt.Errorf("migrations: marshal legacy usage: %w", err)
+		return fmt.Errorf("compat: marshal legacy usage: %w", err)
 	}
 	createdAt := meta.CreatedAt
 	updatedAt := meta.UpdatedAt
@@ -134,7 +141,7 @@ func importLegacyConversation(
 		return err
 	}
 	sort.Strings(files)
-	conv := state.Conversation{
+	payload := WorkspaceImport{
 		ID:           id,
 		Title:        meta.Title,
 		CreatedAt:    createdAt,
@@ -144,9 +151,6 @@ func importLegacyConversation(
 		UsageJSON:    usageJSON,
 		ImportSource: meta.ImportSource,
 		ImportReady:  meta.ImportReady,
-	}
-	if err := st.EnsureConversation(ctx, conv); err != nil {
-		return err
 	}
 	for _, path := range files {
 		data, err := os.ReadFile(path)
@@ -183,57 +187,44 @@ func importLegacyConversation(
 		}
 		artifacts, err := json.Marshal(turn.Artifacts)
 		if err != nil {
-			return fmt.Errorf("migrations: marshal legacy artifacts: %w", err)
+			return fmt.Errorf("compat: marshal legacy artifacts: %w", err)
 		}
-		archiveMsgs := make([]state.ArchiveMessage, 0, len(msgs))
-		for _, m := range msgs {
-			archiveMsgs = append(archiveMsgs, state.ArchiveMessage{
-				Role:    string(m.Role),
-				Content: m.Content,
-			})
-		}
-		if err := st.CommitConversationTurn(ctx, conv, state.ArchiveTurn{
+		imported := WorkspaceImportTurn{
 			RunID:         runID,
 			At:            at,
 			RequestedAt:   requested,
 			StartedAt:     started,
 			FinishedAt:    finished,
 			ArtifactsJSON: artifacts,
-		}, archiveMsgs); err != nil {
-			return err
+			Messages:      make([]WorkspaceImportMessage, 0, len(msgs)),
 		}
+		for _, m := range msgs {
+			imported.Messages = append(imported.Messages, WorkspaceImportMessage{
+				Role:    string(m.Role),
+				Content: m.Content,
+			})
+		}
+		payload.Turns = append(payload.Turns, imported)
 	}
-	if err := importLegacyStateDocs(ctx, st, dir, id); err != nil {
-		return err
-	}
-	fresh, err := st.Conversation(ctx, id)
+	docs, err := readLegacyStateDocs(dir)
 	if err != nil {
 		return err
 	}
-	if meta.Title != "" {
-		fresh.Title = meta.Title
-	}
-	if len(usageJSON) > 0 && string(usageJSON) != "{}" {
-		fresh.UsageJSON = usageJSON
-	}
-	if meta.ImportSource != "" {
-		fresh.ImportSource = meta.ImportSource
-		fresh.ImportReady = meta.ImportReady
-	}
-	if err := st.UpsertConversation(ctx, fresh); err != nil {
+	payload.State = docs
+	if err := importer.ImportConversation(ctx, payload); err != nil {
 		return err
 	}
-	if err := markLegacyMigrated(ctx, st, id); err != nil {
+	if err := markLegacyMigrated(ctx, importer, id); err != nil {
 		return err
 	}
-	telemetry.WarnErr(ctx, "migrations: remove legacy history failed",
+	telemetry.WarnErr(ctx, "compat: remove legacy history failed",
 		os.RemoveAll(historyDir))
 	if entries, err := os.ReadDir(dir); err == nil {
 		for _, entry := range entries {
 			if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 				continue
 			}
-			telemetry.WarnErr(ctx, "migrations: remove legacy session file failed",
+			telemetry.WarnErr(ctx, "compat: remove legacy session file failed",
 				os.Remove(filepath.Join(dir, entry.Name())),
 				otellog.String("session", id))
 		}
@@ -241,8 +232,10 @@ func importLegacyConversation(
 	return nil
 }
 
-func markLegacyMigrated(ctx context.Context, st *state.Store, id string) error {
-	return st.SetConversationState(ctx, id, legacyMigratedKey, []byte("1"))
+func markLegacyMigrated(
+	ctx context.Context, importer WorkspaceImporter, id string,
+) error {
+	return importer.SetState(ctx, id, legacyMigratedKey, []byte("1"))
 }
 
 func readLegacyMeta(dir string) (legacyWorkspaceMeta, error) {
@@ -260,13 +253,15 @@ func readLegacyMeta(dir string) (legacyWorkspaceMeta, error) {
 	return meta, nil
 }
 
-func importLegacyStateDocs(
-	ctx context.Context, st *state.Store, dir, id string,
-) error {
+// readLegacyStateDocs reads the per-session state documents (plan,
+// approvals, ...) that lived next to the transcript. meta.json and
+// runs.json are metadata, not state.
+func readLegacyStateDocs(dir string) (map[string][]byte, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	out := map[string][]byte{}
 	for _, entry := range entries {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
@@ -278,13 +273,11 @@ func importLegacyStateDocs(
 		}
 		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if err := st.SetConversationState(ctx, id, name, data); err != nil {
-			return err
-		}
+		out[name] = data
 	}
-	return nil
+	return out, nil
 }
 
 // filterLegacyArchive keeps the parts the archive understands.

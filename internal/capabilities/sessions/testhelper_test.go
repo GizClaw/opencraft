@@ -3,7 +3,8 @@ package sessions
 import (
 	"context"
 
-	"github.com/GizClaw/opencraft/internal/orchestration/migrations"
+	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
+	"github.com/GizClaw/opencraft/internal/foundation/compat"
 )
 
 // newMigratedStore opens a sessions.Store exactly like the workspace
@@ -14,7 +15,7 @@ func newMigratedStore(root string, window int) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := migrations.Workspace(context.Background(), store.Database(), root); err != nil {
+	if err := compat.Workspace(context.Background(), store.Database(), root, state.Importer(store.Database())); err != nil {
 		_ = store.CloseDB()
 		return nil, err
 	}

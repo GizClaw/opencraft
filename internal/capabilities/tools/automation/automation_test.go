@@ -89,7 +89,7 @@ func TestAutomationToolList(t *testing.T) {
 		t.Fatal(err)
 	}
 	var tasks []taskView
-	if err := json.Unmarshal([]byte(out), &tasks); err != nil {
+	if err := json.Unmarshal([]byte(out.Text()), &tasks); err != nil {
 		t.Fatalf("list output is not JSON: %v\n%s", err, out)
 	}
 	if len(tasks) != 1 || tasks[0].Name != "brief" {
@@ -105,7 +105,7 @@ func TestAutomationToolCreateConfirmed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, `"id":"t-saved"`) {
+	if !strings.Contains(out.Text(), `"id":"t-saved"`) {
 		t.Fatalf("create output = %s", out)
 	}
 	if len(host.applied) != 1 || host.applied[0] != "create" {
@@ -121,7 +121,7 @@ func TestAutomationToolCreateCancelled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, `"cancelled":true`) {
+	if !strings.Contains(out.Text(), `"cancelled":true`) {
 		t.Fatalf("cancel output = %s", out)
 	}
 	if len(host.applied) != 0 {
@@ -166,7 +166,7 @@ func TestAutomationToolDeleteConfirmed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, `"deleted":true`) {
+	if !strings.Contains(out.Text(), `"deleted":true`) {
 		t.Fatalf("delete output = %s", out)
 	}
 	if len(host.applied) != 1 || host.applied[0] != "delete" {

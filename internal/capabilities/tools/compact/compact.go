@@ -136,7 +136,18 @@ func (t *Tool) Metadata() tool.ToolMeta {
 
 // Execute condenses the given conversation prefix, merging any
 // previously persisted artifact, and returns the summary.
-func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
+// Execute implements tool.Tool. The tool result is a single text part;
+// the tool has no multimodal output.
+func (t *Tool) Execute(ctx context.Context, arguments string) (message.Content, error) {
+	out, err := t.execute(ctx, arguments)
+	if err != nil {
+		return message.Content{}, err
+	}
+	return message.NewTextContent(out), nil
+}
+
+// execute renders the tool's text result.
+func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 	var args Args
 	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
 		return "", errdefs.Validationf("compact: parse arguments: %v", err)

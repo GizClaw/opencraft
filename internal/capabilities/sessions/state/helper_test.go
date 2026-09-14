@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
-	"github.com/GizClaw/opencraft/internal/orchestration/migrations"
+	"github.com/GizClaw/opencraft/internal/foundation/compat"
 )
 
 func openState(t *testing.T, path string) *state.Store {
@@ -15,7 +15,7 @@ func openState(t *testing.T, path string) *state.Store {
 		t.Fatalf("open state: %v", err)
 	}
 	t.Cleanup(func() { _ = s.Close() })
-	if err := migrations.WorkspaceSchema(context.Background(), s.Handle()); err != nil {
+	if err := compat.WorkspaceSchema(context.Background(), s.Handle()); err != nil {
 		t.Fatalf("migrate state: %v", err)
 	}
 	return s

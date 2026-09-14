@@ -11,14 +11,16 @@ export interface ConfigStatus {
   agents: number;
 }
 
+// ProviderView is one inference driver the settings page can build an
+// instance from. Opencraft keeps no vendor table: the endpoint, the API
+// surface, the wire dialect and the models are deployment data.
 export interface ProviderView {
   id: string;
   name: string;
-  default_model: string;
   env_var: string;
-  api: string;
-  azure: boolean;
   model_endpoint: boolean;
+  // Driver this entry registers (equals id today).
+  impl: string;
 }
 
 export interface ModelInstance {
@@ -32,27 +34,18 @@ export interface ModelInstance {
   endpoint: string;
   max_input_tokens?: number;
   max_output_tokens?: number;
+  /** Discovery metadata; empty status means the model is active. */
+  lifecycle?: ModelLifecycle;
+  /** Driver-specific model leaves (resolution caps, wire-model aliases,
+   * parameter matrices) as the JSON object the deployment declares. */
+  spec_json?: string;
 }
 
-// ModelTemplate is one driver built-in model normalized for the
-// settings page dropdown.
-export interface ModelTemplate {
-  name: string;
-  kind: string;
-  inputs: string[];
-  outputs: string[];
-  reasoning: string;
-  reasoning_effort_map?: Record<string, string>;
-  web_search: boolean;
-  deprecated: boolean;
-  replacement?: string;
-  max_input_tokens?: number;
-}
-
-export interface ProviderModelCatalog {
-  provider: string;
-  models: ModelTemplate[];
-  error?: string;
+export interface ModelLifecycle {
+  status?: string;
+  replacement_provider?: string;
+  replacement_name?: string;
+  notes?: string;
 }
 
 // AttachmentDTO mirrors the desktop binding's preview metadata for one
@@ -95,17 +88,58 @@ export interface ProviderInstance {
   key_keychain?: boolean;
   models: ModelInstance[];
   endpoint: string;
+  advanced: ProviderAdvanced;
   enabled: boolean;
   managed: boolean;
 }
 
+// ProviderAdvanced mirrors the config layer's advanced provider spec
+// knobs. Every field is optional: an empty value keeps the driver
+// default. Which fields a driver reads differs — see the settings page
+// section labels.
+export interface ProviderAdvanced {
+  routing?: string;
+  query?: Record<string, string>;
+  headers?: Record<string, string>;
+  organization?: string;
+  project?: string;
+  timeout?: string;
+  region?: string;
+  auth_scheme?: string;
+  auth_header?: string;
+  /** "" keeps the default envelope; "-" disables forwarding. */
+  metadata_envelope?: string;
+  http_retries?: number;
+  /** "" keeps the driver default; "true"/"false" send that value;
+   * "omit" sends nothing for endpoints that do not know the field. */
+  store?: string;
+  /** Provider body fields the driver does not model: key to raw JSON. */
+  extra_body?: Record<string, string>;
+  include_reasoning_payload?: boolean;
+  reasoning_channel?: string;
+  reasoning_summary?: string;
+  truncation?: string;
+  chat_include_usage?: boolean;
+  chat_include_obfuscation?: boolean;
+  video_input?: boolean;
+  media_base_url?: string;
+  video_poll_interval_millis?: number;
+}
+
+export interface RouterPolicy {
+  max_attempts: number;
+  fallback_on_retry_exhausted: boolean;
+}
+
 export interface InferenceRequest {
   instances: ProviderInstance[];
+  router: RouterPolicy;
 }
 
 export interface ConfigState {
   instances: ProviderInstance[];
   model: string;
+  router: RouterPolicy;
 }
 
 export interface ModelUsageStat {
@@ -220,6 +254,11 @@ export interface SessionTurn {
   run_id?: string;
   status?: string;
   error?: string;
+  // interrupt_cause / error_kind are the structured class of a failed
+  // turn (engine interrupt cause, inference error kind); the transcript
+  // renders its copy from these instead of parsing error.
+  interrupt_cause?: string;
+  error_kind?: string;
   request_id?: string;
   response_id?: string;
   messages: HistoryMessage[];
@@ -730,7 +769,8 @@ export interface UIEvent {
   data: unknown;
 }
 
-// Automation types mirror internal/desktop/automations.go DTOs.
+// Automation types mirror internal/adapters/desktop/bindings/automation.go
+// DTOs.
 
 export interface AutomationSchedule {
   type: string;

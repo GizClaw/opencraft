@@ -32,7 +32,7 @@ type Store struct {
 }
 
 // Attach binds the automation store to an existing foundation/db
-// handle that orchestration/migrations.User already migrated.
+// handle that internal/foundation/compat.User already migrated.
 func Attach(handle *db.DB) (*Store, error) {
 	if handle == nil {
 		return nil, fmt.Errorf("automations: nil database")

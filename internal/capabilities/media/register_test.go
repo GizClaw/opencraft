@@ -97,7 +97,7 @@ func TestFlattenNonImageMedia(t *testing.T) {
 		message.FilePart{URI: storedFile, Name: "notes.txt"},
 		message.AudioPart{Source: audioSource},
 		message.VideoPart{Source: videoSource},
-	}, workDir)
+	}, workDir, false)
 	if !changed || len(parts) != 4 {
 		t.Fatalf("flatten = %v parts, changed=%v", len(parts), changed)
 	}
@@ -121,12 +121,26 @@ func TestFlattenNonImageMedia(t *testing.T) {
 	}
 	parts, changed = flattenNonImageMedia([]message.Part{
 		message.AudioPart{Source: outside},
-	}, workDir)
+	}, workDir, false)
 	if !changed || len(parts) != 1 {
 		t.Fatalf("outside flatten = %v parts, changed=%v", len(parts), changed)
 	}
 	if got := parts[0].(message.TextPart).Text; got != "[音频文件] /tmp/out.mp3" {
 		t.Errorf("outside line = %q", got)
+	}
+
+	// A model that accepts video keeps the part: the driver lowers it to
+	// the wire, and flattening it would hide the attachment behind a
+	// path the model cannot open.
+	parts, changed = flattenNonImageMedia([]message.Part{
+		message.TextPart{Text: "look"},
+		message.VideoPart{Source: videoSource},
+	}, workDir, true)
+	if changed || len(parts) != 2 {
+		t.Fatalf("video passthrough = %v parts, changed=%v", len(parts), changed)
+	}
+	if _, ok := parts[1].(message.VideoPart); !ok {
+		t.Fatalf("part = %T, want the video to survive", parts[1])
 	}
 
 	// Images survive stripping.
@@ -137,8 +151,35 @@ func TestFlattenNonImageMedia(t *testing.T) {
 	parts, changed = flattenNonImageMedia([]message.Part{
 		message.TextPart{Text: "hi"},
 		message.ImagePart{Source: remote},
-	}, workDir)
+	}, workDir, false)
 	if changed || len(parts) != 2 {
 		t.Errorf("flatten = %v parts, changed=%v, want unchanged", len(parts), changed)
+	}
+}
+
+// TestVideoCapable pins the hint matching the media hook uses: an
+// explicit hint wins, an empty hint falls back to the router's default
+// target (recorded as ""), and an unknown hint never enables video.
+func TestVideoCapable(t *testing.T) {
+	models := []string{"", "kimi-1/kimi-k3"}
+	tests := []struct {
+		name string
+		hint any
+		want bool
+	}{
+		{name: "explicit hint", hint: "kimi-1/kimi-k3", want: true},
+		{name: "default target", hint: "", want: true},
+		{name: "nil hint", hint: nil, want: true},
+		{name: "other model", hint: "openai-1/gpt-5.6-sol", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := videoCapable(tt.hint, models); got != tt.want {
+				t.Fatalf("videoCapable(%v) = %v, want %v", tt.hint, got, tt.want)
+			}
+		})
+	}
+	if videoCapable("kimi-1/kimi-k3", nil) {
+		t.Fatal("no declared models means no video")
 	}
 }

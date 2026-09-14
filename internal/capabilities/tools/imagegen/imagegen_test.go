@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/inference"
+	"github.com/GizClaw/flowcraft/core/inference/model"
 	"github.com/GizClaw/flowcraft/core/inference/route"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/message/media"
@@ -46,8 +47,8 @@ func TestExecuteSavesGeneratedImage(t *testing.T) {
 						},
 					},
 				}, route.Trace{
-					Executed: inference.ModelRef{
-						ID: inference.ModelID{
+					Executed: model.ModelRef{
+						ID: model.ModelID{
 							Provider: "openai",
 							Name:     "gpt-image-2",
 						},
@@ -81,7 +82,7 @@ func TestExecuteSavesGeneratedImage(t *testing.T) {
 		Count int      `json:"count"`
 		Model string   `json:"model"`
 	}
-	if err := json.Unmarshal([]byte(out), &result); err != nil {
+	if err := json.Unmarshal([]byte(out.Text()), &result); err != nil {
 		t.Fatalf("result is not JSON: %v\n%s", err, out)
 	}
 	if result.Count != 1 || len(result.Paths) != 1 {
@@ -153,7 +154,7 @@ func TestExecuteNoRouteHint(t *testing.T) {
 			_ context.Context, _ inference.GenerateRequest,
 		) (inference.GenerateResponse, route.Trace, error) {
 			return inference.GenerateResponse{}, route.Trace{},
-				route.NewError(route.NoRoute, inference.OperationGenerate,
+				route.NewError(route.NoRoute, model.OperationGenerate,
 					errors.New("no image-capable pools"))
 		},
 	}

@@ -386,7 +386,7 @@ func TestFilesToolReadsReadonlySkillRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read_file skill reference: %v", err)
 	}
-	if !strings.Contains(got, "skill reference body") {
+	if !strings.Contains(got.Text(), "skill reference body") {
 		t.Errorf("read_file result = %q, want skill body", got)
 	}
 	// ...paths outside both the root and the readonly allowlist stay

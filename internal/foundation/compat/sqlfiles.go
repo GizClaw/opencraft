@@ -1,4 +1,4 @@
-package migrations
+package compat
 
 import (
 	"fmt"
@@ -20,7 +20,7 @@ func discoverMigrations(sqlFS fs.FS, dir string) []db.Migration {
 	pattern := dir + "/*.sql"
 	names, err := fs.Glob(sqlFS, pattern)
 	if err != nil {
-		panic(fmt.Sprintf("migrations: glob %s: %v", pattern, err))
+		panic(fmt.Sprintf("compat: glob %s: %v", pattern, err))
 	}
 
 	type entry struct {
@@ -33,17 +33,17 @@ func discoverMigrations(sqlFS fs.FS, dir string) []db.Migration {
 	for _, name := range names {
 		sql, err := fs.ReadFile(sqlFS, name)
 		if err != nil {
-			panic(fmt.Sprintf("migrations: read %s: %v", name, err))
+			panic(fmt.Sprintf("compat: read %s: %v", name, err))
 		}
 		base := path.Base(name)
 		prefix, _, _ := strings.Cut(base, "_")
 		version, err := strconv.Atoi(prefix)
 		if err != nil || version <= 0 {
-			panic(fmt.Sprintf("migrations: %s has invalid version prefix", name))
+			panic(fmt.Sprintf("compat: %s has invalid version prefix", name))
 		}
 		if prev, ok := seen[version]; ok {
 			panic(fmt.Sprintf(
-				"migrations: version %d appears in both %s and %s",
+				"compat: version %d appears in both %s and %s",
 				version, prev, name))
 		}
 		seen[version] = name

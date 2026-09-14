@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -114,7 +115,18 @@ func (t *readFileTool) Definition() message.ToolDefinition {
 
 func (t *readFileTool) Metadata() tool.ToolMeta { return tool.ToolMeta{} }
 
-func (t *readFileTool) Execute(ctx context.Context, arguments string) (string, error) {
+// Execute implements tool.Tool. The tool result is a single text part;
+// the tool has no multimodal output.
+func (t *readFileTool) Execute(ctx context.Context, arguments string) (message.Content, error) {
+	out, err := t.execute(ctx, arguments)
+	if err != nil {
+		return message.Content{}, err
+	}
+	return message.NewTextContent(out), nil
+}
+
+// execute renders the tool's text result.
+func (t *readFileTool) execute(ctx context.Context, arguments string) (string, error) {
 	var args struct {
 		FilePath string `json:"file_path"`
 		Offset   int    `json:"offset"`
@@ -135,6 +147,15 @@ func (t *readFileTool) Execute(ctx context.Context, arguments string) (string, e
 		return "", errdefs.Validationf(
 			"%s: %s exceeds the %d-byte limit; use grep or a narrower range",
 			ReadFileName, args.FilePath, maxReadFileBytes)
+	}
+	// Binary image bytes are not text: returning them as a JSON string
+	// would hand the model mojibake. Point at the tool that can show it.
+	if mediaType := http.DetectContentType(data); strings.HasPrefix(mediaType, "image/") {
+		return fmt.Sprintf(
+			"%s is an image (%s). Use view_image to look at it; read_file "+
+				"returns text only.",
+			args.FilePath, mediaType,
+		), nil
 	}
 
 	total := 0
@@ -240,7 +261,18 @@ func (t *writeFileTool) Metadata() tool.ToolMeta {
 	return tool.ToolMeta{MutatesState: true}
 }
 
-func (t *writeFileTool) Execute(ctx context.Context, arguments string) (string, error) {
+// Execute implements tool.Tool. The tool result is a single text part;
+// the tool has no multimodal output.
+func (t *writeFileTool) Execute(ctx context.Context, arguments string) (message.Content, error) {
+	out, err := t.execute(ctx, arguments)
+	if err != nil {
+		return message.Content{}, err
+	}
+	return message.NewTextContent(out), nil
+}
+
+// execute renders the tool's text result.
+func (t *writeFileTool) execute(ctx context.Context, arguments string) (string, error) {
 	var args struct {
 		FilePath string `json:"file_path"`
 		Content  string `json:"content"`
@@ -301,7 +333,18 @@ type dirEntry struct {
 	Size int64  `json:"size,omitempty"`
 }
 
-func (t *listDirTool) Execute(ctx context.Context, arguments string) (string, error) {
+// Execute implements tool.Tool. The tool result is a single text part;
+// the tool has no multimodal output.
+func (t *listDirTool) Execute(ctx context.Context, arguments string) (message.Content, error) {
+	out, err := t.execute(ctx, arguments)
+	if err != nil {
+		return message.Content{}, err
+	}
+	return message.NewTextContent(out), nil
+}
+
+// execute renders the tool's text result.
+func (t *listDirTool) execute(ctx context.Context, arguments string) (string, error) {
 	var args struct {
 		Path          string `json:"path"`
 		Recursive     bool   `json:"recursive"`
@@ -430,7 +473,18 @@ type grepMatch struct {
 	Line       string `json:"line"`
 }
 
-func (t *grepTool) Execute(ctx context.Context, arguments string) (string, error) {
+// Execute implements tool.Tool. The tool result is a single text part;
+// the tool has no multimodal output.
+func (t *grepTool) Execute(ctx context.Context, arguments string) (message.Content, error) {
+	out, err := t.execute(ctx, arguments)
+	if err != nil {
+		return message.Content{}, err
+	}
+	return message.NewTextContent(out), nil
+}
+
+// execute renders the tool's text result.
+func (t *grepTool) execute(ctx context.Context, arguments string) (string, error) {
 	var args struct {
 		Pattern         string `json:"pattern"`
 		Path            string `json:"path"`
@@ -557,7 +611,18 @@ func (t *globTool) Definition() message.ToolDefinition {
 
 func (t *globTool) Metadata() tool.ToolMeta { return tool.ToolMeta{} }
 
-func (t *globTool) Execute(ctx context.Context, arguments string) (string, error) {
+// Execute implements tool.Tool. The tool result is a single text part;
+// the tool has no multimodal output.
+func (t *globTool) Execute(ctx context.Context, arguments string) (message.Content, error) {
+	out, err := t.execute(ctx, arguments)
+	if err != nil {
+		return message.Content{}, err
+	}
+	return message.NewTextContent(out), nil
+}
+
+// execute renders the tool's text result.
+func (t *globTool) execute(ctx context.Context, arguments string) (string, error) {
 	var args struct {
 		Pattern string `json:"pattern"`
 		Path    string `json:"path"`

@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/GizClaw/flowcraft/core/inference/model"
 	"sigs.k8s.io/yaml"
 )
 
@@ -62,4 +63,34 @@ type pool struct {
 			} `json:"id"`
 		} `json:"model"`
 	} `json:"targets"`
+}
+
+// EffortMapStrings converts canonical ReasoningEffort keys to their
+// wire string form.
+func EffortMapStrings(
+	efforts map[model.ReasoningEffort]string,
+) map[string]string {
+	if len(efforts) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(efforts))
+	for effort, mode := range efforts {
+		out[string(effort)] = mode
+	}
+	return out
+}
+
+// EffortMapEfforts converts wire string form effort maps back to
+// canonical ReasoningEffort keys.
+func EffortMapEfforts(
+	raw map[string]string,
+) map[model.ReasoningEffort]string {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make(map[model.ReasoningEffort]string, len(raw))
+	for effort, mode := range raw {
+		out[model.ReasoningEffort(effort)] = mode
+	}
+	return out
 }

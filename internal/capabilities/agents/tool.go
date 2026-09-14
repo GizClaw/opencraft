@@ -90,9 +90,20 @@ func (createTool) Definition() message.ToolDefinition {
 
 func (createTool) Metadata() tool.ToolMeta { return tool.ToolMeta{} }
 
+// Execute implements tool.Tool. The tool result is a single text part;
+// the tool has no multimodal output.
 func (t createTool) Execute(
 	ctx context.Context, arguments string,
-) (string, error) {
+) (message.Content, error) {
+	out, err := t.execute(ctx, arguments)
+	if err != nil {
+		return message.Content{}, err
+	}
+	return message.NewTextContent(out), nil
+}
+
+// execute renders the tool's text result.
+func (t createTool) execute(ctx context.Context, arguments string) (string, error) {
 	var args struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
@@ -165,9 +176,20 @@ func (updateTool) Definition() message.ToolDefinition {
 
 func (updateTool) Metadata() tool.ToolMeta { return tool.ToolMeta{} }
 
+// Execute implements tool.Tool. The tool result is a single text part;
+// the tool has no multimodal output.
 func (t updateTool) Execute(
 	ctx context.Context, arguments string,
-) (string, error) {
+) (message.Content, error) {
+	out, err := t.execute(ctx, arguments)
+	if err != nil {
+		return message.Content{}, err
+	}
+	return message.NewTextContent(out), nil
+}
+
+// execute renders the tool's text result.
+func (t updateTool) execute(ctx context.Context, arguments string) (string, error) {
 	var args struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
@@ -224,9 +246,20 @@ func (removeTool) Definition() message.ToolDefinition {
 
 func (removeTool) Metadata() tool.ToolMeta { return tool.ToolMeta{} }
 
+// Execute implements tool.Tool. The tool result is a single text part;
+// the tool has no multimodal output.
 func (t removeTool) Execute(
 	ctx context.Context, arguments string,
-) (string, error) {
+) (message.Content, error) {
+	out, err := t.execute(ctx, arguments)
+	if err != nil {
+		return message.Content{}, err
+	}
+	return message.NewTextContent(out), nil
+}
+
+// execute renders the tool's text result.
+func (t removeTool) execute(ctx context.Context, arguments string) (string, error) {
 	var args struct {
 		Name string `json:"name"`
 	}

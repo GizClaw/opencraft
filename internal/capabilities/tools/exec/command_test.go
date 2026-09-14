@@ -104,7 +104,7 @@ func TestExecuteRunsShellCommand(t *testing.T) {
 		ExitCode int    `json:"exit_code"`
 		Stdout   string `json:"stdout"`
 	}
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
+	if err := json.Unmarshal([]byte(out.Text()), &res); err != nil {
 		t.Fatal(err)
 	}
 	if res.Stdout != "out" {

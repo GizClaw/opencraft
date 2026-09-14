@@ -52,7 +52,7 @@ func TestCreateToolDefinitionAndExecute(t *testing.T) {
 		t.Fatalf("Execute: %v", err)
 	}
 	var result map[string]any
-	if err := json.Unmarshal([]byte(got), &result); err != nil {
+	if err := json.Unmarshal([]byte(got.Text()), &result); err != nil {
 		t.Fatal(err)
 	}
 	if result["name"] != "researcher" || result["status"] != "registered" {
@@ -84,7 +84,7 @@ func TestRemoveToolExecute(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute remove: %v", err)
 	}
-	if !strings.Contains(got, `"status":"unregistered"`) {
+	if !strings.Contains(got.Text(), `"status":"unregistered"`) {
 		t.Errorf("remove result = %s", got)
 	}
 	if len(lc.List()) != 0 {
@@ -113,7 +113,7 @@ func TestUpdateToolDefinitionAndExecute(t *testing.T) {
 		t.Fatalf("Execute update: %v", err)
 	}
 	var result map[string]any
-	if err := json.Unmarshal([]byte(got), &result); err != nil {
+	if err := json.Unmarshal([]byte(got.Text()), &result); err != nil {
 		t.Fatal(err)
 	}
 	if result["name"] != "worker" || result["status"] != "updated" {
@@ -145,7 +145,7 @@ func TestCreateToolRequiresConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute(cancelled): %v", err)
 	}
-	if !strings.Contains(out, `"cancelled":true`) {
+	if !strings.Contains(out.Text(), `"cancelled":true`) {
 		t.Fatalf("cancelled output = %q", out)
 	}
 	if len(tool.lifecycle.List()) != 0 {

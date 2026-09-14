@@ -75,7 +75,7 @@ func TestExecuteCondensesAndPersistsArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if got := patchSummary(t, out); got != "S1" {
+	if got := patchSummary(t, out.Text()); got != "S1" {
 		t.Fatalf("summary = %q, want S1", got)
 	}
 	if calls != 1 {
@@ -88,7 +88,7 @@ func TestExecuteCondensesAndPersistsArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute again: %v", err)
 	}
-	if got := patchSummary(t, out2); got != "S1" || calls != 1 {
+	if got := patchSummary(t, out2.Text()); got != "S1" || calls != 1 {
 		t.Fatalf("reuse = %q calls=%d, want S1 calls=1", got, calls)
 	}
 }
@@ -136,7 +136,7 @@ func TestExecuteMergesNewMessagesWithArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
-	if got := patchSummary(t, out); got != "S2" {
+	if got := patchSummary(t, out.Text()); got != "S2" {
 		t.Fatalf("summary = %q, want S2", got)
 	}
 
@@ -208,7 +208,7 @@ func TestExecuteSkipsSummaryMarkedMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute reuse: %v", err)
 	}
-	if got := patchSummary(t, out); got != "S1" || calls != 1 {
+	if got := patchSummary(t, out.Text()); got != "S1" || calls != 1 {
 		t.Fatalf("reuse = %q calls=%d, want S1 calls=1", got, calls)
 	}
 
@@ -224,7 +224,7 @@ func TestExecuteSkipsSummaryMarkedMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute next: %v", err)
 	}
-	if got := patchSummary(t, out); got != "S2" || calls != 2 {
+	if got := patchSummary(t, out.Text()); got != "S2" || calls != 2 {
 		t.Fatalf("next = %q calls=%d, want S2 calls=2", got, calls)
 	}
 }
@@ -265,7 +265,7 @@ func TestExecuteRendersToolActivity(t *testing.T) {
 				Role: message.RoleTool,
 				Content: message.Content{Parts: []message.Part{
 					message.ToolResultPart{Result: message.ToolResult{
-						CallID: "c1", Content: "build ok",
+						CallID: "c1", Content: message.NewTextContent("build ok"),
 					}},
 				}},
 			},

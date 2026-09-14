@@ -354,7 +354,7 @@ func TestRequestPermissionsGrantsAndPersists(t *testing.T) {
 		Permissions []string `json:"permissions"`
 		Cancelled   bool     `json:"cancelled"`
 	}
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
+	if err := json.Unmarshal([]byte(out.Text()), &res); err != nil {
 		t.Fatal(err)
 	}
 	if !res.Granted || res.Cancelled {
@@ -398,7 +398,7 @@ func TestRequestPermissionsDenied(t *testing.T) {
 		Granted     bool     `json:"granted"`
 		Permissions []string `json:"permissions"`
 	}
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
+	if err := json.Unmarshal([]byte(out.Text()), &res); err != nil {
 		t.Fatal(err)
 	}
 	if res.Granted || len(res.Permissions) != 0 {

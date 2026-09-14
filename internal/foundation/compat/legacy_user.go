@@ -1,9 +1,10 @@
-package migrations
+package compat
 
 import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -12,11 +13,44 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/db"
 )
 
+// userLegacyVersion is the user.db version recorded for the Go
+// compatibility step below, in the same sequence as the SQL files in
+// sql/user.
+const (
+	userLegacyVersion = 6
+	userLegacyName    = "006_user_legacy_upgrade"
+)
+
 // migrateUserLegacy brings user.db rows created before the centralized
-// migration runner up to the current schema. Every step is idempotent
-// so repeated starts are safe.
+// migration runner up to the current schema, once per database. It is
+// recorded like an SQL migration (see userLegacyVersion): the steps
+// inspect the schema rather than express themselves as statements, and
+// without a recorded version every start would repeat the inspection
+// and the weekly-origin scan. It lives in Go for the same reason the
+// workspace summary cleanup does — SQL cannot express "add the column
+// only when a pre-runner build left it out".
 func migrateUserLegacy(ctx context.Context, handle *db.DB) error {
-	sqlDB := handle.SQLDB()
+	conn := handle.SQLDB()
+	var applied int
+	if err := conn.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM schema_migrations WHERE version = ?`,
+		userLegacyVersion).Scan(&applied); err != nil {
+		return fmt.Errorf("compat: check user legacy upgrade: %w", err)
+	}
+	if applied > 0 {
+		return nil
+	}
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("compat: begin user legacy upgrade: %w", err)
+	}
+	defer func() {
+		if err := tx.Rollback(); err != nil &&
+			!errors.Is(err, sql.ErrTxDone) {
+			telemetry.WarnErr(ctx,
+				"compat: rollback user legacy upgrade failed", err)
+		}
+	}()
 	for _, col := range []struct {
 		name string
 		decl string
@@ -25,25 +59,44 @@ func migrateUserLegacy(ctx context.Context, handle *db.DB) error {
 		{name: "conversation_id", decl: "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if err := ensureColumn(
-			ctx, sqlDB, "automations", col.name, col.decl,
+			ctx, tx, "automations", col.name, col.decl,
 		); err != nil {
 			return err
 		}
 	}
-	return backfillWeeklyOrigins(ctx, sqlDB)
+	if err := backfillWeeklyOrigins(ctx, tx); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name, applied_at)
+		 VALUES (?, ?, datetime('now'))`,
+		userLegacyVersion, userLegacyName); err != nil {
+		return fmt.Errorf("compat: record user legacy upgrade: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("compat: commit user legacy upgrade: %w", err)
+	}
+	return nil
+}
+
+// execQueryer is the part of database/sql shared by *sql.DB and
+// *sql.Tx, so one legacy step can run inside a transaction.
+type execQueryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
 // ensureColumn adds one column to a table created by an app version
 // whose CREATE TABLE predates the current schema.
 func ensureColumn(
-	ctx context.Context, db *sql.DB, table, column, decl string,
+	ctx context.Context, q execQueryer, table, column, decl string,
 ) error {
-	rows, err := db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
+	rows, err := q.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
 	if err != nil {
 		return fmt.Errorf("inspect %s: %w", table, err)
 	}
 	defer func() {
-		telemetry.WarnErr(ctx, "migrations: close column inspection rows failed",
+		telemetry.WarnErr(ctx, "compat: close column inspection rows failed",
 			rows.Close())
 	}()
 	for rows.Next() {
@@ -65,7 +118,7 @@ func ensureColumn(
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	if _, err := db.ExecContext(ctx,
+	if _, err := q.ExecContext(ctx,
 		`ALTER TABLE `+table+` ADD COLUMN `+column+` `+decl,
 	); err != nil {
 		return fmt.Errorf("add %s.%s: %w", table, column, err)
@@ -76,13 +129,13 @@ func ensureColumn(
 // backfillWeeklyOrigins gives pre-anchor weekly automations a phase
 // origin. Weekly tasks saved before Origin existed run forever on the
 // "origin required" error path otherwise.
-func backfillWeeklyOrigins(ctx context.Context, db *sql.DB) error {
-	rows, err := db.QueryContext(ctx, `SELECT id, schedule FROM automations`)
+func backfillWeeklyOrigins(ctx context.Context, q execQueryer) error {
+	rows, err := q.QueryContext(ctx, `SELECT id, schedule FROM automations`)
 	if err != nil {
 		return fmt.Errorf("list automations for origin backfill: %w", err)
 	}
 	defer func() {
-		telemetry.WarnErr(ctx, "migrations: close automations rows failed",
+		telemetry.WarnErr(ctx, "compat: close automations rows failed",
 			rows.Close())
 	}()
 
@@ -123,7 +176,7 @@ func backfillWeeklyOrigins(ctx context.Context, db *sql.DB) error {
 		return fmt.Errorf("list automations for origin backfill: %w", err)
 	}
 	for _, u := range updates {
-		if _, err := db.ExecContext(ctx,
+		if _, err := q.ExecContext(ctx,
 			`UPDATE automations SET schedule = ? WHERE id = ? AND schedule = ?`,
 			u.next, u.id, u.raw,
 		); err != nil {

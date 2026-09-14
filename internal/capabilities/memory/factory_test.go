@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/inference"
+	"github.com/GizClaw/flowcraft/core/inference/model"
 	"github.com/GizClaw/flowcraft/core/inference/route"
 	corememory "github.com/GizClaw/flowcraft/core/memory"
 	"github.com/GizClaw/flowcraft/core/resource"
@@ -26,8 +27,8 @@ func TestFactoryWiresRouter(t *testing.T) {
 		route.Policy{
 			Generate: []route.Pool{{
 				Tier: "default",
-				Targets: []route.Target{{Model: inference.ModelRef{
-					ID: inference.ModelID{
+				Targets: []route.Target{{Model: model.ModelRef{
+					ID: model.ModelID{
 						Provider: "deepseek",
 						Name:     "deepseek-v4-flash",
 					},

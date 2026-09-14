@@ -297,7 +297,7 @@ func TestCommitHookPersistsFullConversation(t *testing.T) {
 		Role: message.RoleTool,
 		Content: message.Content{Parts: []message.Part{
 			message.ToolResultPart{Result: message.ToolResult{
-				CallID: "c1", Content: "sunny 28C",
+				CallID: "c1", Content: message.NewTextContent("sunny 28C"),
 			}},
 		}},
 	})
@@ -336,7 +336,7 @@ func TestCommitHookPersistsFullConversation(t *testing.T) {
 	if hist[2].Role != message.RoleTool {
 		t.Errorf("third message = %+v", hist[2])
 	} else if result, ok := hist[2].Content.Parts[0].(message.ToolResultPart); !ok ||
-		result.Result.Content != "sunny 28C" {
+		result.Result.Content.Text() != "sunny 28C" {
 		t.Errorf("tool result message = %+v, want structured ToolResultPart", hist[2])
 	}
 	if hist[3].Role != message.RoleAssistant || hist[3].Content.Text() != "今天 28 度" {
@@ -526,7 +526,7 @@ func TestCommitHookExcludesCompactionSummary(t *testing.T) {
 		Role: message.RoleTool,
 		Content: message.Content{Parts: []message.Part{
 			message.ToolResultPart{Result: message.ToolResult{
-				CallID: "c1", Content: "sunny 28C",
+				CallID: "c1", Content: message.NewTextContent("sunny 28C"),
 			}},
 		}},
 	})

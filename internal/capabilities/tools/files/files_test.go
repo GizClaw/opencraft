@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/workspace"
 )
 
@@ -32,13 +33,17 @@ func writeTree(t *testing.T, ws workspace.Workspace, files map[string]string) {
 	}
 }
 
-func execute(t *testing.T, tool execTool, args string) (string, error) {
-	t.Helper()
-	return tool.Execute(context.Background(), args)
+type execTool interface {
+	Execute(context.Context, string) (message.Content, error)
 }
 
-type execTool interface {
-	Execute(context.Context, string) (string, error)
+func execute(t *testing.T, tool execTool, args string) (string, error) {
+	t.Helper()
+	out, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		return "", err
+	}
+	return out.Text(), nil
 }
 
 func TestReadFileRange(t *testing.T) {
@@ -54,6 +59,25 @@ func TestReadFileRange(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("read_file result missing %s: %s", want, got)
 		}
+	}
+}
+
+// TestReadFilePointsImagesAtViewImage: binary image bytes are not text,
+// so read_file answers with a pointer to view_image instead of handing
+// the model a mojibake string.
+func TestReadFilePointsImagesAtViewImage(t *testing.T) {
+	tool, _ := newTestTool(t)
+	png := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13}
+	writeTree(t, tool.ws, map[string]string{})
+	if err := tool.ws.Write(context.Background(), "shot.png", png); err != nil {
+		t.Fatalf("write image: %v", err)
+	}
+	got, err := execute(t, tool.read(), `{"file_path":"shot.png"}`)
+	if err != nil {
+		t.Fatalf("read_file: %v", err)
+	}
+	if !strings.Contains(got, "view_image") {
+		t.Fatalf("read_file result = %q, want a view_image pointer", got)
 	}
 }
 

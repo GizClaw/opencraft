@@ -23,7 +23,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/GizClaw/flowcraft/core/inference"
+	"github.com/GizClaw/flowcraft/core/inference/model"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 )
 
@@ -54,13 +54,22 @@ type Capability struct {
 // it is independent of the plugin id, so one plugin can submit several
 // profiles. Ownership is recorded separately by the host.
 type InferenceProfile struct {
-	ID       string         `json:"id"`
-	Type     string         `json:"type"`
-	Name     string         `json:"name"`
-	API      string         `json:"api"`
-	Endpoint string         `json:"endpoint"`
-	Models   []ProfileModel `json:"models"`
-	KeyRef   string         `json:"key_ref"`
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Name     string `json:"name"`
+	API      string `json:"api"`
+	Endpoint string `json:"endpoint"`
+	// Driver names the flowcraft driver impl (openai, anthropic,
+	// bytedance, minimax) for a provider that is not one of OpenCraft's
+	// built-in presets. Setting it lets a plugin introduce a new vendor
+	// instead of borrowing an existing preset id; Type then only names
+	// the deployment.
+	Driver string `json:"driver,omitempty"`
+	// Models declares every model the endpoint serves: flowcraft's
+	// drivers ship no built-in line-up, so a profile is the whole
+	// declaration.
+	Models []ProfileModel `json:"models"`
+	KeyRef string         `json:"key_ref"`
 	// ProviderSpec carries provider-specific spec options (for example
 	// openai's chat_stream_options) as an opaque bag. The host writes
 	// them into the provider spec; keys the host manages itself are
@@ -79,11 +88,11 @@ type ProfileModel struct {
 	Kind string `json:"kind,omitempty"`
 	// Capabilities declares input/output content kinds, reasoning
 	// control, hosted web search, and other canonical capability bits.
-	Capabilities inference.ModelCapabilities `json:"capabilities,omitempty"`
-	Endpoint     string                      `json:"endpoint,omitempty"`
+	Capabilities model.ModelCapabilities `json:"capabilities,omitempty"`
+	Endpoint     string                  `json:"endpoint,omitempty"`
 	// Limits declares numeric capacity limits (input/output tokens).
 	// Nil fields let the driver catalog supply built-in model values.
-	Limits inference.ModelLimits `json:"limits,omitempty"`
+	Limits model.ModelLimits `json:"limits,omitempty"`
 }
 
 // InferenceHandler is the host-side write path for inference profiles.

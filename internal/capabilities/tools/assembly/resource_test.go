@@ -1,6 +1,7 @@
 package assembly
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/message/media"
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/tool"
 
@@ -46,12 +48,70 @@ func newAssembly(t testing.TB, settings string, src tool.Source) *tool.Assembly 
 }
 
 func probeTool(content string) tool.Tool {
-	return tool.FuncTool(
+	return tool.TextTool(
 		message.ToolDefinition{Name: "probe"},
 		func(_ context.Context, _ string) (string, error) {
 			return content, nil
 		},
 	)
+}
+
+// imageProbeTool returns one image part of the requested size, so tests
+// can exercise the non-text part budget without a real image decoder.
+func imageProbeTool(t *testing.T, size int) tool.Tool {
+	t.Helper()
+	source, err := media.NewImageBytes(bytes.Repeat([]byte{7}, size), "image/png")
+	if err != nil {
+		t.Fatalf("image source: %v", err)
+	}
+	return tool.FuncTool(
+		message.ToolDefinition{Name: "probe"},
+		func(_ context.Context, _ string) (message.Content, error) {
+			return message.Content{Parts: []message.Part{
+				message.TextPart{Text: "view_image: big.png"},
+				message.ImagePart{Source: source},
+			}}, nil
+		},
+	)
+}
+
+// TestAssemblyPartBudgetBoundsImages pins the non-text budget: an
+// oversized image is dropped with the marker instead of riding every
+// later turn's context, and a budget large enough keeps it.
+func TestAssemblyPartBudgetBoundsImages(t *testing.T) {
+	settings := `{
+		"middlewares": {
+			"result_limit": {"max_chars": 8000, "part_budget_bytes": 1024}
+		}
+	}`
+	asm := newAssembly(t, settings, stubSource{t: imageProbeTool(t, 4096)})
+	res := runProbe(asm)
+	text := res.Content.Text()
+	if !strings.Contains(text, "result truncated") {
+		t.Fatalf("oversized image must be reported as truncated: %q", text)
+	}
+	for _, part := range res.Content.Parts {
+		if _, ok := part.(message.ImagePart); ok {
+			t.Fatal("oversized image survived the part budget")
+		}
+	}
+
+	roomy := `{
+		"middlewares": {
+			"result_limit": {"max_chars": 8000, "part_budget_bytes": 65536}
+		}
+	}`
+	asm = newAssembly(t, roomy, stubSource{t: imageProbeTool(t, 4096)})
+	res = runProbe(asm)
+	var carried bool
+	for _, part := range res.Content.Parts {
+		if _, ok := part.(message.ImagePart); ok {
+			carried = true
+		}
+	}
+	if !carried {
+		t.Fatalf("image within budget must survive: %q", res.Content.Text())
+	}
 }
 
 func runProbe(asm *tool.Assembly) message.ToolResult {
@@ -95,14 +155,15 @@ func TestAssemblyWiresResultLimitRedactAudit(t *testing.T) {
 	})
 
 	res := runProbe(asm)
-	if len([]rune(res.Content)) > 300 {
-		t.Fatalf("result has %d runes, want <= 300", len([]rune(res.Content)))
+	text := res.Content.Text()
+	if len([]rune(text)) > 300 {
+		t.Fatalf("result has %d runes, want <= 300", len([]rune(text)))
 	}
-	if !strings.Contains(res.Content, "result truncated") {
-		t.Fatalf("limiter marker missing: %q", res.Content)
+	if !strings.Contains(text, "result truncated") {
+		t.Fatalf("limiter marker missing: %q", text)
 	}
-	if strings.Contains(res.Content, testSecret) {
-		t.Fatalf("model-facing result leaked secret: %q", res.Content)
+	if strings.Contains(text, testSecret) {
+		t.Fatalf("model-facing result leaked secret: %q", text)
 	}
 
 	entry := readAudit(t, auditDir)
@@ -139,8 +200,9 @@ func TestAssemblyAuditRedactsEvenWhenRedactDisabled(t *testing.T) {
 	})
 
 	res := runProbe(asm)
-	if !strings.Contains(res.Content, testSecret) {
-		t.Fatalf("redact disabled: model should see the secret, got %q", res.Content)
+	text := res.Content.Text()
+	if !strings.Contains(text, testSecret) {
+		t.Fatalf("redact disabled: model should see the secret, got %q", text)
 	}
 	entry := readAudit(t, auditDir)
 	if strings.Contains(entry.Result, testSecret) {
@@ -167,8 +229,9 @@ func TestAssemblyRedactsHyphenatedProviderKeys(t *testing.T) {
 	asm := newAssembly(t, settings, stubSource{t: probeTool(content)})
 
 	res := runProbe(asm)
-	if strings.Contains(res.Content, "sk-proj-") || strings.Contains(res.Content, "sk-ant-") {
-		t.Fatalf("model-facing result leaked provider key: %q", res.Content)
+	text := res.Content.Text()
+	if strings.Contains(text, "sk-proj-") || strings.Contains(text, "sk-ant-") {
+		t.Fatalf("model-facing result leaked provider key: %q", text)
 	}
 	entry := readAudit(t, auditDir)
 	if strings.Contains(entry.Result, "sk-proj-") || strings.Contains(entry.Result, "sk-ant-") {
@@ -184,8 +247,9 @@ func TestAssemblyResultLimitZeroDisabled(t *testing.T) {
 	}`
 	content := strings.Repeat("x", 5000)
 	asm := newAssembly(t, settings, stubSource{t: probeTool(content)})
-	if res := runProbe(asm); res.Content != content {
-		t.Fatalf("zero limit must pass through, got %d runes", len([]rune(res.Content)))
+	if res := runProbe(asm); res.Content.Text() != content {
+		t.Fatalf("zero limit must pass through, got %d runes",
+			len([]rune(res.Content.Text())))
 	}
 }
 
@@ -214,14 +278,15 @@ func TestAssemblyTruncatePersistsRedactedContent(t *testing.T) {
 	})
 
 	res := runProbe(asm)
-	if len([]rune(res.Content)) > 200 {
-		t.Fatalf("truncated result = %d runes, want <= 200", len([]rune(res.Content)))
+	text := res.Content.Text()
+	if len([]rune(text)) > 200 {
+		t.Fatalf("truncated result = %d runes, want <= 200", len([]rune(text)))
 	}
-	if strings.Contains(res.Content, testSecret) {
-		t.Fatalf("truncated result leaked secret: %q", res.Content)
+	if strings.Contains(text, testSecret) {
+		t.Fatalf("truncated result leaked secret: %q", text)
 	}
-	if !strings.Contains(res.Content, "truncated; full output:") {
-		t.Fatalf("truncate marker missing: %q", res.Content)
+	if !strings.Contains(text, "truncated; full output:") {
+		t.Fatalf("truncate marker missing: %q", text)
 	}
 	raw, err := os.ReadFile(filepath.Join(cacheDir, "call-1.output"))
 	if err != nil {

@@ -16,10 +16,11 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/tool"
+	"golang.org/x/net/http/httpproxy"
+
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/extract"
-	"golang.org/x/net/http/httpproxy"
 )
 
 // Name is the canonical web_fetch tool name.
@@ -94,7 +95,18 @@ func (t *Tool) Definition() message.ToolDefinition {
 func (t *Tool) Metadata() tool.ToolMeta { return tool.ToolMeta{} }
 
 // Execute implements tool.Tool.
-func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
+// Execute implements tool.Tool. The tool result is a single text part;
+// the tool has no multimodal output.
+func (t *Tool) Execute(ctx context.Context, arguments string) (message.Content, error) {
+	out, err := t.execute(ctx, arguments)
+	if err != nil {
+		return message.Content{}, err
+	}
+	return message.NewTextContent(out), nil
+}
+
+// execute renders the tool's text result.
+func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 	var args struct {
 		URL       string `json:"url"`
 		MaxLength int    `json:"max_length"`

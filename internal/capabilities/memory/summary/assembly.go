@@ -16,8 +16,9 @@ import (
 )
 
 // TurnStore is the storage surface the summary assembly needs. Messages use
-// the canonical sdk/message.Message type. Implement it with internal/state
-// (SQLite) or a test double.
+// the canonical flowcraft message.Message type. Implement it with the
+// sessions state store (internal/capabilities/sessions/state, SQLite) or a
+// test double.
 //
 // Index-space contract: the store's conversation messages are all
 // text-bearing (empty text is skipped at append), so every stored message

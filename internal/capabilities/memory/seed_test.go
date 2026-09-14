@@ -22,7 +22,7 @@ func TestSeedConversationRendersToolActivityAndSkipsSystem(t *testing.T) {
 			Content: message.Content{Parts: []message.Part{
 				message.ToolResultPart{Result: message.ToolResult{
 					CallID:  "call-1",
-					Content: "build output",
+					Content: message.NewTextContent("build output"),
 				}},
 			}},
 		},

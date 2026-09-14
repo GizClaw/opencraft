@@ -59,7 +59,7 @@ func TestUpdatePlanReplacesSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update_plan: %v", err)
 	}
-	if out != "Plan updated" {
+	if out.Text() != "Plan updated" {
 		t.Errorf("result = %q, want %q", out, "Plan updated")
 	}
 	latest, ok := store.Latest("assistant", "s-1")

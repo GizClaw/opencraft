@@ -10,7 +10,7 @@ import (
 // abortedToolResult is the short, provider-valid marker inserted for an
 // assistant tool_call that has no result in the retained window,
 // mirroring codex-rs' ensure_call_outputs_present.
-const abortedToolResult = "aborted"
+var abortedToolResult = message.NewTextContent("aborted")
 
 // rawContext carries one stored conversation message as a real
 // message.Message, plus the pairing metadata worldstate needs to keep
@@ -86,7 +86,7 @@ func rawContextFor(item memory.ContextItem) rawContext {
 // short marker so the model sees the tool did not produce usable
 // output without carrying a giant partial payload.
 func sanitizeToolResult(r message.ToolResult) message.ToolResult {
-	if r.IsError && strings.TrimSpace(r.Content) == "" {
+	if r.IsError && strings.TrimSpace(r.Content.Text()) == "" {
 		r.Content = abortedToolResult
 	}
 	return r

@@ -88,9 +88,20 @@ func (searchTool) Definition() message.ToolDefinition {
 
 func (searchTool) Metadata() tool.ToolMeta { return tool.ToolMeta{} }
 
+// Execute implements tool.Tool. The tool result is a single text part;
+// the tool has no multimodal output.
 func (t searchTool) Execute(
 	_ context.Context, arguments string,
-) (string, error) {
+) (message.Content, error) {
+	out, err := t.execute(arguments)
+	if err != nil {
+		return message.Content{}, err
+	}
+	return message.NewTextContent(out), nil
+}
+
+// execute renders the tool's text result.
+func (t searchTool) execute(arguments string) (string, error) {
 	var args struct {
 		Query string `json:"query"`
 		Limit int    `json:"limit"`
@@ -157,9 +168,20 @@ func (readTool) Definition() message.ToolDefinition {
 
 func (readTool) Metadata() tool.ToolMeta { return tool.ToolMeta{} }
 
+// Execute implements tool.Tool. The tool result is a single text part;
+// the tool has no multimodal output.
 func (t readTool) Execute(
 	_ context.Context, arguments string,
-) (string, error) {
+) (message.Content, error) {
+	out, err := t.execute(arguments)
+	if err != nil {
+		return message.Content{}, err
+	}
+	return message.NewTextContent(out), nil
+}
+
+// execute renders the tool's text result.
+func (t readTool) execute(arguments string) (string, error) {
 	var args struct {
 		Name string `json:"name"`
 	}
@@ -197,9 +219,20 @@ func (installTool) Metadata() tool.ToolMeta {
 	return tool.ToolMeta{MutatesState: true}
 }
 
+// Execute implements tool.Tool. The tool result is a single text part;
+// the tool has no multimodal output.
 func (t installTool) Execute(
 	ctx context.Context, arguments string,
-) (string, error) {
+) (message.Content, error) {
+	out, err := t.execute(ctx, arguments)
+	if err != nil {
+		return message.Content{}, err
+	}
+	return message.NewTextContent(out), nil
+}
+
+// execute renders the tool's text result.
+func (t installTool) execute(ctx context.Context, arguments string) (string, error) {
 	var args struct {
 		Repo  string `json:"repo"`
 		Scope string `json:"scope"`
@@ -265,9 +298,20 @@ func (createTool) Metadata() tool.ToolMeta {
 	return tool.ToolMeta{MutatesState: true}
 }
 
+// Execute implements tool.Tool. The tool result is a single text part;
+// the tool has no multimodal output.
 func (t createTool) Execute(
 	ctx context.Context, arguments string,
-) (string, error) {
+) (message.Content, error) {
+	out, err := t.execute(ctx, arguments)
+	if err != nil {
+		return message.Content{}, err
+	}
+	return message.NewTextContent(out), nil
+}
+
+// execute renders the tool's text result.
+func (t createTool) execute(ctx context.Context, arguments string) (string, error) {
 	var args struct {
 		Name        string            `json:"name"`
 		Description string            `json:"description"`
@@ -344,9 +388,20 @@ func (modifyTool) Metadata() tool.ToolMeta {
 	return tool.ToolMeta{MutatesState: true}
 }
 
+// Execute implements tool.Tool. The tool result is a single text part;
+// the tool has no multimodal output.
 func (t modifyTool) Execute(
 	ctx context.Context, arguments string,
-) (string, error) {
+) (message.Content, error) {
+	out, err := t.execute(ctx, arguments)
+	if err != nil {
+		return message.Content{}, err
+	}
+	return message.NewTextContent(out), nil
+}
+
+// execute renders the tool's text result.
+func (t modifyTool) execute(ctx context.Context, arguments string) (string, error) {
 	var args struct {
 		Name        string            `json:"name"`
 		Description string            `json:"description"`

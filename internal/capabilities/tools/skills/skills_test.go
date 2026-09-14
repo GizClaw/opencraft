@@ -67,7 +67,7 @@ func TestSkillSearchTool(t *testing.T) {
 		Scope       string  `json:"scope"`
 		Score       float64 `json:"score"`
 	}
-	if err := json.Unmarshal([]byte(out), &hits); err != nil {
+	if err := json.Unmarshal([]byte(out.Text()), &hits); err != nil {
 		t.Fatalf("search output %q: %v", out, err)
 	}
 	if len(hits) == 0 || hits[0].Name != "review" {
@@ -85,7 +85,7 @@ func TestSkillSearchTool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := json.Unmarshal([]byte(out), &hits); err != nil {
+	if err := json.Unmarshal([]byte(out.Text()), &hits); err != nil {
 		t.Fatal(err)
 	}
 	if len(hits) != 1 {
@@ -106,7 +106,7 @@ func TestSkillCreateModifyTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "qa") {
+	if !strings.Contains(out.Text(), "qa") {
 		t.Fatalf("create output = %q", out)
 	}
 	meta, body, err := svc.ReadFull("qa")
@@ -132,7 +132,7 @@ func TestSkillCreateModifyTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "qa") {
+	if !strings.Contains(out.Text(), "qa") {
 		t.Fatalf("modify output = %q", out)
 	}
 	meta, body, err = svc.ReadFull("qa")
@@ -152,7 +152,7 @@ func TestSkillCreateModifyTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "SKILL.md") {
+	if !strings.Contains(out.Text(), "SKILL.md") {
 		t.Fatalf("patch output = %q", out)
 	}
 	_, body, err = svc.ReadFull("qa")
@@ -189,7 +189,7 @@ func TestSkillCreateRequiresConfirmation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute(cancelled): %v", err)
 	}
-	if !strings.Contains(out, `"cancelled":true`) {
+	if !strings.Contains(out.Text(), `"cancelled":true`) {
 		t.Fatalf("cancelled output = %q", out)
 	}
 	if _, _, err := svc.ReadFull("sneaky"); err == nil {
@@ -203,7 +203,7 @@ func TestSkillReadTool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, "Full instructions for plan") {
+	if !strings.Contains(out.Text(), "Full instructions for plan") {
 		t.Fatalf("skill_read = %q, want full body", out)
 	}
 	if _, err := tool.Execute(context.Background(), `{"name": "missing"}`); err == nil {

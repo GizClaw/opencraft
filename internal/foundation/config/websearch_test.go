@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/GizClaw/flowcraft/core/inference"
+	"github.com/GizClaw/flowcraft/core/inference/model"
 )
 
 // webSearchInstance builds one enabled instance whose models all
@@ -27,7 +27,7 @@ func webSearchInstance(
 		}
 		in.Models = append(in.Models, Model{
 			Name: name,
-			Capabilities: inference.ModelCapabilities{
+			Capabilities: model.ModelCapabilities{
 				HostedWebSearch: on,
 			},
 		})
@@ -37,14 +37,14 @@ func webSearchInstance(
 
 func TestWebSearchExtensionsDeepSeekResponses(t *testing.T) {
 	cfg := InferenceConfig{Instances: []Instance{
-		webSearchInstance("deepseek", "inst-aaa", "responses", true),
+		webSearchInstance("openai", "inst-aaa", "responses", true),
 	}}
 	out := cfg.WebSearchExtensions()
 	if len(out) != 1 {
 		t.Fatalf("extensions = %+v, want one", out)
 	}
 	got := out[0]
-	if got.Provider != "deepseek-inst-aaa" ||
+	if got.Provider != "openai-inst-aaa" ||
 		got.ID != "generate_options" {
 		t.Fatalf("entry = %+v", got)
 	}
@@ -73,7 +73,7 @@ func TestWebSearchExtensionsSkipsMixedGenerateModels(t *testing.T) {
 	// enablement, so the deployment is skipped wholesale rather than
 	// breaking the non-searchable model at compile time.
 	cfg := InferenceConfig{Instances: []Instance{
-		webSearchInstance("deepseek", "inst-aaa", "responses", true, false),
+		webSearchInstance("openai", "inst-aaa", "responses", true, false),
 	}}
 	if out := cfg.WebSearchExtensions(); len(out) != 0 {
 		t.Fatalf("mixed instance emitted extensions: %+v", out)
@@ -112,7 +112,7 @@ func TestWebSearchExtensionsBytedanceEmptyKnobs(t *testing.T) {
 }
 
 func TestWebSearchExtensionsSkipsDisabledAndUnsupported(t *testing.T) {
-	disabled := webSearchInstance("deepseek", "inst-aaa", "responses", true)
+	disabled := webSearchInstance("openai", "inst-aaa", "responses", true)
 	disabled.Enabled = false
 	anthropic := webSearchInstance("anthropic", "inst-aaa", "", true)
 	cfg := InferenceConfig{Instances: []Instance{disabled, anthropic}}
@@ -123,25 +123,25 @@ func TestWebSearchExtensionsSkipsDisabledAndUnsupported(t *testing.T) {
 
 func TestWebSearchExtensionsAzure(t *testing.T) {
 	cfg := InferenceConfig{Instances: []Instance{
-		webSearchInstance("azure", "inst-aaa", "", true),
+		webSearchInstance("openai", "inst-aaa", "", true),
 	}}
 	out := cfg.WebSearchExtensions()
-	if len(out) != 1 || out[0].Provider != "azure-inst-aaa" {
+	if len(out) != 1 || out[0].Provider != "openai-inst-aaa" {
 		t.Fatalf("extensions = %+v, want azure-inst-aaa", out)
 	}
 }
 
 func TestWebSearchExtensionsMultipleInstancesSameType(t *testing.T) {
 	cfg := InferenceConfig{Instances: []Instance{
-		webSearchInstance("deepseek", "inst-a", "responses", true),
-		webSearchInstance("deepseek", "inst-b", "responses", true),
+		webSearchInstance("openai", "inst-a", "responses", true),
+		webSearchInstance("openai", "inst-b", "responses", true),
 	}}
 	out := cfg.WebSearchExtensions()
 	if len(out) != 2 {
 		t.Fatalf("extensions = %+v, want two", out)
 	}
-	if out[0].Provider != "deepseek-inst-a" ||
-		out[1].Provider != "deepseek-inst-b" {
+	if out[0].Provider != "openai-inst-a" ||
+		out[1].Provider != "openai-inst-b" {
 		t.Fatalf("extensions = %+v, want distinct deployment ids", out)
 	}
 }
@@ -151,7 +151,7 @@ func TestWebSearchExtensionsDefaultsToResponsesWhenApiEmpty(t *testing.T) {
 	// writer always emits it, so an empty API field on an in-memory
 	// instance must not suppress the extension.
 	cfg := InferenceConfig{Instances: []Instance{
-		webSearchInstance("deepseek", "inst-aaa", "", true),
+		webSearchInstance("openai", "inst-aaa", "", true),
 	}}
 	if out := cfg.WebSearchExtensions(); len(out) != 1 {
 		t.Fatalf("extensions = %+v, want one", out)
@@ -160,10 +160,10 @@ func TestWebSearchExtensionsDefaultsToResponsesWhenApiEmpty(t *testing.T) {
 
 func TestWebSearchExtensionsLegacyDeploymentID(t *testing.T) {
 	cfg := InferenceConfig{Instances: []Instance{
-		webSearchInstance("deepseek", "", "responses", true),
+		webSearchInstance("openai", "", "responses", true),
 	}}
 	out := cfg.WebSearchExtensions()
-	if len(out) != 1 || out[0].Provider != "deepseek-1" {
+	if len(out) != 1 || out[0].Provider != "openai-1" {
 		t.Fatalf("extensions = %+v, want deepseek-1", out)
 	}
 }
@@ -172,7 +172,7 @@ func TestWebSearchExtensionsSkipsLegacyIdWhenDisabledPresent(t *testing.T) {
 	// A disabled instance reorders LoadInference output, so a
 	// position-derived deployment id cannot be trusted; emitting it
 	// would reference a provider the runtime never registered.
-	legacy := webSearchInstance("deepseek", "", "responses", true)
+	legacy := webSearchInstance("openai", "", "responses", true)
 	disabled := webSearchInstance("openai", "", "responses", true)
 	disabled.Enabled = false
 	cfg := InferenceConfig{Instances: []Instance{legacy, disabled}}

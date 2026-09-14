@@ -51,7 +51,7 @@ func TestToolActivityRendersCallsAndResults(t *testing.T) {
 		Role: message.RoleTool,
 		Content: message.Content{Parts: []message.Part{
 			message.ToolResultPart{Result: message.ToolResult{
-				CallID: "c1", Content: "ok",
+				CallID: "c1", Content: message.NewTextContent("ok"),
 			}},
 		}},
 	}

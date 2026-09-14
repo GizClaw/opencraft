@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/inference"
+	"github.com/GizClaw/flowcraft/core/inference/model"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
@@ -19,9 +20,14 @@ import (
 // web_search extension emitted by config.WebSearchExtensions.
 type webSearchCase struct {
 	name   string
+	typ    string // driver impl the deployment declares
 	envVar string
 	model  config.Model
 	api    string
+	// endpoint + routing describe an Azure deployment endpoint, which
+	// is deployment data now that opencraft has no vendor table.
+	endpoint string
+	routing  string
 }
 
 // webSearchDrivers covers every catalog provider whose driver exposes
@@ -32,36 +38,42 @@ func webSearchDrivers() []webSearchCase {
 	hosted := func(name string) config.Model {
 		return config.Model{
 			Name: name,
-			Capabilities: inference.ModelCapabilities{
+			Capabilities: model.ModelCapabilities{
 				HostedWebSearch: true,
 			},
 		}
 	}
 	return []webSearchCase{
 		{
-			name:   "deepseek",
-			envVar: "DEEPSEEK_API_KEY",
+			name:   "openai-wire-deepseek",
+			typ:    "openai",
+			envVar: "OPENAI_API_KEY",
 			api:    "responses",
 			model:  hosted("deepseek-v4-flash"),
 		},
 		{
 			name:   "openai",
+			typ:    "openai",
 			envVar: "OPENAI_API_KEY",
 			api:    "responses",
 			model:  hosted("gpt-5.6-sol"),
 		},
 		{
 			name:   "bytedance",
+			typ:    "bytedance",
 			envVar: "ARK_API_KEY",
 			model:  hosted("doubao-seed-2-1-pro"),
 		},
 		{
-			name:   "azure",
-			envVar: "AZURE_OPENAI_API_KEY",
+			name:     "azure-deployment",
+			typ:      "openai",
+			endpoint: "https://oc-test.openai.azure.com",
+			routing:  "azure_deployment",
+			envVar:   "OPENAI_API_KEY",
 			model: config.Model{
 				Name: "gpt-5.6-sol-deploy",
 				Kind: "generate",
-				Capabilities: inference.ModelCapabilities{
+				Capabilities: model.ModelCapabilities{
 					HostedWebSearch: true,
 				},
 			},
@@ -151,8 +163,8 @@ func explainWebSearch(
 		t.Fatalf("decode board bag: %v", err)
 	}
 
-	ref := inference.ModelRef{
-		ID: inference.ModelID{
+	ref := model.ModelRef{
+		ID: model.ModelID{
 			Provider: deploymentID,
 			Name:     modelName,
 		},
@@ -202,21 +214,22 @@ func TestHostedWebSearchBoardBagReachesEveryDriverCompiler(t *testing.T) {
 			t.Setenv(tc.envVar, "test-key")
 			inst := config.Instance{
 				StableID:  "inst-aaa",
-				Type:      tc.name,
+				Type:      tc.typ,
 				API:       tc.api,
+				Endpoint:  tc.endpoint,
 				KeySource: config.KeyEnv,
 				Enabled:   true,
 				Models:    []config.Model{tc.model},
 			}
-			if tc.name == "azure" {
-				inst.Endpoint = "https://oc-test.openai.azure.com"
+			if tc.routing != "" {
+				inst.Advanced = config.InstanceAdvanced{Routing: tc.routing}
 			}
 			_, assembly, cfg := buildWebSearchRuntime(t, inst)
 			entries := cfg.WebSearchExtensions()
 			if len(entries) != 1 {
 				t.Fatalf("web search entries = %+v, want one", entries)
 			}
-			deploymentID := tc.name + "-inst-aaa"
+			deploymentID := tc.typ + "-inst-aaa"
 			if entries[0].Provider != deploymentID {
 				t.Fatalf("entry provider = %q, want %q", entries[0].Provider, deploymentID)
 			}
@@ -232,20 +245,20 @@ func TestHostedWebSearchBoardBagReachesEveryDriverCompiler(t *testing.T) {
 // for a deployment whose selected model does not declare hosted web
 // search fails the compile instead of degrading silently.
 func TestHostedWebSearchRejectsUnsupportedModel(t *testing.T) {
-	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("OPENAI_API_KEY", "test-key")
 	// A catalog model may gain hosted web search in a driver upgrade, so
 	// the "unsupported" case is pinned with a declared model that never
 	// carries the capability.
 	plain := config.Model{
-		Name: "deepseek-custom",
-		Capabilities: inference.ModelCapabilities{
+		Name: "openai-custom",
+		Capabilities: model.ModelCapabilities{
 			Inputs:  []message.PartKind{message.PartText},
 			Outputs: []message.PartKind{message.PartText},
 		},
 	}
 	inst := config.Instance{
 		StableID:  "inst-aaa",
-		Type:      "deepseek",
+		Type:      "openai",
 		API:       "responses",
 		KeySource: config.KeyEnv,
 		Enabled:   true,
@@ -260,7 +273,7 @@ func TestHostedWebSearchRejectsUnsupportedModel(t *testing.T) {
 	// deployment while the selected model lacks the capability — must
 	// fail the compile with the driver's rejection.
 	rawEntry, err := json.Marshal([]config.HostedWebSearchExtension{{
-		Provider: "deepseek-inst-aaa",
+		Provider: "openai-inst-aaa",
 		ID:       "generate_options",
 		Fields: map[string]any{
 			"web_search": map[string]any{
@@ -280,10 +293,10 @@ func TestHostedWebSearchRejectsUnsupportedModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ref := inference.ModelRef{
-		ID: inference.ModelID{
-			Provider: "deepseek-inst-aaa",
-			Name:     "deepseek-custom",
+	ref := model.ModelRef{
+		ID: model.ModelID{
+			Provider: "openai-inst-aaa",
+			Name:     "openai-custom",
 		},
 		Profile: "inst-aaa",
 	}
