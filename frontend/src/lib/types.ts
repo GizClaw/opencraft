@@ -316,7 +316,7 @@ export type HistoryPart =
     }
   | {
       type: 'tool_result';
-      result?: { call_id: string; content?: string; is_error?: boolean };
+      result?: ToolResultWire;
     }
   | { type: 'image'; source?: MediaSourceWire }
   | {
@@ -748,9 +748,19 @@ export interface ToolCallWire {
   arguments: unknown;
 }
 
+// ContentWire is the wire form of flowcraft's message.Content: the
+// ordered parts an operation produced.
+export interface ContentWire {
+  parts?: StreamPart[];
+}
+
 export interface ToolResultWire {
   call_id: string;
-  content: string;
+  // content is the tool's canonical payload. Tools answer with the
+  // parts the model saw — every built-in tool returns one text part
+  // holding its JSON envelope — so the card renders the text of those
+  // parts instead of a single flattened string.
+  content?: ContentWire;
   is_error?: boolean;
 }
 

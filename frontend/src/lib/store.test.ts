@@ -849,6 +849,72 @@ describe('store: send and stream', () => {
     expect(conv.turnArtifacts[0].status).toBe('failed');
   });
 
+  // The archive stores a tool result as the ordered parts the tool
+  // returned (flowcraft core v0.4.0), so resuming reads the text of
+  // those parts rather than a single flattened string.
+  it('resume renders an archived tool result from its content parts', async () => {
+    apiMock.sessionTurns.mockResolvedValue([
+      {
+        seq: 1,
+        at: '2026-09-10T02:53:57Z',
+        status: 'succeeded',
+        messages: [
+          {
+            role: 'assistant',
+            content: {
+              parts: [
+                {
+                  type: 'tool_call',
+                  call: {
+                    id: 'call-1',
+                    name: 'exec_command',
+                    arguments: { command: 'ls' },
+                  },
+                },
+              ],
+            },
+          },
+          {
+            role: 'tool',
+            content: {
+              parts: [
+                {
+                  type: 'tool_result',
+                  result: {
+                    call_id: 'call-1',
+                    content: {
+                      parts: [
+                        {
+                          type: 'text',
+                          text: '{"exit_code":0,"stdout":"README.md\\n"}',
+                        },
+                      ],
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        ],
+        artifacts: [],
+      },
+    ]);
+
+    await useStore.getState().resume('s-2');
+
+    const items = useStore.getState().conversations['s-2'].messages[0].items;
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({
+      kind: 'tool_call',
+      tool: {
+        id: 'call-1',
+        name: 'exec_command',
+        status: 'done',
+        result: '{"exit_code":0,"stdout":"README.md\\n"}',
+      },
+    });
+  });
+
   it('does not duplicate an archived assistant message', async () => {
     apiMock.sessionTurns.mockResolvedValue([
       historyTurn(1, 'history user', 'history answer'),
@@ -1016,7 +1082,9 @@ describe('store: send and stream', () => {
             type: 'tool_result',
             result: {
               call_id: 'call-1',
-              content: '{"content":"ok"}',
+              content: {
+                parts: [{ type: 'text', text: '{"content":"ok"}' }],
+              },
               is_error: false,
             },
           },

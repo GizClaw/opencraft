@@ -55,7 +55,14 @@ test('sends a message and renders the streamed tool call', async ({ page }) => {
           type: 'tool_result',
           result: {
             call_id: 'call-1',
-            content: '{"exit_code":0,"stdout":"README.md\\n","stderr":""}',
+            content: {
+              parts: [
+                {
+                  type: 'text',
+                  text: '{"exit_code":0,"stdout":"README.md\\n","stderr":""}',
+                },
+              ],
+            },
             is_error: false,
           },
         },

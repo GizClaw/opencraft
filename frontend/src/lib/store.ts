@@ -3,6 +3,7 @@ import i18n from '../i18n';
 import { api } from './api';
 import { sanitizeToolResult } from './ansi';
 import { coalesceStreamEvents } from './stream';
+import { toolResultText } from './toolresult';
 import type {
   AgentSummary,
   AutomationRun,
@@ -361,7 +362,9 @@ const historyToMessages = (history: HistoryMessage[]): MessageView[] => {
         );
         if (call) {
           call.item.tool.status = p.result.is_error ? 'error' : 'done';
-          call.item.tool.result = sanitizeToolResult(p.result.content ?? '');
+          call.item.tool.result = sanitizeToolResult(
+            toolResultText(p.result.content),
+          );
         }
       }
       continue;
@@ -632,7 +635,7 @@ function applyStream(
               status: part.result.is_error
                 ? ('error' as const)
                 : ('done' as const),
-              result: sanitizeToolResult(part.result.content ?? ''),
+              result: sanitizeToolResult(toolResultText(part.result.content)),
             },
           };
         });
