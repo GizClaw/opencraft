@@ -21,6 +21,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/imageutil"
 	patchutil "github.com/GizClaw/opencraft/internal/foundation/utils/patch"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
 
 // File exposes workspace file browsing operations.
@@ -162,17 +163,11 @@ func (b *File) resolve(path string) (string, error) {
 	if root == "" {
 		return "", errors.New("file: no workspace selected")
 	}
-	full := filepath.Join(root, filepath.FromSlash(path))
-	abs, err := filepath.Abs(full)
+	full, err := pathsafe.ResolveUnder(root, path)
 	if err != nil {
-		return "", err
-	}
-	rel, err := filepath.Rel(root, abs)
-	if err != nil || rel == ".." ||
-		strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "", fmt.Errorf("%s is outside the workspace", path)
 	}
-	return abs, nil
+	return full, nil
 }
 
 // readRoots returns the containment roots the viewer may open.
@@ -211,19 +206,6 @@ func relOf(root, full string) string {
 	return filepath.ToSlash(rel)
 }
 
-// within reports whether path is root or one of its descendants.
-func within(root, path string) bool {
-	if path == root {
-		return true
-	}
-	rel, err := filepath.Rel(root, path)
-	if err != nil {
-		return false
-	}
-	return rel != ".." &&
-		!strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
 // locatePath resolves a viewer target under containment: relative
 // targets resolve under base ("" = workspace root), absolute targets
 // must land inside one registered read root. Symlinks are evaluated
@@ -259,7 +241,7 @@ func (b *File) locatePath(target, base string) (string, string, error) {
 		if err != nil {
 			continue
 		}
-		if within(rootEval, eval) {
+		if pathsafe.Within(rootEval, eval) {
 			// Keep the caller-visible path (not the symlink-evaluated
 			// one): on macOS the workspace root is commonly reachable
 			// through /var while EvalSymlinks normalizes it to

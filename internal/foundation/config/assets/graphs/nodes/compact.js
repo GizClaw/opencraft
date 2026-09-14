@@ -26,11 +26,12 @@ var count = Number(board.getVar("world.sections.count") || 0);
 var compactCount = Number(board.getVar("world.compact.count") || 0);
 
 // renderText estimates one MainChannel message's prompt footprint.
-// It mirrors compact.RenderMessage (internal/tools/compact/compact.go):
-// text parts keep their content and tool activity is rendered as
-// tool_call / tool_result lines, so the estimate covers what the model
-// will actually pay for. The fold itself is passed to the compact tool
-// as full messages (role + content parts) — rendering happens in Go.
+// It mirrors summarytext.RenderMessage
+// (internal/foundation/utils/summarytext): text parts keep their content
+// and tool activity is rendered as tool_call / tool_result lines, so
+// the estimate covers what the model will actually pay for. The fold
+// itself is passed to the compact tool as full messages (role + content
+// parts) — rendering happens in Go.
 function renderText(m) {
   var parts = (m && m.content && m.content.parts) || [];
   var text = "";
@@ -41,15 +42,33 @@ function renderText(m) {
     if (p.type === "text") {
       text += p.text || "";
     } else if (p.type === "tool_call" && p.call) {
+      // JSON.stringify matches the Go side's compacted arguments
+      // (summarytext.compactJSON). Both sides cover the same text; only
+      // an exotic spelling (an explicit \uXXXX escape, an HTML-escaped
+      // character) can be written out differently, by a few characters.
       lines.push("tool_call: " + p.call.name + " " + JSON.stringify(p.call.arguments));
     } else if (p.type === "tool_result" && p.result) {
-      lines.push("tool_result: " + p.result.content);
+      lines.push("tool_result: " + resultText(p.result.content));
     }
   }
   if (lines.length > 0) {
     var trimmed = text.trim();
     if (trimmed === "") return lines.join("\n");
     return trimmed + "\n" + lines.join("\n");
+  }
+  return text;
+}
+
+// resultText mirrors the Go side's Content.Text() for a tool result:
+// text parts are concatenated in order and every other part kind is
+// skipped. A result whose content was read as an opaque value would
+// make the estimate cover the wrong text entirely.
+function resultText(content) {
+  var parts = (content && content.parts) || [];
+  var text = "";
+  for (var i = 0; i < parts.length; i++) {
+    var p = parts[i];
+    if (p && p.type === "text") text += p.text || "";
   }
   return text;
 }

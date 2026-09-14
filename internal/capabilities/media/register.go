@@ -27,6 +27,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/resource"
 
 	"github.com/GizClaw/opencraft/internal/foundation/utils/imageutil"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
 
 // Register adds the opencraft.media prepare hook factory to r.
@@ -263,8 +264,7 @@ func flattenNonImageMedia(
 // and falls back to the absolute path otherwise.
 func workspacePath(workDir, path string) string {
 	if workDir != "" {
-		if rel, err := filepath.Rel(workDir, path); err == nil &&
-			rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		if rel, ok := pathsafe.Rel(workDir, path); ok {
 			return rel
 		}
 	}

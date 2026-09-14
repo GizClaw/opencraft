@@ -25,6 +25,8 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/inference/model"
 	"github.com/GizClaw/flowcraft/core/telemetry"
+
+	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
 
 const (
@@ -862,8 +864,7 @@ func (l DefaultLoader) Capability(id string) (Capability, bool, error) {
 
 func (l DefaultLoader) BinaryPath(id string, cap Capability) (string, error) {
 	bin := filepath.Clean(cap.Binary)
-	if bin == "" || filepath.IsAbs(bin) ||
-		bin == ".." || strings.HasPrefix(bin, ".."+string(filepath.Separator)) {
+	if bin == "" || !pathsafe.RelRef(bin) {
 		return "", fmt.Errorf("runtime: capability binary escapes plugin dir: %q", cap.Binary)
 	}
 	path := filepath.Join(l.Root, id, bin)

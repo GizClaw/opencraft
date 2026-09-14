@@ -8,6 +8,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	crepo "github.com/GizClaw/opencraft/internal/capabilities/repo"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/gitx"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
 
 // Git exposes repository operations for the UI's Git panel. The panel
@@ -397,11 +398,6 @@ func insideRoot(root, repoRoot, rel string) bool {
 	if root == "" || repoRoot == "" {
 		return false
 	}
-	full := filepath.Join(repoRoot, filepath.FromSlash(rel))
-	relTo, err := filepath.Rel(root, full)
-	if err != nil {
-		return false
-	}
-	return relTo != ".." &&
-		!strings.HasPrefix(relTo, ".."+string(filepath.Separator))
+	return pathsafe.Within(
+		root, filepath.Join(repoRoot, filepath.FromSlash(rel)))
 }

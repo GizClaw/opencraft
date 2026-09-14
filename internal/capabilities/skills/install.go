@@ -12,6 +12,8 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/telemetry"
+
+	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
 
 // Install scopes for the skill_install tool.
@@ -109,24 +111,11 @@ func (s *Service) Install(
 // repo-supplied subpath cannot escape the clone directory via ".." or a
 // symlink before it is moved into the skill root.
 func ensureInside(parent, child string) error {
-	contained := func(base, target string) bool {
-		rel, err := filepath.Rel(base, target)
-		return err == nil && rel != ".." &&
-			!strings.HasPrefix(rel, ".."+string(filepath.Separator))
-	}
-	if !contained(parent, child) {
+	if !pathsafe.Within(parent, child) {
 		return errdefs.Validationf(
 			"skills: subpath %q escapes the clone directory", child)
 	}
-	parentReal, err := filepath.EvalSymlinks(parent)
-	if err != nil {
-		parentReal = parent
-	}
-	childReal, err := filepath.EvalSymlinks(child)
-	if err != nil {
-		childReal = filepath.Clean(child)
-	}
-	if !contained(parentReal, childReal) {
+	if !pathsafe.RealWithin(parent, child) {
 		return errdefs.Validationf(
 			"skills: subpath %q resolves outside the clone directory", child)
 	}

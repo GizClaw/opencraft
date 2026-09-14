@@ -14,6 +14,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
 	pluginupdate "github.com/GizClaw/opencraft/internal/capabilities/plugins/update"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
 
 // Plugin exposes plugin registry, KV and capability invocation.
@@ -190,9 +191,7 @@ func pluginSkillRoots(m *plugins.Manifest, dir string) []string {
 	var roots []string
 	for _, rel := range m.Skills {
 		clean := filepath.Clean(rel)
-		if filepath.IsAbs(clean) ||
-			clean == ".." ||
-			strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		if !pathsafe.RelRef(clean) {
 			continue
 		}
 		root := filepath.Join(dir, clean)
