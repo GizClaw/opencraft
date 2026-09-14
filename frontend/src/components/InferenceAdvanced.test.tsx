@@ -54,10 +54,11 @@ describe('AdvancedSection', () => {
 
   it('reports the retention policy as one of its four values', () => {
     const onUpdate = renderSection('openai');
-    const select = screen.getByRole('combobox', { name: 'Store responses' });
-    fireEvent.change(select, { target: { value: 'omit' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Store responses' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Omit the field' }));
     expect(onUpdate).toHaveBeenCalledWith('store', 'omit');
-    fireEvent.change(select, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Store responses' }));
+    fireEvent.click(screen.getByRole('option', { name: 'default' }));
     expect(onUpdate).toHaveBeenLastCalledWith('store', '');
   });
 
@@ -72,7 +73,7 @@ describe('AdvancedSection', () => {
     );
     expect(screen.getByRole('textbox', { name: 'Timeout' })).toBeDisabled();
     expect(
-      screen.getByRole('combobox', { name: 'Store responses' }),
+      screen.getByRole('button', { name: 'Store responses' }),
     ).toBeDisabled();
     expect(screen.getByText('owned by a plugin')).toBeInTheDocument();
     // The map editors lose their add affordance too.

@@ -2,6 +2,7 @@ import { ChevronDown } from 'lucide-react';
 import { Fragment, useEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { MenuSelect, type MenuOption } from './MenuSelect';
 import type { ProviderAdvanced } from '../lib/types';
 
 // AdvancedSection is the collapsible provider-spec editor on one
@@ -54,28 +55,26 @@ export function AdvancedSection({
     </label>
   );
 
-  // select renders one enum leaf. The value stays the wire token; the
-  // option text is the human name for it.
+  // select renders one enum leaf as the page's own dropdown. The value
+  // stays the wire token; the option text is the human name for it.
   const select = (
     key: keyof ProviderAdvanced,
     label: string,
-    options: { value: string; label: string }[],
+    options: MenuOption[],
   ) => (
     <label className="flex flex-col gap-1.5">
       <span className="text-xs text-dim">{label}</span>
-      <select
+      <MenuSelect
+        label={label}
         value={(adv[key] as string | undefined) ?? ''}
-        onChange={(e) => onUpdate(key, e.target.value)}
+        options={[
+          { value: '', label: t('config.advanced.default') },
+          ...options,
+        ]}
+        placeholder={t('config.advanced.default')}
+        onChange={(next) => onUpdate(key, next)}
         disabled={disabled}
-        className={inputClass}
-      >
-        <option value="">{t('config.advanced.default')}</option>
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
+      />
     </label>
   );
 
@@ -85,19 +84,20 @@ export function AdvancedSection({
     return (
       <label className="flex flex-col gap-1.5">
         <span className="text-xs text-dim">{label}</span>
-        <select
+        <MenuSelect
+          label={label}
           value={value === undefined ? '' : String(value)}
-          onChange={(e) => {
-            const raw = e.target.value;
-            onUpdate(key, raw === '' ? ('' as never) : raw === 'true');
-          }}
+          options={[
+            { value: '', label: t('config.advanced.default') },
+            { value: 'true', label: t('config.advanced.on') },
+            { value: 'false', label: t('config.advanced.off') },
+          ]}
+          placeholder={t('config.advanced.default')}
+          onChange={(raw) =>
+            onUpdate(key, raw === '' ? ('' as never) : raw === 'true')
+          }
           disabled={disabled}
-          className={inputClass}
-        >
-          <option value="">{t('config.advanced.default')}</option>
-          <option value="true">{t('config.advanced.on')}</option>
-          <option value="false">{t('config.advanced.off')}</option>
-        </select>
+        />
       </label>
     );
   };

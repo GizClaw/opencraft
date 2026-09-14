@@ -132,8 +132,8 @@ describe('ConfigPage inference', () => {
     summary.click();
     await waitFor(() =>
       expect(
-        screen.getByRole('combobox', { name: 'Reasoning channel' }),
-      ).toHaveValue('text'),
+        screen.getByRole('button', { name: 'Reasoning channel' }),
+      ).toHaveTextContent('Plain text'),
     );
 
     await waitFor(() => {
