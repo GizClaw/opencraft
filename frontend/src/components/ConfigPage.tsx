@@ -1214,8 +1214,10 @@ export function ConfigPage() {
                           </div>
                           <AdvancedSection
                             row={row}
+                            disabled={row.managed}
                             driver={
-                              catalog.find((p) => p.id === row.type)?.impl ?? ''
+                              catalog.find((p) => p.id === row.type)?.impl ||
+                              row.driver
                             }
                             onUpdate={(key, value) =>
                               updateAdvanced(row.id, key, value)
