@@ -1514,6 +1514,7 @@ export function ConfigPage() {
                                         value={m.maxInputTokens}
                                         disabled={row.managed}
                                         placeholder={t('setup.maxInputAuto')}
+                                        title={t('setup.maxInputHint')}
                                         onChange={(e) => {
                                           const next: number | '' =
                                             e.target.value === ''
