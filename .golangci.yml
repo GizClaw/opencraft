@@ -15,3 +15,17 @@ linters:
       - path: '.*_test\.go$'
         linters:
           - errcheck
+
+# Formatters run through the same toolchain as the linters, so
+# `make lint` (CI) catches an unsorted import block and `make fmt`
+# fixes it. goimports groups stdlib / third-party / this module, which
+# is the layout the tree already uses: one blank line before the
+# github.com/GizClaw/opencraft block.
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/GizClaw/opencraft

@@ -128,8 +128,8 @@ export function canApplyEvent(
         projection.turn.name === 'running'
       );
     default:
-      // artifact/interact/artifact_sync/resolved are data-only or are
-      // reconciled by the data layer; actor validity is checked there.
+      // artifact/interact/resolved are data-only or are reconciled by
+      // the data layer; actor validity is checked there.
       return true;
   }
 }
@@ -186,7 +186,6 @@ export function routeBackendEvent(ev: UIEvent, deps: EventRouterDeps) {
 
     case 'stream':
     case 'artifact':
-    case 'artifact_sync':
     case 'interact':
     case 'turn_end':
     case 'automation_run_started': {

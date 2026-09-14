@@ -32,10 +32,10 @@ group() {
 # banned <layer> prints the layers <layer> may not import, one per line.
 banned() {
 	case "$1" in
-		capabilities|foundation) echo "adapters orchestration testing" ;;
-		orchestration) echo "adapters testing" ;;
-		adapters) echo "testing" ;;
-		*) echo "" ;;
+	capabilities|foundation) echo "adapters orchestration testing" ;;
+	orchestration) echo "adapters testing" ;;
+	adapters) echo "testing" ;;
+	*) echo "" ;;
 	esac
 }
 
