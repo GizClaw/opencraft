@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/message"
-
-	"github.com/GizClaw/opencraft/internal/foundation/compat"
 )
 
 // The user configuration layer is one YAML document: its shape lives in
@@ -192,23 +190,14 @@ func (c InferenceConfig) inferenceView(now time.Time) (inferenceView, error) {
 }
 
 // providerSpecBlock renders one provider's spec body: the basic endpoint
-// plus every advanced knob, then the opaque provider-spec bag with the
-// keys the writer already emitted removed.
+// plus every advanced knob. Every spec leaf the drivers accept is
+// modeled on InstanceAdvanced, so there is nothing left to append.
 func providerSpecBlock(prov Provider, in Instance, id string) (string, error) {
 	var b strings.Builder
-	written, err := writeProviderSpec(
+	if err := writeProviderSpec(
 		&b, prov, in, strings.TrimSpace(in.API),
-	)
-	if err != nil {
-		return "", err
-	}
-	if len(in.ProviderSpec) > 0 {
-		if err := writeProviderSpecYAML(
-			&b, compat.NormalizeProviderSpec(in.ProviderSpec), written,
-		); err != nil {
-			return "", fmt.Errorf(
-				"config: encode provider spec for %s: %w", id, err)
-		}
+	); err != nil {
+		return "", fmt.Errorf("config: encode provider spec for %s: %w", id, err)
 	}
 	return b.String(), nil
 }

@@ -33,20 +33,24 @@ const apiMock = vi.hoisted(() => {
           type: 'openai',
           name: 'primary',
           api: 'responses',
-          key: '',
+          endpoint: 'https://gateway.example/v1',
+          key_source: 'env',
+          key_ref: '',
           key_set: true,
           key_env: true,
+          key_keychain: false,
           models: [
             {
               name: 'deepseek-v4-flash',
-              inputs: ['text'],
-              outputs: ['text'],
-              reasoning: 'toggle',
-              web_search: false,
+              kind: 'generate',
+              capabilities: {
+                inputs: ['text'],
+                outputs: ['text'],
+                reasoning: { kind: 'toggle' },
+              },
               endpoint: '',
             },
           ],
-          endpoint: '',
           advanced: { reasoning_channel: 'text' },
           enabled: true,
           managed: false,
@@ -93,7 +97,6 @@ describe('ConfigPage inference', () => {
           type: 'openai',
           name: '',
           api: 'responses',
-          key: '',
           key_set: false,
           key_env: true,
           models: [],
@@ -145,6 +148,27 @@ describe('ConfigPage inference', () => {
     });
     expect(payload.instances[0].advanced).toEqual({
       reasoning_channel: 'text',
+    });
+    // The row round-trips in the canonical shape: one model declaration
+    // with nested capabilities, and the credential restated as the env
+    // source the form shows.
+    expect(payload.instances[0].key_source).toBe('env');
+    expect(payload.instances[0].models[0]).toEqual({
+      name: 'deepseek-v4-flash',
+      kind: 'generate',
+      capabilities: {
+        inputs: ['text'],
+        outputs: ['text'],
+        reasoning: { kind: 'toggle' },
+        hosted_web_search: undefined,
+      },
+      endpoint: undefined,
+      limits: {
+        max_input_tokens: undefined,
+        max_output_tokens: undefined,
+      },
+      lifecycle: undefined,
+      driver_fields: undefined,
     });
   });
 });

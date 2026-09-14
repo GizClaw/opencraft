@@ -297,10 +297,9 @@ func TestInferenceYAMLDropsRetiredCatalogKey(t *testing.T) {
 	if len(cfg.Instances) != 1 {
 		t.Fatalf("instances = %+v", cfg.Instances)
 	}
-	if _, ok := cfg.Instances[0].ProviderSpec["catalog"]; ok {
-		t.Fatalf("retired key parked in the provider bag: %+v",
-			cfg.Instances[0].ProviderSpec)
-	}
+	// The retired key has no home in the typed configuration, and the
+	// rewrite below must drop it rather than keep it where the driver
+	// would reject it.
 	if err := WriteInference(dir, cfg); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -476,7 +475,7 @@ func TestInferenceYAMLPluginDeclaredProvider(t *testing.T) {
 // and the router retry policy to the settings page's data model: what
 // the form edits must survive a write/read cycle unchanged, including
 // the explicit request-metadata opt-out.
-func TestInferenceYAMLAdvancedRoundTrip(t *testing.T) {
+func TestInferenceYAMLWireOptionsRoundTrip(t *testing.T) {
 	retries, usage := 3, false
 	cfg := InferenceConfig{
 		Instances: []Instance{{
@@ -1029,16 +1028,15 @@ func TestMigrateUserInferenceConfigDropsDeprecatedKeys(t *testing.T) {
 	}
 }
 
-func TestInferenceYAMLProviderSpecRoundTrip(t *testing.T) {
+func TestInferenceYAMLAdvancedRoundTrip(t *testing.T) {
+	includeUsage := false
 	cfg := InferenceConfig{Instances: []Instance{{
 		StableID:  "inst-aaa",
 		Type:      "openai",
 		KeySource: KeyEnv,
 		API:       "chat",
-		ProviderSpec: map[string]any{
-			"chat_stream_options": map[string]any{
-				"include_usage": false,
-			},
+		Advanced: InstanceAdvanced{
+			ChatIncludeUsage: &includeUsage,
 		},
 		Models:  []Model{{Name: "glm-5.3-flash"}},
 		Enabled: true,
@@ -1069,27 +1067,84 @@ func TestInferenceYAMLProviderSpecRoundTrip(t *testing.T) {
 	if len(loaded.Instances) != 1 {
 		t.Fatalf("round trip instances = %+v", loaded.Instances)
 	}
-	opts, ok := loaded.Instances[0].ProviderSpec["chat_stream_options"].(map[string]any)
-	if !ok || opts["include_usage"] != false {
-		t.Fatalf("round trip provider spec = %+v",
-			loaded.Instances[0].ProviderSpec)
+	got := loaded.Instances[0].Advanced.ChatIncludeUsage
+	if got == nil || *got {
+		t.Fatalf("round trip chat options = %v, want false",
+			loaded.Instances[0].Advanced)
 	}
 
-	// Host-managed spec keys must not leak back into the provider bag.
-	if _, ok := loaded.Instances[0].ProviderSpec["api"]; ok {
-		t.Fatalf("host-managed api leaked into provider spec: %+v",
-			loaded.Instances[0].ProviderSpec)
-	}
-
-	// Nil provider spec must not emit a chat_stream_options section.
+	// An unset knob must not emit a chat_stream_options section.
 	plain := cfg
-	plain.Instances[0].ProviderSpec = nil
+	plain.Instances[0].Advanced.ChatIncludeUsage = nil
 	data, err = plain.InferenceYAML()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(data), "chat_stream_options:") {
 		t.Fatalf("nil provider spec must not be emitted:\n%s", data)
+	}
+}
+
+// TestInferenceYAMLFoldsLegacyChatOptions pins the compat read: a
+// document written before the chat stream options moved under wire
+// still feeds the typed knobs, and the next write emits the current
+// placement.
+func TestInferenceYAMLFoldsLegacyChatOptions(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "opencraft.yaml")
+	legacy := `version: v1
+resources:
+  provider.openai-inst-aaa:
+    kind: inference.Provider
+    impl: openai
+    settings:
+      id: openai-inst-aaa
+      spec:
+        api: chat
+        chat_stream_options:
+          include_usage: false
+        models:
+          - name: glm-5.3-flash
+            kind: generate
+      profiles:
+        - id: inst-aaa
+          secrets:
+            api_key: ${env:OPENAI_API_KEY}
+  router:
+    settings:
+      generate:
+        - tier: default
+          targets:
+            - model:
+                id:
+                  provider: openai-inst-aaa
+                  name: glm-5.3-flash
+`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := LoadInference(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(cfg.Instances) != 1 {
+		t.Fatalf("instances = %+v", cfg.Instances)
+	}
+	usage := cfg.Instances[0].Advanced.ChatIncludeUsage
+	if usage == nil || *usage {
+		t.Fatalf("legacy chat options not folded: %+v", cfg.Instances[0].Advanced)
+	}
+
+	if err := WriteInference(dir, cfg); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "wire:") ||
+		strings.Contains(string(raw), "\n        chat_stream_options:") {
+		t.Fatalf("rewrite must place chat options under wire:\n%s", raw)
 	}
 }
 
@@ -1208,21 +1263,62 @@ func TestKeychainKeyRoundTrip(t *testing.T) {
 	}
 }
 
-func TestMatchStoredKeysInheritsKeychainRefs(t *testing.T) {
-	existing := []Instance{{
+// TestSettingsSaveCarriesStoredCredential pins the settings-page carry
+// over: a row that does not restate its credential keeps the stored one
+// (matched by stable identity), while a brand-new enabled row cannot
+// inherit a credential it never had.
+func TestSettingsSaveCarriesStoredCredential(t *testing.T) {
+	dir := t.TempDir()
+	if err := WriteInference(dir, InferenceConfig{Instances: []Instance{{
 		StableID:  "inst-a",
 		Type:      "openai",
+		Name:      "gateway",
+		API:       "responses",
 		KeySource: KeyKeychain,
-		KeyValue:  "inference/deepseek-inst-a",
-	}}
-	rows := []KeyRequest{{
+		KeyValue:  "inference/openai-inst-a",
+		Enabled:   true,
+		Models:    []Model{{Name: "deepseek-v4-flash"}},
+	}}}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The page swaps the row's model without restating the credential.
+	edited := InstanceSpec{
 		StableID: "inst-a",
 		Type:     "openai",
-		Models:   []string{"deepseek-v4-flash"},
-	}}
-	idxs, ok := MatchStoredKeys(existing, rows, map[int]bool{})
-	if !ok || len(idxs) != 1 || idxs[0] != 0 {
-		t.Fatalf("MatchStoredKeys = (%v, %v), want stable-id match", idxs, ok)
+		API:      "responses",
+		Models:   []ModelSpec{{Name: "deepseek-v4-pro"}},
+		Enabled:  boolPtr(true),
+	}
+	if _, err := ApplySettingsSave(dir, SaveRequest{
+		Instances: []InstanceSpec{edited},
+	}, nil); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	cfg, err := LoadInference(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := cfg.Instances[0]
+	if in.Models[0].Name != "deepseek-v4-pro" {
+		t.Fatalf("edit lost: %+v", in)
+	}
+	if in.KeySource != KeyKeychain || in.KeyValue != "inference/openai-inst-a" {
+		t.Fatalf("stored credential lost: (%v, %q)", in.KeySource, in.KeyValue)
+	}
+
+	// A new enabled row stating no credential is refused instead of
+	// silently pinning the provider's environment variable.
+	fresh := InstanceSpec{
+		Type:    "openai",
+		API:     "responses",
+		Models:  []ModelSpec{{Name: "gpt-5.6-sol"}},
+		Enabled: boolPtr(true),
+	}
+	if _, err := ApplySettingsSave(dir, SaveRequest{
+		Instances: []InstanceSpec{fresh},
+	}, nil); err == nil || !strings.Contains(err.Error(), "API key") {
+		t.Fatalf("keyless new row accepted: %v", err)
 	}
 }
 

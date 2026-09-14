@@ -34,6 +34,7 @@ resources:
           scheme: 'header'
           header: 'x-api-key'
         wire:
+          reasoning_scope: 'gateway-2026'
           video_input: true
           store: omit
           reasoning_channel: 'text'
@@ -46,7 +47,6 @@ resources:
             include_obfuscation: true
         request_metadata: {}
         http_retries: 3
-        custom_provider_key: kept
         models:
           - name: 'glm-5.3-flash'
             kind: 'generate'

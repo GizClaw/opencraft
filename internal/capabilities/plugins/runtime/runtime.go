@@ -8,6 +8,7 @@ package runtime
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -23,9 +24,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/GizClaw/flowcraft/core/inference/model"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
+	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
 
@@ -49,53 +50,15 @@ type Capability struct {
 	Hosts []string `json:"hosts,omitempty"`
 }
 
-// InferenceProfile is a plugin-submitted inference provider profile.
-// The host validates and writes it but does not interpret its domain
-// meaning (gateway, session, ...). ID is the full stable provider
-// instance id and must be unique across the user's inference config;
-// it is independent of the plugin id, so one plugin can submit several
-// profiles. Ownership is recorded separately by the host.
-type InferenceProfile struct {
-	ID       string `json:"id"`
-	Type     string `json:"type"`
-	Name     string `json:"name"`
-	API      string `json:"api"`
-	Endpoint string `json:"endpoint"`
-	// Driver names the flowcraft driver impl (openai, anthropic,
-	// bytedance, minimax) for a provider that is not one of OpenCraft's
-	// built-in presets. Setting it lets a plugin introduce a new vendor
-	// instead of borrowing an existing preset id; Type then only names
-	// the deployment.
-	Driver string `json:"driver,omitempty"`
-	// Models declares every model the endpoint serves: flowcraft's
-	// drivers ship no built-in line-up, so a profile is the whole
-	// declaration.
-	Models []ProfileModel `json:"models"`
-	KeyRef string         `json:"key_ref"`
-	// ProviderSpec carries provider-specific spec options (for example
-	// openai's chat_stream_options) as an opaque bag. The host writes
-	// them into the provider spec; keys the host manages itself are
-	// rejected.
-	ProviderSpec map[string]any `json:"provider_spec,omitempty"`
-}
-
-// ProfileModel is one model in an inference profile. Capabilities,
-// limits, and kind use the canonical flowcraft DTOs so plugin
-// deployments carry the same capability/context-window metadata as
-// settings-configured models instead of a flattened subset.
-type ProfileModel struct {
-	Name string `json:"name"`
-	// Kind is the model family ("generate" | "image" | "video" | "tts");
-	// empty derives from Outputs on write.
-	Kind string `json:"kind,omitempty"`
-	// Capabilities declares input/output content kinds, reasoning
-	// control, hosted web search, and other canonical capability bits.
-	Capabilities model.ModelCapabilities `json:"capabilities,omitempty"`
-	Endpoint     string                  `json:"endpoint,omitempty"`
-	// Limits declares numeric capacity limits (input/output tokens).
-	// Nil fields let the driver catalog supply built-in model values.
-	Limits model.ModelLimits `json:"limits,omitempty"`
-}
+// InferenceProfile is one inference deployment a capability plugin
+// submits over inference.upsert. It is exactly the row shape the desktop
+// settings page posts, so a plugin can configure everything a user can;
+// the host applies the plugin write policy on the way in (see
+// config.InstanceSpec.Lower): the row carries its own stable_id, its
+// credential must live in the calling plugin's secret namespace
+// (key_source "keychain" with key_ref "auth/<plugin>/..."), and the
+// user-owned enabled flag is not the plugin's to set.
+type InferenceProfile = config.InstanceSpec
 
 // InferenceHandler is the host-side write path for inference profiles.
 type InferenceHandler struct {
@@ -748,8 +711,13 @@ func (m *Manager) handleSessionImportedSources(p *process, req rpcRequest) (any,
 }
 
 func (m *Manager) handleInferenceUpsert(p *process, req rpcRequest) (any, error) {
+	// The profile is decoded strictly: a plugin built against a newer
+	// contract fails loudly on a field this host does not know, instead
+	// of having part of its declaration silently ignored.
+	dec := json.NewDecoder(bytes.NewReader(req.Params))
+	dec.DisallowUnknownFields()
 	var profile InferenceProfile
-	if err := json.Unmarshal(req.Params, &profile); err != nil {
+	if err := dec.Decode(&profile); err != nil {
 		return nil, fmt.Errorf("runtime: inference.upsert args: %w", err)
 	}
 	if m.inference.Upsert == nil {

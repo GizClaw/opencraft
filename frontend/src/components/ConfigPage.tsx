@@ -33,10 +33,10 @@ import { useStore } from '../lib/store';
 import type {
   CacheClearResult,
   DiagnosticsReport,
+  InstanceSpec,
   MemorySettings,
   ModelUsageStat,
   PolicyDecision,
-  ProviderInstance,
   ProviderView,
   ModelLifecycle,
   ProviderAdvanced,
@@ -87,9 +87,16 @@ interface InstanceRow {
   id: string; // frontend key
   stableId: string; // persisted identity ("" on newly added rows)
   type: string;
+  // driver is the flowcraft driver impl of a plugin-declared vendor
+  // (a type outside the preset catalog). Managed rows carry it
+  // read-only; rows built from the catalog leave it empty.
+  driver: string;
   name: string;
   api: string;
   key: string;
+  // keyRef is the credential-store account a keychain row references;
+  // the settings page round-trips it so an edit keeps the credential.
+  keyRef: string;
   keySet: boolean;
   keyEnv: boolean;
   keyKeychain: boolean;
@@ -145,6 +152,54 @@ function modelLifecyclePayload(m: RowModel): ModelLifecycle | undefined {
     replacement_name: m.lifecycleReplacementName.trim() || undefined,
     notes: m.lifecycleNotes.trim() || undefined,
   };
+}
+
+// driverFieldsText renders the driver-specific model leaves as the JSON
+// object the form edits; an empty bag stays an empty string.
+function driverFieldsText(fields: Record<string, unknown> | undefined): string {
+  if (fields === undefined || Object.keys(fields).length === 0) return '';
+  return JSON.stringify(fields, null, 2);
+}
+
+// driverFieldsPayload reads the edited JSON back. Invalid input yields
+// undefined: the save is blocked by the form's own validation, and the
+// writer validates again.
+function driverFieldsPayload(
+  text: string,
+): Record<string, unknown> | undefined {
+  const trimmed = text.trim();
+  if (trimmed === '') return undefined;
+  try {
+    const parsed: unknown = JSON.parse(trimmed);
+    if (
+      parsed === null ||
+      typeof parsed !== 'object' ||
+      Array.isArray(parsed)
+    ) {
+      return undefined;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return undefined;
+  }
+}
+
+// credentialPayload renders one row's credential the way the form
+// states it: the env source when the box is checked, a typed key as a
+// literal, an existing keychain reference explicitly, and nothing at all
+// when the user did not touch the credential (the host then keeps the
+// stored one).
+function credentialPayload(
+  r: InstanceRow,
+): Pick<InstanceSpec, 'key_source' | 'key_ref' | 'key_value'> {
+  if (r.keyEnv) return { key_source: 'env' };
+  const typed = r.key.trim();
+  if (typed !== '') return { key_source: 'literal', key_value: typed };
+  if (r.keyKeychain && r.keyRef !== '') {
+    return { key_source: 'keychain', key_ref: r.keyRef };
+  }
+  if (r.keySet) return { key_source: r.keyKeychain ? 'keychain' : 'literal' };
+  return {};
 }
 
 // emptyModelRow is the row a new instance or model starts from:
@@ -307,28 +362,30 @@ export function ConfigPage() {
           const models = (s.models ?? []).map((m) => ({
             name: m.name ?? '',
             kind: m.kind ?? '',
-            inputs: m.inputs ?? [],
-            outputs: m.outputs ?? [],
-            reasoning: m.reasoning ?? '',
-            reasoningEffortMap: m.reasoning_effort_map ?? {},
-            webSearch: m.web_search ?? false,
+            inputs: m.capabilities?.inputs ?? [],
+            outputs: m.capabilities?.outputs ?? [],
+            reasoning: m.capabilities?.reasoning?.kind ?? '',
+            reasoningEffortMap: m.capabilities?.reasoning?.effort_map ?? {},
+            webSearch: m.capabilities?.hosted_web_search ?? false,
             endpoint: m.endpoint ?? '',
-            maxInputTokens: limitToRow(m.max_input_tokens),
-            maxOutputTokens: limitToRow(m.max_output_tokens),
+            maxInputTokens: limitToRow(m.limits?.max_input_tokens),
+            maxOutputTokens: limitToRow(m.limits?.max_output_tokens),
             lifecycleStatus: m.lifecycle?.status ?? '',
             lifecycleReplacementProvider:
               m.lifecycle?.replacement_provider ?? '',
             lifecycleReplacementName: m.lifecycle?.replacement_name ?? '',
             lifecycleNotes: m.lifecycle?.notes ?? '',
-            specJson: m.spec_json ?? '',
+            specJson: driverFieldsText(m.driver_fields),
           }));
           return {
             id: newID(),
             stableId: s.stable_id ?? '',
             type: s.type,
+            driver: s.driver ?? '',
             name: s.name ?? '',
             api: s.api ?? '',
-            key: s.key ?? '',
+            key: '',
+            keyRef: s.key_ref ?? '',
             keySet: s.key_set ?? false,
             keyEnv: s.key_env ?? false,
             keyKeychain: s.key_keychain ?? false,
@@ -574,9 +631,11 @@ export function ConfigPage() {
         id: newID(),
         stableId: '',
         type,
+        driver: '',
         name: '',
         api: '',
         key: '',
+        keyRef: '',
         keySet: false,
         keyEnv: false,
         keyKeychain: false,
@@ -713,34 +772,44 @@ export function ConfigPage() {
         }
       }
     }
-    const instances: ProviderInstance[] = rows.map((r) => ({
-      stable_id: r.stableId,
+    const instances: InstanceSpec[] = rows.map((r) => ({
+      stable_id: r.stableId === '' ? undefined : r.stableId,
       type: r.type,
-      name: r.name,
-      api: r.api,
-      key: r.key,
-      key_set: r.keySet,
-      key_env: r.keyEnv,
+      name: r.name.trim() === '' ? undefined : r.name.trim(),
+      driver: r.driver.trim() === '' ? undefined : r.driver.trim(),
+      api: r.api === '' ? undefined : r.api,
+      endpoint: r.endpoint.trim() === '' ? undefined : r.endpoint.trim(),
+      ...credentialPayload(r),
+      enabled: r.enabled,
+      advanced: r.advanced,
       models: r.models.map((m) => ({
         name: m.name,
-        kind: m.kind,
-        inputs: m.inputs,
-        outputs: m.outputs,
-        reasoning: m.reasoning,
-        reasoning_effort_map: m.reasoning === '' ? {} : m.reasoningEffortMap,
-        web_search: m.webSearch,
-        endpoint: m.endpoint,
-        max_input_tokens:
-          m.maxInputTokens === '' ? undefined : m.maxInputTokens,
-        max_output_tokens:
-          m.maxOutputTokens === '' ? undefined : m.maxOutputTokens,
+        kind: m.kind === '' ? undefined : m.kind,
+        capabilities: {
+          inputs: m.inputs,
+          outputs: m.outputs,
+          reasoning:
+            m.reasoning === ''
+              ? undefined
+              : {
+                  kind: m.reasoning,
+                  effort_map:
+                    Object.keys(m.reasoningEffortMap).length === 0
+                      ? undefined
+                      : m.reasoningEffortMap,
+                },
+          hosted_web_search: m.webSearch || undefined,
+        },
+        endpoint: m.endpoint.trim() === '' ? undefined : m.endpoint.trim(),
+        limits: {
+          max_input_tokens:
+            m.maxInputTokens === '' ? undefined : m.maxInputTokens,
+          max_output_tokens:
+            m.maxOutputTokens === '' ? undefined : m.maxOutputTokens,
+        },
         lifecycle: modelLifecyclePayload(m),
-        spec_json: m.specJson.trim() === '' ? undefined : m.specJson,
+        driver_fields: driverFieldsPayload(m.specJson),
       })),
-      endpoint: r.endpoint,
-      advanced: r.advanced,
-      enabled: r.enabled,
-      managed: r.managed,
     }));
     setSaving(true);
     try {
@@ -987,20 +1056,23 @@ export function ConfigPage() {
                         <input
                           type="checkbox"
                           checked={row.enabled}
-                          disabled={row.managed}
                           onChange={(e) =>
                             update(row.id, { enabled: e.target.checked })
                           }
                           className="accent-[var(--color-accent)]"
-                          title={
-                            row.managed
-                              ? t('config.managedBadge')
-                              : t('config.instanceEnabled')
-                          }
+                          title={t('config.instanceEnabled')}
                         />
                         <span className="font-medium text-sm shrink-0">
                           {prov?.name ?? row.type}
                         </span>
+                        {row.driver !== '' && (
+                          <span
+                            className="shrink-0 rounded bg-panel px-1.5 py-0.5 text-[0.7143rem] text-dim"
+                            title={t('config.instanceDriver')}
+                          >
+                            {row.driver}
+                          </span>
+                        )}
                         {row.managed && (
                           <span className="shrink-0 rounded bg-panel px-1.5 py-0.5 text-[0.7143rem] text-dim">
                             {t('config.managedBadge')}
