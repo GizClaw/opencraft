@@ -440,10 +440,13 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 		}
 		store := host.store
 		if store != nil {
+			class := ClassifyRunError(res.Err, err)
 			telemetry.WarnErr(persistCtx, "host: record turn end failed",
 				store.RecordTurnEnd(
 					detail.contextID, r.RunID(), finishedAt,
-					string(status), errText, requestID, responseID))
+					string(status), errText,
+					class.InterruptCause, class.ErrorKind,
+					requestID, responseID))
 		}
 		host.persistTurnUsage(
 			persistCtx, detail.contextID, usageDeltas, turnUsage)

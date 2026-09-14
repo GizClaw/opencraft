@@ -250,14 +250,41 @@ func (s *Shell) LastUserActive() time.Time {
 	return s.userActiveAt
 }
 
-// SetNotificationSink installs an optional observer invoked for every UI
-// event right after the frontend emit. The desktop adapter uses it to raise
-// native system notifications for interact/turn_end/automation events from
-// Go, so hidden or suspended windows never lose notifications.
+// SetNotificationSink installs an optional observer that receives every
+// UI event right after the frontend emit, and anything passed to
+// Notify. The desktop adapter uses it to raise native system
+// notifications for interact/turn_end/automation events from Go, so
+// hidden or suspended windows never lose notifications.
 func (s *Shell) SetNotificationSink(fn func(typ string, data any)) {
 	s.mu.Lock()
 	s.notifySink = fn
 	s.mu.Unlock()
+}
+
+// Notification kinds. They name what the sink has to build, not an event
+// the frontend handles: interact/turn_end are UI events that also
+// notify, while the automation result has no UI consumer at all.
+const (
+	NotifyInteract   = "interact"
+	NotifyTurnEnd    = "turn_end"
+	NotifyAutomation = "automation_notify"
+)
+
+// Notify routes one payload to the notification sink without putting it
+// on the UI event bus. Use it for a notification the frontend does not
+// consume — emitting a UI event only to trigger a notification would
+// leave the frontend with an event nothing reads.
+//
+// Unlike Emit it does not require the native application to be attached
+// yet, and unlike Emit it ignores the pet sink: it carries no activity
+// for the pet feed.
+func (s *Shell) Notify(typ string, data any) {
+	s.mu.Lock()
+	fn := s.notifySink
+	s.mu.Unlock()
+	if fn != nil {
+		fn(typ, data)
+	}
 }
 
 // SetPetSink installs an optional observer invoked for every UI event

@@ -39,6 +39,11 @@ type ArchiveTurn struct {
 	FinishedAt  time.Time
 	Status      string
 	Error       string
+	// InterruptCause / ErrorKind are the structured class of a failed
+	// turn (host.TurnErrorClass), stored so a resumed transcript can
+	// render the same copy as the live turn without parsing Error.
+	InterruptCause string
+	ErrorKind      string
 	// RequestID is the provider-assigned request identifier of the
 	// terminal operation when the provider reported one. Failures
 	// usually carry it on the error chain; successful generations
@@ -377,8 +382,9 @@ func (s *Store) CommitConversationTurnWithHook(
 		INSERT INTO archive_turns(
 			conversation_id, seq, run_id, at,
 			requested_at, started_at, finished_at,
-			status, error, request_id, response_id, artifacts_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			status, error, interrupt_cause, error_kind,
+			request_id, response_id, artifacts_json
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.ID, turnSeq, runID,
 		turn.At.UTC().Format(time.RFC3339Nano),
 		turn.RequestedAt.UTC().Format(time.RFC3339Nano),
@@ -386,6 +392,8 @@ func (s *Store) CommitConversationTurnWithHook(
 		turn.FinishedAt.UTC().Format(time.RFC3339Nano),
 		turn.Status,
 		turn.Error,
+		turn.InterruptCause,
+		turn.ErrorKind,
 		turn.RequestID,
 		turn.ResponseID,
 		string(turn.ArtifactsJSON),
@@ -456,7 +464,8 @@ func (s *Store) ListArchiveTurns(
 	rows, err := s.db.SQLDB().QueryContext(ctx, `
 		SELECT id, conversation_id, seq, run_id, at,
 			requested_at, started_at, finished_at,
-			status, error, request_id, response_id, artifacts_json
+			status, error, interrupt_cause, error_kind,
+			request_id, response_id, artifacts_json
 		FROM archive_turns WHERE conversation_id = ? ORDER BY seq`, conversationID)
 	if err != nil {
 		return nil, fmt.Errorf("state: list archive turns: %w", err)
@@ -470,9 +479,11 @@ func (s *Store) ListArchiveTurns(
 		var conversationID string
 		var runID sql.NullString
 		var at, requested, started, finished, status, errText string
+		var interruptCause, errorKind string
 		var requestID, responseID, artifacts string
 		if err := rows.Scan(&t.ID, &conversationID, &t.Seq, &runID, &at,
 			&requested, &started, &finished, &status, &errText,
+			&interruptCause, &errorKind,
 			&requestID, &responseID, &artifacts); err != nil {
 			return nil, fmt.Errorf("state: scan archive turn: %w", err)
 		}
@@ -483,6 +494,8 @@ func (s *Store) ListArchiveTurns(
 		t.FinishedAt = parseTime(finished)
 		t.Status = status
 		t.Error = errText
+		t.InterruptCause = interruptCause
+		t.ErrorKind = errorKind
 		t.RequestID = requestID
 		t.ResponseID = responseID
 		t.ArtifactsJSON = []byte(artifacts)
@@ -537,16 +550,19 @@ func (s *Store) ArchiveTurnByRun(
 	var convID string
 	var run sql.NullString
 	var at, requested, started, finished, status, errText string
+	var interruptCause, errorKind string
 	var requestID, responseID, artifacts string
 	err := s.db.SQLDB().QueryRowContext(ctx, `
 		SELECT id, conversation_id, seq, run_id, at,
 			requested_at, started_at, finished_at,
-			status, error, request_id, response_id, artifacts_json
+			status, error, interrupt_cause, error_kind,
+			request_id, response_id, artifacts_json
 		FROM archive_turns
 		WHERE conversation_id = ? AND run_id = ?`,
 		conversationID, runID,
 	).Scan(&t.ID, &convID, &t.Seq, &run, &at,
 		&requested, &started, &finished, &status, &errText,
+		&interruptCause, &errorKind,
 		&requestID, &responseID, &artifacts)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -562,6 +578,8 @@ func (s *Store) ArchiveTurnByRun(
 	t.FinishedAt = parseTime(finished)
 	t.Status = status
 	t.Error = errText
+	t.InterruptCause = interruptCause
+	t.ErrorKind = errorKind
 	t.RequestID = requestID
 	t.ResponseID = responseID
 	t.ArtifactsJSON = []byte(artifacts)
@@ -602,7 +620,8 @@ func (s *Store) ArchiveTurnByRun(
 // so archive rows always carry the same status the UI event reports.
 func (s *Store) UpdateArchiveTurnEnd(
 	ctx context.Context, conversationID, runID string,
-	finishedAt time.Time, status, errText, requestID, responseID string,
+	finishedAt time.Time,
+	status, errText, interruptCause, errorKind, requestID, responseID string,
 ) error {
 	if runID == "" {
 		return fmt.Errorf("state: run id is required")
@@ -613,11 +632,14 @@ func (s *Store) UpdateArchiveTurnEnd(
 			finished_at = ?,
 			status = ?,
 			error = ?,
+			interrupt_cause = ?,
+			error_kind = ?,
 			request_id = ?,
 			response_id = ?
 		WHERE conversation_id = ? AND run_id = ?`,
 		finishedAt.Format(time.RFC3339Nano),
-		status, errText, requestID, responseID, conversationID, runID)
+		status, errText, interruptCause, errorKind,
+		requestID, responseID, conversationID, runID)
 	if err != nil {
 		return fmt.Errorf("state: update archive turn end: %w", err)
 	}
@@ -671,7 +693,7 @@ func (s *Store) UpdateArchiveTurnArtifacts(
 
 // DeleteConversationRows removes every state row owned by one
 // conversation. Memory rows live in the same workspace DB and are
-// registered by orchestration/migrations; they are removed here too so
+// registered by internal/foundation/compat; they are removed here too so
 // a conversation deletion never leaves orphaned memory context
 // behind. A store that has not run the workspace migrations yet has no
 // such tables, and the cleanup is skipped for them.
@@ -713,7 +735,7 @@ func (s *Store) DeleteConversationRows(ctx context.Context, id string) error {
 
 // execIfTableExists runs query only when table is present in the
 // database. Workspace DBs get their complete schema registered by
-// orchestration/migrations, so standalone stores and tests may
+// internal/foundation/compat, so standalone stores and tests may
 // legitimately not have the tables yet.
 func execIfTableExists(
 	ctx context.Context,

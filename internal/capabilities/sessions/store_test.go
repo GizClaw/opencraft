@@ -917,12 +917,14 @@ func TestRecordTurnTimingPersistsWithArchivedTurn(t *testing.T) {
 	finished := started.Add(4 * time.Second)
 	if err := store.RecordTurnEnd(
 		id, "run-timed", finished, "failed", "engine boom",
+		"host_shutdown", "provider_failure",
 		"req-timed", "resp-timed",
 	); err != nil {
 		t.Fatalf("RecordTurnEnd: %v", err)
 	}
 	if err := store.RecordTurnEnd(
-		"bad-id", "run-timed", finished, "failed", "engine boom", "", "",
+		"bad-id", "run-timed", finished, "failed", "engine boom",
+		"", "", "", "",
 	); err == nil {
 		t.Fatal("RecordTurnEnd accepted invalid session id")
 	}
@@ -940,6 +942,13 @@ func TestRecordTurnTimingPersistsWithArchivedTurn(t *testing.T) {
 		turns[0].ResponseID != "resp-timed" {
 		t.Fatalf("turn request/response id = %q/%q, want req-timed/resp-timed",
 			turns[0].RequestID, turns[0].ResponseID)
+	}
+	// The structured class round-trips with the turn, so a resumed
+	// transcript renders the same copy as the live event.
+	if turns[0].InterruptCause != "host_shutdown" ||
+		turns[0].ErrorKind != "provider_failure" {
+		t.Fatalf("turn class = %q/%q, want host_shutdown/provider_failure",
+			turns[0].InterruptCause, turns[0].ErrorKind)
 	}
 	// A retried commit for the same run id is idempotent: the turn is
 	// not archived twice.
@@ -989,7 +998,7 @@ func TestTurnByRunIDLoadsOneCompletedTurn(t *testing.T) {
 	if err := store.RecordTurnEnd(
 		// A successful generation may only expose the provider
 		// response id; the request id stays empty.
-		id, "run-2", finished, "completed", "", "", "resp-2",
+		id, "run-2", finished, "completed", "", "", "", "", "resp-2",
 	); err != nil {
 		t.Fatal(err)
 	}

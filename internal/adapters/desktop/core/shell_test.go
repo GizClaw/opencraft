@@ -27,6 +27,37 @@ func markQuittingPending(s *Shell) {
 	s.mu.Unlock()
 }
 
+// TestShellNotifyReachesTheSinkWithoutAttachment pins the notification
+// path used by payloads the frontend does not consume (the automation
+// result): Notify hands the payload to the sink directly, so it works
+// before a window exists, and it never touches the pet feed.
+func TestShellNotifyReachesTheSinkWithoutAttachment(t *testing.T) {
+	s := NewShell(t.TempDir())
+	var notified []string
+	var petted []string
+	s.SetNotificationSink(func(typ string, _ any) {
+		notified = append(notified, typ)
+	})
+	s.SetPetSink(func(typ string, _ any) {
+		petted = append(petted, typ)
+	})
+
+	s.Notify(NotifyAutomation, map[string]any{"name": "brief"})
+
+	if len(notified) != 1 || notified[0] != NotifyAutomation {
+		t.Fatalf("notification sink saw %v, want [%s]", notified, NotifyAutomation)
+	}
+	if len(petted) != 0 {
+		t.Fatalf("pet feed saw %v, want nothing", petted)
+	}
+}
+
+// A shell without a sink must drop the notification rather than panic.
+func TestShellNotifyWithoutSinkIsNoop(t *testing.T) {
+	s := NewShell(t.TempDir())
+	s.Notify(NotifyAutomation, map[string]any{"name": "brief"})
+}
+
 func TestShellPrefsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	s := NewShell(dir)

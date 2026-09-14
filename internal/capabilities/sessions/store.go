@@ -76,6 +76,11 @@ type TurnRecord struct {
 	RunID       string    `json:"run_id,omitempty"`
 	Status      string    `json:"status,omitempty"`
 	Error       string    `json:"error,omitempty"`
+	// InterruptCause / ErrorKind are the structured class of a failed
+	// turn. They are the fields a UI renders from; Error stays for
+	// correlation with provider-side logs.
+	InterruptCause string `json:"interrupt_cause,omitempty"`
+	ErrorKind      string `json:"error_kind,omitempty"`
 	// RequestID is the provider request identifier of the terminal
 	// operation, surfaced in the UI warning box for correlation with
 	// provider-side logs. Empty when the provider reported none.
@@ -125,7 +130,7 @@ type Store struct {
 // New creates a Store rooted at root. The window is a convenience
 // default for History(0); model context is owned by the memory layer.
 // New opens the SQLite handle but does not migrate it: the workspace
-// caller must run orchestration/migrations.Workspace before use.
+// caller must run internal/foundation/compat.Workspace before use.
 func New(root string, window int) (*Store, error) {
 	if root == "" {
 		return nil, errdefs.Validationf("session store: root is required")
@@ -370,15 +375,16 @@ func (s *Store) RecordTurnTiming(
 // turn_end event the UI receives.
 func (s *Store) RecordTurnEnd(
 	id, runID string, finishedAt time.Time,
-	status, errText, requestID, responseID string,
+	status, errText, interruptCause, errorKind, requestID, responseID string,
 ) error {
 	return s.recordTurnEnd(
-		id, runID, finishedAt, status, errText, requestID, responseID)
+		id, runID, finishedAt, status, errText,
+		interruptCause, errorKind, requestID, responseID)
 }
 
 func (s *Store) recordTurnEnd(
 	id, runID string, finishedAt time.Time,
-	status, errText, requestID, responseID string,
+	status, errText, interruptCause, errorKind, requestID, responseID string,
 ) error {
 	if err := requireID(id); err != nil {
 		return err
@@ -389,7 +395,8 @@ func (s *Store) recordTurnEnd(
 	finishedAt = finishedAt.UTC()
 	if err := s.db.UpdateArchiveTurnEnd(
 		context.Background(), id, runID,
-		finishedAt, status, errText, requestID, responseID,
+		finishedAt, status, errText,
+		interruptCause, errorKind, requestID, responseID,
 	); err != nil {
 		return err
 	}
@@ -682,16 +689,18 @@ func archiveTurnRecord(
 	msgs []state.ArchiveMessage,
 ) TurnRecord {
 	rec := TurnRecord{
-		Seq:         turn.Seq,
-		At:          turn.At,
-		RequestedAt: turn.RequestedAt,
-		StartedAt:   turn.StartedAt,
-		FinishedAt:  turn.FinishedAt,
-		RunID:       turn.RunID,
-		Status:      turn.Status,
-		Error:       turn.Error,
-		RequestID:   turn.RequestID,
-		ResponseID:  turn.ResponseID,
+		Seq:            turn.Seq,
+		At:             turn.At,
+		RequestedAt:    turn.RequestedAt,
+		StartedAt:      turn.StartedAt,
+		FinishedAt:     turn.FinishedAt,
+		RunID:          turn.RunID,
+		Status:         turn.Status,
+		Error:          turn.Error,
+		InterruptCause: turn.InterruptCause,
+		ErrorKind:      turn.ErrorKind,
+		RequestID:      turn.RequestID,
+		ResponseID:     turn.ResponseID,
 	}
 	for _, m := range msgs {
 		rec.Messages = append(rec.Messages, message.Message{
@@ -1088,7 +1097,7 @@ func (f Factory) New(ctx context.Context, in resource.Input) (any, error) {
 	if f.StoreFor == nil {
 		return nil, errdefs.NotAvailablef(
 			"session store: StoreFor is required; schema migration is " +
-				"centralized in orchestration/migrations")
+				"centralized in internal/foundation/compat")
 	}
 	return f.StoreFor(ctx, s.Root, s.Window)
 }
