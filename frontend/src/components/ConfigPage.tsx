@@ -1527,7 +1527,7 @@ export function ConfigPage() {
                                                 : next,
                                           });
                                         }}
-                                        className="w-28 rounded-md border border-edge bg-panel px-2 py-1 outline-none focus:border-accent"
+                                        className="h-[1.875rem] w-40 rounded-lg border border-edge bg-panel px-2 text-xs text-fg outline-none transition-colors focus:border-accent disabled:opacity-40"
                                       />
                                     </label>
                                   </div>

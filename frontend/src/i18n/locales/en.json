@@ -732,7 +732,7 @@
     "effortMapIncomplete": "Effort map must define all five canonical levels (minimal/low/medium/high/xhigh)",
     "webSearch": "hosted web search",
     "maxInputTokens": "max input tokens",
-    "maxInputAuto": "auto (catalog)",
+    "maxInputAuto": "auto (driver default)",
     "model": "Model",
     "models": "Models",
     "apiMode": "API mode",

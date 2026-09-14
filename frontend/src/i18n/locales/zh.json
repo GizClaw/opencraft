@@ -732,7 +732,7 @@
     "effortMapIncomplete": "effort map 必须定义全部 5 个标准档位（minimal/low/medium/high/xhigh）",
     "webSearch": "hosted web search",
     "maxInputTokens": "最大输入 tokens",
-    "maxInputAuto": "自动（驱动 catalog）",
+    "maxInputAuto": "自动（驱动默认值）",
     "model": "模型",
     "models": "模型",
     "apiMode": "API 模式",
