@@ -3,15 +3,11 @@ module github.com/GizClaw/opencraft
 go 1.25.13
 
 require (
-	github.com/GizClaw/flowcraft/core v0.3.1
-	github.com/GizClaw/flowcraft/driver/anthropic v0.2.5
-	github.com/GizClaw/flowcraft/driver/azure v0.2.7
-	github.com/GizClaw/flowcraft/driver/bytedance v0.2.5
-	github.com/GizClaw/flowcraft/driver/deepseek v0.2.6
-	github.com/GizClaw/flowcraft/driver/kimi v0.2.5
-	github.com/GizClaw/flowcraft/driver/minimax v0.2.5
-	github.com/GizClaw/flowcraft/driver/openai v0.2.8
-	github.com/GizClaw/flowcraft/driver/qwen v0.2.5
+	github.com/GizClaw/flowcraft/core v0.4.0
+	github.com/GizClaw/flowcraft/driver/anthropic v0.3.0
+	github.com/GizClaw/flowcraft/driver/bytedance v0.3.0
+	github.com/GizClaw/flowcraft/driver/minimax v0.3.0
+	github.com/GizClaw/flowcraft/driver/openai v0.3.0
 	github.com/PuerkitoBio/goquery v1.12.0
 	github.com/disintegration/imaging v1.6.2
 	github.com/go-shiori/go-readability v0.0.0-20251205110129-5db1dc9836f0
@@ -81,7 +77,7 @@ require (
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/volcengine/volc-sdk-golang v1.0.23 // indirect
-	github.com/volcengine/volcengine-go-sdk v1.2.48 // indirect
+	github.com/volcengine/volcengine-go-sdk v1.2.52 // indirect
 	github.com/yosida95/uritemplate/v3 v3.0.2 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect

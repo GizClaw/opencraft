@@ -3,7 +3,7 @@
 // session, aggregated on demand. Model rows are keyed by model name
 // only (not provider/model): statistics intentionally bucket by name
 // across providers. The desktop shell migrates user.db through
-// orchestration/migrations and then Attach binds this store to the
+// internal/foundation/compat and then Attach binds this store to the
 // shared handle.
 package usage
 
@@ -26,7 +26,7 @@ type Store struct {
 }
 
 // Attach binds the usage store to an existing foundation/db handle
-// that orchestration/migrations.User already migrated.
+// that internal/foundation/compat.User already migrated.
 func Attach(handle *db.DB) (*Store, error) {
 	if handle == nil {
 		return nil, fmt.Errorf("usage: nil database")

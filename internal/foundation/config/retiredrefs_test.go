@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/GizClaw/opencraft/internal/foundation/compat"
 )
 
 // writeDoc seeds one user layer document and returns its path.
@@ -26,20 +28,20 @@ func writeDoc(t *testing.T, dir, body string) string {
 // change the expected outcome.
 func clearRetiredEnv(t *testing.T) {
 	t.Helper()
-	for _, ref := range retiredRefs {
-		previous, set := os.LookupEnv(ref.Env)
-		if err := os.Unsetenv(ref.Env); err != nil {
+	for _, name := range compat.RetiredEnvNames() {
+		previous, set := os.LookupEnv(name)
+		if err := os.Unsetenv(name); err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() {
 			if !set {
-				if err := os.Unsetenv(ref.Env); err != nil {
-					t.Errorf("unset %s: %v", ref.Env, err)
+				if err := os.Unsetenv(name); err != nil {
+					t.Errorf("unset %s: %v", name, err)
 				}
 				return
 			}
-			if err := os.Setenv(ref.Env, previous); err != nil {
-				t.Errorf("restore %s: %v", ref.Env, err)
+			if err := os.Setenv(name, previous); err != nil {
+				t.Errorf("restore %s: %v", name, err)
 			}
 		})
 	}

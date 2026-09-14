@@ -121,7 +121,7 @@ func TestArchiveObserverKeepsIntermediateToolActivity(t *testing.T) {
 		Role: message.RoleTool,
 		Content: message.Content{Parts: []message.Part{
 			message.ToolResultPart{Result: message.ToolResult{
-				CallID: "c1", Content: "build ok",
+				CallID: "c1", Content: message.NewTextContent("build ok"),
 			}},
 		}},
 	})
@@ -148,7 +148,7 @@ func TestArchiveObserverKeepsIntermediateToolActivity(t *testing.T) {
 		t.Errorf("tool-call assistant message = %+v, want structured ToolCallPart", hist[1])
 	}
 	if result, ok := hist[2].Content.Parts[0].(message.ToolResultPart); !ok ||
-		result.Result.Content != "build ok" {
+		result.Result.Content.Text() != "build ok" {
 		t.Errorf("tool result message = %+v, want structured ToolResultPart", hist[2])
 	}
 	for _, m := range hist {

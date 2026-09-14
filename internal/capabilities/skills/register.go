@@ -23,7 +23,7 @@ type Factory struct{}
 var _ resource.Factory = Factory{}
 
 // pluginRootsProvider is implemented by the shared plugin host
-// (internal/plugins/agent) and contributes plugin skill roots.
+// (internal/capabilities/plugins/agent) and contributes plugin skill roots.
 type pluginRootsProvider interface {
 	SkillRoots() []string
 }

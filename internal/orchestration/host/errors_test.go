@@ -8,6 +8,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/inference"
+	"github.com/GizClaw/flowcraft/core/inference/model"
 )
 
 func TestIsRetryableStartError(t *testing.T) {
@@ -63,7 +64,7 @@ func TestFailureRequestID(t *testing.T) {
 		"graph %q node %q: %w",
 		"opencraft-assistant", "llm",
 		inference.NewError(
-			inference.ProviderTruncated, inference.OperationGenerate, "",
+			inference.ProviderTruncated, model.OperationGenerate, "",
 			errdefs.WithRequestID(
 				errdefs.NotAvailable(errors.New("stream ended early")),
 				"req-stream-1",
@@ -75,7 +76,7 @@ func TestFailureRequestID(t *testing.T) {
 	}
 
 	field := inference.NewError(
-		inference.ProviderFailure, inference.OperationGenerate, "",
+		inference.ProviderFailure, model.OperationGenerate, "",
 		errors.New("provider boom"),
 	)
 	field.RequestID = "req-field-1"

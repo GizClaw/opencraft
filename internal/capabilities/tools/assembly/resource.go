@@ -38,6 +38,11 @@ type middlewareSettings struct {
 	ResultLimit *ResultLimitSettings                `json:"result_limit,omitempty"`
 	Redact      *RedactSettings                     `json:"redact,omitempty"`
 	Audit       *AuditSettings                      `json:"audit,omitempty"`
+	// ResultPartBudgetBytes caps the encoded size of one result's
+	// non-text parts when result_limit does not carry its own
+	// part_budget_bytes. Nil keeps flowcraft's default (1 MiB); 0 lifts
+	// the cap.
+	ResultPartBudgetBytes *int `json:"result_part_budget_bytes,omitempty"`
 }
 
 // AssemblyFactory builds tool.Assembly/opencraft.
@@ -117,6 +122,16 @@ func buildMiddleware(
 		core.Recover = s.Recover
 		core.Timeout = s.Timeout
 		core.Concurrency = s.Concurrency
+		// Non-text result parts are bounded even when the text limit is
+		// off: a tool result rides every later turn's context, and media
+		// has no natural size. flowcraft applies its own default (1 MiB)
+		// when this is nil. The result_limit section wins when it names
+		// a budget, because that limiter meters text and media together.
+		partBudget := s.ResultPartBudgetBytes
+		if s.ResultLimit != nil && s.ResultLimit.PartBudgetBytes != nil {
+			partBudget = s.ResultLimit.PartBudgetBytes
+		}
+		core.ResultPartBudgetBytes = partBudget
 	}
 	built, err := toolmiddleware.FromSettings(core)
 	if err != nil {

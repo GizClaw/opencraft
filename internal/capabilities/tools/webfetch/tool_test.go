@@ -38,7 +38,7 @@ func TestToolExtractsArticle(t *testing.T) {
 		Content     string `json:"content"`
 		Truncated   bool   `json:"truncated"`
 	}
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
+	if err := json.Unmarshal([]byte(out.Text()), &res); err != nil {
 		t.Fatalf("parse result: %v\n%s", err, out)
 	}
 	if !strings.Contains(res.Title, "FlowCraft") {
@@ -76,7 +76,7 @@ func TestToolTruncates(t *testing.T) {
 		Content   string `json:"content"`
 		Truncated bool   `json:"truncated"`
 	}
-	if err := json.Unmarshal([]byte(out), &res); err != nil {
+	if err := json.Unmarshal([]byte(out.Text()), &res); err != nil {
 		t.Fatal(err)
 	}
 	if !res.Truncated {

@@ -1,4 +1,4 @@
-package migrations
+package compat
 
 import (
 	"context"
@@ -38,14 +38,14 @@ func AdoptLegacySessions(
 	if _, err := os.Stat(filepath.Join(destRoot, "session.db")); err == nil {
 		return nil
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("migrations: inspect new session root %s: %w",
+		return fmt.Errorf("compat: inspect new session root %s: %w",
 			destRoot, err)
 	}
 	// Only migrate a real project-local tree. Never follow a symlinked
 	// .opencraft or sessions entry from an untrusted workspace.
 	realParent, err := isRealDirectory(filepath.Dir(legacyRoot))
 	if err != nil {
-		return fmt.Errorf("migrations: inspect legacy sessions parent: %w", err)
+		return fmt.Errorf("compat: inspect legacy sessions parent: %w", err)
 	}
 	if !realParent {
 		return nil
@@ -58,7 +58,7 @@ func AdoptLegacySessions(
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(destRoot), 0o700); err != nil {
-		return fmt.Errorf("migrations: create session root parent: %w", err)
+		return fmt.Errorf("compat: create session root parent: %w", err)
 	}
 
 	adopted, err := relocateLegacySessions(ctx, legacyRoot, destRoot)
@@ -67,7 +67,7 @@ func AdoptLegacySessions(
 	}
 	if adopted {
 		telemetry.WarnErr(ctx,
-			"migrations: remove empty legacy sessions parent failed",
+			"compat: remove empty legacy sessions parent failed",
 			removeEmptyDir(filepath.Dir(legacyRoot)))
 	}
 	return nil
@@ -93,11 +93,11 @@ func relocateLegacySessions(
 				return false, nil
 			}
 			return false, fmt.Errorf(
-				"migrations: remove empty session root %s: %w", destRoot, err)
+				"compat: remove empty session root %s: %w", destRoot, err)
 		}
 	case errors.Is(err, os.ErrNotExist):
 	default:
-		return false, fmt.Errorf("migrations: read session root %s: %w",
+		return false, fmt.Errorf("compat: read session root %s: %w",
 			destRoot, err)
 	}
 
@@ -110,23 +110,23 @@ func relocateLegacySessions(
 			return false, nil
 		}
 		return false, fmt.Errorf(
-			"migrations: move legacy sessions %s: %w", legacyRoot, err)
+			"compat: move legacy sessions %s: %w", legacyRoot, err)
 	}
 
 	tmp, err := os.MkdirTemp(filepath.Dir(destRoot), ".adopt-*")
 	if err != nil {
-		return false, fmt.Errorf("migrations: create adoption temp: %w", err)
+		return false, fmt.Errorf("compat: create adoption temp: %w", err)
 	}
 	if err := copyLegacyTree(legacyRoot, tmp); err != nil {
 		telemetry.WarnErr(ctx,
-			"migrations: remove partial legacy session copy failed",
+			"compat: remove partial legacy session copy failed",
 			os.RemoveAll(tmp))
 		return false, fmt.Errorf(
-			"migrations: copy legacy sessions %s: %w", legacyRoot, err)
+			"compat: copy legacy sessions %s: %w", legacyRoot, err)
 	}
 	if err := os.Rename(tmp, destRoot); err != nil {
 		telemetry.WarnErr(ctx,
-			"migrations: remove unused legacy session copy failed",
+			"compat: remove unused legacy session copy failed",
 			os.RemoveAll(tmp))
 		if _, statErr := os.Stat(legacyRoot); errors.Is(statErr, os.ErrNotExist) {
 			if _, destErr := os.Stat(destRoot); destErr == nil {
@@ -134,9 +134,9 @@ func relocateLegacySessions(
 			}
 		}
 		return false, fmt.Errorf(
-			"migrations: finalize legacy sessions copy: %w", err)
+			"compat: finalize legacy sessions copy: %w", err)
 	}
-	telemetry.WarnErr(ctx, "migrations: remove legacy sessions after copy failed",
+	telemetry.WarnErr(ctx, "compat: remove legacy sessions after copy failed",
 		os.RemoveAll(legacyRoot))
 	return true, nil
 }
@@ -170,7 +170,7 @@ func copyLegacyTree(src, dst string) error {
 			return copyLegacyFile(path, target, info.Mode().Perm())
 		default:
 			return fmt.Errorf(
-				"migrations: legacy sessions contains unsupported file %s",
+				"compat: legacy sessions contains unsupported file %s",
 				path)
 		}
 	})
@@ -183,7 +183,7 @@ func copyLegacyFile(src, dst string, perm fs.FileMode) error {
 	}
 	defer func() {
 		telemetry.WarnErr(context.Background(),
-			"migrations: close legacy session source failed", in.Close())
+			"compat: close legacy session source failed", in.Close())
 	}()
 	out, err := os.OpenFile(dst, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, perm)
 	if err != nil {
@@ -191,9 +191,9 @@ func copyLegacyFile(src, dst string, perm fs.FileMode) error {
 	}
 	if _, err := io.Copy(out, in); err != nil {
 		telemetry.WarnErr(context.Background(),
-			"migrations: close partial legacy session copy failed", out.Close())
+			"compat: close partial legacy session copy failed", out.Close())
 		telemetry.WarnErr(context.Background(),
-			"migrations: remove partial legacy session copy failed",
+			"compat: remove partial legacy session copy failed",
 			os.Remove(dst))
 		return err
 	}
@@ -222,6 +222,9 @@ func removeEmptyDir(dir string) error {
 	return nil
 }
 
+// isRealDirectory reports whether path exists, is a directory, and is
+// not a symlink. Only a real directory may be adopted: following a link
+// would move whatever it points at, which is outside the workspace.
 func isRealDirectory(path string) (bool, error) {
 	info, err := os.Lstat(path)
 	if err != nil {

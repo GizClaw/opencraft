@@ -72,15 +72,6 @@ func (m *Manager) Load(ctx context.Context) (*View, error) {
 		Source:   resource.Source{Embed: "assets/opencraft.yaml"},
 		Embed:    FS(),
 	}, {
-		// Fixed inference wiring (providers + infer assembly + router
-		// retry shell) lives in its own embedded layer so the
-		// setup-written user layer only carries the variable parts
-		// (key profiles, azure, generate targets).
-		Priority: 1,
-		Name:     "embedded-inference",
-		Source:   resource.Source{Embed: "assets/inference.yaml"},
-		Embed:    FS(),
-	}, {
 		// Tool containers + script runtime, agent definitions, and the
 		// runtime section live in their own embedded layer files so the
 		// base document stays navigable. Each is a partial document

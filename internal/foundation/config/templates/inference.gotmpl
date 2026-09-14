@@ -1,0 +1,76 @@
+{{define "inference"}}# opencraft user configuration layer
+# (~/.opencraft/config/opencraft.yaml; edited through the
+# desktop settings page; last written {{.Now}}).
+#
+# This file carries the whole inference wiring: one provider
+# deployment per instance (driver + models + endpoint +
+# capabilities + key), the infer assembly over those
+# providers, and the router — its retry policy plus the
+# generate targets in the enabled order (failures fall back
+# to the next target).
+# Resources, deps, and settings merge deeply across layers, so
+# resources not managed here (MCP servers, sandbox policy,
+# custom graphs) are preserved across settings writes.
+version: v1
+resources:
+{{range .Providers}}{{template "provider" .}}{{end}}  infer:
+    kind: inference.Assembly
+    impl: unified
+{{if .Deps}}    deps:
+{{range .Deps}}      provider.{{.}}: provider.{{.}}
+{{end}}{{end}}  router:
+    kind: inference.Router
+    impl: unified
+    deps:
+      target: infer
+    settings:
+      retry:
+        generate:
+          max_attempts: {{.Router.MaxAttempts}}
+          fallback_on_retry_exhausted: {{.Router.Fallback}}
+      generate:
+        - tier: default
+          targets:
+{{range .Router.Targets}}            - model:
+                id:
+                  provider: {{.Provider}}
+                  name: {{quote .Name}}
+{{if .Profile}}                profile: {{quote .Profile}}
+{{end}}{{end}}{{if not .Router.Targets}}          targets: []
+{{end}}{{end}}
+
+{{define "provider"}}  provider.{{.ID}}:
+    kind: inference.Provider
+    impl: {{.Impl}}
+    settings:
+      id: {{.ID}}
+      spec:
+{{.Spec}}        models:
+{{range .Models}}{{template "model" .}}{{end}}      profiles:
+        -{{if .StableID}} id: {{quote .StableID}}{{end}}
+{{if .Endpoints}}          endpoints:
+{{range .Endpoints}}            {{quote .Name}}: {{quote .Endpoint}}
+{{end}}{{end}}          secrets:
+            api_key: {{.APIKey}}
+{{end}}
+
+{{define "model"}}          - name: {{quote .Name}}
+            kind: {{quote .Kind}}
+            capabilities:
+{{if .Outputs}}              outputs: {{kinds .Outputs}}
+{{end}}{{if .Inputs}}              inputs: {{kinds .Inputs}}
+{{end}}{{if .ReasoningKind}}              reasoning:
+                kind: {{quote .ReasoningKind}}
+{{if .EffortMap}}                effort_map:
+{{range .EffortMap}}                  {{quote .Effort}}: {{quote .Mode}}
+{{end}}{{end}}{{end}}{{if .WebSearch}}              hosted_web_search: true
+{{end}}{{if .HasLimits}}            limits:
+{{if .MaxInput}}              max_input_tokens: {{.MaxInput}}
+{{end}}{{if .MaxOutput}}              max_output_tokens: {{.MaxOutput}}
+{{end}}{{end}}{{if .Lifecycle}}            lifecycle:
+              status: {{quote .Lifecycle.Status}}
+{{if .Lifecycle.Name}}              replacement:
+                provider: {{quote .Lifecycle.Provider}}
+                name: {{quote .Lifecycle.Name}}
+{{end}}{{if .Lifecycle.Notes}}              notes: {{quote .Lifecycle.Notes}}
+{{end}}{{end}}{{.DriverFields}}{{end}}

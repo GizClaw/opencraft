@@ -268,7 +268,20 @@ func (updatePlanTool) Metadata() tool.ToolMeta {
 	return tool.ToolMeta{MutatesState: true}
 }
 
+// Execute implements tool.Tool. The tool result is a single text part;
+// the tool has no multimodal output.
 func (t updatePlanTool) Execute(
+	ctx context.Context, arguments string,
+) (message.Content, error) {
+	out, err := t.execute(ctx, arguments)
+	if err != nil {
+		return message.Content{}, err
+	}
+	return message.NewTextContent(out), nil
+}
+
+// execute renders the tool's text result.
+func (t updatePlanTool) execute(
 	ctx context.Context, arguments string,
 ) (string, error) {
 	args, err := decodeArgs(arguments)

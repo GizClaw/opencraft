@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/deploy"
-	"github.com/GizClaw/flowcraft/core/inference"
+	"github.com/GizClaw/flowcraft/core/inference/model"
 	"github.com/GizClaw/flowcraft/core/message"
 )
 
@@ -30,6 +30,9 @@ func envKeyed(t *testing.T, ids ...string) InferenceConfig {
 			Type:      id,
 			KeySource: KeyEnv,
 			Enabled:   true,
+			// Opencraft keeps no model table: every instance names the
+			// models it serves.
+			Models: []Model{{Name: "test-model-" + id}},
 		})
 	}
 	return cfg
@@ -64,12 +67,25 @@ func TestNeeded(t *testing.T) {
 		t.Fatalf("no router: needed=%v err=%v, want true", needed, err)
 	}
 
-	// A router declaration (settings-page output) counts as configured.
+	// A router without targets is still unconfigured: the generated
+	// layer always declares the router so the resources that reference
+	// it resolve, and an empty target list is the "run setup" state.
 	writeFile(t, dir, "opencraft.yaml",
 		"resources:\n  router:\n    settings:\n      generate:\n")
 	needed, err = InferenceNeeded(dir)
+	if err != nil || !needed {
+		t.Fatalf("empty router: needed=%v err=%v, want true", needed, err)
+	}
+
+	// One generate target marks the install configured.
+	writeFile(t, dir, "opencraft.yaml",
+		"resources:\n  router:\n    settings:\n      generate:\n"+
+			"        - tier: default\n          targets:\n"+
+			"            - model:\n                id:\n"+
+			"                  provider: openai-1\n                  name: deepseek-v4-flash\n")
+	needed, err = InferenceNeeded(dir)
 	if err != nil || needed {
-		t.Fatalf("with router: needed=%v err=%v, want false", needed, err)
+		t.Fatalf("with targets: needed=%v err=%v, want false", needed, err)
 	}
 
 	// An unparseable user layer is an error, never "unconfigured".
@@ -132,7 +148,7 @@ resources:
           targets:
             - model:
                 id:
-                  provider: deepseek-1
+                  provider: openai-1
                   name: deepseek-v4-flash
 `,
 			want: true,
@@ -156,7 +172,7 @@ resources:
 }
 
 func TestInferenceYAMLVariableParts(t *testing.T) {
-	cfg := envKeyed(t, "deepseek", "openai")
+	cfg := envKeyed(t, "openai", "anthropic")
 	data, err := cfg.InferenceYAML()
 	if err != nil {
 		t.Fatal(err)
@@ -165,41 +181,43 @@ func TestInferenceYAMLVariableParts(t *testing.T) {
 
 	// One deployment resource per enabled instance, with the key
 	// profile and the model declaration.
-	if !strings.Contains(doc, "api_key: ${env:DEEPSEEK_API_KEY}") {
-		t.Fatalf("deepseek profile missing:\n%s", doc)
-	}
 	if !strings.Contains(doc, "api_key: ${env:OPENAI_API_KEY}") {
 		t.Fatalf("openai profile missing:\n%s", doc)
 	}
-	if strings.Contains(doc, "api_key: ${env:ANTHROPIC_API_KEY}") {
-		t.Fatalf("unkeyed anthropic must not carry a profile:\n%s", doc)
+	if strings.Contains(doc, "api_key: ${env:AZURE_OPENAI_API_KEY}") {
+		t.Fatalf("no driver defaults to an Azure env var any more:\n%s", doc)
 	}
-	if !strings.Contains(doc, "provider.deepseek-1:") ||
-		!strings.Contains(doc, "provider.openai-2:") {
+	if !strings.Contains(doc, "provider.openai-1:") ||
+		!strings.Contains(doc, "provider.anthropic-2:") {
 		t.Fatalf("instance deployments missing:\n%s", doc)
 	}
-	if !strings.Contains(doc, "request_metadata:\n          envelope: client_metadata") {
+	if !strings.Contains(doc, "request_metadata:\n          envelope: 'client_metadata'") {
 		t.Fatalf("client_metadata envelope missing:\n%s", doc)
 	}
+	if !strings.Contains(doc, "api_key: ${env:ANTHROPIC_API_KEY}") {
+		t.Fatalf("anthropic profile missing:\n%s", doc)
+	}
 	// Router targets = enabled instances in priority order.
-	idx := strings.Index(doc, "provider: deepseek-1")
-	idx2 := strings.Index(doc, "provider: openai-2")
+	idx := strings.Index(doc, "provider: openai-1")
+	idx2 := strings.Index(doc, "provider: anthropic-2")
 	if idx < 0 || idx2 < 0 || idx > idx2 {
 		t.Fatalf("router priority order wrong:\n%s", doc)
-	}
-	if strings.Contains(doc, "provider: anthropic-1") {
-		t.Fatalf("unkeyed provider must not be a router target:\n%s", doc)
 	}
 }
 
 func TestInferenceYAMLAzure(t *testing.T) {
-	cfg := envKeyed(t, "deepseek")
+	cfg := envKeyed(t, "openai")
 	cfg.Instances = append(cfg.Instances, Instance{
-		Type:      "azure",
+		Type:      "openai",
 		KeySource: KeyEnv,
 		Endpoint:  "https://res.openai.azure.com",
 		Models:    []Model{{Name: "gpt-5.6-sol-deploy"}},
-		Enabled:   true,
+		Advanced: InstanceAdvanced{
+			Routing:    "azure_deployment",
+			AuthScheme: "header",
+			AuthHeader: "api-key",
+		},
+		Enabled: true,
 	})
 	data, err := cfg.InferenceYAML()
 	if err != nil {
@@ -207,41 +225,364 @@ func TestInferenceYAMLAzure(t *testing.T) {
 	}
 	doc := string(data)
 	for _, want := range []string{
-		"provider.azure-2:",
-		"endpoint: 'https://res.openai.azure.com'",
-		"request_metadata:\n          envelope: client_metadata",
+		"provider.openai-2:",
+		"endpoint:\n          base_url: 'https://res.openai.azure.com'",
+		"routing: 'azure_deployment'",
+		"auth:\n          scheme: 'header'\n          header: 'api-key'",
+		"request_metadata:\n          envelope: 'client_metadata'",
 		"name: 'gpt-5.6-sol-deploy'",
 		"kind: 'generate'",
 		"capabilities:",
 		"outputs: [text]",
-		"provider.azure-2: provider.azure-2", // infer dep merge
-		"provider: azure-2",                  // router target
+		"provider.openai-2: provider.openai-2", // infer dep merge
+		"provider: openai-2",                   // router target
 	} {
 		if !strings.Contains(doc, want) {
 			t.Fatalf("azure doc missing %q:\n%s", want, doc)
 		}
 	}
 
-	// Missing endpoint/model must fail generation.
-	bad := envKeyed(t, "deepseek")
-	bad.Instances = append(bad.Instances, Instance{Type: "azure", Enabled: true})
+	// Azure routing without an endpoint must fail generation.
+	bad := envKeyed(t, "openai")
+	bad.Instances = append(bad.Instances, Instance{
+		Type: "openai", Enabled: true,
+		Advanced: InstanceAdvanced{Routing: "azure_deployment"},
+		Models:   []Model{{Name: "deploy"}},
+	})
 	if _, err := bad.InferenceYAML(); err == nil {
 		t.Fatal("azure without endpoint must fail")
 	}
 }
 
+// TestInferenceYAMLAdvancedRoundTrip pins the advanced provider knobs
+// TestInferenceYAMLPluginDeclaredProvider covers a provider that is not
+// TestInferenceYAMLDriverFactsRoundTrip pins the declaration leaves the
+// TestInferenceYAMLDropsRetiredCatalogKey: core v0.4.0 rejects the
+// retired `catalog` key. A document that still carries one (our own
+// earlier build wrote it for plugin-declared providers) loads, and the
+// next write drops it rather than parking it in the opaque provider bag
+// where it would keep failing every build.
+func TestInferenceYAMLDropsRetiredCatalogKey(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "opencraft.yaml", `resources:
+  provider.openai-inst-aaa:
+    kind: inference.Provider
+    impl: openai
+    settings:
+      id: openai-inst-aaa
+      spec:
+        api: chat
+        catalog: declared
+        models:
+          - name: glm-5.3-flash
+            kind: generate
+      profiles:
+        - id: inst-aaa
+          secrets:
+            api_key: ${env:OPENAI_API_KEY}
+  router:
+    settings:
+      generate:
+        - tier: default
+          targets:
+            - model:
+                id:
+                  provider: openai-inst-aaa
+                  name: glm-5.3-flash
+`)
+	cfg, err := LoadInference(dir)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(cfg.Instances) != 1 {
+		t.Fatalf("instances = %+v", cfg.Instances)
+	}
+	if _, ok := cfg.Instances[0].ProviderSpec["catalog"]; ok {
+		t.Fatalf("retired key parked in the provider bag: %+v",
+			cfg.Instances[0].ProviderSpec)
+	}
+	if err := WriteInference(dir, cfg); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "opencraft.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "catalog") {
+		t.Fatalf("retired key survived the rewrite:\n%s", raw)
+	}
+}
+
+// TestInferenceYAMLDriverFactsRoundTrip pins the declaration leaves the
+// settings page edits on top of the basic model row: discovery metadata,
+// the driver-specific model fields opencraft does not model, the
+// unmodeled provider body fields, and the retention policy's "omit".
+func TestInferenceYAMLDriverFactsRoundTrip(t *testing.T) {
+	cfg := InferenceConfig{Instances: []Instance{
+		{
+			StableID:  "inst-openai",
+			Type:      "openai",
+			KeySource: KeyEnv,
+			Enabled:   true,
+			Advanced: InstanceAdvanced{
+				Store:     "omit",
+				ExtraBody: map[string]string{"custom_gateway_hint": `"prefer-a"`},
+			},
+			Models: []Model{{
+				Name:         "gpt-5.6-sol",
+				Capabilities: model.ModelCapabilities{Outputs: []message.PartKind{message.PartText}},
+				Lifecycle: ModelLifecycle{
+					Status:              "deprecated",
+					ReplacementProvider: "openai",
+					ReplacementName:     "gpt-5.6-terra",
+					Notes:               "sunset later this year",
+				},
+			}},
+		},
+		{
+			StableID:  "inst-ark",
+			Type:      "bytedance",
+			KeySource: KeyEnv,
+			Enabled:   false,
+			Models: []Model{{
+				Name: "doubao-seedance-2-0",
+				Kind: "video",
+				Capabilities: model.ModelCapabilities{
+					Outputs: []message.PartKind{message.PartVideo},
+				},
+				DriverFields: map[string]any{
+					"max_resolution": "1080p",
+					"video": map[string]any{
+						"seed":                 true,
+						"duration_min_seconds": float64(5),
+					},
+				},
+			}},
+		},
+	}}
+	data, err := cfg.InferenceYAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+	for _, want := range []string{
+		"store: omit",
+		"extra_body:\n            'custom_gateway_hint': \"prefer-a\"",
+		"lifecycle:\n              status: 'deprecated'",
+		"replacement:\n                provider: 'openai'\n                name: 'gpt-5.6-terra'",
+		"notes: 'sunset later this year'",
+		"max_resolution: 1080p",
+		// The nesting itself is proven by the runtime build test, which
+		// makes the driver decode this block.
+		"video:",
+		"duration_min_seconds: 5",
+		"seed: true",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Fatalf("driver-facts doc missing %q:\n%s", want, doc)
+		}
+	}
+
+	dir := t.TempDir()
+	if err := WriteInference(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadInference(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Instances) != 2 {
+		t.Fatalf("instances = %d, want 2", len(loaded.Instances))
+	}
+	openai := loaded.Instances[0]
+	if openai.Advanced.Store != "omit" ||
+		openai.Advanced.ExtraBody["custom_gateway_hint"] != `"prefer-a"` {
+		t.Fatalf("advanced round trip = %+v", openai.Advanced)
+	}
+	lifecycle := openai.Models[0].Lifecycle
+	if lifecycle.Status != "deprecated" ||
+		lifecycle.ReplacementProvider != "openai" ||
+		lifecycle.ReplacementName != "gpt-5.6-terra" ||
+		lifecycle.Notes != "sunset later this year" {
+		t.Fatalf("lifecycle round trip = %+v", lifecycle)
+	}
+	ark := loaded.Instances[1]
+	if ark.Models[0].DriverFields["max_resolution"] != "1080p" {
+		t.Fatalf("driver fields round trip = %+v", ark.Models[0].DriverFields)
+	}
+	video, ok := ark.Models[0].DriverFields["video"].(map[string]any)
+	if !ok || video["seed"] != true {
+		t.Fatalf("nested driver fields = %+v", ark.Models[0].DriverFields)
+	}
+}
+
+// TestInferenceYAMLPluginDeclaredProvider covers a provider that is not
+// one of the built-in presets: the instance names its driver, so the
+// deployment carries the impl and a declared catalog, and the write/
+// read cycle keeps the vendor id intact instead of folding it onto the
+// first preset that shares the driver.
+func TestInferenceYAMLPluginDeclaredProvider(t *testing.T) {
+	cfg := InferenceConfig{Instances: []Instance{{
+		StableID:  "plug-vendor",
+		Type:      "vendorx",
+		Name:      "Vendor X",
+		Driver:    "openai",
+		API:       "chat",
+		KeySource: KeyKeychain,
+		KeyValue:  "auth/plug/vendorx",
+		Enabled:   true,
+		Endpoint:  "https://api.vendorx.example/v1",
+		Models:    []Model{{Name: "vendorx-pro"}},
+	}}}
+	data, err := cfg.InferenceYAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+	for _, want := range []string{
+		"provider.vendorx-plug-vendor:",
+		"impl: openai",
+		"base_url: 'https://api.vendorx.example/v1'",
+		"name: 'vendorx-pro'",
+		"provider: vendorx-plug-vendor",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Fatalf("plugin provider doc missing %q:\n%s", want, doc)
+		}
+	}
+
+	dir := t.TempDir()
+	if err := WriteInference(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadInference(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Instances) != 1 {
+		t.Fatalf("instances = %d, want 1", len(loaded.Instances))
+	}
+	got := loaded.Instances[0]
+	if got.Type != "vendorx" || got.Driver != "openai" ||
+		got.StableID != "plug-vendor" {
+		t.Fatalf("round-tripped provider = %+v", got)
+	}
+	if got.DeploymentID(1) != "vendorx-plug-vendor" {
+		t.Fatalf("deployment id = %q", got.DeploymentID(1))
+	}
+}
+
+// TestInferenceYAMLAdvancedRoundTrip pins the advanced provider knobs
+// and the router retry policy to the settings page's data model: what
+// the form edits must survive a write/read cycle unchanged, including
+// the explicit request-metadata opt-out.
+func TestInferenceYAMLAdvancedRoundTrip(t *testing.T) {
+	retries, usage := 3, false
+	cfg := InferenceConfig{
+		Instances: []Instance{{
+			StableID:  "inst-aaa",
+			Type:      "openai",
+			API:       "chat",
+			KeySource: KeyEnv,
+			Enabled:   true,
+			Endpoint:  "https://gateway.example/v1",
+			Advanced: InstanceAdvanced{
+				Routing:          "azure_deployment",
+				Query:            map[string]string{"api-version": "2025-04-01-preview"},
+				Headers:          map[string]string{"x-gateway": "one"},
+				Organization:     "org-1",
+				Project:          "proj-2",
+				Timeout:          "90s",
+				AuthScheme:       "header",
+				AuthHeader:       "x-api-key",
+				MetadataEnvelope: "-",
+				HTTPRetries:      &retries,
+				Store:            "false",
+				ReasoningChannel: "text",
+				ChatIncludeUsage: &usage,
+			},
+			Models: []Model{{Name: "glm-5.3-flash"}},
+		}},
+		Router: RouterPolicy{MaxAttempts: 4, FallbackOnRetryExhausted: false},
+	}
+	data, err := cfg.InferenceYAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc := string(data)
+	for _, want := range []string{
+		"endpoint:\n          base_url: 'https://gateway.example/v1'",
+		"routing: 'azure_deployment'",
+		"organization: 'org-1'",
+		"project: 'proj-2'",
+		"timeout: '90s'",
+		"headers:\n            'x-gateway': 'one'",
+		"query:\n            'api-version': '2025-04-01-preview'",
+		"auth:\n          scheme: 'header'\n          header: 'x-api-key'",
+		"request_metadata: {}",
+		"http_retries: 3",
+		"store: false",
+		"reasoning_channel: 'text'",
+		"chat_stream_options:\n            include_usage: false",
+		"max_attempts: 4",
+		"fallback_on_retry_exhausted: false",
+	} {
+		if !strings.Contains(doc, want) {
+			t.Fatalf("advanced doc missing %q:\n%s", want, doc)
+		}
+	}
+
+	dir := t.TempDir()
+	if err := WriteInference(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadInference(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Instances) != 1 {
+		t.Fatalf("instances = %d, want 1", len(loaded.Instances))
+	}
+	got := loaded.Instances[0]
+	if got.Endpoint != "https://gateway.example/v1" {
+		t.Fatalf("endpoint = %q", got.Endpoint)
+	}
+	adv := got.Advanced
+	if adv.Routing != "azure_deployment" ||
+		adv.Organization != "org-1" ||
+		adv.Project != "proj-2" ||
+		adv.Timeout != "90s" ||
+		adv.AuthScheme != "header" ||
+		adv.AuthHeader != "x-api-key" ||
+		adv.MetadataEnvelope != "-" ||
+		adv.ReasoningChannel != "text" ||
+		adv.HTTPRetries == nil || *adv.HTTPRetries != 3 ||
+		adv.Store != "false" ||
+		adv.ChatIncludeUsage == nil || *adv.ChatIncludeUsage != false {
+		t.Fatalf("advanced round trip = %+v", adv)
+	}
+	if adv.Query["api-version"] != "2025-04-01-preview" ||
+		adv.Headers["x-gateway"] != "one" {
+		t.Fatalf("advanced maps = %+v / %+v", adv.Query, adv.Headers)
+	}
+	if loaded.Router.MaxAttempts != 4 ||
+		loaded.Router.FallbackOnRetryExhausted {
+		t.Fatalf("router policy = %+v", loaded.Router)
+	}
+}
+
 func TestInferenceYAMLAzureCapabilities(t *testing.T) {
-	cfg := envKeyed(t, "deepseek")
+	cfg := envKeyed(t, "openai")
 	cfg.Instances = append(cfg.Instances, Instance{
-		Type:      "azure",
+		Type:      "openai",
 		KeySource: KeyEnv,
 		Endpoint:  "https://res.openai.azure.com",
 		Models: []Model{{
 			Name: "gpt-5.6-sol-deploy",
-			Capabilities: inference.ModelCapabilities{
+			Capabilities: model.ModelCapabilities{
 				Inputs:          []message.PartKind{message.PartImage},
 				Outputs:         []message.PartKind{message.PartText},
-				Reasoning:       inference.ReasoningCapability{Kind: inference.ReasoningToggle},
+				Reasoning:       model.ReasoningCapability{Kind: model.ReasoningToggle},
 				HostedWebSearch: true,
 			},
 		}},
@@ -265,9 +606,9 @@ func TestInferenceYAMLAzureCapabilities(t *testing.T) {
 
 	// Reasoning left off (the empty option) must not emit a reasoning
 	// declaration.
-	off := envKeyed(t, "deepseek")
+	off := envKeyed(t, "openai")
 	off.Instances = append(off.Instances, Instance{
-		Type:      "azure",
+		Type:      "openai",
 		KeySource: KeyEnv,
 		Endpoint:  "https://res.openai.azure.com",
 		Models:    []Model{{Name: "gpt-5.6-sol-deploy"}},
@@ -284,14 +625,14 @@ func TestInferenceYAMLAzureCapabilities(t *testing.T) {
 
 func TestInferenceYAMLLimitsRoundTrip(t *testing.T) {
 	input, output := 1_000_000, 65_536
-	cfg := envKeyed(t, "deepseek")
+	cfg := envKeyed(t, "openai")
 	cfg.Instances = append(cfg.Instances, Instance{
-		Type:      "azure",
+		Type:      "openai",
 		KeySource: KeyEnv,
 		Endpoint:  "https://res.openai.azure.com",
 		Models: []Model{{
 			Name: "gpt-5.6-sol-deploy",
-			Limits: inference.ModelLimits{
+			Limits: model.ModelLimits{
 				MaxInputTokens:  &input,
 				MaxOutputTokens: &output,
 			},
@@ -321,9 +662,9 @@ func TestInferenceYAMLLimitsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got *inference.ModelLimits
+	var got *model.ModelLimits
 	for _, in := range loaded.Instances {
-		if in.Type != "azure" || len(in.Models) != 1 {
+		if in.Type != "openai" || len(in.Models) != 1 {
 			continue
 		}
 		limits := in.Models[0].Limits
@@ -335,11 +676,11 @@ func TestInferenceYAMLLimitsRoundTrip(t *testing.T) {
 		t.Fatalf("round-tripped limits = %+v, want %d/%d", got, input, output)
 	}
 
-	// Catalog-default models without declared limits must stay silent so
-	// the driver keeps its built-in values.
-	plain := envKeyed(t, "deepseek")
+	// A model that declares no limits stays silent: the driver then
+	// publishes none for it rather than inheriting a vendor default.
+	plain := envKeyed(t, "openai")
 	plain.Instances = append(plain.Instances, Instance{
-		Type:      "deepseek",
+		Type:      "openai",
 		KeySource: KeyEnv,
 		Models:    []Model{{Name: "deepseek-v4-flash"}},
 		Enabled:   true,
@@ -355,14 +696,14 @@ func TestInferenceYAMLLimitsRoundTrip(t *testing.T) {
 	// Non-positive declared limits must fail generation, mirroring the
 	// driver-side ModelLimits validation.
 	zero := 0
-	bad := envKeyed(t, "deepseek")
+	bad := envKeyed(t, "openai")
 	bad.Instances = append(bad.Instances, Instance{
-		Type:      "azure",
+		Type:      "openai",
 		KeySource: KeyEnv,
 		Endpoint:  "https://res.openai.azure.com",
 		Models: []Model{{
 			Name:   "gpt-5.6-sol-deploy",
-			Limits: inference.ModelLimits{MaxInputTokens: &zero},
+			Limits: model.ModelLimits{MaxInputTokens: &zero},
 		}},
 		Enabled: true,
 	})
@@ -374,19 +715,19 @@ func TestInferenceYAMLLimitsRoundTrip(t *testing.T) {
 func TestInferenceYAMLReasoningEffortMap(t *testing.T) {
 	cfg := InferenceConfig{Instances: []Instance{{
 		StableID:  "inst-aaa",
-		Type:      "deepseek",
+		Type:      "openai",
 		KeySource: KeyEnv,
 		Models: []Model{{
 			Name: "deepseek-v4-pro",
-			Capabilities: inference.ModelCapabilities{
-				Reasoning: inference.ReasoningCapability{
-					Kind: inference.ReasoningToggle,
-					EffortMap: map[inference.ReasoningEffort]string{
-						inference.ReasoningMinimal: "low",
-						inference.ReasoningLow:     "low",
-						inference.ReasoningMedium:  "high",
-						inference.ReasoningHigh:    "high",
-						inference.ReasoningXHigh:   "max",
+			Capabilities: model.ModelCapabilities{
+				Reasoning: model.ReasoningCapability{
+					Kind: model.ReasoningToggle,
+					EffortMap: map[model.ReasoningEffort]string{
+						model.ReasoningMinimal: "low",
+						model.ReasoningLow:     "low",
+						model.ReasoningMedium:  "high",
+						model.ReasoningHigh:    "high",
+						model.ReasoningXHigh:   "max",
 					},
 				},
 			},
@@ -423,11 +764,11 @@ func TestInferenceYAMLReasoningEffortMap(t *testing.T) {
 		t.Fatalf("round trip = %+v", loaded.Instances)
 	}
 	got := loaded.Instances[0].Models[0].Capabilities.Reasoning
-	if got.Kind != inference.ReasoningToggle {
+	if got.Kind != model.ReasoningToggle {
 		t.Fatalf("round trip reasoning kind = %q, want toggle", got.Kind)
 	}
-	if got.EffortMap[inference.ReasoningXHigh] != "max" ||
-		got.EffortMap[inference.ReasoningMedium] != "high" {
+	if got.EffortMap[model.ReasoningXHigh] != "max" ||
+		got.EffortMap[model.ReasoningMedium] != "high" {
 		t.Fatalf("round trip effort map = %+v", got.EffortMap)
 	}
 }
@@ -435,17 +776,17 @@ func TestInferenceYAMLReasoningEffortMap(t *testing.T) {
 func TestInferenceYAMLMultipleModels(t *testing.T) {
 	cfg := InferenceConfig{Instances: []Instance{{
 		StableID:  "inst-aaa",
-		Type:      "deepseek",
+		Type:      "openai",
 		KeySource: KeyEnv,
 		Models: []Model{
 			{Name: "deepseek-v4-flash",
-				Capabilities: inference.ModelCapabilities{
+				Capabilities: model.ModelCapabilities{
 					HostedWebSearch: true,
 				}},
 			{Name: "deepseek-v4-pro",
-				Capabilities: inference.ModelCapabilities{
+				Capabilities: model.ModelCapabilities{
 					Inputs:    []message.PartKind{message.PartImage},
-					Reasoning: inference.ReasoningCapability{Kind: inference.ReasoningAlways},
+					Reasoning: model.ReasoningCapability{Kind: model.ReasoningAlways},
 				}},
 		},
 		Enabled: true,
@@ -456,13 +797,13 @@ func TestInferenceYAMLMultipleModels(t *testing.T) {
 	}
 	doc := string(data)
 	for _, want := range []string{
-		"provider.deepseek-inst-aaa:", // stable resource id
+		"provider.openai-inst-aaa:", // stable resource id
 		"name: 'deepseek-v4-flash'",
 		"hosted_web_search: true",
 		"name: 'deepseek-v4-pro'",
 		"reasoning:\n                kind: 'always'",
 		"inputs: [image]",
-		"provider: deepseek-inst-aaa", // router targets use the same id
+		"provider: openai-inst-aaa", // router targets use the same id
 	} {
 		if !strings.Contains(doc, want) {
 			t.Fatalf("multi-model doc missing %q:\n%s", want, doc)
@@ -485,7 +826,7 @@ func TestInferenceYAMLMultipleModels(t *testing.T) {
 		t.Fatalf("round trip instances = %d, want 1", len(got.Instances))
 	}
 	in := got.Instances[0]
-	if in.DeploymentID(1) != "deepseek-inst-aaa" {
+	if in.DeploymentID(1) != "openai-inst-aaa" {
 		t.Fatalf("round trip deployment id = %q", in.DeploymentID(1))
 	}
 	if len(in.Models) != 2 {
@@ -498,7 +839,7 @@ func TestInferenceYAMLMultipleModels(t *testing.T) {
 	if in.Models[1].Name != "deepseek-v4-pro" ||
 		len(in.Models[1].Capabilities.Inputs) != 1 ||
 		in.Models[1].Capabilities.Inputs[0] != message.PartImage ||
-		in.Models[1].Capabilities.Reasoning.Kind != inference.ReasoningAlways {
+		in.Models[1].Capabilities.Reasoning.Kind != model.ReasoningAlways {
 		t.Fatalf("model 1 = %+v", in.Models[1])
 	}
 }
@@ -510,11 +851,11 @@ func TestInferenceYAMLGenerationKinds(t *testing.T) {
 		KeySource: KeyEnv,
 		Models: []Model{
 			{Name: "text-model"},
-			{Name: "img-model", Capabilities: inference.ModelCapabilities{
+			{Name: "img-model", Capabilities: model.ModelCapabilities{
 				Inputs:  []message.PartKind{message.PartText},
 				Outputs: []message.PartKind{message.PartImage},
 			}},
-			{Name: "vid-model", Capabilities: inference.ModelCapabilities{
+			{Name: "vid-model", Capabilities: model.ModelCapabilities{
 				Inputs:  []message.PartKind{message.PartText, message.PartImage},
 				Outputs: []message.PartKind{message.PartVideo},
 			}},
@@ -553,7 +894,7 @@ func TestInferenceYAMLByTedanceEndpoints(t *testing.T) {
 		KeySource: KeyEnv,
 		Models: []Model{
 			{Name: "doubao-seedance-1-6-pro", Endpoint: "ep-20260801-abc",
-				Capabilities: inference.ModelCapabilities{
+				Capabilities: model.ModelCapabilities{
 					Inputs:  []message.PartKind{message.PartText},
 					Outputs: []message.PartKind{message.PartVideo},
 				}},
@@ -598,7 +939,7 @@ func TestInferenceYAMLDeepseekResponsesSurface(t *testing.T) {
 	// serves every generate model on that surface).
 	cfg := InferenceConfig{Instances: []Instance{{
 		StableID:  "inst-aaa",
-		Type:      "deepseek",
+		Type:      "openai",
 		KeySource: KeyEnv,
 		API:       "responses",
 		Models:    []Model{{Name: "deepseek-v4-flash"}},
@@ -619,7 +960,7 @@ func TestInferenceYAMLDeepseekResponsesSurface(t *testing.T) {
 	// Chat mode must not emit the flag either.
 	chat := cfg
 	chat.Instances = []Instance{{
-		StableID: "inst-aaa", Type: "deepseek", KeySource: KeyEnv,
+		StableID: "inst-aaa", Type: "openai", KeySource: KeyEnv,
 		API: "chat", Models: []Model{{Name: "deepseek-v4-flash"}}, Enabled: true,
 	}}
 	data, err = chat.InferenceYAML()
@@ -632,7 +973,7 @@ func TestInferenceYAMLDeepseekResponsesSurface(t *testing.T) {
 }
 
 func TestMigrateUserInferenceConfigDropsDeprecatedKeys(t *testing.T) {
-	cfg := envKeyed(t, "deepseek")
+	cfg := envKeyed(t, "openai")
 	data, err := cfg.InferenceYAML()
 	if err != nil {
 		t.Fatal(err)
@@ -709,8 +1050,8 @@ func TestInferenceYAMLProviderSpecRoundTrip(t *testing.T) {
 	doc := string(data)
 	for _, want := range []string{
 		"api: 'chat'",
-		"chat_stream_options:",
-		"chat_stream_options:\n          include_usage: false",
+		"wire:",
+		"chat_stream_options:\n            include_usage: false",
 	} {
 		if !strings.Contains(doc, want) {
 			t.Fatalf("provider spec doc missing %q:\n%s", want, doc)
@@ -753,23 +1094,29 @@ func TestInferenceYAMLProviderSpecRoundTrip(t *testing.T) {
 }
 
 func TestInferenceYAMLModelNormalization(t *testing.T) {
-	// Empty names fall back to the provider default.
-	cfg := InferenceConfig{Instances: []Instance{{
-		Type: "deepseek", KeySource: KeyEnv, Models: []Model{{Name: ""}}, Enabled: true,
+	// Opencraft keeps no model table: a nameless model row is a
+	// validation error, not a silent default, and a nameless model list
+	// becomes one nameless row that fails the same way.
+	unnamed := InferenceConfig{Instances: []Instance{{
+		Type: "openai", KeySource: KeyEnv, Models: []Model{{Name: ""}}, Enabled: true,
 	}}}
-	data, err := cfg.InferenceYAML()
-	if err != nil {
-		t.Fatal(err)
+	if _, err := unnamed.InferenceYAML(); err == nil ||
+		!strings.Contains(err.Error(), "model name is required") {
+		t.Fatalf("unnamed model = %v, want a required-name error", err)
 	}
-	if !strings.Contains(string(data), "name: 'deepseek-v4-flash'") {
-		t.Fatalf("empty model must default to the provider model:\n%s", data)
+	empty := InferenceConfig{Instances: []Instance{{
+		Type: "openai", KeySource: KeyEnv, Enabled: true,
+	}}}
+	if _, err := empty.InferenceYAML(); err == nil ||
+		!strings.Contains(err.Error(), "model name is required") {
+		t.Fatalf("empty model list = %v, want a required-name error", err)
 	}
 
-	// Duplicate model names are rejected (flowcraft freezes per-provider
-	// models by name).
+	// Names are trimmed and duplicates are rejected (flowcraft freezes
+	// per-provider models by name).
 	dup := InferenceConfig{Instances: []Instance{{
-		Type: "deepseek", KeySource: KeyEnv,
-		Models:  []Model{{Name: "deepseek-v4-flash"}, {Name: " deepseek-v4-flash "}},
+		Type: "openai", KeySource: KeyEnv,
+		Models:  []Model{{Name: "glm-5.3-flash"}, {Name: " glm-5.3-flash "}},
 		Enabled: true,
 	}}}
 	if _, err := dup.InferenceYAML(); err == nil {
@@ -778,28 +1125,29 @@ func TestInferenceYAMLModelNormalization(t *testing.T) {
 }
 
 func TestDeploymentIDStableAcrossReorders(t *testing.T) {
-	a := Instance{StableID: "inst-a", Type: "deepseek"}
-	b := Instance{StableID: "inst-b", Type: "deepseek"}
-	if a.DeploymentID(1) != "deepseek-inst-a" || b.DeploymentID(1) != "deepseek-inst-b" {
+	a := Instance{StableID: "inst-a", Type: "openai"}
+	b := Instance{StableID: "inst-b", Type: "openai"}
+	if a.DeploymentID(1) != "openai-inst-a" || b.DeploymentID(1) != "openai-inst-b" {
 		t.Fatalf("stable ids must not depend on position: %q %q",
 			a.DeploymentID(1), b.DeploymentID(1))
 	}
-	if a.DeploymentID(9) != "deepseek-inst-a" {
+	if a.DeploymentID(9) != "openai-inst-a" {
 		t.Fatalf("position must not leak into stable ids: %q", a.DeploymentID(9))
 	}
 	// Instances without a stable id use the positional form.
-	positional := Instance{Type: "deepseek"}
-	if positional.DeploymentID(3) != "deepseek-3" {
-		t.Fatalf("positional deployment id = %q, want deepseek-3", positional.DeploymentID(3))
+	positional := Instance{Type: "openai"}
+	if positional.DeploymentID(3) != "openai-3" {
+		t.Fatalf("positional deployment id = %q, want openai-3", positional.DeploymentID(3))
 	}
 }
 
 func TestLiteralKeyQuoted(t *testing.T) {
 	cfg := InferenceConfig{Instances: []Instance{{
-		Type:      "deepseek",
+		Type:      "openai",
 		KeySource: KeyLiteral,
 		KeyValue:  "sk-it's-secret",
 		Enabled:   true,
+		Models:    []Model{{Name: "glm-5.3-flash"}},
 	}}}
 	data, err := cfg.InferenceYAML()
 	if err != nil {
@@ -813,17 +1161,18 @@ func TestLiteralKeyQuoted(t *testing.T) {
 func TestKeychainKeyRenderedAsSecretRef(t *testing.T) {
 	cfg := InferenceConfig{Instances: []Instance{{
 		StableID:  "inst-0a1b2c3d",
-		Type:      "deepseek",
+		Type:      "openai",
 		KeySource: KeyKeychain,
-		KeyValue:  "inference/deepseek-inst-0a1b2c3d",
+		KeyValue:  "inference/openai-inst-0a1b2c3d",
 		Enabled:   true,
+		Models:    []Model{{Name: "glm-5.3-flash"}},
 	}}}
 	data, err := cfg.InferenceYAML()
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(data),
-		"api_key: ${secret:keychain.inference/deepseek-inst-0a1b2c3d}") {
+		"api_key: ${secret:keychain.inference/openai-inst-0a1b2c3d}") {
 		t.Fatalf("keychain key not rendered as secret ref:\n%s", data)
 	}
 	// The plaintext must never appear in the config.
@@ -836,10 +1185,10 @@ func TestKeychainKeyRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	cfg := InferenceConfig{Instances: []Instance{{
 		StableID:  "inst-0a1b2c3d",
-		Type:      "deepseek",
+		Type:      "openai",
 		Models:    []Model{{Name: "deepseek-v4-flash"}},
 		KeySource: KeyKeychain,
-		KeyValue:  "inference/deepseek-inst-0a1b2c3d",
+		KeyValue:  "inference/openai-inst-0a1b2c3d",
 		Enabled:   true,
 	}}}
 	if err := WriteInference(dir, cfg); err != nil {
@@ -853,7 +1202,7 @@ func TestKeychainKeyRoundTrip(t *testing.T) {
 		t.Fatalf("instances = %d, want 1", len(got.Instances))
 	}
 	in := got.Instances[0]
-	if in.KeySource != KeyKeychain || in.KeyValue != "inference/deepseek-inst-0a1b2c3d" {
+	if in.KeySource != KeyKeychain || in.KeyValue != "inference/openai-inst-0a1b2c3d" {
 		t.Fatalf("round trip = (%v, %q), want KeyKeychain + account",
 			in.KeySource, in.KeyValue)
 	}
@@ -862,13 +1211,13 @@ func TestKeychainKeyRoundTrip(t *testing.T) {
 func TestMatchStoredKeysInheritsKeychainRefs(t *testing.T) {
 	existing := []Instance{{
 		StableID:  "inst-a",
-		Type:      "deepseek",
+		Type:      "openai",
 		KeySource: KeyKeychain,
 		KeyValue:  "inference/deepseek-inst-a",
 	}}
 	rows := []KeyRequest{{
 		StableID: "inst-a",
-		Type:     "deepseek",
+		Type:     "openai",
 		Models:   []string{"deepseek-v4-flash"},
 	}}
 	idxs, ok := MatchStoredKeys(existing, rows, map[int]bool{})
@@ -881,7 +1230,7 @@ func TestInferenceStableIDRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	cfg := InferenceConfig{Instances: []Instance{{
 		StableID:  "inst-0a1b2c3d",
-		Type:      "deepseek",
+		Type:      "openai",
 		Models:    []Model{{Name: "deepseek-v4-flash"}},
 		KeySource: KeyLiteral,
 		KeyValue:  "sk-roundtrip",
@@ -918,7 +1267,7 @@ func TestInferenceStableIDRoundTrip(t *testing.T) {
 
 func TestWriteAndRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	cfg := envKeyed(t, "deepseek")
+	cfg := envKeyed(t, "openai")
 	if err := WriteInference(dir, cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -935,7 +1284,7 @@ func TestWriteAndRoundTrip(t *testing.T) {
 	if err != nil || needed {
 		t.Fatalf("after write: needed=%v err=%v", needed, err)
 	}
-	if got := DefaultModel(dir); got != "deepseek-1/deepseek-v4-flash" {
+	if got := DefaultModel(dir); got != "openai-1/test-model-openai" {
 		t.Fatalf("DefaultModel = %q", got)
 	}
 
@@ -945,17 +1294,14 @@ func TestWriteAndRoundTrip(t *testing.T) {
 	if view.Document.Resources["infer"].Kind != "inference.Assembly" {
 		t.Fatalf("infer = %+v", view.Document.Resources["infer"])
 	}
-	for _, id := range []string{"deepseek", "openai", "anthropic", "qwen"} {
-		name := "provider." + id
-		if _, ok := view.Document.Resources[name]; !ok {
-			t.Fatalf("%s missing from merged view", name)
-		}
-	}
+	// Every provider resource comes from the user layer: a wire-family
+	// driver carries no vendor facts, so the embedded layer declares
+	// only the assembly and the router shell.
 	if _, ok := view.Document.Resources["provider.azure"]; ok {
 		t.Fatal("azure must not be registered unconfigured")
 	}
-	if _, ok := view.Document.Resources["provider.deepseek-1"]; !ok {
-		t.Fatal("provider.deepseek-1 missing from merged view")
+	if _, ok := view.Document.Resources["provider.openai-1"]; !ok {
+		t.Fatal("provider.openai-1 missing from merged view")
 	}
 }
 
@@ -963,17 +1309,17 @@ func TestWriteInferenceMultipleModelsLoads(t *testing.T) {
 	dir := t.TempDir()
 	cfg := InferenceConfig{Instances: []Instance{{
 		StableID:  "inst-aaa",
-		Type:      "deepseek",
+		Type:      "openai",
 		KeySource: KeyEnv,
 		Models: []Model{
 			{Name: "deepseek-v4-flash",
-				Capabilities: inference.ModelCapabilities{
+				Capabilities: model.ModelCapabilities{
 					HostedWebSearch: true,
 				}},
 			{Name: "deepseek-v4-pro",
-				Capabilities: inference.ModelCapabilities{
+				Capabilities: model.ModelCapabilities{
 					Inputs:    []message.PartKind{message.PartImage},
-					Reasoning: inference.ReasoningCapability{Kind: inference.ReasoningAlways},
+					Reasoning: model.ReasoningCapability{Kind: model.ReasoningAlways},
 				}},
 		},
 		Enabled: true,
@@ -985,7 +1331,7 @@ func TestWriteInferenceMultipleModelsLoads(t *testing.T) {
 	// provider with two models and two router targets sharing the
 	// stable profile.
 	view := load(t, t.TempDir(), dir)
-	if _, ok := view.Document.Resources["provider.deepseek-inst-aaa"]; !ok {
+	if _, ok := view.Document.Resources["provider.openai-inst-aaa"]; !ok {
 		t.Fatal("stable provider resource missing from merged view")
 	}
 }
@@ -1066,7 +1412,7 @@ agents:
 	if _, ok := view.Document.Resources["tool.mcp"]; !ok {
 		t.Fatal("tool.mcp missing from merged view")
 	}
-	if got := DefaultModel(dir); got != "openai-1/gpt-5.6-sol" {
+	if got := DefaultModel(dir); got != "openai-1/test-model-openai" {
 		t.Fatalf("DefaultModel = %q, want openai", got)
 	}
 }
@@ -1074,7 +1420,7 @@ agents:
 func TestWriteInferenceRejectsNonMappingUserLayer(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "opencraft.yaml", "just a scalar\n")
-	cfg := envKeyed(t, "deepseek")
+	cfg := envKeyed(t, "openai")
 	if err := WriteInference(dir, cfg); err == nil {
 		t.Fatal("WriteInference over a non-mapping user layer must fail, not silently clobber it")
 	}
@@ -1110,7 +1456,7 @@ resources:
                   name: deployment
 `
 	writeFile(t, dir, "opencraft.yaml", existing)
-	if err := WriteInference(dir, envKeyed(t, "deepseek")); err != nil {
+	if err := WriteInference(dir, envKeyed(t, "openai")); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "opencraft.yaml"))
@@ -1121,7 +1467,7 @@ resources:
 	if strings.Contains(doc, "provider.azure") {
 		t.Fatalf("stale azure provider survived a non-azure re-save:\n%s", doc)
 	}
-	if !strings.Contains(doc, "provider.deepseek-1: provider.deepseek-1") {
+	if !strings.Contains(doc, "provider.openai-1: provider.openai-1") {
 		t.Fatalf("new instance infer dep missing:\n%s", doc)
 	}
 }
@@ -1148,7 +1494,7 @@ func TestLoadInferenceMissingConfig(t *testing.T) {
 func TestWriteInferenceOverwritesEmptyUserLayer(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "opencraft.yaml", "")
-	if err := WriteInference(dir, envKeyed(t, "deepseek")); err != nil {
+	if err := WriteInference(dir, envKeyed(t, "openai")); err != nil {
 		t.Fatalf("WriteInference over empty layer: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "opencraft.yaml"))
@@ -1165,35 +1511,35 @@ func TestWriteInferenceOverwritesEmptyUserLayer(t *testing.T) {
 func TestWriteInferenceRefusesNonMappingLayer(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "opencraft.yaml", "just some text\n")
-	if err := WriteInference(dir, envKeyed(t, "deepseek")); err == nil {
+	if err := WriteInference(dir, envKeyed(t, "openai")); err == nil {
 		t.Fatal("WriteInference over a scalar layer must refuse")
 	}
 }
 
 func TestModelReasoning(t *testing.T) {
 	cfg := InferenceConfig{Instances: []Instance{
-		{StableID: "a", Type: "deepseek", Enabled: true, Models: []Model{
-			{Name: "m1", Capabilities: inference.ModelCapabilities{Reasoning: inference.ReasoningCapability{Kind: inference.ReasoningToggle}}},
+		{StableID: "a", Type: "openai", Enabled: true, Models: []Model{
+			{Name: "m1", Capabilities: model.ModelCapabilities{Reasoning: model.ReasoningCapability{Kind: model.ReasoningToggle}}},
 			{Name: "m0"}, // no reasoning capability
 		}},
 		{StableID: "b", Type: "openai", Enabled: true, Models: []Model{
-			{Name: "gpt", Capabilities: inference.ModelCapabilities{Reasoning: inference.ReasoningCapability{Kind: inference.ReasoningAlways}}},
+			{Name: "gpt", Capabilities: model.ModelCapabilities{Reasoning: model.ReasoningCapability{Kind: model.ReasoningAlways}}},
 		}},
-		{StableID: "c", Type: "qwen", Enabled: false, Models: []Model{
-			{Name: "q", Capabilities: inference.ModelCapabilities{Reasoning: inference.ReasoningCapability{Kind: inference.ReasoningAlways}}},
+		{StableID: "c", Type: "openai", Enabled: false, Models: []Model{
+			{Name: "q", Capabilities: model.ModelCapabilities{Reasoning: model.ReasoningCapability{Kind: model.ReasoningAlways}}},
 		}},
 	}}
-	if !cfg.ModelReasoning("deepseek-a/m1") {
-		t.Error("deepseek-a/m1 declares toggle, want true")
+	if !cfg.ModelReasoning("openai-a/m1") {
+		t.Error("openai-a/m1 declares toggle, want true")
 	}
-	if cfg.ModelReasoning("deepseek-a/m0") {
-		t.Error("deepseek-a/m0 has no reasoning capability, want false")
+	if cfg.ModelReasoning("openai-a/m0") {
+		t.Error("openai-a/m0 has no reasoning capability, want false")
 	}
 	if !cfg.ModelReasoning("openai-b/gpt") {
 		t.Error("openai-b/gpt declares always, want true")
 	}
-	if cfg.ModelReasoning("qwen-c/q") {
-		t.Error("qwen-c is disabled, want false")
+	if cfg.ModelReasoning("openai-c/q") {
+		t.Error("openai-c is disabled, want false")
 	}
 	if cfg.ModelReasoning("unknown/x") {
 		t.Error("unknown model, want false")
@@ -1205,7 +1551,7 @@ func TestModelReasoning(t *testing.T) {
 	}
 
 	plain := InferenceConfig{Instances: []Instance{
-		{StableID: "a", Type: "deepseek", Enabled: true, Models: []Model{{Name: "m"}}},
+		{StableID: "a", Type: "openai", Enabled: true, Models: []Model{{Name: "m"}}},
 	}}
 	if plain.ModelReasoning("") {
 		t.Error("default target without reasoning capability, want false")

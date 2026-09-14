@@ -34,7 +34,7 @@ func ItemEventsFromStream(
 			ConversationID: conversationID,
 			RunID:          runID,
 			CallID:         p.Result.CallID,
-			Content:        p.Result.Content,
+			Content:        p.Result.Content.Text(),
 			IsError:        p.Result.IsError,
 		})
 	}

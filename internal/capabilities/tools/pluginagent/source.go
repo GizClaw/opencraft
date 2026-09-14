@@ -191,7 +191,21 @@ func (a *toolAdapter) Metadata() tool.ToolMeta {
 	}
 }
 
+// Execute implements tool.Tool. The tool result is a single text part;
+// plugin agent tools have no multimodal output.
 func (a *toolAdapter) Execute(
+	ctx context.Context,
+	arguments string,
+) (message.Content, error) {
+	out, err := a.execute(ctx, arguments)
+	if err != nil {
+		return message.Content{}, err
+	}
+	return message.NewTextContent(out), nil
+}
+
+// execute renders the tool's text result.
+func (a *toolAdapter) execute(
 	ctx context.Context,
 	arguments string,
 ) (string, error) {

@@ -46,7 +46,7 @@ func TestRequestPermissionsGrant(t *testing.T) {
 		`"granted":true`, `"scope":"session"`,
 		`"npm install"`, `"git push"`,
 	} {
-		if !strings.Contains(out, want) {
+		if !strings.Contains(out.Text(), want) {
 			t.Errorf("result missing %s: %s", want, out)
 		}
 	}
@@ -62,7 +62,7 @@ func TestRequestPermissionsDeny(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request_permissions: %v", err)
 	}
-	if !strings.Contains(out, `"granted":false`) {
+	if !strings.Contains(out.Text(), `"granted":false`) {
 		t.Errorf("deny result: %s", out)
 	}
 	if len(policy.granted) != 0 {

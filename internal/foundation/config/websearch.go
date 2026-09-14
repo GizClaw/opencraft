@@ -33,15 +33,15 @@ type HostedWebSearchExtension struct {
 // extension id that carries the provider web_search knob.
 const hostedWebSearchExtensionID = "generate_options"
 
-// webSearchCapableProviders lists the catalog provider types whose
-// drivers expose a hosted web_search generate option. Anthropic, Kimi,
-// MiniMax, and Qwen do not, so a manually enabled checkbox on their
-// models cannot lower onto the wire and is never emitted.
+// webSearchCapableProviders lists the drivers whose wire can carry a
+// hosted web_search option at all: the OpenAI wire exposes it on the
+// Responses surface, ByteDance on its generate surface. Which models
+// actually have it is declared per model (HostedWebSearch) — opencraft
+// keeps no vendor table, so a Kimi or Qwen model shares the OpenAI
+// driver and simply does not declare the capability.
 var webSearchCapableProviders = map[string]bool{
 	"openai":    true,
-	"deepseek":  true,
 	"bytedance": true,
-	"azure":     true,
 }
 
 // generateModelKind reports whether a model is a generate-surface
@@ -68,18 +68,11 @@ func (c InferenceConfig) WebSearchExtensions() []HostedWebSearchExtension {
 		if len(in.Models) == 0 {
 			continue
 		}
-		// OpenAI/DeepSeek expose web_search only on the Responses
-		// surface; the chat compiler rejects the knob outright.
-		if in.Type == "openai" || in.Type == "deepseek" {
-			api := in.API
-			if api == "" {
-				if prov, ok := ProviderByID(in.Type); ok {
-					api = prov.API
-				}
-			}
-			if api == "chat" {
-				continue
-			}
+		// The OpenAI wire exposes hosted web_search only on the
+		// Responses surface; the chat compiler rejects the knob
+		// outright, and an unset surface means the driver default.
+		if in.Type == "openai" && in.API == "chat" {
+			continue
 		}
 		searchable := false
 		for _, m := range in.Models {

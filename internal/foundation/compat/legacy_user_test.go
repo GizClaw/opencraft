@@ -1,4 +1,4 @@
-package migrations
+package compat
 
 import (
 	"context"
@@ -8,6 +8,77 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/foundation/db"
 )
+
+// TestUserLegacyUpgradeRunsOnce pins the step as a versioned migration:
+// the inspection and the weekly-origin scan must not repeat on every
+// start, and the applied version is recorded next to the SQL ones.
+func TestUserLegacyUpgradeRunsOnce(t *testing.T) {
+	ctx := context.Background()
+	handle, err := db.Open(filepath.Join(t.TempDir(), "user.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = handle.Close() }()
+
+	if _, err := handle.SQLDB().ExecContext(ctx, `
+		CREATE TABLE automations (
+			id          TEXT PRIMARY KEY,
+			name        TEXT NOT NULL,
+			prompt      TEXT NOT NULL,
+			schedule    TEXT NOT NULL,
+			workspace   TEXT NOT NULL,
+			created_at  TEXT NOT NULL,
+			updated_at  TEXT NOT NULL
+		)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := User(ctx, handle); err != nil {
+		t.Fatalf("User migration: %v", err)
+	}
+
+	var applied int
+	var name string
+	if err := handle.SQLDB().QueryRowContext(ctx,
+		`SELECT COUNT(*), COALESCE(MAX(name), '') FROM schema_migrations
+		 WHERE version = ?`, 6,
+	).Scan(&applied, &name); err != nil {
+		t.Fatal(err)
+	}
+	if applied != 1 || name != "006_user_legacy_upgrade" {
+		t.Fatalf("user legacy row = %d %q, want one 006_user_legacy_upgrade",
+			applied, name)
+	}
+
+	// A weekly row written after the step ran keeps its empty origin:
+	// the backfill belongs to the migration, not to every start.
+	if _, err := handle.SQLDB().ExecContext(ctx, `
+		INSERT INTO automations (
+			id, name, prompt, schedule, workspace, created_at, updated_at
+		) VALUES ('t-later', 'brief', 'run',
+		          '{"type":"weekly","days":["MO"],"time":"09:00"}',
+		          '/tmp/ws', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := User(ctx, handle); err != nil {
+		t.Fatalf("second User migration: %v", err)
+	}
+	var raw string
+	if err := handle.SQLDB().QueryRowContext(ctx,
+		`SELECT schedule FROM automations WHERE id = 't-later'`,
+	).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var sched struct {
+		Origin string `json:"origin"`
+	}
+	if err := json.Unmarshal([]byte(raw), &sched); err != nil {
+		t.Fatal(err)
+	}
+	if sched.Origin != "" {
+		t.Fatalf("origin backfilled on a repeat run: %q", sched.Origin)
+	}
+}
 
 func TestUserLegacyUpgradesOldAutomationTable(t *testing.T) {
 	ctx := context.Background()

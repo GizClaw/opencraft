@@ -28,14 +28,15 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
 	metricstore "github.com/GizClaw/opencraft/internal/capabilities/telemetry/metric"
 	automationtool "github.com/GizClaw/opencraft/internal/capabilities/tools/automation"
 	"github.com/GizClaw/opencraft/internal/capabilities/usage"
+	"github.com/GizClaw/opencraft/internal/foundation/compat"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
 	"github.com/GizClaw/opencraft/internal/orchestration/engine"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
-	"github.com/GizClaw/opencraft/internal/orchestration/migrations"
 
 	otellog "go.opentelemetry.io/otel/log"
 )
@@ -243,7 +244,7 @@ func (m *Manager) OpenUserDB(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("host: open user db: %w", err)
 	}
-	if err := migrations.User(ctx, handle); err != nil {
+	if err := compat.User(ctx, handle); err != nil {
 		telemetry.WarnErr(ctx, "host: close user db after migration failure",
 			handle.Close())
 		return fmt.Errorf("host: migrate user db: %w", err)
@@ -795,8 +796,8 @@ func (m *Manager) acquireStore(
 	}
 	m.mu.Unlock()
 
-	if err := migrations.AdoptLegacySessions(
-		ctx, migrations.LegacySessionsDir(workDir), root,
+	if err := compat.AdoptLegacySessions(
+		ctx, compat.LegacySessionsDir(workDir), root,
 	); err != nil {
 		return nil, err
 	}
@@ -805,7 +806,9 @@ func (m *Manager) acquireStore(
 	if err != nil {
 		return nil, err
 	}
-	if err := migrations.Workspace(ctx, store.Database(), root); err != nil {
+	if err := compat.Workspace(
+		ctx, store.Database(), root, state.Importer(store.Database()),
+	); err != nil {
 		telemetry.WarnErr(ctx, "host: close store after workspace migration failure",
 			store.CloseDB())
 		return nil, err

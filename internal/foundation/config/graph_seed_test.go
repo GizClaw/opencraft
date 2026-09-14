@@ -24,7 +24,7 @@ func TestUserConfigAndGraphNotSeeded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"opencraft.yaml", "inference.yaml"} {
+	for _, name := range []string{"opencraft.yaml"} {
 		target := filepath.Join(cfgDir, filepath.FromSlash(name))
 		if _, err := os.Stat(target); err == nil {
 			t.Fatalf("config document %s must not be seeded (wizard-owned)", name)
@@ -50,7 +50,6 @@ func TestUserConfigAndGraphNotSeeded(t *testing.T) {
 	)
 	for _, src := range []resource.Source{
 		{Embed: "assets/graphs/assistant.yaml"},
-		{Embed: "assets/inference.yaml"},
 		{Embed: "assets/graphs/nodes/world.js"},
 		{Embed: "assets/graphs/nodes/compact.js"},
 	} {

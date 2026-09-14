@@ -73,7 +73,18 @@ func (t *CommandTool) Metadata() tool.ToolMeta {
 }
 
 // Execute implements tool.Tool.
-func (t *CommandTool) Execute(ctx context.Context, arguments string) (string, error) {
+// Execute implements tool.Tool. The tool result is a single text part;
+// the tool has no multimodal output.
+func (t *CommandTool) Execute(ctx context.Context, arguments string) (message.Content, error) {
+	out, err := t.execute(ctx, arguments)
+	if err != nil {
+		return message.Content{}, err
+	}
+	return message.NewTextContent(out), nil
+}
+
+// execute renders the tool's text result.
+func (t *CommandTool) execute(ctx context.Context, arguments string) (string, error) {
 	var args struct {
 		Command        string   `json:"command"`
 		Workdir        string   `json:"workdir"`

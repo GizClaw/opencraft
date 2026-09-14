@@ -26,7 +26,7 @@ func TestDeleteSessionClosesLiveSession(t *testing.T) {
 	work := t.TempDir()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("OPENAI_API_KEY", "test-key")
 
 	userDir := filepath.Join(home, ".opencraft", "config")
 	seedLocalSandboxConfig(t, userDir)
@@ -35,6 +35,7 @@ func TestDeleteSessionClosesLiveSession(t *testing.T) {
 			Type:      config.Providers[0].ID,
 			KeySource: config.KeyEnv,
 			Enabled:   true,
+			Models:    []config.Model{{Name: "test-model"}},
 		}},
 	}
 	if err := config.WriteInference(userDir, cfg); err != nil {

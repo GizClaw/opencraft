@@ -44,7 +44,7 @@ func TestToolAppliesAddUpdateDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add: %v", err)
 	}
-	if !strings.Contains(out, `"action":"add"`) {
+	if !strings.Contains(out.Text(), `"action":"add"`) {
 		t.Fatalf("add result = %s", out)
 	}
 	if data, err := ws.Read(ctx, "a.txt"); err != nil || string(data) != "hello\n" {
@@ -71,7 +71,7 @@ func TestToolAppliesAddUpdateDelete(t *testing.T) {
 			Action string `json:"action"`
 		} `json:"files"`
 	}
-	if err := json.Unmarshal([]byte(out), &result); err != nil ||
+	if err := json.Unmarshal([]byte(out.Text()), &result); err != nil ||
 		len(result.Files) != 1 || result.Files[0].Action != "delete" {
 		t.Fatalf("delete result = %s, %v", out, err)
 	}

@@ -15,6 +15,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/inference"
+	"github.com/GizClaw/flowcraft/core/inference/model"
 	"github.com/GizClaw/flowcraft/core/inference/route"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/message/media"
@@ -116,7 +117,18 @@ func (t *Tool) Metadata() tool.ToolMeta {
 
 // Execute routes one text-to-image request through the router and
 // persists every generated image under generated/ in the workspace.
-func (t *Tool) Execute(ctx context.Context, arguments string) (string, error) {
+// Execute implements tool.Tool. The tool result is a single text part;
+// the tool has no multimodal output.
+func (t *Tool) Execute(ctx context.Context, arguments string) (message.Content, error) {
+	out, err := t.execute(ctx, arguments)
+	if err != nil {
+		return message.Content{}, err
+	}
+	return message.NewTextContent(out), nil
+}
+
+// execute renders the tool's text result.
+func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 	if t.generate == nil {
 		return "", errdefs.Internalf("%s: router is not wired", Name)
 	}
@@ -252,7 +264,7 @@ func extensionFor(mediaType string) string {
 
 // modelLabel renders a model id as "provider/name" (or just "name"
 // when the provider is empty).
-func modelLabel(id inference.ModelID) string {
+func modelLabel(id model.ModelID) string {
 	if id.Provider == "" {
 		return id.Name
 	}

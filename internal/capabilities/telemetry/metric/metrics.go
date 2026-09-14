@@ -2,7 +2,7 @@
 // desktop Diagnostics panel (~/.opencraft/user.db). It complements the OTel
 // pipelines: the same samples that go to logs/OTLP metrics are also recorded
 // here so the app can render its own charts without an external collector.
-// The table is created by orchestration/migrations (user migration 005);
+// The table is created by internal/foundation/compat (user migration 005);
 // Attach binds this store to the shared migrated handle.
 package metric
 
@@ -36,7 +36,7 @@ type Store struct {
 }
 
 // Attach binds the metric store to an existing foundation/db handle that
-// orchestration/migrations.User already migrated.
+// internal/foundation/compat.User already migrated.
 func Attach(handle *db.DB) (*Store, error) {
 	if handle == nil {
 		return nil, fmt.Errorf("metrics: nil database")

@@ -35,10 +35,12 @@ import type {
   DiagnosticsReport,
   MemorySettings,
   ModelUsageStat,
-  ModelTemplate,
   PolicyDecision,
   ProviderInstance,
   ProviderView,
+  ModelLifecycle,
+  ProviderAdvanced,
+  RouterPolicy,
   SandboxProbeResult,
   UIEvent,
   UsagePoint,
@@ -48,6 +50,8 @@ import { UsageHero } from './UsageHero';
 import { UsageModelSelect } from './UsageModelSelect';
 import { UsageRangePicker } from './UsageRangePicker';
 import { MCPLogo, MCPSection } from './ToolsPanel';
+import { AdvancedSection } from './InferenceAdvanced';
+import { ModelAdvanced } from './ModelAdvanced';
 import { PluginPanels } from '../plugins/components/PluginPanels';
 import { usePluginStore } from '../plugins/store';
 import { Events } from '@wailsio/runtime';
@@ -67,6 +71,13 @@ interface RowModel {
   // '' means "auto": keep the driver catalog value / unknown.
   maxInputTokens: number | '';
   maxOutputTokens: number | '';
+  // Discovery metadata: '' status means the model is active.
+  lifecycleStatus: string;
+  lifecycleReplacementProvider: string;
+  lifecycleReplacementName: string;
+  lifecycleNotes: string;
+  // Driver-specific model leaves, edited as one JSON object.
+  specJson: string;
 }
 
 type UsagePreset = 'today' | '1d' | '7d' | '14d' | '30d';
@@ -84,6 +95,9 @@ interface InstanceRow {
   keyKeychain: boolean;
   models: RowModel[];
   endpoint: string;
+  // advanced holds the provider spec knobs the advanced section edits;
+  // an empty object means "driver defaults".
+  advanced: ProviderAdvanced;
   enabled: boolean;
   managed: boolean; // deployment owned by a capability plugin
 }
@@ -103,10 +117,6 @@ type Tab =
 // catalog value / unknown.
 const AUTO_LIMIT: number | '' = '';
 
-// ModelTemplateRow is modelFromTemplate's result: everything except the
-// per-deployment endpoint, which callers add when they have one.
-type ModelTemplateRow = Omit<RowModel, 'endpoint'> & { endpoint?: string };
-
 // EFFORT_LEVELS is the canonical reasoning effort ladder flowcraft
 // exposes; each level maps to a provider-specific wire token.
 const EFFORT_LEVELS = ['minimal', 'low', 'medium', 'high', 'xhigh'] as const;
@@ -119,32 +129,45 @@ function effortMapComplete(m: RowModel): boolean {
   );
 }
 
-// modelFromTemplate lowers one driver built-in template into an
-// editable model row (capabilities are prefilled, not locked).
 function limitToRow(v: number | undefined): number | '' {
   return v === undefined || !Number.isFinite(v) || v <= 0 ? '' : v;
 }
 
-function modelFromTemplate(t: ModelTemplate): ModelTemplateRow {
+// modelLifecyclePayload renders one row's discovery metadata, dropping
+// the whole block when the model is active (an active model must not
+// carry retirement facts).
+function modelLifecyclePayload(m: RowModel): ModelLifecycle | undefined {
+  const status = m.lifecycleStatus.trim();
+  if (status === '') return undefined;
   return {
-    name: t.name,
-    kind: t.kind,
-    inputs: t.inputs ?? [],
-    outputs: t.outputs ?? [],
-    reasoning: t.reasoning,
-    reasoningEffortMap: t.reasoning_effort_map ?? {},
-    webSearch: t.web_search,
-    maxInputTokens: limitToRow(t.max_input_tokens),
-    maxOutputTokens: '',
+    status,
+    replacement_provider: m.lifecycleReplacementProvider.trim() || undefined,
+    replacement_name: m.lifecycleReplacementName.trim() || undefined,
+    notes: m.lifecycleNotes.trim() || undefined,
   };
 }
 
-function templateFor(
-  templates: Map<string, ModelTemplate[]>,
-  type: string,
-  name: string,
-): ModelTemplate | undefined {
-  return templates.get(type)?.find((t) => t.name === name);
+// emptyModelRow is the row a new instance or model starts from:
+// opencraft keeps no model table, so the deployment names the model and
+// declares its capabilities.
+function emptyModelRow(): RowModel {
+  return {
+    name: '',
+    kind: '',
+    inputs: [],
+    outputs: [],
+    reasoning: '',
+    reasoningEffortMap: {},
+    webSearch: false,
+    endpoint: '',
+    maxInputTokens: AUTO_LIMIT,
+    maxOutputTokens: AUTO_LIMIT,
+    lifecycleStatus: '',
+    lifecycleReplacementProvider: '',
+    lifecycleReplacementName: '',
+    lifecycleNotes: '',
+    specJson: '',
+  };
 }
 
 export function ConfigPage() {
@@ -173,44 +196,22 @@ export function ConfigPage() {
   }, [closeConfig]);
 
   const [rows, setRows] = useState<InstanceRow[]>([]);
+  // Router retry policy; the targets themselves follow the instance
+  // list order, so this is the only router field the page edits.
+  const [router, setRouter] = useState<RouterPolicy>({
+    max_attempts: 2,
+    fallback_on_retry_exhausted: true,
+  });
   const [catalog, setCatalog] = useState<ProviderView[]>([]);
-  const [modelTemplates, setModelTemplates] = useState<
-    Map<string, ModelTemplate[]>
-  >(new Map());
-  const [catalogErrors, setCatalogErrors] = useState<Map<string, string>>(
-    new Map(),
-  );
-  const [modelMenu, setModelMenu] = useState<string | null>(null);
+  // The field menus (kind / inputs / outputs / reasoning) anchor to the
+  // control that opened them; nothing else needs the rectangle.
   const [menuRect, setMenuRect] = useState<{
     top: number;
     left: number;
     width: number;
   } | null>(null);
-  const modelMenuRef = useRef<HTMLDivElement | null>(null);
   const [fieldMenu, setFieldMenu] = useState<string | null>(null);
   const fieldMenuRef = useRef<HTMLDivElement | null>(null);
-
-  // The catalog dropdown is portaled to document.body so the provider
-  // card's overflow-hidden cannot clip it. Scrolling or resizing
-  // outside the dropdown closes it rather than leaving a stale
-  // position; scrolling inside the dropdown list itself keeps working.
-  useEffect(() => {
-    if (!modelMenu) return;
-    const close = (e: Event) => {
-      const target = e.target;
-      if (target instanceof Node && modelMenuRef.current?.contains(target)) {
-        return;
-      }
-      setModelMenu(null);
-    };
-    const closeOnResize = () => setModelMenu(null);
-    document.addEventListener('scroll', close, true);
-    window.addEventListener('resize', closeOnResize);
-    return () => {
-      document.removeEventListener('scroll', close, true);
-      window.removeEventListener('resize', closeOnResize);
-    };
-  }, [modelMenu]);
 
   // Field menus (outputs / inputs / kind / reasoning) reuse the same
   // anchored, portaled list the catalog dropdown uses so every model
@@ -251,7 +252,10 @@ export function ConfigPage() {
     setMenuRect({ top: r.bottom + 4, left: r.left, width: r.width });
     setFieldMenu(key);
   };
-  const [newType, setNewType] = useState('deepseek');
+  // newType is the driver the "add instance" picker will create. It is
+  // filled from the loaded driver list so it can never name a provider
+  // that no longer exists.
+  const [newType, setNewType] = useState('');
   const [defaultModel, setDefaultModel] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
@@ -290,23 +294,14 @@ export function ConfigPage() {
 
   const loadInference = useCallback(async () => {
     try {
-      const [providers, state, catalogs] = await Promise.all([
+      const [providers, state] = await Promise.all([
         api.providers(),
         api.configState(),
-        api.modelCatalog(),
       ]);
       setCatalog(providers);
-      const templates = new Map(
-        (catalogs ?? []).map((c) => [c.provider, c.models]),
+      setNewType((prev) =>
+        providers.some((p) => p.id === prev) ? prev : (providers[0]?.id ?? ''),
       );
-      const errors = new Map(
-        (catalogs ?? [])
-          .filter((c) => c.error)
-          .map((c) => [c.provider, c.error as string]),
-      );
-      setModelTemplates(templates);
-      setCatalogErrors(errors);
-      const byType = new Map(providers.map((p) => [p.id, p]));
       setRows(
         (state.instances ?? []).map((s) => {
           const models = (s.models ?? []).map((m) => ({
@@ -320,9 +315,13 @@ export function ConfigPage() {
             endpoint: m.endpoint ?? '',
             maxInputTokens: limitToRow(m.max_input_tokens),
             maxOutputTokens: limitToRow(m.max_output_tokens),
+            lifecycleStatus: m.lifecycle?.status ?? '',
+            lifecycleReplacementProvider:
+              m.lifecycle?.replacement_provider ?? '',
+            lifecycleReplacementName: m.lifecycle?.replacement_name ?? '',
+            lifecycleNotes: m.lifecycle?.notes ?? '',
+            specJson: m.spec_json ?? '',
           }));
-          const defaultName = byType.get(s.type)?.default_model ?? '';
-          const defaultTpl = templateFor(templates, s.type, defaultName);
           return {
             id: newID(),
             stableId: s.stable_id ?? '',
@@ -333,30 +332,19 @@ export function ConfigPage() {
             keySet: s.key_set ?? false,
             keyEnv: s.key_env ?? false,
             keyKeychain: s.key_keychain ?? false,
-            models:
-              models.length > 0
-                ? models
-                : [
-                    defaultTpl
-                      ? { ...modelFromTemplate(defaultTpl), endpoint: '' }
-                      : {
-                          name: defaultName,
-                          kind: '',
-                          inputs: [],
-                          outputs: [],
-                          reasoning: '',
-                          reasoningEffortMap: {},
-                          webSearch: false,
-                          endpoint: '',
-                          maxInputTokens: AUTO_LIMIT,
-                          maxOutputTokens: AUTO_LIMIT,
-                        },
-                  ],
+            models: models.length > 0 ? models : [emptyModelRow()],
             endpoint: s.endpoint ?? '',
+            advanced: s.advanced ?? {},
             enabled: s.enabled ?? true,
             managed: s.managed ?? false,
           };
         }),
+      );
+      setRouter(
+        state.router ?? {
+          max_attempts: 2,
+          fallback_on_retry_exhausted: true,
+        },
       );
       setDefaultModel(state.model);
     } catch (err) {
@@ -577,12 +565,9 @@ export function ConfigPage() {
   const enabledRows = useMemo(() => rows.filter((r) => r.enabled), [rows]);
 
   const addInstance = (type: string) => {
-    const prov = catalog.find((p) => p.id === type);
-    const defaultTpl = templateFor(
-      modelTemplates,
-      type,
-      prov?.default_model ?? '',
-    );
+    // Only a driver the deployment knows can become an instance; an
+    // unknown id would be written as an unresolvable provider.
+    if (!catalog.some((p) => p.id === type)) return;
     setRows((prev) => [
       ...prev,
       {
@@ -590,28 +575,14 @@ export function ConfigPage() {
         stableId: '',
         type,
         name: '',
-        api: prov?.api ?? '',
+        api: '',
         key: '',
         keySet: false,
         keyEnv: false,
         keyKeychain: false,
-        models: [
-          defaultTpl
-            ? { ...modelFromTemplate(defaultTpl), endpoint: '' }
-            : {
-                name: prov?.default_model ?? '',
-                kind: '',
-                inputs: [],
-                outputs: [],
-                reasoning: '',
-                reasoningEffortMap: {},
-                webSearch: false,
-                endpoint: '',
-                maxInputTokens: AUTO_LIMIT,
-                maxOutputTokens: AUTO_LIMIT,
-              },
-        ],
+        models: [emptyModelRow()],
         endpoint: '',
+        advanced: {},
         enabled: true,
         managed: false,
       },
@@ -637,6 +608,28 @@ export function ConfigPage() {
     setRows((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
   };
 
+  // updateAdvanced patches one provider-level spec knob; an emptied
+  // field is dropped from the object so the writer keeps the driver
+  // default instead of pinning an empty value.
+  const updateAdvanced = (
+    id: string,
+    key: keyof ProviderAdvanced,
+    value: ProviderAdvanced[keyof ProviderAdvanced],
+  ) => {
+    setRows((prev) =>
+      prev.map((r) => {
+        if (r.id !== id) return r;
+        const advanced: ProviderAdvanced = { ...r.advanced };
+        if (value === '' || value === undefined) {
+          delete advanced[key];
+        } else {
+          advanced[key] = value as never;
+        }
+        return { ...r, advanced };
+      }),
+    );
+  };
+
   const updateModel = (id: string, idx: number, patch: Partial<RowModel>) => {
     setRows((prev) =>
       prev.map((r) =>
@@ -652,31 +645,13 @@ export function ConfigPage() {
     );
   };
 
-  const applyTemplate = (id: string, idx: number, t: ModelTemplate) => {
-    updateModel(id, idx, modelFromTemplate(t));
-  };
-
   const addModel = (id: string) => {
     setRows((prev) =>
       prev.map((r) =>
         r.id === id
           ? {
               ...r,
-              models: [
-                ...r.models,
-                {
-                  name: '',
-                  kind: '',
-                  inputs: [],
-                  outputs: [],
-                  reasoning: '',
-                  reasoningEffortMap: {},
-                  webSearch: false,
-                  endpoint: '',
-                  maxInputTokens: AUTO_LIMIT,
-                  maxOutputTokens: AUTO_LIMIT,
-                },
-              ],
+              models: [...r.models, emptyModelRow()],
             }
           : r,
       ),
@@ -759,14 +734,17 @@ export function ConfigPage() {
           m.maxInputTokens === '' ? undefined : m.maxInputTokens,
         max_output_tokens:
           m.maxOutputTokens === '' ? undefined : m.maxOutputTokens,
+        lifecycle: modelLifecyclePayload(m),
+        spec_json: m.specJson.trim() === '' ? undefined : m.specJson,
       })),
       endpoint: r.endpoint,
+      advanced: r.advanced,
       enabled: r.enabled,
       managed: r.managed,
     }));
     setSaving(true);
     try {
-      await api.saveInstances({ instances });
+      await api.saveInstances({ instances, router });
       toast(t('config.saved'));
       closeConfig();
     } catch (err) {
@@ -922,17 +900,65 @@ export function ConfigPage() {
                     : t('setup.subtitle')}
                 </p>
                 <div className="flex items-center gap-2">
-                  <select
-                    value={newType}
-                    onChange={(e) => setNewType(e.target.value)}
-                    className="rounded-lg border border-edge bg-panel px-2 py-1.5 text-sm outline-none"
+                  <button
+                    type="button"
+                    data-field="add-driver"
+                    aria-label={t('config.driverPicker')}
+                    onFocus={(e) => openFieldMenu(e, 'add-driver')}
+                    onClick={(e) => {
+                      if (fieldMenu === 'add-driver') {
+                        setFieldMenu(null);
+                      } else {
+                        openFieldMenu(e, 'add-driver');
+                      }
+                    }}
+                    className="inline-flex min-w-48 max-w-64 items-center gap-1.5 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent"
                   >
-                    {catalog.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
-                  </select>
+                    <span className="min-w-0 flex-1 truncate text-fg">
+                      {catalog.find((p) => p.id === newType)?.name ?? ''}
+                    </span>
+                    <ChevronDown
+                      size="1.0000rem"
+                      className="shrink-0 text-dim"
+                    />
+                  </button>
+                  {menuRect &&
+                    fieldMenu === 'add-driver' &&
+                    createPortal(
+                      <div
+                        ref={fieldMenuRef}
+                        style={{
+                          top: menuRect.top,
+                          left: menuRect.left,
+                          width: Math.max(menuRect.width, 192),
+                        }}
+                        className="fixed z-[100] overflow-y-auto rounded-xl border border-edge bg-panel py-1 shadow-xl"
+                      >
+                        {catalog.map((p) => (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => {
+                              setNewType(p.id);
+                              setFieldMenu(null);
+                            }}
+                            className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-panel2 ${
+                              newType === p.id ? 'text-fg' : 'text-dim'
+                            }`}
+                          >
+                            <Check
+                              size="0.8rem"
+                              className={`shrink-0 ${
+                                newType === p.id ? 'text-accent' : 'invisible'
+                              }`}
+                            />
+                            <span className="truncate">{p.name}</span>
+                          </button>
+                        ))}
+                      </div>,
+                      document.body,
+                    )}
                   <button
                     onClick={() => addInstance(newType)}
                     className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
@@ -1114,6 +1140,15 @@ export function ConfigPage() {
                                 document.body,
                               )}
                           </div>
+                          <AdvancedSection
+                            row={row}
+                            driver={
+                              catalog.find((p) => p.id === row.type)?.impl ?? ''
+                            }
+                            onUpdate={(key, value) =>
+                              updateAdvanced(row.id, key, value)
+                            }
+                          />
                           <div className="space-y-2 pt-1">
                             <div className="flex items-center justify-between">
                               <span className="text-xs font-medium text-dim">
@@ -1144,111 +1179,9 @@ export function ConfigPage() {
                                           name: e.target.value,
                                         })
                                       }
-                                      onFocus={(e) => {
-                                        const r =
-                                          e.currentTarget.getBoundingClientRect();
-                                        setMenuRect({
-                                          top: r.bottom + 4,
-                                          left: r.left,
-                                          width: r.width,
-                                        });
-                                        setModelMenu(`${row.id}:${mi}`);
-                                      }}
-                                      onBlur={() => setModelMenu(null)}
                                       placeholder={t('setup.model')}
                                       className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
                                     />
-                                    {modelMenu === `${row.id}:${mi}` &&
-                                      !row.managed &&
-                                      menuRect &&
-                                      createPortal(
-                                        <div
-                                          ref={modelMenuRef}
-                                          style={{
-                                            top: menuRect.top,
-                                            left: menuRect.left,
-                                            width: menuRect.width,
-                                          }}
-                                          className="fixed z-[100] max-h-56 overflow-y-auto rounded-xl border border-edge bg-panel shadow-xl"
-                                        >
-                                          {(modelTemplates.get(row.type) ?? [])
-                                            .length === 0 ? (
-                                            <div className="px-2 py-1.5 text-xs text-dim">
-                                              {catalogErrors.get(row.type)
-                                                ? t('setup.catalogError')
-                                                : t('setup.catalogEmpty')}
-                                            </div>
-                                          ) : (
-                                            (
-                                              modelTemplates.get(row.type) ?? []
-                                            ).map((tmpl) => (
-                                              <button
-                                                key={tmpl.name}
-                                                type="button"
-                                                onMouseDown={(e) =>
-                                                  e.preventDefault()
-                                                }
-                                                onClick={() => {
-                                                  applyTemplate(
-                                                    row.id,
-                                                    mi,
-                                                    tmpl,
-                                                  );
-                                                  setModelMenu(null);
-                                                }}
-                                                className="flex w-full items-center justify-between gap-2 px-2 py-1.5 text-left text-xs hover:bg-panel2"
-                                              >
-                                                <span className="truncate font-mono">
-                                                  {tmpl.name}
-                                                </span>
-                                                <span className="shrink-0 text-dim">
-                                                  {tmpl.deprecated
-                                                    ? `⚠️ ${t('setup.deprecated')}`
-                                                    : tmpl.kind}
-                                                  {tmpl.deprecated &&
-                                                  tmpl.replacement
-                                                    ? ` → ${tmpl.replacement}`
-                                                    : ''}
-                                                </span>
-                                              </button>
-                                            ))
-                                          )}
-                                        </div>,
-                                        document.body,
-                                      )}
-                                    {(() => {
-                                      const cur = templateFor(
-                                        modelTemplates,
-                                        row.type,
-                                        m.name,
-                                      );
-                                      return cur ? (
-                                        <div className="mt-1 flex flex-wrap items-center gap-2">
-                                          {cur.deprecated && (
-                                            <span className="text-xs text-amber-600">
-                                              ⚠️{' '}
-                                              {cur.replacement
-                                                ? t('setup.deprecatedHint', {
-                                                    replacement:
-                                                      cur.replacement,
-                                                  })
-                                                : t('setup.deprecated')}
-                                            </span>
-                                          )}
-                                          {!row.managed && (
-                                            <button
-                                              type="button"
-                                              onClick={() =>
-                                                applyTemplate(row.id, mi, cur)
-                                              }
-                                              className="text-xs text-dim hover:text-fg"
-                                            >
-                                              ↺ {t('setup.resetCatalog')}
-                                            </button>
-                                          )}
-                                        </div>
-                                      ) : null;
-                                    })()}
                                   </div>
                                   <button
                                     onClick={() => moveModel(row.id, mi, -1)}
@@ -1735,6 +1668,13 @@ export function ConfigPage() {
                                     className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
                                   />
                                 )}
+                                <ModelAdvanced
+                                  value={m}
+                                  disabled={row.managed}
+                                  onUpdate={(patch) =>
+                                    updateModel(row.id, mi, patch)
+                                  }
+                                />
                               </div>
                             ))}
                           </div>
@@ -1782,6 +1722,47 @@ export function ConfigPage() {
                     </div>
                   );
                 })}
+
+                <div className="rounded-xl border border-edge bg-panel2 p-3">
+                  <div className="text-xs text-dim mb-2">
+                    {t('config.router.title')}
+                  </div>
+                  <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                    <label className="flex flex-col gap-1">
+                      <span className="text-xs text-dim">
+                        {t('config.router.maxAttempts')}
+                      </span>
+                      <input
+                        type="number"
+                        min={1}
+                        value={router.max_attempts}
+                        onChange={(e) =>
+                          setRouter({
+                            ...router,
+                            max_attempts: Number(e.target.value) || 1,
+                          })
+                        }
+                        className="w-full rounded-lg border border-edge bg-panel px-2 py-1 text-xs outline-none focus:border-accent"
+                      />
+                    </label>
+                    <label className="flex items-center gap-2 pt-4">
+                      <input
+                        type="checkbox"
+                        checked={router.fallback_on_retry_exhausted}
+                        onChange={(e) =>
+                          setRouter({
+                            ...router,
+                            fallback_on_retry_exhausted: e.target.checked,
+                          })
+                        }
+                        className="accent-accent"
+                      />
+                      <span className="text-xs text-dim">
+                        {t('config.router.fallback')}
+                      </span>
+                    </label>
+                  </div>
+                </div>
 
                 {enabledRows.length > 1 && (
                   <div className="rounded-xl border border-edge bg-panel2 p-3">

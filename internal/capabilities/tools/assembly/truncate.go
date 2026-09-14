@@ -42,7 +42,11 @@ func truncateMiddleware(cfg TruncateSettings) tool.Middleware {
 			if res.IsError {
 				return res
 			}
-			runes := []rune(res.Content)
+			// The cap counts the text projection: non-text parts
+			// (images, audio, structured data) are carried through
+			// untouched instead of being flattened away.
+			full := res.Content.Text()
+			runes := []rune(full)
 			if len(runes) <= cfg.MaxChars {
 				return res
 			}
@@ -52,7 +56,7 @@ func truncateMiddleware(cfg TruncateSettings) tool.Middleware {
 					"tool assembly: secure truncation directory failed",
 					os.Chmod(cfg.Dir, 0o700))
 				tmp := path + ".tmp"
-				if err := os.WriteFile(tmp, []byte(res.Content), 0o600); err == nil {
+				if err := os.WriteFile(tmp, []byte(full), 0o600); err == nil {
 					telemetry.WarnErr(ctx,
 						"tool assembly: persist truncated output failed",
 						os.Rename(tmp, path))
@@ -85,8 +89,29 @@ func truncateMiddleware(cfg TruncateSettings) tool.Middleware {
 			out = append(out, runes[:head]...)
 			out = append(out, markerRunes...)
 			out = append(out, runes[len(runes)-tail:]...)
-			res.Content = string(out)
+			res.Content = replaceTextParts(res.Content, string(out))
 			return res
 		}
 	}
+}
+
+// replaceTextParts swaps every text part for one truncated text part
+// and keeps the remaining parts in order, so a multimodal result loses
+// prose and keeps its media.
+func replaceTextParts(content message.Content, text string) message.Content {
+	out := message.Content{
+		Parts: make([]message.Part, 0, len(content.Parts)+1),
+	}
+	out.Parts = append(out.Parts, message.TextPart{Text: text})
+	for _, part := range content.Parts {
+		normalized, err := message.NormalizePart(part)
+		if err != nil {
+			continue
+		}
+		if _, isText := normalized.(message.TextPart); isText {
+			continue
+		}
+		out.Parts = append(out.Parts, part)
+	}
+	return out
 }

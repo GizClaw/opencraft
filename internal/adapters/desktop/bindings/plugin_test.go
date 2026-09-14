@@ -32,10 +32,10 @@ func writeSimplePlugin(t *testing.T, dataDir, id string) {
 func seedPluginInference(t *testing.T, dir, pluginID string) {
 	t.Helper()
 	cfg := config.InferenceConfig{Instances: []config.Instance{
-		{StableID: pluginID + "-main", Type: "deepseek", Name: "Main",
+		{StableID: pluginID + "-main", Type: "openai", Name: "Main",
 			KeySource: config.KeyLiteral, KeyValue: "key-1", Enabled: true,
 			Models: []config.Model{{Name: "deepseek-v4-flash"}}},
-		{StableID: pluginID + "-gateway", Type: "deepseek",
+		{StableID: pluginID + "-gateway", Type: "openai",
 			Name: "Gateway", KeySource: config.KeyLiteral,
 			KeyValue: "key-2", Enabled: true,
 			Models: []config.Model{{Name: "deepseek-v4-flash"}}},

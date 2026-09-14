@@ -24,18 +24,18 @@ func TestTruncateMiddlewarePersistsFullOutputAndTruncates(t *testing.T) {
 	}
 
 	next := func(context.Context, message.ToolCall) message.ToolResult {
-		return message.ToolResult{CallID: "call-1", Content: strings.Repeat("x", 1000)}
+		return message.ToolResult{CallID: "call-1", Content: message.NewTextContent(strings.Repeat("x", 1000))}
 	}
 	res := mw(next)(context.Background(), message.ToolCall{})
 
-	if len([]rune(res.Content)) > 200 {
-		t.Fatalf("truncated content = %d runes, want <= 200", len([]rune(res.Content)))
+	if len([]rune(res.Content.Text())) > 200 {
+		t.Fatalf("truncated content = %d runes, want <= 200", len([]rune(res.Content.Text())))
 	}
-	if !strings.Contains(res.Content, "truncated; full output:") {
-		t.Fatalf("marker missing: %q", res.Content)
+	if !strings.Contains(res.Content.Text(), "truncated; full output:") {
+		t.Fatalf("marker missing: %q", res.Content.Text())
 	}
-	if !strings.Contains(res.Content, filepath.Join(".opencraft", "cache", "tools", "call-1.output")) {
-		t.Fatalf("relative pointer missing: %q", res.Content)
+	if !strings.Contains(res.Content.Text(), filepath.Join(".opencraft", "cache", "tools", "call-1.output")) {
+		t.Fatalf("relative pointer missing: %q", res.Content.Text())
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, "call-1.output"))
 	if err != nil {
@@ -53,11 +53,11 @@ func TestTruncateMiddlewarePassesSmallResultsThrough(t *testing.T) {
 		Dir:      t.TempDir(),
 	})
 	next := func(context.Context, message.ToolCall) message.ToolResult {
-		return message.ToolResult{CallID: "call-1", Content: "short"}
+		return message.ToolResult{CallID: "call-1", Content: message.NewTextContent("short")}
 	}
 	res := mw(next)(context.Background(), message.ToolCall{})
-	if res.Content != "short" {
-		t.Fatalf("content = %q, want untouched", res.Content)
+	if res.Content.Text() != "short" {
+		t.Fatalf("content = %q, want untouched", res.Content.Text())
 	}
 }
 
@@ -75,13 +75,13 @@ func TestTruncateMiddlewareSkipsErrors(t *testing.T) {
 	next := func(context.Context, message.ToolCall) message.ToolResult {
 		return message.ToolResult{
 			CallID:  "call-1",
-			Content: strings.Repeat("e", 100),
+			Content: message.NewTextContent(strings.Repeat("e", 100)),
 			IsError: true,
 		}
 	}
 	res := mw(next)(context.Background(), message.ToolCall{})
-	if len([]rune(res.Content)) != 100 {
-		t.Fatalf("error result must pass through untouched, got %d runes", len([]rune(res.Content)))
+	if len([]rune(res.Content.Text())) != 100 {
+		t.Fatalf("error result must pass through untouched, got %d runes", len([]rune(res.Content.Text())))
 	}
 }
 
@@ -93,7 +93,7 @@ func TestTruncateCacheOwnerOnly(t *testing.T) {
 		Dir:      dir,
 	})
 	next := func(context.Context, message.ToolCall) message.ToolResult {
-		return message.ToolResult{CallID: "call-1", Content: strings.Repeat("x", 100)}
+		return message.ToolResult{CallID: "call-1", Content: message.NewTextContent(strings.Repeat("x", 100))}
 	}
 	mw(next)(context.Background(), message.ToolCall{})
 

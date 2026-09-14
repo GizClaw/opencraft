@@ -34,6 +34,20 @@ resources:
     impl: opencraft/files
     deps:
       hostworkspace: hostws
+  # Multimodal input: view_image returns one workspace image as an
+  # image part (downscaled to fit the prompt budget) so a vision model
+  # can look at screenshots, diagrams and charts. read_file keeps
+  # reading files as text.
+  tool.viewimage:
+    kind: tool.Source
+    impl: opencraft/viewimage
+    deps:
+      hostworkspace: hostws
+    settings:
+      # Both targets stay at or below the tool-result part budget, or
+      # the middleware drops the image before the model sees it.
+      max_edge: 1568
+      max_bytes: 1048576
   # Text-to-image generation: routes an image-output request through the
   # inference router, which selects an image-capable model from the
   # user's generate targets; generated files land under generated/.
@@ -127,6 +141,7 @@ resources:
       tool.askuser: tool.askuser
       tool.automation: tool.automation
       tool.files: tool.files
+      tool.viewimage: tool.viewimage
       tool.imagegen: tool.imagegen
       tool.videogen: tool.videogen
       tool.plan: tool.plan
@@ -157,6 +172,10 @@ resources:
         # the loop's MainChannel bounded even for pathological outputs.
         result_limit:
           max_chars: 32768
+          # Non-text parts (view_image output, structured data) share
+          # this byte budget; keep the view_image max_bytes target at or
+          # below it.
+          part_budget_bytes: 1048576
         # Best-effort secret stripping from tool results before the
         # model sees them. The same rules always apply to the audit
         # trail below, even when this middleware is disabled.
@@ -189,6 +208,7 @@ resources:
           apply_patch: always
           ask_user: always
           read_file: always
+          view_image: always
           write_file: always
           list_dir: always
           grep: always

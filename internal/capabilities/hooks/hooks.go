@@ -91,7 +91,7 @@ type Factory struct{}
 var _ resource.Factory = Factory{}
 
 // pluginHooksProvider is implemented by the shared plugin host
-// (internal/plugins/agent) and contributes plugin hook files.
+// (internal/capabilities/plugins/agent) and contributes plugin hook files.
 type pluginHooksProvider interface {
 	PluginHooks() []ExtraSource
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference/route"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/resource"
+
 	"github.com/GizClaw/opencraft/internal/capabilities/memory/summary"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 )

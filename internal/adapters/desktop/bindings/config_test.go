@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
-	"github.com/GizClaw/flowcraft/core/inference"
+	"github.com/GizClaw/flowcraft/core/inference/model"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
@@ -65,11 +65,11 @@ func TestMCPProbeStatusClassifiesTransientTimeout(t *testing.T) {
 }
 
 func TestConfigSaveInstances(t *testing.T) {
-	t.Setenv("DEEPSEEK_API_KEY", "test-key")
+	t.Setenv("OPENAI_API_KEY", "test-key")
 	dir := t.TempDir()
 	b := NewConfig(core.NewCore(dir, dir, ""))
 	err := b.SaveInstances(InferenceRequest{Instances: []ProviderInstance{{
-		Type:    "deepseek",
+		Type:    "openai",
 		Name:    "primary",
 		API:     "chat",
 		KeyEnv:  true,
@@ -96,15 +96,15 @@ func TestConfigStatusReportsDefaultReasoning(t *testing.T) {
 	if err := config.WriteInference(dir, config.InferenceConfig{
 		Instances: []config.Instance{{
 			StableID:  "primary",
-			Type:      "deepseek",
+			Type:      "openai",
 			Name:      "Primary",
 			KeySource: config.KeyEnv,
 			Enabled:   true,
 			Models: []config.Model{{
 				Name: "deepseek-v4-flash",
-				Capabilities: inference.ModelCapabilities{
-					Reasoning: inference.ReasoningCapability{
-						Kind: inference.ReasoningAlways,
+				Capabilities: model.ModelCapabilities{
+					Reasoning: model.ReasoningCapability{
+						Kind: model.ReasoningAlways,
 					},
 				},
 			}},
@@ -149,7 +149,7 @@ func TestConfigStateMarksPluginManagedInstances(t *testing.T) {
 	b := NewConfig(core.NewCore(dir, dir, ""))
 
 	cfg := config.InferenceConfig{Instances: []config.Instance{
-		{StableID: "sso-haivivi-main", Type: "deepseek", Name: "Haivivi SSO",
+		{StableID: "sso-haivivi-main", Type: "openai", Name: "Haivivi SSO",
 			KeySource: config.KeyEnv, Enabled: true,
 			Models: []config.Model{{Name: "deepseek-v4-flash"}}},
 		{StableID: "user-1", Type: "openai", Name: "My OpenAI",
@@ -185,7 +185,7 @@ func TestSaveInstancesRestoresManagedRows(t *testing.T) {
 	b := NewConfig(core.NewCore(dir, dir, ""))
 
 	seed := config.InferenceConfig{Instances: []config.Instance{
-		{StableID: "sso-haivivi-main", Type: "deepseek", Name: "Haivivi SSO",
+		{StableID: "sso-haivivi-main", Type: "openai", Name: "Haivivi SSO",
 			KeySource: config.KeyLiteral, KeyValue: "managed-key",
 			Enabled: true,
 			Models:  []config.Model{{Name: "deepseek-v4-flash"}}},
@@ -232,7 +232,7 @@ func TestRestoreManagedInstancesKeepsProviderSpec(t *testing.T) {
 			"include_usage": false,
 		},
 	}
-	model := config.Model{Name: "glm-5.3-flash"}
+	glm := config.Model{Name: "glm-5.3-flash"}
 	existing := []config.Instance{{
 		StableID:     "sso-haivivi-glm",
 		Type:         "openai",
@@ -240,7 +240,7 @@ func TestRestoreManagedInstancesKeepsProviderSpec(t *testing.T) {
 		API:          "chat",
 		KeySource:    config.KeyKeychain,
 		KeyValue:     "auth/sso-haivivi/token",
-		Models:       []config.Model{model},
+		Models:       []config.Model{glm},
 		ProviderSpec: spec,
 		Enabled:      true,
 	}}
@@ -251,7 +251,7 @@ func TestRestoreManagedInstancesKeepsProviderSpec(t *testing.T) {
 		API:       "chat",
 		KeySource: config.KeyKeychain,
 		KeyValue:  "auth/sso-haivivi/token",
-		Models:    []config.Model{model},
+		Models:    []config.Model{glm},
 		Enabled:   true,
 	}}
 	out, restored := restoreManagedInstances(
@@ -273,10 +273,10 @@ func TestConfigStateMarksMultiplePluginOwnedInstances(t *testing.T) {
 	b := NewConfig(core.NewCore(dir, dir, ""))
 
 	cfg := config.InferenceConfig{Instances: []config.Instance{
-		{StableID: "sso-haivivi-main", Type: "deepseek", Name: "Main",
+		{StableID: "sso-haivivi-main", Type: "openai", Name: "Main",
 			KeySource: config.KeyEnv, Enabled: true,
 			Models: []config.Model{{Name: "deepseek-v4-flash"}}},
-		{StableID: "sso-haivivi-gateway", Type: "deepseek",
+		{StableID: "sso-haivivi-gateway", Type: "openai",
 			Name: "Gateway", KeySource: config.KeyEnv, Enabled: true,
 			Models: []config.Model{{Name: "deepseek-v4-flash"}}},
 		{StableID: "user-1", Type: "openai", Name: "User",
@@ -314,10 +314,10 @@ func TestSaveInstancesRestoresMultipleManagedRows(t *testing.T) {
 	b := NewConfig(core.NewCore(dir, dir, ""))
 
 	seed := config.InferenceConfig{Instances: []config.Instance{
-		{StableID: "sso-haivivi-main", Type: "deepseek", Name: "Main",
+		{StableID: "sso-haivivi-main", Type: "openai", Name: "Main",
 			KeySource: config.KeyLiteral, KeyValue: "key-1", Enabled: true,
 			Models: []config.Model{{Name: "deepseek-v4-flash"}}},
-		{StableID: "sso-haivivi-gateway", Type: "deepseek",
+		{StableID: "sso-haivivi-gateway", Type: "openai",
 			Name: "Gateway", KeySource: config.KeyLiteral,
 			KeyValue: "key-2", Enabled: true,
 			Models: []config.Model{{Name: "deepseek-v4-flash"}}},

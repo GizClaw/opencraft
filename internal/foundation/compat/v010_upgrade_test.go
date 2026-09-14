@@ -1,4 +1,4 @@
-package migrations
+package compat_test
 
 import (
 	"context"
@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
+	"github.com/GizClaw/opencraft/internal/foundation/compat"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
 )
 
@@ -82,7 +84,7 @@ func TestWorkspaceUpgradesV010(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := Workspace(ctx, handle, sessionsRoot); err != nil {
+	if err := compat.Workspace(ctx, handle, sessionsRoot, state.Importer(handle)); err != nil {
 		t.Fatalf("Workspace upgrade from v0.1.0: %v", err)
 	}
 

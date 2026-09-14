@@ -93,10 +93,33 @@ func (c *Core) upsertInferenceProfile(
 		}
 	}
 	if _, ok := config.ProviderByID(profile.Type); !ok {
+		// A profile with an explicit driver declares its own provider:
+		// the type only names the deployment.
+		if strings.TrimSpace(profile.Driver) == "" {
+			return fmt.Errorf(
+				"inference: unknown provider type %q (set driver to "+
+					"declare a provider outside the built-in presets)",
+				profile.Type,
+			)
+		}
+	}
+	inst := config.Instance{
+		Type:         profile.Type,
+		Name:         profile.Name,
+		Driver:       strings.TrimSpace(profile.Driver),
+		API:          profile.API,
+		Endpoint:     profile.Endpoint,
+		KeySource:    config.KeyKeychain,
+		KeyValue:     profile.KeyRef,
+		Enabled:      true,
+		ProviderSpec: profile.ProviderSpec,
+	}
+	prov, ok := config.ProviderFor(inst)
+	if !ok {
 		return fmt.Errorf("inference: unknown provider type %q", profile.Type)
 	}
 	if err := config.ValidateProviderSpec(
-		profile.Type, profile.API, profile.ProviderSpec,
+		prov, profile.API, profile.ProviderSpec,
 	); err != nil {
 		return err
 	}
@@ -111,18 +134,8 @@ func (c *Core) upsertInferenceProfile(
 	if len(models) == 0 {
 		return errors.New("inference: profile has no named models")
 	}
-	inst := config.Instance{
-		StableID:     profile.ID,
-		Type:         profile.Type,
-		Name:         profile.Name,
-		API:          profile.API,
-		Endpoint:     profile.Endpoint,
-		Models:       models,
-		KeySource:    config.KeyKeychain,
-		KeyValue:     profile.KeyRef,
-		Enabled:      true,
-		ProviderSpec: profile.ProviderSpec,
-	}
+	inst.StableID = profile.ID
+	inst.Models = models
 	return config.UpdateInferenceState(
 		c.UserDir,
 		func(cfg config.InferenceConfig, owners map[string]string) (

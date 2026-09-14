@@ -7,8 +7,8 @@ import (
 	"time"
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/foundation/compat"
 	"github.com/GizClaw/opencraft/internal/foundation/db"
-	"github.com/GizClaw/opencraft/internal/orchestration/migrations"
 )
 
 func newUsageStore(t *testing.T) (*Store, *db.DB) {
@@ -18,7 +18,7 @@ func newUsageStore(t *testing.T) (*Store, *db.DB) {
 		t.Fatalf("open user db: %v", err)
 	}
 	t.Cleanup(func() { _ = handle.Close() })
-	if err := migrations.User(context.Background(), handle); err != nil {
+	if err := compat.User(context.Background(), handle); err != nil {
 		t.Fatalf("migrate user db: %v", err)
 	}
 	store, err := Attach(handle)

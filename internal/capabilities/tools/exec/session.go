@@ -105,7 +105,18 @@ type args struct {
 }
 
 // Execute implements tool.Tool.
-func (t *SessionTool) Execute(ctx context.Context, arguments string) (string, error) {
+// Execute implements tool.Tool. The tool result is a single text part;
+// the tool has no multimodal output.
+func (t *SessionTool) Execute(ctx context.Context, arguments string) (message.Content, error) {
+	out, err := t.execute(ctx, arguments)
+	if err != nil {
+		return message.Content{}, err
+	}
+	return message.NewTextContent(out), nil
+}
+
+// execute renders the tool's text result.
+func (t *SessionTool) execute(ctx context.Context, arguments string) (string, error) {
 	var a args
 	if err := json.Unmarshal([]byte(arguments), &a); err != nil {
 		return "", errdefs.Validationf("exec_session: parse arguments: %v", err)

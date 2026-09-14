@@ -6,12 +6,55 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/GizClaw/flowcraft/core/inference"
+	"github.com/GizClaw/flowcraft/core/inference/model"
 	"github.com/GizClaw/flowcraft/core/message"
 
 	pluginruntime "github.com/GizClaw/opencraft/internal/capabilities/plugins/runtime"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 )
+
+// TestPluginInferenceDeclaresNewVendor covers a plugin that brings its
+// own provider: naming a driver lets it introduce a vendor that is not
+// in OpenCraft's preset list, and the profile still needs either a
+// known type or a driver.
+func TestPluginInferenceDeclaresNewVendor(t *testing.T) {
+	dir := t.TempDir()
+	c := NewCore(dir, dir, "")
+
+	unnamed := pluginruntime.InferenceProfile{
+		ID:       "vendorx-main",
+		Type:     "vendorx",
+		API:      "chat",
+		Endpoint: "https://api.vendorx.example/v1",
+		Models:   []pluginruntime.ProfileModel{{Name: "vendorx-pro"}},
+		KeyRef:   "auth/vendorx/token",
+	}
+	if err := c.upsertInferenceProfile("vendorx", unnamed); err == nil {
+		t.Fatal("a provider outside the presets must name its driver")
+	}
+
+	profile := unnamed
+	profile.Driver = "openai"
+	if err := c.upsertInferenceProfile("vendorx", profile); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	cfg, err := config.LoadInference(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Instances) != 1 {
+		t.Fatalf("instances = %+v", cfg.Instances)
+	}
+	in := cfg.Instances[0]
+	if in.Type != "vendorx" || in.Driver != "openai" {
+		t.Fatalf("declared provider = %+v", in)
+	}
+	prov, ok := config.ProviderFor(in)
+	if !ok || prov.Impl != "openai" {
+		t.Fatalf("resolved provider = %+v (ok=%v)", prov, ok)
+	}
+}
 
 func TestPluginInferenceUpsertAndRemove(t *testing.T) {
 	dir := t.TempDir()
@@ -19,16 +62,16 @@ func TestPluginInferenceUpsertAndRemove(t *testing.T) {
 
 	profile := pluginruntime.InferenceProfile{
 		ID:       "sso-haivivi-main",
-		Type:     "deepseek",
+		Type:     "openai",
 		Name:     "Haivivi SSO",
 		API:      "responses",
 		Endpoint: "https://ai.haivivi.cn/v1",
 		Models: []pluginruntime.ProfileModel{
 			{
 				Name: "deepseek-v4-flash",
-				Capabilities: inference.ModelCapabilities{
-					Reasoning: inference.ReasoningCapability{
-						Kind: inference.ReasoningToggle,
+				Capabilities: model.ModelCapabilities{
+					Reasoning: model.ReasoningCapability{
+						Kind: model.ReasoningToggle,
 					},
 				},
 			},
@@ -47,7 +90,7 @@ func TestPluginInferenceUpsertAndRemove(t *testing.T) {
 		t.Fatalf("instances = %+v", cfg.Instances)
 	}
 	in := cfg.Instances[0]
-	if in.StableID != "sso-haivivi-main" || in.Type != "deepseek" ||
+	if in.StableID != "sso-haivivi-main" || in.Type != "openai" ||
 		!in.Enabled || in.KeySource != config.KeyKeychain ||
 		in.KeyValue != "auth/sso-haivivi/token" ||
 		len(in.Models) != 1 || in.Models[0].Name != "deepseek-v4-flash" {
@@ -92,14 +135,14 @@ func TestPluginInferencePreservesModelKindAndLimits(t *testing.T) {
 		Models: []pluginruntime.ProfileModel{{
 			Name: "custom-llm",
 			Kind: "generate",
-			Capabilities: inference.ModelCapabilities{
+			Capabilities: model.ModelCapabilities{
 				Inputs:  []message.PartKind{message.PartText},
 				Outputs: []message.PartKind{message.PartText},
-				Reasoning: inference.ReasoningCapability{
-					Kind: inference.ReasoningToggle,
+				Reasoning: model.ReasoningCapability{
+					Kind: model.ReasoningToggle,
 				},
 			},
-			Limits: inference.ModelLimits{
+			Limits: model.ModelLimits{
 				MaxInputTokens:  &maxInput,
 				MaxOutputTokens: &maxOutput,
 			},
@@ -134,7 +177,7 @@ func TestPluginInferenceMultipleProviders(t *testing.T) {
 	c := NewCore(dir, dir, "")
 
 	base := pluginruntime.InferenceProfile{
-		Type:   "deepseek",
+		Type:   "openai",
 		Models: []pluginruntime.ProfileModel{{Name: "deepseek-v4-flash"}},
 		KeyRef: "auth/sso-haivivi/token",
 	}
@@ -213,9 +256,9 @@ func TestPluginInferenceProviderSpecWritesChatStreamOptions(t *testing.T) {
 		Models: []pluginruntime.ProfileModel{
 			{
 				Name: "glm-5.3-flash",
-				Capabilities: inference.ModelCapabilities{
-					Reasoning: inference.ReasoningCapability{
-						Kind: inference.ReasoningAlways,
+				Capabilities: model.ModelCapabilities{
+					Reasoning: model.ReasoningCapability{
+						Kind: model.ReasoningAlways,
 					},
 				},
 			},
@@ -280,10 +323,13 @@ func TestPluginInferenceProviderSpecValidation(t *testing.T) {
 	}
 
 	badChat := base
-	badChat.Type = "deepseek"
+	// DeepSeek is OpenAI-wire with a chat surface, so the profile that
+	// is not eligible for chat_stream_options is one outside the
+	// OpenAI wire family.
+	badChat.Type = "anthropic"
 	if err := c.upsertInferenceProfile(
 		"sso-haivivi", badChat,
-	); err == nil || !strings.Contains(err.Error(), "openai chat") {
+	); err == nil || !strings.Contains(err.Error(), "OpenAI-wire chat") {
 		t.Fatalf("chat_stream_options on non-openai profile = %v", err)
 	}
 
@@ -291,7 +337,7 @@ func TestPluginInferenceProviderSpecValidation(t *testing.T) {
 	badAPI.API = "responses"
 	if err := c.upsertInferenceProfile(
 		"sso-haivivi", badAPI,
-	); err == nil || !strings.Contains(err.Error(), "openai chat") {
+	); err == nil || !strings.Contains(err.Error(), "OpenAI-wire chat") {
 		t.Fatalf("chat_stream_options on responses profile = %v", err)
 	}
 
@@ -312,7 +358,7 @@ func TestPluginInferenceCannotHijackAnotherInstance(t *testing.T) {
 
 	profile := pluginruntime.InferenceProfile{
 		ID:     "sso-haivivi-gateway",
-		Type:   "deepseek",
+		Type:   "openai",
 		Models: []pluginruntime.ProfileModel{{Name: "deepseek-v4-flash"}},
 		KeyRef: "auth/sso-haivivi/token",
 	}
@@ -334,7 +380,7 @@ func TestPluginInferenceRequiresExplicitOwnership(t *testing.T) {
 	if err := config.WriteInferenceOwned(dir, config.InferenceConfig{
 		Instances: []config.Instance{{
 			StableID:  "sso-haivivi-main",
-			Type:      "deepseek",
+			Type:      "openai",
 			KeySource: config.KeyLiteral,
 			KeyValue:  "user-key",
 			Enabled:   true,
@@ -345,7 +391,7 @@ func TestPluginInferenceRequiresExplicitOwnership(t *testing.T) {
 	}
 	profile := pluginruntime.InferenceProfile{
 		ID:     "sso-haivivi-main",
-		Type:   "deepseek",
+		Type:   "openai",
 		Models: []pluginruntime.ProfileModel{{Name: "deepseek-v4-flash"}},
 		KeyRef: "auth/sso-haivivi/token",
 	}
@@ -366,7 +412,7 @@ func TestPluginInferenceCleansLegacyPreOwnershipInstance(t *testing.T) {
 	if err := config.WriteInference(dir, config.InferenceConfig{
 		Instances: []config.Instance{{
 			StableID:  "sso-haivivi",
-			Type:      "deepseek",
+			Type:      "openai",
 			Name:      "Haivivi SSO",
 			KeySource: config.KeyKeychain,
 			KeyValue:  "auth/sso-haivivi/token",
@@ -389,16 +435,16 @@ func TestPluginInferenceCleansLegacyPreOwnershipInstance(t *testing.T) {
 	// the legacy instance id it no longer wants.
 	profile := pluginruntime.InferenceProfile{
 		ID:       "sso-haivivi-deepseek",
-		Type:     "deepseek",
+		Type:     "openai",
 		Name:     "Haivivi SSO",
 		API:      "responses",
 		Endpoint: "https://ai.haivivi.cn/v1",
 		Models: []pluginruntime.ProfileModel{
 			{
 				Name: "deepseek-v4-flash",
-				Capabilities: inference.ModelCapabilities{
-					Reasoning: inference.ReasoningCapability{
-						Kind: inference.ReasoningToggle,
+				Capabilities: model.ModelCapabilities{
+					Reasoning: model.ReasoningCapability{
+						Kind: model.ReasoningToggle,
 					},
 				},
 			},

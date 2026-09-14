@@ -7,6 +7,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/inference"
+	"github.com/GizClaw/flowcraft/core/inference/model"
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 )
@@ -161,8 +162,8 @@ func TestUsageFromReportMapsInferenceFields(t *testing.T) {
 		OutputTokens: 50,
 		TotalTokens:  150,
 		LatencyMs:    321,
-		Model: inference.ModelRef{
-			ID: inference.ModelID{
+		Model: model.ModelRef{
+			ID: model.ModelID{
 				Provider: "openai-1",
 				Name:     "gpt-test",
 			},
@@ -205,8 +206,8 @@ func TestReportUsageBucketsPerModel(t *testing.T) {
 			InputTokens:  input,
 			OutputTokens: input / 5,
 			TotalTokens:  input + input/5,
-			Model: inference.ModelRef{
-				ID: inference.ModelID{Provider: "openai-1", Name: name},
+			Model: model.ModelRef{
+				ID: model.ModelID{Provider: "openai-1", Name: name},
 			},
 		})
 	}

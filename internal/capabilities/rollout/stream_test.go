@@ -31,7 +31,7 @@ func TestItemEventsFromStreamMapsParts(t *testing.T) {
 	toolResult := agent.StreamDeltaPayload{
 		Type: agent.StreamDeltaPart,
 		Part: message.ToolResultPart{Result: message.ToolResult{
-			CallID: "c1", Content: "ok", IsError: true,
+			CallID: "c1", Content: message.NewTextContent("ok"), IsError: true,
 		}},
 	}
 	got = ItemEventsFromStream(conv, run, toolResult)

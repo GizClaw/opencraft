@@ -26,9 +26,9 @@ func FuzzRedactContent(f *testing.F) {
 	mw := toolmiddleware.Redact(rules...)
 	f.Fuzz(func(t *testing.T, input string) {
 		res := mw(func(context.Context, message.ToolCall) message.ToolResult {
-			return message.ToolResult{Content: input}
+			return message.ToolResult{Content: message.NewTextContent(input)}
 		})(context.Background(), message.ToolCall{})
-		if res.Content == "" && input != "" {
+		if res.Content.Text() == "" && input != "" {
 			t.Fatalf("redaction dropped a non-empty result")
 		}
 	})

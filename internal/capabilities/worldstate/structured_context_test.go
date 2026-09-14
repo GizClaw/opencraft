@@ -28,7 +28,7 @@ func toolResultItem(callID, content string) memory.ContextItem {
 		Content: message.Content{Parts: []message.Part{
 			message.TextPart{Text: "tool_result: " + content},
 			message.ToolResultPart{Result: message.ToolResult{
-				CallID: callID, Content: content,
+				CallID: callID, Content: message.NewTextContent(content),
 			}},
 		}},
 	}
@@ -76,7 +76,7 @@ func TestCallWithoutResultGetsAbortedSynthetic(t *testing.T) {
 	}
 	results := secs[1].ToolResults()
 	if len(results) != 1 || results[0].CallID != "c3" ||
-		results[0].Content != "aborted" {
+		results[0].Content.Text() != "aborted" {
 		t.Fatalf("synthetic result = %+v", results)
 	}
 }
@@ -88,7 +88,7 @@ func TestEmptyErrorResultBecomesAborted(t *testing.T) {
 		Content: message.Content{Parts: []message.Part{
 			message.TextPart{Text: "tool_result: "},
 			message.ToolResultPart{Result: message.ToolResult{
-				CallID: "c1", Content: "", IsError: true,
+				CallID: "c1", Content: message.NewTextContent(""), IsError: true,
 			}},
 		}},
 	}
@@ -99,7 +99,7 @@ func TestEmptyErrorResultBecomesAborted(t *testing.T) {
 		t.Fatalf("sections = %+v", secs)
 	}
 	results := secs[1].ToolResults()
-	if len(results) != 1 || results[0].Content != "aborted" {
+	if len(results) != 1 || results[0].Content.Text() != "aborted" {
 		t.Fatalf("error result = %+v, want aborted marker", results)
 	}
 }

@@ -85,7 +85,7 @@ func TestSourceExposesCapabilityTools(t *testing.T) {
 		t.Fatalf("definition = %+v", def)
 	}
 	res, err := got.Execute(t.Context(), `{"x":1}`)
-	if err != nil || res != "pong" {
+	if err != nil || res.Text() != "pong" {
 		t.Fatalf("Execute = (%q, %v)", res, err)
 	}
 }

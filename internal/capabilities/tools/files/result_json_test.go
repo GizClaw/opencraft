@@ -42,8 +42,9 @@ func TestReadFileResultJSONRoundTrip(t *testing.T) {
 
 	// The tool result must be valid JSON.
 	var envelope map[string]any
-	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
-		t.Fatalf("tool result not valid JSON: %v\n%s", err, out[:200])
+	text := out.Text()
+	if err := json.Unmarshal([]byte(text), &envelope); err != nil {
+		t.Fatalf("tool result not valid JSON: %v\n%s", err, text[:200])
 	}
 	content, _ := envelope["content"].(string)
 	if !strings.Contains(content, "diff --git") {
@@ -51,21 +52,17 @@ func TestReadFileResultJSONRoundTrip(t *testing.T) {
 	}
 
 	// The envelope must survive the message round trip byte-identically.
-	part := message.ToolResultPart{Result: message.ToolResult{Content: out}}
+	part := message.ToolResultPart{Result: message.ToolResult{Content: message.NewTextContent(text)}}
 	b, err := json.Marshal(part)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var back struct {
-		Result struct {
-			Content string `json:"content"`
-		} `json:"result"`
-	}
+	var back message.ToolResultPart
 	if err := json.Unmarshal(b, &back); err != nil {
 		t.Fatal(err)
 	}
-	if back.Result.Content != out {
+	if back.Result.Content.Text() != text {
 		t.Fatalf("content corrupted through message round trip:\n got %.80q\nwant %.80q",
-			back.Result.Content, out)
+			back.Result.Content.Text(), text)
 	}
 }

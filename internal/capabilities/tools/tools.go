@@ -36,6 +36,7 @@ import (
 	plugintools "github.com/GizClaw/opencraft/internal/capabilities/tools/pluginagent"
 	skillstools "github.com/GizClaw/opencraft/internal/capabilities/tools/skills"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/videogen"
+	"github.com/GizClaw/opencraft/internal/capabilities/tools/viewimage"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/webfetch"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 )
@@ -51,6 +52,7 @@ func Register(r *resource.Registry) error {
 		r.Register(filesSourceFactory{}),
 		r.Register(imagegenSourceFactory{}),
 		r.Register(videogenSourceFactory{}),
+		r.Register(viewimageSourceFactory{}),
 		r.Register(permissionsSourceFactory{}),
 		r.Register(planSourceFactory{}),
 		r.Register(skillsSourceFactory{}),
@@ -255,6 +257,45 @@ func (filesSourceFactory) New(_ context.Context, in resource.Input) (any, error)
 		return nil, err
 	}
 	return toolList(files.MustNew(ws).Tools()), nil
+}
+
+// imagegenSourceFactory contributes the generate_image tool. It needs
+// viewimageSourceFactory contributes the view_image tool: it reads one
+// workspace image and returns it as a multimodal tool result, so a
+// vision model can look at it instead of reading bytes.
+type viewimageSourceFactory struct{}
+
+var _ resource.Factory = viewimageSourceFactory{}
+
+func (viewimageSourceFactory) Spec() resource.Spec {
+	return resource.Spec{
+		Kind: "tool.Source",
+		Impl: "opencraft/viewimage",
+		Deps: []resource.DepSpec{{
+			Name: "hostworkspace", Type: "opencraft.hostworkspace", Required: true,
+		}},
+	}
+}
+
+func (viewimageSourceFactory) New(_ context.Context, in resource.Input) (any, error) {
+	if !sourceEnabled(in) {
+		return toolList{}, nil
+	}
+	ws, err := resourcedep.Required[workspace.Workspace](
+		in, "view_image tool", "hostworkspace")
+	if err != nil {
+		return nil, err
+	}
+	settings, err := resource.DecodeTyped[viewimage.Settings](
+		context.Background(), in.Settings)
+	if err != nil {
+		return nil, err
+	}
+	t, err := viewimage.New(ws, settings)
+	if err != nil {
+		return nil, err
+	}
+	return toolList{t}, nil
 }
 
 // imagegenSourceFactory contributes the generate_image tool. It needs

@@ -25,6 +25,8 @@ import (
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	"go.opentelemetry.io/otel/log"
 	"sigs.k8s.io/yaml"
+
+	"github.com/GizClaw/opencraft/internal/foundation/compat"
 )
 
 // ResourceKind is the deployable resource kind of the persistent
@@ -839,13 +841,24 @@ func (l *Lifecycle) readSpec(dir string) (AgentSpec, error) {
 	if err != nil {
 		return spec, err
 	}
-	if legacy, ok, err := decodeLegacySpec(data); err != nil {
+	if legacy, ok, err := compat.LegacyAgentDeclaration(data); err != nil {
 		return spec, fmt.Errorf("agents: parse %s: %w", dir, err)
 	} else if ok {
 		// Pre-version declarations (name/description/graph at the top
-		// level) still load; the file is rewritten in the current
-		// format on the next update.
-		spec = legacy
+		// level) still load; compat owns recognising that shape and the
+		// file is rewritten in the current format on the next update.
+		spec = AgentSpec{
+			Card: agent.AgentCard{
+				Name:        legacy.Name,
+				Description: legacy.Description,
+			},
+			Engine: agent.EngineRef{
+				Kind:     "agent.Engine",
+				Impl:     "graph",
+				Settings: graphSettings(legacy.Graph),
+			},
+			CreatedAt: legacy.CreatedAt,
+		}
 	} else {
 		// Hand-authored files are strict: unknown keys (prepare,
 		// policy, tools, observe, ...) are rejected instead of being
@@ -873,47 +886,6 @@ func (l *Lifecycle) readSpec(dir string) (AgentSpec, error) {
 			dir, spec.Card.Name)
 	}
 	return spec, nil
-}
-
-// decodeLegacySpec converts a pre-Definition declaration (top-level
-// name/description/graph, written before the card/engine format) into
-// the current AgentSpec. ok=false means the file is not a legacy
-// declaration.
-func decodeLegacySpec(data []byte) (AgentSpec, bool, error) {
-	var probe map[string]any
-	if err := yaml.Unmarshal(data, &probe); err != nil {
-		return AgentSpec{}, false, err
-	}
-	if _, ok := probe["graph"].(string); !ok {
-		return AgentSpec{}, false, nil
-	}
-	if _, hasCard := probe["card"]; hasCard {
-		return AgentSpec{}, false, nil
-	}
-	if _, hasVersion := probe["version"]; hasVersion {
-		return AgentSpec{}, false, nil
-	}
-	var legacy struct {
-		Name        string    `json:"name"`
-		Description string    `json:"description"`
-		Graph       string    `json:"graph"`
-		CreatedAt   time.Time `json:"created_at,omitempty"`
-	}
-	if err := yaml.UnmarshalStrict(data, &legacy); err != nil {
-		return AgentSpec{}, false, err
-	}
-	return AgentSpec{
-		Card: agent.AgentCard{
-			Name:        legacy.Name,
-			Description: legacy.Description,
-		},
-		Engine: agent.EngineRef{
-			Kind:     "agent.Engine",
-			Impl:     "graph",
-			Settings: graphSettings(legacy.Graph),
-		},
-		CreatedAt: legacy.CreatedAt,
-	}, true, nil
 }
 
 // removeTimeout bounds UnregisterAgent drains from this package.

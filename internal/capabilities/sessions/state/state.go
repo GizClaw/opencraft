@@ -22,7 +22,7 @@ import (
 
 // Store is a SQLite-backed opencraft state store. Open creates or
 // opens the database handle without applying migrations; the central
-// orchestration/migrations package owns every schema step and must run
+// internal/foundation/compat package owns every schema step and must run
 // Workspace before the store is used.
 type Store struct {
 	db     *db.DB
@@ -30,7 +30,7 @@ type Store struct {
 }
 
 // Open opens (creating if necessary) the SQLite database at path.
-// Callers must apply orchestration/migrations.WorkspaceSchema before
+// Callers must apply internal/foundation/compat.WorkspaceSchema before
 // using the returned store.
 func Open(path string) (*Store, error) {
 	handle, err := db.OpenWithOptions(path, db.OpenOptions{ForeignKeys: false})

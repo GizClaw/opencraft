@@ -1,0 +1,160 @@
+# opencraft user configuration layer
+# (~/.opencraft/config/opencraft.yaml; edited through the
+# desktop settings page; last written 2026-09-14T12:00:00Z).
+#
+# This file carries the whole inference wiring: one provider
+# deployment per instance (driver + models + endpoint +
+# capabilities + key), the infer assembly over those
+# providers, and the router — its retry policy plus the
+# generate targets in the enabled order (failures fall back
+# to the next target).
+# Resources, deps, and settings merge deeply across layers, so
+# resources not managed here (MCP servers, sandbox policy,
+# custom graphs) are preserved across settings writes.
+version: v1
+resources:
+  provider.openai-inst-aaa:
+    kind: inference.Provider
+    impl: openai
+    settings:
+      id: openai-inst-aaa
+      spec:
+        api: 'chat'
+        endpoint:
+          base_url: 'https://gateway.example/v1'
+          routing: 'azure_deployment'
+          organization: 'org-1'
+          project: 'proj-2'
+          timeout: '90s'
+          headers:
+            'x-gateway': 'one'
+          query:
+            'api-version': '2025-04-01-preview'
+        auth:
+          scheme: 'header'
+          header: 'x-api-key'
+        wire:
+          video_input: true
+          store: omit
+          reasoning_channel: 'text'
+          reasoning_summary: 'auto'
+          truncation: 'auto'
+          extra_body:
+            'custom_hint': "prefer-a"
+          chat_stream_options:
+            include_usage: false
+            include_obfuscation: true
+        request_metadata: {}
+        http_retries: 3
+        custom_provider_key: kept
+        models:
+          - name: 'glm-5.3-flash'
+            kind: 'generate'
+            capabilities:
+              outputs: [text]
+              inputs: [text, image]
+              reasoning:
+                kind: 'toggle'
+                effort_map:
+                  'minimal': 'low'
+                  'low': 'low'
+                  'medium': 'high'
+                  'high': 'high'
+                  'xhigh': 'max'
+              hosted_web_search: true
+            limits:
+              max_input_tokens: 1000000
+              max_output_tokens: 384000
+            lifecycle:
+              status: 'deprecated'
+              replacement:
+                provider: 'openai'
+                name: 'gpt-5.6-terra'
+              notes: 'sunset later this year'
+          - name: 'glm-5.3-air'
+            kind: 'generate'
+            capabilities:
+              outputs: [text]
+      profiles:
+        - id: 'inst-aaa'
+          secrets:
+            api_key: ${env:OPENAI_API_KEY}
+  provider.bytedance-inst-bbb:
+    kind: inference.Provider
+    impl: bytedance
+    settings:
+      id: bytedance-inst-bbb
+      spec:
+        base_url: 'https://ark.cn-beijing.volces.com/api/v3'
+        region: 'cn-beijing'
+        project: 'proj-ark'
+        timeout: '2m'
+        headers:
+          'x-ark': 'one'
+        query:
+          'version': '2024-01-01'
+        video_poll_interval_millis: 5000
+        models:
+          - name: 'doubao-seedance-2-0'
+            kind: 'video'
+            capabilities:
+              outputs: [video]
+            max_resolution: 1080p
+            video:
+              duration_min_seconds: 5
+              seed: true
+      profiles:
+        - id: 'inst-bbb'
+          endpoints:
+            'doubao-seedance-2-0': 'ep-2026-ark'
+          secrets:
+            api_key: ${secret:keychain.inference/ark-account}
+  provider.minimax-inst-ccc:
+    kind: inference.Provider
+    impl: minimax
+    settings:
+      id: minimax-inst-ccc
+      spec:
+        models:
+          - name: 'image-01'
+            kind: 'image'
+            capabilities:
+              outputs: [image]
+      profiles:
+        - id: 'inst-ccc'
+          secrets:
+            api_key: 'sk-it''s-secret'
+  infer:
+    kind: inference.Assembly
+    impl: unified
+    deps:
+      provider.openai-inst-aaa: provider.openai-inst-aaa
+      provider.minimax-inst-ccc: provider.minimax-inst-ccc
+  router:
+    kind: inference.Router
+    impl: unified
+    deps:
+      target: infer
+    settings:
+      retry:
+        generate:
+          max_attempts: 4
+          fallback_on_retry_exhausted: false
+      generate:
+        - tier: default
+          targets:
+            - model:
+                id:
+                  provider: openai-inst-aaa
+                  name: 'glm-5.3-flash'
+                profile: 'inst-aaa'
+            - model:
+                id:
+                  provider: openai-inst-aaa
+                  name: 'glm-5.3-air'
+                profile: 'inst-aaa'
+            - model:
+                id:
+                  provider: minimax-inst-ccc
+                  name: 'image-01'
+                profile: 'inst-ccc'

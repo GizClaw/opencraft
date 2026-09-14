@@ -4,7 +4,8 @@ import (
 	"context"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
-	"github.com/GizClaw/opencraft/internal/orchestration/migrations"
+	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
+	"github.com/GizClaw/opencraft/internal/foundation/compat"
 )
 
 func newMigratedSessions(root string, window int) (*sessions.Store, error) {
@@ -12,7 +13,7 @@ func newMigratedSessions(root string, window int) (*sessions.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := migrations.Workspace(context.Background(), store.Database(), root); err != nil {
+	if err := compat.Workspace(context.Background(), store.Database(), root, state.Importer(store.Database())); err != nil {
 		_ = store.CloseDB()
 		return nil, err
 	}

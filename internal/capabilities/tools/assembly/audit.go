@@ -63,11 +63,13 @@ type fileAuditSink struct {
 // Record implements toolmiddleware.AuditSink.
 func (s *fileAuditSink) Record(ctx context.Context, rec toolmiddleware.AuditRecord) {
 	entry := auditEntry{
-		Timestamp:  time.Now().UTC().Format(time.RFC3339Nano),
-		Tool:       rec.Call.Name,
-		CallID:     rec.Result.CallID,
-		Arguments:  string(rec.Call.Arguments),
-		Result:     rec.Result.Content,
+		Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+		Tool:      rec.Call.Name,
+		CallID:    rec.Result.CallID,
+		Arguments: string(rec.Call.Arguments),
+		// The audit trail is a text projection: media parts are
+		// recorded as their kind only, never as inline bytes.
+		Result:     rec.Result.Content.Text(),
 		IsError:    rec.Result.IsError,
 		DurationMS: rec.Duration.Milliseconds(),
 	}

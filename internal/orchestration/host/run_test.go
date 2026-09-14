@@ -3,7 +3,7 @@ package host
 import (
 	"testing"
 
-	"github.com/GizClaw/flowcraft/core/inference"
+	"github.com/GizClaw/flowcraft/core/inference/model"
 
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 )
@@ -13,14 +13,14 @@ func TestReasoningCapableThink(t *testing.T) {
 		dir := t.TempDir()
 		cfg := config.InferenceConfig{Instances: []config.Instance{{
 			StableID:  "a",
-			Type:      "deepseek",
+			Type:      "openai",
 			KeySource: config.KeyEnv,
 			Enabled:   true,
 			Models: []config.Model{{
 				Name: "m1",
-				Capabilities: inference.ModelCapabilities{
-					Reasoning: inference.ReasoningCapability{
-						Kind: inference.ReasoningAlways,
+				Capabilities: model.ModelCapabilities{
+					Reasoning: model.ReasoningCapability{
+						Kind: model.ReasoningAlways,
 					},
 				},
 			}},
@@ -37,7 +37,7 @@ func TestReasoningCapableThink(t *testing.T) {
 		dir := t.TempDir()
 		cfg := config.InferenceConfig{Instances: []config.Instance{{
 			StableID:  "a",
-			Type:      "deepseek",
+			Type:      "openai",
 			KeySource: config.KeyEnv,
 			Enabled:   true,
 			Models: []config.Model{{

@@ -625,7 +625,7 @@ func TestAssemblyContextPairLookbackBoundedOnDanglingResult(t *testing.T) {
 		Role: message.RoleTool,
 		Content: message.Content{Parts: []message.Part{
 			message.ToolResultPart{Result: message.ToolResult{
-				CallID: "dangling", Content: "ok",
+				CallID: "dangling", Content: message.NewTextContent("ok"),
 			}},
 		}},
 	})
@@ -823,7 +823,7 @@ func TestAssemblyContextExtendsBoundaryForToolPair(t *testing.T) {
 				Role: message.RoleTool,
 				Content: message.Content{Parts: []message.Part{
 					message.ToolResultPart{Result: message.ToolResult{
-						CallID: "c1", Content: "ok",
+						CallID: "c1", Content: message.NewTextContent("ok"),
 					}},
 				}},
 			},
@@ -883,7 +883,7 @@ func TestAssemblyFoldKeepsToolPairRaw(t *testing.T) {
 				Role: message.RoleTool,
 				Content: message.Content{Parts: []message.Part{
 					message.ToolResultPart{Result: message.ToolResult{
-						CallID: "c1", Content: "ok",
+						CallID: "c1", Content: message.NewTextContent("ok"),
 					}},
 				}},
 			},

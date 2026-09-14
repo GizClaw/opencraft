@@ -53,7 +53,6 @@ import type {
   MemorySettings,
   ModelUsageStat,
   ModelOption,
-  ProviderModelCatalog,
   PatchFileDTO,
   PolicyDecision,
   PetsSettings,
@@ -173,7 +172,6 @@ export const api = {
   configStatus: () => Config.ConfigStatus() as unknown as Promise<ConfigStatus>,
   providers: () => Config.Providers() as unknown as Promise<ProviderView[]>,
   configState: () => Config.ConfigState() as Promise<ConfigState>,
-  modelCatalog: () => Config.ModelCatalog() as Promise<ProviderModelCatalog[]>,
   saveInstances: (req: InferenceRequest) =>
     Config.SaveInstances(req as unknown as gen.InferenceRequest),
   reload: () => Config.Reload(),

@@ -2,6 +2,7 @@ package bindings
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -12,7 +13,7 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
-	"github.com/GizClaw/flowcraft/core/inference"
+	"github.com/GizClaw/flowcraft/core/inference/model"
 	flowtelemetry "github.com/GizClaw/flowcraft/core/telemetry"
 	"github.com/GizClaw/flowcraft/core/tool/mcp"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -60,37 +61,32 @@ func (b *Config) ConfigStatus() (ConfigStatus, error) {
 	return b.core.ConfigStatus(), nil
 }
 
-// ProviderView is one entry of the provider catalog.
+// ProviderView is one inference driver the settings page can build an
+// instance from. It carries no vendor defaults: the endpoint, the API
+// surface, the wire dialect and the models are deployment data.
 type ProviderView struct {
 	ID            string `json:"id"`
 	Name          string `json:"name"`
-	DefaultModel  string `json:"default_model"`
 	EnvVar        string `json:"env_var"`
-	API           string `json:"api"`
-	Azure         bool   `json:"azure"`
 	ModelEndpoint bool   `json:"model_endpoint"`
+	// Impl is the driver this entry registers. It equals ID today; it
+	// stays separate so a plugin-declared driver can reuse an entry.
+	Impl string `json:"impl"`
 }
 
-// Providers returns the provider catalog.
+// Providers returns the drivers an instance can be built from.
 func (b *Config) Providers() []ProviderView {
 	out := make([]ProviderView, 0, len(config.Providers))
 	for _, p := range config.Providers {
 		out = append(out, ProviderView{
 			ID:            p.ID,
 			Name:          p.Name,
-			DefaultModel:  p.DefaultModel,
 			EnvVar:        p.EnvVar,
-			API:           p.API,
-			Azure:         p.Azure,
 			ModelEndpoint: p.ModelEndpoint,
+			Impl:          p.Impl,
 		})
 	}
 	return out
-}
-
-// ModelCatalog returns every driver's built-in model catalog.
-func (b *Config) ModelCatalog() ([]config.ProviderModels, error) {
-	return config.ModelCatalog()
 }
 
 // ModelView is one model exposed by an inference instance.
@@ -107,6 +103,20 @@ type ModelView struct {
 	// capacity limits; nil means "use the driver catalog / unknown".
 	MaxInputTokens  *int `json:"max_input_tokens,omitempty"`
 	MaxOutputTokens *int `json:"max_output_tokens,omitempty"`
+	// Lifecycle is the model's discovery metadata: empty means active.
+	Lifecycle ModelLifecycleView `json:"lifecycle"`
+	// SpecJSON carries the driver-specific model leaves opencraft does
+	// not model (resolution caps, wire-model aliases, parameter
+	// matrices) as the JSON object the deployment declares.
+	SpecJSON string `json:"spec_json,omitempty"`
+}
+
+// ModelLifecycleView is one model's deprecation metadata.
+type ModelLifecycleView struct {
+	Status              string `json:"status,omitempty"`
+	ReplacementProvider string `json:"replacement_provider,omitempty"`
+	ReplacementName     string `json:"replacement_name,omitempty"`
+	Notes               string `json:"notes,omitempty"`
 }
 
 // ProviderInstance is one inference instance in router priority order.
@@ -121,14 +131,58 @@ type ProviderInstance struct {
 	KeyKeychain bool        `json:"key_keychain"`
 	Models      []ModelView `json:"models"`
 	Endpoint    string      `json:"endpoint"`
-	Enabled     bool        `json:"enabled"`
-	Managed     bool        `json:"managed"`
+	// Advanced carries the provider-level spec knobs the settings page
+	// edits in its advanced section (endpoint transport, auth, wire
+	// dialect, request metadata, retries).
+	Advanced ProviderAdvancedView `json:"advanced"`
+	Enabled  bool                 `json:"enabled"`
+	Managed  bool                 `json:"managed"`
+}
+
+// ProviderAdvancedView mirrors config.InstanceAdvanced for the
+// settings page. Every field is optional: an empty value leaves the
+// driver default in place.
+type ProviderAdvancedView struct {
+	Routing          string            `json:"routing,omitempty"`
+	Query            map[string]string `json:"query,omitempty"`
+	Headers          map[string]string `json:"headers,omitempty"`
+	Organization     string            `json:"organization,omitempty"`
+	Project          string            `json:"project,omitempty"`
+	Timeout          string            `json:"timeout,omitempty"`
+	Region           string            `json:"region,omitempty"`
+	AuthScheme       string            `json:"auth_scheme,omitempty"`
+	AuthHeader       string            `json:"auth_header,omitempty"`
+	MetadataEnvelope string            `json:"metadata_envelope,omitempty"`
+	HTTPRetries      *int              `json:"http_retries,omitempty"`
+
+	Store                   string            `json:"store,omitempty"`
+	IncludeReasoningPayload *bool             `json:"include_reasoning_payload,omitempty"`
+	ReasoningChannel        string            `json:"reasoning_channel,omitempty"`
+	ReasoningSummary        string            `json:"reasoning_summary,omitempty"`
+	Truncation              string            `json:"truncation,omitempty"`
+	ExtraBody               map[string]string `json:"extra_body,omitempty"`
+	ChatIncludeUsage        *bool             `json:"chat_include_usage,omitempty"`
+	ChatIncludeObfuscation  *bool             `json:"chat_include_obfuscation,omitempty"`
+	VideoInput              bool              `json:"video_input,omitempty"`
+
+	MediaBaseURL            string `json:"media_base_url,omitempty"`
+	VideoPollIntervalMillis *int   `json:"video_poll_interval_millis,omitempty"`
+}
+
+// RouterPolicyView is the router retry policy shown in the settings
+// page.
+type RouterPolicyView struct {
+	MaxAttempts              int  `json:"max_attempts"`
+	FallbackOnRetryExhausted bool `json:"fallback_on_retry_exhausted"`
 }
 
 // ConfigState is the full inference wiring the settings page edits.
 type ConfigState struct {
 	Model     string             `json:"model"`
 	Instances []ProviderInstance `json:"instances"`
+	// Router is the generate retry policy the page edits alongside the
+	// instance list.
+	Router RouterPolicyView `json:"router"`
 }
 
 // ConfigState returns the configured inference wiring plus the current
@@ -142,7 +196,17 @@ func (b *Config) ConfigState() (ConfigState, error) {
 	if err != nil {
 		return ConfigState{}, err
 	}
-	st := ConfigState{Model: config.DefaultModel(b.core.UserDir)}
+	policy := cfg.Router
+	if policy.MaxAttempts <= 0 {
+		policy = config.DefaultRouterPolicy()
+	}
+	st := ConfigState{
+		Model: config.DefaultModel(b.core.UserDir),
+		Router: RouterPolicyView{
+			MaxAttempts:              policy.MaxAttempts,
+			FallbackOnRetryExhausted: policy.FallbackOnRetryExhausted,
+		},
+	}
 	for _, in := range cfg.Instances {
 		st.Instances = append(st.Instances, ProviderInstance{
 			StableID: in.StableID,
@@ -156,11 +220,94 @@ func (b *Config) ConfigState() (ConfigState, error) {
 			KeyKeychain: in.KeySource == config.KeyKeychain,
 			Models:      modelViews(in.Models),
 			Endpoint:    in.Endpoint,
+			Advanced:    advancedView(in.Advanced),
 			Enabled:     in.Enabled,
 			Managed:     managed[in.StableID],
 		})
 	}
 	return st, nil
+}
+
+// ModelOption is one selectable per-conversation model hint.
+// advancedView projects the config-layer advanced knobs onto the
+// settings-page DTO. The two structs are field-for-field mirrors; the
+// conversion exists so the config package keeps its own vocabulary
+// (and can grow driver-specific defaults) without the binding leaking
+// it into the wire format.
+func advancedView(adv config.InstanceAdvanced) ProviderAdvancedView {
+	return ProviderAdvancedView{
+		Routing:                 adv.Routing,
+		Query:                   adv.Query,
+		Headers:                 adv.Headers,
+		Organization:            adv.Organization,
+		Project:                 adv.Project,
+		Timeout:                 adv.Timeout,
+		Region:                  adv.Region,
+		AuthScheme:              adv.AuthScheme,
+		AuthHeader:              adv.AuthHeader,
+		MetadataEnvelope:        adv.MetadataEnvelope,
+		HTTPRetries:             adv.HTTPRetries,
+		Store:                   adv.Store,
+		ExtraBody:               adv.ExtraBody,
+		IncludeReasoningPayload: adv.IncludeReasoningPayload,
+		ReasoningChannel:        adv.ReasoningChannel,
+		ReasoningSummary:        adv.ReasoningSummary,
+		Truncation:              adv.Truncation,
+		ChatIncludeUsage:        adv.ChatIncludeUsage,
+		ChatIncludeObfuscation:  adv.ChatIncludeObfuscation,
+		VideoInput:              adv.VideoInput,
+		MediaBaseURL:            adv.MediaBaseURL,
+		VideoPollIntervalMillis: adv.VideoPollIntervalMillis,
+	}
+}
+
+// advancedConfig is the inverse of advancedView.
+func advancedConfig(view ProviderAdvancedView) config.InstanceAdvanced {
+	return config.InstanceAdvanced{
+		Routing:                 strings.TrimSpace(view.Routing),
+		Query:                   trimStringMap(view.Query),
+		Headers:                 trimStringMap(view.Headers),
+		Organization:            strings.TrimSpace(view.Organization),
+		Project:                 strings.TrimSpace(view.Project),
+		Timeout:                 strings.TrimSpace(view.Timeout),
+		Region:                  strings.TrimSpace(view.Region),
+		AuthScheme:              strings.TrimSpace(view.AuthScheme),
+		AuthHeader:              strings.TrimSpace(view.AuthHeader),
+		MetadataEnvelope:        strings.TrimSpace(view.MetadataEnvelope),
+		HTTPRetries:             view.HTTPRetries,
+		Store:                   strings.TrimSpace(view.Store),
+		ExtraBody:               trimStringMap(view.ExtraBody),
+		IncludeReasoningPayload: view.IncludeReasoningPayload,
+		ReasoningChannel:        strings.TrimSpace(view.ReasoningChannel),
+		ReasoningSummary:        strings.TrimSpace(view.ReasoningSummary),
+		Truncation:              strings.TrimSpace(view.Truncation),
+		ChatIncludeUsage:        view.ChatIncludeUsage,
+		ChatIncludeObfuscation:  view.ChatIncludeObfuscation,
+		VideoInput:              view.VideoInput,
+		MediaBaseURL:            strings.TrimSpace(view.MediaBaseURL),
+		VideoPollIntervalMillis: view.VideoPollIntervalMillis,
+	}
+}
+
+// trimStringMap drops blank entries so an empty form row never pins a
+// provider spec key.
+func trimStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if key == "" || value == "" {
+			continue
+		}
+		out[key] = value
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // ModelOption is one selectable per-conversation model hint.
@@ -182,13 +329,13 @@ func (b *Config) ModelOptions() ([]ModelOption, error) {
 			continue
 		}
 		for _, m := range in.Models {
-			model := strings.TrimSpace(m.Name)
-			if model == "" {
+			name := strings.TrimSpace(m.Name)
+			if name == "" {
 				continue
 			}
 			out = append(out, ModelOption{
-				ID:        in.DeploymentID(i+1) + "/" + model,
-				Label:     instanceLabel(in, i+1) + " · " + model,
+				ID:        in.DeploymentID(i+1) + "/" + name,
+				Label:     instanceLabel(in, i+1) + " · " + name,
 				Reasoning: m.Capabilities.Reasoning.Kind != "",
 			})
 		}
@@ -479,6 +626,8 @@ func mcpTransport(server config.MCPServer) (mcpsdk.Transport, error) {
 // InferenceRequest is the settings-page inference payload.
 type InferenceRequest struct {
 	Instances []ProviderInstance `json:"instances"`
+	// Router carries the generate retry policy the page edits.
+	Router RouterPolicyView `json:"router"`
 }
 
 func (b *Config) saveInference(req InferenceRequest) error {
@@ -524,6 +673,7 @@ func (b *Config) saveInference(req InferenceRequest) error {
 					API:       strings.TrimSpace(p.API),
 					Models:    configModels(p.Models),
 					Endpoint:  strings.TrimSpace(p.Endpoint),
+					Advanced:  advancedConfig(p.Advanced),
 					Enabled:   p.Enabled,
 					KeySource: config.KeyLiteral,
 				}
@@ -635,6 +785,16 @@ func (b *Config) saveInference(req InferenceRequest) error {
 				existing.Instances, instances, managed,
 			)
 			next = config.InferenceConfig{Instances: instances}
+			policy := config.DefaultRouterPolicy()
+			if req.Router.MaxAttempts > 0 {
+				policy.MaxAttempts = req.Router.MaxAttempts
+				policy.FallbackOnRetryExhausted =
+					req.Router.FallbackOnRetryExhausted
+			}
+			next.Router = config.RouterPolicy{
+				MaxAttempts:              policy.MaxAttempts,
+				FallbackOnRetryExhausted: policy.FallbackOnRetryExhausted,
+			}
 			if len(next.Enabled()) == 0 {
 				err = errors.New("enable at least one instance")
 				return
@@ -798,6 +958,13 @@ func modelViews(models []config.Model) []ModelView {
 			Endpoint:           m.Endpoint,
 			MaxInputTokens:     cloneInt(m.Limits.MaxInputTokens),
 			MaxOutputTokens:    cloneInt(m.Limits.MaxOutputTokens),
+			Lifecycle: ModelLifecycleView{
+				Status:              m.Lifecycle.Status,
+				ReplacementProvider: m.Lifecycle.ReplacementProvider,
+				ReplacementName:     m.Lifecycle.ReplacementName,
+				Notes:               m.Lifecycle.Notes,
+			},
+			SpecJSON: driverFieldsJSON(m.DriverFields),
 		})
 	}
 	return out
@@ -809,21 +976,56 @@ func configModels(views []ModelView) []config.Model {
 		out = append(out, config.Model{
 			Name: strings.TrimSpace(v.Name),
 			Kind: strings.TrimSpace(v.Kind),
-			Capabilities: inference.ModelCapabilities{
+			Capabilities: model.ModelCapabilities{
 				Inputs:  config.ToPartKinds(v.Inputs),
 				Outputs: config.ToPartKinds(v.Outputs),
-				Reasoning: inference.ReasoningCapability{
-					Kind:      inference.ReasoningKind(strings.TrimSpace(v.Reasoning)),
+				Reasoning: model.ReasoningCapability{
+					Kind:      model.ReasoningKind(strings.TrimSpace(v.Reasoning)),
 					EffortMap: config.EffortMapEfforts(v.ReasoningEffortMap),
 				},
 				HostedWebSearch: v.WebSearch,
 			},
 			Endpoint: strings.TrimSpace(v.Endpoint),
-			Limits: inference.ModelLimits{
+			Limits: model.ModelLimits{
 				MaxInputTokens:  cloneInt(v.MaxInputTokens),
 				MaxOutputTokens: cloneInt(v.MaxOutputTokens),
 			},
+			Lifecycle: config.ModelLifecycle{
+				Status:              strings.TrimSpace(v.Lifecycle.Status),
+				ReplacementProvider: strings.TrimSpace(v.Lifecycle.ReplacementProvider),
+				ReplacementName:     strings.TrimSpace(v.Lifecycle.ReplacementName),
+				Notes:               strings.TrimSpace(v.Lifecycle.Notes),
+			},
+			DriverFields: parseDriverFieldsJSON(v.SpecJSON),
 		})
+	}
+	return out
+}
+
+// driverFieldsJSON renders the driver-specific model leaves as the JSON
+// object the settings page edits; an empty bag stays an empty string.
+func driverFieldsJSON(fields map[string]any) string {
+	if len(fields) == 0 {
+		return ""
+	}
+	raw, err := json.Marshal(fields)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+// parseDriverFieldsJSON reads the edited JSON object back. Invalid input
+// yields nil: the writer validates again and the settings page reports
+// the parse error before saving.
+func parseDriverFieldsJSON(text string) map[string]any {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return nil
+	}
+	out := map[string]any{}
+	if err := json.Unmarshal([]byte(trimmed), &out); err != nil {
+		return nil
 	}
 	return out
 }

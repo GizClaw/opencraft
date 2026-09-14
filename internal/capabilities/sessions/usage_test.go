@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/inference"
+	"github.com/GizClaw/flowcraft/core/inference/model"
 )
 
 func TestUsageFromReportMapsInferenceFields(t *testing.T) {
@@ -15,8 +16,8 @@ func TestUsageFromReportMapsInferenceFields(t *testing.T) {
 		OutputTokens: 50,
 		TotalTokens:  150,
 		LatencyMs:    321,
-		Model: inference.ModelRef{
-			ID: inference.ModelID{
+		Model: model.ModelRef{
+			ID: model.ModelID{
 				Provider: "openai-1",
 				Name:     "gpt-test",
 			},

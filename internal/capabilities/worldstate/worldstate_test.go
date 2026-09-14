@@ -543,7 +543,7 @@ func TestRenderToBoardNormalizesRawToolContext(t *testing.T) {
 	}
 	results := raws[1].ToolResults()
 	if len(results) != 1 || results[0].CallID != "c-raw-1" ||
-		results[0].Content != "aborted" {
+		results[0].Content.Text() != "aborted" {
 		t.Fatalf("synthetic result = %+v", results)
 	}
 	for _, sec := range raws {
