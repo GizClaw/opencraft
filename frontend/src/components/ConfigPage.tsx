@@ -1214,8 +1214,10 @@ export function ConfigPage() {
                           </div>
                           <AdvancedSection
                             row={row}
+                            disabled={row.managed}
                             driver={
-                              catalog.find((p) => p.id === row.type)?.impl ?? ''
+                              catalog.find((p) => p.id === row.type)?.impl ||
+                              row.driver
                             }
                             onUpdate={(key, value) =>
                               updateAdvanced(row.id, key, value)
@@ -1512,6 +1514,7 @@ export function ConfigPage() {
                                         value={m.maxInputTokens}
                                         disabled={row.managed}
                                         placeholder={t('setup.maxInputAuto')}
+                                        title={t('setup.maxInputHint')}
                                         onChange={(e) => {
                                           const next: number | '' =
                                             e.target.value === ''
@@ -1525,7 +1528,7 @@ export function ConfigPage() {
                                                 : next,
                                           });
                                         }}
-                                        className="w-28 rounded-md border border-edge bg-panel px-2 py-1 outline-none focus:border-accent"
+                                        className="h-[1.875rem] w-40 rounded-lg border border-edge bg-panel px-2 text-xs text-fg outline-none transition-colors focus:border-accent disabled:opacity-40"
                                       />
                                     </label>
                                   </div>

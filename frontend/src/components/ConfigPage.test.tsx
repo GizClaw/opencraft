@@ -127,11 +127,13 @@ describe('ConfigPage inference', () => {
     ).toBeInTheDocument();
 
     // The stored advanced knobs seed the form and survive an edit: the
-    // section is collapsed, so open it before reading the field.
+    // panel is collapsed, so open it before reading the field.
     const summary = screen.getAllByText('Advanced')[0];
     summary.click();
     await waitFor(() =>
-      expect(screen.getByDisplayValue('text')).toBeInTheDocument(),
+      expect(
+        screen.getByRole('button', { name: 'Reasoning channel' }),
+      ).toHaveTextContent('Plain text'),
     );
 
     await waitFor(() => {

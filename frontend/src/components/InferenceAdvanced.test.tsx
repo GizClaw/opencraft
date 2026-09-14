@@ -7,17 +7,43 @@ import type { ProviderAdvanced } from '../lib/types';
 function renderSection(driver: string, advanced: ProviderAdvanced = {}) {
   const onUpdate = vi.fn();
   render(
-    <AdvancedSection row={{ advanced }} driver={driver} onUpdate={onUpdate} />,
+    <AdvancedSection
+      row={{ advanced, api: 'responses' }}
+      driver={driver}
+      onUpdate={onUpdate}
+    />,
   );
   return onUpdate;
 }
 
 describe('AdvancedSection', () => {
-  it('shows the OpenAI wire knobs and the video toggle', () => {
+  it('groups the OpenAI wire knobs by the driver sections', () => {
     renderSection('openai');
+    expect(screen.getByText('Endpoint')).toBeInTheDocument();
+    expect(screen.getByText('Auth')).toBeInTheDocument();
+    expect(screen.getByText('Transport')).toBeInTheDocument();
+    expect(screen.getByText('Wire dialect')).toBeInTheDocument();
+    expect(screen.getByText('Request body')).toBeInTheDocument();
     expect(screen.getByText('Routing')).toBeInTheDocument();
+    // The responses surface has no chat streaming knobs and no video
+    // extension; both belong to the chat surface only.
+    expect(screen.queryByText('Chat streaming')).toBeNull();
+    expect(screen.queryByText(/Accept video blocks/)).toBeNull();
+  });
+
+  it('shows the chat surface knobs and hides the responses-only ones', () => {
+    render(
+      <AdvancedSection
+        row={{ advanced: {}, api: 'chat' }}
+        driver="openai"
+        onUpdate={vi.fn()}
+      />,
+    );
+    expect(screen.getByText('Chat streaming')).toBeInTheDocument();
     expect(screen.getByText('Chat: include usage')).toBeInTheDocument();
     expect(screen.getByText(/Accept video blocks/)).toBeInTheDocument();
+    expect(screen.queryByText('Reasoning summary')).toBeNull();
+    expect(screen.queryByText('Truncation')).toBeNull();
   });
 
   it('shows the video toggle on a compatible Messages endpoint', () => {
@@ -28,11 +54,30 @@ describe('AdvancedSection', () => {
 
   it('reports the retention policy as one of its four values', () => {
     const onUpdate = renderSection('openai');
-    const select = screen.getByRole('combobox', { name: 'Store responses' });
-    fireEvent.change(select, { target: { value: 'omit' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Store responses' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Omit the field' }));
     expect(onUpdate).toHaveBeenCalledWith('store', 'omit');
-    fireEvent.change(select, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Store responses' }));
+    fireEvent.click(screen.getByRole('option', { name: 'default' }));
     expect(onUpdate).toHaveBeenLastCalledWith('store', '');
+  });
+
+  it('renders read-only for a plugin-owned deployment', () => {
+    render(
+      <AdvancedSection
+        row={{ advanced: { timeout: '90s' }, api: 'responses' }}
+        driver="openai"
+        disabled
+        onUpdate={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole('textbox', { name: 'Timeout' })).toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: 'Store responses' }),
+    ).toBeDisabled();
+    expect(screen.getByText('owned by a plugin')).toBeInTheDocument();
+    // The map editors lose their add affordance too.
+    expect(screen.queryByText('Add entry')).toBeNull();
   });
 
   it('clears a text field by reporting an empty string', () => {
