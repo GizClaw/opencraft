@@ -365,11 +365,17 @@ func (d *Desktop) runAutomation(
 			requestID, responseID, output,
 			finishedAt, durationMs,
 		)
+		class := host.ClassifyRunError(resErr(res), waitErr)
+		end.InterruptCause = class.InterruptCause
+		end.ErrorKind = class.ErrorKind
 		end.AgentID = core.AssistantAgentID
 		end.Notify = &notify
 		d.core.Shell.Emit("turn_end", end)
 	} else if notify {
-		d.core.Shell.Emit("automation_notify", map[string]any{
+		// No UI consumer for this payload: the automation panels refresh
+		// from automation_run / automation_changed, so the banner is
+		// raised through the notification path instead of the event bus.
+		d.core.Shell.Notify(core.NotifyAutomation, map[string]any{
 			"task_id": task.ID,
 			"name":    task.Name,
 			"status":  string(result.Status),
@@ -385,6 +391,15 @@ func (d *Desktop) runAutomation(
 
 // automationOutput returns the bounded text of the run's final
 // assistant message for notifications outside the open workspace.
+// resErr is the error the engine reported, or nil when the run
+// produced a result.
+func resErr(res *agent.Result) error {
+	if res == nil {
+		return nil
+	}
+	return res.Err
+}
+
 func automationOutput(res *agent.Result) string {
 	if res == nil {
 		return ""

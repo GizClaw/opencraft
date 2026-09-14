@@ -239,6 +239,12 @@ export interface TurnArtifacts {
   // with the archived turn for resumed sessions.
   status?: TurnStatus;
   error?: string;
+  // interruptCause/errorKind are the structured class of a failed turn
+  // (the engine's interrupt cause, the inference error kind). The
+  // backend reads them from the engine's typed error, so the UI renders
+  // copy without parsing `error`, which is prose flowcraft owns.
+  interruptCause?: string;
+  errorKind?: string;
   // requestID/responseID are the provider correlation identifiers of
   // the terminal operation: the request id when the provider reported
   // one (usually failures), and the response id once a response
@@ -436,6 +442,8 @@ function historyTurnsToState(turns: SessionTurn[]): {
       durationMs: turn.duration_ms,
       status: normalizeTurnStatus(turn.status) ?? cleaned.status,
       error: turn.error,
+      interruptCause: turn.interrupt_cause,
+      errorKind: turn.error_kind,
       requestID: turn.request_id,
       responseID: turn.response_id,
       docs: (turn.artifacts ?? []).map((a) => ({
@@ -535,15 +543,12 @@ function mergeAppend(
   }
 }
 
-// friendlyInterruption maps engine interruption errors to user-facing
-// text so raw engine internals (e.g. "engine: interrupted
-// (host_shutdown)") never leak into the transcript. It returns null
-// when the error is not an interruption, so the original error stays.
-export function friendlyInterruption(error: string): string | null {
-  const m = error.match(/^engine: interrupted(?: \(([a-z_]+)\))?(?:: (.+))?$/);
-  if (!m) return null;
-  const cause = m[1] ?? '';
-  const detail = m[2];
+// friendlyInterruption maps the engine's interrupt cause to user-facing
+// text so raw engine internals never leak into the transcript. The cause
+// is a field the backend reads from the engine's typed interrupt; the UI
+// does not parse the error text. It returns null when the turn did not
+// end as an interrupt, so the original error stays.
+export function friendlyInterruption(cause?: string): string | null {
   switch (cause) {
     case 'host_shutdown':
       return i18n.t('chat.interruptedHostShutdown');
@@ -551,8 +556,10 @@ export function friendlyInterruption(error: string): string | null {
       return i18n.t('chat.cancelled');
     case 'user_input':
       return i18n.t('chat.interruptedUserInput');
-    case 'custom':
-      return detail ?? i18n.t('chat.interrupted');
+    case undefined:
+    case '':
+      // The engine's zero cause ("unknown") renders as empty.
+      return null;
     default:
       return i18n.t('chat.interrupted');
   }
@@ -564,24 +571,20 @@ export function friendlyInterruption(error: string): string | null {
 // be hidden.
 export function isUserStop(
   status: TurnStatus | undefined,
-  error?: string,
+  interruptCause?: string,
 ): boolean {
   if (status === 'canceled') return true;
-  if (status !== 'interrupted' || !error) return false;
-  const cause = error.match(/^engine: interrupted(?: \(([a-z_]+)\))?/)?.[1];
-  return cause === 'user_cancel' || cause === 'user_input';
+  if (status !== 'interrupted') return false;
+  return interruptCause === 'user_cancel' || interruptCause === 'user_input';
 }
 
-// friendlyFailure maps flowcraft graph/inference errors to user-safe
-// text. The `graph "..." node "..."` prefix is internal plumbing; a
-// provider failure only needs to tell the user the model call did not
-// go through and that retrying is reasonable.
-export function friendlyFailure(error: string): string | null {
-  const m = error.match(
-    /^(?:graph "[^"]+" node "[^"]+": )?([a-z_]+)(?: during [a-z_]+)?(?: at [^:]+)?$/,
-  );
-  if (!m) return null;
-  switch (m[1]) {
+// friendlyFailure maps the inference error kind to user-safe text: a
+// provider failure only needs to tell the user the model call did not go
+// through and that retrying is reasonable. It returns null for a failure
+// the engine did not classify, so the caller can fall back to the raw
+// error rather than claim a generic cause.
+export function friendlyFailure(kind?: string): string | null {
+  switch (kind) {
     case 'provider_failure':
       return i18n.t('chat.providerFailure');
     case 'invalid_provider_response':
@@ -592,6 +595,9 @@ export function friendlyFailure(error: string): string | null {
       return i18n.t('chat.modelConfiguration');
     case 'invalid_request':
       return i18n.t('chat.invalidRequest');
+    case undefined:
+    case '':
+      return null;
     default:
       return i18n.t('chat.genericFailure');
   }
@@ -1285,6 +1291,8 @@ export const useStore = create<StoreState>((set, get) => {
             run_id?: string;
             status: string;
             error?: string;
+            interrupt_cause?: string;
+            error_kind?: string;
             request_id?: string;
             response_id?: string;
             finished_at?: string;
@@ -1309,6 +1317,8 @@ export const useStore = create<StoreState>((set, get) => {
                         : t.durationMs,
                     status: normalizeTurnStatus(data.status) ?? t.status,
                     error: data.error ?? t.error,
+                    interruptCause: data.interrupt_cause ?? t.interruptCause,
+                    errorKind: data.error_kind ?? t.errorKind,
                     requestID: data.request_id ?? t.requestID,
                     responseID: data.response_id ?? t.responseID,
                   }

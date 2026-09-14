@@ -4,6 +4,7 @@ import { stateRoot } from '../state/app';
 import {
   firstMessageTitle,
   friendlyFailure,
+  friendlyInterruption,
   isUserStop,
   pendingConversationIDs,
   useStore,
@@ -779,6 +780,8 @@ describe('store: send and stream', () => {
         ...historyTurn(1, 'history user', 'partial answer'),
         status: 'failed',
         error: 'engine boom',
+        interrupt_cause: 'host_shutdown',
+        error_kind: 'provider_failure',
       },
     ]);
 
@@ -1424,44 +1427,56 @@ describe('store: send and stream', () => {
     });
   });
 
-  it('friendlyFailure hides graph internals for provider errors', () => {
-    const friendly = friendlyFailure(
-      'graph "opencraft-assistant" node "llm": provider_failure during generate',
-    );
-    expect(friendly).toBeTruthy();
-    expect(friendly ?? '').not.toContain('graph "opencraft-assistant"');
-    expect(friendly ?? '').not.toContain('provider_failure');
+  it('friendlyFailure maps the error kind the backend classified', () => {
+    for (const kind of [
+      'provider_failure',
+      'invalid_provider_response',
+      'unknown_model',
+      'invalid_request',
+    ]) {
+      const friendly = friendlyFailure(kind);
+      expect(friendly).toBeTruthy();
+      // The copy never leaks the enum or the graph wiring.
+      expect(friendly ?? '').not.toContain(kind);
+      expect(friendly ?? '').not.toContain('graph "');
+    }
+    // A failure the engine did not classify keeps the raw error, which
+    // is what the notice falls back to.
+    expect(friendlyFailure('')).toBeNull();
+    expect(friendlyFailure(undefined)).toBeNull();
+    expect(friendlyFailure('some_future_kind')).toBeTruthy();
+  });
+
+  it('friendlyInterruption maps the interrupt cause, not the text', () => {
+    expect(friendlyInterruption('user_cancel')).toBeTruthy();
+    expect(friendlyInterruption('host_shutdown')).toBeTruthy();
+    expect(friendlyInterruption('user_input')).toBeTruthy();
+    // An unknown cause still reads as an interruption; no cause at all
+    // means the turn did not end as one.
+    expect(friendlyInterruption('custom')).toBeTruthy();
+    expect(friendlyInterruption('')).toBeNull();
+    expect(friendlyInterruption(undefined)).toBeNull();
   });
 });
 
 describe('isUserStop', () => {
-  it('treats canceled turns as user stops regardless of error', () => {
-    expect(isUserStop('canceled', 'context canceled')).toBe(true);
+  it('treats canceled turns as user stops', () => {
+    expect(isUserStop('canceled', 'user_cancel')).toBe(true);
     expect(isUserStop('canceled')).toBe(true);
   });
 
   it('treats user_cancel and user_input interruptions as user stops', () => {
-    expect(isUserStop('interrupted', 'engine: interrupted (user_cancel)')).toBe(
-      true,
-    );
-    expect(
-      isUserStop(
-        'interrupted',
-        'engine: interrupted (user_input): new message arrived',
-      ),
-    ).toBe(true);
+    expect(isUserStop('interrupted', 'user_cancel')).toBe(true);
+    expect(isUserStop('interrupted', 'user_input')).toBe(true);
   });
 
   it('keeps non-user interruptions and failures out of the user-stop bucket', () => {
-    expect(
-      isUserStop('interrupted', 'engine: interrupted (host_shutdown)'),
-    ).toBe(false);
-    expect(isUserStop('interrupted', 'engine: interrupted')).toBe(false);
+    expect(isUserStop('interrupted', 'host_shutdown')).toBe(false);
+    expect(isUserStop('interrupted', 'custom')).toBe(false);
+    expect(isUserStop('interrupted', '')).toBe(false);
     expect(isUserStop('interrupted')).toBe(false);
-    expect(isUserStop('failed', 'engine: interrupted (user_cancel)')).toBe(
-      false,
-    );
-    expect(isUserStop('aborted', 'boom')).toBe(false);
+    expect(isUserStop('failed', 'user_cancel')).toBe(false);
+    expect(isUserStop('aborted', 'user_cancel')).toBe(false);
   });
 });
 

@@ -23,16 +23,18 @@ const (
 )
 
 // handleDesktopNotification is installed as the core shell's notification
-// sink. Every interact/turn_end/automation event still reaches the frontend
-// (the UI event bus), but system notifications are now raised from Go so a
-// hidden, minimized, or close-to-tray window cannot drop them.
+// sink. interact/turn_end reach it as UI events that also notify; the
+// automation result reaches it through Shell.Notify because the
+// frontend has no consumer for that payload. Either way the banner is
+// raised from Go, so a hidden, minimized, or close-to-tray window
+// cannot drop it.
 func (d *Desktop) handleDesktopNotification(typ string, data any) {
 	if d == nil || d.notifications == nil {
 		return
 	}
 	texts := d.core.Shell.Texts()
 	switch typ {
-	case "interact":
+	case core.NotifyInteract:
 		spec, ok := data.(map[string]any)
 		if !ok {
 			return
@@ -43,7 +45,7 @@ func (d *Desktop) handleDesktopNotification(typ string, data any) {
 			body = texts.NotifyInteract
 		}
 		d.sendNotification("interact", notifyFallbackTitle, body)
-	case "turn_end":
+	case core.NotifyTurnEnd:
 		ev, ok := data.(core.TurnEndEvent)
 		if !ok || ev.Notify != nil && !*ev.Notify {
 			return
@@ -63,34 +65,40 @@ func (d *Desktop) handleDesktopNotification(typ string, data any) {
 			body += "\n" + snippet
 		}
 		d.sendNotification("turn-end", title, body)
-	case "automation_notify":
+	case core.NotifyAutomation:
 		payload, ok := data.(map[string]any)
 		if !ok {
 			return
 		}
-		name, _ := payload["name"].(string)
-		title := strings.TrimSpace(name)
-		if title == "" {
-			title = notifyFallbackTitle
-		}
-		title = truncateRunes(title, notifyTitleLimit)
-		status, _ := payload["status"].(string)
-		statusText := notifyStatus(texts, status)
-		output, _ := payload["output"].(string)
-		errorText, _ := payload["error"].(string)
-		snippet := strings.TrimSpace(output)
-		if snippet == "" {
-			snippet = strings.TrimSpace(errorText)
-		}
-		if snippet != "" {
-			snippet = truncateRunes(snippet, notifySnippetLimit)
-		}
-		body := statusText
-		if snippet != "" {
-			body += "\n" + snippet
-		}
+		title, body := automationNotification(texts, payload)
 		d.sendNotification("automation-turn-end", title, body)
 	}
+}
+
+// automationNotification shapes one automation result into the title and
+// body of its banner: the task name, then the status line, then whatever
+// the task produced (its output, or its error when it produced none).
+func automationNotification(
+	texts core.DesktopTexts, payload map[string]any,
+) (title, body string) {
+	name, _ := payload["name"].(string)
+	title = strings.TrimSpace(name)
+	if title == "" {
+		title = notifyFallbackTitle
+	}
+	title = truncateRunes(title, notifyTitleLimit)
+	status, _ := payload["status"].(string)
+	output, _ := payload["output"].(string)
+	errorText, _ := payload["error"].(string)
+	snippet := strings.TrimSpace(output)
+	if snippet == "" {
+		snippet = strings.TrimSpace(errorText)
+	}
+	body = notifyStatus(texts, status)
+	if snippet != "" {
+		body += "\n" + truncateRunes(snippet, notifySnippetLimit)
+	}
+	return title, body
 }
 
 // sendNotification pushes one best-effort system notification.

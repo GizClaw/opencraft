@@ -147,6 +147,16 @@ func (b *Conversation) StartTurn(
 
 // waitTurn blocks until the run finishes and emits the terminal
 // turn_end event the frontend uses to settle the conversation actor.
+// resultErr is the error the engine reported, or nil when the run
+// produced a result. It exists so the classification and the rendered
+// error text come from the same error.
+func resultErr(res *agent.Result) error {
+	if res == nil {
+		return nil
+	}
+	return res.Err
+}
+
 func (b *Conversation) waitTurn(
 	ctx context.Context,
 	run *host.Run,
@@ -171,6 +181,9 @@ func (b *Conversation) waitTurn(
 		requestID, responseID,
 		lastAssistantOutput(res), finishedAt, durationMs,
 	)
+	class := host.ClassifyRunError(resultErr(res), err)
+	end.InterruptCause = class.InterruptCause
+	end.ErrorKind = class.ErrorKind
 	end.AgentID = core.AssistantAgentID
 	b.core.Shell.Emit("turn_end", end)
 	b.core.Shell.Emit("status", core.StatusEvent{})

@@ -54,19 +54,24 @@ func toSessionMeta(m sessions.Meta) SessionMeta {
 // started/finished stamps with the same legacy fallbacks older
 // archives relied on.
 type SessionTurnDTO struct {
-	Seq         int                 `json:"seq"`
-	At          string              `json:"at"`
-	RequestedAt string              `json:"requested_at,omitempty"`
-	StartedAt   string              `json:"started_at,omitempty"`
-	FinishedAt  string              `json:"finished_at,omitempty"`
-	DurationMs  int64               `json:"duration_ms,omitempty"`
-	RunID       string              `json:"run_id,omitempty"`
-	Status      string              `json:"status,omitempty"`
-	Error       string              `json:"error,omitempty"`
-	RequestID   string              `json:"request_id,omitempty"`
-	ResponseID  string              `json:"response_id,omitempty"`
-	Messages    []message.Message   `json:"messages"`
-	Artifacts   []sessions.Artifact `json:"artifacts,omitempty"`
+	Seq         int    `json:"seq"`
+	At          string `json:"at"`
+	RequestedAt string `json:"requested_at,omitempty"`
+	StartedAt   string `json:"started_at,omitempty"`
+	FinishedAt  string `json:"finished_at,omitempty"`
+	DurationMs  int64  `json:"duration_ms,omitempty"`
+	RunID       string `json:"run_id,omitempty"`
+	Status      string `json:"status,omitempty"`
+	Error       string `json:"error,omitempty"`
+	// InterruptCause / ErrorKind are the structured class of a failed
+	// turn, so the transcript renders the same copy as the live turn
+	// without parsing Error.
+	InterruptCause string              `json:"interrupt_cause,omitempty"`
+	ErrorKind      string              `json:"error_kind,omitempty"`
+	RequestID      string              `json:"request_id,omitempty"`
+	ResponseID     string              `json:"response_id,omitempty"`
+	Messages       []message.Message   `json:"messages"`
+	Artifacts      []sessions.Artifact `json:"artifacts,omitempty"`
 }
 
 // SessionDeleteResult reports a deleted conversation. When the deleted
@@ -100,19 +105,21 @@ func toSessionTurnDTO(t sessions.TurnRecord) SessionTurnDTO {
 		durationMs = t.FinishedAt.Sub(t.StartedAt).Milliseconds()
 	}
 	return SessionTurnDTO{
-		Seq:         t.Seq,
-		At:          t.At.UTC().Format(time.RFC3339),
-		RequestedAt: requestedAt.UTC().Format(time.RFC3339),
-		StartedAt:   startedAt.UTC().Format(time.RFC3339),
-		FinishedAt:  finishedAt.UTC().Format(time.RFC3339),
-		DurationMs:  durationMs,
-		RunID:       t.RunID,
-		Status:      t.Status,
-		Error:       t.Error,
-		RequestID:   t.RequestID,
-		ResponseID:  t.ResponseID,
-		Messages:    t.Messages,
-		Artifacts:   t.Artifacts,
+		Seq:            t.Seq,
+		At:             t.At.UTC().Format(time.RFC3339),
+		RequestedAt:    requestedAt.UTC().Format(time.RFC3339),
+		StartedAt:      startedAt.UTC().Format(time.RFC3339),
+		FinishedAt:     finishedAt.UTC().Format(time.RFC3339),
+		DurationMs:     durationMs,
+		RunID:          t.RunID,
+		Status:         t.Status,
+		Error:          t.Error,
+		InterruptCause: t.InterruptCause,
+		ErrorKind:      t.ErrorKind,
+		RequestID:      t.RequestID,
+		ResponseID:     t.ResponseID,
+		Messages:       t.Messages,
+		Artifacts:      t.Artifacts,
 	}
 }
 

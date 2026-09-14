@@ -228,6 +228,8 @@ function archivedTurnEndKind(status?: TurnStatus): TurnEndKind | undefined {
 function TurnEndNotice({
   status,
   error,
+  interruptCause,
+  errorKind,
   requestID,
   responseID,
   live = false,
@@ -235,6 +237,8 @@ function TurnEndNotice({
 }: {
   status: TurnEndKind;
   error?: string;
+  interruptCause?: string;
+  errorKind?: string;
   requestID?: string;
   responseID?: string;
   live?: boolean;
@@ -247,7 +251,7 @@ function TurnEndNotice({
   // debugging detail worth surfacing; failed/aborted turns and
   // non-user interruptions show the correlation ids and the raw reason
   // beneath the friendly summary.
-  const userStop = isUserStop(status, error);
+  const userStop = isUserStop(status, interruptCause);
   const failure = status === 'failed' || status === 'aborted';
   const container = failure
     ? 'border-err/40 bg-err/10'
@@ -260,7 +264,7 @@ function TurnEndNotice({
       ? 'border-warn/30 bg-warn/10 text-warn'
       : 'border-edge bg-panel text-dim';
   const Icon = status === 'canceled' ? Ban : AlertTriangle;
-  const friendlyError = error ? friendlyFailure(error) : null;
+  const friendlyError = friendlyFailure(errorKind);
   let title: string;
   let detail: string;
   if (status === 'aborted') {
@@ -272,8 +276,7 @@ function TurnEndNotice({
   } else if (status === 'interrupted') {
     title = t('chat.lastInterrupted');
     detail =
-      (error ? friendlyInterruption(error) : null) ??
-      t('chat.lastInterruptedDetail');
+      friendlyInterruption(interruptCause) ?? t('chat.lastInterruptedDetail');
   } else {
     title = t('chat.lastFailed');
     detail = friendlyError || error || t('chat.lastFailedDetail');
@@ -1029,6 +1032,8 @@ function TurnBlock({
       <TurnEndNotice
         status={endStatus}
         error={endError}
+        interruptCause={turn.interruptCause}
+        errorKind={turn.errorKind}
         requestID={requestID}
         responseID={responseID}
         live={liveEnd}
@@ -2513,6 +2518,8 @@ export function ChatView() {
                               ? (turn.error ?? failedTurn?.error)
                               : turn.error
                           }
+                          interruptCause={turn.interruptCause}
+                          errorKind={turn.errorKind}
                           live={Boolean(liveEnd)}
                           onDismiss={liveEnd ? clearLastFailed : undefined}
                         />
