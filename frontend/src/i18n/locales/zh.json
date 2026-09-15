@@ -574,6 +574,7 @@
     "invalidProviderResponse": "模型返回了无法识别的响应，请重试或切换模型。",
     "modelConfiguration": "模型配置似乎无效，请检查模型设置。",
     "invalidRequest": "模型服务拒绝了这次请求，请检查模型设置后重试。",
+    "turnTimeout": "本轮在完成前超时了。请重试，或把任务拆成更小的步骤。",
     "genericFailure": "回复运行失败，请重试。",
     "dismiss": "忽略",
     "thinkMinimal": "极低",

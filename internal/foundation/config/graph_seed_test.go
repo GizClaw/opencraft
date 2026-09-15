@@ -148,3 +148,48 @@ func TestAssistantGraphDiscardsFailedStreams(t *testing.T) {
 		t.Fatalf("stream_failure_policy.on_interrupt = %q, want default (unset)", got)
 	}
 }
+
+// TestAssistantAgentLiftsIterationGuard guards the default agent's
+// budgets: the graph's node-routing guard is lifted with an explicit 0
+// (an absent key keeps flowcraft's default 100, which ordinary tool
+// work exhausts) and policy.run_timeout bounds the whole run instead,
+// including revise attempts that restart the per-Execute timeout.
+func TestAssistantAgentLiftsIterationGuard(t *testing.T) {
+	type buildSpec struct {
+		MaxIterations *int `yaml:"max_iterations"`
+	}
+	type assistantSpec struct {
+		Engine struct {
+			Settings struct {
+				Build buildSpec `yaml:"build"`
+			} `yaml:"settings"`
+		} `yaml:"engine"`
+		Policy struct {
+			RunTimeout string `yaml:"run_timeout"`
+		} `yaml:"policy"`
+	}
+	var doc struct {
+		Agents map[string]assistantSpec `yaml:"agents"`
+	}
+	data, err := FS().ReadFile("assets/agents.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := yamlv4.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("parse agents.yaml: %v", err)
+	}
+	assistant, ok := doc.Agents["assistant"]
+	if !ok {
+		t.Fatal("embedded agents.yaml declares no assistant agent")
+	}
+	build := assistant.Engine.Settings.Build
+	if build.MaxIterations == nil {
+		t.Fatal("build.max_iterations must be explicit: an absent key keeps flowcraft's default 100")
+	}
+	if *build.MaxIterations != 0 {
+		t.Fatalf("build.max_iterations = %d, want 0 (unlimited)", *build.MaxIterations)
+	}
+	if got := assistant.Policy.RunTimeout; got != "1h" {
+		t.Fatalf("policy.run_timeout = %q, want 1h once the iteration guard is lifted", got)
+	}
+}

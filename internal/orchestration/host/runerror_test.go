@@ -1,11 +1,13 @@
 package host
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/inference"
 )
 
@@ -36,6 +38,24 @@ func TestClassifyRunErrorReadsTheEngineTypes(t *testing.T) {
 		{
 			name: "provider failure kind",
 			resErr: fmt.Errorf("graph %q node %q: %w", "assistant", "llm",
+				&inference.Error{Kind: inference.ProviderFailure}),
+			wantKind: "provider_failure",
+		},
+		{
+			name: "engine deadline classifies as a timeout",
+			resErr: errdefs.Timeoutf(
+				"graph %q execution timed out (deadline %s)",
+				"assistant", "2026-09-15T00:00:00Z"),
+			wantKind: "timeout",
+		},
+		{
+			name:     "bare context deadline classifies as a timeout",
+			resErr:   fmt.Errorf("run %q: %w", "r-1", context.DeadlineExceeded),
+			wantKind: "timeout",
+		},
+		{
+			name: "the inference kind wins over a timeout wrapper",
+			resErr: errdefs.Timeout(
 				&inference.Error{Kind: inference.ProviderFailure}),
 			wantKind: "provider_failure",
 		},

@@ -1512,6 +1512,7 @@ describe('store: send and stream', () => {
       'invalid_provider_response',
       'unknown_model',
       'invalid_request',
+      'timeout',
     ]) {
       const friendly = friendlyFailure(kind);
       expect(friendly).toBeTruthy();

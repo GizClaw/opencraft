@@ -574,6 +574,7 @@
     "invalidProviderResponse": "The model returned an unexpected response. Try again or switch models.",
     "modelConfiguration": "The model configuration looks invalid. Check your model settings.",
     "invalidRequest": "The model provider rejected this request. Check your model settings and try again.",
+    "turnTimeout": "This turn timed out before it finished. Try again, or split the work into smaller steps.",
     "genericFailure": "The reply failed while running. Try again.",
     "dismiss": "Dismiss",
     "thinkMinimal": "Minimal",
