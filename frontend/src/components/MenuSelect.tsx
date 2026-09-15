@@ -62,17 +62,28 @@ export function MenuSelect({
       close();
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close();
+      if (event.key !== 'Escape') return;
+      // Escape belongs to the open menu first: stopping here keeps the
+      // settings dialog (a window-level listener) from closing underneath.
+      event.stopPropagation();
+      close();
     };
     document.addEventListener('mousedown', onPointerDown);
     document.addEventListener('keydown', onKeyDown);
-    // A scroll or resize invalidates the measured anchor.
-    window.addEventListener('scroll', close, true);
+    // A scroll or resize invalidates the measured anchor. The menu's own list
+    // scrolls independently — resting a trackpad on it must not close the menu
+    // it is scrolling.
+    const onScroll = (event: Event) => {
+      const target = event.target;
+      if (target instanceof Node && menuRef.current?.contains(target)) return;
+      close();
+    };
+    window.addEventListener('scroll', onScroll, true);
     window.addEventListener('resize', close);
     return () => {
       document.removeEventListener('mousedown', onPointerDown);
       document.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('resize', close);
     };
   }, [open]);

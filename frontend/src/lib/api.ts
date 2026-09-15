@@ -80,6 +80,7 @@ import type { PetPack } from '../pet/pack';
 import type { PetActivityDTO } from '../pet/state';
 import type { PetMindDebug } from '../pet/state';
 import type { PetRuntimeStatus } from '../pet/validate';
+import { normalizeUISettings, type UISettings } from './appearance';
 import type * as genPlugin from '../../bindings/github.com/GizClaw/opencraft/internal/capabilities/plugins/models';
 import type * as genPet from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/pet/models';
 
@@ -368,6 +369,16 @@ export const api = {
   getCloseToTray: () => Lifecycle.GetCloseToTray(),
   setCloseToTray: (closeToTray: boolean) =>
     Lifecycle.SetCloseToTray(closeToTray),
+  // uiSettings normalizes the appearance payload and resolves null when the
+  // binding is absent (a double, or a desktop build without the setting), so
+  // callers keep their cached copy.
+  uiSettings: async () => normalizeUISettings(await Lifecycle.GetUISettings()),
+  setUISettings: (settings: UISettings) =>
+    Lifecycle.SetUISettings(settings as unknown as gen.UISettings),
+  // uiFonts lists the font families installed on this machine; an empty list
+  // means the host cannot enumerate them and the picker falls back to typed
+  // family names.
+  uiFonts: async () => (await Lifecycle.ListFonts()) ?? [],
   petSettings: () =>
     Lifecycle.GetPetsSettings() as unknown as Promise<PetsSettings>,
   setPetSettings: (settings: PetsSettings) =>

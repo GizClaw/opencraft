@@ -708,6 +708,27 @@ func (s *Shell) SetAssistantPetCharacter(id string) error {
 	})
 }
 
+// UISettings returns the persisted appearance preferences (Settings >
+// Interface). Values are already normalized by the loader.
+func (s *Shell) UISettings() UIPrefs {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.prefs.UI
+}
+
+// SetUISettings persists the appearance preferences. Unknown preset ids and
+// out-of-range scales are rejected so a renderer/desktop mismatch cannot be
+// stored; the remaining values are normalized before the write.
+func (s *Shell) SetUISettings(ui UIPrefs) error {
+	if err := validateUIPrefs(ui); err != nil {
+		return err
+	}
+	normalized := normalizeUIPrefs(ui)
+	return s.commit(func(p *DesktopPrefs) {
+		p.UI = normalized
+	})
+}
+
 // commit applies one mutation to the in-memory preference document and
 // writes it back under the same lock.
 func (s *Shell) commit(mutate func(*DesktopPrefs)) error {

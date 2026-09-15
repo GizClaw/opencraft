@@ -1,6 +1,13 @@
 import { create } from 'zustand';
 import i18n from '../i18n';
 import { api } from './api';
+import {
+  applyUISettings,
+  cacheUISettings,
+  readCachedUISettings,
+  DEFAULT_UI_SETTINGS,
+  type UISettings,
+} from './appearance';
 import { sanitizeToolResult } from './ansi';
 import { coalesceStreamEvents } from './stream';
 import { toolResultText } from './toolresult';
@@ -684,6 +691,10 @@ interface StoreState {
   sessionDefaults: SessionDefaults;
   yoloOnly: boolean;
   theme: 'dark' | 'light' | 'auto';
+  // Appearance preferences (Settings > Interface). The cached copy paints
+  // the first frame; the Go desktop document is the durable source and
+  // reconciles this value during init.
+  uiSettings: UISettings;
   workspaces: WorkspaceMeta[];
   toasts: ToastItem[];
   sessionsLoading: boolean;
@@ -737,6 +748,7 @@ interface StoreState {
   setThink: (level: string) => Promise<void>;
   setModel: (model: string) => Promise<void>;
   setTheme: (theme: 'dark' | 'light' | 'auto') => void;
+  setUISettings: (settings: UISettings) => void;
   setSessionDefaults: (d: SessionDefaults) => void;
   loadWorkspaces: () => Promise<void>;
   chooseWorkspace: () => Promise<void>;
@@ -1659,6 +1671,7 @@ export const useStore = create<StoreState>((set, get) => {
     sessionDefaults: { mode: 'workspace', think: 'medium' },
     yoloOnly: false,
     theme: 'dark',
+    uiSettings: readCachedUISettings() ?? DEFAULT_UI_SETTINGS,
     workspaces: [],
     toasts: [],
     sessionsLoading: false,
@@ -1717,6 +1730,18 @@ export const useStore = create<StoreState>((set, get) => {
           yoloOnly: profile?.yolo_only ?? false,
           theme,
         });
+        // The persisted appearance preferences win over the localStorage
+        // mirror that painted the first frame. They are cosmetic, so a
+        // missing or failing binding keeps the cached copy instead of
+        // failing init.
+        void api
+          .uiSettings()
+          .then((ui) => {
+            if (ui !== null) get().setUISettings(ui);
+          })
+          .catch(() => {
+            // Keep the cached appearance; the user can still change it.
+          });
         if (currentSession !== '') {
           stateRoot.sendFocus({
             type: 'RESTORE_FOCUS',
@@ -2389,6 +2414,15 @@ export const useStore = create<StoreState>((set, get) => {
       applyTheme(theme);
       window.localStorage.setItem('opencraft.theme', theme);
       set({ theme });
+    },
+
+    // setUISettings applies the appearance immediately and mirrors it for
+    // the next first paint; persisting to the desktop document is the
+    // caller's job, so a failed save can roll this back.
+    setUISettings: (settings) => {
+      applyUISettings(settings);
+      cacheUISettings(settings);
+      set({ uiSettings: settings });
     },
 
     setSessionDefaults: (d) => set({ sessionDefaults: d }),

@@ -22,6 +22,7 @@ const apiMock = vi.hoisted(() => ({
   modelOptions: vi.fn(),
   sessionDefaults: vi.fn(),
   saveSessionDefaults: vi.fn(),
+  uiSettings: vi.fn(),
   listSessions: vi.fn(),
   sessionTurns: vi.fn(),
   turnByRunID: vi.fn(),
@@ -1767,6 +1768,9 @@ describe('store: init session bootstrap', () => {
     apiMock.getThink.mockResolvedValue('medium');
     apiMock.getModel.mockResolvedValue('');
     apiMock.modelOptions.mockResolvedValue([]);
+    // The appearance binding is cosmetic: a null payload keeps whatever the
+    // localStorage mirror painted.
+    apiMock.uiSettings.mockResolvedValue(null);
   }
 
   it('starts a fresh conversation when no current session exists', async () => {

@@ -88,7 +88,7 @@ export function UsageModelSelect({
       >
         <span className="truncate">{selectedLabel}</span>
         <ChevronDown
-          size={14}
+          size="1rem"
           className={`ml-auto shrink-0 text-dim transition-transform ${
             open ? 'rotate-180' : ''
           }`}
@@ -125,7 +125,7 @@ export function UsageModelSelect({
                   >
                     <span className="truncate">{option.label}</span>
                     {selected && (
-                      <Check size={13} className="ml-auto shrink-0" />
+                      <Check size="0.9286rem" className="ml-auto shrink-0" />
                     )}
                   </button>
                 );

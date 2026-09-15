@@ -76,7 +76,7 @@ function PetPackSelect({ packs, value, onChange, label }: PetPackSelectProps) {
           </span>
         )}
         <ChevronDown
-          size={14}
+          size="1rem"
           className={`ml-auto shrink-0 text-dim transition-transform ${
             open ? 'rotate-180' : ''
           }`}
@@ -115,7 +115,7 @@ function PetPackSelect({ packs, value, onChange, label }: PetPackSelectProps) {
                     </span>
                   )}
                   {selectedPack && (
-                    <Check size={13} className="ml-auto shrink-0" />
+                    <Check size="0.9286rem" className="ml-auto shrink-0" />
                   )}
                 </button>
               );

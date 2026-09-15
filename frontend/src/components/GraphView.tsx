@@ -190,7 +190,10 @@ function edgeMid(
   return { x: (x1 + x2) / 2, y: (y1 + y2) / 2 - 14 };
 }
 
-// ConditionPill renders one edge condition as a small mono pill.
+// ConditionPill renders one edge condition as a small mono pill. The pill is
+// sized in em against its own font size (a 9px design-size label with 5.6px
+// per character and 14px of horizontal padding), so it grows with the text
+// when Settings > Interface scales the UI.
 function ConditionPill({
   condition,
   x,
@@ -202,28 +205,28 @@ function ConditionPill({
 }) {
   const label =
     condition.length > 30 ? `${condition.slice(0, 29)}…` : condition;
-  const w = label.length * 5.6 + 14;
+  const w = label.length * 0.6222 + 1.5556;
   return (
     <g
       transform={`translate(${x}, ${y})`}
+      fontSize="0.6429rem"
       className="pointer-events-none select-none"
     >
       <rect
-        x={-w / 2}
-        y={-8}
-        width={w}
-        height={16}
-        rx={8}
+        x={`${(-w / 2).toFixed(4)}em`}
+        y="-0.8889em"
+        width={`${w.toFixed(4)}em`}
+        height="1.7778em"
+        rx="0.8889em"
         fill="var(--color-panel2)"
         stroke="var(--color-edge)"
       />
       <text
         x={0}
-        y={3}
-        fontSize={9}
+        y="0.3333em"
         textAnchor="middle"
         fill="var(--color-dim)"
-        fontFamily="ui-monospace, SFMono-Regular, monospace"
+        fontFamily="var(--oc-font-mono)"
       >
         {label}
       </text>

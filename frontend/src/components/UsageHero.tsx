@@ -114,7 +114,7 @@ export function UsageHero({
                   'linear-gradient(135deg, rgba(59,130,246,0.18), rgba(59,130,246,0.05))',
               }}
             >
-              <Zap size={20} style={{ color: ACCENT_BLUE }} />
+              <Zap size="1.4286rem" style={{ color: ACCENT_BLUE }} />
             </div>
             <div>
               <div className="mb-0.5 flex items-center gap-1.5 text-[11px] font-medium text-dim">
@@ -142,7 +142,7 @@ export function UsageHero({
                 {t('config.usageSessions')}
               </span>
               <span className="flex items-center gap-1.5 text-sm font-semibold tabular-nums text-fg">
-                <Activity size={14} style={{ color: ACCENT_BLUE }} />
+                <Activity size="1rem" style={{ color: ACCENT_BLUE }} />
                 {sessions.toLocaleString()}
               </span>
             </div>
@@ -152,7 +152,7 @@ export function UsageHero({
                 {t('config.usageModels')}
               </span>
               <span className="flex items-center gap-1.5 text-sm font-semibold tabular-nums text-fg">
-                <LayoutGrid size={14} style={{ color: ACCENT_PURPLE }} />
+                <LayoutGrid size="1rem" style={{ color: ACCENT_PURPLE }} />
                 {totals.models.toLocaleString()}
               </span>
             </div>
@@ -174,25 +174,25 @@ export function UsageHero({
 
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
           <MiniStat
-            icon={<ArrowDownToLine size={14} />}
+            icon={<ArrowDownToLine size="1rem" />}
             label={t('config.usageInput')}
             value={fmtShort(totals.input)}
             color={ACCENT_BLUE}
           />
           <MiniStat
-            icon={<ArrowUpFromLine size={14} />}
+            icon={<ArrowUpFromLine size="1rem" />}
             label={t('config.usageOutput')}
             value={fmtShort(totals.output)}
             color={ACCENT_GREEN}
           />
           <MiniStat
-            icon={<Database size={14} />}
+            icon={<Database size="1rem" />}
             label={t('config.usageCacheWrite')}
             value={fmtShort(totals.cacheWrite)}
             color={ACCENT_ORANGE}
           />
           <MiniStat
-            icon={<Sparkles size={14} />}
+            icon={<Sparkles size="1rem" />}
             label={t('config.usageCache')}
             value={fmtShort(totals.cacheRead)}
             color={ACCENT_PURPLE}

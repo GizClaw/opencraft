@@ -1,6 +1,11 @@
 package bindings
 
-import "github.com/GizClaw/opencraft/internal/adapters/desktop/core"
+import (
+	"github.com/GizClaw/flowcraft/core/telemetry"
+
+	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
+	"github.com/GizClaw/opencraft/internal/foundation/sysfont"
+)
 
 // Lifecycle exposes native window/tray lifecycle methods.
 type Lifecycle struct {
@@ -60,6 +65,54 @@ func (b *Lifecycle) SetPetsSettings(settings PetsSettings) error {
 	}
 	b.core.Shell.Emit("pet:settings_changed", settings)
 	return nil
+}
+
+// UISettings is the desktop appearance preference surface (Settings >
+// Interface). A font is a preset id plus, for "custom", the family name from
+// the system catalogue; the renderer turns that into a CSS font stack (see
+// frontend/src/lib/appearance.ts).
+type UISettings struct {
+	FontFamily     string  `json:"fontFamily"`
+	FontFamilyName string  `json:"fontFamilyName,omitempty"`
+	CodeFont       string  `json:"codeFont"`
+	CodeFontName   string  `json:"codeFontName,omitempty"`
+	FontScale      float64 `json:"fontScale"`
+}
+
+// GetUISettings returns the persisted appearance preferences.
+func (b *Lifecycle) GetUISettings() UISettings {
+	ui := b.core.Shell.UISettings()
+	return UISettings{
+		FontFamily:     ui.FontFamily,
+		FontFamilyName: ui.FontFamilyName,
+		CodeFont:       ui.CodeFont,
+		CodeFontName:   ui.CodeFontName,
+		FontScale:      ui.FontScale,
+	}
+}
+
+// SetUISettings persists the appearance preferences. The renderer applies
+// them immediately; the desktop document is the durable copy.
+func (b *Lifecycle) SetUISettings(settings UISettings) error {
+	return b.core.Shell.SetUISettings(core.UIPrefs{
+		FontFamily:     settings.FontFamily,
+		FontFamilyName: settings.FontFamilyName,
+		CodeFont:       settings.CodeFont,
+		CodeFontName:   settings.CodeFontName,
+		FontScale:      settings.FontScale,
+	})
+}
+
+// ListFonts returns the font families installed on this machine, sorted and
+// deduplicated. An empty list means the platform exposes no catalogue here;
+// the picker then falls back to typed family names.
+func (b *Lifecycle) ListFonts() []string {
+	families, err := sysfont.List()
+	if err != nil {
+		telemetry.WarnErr(b.core.Shell.Context(),
+			"desktop appearance: list system fonts failed", err)
+	}
+	return families
 }
 
 // ReportUserActivity records main-window activity (pointer/keys/focus)

@@ -21,17 +21,18 @@ import { toml } from '@codemirror/legacy-modes/mode/toml';
 import type { Extension } from '@codemirror/state';
 import { Eye } from 'lucide-react';
 
-// Viewer theme: match the chat's small mono text instead of the
-// editor defaults (which inherit the 15.68px UI base and look bulky).
+// Viewer theme: match the chat's small mono text instead of the editor
+// defaults (which inherit the UI base and look bulky). Both values are
+// rem-based so Settings > Interface scales them with the rest of the UI.
 const viewerTheme = EditorView.theme({
   '&': {
     height: '100%',
-    fontSize: '12px',
+    // 0.8571rem = 12px at the 14px design base.
+    fontSize: '0.8571rem',
     color: 'var(--color-fg)',
   },
   '.cm-scroller': {
-    fontFamily:
-      'ui-monospace, SFMono-Regular, Menlo, Consolas, "PingFang SC", monospace',
+    fontFamily: 'var(--oc-font-mono)',
     lineHeight: '1.55',
     overflow: 'auto',
   },
