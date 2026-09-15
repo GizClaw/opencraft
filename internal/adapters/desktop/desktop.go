@@ -56,7 +56,12 @@ type Desktop struct {
 	petManualUntil time.Time
 	petReady       bool
 	petDirector    *petfeed.PetDirector
-	petDebug       petfeed.MindDebug
+	// petGeometry is where the renderer drew the character inside the
+	// pet window; the placement maths anchors on it instead of on the
+	// window rectangle. It stays at the shipped layout until the
+	// surface reports its own measurement.
+	petGeometry petfeed.WindowGeometry
+	petDebug    petfeed.MindDebug
 }
 
 // New resolves the user data/config directories and builds the core

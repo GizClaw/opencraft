@@ -141,6 +141,7 @@ func (d *Desktop) startAssistantPet(ctx context.Context) {
 	d.petWindow = win
 	d.petStop = stop
 	d.petDirector = director
+	d.petGeometry = petfeed.DefaultWindowGeometry()
 	d.petMu.Unlock()
 	d.core.Shell.SetPetWindowControls(desktopcore.PetWindowControls{
 		MoveBy:      d.movePetWindow,
@@ -149,6 +150,7 @@ func (d *Desktop) startAssistantPet(ctx context.Context) {
 		Poke:        d.pokePet,
 		Diagnostics: d.petDiagnostics,
 		Position:    d.petWindowPosition,
+		Geometry:    d.setPetGeometry,
 	})
 
 	go d.runPetWindowLoop(ctx, stop, win, app, director)
@@ -183,6 +185,15 @@ func (d *Desktop) onPetsChanged() {
 		return
 	}
 	d.stopPet()
+}
+
+// setPetGeometry records where the renderer drew the character inside
+// the window. Every placement calculation (dock, watch spot, clamps)
+// anchors on that box rather than on the transparent window rectangle.
+func (d *Desktop) setPetGeometry(g petfeed.WindowGeometry) {
+	d.petMu.Lock()
+	d.petGeometry = petfeed.NormalizeWindowGeometry(g)
+	d.petMu.Unlock()
 }
 
 // movePetWindow drags the pet window by a relative offset and pauses
@@ -239,6 +250,7 @@ func (d *Desktop) pokePet() {
 
 // dockAssistantPet parks the pet window at the bottom-right corner of
 // the primary screen's work area and records the position on Desktop.
+// The drawn character, not the window, keeps the corner margins.
 func (d *Desktop) dockAssistantPet(
 	app *application.App, win *application.WebviewWindow,
 ) bool {
@@ -247,8 +259,13 @@ func (d *Desktop) dockAssistantPet(
 		return false
 	}
 	area := screen.WorkArea
-	x := area.X + area.Width - assistantPetWidth - 16
-	y := area.Y + area.Height - assistantPetHeight - 8
+	work := petfeed.Rect{
+		X: area.X, Y: area.Y, Width: area.Width, Height: area.Height,
+	}
+	d.petMu.Lock()
+	geometry := d.petGeometry
+	d.petMu.Unlock()
+	x, y := petfeed.DockSpot(geometry, work)
 	win.SetPosition(x, y)
 	d.petMu.Lock()
 	d.petX = x
@@ -302,20 +319,13 @@ func (d *Desktop) runPetWindowLoop(
 	x, y := d.petX, d.petY
 	d.petMu.Unlock()
 
-	screen := app.Screen.GetPrimary()
-	if screen == nil {
+	if app.Screen.GetPrimary() == nil {
 		return
 	}
-	area := screen.WorkArea
-	floorY := area.Y + area.Height - assistantPetHeight - 8
-	minTop := area.Y + 24
-	minX := area.X + 16
-	maxX := area.X + area.Width - assistantPetWidth - 16
-
-	mainX, mainY := x, y
-	mainW, mainH := assistantPetWidth, assistantPetHeight
-	perchMinX, perchMaxX := minX, maxX
-	perchTop, perchFloor := minTop, floorY
+	// mainRect is the main window's frame and perchArea the work area of
+	// the screen it sits on; both are re-read on a slow cadence below.
+	mainRect := petfeed.Rect{X: x, Y: y}
+	perchArea := petfeed.Rect{}
 	perchOK := false
 	lastRectRefresh := time.Now().Add(-time.Second)
 	ticker := time.NewTicker(petLoopTick)
@@ -340,13 +350,19 @@ func (d *Desktop) runPetWindowLoop(
 
 			if now.Sub(lastRectRefresh) >= 500*time.Millisecond {
 				lastRectRefresh = now
-				main := d.core.Shell.MainWindow()
-				if main != nil {
-					mainX, mainY = main.Position()
-					mainW, mainH = main.Size()
-					perchOK = false
-					centerX := mainX + mainW/2
-					centerY := mainY + mainH/2
+				perchOK = false
+				// A minimised or tray-hidden window is not something to
+				// walk to: its reported position is stale, and the pet
+				// would end up standing next to nothing.
+				if main := d.core.Shell.MainWindow(); main != nil &&
+					main.IsVisible() && !main.IsMinimised() {
+					mainX, mainY := main.Position()
+					mainW, mainH := main.Size()
+					mainRect = petfeed.Rect{
+						X: mainX, Y: mainY, Width: mainW, Height: mainH,
+					}
+					centerX := mainRect.X + mainRect.Width/2
+					centerY := mainRect.Y + mainRect.Height/2
 					for _, screen := range app.Screen.GetAll() {
 						if screen == nil {
 							continue
@@ -358,45 +374,27 @@ func (d *Desktop) runPetWindowLoop(
 							centerY >= area.Y+area.Height {
 							continue
 						}
-						perchMinX = area.X + 16
-						perchMaxX = area.X + area.Width -
-							assistantPetWidth - 16
-						perchTop = area.Y + 24
-						perchFloor = area.Y + area.Height -
-							assistantPetHeight - 8
+						perchArea = petfeed.Rect{
+							X: area.X, Y: area.Y,
+							Width: area.Width, Height: area.Height,
+						}
 						perchOK = true
-						minX = perchMinX
-						maxX = perchMaxX
-						minTop = perchTop
-						floorY = perchFloor
 						break
 					}
-				} else {
-					perchOK = false
 				}
 			}
 			d.petMu.Lock()
 			manual := now.Before(d.petManualUntil)
 			x, y = d.petX, d.petY
+			geometry := d.petGeometry
 			d.petMu.Unlock()
 
-			// Watch spot next to the main window; without one the pet
-			// stays where it is.
+			// Watch spot on the main window's bottom edge; without one
+			// the pet stays where it is.
 			watchX, watchY := x, y
 			if perchOK {
-				watchY = mainY + mainH - assistantPetHeight - 8
-				watchY = clampInt(watchY, perchTop, perchFloor)
-				rightX := mainX + mainW + 8
-				leftX := mainX - assistantPetWidth - 8
-				switch {
-				case rightX+assistantPetWidth <= perchMaxX:
-					watchX = rightX
-				case leftX >= perchMinX:
-					watchX = leftX
-				default:
-					watchX = x
-				}
-				watchX = clampInt(watchX, perchMinX, perchMaxX)
+				watchX, watchY = petfeed.WatchSpot(
+					geometry, mainRect, perchArea)
 			}
 
 			// The walk speed is a pack property: re-read it every

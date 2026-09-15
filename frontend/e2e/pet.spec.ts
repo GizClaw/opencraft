@@ -746,6 +746,38 @@ test('keeps the character and its overlays inside the 168px stage', async ({
   expect(borderWhileAsking).not.toBe(borderWhileWorking);
 });
 
+test('reports where the character is drawn', async ({ page }) => {
+  await mountPet(page);
+
+  // Go anchors the dock position and the watch spot on this box, so the
+  // surface has to measure the drawn pixels: the stage itself is
+  // transparent and about 40px wider than the character on each side.
+  const geometryCalls = async () =>
+    (await petCalls(page)).filter((call) => call.method === 'ReportGeometry');
+  await expect
+    .poll(async () => (await geometryCalls()).length)
+    .toBeGreaterThan(0);
+
+  const geometry = (await geometryCalls()).at(-1)?.args[0] as {
+    canvas: { x: number; y: number; width: number; height: number };
+    art: { x: number; y: number; width: number; height: number };
+    measured: boolean;
+  };
+  expect(geometry.measured).toBe(true);
+  expect(geometry.canvas).toEqual({ x: 20, y: 20, width: 128, height: 128 });
+  // The stub paints a ring of radius 41 device px around the canvas
+  // centre; allow the anti-aliased edge to land a pixel either way.
+  expect(geometry.art.x).toBeGreaterThanOrEqual(42);
+  expect(geometry.art.x).toBeLessThanOrEqual(44);
+  expect(geometry.art.y).toBe(geometry.art.x);
+  expect(geometry.art.width).toBeGreaterThanOrEqual(81);
+  expect(geometry.art.width).toBeLessThanOrEqual(85);
+  expect(geometry.art.height).toBe(geometry.art.width);
+  // The box only moves when the pose does: the 500ms re-measure must not
+  // turn into a stream of identical reports.
+  expect((await geometryCalls()).length).toBeLessThanOrEqual(3);
+});
+
 test('names the running tool in a tinted pill and flags a failure', async ({
   page,
 }) => {

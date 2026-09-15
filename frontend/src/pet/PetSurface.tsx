@@ -4,6 +4,7 @@ import { Events } from '@wailsio/runtime';
 import { CircleAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
+import { measurePetGeometry } from './geometry';
 import { hitTestPet } from './hit';
 import type { PetPack } from './pack';
 import { pickPack } from './pack';
@@ -46,6 +47,12 @@ function reportRuntimeStatus(status: PetRuntimeStatus) {
 // rAF loop, so pausing is what stops the CPU cost of a still frame.
 const petIdlePauseAfter = 20_000;
 
+// petGeometryInterval is how often the surface re-measures the drawn
+// character. The box only moves when the pose changes materially, and a
+// report is only sent when it did: Go parks the window and computes the
+// watch spot from it.
+const petGeometryInterval = 500;
+
 /**
  * PetSurface is the whole-screen roaming pet renderer mounted by the
  * pet Wails window (?surface=pet). It is deliberately inert: no plugin
@@ -70,7 +77,9 @@ export default function PetSurface() {
   const reactionTimer = useRef<number | undefined>(undefined);
   const pauseTimer = useRef<number | undefined>(undefined);
   const hiddenRef = useRef(false);
+  const surfaceRef = useRef<HTMLElement | null>(null);
   const lastIntentSeqRef = useRef(0);
+  const reportedGeometryRef = useRef('');
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const riveRef = useRef<PetRiveHandle | null>(null);
   // Latest surface state for the rover-independent readers (the idle
@@ -297,6 +306,28 @@ export default function PetSurface() {
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
+  // Tell Go where the character is actually drawn. The OS window is a
+  // transparent stage around it, so the dock position and the watch
+  // spot would otherwise be computed against the wrong rectangle.
+  useEffect(() => {
+    const report = () => {
+      const geometry = measurePetGeometry(
+        canvasRef.current,
+        surfaceRef.current,
+      );
+      if (!geometry) return;
+      const key = JSON.stringify(geometry);
+      if (key === reportedGeometryRef.current) return;
+      reportedGeometryRef.current = key;
+      void api.petReportGeometry(geometry).catch((err) => {
+        console.warn('pet: geometry report failed', err);
+      });
+    };
+    report();
+    const timer = window.setInterval(report, petGeometryInterval);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const onPointerDown = (event: React.PointerEvent) => {
     // The stage is a transparent rectangle the OS window keeps
     // capturing, so only a press on something the user can see starts
@@ -431,6 +462,7 @@ export default function PetSurface() {
 
   return (
     <main
+      ref={surfaceRef}
       className="pet-surface"
       data-interactive={pet.interactive ? 'true' : 'false'}
       data-rive-ready={riveReady ? 'true' : 'false'}

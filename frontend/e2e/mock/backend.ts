@@ -301,6 +301,9 @@ export function mockBackend(cfg?: MockConfig) {
         return config.petAsset ?? '';
       },
       Poke: async () => recordPet('Poke', []),
+      ReportGeometry: async (geometry: unknown) => {
+        recordPet('ReportGeometry', [geometry]);
+      },
       Position: async () =>
         config.petPosition ?? { x: 100, y: 100, ready: true },
       RegisterPack: noop,

@@ -101,6 +101,27 @@ func (b *Pet) Activate() {
 	b.core.Shell.ActivatePet()
 }
 
+// ReportGeometry records where the renderer drew the character inside
+// the pet window. The window rectangle is a transparent stage, so every
+// placement (dock position, watch spot, screen clamps) is computed from
+// the drawn box the surface measures here.
+func (b *Pet) ReportGeometry(geometry pet.WindowGeometry) error {
+	geometry = pet.NormalizeWindowGeometry(geometry)
+	for _, box := range []pet.Rect{geometry.Canvas, geometry.Art} {
+		if box.Width < 0 || box.Height < 0 ||
+			box.Width > maxPetGeometrySpan || box.Height > maxPetGeometrySpan {
+			return fmt.Errorf(
+				"pet: geometry %dx%d is out of range", box.Width, box.Height)
+		}
+	}
+	b.core.Shell.ReportPetGeometry(geometry)
+	return nil
+}
+
+// maxPetGeometrySpan bounds a reported box so a broken renderer cannot
+// park the pet off-screen.
+const maxPetGeometrySpan = 4096
+
 // Poke records a click/pet interaction with the pet.
 func (b *Pet) Poke() {
 	b.core.Shell.PokePet()

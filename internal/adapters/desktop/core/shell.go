@@ -116,6 +116,9 @@ type PetWindowControls struct {
 	// Position returns the tracked window position when the pet is
 	// docked.
 	Position func() (x, y int, ok bool)
+	// Geometry records where the renderer drew the character inside the
+	// pet window; placement is anchored on it.
+	Geometry func(g petfeed.WindowGeometry)
 }
 
 // SetPetWindowControls installs the desktop-root callbacks for pet
@@ -145,6 +148,17 @@ func (s *Shell) SetPetPosition(x, y int) {
 	s.mu.Unlock()
 	if fn != nil {
 		fn(x, y)
+	}
+}
+
+// ReportPetGeometry hands the renderer's measurement of the drawn
+// character to the desktop root, which anchors every placement on it.
+func (s *Shell) ReportPetGeometry(g petfeed.WindowGeometry) {
+	s.mu.Lock()
+	fn := s.pet.Geometry
+	s.mu.Unlock()
+	if fn != nil {
+		fn(g)
 	}
 }
 
