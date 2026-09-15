@@ -67,6 +67,7 @@ import type {
   SessionImportDTO,
   SessionTurn,
   SkillDTO,
+  TelemetryExportStatus,
   TurnStart,
   TurnMessage,
   WorkspaceMeta,
@@ -367,6 +368,10 @@ export const api = {
   pluginUninstall: (id: string) => Plugin.Uninstall(id),
   pluginInvoke: (id: string, method: string, args: string) =>
     Plugin.Invoke(id, method, args),
+  telemetryExport: () =>
+    Diagnostics.TelemetryExport() as unknown as Promise<TelemetryExportStatus>,
+  setTelemetryExport: (enabled: boolean) =>
+    Diagnostics.SetTelemetryExport(enabled),
   getCloseToTray: () => Lifecycle.GetCloseToTray(),
   setCloseToTray: (closeToTray: boolean) =>
     Lifecycle.SetCloseToTray(closeToTray),

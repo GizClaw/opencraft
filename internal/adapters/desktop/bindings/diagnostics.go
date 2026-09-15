@@ -37,6 +37,46 @@ func NewDiagnosticsBinding(c *core.Core) *Diagnostics {
 	return &Diagnostics{core: c}
 }
 
+// TelemetryExportDTO is the diagnostics view of the OTLP export sink.
+// Header values are credentials and stay in the host, so the DTO carries
+// header names only.
+type TelemetryExportDTO struct {
+	// Enabled is the user switch: may capability plugins install their
+	// own export sink?
+	Enabled bool `json:"enabled"`
+	// Configured reports whether an OTLP endpoint is active, whoever
+	// installed it.
+	Configured  bool     `json:"configured"`
+	Endpoint    string   `json:"endpoint"`
+	Insecure    bool     `json:"insecure"`
+	HeaderNames []string `json:"headerNames"`
+	// Owner is the plugin that installed the sink, empty when the
+	// application configuration owns it.
+	Owner string `json:"owner"`
+}
+
+// TelemetryExport reports where the app currently exports telemetry and
+// whether capability plugins may point it at their own collector.
+func (b *Diagnostics) TelemetryExport() TelemetryExportDTO {
+	state := b.core.PluginTelemetryState()
+	return TelemetryExportDTO{
+		Enabled:     state.Enabled,
+		Configured:  state.Configured,
+		Endpoint:    state.Endpoint,
+		Insecure:    state.Insecure,
+		HeaderNames: state.HeaderNames,
+		Owner:       state.Owner,
+	}
+}
+
+// SetTelemetryExport toggles the plugin export switch. Disabling it
+// drops the sink a plugin installed and remembers it, so enabling the
+// switch again re-installs it without waiting for the plugin to
+// re-configure.
+func (b *Diagnostics) SetTelemetryExport(enabled bool) error {
+	return b.core.SetPluginTelemetryExport(enabled)
+}
+
 var (
 	frontendVitalsDuration = octelemetry.MustFloat64Histogram(
 		"frontend.vitals.duration_ms",

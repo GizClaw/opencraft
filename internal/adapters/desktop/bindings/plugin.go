@@ -46,6 +46,9 @@ func (b *Plugin) SetEnabled(id string, enabled bool) error {
 	var removeErr error
 	if !enabled {
 		b.core.Plugin.Capability.Stop(id)
+		if err := b.core.RemovePluginTelemetry(id); err != nil {
+			removeErr = err
+		}
 		removed, err := b.core.RemovePluginInference(id)
 		if err != nil {
 			removeErr = err
@@ -330,6 +333,9 @@ func (b *Plugin) Uninstall(id string) error {
 		telemetry.WarnErr(context.Background(),
 			"desktop plugin: capability cleanup failed",
 			b.core.Plugin.Capability.Cleanup(id))
+	}
+	if err := b.core.RemovePluginTelemetry(id); err != nil {
+		return err
 	}
 	removed, err := b.core.RemovePluginInference(id)
 	if err != nil {

@@ -110,6 +110,31 @@ export function PluginDetailDrawer({
               </p>
             )}
           </section>
+
+          {/* Declared manifest permissions are the plugin's host
+              capabilities (secrets, session import, OTLP export, ...).
+              The host enforces them; this section makes them visible. */}
+          <section>
+            <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-dim">
+              {t('config.pluginsPermissions')}
+            </h4>
+            {plugin.permissions.length > 0 ? (
+              <ul className="flex flex-wrap gap-1.5">
+                {plugin.permissions.map((perm) => (
+                  <li
+                    key={perm}
+                    className="rounded border border-edge bg-panel2 px-1.5 py-0.5 font-mono text-[0.7143rem] text-dim"
+                  >
+                    {perm}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-xs text-dim">
+                {t('config.pluginsPermissionsEmpty')}
+              </p>
+            )}
+          </section>
         </div>
       </aside>
     </>

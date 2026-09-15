@@ -199,6 +199,15 @@ export function mockBackend(cfg?: MockConfig) {
       ReportFrontendError: noop,
       ReportFrontendPerf: noop,
       RunSandboxProbe: async () => ({ ok: true }),
+      SetTelemetryExport: noop,
+      TelemetryExport: async () => ({
+        enabled: true,
+        configured: false,
+        endpoint: '',
+        insecure: false,
+        headerNames: [],
+        owner: '',
+      }),
     },
     File: {
       Diff: async () => '',

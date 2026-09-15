@@ -39,12 +39,25 @@ type DesktopPrefs struct {
 	// character id is resolved against the pet pack registry at window
 	// creation time; unknown ids fall back to the builtin default.
 	Pets PetPrefs `json:"pets,omitempty"`
+	// Telemetry carries the plugin telemetry-export switch.
+	Telemetry TelemetryPrefs `json:"telemetry,omitempty"`
 }
 
 // PetPrefs is the desktop pet section of the preference document.
 type PetPrefs struct {
 	Enabled            bool   `json:"enabled"`
 	AssistantCharacter string `json:"assistantCharacter,omitempty"`
+}
+
+// TelemetryPrefs is the desktop telemetry section of the preference
+// document.
+type TelemetryPrefs struct {
+	// PluginExport allows capability plugins that declare
+	// telemetry:export to install their own OTLP export sink. On by
+	// default, because installing such a plugin is already an explicit
+	// user decision; turning it off makes the host refuse every
+	// telemetry.configure call instead of trusting the manifest.
+	PluginExport bool `json:"pluginExport"`
 }
 
 // LoadPrefs reads the desktop preference file with defaults.
@@ -96,6 +109,7 @@ func DefaultPrefs() DesktopPrefs {
 		DefaultMode:  string(mode),
 		DefaultThink: think,
 		UI:           defaultUIPrefs(),
+		Telemetry:    TelemetryPrefs{PluginExport: true},
 	}
 }
 

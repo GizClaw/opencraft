@@ -45,6 +45,12 @@ type TelemetryOptions struct {
 	// insecure regardless of this field.
 	OTLPInsecure bool
 
+	// OTLPHeaders are sent with every export request. Managed
+	// collectors use them for auth (Honeycomb's "x-honeycomb-team",
+	// Grafana Cloud basic auth, an Authorization bearer). Values are
+	// credentials: they are never logged and never written to disk.
+	OTLPHeaders map[string]string
+
 	// LogFile enables a rotating plain-text file sink at this path
 	// (100MB / 7 backups / 30 days, matching flowcraft's logfile
 	// defaults). Empty disables the file sink.
@@ -77,6 +83,7 @@ func InitOtel(ctx context.Context, opts TelemetryOptions) (shutdown func(context
 		cfg := telemetry.OTLPConfig{
 			Endpoint: endpoint,
 			Insecure: insecure,
+			Headers:  opts.OTLPHeaders,
 		}
 		initOpts = append(initOpts,
 			telemetry.TracerOpts(telemetry.WithOTLPTraceExporter(cfg)),
