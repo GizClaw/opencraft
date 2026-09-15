@@ -8,9 +8,10 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync"
 	"testing"
 	"time"
+
+	"github.com/GizClaw/opencraft/internal/testing/logcapture"
 )
 
 // helperPlugin simulates a capability plugin: it handshakes, then
@@ -65,10 +66,12 @@ func oversizedPlugin() {
 }
 
 // crashingPlugin handshakes and then exits on its own, simulating a
-// capability process that died after announcing itself.
+// capability process that died after announcing itself. It explains
+// itself on stderr, which is the only channel a plugin has for that.
 func crashingPlugin() {
 	_, _ = fmt.Fprintln(os.Stdout,
 		`{"jsonrpc":"2.0","id":1,"method":"handshake","params":{"id":"test-plugin","protocol":1}}`)
+	_, _ = fmt.Fprintln(os.Stderr, "helper plugin: crashing on purpose")
 	time.Sleep(50 * time.Millisecond)
 	os.Exit(1)
 }
@@ -498,21 +501,17 @@ func TestStopShutsDownProcess(t *testing.T) {
 }
 
 func TestCleanupNotifiesPlugin(t *testing.T) {
+	capture := logcapture.Install(t)
 	m, _ := newTestManager(t)
-	log := &lockedBuffer{}
-	m.SetLogger(log)
 	if _, err := m.Invoke(context.Background(), "test-plugin", "auth.poll", nil); err != nil {
 		t.Fatalf("invoke: %v", err)
 	}
 	if err := m.Cleanup("test-plugin"); err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for !strings.Contains(log.String(), "CLEANUP_CALLED") && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
-	if !strings.Contains(log.String(), "CLEANUP_CALLED") {
-		t.Fatalf("plugin cleanup callback not invoked; stderr=%q", log.String())
+	if !waitForPluginStderr(capture, "CLEANUP_CALLED") {
+		t.Fatalf("plugin cleanup callback not invoked; log=%v",
+			capture.Bodies())
 	}
 	m.mu.Lock()
 	_, running := m.procs["test-plugin"]
@@ -522,22 +521,55 @@ func TestCleanupNotifiesPlugin(t *testing.T) {
 	}
 }
 
-// lockedBuffer is a concurrency-safe writer for the stderr forwarder.
-type lockedBuffer struct {
-	mu sync.Mutex
-	b  bytes.Buffer
+// TestPluginStderrReachesHostLog pins the contract a plugin relies on
+// when it explains itself: whatever it writes to stderr lands in the
+// host log, tagged with the plugin id, instead of being discarded.
+func TestPluginStderrReachesHostLog(t *testing.T) {
+	capture := logcapture.Install(t)
+	m, _ := newTestManagerWithHelper(t, "4")
+
+	// The helper handshakes, then dies; the invoke itself may fail,
+	// which is not what this test is about.
+	_, _ = m.Invoke(context.Background(), "test-plugin", "auth.poll", nil)
+
+	if !waitForPluginStderr(capture, "crashing on purpose") {
+		t.Fatalf("plugin stderr missing from the host log: %v",
+			capture.Bodies())
+	}
+	for _, record := range capture.Records() {
+		if record.Body().AsString() != pluginStderrBody {
+			continue
+		}
+		if id := logcapture.Attribute(record, "plugin.id"); id != "test-plugin" {
+			t.Fatalf("plugin.id = %q, want test-plugin", id)
+		}
+	}
 }
 
-func (l *lockedBuffer) Write(p []byte) (int, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.b.Write(p)
-}
+// pluginStderrBody is the message the runtime logs forwarded plugin
+// stderr lines under.
+const pluginStderrBody = "plugin stderr"
 
-func (l *lockedBuffer) String() string {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.b.String()
+// waitForPluginStderr reports whether one forwarded line contains want.
+// The forwarder runs in its own goroutine, so the caller polls.
+func waitForPluginStderr(capture *logcapture.Recorder, want string) bool {
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		for _, record := range capture.Records() {
+			if record.Body().AsString() != pluginStderrBody {
+				continue
+			}
+			if strings.Contains(
+				logcapture.Attribute(record, "plugin.line"), want,
+			) {
+				return true
+			}
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // stubWriter is a write-only sink capturing what the host sends to a

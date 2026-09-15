@@ -26,6 +26,13 @@
 // are decoded strictly, so a mistyped field fails the call instead of
 // silently configuring something else.
 //
+// Anything the child writes to stderr is forwarded to the host log, one
+// record per line, tagged with the plugin id (message "plugin stderr",
+// attributes plugin.id / plugin.line): that stream is where a plugin
+// explains a failed handshake, a provider problem or a crash, and the
+// host has no other way to see it. The host forwards it verbatim and
+// does not interpret it, so plugins must keep credentials out of stderr.
+//
 // telemetry.configure points OTLP export at the plugin's own collector:
 //
 //	{"jsonrpc":"2.0","id":7,"method":"telemetry.configure","params":{
@@ -60,6 +67,7 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
+	otellog "go.opentelemetry.io/otel/log"
 
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
@@ -72,6 +80,10 @@ const (
 	DefaultCallTimeout = 30 * time.Second
 	// ProtocolVersion is the wire protocol version plugins must report.
 	ProtocolVersion = 1
+	// stderrLineLimit bounds one forwarded plugin stderr line, so a
+	// plugin that never emits a newline cannot grow host memory without
+	// bound.
+	stderrLineLimit = 16 * 1024
 )
 
 // Capability is the manifest-declared runtime of one plugin.
@@ -200,7 +212,6 @@ type Manager struct {
 	root          string
 	secrets       SecretStore
 	openURL       func(url string)
-	log           io.Writer
 	inference     InferenceHandler
 	sessionImport SessionImportHandler
 	workspace     WorkspaceHandler
@@ -234,7 +245,6 @@ func NewManager(root string, loader Loader, secrets SecretStore) *Manager {
 		loader:  loader,
 		root:    root,
 		secrets: secrets,
-		log:     io.Discard,
 		baseCtx: baseCtx,
 		cancel:  cancel,
 		procs:   make(map[string]*process),
@@ -246,13 +256,6 @@ func NewManager(root string, loader Loader, secrets SecretStore) *Manager {
 
 // SetOpenURL wires the system-browser opener (nil-safe).
 func (m *Manager) SetOpenURL(fn func(url string)) { m.openURL = fn }
-
-// SetLogger attaches a writer for plugin stderr forwarding.
-func (m *Manager) SetLogger(w io.Writer) {
-	if w != nil {
-		m.log = w
-	}
-}
 
 // SetInferenceHandler wires the inference profile write path.
 func (m *Manager) SetInferenceHandler(h InferenceHandler) {
@@ -483,9 +486,21 @@ func (m *Manager) start(id string, cap Capability, bin string) (*process, error)
 	}
 	go p.readLoop(stdout)
 	go func() {
-		_, copyErr := io.Copy(m.log, stderr)
+		// The child's stderr is the plugin's only out-of-band channel:
+		// handshake failures, provider problems and panic traces land
+		// there, and without forwarding they are lost (the JSON-RPC
+		// stream carries results, not diagnostics). Each line becomes one
+		// record carrying the plugin id, so several plugins running at
+		// once stay readable.
+		sc := bufio.NewScanner(stderr)
+		sc.Buffer(make([]byte, 0, 4096), stderrLineLimit)
+		for sc.Scan() {
+			telemetry.Warn(m.baseCtx, "plugin stderr",
+				otellog.String("plugin.id", id),
+				otellog.String("plugin.line", sc.Text()))
+		}
 		telemetry.WarnErr(m.baseCtx,
-			"plugin runtime: drain capability stderr failed", copyErr)
+			"plugin runtime: drain capability stderr failed", sc.Err())
 	}()
 	go func() {
 		<-p.done
