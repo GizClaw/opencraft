@@ -240,6 +240,66 @@ func TestSeriesHourAndDay(t *testing.T) {
 	}
 }
 
+// TestSeriesAggregatesAllModels pins the all-models trend: an empty
+// model sums every model's buckets into one series, so the dashboard
+// still draws a curve when the selected model has no rows in range.
+func TestSeriesAggregatesAllModels(t *testing.T) {
+	store, _ := newUsageStore(t)
+	ctx := context.Background()
+
+	for _, row := range []struct {
+		model  string
+		hour   string
+		input  int64
+		output int64
+	}{
+		{"deepseek-v4-flash", "2026-09-09T07:00:00Z", 100, 20},
+		{"deepseek-flash", "2026-09-09T07:00:00Z", 5, 1},
+		{"deepseek-flash", "2026-09-15T03:00:00Z", 50, 10},
+	} {
+		if _, err := store.db.ExecContext(ctx, `
+			INSERT INTO model_usage_hourly (
+				model, hour, input_tokens, output_tokens,
+				cache_read_tokens, cache_write_tokens,
+				reasoning_tokens, latency_ms, calls
+			) VALUES (?, ?, ?, ?, 0, 0, 0, 0, 1)
+		`, row.model, row.hour, row.input, row.output); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// A model-scoped series still filters to that model.
+	scoped, err := store.Series(ctx, "deepseek-flash", GranularityHour, 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scoped) != 2 || scoped[0].InputTokens != 5 || scoped[1].InputTokens != 50 {
+		t.Fatalf("scoped series = %+v", scoped)
+	}
+
+	// The empty model sums every model sharing a bucket.
+	all, err := store.Series(ctx, "", GranularityHour, 0, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 ||
+		all[0].Time != "2026-09-09T07:00:00Z" ||
+		all[0].InputTokens != 105 || all[0].OutputTokens != 21 ||
+		all[1].InputTokens != 50 {
+		t.Fatalf("all-model series = %+v", all)
+	}
+
+	// The window filter applies to the aggregate as well.
+	windowed, err := store.Series(ctx, "", GranularityHour, 0,
+		"2026-09-15T00:00:00Z", "2026-09-16T00:00:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(windowed) != 1 || windowed[0].InputTokens != 50 {
+		t.Fatalf("windowed all-model series = %+v", windowed)
+	}
+}
+
 func TestRecordAttributionUsesReportTime(t *testing.T) {
 	store, _ := newUsageStore(t)
 	ctx := context.Background()

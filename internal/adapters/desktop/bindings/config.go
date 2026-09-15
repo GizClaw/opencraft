@@ -352,7 +352,8 @@ type UsagePoint struct {
 	ReasoningTokens  int64  `json:"reasoning_tokens"`
 }
 
-// ModelUsageSeries returns one model's bucketed usage.
+// ModelUsageSeries returns bucketed usage for one model, or for every
+// model when the name is empty (the dashboard's all-models trend).
 func (b *Config) ModelUsageSeries(
 	model string,
 	granularity string,
@@ -363,9 +364,6 @@ func (b *Config) ModelUsageSeries(
 	store := b.core.Runtime.Usage()
 	if store == nil {
 		return nil, errNotReady("usage")
-	}
-	if model == "" {
-		return []UsagePoint{}, nil
 	}
 	g := usage.GranularityHour
 	if granularity == string(usage.GranularityDay) {
