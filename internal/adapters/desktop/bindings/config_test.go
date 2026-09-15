@@ -3,6 +3,7 @@ package bindings
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
@@ -29,6 +30,50 @@ func TestConfigMemoryRoundTrip(t *testing.T) {
 	}
 	if got.MaxRawMessages != 48 || got.PreserveRecent != 6 {
 		t.Fatalf("memory config = %+v", got)
+	}
+}
+
+// TestInferenceCatalogResolvesTemplates pins the catalog binding the
+// settings page reads: every template must arrive with its models
+// already resolved, and every model must name a provider the instance
+// picker can offer.
+func TestInferenceCatalogResolvesTemplates(t *testing.T) {
+	b := NewConfig(core.NewCore(t.TempDir(), t.TempDir(), ""))
+	st, err := b.InferenceCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Version == "" {
+		t.Fatal("catalog has no version")
+	}
+	if len(st.Templates) == 0 || len(st.Models) == 0 {
+		t.Fatalf(
+			"catalog is empty: %d templates, %d models",
+			len(st.Templates), len(st.Models),
+		)
+	}
+	providers := b.Providers()
+	known := make(map[string]bool, len(providers))
+	for _, p := range providers {
+		known[p.ID] = true
+	}
+	for _, m := range st.Models {
+		if !known[m.Type] {
+			t.Fatalf("catalog model %s names unknown type %q", m.ID, m.Type)
+		}
+		if strings.TrimSpace(m.Model.Name) == "" {
+			t.Fatalf("catalog model %s carries no model name", m.ID)
+		}
+	}
+	for _, template := range st.Templates {
+		if len(template.Models) == 0 {
+			t.Fatalf("template %s resolved no models", template.ID)
+		}
+		for _, m := range template.Models {
+			if strings.TrimSpace(m.Name) == "" {
+				t.Fatalf("template %s carries a nameless model", template.ID)
+			}
+		}
 	}
 }
 

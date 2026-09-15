@@ -1,0 +1,841 @@
+{
+  "version": "2026.09.15",
+  "notes": "Built-in inference templates. OpenCraft keeps no vendor table in the runtime: what a provider serves is deployment data, so nothing here reaches a deployment until the user adds it on the settings page, and every value it fills stays editable. Facts are maintenance data: every entry records where it came from in source and is verified against the vendor's own model documentation before it ships; the package tests then run each entry through the settings-page write path and through a real runtime build. Effort maps translate OpenCraft's canonical ladder (minimal/low/medium/high/xhigh) onto the vendor's own tiers in order, so the top rung reaches the vendor's top tier; a vendor with fewer tiers folds neighbouring rungs (3-tier vendors: minimal/low fold to the low tier, medium/high to the middle, xhigh to the top; ByteDance Ark's low/medium/high folds the same way onto low, low, medium, high, high). Vendors that can only be driven through the OpenAI wire are declared with type openai plus the deployment endpoint in their template. Verified vendors so far: OpenAI, DeepSeek, Zhipu AI, Moonshot AI, Anthropic, MiniMax, ByteDance Ark.",
+  "models": [
+    {
+      "id": "openai/gpt-6-astra",
+      "type": "openai",
+      "vendor": "OpenAI",
+      "label": "GPT-6 Astra",
+      "source": "https://developers.openai.com/api/docs/models/gpt-6-astra (2026-09-15)",
+      "name": "gpt-6-astra",
+      "kind": "generate",
+      "capabilities": {
+        "inputs": ["text", "image"],
+        "outputs": ["text"],
+        "reasoning": {
+          "kind": "always",
+          "effort_map": {
+            "minimal": "low",
+            "low": "medium",
+            "medium": "high",
+            "high": "xhigh",
+            "xhigh": "max"
+          }
+        },
+        "hosted_web_search": true
+      },
+      "limits": {
+        "max_input_tokens": 922000,
+        "max_output_tokens": 128000
+      }
+    },
+    {
+      "id": "openai/gpt-5.6-sol",
+      "type": "openai",
+      "vendor": "OpenAI",
+      "label": "GPT-5.6 Sol",
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.6-sol (2026-09-15)",
+      "name": "gpt-5.6-sol",
+      "kind": "generate",
+      "capabilities": {
+        "inputs": ["text", "image"],
+        "outputs": ["text"],
+        "reasoning": {
+          "kind": "toggle",
+          "effort_map": {
+            "minimal": "low",
+            "low": "medium",
+            "medium": "high",
+            "high": "xhigh",
+            "xhigh": "max"
+          }
+        },
+        "hosted_web_search": true
+      },
+      "limits": {
+        "max_input_tokens": 922000,
+        "max_output_tokens": 128000
+      }
+    },
+    {
+      "id": "openai/gpt-5.6-terra",
+      "type": "openai",
+      "vendor": "OpenAI",
+      "label": "GPT-5.6 Terra",
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.6-terra (2026-09-15)",
+      "name": "gpt-5.6-terra",
+      "kind": "generate",
+      "capabilities": {
+        "inputs": ["text", "image"],
+        "outputs": ["text"],
+        "reasoning": {
+          "kind": "toggle",
+          "effort_map": {
+            "minimal": "low",
+            "low": "medium",
+            "medium": "high",
+            "high": "xhigh",
+            "xhigh": "max"
+          }
+        },
+        "hosted_web_search": true
+      },
+      "limits": {
+        "max_input_tokens": 922000,
+        "max_output_tokens": 128000
+      }
+    },
+    {
+      "id": "openai/gpt-5.6-luna",
+      "type": "openai",
+      "vendor": "OpenAI",
+      "label": "GPT-5.6 Luna",
+      "source": "https://developers.openai.com/api/docs/models/gpt-5.6-luna (2026-09-15)",
+      "name": "gpt-5.6-luna",
+      "kind": "generate",
+      "capabilities": {
+        "inputs": ["text", "image"],
+        "outputs": ["text"],
+        "reasoning": {
+          "kind": "toggle",
+          "effort_map": {
+            "minimal": "low",
+            "low": "medium",
+            "medium": "high",
+            "high": "xhigh",
+            "xhigh": "max"
+          }
+        },
+        "hosted_web_search": true
+      },
+      "limits": {
+        "max_input_tokens": 922000,
+        "max_output_tokens": 128000
+      }
+    },
+    {
+      "id": "openai/gpt-image-2",
+      "type": "openai",
+      "vendor": "OpenAI",
+      "label": "GPT-Image-2",
+      "source": "https://developers.openai.com/api/docs/models/gpt-image-2 (2026-09-15)",
+      "name": "gpt-image-2",
+      "kind": "image",
+      "capabilities": {
+        "inputs": ["text", "image"],
+        "outputs": ["image"]
+      }
+    },
+    {
+      "id": "deepseek/deepseek-flash",
+      "type": "openai",
+      "vendor": "DeepSeek",
+      "label": "DeepSeek Flash",
+      "source": "https://api-docs.deepseek.com/quick_start/pricing + /guides/thinking_mode (2026-09-15)",
+      "name": "deepseek-flash",
+      "kind": "generate",
+      "capabilities": {
+        "inputs": ["text", "image"],
+        "outputs": ["text"],
+        "reasoning": {
+          "kind": "toggle",
+          "effort_map": {
+            "minimal": "low",
+            "low": "low",
+            "medium": "high",
+            "high": "high",
+            "xhigh": "max"
+          }
+        }
+      },
+      "limits": {
+        "max_input_tokens": 1000000,
+        "max_output_tokens": 384000
+      }
+    },
+    {
+      "id": "deepseek/deepseek-v4-pro",
+      "type": "openai",
+      "vendor": "DeepSeek",
+      "label": "DeepSeek V4 Pro",
+      "source": "https://api-docs.deepseek.com/quick_start/pricing + /guides/thinking_mode (2026-09-15)",
+      "name": "deepseek-v4-pro",
+      "kind": "generate",
+      "capabilities": {
+        "inputs": ["text"],
+        "outputs": ["text"],
+        "reasoning": {
+          "kind": "toggle",
+          "effort_map": {
+            "minimal": "low",
+            "low": "low",
+            "medium": "high",
+            "high": "high",
+            "xhigh": "max"
+          }
+        }
+      },
+      "limits": {
+        "max_input_tokens": 1000000,
+        "max_output_tokens": 384000
+      }
+    },
+    {
+      "id": "zhipu/glm-5.3",
+      "type": "openai",
+      "vendor": "Zhipu AI",
+      "label": "GLM-5.3",
+      "source": "https://docs.bigmodel.cn/cn/guide/models/text/glm-5.3 (2026-09-15)",
+      "name": "glm-5.3",
+      "kind": "generate",
+      "capabilities": {
+        "inputs": ["text"],
+        "outputs": ["text"],
+        "reasoning": {
+          "kind": "always",
+          "effort_map": {
+            "minimal": "low",
+            "low": "low",
+            "medium": "high",
+            "high": "high",
+            "xhigh": "max"
+          }
+        }
+      },
+      "limits": {
+        "max_input_tokens": 1000000,
+        "max_output_tokens": 128000
+      }
+    },
+    {
+      "id": "zhipu/glm-5.3-flash",
+      "type": "openai",
+      "vendor": "Zhipu AI",
+      "label": "GLM-5.3-Flash",
+      "source": "https://docs.bigmodel.cn/cn/guide/models/vlm/glm-5.3-flash (2026-09-15)",
+      "name": "glm-5.3-flash",
+      "kind": "generate",
+      "capabilities": {
+        "inputs": ["text", "image", "video"],
+        "outputs": ["text"],
+        "reasoning": {
+          "kind": "always",
+          "effort_map": {
+            "minimal": "low",
+            "low": "low",
+            "medium": "high",
+            "high": "high",
+            "xhigh": "max"
+          }
+        }
+      },
+      "limits": {
+        "max_input_tokens": 1000000,
+        "max_output_tokens": 128000
+      }
+    },
+    {
+      "id": "moonshot/kimi-k3",
+      "type": "openai",
+      "vendor": "Moonshot AI",
+      "label": "Kimi K3",
+      "source": "https://platform.kimi.com/docs/models + /docs/guide/use-reasoning-effort (2026-09-15)",
+      "name": "kimi-k3",
+      "kind": "generate",
+      "capabilities": {
+        "inputs": ["text", "image"],
+        "outputs": ["text"],
+        "reasoning": {
+          "kind": "always",
+          "effort_map": {
+            "minimal": "low",
+            "low": "low",
+            "medium": "high",
+            "high": "high",
+            "xhigh": "max"
+          }
+        }
+      },
+      "limits": {
+        "max_input_tokens": 1000000,
+        "max_output_tokens": 1048576
+      }
+    },
+    {
+      "id": "moonshot/kimi-k2.7-code",
+      "type": "openai",
+      "vendor": "Moonshot AI",
+      "label": "Kimi K2.7 Code",
+      "source": "https://platform.kimi.com/docs/api/models-overview (2026-09-15)",
+      "name": "kimi-k2.7-code",
+      "kind": "generate",
+      "capabilities": {
+        "inputs": ["text", "image"],
+        "outputs": ["text"],
+        "reasoning": {
+          "kind": "always"
+        }
+      },
+      "limits": {
+        "max_input_tokens": 262144
+      }
+    },
+    {
+      "id": "moonshot/kimi-k2.6",
+      "type": "openai",
+      "vendor": "Moonshot AI",
+      "label": "Kimi K2.6",
+      "source": "https://platform.kimi.com/docs/api/models-overview (2026-09-15)",
+      "name": "kimi-k2.6",
+      "kind": "generate",
+      "capabilities": {
+        "inputs": ["text", "image"],
+        "outputs": ["text"],
+        "reasoning": {
+          "kind": "always"
+        }
+      },
+      "limits": {
+        "max_input_tokens": 262144
+      }
+    },
+    {
+      "id": "anthropic/claude-fable-5-1",
+      "type": "anthropic",
+      "vendor": "Anthropic",
+      "label": "Claude Fable 5.1",
+      "source": "https://platform.claude.com/docs/en/models/fable-5-1/overview (2026-09-15)",
+      "name": "claude-fable-5-1",
+      "kind": "generate",
+      "capabilities": {
+        "inputs": ["text", "image"],
+        "outputs": ["text"],
+        "reasoning": {
+          "kind": "always",
+          "effort_map": {
+            "minimal": "low",
+            "low": "medium",
+            "medium": "high",
+            "high": "xhigh",
+            "xhigh": "max"
+          }
+        }
+      },
+      "limits": {
+        "max_input_tokens": 1000000,
+        "max_output_tokens": 128000
+      }
+    },
+    {
+      "id": "anthropic/claude-opus-5",
+      "type": "anthropic",
+      "vendor": "Anthropic",
+      "label": "Claude Opus 5",
+      "source": "https://platform.claude.com/docs/en/models/opus-5/overview (2026-09-15)",
+      "name": "claude-opus-5",
+      "kind": "generate",
+      "capabilities": {
+        "inputs": ["text", "image"],
+        "outputs": ["text"],
+        "reasoning": {
+          "kind": "toggle",
+          "effort_map": {
+            "minimal": "low",
+            "low": "medium",
+            "medium": "high",
+            "high": "xhigh",
+            "xhigh": "max"
+          }
+        }
+      },
+      "limits": {
+        "max_input_tokens": 1000000,
+        "max_output_tokens": 128000
+      }
+    },
+    {
+      "id": "anthropic/claude-sonnet-5",
+      "type": "anthropic",
+      "vendor": "Anthropic",
+      "label": "Claude Sonnet 5",
+      "source": "https://platform.claude.com/docs/en/models/sonnet-5/overview (2026-09-15)",
+      "name": "claude-sonnet-5",
+      "kind": "generate",
+      "capabilities": {
+        "inputs": ["text", "image"],
+        "outputs": ["text"],
+        "reasoning": {
+          "kind": "toggle",
+          "effort_map": {
+            "minimal": "low",
+            "low": "medium",
+            "medium": "high",
+            "high": "xhigh",
+            "xhigh": "max"
+          }
+        }
+      },
+      "limits": {
+        "max_input_tokens": 1000000,
+        "max_output_tokens": 128000
+      }
+    },
+    {
+      "id": "anthropic/claude-haiku-4-5",
+      "type": "anthropic",
+      "vendor": "Anthropic",
+      "label": "Claude Haiku 4.5",
+      "source": "https://platform.claude.com/docs/en/models/haiku-4-5/overview (2026-09-15)",
+      "name": "claude-haiku-4-5-20251001",
+      "kind": "generate",
+      "capabilities": {
+        "inputs": ["text", "image"],
+        "outputs": ["text"],
+        "reasoning": {
+          "kind": "toggle"
+        }
+      },
+      "limits": {
+        "max_input_tokens": 200000,
+        "max_output_tokens": 64000
+      }
+    },
+    {
+      "id": "minimax/image-01",
+      "type": "minimax",
+      "vendor": "MiniMax",
+      "label": "MiniMax image-01",
+      "source": "https://platform.minimaxi.com/docs/api-reference/image-generation-t2i (2026-09-15)",
+      "name": "image-01",
+      "kind": "image",
+      "capabilities": {
+        "inputs": ["text", "image"],
+        "outputs": ["image"]
+      }
+    },
+    {
+      "id": "minimax/image-01-live",
+      "type": "minimax",
+      "vendor": "MiniMax",
+      "label": "MiniMax image-01-live",
+      "source": "https://platform.minimaxi.com/docs/api-reference/image-generation-t2i (2026-09-15)",
+      "name": "image-01-live",
+      "kind": "image",
+      "capabilities": {
+        "inputs": ["text", "image"],
+        "outputs": ["image"]
+      }
+    },
+    {
+      "id": "minimax/MiniMax-H3",
+      "type": "minimax",
+      "vendor": "MiniMax",
+      "label": "MiniMax H3",
+      "source": "https://platform.minimaxi.com/docs/api-reference/video-generation-v2-create (2026-09-15)",
+      "name": "MiniMax-H3",
+      "kind": "video",
+      "capabilities": {
+        "inputs": ["text", "image", "video", "audio"],
+        "outputs": ["video"]
+      },
+      "driver_fields": {
+        "video": {
+          "api": "v2"
+        }
+      }
+    },
+    {
+      "id": "minimax/MiniMax-H3-Max",
+      "type": "minimax",
+      "vendor": "MiniMax",
+      "label": "MiniMax H3 Max",
+      "source": "https://platform.minimaxi.com/docs/api-reference/video-generation-v2-create (2026-09-15)",
+      "name": "MiniMax-H3-Max",
+      "kind": "video",
+      "capabilities": {
+        "inputs": ["text", "image", "video", "audio"],
+        "outputs": ["video"]
+      },
+      "driver_fields": {
+        "video": {
+          "api": "v2"
+        }
+      }
+    },
+    {
+      "id": "minimax/speech-2.8-hd",
+      "type": "minimax",
+      "vendor": "MiniMax",
+      "label": "MiniMax Speech 2.8 HD",
+      "source": "https://platform.minimaxi.com/docs/api-reference/speech-t2a-http (2026-09-15)",
+      "name": "speech-2.8-hd",
+      "kind": "tts",
+      "capabilities": {
+        "inputs": ["text"],
+        "outputs": ["audio"]
+      }
+    },
+    {
+      "id": "minimax/speech-2.8-turbo",
+      "type": "minimax",
+      "vendor": "MiniMax",
+      "label": "MiniMax Speech 2.8 Turbo",
+      "source": "https://platform.minimaxi.com/docs/api-reference/speech-t2a-http (2026-09-15)",
+      "name": "speech-2.8-turbo",
+      "kind": "tts",
+      "capabilities": {
+        "inputs": ["text"],
+        "outputs": ["audio"]
+      }
+    },
+    {
+      "id": "bytedance/doubao-seed-evolving",
+      "type": "bytedance",
+      "vendor": "ByteDance",
+      "label": "Doubao Seed Evolving",
+      "source": "https://www.volcengine.com/docs/82379/1330310 + /docs/82379/1449737 (2026-09-15)",
+      "name": "doubao-seed-evolving",
+      "kind": "generate",
+      "capabilities": {
+        "inputs": ["text", "image", "video"],
+        "outputs": ["text"],
+        "reasoning": {
+          "kind": "toggle",
+          "effort_map": {
+            "minimal": "low",
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "high"
+          }
+        },
+        "hosted_web_search": true
+      },
+      "limits": {
+        "max_input_tokens": 1048576,
+        "max_output_tokens": 262144
+      }
+    },
+    {
+      "id": "bytedance/doubao-seed-2-1-pro",
+      "type": "bytedance",
+      "vendor": "ByteDance",
+      "label": "Doubao Seed 2.1 Pro",
+      "source": "https://www.volcengine.com/docs/82379/1330310 + /docs/82379/1449737 (2026-09-15)",
+      "name": "doubao-seed-2-1-pro-260628",
+      "kind": "generate",
+      "capabilities": {
+        "inputs": ["text", "image", "video"],
+        "outputs": ["text"],
+        "reasoning": {
+          "kind": "toggle",
+          "effort_map": {
+            "minimal": "low",
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "high"
+          }
+        },
+        "hosted_web_search": true
+      },
+      "limits": {
+        "max_input_tokens": 262144,
+        "max_output_tokens": 262144
+      }
+    },
+    {
+      "id": "bytedance/doubao-seed-2-1-turbo",
+      "type": "bytedance",
+      "vendor": "ByteDance",
+      "label": "Doubao Seed 2.1 Turbo",
+      "source": "https://www.volcengine.com/docs/82379/1330310 + /docs/82379/1449737 (2026-09-15)",
+      "name": "doubao-seed-2-1-turbo-260628",
+      "kind": "generate",
+      "capabilities": {
+        "inputs": ["text", "image", "video"],
+        "outputs": ["text"],
+        "reasoning": {
+          "kind": "toggle",
+          "effort_map": {
+            "minimal": "low",
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "high"
+          }
+        },
+        "hosted_web_search": true
+      },
+      "limits": {
+        "max_input_tokens": 262144,
+        "max_output_tokens": 262144
+      }
+    },
+    {
+      "id": "bytedance/doubao-seedream-5-0-pro",
+      "type": "bytedance",
+      "vendor": "ByteDance",
+      "label": "Doubao Seedream 5.0 pro",
+      "source": "https://www.volcengine.com/docs/82379/1330310 (2026-09-15)",
+      "name": "doubao-seedream-5-0-pro-260628",
+      "kind": "image",
+      "capabilities": {
+        "inputs": ["text", "image"],
+        "outputs": ["image"]
+      }
+    },
+    {
+      "id": "bytedance/doubao-seedream-5-0",
+      "type": "bytedance",
+      "vendor": "ByteDance",
+      "label": "Doubao Seedream 5.0",
+      "source": "https://www.volcengine.com/docs/82379/1330310 (2026-09-15)",
+      "name": "doubao-seedream-5-0-260128",
+      "kind": "image",
+      "capabilities": {
+        "inputs": ["text", "image"],
+        "outputs": ["image"]
+      }
+    },
+    {
+      "id": "bytedance/doubao-seedance-2-5",
+      "type": "bytedance",
+      "vendor": "ByteDance",
+      "label": "Doubao Seedance 2.5",
+      "source": "https://www.volcengine.com/docs/82379/1330310 + /docs/82379/1520757 (2026-09-15)",
+      "name": "doubao-seedance-2-5-260628",
+      "kind": "video",
+      "capabilities": {
+        "inputs": ["text", "image", "video", "audio"],
+        "outputs": ["video"]
+      },
+      "driver_fields": {
+        "max_resolution": "1080p",
+        "video": {
+          "duration_min_seconds": 4,
+          "duration_max_seconds": 30,
+          "omni_reference_task_type": true,
+          "audio_only": true
+        }
+      }
+    },
+    {
+      "id": "bytedance/doubao-seedance-2-0",
+      "type": "bytedance",
+      "vendor": "ByteDance",
+      "label": "Doubao Seedance 2.0",
+      "source": "https://www.volcengine.com/docs/82379/1330310 + /docs/82379/1520757 (2026-09-15)",
+      "name": "doubao-seedance-2-0-260128",
+      "kind": "video",
+      "capabilities": {
+        "inputs": ["text", "image", "video", "audio"],
+        "outputs": ["video"]
+      },
+      "driver_fields": {
+        "max_resolution": "4k",
+        "video": {
+          "duration_min_seconds": 4,
+          "duration_max_seconds": 15,
+          "omni_reference_task_type": true
+        }
+      }
+    },
+    {
+      "id": "bytedance/doubao-seedance-2-0-fast",
+      "type": "bytedance",
+      "vendor": "ByteDance",
+      "label": "Doubao Seedance 2.0 Fast",
+      "source": "https://www.volcengine.com/docs/82379/1330310 + /docs/82379/1520757 (2026-09-15)",
+      "name": "doubao-seedance-2-0-fast-260128",
+      "kind": "video",
+      "capabilities": {
+        "inputs": ["text", "image", "video", "audio"],
+        "outputs": ["video"]
+      },
+      "driver_fields": {
+        "max_resolution": "720p",
+        "video": {
+          "duration_min_seconds": 4,
+          "duration_max_seconds": 15,
+          "omni_reference_task_type": true
+        }
+      }
+    },
+    {
+      "id": "bytedance/doubao-seedance-2-0-mini",
+      "type": "bytedance",
+      "vendor": "ByteDance",
+      "label": "Doubao Seedance 2.0 Mini",
+      "source": "https://www.volcengine.com/docs/82379/1330310 + /docs/82379/1520757 (2026-09-15)",
+      "name": "doubao-seedance-2-0-mini-260615",
+      "kind": "video",
+      "capabilities": {
+        "inputs": ["text", "image", "video", "audio"],
+        "outputs": ["video"]
+      },
+      "driver_fields": {
+        "max_resolution": "720p",
+        "video": {
+          "duration_min_seconds": 4,
+          "duration_max_seconds": 15,
+          "omni_reference_task_type": true
+        }
+      }
+    },
+    {
+      "id": "bytedance/doubao-seed-2-0-lite",
+      "type": "bytedance",
+      "vendor": "ByteDance",
+      "label": "Doubao Seed 2.0 Lite",
+      "source": "https://www.volcengine.com/docs/82379/1330310 + /docs/82379/1449737 (2026-09-15)",
+      "name": "doubao-seed-2-0-lite-260428",
+      "kind": "generate",
+      "capabilities": {
+        "inputs": ["text", "image", "video", "audio"],
+        "outputs": ["text"],
+        "reasoning": {
+          "kind": "toggle",
+          "effort_map": {
+            "minimal": "low",
+            "low": "low",
+            "medium": "medium",
+            "high": "high",
+            "xhigh": "high"
+          }
+        },
+        "hosted_web_search": true
+      },
+      "limits": {
+        "max_input_tokens": 229376,
+        "max_output_tokens": 131072
+      }
+    },
+    {
+      "id": "minimax/MiniMax-M3",
+      "type": "anthropic",
+      "vendor": "MiniMax",
+      "label": "MiniMax M3",
+      "source": "https://platform.minimaxi.com/docs/guides/text-generation + /docs/api-reference/text-anthropic-api (2026-09-15)",
+      "name": "MiniMax-M3",
+      "kind": "generate",
+      "capabilities": {
+        "inputs": ["text", "image", "video"],
+        "outputs": ["text"],
+        "reasoning": {
+          "kind": "toggle"
+        }
+      },
+      "limits": {
+        "max_input_tokens": 1000000
+      }
+    }
+  ],
+  "templates": [
+    {
+      "id": "openai-official",
+      "label": "OpenAI",
+      "type": "openai",
+      "vendor": "OpenAI",
+      "api": "responses",
+      "models": ["openai/gpt-5.6-sol"]
+    },
+    {
+      "id": "openai-images",
+      "label": "OpenAI Images",
+      "type": "openai",
+      "vendor": "OpenAI",
+      "models": ["openai/gpt-image-2"]
+    },
+    {
+      "id": "deepseek-official",
+      "label": "DeepSeek",
+      "type": "openai",
+      "vendor": "DeepSeek",
+      "api": "responses",
+      "endpoint": "https://api.deepseek.com",
+      "models": ["deepseek/deepseek-flash"]
+    },
+    {
+      "id": "zhipu-glm",
+      "label": "Zhipu GLM",
+      "type": "openai",
+      "vendor": "Zhipu AI",
+      "api": "chat",
+      "endpoint": "https://open.bigmodel.cn/api/paas/v4",
+      "models": ["zhipu/glm-5.3"]
+    },
+    {
+      "id": "zhipu-glm-video",
+      "label": "Zhipu GLM (video in)",
+      "type": "openai",
+      "vendor": "Zhipu AI",
+      "api": "chat",
+      "endpoint": "https://open.bigmodel.cn/api/paas/v4",
+      "advanced": {
+        "video_input": true
+      },
+      "models": ["zhipu/glm-5.3-flash"]
+    },
+    {
+      "id": "moonshot-kimi",
+      "label": "Moonshot Kimi",
+      "type": "openai",
+      "vendor": "Moonshot AI",
+      "api": "chat",
+      "endpoint": "https://api.moonshot.cn/v1",
+      "models": ["moonshot/kimi-k3"]
+    },
+    {
+      "id": "anthropic-official",
+      "label": "Anthropic",
+      "type": "anthropic",
+      "vendor": "Anthropic",
+      "models": ["anthropic/claude-opus-5"]
+    },
+    {
+      "id": "minimax-images",
+      "label": "MiniMax Images",
+      "type": "minimax",
+      "vendor": "MiniMax",
+      "models": ["minimax/image-01"]
+    },
+    {
+      "id": "minimax-video",
+      "label": "MiniMax Video",
+      "type": "minimax",
+      "vendor": "MiniMax",
+      "models": ["minimax/MiniMax-H3"]
+    },
+    {
+      "id": "bytedance-ark",
+      "label": "ByteDance Ark",
+      "type": "bytedance",
+      "vendor": "ByteDance",
+      "models": ["bytedance/doubao-seed-evolving"]
+    },
+    {
+      "id": "bytedance-images",
+      "label": "ByteDance Images",
+      "type": "bytedance",
+      "vendor": "ByteDance",
+      "models": ["bytedance/doubao-seedream-5-0-pro"]
+    },
+    {
+      "id": "bytedance-video",
+      "label": "ByteDance Video",
+      "type": "bytedance",
+      "vendor": "ByteDance",
+      "models": ["bytedance/doubao-seedance-2-5"]
+    },
+    {
+      "id": "minimax-m3",
+      "label": "MiniMax M3",
+      "type": "anthropic",
+      "vendor": "MiniMax",
+      "endpoint": "https://api.minimax.cn/anthropic",
+      "models": ["minimax/MiniMax-M3"]
+    }
+  ]
+}

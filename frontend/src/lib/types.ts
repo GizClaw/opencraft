@@ -23,6 +23,44 @@ export interface ProviderView {
   impl: string;
 }
 
+// InferenceCatalogModel is one built-in model the settings page can
+// prefill a model row from. Type names the inference driver that serves
+// it (config.Providers); Model is the canonical declaration a save
+// submits, so the catalog fills the row through the same shape the page
+// already round-trips. Source records where the entry's facts came from
+// and stays maintenance metadata.
+export interface InferenceCatalogModel {
+  id: string;
+  type: string;
+  vendor?: string;
+  label?: string;
+  source?: string;
+  model: ModelSpec;
+}
+
+// InferenceCatalogTemplate is one built-in starter instance: the
+// provider-level fields plus the models the new row starts with, in
+// router priority order.
+export interface InferenceCatalogTemplate {
+  id: string;
+  label: string;
+  type: string;
+  vendor?: string;
+  api?: string;
+  endpoint?: string;
+  /** Provider-level knobs the template pins (e.g. the endpoint fact that
+   * a chat deployment lowers video input). Empty means driver defaults. */
+  advanced?: ProviderAdvanced;
+  notes?: string;
+  models: ModelSpec[];
+}
+
+export interface InferenceCatalogState {
+  version: string;
+  templates: InferenceCatalogTemplate[];
+  models: InferenceCatalogModel[];
+}
+
 /** ReasoningCapability mirrors flowcraft's canonical capability DTO. */
 export interface ReasoningCapability {
   kind?: string;
