@@ -393,6 +393,9 @@ export const api = {
   petPoke: () => Pet.Poke(),
   petReportGeometry: (geometry: PetWindowGeometry) =>
     Pet.ReportGeometry(geometry as unknown as genPet.WindowGeometry),
+  petBeginDrag: () => Pet.BeginDrag(),
+  petEndDrag: () => Pet.EndDrag(),
+  petHover: (inside: boolean) => Pet.Hover(inside),
   petGetPosition: () => Pet.Position(),
   reportUserActivity: () => Lifecycle.ReportUserActivity(),
   petPackAsset: (asset: string) => Pet.PackAsset(asset),

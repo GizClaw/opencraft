@@ -501,6 +501,12 @@ func (d *PetDirector) NotePoke(now time.Time) {
 	d.mind.NotePoke(now)
 }
 
+// NoteHover records whether the pointer is on the character; the mind
+// turns the transitions into a greeting wave and later glances.
+func (d *PetDirector) NoteHover(inside bool, now time.Time) {
+	d.mind.NoteHover(inside, now)
+}
+
 // Debug combines the mind snapshot with the surface state that was
 // active when it was produced.
 func (d *PetDirector) Debug(state PetSurfaceState) MindDebug {

@@ -56,6 +56,12 @@ type Desktop struct {
 	petManualUntil time.Time
 	petReady       bool
 	petDirector    *petfeed.PetDirector
+	// Drag gesture state: the surface marks begin/end, and each
+	// SetPosition step feeds the walk cycle and the turning direction.
+	petDragging    bool
+	petDragFacing  string
+	petDragDx      int
+	petDragMovedAt time.Time
 	// petGeometry is where the renderer drew the character inside the
 	// pet window; the placement maths anchors on it instead of on the
 	// window rectangle. It stays at the shipped layout until the

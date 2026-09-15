@@ -53,6 +53,11 @@ const petIdlePauseAfter = 20_000;
 // watch spot from it.
 const petGeometryInterval = 500;
 
+// petHoverInterval throttles the hover probe. Reading the drawing
+// surface is the expensive half of the test and the pointer moves far
+// more often than the answer can change.
+const petHoverInterval = 120;
+
 /**
  * PetSurface is the whole-screen roaming pet renderer mounted by the
  * pet Wails window (?surface=pet). It is deliberately inert: no plugin
@@ -80,6 +85,16 @@ export default function PetSurface() {
   const surfaceRef = useRef<HTMLElement | null>(null);
   const lastIntentSeqRef = useRef(0);
   const reportedGeometryRef = useRef('');
+  // Hover state: whether the pointer is on the character, when the pixel
+  // probe last ran, and the move that arrived inside the throttle window
+  // (a dropped move would otherwise leave the pet thinking the pointer
+  // never left).
+  const hoverRef = useRef<{
+    inside: boolean;
+    checkedAt: number;
+    timer: number;
+    pending: { x: number; y: number } | null;
+  }>({ inside: false, checkedAt: 0, timer: 0, pending: null });
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const riveRef = useRef<PetRiveHandle | null>(null);
   // Latest surface state for the rover-independent readers (the idle
@@ -167,6 +182,9 @@ export default function PetSurface() {
       }
       if (pauseTimer.current !== undefined) {
         window.clearTimeout(pauseTimer.current);
+      }
+      if (hoverRef.current.timer !== 0) {
+        window.clearTimeout(hoverRef.current.timer);
       }
     },
     [],
@@ -349,6 +367,11 @@ export default function PetSurface() {
     }
     const drag = dragRef.current;
     drag.active = true;
+    // The pet walks while the window is dragged; Go turns the gesture
+    // into walking/facing values (see beginPetDrag).
+    void api.petBeginDrag().catch((err) => {
+      console.warn('pet: begin drag failed', err);
+    });
     drag.startScreenX = event.screenX;
     drag.startScreenY = event.screenY;
     drag.moved = 0;
@@ -396,7 +419,10 @@ export default function PetSurface() {
 
   const onPointerMove = (event: React.PointerEvent) => {
     const drag = dragRef.current;
-    if (!drag.active) return;
+    if (!drag.active) {
+      reportHover(event.clientX, event.clientY);
+      return;
+    }
     drag.moved +=
       Math.abs(event.screenX - drag.startScreenX) +
       Math.abs(event.screenY - drag.startScreenY);
@@ -441,6 +467,56 @@ export default function PetSurface() {
     }
   };
 
+  // finishDrag closes the gesture for Go, which is what stops the walk
+  // cycle when the user lets go.
+  const finishDrag = () => {
+    if (!dragRef.current.active) return;
+    cancelDrag();
+    void api.petEndDrag().catch((err) => {
+      console.warn('pet: end drag failed', err);
+    });
+  };
+
+  const setHover = (inside: boolean) => {
+    if (hoverRef.current.inside === inside) return;
+    hoverRef.current.inside = inside;
+    void api.petHover(inside).catch((err) => {
+      console.warn('pet: hover report failed', err);
+    });
+  };
+
+  // probeHover asks whether the pointer is on the character: the
+  // overlays that belong to it count, everything else is decided by the
+  // same pixel probe that gates presses.
+  const probeHover = (x: number, y: number) => {
+    hoverRef.current.checkedAt = performance.now();
+    const element = document.elementFromPoint(x, y);
+    const onOverlay = Boolean(
+      element?.closest?.('.pet-bubble, .pet-tool, .pet-degraded'),
+    );
+    setHover(onOverlay || hitTestPet(canvasRef.current, x, y));
+  };
+
+  // reportHover throttles the probe but never drops the last move: the
+  // state has to settle on wherever the pointer ended up.
+  const reportHover = (x: number, y: number) => {
+    const hover = hoverRef.current;
+    const elapsed = performance.now() - hover.checkedAt;
+    if (elapsed >= petHoverInterval) {
+      probeHover(x, y);
+      return;
+    }
+    hover.pending = { x, y };
+    if (hover.timer !== 0) return;
+    hover.timer = window.setTimeout(() => {
+      hover.timer = 0;
+      const pending = hover.pending;
+      hover.pending = null;
+      if (!pending) return;
+      probeHover(pending.x, pending.y);
+    }, petHoverInterval - elapsed);
+  };
+
   const endDrag = (event: React.PointerEvent) => {
     const drag = dragRef.current;
     if (!drag.active) return;
@@ -448,16 +524,23 @@ export default function PetSurface() {
       Math.abs(event.screenX - drag.startScreenX) +
       Math.abs(event.screenY - drag.startScreenY);
     if (total < 6) {
-      cancelDrag();
+      finishDrag();
       void api.petPoke();
       void api.petActivate();
       return;
     }
-    cancelDrag();
+    finishDrag();
   };
 
   const onPointerLeave = () => {
-    cancelDrag();
+    finishDrag();
+    const hover = hoverRef.current;
+    if (hover.timer !== 0) {
+      window.clearTimeout(hover.timer);
+      hover.timer = 0;
+    }
+    hover.pending = null;
+    setHover(false);
   };
 
   return (

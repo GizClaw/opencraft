@@ -99,3 +99,32 @@ func TestPetWalksToWatch(t *testing.T) {
 		})
 	}
 }
+
+// A drag turns the character only after enough sideways travel: a slow
+// drag accumulates, a vertical drag keeps the last direction, and the
+// walk cycle follows any movement.
+func TestPetDragStepTurnsOnAccumulatedTravel(t *testing.T) {
+	d := &Desktop{}
+	d.notePetDragStep(3, 0)
+	if d.petDragFacing != "" {
+		t.Fatalf("a wobble below the dead zone must not turn: %q", d.petDragFacing)
+	}
+	d.notePetDragStep(3, 0)
+	if d.petDragFacing != petFacingRight {
+		t.Fatalf("accumulated rightward drag = %q, want %q",
+			d.petDragFacing, petFacingRight)
+	}
+	if d.petDragMovedAt.IsZero() {
+		t.Fatal("a drag step must mark the gesture as moving")
+	}
+
+	d.notePetDragStep(0, 12)
+	if d.petDragFacing != petFacingRight {
+		t.Fatalf("a vertical drag must keep the facing, got %q", d.petDragFacing)
+	}
+
+	d.notePetDragStep(-20, 0)
+	if d.petDragFacing != petFacingLeft {
+		t.Fatalf("leftward drag = %q, want %q", d.petDragFacing, petFacingLeft)
+	}
+}

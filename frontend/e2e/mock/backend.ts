@@ -285,6 +285,9 @@ export function mockBackend(cfg?: MockConfig) {
     Pet: {
       Activate: async () => recordPet('Activate', []),
       Activities: emptyList,
+      BeginDrag: async () => recordPet('BeginDrag', []),
+      EndDrag: async () => recordPet('EndDrag', []),
+      Hover: async (inside: boolean) => recordPet('Hover', [inside]),
       Diagnostics: async () =>
         config.petDiagnostics ?? {
           drives: { attention: 60, energy: 40, comfort: 50 },

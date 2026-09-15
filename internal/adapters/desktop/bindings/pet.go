@@ -127,6 +127,24 @@ func (b *Pet) Poke() {
 	b.core.Shell.PokePet()
 }
 
+// BeginDrag marks the start of a drag gesture: the character walks
+// while the window is being moved instead of standing still.
+func (b *Pet) BeginDrag() {
+	b.core.Shell.BeginPetDrag()
+}
+
+// EndDrag marks the end of a drag gesture.
+func (b *Pet) EndDrag() {
+	b.core.Shell.EndPetDrag()
+}
+
+// Hover reports pointer enter/leave on the drawn character. The first
+// hover of a session greets, later ones get a glance; it never wakes a
+// sleeping pet.
+func (b *Pet) Hover(inside bool) {
+	b.core.Shell.HoverPet(inside)
+}
+
 // Diagnostics returns the pet mind/rover snapshot for the settings
 // diagnostics panel.
 func (b *Pet) Diagnostics() pet.MindDebug {

@@ -50,6 +50,14 @@ type Mind struct {
 	pendingWave    bool
 	pendingSulk    bool
 	pokeCount      int
+	// Hover state: whether the pointer is on the character, whether the
+	// introduction wave has been spent, and the one-shot reactions
+	// waiting for the next Step.
+	hovered      bool
+	hoverGreeted bool
+	lastHover    time.Time
+	hoverWave    bool
+	hoverLook    bool
 
 	attention   float64
 	energy      float64
@@ -80,6 +88,10 @@ const (
 	// the pet; lookCooldown stops the pet from reacting to every pulse.
 	lookMinGap   = time.Second
 	lookCooldown = 45 * time.Second
+	// hoverCooldown is the shortest gap between two hover reactions: the
+	// pointer crosses the character many times while the user works, and
+	// the pet should not react to every pass.
+	hoverCooldown = 20 * time.Second
 )
 
 // petUserNearAfter is how recent a user pulse (or poke) has to be for
@@ -181,6 +193,31 @@ func (m *Mind) NotePoke(now time.Time) {
 			m.energy = wakeAbove
 		}
 	}
+}
+
+// NoteHover records whether the pointer is on the character. Only
+// transitions matter: the first hover of a session greets with a wave,
+// later ones get a glance, and hovering never wakes a sleeping pet or
+// counts as a poke.
+func (m *Mind) NoteHover(inside bool, now time.Time) {
+	if inside == m.hovered {
+		return
+	}
+	m.hovered = inside
+	if !inside {
+		return
+	}
+	if !m.hoverGreeted {
+		m.hoverGreeted = true
+		m.lastHover = now
+		m.hoverWave = true
+		return
+	}
+	if now.Sub(m.lastHover) < hoverCooldown {
+		return
+	}
+	m.lastHover = now
+	m.hoverLook = true
 }
 
 // awayWelcomeAfter is how long the user must be away before a return
@@ -324,6 +361,25 @@ func (m *Mind) Step(
 		state.Disposition != PetDispositionAsk {
 		m.pendingWave = false
 		state.Intent = PetIntentWave
+	}
+
+	// Hover is the pet's "I see you" repertoire: a wave the first time,
+	// a glance afterwards. It never fires at a sleeping pet — only a
+	// poke wakes that — and a reaction already playing wins.
+	if m.sleeping {
+		m.hoverWave = false
+		m.hoverLook = false
+	} else if state.Intent == "" {
+		switch {
+		case m.hoverWave:
+			m.hoverWave = false
+			m.attention = clampDrive(m.attention + 6)
+			state.Intent = PetIntentWave
+		case m.hoverLook:
+			m.hoverLook = false
+			m.attention = clampDrive(m.attention + 3)
+			state.Intent = PetIntentLook
+		}
 	}
 
 	if m.pendingSulk &&

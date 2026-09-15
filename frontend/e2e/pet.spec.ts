@@ -440,6 +440,8 @@ test('drags the window and pokes on a click', async ({ page }) => {
     (call) => call.method === 'SetPosition',
   );
   expect(drag.length).toBeGreaterThan(0);
+  // The gesture is bracketed so Go can turn it into a walk cycle.
+  expect(await gestureCalls(page)).toEqual(['BeginDrag', 'EndDrag']);
   // The mock window sits at (100, 100); the drag moved it by (40, 12).
   expect(drag.at(-1)?.args).toEqual([140, 112]);
 
@@ -451,6 +453,48 @@ test('drags the window and pokes on a click', async ({ page }) => {
   expect((await petCalls(page)).slice(-2)).toEqual([
     { method: 'Poke', args: [] },
     { method: 'Activate', args: [] },
+  ]);
+  expect(await gestureCalls(page)).toEqual([
+    'BeginDrag',
+    'EndDrag',
+    'BeginDrag',
+    'EndDrag',
+  ]);
+});
+
+/** The drag-gesture calls the surface made, in order. */
+async function gestureCalls(page: Page): Promise<string[]> {
+  return (await petCalls(page))
+    .filter((call) => call.method === 'BeginDrag' || call.method === 'EndDrag')
+    .map((call) => call.method);
+}
+
+test('reports when the pointer is on the character', async ({ page }) => {
+  await mountPet(page);
+
+  const canvas = await page.locator('.pet-canvas').boundingBox();
+  const stage = await surface(page).boundingBox();
+  expect(canvas).not.toBeNull();
+  expect(stage).not.toBeNull();
+  const hoverCalls = async () =>
+    (await petCalls(page)).filter((call) => call.method === 'Hover');
+
+  // The middle of the ring counts as the character (it is a hole in the
+  // drawn shape, not outside it); the empty stage margin does not.
+  await page.mouse.move(
+    (canvas?.x ?? 0) + (canvas?.width ?? 0) / 2,
+    (canvas?.y ?? 0) + (canvas?.height ?? 0) / 2,
+  );
+  await expect.poll(async () => (await hoverCalls()).length).toBeGreaterThan(0);
+  expect((await hoverCalls()).at(-1)?.args).toEqual([true]);
+
+  await page.mouse.move((stage?.x ?? 0) + 4, (stage?.y ?? 0) + 4);
+  await expect
+    .poll(async () => (await hoverCalls()).at(-1)?.args?.[0])
+    .toBe(false);
+  expect((await hoverCalls()).map((call) => call.args[0])).toEqual([
+    true,
+    false,
   ]);
 });
 

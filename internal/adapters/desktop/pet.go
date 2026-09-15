@@ -35,6 +35,16 @@ const petLoopTick = 60 * time.Millisecond
 // petManualHoldFor keeps autonomy paused after a user drag.
 const petManualHoldFor = 5 * time.Second
 
+// petDragTurnPixels is how far a drag has to travel sideways before the
+// character turns. Below it the last direction is held, so a wobbling
+// pointer does not flip the pose while the window is being dragged.
+const petDragTurnPixels = 6
+
+// petDragWalkIdle is how long the walk cycle survives after the last
+// drag step. Dragging is a series of small moves with pauses between
+// them; a pet that freezes mid-gesture looks carried rather than walking.
+const petDragWalkIdle = 250 * time.Millisecond
+
 // petStatePayload is the wire snapshot broadcast to the pet surface.
 // It mirrors petfeed.PetSurfaceState so the renderer never imports Go
 // domain packages through the Wails binding layer.
@@ -151,6 +161,9 @@ func (d *Desktop) startAssistantPet(ctx context.Context) {
 		Diagnostics: d.petDiagnostics,
 		Position:    d.petWindowPosition,
 		Geometry:    d.setPetGeometry,
+		BeginDrag:   d.beginPetDrag,
+		EndDrag:     d.endPetDrag,
+		Hover:       d.hoverPet,
 	})
 
 	go d.runPetWindowLoop(ctx, stop, win, app, director)
@@ -226,10 +239,58 @@ func (d *Desktop) setPetWindowPosition(x, y int) {
 	if win == nil {
 		return
 	}
+	d.notePetDragStep(x-d.petX, y-d.petY)
 	d.petX = x
 	d.petY = y
 	d.petManualUntil = time.Now().Add(petManualHoldFor)
 	win.SetPosition(x, y)
+}
+
+// notePetDragStep turns one drag delta into the walk signal the Rive
+// state machine reads: any movement keeps the walk cycle alive for
+// petDragWalkIdle, and a sideways step past the dead zone turns the
+// character. Callers hold petMu.
+func (d *Desktop) notePetDragStep(dx, dy int) {
+	if dx == 0 && dy == 0 {
+		return
+	}
+	d.petDragMovedAt = time.Now()
+	d.petDragDx += dx
+	if absInt(d.petDragDx) < petDragTurnPixels {
+		return
+	}
+	d.petDragFacing = petFacing(d.petDragFacing, d.petDragDx)
+	d.petDragDx = 0
+}
+
+// beginPetDrag marks the start of a drag gesture. The character walks
+// while the window is being moved instead of standing still.
+func (d *Desktop) beginPetDrag() {
+	d.petMu.Lock()
+	d.petDragging = true
+	d.petDragDx = 0
+	d.petDragMovedAt = time.Time{}
+	d.petManualUntil = time.Now().Add(petManualHoldFor)
+	d.petMu.Unlock()
+}
+
+// endPetDrag ends the gesture; the pet stands still again.
+func (d *Desktop) endPetDrag() {
+	d.petMu.Lock()
+	d.petDragging = false
+	d.petDragDx = 0
+	d.petDragMovedAt = time.Time{}
+	d.petMu.Unlock()
+}
+
+// hoverPet forwards pointer enter/leave on the character to the mind.
+func (d *Desktop) hoverPet(inside bool) {
+	d.petMu.Lock()
+	director := d.petDirector
+	d.petMu.Unlock()
+	if director != nil {
+		director.NoteHover(inside, time.Now())
+	}
 }
 
 // activatePet brings the main OpenCraft window to the foreground.
@@ -385,6 +446,12 @@ func (d *Desktop) runPetWindowLoop(
 			}
 			d.petMu.Lock()
 			manual := now.Before(d.petManualUntil)
+			// A drag gesture counts as walking: the surface moved the
+			// window, so the loop sees no movement of its own, but the
+			// character should be running along with the pointer.
+			dragging := d.petDragging && manual
+			dragFacing := d.petDragFacing
+			dragMovedAt := d.petDragMovedAt
 			x, y = d.petX, d.petY
 			geometry := d.petGeometry
 			d.petMu.Unlock()
@@ -438,20 +505,30 @@ func (d *Desktop) runPetWindowLoop(
 				win.SetPosition(x, y)
 			}
 
+			walking := moved ||
+				(dragging && !dragMovedAt.IsZero() &&
+					now.Sub(dragMovedAt) < petDragWalkIdle)
+			if dragging && dragFacing != "" {
+				// The drag owns the facing while it lasts: the user is
+				// walking the pet, and the next stale direction would
+				// otherwise snap it back mid-gesture.
+				facing = dragFacing
+			}
+
 			state = director.Tick(
 				desktopcore.AssistantAgentID,
 				now,
 				d.core.Shell.LastUserActive(),
-				moved,
+				walking,
 			)
 			debug := director.Debug(state)
-			debug.Walking = moved
+			debug.Walking = walking
 			d.petMu.Lock()
 			d.petDebug = debug
 			d.petMu.Unlock()
 
 			payload := newPetStatePayload(state)
-			payload.Walking = moved
+			payload.Walking = walking
 			payload.Facing = facing
 			payload.IntentSeq = intents.Observe(state.Intent)
 			if payload == last {

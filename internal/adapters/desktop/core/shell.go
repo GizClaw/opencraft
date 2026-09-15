@@ -119,6 +119,12 @@ type PetWindowControls struct {
 	// Geometry records where the renderer drew the character inside the
 	// pet window; placement is anchored on it.
 	Geometry func(g petfeed.WindowGeometry)
+	// BeginDrag/EndDrag bracket a drag gesture, so the character walks
+	// while the user moves the window.
+	BeginDrag func()
+	EndDrag   func()
+	// Hover reports pointer enter/leave on the character.
+	Hover func(inside bool)
 }
 
 // SetPetWindowControls installs the desktop-root callbacks for pet
@@ -159,6 +165,36 @@ func (s *Shell) ReportPetGeometry(g petfeed.WindowGeometry) {
 	s.mu.Unlock()
 	if fn != nil {
 		fn(g)
+	}
+}
+
+// BeginPetDrag marks the start of a drag gesture on the pet window.
+func (s *Shell) BeginPetDrag() {
+	s.mu.Lock()
+	fn := s.pet.BeginDrag
+	s.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
+}
+
+// EndPetDrag marks the end of a drag gesture on the pet window.
+func (s *Shell) EndPetDrag() {
+	s.mu.Lock()
+	fn := s.pet.EndDrag
+	s.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
+}
+
+// HoverPet reports whether the pointer is on the drawn character.
+func (s *Shell) HoverPet(inside bool) {
+	s.mu.Lock()
+	fn := s.pet.Hover
+	s.mu.Unlock()
+	if fn != nil {
+		fn(inside)
 	}
 }
 
