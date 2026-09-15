@@ -1,8 +1,30 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ToolView } from '../lib/store';
-import { ToolCard } from './ToolCard';
+import { ApplyPatchView, ToolCard } from './ToolCard';
+
+const apiMock = vi.hoisted(() => ({
+  renderPatch: vi.fn(),
+  renderSkillPatch: vi.fn(),
+}));
+
+vi.mock('../lib/api', () => ({ api: apiMock }));
+
+beforeEach(() => {
+  apiMock.renderPatch.mockReset();
+  apiMock.renderSkillPatch.mockReset();
+  apiMock.renderSkillPatch.mockResolvedValue([]);
+  // Stand-in for the workspace diff renderer: only codex patch text
+  // parses, anything else is rejected like the Go binding does.
+  apiMock.renderPatch.mockImplementation(async (patch: string) => {
+    if (!patch.startsWith('*** Begin Patch')) {
+      const first = patch.split('\n')[0];
+      throw new Error(`apply_patch: unexpected line outside patch: "${first}"`);
+    }
+    return [];
+  });
+});
 
 function tool(overrides: Partial<ToolView>): ToolView {
   return {
@@ -79,5 +101,67 @@ describe('ToolCard', () => {
     expect(screen.getByText(/exit\s+2/i)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /ls/i }));
     expect(screen.getAllByText('boom').length).toBeGreaterThan(0);
+  });
+});
+
+describe('ApplyPatchView', () => {
+  it('renders the decoded patch through the backend diff renderer', async () => {
+    const patch =
+      '*** Begin Patch\n*** Update File: a.txt\n@@\n-old\n+new\n*** End Patch\n';
+    apiMock.renderPatch.mockResolvedValueOnce([
+      {
+        path: 'a.txt',
+        action: 'update',
+        added: 1,
+        removed: 1,
+        lines: [
+          { kind: 'delete', old_num: 3, new_num: 0, text: 'old' },
+          { kind: 'add', old_num: 0, new_num: 3, text: 'new' },
+        ],
+      },
+    ]);
+    render(
+      <ApplyPatchView
+        tool={tool({ name: 'apply_patch', args: JSON.stringify({ patch }) })}
+      />,
+    );
+    expect(apiMock.renderPatch).toHaveBeenCalledTimes(1);
+    expect(apiMock.renderPatch).toHaveBeenCalledWith(patch);
+    expect(await screen.findByText('new')).toBeInTheDocument();
+  });
+
+  it('keeps the raw arguments local when the call carries no patch text', async () => {
+    // Models trained on other apply_patch harnesses send the patch as
+    // "input". That text must never reach the backend parser: the call
+    // fails and the desktop runtime logs the binding ERR this test
+    // keeps out of the log.
+    const args = JSON.stringify(
+      { input: '*** Begin Patch\n*** End Patch\n' },
+      null,
+      2,
+    );
+    render(
+      <ApplyPatchView
+        tool={tool({ name: 'apply_patch', args, status: 'error' })}
+      />,
+    );
+    expect(await screen.findByText('{')).toBeInTheDocument();
+    expect(apiMock.renderPatch).not.toHaveBeenCalled();
+  });
+
+  it('skips the renderer when the arguments are not parseable JSON', async () => {
+    render(
+      <ApplyPatchView
+        tool={tool({
+          name: 'apply_patch',
+          args: '{"patch":"*** Begin Patch',
+          status: 'running',
+        })}
+      />,
+    );
+    expect(
+      await screen.findByText('{"patch":"*** Begin Patch'),
+    ).toBeInTheDocument();
+    expect(apiMock.renderPatch).not.toHaveBeenCalled();
   });
 });

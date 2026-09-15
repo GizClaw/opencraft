@@ -2408,13 +2408,23 @@ function DiffBlock({ patch }: { patch: string }) {
 // skill_modify as a git diff against the current file content,
 // computed server-side. Falls back to the raw colored patch while the
 // preview loads or when it fails.
+//
+// Only a decoded non-empty `patch` string is patch text. Calls whose
+// arguments are unparseable, empty, or carry the patch under another
+// key render the raw argument JSON locally: the backend parser can
+// only reject that text, and a rejected binding call is logged as an
+// ERR by the desktop runtime even though the UI expected the failure.
 function usePatchFiles(tool: ToolView): {
   files: PatchFileDTO[] | null;
   failed: boolean;
   patch: string;
 } {
   const args = parseArgs(tool);
-  const patch = args && typeof args.patch === 'string' ? args.patch : tool.args;
+  const patchArg =
+    args && typeof args.patch === 'string' && args.patch.trim() !== ''
+      ? args.patch
+      : null;
+  const patch = patchArg ?? tool.args;
   const name = args && typeof args.name === 'string' ? args.name : '';
   const scope = args && typeof args.scope === 'string' ? args.scope : '';
   const [files, setFiles] = useState<PatchFileDTO[] | null>(null);
@@ -2424,10 +2434,16 @@ function usePatchFiles(tool: ToolView): {
     let cancelled = false;
     setFiles(null);
     setFailed(false);
+    if (patchArg === null) {
+      setFailed(true);
+      return () => {
+        cancelled = true;
+      };
+    }
     const req =
       tool.name === 'apply_patch'
-        ? api.renderPatch(patch)
-        : api.renderSkillPatch(name, scope, patch);
+        ? api.renderPatch(patchArg)
+        : api.renderSkillPatch(name, scope, patchArg);
     void req
       .then((f) => {
         if (!cancelled) setFiles(f);
@@ -2438,7 +2454,7 @@ function usePatchFiles(tool: ToolView): {
     return () => {
       cancelled = true;
     };
-  }, [tool.name, patch, name, scope]);
+  }, [tool.name, patchArg, name, scope]);
 
   return { files, failed, patch };
 }

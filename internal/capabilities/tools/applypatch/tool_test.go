@@ -101,6 +101,50 @@ func TestToolRejectsEscapingAndMalformedPatches(t *testing.T) {
 	}
 }
 
+func TestToolAcceptsInputAlias(t *testing.T) {
+	ws := memWorkspace(t)
+	tool, err := New(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	// Other apply_patch harnesses name the patch text "input"; the
+	// codex patch text is identical, so the alias must apply it.
+	if _, err := tool.Execute(ctx,
+		`{"input":"*** Begin Patch\n*** Add File: b.txt\n+hi\n*** End Patch\n"}`); err != nil {
+		t.Fatalf("input alias: %v", err)
+	}
+	if data, err := ws.Read(ctx, "b.txt"); err != nil || string(data) != "hi\n" {
+		t.Fatalf("b.txt = %q, %v", data, err)
+	}
+}
+
+func TestToolRejectsUnknownAndMissingArguments(t *testing.T) {
+	ws := memWorkspace(t)
+	tool, err := New(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	// An unknown key must be reported by name: the previous silent
+	// decode left the patch empty and surfaced the caller's typo as
+	// "unexpected line outside patch: \"\"" instead.
+	_, err = tool.Execute(ctx,
+		`{"patch_text":"*** Begin Patch\n*** End Patch\n"}`)
+	if err == nil || !strings.Contains(err.Error(), "patch_text") {
+		t.Fatalf("unknown argument error = %v", err)
+	}
+	for _, arguments := range []string{
+		`{}`,
+		`{"patch":""}`,
+		`{"patch":"  \n"}`,
+	} {
+		if _, err := tool.Execute(ctx, arguments); err == nil {
+			t.Fatalf("Execute(%s) unexpectedly succeeded", arguments)
+		}
+	}
+}
+
 func jsonString(s string) string {
 	b, _ := json.Marshal(s)
 	return string(b)
