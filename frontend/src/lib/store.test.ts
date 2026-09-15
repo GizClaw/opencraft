@@ -1926,6 +1926,43 @@ describe('store: workspace switch session restore', () => {
     });
   });
 
+  it('ready refreshes the model list the composer offers', async () => {
+    // Saving inference settings rewrites the deployment document; the
+    // backend signals that with the same ready event a runtime reload
+    // uses, so the composer's model list follows the saved instances.
+    apiMock.modelOptions.mockResolvedValue([
+      {
+        id: 'openai-1/gpt-6-astra',
+        label: 'primary · gpt-6-astra',
+        reasoning: true,
+      },
+    ]);
+    useStore.setState({ workspace: '/tmp/a', modelOptions: [] });
+
+    useStore.getState().handleEvent({
+      type: 'ready',
+      data: {
+        needed: false,
+        default_model: 'openai-1/gpt-6-astra',
+        default_reasoning: true,
+        work_dir: '/tmp/a',
+        user_dir: '/tmp/u',
+        version: 'test',
+        agents: 0,
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(useStore.getState().modelOptions).toEqual([
+        {
+          id: 'openai-1/gpt-6-astra',
+          label: 'primary · gpt-6-astra',
+          reasoning: true,
+        },
+      ]);
+    });
+  });
+
   it('keeps a running conversation visible after a workspace round trip', async () => {
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
     useStore.setState({

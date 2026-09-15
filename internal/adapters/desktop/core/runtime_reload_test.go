@@ -3,6 +3,8 @@ package core
 import (
 	"context"
 	"os"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +13,58 @@ import (
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
+
+// TestApplyDocumentReloadEmitsReady pins the signal a document-only save
+// depends on. Saving inference instances, memory, or MCP rewrites the
+// user layer and applies it in place: the Host keeps serving, so nothing
+// else tells the UI that the document it reads — the composer's model
+// list, the default reasoning flag, the session defaults — changed. The
+// frontend refreshes those on the ready event alone, which is why the
+// in-place path has to emit it.
+func TestApplyDocumentReloadEmitsReady(t *testing.T) {
+	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	workDir := t.TempDir()
+	configDir := t.TempDir()
+	if err := os.MkdirAll(configDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeProviderConfig(t, configDir, provider.URL())
+
+	c := NewCore(configDir, t.TempDir(), "")
+	ctx := context.Background()
+	c.SetWorkDir(workDir)
+	if err := c.RebuildRuntime(ctx); err != nil {
+		t.Fatalf("rebuild: %v", err)
+	}
+	host := c.Runtime.Current()
+	if host == nil {
+		t.Fatal("no current host after rebuild")
+	}
+
+	var (
+		mu     sync.Mutex
+		events []string
+	)
+	c.Shell.SetPetSink(func(typ string, _ any) {
+		mu.Lock()
+		defer mu.Unlock()
+		events = append(events, typ)
+	})
+
+	if err := c.ApplyDocumentReload(ctx); err != nil {
+		t.Fatalf("document reload: %v", err)
+	}
+	// The in-place branch is the one under test: a rebuild would replace
+	// the current Host and emit ready through RebuildRuntime instead.
+	if got := c.Runtime.Current(); got != host {
+		t.Fatal("document reload replaced the host; want the in-place path")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !slices.Contains(events, "ready") {
+		t.Fatalf("emitted %v, want a ready event", events)
+	}
+}
 
 // TestRebuildRuntimeReplacesRetiredHostAfterSwitchBack pins the
 // lifecycle gap where a workspace switch away and back left

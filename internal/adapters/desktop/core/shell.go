@@ -351,17 +351,21 @@ func (s *Shell) OpenURL(url string) {
 	}
 }
 
-// Emit pushes one UI event to the frontend. Events before attachment are
-// dropped.
+// Emit pushes one UI event to the frontend and hands it to the Go-side
+// observers. Delivery to the window needs attachment; the observers do
+// not.
 func (s *Shell) Emit(typ string, data any) {
-	app, _ := s.attached()
-	if app == nil {
-		return
+	if app, _ := s.attached(); app != nil {
+		app.Event.Emit("opencraft:ui", map[string]any{
+			"type": typ,
+			"data": data,
+		})
 	}
-	app.Event.Emit("opencraft:ui", map[string]any{
-		"type": typ,
-		"data": data,
-	})
+	// The sinks are Go-side observers of every UI event, so they run
+	// whether or not a window is attached: the pet feed and the
+	// notification funnel exist before the window does, and a test
+	// without a Wails application still has to be able to observe which
+	// events a code path emits. Only the UI delivery needs the app.
 	s.mu.Lock()
 	fn := s.notifySink
 	pet := s.petSink
