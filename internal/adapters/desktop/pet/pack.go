@@ -46,7 +46,10 @@ type PackBinding struct {
 
 // PackMeta carries the render/window hints for one character.
 type PackMeta struct {
-	// Scale is the render scale relative to the 240px pet canvas.
+	// Scale is the render scale relative to the 128px Rive canvas the
+	// pet stage centres (the OS window is 168px square; a character
+	// scaled much past 1.2 starts to run into the bubble and the tool
+	// pill).
 	Scale float64 `json:"scale"`
 	// WalkSpeed is the horizontal window speed in DIP/s the director
 	// moves the pet at when walking; the Rive walk animation is

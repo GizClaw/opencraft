@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import type * as React from 'react';
 import { Events } from '@wailsio/runtime';
+import { CircleAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
+import { hitTestPet } from './hit';
 import type { PetPack } from './pack';
 import { pickPack } from './pack';
 import { base64ToArrayBuffer, createPetRive, type PetRiveHandle } from './rive';
 import { toPetView, type PetStatePayload, type PetView } from './state';
+import { petToolCategory, petToolIcon } from './toolCategory';
 import type { PetRuntimeStatus } from './validate';
 import './pet.css';
 
@@ -295,6 +298,24 @@ export default function PetSurface() {
   }, []);
 
   const onPointerDown = (event: React.PointerEvent) => {
+    // The stage is a transparent rectangle the OS window keeps
+    // capturing, so only a press on something the user can see starts
+    // an interaction: the drawn character, or one of the overlays that
+    // belongs to it (the speech bubble, the tool pill, and the degraded
+    // badge, which is the only thing on screen when the pack does not
+    // match its asset). Presses on the transparent part of the stage
+    // belong to whatever is underneath — see pet/hit.ts for the pixel
+    // probe.
+    const target = event.target as Element | null;
+    const onOverlay = Boolean(
+      target?.closest?.('.pet-bubble, .pet-tool, .pet-degraded'),
+    );
+    if (
+      !onOverlay &&
+      !hitTestPet(canvasRef.current, event.clientX, event.clientY)
+    ) {
+      return;
+    }
     const drag = dragRef.current;
     drag.active = true;
     drag.startScreenX = event.screenX;
@@ -337,6 +358,10 @@ export default function PetSurface() {
   const degraded = Boolean(mountError) || (status !== null && !status.ok);
   const degradedDetail =
     mountError || status?.error || status?.missing?.join('\n') || '';
+  // A tool that failed keeps its name on the stage but flags itself, so
+  // the desktop still says which call went wrong.
+  const toolFailed = pet.phase === 'error';
+  const ToolIcon = toolFailed ? CircleAlert : petToolIcon(pet.toolCategory);
 
   const onPointerMove = (event: React.PointerEvent) => {
     const drag = dragRef.current;
@@ -434,8 +459,16 @@ export default function PetSurface() {
       )}
       {bubbleText && <div className="pet-bubble">{bubbleText}</div>}
       {pet.toolName && (
-        <div className="pet-tool-label" title={pet.toolName}>
-          {pet.toolName}
+        <div
+          className="pet-tool"
+          data-category={petToolCategory(pet.toolCategory)}
+          data-state={toolFailed ? 'error' : 'running'}
+          title={pet.toolName}
+        >
+          <span className="pet-tool__badge" aria-hidden="true">
+            <ToolIcon size={10} strokeWidth={2.4} />
+          </span>
+          <span className="pet-tool__name">{pet.toolName}</span>
         </div>
       )}
     </main>

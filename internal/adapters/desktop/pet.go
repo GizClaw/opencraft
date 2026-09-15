@@ -13,11 +13,21 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-// assistantPetSize is the transparent window canvas around the roaming
-// assistant pet. Keep it tight around the sprite: a transparent webview
-// still captures clicks over its whole rectangle unless mouse events
-// are ignored.
-const assistantPetSize = 240
+// The transparent stage the roaming assistant pet lives on. The
+// renderer centres a 128px Rive canvas on it, draws the speech bubble
+// in the empty band above the character and the tool pill below its
+// feet, so the stage only has to be as large as those three together.
+//
+// Keep it tight: a transparent webview still captures the mouse over
+// its whole rectangle (Wails only offers whole-window mouse ignoring),
+// so every pixel of margin here is a pixel that swallows a click meant
+// for the window underneath. Presses that miss the character are
+// dropped by the surface itself (frontend/src/pet/hit.ts), which is
+// why the stage no longer has to be generous.
+const (
+	assistantPetWidth  = 168
+	assistantPetHeight = 168
+)
 
 // petRoamTick is the rover physics step. The state broadcast runs on a
 // slower cadence (see petStateBroadcastEvery).
@@ -88,12 +98,12 @@ func (d *Desktop) startAssistantPet(ctx context.Context) {
 		Name:             "pet",
 		Title:            "OpenCraft Pet",
 		URL:              "/?surface=pet&agent=assistant",
-		Width:            assistantPetSize,
-		Height:           assistantPetSize,
-		MinWidth:         assistantPetSize,
-		MinHeight:        assistantPetSize,
-		MaxWidth:         assistantPetSize,
-		MaxHeight:        assistantPetSize,
+		Width:            assistantPetWidth,
+		Height:           assistantPetHeight,
+		MinWidth:         assistantPetWidth,
+		MinHeight:        assistantPetHeight,
+		MaxWidth:         assistantPetWidth,
+		MaxHeight:        assistantPetHeight,
 		DisableResize:    true,
 		Frameless:        true,
 		AlwaysOnTop:      true,
@@ -120,9 +130,10 @@ func (d *Desktop) startAssistantPet(ctx context.Context) {
 	}
 
 	// The window stays interactive (not mouse-ignored) so the pet can
-	// be dragged and clicked. Per-pixel click-through is a platform
-	// follow-up; the window is small enough that the tradeoff is
-	// acceptable for the roaming milestone.
+	// be dragged and clicked. Wails only offers whole-window mouse
+	// ignoring, so real click-through stays a platform follow-up; the
+	// surface drops presses that miss the drawn character instead
+	// (frontend/src/pet/hit.ts).
 	win.SetIgnoreMouseEvents(false)
 
 	stop := make(chan struct{})
@@ -245,8 +256,8 @@ func (d *Desktop) dockAssistantPet(
 		return false
 	}
 	area := screen.WorkArea
-	x := area.X + area.Width - assistantPetSize - 16
-	y := area.Y + area.Height - assistantPetSize - 8
+	x := area.X + area.Width - assistantPetWidth - 16
+	y := area.Y + area.Height - assistantPetHeight - 8
 	win.SetPosition(x, y)
 	d.petMu.Lock()
 	d.petX = x
@@ -305,10 +316,10 @@ func (d *Desktop) roamAssistantPet(
 		return
 	}
 	area := screen.WorkArea
-	floorY := area.Y + area.Height - assistantPetSize - 8
+	floorY := area.Y + area.Height - assistantPetHeight - 8
 	minTop := area.Y + 24
 	minX := area.X + 16
-	maxX := area.X + area.Width - assistantPetSize - 16
+	maxX := area.X + area.Width - assistantPetWidth - 16
 
 	targetX, targetY := x, y
 	// Home is the pet's resting spot: it returns there after work and
@@ -316,7 +327,7 @@ func (d *Desktop) roamAssistantPet(
 	homeX, homeY := x, y
 	nextStrollAt := time.Now().Add(3 * time.Second)
 	mainX, mainY := x, y
-	mainW, mainH := assistantPetSize, assistantPetSize
+	mainW, mainH := assistantPetWidth, assistantPetHeight
 	perchMinX, perchMaxX := minX, maxX
 	perchTop, perchFloor := minTop, floorY
 	perchOK := false
@@ -364,10 +375,10 @@ func (d *Desktop) roamAssistantPet(
 						}
 						perchMinX = area.X + 16
 						perchMaxX = area.X + area.Width -
-							assistantPetSize - 16
+							assistantPetWidth - 16
 						perchTop = area.Y + 24
 						perchFloor = area.Y + area.Height -
-							assistantPetSize - 8
+							assistantPetHeight - 8
 						perchOK = true
 						minX = perchMinX
 						maxX = perchMaxX
@@ -388,12 +399,12 @@ func (d *Desktop) roamAssistantPet(
 			// when the window has no room beside it.
 			watchX, watchY := homeX, homeY
 			if perchOK {
-				watchY = mainY + mainH - assistantPetSize - 8
+				watchY = mainY + mainH - assistantPetHeight - 8
 				watchY = clampInt(watchY, perchTop, perchFloor)
 				rightX := mainX + mainW + 8
-				leftX := mainX - assistantPetSize - 8
+				leftX := mainX - assistantPetWidth - 8
 				switch {
-				case rightX+assistantPetSize <= perchMaxX:
+				case rightX+assistantPetWidth <= perchMaxX:
 					watchX = rightX
 				case leftX >= perchMinX:
 					watchX = leftX

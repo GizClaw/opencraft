@@ -137,6 +137,7 @@ export class Rive {
     record.artboard = options.artboard ?? '';
     record.stateMachine = options.stateMachine ?? '';
     this.record = record;
+    this.canvas = options.canvas ?? null;
     this.handlers = new Map();
     // The renderer registers its Load handler synchronously once the
     // constructor returns, so the event has to wait for one microtask.
@@ -182,7 +183,33 @@ export class Rive {
     if (instance) this.record.bound += 1;
   }
 
-  resizeDrawingSurfaceToCanvas() {}
+  // The real runtime paints the character into the canvas, and the pet
+  // surface reads those pixels to decide whether a press landed on the
+  // character (src/pet/hit.ts). The stand-in therefore has to leave a
+  // drawn silhouette behind, shaped like the shipped one: a ring whose
+  // hole is wider than its band, with transparent corners, so the spec
+  // covers both the pixel probe and the enclosed-hole fill.
+  resizeDrawingSurfaceToCanvas() {
+    const canvas = this.canvas;
+    if (!canvas) return;
+    const ratio = window.devicePixelRatio || 1;
+    const width = Math.max(1, Math.round(canvas.clientWidth * ratio));
+    const height = Math.max(1, Math.round(canvas.clientHeight * ratio));
+    if (canvas.width !== width) canvas.width = width;
+    if (canvas.height !== height) canvas.height = height;
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = '#3f76f2';
+    const outer = Math.min(canvas.width, canvas.height) * 0.32;
+    const inner = outer * 0.62;
+    const centreX = canvas.width / 2;
+    const centreY = canvas.height / 2;
+    context.beginPath();
+    context.arc(centreX, centreY, outer, 0, Math.PI * 2);
+    context.arc(centreX, centreY, inner, 0, Math.PI * 2, true);
+    context.fill();
+  }
 
   pause() {
     this.record.pauses += 1;
