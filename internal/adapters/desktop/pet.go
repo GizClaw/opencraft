@@ -12,7 +12,7 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
-// The transparent stage the roaming assistant pet lives on. The
+// The transparent stage the assistant pet lives on. The
 // renderer centres a 128px Rive canvas on it, draws the speech bubble
 // in the empty band above the character and the tool pill below its
 // feet, so the stage only has to be as large as those three together.
@@ -472,7 +472,7 @@ func (d *Desktop) runPetWindowLoop(
 			// The walk speed is a pack property: re-read it every
 			// tick so switching character applies without restarting
 			// the loop.
-			roamSpeed := d.core.ActivePack().Meta.WalkSpeed
+			walkSpeed := d.core.ActivePack().Meta.WalkSpeed
 
 			// Re-anchor on the OS-reported position every few ticks.
 			// Mixed-DPI displays can round window coordinates at the
@@ -481,7 +481,7 @@ func (d *Desktop) runPetWindowLoop(
 			tickCount++
 			if tickCount%5 == 0 {
 				osX, osY := win.Position()
-				maxDelta := 3*int(roamSpeed*petLoopTick.Seconds()) + 8
+				maxDelta := 3*int(walkSpeed*petLoopTick.Seconds()) + 8
 				if absInt(x-osX) <= maxDelta && absInt(y-osY) <= maxDelta {
 					x, y = osX, osY
 				}
@@ -494,8 +494,8 @@ func (d *Desktop) runPetWindowLoop(
 			// flip the direction for a tick.
 			walkFromX := x
 			if petWalksToWatch(state.Disposition, perchOK, manual) {
-				x = petStep(x, watchX, petLoopTick, roamSpeed)
-				y = petStep(y, watchY, petLoopTick, roamSpeed)
+				x = petStep(x, watchX, petLoopTick, walkSpeed)
+				y = petStep(y, watchY, petLoopTick, walkSpeed)
 			}
 			facing = petFacing(facing, x-walkFromX)
 

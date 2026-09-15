@@ -40,13 +40,13 @@ func TestPluginInstanceDeclaresNewVendor(t *testing.T) {
 		KeyRef:   "auth/vendorx/token",
 		Models:   []ModelSpec{{Name: "vendorx-pro"}},
 	}
-	if err := UpsertPluginInstance(dir, "vendorx", unnamed); err == nil {
+	if _, err := UpsertPluginInstance(dir, "vendorx", unnamed); err == nil {
 		t.Fatal("a provider outside the presets must name its driver")
 	}
 
 	declared := unnamed
 	declared.Driver = "openai"
-	if err := UpsertPluginInstance(dir, "vendorx", declared); err != nil {
+	if _, err := UpsertPluginInstance(dir, "vendorx", declared); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 	cfg, err := LoadInference(dir)
@@ -66,6 +66,58 @@ func TestPluginInstanceDeclaresNewVendor(t *testing.T) {
 	}
 }
 
+// TestPluginInstanceReportsNoOpWrite pins the signal the desktop host
+// uses to decide whether a plugin write needs a runtime rebuild: a
+// plugin re-submits its whole row set on every catalog sync, so an
+// identical row must report no change, while a new row, an edited row
+// and a real removal must.
+func TestPluginInstanceReportsNoOpWrite(t *testing.T) {
+	dir := t.TempDir()
+	profile := pluginSpec("sso-haivivi", "sso-haivivi-main", "openai")
+
+	changed, err := UpsertPluginInstance(dir, "sso-haivivi", profile)
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	if !changed {
+		t.Fatal("first upsert must report a change")
+	}
+
+	changed, err = UpsertPluginInstance(dir, "sso-haivivi", profile)
+	if err != nil {
+		t.Fatalf("re-upsert: %v", err)
+	}
+	if changed {
+		t.Fatal("identical re-upsert must not report a change")
+	}
+
+	edited := pluginSpec("sso-haivivi", "sso-haivivi-main", "openai")
+	edited.Models = append(edited.Models, ModelSpec{Name: "glm-5.3-flash"})
+	changed, err = UpsertPluginInstance(dir, "sso-haivivi", edited)
+	if err != nil {
+		t.Fatalf("edited upsert: %v", err)
+	}
+	if !changed {
+		t.Fatal("edited row must report a change")
+	}
+
+	changed, err = RemovePluginInstance(dir, "sso-haivivi", "sso-haivivi-absent")
+	if err != nil {
+		t.Fatalf("remove missing row: %v", err)
+	}
+	if changed {
+		t.Fatal("removing an absent row must not report a change")
+	}
+
+	changed, err = RemovePluginInstance(dir, "sso-haivivi", "sso-haivivi-main")
+	if err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if !changed {
+		t.Fatal("removing a stored row must report a change")
+	}
+}
+
 // TestPluginInstanceUpsertAndRemove pins the identity/ownership round
 // trip of one plugin row.
 func TestPluginInstanceUpsertAndRemove(t *testing.T) {
@@ -78,7 +130,7 @@ func TestPluginInstanceUpsertAndRemove(t *testing.T) {
 			Reasoning: model.ReasoningCapability{Kind: model.ReasoningToggle},
 		},
 	}}
-	if err := UpsertPluginInstance(dir, "sso-haivivi", profile); err != nil {
+	if _, err := UpsertPluginInstance(dir, "sso-haivivi", profile); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 
@@ -104,7 +156,7 @@ func TestPluginInstanceUpsertAndRemove(t *testing.T) {
 		t.Fatalf("owner not recorded: %+v", owners)
 	}
 
-	if err := RemovePluginInstance(dir, "sso-haivivi", "sso-haivivi-main"); err != nil {
+	if _, err := RemovePluginInstance(dir, "sso-haivivi", "sso-haivivi-main"); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
 	cfg, err = LoadInference(dir)
@@ -143,7 +195,7 @@ func TestPluginInstancePreservesModelKindAndLimits(t *testing.T) {
 			MaxOutputTokens: &maxOutput,
 		},
 	}}
-	if err := UpsertPluginInstance(dir, "plug", profile); err != nil {
+	if _, err := UpsertPluginInstance(dir, "plug", profile); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 
@@ -185,7 +237,7 @@ func TestPluginInstanceAdvancedKnobs(t *testing.T) {
 		Store:            "omit",
 		ReasoningScope:   "gateway-2026",
 	}
-	if err := UpsertPluginInstance(dir, "sso-haivivi", profile); err != nil {
+	if _, err := UpsertPluginInstance(dir, "sso-haivivi", profile); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 
@@ -226,7 +278,8 @@ func TestPluginInstanceAdvancedValidation(t *testing.T) {
 		profile := pluginSpec("sso-haivivi", "sso-haivivi-glm", typ)
 		profile.API = api
 		profile.Advanced = InstanceAdvanced{ChatIncludeUsage: &includeUsage}
-		return UpsertPluginInstance(dir, "sso-haivivi", profile)
+		_, err := UpsertPluginInstance(dir, "sso-haivivi", profile)
+		return err
 	}
 	if err := chatOptions("openai", "chat"); err != nil {
 		t.Fatalf("valid openai chat profile rejected: %v", err)
@@ -242,7 +295,7 @@ func TestPluginInstanceAdvancedValidation(t *testing.T) {
 
 	badStore := pluginSpec("sso-haivivi", "sso-haivivi-store", "openai")
 	badStore.Advanced = InstanceAdvanced{Store: "sometimes"}
-	if err := UpsertPluginInstance(dir, "sso-haivivi", badStore); err == nil ||
+	if _, err := UpsertPluginInstance(dir, "sso-haivivi", badStore); err == nil ||
 		!strings.Contains(err.Error(), "store") {
 		t.Fatalf("unknown store policy accepted: %v", err)
 	}
@@ -255,21 +308,21 @@ func TestPluginInstanceSourcePolicy(t *testing.T) {
 
 	foreign := pluginSpec("plug", "plug-gateway", "openai")
 	foreign.KeyRef = "auth/other-plugin/token"
-	if err := UpsertPluginInstance(dir, "plug", foreign); err == nil ||
+	if _, err := UpsertPluginInstance(dir, "plug", foreign); err == nil ||
 		!strings.Contains(err.Error(), "outside plugin namespace") {
 		t.Fatalf("foreign key ref accepted: %v", err)
 	}
 
 	literal := pluginSpec("plug", "plug-gateway", "openai")
 	literal.KeyValue = "sk-plaintext"
-	if err := UpsertPluginInstance(dir, "plug", literal); err == nil ||
+	if _, err := UpsertPluginInstance(dir, "plug", literal); err == nil ||
 		!strings.Contains(err.Error(), "literal key") {
 		t.Fatalf("plugin literal key accepted: %v", err)
 	}
 
 	envSource := pluginSpec("plug", "plug-gateway", "openai")
 	envSource.KeySource = KeySourceEnvName
-	if err := UpsertPluginInstance(dir, "plug", envSource); err == nil ||
+	if _, err := UpsertPluginInstance(dir, "plug", envSource); err == nil ||
 		!strings.Contains(err.Error(), "not available to plugins") {
 		t.Fatalf("plugin env source accepted: %v", err)
 	}
@@ -277,13 +330,13 @@ func TestPluginInstanceSourcePolicy(t *testing.T) {
 	disabled := pluginSpec("plug", "plug-gateway", "openai")
 	off := false
 	disabled.Enabled = &off
-	if err := UpsertPluginInstance(dir, "plug", disabled); err == nil ||
+	if _, err := UpsertPluginInstance(dir, "plug", disabled); err == nil ||
 		!strings.Contains(err.Error(), "user-owned") {
 		t.Fatalf("plugin disabled its own row: %v", err)
 	}
 
 	badID := pluginSpec("plug", "Plug-Gateway", "openai")
-	if err := UpsertPluginInstance(dir, "plug", badID); err == nil ||
+	if _, err := UpsertPluginInstance(dir, "plug", badID); err == nil ||
 		!strings.Contains(err.Error(), "invalid provider instance id") {
 		t.Fatalf("malformed identity accepted: %v", err)
 	}
@@ -294,12 +347,12 @@ func TestPluginInstanceSourcePolicy(t *testing.T) {
 func TestPluginInstanceCannotHijackAnotherInstance(t *testing.T) {
 	dir := t.TempDir()
 	profile := pluginSpec("sso-haivivi", "sso-haivivi-gateway", "openai")
-	if err := UpsertPluginInstance(dir, "sso-haivivi", profile); err != nil {
+	if _, err := UpsertPluginInstance(dir, "sso-haivivi", profile); err != nil {
 		t.Fatalf("first upsert: %v", err)
 	}
 	other := profile
 	other.KeyRef = "auth/other-plugin/token"
-	if err := UpsertPluginInstance(dir, "other-plugin", other); err == nil ||
+	if _, err := UpsertPluginInstance(dir, "other-plugin", other); err == nil ||
 		!strings.Contains(err.Error(), "owned by plugin") {
 		t.Fatalf("foreign plugin must not hijack an owned id, got %v", err)
 	}
@@ -313,7 +366,7 @@ func TestManagedRowEnabledStaysUserOwned(t *testing.T) {
 	dir := t.TempDir()
 	pluginID, id := "sso-haivivi", "sso-haivivi-main"
 	profile := pluginSpec(pluginID, id, "openai")
-	if err := UpsertPluginInstance(dir, pluginID, profile); err != nil {
+	if _, err := UpsertPluginInstance(dir, pluginID, profile); err != nil {
 		t.Fatalf("upsert: %v", err)
 	}
 
@@ -352,7 +405,7 @@ func TestManagedRowEnabledStaysUserOwned(t *testing.T) {
 	// the row behind the user's back.
 	refreshed := pluginSpec(pluginID, id, "openai")
 	refreshed.Endpoint = "https://ai.example.com/v2"
-	if err := UpsertPluginInstance(dir, pluginID, refreshed); err != nil {
+	if _, err := UpsertPluginInstance(dir, pluginID, refreshed); err != nil {
 		t.Fatalf("re-upsert: %v", err)
 	}
 	cfg, err = LoadInference(dir)
@@ -388,7 +441,7 @@ func TestPluginInstanceRequiresExplicitOwnership(t *testing.T) {
 		t.Fatal(err)
 	}
 	profile := pluginSpec("sso-haivivi", "sso-haivivi-main", "openai")
-	if err := UpsertPluginInstance(dir, "sso-haivivi", profile); err == nil ||
+	if _, err := UpsertPluginInstance(dir, "sso-haivivi", profile); err == nil ||
 		!strings.Contains(err.Error(), "not owned") {
 		t.Fatalf("unowned instance must not be claimed, got %v", err)
 	}
@@ -421,10 +474,10 @@ func TestPluginInstancesCleanLegacyPreOwnershipInstance(t *testing.T) {
 
 	profile := pluginSpec("sso-haivivi", "sso-haivivi-deepseek", "openai")
 	profile.Name = "Haivivi SSO"
-	if err := UpsertPluginInstance(dir, "sso-haivivi", profile); err != nil {
+	if _, err := UpsertPluginInstance(dir, "sso-haivivi", profile); err != nil {
 		t.Fatalf("upsert new profile: %v", err)
 	}
-	if err := RemovePluginInstance(dir, "sso-haivivi", "sso-haivivi"); err != nil {
+	if _, err := RemovePluginInstance(dir, "sso-haivivi", "sso-haivivi"); err != nil {
 		t.Fatalf("remove legacy instance after upgrade: %v", err)
 	}
 
@@ -451,7 +504,7 @@ func TestPluginInstancesRemoveAll(t *testing.T) {
 	dir := t.TempDir()
 	for _, id := range []string{"sso-haivivi-gateway", "sso-haivivi-embed"} {
 		profile := pluginSpec("sso-haivivi", id, "openai")
-		if err := UpsertPluginInstance(dir, "sso-haivivi", profile); err != nil {
+		if _, err := UpsertPluginInstance(dir, "sso-haivivi", profile); err != nil {
 			t.Fatalf("upsert %s: %v", id, err)
 		}
 	}

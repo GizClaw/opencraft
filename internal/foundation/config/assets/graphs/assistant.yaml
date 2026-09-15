@@ -94,11 +94,15 @@ edges:
   - { from: world, to: compact }
   - { from: compact, to: llm, condition: "tool_pending == false" }
   - { from: compact, to: tools, condition: "tool_pending == true" }
+  # Default branches. An unconditional edge to __end__ is how a split
+  # declares that "nothing else fired" ends the run on purpose: END
+  # targets are never scheduled, so the edge adds no parallel branch. The
+  # llm split ends the turn when no tool call is pending and no
+  # undefined-tool recovery is due; compact's split routes on a boolean
+  # its script always writes, which the analyzer cannot see from the
+  # graph definition alone.
+  - { from: compact, to: __end__ }
   - { from: llm, to: tools, condition: "tool_pending == true" }
   - { from: llm, to: compact, condition: "recover_pending == true" }
-  - {
-      from: llm,
-      to: __end__,
-      condition: "tool_pending == false && recover_pending != true",
-    }
+  - { from: llm, to: __end__ }
   - { from: tools, to: compact }

@@ -8,9 +8,10 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync"
 	"testing"
 	"time"
+
+	"github.com/GizClaw/opencraft/internal/testing/logcapture"
 )
 
 // helperPlugin simulates a capability plugin: it handshakes, then
@@ -39,6 +40,12 @@ func helperPlugin() {
 		case "auth.poll":
 			write(fmt.Sprintf(
 				`{"jsonrpc":"2.0","id":%s,"result":{"status":"ok"}}`, req.ID))
+		case "auth.big":
+			// A response far above bufio.Scanner's 64 KiB default: the
+			// host has to accept it instead of ending the session.
+			write(fmt.Sprintf(
+				`{"jsonrpc":"2.0","id":%s,"result":{"blob":%q}}`,
+				req.ID, strings.Repeat("x", bigResponseBytes)))
 		case "auth.fail":
 			write(fmt.Sprintf(
 				`{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"boom"}}`, req.ID))
@@ -57,18 +64,30 @@ func malformedPlugin() {
 	os.Exit(0)
 }
 
-// oversizedPlugin emits a line beyond bufio.Scanner's token limit and
-// exits, exercising the read-loop teardown path.
+// oversizedPlugin emits a line beyond the scanner's cap and exits,
+// exercising the read-loop teardown path.
 func oversizedPlugin() {
-	_, _ = fmt.Fprintln(os.Stdout, strings.Repeat("x", 128<<10))
+	_, _ = fmt.Fprintln(os.Stdout, strings.Repeat("x", stdoutLineLimit+1024))
 	os.Exit(0)
 }
 
+// oversizedOutputPlugin handshakes, then emits a line beyond the
+// scanner's cap and keeps running: the host has to notice the failure and
+// stop it rather than leave it blocked on a full pipe.
+func oversizedOutputPlugin() {
+	_, _ = fmt.Fprintln(os.Stdout,
+		`{"jsonrpc":"2.0","id":1,"method":"handshake","params":{"id":"test-plugin","protocol":1}}`)
+	_, _ = fmt.Fprintln(os.Stdout, strings.Repeat("x", stdoutLineLimit+1024))
+	time.Sleep(30 * time.Second)
+}
+
 // crashingPlugin handshakes and then exits on its own, simulating a
-// capability process that died after announcing itself.
+// capability process that died after announcing itself. It explains
+// itself on stderr, which is the only channel a plugin has for that.
 func crashingPlugin() {
 	_, _ = fmt.Fprintln(os.Stdout,
 		`{"jsonrpc":"2.0","id":1,"method":"handshake","params":{"id":"test-plugin","protocol":1}}`)
+	_, _ = fmt.Fprintln(os.Stderr, "helper plugin: crashing on purpose")
 	time.Sleep(50 * time.Millisecond)
 	os.Exit(1)
 }
@@ -84,8 +103,14 @@ func TestHelperProcess(t *testing.T) {
 		oversizedPlugin()
 	case "4":
 		crashingPlugin()
+	case "5":
+		oversizedOutputPlugin()
 	}
 }
+
+// bigResponseBytes is the payload of the auth.big helper response: well
+// past the scanner's 64 KiB default and far below the host's cap.
+const bigResponseBytes = 1 << 20
 
 type memSecrets struct {
 	m map[string]string
@@ -156,6 +181,88 @@ func TestOversizedPluginFailsHandshake(t *testing.T) {
 	m, _ := newTestManagerWithHelper(t, "3")
 	if _, err := m.Invoke(context.Background(), "test-plugin", "auth.begin", nil); err == nil {
 		t.Fatal("oversized plugin unexpectedly answered")
+	}
+}
+
+// TestLargeResponseIsAccepted covers the root cause behind the
+// oversized-output path: a response bigger than the scanner's 64 KiB
+// default used to end the read loop, which left the plugin blocked on a
+// full pipe and made every later call report "process exited".
+func TestLargeResponseIsAccepted(t *testing.T) {
+	m, _ := newTestManager(t)
+	res, err := m.Invoke(context.Background(), "test-plugin", "auth.big", nil)
+	if err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	var out struct {
+		Blob string `json:"blob"`
+	}
+	if err := json.Unmarshal(res, &out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(out.Blob) != bigResponseBytes {
+		t.Fatalf("blob = %d bytes, want %d", len(out.Blob), bigResponseBytes)
+	}
+}
+
+// TestOversizedOutputStopsPlugin pins what happens when a plugin's output
+// does exceed the cap: the host reports the read failure with the plugin
+// id and stops the process, instead of leaving it running and blocked on
+// a pipe nobody drains.
+func TestOversizedOutputStopsPlugin(t *testing.T) {
+	capture := logcapture.Install(t)
+	m, _ := newTestManagerWithHelper(t, "5")
+	p, err := m.get(context.Background(), "test-plugin")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	select {
+	case <-p.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("plugin with oversized output was not stopped")
+	}
+	if !p.hostStopped.Load() {
+		t.Fatal("the host did not stop the plugin it could no longer read")
+	}
+	var seen bool
+	for _, record := range capture.Records() {
+		if record.Body().AsString() !=
+			"plugin runtime: read capability output failed" {
+			continue
+		}
+		if got := logcapture.Attribute(record, "plugin.id"); got != "test-plugin" {
+			t.Fatalf("plugin.id = %q, want test-plugin", got)
+		}
+		seen = true
+	}
+	if !seen {
+		t.Fatalf("read failure was not logged: %v", capture.Bodies())
+	}
+}
+
+// TestGetReplacesFinishedProcess pins the isolation rule: a cached
+// process whose done channel is already closed must not be handed out,
+// or one dead plugin would fail every caller until its exit watcher
+// finally removed it.
+func TestGetReplacesFinishedProcess(t *testing.T) {
+	m, _ := newTestManager(t)
+	dead := &process{
+		manager: m,
+		id:      "test-plugin",
+		done:    make(chan struct{}),
+	}
+	close(dead.done)
+	m.mu.Lock()
+	m.procs["test-plugin"] = dead
+	m.mu.Unlock()
+
+	got, err := m.get(context.Background(), "test-plugin")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer got.stop()
+	if got == dead {
+		t.Fatal("get returned a finished process")
 	}
 }
 
@@ -498,21 +605,17 @@ func TestStopShutsDownProcess(t *testing.T) {
 }
 
 func TestCleanupNotifiesPlugin(t *testing.T) {
+	capture := logcapture.Install(t)
 	m, _ := newTestManager(t)
-	log := &lockedBuffer{}
-	m.SetLogger(log)
 	if _, err := m.Invoke(context.Background(), "test-plugin", "auth.poll", nil); err != nil {
 		t.Fatalf("invoke: %v", err)
 	}
 	if err := m.Cleanup("test-plugin"); err != nil {
 		t.Fatalf("cleanup: %v", err)
 	}
-	deadline := time.Now().Add(2 * time.Second)
-	for !strings.Contains(log.String(), "CLEANUP_CALLED") && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
-	if !strings.Contains(log.String(), "CLEANUP_CALLED") {
-		t.Fatalf("plugin cleanup callback not invoked; stderr=%q", log.String())
+	if !waitForPluginStderr(capture, "CLEANUP_CALLED") {
+		t.Fatalf("plugin cleanup callback not invoked; log=%v",
+			capture.Bodies())
 	}
 	m.mu.Lock()
 	_, running := m.procs["test-plugin"]
@@ -522,22 +625,55 @@ func TestCleanupNotifiesPlugin(t *testing.T) {
 	}
 }
 
-// lockedBuffer is a concurrency-safe writer for the stderr forwarder.
-type lockedBuffer struct {
-	mu sync.Mutex
-	b  bytes.Buffer
+// TestPluginStderrReachesHostLog pins the contract a plugin relies on
+// when it explains itself: whatever it writes to stderr lands in the
+// host log, tagged with the plugin id, instead of being discarded.
+func TestPluginStderrReachesHostLog(t *testing.T) {
+	capture := logcapture.Install(t)
+	m, _ := newTestManagerWithHelper(t, "4")
+
+	// The helper handshakes, then dies; the invoke itself may fail,
+	// which is not what this test is about.
+	_, _ = m.Invoke(context.Background(), "test-plugin", "auth.poll", nil)
+
+	if !waitForPluginStderr(capture, "crashing on purpose") {
+		t.Fatalf("plugin stderr missing from the host log: %v",
+			capture.Bodies())
+	}
+	for _, record := range capture.Records() {
+		if record.Body().AsString() != pluginStderrBody {
+			continue
+		}
+		if id := logcapture.Attribute(record, "plugin.id"); id != "test-plugin" {
+			t.Fatalf("plugin.id = %q, want test-plugin", id)
+		}
+	}
 }
 
-func (l *lockedBuffer) Write(p []byte) (int, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.b.Write(p)
-}
+// pluginStderrBody is the message the runtime logs forwarded plugin
+// stderr lines under.
+const pluginStderrBody = "plugin stderr"
 
-func (l *lockedBuffer) String() string {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	return l.b.String()
+// waitForPluginStderr reports whether one forwarded line contains want.
+// The forwarder runs in its own goroutine, so the caller polls.
+func waitForPluginStderr(capture *logcapture.Recorder, want string) bool {
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		for _, record := range capture.Records() {
+			if record.Body().AsString() != pluginStderrBody {
+				continue
+			}
+			if strings.Contains(
+				logcapture.Attribute(record, "plugin.line"), want,
+			) {
+				return true
+			}
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // stubWriter is a write-only sink capturing what the host sends to a

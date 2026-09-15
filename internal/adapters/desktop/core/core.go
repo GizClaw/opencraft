@@ -37,6 +37,10 @@ type Core struct {
 	// suspended (see telemetry.go).
 	telemetryMu   sync.Mutex
 	telemetryLast *rememberedPluginSink
+	// pluginWrites tracks the runtime rebuilds triggered by capability
+	// plugin inference writes, so a plugin that re-submits an unchanged
+	// row set does not rebuild the runtime per row (see inference.go).
+	pluginWrites pluginInferenceWrite
 
 	UserDir string
 	DataDir string

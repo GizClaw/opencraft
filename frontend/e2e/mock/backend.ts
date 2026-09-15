@@ -301,7 +301,7 @@ export function mockBackend(cfg?: MockConfig) {
           drives: { attention: 60, energy: 40, comfort: 50 },
           mood: 'content',
           stats: { poke_count: 0 },
-          disposition: 'roam',
+          disposition: 'idle',
           phase: 'idle',
           walking: false,
           hovered: false,

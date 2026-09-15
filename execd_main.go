@@ -18,11 +18,33 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
+	otellog "go.opentelemetry.io/otel/log"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/execd"
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 )
+
+// initChildLogging sends this process's warnings to stderr. The child is
+// forked before the desktop installs its log pipeline, so without a
+// provider of its own every telemetry call inside it would be a no-op.
+// Stderr is the one channel the parent can pick up (stdout carries the
+// JSON-RPC protocol in stdio mode); fork.go forwards what lands there
+// into the application log. It returns nil when the pipeline could not
+// be installed, in which case the failure itself is the last diagnostic.
+func initChildLogging(ctx context.Context) func(context.Context) error {
+	opts := make([]telemetry.LogOption, 0, 2)
+	for _, processor := range telemetry.ConsoleProcessors(otellog.SeverityWarn) {
+		opts = append(opts, telemetry.WithLogProcessor(processor))
+	}
+	stop, err := telemetry.InitLog(ctx, opts...)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr,
+			"opencraft execd: start log pipeline: %v\n", err)
+		return nil
+	}
+	return stop
+}
 
 func runExecServer() {
 	fs := flag.NewFlagSet("execd", flag.ExitOnError)
@@ -40,6 +62,17 @@ func runExecServer() {
 	}
 
 	ctx := context.Background()
+	if stopLog := initChildLogging(ctx); stopLog != nil {
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(
+				context.Background(), 5*time.Second)
+			defer cancel()
+			if err := stopLog(shutdownCtx); err != nil {
+				_, _ = fmt.Fprintf(os.Stderr,
+					"opencraft execd: close log pipeline: %v\n", err)
+			}
+		}()
+	}
 	if _, err := config.EnsureUserConfig(); err != nil {
 		execdFatal(1, "opencraft execd: seed config: %v", err)
 	}

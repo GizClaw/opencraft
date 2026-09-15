@@ -1,9 +1,11 @@
 package config
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // The write API used by both producers of inference rows. Every rule
@@ -32,7 +34,7 @@ func ApplySettingsSave(
 		isManaged = func(string) bool { return false }
 	}
 	next := InferenceConfig{}
-	err = UpdateInferenceState(configDir, func(
+	_, err = UpdateInferenceState(configDir, func(
 		existing InferenceConfig,
 		owners map[string]string,
 	) (InferenceConfig, map[string]string, bool, error) {
@@ -113,10 +115,17 @@ func ApplySettingsSave(
 // deployment. The row must carry its own identity, and it can only
 // replace a row the same plugin owns; the ownership sidecar records the
 // claim.
-func UpsertPluginInstance(configDir, pluginID string, spec InstanceSpec) error {
+//
+// changed reports whether the stored rows differ from what the plugin
+// submitted: plugins re-submit their whole row set on every catalog
+// sync, and each accepted write costs the host a full runtime rebuild,
+// so an identical row must not buy one.
+func UpsertPluginInstance(
+	configDir, pluginID string, spec InstanceSpec,
+) (changed bool, err error) {
 	in, err := spec.Lower(SourcePlugin, pluginID)
 	if err != nil {
-		return err
+		return false, err
 	}
 	return UpdateInferenceState(configDir, func(
 		cfg InferenceConfig,
@@ -135,6 +144,9 @@ func UpsertPluginInstance(configDir, pluginID string, spec InstanceSpec) error {
 			// The plugin owns the deployment; the user owns whether it
 			// is routed, so a re-upsert keeps the stored toggle.
 			in.Enabled = cfg.Instances[i].Enabled
+			if inferenceDocumentsEqual(cfg, replaceInstance(cfg, i, in)) {
+				return cfg, owners, false, nil
+			}
 			cfg.Instances[i] = in
 			owners[in.StableID] = pluginID
 			return cfg, owners, true, nil
@@ -151,11 +163,51 @@ func UpsertPluginInstance(configDir, pluginID string, spec InstanceSpec) error {
 	})
 }
 
+// replaceInstance returns cfg with the row at index replaced. The
+// instance slice is copied so the caller's document stays untouched.
+func replaceInstance(
+	cfg InferenceConfig, index int, in Instance,
+) InferenceConfig {
+	instances := make([]Instance, len(cfg.Instances))
+	copy(instances, cfg.Instances)
+	instances[index] = in
+	cfg.Instances = instances
+	return cfg
+}
+
+// inferenceDocumentsEqual reports whether two configurations render to
+// the same user document, which is exactly the question "would this
+// write reach disk". Comparing rows directly does not answer it: the
+// stored row carries the defaults of a YAML round trip (a model's
+// generate kind, its default text output) that a freshly lowered row
+// does not, so the same deployment reads as two different structs. The
+// timestamp is injected once so both renders share a header.
+//
+// A configuration the writer refuses (no enabled instance, say) reports
+// false: the caller then writes and surfaces the writer's own error.
+func inferenceDocumentsEqual(a, b InferenceConfig) bool {
+	now := time.Now()
+	left, err := a.inferenceYAMLAt(now)
+	if err != nil {
+		return false
+	}
+	right, err := b.inferenceYAMLAt(now)
+	if err != nil {
+		return false
+	}
+	return bytes.Equal(left, right)
+}
+
 // RemovePluginInstance drops one plugin-owned deployment. Credentials
-// are untouched: the plugin clears its own secrets.
-func RemovePluginInstance(configDir, pluginID, stableID string) error {
+// are untouched: the plugin clears its own secrets. changed reports
+// whether a row was actually removed: plugins clean up ids an older
+// version wrote on every sync, and a miss must not cost a runtime
+// rebuild.
+func RemovePluginInstance(
+	configDir, pluginID, stableID string,
+) (changed bool, err error) {
 	if err := ValidateStableID(stableID); err != nil {
-		return err
+		return false, err
 	}
 	return UpdateInferenceState(configDir, func(
 		cfg InferenceConfig,
@@ -196,7 +248,7 @@ func RemovePluginInstance(configDir, pluginID, stableID string) error {
 // secrets are not touched here.
 func RemovePluginInstances(configDir, pluginID string) (bool, error) {
 	removed := false
-	err := UpdateInferenceState(configDir, func(
+	_, err := UpdateInferenceState(configDir, func(
 		cfg InferenceConfig,
 		owners map[string]string,
 	) (InferenceConfig, map[string]string, bool, error) {

@@ -26,6 +26,7 @@ const RIVE_ACCESSORS = [
   'off',
   'viewModelByName',
   'viewModelByIndex',
+  'viewModelCount',
   'defaultViewModel',
   'enums',
   'bindViewModelInstance',
@@ -149,6 +150,7 @@ describe('factsFromRuntime', () => {
     const facts = factsFromRuntime(
       {
         contents: stub.contents,
+        viewModelCount: () => stub.viewModelCount,
         viewModelByIndex: (index) => stub.viewModelByIndex(index),
         defaultViewModel: () => stub.defaultViewModel(),
         enums: () => stub.enums(),

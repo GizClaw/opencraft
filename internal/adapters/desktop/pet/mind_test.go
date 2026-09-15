@@ -43,7 +43,7 @@ func idleState() PetSurfaceState {
 	return PetSurfaceState{
 		AgentID:     "assistant",
 		Phase:       PetPhaseIdle,
-		Disposition: PetDispositionRoam,
+		Disposition: PetDispositionIdle,
 	}
 }
 
@@ -64,7 +64,7 @@ func TestMindSleepsWhenExhaustedAndWakes(t *testing.T) {
 	for i := 0; i < 80; i++ {
 		now = now.Add(500 * time.Millisecond)
 		state = mind.Step(state, now, now, false)
-		if state.Disposition == PetDispositionRoam {
+		if state.Disposition == PetDispositionIdle {
 			return
 		}
 	}

@@ -111,6 +111,7 @@ export interface PetAssetRuntime {
   contents?: {
     artboards?: { name: string; stateMachines: { name: string }[] }[];
   };
+  viewModelCount(): number;
   viewModelByIndex(index: number): {
     name: string;
     properties: { name: string; type: string; enumName?: string }[];
@@ -144,9 +145,15 @@ export function factsFromRuntime(
       rive.enums().map((dataEnum) => [dataEnum.name, dataEnum.values]),
     ),
   };
-  for (let index = 0; ; index++) {
+  // The file's view model count bounds the walk. Probing index after
+  // index instead (until the runtime answers null) makes the Rive
+  // runtime log "Could not find View Model. Index N is out of range"
+  // for the probe past the end, which the desktop shell forwards as an
+  // ERROR record once per pet mount.
+  const count = rive.viewModelCount();
+  for (let index = 0; index < count; index++) {
     const viewModel = rive.viewModelByIndex(index);
-    if (!viewModel) break;
+    if (!viewModel) continue;
     facts.viewModels[viewModel.name] = viewModel.properties.map((property) => ({
       name: property.name,
       type: property.type,
@@ -209,6 +216,9 @@ export async function createPetRive(
   const facts = factsFromRuntime(
     {
       contents: rive.contents,
+      // `viewModelCount` is a getter on the canvas runtime and a method
+      // on the advanced one; the facts walk reads it as a method.
+      viewModelCount: () => rive.viewModelCount,
       viewModelByIndex: (index) => rive.viewModelByIndex(index),
       defaultViewModel: () => rive.defaultViewModel(),
       enums: () => rive.enums(),

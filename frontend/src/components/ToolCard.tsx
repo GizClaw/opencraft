@@ -266,9 +266,21 @@ function ExecView({ tool }: { tool: ToolView }) {
 
   return (
     <div className="my-1.5">
-      <button
+      {/* The row toggles on click and carries its own copy button, so it
+          is a div with button semantics: interactive content must not
+          nest inside a <button>. Same shape as the sidebar's workspace
+          header. */}
+      <div
+        role="button"
+        tabIndex={0}
         onClick={() => setOpen(!open)}
-        className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setOpen(!open);
+          }
+        }}
+        className={`flex w-full cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
           running
             ? 'border-accent/40 bg-panel2'
             : failed
@@ -329,7 +341,7 @@ function ExecView({ tool }: { tool: ToolView }) {
         ) : (
           <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
         )}
-      </button>
+      </div>
       {open && (
         <div className="mt-1 overflow-hidden rounded-md border border-edge bg-panel/60">
           {running && (
@@ -429,9 +441,19 @@ function ReadView({ tool }: { tool: ToolView }) {
 
   return (
     <div className="my-1.5">
-      <button
+      {/* Same clickable row shape as the exec view above: the copy button
+          has to be a real button, so the toggle cannot be one. */}
+      <div
+        role="button"
+        tabIndex={0}
         onClick={() => setOpen(!open)}
-        className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setOpen(!open);
+          }
+        }}
+        className={`flex w-full cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
           failed
             ? 'border-err/40 bg-err/5'
             : running
@@ -481,7 +503,7 @@ function ReadView({ tool }: { tool: ToolView }) {
         ) : (
           <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
         )}
-      </button>
+      </div>
       {open && (
         <div className="mt-1 overflow-hidden rounded-md border border-edge bg-panel/60">
           {running && (

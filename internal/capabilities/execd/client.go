@@ -3,8 +3,10 @@ package execd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"sync"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
@@ -20,6 +22,9 @@ type Client struct {
 	handlers  map[string]func(json.RawMessage)
 	closeOnce sync.Once
 	done      chan struct{}
+	// readDone is closed when the read loop returns, so teardown can
+	// order the client's last record before it removes the socket.
+	readDone chan struct{}
 }
 
 // Dial performs the initialize handshake over conn and starts the read
@@ -30,6 +35,7 @@ func Dial(ctx context.Context, conn io.ReadWriteCloser) (*Client, error) {
 		pending:  make(map[int64]chan Response),
 		handlers: make(map[string]func(json.RawMessage)),
 		done:     make(chan struct{}),
+		readDone: make(chan struct{}),
 	}
 	go c.readLoop()
 	var init InitializeResponse
@@ -130,6 +136,38 @@ func (c *Client) Close() error {
 	return err
 }
 
+// WaitReadLoop blocks until the read loop has returned, which is how
+// teardown orders the client's last record before it removes the
+// socket. A client whose loop already ended returns immediately.
+func (c *Client) WaitReadLoop(ctx context.Context) error {
+	select {
+	case <-c.readDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// closing reports whether Close already ran, i.e. the read loop is
+// ending because a caller asked it to.
+func (c *Client) closing() bool {
+	select {
+	case <-c.done:
+		return true
+	default:
+		return false
+	}
+}
+
+// connectionClosed reports whether err is the ordinary end of a
+// connection — our own close, or the peer hanging up — rather than a
+// protocol failure.
+func connectionClosed(err error) bool {
+	return errors.Is(err, net.ErrClosed) ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrClosedPipe)
+}
+
 func (c *Client) call(
 	ctx context.Context,
 	method string,
@@ -181,6 +219,7 @@ func (c *Client) call(
 }
 
 func (c *Client) readLoop() {
+	defer close(c.readDone)
 	dec := json.NewDecoder(c.conn)
 	for {
 		var msg struct {
@@ -191,8 +230,14 @@ func (c *Client) readLoop() {
 			Error  *RPCError       `json:"error"`
 		}
 		if err := dec.Decode(&msg); err != nil {
-			telemetry.WarnErr(context.Background(),
-				"execd: decode response failed; closing client", err)
+			// Closing the client unblocks this read with net.ErrClosed,
+			// and a child that exits closes the socket (io.EOF): both are
+			// the ordinary end of the loop, so only an unexpected decode
+			// failure is worth a warning.
+			if !c.closing() && !connectionClosed(err) {
+				telemetry.WarnErr(context.Background(),
+					"execd: decode response failed; closing client", err)
+			}
 			telemetry.WarnErr(context.Background(),
 				"execd: close client after decode failure", c.Close())
 			return

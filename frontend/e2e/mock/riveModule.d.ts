@@ -22,6 +22,7 @@ export declare class Rive {
   off(type: string, handler: (payload: unknown) => void): void;
   viewModelByName(name: string): StubViewModel | null;
   viewModelByIndex(index: number): StubViewModel | null;
+  get viewModelCount(): number;
   defaultViewModel(): StubViewModel | null;
   enums(): { name: string; values: string[] }[];
   bindViewModelInstance(instance: unknown): void;

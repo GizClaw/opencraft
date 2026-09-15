@@ -209,8 +209,8 @@ func TestPetDirectorTransitions(t *testing.T) {
 	feed.now = func() time.Time { return now }
 	director := NewPetDirector(feed)
 
-	if state := director.Poll("assistant", now); state.Disposition != PetDispositionRoam {
-		t.Fatalf("no activity must roam, got %+v", state)
+	if state := director.Poll("assistant", now); state.Disposition != PetDispositionIdle {
+		t.Fatalf("no activity must be idle, got %+v", state)
 	}
 
 	now = base
@@ -233,8 +233,8 @@ func TestPetDirectorTransitions(t *testing.T) {
 	}
 
 	state = director.Poll("assistant", now.Add(5*time.Second))
-	if state.Disposition != PetDispositionRoam {
-		t.Fatalf("idle timeout must roam, got %+v", state)
+	if state.Disposition != PetDispositionIdle {
+		t.Fatalf("idle timeout must be idle, got %+v", state)
 	}
 	state = director.Poll("assistant", now.Add(95*time.Second))
 	if state.Disposition != PetDispositionSleep {

@@ -171,6 +171,12 @@ export class Rive {
     return index === 0 ? viewModel(this.record) : null;
   }
 
+  // The real runtime exposes this as a getter; the renderer reads it to
+  // bound its view model walk instead of probing past the end.
+  get viewModelCount() {
+    return 1;
+  }
+
   defaultViewModel() {
     return this.viewModelByName('PetVM');
   }

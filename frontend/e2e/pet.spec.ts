@@ -183,14 +183,14 @@ test('mounts the shipped pack and only writes view model values that move', asyn
   await emitPetState(page, {
     phase: 'thinking',
     walking: true,
-    disposition: 'roam',
+    disposition: 'idle',
   });
   // Repeats of the same payload must not rewrite anything: a write is what
   // re-enters state machine transitions.
   await emitPetState(page, {
     phase: 'thinking',
     walking: true,
-    disposition: 'roam',
+    disposition: 'idle',
   });
 
   await emitPetState(page, {
@@ -228,7 +228,7 @@ test('fires one-shot intents only when the intent sequence moves', async ({
 
   await emitPetState(page, {
     phase: 'idle',
-    disposition: 'roam',
+    disposition: 'idle',
     intent: 'wave',
     intent_seq: 1,
   });
@@ -238,21 +238,21 @@ test('fires one-shot intents only when the intent sequence moves', async ({
   // must not replay it.
   await emitPetState(page, {
     phase: 'idle',
-    disposition: 'roam',
+    disposition: 'idle',
     intent: 'wave',
     intent_seq: 1,
   });
 
   await emitPetState(page, {
     phase: 'idle',
-    disposition: 'roam',
+    disposition: 'idle',
     intent: 'wave',
     intent_seq: 2,
   });
 
   await emitPetState(page, {
     phase: 'idle',
-    disposition: 'roam',
+    disposition: 'idle',
     intent: 'sulk',
     intent_seq: 3,
   });
@@ -337,7 +337,7 @@ test('degrades visibly when the pack no longer matches the asset', async ({
   await emitPetState(page, {
     phase: 'thinking',
     walking: true,
-    disposition: 'roam',
+    disposition: 'idle',
   });
   expect((await riveLog(page)).writes.map((write) => write.path)).toEqual([
     'phase',
@@ -656,7 +656,7 @@ test('treats the speech bubble and the tool pill as the pet', async ({
 
   await emitPetState(page, {
     phase: 'idle',
-    disposition: 'roam',
+    disposition: 'idle',
     intent: 'wave',
     intent_seq: 1,
   });
@@ -878,6 +878,11 @@ test('shows the mount report in Settings > Diagnostics', async ({ page }) => {
 
   const panel = page.getByText('Pet behavior');
   await expect(panel).toBeVisible();
+  // The idle disposition reads "Idle" now that the pet parks instead of
+  // roaming: the row is the user-visible end of the disposition rename.
+  await expect(page.getByText('Disposition').locator('..')).toContainText(
+    'Idle',
+  );
   await expect(page.getByText('Degraded')).toBeVisible();
   await expect(
     page.getByText('binding "walking": property "galloping"'),

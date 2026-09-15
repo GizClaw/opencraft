@@ -337,7 +337,7 @@ func (m *Mind) Step(
 		switch {
 		case userNear:
 			m.sleeping = false
-			state.Disposition = PetDispositionRoam
+			state.Disposition = PetDispositionIdle
 		case !m.sleeping:
 			m.sleeping = true
 		}
@@ -353,10 +353,10 @@ func (m *Mind) Step(
 	case m.sleeping && m.energy >= wakeAbove && m.energySleep:
 		m.sleeping = false
 		m.energySleep = false
-		state.Disposition = PetDispositionRoam
+		state.Disposition = PetDispositionIdle
 	case m.sleeping:
 		state.Disposition = PetDispositionSleep
-	case state.Disposition == PetDispositionRoam &&
+	case state.Disposition == PetDispositionIdle &&
 		m.energy >= zoomiesAt &&
 		m.attention < 40 &&
 		now.Sub(m.lastZoomies) >= zoomiesWait:
@@ -372,7 +372,7 @@ func (m *Mind) Step(
 		lastUserActive.After(m.lastUserActive)
 	if freshPulse && state.Intent == "" && !m.sleeping {
 		away := lastUserActive.Sub(m.lastUserActive)
-		if state.Disposition == PetDispositionRoam &&
+		if state.Disposition == PetDispositionIdle &&
 			away >= lookMinGap &&
 			away < awayWelcomeAfter &&
 			now.Sub(m.lastLook) >= lookCooldown {
@@ -381,7 +381,7 @@ func (m *Mind) Step(
 		}
 	}
 
-	// Poke reactions only interrupt idle/roam states, never work.
+	// Poke reactions only interrupt idle states, never work.
 	if m.pendingWave &&
 		state.Disposition != PetDispositionWork &&
 		state.Disposition != PetDispositionAsk {
