@@ -56,7 +56,6 @@ type Desktop struct {
 	petManualUntil time.Time
 	petReady       bool
 	petDirector    *petfeed.PetDirector
-	petRoamPaused  bool
 	petDebug       petfeed.MindDebug
 }
 

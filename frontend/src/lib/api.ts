@@ -390,7 +390,6 @@ export const api = {
   petSetPosition: (x: number, y: number) => Pet.SetPosition(x, y),
   petActivate: () => Pet.Activate(),
   petPoke: () => Pet.Poke(),
-  petSetRoamingPaused: (paused: boolean) => Pet.SetRoamingPaused(paused),
   petGetPosition: () => Pet.Position(),
   reportUserActivity: () => Lifecycle.ReportUserActivity(),
   petPackAsset: (asset: string) => Pet.PackAsset(asset),

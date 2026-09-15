@@ -367,7 +367,9 @@ func samePetActivity(a, b PetActivity) bool {
 type PetDisposition string
 
 const (
-	// PetDispositionRoam: no recent agent activity, the pet wanders.
+	// PetDispositionRoam: no recent agent activity. The pet is awake and
+	// idle; it stays parked where it is, and only walks to its watch
+	// spot while the agent works or asks.
 	PetDispositionRoam PetDisposition = "roam"
 	// PetDispositionSleep: no activity for a long stretch.
 	PetDispositionSleep PetDisposition = "sleep"

@@ -106,11 +106,6 @@ func (b *Pet) Poke() {
 	b.core.Shell.PokePet()
 }
 
-// SetRoamingPaused pauses or resumes the pet's autonomous roaming.
-func (b *Pet) SetRoamingPaused(paused bool) {
-	b.core.Shell.SetPetRoamingPaused(paused)
-}
-
 // Diagnostics returns the pet mind/rover snapshot for the settings
 // diagnostics panel.
 func (b *Pet) Diagnostics() pet.MindDebug {

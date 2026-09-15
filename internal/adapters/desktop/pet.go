@@ -2,7 +2,6 @@ package desktop
 
 import (
 	"context"
-	"math/rand"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
@@ -29,9 +28,9 @@ const (
 	assistantPetHeight = 168
 )
 
-// petRoamTick is the rover physics step. The state broadcast runs on a
-// slower cadence (see petStateBroadcastEvery).
-const petRoamTick = 60 * time.Millisecond
+// petLoopTick is the window loop's physics step. The state broadcast
+// runs on a slower cadence (see petStateBroadcastEvery).
+const petLoopTick = 60 * time.Millisecond
 
 // petManualHoldFor keeps autonomy paused after a user drag.
 const petManualHoldFor = 5 * time.Second
@@ -78,8 +77,8 @@ func newPetStatePayload(st petfeed.PetSurfaceState) petStatePayload {
 	return p
 }
 
-// startAssistantPet creates the roaming assistant pet window when the
-// desktop pet preference is enabled and starts the rover loop.
+// startAssistantPet creates the assistant pet window when the desktop
+// pet preference is enabled and starts the window loop.
 func (d *Desktop) startAssistantPet(ctx context.Context) {
 	if !d.core.Shell.PetsEnabled() {
 		return
@@ -143,17 +142,16 @@ func (d *Desktop) startAssistantPet(ctx context.Context) {
 	d.petStop = stop
 	d.petDirector = director
 	d.petMu.Unlock()
-	d.core.Shell.SetPetWindowControls(
-		d.movePetWindow,
-		d.setPetWindowPosition,
-		d.activatePet,
-		d.pokePet,
-		d.setRoamPaused,
-		d.petDiagnostics,
-		d.petWindowPosition,
-	)
+	d.core.Shell.SetPetWindowControls(desktopcore.PetWindowControls{
+		MoveBy:      d.movePetWindow,
+		SetPosition: d.setPetWindowPosition,
+		Activate:    d.activatePet,
+		Poke:        d.pokePet,
+		Diagnostics: d.petDiagnostics,
+		Position:    d.petWindowPosition,
+	})
 
-	go d.roamAssistantPet(ctx, stop, win, app, director)
+	go d.runPetWindowLoop(ctx, stop, win, app, director)
 }
 
 // ensureAssistantPet starts the pet window when enabled and not already
@@ -239,13 +237,6 @@ func (d *Desktop) pokePet() {
 	}
 }
 
-// setRoamPaused freezes the autonomous rover until resumed.
-func (d *Desktop) setRoamPaused(paused bool) {
-	d.petMu.Lock()
-	d.petRoamPaused = paused
-	d.petMu.Unlock()
-}
-
 // dockAssistantPet parks the pet window at the bottom-right corner of
 // the primary screen's work area and records the position on Desktop.
 func (d *Desktop) dockAssistantPet(
@@ -294,10 +285,10 @@ func (d *Desktop) waitForPetDock(
 	}
 }
 
-// roamAssistantPet is the autonomous rover: it wanders to random
-// positions while idle, freezes in place while the agent works or
-// asks, sleeps after long inactivity, and yields to user drags.
-func (d *Desktop) roamAssistantPet(
+// runPetWindowLoop keeps the pet window where it belongs: parked where
+// the user left it, walking to the watch spot while the agent works or
+// asks, and standing still otherwise. The pet never wanders on its own.
+func (d *Desktop) runPetWindowLoop(
 	ctx context.Context,
 	stop chan struct{},
 	win *application.WebviewWindow,
@@ -321,19 +312,13 @@ func (d *Desktop) roamAssistantPet(
 	minX := area.X + 16
 	maxX := area.X + area.Width - assistantPetWidth - 16
 
-	targetX, targetY := x, y
-	// Home is the pet's resting spot: it returns there after work and
-	// only makes short, occasional strolls around it (A+B behavior).
-	homeX, homeY := x, y
-	nextStrollAt := time.Now().Add(3 * time.Second)
 	mainX, mainY := x, y
 	mainW, mainH := assistantPetWidth, assistantPetHeight
 	perchMinX, perchMaxX := minX, maxX
 	perchTop, perchFloor := minTop, floorY
 	perchOK := false
 	lastRectRefresh := time.Now().Add(-time.Second)
-	wasManual := false
-	ticker := time.NewTicker(petRoamTick)
+	ticker := time.NewTicker(petLoopTick)
 	defer ticker.Stop()
 
 	var last petStatePayload
@@ -391,13 +376,13 @@ func (d *Desktop) roamAssistantPet(
 				}
 			}
 			d.petMu.Lock()
-			manual := d.petRoamPaused || now.Before(d.petManualUntil)
+			manual := now.Before(d.petManualUntil)
 			x, y = d.petX, d.petY
 			d.petMu.Unlock()
 
-			// Watch spot next to the main window; falls back to home
-			// when the window has no room beside it.
-			watchX, watchY := homeX, homeY
+			// Watch spot next to the main window; without one the pet
+			// stays where it is.
+			watchX, watchY := x, y
 			if perchOK {
 				watchY = mainY + mainH - assistantPetHeight - 8
 				watchY = clampInt(watchY, perchTop, perchFloor)
@@ -409,14 +394,14 @@ func (d *Desktop) roamAssistantPet(
 				case leftX >= perchMinX:
 					watchX = leftX
 				default:
-					watchX = homeX
+					watchX = x
 				}
 				watchX = clampInt(watchX, perchMinX, perchMaxX)
 			}
 
 			// The walk speed is a pack property: re-read it every
 			// tick so switching character applies without restarting
-			// the rover.
+			// the loop.
 			roamSpeed := d.core.ActivePack().Meta.WalkSpeed
 
 			// Re-anchor on the OS-reported position every few ticks.
@@ -426,47 +411,21 @@ func (d *Desktop) roamAssistantPet(
 			tickCount++
 			if tickCount%5 == 0 {
 				osX, osY := win.Position()
-				maxDelta := 3*int(roamSpeed*petRoamTick.Seconds()) + 8
+				maxDelta := 3*int(roamSpeed*petLoopTick.Seconds()) + 8
 				if absInt(x-osX) <= maxDelta && absInt(y-osY) <= maxDelta {
 					x, y = osX, osY
 				}
 			}
 
-			if wasManual && !manual {
-				// The user parked the pet somewhere: that spot
-				// becomes its new home.
-				homeX = clampInt(x, minX, maxX)
-				homeY = clampInt(y, minTop, floorY)
-			}
-			wasManual = manual
-
-			// Facing comes from the rover's own step, never from the OS
-			// re-anchor above or a user drag: those deltas are larger
-			// than one step and would flip the direction for a tick.
+			// The pet only walks when it has somewhere to be: the watch
+			// spot while the agent works or asks. Facing comes from the
+			// loop's own step, never from the OS re-anchor above or a
+			// user drag: those deltas are larger than one step and would
+			// flip the direction for a tick.
 			walkFromX := x
-			if !manual {
-				switch state.Disposition {
-				case petfeed.PetDispositionSleep:
-					// Asleep: stay put.
-				case petfeed.PetDispositionRoam:
-					if x == targetX && y == targetY {
-						if now.After(nextStrollAt) {
-							nextStrollAt = now.Add(petStrollDelay())
-							targetX, targetY = petStrollTarget(
-								homeX, homeY, minX, minTop, maxX, floorY)
-						}
-					} else if petDistance(x, y, homeX, homeY) >
-						petStrollRange*2 {
-						// Way off leash (drag, screen change): go home.
-						targetX, targetY = homeX, homeY
-					}
-					x = petStep(x, targetX, petRoamTick, roamSpeed)
-					y = petStep(y, targetY, petRoamTick, roamSpeed)
-				default: // work / ask: walk to the window and stay there
-					targetX, targetY = watchX, watchY
-					x = petStep(x, targetX, petRoamTick, roamSpeed)
-					y = petStep(y, targetY, petRoamTick, roamSpeed)
-				}
+			if petWalksToWatch(state.Disposition, perchOK, manual) {
+				x = petStep(x, watchX, petLoopTick, roamSpeed)
+				y = petStep(y, watchY, petLoopTick, roamSpeed)
 			}
 			facing = petFacing(facing, x-walkFromX)
 
@@ -523,32 +482,18 @@ func absInt(value int) int {
 	return value
 }
 
-// petStrollRange is how far (DIP) the pet may roam from home before it
-// wanders back.
-const petStrollRange = 360
-
-// petStrollDelay is the pause between short strolls from home.
-func petStrollDelay() time.Duration {
-	return time.Duration(8+rand.Intn(13)) * time.Second
-}
-
-// petDistance is a cheap Manhattan distance used for home-leash checks.
-func petDistance(x1, y1, x2, y2 int) int {
-	return absInt(x1-x2) + absInt(y1-y2)
-}
-
-// petStrollTarget picks a short stroll point around home (with a chance
-// to simply head home), clamped to the roamable area.
-func petStrollTarget(
-	homeX, homeY, xMin, yMin, xMax, yMax int,
-) (int, int) {
-	if rand.Intn(100) < 30 {
-		return homeX, homeY
+// petWalksToWatch reports whether the pet should walk to its watch spot
+// this tick. Only an agent at work or waiting for an answer gives the
+// pet somewhere to be; idling and sleeping both mean standing still,
+// and a user drag always wins.
+func petWalksToWatch(
+	disposition petfeed.PetDisposition, watchOK, manual bool,
+) bool {
+	if manual || !watchOK {
+		return false
 	}
-	dx := rand.Intn(2*petStrollRange+1) - petStrollRange
-	dy := rand.Intn(2*petStrollRange+1) - petStrollRange
-	return clampInt(homeX+dx, xMin, xMax),
-		clampInt(homeY+dy, yMin, yMax)
+	return disposition == petfeed.PetDispositionWork ||
+		disposition == petfeed.PetDispositionAsk
 }
 
 // petStep moves current toward target by the distance travelled in one
@@ -617,8 +562,7 @@ func (d *Desktop) stopPet() {
 	// The report describes a window that is gone; diagnostics must not
 	// keep presenting it as the live character.
 	d.core.Shell.ClearPetRuntimeStatus()
-	d.core.Shell.SetPetWindowControls(
-		nil, nil, nil, nil, nil, nil, nil)
+	d.core.Shell.SetPetWindowControls(desktopcore.PetWindowControls{})
 }
 
 // petDiagnostics returns the latest rover/mind snapshot for bindings.

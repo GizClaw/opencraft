@@ -319,7 +319,6 @@ export function mockBackend(cfg?: MockConfig) {
       },
       SetPosition: async (x: number, y: number) =>
         recordPet('SetPosition', [x, y]),
-      SetRoamingPaused: noop,
       UnregisterPack: noop,
     },
     Plugin: {
