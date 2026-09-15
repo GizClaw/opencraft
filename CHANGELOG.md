@@ -6,6 +6,156 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-16
+
+### Added
+
+- Settings > Interface gains appearance settings: the interface and
+  code fonts are chosen from the families the host enumerates
+  (CoreText on macOS, GDI on Windows, fontconfig on Linux) with a
+  searchable picker, and a text-size scale applies through CSS
+  variables. The choice lives in the desktop preference document with
+  a localStorage mirror, so the first frame paints before the binding
+  resolves. (#130)
+- Built-in model template catalog: `foundation/config` embeds
+  `inference_templates.json` (read as `Config.InferenceCatalog`)
+  whose entries reuse `InstanceSpec`/`ModelSpec`, decode strictly,
+  record their source and are validated through the same path a
+  settings save takes. Settings shows templates as one-click pills
+  next to the driver picker plus a searchable model list per row;
+  picking a model only writes model fields, and a declaration that
+  needs a provider-level fact (video input) warns instead of editing
+  the provider behind the user's back. (#127)
+- Capability plugins that declare `telemetry:export` can point the
+  app's OTLP export (logs, traces, metrics) at their own collector
+  through `telemetry.configure` / `telemetry.disable`. Collector
+  credentials stay in memory, one sink is active at a time,
+  `OTEL_EXPORTER_OTLP_ENDPOINT` keeps priority, and the sink is
+  dropped when the plugin is disabled, uninstalled or crashes. The
+  switch sits in Settings > Diagnostics next to the log viewer, and
+  install/remove/deny changes land in
+  `~/.opencraft/audit/telemetry.jsonl`. (#134)
+- `view_image` returns workspace images to the model, oversized prompt
+  images are downscaled, and models that declare video input get the
+  bytes passed through, all on flowcraft's multimodal tool results.
+  (#119)
+- The pet reacts to hover — a wave on the first hover of a session, a
+  glance afterwards — and walks while it is dragged, turning to face
+  the direction of travel. (#131, #132)
+
+### Changed
+
+- flowcraft core upgraded to v0.4.1 with drivers v0.3.0: the
+  per-vendor drivers collapse into one per wire family, tool results
+  carry multimodal content, and the inference layer no longer ships a
+  built-in model catalog or vendor presets — drivers are declared as
+  deployment data and the user document is rendered from a pinned
+  template. (#119)
+- Turns are bounded by a run timeout instead of a node budget:
+  `build.max_iterations: 0` lifts the graph loop guard and the agent
+  policy's `run_timeout` (1h) ends the run, and a turn that ends on a
+  deadline carries `error_kind: timeout` and renders a localized
+  notice. (#133)
+- Inference configuration has one row contract: `InstanceSpec` /
+  `ModelSpec` are the single wire shape shared by the settings page
+  and `inference.upsert`, `Lower` is the only way in, and the write
+  rules live in `foundation/config`. The opaque `provider_spec` bag is
+  gone (every provider-spec leaf the drivers accept is typed,
+  including `reasoning_scope`), a plugin-declared vendor row no longer
+  blocks settings saves, a managed row's `enabled` toggle belongs to
+  the user and survives a plugin re-upsert, and plugin profiles are
+  decoded strictly — `id` → `stable_id`, `provider_spec` →
+  `advanced`, `enabled` no longer plugin-settable, with no
+  compatibility shim. (#123)
+- The inference advanced panel is grouped by driver section and uses
+  the page's own dropdowns, and the model input-token field is wider
+  with a hint that no longer claims a driver default that does not
+  exist. (#124)
+- Path containment is single-sourced: `foundation/utils/pathsafe`
+  (`Within`/`Rel`/`ResolveUnder`/`RelRef`/`RealWithin`/`RealDir`) now
+  backs the file/git bindings, skill installs, media attachments and
+  plugin manifest/zip-slip checks that previously hand-wrote the
+  comparison in fourteen places. (#120)
+- Both JS graph mirrors are gated by fixtures generated from Go:
+  `compact.js` against `summarytext` (including the summary prefix)
+  and `world.js` against `worldstate`, with the real embedded scripts
+  run by `frontend/src/lib/compactMirror.test.ts` and
+  `worldNodeMirror.test.ts`. Writing the compaction gate fixed two
+  real bugs: structured `tool_result` content counted as
+  `[object Object]`, and tool-call arguments were estimated from a
+  spelling Go does not render. (#120)
+- The desktop pet no longer roams: it stands still while idle and only
+  walks to its watch spot while the agent works or asks. The window
+  anchors on the character's drawn pixels instead of the window
+  rectangle, the stage shrank to 168px with hit-testing that only
+  starts an interaction on visible pixels, and the disposition is
+  renamed to idle (Settings > Diagnostics shows "Idle"). (#128, #131,
+  #135)
+- Automation notifications no longer ride the UI event bus:
+  `Shell.Notify` hands a payload straight to the notification sink
+  without requiring an attached window, notification kinds are named
+  constants, and the banner copy is assembled by a unit-tested shaper.
+  (#121)
+- Child diagnostics reach the app log: the execd child installs a
+  stderr-only sink forwarded line by line with `execd.pid` /
+  `execd.socket` tags, capability-plugin stderr is forwarded as WARN
+  records with `plugin.id` / `plugin.line`, normal teardown is no
+  longer logged as a warning, and sockets older than a day are swept
+  once per process. (#135)
+- A plugin write that renders an unchanged inference document no
+  longer rebuilds the runtime, and the assistant graph declares an
+  explicit default branch for its two splits instead of relying on
+  their routing variables being booleans. (#135)
+- Formatting is checked with the toolchain `go.mod` pins instead of
+  whatever `gofmt` is on PATH, imports are grouped by goimports
+  through golangci-lint, and the last dead UI compatibility branches
+  (the legacy turn marker strip and `artifact_sync`) were removed
+  after confirming that no build ever persisted them. (#122)
+
+### Fixed
+
+- Conversations containing a tool call from before flowcraft core
+  v0.4.0 can be resumed again: workspace migration 015 rewrites the
+  string content of tool results in `archive_messages` and
+  `memory_items` into canonical parts, and the desktop transcript
+  reads those parts for archived and live results alike. (#125)
+- `view_image` output is no longer dropped by the result budget: the
+  raw cap dropped to 786000 bytes so base64 expansion plus the JSON
+  envelope fits in 1 MiB, and oversized files are rejected through
+  `workspace.LimitedReader` instead of being read whole. (#126)
+- `apply_patch` accepts `input` as an alias for `patch` and rejects
+  unknown keys by name, so models that emit the codex-harness shape no
+  longer produce an empty patch; the tool card only asks the backend
+  to render a patch when the arguments carry one, and its copy button
+  is no longer nested inside the clickable row toggle. (#129, #135)
+- The usage trend defaults to all models: an empty model aggregates
+  the series across every model, and the picker offers an "All models"
+  entry instead of preselecting the lifetime top model — a name that
+  may no longer run, which left the chart empty while the table was
+  full. A range without usage now says so. (#129)
+- Turn errors are classified from types instead of the rendered prose:
+  `host.ClassifyRunError` reads `interrupt_cause` from
+  `agent.InterruptedError.Cause` and `error_kind` from
+  `inference.Error.Kind` (plus a harness-level timeout), migration 014
+  adds the columns and backfills existing rows with rules more
+  tolerant than the renderer they replace, and the frontend only reads
+  fields — the text parsing and its generic fallbacks are gone. (#121)
+- Pet hover used to fire only when OpenCraft happened to be frontmost,
+  because a webview sees mouse moves only while it is the key window:
+  hover is now polled from the global pointer (NSEvent on macOS,
+  GetCursorPos on Windows), the hit box is the drawn box plus a 4px
+  pad, hover also fires while the pet is working or asking, and
+  Diagnostics shows the polled pointer state. Linux has no
+  global-pointer source yet, so hover stays inactive there. (#132)
+- A capability plugin that writes a response larger than 64 KiB no
+  longer hangs the host: the scanner got an explicit 8 MiB cap, a
+  failed read logs the plugin id and stops the process, and a cached
+  process whose done channel is already closed is not handed out.
+  (#135)
+- The pet reads the runtime's view model count instead of probing one
+  index past the end, which logged a console error on every mount.
+  (#135)
+
 ## [0.4.1] - 2026-09-11
 
 ### Added
