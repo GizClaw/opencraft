@@ -306,6 +306,7 @@
     "petDiagDisposition": "状态",
     "petDiagEmpty": "暂无宠物诊断（桌面宠物未开启或窗口未启动）。",
     "petDiagEnergy": "精力",
+    "petDiagHover": "指针在宠物上",
     "petDiagMount": "挂载状态",
     "petDiagMountDegraded": "降级",
     "petDiagMountOk": "正常",

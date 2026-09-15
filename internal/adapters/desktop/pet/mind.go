@@ -153,6 +153,9 @@ type MindDebug struct {
 	Disposition PetDisposition `json:"disposition"`
 	Phase       PetPhase       `json:"phase"`
 	Walking     bool           `json:"walking"`
+	// Hovered mirrors the polled pointer state, so the settings
+	// diagnostics panel can show whether the pet sees the cursor at all.
+	Hovered bool `json:"hovered"`
 }
 
 // Stats returns interaction counters.
@@ -167,9 +170,10 @@ func (m *Mind) Stats() MindStats {
 // Debug snapshots the mind-only portion of the diagnostics payload.
 func (m *Mind) Debug() MindDebug {
 	return MindDebug{
-		Drives: m.Drives(),
-		Mood:   m.Mood(),
-		Stats:  m.Stats(),
+		Drives:  m.Drives(),
+		Mood:    m.Mood(),
+		Stats:   m.Stats(),
+		Hovered: m.hovered,
 	}
 }
 
@@ -291,6 +295,28 @@ func (m *Mind) Step(
 		m.lastSulk = now
 		m.pendingSulk = true
 	}
+
+	// Hover is the pet's "I see you" repertoire: a wave the first time,
+	// a glance afterwards. It fires while the pet is working too — the
+	// user reaching for a pet that is busy watching the window is the
+	// common case — but never at a sleeping pet (only a poke wakes that),
+	// and a reaction already playing wins.
+	if m.sleeping {
+		m.hoverWave = false
+		m.hoverLook = false
+	} else if state.Intent == "" {
+		switch {
+		case m.hoverWave:
+			m.hoverWave = false
+			m.attention = clampDrive(m.attention + 6)
+			state.Intent = PetIntentWave
+		case m.hoverLook:
+			m.hoverLook = false
+			m.attention = clampDrive(m.attention + 3)
+			state.Intent = PetIntentLook
+		}
+	}
+
 	if state.Disposition == PetDispositionWork ||
 		state.Disposition == PetDispositionAsk {
 		m.sleeping = false
@@ -361,25 +387,6 @@ func (m *Mind) Step(
 		state.Disposition != PetDispositionAsk {
 		m.pendingWave = false
 		state.Intent = PetIntentWave
-	}
-
-	// Hover is the pet's "I see you" repertoire: a wave the first time,
-	// a glance afterwards. It never fires at a sleeping pet — only a
-	// poke wakes that — and a reaction already playing wins.
-	if m.sleeping {
-		m.hoverWave = false
-		m.hoverLook = false
-	} else if state.Intent == "" {
-		switch {
-		case m.hoverWave:
-			m.hoverWave = false
-			m.attention = clampDrive(m.attention + 6)
-			state.Intent = PetIntentWave
-		case m.hoverLook:
-			m.hoverLook = false
-			m.attention = clampDrive(m.attention + 3)
-			state.Intent = PetIntentLook
-		}
 	}
 
 	if m.pendingSulk &&

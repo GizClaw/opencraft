@@ -306,6 +306,7 @@
     "petDiagDisposition": "Disposition",
     "petDiagEmpty": "No pet diagnostics yet (desktop pet disabled or window not started).",
     "petDiagEnergy": "Energy",
+    "petDiagHover": "Pointer on pet",
     "petDiagMount": "Mount",
     "petDiagMountDegraded": "Degraded",
     "petDiagMountOk": "Mounted",

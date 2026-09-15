@@ -123,8 +123,6 @@ type PetWindowControls struct {
 	// while the user moves the window.
 	BeginDrag func()
 	EndDrag   func()
-	// Hover reports pointer enter/leave on the character.
-	Hover func(inside bool)
 }
 
 // SetPetWindowControls installs the desktop-root callbacks for pet
@@ -185,16 +183,6 @@ func (s *Shell) EndPetDrag() {
 	s.mu.Unlock()
 	if fn != nil {
 		fn()
-	}
-}
-
-// HoverPet reports whether the pointer is on the drawn character.
-func (s *Shell) HoverPet(inside bool) {
-	s.mu.Lock()
-	fn := s.pet.Hover
-	s.mu.Unlock()
-	if fn != nil {
-		fn(inside)
 	}
 }
 

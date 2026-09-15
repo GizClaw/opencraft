@@ -163,7 +163,6 @@ func (d *Desktop) startAssistantPet(ctx context.Context) {
 		Geometry:    d.setPetGeometry,
 		BeginDrag:   d.beginPetDrag,
 		EndDrag:     d.endPetDrag,
-		Hover:       d.hoverPet,
 	})
 
 	go d.runPetWindowLoop(ctx, stop, win, app, director)
@@ -281,16 +280,6 @@ func (d *Desktop) endPetDrag() {
 	d.petDragDx = 0
 	d.petDragMovedAt = time.Time{}
 	d.petMu.Unlock()
-}
-
-// hoverPet forwards pointer enter/leave on the character to the mind.
-func (d *Desktop) hoverPet(inside bool) {
-	d.petMu.Lock()
-	director := d.petDirector
-	d.petMu.Unlock()
-	if director != nil {
-		director.NoteHover(inside, time.Now())
-	}
 }
 
 // activatePet brings the main OpenCraft window to the foreground.
@@ -462,6 +451,22 @@ func (d *Desktop) runPetWindowLoop(
 			if perchOK {
 				watchX, watchY = petfeed.WatchSpot(
 					geometry, mainRect, perchArea)
+			}
+
+			// Hover is polled here rather than reported by the surface:
+			// the webview only delivers mouse movement while this window
+			// is the key window of the active application, which an
+			// always-on-top companion never is. Reading the global
+			// pointer works while the user is in another app too.
+			if cursorX, cursorY, ok := petfeed.CursorPosition(
+				petWindowHandle(win),
+			); ok {
+				director.NoteHover(
+					petfeed.CursorOnCharacter(
+						cursorX, cursorY, x, y, geometry,
+					),
+					now,
+				)
 			}
 
 			// The walk speed is a pack property: re-read it every

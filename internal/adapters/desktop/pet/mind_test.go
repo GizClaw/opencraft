@@ -160,6 +160,23 @@ func TestMindHoverLeavesASleepingPetAlone(t *testing.T) {
 	}
 }
 
+func TestMindHoverReactsWhileWorking(t *testing.T) {
+	base := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	mind := NewMind()
+	working := idleState()
+	working.Disposition = PetDispositionWork
+	working.Phase = PetPhaseTool
+
+	mind.NoteHover(true, base)
+	state := mind.Step(working, base.Add(time.Second), base.Add(time.Second), false)
+	if state.Intent != PetIntentWave {
+		t.Fatalf("hovering a working pet must greet, got %+v", state)
+	}
+	if state.Disposition != PetDispositionWork {
+		t.Fatalf("the hover reaction must not change the disposition: %+v", state)
+	}
+}
+
 func TestMindSulksAfterIgnoredDone(t *testing.T) {
 	base := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
 	mind := NewMind()
