@@ -25,6 +25,8 @@ function dispositionLabel(
   t: (key: string) => string,
 ): string {
   switch (disposition) {
+    case 'idle':
+      return t('config.petDispIdle');
     case 'work':
       return t('config.petDispWork');
     case 'ask':
@@ -32,7 +34,7 @@ function dispositionLabel(
     case 'sleep':
       return t('config.petDispSleep');
     default:
-      return t('config.petDispRoam');
+      return t('config.petDispIdle');
   }
 }
 

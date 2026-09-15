@@ -6,7 +6,7 @@
 export type PetPhase =
   'idle' | 'thinking' | 'tool' | 'answering' | 'asking' | 'done' | 'error';
 
-export type PetDisposition = 'roam' | 'sleep' | 'work' | 'ask';
+export type PetDisposition = 'idle' | 'sleep' | 'work' | 'ask';
 
 /** Horizontal walk direction the rover reports; packs translate it. */
 export type PetFacing = 'left' | 'right';
@@ -81,7 +81,7 @@ export function toPetView(payload: PetStatePayload | null): PetView {
   if (!payload) {
     return {
       phase: 'idle',
-      disposition: 'roam',
+      disposition: 'idle',
       interactive: false,
       walking: false,
       sleeping: false,

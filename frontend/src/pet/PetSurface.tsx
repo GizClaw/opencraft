@@ -54,7 +54,7 @@ const petIdlePauseAfter = 20_000;
 const petGeometryInterval = 500;
 
 /**
- * PetSurface is the whole-screen roaming pet renderer mounted by the
+ * PetSurface is the whole-screen pet renderer mounted by the
  * pet Wails window (?surface=pet). It is deliberately inert: no plugin
  * host, no main store. The Go PetDirector broadcasts pet:state
  * snapshots; the surface resolves the active pack, mounts the Rive
@@ -111,7 +111,7 @@ export default function PetSurface() {
       const view = petRef.current;
       const idle = view.phase === 'idle' && !view.intent;
       if (view.walking) {
-        // Still roaming: the walk cycle has to keep playing.
+        // Still walking: the walk cycle has to keep playing.
         scheduleIdlePause();
         return;
       }

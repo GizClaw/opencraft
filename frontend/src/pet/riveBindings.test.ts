@@ -41,7 +41,7 @@ const pack: PetPack = {
 function view(overrides: Partial<PetView>): PetView {
   return {
     phase: 'idle',
-    disposition: 'roam',
+    disposition: 'idle',
     interactive: false,
     intentSeq: 0,
     ...overrides,

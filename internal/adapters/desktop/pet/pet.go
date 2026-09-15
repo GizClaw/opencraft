@@ -367,10 +367,10 @@ func samePetActivity(a, b PetActivity) bool {
 type PetDisposition string
 
 const (
-	// PetDispositionRoam: no recent agent activity. The pet is awake and
+	// PetDispositionIdle: no recent agent activity. The pet is awake and
 	// idle; it stays parked where it is, and only walks to its watch
 	// spot while the agent works or asks.
-	PetDispositionRoam PetDisposition = "roam"
+	PetDispositionIdle PetDisposition = "idle"
 	// PetDispositionSleep: no activity for a long stretch.
 	PetDispositionSleep PetDisposition = "sleep"
 	// PetDispositionWork: the agent is producing output (thinking,
@@ -421,7 +421,7 @@ type PetDirector struct {
 }
 
 // NewPetDirector creates a director with the canonical timeout budget:
-// an agent idle for 2s goes back to roaming; 90s without events sends
+// an agent idle for 2s goes back to idle; 90s without events sends
 // the pet to sleep.
 func NewPetDirector(feed *PetActivityFeed) *PetDirector {
 	return &PetDirector{
@@ -523,7 +523,7 @@ func (d *PetDirector) Poll(agentID string, now time.Time) PetSurfaceState {
 	state := PetSurfaceState{
 		AgentID:     agentID,
 		Phase:       PetPhaseIdle,
-		Disposition: PetDispositionRoam,
+		Disposition: PetDispositionIdle,
 	}
 	if last.IsZero() {
 		return state

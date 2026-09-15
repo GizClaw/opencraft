@@ -1,5 +1,5 @@
 /**
- * Pixel hit test for the roaming pet window.
+ * Pixel hit test for the pet window.
  *
  * The OS window is a transparent rectangle that keeps capturing the
  * mouse (Wails only exposes whole-window mouse ignoring), so the

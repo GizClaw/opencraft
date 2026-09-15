@@ -52,8 +52,8 @@ func (b *Lifecycle) GetPetsSettings() PetsSettings {
 }
 
 // SetPetsSettings persists the pet preferences. Toggling enabled
-// starts or stops the roaming pet window through the desktop root's
-// change listener.
+// starts or stops the pet window through the desktop root's change
+// listener.
 func (b *Lifecycle) SetPetsSettings(settings PetsSettings) error {
 	if err := b.core.Shell.SetPetsEnabled(settings.Enabled); err != nil {
 		return err

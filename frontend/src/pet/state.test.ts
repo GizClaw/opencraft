@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { toPetView, type PetStatePayload } from './state';
 
 describe('toPetView', () => {
-  it('defaults to an idle roaming pet without a snapshot', () => {
+  it('defaults to an idle pet without a snapshot', () => {
     expect(toPetView(null)).toEqual({
       phase: 'idle',
-      disposition: 'roam',
+      disposition: 'idle',
       interactive: false,
       walking: false,
       sleeping: false,
@@ -60,7 +60,7 @@ describe('toPetView', () => {
     expect(
       toPetView({
         phase: 'idle',
-        disposition: 'roam',
+        disposition: 'idle',
         walking: true,
         facing: 'left',
       }).facing,

@@ -738,8 +738,8 @@ func (s *Shell) SetPetsEnabled(enabled bool) error {
 	return nil
 }
 
-// AssistantPetCharacter returns the pack id selected for the roaming
-// assistant pet, or "" when the builtin default applies.
+// AssistantPetCharacter returns the pack id selected for the assistant
+// pet, or "" when the builtin default applies.
 func (s *Shell) AssistantPetCharacter() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()

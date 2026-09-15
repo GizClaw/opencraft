@@ -11,7 +11,7 @@ func TestPetStepMovesAndClamps(t *testing.T) {
 	tick := 60 * time.Millisecond
 	const speed = 110 // the builtin pack's meta.walkSpeed
 	if step := int(speed * tick.Seconds()); step <= 0 {
-		t.Fatalf("roam step must be positive, got %d", step)
+		t.Fatalf("walk step must be positive, got %d", step)
 	}
 	left := petStep(100, 200, tick, speed)
 	if left <= 100 || left > 200 {
@@ -84,7 +84,7 @@ func TestPetWalksToWatch(t *testing.T) {
 	}{
 		{"work walks", petfeed.PetDispositionWork, true, false, true},
 		{"ask walks", petfeed.PetDispositionAsk, true, false, true},
-		{"idle stays", petfeed.PetDispositionRoam, true, false, false},
+		{"idle stays", petfeed.PetDispositionIdle, true, false, false},
 		{"sleep stays", petfeed.PetDispositionSleep, true, false, false},
 		{"no watch spot stays", petfeed.PetDispositionWork, false, false, false},
 		{"drag wins", petfeed.PetDispositionWork, true, true, false},

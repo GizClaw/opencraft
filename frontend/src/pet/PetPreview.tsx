@@ -5,8 +5,8 @@ import { base64ToArrayBuffer, createPetRive, type PetRiveHandle } from './rive';
 import { toPetView } from './state';
 
 /**
- * PetPreview renders one pack with the same Rive driver the roaming pet
- * window uses, giving the settings page and plugin authors a live
+ * PetPreview renders one pack with the same Rive driver the pet window
+ * uses, giving the settings page and plugin authors a live
  * preview of a character without opening a desktop window.
  */
 export function PetPreview({ pack }: { pack: PetPack }) {
