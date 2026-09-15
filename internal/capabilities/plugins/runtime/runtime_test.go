@@ -40,6 +40,12 @@ func helperPlugin() {
 		case "auth.poll":
 			write(fmt.Sprintf(
 				`{"jsonrpc":"2.0","id":%s,"result":{"status":"ok"}}`, req.ID))
+		case "auth.big":
+			// A response far above bufio.Scanner's 64 KiB default: the
+			// host has to accept it instead of ending the session.
+			write(fmt.Sprintf(
+				`{"jsonrpc":"2.0","id":%s,"result":{"blob":%q}}`,
+				req.ID, strings.Repeat("x", bigResponseBytes)))
 		case "auth.fail":
 			write(fmt.Sprintf(
 				`{"jsonrpc":"2.0","id":%s,"error":{"code":-32000,"message":"boom"}}`, req.ID))
@@ -58,11 +64,21 @@ func malformedPlugin() {
 	os.Exit(0)
 }
 
-// oversizedPlugin emits a line beyond bufio.Scanner's token limit and
-// exits, exercising the read-loop teardown path.
+// oversizedPlugin emits a line beyond the scanner's cap and exits,
+// exercising the read-loop teardown path.
 func oversizedPlugin() {
-	_, _ = fmt.Fprintln(os.Stdout, strings.Repeat("x", 128<<10))
+	_, _ = fmt.Fprintln(os.Stdout, strings.Repeat("x", stdoutLineLimit+1024))
 	os.Exit(0)
+}
+
+// oversizedOutputPlugin handshakes, then emits a line beyond the
+// scanner's cap and keeps running: the host has to notice the failure and
+// stop it rather than leave it blocked on a full pipe.
+func oversizedOutputPlugin() {
+	_, _ = fmt.Fprintln(os.Stdout,
+		`{"jsonrpc":"2.0","id":1,"method":"handshake","params":{"id":"test-plugin","protocol":1}}`)
+	_, _ = fmt.Fprintln(os.Stdout, strings.Repeat("x", stdoutLineLimit+1024))
+	time.Sleep(30 * time.Second)
 }
 
 // crashingPlugin handshakes and then exits on its own, simulating a
@@ -87,8 +103,14 @@ func TestHelperProcess(t *testing.T) {
 		oversizedPlugin()
 	case "4":
 		crashingPlugin()
+	case "5":
+		oversizedOutputPlugin()
 	}
 }
+
+// bigResponseBytes is the payload of the auth.big helper response: well
+// past the scanner's 64 KiB default and far below the host's cap.
+const bigResponseBytes = 1 << 20
 
 type memSecrets struct {
 	m map[string]string
@@ -159,6 +181,88 @@ func TestOversizedPluginFailsHandshake(t *testing.T) {
 	m, _ := newTestManagerWithHelper(t, "3")
 	if _, err := m.Invoke(context.Background(), "test-plugin", "auth.begin", nil); err == nil {
 		t.Fatal("oversized plugin unexpectedly answered")
+	}
+}
+
+// TestLargeResponseIsAccepted covers the root cause behind the
+// oversized-output path: a response bigger than the scanner's 64 KiB
+// default used to end the read loop, which left the plugin blocked on a
+// full pipe and made every later call report "process exited".
+func TestLargeResponseIsAccepted(t *testing.T) {
+	m, _ := newTestManager(t)
+	res, err := m.Invoke(context.Background(), "test-plugin", "auth.big", nil)
+	if err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	var out struct {
+		Blob string `json:"blob"`
+	}
+	if err := json.Unmarshal(res, &out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(out.Blob) != bigResponseBytes {
+		t.Fatalf("blob = %d bytes, want %d", len(out.Blob), bigResponseBytes)
+	}
+}
+
+// TestOversizedOutputStopsPlugin pins what happens when a plugin's output
+// does exceed the cap: the host reports the read failure with the plugin
+// id and stops the process, instead of leaving it running and blocked on
+// a pipe nobody drains.
+func TestOversizedOutputStopsPlugin(t *testing.T) {
+	capture := logcapture.Install(t)
+	m, _ := newTestManagerWithHelper(t, "5")
+	p, err := m.get(context.Background(), "test-plugin")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	select {
+	case <-p.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("plugin with oversized output was not stopped")
+	}
+	if !p.hostStopped.Load() {
+		t.Fatal("the host did not stop the plugin it could no longer read")
+	}
+	var seen bool
+	for _, record := range capture.Records() {
+		if record.Body().AsString() !=
+			"plugin runtime: read capability output failed" {
+			continue
+		}
+		if got := logcapture.Attribute(record, "plugin.id"); got != "test-plugin" {
+			t.Fatalf("plugin.id = %q, want test-plugin", got)
+		}
+		seen = true
+	}
+	if !seen {
+		t.Fatalf("read failure was not logged: %v", capture.Bodies())
+	}
+}
+
+// TestGetReplacesFinishedProcess pins the isolation rule: a cached
+// process whose done channel is already closed must not be handed out,
+// or one dead plugin would fail every caller until its exit watcher
+// finally removed it.
+func TestGetReplacesFinishedProcess(t *testing.T) {
+	m, _ := newTestManager(t)
+	dead := &process{
+		manager: m,
+		id:      "test-plugin",
+		done:    make(chan struct{}),
+	}
+	close(dead.done)
+	m.mu.Lock()
+	m.procs["test-plugin"] = dead
+	m.mu.Unlock()
+
+	got, err := m.get(context.Background(), "test-plugin")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer got.stop()
+	if got == dead {
+		t.Fatal("get returned a finished process")
 	}
 }
 

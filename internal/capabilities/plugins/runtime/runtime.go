@@ -84,6 +84,13 @@ const (
 	// plugin that never emits a newline cannot grow host memory without
 	// bound.
 	stderrLineLimit = 16 * 1024
+	// stdoutBufferInitial and stdoutLineLimit size the scanner over the
+	// plugin's JSON-RPC stdout. Responses carry real payloads (a model
+	// catalog, the output of a lark command), so the cap sits far above
+	// the scanner's 64 KiB default and the initial buffer keeps ordinary
+	// small responses from growing it.
+	stdoutBufferInitial = 64 * 1024
+	stdoutLineLimit     = 8 * 1024 * 1024
 )
 
 // Capability is the manifest-declared runtime of one plugin.
@@ -117,8 +124,8 @@ type InferenceHandler struct {
 
 // SessionImportRequest asks the host to import a session bundle the
 // plugin wrote to disk. BundlePath is used instead of inline messages
-// because the JSON-RPC transport is line-delimited and capped by
-// bufio.Scanner's default 64 KiB token limit.
+// because the JSON-RPC transport is line-delimited and capped by the
+// stdout line limit (see stdoutLineLimit), while a bundle is unbounded.
 type SessionImportRequest struct {
 	BundlePath string `json:"bundle_path"`
 	Title      string `json:"title"`
@@ -408,8 +415,17 @@ func (m *Manager) Shutdown() {
 func (m *Manager) get(ctx context.Context, id string) (*process, error) {
 	m.mu.Lock()
 	if p, ok := m.procs[id]; ok {
-		m.mu.Unlock()
-		return p, nil
+		select {
+		case <-p.done:
+			// The process ended but its exit watcher has not taken it out
+			// of the map yet: drop it here so this call starts a fresh one
+			// instead of talking to a corpse (one broken plugin panel must
+			// not break the next caller).
+			delete(m.procs, id)
+		default:
+			m.mu.Unlock()
+			return p, nil
+		}
 	}
 	cap, ok, err := m.loader.Capability(id)
 	if err != nil {
@@ -632,6 +648,7 @@ func (p *process) write(v any) error {
 func (p *process) readLoop(r io.Reader) {
 	defer close(p.done)
 	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, stdoutBufferInitial), stdoutLineLimit)
 	for sc.Scan() {
 		line := sc.Bytes()
 		var probe struct {
@@ -645,6 +662,16 @@ func (p *process) readLoop(r io.Reader) {
 		} else {
 			p.handleResponse(line)
 		}
+	}
+	// A scanned-out failure (a line past the cap, a broken pipe) ends the
+	// session while the plugin is still running: without this the child
+	// would block on a full pipe and the next call would report "process
+	// exited" instead of what actually happened.
+	if err := sc.Err(); err != nil {
+		telemetry.WarnErr(p.manager.baseCtx,
+			"plugin runtime: read capability output failed", err,
+			otellog.String("plugin.id", p.id))
+		p.stop()
 	}
 }
 
