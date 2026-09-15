@@ -880,9 +880,9 @@ test('shows the mount report in Settings > Diagnostics', async ({ page }) => {
   await expect(panel).toBeVisible();
   // The idle disposition reads "Idle" now that the pet parks instead of
   // roaming: the row is the user-visible end of the disposition rename.
-  await expect(
-    page.getByText('Disposition').locator('..'),
-  ).toContainText('Idle');
+  await expect(page.getByText('Disposition').locator('..')).toContainText(
+    'Idle',
+  );
   await expect(page.getByText('Degraded')).toBeVisible();
   await expect(
     page.getByText('binding "walking": property "galloping"'),
