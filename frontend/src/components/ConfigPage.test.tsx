@@ -163,6 +163,15 @@ const apiMock = vi.hoisted(() => {
         reasoning_tokens: 23799,
       },
     ]),
+    telemetryExport: vi.fn(async () => ({
+      enabled: true,
+      configured: true,
+      endpoint: 'collector.example:4318',
+      insecure: false,
+      headerNames: ['Authorization'],
+      owner: 'sso-plugin',
+    })),
+    readLog: vi.fn(async () => ''),
   };
   return new Proxy(known, {
     get: (target, prop) =>
@@ -482,5 +491,17 @@ describe('ConfigPage usage', () => {
     expect(
       await screen.findByText('No usage recorded in this range.'),
     ).toBeInTheDocument();
+  });
+});
+
+describe('ConfigPage diagnostics', () => {
+  it('shows the OTLP export sink in the diagnostics tab', async () => {
+    useStore.setState({ configTab: 'diagnostics' });
+    render(<ConfigPage />);
+
+    // Telemetry egress lives with the log viewer it feeds, not with the
+    // plugin list that may point it somewhere else.
+    const status = await screen.findByText(/configured by sso-plugin/);
+    expect(status.textContent).toContain('collector.example:4318');
   });
 });

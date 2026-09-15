@@ -691,6 +691,23 @@ export interface MemorySettings {
   replay_full_history: boolean;
 }
 
+/**
+ * TelemetryExportStatus is the OTLP export sink the app runs. Endpoint
+ * and header names are visible; header values are credentials and never
+ * leave the backend.
+ */
+export interface TelemetryExportStatus {
+  /** User switch allowing capability plugins to install export sinks. */
+  enabled: boolean;
+  /** Whether any OTLP endpoint is active, whoever installed it. */
+  configured: boolean;
+  endpoint: string;
+  insecure: boolean;
+  headerNames: string[];
+  /** Plugin that installed the active sink; empty for app configuration. */
+  owner: string;
+}
+
 export interface DiagnosticsReport {
   version: string;
   go_version: string;

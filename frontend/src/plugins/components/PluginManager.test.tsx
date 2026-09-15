@@ -18,7 +18,7 @@ const toolPlugin: PluginSummary = {
   name: 'Tool Plugin',
   version: '1.0.0',
   entry: 'dist/index.js',
-  permissions: ['tools:expose'],
+  permissions: ['tools:expose', 'telemetry:export'],
   enabled: true,
   hasTools: true,
 };
@@ -61,5 +61,15 @@ describe('PluginManager tools visibility', () => {
     expect(screen.getByText('mutate_thing')).toBeInTheDocument();
     expect(screen.getByText('mutates')).toBeInTheDocument();
     expect(screen.getByText('thing.run')).toBeInTheDocument();
+  });
+
+  it('lists the declared host permissions in the detail drawer', async () => {
+    const user = userEvent.setup();
+    render(<PluginManager showTitle={false} />);
+
+    await user.click(screen.getByRole('button', { name: /Tool Plugin/ }));
+    expect(await screen.findByText('Permissions')).toBeInTheDocument();
+    expect(screen.getByText('tools:expose')).toBeInTheDocument();
+    expect(screen.getByText('telemetry:export')).toBeInTheDocument();
   });
 });

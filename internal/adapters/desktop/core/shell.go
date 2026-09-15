@@ -580,6 +580,24 @@ func (s *Shell) GetCloseToTray() bool {
 	return s.prefs.CloseToTray
 }
 
+// PluginTelemetryExport reports whether capability plugins may install
+// their own OTLP export sink (Settings > Telemetry).
+func (s *Shell) PluginTelemetryExport() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.prefs.Telemetry.PluginExport
+}
+
+// SetPluginTelemetryExport persists the plugin telemetry-export switch.
+// It only records the decision: core.SetPluginTelemetryExport applies it
+// to the live pipeline (dropping or restoring the plugin's sink), so the
+// switch and the running exporter never disagree.
+func (s *Shell) SetPluginTelemetryExport(enabled bool) error {
+	return s.commit(func(p *DesktopPrefs) {
+		p.Telemetry.PluginExport = enabled
+	})
+}
+
 // SetCloseToTray persists the close behavior.
 func (s *Shell) SetCloseToTray(closeToTray bool) error {
 	return s.commit(func(p *DesktopPrefs) {

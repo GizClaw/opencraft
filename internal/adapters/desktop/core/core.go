@@ -8,6 +8,7 @@ import (
 
 	petfeed "github.com/GizClaw/opencraft/internal/adapters/desktop/pet"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	octelemetry "github.com/GizClaw/opencraft/internal/capabilities/telemetry"
 	"github.com/GizClaw/opencraft/internal/foundation/version"
 )
 
@@ -28,6 +29,14 @@ type Core struct {
 	Pet *petfeed.PetActivityFeed
 	// Packs is the shared pet pack registry (builtin + plugin packs).
 	Packs *petfeed.PackStore
+	// Telemetry owns the OTel pipelines. The desktop shell installs it
+	// after the composition root is built (see desktop.New), so plugin
+	// telemetry requests are refused while it is nil.
+	Telemetry *octelemetry.Pipeline
+	// telemetryMu guards telemetryLast, the plugin sink the user switch
+	// suspended (see telemetry.go).
+	telemetryMu   sync.Mutex
+	telemetryLast *rememberedPluginSink
 
 	UserDir string
 	DataDir string
@@ -67,6 +76,7 @@ func NewCore(userDir, dataDir, workDir string) *Core {
 	c.wirePluginInference()
 	c.wirePluginSessionImport()
 	c.wirePluginWorkspace()
+	c.wirePluginTelemetry()
 	return c
 }
 

@@ -31,6 +31,7 @@ import { alignUsageWindow } from '../lib/usageWindow';
 import { LogViewer } from './LogViewer';
 import { MetricsCharts } from './MetricsCharts';
 import { PetBehaviorPanel } from './PetBehaviorPanel';
+import { TelemetryExportCard } from './TelemetryExportCard';
 import { useStore } from '../lib/store';
 import type {
   CacheClearResult,
@@ -2808,6 +2809,7 @@ export function ConfigPage() {
                 </div>
 
                 <div className="space-y-2 border-t border-edge pt-3">
+                  <TelemetryExportCard />
                   <p className="text-xs text-dim">{t('config.logsHint')}</p>
                   <div className="h-[22rem]">
                     <LogViewer fetchLogs={() => api.readLog(300)} />

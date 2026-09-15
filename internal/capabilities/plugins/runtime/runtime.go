@@ -4,6 +4,40 @@
 // stdin/stdout. The host only understands method names + JSON payloads;
 // it never interprets domain semantics, and secrets never appear in
 // RPC results (plugins persist them via the secret.* primitives).
+//
+// A capability process announces itself with a "handshake" request
+// ({"jsonrpc":"2.0","id":1,"method":"handshake",
+// "params":{"id":"<plugin-id>","protocol":1}}), then serves host→plugin
+// methods. The host recognises these plugin→host primitives, each gated
+// by the manifest permission in parentheses:
+//
+//	secret.get / secret.set / secret.delete   (secrets:auth, scoped to
+//	                                           auth/<plugin>/… and
+//	                                           inference/<plugin>/…)
+//	open.url                                  (capability.hosts allowlist)
+//	inference.upsert / inference.remove       (credential namespace of the
+//	                                           calling plugin)
+//	session.import / session.imported_sources (sessions:import)
+//	workspace.current
+//	telemetry.configure / telemetry.disable   (telemetry:export)
+//	emit.event                                (reserved)
+//
+// Unknown methods are rejected. Arguments that carry structured payloads
+// are decoded strictly, so a mistyped field fails the call instead of
+// silently configuring something else.
+//
+// telemetry.configure points OTLP export at the plugin's own collector:
+//
+//	{"jsonrpc":"2.0","id":7,"method":"telemetry.configure","params":{
+//	  "endpoint":"otel-collector.example:4318",
+//	  "headers":{"authorization":"Bearer <token>"}}}
+//
+// Header values are credentials: the host keeps them in memory only,
+// never writes them to disk and never logs them (header names are
+// logged). The host validates the endpoint (remote endpoints must be
+// https), allows one plugin sink at a time, and drops it when the plugin
+// is disabled, uninstalled or dies. The local log file is unaffected:
+// plugins replace the export target, not the logging pipeline.
 package runtime
 
 import (
@@ -22,6 +56,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
@@ -118,6 +153,26 @@ type WorkspaceHandler struct {
 	Current func() (string, error)
 }
 
+// TelemetryExportRequest asks the host to point OTLP export at one
+// collector (telemetry.configure). Headers carry collector credentials:
+// they stay in host memory, so a plugin that needs the sink after an app
+// restart has to configure it again.
+type TelemetryExportRequest struct {
+	Endpoint string            `json:"endpoint"`
+	Headers  map[string]string `json:"headers,omitempty"`
+	Insecure bool              `json:"insecure,omitempty"`
+}
+
+// TelemetryHandler is the host-side path for the export sink. The host
+// owns the policy (declared permission, user switch, single active sink)
+// and validates the endpoint before the pipeline is touched.
+type TelemetryHandler struct {
+	// Configure installs or replaces the sink owned by pluginID.
+	Configure func(pluginID string, req TelemetryExportRequest) error
+	// Disable drops the sink when pluginID owns it.
+	Disable func(pluginID string) error
+}
+
 // SecretStore is the minimal credential surface exposed to plugins as
 // the secret.* primitives. Values never cross the JS boundary.
 type SecretStore interface {
@@ -149,11 +204,19 @@ type Manager struct {
 	inference     InferenceHandler
 	sessionImport SessionImportHandler
 	workspace     WorkspaceHandler
+	telemetry     TelemetryHandler
 
-	handshakeTimeout time.Duration
-	callTimeout      time.Duration
+	// Timeout budgets are atomic: the host may retune them while
+	// capability processes are running, and -race covers this path.
+	handshakeTimeout atomic.Int64
+	callTimeout      atomic.Int64
 	env              []string
 	hostVersion      string
+	// onExit observes capability processes that ended on their own
+	// (crash, kill, stdin/stdout closed). Processes the host stopped
+	// deliberately do not fire it: the stopping path already cleans up
+	// after itself.
+	onExit func(pluginID string)
 
 	mu    sync.Mutex
 	procs map[string]*process
@@ -167,17 +230,18 @@ func NewManager(root string, loader Loader, secrets SecretStore) *Manager {
 	// Manager-owned lifecycle: capability calls and cleanups outlive
 	// individual requests, and Shutdown cancels the base context.
 	baseCtx, cancel := context.WithCancel(context.Background())
-	return &Manager{
-		loader:           loader,
-		root:             root,
-		secrets:          secrets,
-		log:              io.Discard,
-		baseCtx:          baseCtx,
-		cancel:           cancel,
-		handshakeTimeout: DefaultHandshakeTimeout,
-		callTimeout:      DefaultCallTimeout,
-		procs:            make(map[string]*process),
+	m := &Manager{
+		loader:  loader,
+		root:    root,
+		secrets: secrets,
+		log:     io.Discard,
+		baseCtx: baseCtx,
+		cancel:  cancel,
+		procs:   make(map[string]*process),
 	}
+	m.handshakeTimeout.Store(int64(DefaultHandshakeTimeout))
+	m.callTimeout.Store(int64(DefaultCallTimeout))
+	return m
 }
 
 // SetOpenURL wires the system-browser opener (nil-safe).
@@ -203,6 +267,47 @@ func (m *Manager) SetSessionImportHandler(h SessionImportHandler) {
 // SetWorkspaceHandler wires the host's current-workspace query.
 func (m *Manager) SetWorkspaceHandler(h WorkspaceHandler) {
 	m.workspace = h
+}
+
+// SetTelemetryHandler wires the OTLP export sink path.
+func (m *Manager) SetTelemetryHandler(h TelemetryHandler) {
+	m.telemetry = h
+}
+
+// SetProcessExitHandler wires the callback invoked once per capability
+// process that exits without the host asking it to. It lets the host
+// drop runtime-installed state, such as the plugin's export sink.
+func (m *Manager) SetProcessExitHandler(fn func(pluginID string)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onExit = fn
+}
+
+// SetTimeouts overrides the handshake and per-call budgets. Zero leaves
+// the corresponding default in place, and a negative value resets it.
+// Embedders that start capability plugins on a loaded or slow machine
+// (test runners, CI) raise them so a scheduling hiccup is not reported
+// as a broken plugin.
+func (m *Manager) SetTimeouts(handshake, call time.Duration) {
+	setBudget(&m.handshakeTimeout, handshake, DefaultHandshakeTimeout)
+	setBudget(&m.callTimeout, call, DefaultCallTimeout)
+}
+
+func setBudget(budget *atomic.Int64, value, fallback time.Duration) {
+	switch {
+	case value > 0:
+		budget.Store(int64(value))
+	case value < 0:
+		budget.Store(int64(fallback))
+	}
+}
+
+func (m *Manager) handshakeBudget() time.Duration {
+	return time.Duration(m.handshakeTimeout.Load())
+}
+
+func (m *Manager) callBudget() time.Duration {
+	return time.Duration(m.callTimeout.Load())
 }
 
 // SetEnv adds extra environment variables for plugin processes
@@ -336,7 +441,7 @@ func (m *Manager) get(ctx context.Context, id string) (*process, error) {
 		return p, nil
 	case <-p.done:
 		return nil, fmt.Errorf("runtime: plugin %q exited during handshake", id)
-	case <-time.After(m.handshakeTimeout):
+	case <-time.After(m.handshakeBudget()):
 		p.stop()
 		return nil, fmt.Errorf("runtime: plugin %q handshake timeout", id)
 	case <-ctx.Done():
@@ -388,7 +493,11 @@ func (m *Manager) start(id string, cap Capability, bin string) (*process, error)
 		if m.procs[id] == p {
 			delete(m.procs, id)
 		}
+		onExit := m.onExit
 		m.mu.Unlock()
+		if onExit != nil && !p.hostStopped.Load() {
+			onExit(id)
+		}
 	}()
 	return p, nil
 }
@@ -407,6 +516,9 @@ type process struct {
 	pending map[int]chan rpcResponse
 	ready   chan struct{}
 	done    chan struct{}
+	// hostStopped records that the host terminated this process itself,
+	// so its exit is cleanup, not a crash to react to.
+	hostStopped atomic.Bool
 }
 
 type rpcRequest struct {
@@ -464,7 +576,7 @@ func (p *process) call(ctx context.Context, method string, args any) (json.RawMe
 			return nil, &RPCCallError{Method: method, Message: resp.Error.Message}
 		}
 		return resp.Result, nil
-	case <-time.After(p.manager.callTimeout):
+	case <-time.After(p.manager.callBudget()):
 		p.drop(id)
 		return nil, fmt.Errorf("runtime: plugin %q call %s timeout", p.id, method)
 	case <-p.done:
@@ -643,6 +755,7 @@ func (p *process) stop() {
 		return
 	default:
 	}
+	p.hostStopped.Store(true)
 	telemetry.WarnErr(p.manager.baseCtx,
 		"plugin runtime: kill capability process failed", p.cmd.Process.Kill())
 	telemetry.WarnErr(p.manager.baseCtx,
@@ -666,12 +779,42 @@ func (m *Manager) handlePrimitive(p *process, req rpcRequest) (any, error) {
 		return m.handleSessionImportedSources(p, req)
 	case "workspace.current":
 		return m.handleWorkspaceCurrent()
+	case "telemetry.configure":
+		return m.handleTelemetryConfigure(p, req)
+	case "telemetry.disable":
+		return m.handleTelemetryDisable(p, req)
 	case "emit.event":
 		// Reserved: forward to the host event bus once wired.
 		return map[string]any{}, nil
 	default:
 		return nil, fmt.Errorf("runtime: unknown primitive %q", req.Method)
 	}
+}
+
+func (m *Manager) handleTelemetryConfigure(p *process, req rpcRequest) (any, error) {
+	if m.telemetry.Configure == nil {
+		return nil, errors.New("runtime: telemetry handler unavailable")
+	}
+	var args TelemetryExportRequest
+	decoder := json.NewDecoder(bytes.NewReader(req.Params))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&args); err != nil && !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("runtime: telemetry.configure args: %w", err)
+	}
+	if err := m.telemetry.Configure(p.id, args); err != nil {
+		return nil, err
+	}
+	return map[string]any{"configured": true}, nil
+}
+
+func (m *Manager) handleTelemetryDisable(p *process, req rpcRequest) (any, error) {
+	if m.telemetry.Disable == nil {
+		return nil, errors.New("runtime: telemetry handler unavailable")
+	}
+	if err := m.telemetry.Disable(p.id); err != nil {
+		return nil, err
+	}
+	return map[string]any{"configured": false}, nil
 }
 
 func (m *Manager) handleWorkspaceCurrent() (any, error) {

@@ -81,6 +81,12 @@ var AllowedPermissions = map[string]bool{
 	"skills:contribute":    true,
 	"mcp:contribute":       true,
 	"hooks:register":       true,
+	// telemetry:export lets a capability plugin point OTLP export at
+	// its own collector over telemetry.configure. It ships the whole
+	// app log stream (prompts included) to that collector, so the host
+	// records the active sink and drops it when the plugin is
+	// disabled or uninstalled.
+	"telemetry:export": true,
 }
 
 // CheckPermissions validates a manifest permission list.

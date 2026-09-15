@@ -3,6 +3,7 @@ package desktop
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -42,7 +43,7 @@ type Options struct {
 type Desktop struct {
 	core               *core.Core
 	notifications      *notifications.NotificationService
-	otelShutdown       func(context.Context) error
+	telemetryPipeline  *octelemetry.Pipeline
 	runtimeMetricsStop chan struct{}
 	runtimeMetricsDone chan struct{}
 
@@ -118,30 +119,34 @@ func New(opts Options) (*Desktop, error) {
 		})
 	})
 	c.SetWorkDir(c.InitialWorkDir(opts.WorkDir))
-	shutdown, err := initTelemetry(opts.DataDir)
+	pipeline, err := initTelemetry(opts.DataDir)
 	if err != nil {
 		// Telemetry is best-effort for the desktop app: a failed
 		// pipeline must not block the window.
 		fmt.Fprintf(os.Stderr, "opencraft: telemetry: %v\n", err)
-		shutdown = nil
+		pipeline = nil
 	}
+	// The plugin telemetry handler is wired by the composition root and
+	// resolves this pipeline per call, so it can be attached here.
+	c.Telemetry = pipeline
 	d := &Desktop{
 		core: c,
 		// Windows toast attribution keys off application.Options.Name
 		// ("OpenCraft"); the NSIS installer stamps the same AppUserModelID
 		// onto the shortcuts it creates. Keep main.go's Options.Name and
 		// build/config.yml's productName in sync with that value.
-		notifications: notifications.New(),
-		otelShutdown:  shutdown,
+		notifications:     notifications.New(),
+		telemetryPipeline: pipeline,
 	}
 	c.Shell.SetNotificationSink(d.handleDesktopNotification)
 	return d, nil
 }
 
 // initTelemetry wires the OTel pipelines (rotating log file under
-// ~/.opencraft/logs plus optional OTLP export) and returns the
-// flush/shutdown function.
-func initTelemetry(dataDir string) (func(context.Context) error, error) {
+// ~/.opencraft/logs plus optional OTLP export) and returns their owner.
+// The pipeline keeps the file sink active when a capability plugin
+// swaps the export target at runtime.
+func initTelemetry(dataDir string) (*octelemetry.Pipeline, error) {
 	logPath := filepath.Join(dataDir, "logs", "opencraft.log")
 	otelEndpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 	otelInsecure := false
@@ -155,11 +160,53 @@ func initTelemetry(dataDir string) (func(context.Context) error, error) {
 			otelInsecure = parsed
 		}
 	}
-	return octelemetry.InitOtel(context.Background(), octelemetry.TelemetryOptions{
+	return octelemetry.Start(context.Background(), octelemetry.TelemetryOptions{
 		OTLPEndpoint: otelEndpoint,
 		OTLPInsecure: otelInsecure,
-		LogFile:      logPath,
+		// Header values are credentials for the operator-configured
+		// collector; they are never logged or persisted.
+		OTLPHeaders: otelHeadersFromEnv(),
+		LogFile:     logPath,
 	})
+}
+
+// otelHeadersFromEnv reads the standard OTEL_EXPORTER_OTLP_HEADERS
+// variable ("key=value,key2=value2"). Values may be URL-encoded, which
+// is how the OTel specification transports characters like "," or "="
+// inside a value.
+func otelHeadersFromEnv() map[string]string {
+	raw := strings.TrimSpace(os.Getenv("OTEL_EXPORTER_OTLP_HEADERS"))
+	if raw == "" {
+		return nil
+	}
+	headers := map[string]string{}
+	for _, entry := range strings.Split(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		name, value, ok := strings.Cut(entry, "=")
+		name = strings.TrimSpace(name)
+		if !ok || name == "" {
+			fmt.Fprintf(os.Stderr,
+				"opencraft: telemetry: invalid OTEL_EXPORTER_OTLP_HEADERS entry %q\n",
+				entry)
+			continue
+		}
+		// Percent-decoding only: url.QueryUnescape would also turn "+"
+		// into a space, which corrupts base64/Bearer credentials. This
+		// matches the OTel Go SDK's own header parsing.
+		if decoded, err := url.PathUnescape(strings.TrimSpace(value)); err == nil {
+			value = decoded
+		} else {
+			value = strings.TrimSpace(value)
+		}
+		headers[name] = value
+	}
+	if len(headers) == 0 {
+		return nil
+	}
+	return headers
 }
 
 // Startup wires the application context into the core shell.
@@ -270,13 +317,13 @@ func (d *Desktop) Shutdown(ctx context.Context) {
 	}
 	d.core.Runtime.Close()
 	d.core.Plugin.Close()
-	if d.otelShutdown != nil {
+	if d.telemetryPipeline != nil {
 		// The Wails shutdown context may already be canceled by the
 		// time this runs; derive the flush deadline from a fresh
 		// context so telemetry still gets its full drain window.
 		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := d.otelShutdown(flushCtx); err != nil {
+		if err := d.telemetryPipeline.Shutdown(flushCtx); err != nil {
 			telemetry.WarnErr(context.Background(),
 				"desktop: telemetry shutdown failed", err)
 		}

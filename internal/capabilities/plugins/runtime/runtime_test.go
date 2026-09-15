@@ -64,6 +64,15 @@ func oversizedPlugin() {
 	os.Exit(0)
 }
 
+// crashingPlugin handshakes and then exits on its own, simulating a
+// capability process that died after announcing itself.
+func crashingPlugin() {
+	_, _ = fmt.Fprintln(os.Stdout,
+		`{"jsonrpc":"2.0","id":1,"method":"handshake","params":{"id":"test-plugin","protocol":1}}`)
+	time.Sleep(50 * time.Millisecond)
+	os.Exit(1)
+}
+
 func TestHelperProcess(t *testing.T) {
 	switch os.Getenv("GO_WANT_HELPER_PROCESS") {
 	case "1":
@@ -73,6 +82,8 @@ func TestHelperProcess(t *testing.T) {
 		malformedPlugin()
 	case "3":
 		oversizedPlugin()
+	case "4":
+		crashingPlugin()
 	}
 }
 
@@ -117,7 +128,7 @@ func newTestManager(t *testing.T) (*Manager, *memSecrets) {
 	}
 	m := NewManager(t.TempDir(), loader, sec)
 	m.SetEnv([]string{"GO_WANT_HELPER_PROCESS=1"})
-	m.callTimeout = 2 * time.Second
+	m.SetTimeouts(0, 2*time.Second)
 	return m, sec
 }
 
@@ -130,8 +141,7 @@ func newTestManagerWithHelper(t *testing.T, mode string) (*Manager, *memSecrets)
 	}
 	m := NewManager(t.TempDir(), loader, sec)
 	m.SetEnv([]string{"GO_WANT_HELPER_PROCESS=" + mode})
-	m.handshakeTimeout = 2 * time.Second
-	m.callTimeout = 2 * time.Second
+	m.SetTimeouts(2*time.Second, 2*time.Second)
 	return m, sec
 }
 
@@ -267,6 +277,112 @@ func TestInferencePrimitivesForwardPluginAndInstanceIDs(t *testing.T) {
 	}
 	if removedPlugin != "plug" || removedID != "plug-embed" {
 		t.Fatalf("remove forwarded %q/%q", removedPlugin, removedID)
+	}
+}
+
+func TestTelemetryPrimitives(t *testing.T) {
+	m, _ := newTestManager(t)
+	var calls []string
+	m.SetTelemetryHandler(TelemetryHandler{
+		Configure: func(pluginID string, req TelemetryExportRequest) error {
+			calls = append(calls, pluginID+":"+req.Endpoint+":"+
+				req.Headers["Authorization"])
+			return nil
+		},
+		Disable: func(pluginID string) error {
+			calls = append(calls, "disable:"+pluginID)
+			return nil
+		},
+	})
+
+	res, err := m.handleTelemetryConfigure(&process{id: "exporter"}, rpcRequest{
+		Method: "telemetry.configure",
+		Params: json.RawMessage(
+			`{"endpoint":"collector.example:4318","headers":{"Authorization":"Bearer t"}}`),
+	})
+	if err != nil {
+		t.Fatalf("handleTelemetryConfigure: %v", err)
+	}
+	if len(calls) != 1 ||
+		calls[0] != "exporter:collector.example:4318:Bearer t" {
+		t.Fatalf("configure calls = %q", calls)
+	}
+	data, err := json.Marshal(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"configured":true`) {
+		t.Fatalf("unexpected result: %s", data)
+	}
+
+	// Unknown fields are rejected so a mistyped plugin argument fails
+	// loudly instead of silently configuring a different sink.
+	if _, err := m.handleTelemetryConfigure(&process{id: "exporter"}, rpcRequest{
+		Method: "telemetry.configure",
+		Params: json.RawMessage(
+			`{"endpoint":"collector.example:4318","insecure":true,"typo":1}`),
+	}); err == nil || !strings.Contains(err.Error(), "telemetry.configure args") {
+		t.Fatalf("strict decode error = %v", err)
+	}
+
+	if _, err := m.handleTelemetryDisable(&process{id: "exporter"}, rpcRequest{
+		Method: "telemetry.disable",
+	}); err != nil {
+		t.Fatalf("handleTelemetryDisable: %v", err)
+	}
+	if len(calls) != 2 || calls[1] != "disable:exporter" {
+		t.Fatalf("calls after disable = %q", calls)
+	}
+}
+
+func TestTelemetryPrimitiveWithoutHandler(t *testing.T) {
+	m, _ := newTestManager(t)
+	if _, err := m.handleTelemetryConfigure(&process{id: "exporter"}, rpcRequest{
+		Method: "telemetry.configure",
+		Params: json.RawMessage(`{"endpoint":"collector.example:4318"}`),
+	}); err == nil {
+		t.Fatal("expected an error when no telemetry handler is wired")
+	}
+	if _, err := m.handleTelemetryDisable(&process{id: "exporter"}, rpcRequest{
+		Method: "telemetry.disable",
+	}); err == nil {
+		t.Fatal("expected an error when no telemetry handler is wired")
+	}
+}
+
+func TestProcessExitHandlerFiresOnCrash(t *testing.T) {
+	m, _ := newTestManagerWithHelper(t, "4")
+	exits := make(chan string, 1)
+	m.SetProcessExitHandler(func(pluginID string) { exits <- pluginID })
+
+	// The helper handshakes and then dies on its own; the invoke result
+	// is irrelevant, only the exit notification matters.
+	_, _ = m.Invoke(context.Background(), "test-plugin", "auth.begin", nil)
+
+	select {
+	case id := <-exits:
+		if id != "test-plugin" {
+			t.Fatalf("exit handler got %q", id)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("process exit handler did not fire for a crashed plugin")
+	}
+}
+
+func TestProcessExitHandlerSkipsHostStop(t *testing.T) {
+	m, _ := newTestManager(t)
+	exits := make(chan string, 1)
+	m.SetProcessExitHandler(func(pluginID string) { exits <- pluginID })
+
+	if _, err := m.Invoke(context.Background(), "test-plugin", "auth.poll", nil); err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	m.Stop("test-plugin")
+
+	select {
+	case id := <-exits:
+		t.Fatalf("host stop reported as an unexpected exit: %q", id)
+	case <-time.After(300 * time.Millisecond):
 	}
 }
 
