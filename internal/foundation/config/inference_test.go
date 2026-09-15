@@ -255,6 +255,55 @@ func TestInferenceYAMLAzure(t *testing.T) {
 }
 
 // TestInferenceYAMLAdvancedRoundTrip pins the advanced provider knobs
+// TestInferenceYAMLNestedDriverFieldWithOneKey pins the encoding of a
+// composite driver field whose object carries exactly one key. Deciding
+// "scalar or nested" from the marshaled line count inlined it as
+// "video: api: v2", which is not a YAML mapping, so the whole user layer
+// failed to parse on the next read. MiniMax's video models declare
+// exactly this shape.
+func TestInferenceYAMLNestedDriverFieldWithOneKey(t *testing.T) {
+	cfg := InferenceConfig{Instances: []Instance{{
+		StableID:  "inst-minimax",
+		Type:      "minimax",
+		KeySource: KeyEnv,
+		Enabled:   true,
+		Models: []Model{{
+			Name: "MiniMax-H3",
+			Kind: "video",
+			Capabilities: model.ModelCapabilities{
+				Outputs: []message.PartKind{message.PartVideo},
+			},
+			DriverFields: map[string]any{
+				"video": map[string]any{"api": "v2"},
+			},
+		}},
+	}}}
+	data, err := cfg.InferenceYAML()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(
+		string(data), "            video:\n              api: v2\n",
+	) {
+		t.Fatalf("composite driver field is not nested:\n%s", data)
+	}
+	dir := t.TempDir()
+	if err := WriteInference(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadInference(dir)
+	if err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	video, ok := loaded.Instances[0].Models[0].DriverFields["video"].(map[string]any)
+	if !ok || video["api"] != "v2" {
+		t.Fatalf(
+			"nested driver fields = %+v",
+			loaded.Instances[0].Models[0].DriverFields,
+		)
+	}
+}
+
 // TestInferenceYAMLPluginDeclaredProvider covers a provider that is not
 // TestInferenceYAMLDriverFactsRoundTrip pins the declaration leaves the
 // TestInferenceYAMLDropsRetiredCatalogKey: core v0.4.0 rejects the
