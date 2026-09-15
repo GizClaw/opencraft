@@ -158,6 +158,12 @@ export function PetBehaviorPanel() {
             </span>
           </div>
           <div className="flex justify-between text-dim">
+            <span>{t('config.petDiagHover')}</span>
+            <span className={debug.hovered ? 'text-accent' : 'text-dim'}>
+              {debug.hovered ? '✓' : '—'}
+            </span>
+          </div>
+          <div className="flex justify-between text-dim">
             <span>{t('config.petDiagPokes')}</span>
             <span className="font-mono text-fg">{debug.stats.poke_count}</span>
           </div>

@@ -469,35 +469,6 @@ async function gestureCalls(page: Page): Promise<string[]> {
     .map((call) => call.method);
 }
 
-test('reports when the pointer is on the character', async ({ page }) => {
-  await mountPet(page);
-
-  const canvas = await page.locator('.pet-canvas').boundingBox();
-  const stage = await surface(page).boundingBox();
-  expect(canvas).not.toBeNull();
-  expect(stage).not.toBeNull();
-  const hoverCalls = async () =>
-    (await petCalls(page)).filter((call) => call.method === 'Hover');
-
-  // The middle of the ring counts as the character (it is a hole in the
-  // drawn shape, not outside it); the empty stage margin does not.
-  await page.mouse.move(
-    (canvas?.x ?? 0) + (canvas?.width ?? 0) / 2,
-    (canvas?.y ?? 0) + (canvas?.height ?? 0) / 2,
-  );
-  await expect.poll(async () => (await hoverCalls()).length).toBeGreaterThan(0);
-  expect((await hoverCalls()).at(-1)?.args).toEqual([true]);
-
-  await page.mouse.move((stage?.x ?? 0) + 4, (stage?.y ?? 0) + 4);
-  await expect
-    .poll(async () => (await hoverCalls()).at(-1)?.args?.[0])
-    .toBe(false);
-  expect((await hoverCalls()).map((call) => call.args[0])).toEqual([
-    true,
-    false,
-  ]);
-});
-
 /** Pet calls that mean the user touched the stage, in call order. */
 async function petInteractions(page: Page): Promise<PetCall[]> {
   const touched = new Set(['Poke', 'Activate', 'SetPosition', 'MoveBy']);

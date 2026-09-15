@@ -73,6 +73,8 @@ export interface PetMindDebug {
   disposition: string;
   phase: PetPhase;
   walking: boolean;
+  /** Whether the polled pointer is on the character. */
+  hovered: boolean;
 }
 
 export function toPetView(payload: PetStatePayload | null): PetView {

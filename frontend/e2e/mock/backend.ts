@@ -287,7 +287,6 @@ export function mockBackend(cfg?: MockConfig) {
       Activities: emptyList,
       BeginDrag: async () => recordPet('BeginDrag', []),
       EndDrag: async () => recordPet('EndDrag', []),
-      Hover: async (inside: boolean) => recordPet('Hover', [inside]),
       Diagnostics: async () =>
         config.petDiagnostics ?? {
           drives: { attention: 60, energy: 40, comfort: 50 },
@@ -296,6 +295,7 @@ export function mockBackend(cfg?: MockConfig) {
           disposition: 'roam',
           phase: 'idle',
           walking: false,
+          hovered: false,
         },
       ListPacks: async () => config.petPacks ?? [],
       MoveBy: async (dx: number, dy: number) => recordPet('MoveBy', [dx, dy]),

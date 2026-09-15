@@ -138,13 +138,6 @@ func (b *Pet) EndDrag() {
 	b.core.Shell.EndPetDrag()
 }
 
-// Hover reports pointer enter/leave on the drawn character. The first
-// hover of a session greets, later ones get a glance; it never wakes a
-// sleeping pet.
-func (b *Pet) Hover(inside bool) {
-	b.core.Shell.HoverPet(inside)
-}
-
 // Diagnostics returns the pet mind/rover snapshot for the settings
 // diagnostics panel.
 func (b *Pet) Diagnostics() pet.MindDebug {
