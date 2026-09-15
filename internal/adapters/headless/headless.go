@@ -109,8 +109,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	}
 	contextID := run.ContextID()
 	runID := run.RunID()
-	rec.runID = runID
-	rec.conversID = contextID
+	rec.identify(runID, contextID)
 	rec.emit(rollout.Event{
 		Type:           rollout.TypeTurnStarted,
 		ConversationID: contextID,
@@ -196,6 +195,17 @@ func (r *streamRecorder) record(
 		}
 	}
 	return nil
+}
+
+// identify stamps the run identity every emitted event is tagged with.
+// The stream sink can deliver deltas before StartRun returns, and record
+// reads these fields under the same lock, so the write has to take it
+// too: stamping them directly raced the first deltas of a run.
+func (r *streamRecorder) identify(runID, contextID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.runID = runID
+	r.conversID = contextID
 }
 
 func (r *streamRecorder) emit(ev rollout.Event) {
