@@ -153,6 +153,9 @@ interface UsageChartProps {
   startMs: number;
   endMs: number;
   rangeLabel: string;
+  // allModels marks the aggregate view: with no model selected the
+  // empty state talks about the range instead of one model.
+  allModels?: boolean;
 }
 
 interface ChartRow extends UsagePoint {
@@ -166,6 +169,7 @@ export function UsageChart({
   startMs,
   endMs,
   rangeLabel,
+  allModels = false,
 }: UsageChartProps) {
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage?.startsWith('zh') ? 'zh-CN' : 'en-US';
@@ -194,10 +198,30 @@ export function UsageChart({
     [locale],
   );
 
-  if (startMs <= 0 || endMs <= 0 || filled.length === 0) {
+  // fillUsageSeries zero-fills the window, so an all-empty window is
+  // indistinguishable from "no rows at all" without this check. Saying
+  // so beats drawing an empty plot with no explanation.
+  const hasData = useMemo(
+    () =>
+      filled.some(
+        (p) =>
+          p.input_tokens > 0 ||
+          p.output_tokens > 0 ||
+          p.cache_read_tokens > 0 ||
+          p.cache_write_tokens > 0 ||
+          p.reasoning_tokens > 0,
+      ),
+    [filled],
+  );
+
+  if (startMs <= 0 || endMs <= 0 || filled.length === 0 || !hasData) {
     return (
       <div className="grid h-[18rem] place-items-center rounded-xl border border-edge/70 bg-panel/70 text-sm text-dim backdrop-blur-sm">
-        {t('config.usageSeriesEmpty')}
+        {t(
+          allModels
+            ? 'config.usageSeriesEmptyRange'
+            : 'config.usageSeriesEmpty',
+        )}
       </div>
     );
   }

@@ -423,6 +423,10 @@ export function ConfigPage() {
   const [usageRows, setUsageRows] = useState<ModelUsageStat[]>([]);
   const [usageSessions, setUsageSessions] = useState(0);
   const [usageError, setUsageError] = useState('');
+  // The trend starts on the all-models aggregate ('' selects every
+  // model): a model renamed in settings keeps its old usage rows under
+  // the previous name, so defaulting to the most-used name can plot a
+  // model the user no longer runs.
   const [usageModel, setUsageModel] = useState('');
   const [usageGranularity, setUsageGranularity] = useState<'hour' | 'day'>(
     'hour',
@@ -606,13 +610,6 @@ export function ConfigPage() {
       .catch((err) => setUsageError(String(err)));
   }, [tab]);
 
-  // Default the chart to the most-used model once the summary loads.
-  useEffect(() => {
-    if (!usageModel && usageRows.length > 0) {
-      setUsageModel(usageRows[0].model);
-    }
-  }, [usageRows, usageModel]);
-
   // Resolve the selected preset into a live [start, end) window the
   // same way cc-switch does: "today" and multi-day presets start at
   // local midnight, "1d" is the rolling 24h, and the end is always now.
@@ -643,7 +640,7 @@ export function ConfigPage() {
   // end, and the same aligned window drives the backend query and the
   // chart's zero-fill so the two can never disagree.
   useEffect(() => {
-    if (tab !== 'usage' || !usageModel) {
+    if (tab !== 'usage') {
       setUsageSeries([]);
       return;
     }
@@ -2245,7 +2242,16 @@ export function ConfigPage() {
                     <div className="flex flex-wrap items-center gap-2">
                       <UsageModelSelect
                         value={usageModel}
-                        options={usageRows.map((r) => r.model)}
+                        options={[
+                          {
+                            value: '',
+                            label: t('config.usageAllModels'),
+                          },
+                          ...usageRows.map((r) => ({
+                            value: r.model,
+                            label: r.model,
+                          })),
+                        ]}
                         onChange={setUsageModel}
                         title={t('config.usageModel')}
                       />
@@ -2292,6 +2298,7 @@ export function ConfigPage() {
                       startMs={usageStartMs}
                       endMs={usageEndMs}
                       rangeLabel={usageRangeLabel()}
+                      allModels={usageModel === ''}
                     />
                     <div className="overflow-x-auto rounded-xl border border-edge/60 bg-panel/60 shadow-sm backdrop-blur-sm">
                       <table className="w-full text-xs">

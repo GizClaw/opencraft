@@ -244,13 +244,14 @@ type Point struct {
 	ReasoningTokens  int64
 }
 
-// Series returns one model's usage bucketed by hour or day, oldest
-// first. Hour buckets keep the stored UTC hour string; day buckets are
-// local calendar days computed with utcOffsetMinutes, so boundaries
-// match the viewer's timezone. start and end bound the recorded UTC
-// hours ([start, end)); rows are whole UTC hours, and a row is included
-// when its hour starts inside the window. Empty strings leave that
-// side unbounded.
+// Series returns usage bucketed by hour or day, oldest first. An empty
+// model aggregates every model (the dashboard's all-models trend);
+// otherwise only that model's rows are summed. Hour buckets keep the
+// stored UTC hour string; day buckets are local calendar days computed
+// with utcOffsetMinutes, so boundaries match the viewer's timezone.
+// start and end bound the recorded UTC hours ([start, end)); rows are
+// whole UTC hours, and a row is included when its hour starts inside
+// the window. Empty strings leave that side unbounded.
 func (s *Store) Series(
 	ctx context.Context,
 	model string,
@@ -264,12 +265,12 @@ func (s *Store) Series(
 			SUM(input_tokens), SUM(output_tokens), SUM(cache_read_tokens),
 			SUM(cache_write_tokens), SUM(reasoning_tokens)
 		FROM model_usage_hourly
-		WHERE model = ?
+		WHERE (? = '' OR model = ?)
 			AND (? = '' OR hour >= ?)
 			AND (? = '' OR hour < ?)
 		GROUP BY hour
 		ORDER BY hour
-	`, model, start, start, end, end)
+	`, model, model, start, start, end, end)
 	if err != nil {
 		return nil, fmt.Errorf("usage: series: %w", err)
 	}

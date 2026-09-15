@@ -122,6 +122,47 @@ const apiMock = vi.hoisted(() => {
       ],
     })),
     saveInstances: vi.fn(async () => undefined),
+    modelUsage: vi.fn(async () => [
+      {
+        model: 'deepseek-v4-flash',
+        total_tokens: 161989893,
+        input_tokens: 160206252,
+        output_tokens: 1783641,
+        cache_read_tokens: 156851328,
+        cache_write_tokens: 0,
+        reasoning_tokens: 1251298,
+        latency_ms: 14119381,
+        calls: 1910,
+        workspaces: 3,
+        sessions: 13,
+        updated_at: '2026-09-10T06:21:19Z',
+      },
+      {
+        model: 'deepseek-flash',
+        total_tokens: 2392488,
+        input_tokens: 2358509,
+        output_tokens: 33979,
+        cache_read_tokens: 2292608,
+        cache_write_tokens: 0,
+        reasoning_tokens: 24114,
+        latency_ms: 169731,
+        calls: 37,
+        workspaces: 1,
+        sessions: 2,
+        updated_at: '2026-09-15T03:47:36Z',
+      },
+    ]),
+    modelUsageSessionCount: vi.fn(async () => 14),
+    modelUsageSeries: vi.fn(async () => [
+      {
+        time: '2026-09-15T03:00:00Z',
+        input_tokens: 2349504,
+        output_tokens: 33326,
+        cache_read_tokens: 2283904,
+        cache_write_tokens: 0,
+        reasoning_tokens: 23799,
+      },
+    ]),
   };
   return new Proxy(known, {
     get: (target, prop) =>
@@ -405,5 +446,41 @@ describe('ConfigPage inference', () => {
       lifecycle: undefined,
       driver_fields: undefined,
     });
+  });
+});
+
+describe('ConfigPage usage', () => {
+  it('defaults the trend to the all-models aggregate', async () => {
+    useStore.setState({ configTab: 'usage' });
+    render(<ConfigPage />);
+
+    const picker = await screen.findByRole('button', { name: 'All models' });
+    expect(picker).toBeInTheDocument();
+
+    // The empty model string is what the backend aggregates on, so the
+    // default request must not name a model.
+    await waitFor(() =>
+      expect(
+        (apiMock.modelUsageSeries as ReturnType<typeof vi.fn>).mock.calls[0],
+      ).toEqual([
+        '',
+        'day',
+        expect.any(Number),
+        expect.any(String),
+        expect.any(String),
+      ]),
+    );
+  });
+
+  it('explains an empty range instead of drawing a blank plot', async () => {
+    useStore.setState({ configTab: 'usage' });
+    (
+      apiMock.modelUsageSeries as ReturnType<typeof vi.fn>
+    ).mockResolvedValueOnce([]);
+    render(<ConfigPage />);
+
+    expect(
+      await screen.findByText('No usage recorded in this range.'),
+    ).toBeInTheDocument();
   });
 });
