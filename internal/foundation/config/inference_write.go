@@ -434,45 +434,47 @@ func WriteInferenceOwned(
 // returns the next state; returning nil owners preserves the current
 // ownership sidecar (reconciled against the next rows). An empty next
 // config removes the inference resources instead of writing an invalid
-// empty document.
+// empty document. The returned flag reports whether the write reached
+// disk: producers that re-submit an unchanged row use it to skip the
+// follow-up work (a runtime rebuild) that a no-op write cannot justify.
 func UpdateInferenceState(
 	configDir string,
 	update func(
 		cfg InferenceConfig,
 		owners map[string]string,
 	) (InferenceConfig, map[string]string, bool, error),
-) error {
+) (bool, error) {
 	inferenceStateMu.Lock()
 	defer inferenceStateMu.Unlock()
 	cfg, err := LoadInference(configDir)
 	if err != nil {
-		return err
+		return false, err
 	}
 	owners, err := loadProviderOwnersLocked(configDir)
 	if err != nil {
-		return err
+		return false, err
 	}
 	adoptLegacyProviderOwners(cfg, owners)
 	nextCfg, nextOwners, changed, err := update(cfg, owners)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !changed {
-		return nil
+		return false, nil
 	}
 	if len(nextCfg.Instances) == 0 {
 		if err := removeInferenceConfigLocked(configDir); err != nil {
-			return err
+			return true, err
 		}
-		return saveProviderOwnersLocked(configDir, map[string]string{})
+		return true, saveProviderOwnersLocked(configDir, map[string]string{})
 	}
 	if err := writeInferenceLocked(configDir, nextCfg); err != nil {
-		return err
+		return true, err
 	}
 	if nextOwners == nil {
 		nextOwners = owners
 	}
-	return saveProviderOwnersLocked(
+	return true, saveProviderOwnersLocked(
 		configDir,
 		reconcileProviderOwners(nextOwners, nextCfg.Instances),
 	)
@@ -531,7 +533,7 @@ func MigrateUserInferenceConfig(configDir string) (changed bool, err error) {
 	if len(compat.ShapeNeedsRewrite(data)) == 0 {
 		return false, nil
 	}
-	if err := UpdateInferenceState(configDir, func(
+	if _, err := UpdateInferenceState(configDir, func(
 		cfg InferenceConfig,
 		owners map[string]string,
 	) (InferenceConfig, map[string]string, bool, error) {

@@ -137,7 +137,7 @@ func TestLegacyPluginInstanceAdoptedAndRemovableAfterUpgrade(t *testing.T) {
 	// The owning plugin (id == instance id under the old contract) may
 	// then remove the stale row during its post-upgrade sync.
 	removed := false
-	err = UpdateInferenceState(
+	_, err = UpdateInferenceState(
 		dir,
 		func(
 			cfg InferenceConfig,
@@ -215,7 +215,7 @@ func TestUpdateInferenceStateSerializesLoadModifyWrite(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			errs <- UpdateInferenceState(
+			_, err := UpdateInferenceState(
 				dir,
 				func(
 					cfg InferenceConfig,
@@ -237,6 +237,7 @@ func TestUpdateInferenceStateSerializesLoadModifyWrite(t *testing.T) {
 					return cfg, owners, true, nil
 				},
 			)
+			errs <- err
 		}()
 	}
 	wg.Wait()
