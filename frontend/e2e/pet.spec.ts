@@ -64,6 +64,13 @@ async function mountPet(
   pack: unknown = BUILTIN_PACK,
   ready = true,
 ): Promise<void> {
+  // The pet window is a fixed 168px square stage (assistantPetWidth and
+  // assistantPetHeight in internal/adapters/desktop/pet.go). The surface
+  // fills whatever window it is given, so the spec has to give it the
+  // real one: at the default 1280x720 viewport every layout assertion
+  // about the bubble band, the centred canvas and the tool pill would be
+  // measuring a window that never exists on a desktop.
+  await page.setViewportSize({ width: 168, height: 168 });
   await page.route(RIVE_CHUNK, (route) =>
     route.fulfill({
       status: 200,
@@ -335,6 +342,25 @@ test('degrades visibly when the pack no longer matches the asset', async ({
   expect((await riveLog(page)).writes.map((write) => write.path)).toEqual([
     'phase',
   ]);
+
+  // While the pack is degraded the badge is the only thing on screen,
+  // so it is also the only way to drag the window: it has to accept a
+  // press even though it sits outside the (empty) drawing surface.
+  const badge = await marker.boundingBox();
+  expect(badge).not.toBeNull();
+  const grabX = (badge?.x ?? 0) + (badge?.width ?? 0) / 2;
+  const grabY = (badge?.y ?? 0) + (badge?.height ?? 0) / 2;
+  await page.mouse.move(grabX, grabY);
+  await page.mouse.down();
+  await page.waitForTimeout(50);
+  await page.mouse.move(grabX + 30, grabY + 20, { steps: 4 });
+  await page.waitForTimeout(100);
+  await page.mouse.up();
+
+  const drag = (await petCalls(page)).filter(
+    (call) => call.method === 'SetPosition',
+  );
+  expect(drag.at(-1)?.args).toEqual([130, 120]);
 });
 
 test('degrades visibly when the asset never arrives', async ({ page }) => {
@@ -426,6 +452,364 @@ test('drags the window and pokes on a click', async ({ page }) => {
     { method: 'Poke', args: [] },
     { method: 'Activate', args: [] },
   ]);
+});
+
+/** Pet calls that mean the user touched the stage, in call order. */
+async function petInteractions(page: Page): Promise<PetCall[]> {
+  const touched = new Set(['Poke', 'Activate', 'SetPosition', 'MoveBy']);
+  return (await petCalls(page)).filter((call) => touched.has(call.method));
+}
+
+/** One press-and-release at a viewport point. */
+async function pressAt(page: Page, x: number, y: number): Promise<void> {
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.up();
+}
+
+interface CharacterPixels {
+  /** Middle of the character's top band: solidly painted. */
+  painted: { x: number; y: number };
+  /** A transparent point far from any painted pixel, or null when the
+   *  character covers the whole surface. */
+  empty: { x: number; y: number } | null;
+  /** Centre of the drawing surface in client coordinates. */
+  centre: { x: number; y: number };
+}
+
+/**
+ * Measures the character the real runtime actually painted, in client
+ * coordinates, so the spec never hard-codes a pose or a silhouette: the
+ * press targets are derived from the pixels that are on screen.
+ */
+async function measureCharacter(page: Page): Promise<CharacterPixels | null> {
+  return page.evaluate(() => {
+    const canvas = document.querySelector(
+      '.pet-canvas',
+    ) as HTMLCanvasElement | null;
+    const context = canvas?.getContext('2d');
+    if (!canvas || !context || canvas.width === 0 || canvas.height === 0) {
+      return null;
+    }
+    const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
+    const alphaAt = (x: number, y: number) =>
+      data[(y * canvas.width + x) * 4 + 3] ?? 0;
+    const painted = (x: number, y: number) => alphaAt(x, y) > 24;
+    const rect = canvas.getBoundingClientRect();
+    const toClient = (x: number, y: number) => ({
+      x: rect.left + (x * rect.width) / canvas.width,
+      y: rect.top + (y * rect.height) / canvas.height,
+    });
+
+    const centreX = Math.round(canvas.width / 2);
+    let paintedPoint: { x: number; y: number } | null = null;
+    let runStart = -1;
+    for (let y = 0; y <= canvas.height; y++) {
+      const solid = y < canvas.height && painted(centreX, y);
+      if (solid && runStart < 0) runStart = y;
+      if (!solid && runStart >= 0) {
+        // Middle of the first painted run down the centre line.
+        paintedPoint = { x: centreX, y: Math.round((runStart + y - 1) / 2) };
+        break;
+      }
+    }
+
+    const clear = 6;
+    let emptyPoint: { x: number; y: number } | null = null;
+    for (let y = clear; y < canvas.height - clear && !emptyPoint; y += 2) {
+      for (let x = clear; x < canvas.width - clear; x += 2) {
+        let surrounded = true;
+        for (let dy = -clear; dy <= clear && surrounded; dy++) {
+          for (let dx = -clear; dx <= clear; dx++) {
+            if (painted(x + dx, y + dy)) {
+              surrounded = false;
+              break;
+            }
+          }
+        }
+        if (surrounded) {
+          emptyPoint = { x, y };
+          break;
+        }
+      }
+    }
+
+    if (!paintedPoint) return null;
+    return {
+      painted: toClient(paintedPoint.x, paintedPoint.y),
+      empty: emptyPoint ? toClient(emptyPoint.x, emptyPoint.y) : null,
+      centre: toClient(canvas.width / 2, canvas.height / 2),
+    };
+  });
+}
+
+test('ignores presses that miss the drawn character', async ({ page }) => {
+  await mountPet(page);
+
+  const stage = await surface(page).boundingBox();
+  const canvas = await page.locator('.pet-canvas').boundingBox();
+  expect(stage).not.toBeNull();
+  expect(canvas).not.toBeNull();
+
+  // First the transparent margin of the stage, then a transparent
+  // corner of the drawing surface itself: the window keeps capturing
+  // those pixels, but they are not the character.
+  await pressAt(page, (stage?.x ?? 0) + 4, (stage?.y ?? 0) + 4);
+  await pressAt(page, (canvas?.x ?? 0) + 3, (canvas?.y ?? 0) + 3);
+  expect(await petInteractions(page)).toEqual([]);
+
+  // The character itself still answers a press.
+  await pressAt(
+    page,
+    (canvas?.x ?? 0) + (canvas?.width ?? 0) / 2,
+    (canvas?.y ?? 0) + (canvas?.height ?? 0) / 2,
+  );
+  expect(await petInteractions(page)).toEqual([
+    { method: 'Poke', args: [] },
+    { method: 'Activate', args: [] },
+  ]);
+
+  // The middle of the ring is a hole in the silhouette, and the most
+  // natural place to grab the pet: it counts as the character.
+  await pressAt(
+    page,
+    (canvas?.x ?? 0) + (canvas?.width ?? 0) / 2,
+    (canvas?.y ?? 0) + (canvas?.height ?? 0) / 2,
+  );
+  expect(await petInteractions(page)).toEqual([
+    { method: 'Poke', args: [] },
+    { method: 'Activate', args: [] },
+    { method: 'Poke', args: [] },
+    { method: 'Activate', args: [] },
+  ]);
+});
+
+test('reads the real Rive drawing surface for its hit test', async ({
+  page,
+}) => {
+  // Every other case replaces the runtime with a drawing stub, which
+  // would hide a pixel probe that silently fell back to "the whole
+  // canvas": this one mounts the shipped asset through the real
+  // @rive-app/canvas runtime and presses pixels it measures on screen —
+  // a painted one, an empty one, and the hole in the middle — instead of
+  // coordinates baked into the current character's pose.
+  await page.addInitScript(
+    mockBackend as never,
+    {
+      petPacks: [BUILTIN_PACK],
+      petAsset: BUILTIN_ASSET_BASE64,
+    } as never,
+  );
+  await page.setViewportSize({ width: 168, height: 168 });
+  await page.goto('/?surface=pet');
+  // The real runtime has to fetch and start wasm before it paints
+  // anything, which is slower and less predictable than the stub mount;
+  // wait for pixels rather than for the mount flag.
+  await expect
+    .poll(async () => (await measureCharacter(page)) !== null, {
+      message: 'the real Rive runtime never painted the character',
+      timeout: 20_000,
+    })
+    .toBe(true);
+  const measured = await measureCharacter(page);
+  expect(measured).not.toBeNull();
+
+  if (measured?.empty) {
+    await pressAt(page, measured.empty.x, measured.empty.y);
+    expect(await petInteractions(page)).toEqual([]);
+  }
+
+  await pressAt(page, measured?.painted.x ?? 0, measured?.painted.y ?? 0);
+  expect(await petInteractions(page)).toEqual([
+    { method: 'Poke', args: [] },
+    { method: 'Activate', args: [] },
+  ]);
+
+  await pressAt(page, measured?.centre.x ?? 0, measured?.centre.y ?? 0);
+  expect(await petInteractions(page)).toEqual([
+    { method: 'Poke', args: [] },
+    { method: 'Activate', args: [] },
+    { method: 'Poke', args: [] },
+    { method: 'Activate', args: [] },
+  ]);
+});
+
+test('treats the speech bubble and the tool pill as the pet', async ({
+  page,
+}) => {
+  await mountPet(page);
+
+  await emitPetState(page, {
+    phase: 'idle',
+    disposition: 'roam',
+    intent: 'wave',
+    intent_seq: 1,
+  });
+  const bubble = page.locator('.pet-bubble');
+  await expect(bubble).toBeVisible();
+  const bubbleBox = await bubble.boundingBox();
+  expect(bubbleBox).not.toBeNull();
+  await page.mouse.move(
+    (bubbleBox?.x ?? 0) + (bubbleBox?.width ?? 0) / 2,
+    (bubbleBox?.y ?? 0) + (bubbleBox?.height ?? 0) / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.up();
+
+  await emitPetState(page, {
+    phase: 'tool',
+    tool_name: 'exec_command',
+    tool_category: 'exec',
+    disposition: 'work',
+  });
+  const pill = page.locator('.pet-tool');
+  const pillBox = await pill.boundingBox();
+  expect(pillBox).not.toBeNull();
+  await page.mouse.move(
+    (pillBox?.x ?? 0) + (pillBox?.width ?? 0) / 2,
+    (pillBox?.y ?? 0) + (pillBox?.height ?? 0) / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.up();
+
+  expect(await petInteractions(page)).toEqual([
+    { method: 'Poke', args: [] },
+    { method: 'Activate', args: [] },
+    { method: 'Poke', args: [] },
+    { method: 'Activate', args: [] },
+  ]);
+});
+
+test('keeps the character and its overlays inside the 168px stage', async ({
+  page,
+}) => {
+  await mountPet(page);
+
+  const stage = await surface(page).boundingBox();
+  const canvas = await page.locator('.pet-canvas').boundingBox();
+  expect(stage).not.toBeNull();
+  expect(canvas).not.toBeNull();
+  const centreX = (box: { x: number; width: number }) => box.x + box.width / 2;
+  const centreY = (box: { y: number; height: number }) =>
+    box.y + box.height / 2;
+
+  // The stage is the window the Go side creates, and the Rive artboard
+  // keeps its 128px size centred on it.
+  expect(Math.round(stage?.width ?? 0)).toBe(168);
+  expect(Math.round(stage?.height ?? 0)).toBe(168);
+  expect(Math.round(canvas?.width ?? 0)).toBe(128);
+  expect(Math.round(canvas?.height ?? 0)).toBe(128);
+  expect(Math.abs(centreX(canvas!) - centreX(stage!))).toBeLessThanOrEqual(1);
+  expect(Math.abs(centreY(canvas!) - centreY(stage!))).toBeLessThanOrEqual(1);
+
+  // A pet that is both asking (bubble) and running a tool (pill) draws
+  // both overlays; on a stage this small either one could be clipped by
+  // the window edge, which is what shrinking the stage would break.
+  await emitPetState(page, {
+    phase: 'tool',
+    tool_name: 'exec_command',
+    tool_category: 'exec',
+    disposition: 'work',
+    intent: 'wave',
+    intent_seq: 1,
+  });
+  const bubble = await page.locator('.pet-bubble').boundingBox();
+  const pill = await page.locator('.pet-tool').boundingBox();
+  expect(bubble).not.toBeNull();
+  expect(pill).not.toBeNull();
+  for (const box of [bubble!, pill!]) {
+    expect(box.x).toBeGreaterThanOrEqual(stage!.x);
+    expect(box.y).toBeGreaterThanOrEqual(stage!.y);
+    expect(box.x + box.width).toBeLessThanOrEqual(stage!.x + stage!.width);
+    expect(box.y + box.height).toBeLessThanOrEqual(stage!.y + stage!.height);
+  }
+  // The bubble speaks from the top band, the pill sits under it.
+  expect(bubble!.y + bubble!.height).toBeLessThan(pill!.y);
+
+  // `data-interactive` is the asking pet's invitation cue: the bubble
+  // wears the accent ring only while the pet wants an answer.
+  const borderWhileWorking = await page
+    .locator('.pet-bubble')
+    .evaluate((node) => getComputedStyle(node).borderTopColor);
+  await emitPetState(page, {
+    phase: 'asking',
+    tool_name: 'exec_command',
+    tool_category: 'exec',
+    disposition: 'ask',
+    intent: 'wave',
+    intent_seq: 1,
+    interactive: true,
+  });
+  const borderWhileAsking = await page
+    .locator('.pet-bubble')
+    .evaluate((node) => getComputedStyle(node).borderTopColor);
+  expect(borderWhileAsking).not.toBe(borderWhileWorking);
+});
+
+test('names the running tool in a tinted pill and flags a failure', async ({
+  page,
+}) => {
+  await mountPet(page);
+
+  await emitPetState(page, {
+    phase: 'tool',
+    tool_name: 'exec_command',
+    tool_category: 'exec',
+    disposition: 'work',
+  });
+
+  const pill = page.locator('.pet-tool');
+  await expect(pill).toBeVisible();
+  await expect(pill).toHaveAttribute('data-category', 'exec');
+  await expect(pill).toHaveAttribute('data-state', 'running');
+  await expect(pill).toHaveAttribute('title', 'exec_command');
+  await expect(pill.locator('.pet-tool__name')).toHaveText('exec_command');
+  await expect(pill.locator('.pet-tool__badge > svg')).toHaveClass(
+    /lucide-terminal/,
+  );
+
+  // An unknown category is not a new vocabulary entry: it degrades to
+  // "other", which is what the icon map and the stylesheet both know.
+  await emitPetState(page, {
+    phase: 'tool',
+    tool_name: 'mystery_tool',
+    tool_category: 'browse',
+    disposition: 'work',
+  });
+  await expect(pill).toHaveAttribute('data-category', 'other');
+  await expect(pill.locator('.pet-tool__name')).toHaveText('mystery_tool');
+  await expect(pill.locator('.pet-tool__badge > svg')).toHaveClass(
+    /lucide-wrench/,
+  );
+
+  // A failed call keeps the name but flags itself.
+  await emitPetState(page, {
+    phase: 'error',
+    tool_name: 'mystery_tool',
+    tool_category: 'file',
+    disposition: 'work',
+  });
+  await expect(pill).toHaveAttribute('data-state', 'error');
+  await expect(pill.locator('.pet-tool__badge > svg')).toHaveClass(
+    /lucide-circle-alert/,
+  );
+
+  // Asking is the one state that invites a click; the surface keeps
+  // saying so for diagnostics even though the hit test does not branch
+  // on it.
+  await emitPetState(page, {
+    phase: 'asking',
+    tool_name: 'mystery_tool',
+    tool_category: 'file',
+    disposition: 'ask',
+    interactive: true,
+  });
+  await expect(surface(page)).toHaveAttribute('data-interactive', 'true');
+
+  // Leaving the tool phase takes the pill off the stage again.
+  await emitPetState(page, { phase: 'answering', disposition: 'work' });
+  await expect(page.locator('.pet-tool')).toHaveCount(0);
+  await expect(surface(page)).toHaveAttribute('data-interactive', 'false');
 });
 
 test('shows the mount report in Settings > Diagnostics', async ({ page }) => {

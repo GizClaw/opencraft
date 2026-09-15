@@ -29,7 +29,9 @@ export interface PetPackBinding {
 }
 
 export interface PetPackMeta {
-  /** Render scale relative to the 240px pet canvas. */
+  /** Render scale relative to the 128px Rive canvas the pet stage
+   *  centres. The OS stage is 168px square, so a character scaled much
+   *  past 1.2 starts to run into the speech bubble and the tool pill. */
   scale: number;
   /** Horizontal window speed in DIP/s while walking. */
   walkSpeed: number;

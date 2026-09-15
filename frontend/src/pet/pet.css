@@ -1,6 +1,14 @@
 /* Pet window surface. The character itself is Rive-rendered on the
- * canvas; this stylesheet only keeps the OS window transparent and
- * positions the interaction overlays (speech bubble, tool label). */
+ * canvas; this stylesheet keeps the OS window transparent and lays the
+ * interaction overlays out on the stage the window provides.
+ *
+ * The stage is a fixed 168x168 square (assistantPetWidth/Height in
+ * internal/adapters/desktop/pet.go). A transparent window captures the
+ * mouse over its whole rectangle, so the stage stays tight: the 128px
+ * canvas is centred, the speech bubble uses the empty band above the
+ * character's head and the tool pill the band below its feet. Presses
+ * that miss the drawn character are dropped in PetSurface.tsx
+ * (see pet/hit.ts), so nothing here may grow the window back. */
 /* style.css paints html/body/#root with the app background; the pet
  * surface clears all three when running in the dedicated pet window. */
 html[data-surface='pet'],
@@ -18,10 +26,8 @@ html[data-surface='pet'] #root {
   overflow: hidden;
   user-select: none;
   cursor: default;
-}
-
-.pet-surface[data-interactive='true'] {
-  cursor: pointer;
+  /* Tool pill tint; data-category picks the hue, error overrides it. */
+  --pet-tool-tint: #4f8cff;
 }
 
 .pet-canvas {
@@ -30,6 +36,16 @@ html[data-surface='pet'] #root {
   display: block;
   /* meta.scale of the active pack, applied to the drawn sprite. */
   transform: scale(var(--pet-scale, 1));
+}
+
+/* Only the canvas advertises itself as clickable: a press elsewhere on
+ * the stage is ignored by the hit test, so it must not look grabbable. */
+.pet-surface .pet-canvas {
+  cursor: grab;
+}
+
+.pet-surface .pet-canvas:active {
+  cursor: grabbing;
 }
 
 /* The degraded marker is the only thing the surface draws when the
@@ -53,16 +69,189 @@ html[data-surface='pet'] #root {
 
 .pet-bubble {
   position: absolute;
-  top: 12px;
-  right: 16px;
-  padding: 4px 8px;
-  border-radius: 12px;
+  top: 10px;
+  left: 50%;
+  max-width: calc(100% - 20px);
+  padding: 4px 9px;
+  border: 1px solid rgb(15 23 42 / 10%);
+  border-radius: 13px;
   background: #fff;
   color: #241d47;
-  font-size: 14px;
-  box-shadow: 0 2px 8px rgb(0 0 0 / 25%);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.25;
+  text-align: center;
+  box-shadow: 0 4px 12px rgb(12 18 30 / 28%);
+  transform: translateX(-50%);
+  animation: pet-bubble-in 0.18s ease-out;
 }
 
+/* Comic tail pointing down at the character's head. */
+.pet-bubble::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: inherit;
+  transform: translateX(-50%) rotate(45deg);
+}
+
+/* An asking pet is inviting a click; everything else it draws is a
+ * read-out. The accent ring is what `data-interactive` means. */
+.pet-surface[data-interactive='true'] .pet-bubble {
+  border-color: color-mix(
+    in srgb,
+    var(--color-accent, #4f8cff) 65%,
+    transparent
+  );
+  box-shadow:
+    0 4px 12px rgb(12 18 30 / 28%),
+    0 0 0 2px color-mix(in srgb, var(--color-accent, #4f8cff) 22%, transparent);
+}
+
+/* The running tool, named on the stage: a small glass pill that picks
+ * up the tool category's hue and sweeps while the call is in flight. */
+.pet-tool {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: calc(100% - 16px);
+  padding: 3px 10px 3px 6px;
+  border: 1px solid color-mix(in srgb, var(--pet-tool-tint) 55%, transparent);
+  border-radius: 9999px;
+  background: linear-gradient(180deg, rgb(28 36 54 / 92%), rgb(14 19 30 / 92%));
+  box-shadow: 0 6px 16px rgb(8 12 20 / 45%);
+  color: #eef2ff;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  overflow: hidden;
+  transform: translateX(-50%);
+  animation: pet-tool-in 0.2s ease-out;
+}
+
+.pet-tool[data-category='exec'] {
+  --pet-tool-tint: #fbbf24;
+}
+
+.pet-tool[data-category='file'] {
+  --pet-tool-tint: #60a5fa;
+}
+
+.pet-tool[data-category='web'] {
+  --pet-tool-tint: #34d399;
+}
+
+.pet-tool[data-category='generate'] {
+  --pet-tool-tint: #a78bfa;
+}
+
+.pet-tool[data-category='skill'] {
+  --pet-tool-tint: #f472b6;
+}
+
+.pet-tool[data-category='plan'] {
+  --pet-tool-tint: #818cf8;
+}
+
+.pet-tool[data-category='ask'] {
+  --pet-tool-tint: #fda4af;
+}
+
+.pet-tool[data-category='delegate'] {
+  --pet-tool-tint: #22d3ee;
+}
+
+.pet-tool[data-category='other'] {
+  --pet-tool-tint: #94a3b8;
+}
+
+.pet-tool[data-state='error'] {
+  --pet-tool-tint: var(--color-err, #f87171);
+}
+
+.pet-tool__badge {
+  position: relative;
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--pet-tool-tint) 22%, transparent);
+  color: var(--pet-tool-tint);
+}
+
+/* A call in flight gets a turning ring around its glyph; a failed one
+ * keeps the glyph and simply goes red. */
+.pet-tool[data-state='running'] .pet-tool__badge::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border: 1.5px solid transparent;
+  border-top-color: var(--pet-tool-tint);
+  border-right-color: color-mix(in srgb, var(--pet-tool-tint) 45%, transparent);
+  border-radius: 9999px;
+  animation: pet-tool-spin 0.9s linear infinite;
+}
+
+.pet-tool[data-state='running']::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 30%,
+    color-mix(in srgb, var(--pet-tool-tint) 28%, transparent) 50%,
+    transparent 70%
+  );
+  transform: translateX(-120%);
+  animation: pet-tool-sweep 1.8s ease-in-out infinite;
+}
+
+.pet-tool__name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+@keyframes pet-tool-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 4px);
+  }
+}
+
+@keyframes pet-tool-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pet-tool-sweep {
+  0% {
+    transform: translateX(-120%);
+  }
+  55%,
+  100% {
+    transform: translateX(120%);
+  }
+}
+
+@keyframes pet-bubble-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 4px);
+  }
+}
+
+/* Asking is the one phase that may bounce the bubble for attention. */
 .pet-surface[data-phase='asking'] .pet-bubble {
   animation: pet-bubble-bounce 0.9s ease-in-out infinite;
 }
@@ -70,27 +259,21 @@ html[data-surface='pet'] #root {
 @keyframes pet-bubble-bounce {
   0%,
   100% {
-    transform: translateY(0);
+    transform: translate(-50%, 0);
   }
   50% {
-    transform: translateY(-5px);
+    transform: translate(-50%, -5px);
   }
 }
 
-.pet-tool-label {
-  position: absolute;
-  bottom: 6px;
-  left: 50%;
-  transform: translateX(-50%);
-  max-width: 90%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding: 2px 8px;
-  border-radius: 10px;
-  background: rgb(36 29 71 / 55%);
-  color: #fff;
-  font-size: 10px;
+@media (prefers-reduced-motion: reduce) {
+  .pet-bubble,
+  .pet-surface[data-phase='asking'] .pet-bubble,
+  .pet-tool,
+  .pet-tool[data-state='running'] .pet-tool__badge::after,
+  .pet-tool[data-state='running']::after {
+    animation: none !important;
+  }
 }
 
 .pet-preview {
