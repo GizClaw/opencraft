@@ -36,11 +36,11 @@ func (l *Lifecycle) agentDefinition(spec AgentSpec) (agent.Definition, error) {
 		"graph": graph,
 		"build": map[string]any{
 			"timeout": "1h",
-			// Loop guard counts node invocations, and this graph spends
-			// about three nodes per tool round, so 2000 leaves room for
-			// long-horizon subagent work while the 1h build timeout still
-			// bounds wall clock.
-			"max_iterations": 2000,
+			// The loop guard counts routed nodes and this graph spends
+			// about three nodes per tool round, so 0 lifts it: long-horizon
+			// subagent work is bounded by the run timeout below instead of
+			// by a node budget (build.timeout only spans one Execute).
+			"max_iterations": 0,
 		},
 	})
 	if err != nil {
@@ -62,6 +62,9 @@ func (l *Lifecycle) agentDefinition(spec AgentSpec) (agent.Definition, error) {
 			},
 			Settings: engineSettings,
 		},
+		// Bounds one whole run, revise attempts included; the engine's own
+		// per-Execute timeout stays wired above as the inner deadline.
+		Policy:  &agent.Policy{RunTimeout: "1h"},
 		Prepare: []agent.Hook{l.prepareHook()},
 	}, nil
 }

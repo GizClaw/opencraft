@@ -568,6 +568,8 @@ export function friendlyFailure(kind?: string): string | null {
       return i18n.t('chat.modelConfiguration');
     case 'invalid_request':
       return i18n.t('chat.invalidRequest');
+    case 'timeout':
+      return i18n.t('chat.turnTimeout');
     case undefined:
     case '':
       return null;

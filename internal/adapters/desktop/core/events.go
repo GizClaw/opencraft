@@ -26,9 +26,10 @@ type TurnEndEvent struct {
 	Status  string `json:"status"`
 	Error   string `json:"error,omitempty"`
 	// InterruptCause / ErrorKind are the structured class of a failed
-	// turn (an engine interrupt cause, an inference error kind). The UI
-	// renders from these; Error stays for correlation with provider
-	// logs. Both are empty when the turn did not fail that way.
+	// turn (an engine interrupt cause, an inference error kind, or the
+	// harness-level timeout). The UI renders from these; Error stays for
+	// correlation with provider logs. Both are empty when the turn did
+	// not fail that way.
 	InterruptCause string `json:"interrupt_cause,omitempty"`
 	ErrorKind      string `json:"error_kind,omitempty"`
 	// RequestID is the provider request identifier of the terminal

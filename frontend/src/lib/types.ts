@@ -335,8 +335,9 @@ export interface SessionTurn {
   status?: string;
   error?: string;
   // interrupt_cause / error_kind are the structured class of a failed
-  // turn (engine interrupt cause, inference error kind); the transcript
-  // renders its copy from these instead of parsing error.
+  // turn (engine interrupt cause, inference error kind, or the
+  // harness-level timeout); the transcript renders its copy from these
+  // instead of parsing error.
   interrupt_cause?: string;
   error_kind?: string;
   request_id?: string;

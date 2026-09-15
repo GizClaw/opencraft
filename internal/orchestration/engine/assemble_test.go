@@ -141,6 +141,18 @@ func TestBuildRuntimeAssemblesNewTools(t *testing.T) {
 	}
 	defer func() { _ = rt.Close() }()
 
+	// The deployed assistant carries the run-level wall clock: with the
+	// graph's iteration guard lifted (build.max_iterations: 0), this is
+	// what bounds a runaway turn across revise attempts.
+	assistant, ok := rt.Agent("assistant")
+	if !ok {
+		t.Fatal("assistant agent missing")
+	}
+	if assistant.Policy.RunTimeout != "1h" {
+		t.Errorf("assistant policy.run_timeout = %q, want 1h",
+			assistant.Policy.RunTimeout)
+	}
+
 	// Delegation wiring: the service and kanban backend resources
 	// build, and the deployed assistant is a delegate target (the
 	// deploy builder binds the directory through DeploymentBinder, so

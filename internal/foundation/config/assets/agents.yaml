@@ -23,13 +23,16 @@ agents:
         graph: { embed: assets/graphs/assistant.yaml }
         build:
           timeout: 1h
-          # flowcraft's loop guard counts node invocations, and each
-          # tool round in this graph runs compact + llm + tools (3
-          # nodes), so the default 100 ≈ 33 tool rounds — too tight
-          # for real implementation work. 40000 ≈ 13000 tool rounds,
-          # which turns the guard into a pure cycle safety net: the
-          # 1h build timeout is what actually bounds a runaway turn.
-          max_iterations: 40000
+          # flowcraft's loop guard counts routed nodes (a skipped node
+          # still routes), and each tool round in this graph runs
+          # compact + llm + tools (3 nodes). 0 lifts the guard so long
+          # implementation work is never cut off by a node budget; the
+          # run timeout below is what bounds a runaway turn.
+          max_iterations: 0
+    # Bounds one whole turn end to end — every revise attempt included —
+    # which build.timeout (per Execute) does not: a revise restarts it.
+    policy:
+      run_timeout: 1h
     prepare:
       - type: opencraft.media
         settings:

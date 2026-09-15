@@ -202,6 +202,19 @@ func TestCreateRegistersAndPersists(t *testing.T) {
 		t.Fatalf("decode engine settings: %v", err)
 	}
 	assertGraphMatches(t, engineSettings["graph"], testGraph)
+	// Dynamic subagents lift flowcraft's node-routing guard (0 =
+	// unlimited) and bound the run with wall clock instead, so a
+	// long-horizon subagent is never cut off by a node budget.
+	build, ok := engineSettings["build"].(map[string]any)
+	if !ok {
+		t.Fatalf("engine settings build = %T, want object", engineSettings["build"])
+	}
+	if got := build["max_iterations"]; got != float64(0) {
+		t.Errorf("build.max_iterations = %v, want 0 (unlimited)", got)
+	}
+	if def.Policy == nil || def.Policy.RunTimeout != "1h" {
+		t.Errorf("policy = %+v, want run_timeout 1h", def.Policy)
+	}
 
 	// Persisted declaration round-trips.
 	data, err := os.ReadFile(filepath.Join(dir, "researcher", specFile))
