@@ -5,6 +5,7 @@ import './i18n';
 import App from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { installMockBridge } from './lib/mockBridge';
+import { applyCachedUISettings } from './lib/appearance';
 import {
   installConsoleErrorCapture,
   reportFrontendError,
@@ -25,6 +26,11 @@ window.addEventListener('unhandledrejection', (e) => {
 });
 
 installMockBridge();
+
+// Paint the persisted appearance (interface font, code font, UI scale) before
+// React mounts, so the first frame is not rendered in the default font. The
+// store reconciles this cache with the desktop preference document.
+applyCachedUISettings();
 
 const container = document.getElementById('root');
 

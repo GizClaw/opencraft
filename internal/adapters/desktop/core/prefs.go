@@ -32,6 +32,9 @@ type DesktopPrefs struct {
 	Language     string `json:"language,omitempty"`
 	DefaultMode  string `json:"defaultMode,omitempty"`
 	DefaultThink string `json:"defaultThink,omitempty"`
+	// UI carries the appearance preferences (Settings > Interface):
+	// interface font, code font and UI scale.
+	UI UIPrefs `json:"ui,omitempty"`
 	// Pets carries the desktop pet surface preferences. The assistant
 	// character id is resolved against the pet pack registry at window
 	// creation time; unknown ids fall back to the builtin default.
@@ -92,6 +95,7 @@ func DefaultPrefs() DesktopPrefs {
 		CloseToTray:  true,
 		DefaultMode:  string(mode),
 		DefaultThink: think,
+		UI:           defaultUIPrefs(),
 	}
 }
 
@@ -99,6 +103,7 @@ func DefaultPrefs() DesktopPrefs {
 // from older preference files) back to the canonical defaults.
 func normalizePrefs(prefs DesktopPrefs) DesktopPrefs {
 	defaults := DefaultPrefs()
+	prefs.UI = normalizeUIPrefs(prefs.UI)
 	// The yoloonly build has a single available mode: repair any
 	// preference document (possibly written by the regular build) so
 	// new sessions cannot start confined.

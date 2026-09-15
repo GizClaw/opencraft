@@ -13,6 +13,8 @@ export interface MockConfig {
   // Per-session turn ids, keyed by conversation id. Falls back to
   // startTurn, then to an auto-incrementing id.
   startTurns?: Record<string, { run_id: string; context_id?: string }>;
+  // fontFamilies is the host font catalogue the appearance picker lists.
+  fontFamilies?: string[];
   // NewChat responses consumed in order, then an auto-incrementing id.
   newChatIds?: string[];
   // Per-conversation archive and per-run archive responses used by
@@ -253,9 +255,30 @@ export function mockBackend(cfg?: MockConfig) {
         enabled: config.petsEnabled ?? true,
         assistantCharacter: config.assistantCharacter ?? 'assistant-default',
       }),
+      // the appearance document: specs override GetUISettings to seed a
+      // stored font/size, and the panel's writes are recorded so a spec can
+      // assert what would have been persisted.
+      GetUISettings: async () =>
+        (win as { __ocUISettings?: unknown }).__ocUISettings ?? {
+          fontFamily: 'system',
+          fontFamilyName: '',
+          codeFont: 'system',
+          codeFontName: '',
+          fontScale: 1.12,
+        },
+      // A small stand-in for the host font catalogue: specs pick from it and
+      // override it to cover the "cannot enumerate" path.
+      ListFonts: async () =>
+        config.fontFamilies ?? ['DejaVu Sans', 'Fira Code', 'PingFang SC'],
       ReportUserActivity: noop,
       RequestClose: noop,
       SetCloseToTray: noop,
+      SetUISettings: async (settings: unknown) => {
+        const store = win as { __ocUISettingsCalls?: unknown[] };
+        const calls =
+          store.__ocUISettingsCalls ?? (store.__ocUISettingsCalls = []);
+        calls.push(settings);
+      },
       SetLanguage: noop,
       SetPetsSettings: noop,
     },

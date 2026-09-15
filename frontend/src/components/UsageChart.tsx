@@ -302,7 +302,7 @@ export function UsageChart({
               dataKey="time"
               axisLine={false}
               tickLine={false}
-              tick={{ fill: 'var(--color-dim)', fontSize: 12 }}
+              tick={{ fill: 'var(--color-dim)', fontSize: '0.8571rem' }}
               dy={10}
               minTickGap={28}
               tickFormatter={(value: string) =>
@@ -315,7 +315,7 @@ export function UsageChart({
               axisLine={false}
               tickLine={false}
               tickMargin={8}
-              tick={{ fill: 'var(--color-dim)', fontSize: 12 }}
+              tick={{ fill: 'var(--color-dim)', fontSize: '0.8571rem' }}
               tickFormatter={(value: number) => compactFormatter.format(value)}
             />
             <Tooltip

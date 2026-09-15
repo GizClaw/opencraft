@@ -466,7 +466,7 @@ export default function PetSurface() {
           title={pet.toolName}
         >
           <span className="pet-tool__badge" aria-hidden="true">
-            <ToolIcon size={10} strokeWidth={2.4} />
+            <ToolIcon size="0.7143rem" strokeWidth={2.4} />
           </span>
           <span className="pet-tool__name">{pet.toolName}</span>
         </div>

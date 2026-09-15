@@ -96,10 +96,10 @@ export function UsageRangePicker({
             : 'border-edge/70 bg-panel/70 text-dim hover:bg-panel hover:text-fg'
         } backdrop-blur-sm`}
       >
-        <CalendarDays size={14} className="shrink-0" />
+        <CalendarDays size="1rem" className="shrink-0" />
         <span className="truncate">{label}</span>
         <ChevronDown
-          size={14}
+          size="1rem"
           className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
         />
       </button>

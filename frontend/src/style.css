@@ -15,8 +15,24 @@
   --color-subagent: #a78bfa;
 }
 
+/* Fonts follow Settings > Interface. The runtime variables are written by
+   src/lib/appearance.ts; `inline` keeps the Tailwind utilities pointing at
+   them at use time instead of freezing one stack into the theme layer. */
+@theme inline {
+  --font-sans: var(--oc-font-sans);
+  --font-mono: var(--oc-font-mono);
+}
+
 :root {
   color-scheme: dark;
+  /* Appearance knobs, overwritten on documentElement by appearance.ts from
+     the persisted desktop preferences. The defaults below match the
+     built-in system preset. */
+  --oc-font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'PingFang SC', 'Microsoft YaHei',
+    sans-serif;
+  --oc-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --oc-root-font-size: 15.68px;
 }
 
 /* Light theme: utilities reference the @theme variables at runtime, so
@@ -44,16 +60,12 @@ body,
   margin: 0;
   background: var(--color-bg);
   color: var(--color-fg);
-  font-family:
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    'PingFang SC',
-    'Microsoft YaHei',
-    sans-serif;
-  /* Scale knob: 14px design base × 1.12 = whole UI scaled up 12%.
-     All rem sizes below are expressed against the 14px base. */
-  font-size: 15.68px;
+  font-family: var(--oc-font-sans);
+  /* Scale knob: a 14px design base × the user's scale (1.12 by default =
+     the whole UI at 15.68px). Every rem size in the app is expressed
+     against that 14px base, so this one value zooms text, spacing and
+     icons together. Settings > Interface owns it. */
+  font-size: var(--oc-root-font-size);
   overscroll-behavior: none;
 }
 
@@ -162,7 +174,7 @@ textarea:focus-visible {
   border-radius: 0.3571rem;
   padding: 0.0714rem 0.4286rem;
   color: var(--color-accent);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--oc-font-mono);
   font-size: 0.9em;
 }
 
@@ -180,7 +192,7 @@ textarea:focus-visible {
   border: none;
   padding: 0;
   color: var(--color-fg);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--oc-font-mono);
   font-size: 0.8929rem;
 }
 
@@ -309,7 +321,7 @@ textarea:focus-visible {
 }
 
 .prose-chat code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-family: var(--oc-font-mono);
   font-size: 0.9em;
 }
 

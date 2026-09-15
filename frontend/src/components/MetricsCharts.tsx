@@ -230,12 +230,12 @@ export function MetricsCharts() {
                 <XAxis
                   dataKey="ts"
                   tickFormatter={dateLabel}
-                  tick={{ fontSize: 10, fill: '#94a3b8' }}
+                  tick={{ fontSize: '0.7143rem', fill: '#94a3b8' }}
                   minTickGap={24}
                 />
                 <YAxis
                   tickFormatter={(v: number) => fmtAxisValue(v, def.unit)}
-                  tick={{ fontSize: 10, fill: '#94a3b8' }}
+                  tick={{ fontSize: '0.7143rem', fill: '#94a3b8' }}
                   width={52}
                 />
                 <Tooltip
@@ -253,7 +253,7 @@ export function MetricsCharts() {
                   contentStyle={{
                     background: '#0f172a',
                     border: '1px solid #334155',
-                    fontSize: 12,
+                    fontSize: '0.8571rem',
                   }}
                 />
                 {seriesKeys.map((key, i) => (
