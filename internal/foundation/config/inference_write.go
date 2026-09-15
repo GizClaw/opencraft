@@ -281,18 +281,32 @@ func writeModelDriverFields(
 			)
 		}
 		lines := strings.Split(strings.TrimRight(string(value), "\n"), "\n")
-		if len(lines) == 1 {
+		// A composite value nests one level under its key; a scalar stays
+		// inline. The decision cannot come from the marshaled line count:
+		// a single-entry map marshals to one line, and inlining it would
+		// emit "key: inner: value", which is not a YAML mapping at all.
+		if !isCompositeDriverField(ordered[key]) {
 			fmt.Fprintf(b, "            %s: %s\n", key, lines[0])
 			continue
 		}
-		// A composite value nests one level under its key; the marshaled
-		// text carries no leading indent of its own.
 		fmt.Fprintf(b, "            %s:\n", key)
 		for _, line := range lines {
 			fmt.Fprintf(b, "              %s\n", line)
 		}
 	}
 	return nil
+}
+
+// isCompositeDriverField reports whether one driver-field value is a
+// container (a map or a sequence) rather than a scalar. Values arrive
+// decoded from JSON, so containers are map[string]any and []any.
+func isCompositeDriverField(value any) bool {
+	switch value.(type) {
+	case map[string]any, []any:
+		return true
+	default:
+		return false
+	}
 }
 
 // normalizeModels trims model names, rejects duplicates, and guarantees

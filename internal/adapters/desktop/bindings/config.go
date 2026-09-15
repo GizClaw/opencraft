@@ -83,6 +83,86 @@ func (b *Config) Providers() []ProviderView {
 	return out
 }
 
+// InferenceModelView is one built-in model the settings page can
+// prefill a model row from. Model carries the declaration in the same
+// shape a save submits, so the page never needs a second vocabulary.
+type InferenceModelView struct {
+	ID     string           `json:"id"`
+	Type   string           `json:"type"`
+	Vendor string           `json:"vendor,omitempty"`
+	Label  string           `json:"label,omitempty"`
+	Source string           `json:"source,omitempty"`
+	Model  config.ModelSpec `json:"model"`
+}
+
+// InferenceTemplateView is one built-in starter instance: the
+// provider-level fields plus the resolved models the new row starts
+// with, in router priority order.
+type InferenceTemplateView struct {
+	ID       string                  `json:"id"`
+	Label    string                  `json:"label"`
+	Type     string                  `json:"type"`
+	Vendor   string                  `json:"vendor,omitempty"`
+	API      string                  `json:"api,omitempty"`
+	Endpoint string                  `json:"endpoint,omitempty"`
+	Advanced config.InstanceAdvanced `json:"advanced"`
+	Notes    string                  `json:"notes,omitempty"`
+	Models   []config.ModelSpec      `json:"models"`
+}
+
+// InferenceCatalogState is the built-in inference template catalog.
+type InferenceCatalogState struct {
+	Version   string                  `json:"version"`
+	Templates []InferenceTemplateView `json:"templates"`
+	Models    []InferenceModelView    `json:"models"`
+}
+
+// InferenceCatalog returns the catalog the settings page prefills new
+// instances and model rows from. Nothing in it is applied on its own:
+// the page submits the same InstanceSpec it would submit for a
+// hand-typed row, so the catalog stays a prefill layer.
+func (b *Config) InferenceCatalog() (InferenceCatalogState, error) {
+	catalog, err := config.LoadInferenceCatalog()
+	if err != nil {
+		return InferenceCatalogState{}, err
+	}
+	catalogModels := catalog.Models()
+	catalogTemplates := catalog.Templates()
+	st := InferenceCatalogState{
+		Version:   catalog.Version(),
+		Templates: make([]InferenceTemplateView, 0, len(catalogTemplates)),
+		Models:    make([]InferenceModelView, 0, len(catalogModels)),
+	}
+	for _, m := range catalogModels {
+		st.Models = append(st.Models, InferenceModelView{
+			ID:     m.ID,
+			Type:   m.Type,
+			Vendor: m.Vendor,
+			Label:  m.Label,
+			Source: m.Source,
+			Model:  m.ModelSpec,
+		})
+	}
+	for _, template := range catalogTemplates {
+		models, err := catalog.TemplateModels(template)
+		if err != nil {
+			return InferenceCatalogState{}, err
+		}
+		st.Templates = append(st.Templates, InferenceTemplateView{
+			ID:       template.ID,
+			Label:    template.Label,
+			Type:     template.Type,
+			Vendor:   template.Vendor,
+			API:      template.API,
+			Endpoint: template.Endpoint,
+			Advanced: template.Advanced,
+			Notes:    template.Notes,
+			Models:   models,
+		})
+	}
+	return st, nil
+}
+
 // ProviderInstanceView is one inference instance as the settings page
 // reads it: the canonical row shape (see config.InstanceSpec, which is
 // also what a plugin submits) plus the computed flags the page renders.

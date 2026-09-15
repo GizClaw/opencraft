@@ -83,6 +83,14 @@ func (c *Core) ApplyDocumentReload(ctx context.Context) error {
 		return c.RebuildRuntime(ctx)
 	}
 	if err := h.ReloadDocument(ctx); err == nil {
+		// The Host survives an in-place swap, but the document it serves
+		// changed, and everything the UI reads out of that document is
+		// now stale: the composer's model list and default reasoning
+		// flag, the session defaults, the agent count. RebuildRuntime
+		// emits ready for exactly this reason; the in-place path has to
+		// signal the same way or the UI keeps the previous model list
+		// after a settings save.
+		c.EmitReady()
 		return nil
 	}
 	return c.RebuildRuntime(ctx)

@@ -44,6 +44,7 @@ import type {
   GitLogEntry,
   GitRepo,
   GitStatus,
+  InferenceCatalogState,
   PRAvailability,
   ResolvedTarget,
   HistoryMessage,
@@ -171,6 +172,8 @@ export const api = {
   profile: () => Config.Profile(),
   configStatus: () => Config.ConfigStatus() as unknown as Promise<ConfigStatus>,
   providers: () => Config.Providers() as unknown as Promise<ProviderView[]>,
+  inferenceCatalog: () =>
+    Config.InferenceCatalog() as unknown as Promise<InferenceCatalogState>,
   configState: () => Config.ConfigState() as Promise<ConfigState>,
   saveInstances: (req: InferenceRequest) =>
     Config.SaveInstances(req as unknown as gen.InferenceRequest),

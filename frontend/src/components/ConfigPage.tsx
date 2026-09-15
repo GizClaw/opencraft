@@ -9,6 +9,7 @@ import {
   Cpu,
   Database,
   Import,
+  ListPlus,
   Loader2,
   Palette,
   Plus,
@@ -17,6 +18,7 @@ import {
   ShieldCheck,
   ShieldPlus,
   SlidersHorizontal,
+  Sparkles,
   Stethoscope,
   Terminal,
   Trash2,
@@ -33,8 +35,11 @@ import { useStore } from '../lib/store';
 import type {
   CacheClearResult,
   DiagnosticsReport,
+  InferenceCatalogModel,
+  InferenceCatalogTemplate,
   InstanceSpec,
   MemorySettings,
+  ModelSpec,
   ModelUsageStat,
   PolicyDecision,
   ProviderView,
@@ -225,6 +230,67 @@ function emptyModelRow(): RowModel {
   };
 }
 
+// rowModelFromSpec maps one wire model declaration onto the editable
+// row. The load path and the built-in catalog both carry a ModelSpec, so
+// both fill the form through this one mapping.
+function rowModelFromSpec(m: ModelSpec): RowModel {
+  return {
+    name: m.name ?? '',
+    kind: m.kind ?? '',
+    inputs: m.capabilities?.inputs ?? [],
+    outputs: m.capabilities?.outputs ?? [],
+    reasoning: m.capabilities?.reasoning?.kind ?? '',
+    reasoningEffortMap: m.capabilities?.reasoning?.effort_map ?? {},
+    webSearch: m.capabilities?.hosted_web_search ?? false,
+    endpoint: m.endpoint ?? '',
+    maxInputTokens: limitToRow(m.limits?.max_input_tokens),
+    maxOutputTokens: limitToRow(m.limits?.max_output_tokens),
+    lifecycleStatus: m.lifecycle?.status ?? '',
+    lifecycleReplacementProvider: m.lifecycle?.replacement_provider ?? '',
+    lifecycleReplacementName: m.lifecycle?.replacement_name ?? '',
+    lifecycleNotes: m.lifecycle?.notes ?? '',
+    specJson: driverFieldsText(m.driver_fields),
+  };
+}
+
+// declaresVideoInput reports whether one model declaration accepts video
+// content. Such a model only works on a chat deployment that states
+// wire.video_input, which is why picking it may need a provider-level
+// change the user has to make themselves.
+function declaresVideoInput(m: ModelSpec): boolean {
+  return m.capabilities?.inputs?.includes('video') ?? false;
+}
+
+// catalogEntryMatches reports whether one built-in model matches the
+// list's search box: the model name, its display label, and its vendor
+// all match, so "kimi" and "moonshot" both find the Kimi models.
+function catalogEntryMatches(
+  entry: InferenceCatalogModel,
+  query: string,
+): boolean {
+  const needle = query.trim().toLowerCase();
+  if (needle === '') return true;
+  return [entry.model.name, entry.label ?? '', entry.vendor ?? ''].some(
+    (field) => field.toLowerCase().includes(needle),
+  );
+}
+
+// templateMatches reports whether one built-in template matches the
+// template search box: its label, its vendor, and the models it starts
+// with all match.
+function templateMatches(
+  template: InferenceCatalogTemplate,
+  query: string,
+): boolean {
+  const needle = query.trim().toLowerCase();
+  if (needle === '') return true;
+  return [
+    template.label,
+    template.vendor ?? '',
+    ...(template.models ?? []).map((m) => m.name),
+  ].some((field) => field.toLowerCase().includes(needle));
+}
+
 export function ConfigPage() {
   const closeConfig = useStore((s) => s.closeConfig);
   const configTab = useStore((s) => s.configTab);
@@ -258,11 +324,22 @@ export function ConfigPage() {
     fallback_on_retry_exhausted: true,
   });
   const [catalog, setCatalog] = useState<ProviderView[]>([]);
+  // Built-in catalog: templates prefill a whole instance, models prefill
+  // a model row. Neither applies anything on its own (see
+  // api.inferenceCatalog); every prefilled value stays editable.
+  const [templates, setTemplates] = useState<InferenceCatalogTemplate[]>([]);
+  const [modelCatalog, setModelCatalog] = useState<InferenceCatalogModel[]>([]);
+  // catalogQuery filters the built-in model list of one row; it resets
+  // every time that list is opened.
+  const [catalogQuery, setCatalogQuery] = useState('');
+  // templateQuery filters the built-in template pills.
+  const [templateQuery, setTemplateQuery] = useState('');
   // The field menus (kind / inputs / outputs / reasoning) anchor to the
   // control that opened them; nothing else needs the rectangle.
   const [menuRect, setMenuRect] = useState<{
     top: number;
     left: number;
+    right: number;
     width: number;
   } | null>(null);
   const [fieldMenu, setFieldMenu] = useState<string | null>(null);
@@ -304,8 +381,22 @@ export function ConfigPage() {
     key: string,
   ) => {
     const r = e.currentTarget.getBoundingClientRect();
-    setMenuRect({ top: r.bottom + 4, left: r.left, width: r.width });
+    setMenuRect({
+      top: r.bottom + 4,
+      left: r.left,
+      right: r.right,
+      width: r.width,
+    });
     setFieldMenu(key);
+  };
+
+  // rightAlignedMenuLeft anchors a menu to the right edge of its trigger.
+  // A narrow trigger (the model catalog button) opens a wide list that
+  // would otherwise run past the panel's right edge.
+  const rightAlignedMenuLeft = (minWidth: number) => {
+    if (!menuRect) return 8;
+    const width = Math.max(menuRect.width, minWidth);
+    return Math.max(8, menuRect.right - width);
   };
   // newType is the driver the "add instance" picker will create. It is
   // filled from the loaded driver list so it can never name a provider
@@ -349,34 +440,22 @@ export function ConfigPage() {
 
   const loadInference = useCallback(async () => {
     try {
-      const [providers, state] = await Promise.all([
+      const [providers, state, inferenceCatalog] = await Promise.all([
         api.providers(),
         api.configState(),
+        // The built-in catalog is a convenience: a failure to load it
+        // must not take the settings page down with it.
+        api.inferenceCatalog().catch(() => null),
       ]);
       setCatalog(providers);
+      setTemplates(inferenceCatalog?.templates ?? []);
+      setModelCatalog(inferenceCatalog?.models ?? []);
       setNewType((prev) =>
         providers.some((p) => p.id === prev) ? prev : (providers[0]?.id ?? ''),
       );
       setRows(
         (state.instances ?? []).map((s) => {
-          const models = (s.models ?? []).map((m) => ({
-            name: m.name ?? '',
-            kind: m.kind ?? '',
-            inputs: m.capabilities?.inputs ?? [],
-            outputs: m.capabilities?.outputs ?? [],
-            reasoning: m.capabilities?.reasoning?.kind ?? '',
-            reasoningEffortMap: m.capabilities?.reasoning?.effort_map ?? {},
-            webSearch: m.capabilities?.hosted_web_search ?? false,
-            endpoint: m.endpoint ?? '',
-            maxInputTokens: limitToRow(m.limits?.max_input_tokens),
-            maxOutputTokens: limitToRow(m.limits?.max_output_tokens),
-            lifecycleStatus: m.lifecycle?.status ?? '',
-            lifecycleReplacementProvider:
-              m.lifecycle?.replacement_provider ?? '',
-            lifecycleReplacementName: m.lifecycle?.replacement_name ?? '',
-            lifecycleNotes: m.lifecycle?.notes ?? '',
-            specJson: driverFieldsText(m.driver_fields),
-          }));
+          const models = (s.models ?? []).map(rowModelFromSpec);
           return {
             id: newID(),
             stableId: s.stable_id ?? '',
@@ -624,9 +703,10 @@ export function ConfigPage() {
   const addInstance = (type: string) => {
     // Only a driver the deployment knows can become an instance; an
     // unknown id would be written as an unresolvable provider.
+    // The new row goes to the top: the list is the router priority
+    // order, and the deployment just added is the one being worked on.
     if (!catalog.some((p) => p.id === type)) return;
     setRows((prev) => [
-      ...prev,
       {
         id: newID(),
         stableId: '',
@@ -645,7 +725,84 @@ export function ConfigPage() {
         enabled: true,
         managed: false,
       },
+      ...prev,
     ]);
+  };
+
+  // addInstanceFromTemplate prefills one row from the built-in catalog.
+  // The row is an ordinary user row from here on: the template fills the
+  // provider, the endpoint, and the models, and every field stays
+  // editable (including the credential, which no template carries). Like
+  // a hand-added row it lands at the top of the priority list.
+  const addInstanceFromTemplate = (template: InferenceCatalogTemplate) => {
+    if (!catalog.some((p) => p.id === template.type)) return;
+    const models = (template.models ?? []).map(rowModelFromSpec);
+    setRows((prev) => [
+      {
+        id: newID(),
+        stableId: '',
+        type: template.type,
+        driver: '',
+        name: template.label,
+        api: template.api ?? '',
+        key: '',
+        keyRef: '',
+        keySet: false,
+        keyEnv: false,
+        keyKeychain: false,
+        models: models.length > 0 ? models : [emptyModelRow()],
+        endpoint: template.endpoint ?? '',
+        advanced: template.advanced ?? {},
+        enabled: true,
+        managed: false,
+      },
+      ...prev,
+    ]);
+  };
+
+  // catalogModelsFor lists the built-in models that belong to one
+  // provider type, optionally filtered by the list's search box. Several
+  // vendors share the OpenAI wire family, so the vendor label is what
+  // tells them apart.
+  const catalogModelsFor = (type: string, query = '') =>
+    modelCatalog.filter(
+      (m) => m.type === type && catalogEntryMatches(m, query),
+    );
+
+  // applyCatalogModel fills one model row from the catalog. The patch it
+  // produces is typed as a model-only patch on purpose: picking a model
+  // may never rewrite provider settings (the API surface, the endpoint,
+  // the advanced knobs) — those stay the user's, and a model whose
+  // declaration depends on one of them warns instead.
+  const applyCatalogModel = (
+    rowID: string,
+    index: number,
+    entry: InferenceCatalogModel,
+  ) => {
+    setRows((prev) =>
+      prev.map((r) => {
+        if (r.id !== rowID) return r;
+        const patch: Pick<InstanceRow, 'models'> = {
+          models: r.models.map((m, i) =>
+            i === index ? rowModelFromSpec(entry.model) : m,
+          ),
+        };
+        return { ...r, ...patch };
+      }),
+    );
+    const row = rows.find((r) => r.id === rowID);
+    if (!row || !declaresVideoInput(entry.model)) return;
+    if (row.api !== 'chat') {
+      toast(
+        t('config.modelNeedsChatForVideo', { model: entry.model.name }),
+        'warning',
+      );
+    } else if (row.advanced.video_input !== true) {
+      toast(
+        t('config.modelNeedsVideoInput', { model: entry.model.name }),
+        'warning',
+      );
+    }
   };
 
   const move = (idx: number, dir: -1 | 1) => {
@@ -1036,6 +1193,64 @@ export function ConfigPage() {
                     {t('config.addInstance')}
                   </button>
                 </div>
+                {templates.length > 0 && (
+                  <div className="space-y-2 rounded-xl border border-edge/70 bg-panel/40 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 text-xs font-medium text-dim">
+                        <Sparkles
+                          size="0.8571rem"
+                          className="shrink-0 text-accent"
+                        />
+                        <span>{t('config.templatesGroup')}</span>
+                      </div>
+                      <input
+                        value={templateQuery}
+                        onChange={(e) => setTemplateQuery(e.target.value)}
+                        placeholder={t('config.templateSearchPlaceholder')}
+                        aria-label={t('config.templateSearch')}
+                        className="w-44 rounded-lg border border-edge bg-panel px-2 py-0.5 text-xs outline-none focus:border-accent"
+                      />
+                    </div>
+                    {templates.filter((template) =>
+                      templateMatches(template, templateQuery),
+                    ).length === 0 && (
+                      <p className="text-xs text-dim">
+                        {t('config.templateSearchEmpty')}
+                      </p>
+                    )}
+                    <div className="flex flex-wrap gap-1.5">
+                      {templates
+                        .filter((template) =>
+                          templateMatches(template, templateQuery),
+                        )
+                        .map((template) => {
+                          const models = (template.models ?? [])
+                            .map((m) => m.name)
+                            .join(', ');
+                          return (
+                            <button
+                              key={template.id}
+                              type="button"
+                              aria-label={`${template.label}: ${models}`}
+                              onClick={() => addInstanceFromTemplate(template)}
+                              className="group inline-flex max-w-full items-center gap-1.5 rounded-full border border-edge bg-panel2 py-1 pl-2 pr-2.5 text-xs text-dim transition-colors hover:border-accent/60 hover:bg-accent/10 hover:text-fg focus-visible:border-accent focus-visible:outline-none"
+                            >
+                              <Plus
+                                size="0.7857rem"
+                                className="shrink-0 text-accent/70 transition-colors group-hover:text-accent"
+                              />
+                              <span className="shrink-0 font-medium text-fg/90">
+                                {template.label}
+                              </span>
+                              <span className="min-w-0 max-w-40 truncate font-mono text-[0.7rem] text-dim">
+                                {models}
+                              </span>
+                            </button>
+                          );
+                        })}
+                    </div>
+                  </div>
+                )}
                 {rows.length === 0 && (
                   <p className="text-sm text-dim">
                     {t('config.instancesEmpty')}
@@ -1257,6 +1472,104 @@ export function ConfigPage() {
                                       className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
                                     />
                                   </div>
+                                  {!row.managed &&
+                                    catalogModelsFor(row.type).length > 0 && (
+                                      <button
+                                        type="button"
+                                        data-field={`${row.id}:${mi}:model`}
+                                        aria-label={t(
+                                          'config.modelFromCatalog',
+                                        )}
+                                        title={t('config.modelFromCatalog')}
+                                        onFocus={(e) => {
+                                          setCatalogQuery('');
+                                          openFieldMenu(
+                                            e,
+                                            `${row.id}:${mi}:model`,
+                                          );
+                                        }}
+                                        onClick={(e) => {
+                                          const key = `${row.id}:${mi}:model`;
+                                          if (fieldMenu === key) {
+                                            setFieldMenu(null);
+                                          } else {
+                                            setCatalogQuery('');
+                                            openFieldMenu(e, key);
+                                          }
+                                        }}
+                                        className="shrink-0 rounded-lg border border-edge px-1.5 py-1.5 text-dim transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent"
+                                      >
+                                        <ListPlus size="0.9286rem" />
+                                      </button>
+                                    )}
+                                  {!row.managed &&
+                                    menuRect &&
+                                    fieldMenu === `${row.id}:${mi}:model` &&
+                                    createPortal(
+                                      <div
+                                        ref={fieldMenuRef}
+                                        style={{
+                                          top: menuRect.top,
+                                          left: rightAlignedMenuLeft(256),
+                                          width: Math.max(menuRect.width, 256),
+                                        }}
+                                        className="fixed z-[100] max-h-72 overflow-y-auto rounded-xl border border-edge bg-panel py-1 shadow-xl"
+                                      >
+                                        <div className="sticky top-0 z-10 bg-panel px-2 pb-1 pt-1">
+                                          <input
+                                            autoFocus
+                                            value={catalogQuery}
+                                            onChange={(e) =>
+                                              setCatalogQuery(e.target.value)
+                                            }
+                                            placeholder={t(
+                                              'config.modelSearchPlaceholder',
+                                            )}
+                                            aria-label={t('config.modelSearch')}
+                                            className="w-full rounded-lg border border-edge bg-panel px-2 py-1 text-xs outline-none focus:border-accent"
+                                          />
+                                        </div>
+                                        {catalogModelsFor(
+                                          row.type,
+                                          catalogQuery,
+                                        ).map((entry) => (
+                                          <button
+                                            key={entry.id}
+                                            type="button"
+                                            onMouseDown={(e) =>
+                                              e.preventDefault()
+                                            }
+                                            onClick={() => {
+                                              applyCatalogModel(
+                                                row.id,
+                                                mi,
+                                                entry,
+                                              );
+                                              setFieldMenu(null);
+                                            }}
+                                            className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
+                                          >
+                                            <span className="min-w-0 flex-1 truncate font-mono">
+                                              {entry.model.name}
+                                            </span>
+                                            <span className="shrink-0 truncate text-[0.7143rem] text-dim">
+                                              {entry.label ??
+                                                entry.vendor ??
+                                                ''}
+                                            </span>
+                                          </button>
+                                        ))}
+                                        {catalogModelsFor(
+                                          row.type,
+                                          catalogQuery,
+                                        ).length === 0 && (
+                                          <p className="px-2.5 py-1.5 text-xs text-dim">
+                                            {t('config.modelSearchEmpty')}
+                                          </p>
+                                        )}
+                                      </div>,
+                                      document.body,
+                                    )}
                                   <button
                                     onClick={() => moveModel(row.id, mi, -1)}
                                     disabled={mi === 0}
