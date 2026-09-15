@@ -58,6 +58,15 @@ export interface PetAlphaGrid {
   alpha: Uint8ClampedArray;
 }
 
+/** Bounding box of the drawn pixels, in device pixels; right/bottom are
+ *  exclusive. */
+export interface PetAlphaBounds {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
 /** True when a client point falls inside a rectangle. */
 export function insidePetRect(
   rect: PetHitRect,
@@ -152,6 +161,35 @@ export function patchMaxAlpha(
     }
   }
   return max;
+}
+
+/**
+ * Smallest box that contains every pixel above the hit threshold, or
+ * null when the surface is empty. The pet window reports this box to Go
+ * so placement anchors on the character instead of on the transparent
+ * stage.
+ */
+export function alphaBounds(
+  grid: PetAlphaGrid,
+  threshold: number = PET_HIT_ALPHA,
+): PetAlphaBounds | null {
+  const { width, height, alpha } = grid;
+  let left = width;
+  let top = height;
+  let right = -1;
+  let bottom = -1;
+  for (let y = 0; y < height; y++) {
+    const row = y * width;
+    for (let x = 0; x < width; x++) {
+      if (alpha[row + x] <= threshold) continue;
+      if (x < left) left = x;
+      if (x > right) right = x;
+      if (y < top) top = y;
+      if (y > bottom) bottom = y;
+    }
+  }
+  if (right < 0) return null;
+  return { left, top, right: right + 1, bottom: bottom + 1 };
 }
 
 /**

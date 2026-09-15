@@ -30,13 +30,7 @@ type Shell struct {
 	scheduledTasks func(context.Context) bool
 	onLanguage     func()
 	onPetsChanged  func()
-	petMove        func(dx, dy int)
-	petSetPosition func(x, y int)
-	petActivate    func()
-	petPoke        func()
-	petRoamPause   func(paused bool)
-	petDiagnostics func() petfeed.MindDebug
-	petPosition    func() (x, y int, ok bool)
+	pet            PetWindowControls
 	petRuntime     petfeed.RuntimeStatus
 	hasPetRuntime  bool
 	userActiveAt   time.Time
@@ -103,25 +97,41 @@ func (s *Shell) SetPetsChangedListener(fn func()) {
 	s.mu.Unlock()
 }
 
+// PetWindowControls are the desktop-root callbacks behind the pet
+// bindings: the surface drives the window through them, and the Shell
+// only forwards. A nil field means the pet window is not running.
+type PetWindowControls struct {
+	// MoveBy drags the window by a relative offset.
+	MoveBy func(dx, dy int)
+	// SetPosition moves the window to an absolute position; the drag
+	// gesture sends one per animation frame.
+	SetPosition func(x, y int)
+	// Activate brings the main window to the foreground (pet click).
+	Activate func()
+	// Poke records a click/pet interaction.
+	Poke func()
+	// Diagnostics returns the latest mind snapshot for the settings
+	// diagnostics panel.
+	Diagnostics func() petfeed.MindDebug
+	// Position returns the tracked window position when the pet is
+	// docked.
+	Position func() (x, y int, ok bool)
+	// Geometry records where the renderer drew the character inside the
+	// pet window; placement is anchored on it.
+	Geometry func(g petfeed.WindowGeometry)
+	// BeginDrag/EndDrag bracket a drag gesture, so the character walks
+	// while the user moves the window.
+	BeginDrag func()
+	EndDrag   func()
+	// Hover reports pointer enter/leave on the character.
+	Hover func(inside bool)
+}
+
 // SetPetWindowControls installs the desktop-root callbacks for pet
 // window manipulation (drag movement and click-to-activate).
-func (s *Shell) SetPetWindowControls(
-	move func(dx, dy int),
-	setPosition func(x, y int),
-	activate func(),
-	poke func(),
-	roamPause func(paused bool),
-	diagnostics func() petfeed.MindDebug,
-	position func() (x, y int, ok bool),
-) {
+func (s *Shell) SetPetWindowControls(c PetWindowControls) {
 	s.mu.Lock()
-	s.petMove = move
-	s.petSetPosition = setPosition
-	s.petActivate = activate
-	s.petPoke = poke
-	s.petRoamPause = roamPause
-	s.petDiagnostics = diagnostics
-	s.petPosition = position
+	s.pet = c
 	s.mu.Unlock()
 }
 
@@ -129,7 +139,7 @@ func (s *Shell) SetPetWindowControls(
 // relative offset (drag input from the pet surface).
 func (s *Shell) MovePetWindow(dx, dy int) {
 	s.mu.Lock()
-	fn := s.petMove
+	fn := s.pet.MoveBy
 	s.mu.Unlock()
 	if fn != nil {
 		fn(dx, dy)
@@ -140,17 +150,58 @@ func (s *Shell) MovePetWindow(dx, dy int) {
 // absolute position (drag input from the pet surface).
 func (s *Shell) SetPetPosition(x, y int) {
 	s.mu.Lock()
-	fn := s.petSetPosition
+	fn := s.pet.SetPosition
 	s.mu.Unlock()
 	if fn != nil {
 		fn(x, y)
 	}
 }
 
+// ReportPetGeometry hands the renderer's measurement of the drawn
+// character to the desktop root, which anchors every placement on it.
+func (s *Shell) ReportPetGeometry(g petfeed.WindowGeometry) {
+	s.mu.Lock()
+	fn := s.pet.Geometry
+	s.mu.Unlock()
+	if fn != nil {
+		fn(g)
+	}
+}
+
+// BeginPetDrag marks the start of a drag gesture on the pet window.
+func (s *Shell) BeginPetDrag() {
+	s.mu.Lock()
+	fn := s.pet.BeginDrag
+	s.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
+}
+
+// EndPetDrag marks the end of a drag gesture on the pet window.
+func (s *Shell) EndPetDrag() {
+	s.mu.Lock()
+	fn := s.pet.EndDrag
+	s.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
+}
+
+// HoverPet reports whether the pointer is on the drawn character.
+func (s *Shell) HoverPet(inside bool) {
+	s.mu.Lock()
+	fn := s.pet.Hover
+	s.mu.Unlock()
+	if fn != nil {
+		fn(inside)
+	}
+}
+
 // ActivatePet brings the main window to the foreground (pet click).
 func (s *Shell) ActivatePet() {
 	s.mu.Lock()
-	fn := s.petActivate
+	fn := s.pet.Activate
 	s.mu.Unlock()
 	if fn != nil {
 		fn()
@@ -162,29 +213,18 @@ func (s *Shell) ActivatePet() {
 // PokePet reports a click/pet interaction to the desktop root.
 func (s *Shell) PokePet() {
 	s.mu.Lock()
-	fn := s.petPoke
+	fn := s.pet.Poke
 	s.mu.Unlock()
 	if fn != nil {
 		fn()
 	}
 }
 
-// SetPetRoamingPaused pauses/resumes the autonomous rover from the pet
-// surface context menu.
-func (s *Shell) SetPetRoamingPaused(paused bool) {
-	s.mu.Lock()
-	fn := s.petRoamPause
-	s.mu.Unlock()
-	if fn != nil {
-		fn(paused)
-	}
-}
-
-// PetDiagnostics returns the latest pet mind/rover snapshot for the
-// settings diagnostics panel.
+// PetDiagnostics returns the latest pet mind snapshot for the settings
+// diagnostics panel.
 func (s *Shell) PetDiagnostics() petfeed.MindDebug {
 	s.mu.Lock()
-	fn := s.petDiagnostics
+	fn := s.pet.Diagnostics
 	s.mu.Unlock()
 	if fn == nil {
 		return petfeed.MindDebug{}
@@ -192,11 +232,11 @@ func (s *Shell) PetDiagnostics() petfeed.MindDebug {
 	return fn()
 }
 
-// PetPosition returns the current pet window position when the rover
-// has a valid anchor.
+// PetPosition returns the current pet window position when the window
+// loop has a valid anchor.
 func (s *Shell) PetPosition() (x, y int, ok bool) {
 	s.mu.Lock()
-	fn := s.petPosition
+	fn := s.pet.Position
 	s.mu.Unlock()
 	if fn == nil {
 		return 0, 0, false

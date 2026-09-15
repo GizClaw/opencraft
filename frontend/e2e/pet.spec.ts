@@ -440,6 +440,8 @@ test('drags the window and pokes on a click', async ({ page }) => {
     (call) => call.method === 'SetPosition',
   );
   expect(drag.length).toBeGreaterThan(0);
+  // The gesture is bracketed so Go can turn it into a walk cycle.
+  expect(await gestureCalls(page)).toEqual(['BeginDrag', 'EndDrag']);
   // The mock window sits at (100, 100); the drag moved it by (40, 12).
   expect(drag.at(-1)?.args).toEqual([140, 112]);
 
@@ -451,6 +453,48 @@ test('drags the window and pokes on a click', async ({ page }) => {
   expect((await petCalls(page)).slice(-2)).toEqual([
     { method: 'Poke', args: [] },
     { method: 'Activate', args: [] },
+  ]);
+  expect(await gestureCalls(page)).toEqual([
+    'BeginDrag',
+    'EndDrag',
+    'BeginDrag',
+    'EndDrag',
+  ]);
+});
+
+/** The drag-gesture calls the surface made, in order. */
+async function gestureCalls(page: Page): Promise<string[]> {
+  return (await petCalls(page))
+    .filter((call) => call.method === 'BeginDrag' || call.method === 'EndDrag')
+    .map((call) => call.method);
+}
+
+test('reports when the pointer is on the character', async ({ page }) => {
+  await mountPet(page);
+
+  const canvas = await page.locator('.pet-canvas').boundingBox();
+  const stage = await surface(page).boundingBox();
+  expect(canvas).not.toBeNull();
+  expect(stage).not.toBeNull();
+  const hoverCalls = async () =>
+    (await petCalls(page)).filter((call) => call.method === 'Hover');
+
+  // The middle of the ring counts as the character (it is a hole in the
+  // drawn shape, not outside it); the empty stage margin does not.
+  await page.mouse.move(
+    (canvas?.x ?? 0) + (canvas?.width ?? 0) / 2,
+    (canvas?.y ?? 0) + (canvas?.height ?? 0) / 2,
+  );
+  await expect.poll(async () => (await hoverCalls()).length).toBeGreaterThan(0);
+  expect((await hoverCalls()).at(-1)?.args).toEqual([true]);
+
+  await page.mouse.move((stage?.x ?? 0) + 4, (stage?.y ?? 0) + 4);
+  await expect
+    .poll(async () => (await hoverCalls()).at(-1)?.args?.[0])
+    .toBe(false);
+  expect((await hoverCalls()).map((call) => call.args[0])).toEqual([
+    true,
+    false,
   ]);
 });
 
@@ -744,6 +788,38 @@ test('keeps the character and its overlays inside the 168px stage', async ({
     .locator('.pet-bubble')
     .evaluate((node) => getComputedStyle(node).borderTopColor);
   expect(borderWhileAsking).not.toBe(borderWhileWorking);
+});
+
+test('reports where the character is drawn', async ({ page }) => {
+  await mountPet(page);
+
+  // Go anchors the dock position and the watch spot on this box, so the
+  // surface has to measure the drawn pixels: the stage itself is
+  // transparent and about 40px wider than the character on each side.
+  const geometryCalls = async () =>
+    (await petCalls(page)).filter((call) => call.method === 'ReportGeometry');
+  await expect
+    .poll(async () => (await geometryCalls()).length)
+    .toBeGreaterThan(0);
+
+  const geometry = (await geometryCalls()).at(-1)?.args[0] as {
+    canvas: { x: number; y: number; width: number; height: number };
+    art: { x: number; y: number; width: number; height: number };
+    measured: boolean;
+  };
+  expect(geometry.measured).toBe(true);
+  expect(geometry.canvas).toEqual({ x: 20, y: 20, width: 128, height: 128 });
+  // The stub paints a ring of radius 41 device px around the canvas
+  // centre; allow the anti-aliased edge to land a pixel either way.
+  expect(geometry.art.x).toBeGreaterThanOrEqual(42);
+  expect(geometry.art.x).toBeLessThanOrEqual(44);
+  expect(geometry.art.y).toBe(geometry.art.x);
+  expect(geometry.art.width).toBeGreaterThanOrEqual(81);
+  expect(geometry.art.width).toBeLessThanOrEqual(85);
+  expect(geometry.art.height).toBe(geometry.art.width);
+  // The box only moves when the pose does: the 500ms re-measure must not
+  // turn into a stream of identical reports.
+  expect((await geometryCalls()).length).toBeLessThanOrEqual(3);
 });
 
 test('names the running tool in a tinted pill and flags a failure', async ({

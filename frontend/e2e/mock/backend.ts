@@ -285,6 +285,9 @@ export function mockBackend(cfg?: MockConfig) {
     Pet: {
       Activate: async () => recordPet('Activate', []),
       Activities: emptyList,
+      BeginDrag: async () => recordPet('BeginDrag', []),
+      EndDrag: async () => recordPet('EndDrag', []),
+      Hover: async (inside: boolean) => recordPet('Hover', [inside]),
       Diagnostics: async () =>
         config.petDiagnostics ?? {
           drives: { attention: 60, energy: 40, comfort: 50 },
@@ -301,6 +304,9 @@ export function mockBackend(cfg?: MockConfig) {
         return config.petAsset ?? '';
       },
       Poke: async () => recordPet('Poke', []),
+      ReportGeometry: async (geometry: unknown) => {
+        recordPet('ReportGeometry', [geometry]);
+      },
       Position: async () =>
         config.petPosition ?? { x: 100, y: 100, ready: true },
       RegisterPack: noop,
@@ -319,7 +325,6 @@ export function mockBackend(cfg?: MockConfig) {
       },
       SetPosition: async (x: number, y: number) =>
         recordPet('SetPosition', [x, y]),
-      SetRoamingPaused: noop,
       UnregisterPack: noop,
     },
     Plugin: {

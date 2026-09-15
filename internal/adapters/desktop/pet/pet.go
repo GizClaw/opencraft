@@ -367,7 +367,9 @@ func samePetActivity(a, b PetActivity) bool {
 type PetDisposition string
 
 const (
-	// PetDispositionRoam: no recent agent activity, the pet wanders.
+	// PetDispositionRoam: no recent agent activity. The pet is awake and
+	// idle; it stays parked where it is, and only walks to its watch
+	// spot while the agent works or asks.
 	PetDispositionRoam PetDisposition = "roam"
 	// PetDispositionSleep: no activity for a long stretch.
 	PetDispositionSleep PetDisposition = "sleep"
@@ -497,6 +499,12 @@ func (s *IntentSequencer) Observe(intent PetIntent) uint64 {
 // NotePoke records a user interaction (click/pet) with this pet.
 func (d *PetDirector) NotePoke(now time.Time) {
 	d.mind.NotePoke(now)
+}
+
+// NoteHover records whether the pointer is on the character; the mind
+// turns the transitions into a greeting wave and later glances.
+func (d *PetDirector) NoteHover(inside bool, now time.Time) {
+	d.mind.NoteHover(inside, now)
 }
 
 // Debug combines the mind snapshot with the surface state that was

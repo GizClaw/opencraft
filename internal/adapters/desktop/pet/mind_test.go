@@ -108,6 +108,58 @@ func TestMindPokeWakesAndWaves(t *testing.T) {
 	}
 }
 
+func TestMindHoverGreetsOnceThenLooks(t *testing.T) {
+	base := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	mind := NewMind()
+
+	// The first hover of a session is a greeting: wave on the next tick.
+	mind.NoteHover(true, base)
+	state := mind.Step(idleState(), base.Add(time.Second), base.Add(time.Second), false)
+	if state.Intent != PetIntentWave {
+		t.Fatalf("first hover must wave, got %+v", state)
+	}
+	// Leaving and returning immediately: nothing (still inside the
+	// cooldown, and the greeting is spent).
+	mind.NoteHover(false, base.Add(2*time.Second))
+	mind.NoteHover(true, base.Add(2*time.Second))
+	quiet := mind.Step(idleState(), base.Add(2*time.Second), base.Add(2*time.Second), false)
+	if quiet.Intent != "" {
+		t.Fatalf("hover inside the cooldown must stay quiet, got %+v", quiet)
+	}
+	// A hover after the cooldown is a glance.
+	later := base.Add(hoverCooldown + 5*time.Second)
+	mind.NoteHover(false, later)
+	mind.NoteHover(true, later)
+	look := mind.Step(idleState(), later.Add(time.Second), later.Add(time.Second), false)
+	if look.Intent != PetIntentLook {
+		t.Fatalf("hover after the cooldown must look, got %+v", look)
+	}
+	// Repeats of the same hover state are not transitions.
+	mind.NoteHover(true, later.Add(2*time.Second))
+	repeat := mind.Step(idleState(), later.Add(2*time.Second), later.Add(2*time.Second), false)
+	if repeat.Intent != "" {
+		t.Fatalf("a hover that never left must not react again, got %+v", repeat)
+	}
+}
+
+func TestMindHoverLeavesASleepingPetAlone(t *testing.T) {
+	base := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
+	mind := NewMind()
+	mind.sleeping = true
+	sleeping := idleState()
+	sleeping.Disposition = PetDispositionSleep
+	sleeping.Sleeping = true
+
+	mind.NoteHover(true, base)
+	state := mind.Step(sleeping, base.Add(time.Second), time.Time{}, false)
+	if state.Intent != "" {
+		t.Fatalf("hover must not react at a sleeping pet, got %+v", state)
+	}
+	if !mind.sleeping {
+		t.Fatal("hover must not wake the pet")
+	}
+}
+
 func TestMindSulksAfterIgnoredDone(t *testing.T) {
 	base := time.Date(2026, 9, 9, 12, 0, 0, 0, time.UTC)
 	mind := NewMind()

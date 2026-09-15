@@ -3,6 +3,8 @@ package desktop
 import (
 	"testing"
 	"time"
+
+	petfeed "github.com/GizClaw/opencraft/internal/adapters/desktop/pet"
 )
 
 func TestPetStepMovesAndClamps(t *testing.T) {
@@ -66,5 +68,63 @@ func TestPetFacing(t *testing.T) {
 		if got := petFacing(prev, 0); got != prev {
 			t.Fatalf("hold %q = %q, want %q", prev, got, prev)
 		}
+	}
+}
+
+// The pet walks to its watch spot only while the agent works or asks:
+// idling and sleeping both mean standing still, and a user drag always
+// wins. This is the property the old random roaming violated.
+func TestPetWalksToWatch(t *testing.T) {
+	cases := []struct {
+		name        string
+		disposition petfeed.PetDisposition
+		watchOK     bool
+		manual      bool
+		want        bool
+	}{
+		{"work walks", petfeed.PetDispositionWork, true, false, true},
+		{"ask walks", petfeed.PetDispositionAsk, true, false, true},
+		{"idle stays", petfeed.PetDispositionRoam, true, false, false},
+		{"sleep stays", petfeed.PetDispositionSleep, true, false, false},
+		{"no watch spot stays", petfeed.PetDispositionWork, false, false, false},
+		{"drag wins", petfeed.PetDispositionWork, true, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := petWalksToWatch(tc.disposition, tc.watchOK, tc.manual)
+			if got != tc.want {
+				t.Fatalf("petWalksToWatch(%q, watchOK=%v, manual=%v) = %v, want %v",
+					tc.disposition, tc.watchOK, tc.manual, got, tc.want)
+			}
+		})
+	}
+}
+
+// A drag turns the character only after enough sideways travel: a slow
+// drag accumulates, a vertical drag keeps the last direction, and the
+// walk cycle follows any movement.
+func TestPetDragStepTurnsOnAccumulatedTravel(t *testing.T) {
+	d := &Desktop{}
+	d.notePetDragStep(3, 0)
+	if d.petDragFacing != "" {
+		t.Fatalf("a wobble below the dead zone must not turn: %q", d.petDragFacing)
+	}
+	d.notePetDragStep(3, 0)
+	if d.petDragFacing != petFacingRight {
+		t.Fatalf("accumulated rightward drag = %q, want %q",
+			d.petDragFacing, petFacingRight)
+	}
+	if d.petDragMovedAt.IsZero() {
+		t.Fatal("a drag step must mark the gesture as moving")
+	}
+
+	d.notePetDragStep(0, 12)
+	if d.petDragFacing != petFacingRight {
+		t.Fatalf("a vertical drag must keep the facing, got %q", d.petDragFacing)
+	}
+
+	d.notePetDragStep(-20, 0)
+	if d.petDragFacing != petFacingLeft {
+		t.Fatalf("leftward drag = %q, want %q", d.petDragFacing, petFacingLeft)
 	}
 }

@@ -81,6 +81,7 @@ import type { PetActivityDTO } from '../pet/state';
 import type { PetMindDebug } from '../pet/state';
 import type { PetRuntimeStatus } from '../pet/validate';
 import { normalizeUISettings, type UISettings } from './appearance';
+import type { PetWindowGeometry } from '../pet/geometry';
 import type * as genPlugin from '../../bindings/github.com/GizClaw/opencraft/internal/capabilities/plugins/models';
 import type * as genPet from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/pet/models';
 
@@ -390,7 +391,11 @@ export const api = {
   petSetPosition: (x: number, y: number) => Pet.SetPosition(x, y),
   petActivate: () => Pet.Activate(),
   petPoke: () => Pet.Poke(),
-  petSetRoamingPaused: (paused: boolean) => Pet.SetRoamingPaused(paused),
+  petReportGeometry: (geometry: PetWindowGeometry) =>
+    Pet.ReportGeometry(geometry as unknown as genPet.WindowGeometry),
+  petBeginDrag: () => Pet.BeginDrag(),
+  petEndDrag: () => Pet.EndDrag(),
+  petHover: (inside: boolean) => Pet.Hover(inside),
   petGetPosition: () => Pet.Position(),
   reportUserActivity: () => Lifecycle.ReportUserActivity(),
   petPackAsset: (asset: string) => Pet.PackAsset(asset),
