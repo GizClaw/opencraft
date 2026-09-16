@@ -6,6 +6,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-09-16
+
+### Added
+
+- The agent can author and install plugins without leaving the
+  conversation: `plugin_install`, `plugin_update` and `plugin_list`
+  copy a plugin from a workspace directory or `.zip` package into the
+  same registry Settings > Plugins uses and reload the runtime
+  afterwards, so a plugin written in the workspace is live from the
+  next turn on. Every mutation asks the user to confirm first, and the
+  dialog shows the id, version, permissions, entry bundle and
+  capability binary before anything is copied. Sources keep the file
+  tools' workspace confinement (absolute paths, traversal and symlink
+  escapes are rejected outside YOLO sessions), while manifest
+  validation, version ordering, builtin shadowing and zip-slip checks
+  stay with the registry. A runtime with no interactive user —
+  automation runs, headless — fails closed and exposes none of the
+  three tools, and the new built-in `plugin-creator` skill documents
+  the manifest, bundle and capability-subprocess contracts. (#139)
+
+### Changed
+
+- `google.golang.org/grpc` moves to v1.83.1 with the OpenTelemetry
+  modules at 1.44.0, clearing GO-2026-6348 — heap exhaustion through
+  HTTP/2 DATA frame fragmentation — which the vulnerability database
+  published against the 0.5.0 pin after that release. (#137)
+
+### Fixed
+
+- A stopped `execd` child no longer loses the stderr lines it writes
+  while shutting down: the forwarder ran detached and `exec.Cmd.Wait`
+  closed the pipe's parent end the moment the child was reaped, so
+  shutdown lines could be dropped, or land after stop returned — in
+  the next session's log window and, in CI, the next test's capture.
+  The pipe is explicit now, the forwarder drains to EOF, and stop
+  waits for it under the same bounded teardown grace period. (#138)
+
 ## [0.5.0] - 2026-09-16
 
 ### Added
