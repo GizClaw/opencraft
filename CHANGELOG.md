@@ -41,7 +41,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shutdown lines could be dropped, or land after stop returned — in
   the next session's log window and, in CI, the next test's capture.
   The pipe is explicit now, the forwarder drains to EOF, and stop
-  waits for it under the same bounded teardown grace period. (#138)
+  waits for it under the same bounded teardown grace period — which is
+  only reachable while a grandchild holds the write end, because the
+  parent releases its own copy when the child starts. Without that
+  release the read end never saw EOF, so stop always fell through to
+  the grace period, dropped the child's last lines, leaked a
+  descriptor per child and could still emit a line after returning.
+  (#138, #141)
 
 ## [0.5.0] - 2026-09-16
 
