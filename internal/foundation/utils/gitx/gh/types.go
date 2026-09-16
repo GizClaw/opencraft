@@ -22,7 +22,9 @@ import (
 // is not installed, not logged in to github.com, or refuses to hand
 // out a token. Callers treat it as "hide the PR view".
 var ErrNoProvider = errors.New(
-	"github: no authenticated GitHub provider (install and run `gh auth login`)")
+	"github: no authenticated GitHub provider (install gh and run " +
+		"`gh auth login`; if gh is installed, see Settings > Diagnostics " +
+		"> Process PATH)")
 
 // nameRe mirrors GitHub's owner/repository naming rules. It is reused
 // for both remote segments so nothing unsanitized reaches an API path.
