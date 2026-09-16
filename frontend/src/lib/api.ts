@@ -55,6 +55,7 @@ import type {
   ModelUsageStat,
   ModelOption,
   PatchFileDTO,
+  PathEnvironment,
   PolicyDecision,
   PetsSettings,
   ProviderView,
@@ -378,6 +379,15 @@ export const api = {
     Diagnostics.TelemetryExport() as unknown as Promise<TelemetryExportStatus>,
   setTelemetryExport: (enabled: boolean) =>
     Diagnostics.SetTelemetryExport(enabled),
+  // pathEnvironment describes the PATH this process runs with; a
+  // Finder/Dock launch inherits launchd's minimal PATH, which is why an
+  // MCP server or CLI that works in a terminal can be missing here.
+  pathEnvironment: () =>
+    Diagnostics.PathEnvironment() as unknown as Promise<PathEnvironment>,
+  setPathPrepend: (dirs: string[]) =>
+    Diagnostics.SetPathPrepend(dirs) as unknown as Promise<PathEnvironment>,
+  resolvePath: () =>
+    Diagnostics.ResolvePath() as unknown as Promise<PathEnvironment>,
   getCloseToTray: () => Lifecycle.GetCloseToTray(),
   setCloseToTray: (closeToTray: boolean) =>
     Lifecycle.SetCloseToTray(closeToTray),

@@ -775,6 +775,28 @@ func (s *Shell) SetUISettings(ui UIPrefs) error {
 	})
 }
 
+// PathPrepend returns the configured PATH override directories
+// (Settings > Diagnostics > PATH).
+func (s *Shell) PathPrepend() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.prefs.Path.Prepend...)
+}
+
+// SetPathPrepend persists the PATH override. Writing the document is all
+// this does: applying the new value to the running process — and reloading
+// the runtime so MCP servers attach with it — stays with the caller
+// (see bindings.Diagnostics.ResolvePath).
+func (s *Shell) SetPathPrepend(dirs []string) error {
+	prefs := normalizePathPrefs(PathPrefs{Prepend: dirs})
+	if err := validatePathPrefs(prefs); err != nil {
+		return err
+	}
+	return s.commit(func(p *DesktopPrefs) {
+		p.Path = prefs
+	})
+}
+
 // commit applies one mutation to the in-memory preference document and
 // writes it back under the same lock.
 func (s *Shell) commit(mutate func(*DesktopPrefs)) error {

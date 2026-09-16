@@ -708,6 +708,37 @@ export interface TelemetryExportStatus {
   owner: string;
 }
 
+/**
+ * PathSegment is one entry of the process PATH the app runs with.
+ * "prepend" is a directory the user configured, "inherited" is what the
+ * app was launched with, and "candidate" is a standard install directory
+ * the host appended because the inherited PATH lacked it.
+ */
+export interface PathSegment {
+  dir: string;
+  source: 'prepend' | 'inherited' | 'candidate' | string;
+  present: boolean;
+}
+
+/**
+ * PathEnvironment is the diagnostics view of the PATH every command, MCP
+ * server and sandbox child inherits. The desktop app is usually started
+ * from Finder/Dock, which inherits launchd's minimal PATH instead of the
+ * shell's, so this is where a missing tool becomes visible.
+ */
+export interface PathEnvironment {
+  path: string;
+  segments: PathSegment[];
+  /** Persisted override directories, i.e. the editor's value. */
+  prepend: string[];
+  /** Override entries dropped because they are not absolute directories. */
+  rejected: string[];
+  /** Candidate directories that do not exist on this machine. */
+  missing: string[];
+  /** Whether the runtime reloaded so MCP servers re-attach. */
+  reloaded: boolean;
+}
+
 export interface DiagnosticsReport {
   version: string;
   go_version: string;

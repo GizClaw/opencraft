@@ -17,6 +17,8 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
+	otellog "go.opentelemetry.io/otel/log"
+
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/bindings"
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	petfeed "github.com/GizClaw/opencraft/internal/adapters/desktop/pet"
@@ -24,6 +26,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	octelemetry "github.com/GizClaw/opencraft/internal/capabilities/telemetry"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/envpath"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
 
@@ -129,6 +132,13 @@ func New(opts Options) (*Desktop, error) {
 	// The plugin telemetry handler is wired by the composition root and
 	// resolves this pipeline per call, so it can be attached here.
 	c.Telemetry = pipeline
+	// Resolve PATH once the log sink exists (the line below is the record
+	// of what the app runs with) but before anything can spawn: a
+	// Finder/Dock launch inherits launchd's minimal PATH, so without this
+	// the MCP servers, the commands agents run and the app's own gh/git
+	// lookups cannot see Homebrew or other user-local installs. The merge
+	// rules live in foundation/utils/envpath.
+	resolveProcessPath(c)
 	d := &Desktop{
 		core: c,
 		// Windows toast attribution keys off application.Options.Name
@@ -140,6 +150,31 @@ func New(opts Options) (*Desktop, error) {
 	}
 	c.Shell.SetNotificationSink(d.handleDesktopNotification)
 	return d, nil
+}
+
+// resolveProcessPath installs the merged PATH and records it. Resolution
+// is best-effort: a failure leaves the inherited PATH in place and must
+// never block the window.
+func resolveProcessPath(c *core.Core) {
+	ctx := c.Shell.Context()
+	resolved, err := envpath.Install(envpath.Options{
+		Prepend: c.Shell.PathPrepend(),
+	})
+	if err != nil {
+		telemetry.WarnErr(ctx, "envpath: resolve process PATH failed", err)
+		return
+	}
+	c.SetPathReport(resolved)
+	telemetry.Info(ctx, "envpath: process PATH resolved",
+		otellog.String("path", resolved.Path),
+		otellog.Bool("changed", resolved.Changed),
+		otellog.String("prepend", strings.Join(
+			resolved.Dirs(envpath.SourcePrepend), ", ")),
+		otellog.String("appended", strings.Join(
+			resolved.Dirs(envpath.SourceCandidate), ", ")),
+		otellog.String("missing", strings.Join(resolved.Missing, ", ")),
+		otellog.String("rejected", strings.Join(resolved.Rejected, ", ")),
+	)
 }
 
 // initTelemetry wires the OTel pipelines (rotating log file under

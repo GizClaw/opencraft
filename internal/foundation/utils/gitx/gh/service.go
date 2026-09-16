@@ -57,11 +57,13 @@ func ghAuthToken(
 }
 
 // ghExecutable resolves the gh CLI binary. An explicit GH_PATH wins
-// (lazygit's convention), then PATH, then well-known per-platform
-// install locations. The candidate fallback keeps the PR view working
-// when the app is launched outside a login shell (for example a macOS
-// GUI app whose PATH is the launchd default) and the CLI lives in a
-// Homebrew or other user-local directory.
+// (lazygit's convention), then PATH, then the Windows install
+// directories below.
+//
+// PATH is the primary answer because the process PATH is resolved at
+// startup (foundation/utils/envpath): a GUI launch gets the standard
+// Homebrew and user-local prefixes appended even though launchd hands it
+// a minimal PATH.
 func ghExecutable(lookPath func(string) (string, error)) (string, error) {
 	return ghExecutableFrom(
 		lookPath, os.Getenv("GH_PATH"), ghCandidatePaths())
@@ -89,37 +91,22 @@ func ghExecutableFrom(
 	return "", ErrNoProvider
 }
 
-// ghCandidatePaths lists the standard gh install directories for each
-// platform, probed after PATH misses.
+// ghCandidatePaths lists the gh install directories probed after a PATH
+// miss. It is Windows-only on purpose: everywhere else the startup PATH
+// resolution already adds those prefixes, so a second list here would
+// only duplicate it. Windows keeps the probe because its PATH comes from
+// the registry — an MSI installed while the app was running, or a
+// per-user install that never touched PATH, is still found this way.
 func ghCandidatePaths() []string {
-	switch runtime.GOOS {
-	case "windows":
-		return []string{
-			// Official MSI / winget install.
-			filepath.Join(os.Getenv("ProgramFiles"), "GitHub CLI", "gh.exe"),
-			// Per-user installs (winget --scope user and friends).
-			filepath.Join(
-				os.Getenv("LOCALAPPDATA"), "Programs", "GitHub CLI", "gh.exe"),
-		}
-	default:
-		candidates := []string{
-			// Apple Silicon Homebrew.
-			"/opt/homebrew/bin/gh",
-			// Intel Homebrew and classic /usr/local installs.
-			"/usr/local/bin/gh",
-			// Linux distro packages.
-			"/usr/bin/gh",
-			// Linux snap installs.
-			"/snap/bin/gh",
-		}
-		if home, err := os.UserHomeDir(); err == nil {
-			candidates = append(candidates,
-				// Linuxbrew and user-local installs.
-				filepath.Join(home, ".linuxbrew", "bin", "gh"),
-				filepath.Join(home, ".local", "bin", "gh"),
-			)
-		}
-		return candidates
+	if runtime.GOOS != "windows" {
+		return nil
+	}
+	return []string{
+		// Official MSI / winget install.
+		filepath.Join(os.Getenv("ProgramFiles"), "GitHub CLI", "gh.exe"),
+		// Per-user installs (winget --scope user and friends).
+		filepath.Join(
+			os.Getenv("LOCALAPPDATA"), "Programs", "GitHub CLI", "gh.exe"),
 	}
 }
 

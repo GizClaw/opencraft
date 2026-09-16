@@ -59,7 +59,10 @@ func TestMCPCommandProblemResolvesBareNameAgainstAppPATH(t *testing.T) {
 	if err == nil {
 		t.Fatal("mcpCommandProblem(bare name off PATH) = nil, want error")
 	}
-	for _, want := range []string{"not found in this app's PATH", "absolute command path"} {
+	for _, want := range []string{
+		"not found in this app's PATH",
+		"Diagnostics > Process PATH",
+	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error %q does not mention %q", err, want)
 		}

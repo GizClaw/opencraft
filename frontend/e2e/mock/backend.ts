@@ -199,6 +199,41 @@ export function mockBackend(cfg?: MockConfig) {
       ReportFrontendError: noop,
       ReportFrontendPerf: noop,
       RunSandboxProbe: async () => ({ ok: true }),
+      // The PATH card reads the process environment on mount and the
+      // runtime reload is the host's business, so a fixed shape is enough.
+      PathEnvironment: async () => ({
+        path: '/usr/bin:/bin:/usr/sbin:/sbin',
+        segments: [
+          { dir: '/usr/bin', source: 'inherited', present: true },
+          { dir: '/opt/homebrew/bin', source: 'candidate', present: true },
+        ],
+        prepend: [],
+        rejected: [],
+        missing: [],
+        reloaded: true,
+      }),
+      ResolvePath: async () => ({
+        path: '/usr/bin:/bin:/usr/sbin:/sbin',
+        segments: [
+          { dir: '/usr/bin', source: 'inherited', present: true },
+          { dir: '/opt/homebrew/bin', source: 'candidate', present: true },
+        ],
+        prepend: [],
+        rejected: [],
+        missing: [],
+        reloaded: true,
+      }),
+      SetPathPrepend: async () => ({
+        path: '/usr/bin:/bin:/usr/sbin:/sbin',
+        segments: [
+          { dir: '/usr/bin', source: 'inherited', present: true },
+          { dir: '/opt/homebrew/bin', source: 'candidate', present: true },
+        ],
+        prepend: [],
+        rejected: [],
+        missing: [],
+        reloaded: true,
+      }),
       SetTelemetryExport: noop,
       TelemetryExport: async () => ({
         enabled: true,

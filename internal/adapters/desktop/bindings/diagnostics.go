@@ -23,6 +23,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/execpolicy"
 	ocsandbox "github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/envpath"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/gitx"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/shelldetect"
 	"github.com/GizClaw/opencraft/internal/foundation/version"
@@ -36,6 +37,109 @@ type Diagnostics struct {
 // NewDiagnosticsBinding wires the diagnostics binding.
 func NewDiagnosticsBinding(c *core.Core) *Diagnostics {
 	return &Diagnostics{core: c}
+}
+
+// PathSegmentDTO is one entry of the resolved process PATH. Source is
+// "prepend" (user override), "inherited" (the PATH the app was launched
+// with) or "candidate" (a standard install directory the resolver added).
+type PathSegmentDTO struct {
+	Dir     string `json:"dir"`
+	Source  string `json:"source"`
+	Present bool   `json:"present"`
+}
+
+// PathEnvironmentDTO is the diagnostics view of the process PATH: the
+// value every spawn inherits, where each entry came from, and what the
+// resolver refused or could not find.
+type PathEnvironmentDTO struct {
+	Path     string           `json:"path"`
+	Segments []PathSegmentDTO `json:"segments"`
+	// Prepend is the persisted override, i.e. the editor's value.
+	Prepend []string `json:"prepend"`
+	// Rejected lists override entries dropped because they are not
+	// absolute directories.
+	Rejected []string `json:"rejected"`
+	// Missing lists candidate directories that do not exist on this
+	// machine.
+	Missing []string `json:"missing"`
+	// Reloaded reports whether the runtime reload ran through, so MCP
+	// servers re-attach with the new PATH. False means the reload failed
+	// (the reason goes to the log); the PATH change itself still applies
+	// to every future spawn, including the next runtime build.
+	Reloaded bool `json:"reloaded"`
+}
+
+// PathEnvironment reports the PATH this process runs with. It is a read
+// of the last resolution, not a new one.
+func (b *Diagnostics) PathEnvironment() PathEnvironmentDTO {
+	if report, ok := b.core.PathReport(); ok {
+		return b.pathEnvironmentDTO(report.Plan, report.Rejected, report.Missing)
+	}
+	// No install ran in this process (an embedded or test host): describe
+	// what the current environment would resolve to without writing it
+	// back.
+	plan := envpath.Inspect(envpath.Options{
+		Prepend: b.core.Shell.PathPrepend(),
+	})
+	return b.pathEnvironmentDTO(plan, plan.Rejected, plan.Missing)
+}
+
+// SetPathPrepend persists the PATH override and applies it: resolution
+// runs again and the runtime reloads so MCP servers attach with the new
+// environment. Already-running sessions keep the PATH of the process they
+// were spawned with.
+func (b *Diagnostics) SetPathPrepend(dirs []string) (PathEnvironmentDTO, error) {
+	if err := b.core.Shell.SetPathPrepend(dirs); err != nil {
+		return PathEnvironmentDTO{}, err
+	}
+	return b.ResolvePath()
+}
+
+// ResolvePath re-runs PATH resolution from the current environment and the
+// persisted override, then reloads the runtime. A failed reload is logged
+// and reported as Reloaded=false rather than failing the call: the PATH
+// change itself already took effect for every future spawn.
+func (b *Diagnostics) ResolvePath() (PathEnvironmentDTO, error) {
+	ctx := b.core.Shell.Context()
+	resolved, err := envpath.Install(envpath.Options{
+		Prepend: b.core.Shell.PathPrepend(),
+	})
+	if err != nil {
+		return PathEnvironmentDTO{}, err
+	}
+	b.core.SetPathReport(resolved)
+	dto := b.pathEnvironmentDTO(resolved.Plan, resolved.Rejected, resolved.Missing)
+	if err := b.core.ApplyDocumentReload(ctx); err != nil {
+		flowtelemetry.WarnErr(ctx, "desktop diagnostics: runtime reload failed", err)
+		return dto, nil
+	}
+	dto.Reloaded = true
+	return dto, nil
+}
+
+// pathEnvironmentDTO assembles the view from one resolution.
+func (b *Diagnostics) pathEnvironmentDTO(
+	plan envpath.Plan,
+	rejected, missing []string,
+) PathEnvironmentDTO {
+	dto := PathEnvironmentDTO{
+		Path:     plan.Path,
+		Prepend:  b.core.Shell.PathPrepend(),
+		Rejected: rejected,
+		Missing:  missing,
+	}
+	dto.Segments = make([]PathSegmentDTO, 0, len(plan.Segments))
+	for _, segment := range plan.Segments {
+		dto.Segments = append(dto.Segments, PathSegmentDTO{
+			Dir:     segment.Dir,
+			Source:  segment.Source,
+			Present: segment.Present,
+		})
+	}
+	if dto.Prepend == nil {
+		dto.Prepend = []string{}
+	}
+	return dto
 }
 
 // TelemetryExportDTO is the diagnostics view of the OTLP export sink.
