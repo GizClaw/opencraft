@@ -89,6 +89,15 @@ function summaryOf(tool: ToolView): Summary | null {
       return { verb: 'modifiedSkill', rest: str(args.name) };
     case 'skill_install':
       return { verb: 'installedSkill', rest: str(args.name) || str(args.repo) };
+    case 'plugin_install':
+      return { verb: 'installedPlugin', rest: str(args.path) };
+    case 'plugin_update':
+      return {
+        verb: 'updatedPlugin',
+        rest: str(args.id) || str(args.path),
+      };
+    case 'plugin_list':
+      return { verb: 'listedPlugins', rest: '' };
     case 'web_fetch':
       return { verb: 'fetched', rest: str(args.url) };
     case 'generate_image':

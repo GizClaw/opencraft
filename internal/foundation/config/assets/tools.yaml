@@ -88,6 +88,17 @@ resources:
     impl: opencraft/plugins
     deps:
       plugin.host: plugin.host
+  # Plugin authoring: install/update/list go through the desktop plugin
+  # registry (a host-side copy, not a sandboxed write) and reload the
+  # runtime, so a plugin the agent wrote in the workspace can go live
+  # in one confirmed step. Headless runtimes wire an empty installer
+  # and expose no tools.
+  tool.plugininstall:
+    kind: tool.Source
+    impl: opencraft/plugininstall
+    deps:
+      plugin.installer: plugin.installer
+      workspace: hostws
   # Scheduled-task management: preview + user confirmation happens in
   # the tool; persistence delegates to the desktop automation host.
   tool.automation:
@@ -152,6 +163,7 @@ resources:
       tool.plan: tool.plan
       tool.skills: tool.skills
       tool.plugins: tool.plugins
+      tool.plugininstall: tool.plugininstall
       tool.compact: tool.compact
       tool.permissions: tool.permissions
       tool.delegate: tool.delegate
