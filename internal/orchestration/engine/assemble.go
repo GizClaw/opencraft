@@ -50,6 +50,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
 	opentools "github.com/GizClaw/opencraft/internal/capabilities/tools"
 	automationtool "github.com/GizClaw/opencraft/internal/capabilities/tools/automation"
+	plugininstalltool "github.com/GizClaw/opencraft/internal/capabilities/tools/plugininstall"
 	"github.com/GizClaw/opencraft/internal/capabilities/worldstate"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 )
@@ -72,6 +73,10 @@ type Options struct {
 	// AutomationHost supplies scheduled-task persistence for the agent
 	// automation tool. Nil yields an empty host (no tools exposed).
 	AutomationHost automationtool.Host
+	// PluginInstaller supplies the desktop plugin registry to the
+	// agent plugin install tools. Nil yields an empty installer (no
+	// tools exposed).
+	PluginInstaller plugininstalltool.Installer
 	// SessionStore overrides session-store construction so every
 	// runtime in one workspace shares a single Store.
 	SessionStore func(
@@ -129,6 +134,12 @@ func WithAgentPlugins(h *pluginagent.Host) Option {
 // agent's automation tool.
 func WithAutomationHost(h automationtool.Host) Option {
 	return func(o *Options) { o.AutomationHost = h }
+}
+
+// WithPluginInstaller injects the desktop plugin registry used by the
+// agent's plugin install tools.
+func WithPluginInstaller(i plugininstalltool.Installer) Option {
+	return func(o *Options) { o.PluginInstaller = i }
 }
 
 // WithSessionStore overrides session store construction.
@@ -335,6 +346,10 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 	if automationHost == nil {
 		automationHost = automationtool.EmptyHost()
 	}
+	pluginInstaller := o.PluginInstaller
+	if pluginInstaller == nil {
+		pluginInstaller = plugininstalltool.EmptyInstaller()
+	}
 	for _, ext := range []runtimecore.ExternalResource{
 		{
 			ExternalDependency: runtimecore.ExternalDependency{
@@ -349,6 +364,13 @@ func BuildRuntime(ctx context.Context, doc deploy.Document, opts ...Option) (*ru
 				Contract: automationtool.ResourceKind,
 			},
 			Value: automationHost,
+		},
+		{
+			ExternalDependency: runtimecore.ExternalDependency{
+				Name:     "plugin.installer",
+				Contract: plugininstalltool.ResourceKind,
+			},
+			Value: pluginInstaller,
 		},
 	} {
 		if err := builder.WithExternalResource(ext); err != nil {

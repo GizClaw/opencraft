@@ -31,6 +31,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
 	metricstore "github.com/GizClaw/opencraft/internal/capabilities/telemetry/metric"
 	automationtool "github.com/GizClaw/opencraft/internal/capabilities/tools/automation"
+	plugininstalltool "github.com/GizClaw/opencraft/internal/capabilities/tools/plugininstall"
 	"github.com/GizClaw/opencraft/internal/capabilities/usage"
 	"github.com/GizClaw/opencraft/internal/foundation/compat"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
@@ -79,6 +80,7 @@ type Manager struct {
 	engineOptFunc  func() []engine.Option
 	pluginStore    *plugins.Store
 	pluginCap      *pluginruntime.Manager
+	pluginInstall  plugininstalltool.Installer
 	automationHost automationtool.Host
 	usageObserver  func(context.Context, inference.Usage)
 	usageRecorder  UsageRecorder
@@ -165,8 +167,20 @@ func (m *Manager) SetAutomationHost(h automationtool.Host) {
 	m.refreshEngineOptions()
 }
 
-// refreshEngineOptions reinstalls the engine option builder so plugin and
-// automation hosts are both injected into every runtime assembly.
+// SetPluginInstaller wires the desktop plugin registry into every
+// runtime assembly, exposing the agent's plugin install/update tools.
+// A nil installer keeps the engine's empty fallback so headless
+// runtimes simply expose no plugin authoring tools.
+func (m *Manager) SetPluginInstaller(i plugininstalltool.Installer) {
+	m.mu.Lock()
+	m.pluginInstall = i
+	m.mu.Unlock()
+	m.refreshEngineOptions()
+}
+
+// refreshEngineOptions reinstalls the engine option builder so plugin,
+// plugin-installer and automation hosts are all injected into every
+// runtime assembly.
 func (m *Manager) refreshEngineOptions() {
 	m.SetEngineOptionsFunc(func() []engine.Option {
 		m.mu.Lock()
@@ -179,6 +193,9 @@ func (m *Manager) refreshEngineOptions() {
 		}
 		if m.automationHost != nil {
 			opts = append(opts, engine.WithAutomationHost(m.automationHost))
+		}
+		if m.pluginInstall != nil {
+			opts = append(opts, engine.WithPluginInstaller(m.pluginInstall))
 		}
 		return opts
 	})

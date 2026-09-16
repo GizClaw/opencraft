@@ -108,6 +108,36 @@ func (w *HostWorkspace) Stat(
 	return w.pick(ctx).Stat(ctx, path)
 }
 
+// AbsPath resolves a workspace-relative path to the absolute host path
+// host-side consumers (the plugin install tool) hand to the plugin
+// registry, which copies from the real filesystem and therefore cannot
+// use a workspace view.
+//
+// The confinement matches the file tools: in workspace mode the path
+// must stay inside the workspace root, so absolute paths, ".."
+// traversal and symlink escapes are rejected; in YOLO mode absolute
+// host paths resolve as-is. Both modes fall back to the workspace root
+// for an empty path.
+func (w *HostWorkspace) AbsPath(
+	ctx context.Context, path string,
+) (string, error) {
+	if IsYOLO(ctx, w.sessions) {
+		if filepath.IsAbs(path) {
+			return filepath.Clean(path), nil
+		}
+		// Join maps "" onto the workspace root.
+		return filepath.Join(w.root, path), nil
+	}
+	if filepath.IsAbs(path) {
+		return "", errdefs.Validationf(
+			"workspace: absolute path %q rejected; use a workspace-relative path",
+			path)
+	}
+	// Resolve maps "" onto the workspace root and rejects traversal and
+	// symlink escapes for everything else.
+	return coresandbox.Resolve(w.root, path)
+}
+
 var _ workspace.Workspace = (*HostWorkspace)(nil)
 var _ workspace.LimitedReader = (*HostWorkspace)(nil)
 

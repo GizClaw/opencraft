@@ -72,6 +72,7 @@ func NewCore(userDir, dataDir, workDir string) *Core {
 	})
 	runtime.Manager().SetAgentPlugins(plugin.Store, plugin.Capability)
 	runtime.Manager().SetAutomationHost(NewAutomationHost(runtime))
+	runtime.Manager().SetPluginInstaller(NewPluginInstaller(c))
 	plugin.Capability.SetOpenURL(c.Shell.OpenURL)
 	defaultMode, defaultThink := c.Shell.SessionDefaults()
 	c.Conversation.SetDefaults(

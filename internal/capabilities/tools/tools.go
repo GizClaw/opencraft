@@ -34,6 +34,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/permissions"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/plan"
 	plugintools "github.com/GizClaw/opencraft/internal/capabilities/tools/pluginagent"
+	plugininstalltools "github.com/GizClaw/opencraft/internal/capabilities/tools/plugininstall"
 	skillstools "github.com/GizClaw/opencraft/internal/capabilities/tools/skills"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/videogen"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/viewimage"
@@ -57,6 +58,7 @@ func Register(r *resource.Registry) error {
 		r.Register(planSourceFactory{}),
 		r.Register(skillsSourceFactory{}),
 		r.Register(plugintools.SourceFactory{}),
+		r.Register(plugininstalltools.SourceFactory{}),
 		r.Register(agentlifecycleSourceFactory{}),
 		r.Register(compactSourceFactory{}),
 		r.Register(assembly.AssemblyFactory{}),

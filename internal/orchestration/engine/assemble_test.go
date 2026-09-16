@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GizClaw/flowcraft/core/agent"
 	sdkdelegation "github.com/GizClaw/flowcraft/core/delegation"
+	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/tool"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/agents"
@@ -18,7 +20,9 @@ import (
 	pluginagent "github.com/GizClaw/opencraft/internal/capabilities/plugins/agent"
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
+	plugininstalltool "github.com/GizClaw/opencraft/internal/capabilities/tools/plugininstall"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/foundation/interact"
 	"github.com/GizClaw/opencraft/internal/testing/sessionstore"
 )
 
@@ -43,6 +47,71 @@ func (automationStub) AutomationsApply(
 	context.Context, string, automations.Task,
 ) (automations.Task, error) {
 	return automations.Task{}, nil
+}
+
+// recordingInstaller is a non-empty installer so the engine assembles
+// the agent's plugin authoring tools without a desktop registry, while
+// recording the host paths the tools resolve.
+type recordingInstaller struct {
+	summary   plugins.PluginSummary
+	installed []string
+	updated   [][2]string
+}
+
+func (r *recordingInstaller) PluginsList(
+	context.Context,
+) ([]plugins.PluginSummary, error) {
+	return nil, nil
+}
+
+func (r *recordingInstaller) PluginInspect(
+	context.Context, string,
+) (plugins.PluginSummary, error) {
+	return r.summary, nil
+}
+
+func (r *recordingInstaller) PluginInstall(
+	_ context.Context, src string,
+) (plugins.PluginSummary, error) {
+	r.installed = append(r.installed, src)
+	return r.summary, nil
+}
+
+func (r *recordingInstaller) PluginUpdate(
+	_ context.Context, id, src string,
+) (plugins.PluginSummary, error) {
+	r.updated = append(r.updated, [2]string{id, src})
+	return r.summary, nil
+}
+
+// pluginConfirmCtx answers the tool confirmation prompt.
+func pluginConfirmCtx(approve bool) context.Context {
+	choice := "no"
+	if approve {
+		choice = "yes"
+	}
+	return agent.ContextWithHost(context.Background(), agent.HostFuncs{
+		AskUserFn: func(
+			context.Context, agent.UserPrompt,
+		) (agent.UserReply, error) {
+			return agent.UserReply{
+				Metadata: map[string]string{
+					interact.MetaChoice: choice,
+				},
+			}, nil
+		},
+	})
+}
+
+// catalogHasTool reports whether the assembled tool catalog carries a
+// tool with that name.
+func catalogHasTool(asm *tool.Assembly, name string) bool {
+	for _, def := range asm.Catalog().Definitions() {
+		if def.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func testWorkspaceLayout(
@@ -234,6 +303,144 @@ func TestBuildRuntimeAssemblesNewTools(t *testing.T) {
 	}
 	if !foundAutomation {
 		t.Fatal("automation tool missing from tool catalog")
+	}
+	// No installer is wired here: the plugin authoring tools must stay
+	// out of the catalog so a headless runtime cannot install plugins.
+	if catalogHasTool(toolsAsm, plugininstalltool.InstallName) {
+		t.Fatal("plugin install tool present without an installer")
+	}
+}
+
+// TestBuildRuntimeWithPluginInstallerExposesTools verifies the desktop
+// shape: an injected registry exposes plugin_list / plugin_install /
+// plugin_update, which copy from the workspace through the host.
+func TestBuildRuntimeWithPluginInstallerExposesTools(t *testing.T) {
+	work := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("OPENAI_API_KEY", "test-key")
+
+	userDir := filepath.Join(home, ".opencraft", "config")
+	seedLocalSandboxConfig(t, userDir)
+	cfg := config.InferenceConfig{
+		Instances: []config.Instance{{
+			Type:      config.Providers[0].ID,
+			KeySource: config.KeyEnv,
+			Enabled:   true,
+			Models:    []config.Model{{Name: "test-model"}},
+		}},
+	}
+	if err := config.WriteInference(userDir, cfg); err != nil {
+		t.Fatalf("write inference config: %v", err)
+	}
+
+	mgr, err := config.Open(config.Options{UserDir: userDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := mgr.Load(context.Background())
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	layout := testWorkspaceLayout(t, home, work)
+	sessionStore := migratedSessionStore(t, layout)
+	installer := &recordingInstaller{summary: plugins.PluginSummary{
+		ID: "hello", Name: "Hello", Version: "0.1.0", Enabled: true,
+	}}
+	rt, err := BuildRuntime(
+		context.Background(),
+		view.Document,
+		WithPluginInstaller(installer),
+		WithWorkBase(work),
+		WithConfigBase(userDir),
+		WithWorkspaceLayout(layout),
+		WithSessionStore(func(
+			context.Context, string, int,
+		) (*ocsessions.Store, error) {
+			return sessionStore, nil
+		}),
+	)
+	if err != nil {
+		t.Fatalf("BuildRuntime with plugin installer: %v", err)
+	}
+	defer func() { _ = rt.Close() }()
+
+	toolsValue, ok := rt.Resource("tools")
+	if !ok {
+		t.Fatal("tools resource missing")
+	}
+	asm, ok := toolsValue.(*tool.Assembly)
+	if !ok || asm == nil {
+		t.Fatal("tools resource is not *tool.Assembly")
+	}
+	for _, name := range []string{
+		plugininstalltool.ListName,
+		plugininstalltool.InstallName,
+		plugininstalltool.UpdateName,
+	} {
+		if !catalogHasTool(asm, name) {
+			t.Fatalf("%s missing from tool catalog", name)
+		}
+	}
+
+	// Drive plugin_install through the assembled dispatcher: the source
+	// path must resolve against the real workspace resource, so a
+	// workspace-relative path reaches the installer as an absolute host
+	// path while escapes are rejected before the confirmation.
+	work, err = filepath.EvalSymlinks(work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := func(ctx context.Context, args string) message.ToolResult {
+		t.Helper()
+		return asm.Execute(ctx, message.ToolCall{
+			ID:        "call-1",
+			Name:      plugininstalltool.InstallName,
+			Arguments: json.RawMessage(args),
+		})
+	}
+	res := call(pluginConfirmCtx(true), `{"path":"plug"}`)
+	if res.IsError {
+		t.Fatalf("plugin_install(relative) failed: %s", res.Content.Text())
+	}
+	if len(installer.installed) != 1 ||
+		installer.installed[0] != filepath.Join(work, "plug") {
+		t.Fatalf("installed = %v, want the workspace-resolved path",
+			installer.installed)
+	}
+	for _, args := range []string{
+		`{"path":"../escape"}`, `{"path":"/etc"}`,
+	} {
+		if res := call(pluginConfirmCtx(true), args); !res.IsError {
+			t.Fatalf("plugin_install(%s) succeeded, want rejection", args)
+		}
+	}
+	if len(installer.installed) != 1 {
+		t.Fatalf("rejected sources reached the installer: %v",
+			installer.installed)
+	}
+	// No interactive user (automation / headless): fail closed.
+	if res := call(context.Background(), `{"path":"plug"}`); !res.IsError {
+		t.Fatal("plugin_install without a user backend must fail")
+	}
+	if len(installer.installed) != 1 {
+		t.Fatalf("unconfirmed install reached the installer: %v",
+			installer.installed)
+	}
+	// plugin_update takes the same workspace-relative source and only
+	// reaches the registry after the id matches the manifest.
+	res = asm.Execute(pluginConfirmCtx(true), message.ToolCall{
+		ID:        "call-2",
+		Name:      plugininstalltool.UpdateName,
+		Arguments: json.RawMessage(`{"id":"hello","path":"plug"}`),
+	})
+	if res.IsError {
+		t.Fatalf("plugin_update failed: %s", res.Content.Text())
+	}
+	if len(installer.updated) != 1 ||
+		installer.updated[0] != [2]string{"hello", filepath.Join(work, "plug")} {
+		t.Fatalf("updated = %v, want the workspace-resolved path",
+			installer.updated)
 	}
 }
 

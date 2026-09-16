@@ -129,3 +129,32 @@ The host validates the URL (https, no credentials, SSRF guard), the
 remote version, and the sha256 checksum before downloading; the
 downloaded zip then goes through the normal `UpdateZip` pipeline with
 version constraints and rollback. `changelog` is optional.
+
+## Installing from the agent
+
+The agent can build a plugin inside its workspace and install it
+without leaving the conversation. The registry lives under
+`~/.opencraft/plugins`, outside the session sandbox, so the copy is a
+host-side step: three tools drive it, and each mutation is confirmed by
+the user first.
+
+- `plugin_install({ "path": ".opencraft-plugins/hello" })` — installs a
+  directory containing `plugin.json` or a `.zip` package that the agent
+  wrote in the workspace. The confirmation shows the id, version,
+  permissions, entry bundle and capability binary before anything is
+  copied.
+- `plugin_update({ "id": "hello", "path": "…" })` — same-id, strictly
+  newer version replacement with the usual rollback snapshot.
+- `plugin_list()` — the registry view (id, version, enabled state,
+  permissions, contributed capabilities).
+
+Install and update copy through the same registry code as the settings
+page and then reassemble the runtime, so the plugin's skills, tools,
+MCP servers and hooks are live from the next turn on (`RebuildRuntime`
+defers the swap while the calling turn still runs). Headless runtimes
+wire an empty installer and expose none of these tools, and runs with
+no interactive user to answer the confirmation (automations, headless)
+fail closed instead of installing.
+
+The `plugin-creator` builtin skill documents the manifest and bundle
+contracts the agent needs to author a plugin from scratch.

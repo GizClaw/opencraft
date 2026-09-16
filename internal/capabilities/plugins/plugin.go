@@ -128,6 +128,11 @@ type PluginSummary struct {
 	// CanRollback reports whether a rollback snapshot of the previous
 	// version is available (user plugins only).
 	CanRollback bool `json:"canRollback,omitempty"`
+	// Capability is the declared capability binary (a plugin-relative
+	// path) when the plugin ships one; empty for UI-only plugins. The
+	// host runs that binary as a subprocess, so installers surface it
+	// before anything is copied into the registry.
+	Capability string `json:"capability,omitempty"`
 }
 
 // PluginTool is one agent-callable tool exposed by a capability
@@ -576,6 +581,9 @@ func summaryFromManifest(m *Manifest, dir string, canRollback bool) PluginSummar
 		HasTools:    len(m.Tools) > 0,
 		HasUpdate:   m.Update != nil,
 		CanRollback: canRollback,
+	}
+	if m.Capability != nil {
+		sum.Capability = m.Capability.Binary
 	}
 	if !sum.HasSkills && manifestHasPermission(m, "skills:contribute") &&
 		dirExists(filepath.Join(dir, "skills")) {

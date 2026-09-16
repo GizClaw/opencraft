@@ -64,6 +64,9 @@ export interface PluginSummary {
   hasUpdate?: boolean;
   /** A rollback snapshot of the previous version is available. */
   canRollback?: boolean;
+  /** Declared capability binary (plugin-relative path), when the plugin
+      ships one the host runs as a subprocess. */
+  capability?: string;
 }
 
 /** UI view of one agent-callable tool declared by a plugin manifest. */

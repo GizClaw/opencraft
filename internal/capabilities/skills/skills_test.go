@@ -70,8 +70,8 @@ func TestDiscoverRepoLevelsAndUserDirs(t *testing.T) {
 	if !ok || !strings.Contains(dup.Path, filepath.Join("sub", "dir")) {
 		t.Fatalf("ByName(dup) = %q, want cwd-level dup to beat user-level", dup.Path)
 	}
-	if len(svc.List()) != 10 { // 6 discovered + 4 built-ins
-		t.Fatalf("List() = %d, want 10", len(svc.List()))
+	if len(svc.List()) != 11 { // 6 discovered + 5 built-ins
+		t.Fatalf("List() = %d, want 11", len(svc.List()))
 	}
 }
 
@@ -391,6 +391,7 @@ func TestBuiltinEmbedded(t *testing.T) {
 	svc := NewService(context.Background(), Options{WorkBase: t.TempDir(), Enabled: true})
 	for _, name := range []string{
 		"plan", "review", "skill-creator", "skill-installer",
+		"plugin-creator",
 	} {
 		sk, ok := svc.ByName(name)
 		if !ok {
