@@ -52,11 +52,31 @@ func forwardChildStderr(
 			otellog.String("execd.socket", sock),
 			otellog.String("execd.line", sc.Text()))
 	}
-	// Wait closes the pipe after the child exits, which can race the last
-	// read; that end of the stream is expected, not a failure.
+	// The read end is closed once the drain is over (see
+	// forwardChildStderrAsync), which can race the last read; that end of
+	// the stream is expected, not a failure.
 	if err := sc.Err(); err != nil && !errors.Is(err, os.ErrClosed) {
 		telemetry.WarnErr(ctx, "execd: drain child stderr failed", err)
 	}
+}
+
+// forwardChildStderrAsync drains a child's stderr in the background and
+// returns a channel closed once it has. The read end is closed with the
+// drain, so the channel also means the descriptor is gone.
+func forwardChildStderrAsync(
+	ctx context.Context, pid int, sock string, stderr *os.File,
+) <-chan struct{} {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer func() {
+			if err := stderr.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+				telemetry.WarnErr(ctx, "execd: close child stderr reader failed", err)
+			}
+		}()
+		forwardChildStderr(ctx, pid, sock, stderr)
+	}()
+	return done
 }
 
 // Launch forks the current executable in execd mode and dials its
@@ -136,10 +156,16 @@ func LaunchExe(
 	}
 	cmd := exec.CommandContext(ctx, executable, args...)
 	// The child's stderr carries its own diagnostics (it has a log
-	// pipeline that writes warnings there, see execd_main.go); the pipe
-	// below forwards them into the host log instead of dropping them on
-	// the application's stderr.
-	stderr, err := cmd.StderrPipe()
+	// pipeline that writes warnings there, see execd_main.go), and the
+	// forwarder below copies them into the host log instead of dropping
+	// them on the application's stderr.
+	//
+	// The pipe is explicit rather than cmd.StderrPipe(): Wait closes
+	// StderrPipe's parent end the moment the child is reaped, which can
+	// drop the lines the child wrote last, before the forwarder has read
+	// them. With a read end of our own the forwarder drains everything up
+	// to EOF, and stop can wait for it below.
+	stderr, stderrWrite, err := os.Pipe()
 	if err != nil {
 		if policyFile != "" {
 			telemetry.WarnErr(ctx, "execd: remove policy file after stderr pipe failure",
@@ -147,14 +173,23 @@ func LaunchExe(
 		}
 		return nil, sock, nil, fmt.Errorf("execd stderr pipe: %w", err)
 	}
+	cmd.Stderr = stderrWrite
 	if err := cmd.Start(); err != nil {
+		// Start closes the parent's copy of the write end; the read end
+		// is ours to release.
+		telemetry.WarnErr(ctx, "execd: close stderr reader after start failure",
+			stderr.Close())
+		if err := stderrWrite.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+			telemetry.WarnErr(ctx, "execd: close stderr writer after start failure",
+				err)
+		}
 		if policyFile != "" {
 			telemetry.WarnErr(ctx, "execd: remove policy file after start failure",
 				os.Remove(policyFile))
 		}
 		return nil, sock, nil, fmt.Errorf("execd launch: %w", err)
 	}
-	go forwardChildStderr(ctx, cmd.Process.Pid, sock, stderr)
+	stderrForwarded := forwardChildStderrAsync(ctx, cmd.Process.Pid, sock, stderr)
 	var dialed *Client
 	stop := func() {
 		// Close the client first: the child's Serve loop returns on
@@ -192,6 +227,22 @@ func LaunchExe(
 			telemetry.WarnErr(ctx, "execd: kill child during stop failed",
 				cmd.Process.Kill())
 			<-waited
+		}
+		// The forwarder ends at EOF, which the child's exit produces, so
+		// waiting here keeps the warnings a child writes while shutting
+		// down inside this stop instead of in whatever log window runs
+		// next (the next session, or the next test's capture). A
+		// grandchild that inherited the write end can hold EOF back, so
+		// the wait is bounded and closing the read end ends the drain.
+		select {
+		case <-stderrForwarded:
+		case <-time.After(stopGrace):
+			telemetry.Warn(ctx,
+				"execd: child stderr still draining during stop")
+			if err := stderr.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+				telemetry.WarnErr(ctx,
+					"execd: close child stderr reader during stop failed", err)
+			}
 		}
 		if err := os.Remove(sock); err != nil && !os.IsNotExist(err) {
 			telemetry.WarnErr(ctx, "execd: remove socket during stop failed", err)
