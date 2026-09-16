@@ -79,7 +79,8 @@ func resolveMCPCommand(command string) (string, error) {
 	resolved, err := exec.LookPath(command)
 	if err != nil {
 		return "", fmt.Errorf(
-			"not found in this app's PATH (%s); set an absolute command path — "+
+			"not found in this app's PATH (%s); use an absolute path, or add "+
+				"its directory under Settings > Diagnostics > Process PATH — "+
 				"a Finder launch inherits launchd's PATH, not your shell PATH, "+
 				"and env.PATH cannot change bare-name resolution",
 			os.Getenv("PATH"))
@@ -143,7 +144,8 @@ func checkMCPShebang(path, serverPATH string) error {
 	if !hasExecutableIn(serverPATH, argument) {
 		return fmt.Errorf(
 			"its shebang needs %q on the PATH the server runs with (%s); "+
-				"add the interpreter's directory to this server's env.PATH",
+				"add that directory under Settings > Diagnostics > Process PATH "+
+				"(or to this server's env.PATH)",
 			argument, serverPATH)
 	}
 	return nil
