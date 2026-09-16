@@ -189,6 +189,17 @@ func LaunchExe(
 		}
 		return nil, sock, nil, fmt.Errorf("execd launch: %w", err)
 	}
+	// The child holds its own descriptor for the write end, so the
+	// parent's copy has to go the way StderrPipe's would: while any
+	// writer is open the read end never reaches EOF, and the drain would
+	// only end when stop force-closes the reader after its grace period —
+	// dropping everything the child wrote in the meantime, emitting a
+	// last line after stop returned, and leaking one descriptor per
+	// child.
+	if err := stderrWrite.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+		telemetry.WarnErr(ctx,
+			"execd: close parent stderr writer after start failed", err)
+	}
 	stderrForwarded := forwardChildStderrAsync(ctx, cmd.Process.Pid, sock, stderr)
 	var dialed *Client
 	stop := func() {

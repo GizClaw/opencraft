@@ -161,6 +161,19 @@ func TestStopDrainsForwardedStderr(t *testing.T) {
 		t.Fatalf("stop returned before the child's stderr was drained: "+
 			"%d forwarded records became %d", drained, after)
 	}
+	// The drain ends at EOF (the child's exit), not at the grace period:
+	// a stop that has to force the reader closed means the parent kept
+	// the pipe's write end open, which drops whatever the child wrote
+	// after the grace period and can still emit a line after stop
+	// returned — the cross-test leak TestForwardChildStderrLogsLines
+	// catches as "3 records, want 2".
+	for _, record := range recorder.snapshot() {
+		if body := record.Body().AsString(); strings.Contains(
+			body, "still draining during stop",
+		) {
+			t.Fatalf("stop fell back to the drain grace period: %q", body)
+		}
+	}
 }
 
 // slowRecorder is a log processor that holds each record back for a
@@ -199,4 +212,11 @@ func (r *slowRecorder) forwarded(sock string) int {
 		}
 	}
 	return count
+}
+
+// snapshot returns a copy of every record the processor has seen.
+func (r *slowRecorder) snapshot() []sdklog.Record {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]sdklog.Record(nil), r.records...)
 }
