@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"syscall"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
 )
@@ -161,11 +162,13 @@ func (c *Client) closing() bool {
 
 // connectionClosed reports whether err is the ordinary end of a
 // connection — our own close, or the peer hanging up — rather than a
-// protocol failure.
+// protocol failure. EPIPE is how a unix socket reports the peer's
+// hangup on write, which is the same teardown as a closed pipe.
 func connectionClosed(err error) bool {
 	return errors.Is(err, net.ErrClosed) ||
 		errors.Is(err, io.EOF) ||
-		errors.Is(err, io.ErrClosedPipe)
+		errors.Is(err, io.ErrClosedPipe) ||
+		errors.Is(err, syscall.EPIPE)
 }
 
 func (c *Client) call(

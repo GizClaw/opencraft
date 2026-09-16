@@ -560,9 +560,8 @@ func (s *Server) pushEvents(
 func (s *Server) respond(resp Response) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	telemetry.WarnErr(context.Background(),
-		"execd: encode JSON-RPC response failed",
-		json.NewEncoder(s.out).Encode(resp))
+	s.encodeFrame(context.Background(),
+		"execd: encode JSON-RPC response failed", resp)
 }
 
 func (s *Server) notify(method string, params any) {
@@ -574,13 +573,26 @@ func (s *Server) notify(method string, params any) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	telemetry.WarnErr(context.Background(),
+	s.encodeFrame(context.Background(),
 		"execd: encode JSON-RPC notification failed",
-		json.NewEncoder(s.out).Encode(map[string]any{
+		map[string]any{
 			"jsonrpc": "2.0",
 			"method":  method,
 			"params":  json.RawMessage(raw),
-		}))
+		})
+}
+
+// encodeFrame writes one frame to the transport. A peer that already
+// hung up is teardown, not news: the reader loop ends on the same
+// condition, and a warning here would be emitted with a background
+// context, so it lands in whatever log pipeline is installed by then —
+// in tests, the next test's capture, which is how a closed client used
+// to fail someone else's assertion.
+func (s *Server) encodeFrame(ctx context.Context, what string, v any) {
+	err := json.NewEncoder(s.out).Encode(v)
+	if err != nil && !connectionClosed(err) {
+		telemetry.WarnErr(ctx, what, err)
+	}
 }
 
 func (sess *session) get(id string) (*processEntry, bool) {
