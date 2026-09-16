@@ -726,6 +726,8 @@ export interface DiagnosticsReport {
   active_runs: number;
   sandbox_backend: string;
   sandbox_available: boolean;
+  /** Shell exec_command spawns through (e.g. "/bin/sh -c"). */
+  exec_shell: string;
   usage_total_tokens: number;
 }
 

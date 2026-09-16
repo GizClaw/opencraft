@@ -17,6 +17,7 @@ import {
   Settings,
   ShieldCheck,
   ShieldPlus,
+  ShieldAlert,
   SlidersHorizontal,
   Sparkles,
   Stethoscope,
@@ -408,6 +409,11 @@ export function ConfigPage() {
   const [saving, setSaving] = useState(false);
   const [rules, setRules] = useState<string[]>([]);
   const [ruleInput, setRuleInput] = useState('');
+  // Commands the user allowed to leave the sandbox entirely. They are a
+  // stronger grant than the allowlist above: a match skips the confined
+  // attempt and the approval prompt.
+  const [escalatedRules, setEscalatedRules] = useState<string[]>([]);
+  const [escalatedInput, setEscalatedInput] = useState('');
   const [memory, setMemory] = useState<MemorySettings>({
     max_raw_messages: 36,
     preserve_recent: 4,
@@ -512,6 +518,10 @@ export function ConfigPage() {
     void api
       .permissions()
       .then(setRules)
+      .catch((err) => setError(String(err)));
+    void api
+      .escalatedPermissions()
+      .then(setEscalatedRules)
       .catch((err) => setError(String(err)));
   }, [tab]);
 
@@ -2609,6 +2619,101 @@ export function ConfigPage() {
                     {t('config.permissionsAdd')}
                   </button>
                 </div>
+
+                {/* Escalation rules: commands allowed to leave the
+                    sandbox entirely. Strictly stronger than the
+                    allowlist above, so they get their own bordered
+                    section instead of being mixed into that list. */}
+                <div className="space-y-3 rounded-xl border border-warn/40 bg-warn/5 p-3">
+                  <div className="flex items-start gap-2 text-xs text-dim">
+                    <ShieldAlert
+                      size="1.0000rem"
+                      className="mt-0.5 shrink-0 text-warn"
+                    />
+                    <span>{t('config.escalatedHint')}</span>
+                  </div>
+                  {escalatedRules.length > 0 && (
+                    <div className="overflow-hidden rounded-lg border border-edge bg-panel">
+                      {escalatedRules.map((rule, i) => (
+                        <div
+                          key={rule}
+                          className={`group flex items-center gap-2 px-3 py-2 hover:bg-panel2 ${
+                            i > 0 ? 'border-t border-edge/60' : ''
+                          }`}
+                        >
+                          <ShieldAlert
+                            size="1.0000rem"
+                            className="shrink-0 text-warn"
+                          />
+                          <code className="flex-1 truncate font-mono text-sm text-fg">
+                            {rule}
+                          </code>
+                          <button
+                            onClick={() =>
+                              void api
+                                .denyEscalatedPermission(rule)
+                                .then(() => api.escalatedPermissions())
+                                .then(setEscalatedRules)
+                                .then(() =>
+                                  toast(t('config.escalatedRemoved', { rule })),
+                                )
+                                .catch((err) => setError(String(err)))
+                            }
+                            title={t('config.permissionsRemove')}
+                            aria-label={t('config.permissionsRemove')}
+                            className="shrink-0 rounded p-1 text-dim opacity-0 transition-opacity hover:text-err group-hover:opacity-100"
+                          >
+                            <Trash2 size="1.0000rem" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2 rounded-xl border border-edge bg-panel2 p-2">
+                    <ShieldAlert
+                      size="1.0714rem"
+                      className="ml-1 shrink-0 text-dim"
+                    />
+                    <input
+                      value={escalatedInput}
+                      onChange={(e) => setEscalatedInput(e.target.value)}
+                      placeholder={t('config.permissionsPlaceholder')}
+                      onKeyDown={(e) => {
+                        if (e.key !== 'Enter' || !escalatedInput.trim()) return;
+                        const rule = escalatedInput.trim();
+                        void api
+                          .allowEscalatedPermission(rule)
+                          .then(() => api.escalatedPermissions())
+                          .then(setEscalatedRules)
+                          .then(() => {
+                            setEscalatedInput('');
+                            toast(t('config.escalatedAdded', { rule }));
+                          })
+                          .catch((err) => setError(String(err)));
+                      }}
+                      className="flex-1 bg-transparent px-2 py-1 text-sm outline-none placeholder:text-dim/60"
+                    />
+                    <button
+                      onClick={() => {
+                        if (!escalatedInput.trim()) return;
+                        const rule = escalatedInput.trim();
+                        void api
+                          .allowEscalatedPermission(rule)
+                          .then(() => api.escalatedPermissions())
+                          .then(setEscalatedRules)
+                          .then(() => {
+                            setEscalatedInput('');
+                            toast(t('config.escalatedAdded', { rule }));
+                          })
+                          .catch((err) => setError(String(err)));
+                      }}
+                      className="rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
+                      disabled={!escalatedInput.trim()}
+                    >
+                      {t('config.permissionsAdd')}
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
 
@@ -2655,6 +2760,12 @@ export function ConfigPage() {
                         {diag.sandbox_backend}
                         {diag.sandbox_available ? ' ✓' : ' ✗'}
                       </p>
+                    </div>
+                    <div className="rounded-lg border border-edge bg-panel2 px-3 py-2">
+                      <span className="text-xs text-dim">
+                        {t('config.diagShell')}
+                      </span>
+                      <p className="font-mono">{diag.exec_shell}</p>
                     </div>
                     <div className="rounded-lg border border-edge bg-panel2 px-3 py-2">
                       <span className="text-xs text-dim">

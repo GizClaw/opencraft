@@ -186,7 +186,7 @@ export function mockBackend(cfg?: MockConfig) {
     },
     Diagnostics: {
       ClearCaches: async () => ({ dirs: [], bytes: 0 }),
-      Diagnostics: async () => ({}),
+      Diagnostics: async () => ({ exec_shell: '/bin/sh -c' }),
       EvaluateCommandPolicy: async () => ({ command: '', allowed: true }),
       MetricRange: async () => [],
       // Mirrors the wire shape of a Go nil slice: the repair reports no
@@ -387,9 +387,12 @@ export function mockBackend(cfg?: MockConfig) {
       },
     },
     Settings: {
+      AllowEscalatedPermission: noop,
       AllowPermission: noop,
       DeleteSkill: noop,
+      DenyEscalatedPermission: noop,
       DenyPermission: noop,
+      EscalatedPermissions: emptyList,
       GetSessionDefaults: async () => ({ mode: 'workspace', think: 'medium' }),
       GetModel: async () => '',
       GetThink: async () => 'medium',

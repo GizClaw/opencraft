@@ -9,6 +9,8 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/sandbox"
+
+	"github.com/GizClaw/opencraft/internal/foundation/utils/shelldetect"
 )
 
 type cmdRunner struct {
@@ -86,12 +88,18 @@ func newCommandTool() (*CommandTool, *cmdRunner) {
 		},
 		exit: sandbox.SessionExit{Code: 0, Reason: sandbox.SessionExited},
 	}
-	tool, err := NewCommand(runner)
+	// Pin the POSIX shell so the assertions describe the repository's
+	// default deployment rather than the machine running the test.
+	tool, err := NewCommand(runner, WithShell(testPosixShell))
 	if err != nil {
 		panic(err)
 	}
 	return tool, runner
 }
+
+// testPosixShell is the shell a macOS/Linux deployment gets; windows
+// and cross-compiled tests pass their own spec explicitly.
+var testPosixShell = shelldetect.Default("darwin")
 
 func TestExecuteRunsShellCommand(t *testing.T) {
 	tool, runner := newCommandTool()
@@ -144,11 +152,108 @@ func TestDirectArgs(t *testing.T) {
 		{"", nil, false},
 	}
 	for _, tc := range cases {
-		argv, ok := directArgs(tc.cmd)
+		argv, ok := directArgs(tc.cmd, "")
 		if ok != tc.ok || !reflect.DeepEqual(argv, tc.argv) {
 			t.Errorf("directArgs(%q) = %v, %v; want %v, %v",
 				tc.cmd, argv, ok, tc.argv, tc.ok)
 		}
+	}
+}
+
+// TestDirectArgsWindows covers the Windows-specific word characters:
+// a backslash is a path separator there, so native paths must stay on
+// the direct-argv path instead of being routed through a shell.
+func TestDirectArgsWindows(t *testing.T) {
+	extra := shelldetect.Default("windows").SafeRunes
+	cases := []struct {
+		cmd  string
+		argv []string
+		ok   bool
+	}{
+		{`C:\tools\python.exe script.py`,
+			[]string{`C:\tools\python.exe`, "script.py"}, true},
+		{`py -3 C:\work\main.py`,
+			[]string{"py", "-3", `C:\work\main.py`}, true},
+		{"dir /b", []string{"dir", "/b"}, true},
+		// Expansion and cmd escaping still need the shell.
+		{"echo %PATH%", nil, false},
+		{"echo foo ^& bar", nil, false},
+		{"dir | findstr x", nil, false},
+	}
+	for _, tc := range cases {
+		argv, ok := directArgs(tc.cmd, extra)
+		if ok != tc.ok || !reflect.DeepEqual(argv, tc.argv) {
+			t.Errorf("directArgs(%q) = %v, %v; want %v, %v",
+				tc.cmd, argv, ok, tc.argv, tc.ok)
+		}
+	}
+	// The same command stays ambiguous on POSIX, where a backslash is
+	// an escape character: it must not take the direct path there.
+	if _, ok := directArgs(`C:\tools\python.exe script.py`, ""); ok {
+		t.Error("POSIX must not treat backslashes as literal word characters")
+	}
+}
+
+// TestExecuteUsesConfiguredShell pins the shell wiring: the tool must
+// spawn exactly the configured program and flags, whatever the host.
+func TestExecuteUsesConfiguredShell(t *testing.T) {
+	cases := []struct {
+		name string
+		spec shelldetect.Spec
+		want []string
+	}{
+		{
+			name: "posix",
+			spec: shelldetect.Default("darwin"),
+			want: []string{"/bin/sh", "-c", "rg --files | head"},
+		},
+		{
+			name: "windows",
+			spec: shelldetect.Default("windows"),
+			want: []string{"cmd.exe", "/c", "rg --files | head"},
+		},
+		{
+			name: "windows powershell",
+			spec: shelldetect.Spec{
+				Program:   `C:\tools\pwsh.exe`,
+				Args:      []string{"-NoProfile", "-Command"},
+				SafeRunes: `\`,
+			},
+			want: []string{
+				`C:\tools\pwsh.exe`, "-NoProfile", "-Command",
+				"rg --files | head",
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := &cmdRunner{
+				out: sandbox.SessionOutput{
+					NextSeq: 1,
+					EOF:     true,
+				},
+				exit: sandbox.SessionExit{
+					Code:   0,
+					Reason: sandbox.SessionExited,
+				},
+			}
+			tool, err := NewCommand(runner, WithShell(tc.spec))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := tool.Execute(context.Background(),
+				`{"command":"rg --files | head"}`); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(runner.started[0].Argv, tc.want) {
+				t.Fatalf("argv = %v, want %v", runner.started[0].Argv, tc.want)
+			}
+			if def := tool.Definition(); !strings.Contains(
+				def.Description, tc.spec.CommandLine()) {
+				t.Fatalf("description does not name the shell %q: %s",
+					tc.spec.CommandLine(), def.Description)
+			}
+		})
 	}
 }
 

@@ -39,7 +39,7 @@ func contains(names []string, want string) bool {
 
 func TestExecToolListPlatformGate(t *testing.T) {
 	for _, goos := range []string{"darwin", "linux", "freebsd", "windows"} {
-		names := toolNames(execToolList(stubRunner{}, goos))
+		names := toolNames(execToolList(stubRunner{}, nil, goos))
 		if !contains(names, "exec_command") {
 			t.Errorf("%s: exec_command missing from %v", goos, names)
 		}

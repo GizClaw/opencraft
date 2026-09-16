@@ -78,6 +78,11 @@ resources:
       # ${ocraft:APPROVALS}); commands approved via "Always allow" /
       # request_permissions land here.
       approvals_path: ${ocraft:APPROVALS}
+      # Escalation decisions ("run outside the sandbox" answers) are
+      # appended to <audit_dir>/escalations.jsonl. Remembered rules live
+      # in escalations.yaml next to approvals.yaml, so a downgrade to a
+      # build without the feature cannot drop them.
+      audit_dir: ${ocraft:AUDIT_DIR}
   # Workspace session store: SQLite at the injected data root
   # (${ocraft:SESSIONS_DIR}); conversation/checkpoint tables live in
   # the workspace session.db, media/rollout stay on the filesystem.

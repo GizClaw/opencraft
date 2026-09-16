@@ -443,6 +443,12 @@ func (b *Config) TestMCP(
 	if err := validateMCPServer(&server); err != nil {
 		return err
 	}
+	// A command this process cannot spawn keeps failing inside the
+	// source's retry loop, so the test would only report a timeout for
+	// a configuration the user can fix straight away.
+	if err := mcpCommandProblem(server); err != nil {
+		return err
+	}
 	const timeout = 15 * time.Second
 	testCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -485,7 +491,13 @@ func (b *Config) MCPStatus() ([]MCPStatusDTO, error) {
 	out := make([]MCPStatusDTO, 0, len(servers))
 	for _, srv := range servers {
 		dto := MCPStatusDTO{Name: srv.Name}
-		if src == nil {
+		// A command that cannot be spawned never reaches the source's
+		// give-up path — the retry loop keeps failing — so report it
+		// here instead of leaving the probe at "connecting" forever.
+		if problem := mcpCommandProblem(srv); problem != nil {
+			dto.Status = "error"
+			dto.Error = problem.Error()
+		} else if src == nil {
 			dto.Status = "connecting"
 		} else {
 			probeCtx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
