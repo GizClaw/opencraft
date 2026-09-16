@@ -2,6 +2,7 @@ package execd
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"path/filepath"
 	"strings"
@@ -22,9 +23,35 @@ func TestForwardChildStderrLogsLines(t *testing.T) {
 	forwardChildStderr(context.Background(), 4242, "/tmp/execd-test.sock",
 		strings.NewReader("first line\nsecond line\n"))
 
-	records := capture.Records()
+	// The capture is process wide, so another component's record can
+	// land in this window (a session watcher notifying a client that
+	// already hung up, say). Only the forwarder's records carry the
+	// child's pid attribute, and those are what this test owns.
+	var records []sdklog.Record
+	for _, record := range capture.Records() {
+		if logcapture.Attribute(record, "execd.pid") != "" {
+			records = append(records, record)
+		}
+	}
 	if len(records) != 2 {
-		t.Fatalf("forwarded %d records, want 2", len(records))
+		var leak strings.Builder
+		for i, record := range records {
+			fmt.Fprintf(&leak, "\n  [%d] body=%q line=%q socket=%q pid=%q",
+				i,
+				record.Body().AsString(),
+				logcapture.Attribute(record, "execd.line"),
+				logcapture.Attribute(record, "execd.socket"),
+				logcapture.Attribute(record, "execd.pid"),
+			)
+		}
+		var ignored strings.Builder
+		for _, record := range capture.Records() {
+			if logcapture.Attribute(record, "execd.pid") == "" {
+				fmt.Fprintf(&ignored, "\n  body=%q", record.Body().AsString())
+			}
+		}
+		t.Fatalf("forwarded %d records, want 2:%s\n  (ignored, not forwarded: %s)",
+			len(records), leak.String(), ignored.String())
 	}
 	for i, want := range []string{"first line", "second line"} {
 		record := records[i]
