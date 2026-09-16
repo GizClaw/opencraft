@@ -1,6 +1,7 @@
 package bindings
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,26 @@ import (
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/envpath"
 )
+
+// TestPathEnvironmentWireShapeUsesLists is the regression test for the
+// settings page crashing on the diagnostics tab: an empty Go slice
+// marshals to null, and the renderer read the field as a list.
+func TestPathEnvironmentWireShapeUsesLists(t *testing.T) {
+	c := core.NewCore(t.TempDir(), t.TempDir(), "")
+	c.SetPathReport(envpath.Result{Plan: envpath.Plan{Path: "/usr/bin"}})
+
+	raw, err := json.Marshal(NewDiagnosticsBinding(c).PathEnvironment())
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, want := range []string{
+		`"segments":[]`, `"prepend":[]`, `"rejected":[]`, `"missing":[]`,
+	} {
+		if !strings.Contains(string(raw), want) {
+			t.Fatalf("payload %s does not carry %s", raw, want)
+		}
+	}
+}
 
 func TestPathEnvironmentReportsProvenance(t *testing.T) {
 	inherited := t.TempDir()

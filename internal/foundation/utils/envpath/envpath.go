@@ -228,6 +228,10 @@ func Resolve(inherited string, prepend, candidates []string) Plan {
 // platform. Callers append them after the inherited PATH; the list is
 // not ordered by precedence.
 //
+// The list is per-platform on purpose: the diagnostics view reports a
+// candidate that is absent as a signal, so naming /snap/bin on macOS (or
+// /opt/homebrew/bin on Linux) would be noise rather than information.
+//
 // Windows is deliberately empty: a GUI launch inherits the user's
 // environment from the registry, so the PATH it sees is already the
 // user's PATH.
@@ -235,17 +239,27 @@ func Candidates(goos, home string) []string {
 	if goos == "windows" {
 		return nil
 	}
-	candidates := []string{
-		// Apple Silicon Homebrew and the classic /usr/local prefix.
-		"/opt/homebrew/bin",
-		"/usr/local/bin",
-		// Linux distributions and snap packages.
-		"/snap/bin",
+	var candidates []string
+	if goos == "darwin" {
+		// Apple Silicon Homebrew, then the classic Intel prefix (which
+		// is also where a manual install lands).
+		candidates = []string{"/opt/homebrew/bin", "/usr/local/bin"}
+	} else {
+		candidates = []string{
+			"/usr/local/bin",
+			// Ubuntu's snap packages.
+			"/snap/bin",
+			// The prefix the Linuxbrew installer recommends.
+			"/home/linuxbrew/.linuxbrew/bin",
+		}
 	}
 	if home != "" {
+		if goos != "darwin" {
+			// Linuxbrew installed into the home directory.
+			candidates = append(candidates,
+				filepath.Join(home, ".linuxbrew", "bin"))
+		}
 		candidates = append(candidates,
-			// Homebrew on Linux, and the usual user-local prefixes.
-			filepath.Join(home, ".linuxbrew", "bin"),
 			filepath.Join(home, ".local", "bin"),
 			filepath.Join(home, "bin"),
 			// Go and Rust install into the home directory by default.
