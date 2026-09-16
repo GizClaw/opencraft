@@ -41,6 +41,9 @@ type DesktopPrefs struct {
 	Pets PetPrefs `json:"pets,omitempty"`
 	// Telemetry carries the plugin telemetry-export switch.
 	Telemetry TelemetryPrefs `json:"telemetry,omitempty"`
+	// Path carries the user's PATH override (Settings > Diagnostics),
+	// applied once at startup by foundation/utils/envpath.
+	Path PathPrefs `json:"path,omitempty"`
 }
 
 // PetPrefs is the desktop pet section of the preference document.
@@ -118,6 +121,7 @@ func DefaultPrefs() DesktopPrefs {
 func normalizePrefs(prefs DesktopPrefs) DesktopPrefs {
 	defaults := DefaultPrefs()
 	prefs.UI = normalizeUIPrefs(prefs.UI)
+	prefs.Path = normalizePathPrefs(prefs.Path)
 	// The yoloonly build has a single available mode: repair any
 	// preference document (possibly written by the regular build) so
 	// new sessions cannot start confined.

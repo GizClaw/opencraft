@@ -41,6 +41,9 @@ type Core struct {
 	// plugin inference writes, so a plugin that re-submits an unchanged
 	// row set does not rebuild the runtime per row (see inference.go).
 	pluginWrites pluginInferenceWrite
+	// path holds the last process PATH resolution for the diagnostics
+	// view (see path_report.go).
+	path pathReport
 
 	UserDir string
 	DataDir string
