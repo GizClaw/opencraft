@@ -110,16 +110,9 @@ func (b *Settings) SetModel(model string) error {
 
 // Permissions returns the current sandbox allowlist rules.
 func (b *Settings) Permissions() ([]string, error) {
-	h := b.core.Runtime.Current()
-	if h == nil || h.Controller() == nil || h.Controller().Runtime() == nil {
-		return []string{}, nil
-	}
-	value, ok := h.Controller().Runtime().Resource("execpolicy")
-	if !ok {
-		return []string{}, nil
-	}
-	mgr, ok := value.(*execpolicy.Manager)
-	if !ok || mgr == nil {
+	mgr, err := b.execPolicy()
+	if err != nil {
+		// The settings page polls this before the runtime exists.
 		return []string{}, nil
 	}
 	return mgr.Rules(), nil
@@ -127,36 +120,68 @@ func (b *Settings) Permissions() ([]string, error) {
 
 // AllowPermission adds one sandbox allowlist rule.
 func (b *Settings) AllowPermission(rule string) error {
-	h := b.core.Runtime.Current()
-	if h == nil || h.Controller() == nil || h.Controller().Runtime() == nil {
-		return errors.New("settings: runtime is not ready")
-	}
-	value, ok := h.Controller().Runtime().Resource("execpolicy")
-	if !ok {
-		return errors.New("settings: execpolicy resource is not wired")
-	}
-	mgr, ok := value.(*execpolicy.Manager)
-	if !ok {
-		return errors.New("settings: execpolicy resource has an unexpected type")
+	mgr, err := b.execPolicy()
+	if err != nil {
+		return err
 	}
 	return mgr.AlwaysAllow(strings.TrimSpace(rule))
 }
 
 // DenyPermission removes one sandbox allowlist rule.
 func (b *Settings) DenyPermission(rule string) error {
+	mgr, err := b.execPolicy()
+	if err != nil {
+		return err
+	}
+	return mgr.Remove(strings.TrimSpace(rule))
+}
+
+// EscalatedPermissions returns the commands the user allowed to run
+// outside the sandbox ("always" answers to an escalation prompt).
+func (b *Settings) EscalatedPermissions() ([]string, error) {
+	mgr, err := b.execPolicy()
+	if err != nil {
+		// Mirror Permissions: page load before the runtime is ready.
+		return []string{}, nil
+	}
+	return mgr.EscalatedRules(), nil
+}
+
+// AllowEscalatedPermission adds one "run outside the sandbox" rule.
+func (b *Settings) AllowEscalatedPermission(rule string) error {
+	mgr, err := b.execPolicy()
+	if err != nil {
+		return err
+	}
+	return mgr.AlwaysEscalate(strings.TrimSpace(rule))
+}
+
+// DenyEscalatedPermission removes one "run outside the sandbox" rule.
+func (b *Settings) DenyEscalatedPermission(rule string) error {
+	mgr, err := b.execPolicy()
+	if err != nil {
+		return err
+	}
+	return mgr.RemoveEscalated(strings.TrimSpace(rule))
+}
+
+// execPolicy resolves the shared exec policy manager from the current
+// runtime.
+func (b *Settings) execPolicy() (*execpolicy.Manager, error) {
 	h := b.core.Runtime.Current()
 	if h == nil || h.Controller() == nil || h.Controller().Runtime() == nil {
-		return errors.New("settings: runtime is not ready")
+		return nil, errors.New("settings: runtime is not ready")
 	}
 	value, ok := h.Controller().Runtime().Resource("execpolicy")
 	if !ok {
-		return errors.New("settings: execpolicy resource is not wired")
+		return nil, errors.New("settings: execpolicy resource is not wired")
 	}
 	mgr, ok := value.(*execpolicy.Manager)
 	if !ok {
-		return errors.New("settings: execpolicy resource has an unexpected type")
+		return nil, errors.New(
+			"settings: execpolicy resource has an unexpected type")
 	}
-	return mgr.Remove(strings.TrimSpace(rule))
+	return mgr, nil
 }
 
 func (b *Settings) skillsService() (*skills.Service, error) {

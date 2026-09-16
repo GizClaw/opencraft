@@ -24,6 +24,7 @@ import (
 	ocsandbox "github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/gitx"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/shelldetect"
 	"github.com/GizClaw/opencraft/internal/foundation/version"
 )
 
@@ -194,6 +195,7 @@ type Report struct {
 	ActiveRuns          int    `json:"active_runs"`
 	SandboxBackend      string `json:"sandbox_backend"`
 	SandboxAvailable    bool   `json:"sandbox_available"`
+	ExecShell           string `json:"exec_shell"`
 	UsageTotalTokens    int64  `json:"usage_total_tokens"`
 }
 
@@ -243,6 +245,9 @@ func (b *Diagnostics) Diagnostics() Report {
 		}
 	}
 	rep.SandboxBackend, rep.SandboxAvailable = sandboxBackend()
+	// The shell exec_command actually spawns through: the settings page
+	// must not disagree with the tool description the model reads.
+	rep.ExecShell = shelldetect.Detect(goruntime.GOOS).CommandLine()
 	if store := b.core.Runtime.Usage(); store != nil {
 		if rows, err := store.Summary(ctx); err == nil {
 			for _, r := range rows {

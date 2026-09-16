@@ -320,6 +320,12 @@ export const api = {
   permissions: async () => (await Settings.Permissions()) ?? [],
   allowPermission: (rule: string) => Settings.AllowPermission(rule),
   denyPermission: (rule: string) => Settings.DenyPermission(rule),
+  escalatedPermissions: async () =>
+    (await Settings.EscalatedPermissions()) ?? [],
+  allowEscalatedPermission: (rule: string) =>
+    Settings.AllowEscalatedPermission(rule),
+  denyEscalatedPermission: (rule: string) =>
+    Settings.DenyEscalatedPermission(rule),
   skills: () => Settings.Skills() as unknown as Promise<SkillDTO[]>,
   skillContent: (path: string) => Settings.SkillContent(path),
   deleteSkill: (path: string) => Settings.DeleteSkill(path),

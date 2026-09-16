@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	goruntime "runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -54,13 +55,32 @@ func TestSandboxRunnerContract(t *testing.T) {
 	})
 
 	t.Run("writes outside the root are denied", func(t *testing.T) {
-		outside := filepath.Join(filepath.Dir(workDir), "contract-outside-"+goruntime.GOOS+".txt")
-		_, err := coresandbox.Exec(ctx, confined, shell,
+		outside := outsideWritePath(workDir)
+		res, err := coresandbox.Exec(ctx, confined, shell,
 			shellArgs("echo pwn > "+outside), coresandbox.ExecOptions{
 				WorkDir: workDir,
 			})
 		if _, statErr := os.Stat(outside); statErr == nil {
 			t.Fatalf("outside write escaped the sandbox (exec err=%v)", err)
+		}
+		if err != nil {
+			return
+		}
+		if res.ExitCode == 0 {
+			// The probe path was writable inside the sandbox, so this
+			// run says nothing about denial handling: the host check
+			// above passed for the wrong reason. Fail loudly rather
+			// than leaving a vacuous contract.
+			t.Fatalf("probe path %q was writable inside the sandbox", outside)
+		}
+		// The escalation prompt keys off this predicate, so a real
+		// backend refusal must be recognisable from the finished
+		// command's own output.
+		if reason, denied := Denied(res); !denied {
+			t.Fatalf("real refusal not detected: exit=%d stderr=%q",
+				res.ExitCode, res.Stderr)
+		} else if reason == "" {
+			t.Fatal("denial without a reason")
 		}
 	})
 
@@ -76,4 +96,22 @@ func TestSandboxRunnerContract(t *testing.T) {
 			t.Fatalf("parent secret leaked into the sandbox: %q", res.Stdout)
 		}
 	})
+}
+
+// outsideWritePath returns a path the confined backend must refuse.
+//
+// Linux mounts a private writable tmpfs at /tmp (core/sandbox/bwrap
+// flags.go), and the test workspace lives under it, so its siblings are
+// writable *inside* the sandbox: the write succeeds into the sandbox's
+// own tmpfs and the host simply never sees the file. /var/tmp sits on
+// the read-only root bind instead, which is the refusal this test is
+// about. macOS and Windows keep the workspace sibling, where seatbelt
+// and the low-integrity token reject the write directly.
+func outsideWritePath(workDir string) string {
+	name := "opencraft-contract-outside-" + goruntime.GOOS +
+		"-" + strconv.Itoa(os.Getpid()) + ".txt"
+	if goruntime.GOOS == "linux" {
+		return filepath.Join("/var/tmp", name)
+	}
+	return filepath.Join(filepath.Dir(workDir), name)
 }

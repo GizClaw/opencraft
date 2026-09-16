@@ -40,6 +40,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/viewimage"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/webfetch"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/shelldetect"
 )
 
 // Register adds every opencraft tool.Source factory to r.
@@ -118,6 +119,10 @@ func (execSourceFactory) Spec() resource.Spec {
 		Impl: "opencraft/exec",
 		Deps: []resource.DepSpec{
 			{Name: "sandbox", Type: "sandbox.Runner", Required: true},
+			// Optional: the escalation prompt needs a user to ask.
+			// Headless and embedded runtimes leave it unwired and keep
+			// an OS-sandbox refusal as a plain command failure.
+			{Name: "escalator", Type: "opencraft.execpolicy", Required: false},
 		},
 	}
 }
@@ -130,15 +135,35 @@ func (execSourceFactory) New(_ context.Context, in resource.Input) (any, error) 
 	if err != nil {
 		return nil, err
 	}
-	return execToolList(runner, goruntime.GOOS), nil
+	var escalator ocsandbox.Escalator
+	if dep, ok := in.Dep("escalator"); ok {
+		if esc, ok := dep.(ocsandbox.Escalator); ok {
+			escalator = esc
+		}
+	}
+	return execToolList(runner, escalator, goruntime.GOOS), nil
 }
 
 // execToolList builds the sandbox-backed exec tools for a target OS.
 // exec_session is not offered on Windows: the Windows sandbox runs
 // with OS-level write confinement, which the flowcraft backend does
 // not combine with ConPTY TTY sessions yet (issue #38).
-func execToolList(runner sandbox.Runner, goos string) toolList {
-	tools := toolList{exec.MustNewCommand(runner)}
+//
+// Only exec_command takes part in escalation: a refusal is detected
+// from a finished command's output, and exec_session has no finished
+// result to inspect at Start, so a session is never prompted. A
+// remembered rule still applies to any spawn, sessions included,
+// because the sandbox runner consults it before starting.
+func execToolList(
+	runner sandbox.Runner,
+	escalator ocsandbox.Escalator,
+	goos string,
+) toolList {
+	tools := toolList{exec.MustNewCommand(
+		runner,
+		exec.WithEscalator(escalator),
+		exec.WithShell(shelldetect.Detect(goos)),
+	)}
 	if goos != "windows" {
 		tools = append(tools, exec.MustNewSession(runner))
 	}

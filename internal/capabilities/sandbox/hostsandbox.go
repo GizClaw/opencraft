@@ -48,6 +48,10 @@ type HostSandbox struct {
 	sessions   *sessions.Store
 	confined   coresandbox.Runner
 	unconfined coresandbox.Runner
+	// escalation carries the workspace's persisted "always run without
+	// the sandbox" rules. Nil when the exec policy does not implement
+	// EscalationRules (tests, embedded hosts).
+	escalation EscalationRules
 }
 
 // Unconfined reports whether the session in ctx runs unconfined
@@ -85,10 +89,56 @@ func (h *HostSandbox) Start(
 	// dropped from the writable set for this command (explicit
 	// writable paths like the cache stay writable). The approver sees
 	// the same Opts, so it can auto-allow known read-only commands.
+	// Read-only is also exempt from escalation: trading the mode's
+	// workspace read-only guarantee for a per-command approval would
+	// silently cancel the mode the user picked.
 	if isReadOnly(ctx, h.sessions) {
 		spec.Opts.Write = coresandbox.WriteReadOnly
+		return h.confined.Start(ctx, spec)
+	}
+	// An approved escalation (or a remembered rule for this command)
+	// skips the confined attempt entirely: the user already said this
+	// command may run on the host.
+	if Escalating(ctx) || h.escalationAllowed(spec) {
+		return h.unconfined.Start(ctx, spec)
 	}
 	return h.confined.Start(ctx, spec)
+}
+
+// escalationAllowed reports whether a persisted rule covers spec.
+// Remembered rules cover one-shot commands only: an interactive
+// session is a persistent channel with its own approval gate, so it
+// keeps the confined chain even when the same command was granted a
+// sandbox-free run.
+func (h *HostSandbox) escalationAllowed(
+	spec coresandbox.SessionSpec,
+) bool {
+	if h.escalation == nil || len(spec.Argv) == 0 || spec.TTY {
+		return false
+	}
+	return h.escalation.EscalatedAllowed(coresandbox.ExecRequest{
+		Command: spec.Argv[0],
+		Args:    spec.Argv[1:],
+		Opts:    spec.Opts,
+		TTY:     spec.TTY,
+	})
+}
+
+// unconfinedRequest is the single predicate behind every sandbox-free
+// run: the session is YOLO, or the caller carries an approved
+// escalation for one retry. Both the local pick (HostSandbox.Start) and
+// the execd per-request resolver read it, so an approved retry leaves
+// the confine in local and remote deployments alike.
+func unconfinedRequest(ctx context.Context, store *sessions.Store) bool {
+	return IsYOLO(ctx, store) || Escalating(ctx)
+}
+
+// EscalationAvailable implements EscalationGate for the exec tools:
+// only workspace mode has a confine worth leaving. Unconfined (YOLO)
+// sessions never reach escalation because nothing refuses their
+// commands, and read-only sessions must keep their guarantee.
+func (h *HostSandbox) EscalationAvailable(ctx context.Context) bool {
+	return !h.Unconfined(ctx) && !isReadOnly(ctx, h.sessions)
 }
 
 func (h *HostSandbox) List(
@@ -211,6 +261,13 @@ func (HostSandboxFactory) New(
 	if err != nil {
 		return nil, err
 	}
+	// The exec policy owns the persisted escalation rules. They are
+	// optional: a deployment whose policy has no rule store keeps the
+	// confined-only behaviour and never offers an escalation retry.
+	var escalationRules EscalationRules
+	if rules, ok := approver.(EscalationRules); ok {
+		escalationRules = rules
+	}
 	store, err := resourcedep.Required[*sessions.Store](
 		in, "opencraft sandbox", "sessions")
 	if err != nil {
@@ -245,7 +302,10 @@ func (HostSandboxFactory) New(
 			return nil, err
 		}
 		remote.SetModeFunc(func(ctx context.Context) bool {
-			return IsYOLO(ctx, store)
+			// The child picks its unconfined runner from this flag,
+			// so an approved escalation must travel with it: the
+			// retry is a fresh start request on the same child.
+			return unconfinedRequest(ctx, store)
 		})
 		backend = remote
 	} else {
@@ -296,5 +356,6 @@ func (HostSandboxFactory) New(
 		sessions:   store,
 		confined:   confined,
 		unconfined: unconfined,
+		escalation: escalationRules,
 	}, nil
 }

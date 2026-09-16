@@ -242,6 +242,13 @@ jobs:
       - name: Sandbox contract (windows)
         run: go test -count=1 ./internal/capabilities/sandbox -run TestSandboxRunnerContract
         shell: pwsh
+      # The exec tools are fake-runner tests, so they run everywhere;
+      # they own the platform shell wiring (PowerShell detection on
+      # Windows) and the Windows bare-word rules, which is exactly what
+      # a Linux-only run cannot see.
+      - name: Exec tools (windows)
+        run: go test -count=1 ./internal/capabilities/tools/exec ./internal/foundation/utils/shelldetect
+        shell: pwsh
       - name: Compile check (sandbox/desktop/sessions/secrets)
         run: go vet ./internal/capabilities/sandbox ./internal/adapters/desktop ./internal/capabilities/sessions ./internal/capabilities/secrets
         shell: pwsh

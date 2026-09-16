@@ -12,6 +12,11 @@ resources:
     impl: opencraft/exec
     deps:
       sandbox: box
+      # Escalation prompt: when the OS sandbox refuses a command, the
+      # user may allow one re-run outside it. Same policy resource the
+      # sandbox consults, so "always" answers are persisted with the
+      # workspace approvals file.
+      escalator: execpolicy
   tool.applypatch:
     kind: tool.Source
     impl: opencraft/applypatch
