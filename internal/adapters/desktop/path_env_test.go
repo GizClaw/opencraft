@@ -23,6 +23,13 @@ func TestNewResolvesProcessPath(t *testing.T) {
 	); err != nil {
 		t.Fatalf("write prefs: %v", err)
 	}
+	// New seeds ~/.opencraft through the ambient home directory (the
+	// explicit dirs above only cover the services), so point that at the
+	// test's own tree: a CI home is not writable and no test should touch
+	// the real user configuration.
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
 
 	d, err := New(Options{UserDir: userDir, DataDir: t.TempDir()})
