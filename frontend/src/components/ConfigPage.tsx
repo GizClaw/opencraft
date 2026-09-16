@@ -31,6 +31,7 @@ import { api } from '../lib/api';
 import { alignUsageWindow } from '../lib/usageWindow';
 import { LogViewer } from './LogViewer';
 import { MetricsCharts } from './MetricsCharts';
+import { PathEnvironmentCard } from './PathEnvironmentCard';
 import { PetBehaviorPanel } from './PetBehaviorPanel';
 import { TelemetryExportCard } from './TelemetryExportCard';
 import { useStore } from '../lib/store';
@@ -2921,6 +2922,7 @@ export function ConfigPage() {
 
                 <div className="space-y-2 border-t border-edge pt-3">
                   <TelemetryExportCard />
+                  <PathEnvironmentCard />
                   <p className="text-xs text-dim">{t('config.logsHint')}</p>
                   <div className="h-[22rem]">
                     <LogViewer fetchLogs={() => api.readLog(300)} />
