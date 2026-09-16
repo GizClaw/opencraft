@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-09-16
+
+### Fixed
+
+- `execd` treats a client that already hung up as teardown instead of
+  warning about the failed write, so a session watcher firing after a
+  client disconnects no longer leaves a spurious record in the app log
+  (or, in tests, in the next test's capture). (#143)
+
 ## [0.5.1] - 2026-09-16
 
 ### Added
