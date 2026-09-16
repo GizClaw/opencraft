@@ -4,8 +4,8 @@
 # version and sha256 below (scripts/update-cask.sh v0.1.0) and merge the
 # change so `brew install --cask opencraft` keeps working.
 cask "opencraft" do
-  version "0.5.1"
-  sha256 "4a2ca940c6f69319112b55252a0b0897fdcebc7f75ae61530b9cd2c7fccf4adb"
+  version "0.5.2"
+  sha256 "0e75b7db1918021e13ea90ab40d23295d5f2f7f3d4ec773a9fd3ee50b85f174f"
 
   url "https://github.com/GizClaw/opencraft/releases/download/v#{version}/" \
       "opencraft-#{version}-macos-universal.dmg"
