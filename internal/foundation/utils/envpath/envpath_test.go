@@ -149,6 +149,17 @@ func TestCandidates(t *testing.T) {
 	if len(darwin) == 0 || darwin[0] != "/opt/homebrew/bin" {
 		t.Fatalf("darwin candidates = %v, want Homebrew first", darwin)
 	}
+	// A candidate that cannot exist on the platform is noise in the
+	// diagnostics view: an absent candidate is reported as a signal.
+	for _, unwanted := range []string{"/snap/bin", "/home/linuxbrew/.linuxbrew/bin"} {
+		if contains(darwin, unwanted) {
+			t.Fatalf("darwin candidates %v contain %s", darwin, unwanted)
+		}
+	}
+	linux := Candidates("linux", home)
+	if contains(linux, "/opt/homebrew/bin") || !contains(linux, "/snap/bin") {
+		t.Fatalf("linux candidates = %v, want snap and no Homebrew", linux)
+	}
 	if got := Candidates("windows", home); len(got) != 0 {
 		t.Fatalf("windows candidates = %v, want none", got)
 	}
@@ -186,4 +197,13 @@ func equalStrings(got, want []string) bool {
 		}
 	}
 	return true
+}
+
+func contains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }

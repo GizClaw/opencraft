@@ -124,9 +124,9 @@ func (b *Diagnostics) pathEnvironmentDTO(
 ) PathEnvironmentDTO {
 	dto := PathEnvironmentDTO{
 		Path:     plan.Path,
-		Prepend:  b.core.Shell.PathPrepend(),
-		Rejected: rejected,
-		Missing:  missing,
+		Prepend:  listOrEmpty(b.core.Shell.PathPrepend()),
+		Rejected: listOrEmpty(rejected),
+		Missing:  listOrEmpty(missing),
 	}
 	dto.Segments = make([]PathSegmentDTO, 0, len(plan.Segments))
 	for _, segment := range plan.Segments {
@@ -136,10 +136,16 @@ func (b *Diagnostics) pathEnvironmentDTO(
 			Present: segment.Present,
 		})
 	}
-	if dto.Prepend == nil {
-		dto.Prepend = []string{}
-	}
 	return dto
+}
+
+// listOrEmpty keeps the wire shape stable: a nil slice marshals to null,
+// and the renderer reads these fields as lists.
+func listOrEmpty(values []string) []string {
+	if values == nil {
+		return []string{}
+	}
+	return values
 }
 
 // TelemetryExportDTO is the diagnostics view of the OTLP export sink.
