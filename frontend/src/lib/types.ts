@@ -751,6 +751,73 @@ export interface ToolOptionsRequest {
   video: { [id: string]: { [field: string]: unknown } };
 }
 
+/** WebSearchProviderView is one provider row of the web search card. */
+export interface WebSearchProviderView {
+  id: string;
+  keyless: boolean;
+  key_set: boolean;
+  endpoint: string;
+  override?: string;
+}
+
+/** WebSearchEndpoints carries the optional per-provider endpoint overrides. */
+export interface WebSearchEndpoints {
+  exa?: string;
+  parallel?: string;
+  tavily?: string;
+  brave?: string;
+}
+
+/**
+ * WebSearchState is the persisted web search configuration plus, per
+ * provider, whether a credential is present and which endpoint is in
+ * effect.
+ */
+export interface WebSearchState {
+  enabled: boolean;
+  provider: string;
+  max_results: number;
+  timeout: string;
+  endpoints: WebSearchEndpoints;
+  providers: WebSearchProviderView[];
+  secrets_available: boolean;
+}
+
+/** WebSearchRequest is the save payload for the web search card. */
+export interface WebSearchRequest {
+  enabled: boolean;
+  provider: string;
+  max_results: number;
+  timeout: string;
+  endpoints: WebSearchEndpoints;
+  keys?: { [provider: string]: string };
+  clearKeys?: string[];
+}
+
+/** WebSearchTestRequest runs one real query through one provider. */
+export interface WebSearchTestRequest {
+  provider: string;
+  query: string;
+  apiKey?: string;
+  endpoint?: string;
+  maxResults?: number;
+}
+
+/** WebSearchTestHit is one result of a test run. */
+export interface WebSearchTestHit {
+  title?: string;
+  url: string;
+  snippet?: string;
+  published?: string;
+}
+
+/** WebSearchTestResult reports one real provider call. */
+export interface WebSearchTestResult {
+  provider: string;
+  results: WebSearchTestHit[];
+  context?: string;
+}
+
 /**
  * TelemetryExportStatus is the OTLP export sink the app runs. Endpoint
  * and header names are visible; header values are credentials and never

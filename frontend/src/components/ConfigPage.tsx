@@ -36,6 +36,7 @@ import { PathEnvironmentCard } from './PathEnvironmentCard';
 import { PetBehaviorPanel } from './PetBehaviorPanel';
 import { TelemetryExportCard } from './TelemetryExportCard';
 import { ToolsSection } from './ToolsSection';
+import { WebSearchSection } from './WebSearchSection';
 import { useStore } from '../lib/store';
 import type {
   CacheClearResult,
@@ -1134,7 +1135,10 @@ export function ConfigPage() {
             {tab === 'display' && <SettingsDisplay />}
             {tab === 'tools' && (
               <div className="space-y-4">
-                <ToolsSection />
+                <div className="space-y-2">
+                  <ToolsSection />
+                  <WebSearchSection />
+                </div>
                 <MCPSection />
               </div>
             )}

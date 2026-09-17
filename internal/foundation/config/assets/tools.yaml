@@ -31,6 +31,19 @@ resources:
       # sessions dep lets YOLO sessions keep their "no sandbox" semantics.
       netpolicy: netpolicy
       sessions: sessions
+  # Provider-independent web search. The keyless Parallel/Exa hosted
+  # MCP endpoints make it work with any model out of the box, and
+  # Tavily/Brave keys (settings page) raise the quota. Discovery stays
+  # deferred: the tool is not listed under dynamic.exposures, so the
+  # model finds it through tool_search.
+  tool.websearch:
+    kind: tool.Source
+    impl: opencraft/websearch
+    settings:
+      enabled: true
+      provider: auto
+      max_results: 8
+      timeout: 15s
   tool.askuser:
     kind: tool.Source
     impl: opencraft/askuser
@@ -166,6 +179,7 @@ resources:
       tool: tool.exec
       tool.applypatch: tool.applypatch
       tool.webfetch: tool.webfetch
+      tool.websearch: tool.websearch
       tool.askuser: tool.askuser
       tool.automation: tool.automation
       tool.files: tool.files

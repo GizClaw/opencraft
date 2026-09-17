@@ -17,6 +17,12 @@ import (
 // takes: subprocess handshake → telemetry.configure primitive over
 // JSON-RPC → host permission check → pipeline swap → audit trail.
 func TestPluginTelemetryE2E(t *testing.T) {
+	if testing.Short() {
+		// This test compiles, copies and repeatedly spawns a
+		// capability-plugin fixture binary; `go test -short ./...` skips
+		// the subprocess plumbing and keeps the fast local loop fast.
+		t.Skip("skipping plugin subprocess end-to-end test in short mode")
+	}
 	binary := buildTelemetryPlugin(t)
 	warmTelemetryPlugin(t, binary)
 

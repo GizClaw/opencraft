@@ -39,6 +39,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/videogen"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/viewimage"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/webfetch"
+	"github.com/GizClaw/opencraft/internal/capabilities/tools/websearch"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/shelldetect"
 )
@@ -49,6 +50,7 @@ func Register(r *resource.Registry) error {
 		r.Register(execSourceFactory{}),
 		r.Register(applypatchSourceFactory{}),
 		r.Register(webfetchSourceFactory{}),
+		r.Register(websearchSourceFactory{}),
 		r.Register(askuserSourceFactory{}),
 		r.Register(automation.SourceFactory{}),
 		r.Register(filesSourceFactory{}),
@@ -238,6 +240,37 @@ func (webfetchSourceFactory) New(_ context.Context, in resource.Input) (any, err
 			}
 			t.SetGate(gate)
 		}
+	}
+	return toolList{t}, nil
+}
+
+// websearchSourceFactory contributes the web_search tool. It needs no
+// dependencies: providers and credentials come from the settings, and
+// the keyless Parallel/Exa hosted MCP backends make the tool work with
+// any model out of the box.
+type websearchSourceFactory struct{}
+
+var _ resource.Factory = websearchSourceFactory{}
+
+func (websearchSourceFactory) Spec() resource.Spec {
+	return resource.Spec{Kind: "tool.Source", Impl: "opencraft/websearch"}
+}
+
+func (websearchSourceFactory) New(
+	ctx context.Context,
+	in resource.Input,
+) (any, error) {
+	if !sourceEnabled(in) {
+		return toolList{}, nil
+	}
+	settings, err := resource.DecodeTyped[websearch.Settings](
+		ctx, in.Settings)
+	if err != nil {
+		return nil, err
+	}
+	t, err := websearch.New(settings)
+	if err != nil {
+		return nil, err
 	}
 	return toolList{t}, nil
 }

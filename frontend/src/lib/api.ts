@@ -57,6 +57,10 @@ import type {
   PatchFileDTO,
   ToolOptionsRequest,
   ToolOptionsState,
+  WebSearchRequest,
+  WebSearchState,
+  WebSearchTestRequest,
+  WebSearchTestResult,
   PathEnvironment,
   PolicyDecision,
   PetsSettings,
@@ -347,6 +351,14 @@ export const api = {
     Config.ToolOptions() as unknown as Promise<ToolOptionsState>,
   saveToolOptions: (req: ToolOptionsRequest) =>
     Config.SaveToolOptions(req as unknown as gen.ToolOptionsRequest),
+  webSearchConfig: () =>
+    Config.WebSearchConfig() as unknown as Promise<WebSearchState>,
+  saveWebSearch: (req: WebSearchRequest) =>
+    Config.SaveWebSearch(req as unknown as gen.WebSearchRequest),
+  testWebSearch: (req: WebSearchTestRequest) =>
+    Config.TestWebSearch(
+      req as unknown as gen.WebSearchTestRequest,
+    ) as unknown as Promise<WebSearchTestResult>,
   diagnostics: () =>
     Diagnostics.Diagnostics() as unknown as Promise<DiagnosticsReport>,
   runSandboxProbe: () =>
