@@ -9,6 +9,37 @@ import (
 	"github.com/GizClaw/flowcraft/core/message/media"
 )
 
+// TestEmbeddedToolsWireWebSearch pins the web_search deploy wiring: the
+// source has to exist, stay enabled by default (the keyless hosted MCP
+// backends need no configuration), and be listed in the tools assembly
+// or the model never sees it.
+func TestEmbeddedToolsWireWebSearch(t *testing.T) {
+	userDir := t.TempDir()
+	mgr, err := Open(Options{UserDir: userDir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := mgr.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, ok := view.Document.Resources["tool.websearch"]
+	if !ok {
+		t.Fatal("tool.websearch source is not declared")
+	}
+	if source.Impl != "opencraft/websearch" {
+		t.Fatalf("tool.websearch impl = %q", source.Impl)
+	}
+	tools, ok := view.Document.Resources["tools"]
+	if !ok {
+		t.Fatal("tools assembly is not declared")
+	}
+	if tools.Deps["tool.websearch"] != "tool.websearch" {
+		t.Fatalf("tools assembly does not include tool.websearch: %+v",
+			tools.Deps)
+	}
+}
+
 // TestEmbeddedToolsWireViewImage pins the deploy wiring: the tool has
 // to be both declared as a source and listed in the tools assembly, or
 // the model never sees it.

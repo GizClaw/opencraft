@@ -201,7 +201,9 @@ type SecretStore interface {
 }
 
 // AllowedSecretScopes is the closed set of namespaces a plugin may
-// touch through secret.*. Kept in sync with plugins.AllowedSecretScopes.
+// touch through secret.*. It is deliberately narrower than
+// plugins.AllowedSecretScopes: websearch holds the user's own
+// search-provider keys, which only the settings page may write.
 var AllowedSecretScopes = map[string]bool{"auth": true, "inference": true}
 
 // Loader resolves a plugin's declared capability and its binary path.

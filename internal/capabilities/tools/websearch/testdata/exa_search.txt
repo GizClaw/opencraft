@@ -1,0 +1,15 @@
+Title: Go net/http documentation
+URL: https://pkg.go.dev/net/http
+Published: N/A
+Author: N/A
+Highlights:
+For control over HTTP client headers, redirect policy, and other settings, create a Client.
+
+---
+
+Title: The default Go HTTP client can wait forever
+URL: https://example.com/blog/http-timeouts
+Published: 2026-03-02
+Author: Ana Rivera
+Highlights:
+The default client has no timeout; set one on the client or per request.

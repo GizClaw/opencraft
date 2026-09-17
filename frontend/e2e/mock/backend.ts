@@ -151,6 +151,42 @@ export function mockBackend(cfg?: MockConfig) {
         image: { instances: [] },
         video: { instances: [] },
       }),
+      WebSearchConfig: async () => ({
+        enabled: true,
+        provider: 'auto',
+        max_results: 8,
+        timeout: '15s',
+        endpoints: {},
+        secrets_available: true,
+        providers: [
+          {
+            id: 'exa',
+            keyless: true,
+            key_set: false,
+            endpoint: 'https://mcp.exa.ai/mcp',
+          },
+          {
+            id: 'parallel',
+            keyless: true,
+            key_set: false,
+            endpoint: 'https://search.parallel.ai/mcp',
+          },
+          {
+            id: 'tavily',
+            keyless: false,
+            key_set: false,
+            endpoint: 'https://api.tavily.com/search',
+          },
+          {
+            id: 'brave',
+            keyless: false,
+            key_set: false,
+            endpoint: 'https://api.search.brave.com/res/v1/web/search',
+          },
+        ],
+      }),
+      SaveWebSearch: noop,
+      TestWebSearch: async () => ({ provider: 'parallel', results: [] }),
       Version: async () => '0.1.0-test',
     },
     Conversation: {

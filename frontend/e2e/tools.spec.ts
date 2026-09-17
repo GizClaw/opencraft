@@ -111,3 +111,35 @@ test('edits a generation tool from the tools tab', async ({ page }) => {
     .toBe('high');
   await expect(dialog.getByText('Saved')).toBeVisible();
 });
+
+test('configures web search from the tools tab', async ({ page }) => {
+  await page.addInitScript(
+    mockBackend as never,
+    {
+      handlers: {
+        'Config.SaveWebSearch':
+          'async (req) => { globalThis.__savedWebSearch = req; }',
+      },
+    } as never,
+  );
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('tab', { name: 'Tools' }).click();
+
+  // The card sits between the generation tools and the MCP list.
+  await page.getByText('Web search', { exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole('button', { name: /Brave/ }).click();
+  await page
+    .getByPlaceholder('Paste the provider API key')
+    .fill('bv-123');
+  await dialog.getByRole('button', { name: 'Save & apply' }).click();
+  const saved = await page.evaluate(
+    () => (globalThis as { __savedWebSearch?: unknown }).__savedWebSearch,
+  );
+  expect(saved).toMatchObject({
+    provider: 'brave',
+    keys: { brave: 'bv-123' },
+  });
+});

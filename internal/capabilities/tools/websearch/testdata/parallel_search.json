@@ -1,0 +1,23 @@
+{
+  "search_id": "search_demo",
+  "results": [
+    {
+      "url": "https://go.dev/doc/",
+      "title": "Documentation - The Go Programming Language",
+      "publish_date": null,
+      "excerpts": [
+        "Go is an open source programming language that makes it easy to build simple, reliable, and efficient software."
+      ]
+    },
+    {
+      "url": "https://pkg.go.dev/net/http",
+      "title": "http package - net/http - Go Packages",
+      "publish_date": "2026-01-15",
+      "excerpts": [
+        "Package http provides HTTP client and server implementations."
+      ]
+    }
+  ],
+  "warnings": [],
+  "metadata": {}
+}

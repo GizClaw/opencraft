@@ -100,6 +100,8 @@ function summaryOf(tool: ToolView): Summary | null {
       return { verb: 'listedPlugins', rest: '' };
     case 'web_fetch':
       return { verb: 'fetched', rest: str(args.url) };
+    case 'web_search':
+      return { verb: 'searchedWeb', rest: str(args.query) };
     case 'generate_image':
       return { verb: 'generatedImage', rest: str(args.prompt) };
     case 'generate_video':
@@ -1800,6 +1802,149 @@ function SkillReadView({ tool }: { tool: ToolView }) {
 
 // WebFetchView renders web_fetch as a standalone collapsible block: the
 // header shows the URL; expanding reveals title, description and body.
+// WebSearchView renders web_search as a standalone collapsible block:
+// the query, the backend that served it, and the ranked result links.
+// The optional provider-extracted context stays one click away.
+function WebSearchView({ tool }: { tool: ToolView }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const [showContext, setShowContext] = useState(false);
+  const running = tool.status === 'running';
+  const failed = tool.status === 'error';
+  useEffect(() => {
+    if (running) setOpen(true);
+  }, [running]);
+  const args = parseArgs(tool);
+  const query = args && typeof args.query === 'string' ? args.query : '';
+  const parsed =
+    tool.result !== undefined
+      ? (() => {
+          try {
+            const v = JSON.parse(tool.result);
+            if (v && typeof v === 'object' && Array.isArray(v.results)) {
+              return v as {
+                provider?: string;
+                query?: string;
+                results: {
+                  title?: string;
+                  url: string;
+                  snippet?: string;
+                  published?: string;
+                }[];
+                context?: string;
+                note?: string;
+              };
+            }
+          } catch {
+            // not JSON
+          }
+          return null;
+        })()
+      : null;
+  const results = parsed?.results ?? [];
+
+  return (
+    <div className="my-1.5">
+      <button
+        onClick={() => setOpen(!open)}
+        className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+          failed
+            ? 'border-err/40 bg-err/5'
+            : running
+              ? 'border-accent/40 bg-panel2'
+              : 'border-edge bg-panel2'
+        } hover:bg-panel2/70`}
+      >
+        {running ? (
+          <Loader2
+            size="1.0000rem"
+            className="animate-spin shrink-0 text-accent"
+          />
+        ) : failed ? (
+          <X size="1.0000rem" className="shrink-0 text-err" />
+        ) : (
+          <Globe size="1.0000rem" className="shrink-0 text-accent" />
+        )}
+        <span className="min-w-0 flex-1 truncate text-sm text-fg">
+          {t('tool.searchedWeb')}
+          {query && <span className="text-dim">: {query}</span>}
+        </span>
+        {parsed?.provider && (
+          <span className="shrink-0 text-[0.7143rem] text-dim">
+            {t('tool.webSearchVia', { provider: parsed.provider })}
+          </span>
+        )}
+        {!running && parsed && (
+          <span className="shrink-0 rounded bg-panel px-1.5 py-0.5 font-mono text-[0.7143rem] text-dim tabular-nums">
+            {results.length}
+          </span>
+        )}
+        {open ? (
+          <ChevronDown size="1.0000rem" className="shrink-0 text-dim" />
+        ) : (
+          <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
+        )}
+      </button>
+      {open && (
+        <div className="mt-1.5 space-y-2 rounded-lg border border-edge/70 bg-panel/40 p-2.5">
+          {failed && tool.result !== undefined && (
+            <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs text-err">
+              {tool.result}
+            </pre>
+          )}
+          {results.map((hit) => (
+            <div key={hit.url} className="min-w-0">
+              <a
+                href={hit.url}
+                target="_blank"
+                rel="noreferrer"
+                className="block truncate text-xs text-accent hover:underline"
+              >
+                {hit.title || hit.url}
+              </a>
+              <p className="truncate text-[0.7143rem] text-dim">
+                {hit.url}
+                {hit.published ? ` · ${hit.published}` : ''}
+              </p>
+              {hit.snippet && (
+                <p className="mt-0.5 break-words text-xs text-fg/80">
+                  {hit.snippet}
+                </p>
+              )}
+            </div>
+          ))}
+          {!failed && results.length === 0 && (
+            <p className="text-xs text-dim">{t('tool.webSearchEmpty')}</p>
+          )}
+          {parsed?.note && (
+            <p className="text-xs text-dim">{parsed.note}</p>
+          )}
+          {parsed?.context && (
+            <div>
+              <button
+                onClick={() => setShowContext(!showContext)}
+                className="flex items-center gap-1 text-[0.7143rem] text-dim hover:text-fg"
+              >
+                {showContext ? (
+                  <ChevronDown size="0.7857rem" />
+                ) : (
+                  <ChevronRight size="0.7857rem" />
+                )}
+                {t('tool.webSearchContext')}
+              </button>
+              {showContext && (
+                <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded border border-edge/60 bg-panel p-2 text-[0.7143rem] text-dim">
+                  {parsed.context}
+                </pre>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function WebFetchView({ tool }: { tool: ToolView }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -2753,6 +2898,7 @@ export const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
   // Live tools stay expanded while running so the progress is visible.
   const liveTools = [
     'web_fetch',
+    'web_search',
     'generate_image',
     'generate_video',
     'apply_patch',
@@ -2804,6 +2950,9 @@ export const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
   }
   if (tool.name === 'web_fetch') {
     return <WebFetchView tool={tool} />;
+  }
+  if (tool.name === 'web_search') {
+    return <WebSearchView tool={tool} />;
   }
   if (tool.name === 'generate_image' || tool.name === 'generate_video') {
     return <GenerateView tool={tool} />;

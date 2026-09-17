@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/GizClaw/flowcraft/core/resource"
 	coresandbox "github.com/GizClaw/flowcraft/core/sandbox"
 )
 
@@ -35,6 +36,43 @@ func contains(names []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// TestWebSearchSourceFactory covers the tool.Source contract: the
+// factory builds one web_search tool from its settings, and the
+// enabled:false switch removes it without failing the build.
+func TestWebSearchSourceFactory(t *testing.T) {
+	reg := resource.NewRegistry()
+	if err := Register(reg); err != nil {
+		t.Fatal(err)
+	}
+	factory, ok := reg.Lookup("tool.Source", "opencraft/websearch")
+	if !ok {
+		t.Fatal("websearch factory is not registered")
+	}
+	built, err := factory.New(context.Background(), resource.Input{
+		Settings: []byte(`{"enabled":true,"max_results":3}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	src, ok := built.(toolList)
+	if !ok {
+		t.Fatalf("built = %T, want toolList", built)
+	}
+	if names := toolNames(src); len(names) != 1 || names[0] != "web_search" {
+		t.Fatalf("names = %v", names)
+	}
+
+	disabled, err := factory.New(context.Background(), resource.Input{
+		Settings: []byte(`{"enabled":false}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if names := toolNames(disabled.(toolList)); len(names) != 0 {
+		t.Fatalf("disabled names = %v", names)
+	}
 }
 
 func TestExecToolListPlatformGate(t *testing.T) {

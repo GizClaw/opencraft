@@ -11,6 +11,10 @@ import (
 var AllowedSecretScopes = map[string]bool{
 	"inference": true,
 	"auth":      true,
+	// websearch holds the user's own search-provider keys, written by
+	// the settings page. Plugin capabilities cannot reach this scope:
+	// see the plugin-facing list in plugins/runtime.
+	"websearch": true,
 }
 
 // secretNameRe allows letters, digits, dot, underscore, dash and
