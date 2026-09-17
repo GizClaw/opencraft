@@ -1272,6 +1272,9 @@ export function ConfigPage() {
                 )}
                 {rows.map((row, ri) => {
                   const prov = catalog.find((p) => p.id === row.type);
+                  // The effective driver impl: a preset's impl, or the
+                  // driver a plugin-declared row names.
+                  const driverImpl = prov?.impl || row.driver;
                   return (
                     <div
                       key={row.id}
@@ -1365,89 +1368,96 @@ export function ConfigPage() {
                               placeholder={t('setup.endpointPlaceholder')}
                               className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
                             />
-                            <div className="flex items-center gap-2 text-xs text-dim">
-                              <span className="shrink-0 font-medium">
-                                {t('setup.apiMode')}
-                              </span>
-                              <button
-                                type="button"
-                                data-field={`${row.id}:api`}
-                                disabled={row.managed}
-                                onFocus={(e) =>
-                                  openFieldMenu(e, `${row.id}:api`)
-                                }
-                                onClick={(e) => {
-                                  const key = `${row.id}:api`;
-                                  if (fieldMenu === key) {
-                                    setFieldMenu(null);
-                                  } else {
-                                    openFieldMenu(e, key);
-                                  }
-                                }}
-                                className="inline-flex max-w-56 min-w-0 flex-1 items-center gap-1.5 rounded-lg border border-edge bg-panel px-2 py-1 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
-                              >
-                                <span className="min-w-0 flex-1 truncate font-mono text-fg">
-                                  {row.api === '' ? 'auto' : row.api}
-                                </span>
-                                <ChevronDown
-                                  size="0.875rem"
-                                  className="shrink-0 text-dim"
-                                />
-                              </button>
-                            </div>
-                            {!row.managed &&
-                              menuRect &&
-                              fieldMenu === `${row.id}:api` &&
-                              createPortal(
-                                <div
-                                  ref={fieldMenuRef}
-                                  style={{
-                                    top: menuRect.top,
-                                    left: menuRect.left,
-                                    width: menuRect.width,
-                                  }}
-                                  className="fixed z-[100] overflow-y-auto rounded-xl border border-edge bg-panel py-1 shadow-xl"
-                                >
-                                  {[
-                                    ['responses', 'responses'],
-                                    ['chat', 'chat'],
-                                  ].map(([value, label]) => (
-                                    <button
-                                      key={value}
-                                      type="button"
-                                      onMouseDown={(e) => e.preventDefault()}
-                                      onClick={() => {
-                                        update(row.id, { api: value });
+                            {/* responses | chat is an OpenAI-wire surface;
+                                other drivers have no such choice. */}
+                            {driverImpl === 'openai' && (
+                              <>
+                                <div className="flex items-center gap-2 text-xs text-dim">
+                                  <span className="shrink-0 font-medium">
+                                    {t('setup.apiMode')}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    data-field={`${row.id}:api`}
+                                    disabled={row.managed}
+                                    onFocus={(e) =>
+                                      openFieldMenu(e, `${row.id}:api`)
+                                    }
+                                    onClick={(e) => {
+                                      const key = `${row.id}:api`;
+                                      if (fieldMenu === key) {
                                         setFieldMenu(null);
+                                      } else {
+                                        openFieldMenu(e, key);
+                                      }
+                                    }}
+                                    className="inline-flex max-w-56 min-w-0 flex-1 items-center gap-1.5 rounded-lg border border-edge bg-panel px-2 py-1 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
+                                  >
+                                    <span className="min-w-0 flex-1 truncate font-mono text-fg">
+                                      {row.api === '' ? 'auto' : row.api}
+                                    </span>
+                                    <ChevronDown
+                                      size="0.875rem"
+                                      className="shrink-0 text-dim"
+                                    />
+                                  </button>
+                                </div>
+                                {!row.managed &&
+                                  menuRect &&
+                                  fieldMenu === `${row.id}:api` &&
+                                  createPortal(
+                                    <div
+                                      ref={fieldMenuRef}
+                                      style={{
+                                        top: menuRect.top,
+                                        left: menuRect.left,
+                                        width: menuRect.width,
                                       }}
-                                      className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-panel2 ${
-                                        row.api === value
-                                          ? 'text-fg'
-                                          : 'text-dim'
-                                      }`}
+                                      className="fixed z-[100] overflow-y-auto rounded-xl border border-edge bg-panel py-1 shadow-xl"
                                     >
-                                      <Check
-                                        size="0.8rem"
-                                        className={`shrink-0 ${
-                                          row.api === value
-                                            ? 'text-accent'
-                                            : 'invisible'
-                                        }`}
-                                      />
-                                      <span className="font-mono">{label}</span>
-                                    </button>
-                                  ))}
-                                </div>,
-                                document.body,
-                              )}
+                                      {[
+                                        ['responses', 'responses'],
+                                        ['chat', 'chat'],
+                                      ].map(([value, label]) => (
+                                        <button
+                                          key={value}
+                                          type="button"
+                                          onMouseDown={(e) =>
+                                            e.preventDefault()
+                                          }
+                                          onClick={() => {
+                                            update(row.id, { api: value });
+                                            setFieldMenu(null);
+                                          }}
+                                          className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-panel2 ${
+                                            row.api === value
+                                              ? 'text-fg'
+                                              : 'text-dim'
+                                          }`}
+                                        >
+                                          <Check
+                                            size="0.8rem"
+                                            className={`shrink-0 ${
+                                              row.api === value
+                                                ? 'text-accent'
+                                                : 'invisible'
+                                            }`}
+                                          />
+                                          <span className="font-mono">
+                                            {label}
+                                          </span>
+                                        </button>
+                                      ))}
+                                    </div>,
+                                    document.body,
+                                  )}
+                              </>
+                            )}
                           </div>
                           <AdvancedSection
                             row={row}
                             disabled={row.managed}
-                            driver={
-                              catalog.find((p) => p.id === row.type)?.impl ||
-                              row.driver
-                            }
+                            driver={driverImpl}
                             onUpdate={(key, value) =>
                               updateAdvanced(row.id, key, value)
                             }

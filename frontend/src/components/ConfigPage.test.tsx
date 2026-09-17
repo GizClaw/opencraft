@@ -199,6 +199,78 @@ describe('ConfigPage inference', () => {
     ).toBeInTheDocument();
   });
 
+  it('offers the API mode only on the OpenAI wire', async () => {
+    // responses | chat is an OpenAI-wire surface; a ByteDance row has
+    // no such choice, so the control must not appear there.
+    const model = {
+      name: 'doubao-seedance-2-0',
+      kind: 'video',
+      capabilities: {
+        inputs: ['text'],
+        outputs: ['video'],
+        reasoning: { kind: '' },
+      },
+      endpoint: '',
+    };
+    (apiMock.providers as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+      {
+        id: 'openai',
+        name: 'OpenAI',
+        env_var: 'OPENAI_API_KEY',
+        model_endpoint: false,
+        impl: 'openai',
+      },
+      {
+        id: 'bytedance',
+        name: 'Bytedance',
+        env_var: 'ARK_API_KEY',
+        model_endpoint: true,
+        impl: 'bytedance',
+      },
+    ]);
+    (apiMock.configState as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      model: '',
+      router: { max_attempts: 3, fallback_on_retry_exhausted: false },
+      instances: [
+        {
+          stable_id: 'inst-openai',
+          type: 'openai',
+          name: '',
+          api: 'chat',
+          endpoint: '',
+          key_source: 'env',
+          key_ref: '',
+          key_set: true,
+          key_env: true,
+          key_keychain: false,
+          models: [model],
+          advanced: {},
+          enabled: true,
+          managed: false,
+        },
+        {
+          stable_id: 'inst-ark',
+          type: 'bytedance',
+          name: '',
+          api: '',
+          endpoint: '',
+          key_source: 'env',
+          key_ref: '',
+          key_set: true,
+          key_env: true,
+          key_keychain: false,
+          models: [model],
+          advanced: {},
+          enabled: true,
+          managed: false,
+        },
+      ],
+    });
+    render(<ConfigPage />);
+    await screen.findByRole('button', { name: 'Inference driver' });
+    expect(await screen.findAllByText('API mode')).toHaveLength(1);
+  });
+
   it('starts an instance with one nameless model row', async () => {
     // Opencraft keeps no model table: an instance with no declared
     // models starts from one empty row for the deployment to fill in.

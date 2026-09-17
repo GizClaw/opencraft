@@ -160,6 +160,15 @@ func (s InstanceSpec) Lower(src InstanceSource, pluginID string) (Instance, erro
 			"inference: invalid endpoint %q", in.Endpoint,
 		)
 	}
+	// responses | chat is an OpenAI-wire surface. Every other driver has
+	// a single API, so accepting the field would drop the user's choice
+	// without saying so.
+	if in.API != "" && !prov.OpenAIWire() {
+		return Instance{}, fmt.Errorf(
+			"inference: %s does not take an api mode; only the OpenAI wire "+
+				"family selects between responses and chat", in.Type,
+		)
+	}
 	if err := lowerCredential(&in, s, src, pluginID, prov); err != nil {
 		return Instance{}, err
 	}
