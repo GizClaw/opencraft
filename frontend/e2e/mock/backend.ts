@@ -145,7 +145,12 @@ export function mockBackend(cfg?: MockConfig) {
       SaveInstances: noop,
       SaveMCP: noop,
       SaveMemory: noop,
+      SaveToolOptions: noop,
       TestMCP: noop,
+      ToolOptions: async () => ({
+        image: { instances: [] },
+        video: { instances: [] },
+      }),
       Version: async () => '0.1.0-test',
     },
     Conversation: {

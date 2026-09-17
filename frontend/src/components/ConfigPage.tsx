@@ -23,6 +23,7 @@ import {
   Stethoscope,
   Terminal,
   Trash2,
+  Wrench,
   X,
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
@@ -34,6 +35,7 @@ import { MetricsCharts } from './MetricsCharts';
 import { PathEnvironmentCard } from './PathEnvironmentCard';
 import { PetBehaviorPanel } from './PetBehaviorPanel';
 import { TelemetryExportCard } from './TelemetryExportCard';
+import { ToolsSection } from './ToolsSection';
 import { useStore } from '../lib/store';
 import type {
   CacheClearResult,
@@ -121,6 +123,7 @@ type Tab =
   | 'general'
   | 'display'
   | 'inference'
+  | 'tools'
   | 'mcp'
   | 'usage'
   | 'memory'
@@ -1060,6 +1063,7 @@ export function ConfigPage() {
     { id: 'general', label: t('config.tabGeneral'), icon: SlidersHorizontal },
     { id: 'display', label: t('config.tabDisplay'), icon: Palette },
     { id: 'inference', label: t('config.tabInference'), icon: Cpu },
+    { id: 'tools', label: t('config.tabTools'), icon: Wrench },
     { id: 'mcp', label: t('config.tabMCP'), icon: MCPLogo },
     { id: 'memory', label: t('config.tabMemory'), icon: Database },
     ...(yoloOnly
@@ -1126,6 +1130,7 @@ export function ConfigPage() {
           <div className="min-w-0 flex-1 overflow-y-auto px-5 py-4">
             {tab === 'general' && <SettingsGeneral />}
             {tab === 'display' && <SettingsDisplay />}
+            {tab === 'tools' && <ToolsSection />}
 
             {tab === 'inference' && (
               <div className="space-y-3">
