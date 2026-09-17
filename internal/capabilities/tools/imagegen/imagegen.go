@@ -153,8 +153,9 @@ type Args struct {
 	Count *int `json:"count,omitempty"`
 	// Seed fixes the provider's sampling seed where supported.
 	Seed *int64 `json:"seed,omitempty"`
-	// Quality is an optional generation quality tier: auto, low,
-	// medium, or high. Providers without the knob report it as dropped.
+	// Quality is an optional generation quality tier: auto, low, medium,
+	// high, xhigh, or max. Providers without the knob report it as
+	// dropped.
 	Quality string `json:"quality,omitempty"`
 	// OutputFormat is an optional format: png, jpeg, or webp.
 	OutputFormat string `json:"output_format,omitempty"`
@@ -209,7 +210,7 @@ func (t *Tool) Definition() message.ToolDefinition {
 		message.ToolEnumProperty("quality", "string",
 			"Optional quality tier; providers without a native quality "+
 				"knob report it as dropped.",
-			"auto", "low", "medium", "high"),
+			"auto", "low", "medium", "high", "xhigh", "max"),
 		message.ToolProperty("output_format", "string",
 			"Optional output format: png, jpeg, or webp."),
 		message.ToolArrayProperty("reference_images",
@@ -417,11 +418,13 @@ func imageIntent(args Args) (*inference.ImageIntent, error) {
 		quality := media.ImageQuality(strings.ToLower(raw))
 		switch quality {
 		case media.ImageQualityAuto, media.ImageQualityLow,
-			media.ImageQualityMedium, media.ImageQualityHigh:
+			media.ImageQualityMedium, media.ImageQualityHigh,
+			media.ImageQualityXHigh, media.ImageQualityMax:
 			intent.Quality = quality
 		default:
 			return nil, errdefs.Validationf(
-				"%s: quality must be auto, low, medium, or high, got %q",
+				"%s: quality must be auto, low, medium, high, xhigh, "+
+					"or max, got %q",
 				Name, raw)
 		}
 	}

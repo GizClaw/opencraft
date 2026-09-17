@@ -205,7 +205,7 @@ func TestExecuteLowersRequestKnobs(t *testing.T) {
 		"aspect_ratio": "16:9",
 		"count": 2,
 		"seed": 42,
-		"quality": "high",
+		"quality": "xhigh",
 		"output_format": "webp"
 	}`)
 	if err != nil {
@@ -227,8 +227,8 @@ func TestExecuteLowersRequestKnobs(t *testing.T) {
 	if intent.Seed == nil || *intent.Seed != 42 {
 		t.Errorf("seed = %v, want 42", intent.Seed)
 	}
-	if intent.Quality != media.ImageQualityHigh {
-		t.Errorf("quality = %q, want high", intent.Quality)
+	if intent.Quality != media.ImageQualityXHigh {
+		t.Errorf("quality = %q, want xhigh", intent.Quality)
 	}
 	if intent.OutputFormat != media.ImageFormatWebP {
 		t.Errorf("output format = %q, want webp", intent.OutputFormat)
@@ -484,7 +484,7 @@ func TestExecuteValidation(t *testing.T) {
 			"aspect ratio must use width:height"},
 		{"zero count", `{"prompt":"x","count":0}`, "count must be positive"},
 		{"bad quality", `{"prompt":"x","quality":"ultra"}`,
-			"quality must be auto, low, medium, or high"},
+			"quality must be auto, low, medium, high, xhigh, or max"},
 		{"bad format", `{"prompt":"x","output_format":"gif"}`,
 			"png, jpeg, or webp"},
 		{"previews over cap", `{"prompt":"x","partial_images":4}`,
@@ -623,8 +623,8 @@ func TestExecuteExplainsRejectionCause(t *testing.T) {
 					inference.FieldID(
 						"extension.openai-inst-a.image_options.mask"),
 					errdefs.Validation(errors.New(
-						`openai-inst-a: image masks require `+
-							`endpoint.routing "azure_deployment"`)),
+						`openai-inst-a: mask requires at least one `+
+							`inline reference image`)),
 				)
 		},
 	}
@@ -634,7 +634,7 @@ func TestExecuteExplainsRejectionCause(t *testing.T) {
 	}
 	for _, want := range []string{
 		"invalid_extension",
-		`image masks require endpoint.routing "azure_deployment"`,
+		"mask requires at least one inline reference image",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error missing %q: %v", want, err)
