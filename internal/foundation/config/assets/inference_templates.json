@@ -1,5 +1,5 @@
 {
-  "version": "2026.09.15",
+  "version": "2026.09.17",
   "notes": "Built-in inference templates. OpenCraft keeps no vendor table in the runtime: what a provider serves is deployment data, so nothing here reaches a deployment until the user adds it on the settings page, and every value it fills stays editable. Facts are maintenance data: every entry records where it came from in source and is verified against the vendor's own model documentation before it ships; the package tests then run each entry through the settings-page write path and through a real runtime build. Effort maps translate OpenCraft's canonical ladder (minimal/low/medium/high/xhigh) onto the vendor's own tiers in order, so the top rung reaches the vendor's top tier; a vendor with fewer tiers folds neighbouring rungs (3-tier vendors: minimal/low fold to the low tier, medium/high to the middle, xhigh to the top; ByteDance Ark's low/medium/high folds the same way onto low, low, medium, high, high). Vendors that can only be driven through the OpenAI wire are declared with type openai plus the deployment endpoint in their template. Verified vendors so far: OpenAI, DeepSeek, Zhipu AI, Moonshot AI, Anthropic, MiniMax, ByteDance Ark.",
   "models": [
     {
