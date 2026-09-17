@@ -370,3 +370,120 @@ func TestToolOptionPresetsMatchVocabulary(t *testing.T) {
 		}
 	}
 }
+
+// TestPruneToolOptionsDropsRemovedProviders pins the reconciliation of
+// the knob blocks against the declared instances: a removed provider
+// cannot keep knobs (a later provider re-using the id would inherit
+// them), while a disabled row keeps its configuration because
+// re-enabling it must not lose what the user typed.
+func TestPruneToolOptionsDropsRemovedProviders(t *testing.T) {
+	instances := toolOptionInstances()
+	opts := ToolOptions{
+		Image: map[string]map[string]any{
+			"openai-a":    {"moderation": "low"},
+			"bytedance-b": {"size_token": "2k"},
+			"gone-1":      {"background": "auto"},
+		},
+		Video: map[string]map[string]any{"gone-2": {"camera_fixed": true}},
+	}
+
+	pruned, dropped := PruneToolOptions(opts, instances)
+	if !dropped {
+		t.Fatal("dangling blocks reported as kept")
+	}
+	if _, ok := pruned.Image["gone-1"]; ok {
+		t.Error("removed provider kept its image knobs")
+	}
+	if len(pruned.Video) != 0 {
+		t.Errorf("video knobs = %+v, want none left", pruned.Video)
+	}
+	if got := pruned.Image["openai-a"]["moderation"]; got != "low" {
+		t.Errorf("openai knobs = %v, want the block preserved", got)
+	}
+	if got := pruned.Image["bytedance-b"]["size_token"]; got != "2k" {
+		t.Errorf("bytedance knobs = %v, want the block preserved", got)
+	}
+
+	// The original options are untouched: pruning returns a new view.
+	if _, ok := opts.Image["gone-1"]; !ok {
+		t.Error("PruneToolOptions mutated its input")
+	}
+
+	// Nothing dangling means nothing to rewrite.
+	clean := ToolOptions{Image: map[string]map[string]any{
+		"openai-a": {"moderation": "low"},
+	}}
+	if _, dropped := PruneToolOptions(clean, instances); dropped {
+		t.Error("clean options reported as pruned")
+	}
+
+	// A disabled row is still declared, so it keeps its knobs.
+	disabled := toolOptionInstances()
+	disabled[1].Enabled = false
+	kept, dropped := PruneToolOptions(ToolOptions{
+		Image: map[string]map[string]any{
+			"openai-a":    {"moderation": "low"},
+			"bytedance-b": {"size_token": "2k"},
+		},
+	}, disabled)
+	if dropped {
+		t.Error("disabling a row must not prune its knobs")
+	}
+	if got := kept.Image["bytedance-b"]["size_token"]; got != "2k" {
+		t.Errorf("disabled row knobs = %v, want them preserved", got)
+	}
+}
+
+// TestSettingsSavePrunesToolOptionsOfRemovedProviders walks the real
+// path a user takes: configure two providers' knobs, then remove one
+// instance from the settings page. The write that removes the provider
+// must take its knobs with it — the blocks are invisible in the page
+// (which lists configured instances), so nothing else would ever clean
+// them up.
+func TestSettingsSavePrunesToolOptionsOfRemovedProviders(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "test-key")
+	dir := t.TempDir()
+	instances := toolOptionInstances()
+	if err := WriteInference(dir, InferenceConfig{Instances: instances}); err != nil {
+		t.Fatal(err)
+	}
+	if err := SaveToolOptions(dir, ToolOptions{
+		Image: map[string]map[string]any{"openai-a": {"moderation": "low"}},
+		Video: map[string]map[string]any{"bytedance-b": {"camera_fixed": true}},
+	}, instances); err != nil {
+		t.Fatal(err)
+	}
+
+	// The page submits the openai row only; bytedance is gone.
+	keep := InstanceSpec{
+		StableID: "a",
+		Type:     "openai",
+		Enabled:  boolPtr(true),
+		Models:   []ModelSpec{{Name: "gpt-image-2"}},
+	}
+	if _, err := ApplySettingsSave(dir, SaveRequest{
+		Instances: []InstanceSpec{keep},
+	}, nil); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	opts, err := LoadToolOptions(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(opts.Video) != 0 {
+		t.Errorf("video knobs = %+v, want the removed provider's block gone",
+			opts.Video)
+	}
+	if got := opts.Image["openai-a"]["moderation"]; got != "low" {
+		t.Errorf("kept knobs = %v, want the surviving provider untouched", got)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "opencraft.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "camera_fixed") {
+		t.Errorf("user layer still carries the removed provider's knobs:\n%s",
+			raw)
+	}
+}

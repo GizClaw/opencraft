@@ -266,6 +266,50 @@ func (o ToolOptions) IsZero() bool {
 	return len(o.Image) == 0 && len(o.Video) == 0
 }
 
+// PruneToolOptions drops the knob blocks whose deployment id is no
+// longer a configured instance. Blocks are keyed by deployment id, so a
+// removed provider would otherwise leave its knobs behind: invisible in
+// the settings page (which lists configured instances), still sitting in
+// the user layer, and silently inherited by a later provider that
+// re-uses the id. Disabled instances keep their knobs — the row is still
+// declared, so re-enabling it must not lose the configuration.
+//
+// dropped reports whether anything was removed.
+func PruneToolOptions(
+	opts ToolOptions, instances []Instance,
+) (ToolOptions, bool) {
+	alive := make(map[string]bool, len(instances))
+	for i, in := range instances {
+		alive[in.DeploymentID(i+1)] = true
+	}
+	dropped := false
+	opts.Image = pruneToolOptionBlocks(opts.Image, alive, &dropped)
+	opts.Video = pruneToolOptionBlocks(opts.Video, alive, &dropped)
+	return opts, dropped
+}
+
+// pruneToolOptionBlocks keeps the blocks whose id is still alive, or
+// nil when nothing is left.
+func pruneToolOptionBlocks(
+	blocks map[string]map[string]any, alive map[string]bool, dropped *bool,
+) map[string]map[string]any {
+	if len(blocks) == 0 {
+		return nil
+	}
+	out := make(map[string]map[string]any, len(blocks))
+	for id, values := range blocks {
+		if !alive[id] {
+			*dropped = true
+			continue
+		}
+		out[id] = values
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // LoadToolOptions reads the configured options out of the user layer.
 // A missing file or section is an empty configuration, not an error.
 func LoadToolOptions(configDir string) (ToolOptions, error) {
@@ -340,6 +384,17 @@ func SaveToolOptions(
 // toolOptionsYAML renders the user-layer blocks for the given options,
 // omitting a tool entirely when it has nothing configured.
 func toolOptionsYAML(opts ToolOptions) ([]byte, error) {
+	doc := map[string]any{"resources": toolOptionResources(opts)}
+	data, err := yaml.Marshal(doc)
+	if err != nil {
+		return nil, fmt.Errorf("config: render tool options: %w", err)
+	}
+	return data, nil
+}
+
+// toolOptionResources renders the user-layer resource blocks for the
+// given options, omitting a tool with nothing configured.
+func toolOptionResources(opts ToolOptions) map[string]any {
 	resources := map[string]any{}
 	for tool, key := range toolResourceKeys {
 		options := opts.optionsFor(tool)
@@ -350,7 +405,33 @@ func toolOptionsYAML(opts ToolOptions) ([]byte, error) {
 			"settings": map[string]any{"provider_options": options},
 		}
 	}
-	doc := map[string]any{"resources": resources}
+	return resources
+}
+
+// withToolOptions folds the given knob blocks into an already rendered
+// user document, replacing both tool resources: a tool with nothing
+// configured is dropped from the document, which — together with the
+// caller replacing those keys — is what removes an emptied block from
+// the layer instead of leaving it behind.
+func withToolOptions(fresh []byte, opts ToolOptions) ([]byte, error) {
+	var doc map[string]any
+	if err := yaml.Unmarshal(fresh, &doc); err != nil {
+		return nil, fmt.Errorf("config: parse generated user layer: %w", err)
+	}
+	resources, _ := doc["resources"].(map[string]any)
+	if resources == nil {
+		resources = map[string]any{}
+		doc["resources"] = resources
+	}
+	blocks := toolOptionResources(opts)
+	for _, key := range toolResourceKeys {
+		block, ok := blocks[key]
+		if !ok {
+			delete(resources, key)
+			continue
+		}
+		resources[key] = block
+	}
 	data, err := yaml.Marshal(doc)
 	if err != nil {
 		return nil, fmt.Errorf("config: render tool options: %w", err)

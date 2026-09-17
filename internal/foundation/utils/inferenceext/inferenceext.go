@@ -118,7 +118,17 @@ func buildEntries(
 			"%s: no configured provider supports %s",
 			tool, strings.Join(unsupported, " and "))
 	}
+	configured := make(map[string]bool, len(providers))
+	for _, provider := range providers {
+		configured[provider] = true
+	}
 	for provider := range providerOptions {
+		if !configured[provider] {
+			// The deployment is gone: the settings block outlived it (the
+			// host prunes those on the next inference write), and a
+			// dangling id must not fail a call it cannot apply to.
+			continue
+		}
 		if _, ok := decoders[provider+"/"+extensionID]; ok {
 			continue
 		}

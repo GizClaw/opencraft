@@ -103,7 +103,7 @@ func TestBuildAttachesConfiguredProviderOptions(t *testing.T) {
 		"openai-inst/image_options":    strictDecoder("mask", "background"),
 		"bytedance-inst/image_options": strictDecoder("size_token"),
 	}
-	providers := []string{"openai-inst", "bytedance-inst"}
+	providers := []string{"openai-inst", "bytedance-inst", "text-inst"}
 	entries, err := buildEntries(
 		"generate_image", decoders, providers, "image_options",
 		map[string]any{"mask": "mask-bytes"},
@@ -139,12 +139,34 @@ func TestBuildAttachesConfiguredProviderOptions(t *testing.T) {
 		t.Fatalf("configured rejection error = %v", err)
 	}
 
+	// A configured provider that registers no such extension is a real
+	// misconfiguration and stays loud.
 	_, err = buildEntries(
 		"generate_image", decoders, providers, "image_options", nil,
-		map[string]map[string]any{"gone-inst": {"background": "auto"}},
+		map[string]map[string]any{"text-inst": {"background": "auto"}},
 	)
 	if err == nil || !strings.Contains(err.Error(), "has no image_options extension") {
-		t.Fatalf("unknown configured provider error = %v", err)
+		t.Fatalf("configured provider without the extension = %v", err)
+	}
+
+	// A deployment the settings page removed leaves its block behind
+	// until the next inference write prunes it; a dangling id can never
+	// apply to a call, so it must not fail one.
+	entries, err = buildEntries(
+		"generate_image", decoders, providers, "image_options", nil,
+		map[string]map[string]any{
+			"gone-inst":   {"background": "auto"},
+			"openai-inst": {"background": "auto"},
+		},
+	)
+	if err != nil {
+		t.Fatalf("dangling provider block failed the call: %v", err)
+	}
+	for _, entry := range entries {
+		if entry.Provider != "openai-inst" {
+			t.Errorf("entry for %q, want only the configured provider",
+				entry.Provider)
+		}
 	}
 }
 

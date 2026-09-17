@@ -373,10 +373,30 @@ func writeInferenceLocked(configDir string, cfg InferenceConfig) error {
 	if err != nil {
 		return err
 	}
+	replaceKeys := managedResourceKeys()
+	// Tool knobs are keyed by deployment id, so a provider this write
+	// removes would leave its blocks behind as dead configuration — and
+	// a later provider re-using the id would silently inherit them. Prune
+	// them in the same write, and only then take over those two
+	// resources: without a prune the layer stays exactly as the user left
+	// it.
+	stored, err := LoadToolOptions(configDir)
+	if err != nil {
+		return err
+	}
+	if pruned, dropped := PruneToolOptions(stored, cfg.Instances); dropped {
+		fresh, err = withToolOptions(fresh, pruned)
+		if err != nil {
+			return err
+		}
+		for _, key := range toolResourceKeys {
+			replaceKeys[key] = true
+		}
+	}
 	merged, err := mergeUserLayer(
 		filepath.Join(configDir, "opencraft.yaml"),
 		fresh,
-		managedResourceKeys(),
+		replaceKeys,
 		map[string]bool{},
 		map[string]bool{},
 		true, // inference owns every provider.* resource
