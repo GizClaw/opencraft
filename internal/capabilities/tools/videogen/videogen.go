@@ -69,27 +69,43 @@ type generateFunc func(
 	req inference.GenerateRequest,
 ) (inference.GenerateResponse, route.Trace, error)
 
+// Settings carries the provider-specific knobs the settings page
+// configured for this tool, keyed by deployment id. They are deployment
+// preferences, not per-call arguments: the tool attaches each provider's
+// set to that provider only.
+type Settings struct {
+	ProviderOptions map[string]map[string]any `json:"provider_options,omitempty"`
+}
+
 // Tool generates videos through the deployment router. It is safe for
 // concurrent use.
 type Tool struct {
 	ws       workspace.Workspace
 	generate generateFunc
 	client   *http.Client
+	// providerOptions is the configured knob set per deployment id.
+	providerOptions map[string]map[string]any
 	// extensions renders the provider-addressed video knob fields into
 	// typed extensions. It is nil when no router is wired, in which case
 	// the knobs that need a provider extension are rejected.
-	extensions func(fields map[string]any) (inference.Extensions, error)
+	extensions func(
+		call map[string]any,
+		configured map[string]map[string]any,
+	) (inference.Extensions, error)
 }
 
 // New builds the generate_video tool. router is required; nil leaves
 // the tool un-wired so Execute fails with a clear internal error.
-func New(router *route.Router, ws workspace.Workspace) (*Tool, error) {
+func New(
+	router *route.Router, ws workspace.Workspace, settings Settings,
+) (*Tool, error) {
 	if ws == nil {
 		return nil, errdefs.Validationf(
 			"generate_video: workspace is required")
 	}
 	t := &Tool{
-		ws: ws,
+		ws:              ws,
+		providerOptions: settings.ProviderOptions,
 		client: &http.Client{
 			Timeout: defaultTimeout,
 			CheckRedirect: func(req *http.Request, via []*http.Request) error {
@@ -114,18 +130,21 @@ func New(router *route.Router, ws workspace.Workspace) (*Tool, error) {
 			return router.Generate(ctx, req)
 		}
 		t.extensions = func(
-			fields map[string]any,
+			call map[string]any,
+			configured map[string]map[string]any,
 		) (inference.Extensions, error) {
-			return inferenceext.Probe(
-				Name, router.Target(), videoExtensionID, fields)
+			return inferenceext.Build(
+				Name, router.Target(), videoExtensionID, call, configured)
 		}
 	}
 	return t, nil
 }
 
 // MustNew panics on invalid construction; use in static wiring.
-func MustNew(router *route.Router, ws workspace.Workspace) *Tool {
-	t, err := New(router, ws)
+func MustNew(
+	router *route.Router, ws workspace.Workspace, settings Settings,
+) *Tool {
+	t, err := New(router, ws, settings)
 	if err != nil {
 		panic(err)
 	}
@@ -172,46 +191,6 @@ type Args struct {
 	Seed *int64 `json:"seed,omitempty"`
 	// Watermark requests an AIGC watermark when the provider supports it.
 	Watermark *bool `json:"watermark,omitempty"`
-
-	// Provider knobs. Each one is attached only to a provider whose
-	// video_options decoder models it; a knob no configured provider
-	// supports fails the call instead of being dropped, and a knob the
-	// executed provider did not apply fails the call after the fact.
-	//
-	// CameraFixed keeps the camera static while the subject moves
-	// (Seedance).
-	CameraFixed *bool `json:"camera_fixed,omitempty"`
-	// GenerateAudio asks Seedance 2.x to synthesize a matching track.
-	GenerateAudio *bool `json:"generate_audio,omitempty"`
-	// ServiceTier selects the serving tier: "default" or "flex".
-	ServiceTier string `json:"service_tier,omitempty"`
-	// ExecutionExpiresAfter bounds the server-side task lifetime in
-	// seconds ([3600, 259200]).
-	ExecutionExpiresAfter *int64 `json:"execution_expires_after,omitempty"`
-	// Priority raises the task's queue position ([0, 9]).
-	Priority *int32 `json:"priority,omitempty"`
-	// OutputFormat selects the container: "mp4" or "mov".
-	OutputFormat string `json:"output_format,omitempty"`
-	// OmniReferenceTaskType hints the omni-reference subtask: "auto",
-	// "reference", "edit", or "extend".
-	OmniReferenceTaskType string `json:"omni_reference_task_type,omitempty"`
-	// WebSearch attaches the provider's hosted web search tool.
-	WebSearch *bool `json:"web_search,omitempty"`
-	// CallbackURL receives task status webhooks; polling remains the
-	// fallback, so an unreachable webhook still completes the call.
-	CallbackURL string `json:"callback_url,omitempty"`
-	// SafetyIdentifier is the end-user identifier for provider abuse
-	// detection.
-	SafetyIdentifier string `json:"safety_identifier,omitempty"`
-	// PromptOptimizer lets the provider rewrite the prompt first
-	// (MiniMax v1).
-	PromptOptimizer *bool `json:"prompt_optimizer,omitempty"`
-	// FastPretreatment shortens the optimizer's rewrite time (MiniMax
-	// v1).
-	FastPretreatment *bool `json:"fast_pretreatment,omitempty"`
-	// LastFrameOnly marks a single input image as the closing frame
-	// instead of the opening one (MiniMax v2).
-	LastFrameOnly *bool `json:"last_frame_only,omitempty"`
 }
 
 // Definition describes the generate_video tool.
@@ -270,38 +249,6 @@ func (t *Tool) Definition() message.ToolDefinition {
 				"model supports one."),
 		message.ToolProperty("watermark", "boolean",
 			"Optional AIGC watermark request."),
-		message.ToolProperty("camera_fixed", "boolean",
-			"Optional: keep the camera static while the subject moves "+
-				"(Seedance)."),
-		message.ToolProperty("generate_audio", "boolean",
-			"Optional: let Seedance 2.x synthesize a matching audio track."),
-		message.ToolEnumProperty("service_tier", "string",
-			"Optional serving tier. Providers without a tier knob reject it.",
-			"default", "flex"),
-		message.ToolProperty("execution_expires_after", "integer",
-			"Optional server-side task lifetime in seconds (3600-259200)."),
-		message.ToolProperty("priority", "integer",
-			"Optional queue priority (0-9) on models that support it."),
-		message.ToolEnumProperty("output_format", "string",
-			"Optional output container; providers without the knob reject it.",
-			"mp4", "mov"),
-		message.ToolEnumProperty("omni_reference_task_type", "string",
-			"Optional omni-reference subtask hint (Seedance 2.5).",
-			"auto", "reference", "edit", "extend"),
-		message.ToolProperty("web_search", "boolean",
-			"Optional: attach the provider's hosted web search tool."),
-		message.ToolProperty("callback_url", "string",
-			"Optional http(s) webhook for task status pushes; polling stays "+
-				"the fallback, so a delivery failure does not fail the call."),
-		message.ToolProperty("safety_identifier", "string",
-			"Optional end-user identifier the provider uses for abuse detection."),
-		message.ToolProperty("prompt_optimizer", "boolean",
-			"Optional: let the provider rewrite the prompt first (MiniMax v1)."),
-		message.ToolProperty("fast_pretreatment", "boolean",
-			"Optional: shorten the prompt optimizer's rewrite time (MiniMax v1)."),
-		message.ToolProperty("last_frame_only", "boolean",
-			"Optional: treat a single input image as the closing frame "+
-				"instead of the opening one (MiniMax v2)."),
 	).Required("prompt").Build()
 }
 
@@ -333,7 +280,11 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 		return "", errdefs.Internalf("%s: router is not wired", Name)
 	}
 	var args Args
-	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+	// Strict decode: a knob the tool no longer offers (or a typo) must
+	// fail the call instead of being dropped silently.
+	decoder := json.NewDecoder(strings.NewReader(arguments))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&args); err != nil {
 		return "", errdefs.Validationf(
 			"%s: parse arguments: %v", Name, err)
 	}
@@ -366,17 +317,21 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	payload, err := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"paths": paths,
 		"count": len(paths),
 		"model": inferenceext.Label(trace.Executed.ID),
 		"hint":  "Videos are workspace-relative; open or reference them by path.",
-	})
+	}
+	if dropped := inferenceext.Dropped(resp); len(dropped) > 0 {
+		payload["dropped"] = dropped
+	}
+	out, err := json.Marshal(payload)
 	if err != nil {
 		return "", errdefs.Internalf(
 			"%s: encode result: %v", Name, err)
 	}
-	return string(payload), nil
+	return string(out), nil
 }
 
 // request lowers validated arguments into the routed generate request:
@@ -394,7 +349,7 @@ func (t *Tool) request(
 	if err != nil {
 		return inference.GenerateRequest{}, err
 	}
-	parts, knobs, err := t.inputs(ctx, args)
+	parts, call, err := t.inputs(ctx, args)
 	if err != nil {
 		return inference.GenerateRequest{}, err
 	}
@@ -402,7 +357,7 @@ func (t *Tool) request(
 	// parts in order, so the text travels last and the inputs keep the
 	// role order the drivers expect.
 	parts = append(parts, message.TextPart{Text: prompt})
-	extensions, err := t.providerExtensions(knobs)
+	extensions, err := t.providerExtensions(call)
 	if err != nil {
 		return inference.GenerateRequest{}, err
 	}
@@ -449,7 +404,10 @@ func (t *Tool) inputs(
 	ctx context.Context, args Args,
 ) ([]message.Part, map[string]any, error) {
 	var parts []message.Part
-	knobs := providerKnobs(args)
+	// The only per-call provider knob left is the closing-frame-only
+	// marker: every other provider-specific setting is deployment
+	// configuration the settings page owns.
+	call := map[string]any{}
 	references := len(args.ReferenceImages) > 0 ||
 		len(args.ReferenceVideos) > 0 || len(args.ReferenceAudios) > 0
 	frames := strings.TrimSpace(args.FirstFrame) != "" ||
@@ -488,7 +446,7 @@ func (t *Tool) inputs(
 			}
 			parts = append(parts, part)
 		}
-		return parts, knobs, nil
+		return parts, call, nil
 	}
 	if path := strings.TrimSpace(args.FirstFrame); path != "" {
 		part, err := t.readImage(ctx, path, "first_frame")
@@ -507,56 +465,10 @@ func (t *Tool) inputs(
 			// A single image is the opening frame unless the provider is
 			// told otherwise, so a closing-frame-only request needs the
 			// knob; a provider that does not model it fails the call.
-			knobs["last_frame_only"] = true
+			call["last_frame_only"] = true
 		}
 	}
-	return parts, knobs, nil
-}
-
-// providerKnobs collects the provider-addressed video knobs the caller
-// set, skipping zero values so an absent knob is never attached.
-func providerKnobs(args Args) map[string]any {
-	knobs := map[string]any{}
-	if args.CameraFixed != nil {
-		knobs["camera_fixed"] = *args.CameraFixed
-	}
-	if args.GenerateAudio != nil {
-		knobs["generate_audio"] = *args.GenerateAudio
-	}
-	if value := strings.TrimSpace(args.ServiceTier); value != "" {
-		knobs["service_tier"] = value
-	}
-	if args.ExecutionExpiresAfter != nil {
-		knobs["execution_expires_after"] = *args.ExecutionExpiresAfter
-	}
-	if args.Priority != nil {
-		knobs["priority"] = *args.Priority
-	}
-	if value := strings.TrimSpace(args.OutputFormat); value != "" {
-		knobs["output_format"] = value
-	}
-	if value := strings.TrimSpace(args.OmniReferenceTaskType); value != "" {
-		knobs["omni_reference_task_type"] = value
-	}
-	if args.WebSearch != nil {
-		knobs["web_search"] = *args.WebSearch
-	}
-	if value := strings.TrimSpace(args.CallbackURL); value != "" {
-		knobs["callback_url"] = value
-	}
-	if value := strings.TrimSpace(args.SafetyIdentifier); value != "" {
-		knobs["safety_identifier"] = value
-	}
-	if args.PromptOptimizer != nil {
-		knobs["prompt_optimizer"] = *args.PromptOptimizer
-	}
-	if args.FastPretreatment != nil {
-		knobs["fast_pretreatment"] = *args.FastPretreatment
-	}
-	if args.LastFrameOnly != nil {
-		knobs["last_frame_only"] = *args.LastFrameOnly
-	}
-	return knobs
+	return parts, call, nil
 }
 
 // providerExtensions renders the requested provider-addressed knobs. An
@@ -565,13 +477,13 @@ func providerKnobs(args Args) map[string]any {
 func (t *Tool) providerExtensions(
 	fields map[string]any,
 ) (inference.Extensions, error) {
-	if len(fields) == 0 {
+	if len(fields) == 0 && len(t.providerOptions) == 0 {
 		return nil, nil
 	}
 	if t.extensions == nil {
 		return nil, errdefs.Internalf("%s: router is not wired", Name)
 	}
-	return t.extensions(fields)
+	return t.extensions(fields, t.providerOptions)
 }
 
 // referenceVideoPart wraps one http(s) reference video as a URL-sourced

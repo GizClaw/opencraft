@@ -23,6 +23,7 @@ import {
   Stethoscope,
   Terminal,
   Trash2,
+  Wrench,
   X,
 } from 'lucide-react';
 import { createPortal } from 'react-dom';
@@ -34,6 +35,7 @@ import { MetricsCharts } from './MetricsCharts';
 import { PathEnvironmentCard } from './PathEnvironmentCard';
 import { PetBehaviorPanel } from './PetBehaviorPanel';
 import { TelemetryExportCard } from './TelemetryExportCard';
+import { ToolsSection } from './ToolsSection';
 import { useStore } from '../lib/store';
 import type {
   CacheClearResult,
@@ -57,7 +59,7 @@ import { UsageChart } from './UsageChart';
 import { UsageHero } from './UsageHero';
 import { UsageModelSelect } from './UsageModelSelect';
 import { UsageRangePicker } from './UsageRangePicker';
-import { MCPLogo, MCPSection } from './ToolsPanel';
+import { MCPSection } from './ToolsPanel';
 import { AdvancedSection } from './InferenceAdvanced';
 import { ModelAdvanced } from './ModelAdvanced';
 import { PluginPanels } from '../plugins/components/PluginPanels';
@@ -121,7 +123,7 @@ type Tab =
   | 'general'
   | 'display'
   | 'inference'
-  | 'mcp'
+  | 'tools'
   | 'usage'
   | 'memory'
   | 'permissions'
@@ -303,7 +305,11 @@ export function ConfigPage() {
     `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const { t } = useTranslation();
 
-  const [tab, setTab] = useState<Tab>(configTab as Tab);
+  // 'mcp' merged into the tools tab; a stored value from an older build
+  // still lands on a tab that renders the MCP section.
+  const [tab, setTab] = useState<Tab>(
+    configTab === 'mcp' ? 'tools' : (configTab as Tab),
+  );
   const importPanelCount = usePluginStore((s) =>
     s.panels.reduce(
       (n, p) => n + ((p.tab ?? 'plugins') === 'import' ? 1 : 0),
@@ -1060,7 +1066,7 @@ export function ConfigPage() {
     { id: 'general', label: t('config.tabGeneral'), icon: SlidersHorizontal },
     { id: 'display', label: t('config.tabDisplay'), icon: Palette },
     { id: 'inference', label: t('config.tabInference'), icon: Cpu },
-    { id: 'mcp', label: t('config.tabMCP'), icon: MCPLogo },
+    { id: 'tools', label: t('config.tabTools'), icon: Wrench },
     { id: 'memory', label: t('config.tabMemory'), icon: Database },
     ...(yoloOnly
       ? []
@@ -1126,6 +1132,12 @@ export function ConfigPage() {
           <div className="min-w-0 flex-1 overflow-y-auto px-5 py-4">
             {tab === 'general' && <SettingsGeneral />}
             {tab === 'display' && <SettingsDisplay />}
+            {tab === 'tools' && (
+              <div className="space-y-4">
+                <ToolsSection />
+                <MCPSection />
+              </div>
+            )}
 
             {tab === 'inference' && (
               <div className="space-y-3">
@@ -1267,6 +1279,9 @@ export function ConfigPage() {
                 )}
                 {rows.map((row, ri) => {
                   const prov = catalog.find((p) => p.id === row.type);
+                  // The effective driver impl: a preset's impl, or the
+                  // driver a plugin-declared row names.
+                  const driverImpl = prov?.impl || row.driver;
                   return (
                     <div
                       key={row.id}
@@ -1360,89 +1375,96 @@ export function ConfigPage() {
                               placeholder={t('setup.endpointPlaceholder')}
                               className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
                             />
-                            <div className="flex items-center gap-2 text-xs text-dim">
-                              <span className="shrink-0 font-medium">
-                                {t('setup.apiMode')}
-                              </span>
-                              <button
-                                type="button"
-                                data-field={`${row.id}:api`}
-                                disabled={row.managed}
-                                onFocus={(e) =>
-                                  openFieldMenu(e, `${row.id}:api`)
-                                }
-                                onClick={(e) => {
-                                  const key = `${row.id}:api`;
-                                  if (fieldMenu === key) {
-                                    setFieldMenu(null);
-                                  } else {
-                                    openFieldMenu(e, key);
-                                  }
-                                }}
-                                className="inline-flex max-w-56 min-w-0 flex-1 items-center gap-1.5 rounded-lg border border-edge bg-panel px-2 py-1 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
-                              >
-                                <span className="min-w-0 flex-1 truncate font-mono text-fg">
-                                  {row.api === '' ? 'auto' : row.api}
-                                </span>
-                                <ChevronDown
-                                  size="0.875rem"
-                                  className="shrink-0 text-dim"
-                                />
-                              </button>
-                            </div>
-                            {!row.managed &&
-                              menuRect &&
-                              fieldMenu === `${row.id}:api` &&
-                              createPortal(
-                                <div
-                                  ref={fieldMenuRef}
-                                  style={{
-                                    top: menuRect.top,
-                                    left: menuRect.left,
-                                    width: menuRect.width,
-                                  }}
-                                  className="fixed z-[100] overflow-y-auto rounded-xl border border-edge bg-panel py-1 shadow-xl"
-                                >
-                                  {[
-                                    ['responses', 'responses'],
-                                    ['chat', 'chat'],
-                                  ].map(([value, label]) => (
-                                    <button
-                                      key={value}
-                                      type="button"
-                                      onMouseDown={(e) => e.preventDefault()}
-                                      onClick={() => {
-                                        update(row.id, { api: value });
+                            {/* responses | chat is an OpenAI-wire surface;
+                                other drivers have no such choice. */}
+                            {driverImpl === 'openai' && (
+                              <>
+                                <div className="flex items-center gap-2 text-xs text-dim">
+                                  <span className="shrink-0 font-medium">
+                                    {t('setup.apiMode')}
+                                  </span>
+                                  <button
+                                    type="button"
+                                    data-field={`${row.id}:api`}
+                                    disabled={row.managed}
+                                    onFocus={(e) =>
+                                      openFieldMenu(e, `${row.id}:api`)
+                                    }
+                                    onClick={(e) => {
+                                      const key = `${row.id}:api`;
+                                      if (fieldMenu === key) {
                                         setFieldMenu(null);
+                                      } else {
+                                        openFieldMenu(e, key);
+                                      }
+                                    }}
+                                    className="inline-flex max-w-56 min-w-0 flex-1 items-center gap-1.5 rounded-lg border border-edge bg-panel px-2 py-1 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
+                                  >
+                                    <span className="min-w-0 flex-1 truncate font-mono text-fg">
+                                      {row.api === '' ? 'auto' : row.api}
+                                    </span>
+                                    <ChevronDown
+                                      size="0.875rem"
+                                      className="shrink-0 text-dim"
+                                    />
+                                  </button>
+                                </div>
+                                {!row.managed &&
+                                  menuRect &&
+                                  fieldMenu === `${row.id}:api` &&
+                                  createPortal(
+                                    <div
+                                      ref={fieldMenuRef}
+                                      style={{
+                                        top: menuRect.top,
+                                        left: menuRect.left,
+                                        width: menuRect.width,
                                       }}
-                                      className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-panel2 ${
-                                        row.api === value
-                                          ? 'text-fg'
-                                          : 'text-dim'
-                                      }`}
+                                      className="fixed z-[100] overflow-y-auto rounded-xl border border-edge bg-panel py-1 shadow-xl"
                                     >
-                                      <Check
-                                        size="0.8rem"
-                                        className={`shrink-0 ${
-                                          row.api === value
-                                            ? 'text-accent'
-                                            : 'invisible'
-                                        }`}
-                                      />
-                                      <span className="font-mono">{label}</span>
-                                    </button>
-                                  ))}
-                                </div>,
-                                document.body,
-                              )}
+                                      {[
+                                        ['responses', 'responses'],
+                                        ['chat', 'chat'],
+                                      ].map(([value, label]) => (
+                                        <button
+                                          key={value}
+                                          type="button"
+                                          onMouseDown={(e) =>
+                                            e.preventDefault()
+                                          }
+                                          onClick={() => {
+                                            update(row.id, { api: value });
+                                            setFieldMenu(null);
+                                          }}
+                                          className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-panel2 ${
+                                            row.api === value
+                                              ? 'text-fg'
+                                              : 'text-dim'
+                                          }`}
+                                        >
+                                          <Check
+                                            size="0.8rem"
+                                            className={`shrink-0 ${
+                                              row.api === value
+                                                ? 'text-accent'
+                                                : 'invisible'
+                                            }`}
+                                          />
+                                          <span className="font-mono">
+                                            {label}
+                                          </span>
+                                        </button>
+                                      ))}
+                                    </div>,
+                                    document.body,
+                                  )}
+                              </>
+                            )}
                           </div>
                           <AdvancedSection
                             row={row}
                             disabled={row.managed}
-                            driver={
-                              catalog.find((p) => p.id === row.type)?.impl ||
-                              row.driver
-                            }
+                            driver={driverImpl}
                             onUpdate={(key, value) =>
                               updateAdvanced(row.id, key, value)
                             }
@@ -2957,7 +2979,6 @@ export function ConfigPage() {
                 )}
               </div>
             )}
-            {tab === 'mcp' && <MCPSection />}
           </div>
         </div>
 

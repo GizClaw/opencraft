@@ -19,13 +19,16 @@ import (
 // existing user layer, preserving top-level sections and resources the
 // generator does not own. replaceKeys are resources taken verbatim
 // from the fresh document; mergeKeys are resources deep-merged (the
-// fresh document contributes only the keys it sets). Comments are
+// fresh document contributes only the keys it sets); dropKeys are
+// resources removed from the user layer entirely, which is how a
+// cleared section disappears instead of lingering. Comments are
 // preserved through yaml.Node.
 func mergeUserLayer(
 	path string,
 	fresh []byte,
 	replaceKeys map[string]bool,
 	mergeKeys map[string]bool,
+	dropKeys map[string]bool,
 	dropProviderKeys bool,
 ) ([]byte, error) {
 	oldData, err := os.ReadFile(path)
@@ -91,6 +94,7 @@ func mergeUserLayer(
 		for i := 0; i+1 < len(oldRes.Content); i += 2 {
 			key := oldRes.Content[i].Value
 			if replaceKeys[key] ||
+				dropKeys[key] ||
 				(dropProviderKeys && strings.HasPrefix(key, "provider.")) {
 				continue
 			}

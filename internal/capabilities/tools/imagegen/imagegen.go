@@ -82,6 +82,14 @@ type streamFunc func(
 	req inference.GenerateRequest,
 ) (inference.GenerateStream, route.Trace, error)
 
+// Settings carries the provider-specific knobs the settings page
+// configured for this tool, keyed by deployment id. They are deployment
+// preferences, not per-call arguments: the tool attaches each provider's
+// set to that provider only.
+type Settings struct {
+	ProviderOptions map[string]map[string]any `json:"provider_options,omitempty"`
+}
+
 // Tool generates images through the deployment router. It is safe for
 // concurrent use: the router and workspace are shared, and no mutable
 // state is kept per call.
@@ -89,20 +97,27 @@ type Tool struct {
 	ws       workspace.Workspace
 	generate generateFunc
 	stream   streamFunc
+	// providerOptions is the configured knob set per deployment id.
+	providerOptions map[string]map[string]any
 	// extensions renders the provider-addressed image knob fields into
 	// typed extensions. It is nil when no router is wired, in which case
 	// the knobs that need a provider extension are rejected.
-	extensions func(fields map[string]any) (inference.Extensions, error)
+	extensions func(
+		call map[string]any,
+		configured map[string]map[string]any,
+	) (inference.Extensions, error)
 }
 
 // New builds the generate_image tool. router is required; nil leaves
 // the tool un-wired so Execute fails with a clear internal error.
-func New(router *route.Router, ws workspace.Workspace) (*Tool, error) {
+func New(
+	router *route.Router, ws workspace.Workspace, settings Settings,
+) (*Tool, error) {
 	if ws == nil {
 		return nil, errdefs.Validationf(
 			"generate_image: workspace is required")
 	}
-	t := &Tool{ws: ws}
+	t := &Tool{ws: ws, providerOptions: settings.ProviderOptions}
 	if router != nil {
 		t.generate = func(
 			ctx context.Context,
@@ -117,17 +132,21 @@ func New(router *route.Router, ws workspace.Workspace) (*Tool, error) {
 			return router.GenerateStream(ctx, req)
 		}
 		t.extensions = func(
-			fields map[string]any,
+			call map[string]any,
+			configured map[string]map[string]any,
 		) (inference.Extensions, error) {
-			return imageExtensions(router.Target(), fields)
+			return inferenceext.Build(
+				Name, router.Target(), imageExtensionID, call, configured)
 		}
 	}
 	return t, nil
 }
 
 // MustNew panics on invalid construction; use in static wiring.
-func MustNew(router *route.Router, ws workspace.Workspace) *Tool {
-	t, err := New(router, ws)
+func MustNew(
+	router *route.Router, ws workspace.Workspace, settings Settings,
+) *Tool {
+	t, err := New(router, ws, settings)
 	if err != nil {
 		panic(err)
 	}
@@ -146,15 +165,13 @@ type Args struct {
 	Model string `json:"model,omitempty"`
 	// Size is an optional WxH output size, e.g. "1024x1024".
 	Size string `json:"size,omitempty"`
-	// AspectRatio is an optional "W:H" ratio for providers that size by
-	// ratio instead of pixels; it is mutually exclusive with Size.
-	AspectRatio string `json:"aspect_ratio,omitempty"`
 	// Count is the optional number of images to generate.
 	Count *int `json:"count,omitempty"`
 	// Seed fixes the provider's sampling seed where supported.
 	Seed *int64 `json:"seed,omitempty"`
-	// Quality is an optional generation quality tier: auto, low,
-	// medium, or high. Providers without the knob report it as dropped.
+	// Quality is an optional generation quality tier: auto, low, medium,
+	// high, xhigh, or max. Providers without the knob report it as
+	// dropped.
 	Quality string `json:"quality,omitempty"`
 	// OutputFormat is an optional format: png, jpeg, or webp.
 	OutputFormat string `json:"output_format,omitempty"`
@@ -193,13 +210,9 @@ func (t *Tool) Definition() message.ToolDefinition {
 				"name. The router honors it only for a target that can "+
 				"serve image output; otherwise the default route applies."),
 		message.ToolProperty("size", "string",
-			`Optional output size as WxH, e.g. "1024x1024". Mutually `+
-				"exclusive with aspect_ratio; provider defaults apply when "+
-				"both are omitted."),
-		message.ToolProperty("aspect_ratio", "string",
-			`Optional "W:H" ratio, e.g. "16:9", for providers that size by `+
-				"ratio. Mutually exclusive with size; providers that need "+
-				"explicit pixels reject it."),
+			`Optional output size as WxH, e.g. "1024x1024". Provider `+
+				"defaults apply when omitted, and each provider validates "+
+				"the sizes its models accept."),
 		message.ToolProperty("count", "integer",
 			"Optional number of images to generate (positive). Providers "+
 				"cap it, e.g. at 9 or 10."),
@@ -209,7 +222,7 @@ func (t *Tool) Definition() message.ToolDefinition {
 		message.ToolEnumProperty("quality", "string",
 			"Optional quality tier; providers without a native quality "+
 				"knob report it as dropped.",
-			"auto", "low", "medium", "high"),
+			"auto", "low", "medium", "high", "xhigh", "max"),
 		message.ToolProperty("output_format", "string",
 			"Optional output format: png, jpeg, or webp."),
 		message.ToolArrayProperty("reference_images",
@@ -258,7 +271,11 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 		return "", errdefs.Internalf("%s: router is not wired", Name)
 	}
 	var args Args
-	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+	// Strict decode: a knob the tool no longer offers (or a typo) must
+	// fail the call instead of being dropped silently.
+	decoder := json.NewDecoder(strings.NewReader(arguments))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&args); err != nil {
 		return "", errdefs.Validationf(
 			"%s: parse arguments: %v", Name, err)
 	}
@@ -306,6 +323,9 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 	}
 	if len(previews) > 0 {
 		payload["previews"] = previews
+	}
+	if dropped := inferenceext.Dropped(resp); len(dropped) > 0 {
+		payload["dropped"] = dropped
 	}
 	out, err := json.Marshal(payload)
 	if err != nil {
@@ -382,11 +402,6 @@ func imageIntent(args Args) (*inference.ImageIntent, error) {
 		return nil, errdefs.Validationf("%s: prompt is required", Name)
 	}
 	size := strings.TrimSpace(args.Size)
-	ratio := strings.TrimSpace(args.AspectRatio)
-	if size != "" && ratio != "" {
-		return nil, errdefs.Validationf(
-			"%s: size and aspect_ratio are mutually exclusive", Name)
-	}
 	intent := &inference.ImageIntent{Delivery: media.SourceInline}
 	if size != "" {
 		width, height, err := parseSize(size)
@@ -394,14 +409,6 @@ func imageIntent(args Args) (*inference.ImageIntent, error) {
 			return nil, errdefs.Validationf("%s: %v", Name, err)
 		}
 		intent.Size = &media.ImageSize{Width: width, Height: height}
-	}
-	if ratio != "" {
-		value := media.AspectRatio(ratio)
-		if err := value.Validate(); err != nil {
-			return nil, errdefs.Validationf(
-				"%s: aspect_ratio: %v", Name, err)
-		}
-		intent.AspectRatio = value
 	}
 	if args.Count != nil {
 		if *args.Count <= 0 {
@@ -417,11 +424,13 @@ func imageIntent(args Args) (*inference.ImageIntent, error) {
 		quality := media.ImageQuality(strings.ToLower(raw))
 		switch quality {
 		case media.ImageQualityAuto, media.ImageQualityLow,
-			media.ImageQualityMedium, media.ImageQualityHigh:
+			media.ImageQualityMedium, media.ImageQualityHigh,
+			media.ImageQualityXHigh, media.ImageQualityMax:
 			intent.Quality = quality
 		default:
 			return nil, errdefs.Validationf(
-				"%s: quality must be auto, low, medium, or high, got %q",
+				"%s: quality must be auto, low, medium, high, xhigh, "+
+					"or max, got %q",
 				Name, raw)
 		}
 	}
@@ -501,28 +510,20 @@ func (t *Tool) generateWithPreviews(
 	return resp, trace, previews, nil
 }
 
-// providerExtensions renders the requested provider-addressed knobs.
-// An empty field set needs no extension; a non-empty one fails loudly
-// when no configured provider models it, so a knob the deployment
-// cannot honor never disappears silently.
+// providerExtensions renders the requested provider-addressed knobs:
+// the per-call fields plus the options configured for each provider. An
+// empty request needs no extension; a knob the deployment cannot honor
+// fails loudly instead of disappearing silently.
 func (t *Tool) providerExtensions(
 	fields map[string]any,
 ) (inference.Extensions, error) {
-	if len(fields) == 0 {
+	if len(fields) == 0 && len(t.providerOptions) == 0 {
 		return nil, nil
 	}
 	if t.extensions == nil {
 		return nil, errdefs.Internalf("%s: router is not wired", Name)
 	}
-	return t.extensions(fields)
-}
-
-// imageExtensions probes the configured providers for the requested
-// image knobs and returns the typed extensions to attach.
-func imageExtensions(
-	assembly *inference.Assembly, fields map[string]any,
-) (inference.Extensions, error) {
-	return inferenceext.Probe(Name, assembly, imageExtensionID, fields)
+	return t.extensions(fields, t.providerOptions)
 }
 
 // loadReferenceImage reads one workspace image and returns it as an

@@ -357,7 +357,12 @@ func (imagegenSourceFactory) New(_ context.Context, in resource.Input) (any, err
 	if err != nil {
 		return nil, err
 	}
-	return toolList{imagegen.MustNew(router, ws)}, nil
+	settings, err := resource.DecodeTyped[imagegen.Settings](
+		context.Background(), in.Settings)
+	if err != nil {
+		return nil, err
+	}
+	return toolList{imagegen.MustNew(router, ws, settings)}, nil
 }
 
 // videogenSourceFactory contributes the generate_video tool. It needs
@@ -392,7 +397,12 @@ func (videogenSourceFactory) New(_ context.Context, in resource.Input) (any, err
 	if err != nil {
 		return nil, err
 	}
-	return toolList{videogen.MustNew(router, ws)}, nil
+	settings, err := resource.DecodeTyped[videogen.Settings](
+		context.Background(), in.Settings)
+	if err != nil {
+		return nil, err
+	}
+	return toolList{videogen.MustNew(router, ws, settings)}, nil
 }
 
 // permissionsSourceFactory contributes the request_permissions tool

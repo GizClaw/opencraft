@@ -202,10 +202,10 @@ func TestExecuteLowersRequestKnobs(t *testing.T) {
 	_, err := tool.Execute(context.Background(), `{
 		"prompt": "a poster",
 		"model": "openai-inst-a/gpt-image-2",
-		"aspect_ratio": "16:9",
+		"size": "1536x1024",
 		"count": 2,
 		"seed": 42,
-		"quality": "high",
+		"quality": "xhigh",
 		"output_format": "webp"
 	}`)
 	if err != nil {
@@ -215,11 +215,11 @@ func TestExecuteLowersRequestKnobs(t *testing.T) {
 		t.Errorf("model hint = %q", gotRequest.ModelHint)
 	}
 	intent := gotRequest.Input.Content.Intent.Image
-	if intent.AspectRatio != media.AspectRatio("16:9") {
-		t.Errorf("aspect ratio = %q, want 16:9", intent.AspectRatio)
+	if intent.Size == nil || intent.Size.Width != 1536 || intent.Size.Height != 1024 {
+		t.Errorf("size = %+v, want 1536x1024", intent.Size)
 	}
-	if intent.Size != nil {
-		t.Errorf("size = %+v, want nil for a ratio request", intent.Size)
+	if intent.AspectRatio != "" {
+		t.Errorf("aspect ratio = %q, want unset", intent.AspectRatio)
 	}
 	if intent.Count == nil || *intent.Count != 2 {
 		t.Errorf("count = %v, want 2", intent.Count)
@@ -227,8 +227,8 @@ func TestExecuteLowersRequestKnobs(t *testing.T) {
 	if intent.Seed == nil || *intent.Seed != 42 {
 		t.Errorf("seed = %v, want 42", intent.Seed)
 	}
-	if intent.Quality != media.ImageQualityHigh {
-		t.Errorf("quality = %q, want high", intent.Quality)
+	if intent.Quality != media.ImageQualityXHigh {
+		t.Errorf("quality = %q, want xhigh", intent.Quality)
 	}
 	if intent.OutputFormat != media.ImageFormatWebP {
 		t.Errorf("output format = %q, want webp", intent.OutputFormat)
@@ -266,8 +266,8 @@ func TestExecuteReferenceImagesAndMask(t *testing.T) {
 				},
 			}, traceFor("azure", "gpt-image-2"), nil
 		},
-		extensions: func(fields map[string]any) (inference.Extensions, error) {
-			gotFields = fields
+		extensions: func(call map[string]any, configured map[string]map[string]any) (inference.Extensions, error) {
+			gotFields = call
 			return nil, nil
 		},
 	}
@@ -357,6 +357,46 @@ func TestExecuteReencodesForeignReferenceFormat(t *testing.T) {
 	}
 }
 
+// TestExecuteConfiguredProviderOptions pins that the settings-page knob
+// set reaches the extension builder even when the call names none.
+func TestExecuteConfiguredProviderOptions(t *testing.T) {
+	configured := map[string]map[string]any{
+		"openai-inst-a": {"background": "transparent"},
+	}
+	var gotConfigured map[string]map[string]any
+	tool := &Tool{
+		ws:              newWorkspace(t),
+		providerOptions: configured,
+		generate: func(
+			_ context.Context, _ inference.GenerateRequest,
+		) (inference.GenerateResponse, route.Trace, error) {
+			return inference.GenerateResponse{
+				Message: message.Message{
+					Role: message.RoleAssistant,
+					Content: message.Content{
+						Parts: []message.Part{fakeImagePart(pngBytes)},
+					},
+				},
+			}, traceFor("openai-inst-a", "gpt-image-2"), nil
+		},
+		extensions: func(
+			call map[string]any, configured map[string]map[string]any,
+		) (inference.Extensions, error) {
+			if len(call) != 0 {
+				t.Errorf("call knobs = %+v, want none", call)
+			}
+			gotConfigured = configured
+			return nil, nil
+		},
+	}
+	if _, err := tool.Execute(context.Background(), `{"prompt":"x"}`); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if gotConfigured["openai-inst-a"]["background"] != "transparent" {
+		t.Fatalf("configured = %+v", gotConfigured)
+	}
+}
+
 // TestExecuteStreamsPreviews pins the preview path: partial_images
 // switches the call to the streaming shape, interim snapshots are
 // saved under generated/previews/, and the final image comes from the
@@ -411,8 +451,8 @@ func TestExecuteStreamsPreviews(t *testing.T) {
 			}
 			return stream, traceFor("openai", "gpt-image-2"), nil
 		},
-		extensions: func(fields map[string]any) (inference.Extensions, error) {
-			gotFields = fields
+		extensions: func(call map[string]any, configured map[string]map[string]any) (inference.Extensions, error) {
+			gotFields = call
 			return nil, nil
 		},
 	}
@@ -478,13 +518,16 @@ func TestExecuteValidation(t *testing.T) {
 		{"empty prompt", `{"prompt":"  "}`, "prompt is required"},
 		{"bad size", `{"prompt":"x","size":"square"}`, "size must be WxH"},
 		{"negative size", `{"prompt":"x","size":"-1x10"}`, "positive integers"},
-		{"size and ratio", `{"prompt":"x","size":"1024x1024","aspect_ratio":"1:1"}`,
-			"mutually exclusive"},
-		{"bad ratio", `{"prompt":"x","aspect_ratio":"16x9"}`,
-			"aspect ratio must use width:height"},
+		// aspect_ratio is provider-specific (MiniMax only), so it left the
+		// model-facing schema; a stale call must fail loudly instead of
+		// silently rendering a default-sized image.
+		{"removed aspect_ratio", `{"prompt":"x","aspect_ratio":"16:9"}`,
+			`unknown field "aspect_ratio"`},
+		{"unknown knob", `{"prompt":"x","qualitiy":"high"}`,
+			`unknown field "qualitiy"`},
 		{"zero count", `{"prompt":"x","count":0}`, "count must be positive"},
 		{"bad quality", `{"prompt":"x","quality":"ultra"}`,
-			"quality must be auto, low, medium, or high"},
+			"quality must be auto, low, medium, high, xhigh, or max"},
 		{"bad format", `{"prompt":"x","output_format":"gif"}`,
 			"png, jpeg, or webp"},
 		{"previews over cap", `{"prompt":"x","partial_images":4}`,
@@ -568,7 +611,7 @@ func TestExecuteReferenceImageValidation(t *testing.T) {
 			t.Fatal("generate must not be called for invalid input")
 			return inference.GenerateResponse{}, route.Trace{}, nil
 		},
-		extensions: func(map[string]any) (inference.Extensions, error) {
+		extensions: func(call map[string]any, configured map[string]map[string]any) (inference.Extensions, error) {
 			t.Fatal("no extension must be built for an invalid mask")
 			return nil, nil
 		},
@@ -623,8 +666,8 @@ func TestExecuteExplainsRejectionCause(t *testing.T) {
 					inference.FieldID(
 						"extension.openai-inst-a.image_options.mask"),
 					errdefs.Validation(errors.New(
-						`openai-inst-a: image masks require `+
-							`endpoint.routing "azure_deployment"`)),
+						`openai-inst-a: mask requires at least one `+
+							`inline reference image`)),
 				)
 		},
 	}
@@ -634,7 +677,7 @@ func TestExecuteExplainsRejectionCause(t *testing.T) {
 	}
 	for _, want := range []string{
 		"invalid_extension",
-		`image masks require endpoint.routing "azure_deployment"`,
+		"mask requires at least one inline reference image",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error missing %q: %v", want, err)
@@ -686,7 +729,7 @@ func TestExecuteVerifiesAppliedKnobs(t *testing.T) {
 				}
 				return resp, traceFor(meta.Model.Provider, meta.Model.Name), nil
 			},
-			extensions: func(map[string]any) (inference.Extensions, error) {
+			extensions: func(call map[string]any, configured map[string]map[string]any) (inference.Extensions, error) {
 				return inference.Extensions{attached}, nil
 			},
 		}, dir

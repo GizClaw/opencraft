@@ -110,6 +110,7 @@ func WriteMCP(configDir string, servers []MCPServer) error {
 		fresh,
 		replaceKeys,
 		mergeKeys,
+		map[string]bool{},
 		false, // MCP does not own provider resources; preserve them
 	)
 	if err != nil {

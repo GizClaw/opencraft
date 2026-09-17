@@ -55,6 +55,8 @@ import type {
   ModelUsageStat,
   ModelOption,
   PatchFileDTO,
+  ToolOptionsRequest,
+  ToolOptionsState,
   PathEnvironment,
   PolicyDecision,
   PetsSettings,
@@ -341,6 +343,10 @@ export const api = {
   memoryConfig: () => Config.MemoryConfig() as Promise<MemorySettings>,
   saveMemory: (s: MemorySettings) =>
     Config.SaveMemory(s as unknown as genConfig.MemorySettings),
+  toolOptions: () =>
+    Config.ToolOptions() as unknown as Promise<ToolOptionsState>,
+  saveToolOptions: (req: ToolOptionsRequest) =>
+    Config.SaveToolOptions(req as unknown as gen.ToolOptionsRequest),
   diagnostics: () =>
     Diagnostics.Diagnostics() as unknown as Promise<DiagnosticsReport>,
   runSandboxProbe: () =>

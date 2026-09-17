@@ -694,6 +694,48 @@ export interface MemorySettings {
 }
 
 /**
+ * ToolOptionFieldView is one provider-specific knob the tools settings
+ * tab renders; the host owns the vocabulary, the label comes from i18n.
+ */
+export interface ToolOptionFieldView {
+  name: string;
+  kind: 'bool' | 'int' | 'float' | 'enum' | 'string';
+  values?: string[] | null;
+  min?: number | null;
+  max?: number | null;
+  exclusive_min?: boolean;
+  exclusive_max?: boolean;
+}
+
+/** ToolOptionInstanceView is one deployment a tool card configures. */
+export interface ToolOptionInstanceView {
+  id: string;
+  label: string;
+  impl: string;
+  managed: boolean;
+  fields: ToolOptionFieldView[] | null;
+  /** Configured knob values keyed by dotted field path. */
+  values: { [key: string]: unknown } | null;
+}
+
+/** ToolOptionsToolView is one generation tool's card. */
+export interface ToolOptionsToolView {
+  instances: ToolOptionInstanceView[] | null;
+}
+
+/** ToolOptionsState is the whole provider-specific tools configuration. */
+export interface ToolOptionsState {
+  image: ToolOptionsToolView;
+  video: ToolOptionsToolView;
+}
+
+/** ToolOptionsRequest is the flat dotted save payload per tool. */
+export interface ToolOptionsRequest {
+  image: { [id: string]: { [field: string]: unknown } };
+  video: { [id: string]: { [field: string]: unknown } };
+}
+
+/**
  * TelemetryExportStatus is the OTLP export sink the app runs. Endpoint
  * and header names are visible; header values are credentials and never
  * leave the backend.
