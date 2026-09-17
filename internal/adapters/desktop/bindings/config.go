@@ -235,9 +235,8 @@ func (b *Config) ConfigState() (ConfigState, error) {
 	return st, nil
 }
 
-// ModelOption is one selectable per-conversation model hint.
-
-// ModelOption is one selectable per-conversation model hint.
+// ModelOption is one selectable per-conversation model hint: a model a
+// chat turn can actually run on.
 type ModelOption struct {
 	ID        string `json:"id"`
 	Label     string `json:"label"`
@@ -245,6 +244,10 @@ type ModelOption struct {
 }
 
 // ModelOptions returns selectable model hints in router priority order.
+// Generation-only models (image/video/tts) are skipped: the router
+// reaches them through the capability-aware selection of the generation
+// tools (generate_image / generate_video), and offering one here would
+// show a hint the chat turn silently routes around.
 func (b *Config) ModelOptions() ([]ModelOption, error) {
 	cfg, err := config.LoadInference(b.core.UserDir)
 	if err != nil {
@@ -257,7 +260,7 @@ func (b *Config) ModelOptions() ([]ModelOption, error) {
 		}
 		for _, m := range in.Models {
 			name := strings.TrimSpace(m.Name)
-			if name == "" {
+			if name == "" || !m.ServesText() {
 				continue
 			}
 			out = append(out, ModelOption{

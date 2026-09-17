@@ -3,6 +3,7 @@ package config
 import (
 	"crypto/rand"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -135,6 +136,19 @@ type Model struct {
 	// The keys a driver owns are the driver's business; the host only
 	// refuses the ones it writes itself.
 	DriverFields map[string]any
+}
+
+// ServesText reports whether the model can serve a text-output generate
+// request, the shape every chat turn has. The rule mirrors the router's
+// own selection check on a declared model: an empty output list is
+// undeclared rather than incompatible, while a declared list must
+// contain text. Image/video/audio-only rows stay router targets for the
+// generation tools and are never chat model choices.
+func (m Model) ServesText() bool {
+	if len(m.Capabilities.Outputs) == 0 {
+		return true
+	}
+	return slices.Contains(m.Capabilities.Outputs, message.PartText)
 }
 
 // ModelLifecycle is the settings-page view of one model's discovery
@@ -299,8 +313,9 @@ func (in Instance) DeploymentID(n int) string {
 }
 
 // ModelReasoning reports whether the model selected by hint
-// ("<deployment-id>/<name>", empty = first enabled instance's first
-// model) declares a reasoning capability. Drivers reject
+// ("<deployment-id>/<name>", empty = the router's default text target,
+// the first enabled instance's first text-serving model) declares a
+// reasoning capability. Drivers reject
 // reasoning_effort / reasoning_enabled knobs for models without one, so
 // callers must only send the knob when this returns true.
 func (c InferenceConfig) ModelReasoning(hint string) bool {
@@ -309,16 +324,26 @@ func (c InferenceConfig) ModelReasoning(hint string) bool {
 	var targetName string
 	found := false
 	if !ok || strings.TrimSpace(prov) == "" || strings.TrimSpace(name) == "" {
-		// No hint: the default policy target is the first enabled
-		// instance's first model.
+		// No hint: the default policy target for a text request is the
+		// first text-serving model of the first enabled instance. A
+		// generation-only row (image/video/tts) is never that target, so
+		// it must not decide the reasoning knob either.
 		for _, in := range c.Instances {
-			if !in.Enabled || len(in.Models) == 0 {
+			if !in.Enabled {
 				continue
 			}
-			target = in
-			targetName = in.Models[0].Name
-			found = true
-			break
+			for _, m := range in.Models {
+				if !m.ServesText() {
+					continue
+				}
+				target = in
+				targetName = m.Name
+				found = true
+				break
+			}
+			if found {
+				break
+			}
 		}
 	} else {
 		for i, in := range c.Instances {

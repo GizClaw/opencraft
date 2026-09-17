@@ -1661,6 +1661,36 @@ func TestWriteInferenceRefusesNonMappingLayer(t *testing.T) {
 	}
 }
 
+// TestModelServesText pins the chat eligibility rule shared by the
+// model picker and the default reasoning-model resolution: an
+// undeclared output list stays eligible because the router treats it as
+// compatible, a declared list must contain text, and the
+// generation-only families are tool targets.
+func TestModelServesText(t *testing.T) {
+	tests := []struct {
+		name    string
+		outputs []message.PartKind
+		want    bool
+	}{
+		{name: "undeclared", want: true},
+		{name: "text", outputs: []message.PartKind{message.PartText}, want: true},
+		{name: "text and image", outputs: []message.PartKind{
+			message.PartText, message.PartImage,
+		}, want: true},
+		{name: "image", outputs: []message.PartKind{message.PartImage}, want: false},
+		{name: "video", outputs: []message.PartKind{message.PartVideo}, want: false},
+		{name: "audio", outputs: []message.PartKind{message.PartAudio}, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := Model{Capabilities: model.ModelCapabilities{Outputs: tt.outputs}}
+			if got := m.ServesText(); got != tt.want {
+				t.Fatalf("ServesText() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestModelReasoning(t *testing.T) {
 	cfg := InferenceConfig{Instances: []Instance{
 		{StableID: "a", Type: "openai", Enabled: true, Models: []Model{
@@ -1700,5 +1730,25 @@ func TestModelReasoning(t *testing.T) {
 	}}
 	if plain.ModelReasoning("") {
 		t.Error("default target without reasoning capability, want false")
+	}
+
+	// The default text target skips generation-only rows: an image model
+	// listed first must not decide the reasoning knob for the text model
+	// the router would actually run.
+	mixed := InferenceConfig{Instances: []Instance{
+		{StableID: "m", Type: "openai", Enabled: true, Models: []Model{
+			{Name: "gpt-image-2", Capabilities: model.ModelCapabilities{
+				Outputs: []message.PartKind{message.PartImage},
+			}},
+			{Name: "gpt-5", Capabilities: model.ModelCapabilities{
+				Outputs: []message.PartKind{message.PartText},
+				Reasoning: model.ReasoningCapability{
+					Kind: model.ReasoningAlways,
+				},
+			}},
+		}},
+	}}
+	if !mixed.ModelReasoning("") {
+		t.Error("empty hint should skip the image row and resolve to the text model")
 	}
 }
