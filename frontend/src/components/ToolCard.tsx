@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import {
   Bot,
   Check,
@@ -29,7 +29,7 @@ import {
   recoverJsonContent,
 } from '../lib/diff';
 import { useStore, type ToolView } from '../lib/store';
-import type { PatchFileDTO } from '../lib/types';
+import type { FilePreview, PatchFileDTO } from '../lib/types';
 import { GitDiffView } from './viewer/DiffView';
 
 function parseArgs(tool: ToolView): Record<string, unknown> | null {
@@ -1917,10 +1917,17 @@ function WebFetchView({ tool }: { tool: ToolView }) {
 
 // GenerateView renders generate_image / generate_video as a standalone
 // collapsible block: the header shows a prompt preview; expanding
-// reveals the generated artifact paths.
+// reveals the produced media as thumbnails (images), players (videos),
+// and clickable paths. Progress previews of a streamed generation sit
+// under the final files.
 function GenerateView({ tool }: { tool: ToolView }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const [media, setMedia] = useState<Record<string, FilePreview>>({});
+  // fetched keeps resolved paths across collapse/expand cycles so a
+  // reopened card does not rebuild every data URL.
+  const fetched = useRef(new Set<string>());
+  const openFileTarget = useStore((s) => s.openFileTarget);
   const running = tool.status === 'running';
   useEffect(() => {
     if (running) setOpen(true);
@@ -1935,6 +1942,7 @@ function GenerateView({ tool }: { tool: ToolView }) {
             if (v && typeof v === 'object') {
               return v as {
                 paths?: string[];
+                previews?: string[];
                 count?: number;
                 model?: string;
                 hint?: string;
@@ -1948,7 +1956,94 @@ function GenerateView({ tool }: { tool: ToolView }) {
       : null;
   const failed = tool.status === 'error';
   const paths = parsed?.paths ?? [];
+  const previewPaths = parsed?.previews ?? [];
+  const mediaPaths = Array.from(new Set([...paths, ...previewPaths]));
+  const mediaKey = mediaPaths.join('|');
   const isImage = tool.name === 'generate_image';
+
+  // Previews are resolved by the file binding, which keeps image bytes
+  // as data URLs and hands videos a loopback stream URL. A path that
+  // cannot be resolved (or a tool result written elsewhere) falls back
+  // to a plain clickable path line.
+  useEffect(() => {
+    if (!open || mediaKey === '') return;
+    const wanted = mediaKey
+      .split('|')
+      .filter((path) => !fetched.current.has(path));
+    if (wanted.length === 0) return;
+    for (const path of wanted) fetched.current.add(path);
+    let live = true;
+    void Promise.all(
+      wanted.map(async (path) => {
+        try {
+          return [path, await api.readPreview(path)] as const;
+        } catch {
+          return [path, null] as const;
+        }
+      }),
+    ).then((entries) => {
+      if (!live) return;
+      setMedia((prev) => {
+        const next = { ...prev };
+        for (const [path, preview] of entries) {
+          if (preview) next[path] = preview;
+        }
+        return next;
+      });
+    });
+    return () => {
+      live = false;
+    };
+  }, [open, mediaKey]);
+
+  const openPath = (path: string) => void openFileTarget(path);
+
+  const pathButton = (path: string) => (
+    <button
+      key={path}
+      type="button"
+      onClick={() => openPath(path)}
+      title={t('chat.openArtifact', { path })}
+      className="block max-w-full truncate font-mono text-xs text-fg hover:text-accent"
+    >
+      {path}
+    </button>
+  );
+
+  const mediaEntry = (path: string, side: string) => {
+    const preview = media[path];
+    if (preview?.kind === 'image' && preview.data_url) {
+      return (
+        <button
+          key={path}
+          type="button"
+          onClick={() => openPath(path)}
+          title={t('chat.openArtifact', { path })}
+          className="overflow-hidden rounded-md border border-edge transition-colors hover:border-accent/60"
+        >
+          <img
+            src={preview.data_url}
+            alt={preview.name || path}
+            className={`${side} object-cover`}
+          />
+        </button>
+      );
+    }
+    if (preview?.kind === 'video' && preview.stream_url) {
+      return (
+        <div key={path} className="min-w-0 max-w-full space-y-0.5">
+          <video
+            src={preview.stream_url}
+            controls
+            preload="metadata"
+            className="max-h-64 max-w-full rounded-md border border-edge bg-black"
+          />
+          {pathButton(path)}
+        </div>
+      );
+    }
+    return pathButton(path);
+  };
 
   return (
     <div className="my-1.5">
@@ -2003,12 +2098,18 @@ function GenerateView({ tool }: { tool: ToolView }) {
           {parsed !== null && (
             <>
               {paths.length > 0 && (
+                <div className="flex flex-wrap items-start gap-1.5">
+                  {paths.map((p) => mediaEntry(p, 'h-28 w-28'))}
+                </div>
+              )}
+              {previewPaths.length > 0 && (
                 <div className="space-y-0.5">
-                  {paths.map((p) => (
-                    <div key={p} className="truncate font-mono text-xs text-fg">
-                      {p}
-                    </div>
-                  ))}
+                  <div className="text-[0.7143rem] uppercase tracking-wider text-dim">
+                    {t('tool.previews')}
+                  </div>
+                  <div className="flex flex-wrap items-start gap-1.5">
+                    {previewPaths.map((p) => mediaEntry(p, 'h-20 w-20'))}
+                  </div>
                 </div>
               )}
               {parsed.model && (

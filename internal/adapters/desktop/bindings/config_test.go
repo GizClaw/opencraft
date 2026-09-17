@@ -8,6 +8,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/inference/model"
+	"github.com/GizClaw/flowcraft/core/message"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
@@ -169,6 +170,79 @@ func TestConfigStatusReportsDefaultReasoning(t *testing.T) {
 	}
 	if status.DefaultModel == "" {
 		t.Fatal("default model must be reported")
+	}
+}
+
+// TestModelOptionsOffersOnlyChatModels pins the composer/automation
+// model picker to models a chat turn can run on: image- and video-only
+// rows stay router targets for generate_image/generate_video but must
+// not be selectable, because the router would silently route the turn
+// around the hint.
+func TestModelOptionsOffersOnlyChatModels(t *testing.T) {
+	dir := t.TempDir()
+	b := NewConfig(core.NewCore(dir, dir, ""))
+	if err := config.WriteInference(dir, config.InferenceConfig{
+		Instances: []config.Instance{
+			{
+				StableID:  "primary",
+				Type:      "openai",
+				Name:      "Primary",
+				KeySource: config.KeyEnv,
+				Enabled:   true,
+				Models: []config.Model{
+					{Name: "gpt-image-2", Kind: "image",
+						Capabilities: model.ModelCapabilities{
+							Outputs: []message.PartKind{message.PartImage},
+						}},
+					{Name: "gpt-5",
+						Capabilities: model.ModelCapabilities{
+							Outputs: []message.PartKind{message.PartText},
+						}},
+					{Name: "gpt-5-image",
+						Capabilities: model.ModelCapabilities{
+							Outputs: []message.PartKind{
+								message.PartText, message.PartImage,
+							},
+						}},
+				},
+			},
+			{
+				StableID:  "media",
+				Type:      "minimax",
+				Name:      "Media",
+				KeySource: config.KeyEnv,
+				Enabled:   true,
+				Models: []config.Model{
+					{Name: "image-01", Kind: "image",
+						Capabilities: model.ModelCapabilities{
+							Outputs: []message.PartKind{message.PartImage},
+						}},
+					{Name: "video-01", Kind: "video",
+						Capabilities: model.ModelCapabilities{
+							Outputs: []message.PartKind{message.PartVideo},
+						}},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	options, err := b.ModelOptions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, o := range options {
+		ids = append(ids, o.ID)
+	}
+	want := []string{"openai-primary/gpt-5", "openai-primary/gpt-5-image"}
+	if len(ids) != len(want) {
+		t.Fatalf("model options = %v, want %v", ids, want)
+	}
+	for i := range want {
+		if ids[i] != want[i] {
+			t.Fatalf("model options = %v, want %v", ids, want)
+		}
 	}
 }
 

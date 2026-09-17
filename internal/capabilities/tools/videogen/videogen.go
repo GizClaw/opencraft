@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,7 +23,6 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/inference"
-	"github.com/GizClaw/flowcraft/core/inference/model"
 	"github.com/GizClaw/flowcraft/core/inference/route"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/message/media"
@@ -30,6 +30,8 @@ import (
 	"github.com/GizClaw/flowcraft/core/tool"
 	"github.com/GizClaw/flowcraft/core/workspace"
 	"github.com/rs/xid"
+
+	"github.com/GizClaw/opencraft/internal/foundation/utils/inferenceext"
 )
 
 // Name is the canonical generate_video tool name.
@@ -53,6 +55,13 @@ const maxFirstFrameBytes = 10 << 20 // 10 MiB
 // maxDownloadRedirects bounds provider-issued download redirects.
 const maxDownloadRedirects = 10
 
+// videoExtensionID is the provider-carried extension that models
+// per-request video knobs (the video_options extension both the MiniMax
+// and the ByteDance driver register). Which field a driver accepts is
+// decided by its own strict decoder: the tool probes the configured
+// providers and attaches only what each one models.
+const videoExtensionID = "video_options"
+
 // generateFunc is the generation entry; production wires the router,
 // tests inject a fake.
 type generateFunc func(
@@ -66,6 +75,10 @@ type Tool struct {
 	ws       workspace.Workspace
 	generate generateFunc
 	client   *http.Client
+	// extensions renders the provider-addressed video knob fields into
+	// typed extensions. It is nil when no router is wired, in which case
+	// the knobs that need a provider extension are rejected.
+	extensions func(fields map[string]any) (inference.Extensions, error)
 }
 
 // New builds the generate_video tool. router is required; nil leaves
@@ -100,6 +113,12 @@ func New(router *route.Router, ws workspace.Workspace) (*Tool, error) {
 		) (inference.GenerateResponse, route.Trace, error) {
 			return router.Generate(ctx, req)
 		}
+		t.extensions = func(
+			fields map[string]any,
+		) (inference.Extensions, error) {
+			return inferenceext.Probe(
+				Name, router.Target(), videoExtensionID, fields)
+		}
 	}
 	return t, nil
 }
@@ -119,42 +138,170 @@ var _ tool.Tool = (*Tool)(nil)
 type Args struct {
 	// Prompt is the text description of the video to generate.
 	Prompt string `json:"prompt"`
+	// Model is an optional router hint ("<provider-id>/<name>" or a
+	// bare model name), honored only for a video-capable target.
+	Model string `json:"model,omitempty"`
 	// FirstFrame is an optional workspace-relative image path used as
 	// the first frame (image-to-video).
 	FirstFrame string `json:"first_frame,omitempty"`
+	// LastFrame is an optional workspace-relative image path used as the
+	// closing frame. Alone it asks providers that support it for a
+	// closing-frame-only generation.
+	LastFrame string `json:"last_frame,omitempty"`
+	// ReferenceImages are workspace-relative images for providers that
+	// take reference inputs (Seedance / H3 omni-reference). At least
+	// three are required: providers read one or two images as the first
+	// and last frame.
+	ReferenceImages []string `json:"reference_images,omitempty"`
+	// ReferenceVideos are absolute http(s) URLs the provider fetches as
+	// video references. Local files cannot be referenced this way.
+	ReferenceVideos []string `json:"reference_videos,omitempty"`
+	// ReferenceAudios are absolute http(s) URLs used as audio
+	// references.
+	ReferenceAudios []string `json:"reference_audios,omitempty"`
 	// DurationMillis is the optional target duration; provider models
 	// validate their own tiers (MiniMax: 6s or 10s).
 	DurationMillis *int64 `json:"duration_millis,omitempty"`
 	// Resolution is an optional tier token (e.g. "720p", "1080p", "4k").
 	Resolution string `json:"resolution,omitempty"`
+	// AspectRatio is an optional "W:H" output ratio; provider models
+	// accept their own value sets.
+	AspectRatio string `json:"aspect_ratio,omitempty"`
+	// Seed fixes the provider's sampling seed where the model supports
+	// one.
+	Seed *int64 `json:"seed,omitempty"`
 	// Watermark requests an AIGC watermark when the provider supports it.
 	Watermark *bool `json:"watermark,omitempty"`
+
+	// Provider knobs. Each one is attached only to a provider whose
+	// video_options decoder models it; a knob no configured provider
+	// supports fails the call instead of being dropped, and a knob the
+	// executed provider did not apply fails the call after the fact.
+	//
+	// CameraFixed keeps the camera static while the subject moves
+	// (Seedance).
+	CameraFixed *bool `json:"camera_fixed,omitempty"`
+	// GenerateAudio asks Seedance 2.x to synthesize a matching track.
+	GenerateAudio *bool `json:"generate_audio,omitempty"`
+	// ServiceTier selects the serving tier: "default" or "flex".
+	ServiceTier string `json:"service_tier,omitempty"`
+	// ExecutionExpiresAfter bounds the server-side task lifetime in
+	// seconds ([3600, 259200]).
+	ExecutionExpiresAfter *int64 `json:"execution_expires_after,omitempty"`
+	// Priority raises the task's queue position ([0, 9]).
+	Priority *int32 `json:"priority,omitempty"`
+	// OutputFormat selects the container: "mp4" or "mov".
+	OutputFormat string `json:"output_format,omitempty"`
+	// OmniReferenceTaskType hints the omni-reference subtask: "auto",
+	// "reference", "edit", or "extend".
+	OmniReferenceTaskType string `json:"omni_reference_task_type,omitempty"`
+	// WebSearch attaches the provider's hosted web search tool.
+	WebSearch *bool `json:"web_search,omitempty"`
+	// CallbackURL receives task status webhooks; polling remains the
+	// fallback, so an unreachable webhook still completes the call.
+	CallbackURL string `json:"callback_url,omitempty"`
+	// SafetyIdentifier is the end-user identifier for provider abuse
+	// detection.
+	SafetyIdentifier string `json:"safety_identifier,omitempty"`
+	// PromptOptimizer lets the provider rewrite the prompt first
+	// (MiniMax v1).
+	PromptOptimizer *bool `json:"prompt_optimizer,omitempty"`
+	// FastPretreatment shortens the optimizer's rewrite time (MiniMax
+	// v1).
+	FastPretreatment *bool `json:"fast_pretreatment,omitempty"`
+	// LastFrameOnly marks a single input image as the closing frame
+	// instead of the opening one (MiniMax v2).
+	LastFrameOnly *bool `json:"last_frame_only,omitempty"`
 }
 
 // Definition describes the generate_video tool.
 func (t *Tool) Definition() message.ToolDefinition {
 	return message.DefineSchema(
 		Name,
-		"Generates a video from a text prompt, optionally using a "+
-			"workspace image as the first frame. The request is routed "+
-			"through the configured inference router, which selects a "+
-			"video-capable model (e.g. MiniMax Hailuo or ByteDance "+
-			"Seedance) by output capability; if the router has no such "+
-			"model, the call fails with guidance on how to configure one. "+
-			"Generation is an asynchronous provider task folded into this "+
-			"call and can take minutes. The finished video is downloaded "+
-			"under generated/ in the workspace and the returned JSON lists "+
-			"the workspace-relative path plus the model that produced it.",
+		"Generates a video from a text prompt, optionally guided by "+
+			"frame images (first/last frame) or reference inputs. The "+
+			"request is routed through the configured inference router, "+
+			"which selects a video-capable model (e.g. MiniMax Hailuo or "+
+			"ByteDance Seedance) by output capability; if the router has "+
+			"no such model, the call fails with guidance on how to "+
+			"configure one. Generation is an asynchronous provider task "+
+			"folded into this call and can take minutes; the finished "+
+			"video is downloaded under generated/ in the workspace and the "+
+			"returned JSON lists the workspace-relative path plus the "+
+			"model that produced it. A knob the selected provider does "+
+			"not support is reported in the failure instead of being "+
+			"silently ignored.",
 		message.ToolProperty("prompt", "string",
 			"Text description of the video to generate (required)."),
+		message.ToolProperty("model", "string",
+			`Optional model hint, "<provider-id>/<model>" or a bare model `+
+				"name. The router honors it only for a target that can "+
+				"serve video output; otherwise the default route applies."),
 		message.ToolProperty("first_frame", "string",
 			"Optional workspace-relative path to a png/jpg/webp image used as the first frame."),
+		message.ToolProperty("last_frame", "string",
+			"Optional workspace-relative png/jpg/webp image used as the "+
+				"closing frame. With first_frame it sets both bookends; "+
+				"alone it needs a provider that supports a closing-frame-only "+
+				"input."),
+		message.ToolArrayProperty("reference_images",
+			"Optional workspace-relative images used as references "+
+				"(omni-reference models), at least three: one or two images "+
+				"are read as the first and last frame, so use "+
+				"first_frame/last_frame for bookends. Mutually exclusive "+
+				"with the frame inputs.",
+			message.Items("string")),
+		message.ToolArrayProperty("reference_videos",
+			"Optional absolute http(s) URLs the provider fetches as video "+
+				"references; local files have no upload channel.",
+			message.Items("string")),
+		message.ToolArrayProperty("reference_audios",
+			"Optional absolute http(s) URLs used as audio references.",
+			message.Items("string")),
 		message.ToolProperty("duration_millis", "integer",
 			"Optional target duration in milliseconds; providers validate their own tiers."),
 		message.ToolProperty("resolution", "string",
 			`Optional resolution tier, e.g. "720p", "1080p", or "4k".`),
+		message.ToolProperty("aspect_ratio", "string",
+			`Optional output ratio as "W:H", e.g. "16:9"; each provider `+
+				"accepts its own value set."),
+		message.ToolProperty("seed", "integer",
+			"Optional sampling seed for reproducible output, where the "+
+				"model supports one."),
 		message.ToolProperty("watermark", "boolean",
 			"Optional AIGC watermark request."),
+		message.ToolProperty("camera_fixed", "boolean",
+			"Optional: keep the camera static while the subject moves "+
+				"(Seedance)."),
+		message.ToolProperty("generate_audio", "boolean",
+			"Optional: let Seedance 2.x synthesize a matching audio track."),
+		message.ToolEnumProperty("service_tier", "string",
+			"Optional serving tier. Providers without a tier knob reject it.",
+			"default", "flex"),
+		message.ToolProperty("execution_expires_after", "integer",
+			"Optional server-side task lifetime in seconds (3600-259200)."),
+		message.ToolProperty("priority", "integer",
+			"Optional queue priority (0-9) on models that support it."),
+		message.ToolEnumProperty("output_format", "string",
+			"Optional output container; providers without the knob reject it.",
+			"mp4", "mov"),
+		message.ToolEnumProperty("omni_reference_task_type", "string",
+			"Optional omni-reference subtask hint (Seedance 2.5).",
+			"auto", "reference", "edit", "extend"),
+		message.ToolProperty("web_search", "boolean",
+			"Optional: attach the provider's hosted web search tool."),
+		message.ToolProperty("callback_url", "string",
+			"Optional http(s) webhook for task status pushes; polling stays "+
+				"the fallback, so a delivery failure does not fail the call."),
+		message.ToolProperty("safety_identifier", "string",
+			"Optional end-user identifier the provider uses for abuse detection."),
+		message.ToolProperty("prompt_optimizer", "boolean",
+			"Optional: let the provider rewrite the prompt first (MiniMax v1)."),
+		message.ToolProperty("fast_pretreatment", "boolean",
+			"Optional: shorten the prompt optimizer's rewrite time (MiniMax v1)."),
+		message.ToolProperty("last_frame_only", "boolean",
+			"Optional: treat a single input image as the closing frame "+
+				"instead of the opening one (MiniMax v2)."),
 	).Required("prompt").Build()
 }
 
@@ -190,37 +337,10 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 		return "", errdefs.Validationf(
 			"%s: parse arguments: %v", Name, err)
 	}
-	args.Prompt = strings.TrimSpace(args.Prompt)
-	if args.Prompt == "" {
-		return "", errdefs.Validationf("%s: prompt is required", Name)
+	req, err := t.request(ctx, args)
+	if err != nil {
+		return "", err
 	}
-
-	req := inference.GenerateRequest{
-		Input: inference.GenerateInput{
-			Role: inference.InputRoleUser,
-			Content: inference.InputContent{
-				Content: message.Content{Parts: []message.Part{
-					message.TextPart{Text: args.Prompt},
-				}},
-			},
-		},
-	}
-	intent := &inference.VideoIntent{
-		DurationMillis: args.DurationMillis,
-		Resolution:     strings.ToLower(strings.TrimSpace(args.Resolution)),
-		Watermark:      args.Watermark,
-	}
-	if args.FirstFrame != "" {
-		image, err := t.readFirstFrame(ctx, args.FirstFrame)
-		if err != nil {
-			return "", err
-		}
-		// Providers treat the first image as the first frame; put it
-		// before the prompt text so ordering is unambiguous.
-		req.Input.Content.Parts = append(
-			[]message.Part{image}, req.Input.Content.Parts...)
-	}
-	req.Input.Content.Intent.Video = intent
 
 	genCtx, cancel := context.WithTimeout(ctx, defaultTimeout)
 	defer cancel()
@@ -236,6 +356,9 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 					"~/.opencraft/config/opencraft.yaml and set the "+
 					"provider key on the settings page: %w", Name, err)
 		}
+		return "", inferenceext.Explain(err)
+	}
+	if err := inferenceext.Verify(Name, resp, req.Extensions); err != nil {
 		return "", err
 	}
 
@@ -246,7 +369,7 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 	payload, err := json.Marshal(map[string]any{
 		"paths": paths,
 		"count": len(paths),
-		"model": modelLabel(trace.Executed.ID),
+		"model": inferenceext.Label(trace.Executed.ID),
 		"hint":  "Videos are workspace-relative; open or reference them by path.",
 	})
 	if err != nil {
@@ -256,35 +379,273 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 	return string(payload), nil
 }
 
-// readFirstFrame loads a workspace image as an inline media source for
-// image-to-video generation.
-func (t *Tool) readFirstFrame(
-	ctx context.Context, path string,
-) (message.ImagePart, error) {
+// request lowers validated arguments into the routed generate request:
+// the prompt plus any frame or reference inputs, the canonical video
+// intent, the provider-addressed knobs, and the optional model hint.
+func (t *Tool) request(
+	ctx context.Context, args Args,
+) (inference.GenerateRequest, error) {
+	prompt := strings.TrimSpace(args.Prompt)
+	if prompt == "" {
+		return inference.GenerateRequest{}, errdefs.Validationf(
+			"%s: prompt is required", Name)
+	}
+	intent, err := videoIntent(args)
+	if err != nil {
+		return inference.GenerateRequest{}, err
+	}
+	parts, knobs, err := t.inputs(ctx, args)
+	if err != nil {
+		return inference.GenerateRequest{}, err
+	}
+	// Providers join the text parts into one prompt and read the media
+	// parts in order, so the text travels last and the inputs keep the
+	// role order the drivers expect.
+	parts = append(parts, message.TextPart{Text: prompt})
+	extensions, err := t.providerExtensions(knobs)
+	if err != nil {
+		return inference.GenerateRequest{}, err
+	}
+	return inference.GenerateRequest{
+		Input: inference.GenerateInput{
+			Role: inference.InputRoleUser,
+			Content: inference.InputContent{
+				Content: message.Content{Parts: parts},
+				Intent:  inference.Intent{Video: intent},
+			},
+		},
+		Extensions: extensions,
+		ModelHint:  strings.TrimSpace(args.Model),
+	}, nil
+}
+
+// videoIntent validates the canonical video controls. Provider-specific
+// value sets (duration tiers, resolution, ratios) stay with the drivers,
+// which reject what their models cannot serve.
+func videoIntent(args Args) (*inference.VideoIntent, error) {
+	intent := &inference.VideoIntent{
+		DurationMillis: args.DurationMillis,
+		Resolution:     strings.ToLower(strings.TrimSpace(args.Resolution)),
+		Seed:           args.Seed,
+		Watermark:      args.Watermark,
+	}
+	if raw := strings.TrimSpace(args.AspectRatio); raw != "" {
+		ratio := media.AspectRatio(raw)
+		if err := ratio.Validate(); err != nil {
+			return nil, errdefs.Validationf(
+				"%s: aspect_ratio: %v", Name, err)
+		}
+		intent.AspectRatio = ratio
+	}
+	return intent, nil
+}
+
+// inputs loads the frame or reference inputs. The drivers pick input
+// roles by count — one image is the first frame, two are the bookends,
+// more (or any reference video/audio) are reference inputs — so the
+// combination is validated here instead of letting a provider
+// reinterpret the parts.
+func (t *Tool) inputs(
+	ctx context.Context, args Args,
+) ([]message.Part, map[string]any, error) {
+	var parts []message.Part
+	knobs := providerKnobs(args)
+	references := len(args.ReferenceImages) > 0 ||
+		len(args.ReferenceVideos) > 0 || len(args.ReferenceAudios) > 0
+	frames := strings.TrimSpace(args.FirstFrame) != "" ||
+		strings.TrimSpace(args.LastFrame) != ""
+	if references {
+		if frames {
+			return nil, nil, errdefs.Validationf(
+				"%s: frame inputs and reference inputs are mutually exclusive",
+				Name)
+		}
+		if len(args.ReferenceImages) > 0 && len(args.ReferenceImages) < 3 {
+			return nil, nil, errdefs.Validationf(
+				"%s: reference_images needs at least three images: "+
+					"providers read one or two images as the first and "+
+					"last frame, so use first_frame/last_frame for bookends",
+				Name)
+		}
+		for _, path := range args.ReferenceImages {
+			part, err := t.readImage(ctx, path, "reference_images")
+			if err != nil {
+				return nil, nil, err
+			}
+			parts = append(parts, part)
+		}
+		for _, raw := range args.ReferenceVideos {
+			part, err := referenceVideoPart(raw)
+			if err != nil {
+				return nil, nil, err
+			}
+			parts = append(parts, part)
+		}
+		for _, raw := range args.ReferenceAudios {
+			part, err := referenceAudioPart(raw)
+			if err != nil {
+				return nil, nil, err
+			}
+			parts = append(parts, part)
+		}
+		return parts, knobs, nil
+	}
+	if path := strings.TrimSpace(args.FirstFrame); path != "" {
+		part, err := t.readImage(ctx, path, "first_frame")
+		if err != nil {
+			return nil, nil, err
+		}
+		parts = append(parts, part)
+	}
+	if path := strings.TrimSpace(args.LastFrame); path != "" {
+		part, err := t.readImage(ctx, path, "last_frame")
+		if err != nil {
+			return nil, nil, err
+		}
+		parts = append(parts, part)
+		if strings.TrimSpace(args.FirstFrame) == "" {
+			// A single image is the opening frame unless the provider is
+			// told otherwise, so a closing-frame-only request needs the
+			// knob; a provider that does not model it fails the call.
+			knobs["last_frame_only"] = true
+		}
+	}
+	return parts, knobs, nil
+}
+
+// providerKnobs collects the provider-addressed video knobs the caller
+// set, skipping zero values so an absent knob is never attached.
+func providerKnobs(args Args) map[string]any {
+	knobs := map[string]any{}
+	if args.CameraFixed != nil {
+		knobs["camera_fixed"] = *args.CameraFixed
+	}
+	if args.GenerateAudio != nil {
+		knobs["generate_audio"] = *args.GenerateAudio
+	}
+	if value := strings.TrimSpace(args.ServiceTier); value != "" {
+		knobs["service_tier"] = value
+	}
+	if args.ExecutionExpiresAfter != nil {
+		knobs["execution_expires_after"] = *args.ExecutionExpiresAfter
+	}
+	if args.Priority != nil {
+		knobs["priority"] = *args.Priority
+	}
+	if value := strings.TrimSpace(args.OutputFormat); value != "" {
+		knobs["output_format"] = value
+	}
+	if value := strings.TrimSpace(args.OmniReferenceTaskType); value != "" {
+		knobs["omni_reference_task_type"] = value
+	}
+	if args.WebSearch != nil {
+		knobs["web_search"] = *args.WebSearch
+	}
+	if value := strings.TrimSpace(args.CallbackURL); value != "" {
+		knobs["callback_url"] = value
+	}
+	if value := strings.TrimSpace(args.SafetyIdentifier); value != "" {
+		knobs["safety_identifier"] = value
+	}
+	if args.PromptOptimizer != nil {
+		knobs["prompt_optimizer"] = *args.PromptOptimizer
+	}
+	if args.FastPretreatment != nil {
+		knobs["fast_pretreatment"] = *args.FastPretreatment
+	}
+	if args.LastFrameOnly != nil {
+		knobs["last_frame_only"] = *args.LastFrameOnly
+	}
+	return knobs
+}
+
+// providerExtensions renders the requested provider-addressed knobs. An
+// empty knob set needs no extension; a non-empty one fails loudly when
+// no configured provider models it.
+func (t *Tool) providerExtensions(
+	fields map[string]any,
+) (inference.Extensions, error) {
+	if len(fields) == 0 {
+		return nil, nil
+	}
+	if t.extensions == nil {
+		return nil, errdefs.Internalf("%s: router is not wired", Name)
+	}
+	return t.extensions(fields)
+}
+
+// referenceVideoPart wraps one http(s) reference video as a URL-sourced
+// part: the provider fetches the URL itself, and inlining a video would
+// push the whole file through the request.
+func referenceVideoPart(raw string) (message.Part, error) {
+	raw = strings.TrimSpace(raw)
+	if err := checkHTTPURL(raw); err != nil {
+		return nil, errdefs.Validationf(
+			"%s: reference_videos: %v", Name, err)
+	}
+	source, err := media.NewVideoURL(raw, "")
+	if err != nil {
+		return nil, errdefs.Validationf(
+			"%s: reference_videos: %v", Name, err)
+	}
+	return message.VideoPart{Source: source}, nil
+}
+
+// referenceAudioPart wraps one http(s) reference audio clip.
+func referenceAudioPart(raw string) (message.Part, error) {
+	raw = strings.TrimSpace(raw)
+	if err := checkHTTPURL(raw); err != nil {
+		return nil, errdefs.Validationf(
+			"%s: reference_audios: %v", Name, err)
+	}
+	source, err := media.NewAudioURL(raw, "")
+	if err != nil {
+		return nil, errdefs.Validationf(
+			"%s: reference_audios: %v", Name, err)
+	}
+	return message.AudioPart{Source: source}, nil
+}
+
+// checkHTTPURL keeps provider-fetched references on http(s): anything
+// else has no fetch channel on the provider side.
+func checkHTTPURL(raw string) error {
+	parsed, err := url.Parse(raw)
+	if err != nil || parsed.Host == "" ||
+		(parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return fmt.Errorf("must be an absolute http(s) URL, got %q", raw)
+	}
+	return nil
+}
+
+// readImage loads one workspace frame or reference image as an inline
+// media source.
+func (t *Tool) readImage(
+	ctx context.Context, path, role string,
+) (message.Part, error) {
 	mediaType, err := imageMediaType(path)
 	if err != nil {
-		return message.ImagePart{}, errdefs.Validationf(
-			"%s: first_frame: %v", Name, err)
+		return nil, errdefs.Validationf(
+			"%s: %s: %v", Name, role, err)
 	}
 	info, err := t.ws.Stat(ctx, path)
 	if err != nil {
-		return message.ImagePart{}, errdefs.Validationf(
-			"%s: first_frame: stat %s: %v", Name, path, err)
+		return nil, errdefs.Validationf(
+			"%s: %s: stat %s: %v", Name, role, path, err)
 	}
 	if info.Size() > maxFirstFrameBytes {
-		return message.ImagePart{}, errdefs.Validationf(
-			"%s: first_frame: %s is %d bytes (limit %d)",
-			Name, path, info.Size(), maxFirstFrameBytes)
+		return nil, errdefs.Validationf(
+			"%s: %s: %s is %d bytes (limit %d)",
+			Name, role, path, info.Size(), maxFirstFrameBytes)
 	}
 	data, err := t.ws.Read(ctx, path)
 	if err != nil {
-		return message.ImagePart{}, errdefs.Validationf(
-			"%s: first_frame: read %s: %v", Name, path, err)
+		return nil, errdefs.Validationf(
+			"%s: %s: read %s: %v", Name, role, path, err)
 	}
 	source, err := media.NewImageBytes(data, mediaType)
 	if err != nil {
-		return message.ImagePart{}, errdefs.Internalf(
-			"%s: first_frame: %v", Name, err)
+		return nil, errdefs.Internalf(
+			"%s: %s: %v", Name, role, err)
 	}
 	return message.ImagePart{Source: source}, nil
 }
@@ -406,21 +767,16 @@ func imageMediaType(path string) (string, error) {
 }
 
 // videoExtension maps a media type to a file extension, defaulting to
-// .mp4 for anything unrecognized.
+// .mp4 for anything unrecognized. A provider that returns a MOV
+// container must land as .mov, or a player would read the bytes back
+// with the wrong container.
 func videoExtension(mediaType string) string {
 	switch mediaType {
 	case "video/webm":
 		return ".webm"
+	case "video/quicktime":
+		return ".mov"
 	default:
 		return ".mp4"
 	}
-}
-
-// modelLabel renders a model id as "provider/name" (or just "name"
-// when the provider is empty).
-func modelLabel(id model.ModelID) string {
-	if id.Provider == "" {
-		return id.Name
-	}
-	return id.Provider + "/" + id.Name
 }

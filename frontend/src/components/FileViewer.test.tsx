@@ -1,13 +1,14 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useStore } from '../lib/store';
+import type { FilePreview } from '../lib/types';
 import { stateRoot } from '../state/app';
 import { FileViewer } from './FileViewer';
 
 const apiMock = vi.hoisted(() => ({
   listDir: vi.fn(async () => []),
   searchFiles: vi.fn(async () => []),
-  readPreview: vi.fn(async () => ({
+  readPreview: vi.fn(async (): Promise<FilePreview> => ({
     path: '/tmp/w/internal/a.go',
     rel: 'internal/a.go',
     root: 'workspace',
@@ -63,6 +64,45 @@ describe('FileViewer', () => {
       { timeout: 5000 },
     );
     expect(screen.getAllByText('a.go').length).toBeGreaterThan(0);
+  });
+
+  it('plays a video preview from the loopback stream URL', async () => {
+    apiMock.readPreview.mockResolvedValueOnce({
+      path: '/tmp/w/generated/clip.mp4',
+      rel: 'generated/clip.mp4',
+      root: 'workspace',
+      name: 'clip.mp4',
+      size: 4096,
+      media_type: 'video/mp4',
+      kind: 'video',
+      stream_url: 'http://127.0.0.1:1/media/token/generated/clip.mp4',
+    });
+    useStore.setState({
+      viewers: {
+        's-1': {
+          filesOpen: true,
+          panelMode: 'files',
+          fileTabs: [
+            {
+              key: '/tmp/w/generated/clip.mp4',
+              path: '/tmp/w/generated/clip.mp4',
+              rel: 'generated/clip.mp4',
+              root: 'workspace',
+              name: 'clip.mp4',
+              media_type: 'video/mp4',
+            },
+          ],
+          fileActive: '/tmp/w/generated/clip.mp4',
+          fileTreeDir: '.',
+        },
+      },
+    });
+    render(<FileViewer sessionID="s-1" />);
+    await waitFor(() => {
+      expect(document.querySelector('video')?.getAttribute('src')).toBe(
+        'http://127.0.0.1:1/media/token/generated/clip.mp4',
+      );
+    });
   });
 
   it('opens a blank tab and shows the file tree on plus', async () => {

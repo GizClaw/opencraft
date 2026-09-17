@@ -27,6 +27,10 @@ import (
 // File exposes workspace file browsing operations.
 type File struct {
 	core *core.Core
+	// mediaURL builds the loopback stream URL for one workspace-relative
+	// file. nil (tests, headless wiring) leaves video previews
+	// metadata-only.
+	mediaURL func(rel string) (string, error)
 }
 
 // previewTextLimit caps how many bytes ReadPreview returns for one
@@ -50,6 +54,11 @@ type readRoot struct {
 // NewFileBinding wires the file binding.
 func NewFileBinding(c *core.Core) *File {
 	return &File{core: c}
+}
+
+// SetMediaURL installs the stream URL builder used for video previews.
+func (b *File) SetMediaURL(fn func(rel string) (string, error)) {
+	b.mediaURL = fn
 }
 
 // FileNode is one entry of the workspace file tree.
@@ -302,11 +311,16 @@ type FilePreview struct {
 	Size      int64  `json:"size"`
 	MediaType string `json:"media_type"`
 	// Kind tells the UI how to render the payload: text, image, pdf,
-	// or meta (no inline preview; offer system-app actions).
-	Kind     string `json:"kind"`
-	Text     string `json:"text,omitempty"`
-	DataURL  string `json:"data_url,omitempty"`
-	TooLarge bool   `json:"too_large"`
+	// video (played from StreamURL), or meta (no inline preview; offer
+	// system-app actions).
+	Kind    string `json:"kind"`
+	Text    string `json:"text,omitempty"`
+	DataURL string `json:"data_url,omitempty"`
+	// StreamURL is the loopback URL a video plays from. It is only set
+	// for files under the workspace root; the media element streams and
+	// seeks through byte ranges, so no size cap applies.
+	StreamURL string `json:"stream_url,omitempty"`
+	TooLarge  bool   `json:"too_large"`
 }
 
 // ReadPreview returns a bounded preview for one viewer target: text
@@ -337,6 +351,11 @@ func (b *File) ReadPreview(path string) (FilePreview, error) {
 		Size:      info.Size(),
 		MediaType: mediaType,
 		Kind:      "meta",
+	}
+	if url := b.streamURL(root, rel, mediaType); url != "" {
+		out.Kind = "video"
+		out.StreamURL = url
+		return out, nil
 	}
 	if info.Size() > previewTextLimit {
 		if isTextExt(full) {
@@ -369,6 +388,20 @@ func (b *File) ReadPreview(path string) (FilePreview, error) {
 		out.TooLarge = true
 	}
 	return out, nil
+}
+
+// streamURL returns the loopback URL a video preview plays from, or ""
+// when the file is not a workspace video or streaming is unavailable.
+func (b *File) streamURL(root, rel, mediaType string) string {
+	if b.mediaURL == nil || root != "workspace" || rel == "" ||
+		!strings.HasPrefix(mediaType, "video/") {
+		return ""
+	}
+	url, err := b.mediaURL(rel)
+	if err != nil {
+		return ""
+	}
+	return url
 }
 
 // previewableMediaType reports whether the viewer tries to embed this

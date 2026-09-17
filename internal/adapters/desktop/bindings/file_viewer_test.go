@@ -219,6 +219,51 @@ func TestReadPreviewBinaryImageAndMetadata(t *testing.T) {
 	}
 }
 
+// TestReadPreviewStreamsWorkspaceVideo pins the video path: a workspace
+// video becomes a streamed preview (kind video + loopback URL) instead
+// of an inline data URL, and stays metadata-only when no stream builder
+// is wired.
+func TestReadPreviewStreamsWorkspaceVideo(t *testing.T) {
+	workDir := t.TempDir()
+	clip := filepath.Join(workDir, "generated", "clip.mp4")
+	if err := os.MkdirAll(filepath.Dir(clip), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(clip, []byte("\x00\x00\x00\x18ftypisom"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := core.NewCore(t.TempDir(), t.TempDir(), workDir)
+	b := NewFileBinding(c)
+
+	plain, err := b.ReadPreview("generated/clip.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plain.Kind != "meta" || plain.StreamURL != "" {
+		t.Fatalf("preview without a stream builder = %+v, want meta", plain)
+	}
+
+	var gotRel string
+	b.SetMediaURL(func(rel string) (string, error) {
+		gotRel = rel
+		return "http://127.0.0.1:1/media/token/" + rel, nil
+	})
+	streamed, err := b.ReadPreview("generated/clip.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotRel != "generated/clip.mp4" {
+		t.Errorf("stream builder rel = %q", gotRel)
+	}
+	if streamed.Kind != "video" ||
+		streamed.StreamURL != "http://127.0.0.1:1/media/token/generated/clip.mp4" {
+		t.Fatalf("video preview = %+v", streamed)
+	}
+	if streamed.DataURL != "" || streamed.TooLarge {
+		t.Fatalf("video preview must not embed bytes: %+v", streamed)
+	}
+}
+
 func TestListReturnsRelativePaths(t *testing.T) {
 	workDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(workDir, "docs"), 0o755); err != nil {

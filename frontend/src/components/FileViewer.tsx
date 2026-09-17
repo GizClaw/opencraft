@@ -644,11 +644,13 @@ function TabContent({ tab }: { tab: FileTab }) {
   const [preview, setPreview] = useState<FilePreview | null>(null);
   const [error, setError] = useState('');
   const [showMd, setShowMd] = useState(isMarkdown(tab.name));
+  const [videoFailed, setVideoFailed] = useState(false);
 
   useEffect(() => {
     let live = true;
     setPreview(null);
     setError('');
+    setVideoFailed(false);
     void api
       .readPreview(tab.path)
       .then((p) => {
@@ -727,6 +729,34 @@ function TabContent({ tab }: { tab: FileTab }) {
           className="max-w-full rounded-lg border border-edge object-contain"
         />
       </div>
+    );
+  }
+
+  if (preview.kind === 'video' && preview.stream_url && !videoFailed) {
+    // The loopback endpoint serves byte ranges, so the player streams
+    // and seeks without pulling the file through the IPC bridge.
+    return (
+      <div className="flex h-full items-center justify-center overflow-auto bg-black/95 p-4">
+        <video
+          src={preview.stream_url}
+          controls
+          preload="metadata"
+          onError={() => setVideoFailed(true)}
+          className="max-h-full max-w-full rounded-lg border border-edge"
+        />
+      </div>
+    );
+  }
+
+  if (preview.kind === 'video') {
+    // A platform that refuses the loopback URL keeps the system-player
+    // fallback instead of showing a broken player.
+    return (
+      <MetaPane
+        tab={tab}
+        message={t('files.videoUnavailable')}
+        showMetaActions
+      />
     );
   }
 

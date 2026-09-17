@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -49,6 +50,9 @@ type Desktop struct {
 	telemetryPipeline  *octelemetry.Pipeline
 	runtimeMetricsStop chan struct{}
 	runtimeMetricsDone chan struct{}
+	// media streams workspace files (generated videos) to the webview
+	// over a loopback listener; nil disables inline media playback.
+	media *mediaServer
 
 	petMu     sync.Mutex
 	petWindow *application.WebviewWindow
@@ -149,6 +153,16 @@ func New(opts Options) (*Desktop, error) {
 		telemetryPipeline: pipeline,
 	}
 	c.Shell.SetNotificationSink(d.handleDesktopNotification)
+	// Media playback needs http(s): the webview loads the frontend over
+	// wails:// (or the Vite dev server), which WebKit/AVFoundation
+	// cannot play. Streaming is an enhancement, so a failure logs and
+	// leaves video previews on the system-player fallback.
+	if media, err := newMediaServer(c.ActiveWorkDir); err != nil {
+		telemetry.WarnErr(c.Shell.Context(),
+			"desktop: media streaming disabled", err)
+	} else {
+		d.media = media
+	}
 	return d, nil
 }
 
@@ -347,6 +361,7 @@ func (d *Desktop) hasScheduledTasks(ctx context.Context) bool {
 func (d *Desktop) Shutdown(ctx context.Context) {
 	d.stopPet()
 	d.stopRuntimeMetrics()
+	d.media.Close()
 	if mgr := d.core.Runtime.AutomationManager(); mgr != nil {
 		mgr.Stop()
 	}
@@ -539,7 +554,9 @@ func (d *Desktop) RegisterServices(app *application.App) {
 	reg(application.NewService(bindings.NewConversationBinding(d.core)))
 	reg(application.NewService(bindings.NewSessionBinding(d.core)))
 	reg(application.NewService(bindings.NewAgentBinding(d.core)))
-	reg(application.NewService(bindings.NewFileBinding(d.core)))
+	files := bindings.NewFileBinding(d.core)
+	files.SetMediaURL(d.mediaURL)
+	reg(application.NewService(files))
 	reg(application.NewService(bindings.NewGitBinding(d.core)))
 	reg(application.NewService(bindings.NewPullRequestsBinding(d.core)))
 	reg(application.NewService(bindings.NewSettingsBinding(d.core)))
@@ -549,4 +566,13 @@ func (d *Desktop) RegisterServices(app *application.App) {
 	reg(application.NewService(bindings.NewAutomationBinding(d.core)))
 	reg(application.NewService(bindings.NewPetBinding(d.core)))
 	reg(application.NewService(d.notifications))
+}
+
+// mediaURL builds the loopback stream URL for one workspace-relative
+// file, or reports why streaming is unavailable.
+func (d *Desktop) mediaURL(rel string) (string, error) {
+	if d.media == nil {
+		return "", errors.New("desktop: media streaming is unavailable")
+	}
+	return d.media.URL(rel)
 }

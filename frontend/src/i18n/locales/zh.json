@@ -673,6 +673,7 @@
     "viewSource": "查看源码",
     "previewRendered": "预览渲染",
     "noInlinePreview": "此类型不支持内嵌预览：",
+    "videoUnavailable": "该视频无法内嵌播放。",
     "tooLarge": "文件过大，无法内嵌预览。",
     "outsideRoots": "该文件位于 OpenCraft 可读取目录之外，无法在此打开。",
     "viewerChunkFailed": "预览模块加载失败，请重试，或用系统应用打开。"
@@ -852,6 +853,7 @@
     "model": "模型",
     "entries": "项",
     "files": "个文件",
+    "previews": "预览",
     "truncated": "已截断",
     "noOutput": "无输出",
     "completed": "已完成，无输出",
