@@ -82,6 +82,14 @@ type streamFunc func(
 	req inference.GenerateRequest,
 ) (inference.GenerateStream, route.Trace, error)
 
+// Settings carries the provider-specific knobs the settings page
+// configured for this tool, keyed by deployment id. They are deployment
+// preferences, not per-call arguments: the tool attaches each provider's
+// set to that provider only.
+type Settings struct {
+	ProviderOptions map[string]map[string]any `json:"provider_options,omitempty"`
+}
+
 // Tool generates images through the deployment router. It is safe for
 // concurrent use: the router and workspace are shared, and no mutable
 // state is kept per call.
@@ -89,20 +97,27 @@ type Tool struct {
 	ws       workspace.Workspace
 	generate generateFunc
 	stream   streamFunc
+	// providerOptions is the configured knob set per deployment id.
+	providerOptions map[string]map[string]any
 	// extensions renders the provider-addressed image knob fields into
 	// typed extensions. It is nil when no router is wired, in which case
 	// the knobs that need a provider extension are rejected.
-	extensions func(fields map[string]any) (inference.Extensions, error)
+	extensions func(
+		call map[string]any,
+		configured map[string]map[string]any,
+	) (inference.Extensions, error)
 }
 
 // New builds the generate_image tool. router is required; nil leaves
 // the tool un-wired so Execute fails with a clear internal error.
-func New(router *route.Router, ws workspace.Workspace) (*Tool, error) {
+func New(
+	router *route.Router, ws workspace.Workspace, settings Settings,
+) (*Tool, error) {
 	if ws == nil {
 		return nil, errdefs.Validationf(
 			"generate_image: workspace is required")
 	}
-	t := &Tool{ws: ws}
+	t := &Tool{ws: ws, providerOptions: settings.ProviderOptions}
 	if router != nil {
 		t.generate = func(
 			ctx context.Context,
@@ -117,17 +132,21 @@ func New(router *route.Router, ws workspace.Workspace) (*Tool, error) {
 			return router.GenerateStream(ctx, req)
 		}
 		t.extensions = func(
-			fields map[string]any,
+			call map[string]any,
+			configured map[string]map[string]any,
 		) (inference.Extensions, error) {
-			return imageExtensions(router.Target(), fields)
+			return inferenceext.Build(
+				Name, router.Target(), imageExtensionID, call, configured)
 		}
 	}
 	return t, nil
 }
 
 // MustNew panics on invalid construction; use in static wiring.
-func MustNew(router *route.Router, ws workspace.Workspace) *Tool {
-	t, err := New(router, ws)
+func MustNew(
+	router *route.Router, ws workspace.Workspace, settings Settings,
+) *Tool {
+	t, err := New(router, ws, settings)
 	if err != nil {
 		panic(err)
 	}
@@ -307,6 +326,9 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 	}
 	if len(previews) > 0 {
 		payload["previews"] = previews
+	}
+	if dropped := inferenceext.Dropped(resp); len(dropped) > 0 {
+		payload["dropped"] = dropped
 	}
 	out, err := json.Marshal(payload)
 	if err != nil {
@@ -504,28 +526,20 @@ func (t *Tool) generateWithPreviews(
 	return resp, trace, previews, nil
 }
 
-// providerExtensions renders the requested provider-addressed knobs.
-// An empty field set needs no extension; a non-empty one fails loudly
-// when no configured provider models it, so a knob the deployment
-// cannot honor never disappears silently.
+// providerExtensions renders the requested provider-addressed knobs:
+// the per-call fields plus the options configured for each provider. An
+// empty request needs no extension; a knob the deployment cannot honor
+// fails loudly instead of disappearing silently.
 func (t *Tool) providerExtensions(
 	fields map[string]any,
 ) (inference.Extensions, error) {
-	if len(fields) == 0 {
+	if len(fields) == 0 && len(t.providerOptions) == 0 {
 		return nil, nil
 	}
 	if t.extensions == nil {
 		return nil, errdefs.Internalf("%s: router is not wired", Name)
 	}
-	return t.extensions(fields)
-}
-
-// imageExtensions probes the configured providers for the requested
-// image knobs and returns the typed extensions to attach.
-func imageExtensions(
-	assembly *inference.Assembly, fields map[string]any,
-) (inference.Extensions, error) {
-	return inferenceext.Probe(Name, assembly, imageExtensionID, fields)
+	return t.extensions(fields, t.providerOptions)
 }
 
 // loadReferenceImage reads one workspace image and returns it as an

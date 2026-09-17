@@ -266,8 +266,8 @@ func TestExecuteReferenceImagesAndMask(t *testing.T) {
 				},
 			}, traceFor("azure", "gpt-image-2"), nil
 		},
-		extensions: func(fields map[string]any) (inference.Extensions, error) {
-			gotFields = fields
+		extensions: func(call map[string]any, configured map[string]map[string]any) (inference.Extensions, error) {
+			gotFields = call
 			return nil, nil
 		},
 	}
@@ -357,6 +357,46 @@ func TestExecuteReencodesForeignReferenceFormat(t *testing.T) {
 	}
 }
 
+// TestExecuteConfiguredProviderOptions pins that the settings-page knob
+// set reaches the extension builder even when the call names none.
+func TestExecuteConfiguredProviderOptions(t *testing.T) {
+	configured := map[string]map[string]any{
+		"openai-inst-a": {"background": "transparent"},
+	}
+	var gotConfigured map[string]map[string]any
+	tool := &Tool{
+		ws:              newWorkspace(t),
+		providerOptions: configured,
+		generate: func(
+			_ context.Context, _ inference.GenerateRequest,
+		) (inference.GenerateResponse, route.Trace, error) {
+			return inference.GenerateResponse{
+				Message: message.Message{
+					Role: message.RoleAssistant,
+					Content: message.Content{
+						Parts: []message.Part{fakeImagePart(pngBytes)},
+					},
+				},
+			}, traceFor("openai-inst-a", "gpt-image-2"), nil
+		},
+		extensions: func(
+			call map[string]any, configured map[string]map[string]any,
+		) (inference.Extensions, error) {
+			if len(call) != 0 {
+				t.Errorf("call knobs = %+v, want none", call)
+			}
+			gotConfigured = configured
+			return nil, nil
+		},
+	}
+	if _, err := tool.Execute(context.Background(), `{"prompt":"x"}`); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if gotConfigured["openai-inst-a"]["background"] != "transparent" {
+		t.Fatalf("configured = %+v", gotConfigured)
+	}
+}
+
 // TestExecuteStreamsPreviews pins the preview path: partial_images
 // switches the call to the streaming shape, interim snapshots are
 // saved under generated/previews/, and the final image comes from the
@@ -411,8 +451,8 @@ func TestExecuteStreamsPreviews(t *testing.T) {
 			}
 			return stream, traceFor("openai", "gpt-image-2"), nil
 		},
-		extensions: func(fields map[string]any) (inference.Extensions, error) {
-			gotFields = fields
+		extensions: func(call map[string]any, configured map[string]map[string]any) (inference.Extensions, error) {
+			gotFields = call
 			return nil, nil
 		},
 	}
@@ -568,7 +608,7 @@ func TestExecuteReferenceImageValidation(t *testing.T) {
 			t.Fatal("generate must not be called for invalid input")
 			return inference.GenerateResponse{}, route.Trace{}, nil
 		},
-		extensions: func(map[string]any) (inference.Extensions, error) {
+		extensions: func(call map[string]any, configured map[string]map[string]any) (inference.Extensions, error) {
 			t.Fatal("no extension must be built for an invalid mask")
 			return nil, nil
 		},
@@ -686,7 +726,7 @@ func TestExecuteVerifiesAppliedKnobs(t *testing.T) {
 				}
 				return resp, traceFor(meta.Model.Provider, meta.Model.Name), nil
 			},
-			extensions: func(map[string]any) (inference.Extensions, error) {
+			extensions: func(call map[string]any, configured map[string]map[string]any) (inference.Extensions, error) {
 				return inference.Extensions{attached}, nil
 			},
 		}, dir

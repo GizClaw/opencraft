@@ -11,13 +11,9 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference/model"
 )
 
-// TestEntriesProbesPerField pins the provider probe: each field is
-// offered only to a provider whose decoder accepts it, and a provider
-// without the extension stays untouched.
-func TestEntriesProbesPerField(t *testing.T) {
-	strict := func(fields json.RawMessage, want ...string) (
-		inference.Extension, error,
-	) {
+// strictDecoder accepts only the listed top-level fields.
+func strictDecoder(want ...string) inference.ExtensionDecoder {
+	return func(fields json.RawMessage) (inference.Extension, error) {
 		var bag map[string]json.RawMessage
 		if err := json.Unmarshal(fields, &bag); err != nil {
 			return nil, err
@@ -35,29 +31,34 @@ func TestEntriesProbesPerField(t *testing.T) {
 		}
 		return fakeExtension{}, nil
 	}
+}
+
+// TestBuildProbesPerField pins the provider probe: a call knob is
+// offered only to a provider whose decoder accepts it, a provider
+// without the extension stays untouched, and a call knob no provider
+// models fails the call.
+func TestBuildProbesPerField(t *testing.T) {
 	decoders := map[string]inference.ExtensionDecoder{
-		"mask-vendor/image_options": func(fields json.RawMessage) (
-			inference.Extension, error,
-		) {
-			return strict(fields, "mask")
-		},
-		"preview-vendor/image_options": func(fields json.RawMessage) (
-			inference.Extension, error,
-		) {
-			return strict(fields, "partial_images")
-		},
+		"mask-vendor/image_options":    strictDecoder("mask"),
+		"preview-vendor/image_options": strictDecoder("partial_images"),
 		"other-vendor/music_options": func(json.RawMessage) (
 			inference.Extension, error,
 		) {
 			return fakeExtension{}, nil
 		},
 	}
-	entries := Entries(
+	providers := []string{"mask-vendor", "preview-vendor", "other-vendor"}
+	entries, err := buildEntries(
+		"generate_image",
 		decoders,
-		[]string{"mask-vendor", "preview-vendor", "other-vendor"},
+		providers,
 		"image_options",
 		map[string]any{"mask": "mask-bytes", "partial_images": 2},
+		nil,
 	)
+	if err != nil {
+		t.Fatalf("buildEntries: %v", err)
+	}
 	if len(entries) != 2 {
 		t.Fatalf("entries = %+v, want one per accepting provider", entries)
 	}
@@ -82,6 +83,93 @@ func TestEntriesProbesPerField(t *testing.T) {
 	}
 	if _, ok := byProvider["other-vendor"]; ok {
 		t.Error("a provider without the extension must stay untouched")
+	}
+
+	_, err = buildEntries(
+		"generate_image", decoders, providers, "image_options",
+		map[string]any{"nope": true}, nil,
+	)
+	if err == nil || !strings.Contains(err.Error(), "no configured provider supports nope") {
+		t.Fatalf("unsupported call knob error = %v", err)
+	}
+}
+
+// TestBuildAttachesConfiguredProviderOptions pins the second source:
+// configured options attach only to the provider they belong to, merge
+// with the call knobs, and a configured option the owning provider
+// rejects fails instead of being dropped.
+func TestBuildAttachesConfiguredProviderOptions(t *testing.T) {
+	decoders := map[string]inference.ExtensionDecoder{
+		"openai-inst/image_options":    strictDecoder("mask", "background"),
+		"bytedance-inst/image_options": strictDecoder("size_token"),
+	}
+	providers := []string{"openai-inst", "bytedance-inst"}
+	entries, err := buildEntries(
+		"generate_image", decoders, providers, "image_options",
+		map[string]any{"mask": "mask-bytes"},
+		map[string]map[string]any{
+			"openai-inst":    {"background": "transparent"},
+			"bytedance-inst": {"size_token": "2k"},
+		},
+	)
+	if err != nil {
+		t.Fatalf("buildEntries: %v", err)
+	}
+	got := map[string]map[string]json.RawMessage{}
+	for _, entry := range entries {
+		var bag map[string]json.RawMessage
+		if err := json.Unmarshal(entry.Fields, &bag); err != nil {
+			t.Fatal(err)
+		}
+		got[entry.Provider] = bag
+	}
+	if len(got["openai-inst"]) != 2 {
+		t.Errorf("openai entry = %+v, want mask + background", got["openai-inst"])
+	}
+	if len(got["bytedance-inst"]) != 1 {
+		t.Errorf("bytedance entry = %+v, want size_token only (no mask)",
+			got["bytedance-inst"])
+	}
+
+	_, err = buildEntries(
+		"generate_image", decoders, providers, "image_options", nil,
+		map[string]map[string]any{"openai-inst": {"size_token": "2k"}},
+	)
+	if err == nil || !strings.Contains(err.Error(), "does not accept the configured option") {
+		t.Fatalf("configured rejection error = %v", err)
+	}
+
+	_, err = buildEntries(
+		"generate_image", decoders, providers, "image_options", nil,
+		map[string]map[string]any{"gone-inst": {"background": "auto"}},
+	)
+	if err == nil || !strings.Contains(err.Error(), "has no image_options extension") {
+		t.Fatalf("unknown configured provider error = %v", err)
+	}
+}
+
+// TestDroppedRendersDecisions pins the reporting of fields a driver
+// discarded, which is how a tool result says what the provider ignored.
+func TestDroppedRendersDecisions(t *testing.T) {
+	resp := inference.GenerateResponse{
+		Metadata: inference.Metadata{
+			Decisions: []inference.Decision{
+				{
+					Field:       "generate.intent.image.quality",
+					Disposition: inference.Dropped,
+					Reason:      "seedream has no quality parameter",
+				},
+				{
+					Field:       "generate.intent.image.size",
+					Disposition: inference.Native,
+				},
+			},
+		},
+	}
+	dropped := Dropped(resp)
+	if len(dropped) != 1 ||
+		!strings.Contains(dropped[0], "seedream has no quality parameter") {
+		t.Fatalf("dropped = %v", dropped)
 	}
 }
 

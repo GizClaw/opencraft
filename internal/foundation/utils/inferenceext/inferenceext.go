@@ -18,18 +18,25 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference/model"
 )
 
-// Probe renders the typed extensions to attach for the requested
-// provider knobs. extensionID is the provider-carried extension the
-// drivers register (image_options, video_options, ...); a field is
-// attached only to a provider whose decoder for that extension accepts
-// it, and an empty result fails loudly instead of dropping the knob.
-func Probe(
+// Build renders the typed extensions to attach for one request from two
+// sources. callKnobs are the per-call knobs the tool arguments named:
+// they are offered to every provider whose decoder models them, and a
+// knob no configured provider models fails the call. providerOptions are
+// the knobs the user configured for one deployment each, keyed by
+// provider id: they attach only to that provider, and a provider whose
+// decoder rejects a configured option fails the call too — silently
+// ignoring an explicitly configured knob is the behavior this exists to
+// remove. extensionID is the provider-carried extension the drivers
+// register (image_options, video_options, ...). Both sources merge per
+// provider, so a provider never carries two entries for one extension.
+func Build(
 	tool string,
 	assembly *inference.Assembly,
 	extensionID string,
-	fields map[string]any,
+	callKnobs map[string]any,
+	providerOptions map[string]map[string]any,
 ) (inference.Extensions, error) {
-	if assembly == nil || len(fields) == 0 {
+	if assembly == nil || (len(callKnobs) == 0 && len(providerOptions) == 0) {
 		return nil, nil
 	}
 	decoders := assembly.ExtensionDecoders()
@@ -38,44 +45,54 @@ func Probe(
 	for _, definition := range definitions {
 		providers = append(providers, definition.ID)
 	}
-	entries := Entries(decoders, providers, extensionID, fields)
+	entries, err := buildEntries(
+		tool, decoders, providers, extensionID, callKnobs, providerOptions)
+	if err != nil {
+		return nil, err
+	}
 	if len(entries) == 0 {
-		return nil, errdefs.Validationf(
-			"%s: no configured provider supports %s",
-			tool, strings.Join(FieldNames(fields), " and "))
+		return nil, nil
 	}
 	return inference.DecodeExtensions(
 		entries, decoders, tool+" extensions")
 }
 
-// Entries keeps, per provider, the requested fields that provider's
-// decoder for extensionID accepts. Each field is probed on its own so a
-// provider that models one knob still receives it when it rejects
-// another; the decoder is the authority on what a driver accepts, which
-// keeps callers free of driver field tables.
-func Entries(
+// buildEntries merges both knob sources into one entry per provider and
+// applies the loud failures: a call knob no provider models, a
+// configured option the owning provider rejects, and a configured
+// provider that registers no such extension.
+func buildEntries(
+	tool string,
 	decoders map[string]inference.ExtensionDecoder,
 	providers []string,
 	extensionID string,
-	fields map[string]any,
-) []inference.ExtensionEntry {
-	names := FieldNames(fields)
+	callKnobs map[string]any,
+	providerOptions map[string]map[string]any,
+) ([]inference.ExtensionEntry, error) {
+	callNames := FieldNames(callKnobs)
+	callAccepted := make(map[string]bool, len(callNames))
 	var entries []inference.ExtensionEntry
 	for _, provider := range providers {
 		decoder, ok := decoders[provider+"/"+extensionID]
 		if !ok {
 			continue
 		}
-		accepted := make(map[string]any, len(names))
-		for _, name := range names {
-			probe, err := json.Marshal(map[string]any{name: fields[name]})
-			if err != nil {
+		accepted := make(map[string]any)
+		for _, name := range callNames {
+			if !decoderAccepts(decoder, name, callKnobs[name]) {
 				continue
 			}
-			if _, err := decoder(probe); err != nil {
-				continue
+			accepted[name] = callKnobs[name]
+			callAccepted[name] = true
+		}
+		configured := providerOptions[provider]
+		for _, name := range FieldNames(configured) {
+			if !decoderAccepts(decoder, name, configured[name]) {
+				return nil, errdefs.Validationf(
+					"%s: provider %s does not accept the configured option %s",
+					tool, provider, name)
 			}
-			accepted[name] = fields[name]
+			accepted[name] = configured[name]
 		}
 		if len(accepted) == 0 {
 			continue
@@ -90,7 +107,40 @@ func Entries(
 			Fields:   bag,
 		})
 	}
-	return entries
+	var unsupported []string
+	for _, name := range callNames {
+		if !callAccepted[name] {
+			unsupported = append(unsupported, name)
+		}
+	}
+	if len(unsupported) > 0 {
+		return nil, errdefs.Validationf(
+			"%s: no configured provider supports %s",
+			tool, strings.Join(unsupported, " and "))
+	}
+	for provider := range providerOptions {
+		if _, ok := decoders[provider+"/"+extensionID]; ok {
+			continue
+		}
+		return nil, errdefs.Validationf(
+			"%s: provider %s has no %s extension to configure",
+			tool, provider, extensionID)
+	}
+	return entries, nil
+}
+
+// decoderAccepts probes one provider decoder with a single field, which
+// is how the tool learns what a driver models without carrying a driver
+// field table of its own.
+func decoderAccepts(
+	decoder inference.ExtensionDecoder, name string, value any,
+) bool {
+	probe, err := json.Marshal(map[string]any{name: value})
+	if err != nil {
+		return false
+	}
+	_, err = decoder(probe)
+	return err == nil
 }
 
 // FieldNames returns the field names in deterministic order.
@@ -202,6 +252,25 @@ func Explain(err error) error {
 		return err
 	}
 	return fmt.Errorf("%s: %s", err.Error(), reason)
+}
+
+// Dropped renders the compile decisions a driver discarded, so a tool
+// result can tell the caller which request fields the provider ignored
+// (a Seedream model dropping image quality, say) instead of letting them
+// vanish silently. The report order is preserved.
+func Dropped(resp inference.GenerateResponse) []string {
+	var out []string
+	for _, decision := range resp.Metadata.Decisions {
+		if decision.Disposition != inference.Dropped {
+			continue
+		}
+		text := string(decision.Field)
+		if decision.Reason != "" {
+			text += ": " + decision.Reason
+		}
+		out = append(out, text)
+	}
+	return out
 }
 
 // rejectionReason extracts the human reason of a local compile-time

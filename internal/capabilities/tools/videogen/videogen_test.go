@@ -242,8 +242,8 @@ func TestExecuteBookendFrames(t *testing.T) {
 			gotRequest = req
 			return inference.GenerateResponse{}, route.Trace{}, nil
 		},
-		extensions: func(fields map[string]any) (inference.Extensions, error) {
-			gotFields = fields
+		extensions: func(call map[string]any, configured map[string]map[string]any) (inference.Extensions, error) {
+			gotFields = call
 			return nil, nil
 		},
 	}
@@ -308,8 +308,8 @@ func TestExecuteReferenceInputs(t *testing.T) {
 			gotRequest = req
 			return inference.GenerateResponse{}, route.Trace{}, nil
 		},
-		extensions: func(fields map[string]any) (inference.Extensions, error) {
-			gotFields = fields
+		extensions: func(call map[string]any, configured map[string]map[string]any) (inference.Extensions, error) {
+			gotFields = call
 			return nil, nil
 		},
 	}
@@ -371,63 +371,104 @@ func TestExecuteReferenceInputs(t *testing.T) {
 	}
 }
 
-// TestExecuteProviderKnobs pins that the driver-specific knobs travel
-// as provider extension fields rather than being dropped.
-func TestExecuteProviderKnobs(t *testing.T) {
+// TestExecuteConfiguredProviderOptions pins the new home of the
+// driver-specific knobs: the settings page configures them per
+// deployment, the tool hands that set to the extension builder (which
+// attaches each provider's own), and the model-facing arguments carry
+// none of them.
+func TestExecuteConfiguredProviderOptions(t *testing.T) {
 	ws, err := workspace.NewLocalWorkspace(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	var gotFields map[string]any
+	configured := map[string]map[string]any{
+		"bytedance-inst-a": {
+			"camera_fixed":             true,
+			"generate_audio":           true,
+			"service_tier":             "flex",
+			"output_format":            "mov",
+			"omni_reference_task_type": "extend",
+			"web_search":               true,
+			"callback_url":             "https://example/hook",
+			"safety_identifier":        "user-1",
+			"priority":                 5,
+			"execution_expires_after":  7200,
+		},
+	}
+	var (
+		gotCall       map[string]any
+		gotConfigured map[string]map[string]any
+	)
 	tool := &Tool{
-		ws:     ws,
-		client: &http.Client{},
+		ws:              ws,
+		client:          &http.Client{},
+		providerOptions: configured,
 		generate: func(
 			_ context.Context, _ inference.GenerateRequest,
 		) (inference.GenerateResponse, route.Trace, error) {
 			return inference.GenerateResponse{}, route.Trace{}, nil
 		},
-		extensions: func(fields map[string]any) (inference.Extensions, error) {
-			gotFields = fields
+		extensions: func(call map[string]any, configured map[string]map[string]any) (inference.Extensions, error) {
+			gotCall = call
+			gotConfigured = configured
 			return nil, nil
 		},
 	}
-	_, err = tool.Execute(context.Background(), `{
-		"prompt":"x",
-		"camera_fixed":true,
-		"generate_audio":true,
-		"service_tier":"flex",
-		"output_format":"mov",
-		"omni_reference_task_type":"extend",
-		"web_search":true,
-		"callback_url":"https://example/hook",
-		"safety_identifier":"user-1",
-		"prompt_optimizer":false,
-		"fast_pretreatment":true,
-		"priority":5,
-		"execution_expires_after":7200
-	}`)
+	_, err = tool.Execute(context.Background(), `{"prompt":"x"}`)
 	if err == nil || !strings.Contains(err.Error(), "no video parts") {
 		t.Fatalf("error = %v, want no-video-parts error", err)
 	}
-	want := map[string]any{
-		"camera_fixed":             true,
-		"generate_audio":           true,
-		"service_tier":             "flex",
-		"output_format":            "mov",
-		"omni_reference_task_type": "extend",
-		"web_search":               true,
-		"callback_url":             "https://example/hook",
-		"safety_identifier":        "user-1",
-		"prompt_optimizer":         false,
-		"fast_pretreatment":        true,
-		"priority":                 int32(5),
-		"execution_expires_after":  int64(7200),
+	if len(gotCall) != 0 {
+		t.Errorf("call knobs = %+v, want none", gotCall)
 	}
-	for name, value := range want {
-		if got, ok := gotFields[name]; !ok || got != value {
-			t.Errorf("field %s = %v (present %v), want %v", name, got, ok, value)
-		}
+	if len(gotConfigured["bytedance-inst-a"]) != len(configured["bytedance-inst-a"]) {
+		t.Errorf("configured options = %+v, want the settings set", gotConfigured)
+	}
+
+	// A configured set without a wired router cannot be rendered.
+	bare := &Tool{ws: ws, client: &http.Client{}, providerOptions: configured,
+		generate: func(
+			_ context.Context, _ inference.GenerateRequest,
+		) (inference.GenerateResponse, route.Trace, error) {
+			return inference.GenerateResponse{}, route.Trace{}, nil
+		},
+	}
+	_, err = bare.Execute(context.Background(), `{"prompt":"x"}`)
+	if err == nil || !strings.Contains(err.Error(), "router is not wired") {
+		t.Fatalf("error = %v, want router-is-not-wired", err)
+	}
+}
+
+// TestExecuteConfiguredOptionsSurviveWithoutCallKnobs pins that a
+// configured set alone still reaches the extension builder.
+func TestExecuteConfiguredOptionsSurviveWithoutCallKnobs(t *testing.T) {
+	ws, err := workspace.NewLocalWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	tool := &Tool{
+		ws:              ws,
+		client:          &http.Client{},
+		providerOptions: map[string]map[string]any{"minimax-inst-a": {"prompt_optimizer": false}},
+		generate: func(
+			_ context.Context, _ inference.GenerateRequest,
+		) (inference.GenerateResponse, route.Trace, error) {
+			return inference.GenerateResponse{}, route.Trace{}, nil
+		},
+		extensions: func(_ map[string]any, configured map[string]map[string]any) (inference.Extensions, error) {
+			called = true
+			if _, ok := configured["minimax-inst-a"]; !ok {
+				t.Errorf("configured = %+v", configured)
+			}
+			return nil, nil
+		},
+	}
+	if _, err := tool.Execute(context.Background(), `{"prompt":"x"}`); err == nil {
+		t.Fatal("expected the no-video-parts error")
+	}
+	if !called {
+		t.Error("configured options must reach the extension builder")
 	}
 }
 
@@ -445,8 +486,9 @@ func TestExecuteVerifiesAppliedKnobs(t *testing.T) {
 		fields:   []inference.ExtensionField{"camera_fixed"},
 	}
 	tool := &Tool{
-		ws:     ws,
-		client: &http.Client{},
+		ws:              ws,
+		client:          &http.Client{},
+		providerOptions: map[string]map[string]any{"bytedance-inst-a": {"camera_fixed": true}},
 		generate: func(
 			_ context.Context, _ inference.GenerateRequest,
 		) (inference.GenerateResponse, route.Trace, error) {
@@ -459,12 +501,11 @@ func TestExecuteVerifiesAppliedKnobs(t *testing.T) {
 				},
 			}, route.Trace{}, nil
 		},
-		extensions: func(map[string]any) (inference.Extensions, error) {
+		extensions: func(call map[string]any, configured map[string]map[string]any) (inference.Extensions, error) {
 			return inference.Extensions{attached}, nil
 		},
 	}
-	_, err = tool.Execute(context.Background(),
-		`{"prompt":"x","camera_fixed":true}`)
+	_, err = tool.Execute(context.Background(), `{"prompt":"x"}`)
 	if err == nil || !strings.Contains(err.Error(), "does not support camera_fixed") {
 		t.Fatalf("error = %v, want an unsupported-knob rejection", err)
 	}
@@ -552,8 +593,6 @@ func TestExecuteValidation(t *testing.T) {
 			"first_frame"},
 		{"bad ratio", `{"prompt":"x","aspect_ratio":"16x9"}`,
 			"aspect ratio must use width:height"},
-		{"knob without router", `{"prompt":"x","camera_fixed":true}`,
-			"router is not wired"},
 		{"junk json", `{`, "parse arguments"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
