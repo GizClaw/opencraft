@@ -1916,9 +1916,7 @@ function WebSearchView({ tool }: { tool: ToolView }) {
           {!failed && results.length === 0 && (
             <p className="text-xs text-dim">{t('tool.webSearchEmpty')}</p>
           )}
-          {parsed?.note && (
-            <p className="text-xs text-dim">{parsed.note}</p>
-          )}
+          {parsed?.note && <p className="text-xs text-dim">{parsed.note}</p>}
           {parsed?.context && (
             <div>
               <button

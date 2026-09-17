@@ -211,9 +211,7 @@ export function WebSearchSection() {
             </div>
 
             <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
-              <p className="text-xs text-dim">
-                {t('config.webSearchHint')}
-              </p>
+              <p className="text-xs text-dim">{t('config.webSearchHint')}</p>
 
               <label className="flex items-center gap-2 text-xs text-dim">
                 <input
@@ -369,8 +367,7 @@ export function WebSearchSection() {
                         }
                         value={
                           (endpoints[provider as keyof WebSearchEndpoints] as
-                            | string
-                            | undefined) ?? ''
+                            string | undefined) ?? ''
                         }
                         onChange={(e) => {
                           setEndpoints({
@@ -399,7 +396,9 @@ export function WebSearchSection() {
                   />
                   <button
                     type="button"
-                    disabled={testing || provider === 'auto' || !testQuery.trim()}
+                    disabled={
+                      testing || provider === 'auto' || !testQuery.trim()
+                    }
                     onClick={() => void runTest()}
                     className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-xs text-dim hover:border-accent/40 hover:text-fg disabled:opacity-40"
                   >
