@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	pluginruntime "github.com/GizClaw/opencraft/internal/capabilities/plugins/runtime"
 	octelemetry "github.com/GizClaw/opencraft/internal/capabilities/telemetry"
@@ -39,7 +40,17 @@ func startTestPipeline(
 	if err != nil {
 		t.Fatalf("start telemetry pipeline: %v", err)
 	}
-	t.Cleanup(func() { _ = p.Shutdown(context.Background()) })
+	t.Cleanup(func() {
+		// The tests point their OTLP sinks at unreachable collectors
+		// (collector.example and friends) on purpose: the sink state,
+		// not the delivery, is under test. An unbounded shutdown makes
+		// the SDK walk the exporter's retry budget and adds 30-60s per
+		// test to the suite, so bound the drain and let the test binary
+		// exit drop anything still queued.
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = p.Shutdown(ctx)
+	})
 	return p
 }
 
