@@ -6,6 +6,142 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3] - 2026-09-17
+
+### Added
+
+- `web_search` gives a deployment a search path that does not depend on
+  the provider hosting one: auto mode spreads conversations across the
+  keyless Parallel and Exa hosted MCP endpoints and fails over to the
+  other once, while Tavily and Brave call with a key the user supplies
+  (stored as `websearch/<provider>`; the document keeps only the
+  secret reference). The tool returns links plus a bounded excerpt
+  block — `web_fetch` still owns reading pages in full — and Exa's
+  free-tier notice, which arrives as an ordinary 200 text payload, is
+  mapped back to a rate-limit error so it cannot masquerade as "no
+  results". Responses are capped at 1 MiB with a 15s default timeout
+  and at most 10 results, the model may only set query, count,
+  freshness and domains, and the host always owns the endpoint.
+  Settings > Tools gains the matching card: provider, key, result
+  count, timeout and endpoint override under advanced, and a real test
+  query. An override must be https (plain http only on loopback) and
+  rejects query, fragment, userinfo and redirects. (#157)
+- Settings > Tools is one page for the generation tools and the MCP
+  servers: an item opens the same centered dialog MCP details use,
+  listing every enabled deployment that serves that output with the
+  provider-specific knobs its driver declares — the app's own enum,
+  number and unset/on/off controls, each next to the default the
+  driver documents and a one-line explanation. Presets stage the
+  common requests (no watermark, 2K, transparent background, with
+  audio, fixed camera) and nothing is stored until the user saves,
+  because an unset knob is the state that keeps the provider in charge
+  of its own default. Values persist in the user layer under
+  `resources.tool.imagegen` / `resources.tool.videogen` keyed by
+  deployment id, and the vocabulary, validation and pruning live in
+  `foundation/config`: an unknown provider, an out-of-range or unknown
+  enum value and a knob block whose provider was removed all fail
+  before anything is written. (#152, #154, #155, #156)
+- A command the OS sandbox refuses is no longer a dead end:
+  `exec_command` recognises a confinement refusal in the finished
+  command's output (EPERM/EROFS/access-denied phrasings, including
+  PowerShell's .NET wording; a plain "permission denied" deliberately
+  does not match), asks whether it may run outside the sandbox once,
+  and re-runs the exact same argv with the full environment, marking
+  the result with a `note`. "Always" remembers the rule in the
+  workspace's `escalations.yaml` — deliberately its own file, because
+  a downgraded build rewrites `approvals.yaml` from a narrower struct
+  — and every decision (once / always / deny) is appended to
+  `<workspace>/audit/escalations.jsonl`. Only workspace sessions
+  escalate (read-only keeps its guarantee, YOLO has no confine), only
+  `exec_command` is prompted, remembered rules cover one-shot commands
+  but not TTY sessions, and a host with no user to ask keeps the
+  original failure. Settings > Permissions lists and revokes the
+  rules. (#146)
+- The process PATH is resolved once at startup and used by every
+  spawn: `foundation/utils/envpath` appends the user's prepend list,
+  the inherited PATH and the platform's install directories (Homebrew
+  on macOS; `/usr/local/bin`, snap and Linuxbrew on Linux; plus the
+  per-user bin directories), removes nothing but empty entries and is
+  idempotent, so a Dock-launched app can find Homebrew, npm-global and
+  user-local binaries for MCP stdio servers, agent commands, `gh` and
+  `git` alike. Settings > Diagnostics gains a Process PATH card that
+  groups the entries by origin, flags rejected and missing
+  directories and edits `desktop.json`'s `path.prepend`; saving
+  re-resolves and reloads the runtime so MCP servers reconnect with
+  the new environment. (#147, #148)
+- Generated images and videos play inside the app. The desktop serves
+  workspace media over a loopback endpoint (127.0.0.1 on a random
+  port, a per-launch random token, GET/HEAD only, traversal and
+  symlink escapes rejected, byte-range seeking), the viewer plays
+  videos inline and falls back to the system player, and generation
+  cards render thumbnails, inline players and a streamed-preview
+  section. The image tool gained count, seed, quality, reference
+  images, mask and partial-image previews, and the video tool gained
+  aspect ratio, seed, bookend frames and reference videos/audios, with
+  the input roles validated instead of left to the provider. (#151)
+
+### Changed
+
+- flowcraft core moves to v0.4.4 and the drivers to v0.3.2, carrying
+  the upstream fixes this repository reported: generate fallback skips
+  a target whose declared outputs cannot serve the request, and
+  `tool_search` reports per-round visibility instead of pool
+  membership, so a name that loses the round's budget answers
+  `visible_budget`, an oversized definition no longer stops the byte
+  walk, and the best-ranked hit of a batch wins the tie. Provider
+  knobs left the model-facing schemas with this work: `generate_video`
+  no longer offers thirteen Seedance/MiniMax knobs, `generate_image`
+  keeps only its per-call inputs, and both decode arguments strictly,
+  so a knob the schema does not offer fails loudly. The per-round tool
+  budget rises to 64 definitions / 48 KiB with a 48-tool / 32 KiB
+  discovery pool, measured against the embedded catalog, and tool
+  results list the fields a driver dropped instead of dropping them
+  silently. (#152, #153, #156)
+- Hosted web search is drift-proof: `StartRun` filters the board
+  extension bag against the live runtime generation's decoders, so an
+  entry naming a deployment the serving generation does not have is
+  dropped with one warning instead of failing the turn at the
+  inference node. Eligibility resolves the driver impl rather than the
+  catalog provider id, which restores the checkbox for custom rows
+  and rows with an explicit driver, `deepseek/deepseek-v4-pro` is
+  marked search-capable, and the checkbox explains which upstreams
+  honour the tool. (#149)
+- Windows gets a real shell: `foundation/utils/shelldetect` resolves
+  PowerShell 7 → Windows PowerShell 5.1 → `cmd.exe`, skipping the
+  Store execution-alias stubs a restricted token cannot follow, and
+  the exec tool, the description the model reads, execd's environment
+  report and the diagnostics page all read it instead of the
+  hard-coded `/bin/sh -c` that made shell-syntax commands fail there.
+  Windows bare words accept `\`, so `C:\tools\x.exe a b` stays on the
+  direct-argv path. (#146)
+
+### Fixed
+
+- Settings > Diagnostics no longer blanks the page on a healthy
+  machine: the PATH DTO serialized its empty list fields as `null` and
+  the card read them as arrays, which fired on any machine without a
+  rejected or missing directory. The lists are normalized on the wire
+  and read defensively, the candidate table is split per platform so
+  macOS no longer reports `/snap/bin` as "not installed", and a
+  prepend directory that does not exist yet is flagged in place
+  instead of disappearing. (#148)
+- The pet is pulled back onto a display after a monitor is unplugged
+  or the layout changes: the placement check clamps a stranded
+  position onto the closest work area rather than the primary
+  display's corner, keeps adopting an OS-reported position that is
+  still on a display, skips a drag in progress, and measures the drawn
+  character rather than the transparent stage around it. (#150)
+- Generation-only models no longer sit in the composer and automation
+  model pickers, where a chat turn could never route to them: the
+  option list keeps only models that can serve a text-output chat
+  request, which also lets the Auto reasoning hint resolve against a
+  real text target. (#151)
+- A stdio MCP server whose command cannot be spawned is pre-flighted
+  (PATH for bare names, the child PATH for `#!/usr/bin/env`
+  interpreters) and reported with the concrete reason in both the
+  status list and the test button, instead of retrying forever behind
+  a "connecting" status. (#146)
+
 ## [0.5.2] - 2026-09-16
 
 ### Fixed
