@@ -6,6 +6,8 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
+	otellog "go.opentelemetry.io/otel/log"
+
 	desktopcore "github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	petfeed "github.com/GizClaw/opencraft/internal/adapters/desktop/pet"
 
@@ -352,6 +354,94 @@ func (d *Desktop) waitForPetDock(
 	}
 }
 
+// petWorkAreas returns the work areas the pet can stand on. A screen can
+// report an empty rectangle while a display configuration settles (a
+// wake, a hot-plug), and clamping into one would park the character
+// nowhere, so those are dropped instead.
+func petWorkAreas(screens []*application.Screen) []petfeed.Rect {
+	var works []petfeed.Rect
+	for _, screen := range screens {
+		if screen == nil {
+			continue
+		}
+		area := screen.WorkArea
+		work := petfeed.Rect{
+			X: area.X, Y: area.Y, Width: area.Width, Height: area.Height,
+		}
+		if work.Empty() {
+			continue
+		}
+		works = append(works, work)
+	}
+	return works
+}
+
+// keepPetOnScreen keeps the pet window on a display the user can see. A
+// desktop session outlives monitor unplugs, resolution switches and
+// sleep/wake cycles, and every one of them rewrites what a window
+// coordinate means: a window parked against the old layout keeps its
+// numbers and ends up on no display at all, where nothing else in the
+// rover brings it back (the watch spot is only reachable while the agent
+// works, and the rover steers from its own anchor).
+//
+// The OS-reported position is the truth while it is on a display, so the
+// rover adopts it; that is also what keeps the walk honest when the OS
+// relocated the window itself instead of the rover. When the reported
+// position is on none of the displays, the character is clamped back
+// onto the closest work area: the nearest edge, not a jump to the
+// primary display's corner.
+func (d *Desktop) keepPetOnScreen(
+	win *application.WebviewWindow, works []petfeed.Rect,
+) {
+	// A window the user cannot see — app hidden, minimised to the Dock or
+	// taskbar — reports a placeholder position on some platforms, and
+	// there is nothing on screen to pull back while it stays tucked away.
+	if len(works) == 0 || !win.IsVisible() || win.IsMinimised() {
+		return
+	}
+	now := time.Now()
+	d.petMu.Lock()
+	geometry := d.petGeometry
+	held := d.petDragging || now.Before(d.petManualUntil)
+	d.petMu.Unlock()
+	if held {
+		// The pointer owns the window for the duration of a drag and the
+		// hold that follows it; the next cadence picks up whatever the
+		// gesture left behind.
+		return
+	}
+	osX, osY := win.Position()
+	x, y, moved := petAnchor(geometry, osX, osY, works)
+	if moved {
+		win.SetPosition(x, y)
+		telemetry.Info(context.Background(),
+			"desktop: pet pulled back onto a display",
+			otellog.Int64("from_x", int64(osX)),
+			otellog.Int64("from_y", int64(osY)),
+			otellog.Int64("to_x", int64(x)),
+			otellog.Int64("to_y", int64(y)))
+	}
+	d.petMu.Lock()
+	d.petX, d.petY = x, y
+	d.petMu.Unlock()
+}
+
+// petAnchor reconciles the rover's anchor with the window the OS actually
+// has. A position that is still on a display is adopted as it is — the OS
+// is the authority on where the window is, and following it is also what
+// keeps the walk honest when the OS itself relocated the window. A
+// position on no display is clamped onto the closest work area, and moved
+// reports that the window has to be put there.
+func petAnchor(
+	geometry petfeed.WindowGeometry, osX, osY int, works []petfeed.Rect,
+) (int, int, bool) {
+	if petfeed.CharacterOnScreen(geometry, osX, osY, works) {
+		return osX, osY, false
+	}
+	x, y := petfeed.ClampToScreens(geometry, osX, osY, works)
+	return x, y, x != osX || y != osY
+}
+
 // runPetWindowLoop keeps the pet window where it belongs: parked where
 // the user left it, walking to the watch spot while the agent works or
 // asks, and standing still otherwise. The pet never wanders on its own.
@@ -373,10 +463,12 @@ func (d *Desktop) runPetWindowLoop(
 		return
 	}
 	// mainRect is the main window's frame and perchArea the work area of
-	// the screen it sits on; both are re-read on a slow cadence below.
+	// the screen it sits on; both are re-read on a slow cadence below, on
+	// the same display snapshot the pet is kept on.
 	mainRect := petfeed.Rect{X: x, Y: y}
 	perchArea := petfeed.Rect{}
 	perchOK := false
+	var works []petfeed.Rect
 	lastRectRefresh := time.Now().Add(-time.Second)
 	ticker := time.NewTicker(petLoopTick)
 	defer ticker.Stop()
@@ -387,7 +479,6 @@ func (d *Desktop) runPetWindowLoop(
 	// keeps it when the pet does not move sideways.
 	facing := ""
 	var state petfeed.PetSurfaceState
-	tickCount := 0
 	var intents petfeed.IntentSequencer
 	for {
 		select {
@@ -401,6 +492,13 @@ func (d *Desktop) runPetWindowLoop(
 			if now.Sub(lastRectRefresh) >= 500*time.Millisecond {
 				lastRectRefresh = now
 				perchOK = false
+				// A desktop session outlives monitor unplugs, resolution
+				// switches and sleep/wake cycles, and each of them
+				// rewrites what a window coordinate means: the pet is
+				// re-anchored on the display layout of the moment before
+				// anything else steers it.
+				works = petWorkAreas(app.Screen.GetAll())
+				d.keepPetOnScreen(win, works)
 				// A minimised or tray-hidden window is not something to
 				// walk to: its reported position is stale, and the pet
 				// would end up standing next to nothing.
@@ -413,23 +511,12 @@ func (d *Desktop) runPetWindowLoop(
 					}
 					centerX := mainRect.X + mainRect.Width/2
 					centerY := mainRect.Y + mainRect.Height/2
-					for _, screen := range app.Screen.GetAll() {
-						if screen == nil {
-							continue
+					for _, work := range works {
+						if work.Contains(centerX, centerY) {
+							perchArea = work
+							perchOK = true
+							break
 						}
-						area := screen.WorkArea
-						if centerX < area.X ||
-							centerX >= area.X+area.Width ||
-							centerY < area.Y ||
-							centerY >= area.Y+area.Height {
-							continue
-						}
-						perchArea = petfeed.Rect{
-							X: area.X, Y: area.Y,
-							Width: area.Width, Height: area.Height,
-						}
-						perchOK = true
-						break
 					}
 				}
 			}
@@ -474,24 +561,11 @@ func (d *Desktop) runPetWindowLoop(
 			// the loop.
 			walkSpeed := d.core.ActivePack().Meta.WalkSpeed
 
-			// Re-anchor on the OS-reported position every few ticks.
-			// Mixed-DPI displays can round window coordinates at the
-			// boundary; following the OS instead of our accumulated
-			// position prevents ±1px fighting there.
-			tickCount++
-			if tickCount%5 == 0 {
-				osX, osY := win.Position()
-				maxDelta := 3*int(walkSpeed*petLoopTick.Seconds()) + 8
-				if absInt(x-osX) <= maxDelta && absInt(y-osY) <= maxDelta {
-					x, y = osX, osY
-				}
-			}
-
 			// The pet only walks when it has somewhere to be: the watch
 			// spot while the agent works or asks. Facing comes from the
-			// loop's own step, never from the OS re-anchor above or a
-			// user drag: those deltas are larger than one step and would
-			// flip the direction for a tick.
+			// loop's own step, never from the OS re-anchor in
+			// keepPetOnScreen or a user drag: those deltas are larger
+			// than one step and would flip the direction for a tick.
 			walkFromX := x
 			if petWalksToWatch(state.Disposition, perchOK, manual) {
 				x = petStep(x, watchX, petLoopTick, walkSpeed)

@@ -81,3 +81,121 @@ func TestGeometryFallsBackWhenUnmeasured(t *testing.T) {
 			x, y, wantX, wantY)
 	}
 }
+
+func TestRectContainsIsHalfOpen(t *testing.T) {
+	work := Rect{X: 10, Y: 20, Width: 100, Height: 50}
+	for _, point := range []struct {
+		x, y int
+		want bool
+	}{
+		{10, 20, true},
+		{109, 69, true},
+		{110, 20, false},
+		{10, 70, false},
+		{9, 20, false},
+		{10, 19, false},
+	} {
+		if got := work.Contains(point.x, point.y); got != point.want {
+			t.Fatalf("Contains(%d, %d) = %v, want %v",
+				point.x, point.y, got, point.want)
+		}
+	}
+}
+
+func TestCharacterOnScreenFollowsTheDrawnBox(t *testing.T) {
+	g := DefaultWindowGeometry()
+	dockX, dockY := DockSpot(g, testWorkArea)
+	if !CharacterOnScreen(g, dockX, dockY, []Rect{testWorkArea}) {
+		t.Fatal("a docked pet is on screen")
+	}
+
+	// Half the character hanging past the right edge is still somewhere
+	// the user can see (and is how a user may park it by hand).
+	halfX := testWorkArea.Right() - g.Art.Width/2 - g.Art.X
+	if !CharacterOnScreen(g, halfX, dockY, []Rect{testWorkArea}) {
+		t.Fatal("a half-visible character is on screen")
+	}
+
+	// A sliver does not count: this is the shape a stale coordinate
+	// leaves behind after the display layout changed under the window.
+	sliverX := testWorkArea.Right() - petEdgeMargin - g.Art.X
+	if CharacterOnScreen(g, sliverX, dockY, []Rect{testWorkArea}) {
+		t.Fatalf("a %dpx sliver must not count as visible", petEdgeMargin)
+	}
+}
+
+func TestCharacterOnScreenIgnoresEmptyWorkAreas(t *testing.T) {
+	g := DefaultWindowGeometry()
+	x, y := DockSpot(g, testWorkArea)
+	works := []Rect{{}, {Width: 0, Height: 100}, testWorkArea}
+	if !CharacterOnScreen(g, x, y, works) {
+		t.Fatal("an empty work area must not hide a real one")
+	}
+	if CharacterOnScreen(g, x, y, []Rect{{}, {Height: -1}}) {
+		t.Fatal("empty work areas cannot hold the character")
+	}
+}
+
+func TestClampToScreensBringsAStrandedPetBack(t *testing.T) {
+	g := DefaultWindowGeometry()
+	// A position computed against a wider layout: the box is past the
+	// right and bottom edges of the work area that is left.
+	x := testWorkArea.Right() + 400
+	y := testWorkArea.Bottom() + 120
+	gotX, gotY := ClampToScreens(g, x, y, []Rect{testWorkArea})
+	if gotX == x && gotY == y {
+		t.Fatal("an off-screen position has to move")
+	}
+	if want := testWorkArea.Right() - petEdgeMargin; gotX+g.Art.Right() != want {
+		t.Fatalf("art right edge = %d, want the clamped %d",
+			gotX+g.Art.Right(), want)
+	}
+	if want := testWorkArea.Bottom() - petEdgeMargin; gotY+g.Art.Bottom() != want {
+		t.Fatalf("art bottom = %d, want the clamped %d",
+			gotY+g.Art.Bottom(), want)
+	}
+}
+
+func TestClampToScreensPicksTheClosestWorkArea(t *testing.T) {
+	g := DefaultWindowGeometry()
+	left := Rect{X: 0, Y: 0, Width: 1000, Height: 800}
+	right := Rect{X: 1000, Y: 0, Width: 1000, Height: 800}
+
+	// A pet stranded past the right edge comes back to the right-hand
+	// screen — the closest place to where it was, not the primary
+	// display's corner.
+	x, y := ClampToScreens(g, 2400, 300, []Rect{left, right})
+	if want := right.Right() - petEdgeMargin; x+g.Art.Right() != want {
+		t.Fatalf("art right edge = %d, want the clamped %d",
+			x+g.Art.Right(), want)
+	}
+	if y != 300 {
+		t.Fatalf("a position the display can hold must stay: y = %d", y)
+	}
+
+	// A pet stranded below both screens goes to the nearer one.
+	x, y = ClampToScreens(g, 1500, 900, []Rect{left, right})
+	if x != 1500 {
+		t.Fatalf("x = %d, want the right-hand screen's 1500", x)
+	}
+	if want := right.Bottom() - petEdgeMargin; y+g.Art.Bottom() != want {
+		t.Fatalf("art bottom = %d, want the clamped %d",
+			y+g.Art.Bottom(), want)
+	}
+}
+
+func TestClampToScreensKeepsAVisiblePosition(t *testing.T) {
+	g := DefaultWindowGeometry()
+	x, y := DockSpot(g, testWorkArea)
+	gotX, gotY := ClampToScreens(g, x, y, []Rect{testWorkArea})
+	if gotX != x || gotY != y {
+		t.Fatalf("a visible position must not move: (%d,%d) -> (%d,%d)",
+			x, y, gotX, gotY)
+	}
+	// No work area at all leaves the caller with nothing to anchor on.
+	gotX, gotY = ClampToScreens(g, 5000, 5000, nil)
+	if gotX != 5000 || gotY != 5000 {
+		t.Fatalf("no work areas must keep the position, got (%d,%d)",
+			gotX, gotY)
+	}
+}
