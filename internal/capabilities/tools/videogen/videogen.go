@@ -280,7 +280,11 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 		return "", errdefs.Internalf("%s: router is not wired", Name)
 	}
 	var args Args
-	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+	// Strict decode: a knob the tool no longer offers (or a typo) must
+	// fail the call instead of being dropped silently.
+	decoder := json.NewDecoder(strings.NewReader(arguments))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&args); err != nil {
 		return "", errdefs.Validationf(
 			"%s: parse arguments: %v", Name, err)
 	}

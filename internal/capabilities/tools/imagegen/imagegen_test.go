@@ -202,7 +202,7 @@ func TestExecuteLowersRequestKnobs(t *testing.T) {
 	_, err := tool.Execute(context.Background(), `{
 		"prompt": "a poster",
 		"model": "openai-inst-a/gpt-image-2",
-		"aspect_ratio": "16:9",
+		"size": "1536x1024",
 		"count": 2,
 		"seed": 42,
 		"quality": "xhigh",
@@ -215,11 +215,11 @@ func TestExecuteLowersRequestKnobs(t *testing.T) {
 		t.Errorf("model hint = %q", gotRequest.ModelHint)
 	}
 	intent := gotRequest.Input.Content.Intent.Image
-	if intent.AspectRatio != media.AspectRatio("16:9") {
-		t.Errorf("aspect ratio = %q, want 16:9", intent.AspectRatio)
+	if intent.Size == nil || intent.Size.Width != 1536 || intent.Size.Height != 1024 {
+		t.Errorf("size = %+v, want 1536x1024", intent.Size)
 	}
-	if intent.Size != nil {
-		t.Errorf("size = %+v, want nil for a ratio request", intent.Size)
+	if intent.AspectRatio != "" {
+		t.Errorf("aspect ratio = %q, want unset", intent.AspectRatio)
 	}
 	if intent.Count == nil || *intent.Count != 2 {
 		t.Errorf("count = %v, want 2", intent.Count)
@@ -518,10 +518,13 @@ func TestExecuteValidation(t *testing.T) {
 		{"empty prompt", `{"prompt":"  "}`, "prompt is required"},
 		{"bad size", `{"prompt":"x","size":"square"}`, "size must be WxH"},
 		{"negative size", `{"prompt":"x","size":"-1x10"}`, "positive integers"},
-		{"size and ratio", `{"prompt":"x","size":"1024x1024","aspect_ratio":"1:1"}`,
-			"mutually exclusive"},
-		{"bad ratio", `{"prompt":"x","aspect_ratio":"16x9"}`,
-			"aspect ratio must use width:height"},
+		// aspect_ratio is provider-specific (MiniMax only), so it left the
+		// model-facing schema; a stale call must fail loudly instead of
+		// silently rendering a default-sized image.
+		{"removed aspect_ratio", `{"prompt":"x","aspect_ratio":"16:9"}`,
+			`unknown field "aspect_ratio"`},
+		{"unknown knob", `{"prompt":"x","qualitiy":"high"}`,
+			`unknown field "qualitiy"`},
 		{"zero count", `{"prompt":"x","count":0}`, "count must be positive"},
 		{"bad quality", `{"prompt":"x","quality":"ultra"}`,
 			"quality must be auto, low, medium, high, xhigh, or max"},

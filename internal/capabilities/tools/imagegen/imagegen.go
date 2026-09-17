@@ -165,9 +165,6 @@ type Args struct {
 	Model string `json:"model,omitempty"`
 	// Size is an optional WxH output size, e.g. "1024x1024".
 	Size string `json:"size,omitempty"`
-	// AspectRatio is an optional "W:H" ratio for providers that size by
-	// ratio instead of pixels; it is mutually exclusive with Size.
-	AspectRatio string `json:"aspect_ratio,omitempty"`
 	// Count is the optional number of images to generate.
 	Count *int `json:"count,omitempty"`
 	// Seed fixes the provider's sampling seed where supported.
@@ -213,13 +210,9 @@ func (t *Tool) Definition() message.ToolDefinition {
 				"name. The router honors it only for a target that can "+
 				"serve image output; otherwise the default route applies."),
 		message.ToolProperty("size", "string",
-			`Optional output size as WxH, e.g. "1024x1024". Mutually `+
-				"exclusive with aspect_ratio; provider defaults apply when "+
-				"both are omitted."),
-		message.ToolProperty("aspect_ratio", "string",
-			`Optional "W:H" ratio, e.g. "16:9", for providers that size by `+
-				"ratio. Mutually exclusive with size; providers that need "+
-				"explicit pixels reject it."),
+			`Optional output size as WxH, e.g. "1024x1024". Provider `+
+				"defaults apply when omitted, and each provider validates "+
+				"the sizes its models accept."),
 		message.ToolProperty("count", "integer",
 			"Optional number of images to generate (positive). Providers "+
 				"cap it, e.g. at 9 or 10."),
@@ -278,7 +271,11 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 		return "", errdefs.Internalf("%s: router is not wired", Name)
 	}
 	var args Args
-	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+	// Strict decode: a knob the tool no longer offers (or a typo) must
+	// fail the call instead of being dropped silently.
+	decoder := json.NewDecoder(strings.NewReader(arguments))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&args); err != nil {
 		return "", errdefs.Validationf(
 			"%s: parse arguments: %v", Name, err)
 	}
@@ -405,11 +402,6 @@ func imageIntent(args Args) (*inference.ImageIntent, error) {
 		return nil, errdefs.Validationf("%s: prompt is required", Name)
 	}
 	size := strings.TrimSpace(args.Size)
-	ratio := strings.TrimSpace(args.AspectRatio)
-	if size != "" && ratio != "" {
-		return nil, errdefs.Validationf(
-			"%s: size and aspect_ratio are mutually exclusive", Name)
-	}
 	intent := &inference.ImageIntent{Delivery: media.SourceInline}
 	if size != "" {
 		width, height, err := parseSize(size)
@@ -417,14 +409,6 @@ func imageIntent(args Args) (*inference.ImageIntent, error) {
 			return nil, errdefs.Validationf("%s: %v", Name, err)
 		}
 		intent.Size = &media.ImageSize{Width: width, Height: height}
-	}
-	if ratio != "" {
-		value := media.AspectRatio(ratio)
-		if err := value.Validate(); err != nil {
-			return nil, errdefs.Validationf(
-				"%s: aspect_ratio: %v", Name, err)
-		}
-		intent.AspectRatio = value
 	}
 	if args.Count != nil {
 		if *args.Count <= 0 {

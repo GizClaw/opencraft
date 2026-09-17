@@ -593,6 +593,10 @@ func TestExecuteValidation(t *testing.T) {
 			"first_frame"},
 		{"bad ratio", `{"prompt":"x","aspect_ratio":"16x9"}`,
 			"aspect ratio must use width:height"},
+		// The driver knobs left the schema for the Tools settings tab, so
+		// a stale call must fail loudly instead of being dropped.
+		{"removed provider knob", `{"prompt":"x","camera_fixed":true}`,
+			`unknown field "camera_fixed"`},
 		{"junk json", `{`, "parse arguments"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
