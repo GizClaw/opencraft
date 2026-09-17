@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ToolView } from '../lib/store';
@@ -7,6 +7,7 @@ import { ApplyPatchView, ToolCard } from './ToolCard';
 const apiMock = vi.hoisted(() => ({
   renderPatch: vi.fn(),
   renderSkillPatch: vi.fn(),
+  readPreview: vi.fn(),
 }));
 
 vi.mock('../lib/api', () => ({ api: apiMock }));
@@ -15,6 +16,7 @@ beforeEach(() => {
   apiMock.renderPatch.mockReset();
   apiMock.renderSkillPatch.mockReset();
   apiMock.renderSkillPatch.mockResolvedValue([]);
+  apiMock.readPreview.mockReset();
   // Stand-in for the workspace diff renderer: only codex patch text
   // parses, anything else is rejected like the Go binding does.
   apiMock.renderPatch.mockImplementation(async (patch: string) => {
@@ -37,6 +39,63 @@ function tool(overrides: Partial<ToolView>): ToolView {
 }
 
 describe('ToolCard', () => {
+  it('renders generated media as thumbnails, a player, and previews', async () => {
+    const user = userEvent.setup();
+    apiMock.readPreview.mockImplementation(async (path: string) =>
+      path.endsWith('.mp4')
+        ? {
+            path,
+            rel: path,
+            root: 'workspace',
+            name: 'clip.mp4',
+            size: 3,
+            media_type: 'video/mp4',
+            kind: 'video',
+            stream_url: `http://127.0.0.1:1/media/token/${path}`,
+          }
+        : {
+            path,
+            rel: path,
+            root: 'workspace',
+            name: path.split('/').pop() ?? path,
+            size: 3,
+            media_type: 'image/png',
+            kind: 'image',
+            data_url: 'data:image/png;base64,AAA',
+          },
+    );
+    render(
+      <ToolCard
+        tool={tool({
+          name: 'generate_image',
+          args: '{"prompt":"a red fox"}',
+          result: JSON.stringify({
+            paths: ['generated/image-a.png', 'generated/clip.mp4'],
+            previews: ['generated/previews/preview-a.png'],
+            count: 2,
+            model: 'openai/gpt-image-2',
+            hint: 'Images are workspace-relative',
+          }),
+        })}
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: /a red fox/i }));
+    await waitFor(() => expect(apiMock.readPreview).toHaveBeenCalledTimes(3));
+    await waitFor(() => {
+      const video = document.querySelector('video');
+      expect(video?.getAttribute('src')).toBe(
+        'http://127.0.0.1:1/media/token/generated/clip.mp4',
+      );
+    });
+    // Two images (the final one plus the streamed preview) and one
+    // clickable path line under the player.
+    expect(document.querySelectorAll('img')).toHaveLength(2);
+    expect(screen.getByText('Previews')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'generated/clip.mp4' }),
+    ).toBeInTheDocument();
+  });
+
   it('renders exec_command with exit code and stdout', async () => {
     const user = userEvent.setup();
     render(

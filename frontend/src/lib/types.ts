@@ -485,8 +485,8 @@ export interface ResolvedTarget {
 }
 
 // FilePreview mirrors the File.ReadPreview binding result. Kind tells
-// the viewer how to render: text/image/pdf, or meta for files that
-// fall back to the system app.
+// the viewer how to render: text/image/pdf/video, or meta for files
+// that fall back to the system app.
 export interface FilePreview {
   path: string;
   rel: string;
@@ -494,9 +494,11 @@ export interface FilePreview {
   name: string;
   size: number;
   media_type: string;
-  kind: 'text' | 'image' | 'pdf' | 'meta';
+  kind: 'text' | 'image' | 'pdf' | 'video' | 'meta';
   text?: string;
   data_url?: string;
+  /** Loopback URL a video kind streams from (byte ranges, no base64). */
+  stream_url?: string;
   too_large?: boolean;
 }
 
