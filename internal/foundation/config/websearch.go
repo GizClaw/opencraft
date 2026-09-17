@@ -13,7 +13,9 @@
 // One bag entry is emitted per enabled instance whose generate models
 // all declare hosted web search and whose generate surface accepts it
 // (responses for OpenAI/DeepSeek; ByteDance and Azure have no chat
-// split). Per-model enablement inside one instance cannot be expressed:
+// split). Eligibility follows the deployment's driver impl, so plugin
+// and custom provider rows participate like built-in presets.
+// Per-model enablement inside one instance cannot be expressed:
 // flowcraft extensions have provider granularity, so a mixed instance
 // (searchable and non-searchable generate models) is skipped wholesale
 // to keep the non-searchable models compilable.
@@ -33,12 +35,14 @@ type HostedWebSearchExtension struct {
 // extension id that carries the provider web_search knob.
 const hostedWebSearchExtensionID = "generate_options"
 
-// webSearchCapableProviders lists the drivers whose wire can carry a
-// hosted web_search option at all: the OpenAI wire exposes it on the
+// webSearchCapableProviders lists the driver impls whose wire can carry
+// a hosted web_search option at all: the OpenAI wire exposes it on the
 // Responses surface, ByteDance on its generate surface. Which models
 // actually have it is declared per model (HostedWebSearch) — opencraft
 // keeps no vendor table, so a Kimi or Qwen model shares the OpenAI
-// driver and simply does not declare the capability.
+// driver and simply does not declare the capability. Keys are impl
+// names (Provider.Impl), not catalog type ids: a plugin or custom row
+// carries its own provider type and names the driver separately.
 var webSearchCapableProviders = map[string]bool{
 	"openai":    true,
 	"bytedance": true,
@@ -62,7 +66,15 @@ func generateModelKind(kind string) bool {
 func (c InferenceConfig) WebSearchExtensions() []HostedWebSearchExtension {
 	var out []HostedWebSearchExtension
 	for i, in := range c.Instances {
-		if !in.Enabled || !webSearchCapableProviders[in.Type] {
+		if !in.Enabled {
+			continue
+		}
+		// The driver decides whether the wire can carry the knob. A
+		// row that names its driver explicitly (a plugin or custom
+		// deployment) has a provider type outside the built-in
+		// presets, so gating on Type would silently drop it.
+		prov, ok := ProviderFor(in)
+		if !ok || !webSearchCapableProviders[prov.Impl] {
 			continue
 		}
 		if len(in.Models) == 0 {
@@ -71,7 +83,7 @@ func (c InferenceConfig) WebSearchExtensions() []HostedWebSearchExtension {
 		// The OpenAI wire exposes hosted web_search only on the
 		// Responses surface; the chat compiler rejects the knob
 		// outright, and an unset surface means the driver default.
-		if in.Type == "openai" && in.API == "chat" {
+		if prov.Impl == "openai" && in.API == "chat" {
 			continue
 		}
 		searchable := false
@@ -112,7 +124,7 @@ func (c InferenceConfig) WebSearchExtensions() []HostedWebSearchExtension {
 		out = append(out, HostedWebSearchExtension{
 			Provider: id,
 			ID:       hostedWebSearchExtensionID,
-			Fields:   webSearchFields(in.Type),
+			Fields:   webSearchFields(prov.Impl),
 		})
 	}
 	return out
@@ -122,8 +134,8 @@ func (c InferenceConfig) WebSearchExtensions() []HostedWebSearchExtension {
 // web_search schema accepts. OpenAI/DeepSeek/Azure share the
 // tool_choice knob (required=false lets the model decide when to
 // search); ByteDance's schema has no tool_choice, so it stays empty.
-func webSearchFields(providerType string) map[string]any {
-	if providerType == "bytedance" {
+func webSearchFields(impl string) map[string]any {
+	if impl == "bytedance" {
 		return map[string]any{
 			"web_search": map[string]any{},
 		}
