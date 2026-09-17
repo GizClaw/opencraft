@@ -438,9 +438,7 @@ describe('ConfigPage inference', () => {
       name: 'hosted web search',
     });
     expect(checkbox).toBeChecked();
-    expect(
-      screen.getByText(/Requires upstream support/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Requires upstream support/)).toBeInTheDocument();
 
     // Unticking it takes the note away: nothing is being claimed.
     fireEvent.click(checkbox);
