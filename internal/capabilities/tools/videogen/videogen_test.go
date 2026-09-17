@@ -52,21 +52,26 @@ func TestExecuteDownloadsAndSavesVideo(t *testing.T) {
 			_ context.Context, req inference.GenerateRequest,
 		) (inference.GenerateResponse, route.Trace, error) {
 			gotRequest = req
-			return inference.GenerateResponse{
-					Message: message.Message{
-						Role: message.RoleAssistant,
-						Content: message.Content{
-							Parts: []message.Part{videoPart(t, srv.URL)},
-						},
+			// Hoisted into variables: a nested literal inside the
+			// return list is indented differently by go1.25 and go1.27
+			// gofmt, and CI pins the older toolchain.
+			resp := inference.GenerateResponse{
+				Message: message.Message{
+					Role: message.RoleAssistant,
+					Content: message.Content{
+						Parts: []message.Part{videoPart(t, srv.URL)},
 					},
-				}, route.Trace{
-					Executed: model.ModelRef{
-						ID: model.ModelID{
-							Provider: "bytedance",
-							Name:     "doubao-seedance-2-0",
-						},
+				},
+			}
+			trace := route.Trace{
+				Executed: model.ModelRef{
+					ID: model.ModelID{
+						Provider: "bytedance",
+						Name:     "doubao-seedance-2-0",
 					},
-				}, nil
+				},
+			}
+			return resp, trace, nil
 		},
 	}
 
