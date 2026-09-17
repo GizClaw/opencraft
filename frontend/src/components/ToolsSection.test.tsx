@@ -71,8 +71,11 @@ describe('ToolsSection', () => {
     expect(screen.getByText('OpenAI')).toBeInTheDocument();
     expect(screen.getByText('Video generation')).toBeInTheDocument();
     expect(screen.getByText('Bytedance')).toBeInTheDocument();
-    const background = screen.getByLabelText('Background');
-    expect((background as HTMLSelectElement).value).toBe('transparent');
+    // The knob renders as the app's listbox pattern, showing the stored
+    // value on the trigger.
+    expect(screen.getByLabelText('Background')).toHaveTextContent(
+      'transparent',
+    );
     // A provider without a vocabulary says so instead of rendering an
     // empty control grid.
     expect(
@@ -84,8 +87,10 @@ describe('ToolsSection', () => {
     const user = userEvent.setup();
     render(<ToolsSection />);
     await screen.findByText('Image generation');
-    await user.selectOptions(screen.getByLabelText('Background'), 'opaque');
-    await user.selectOptions(screen.getByLabelText('Fixed camera'), 'true');
+    await user.click(screen.getByLabelText('Background'));
+    await user.click(screen.getByRole('option', { name: 'opaque' }));
+    await user.click(screen.getByLabelText('Fixed camera'));
+    await user.click(screen.getByRole('option', { name: 'on' }));
     await user.click(screen.getAllByRole('button', { name: /Save/i })[0]);
     await waitFor(() =>
       expect(apiMock.saveToolOptions).toHaveBeenCalledTimes(1),
@@ -102,7 +107,8 @@ describe('ToolsSection', () => {
     const user = userEvent.setup();
     render(<ToolsSection />);
     await screen.findByText('Image generation');
-    await user.selectOptions(screen.getByLabelText('Background'), '');
+    await user.click(screen.getByLabelText('Background'));
+    await user.click(screen.getByRole('option', { name: 'unset' }));
     await user.click(screen.getAllByRole('button', { name: /Save/i })[0]);
     await waitFor(() =>
       expect(apiMock.saveToolOptions).toHaveBeenCalledTimes(1),

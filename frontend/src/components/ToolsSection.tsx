@@ -1,6 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Loader2, Wrench } from 'lucide-react';
+import {
+  Check,
+  ChevronDown,
+  Film,
+  Image as ImageIcon,
+  Loader2,
+  Wrench,
+} from 'lucide-react';
 import { api } from '../lib/api';
 import type {
   ToolOptionFieldView,
@@ -17,6 +24,11 @@ import type {
 type ToolValues = Record<string, Record<string, unknown>>;
 type ToolKey = 'image' | 'video';
 
+const controlClass =
+  'w-full rounded-lg border border-edge bg-panel px-2 py-1 text-xs text-fg ' +
+  'outline-none transition-colors hover:border-accent/50 focus:border-accent ' +
+  'disabled:opacity-40';
+
 // fieldLabelKey maps a dotted field path onto its translation key.
 function fieldLabelKey(name: string): string {
   return `config.toolField.${name.replace(/\./g, '_')}`;
@@ -31,6 +43,129 @@ function initialValues(tool: ToolOptionsToolView | undefined): ToolValues {
   return out;
 }
 
+// ToolOptionMenu is the settings page's listbox pattern (a floating menu
+// with a check mark, not a native select) for one provider knob.
+function ToolOptionMenu({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: { value: string; label: string }[];
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const selected = options.find((option) => option.value === value);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        aria-label={label}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="flex h-7 w-full items-center gap-1.5 rounded-lg border border-edge bg-panel px-2 text-xs text-fg outline-none transition-colors hover:border-accent/60 focus:border-accent"
+      >
+        <span
+          className={`min-w-0 flex-1 truncate text-left ${
+            selected ? '' : 'text-dim'
+          }`}
+        >
+          {selected?.label ?? ''}
+        </span>
+        <ChevronDown
+          size="0.8571rem"
+          className={`shrink-0 text-dim transition-transform ${
+            open ? 'rotate-180' : ''
+          }`}
+        />
+      </button>
+      {open && (
+        <>
+          <div
+            className="fixed inset-0 z-30"
+            onMouseDown={() => setOpen(false)}
+          />
+          <div
+            role="listbox"
+            className="absolute top-full right-0 z-40 mt-1 min-w-full rounded-lg border border-edge/80 bg-panel/95 p-1 shadow-xl backdrop-blur-md"
+          >
+            {options.map((option) => {
+              const isSelected = option.value === value;
+              return (
+                <button
+                  key={option.value || 'unset'}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  onClick={() => {
+                    onChange(option.value);
+                    setOpen(false);
+                  }}
+                  className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors ${
+                    isSelected
+                      ? 'bg-accent/10 text-accent'
+                      : 'text-dim hover:bg-panel2 hover:text-fg'
+                  }`}
+                >
+                  <span
+                    className={`min-w-0 flex-1 truncate ${
+                      option.value === '' ? '' : 'font-mono'
+                    }`}
+                  >
+                    {option.label}
+                  </span>
+                  {isSelected && (
+                    <Check size="0.8571rem" className="shrink-0" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// boundsOf describes a numeric field's accepted range for the hint line.
+function boundsOf(field: ToolOptionFieldView): string {
+  const lower = field.min ?? undefined;
+  const upper = field.max ?? undefined;
+  if (lower === undefined && upper === undefined) return '';
+  const lowerText = lower === undefined ? '' : `${lower}`;
+  const upperText = upper === undefined ? '' : `${upper}`;
+  if (
+    lower !== undefined &&
+    upper !== undefined &&
+    !field.exclusive_min &&
+    !field.exclusive_max
+  ) {
+    return `${lowerText}–${upperText}`;
+  }
+  const parts: string[] = [];
+  if (lower !== undefined) {
+    parts.push(`${field.exclusive_min ? '>' : '≥'} ${lowerText}`);
+  }
+  if (upper !== undefined) {
+    parts.push(`${field.exclusive_max ? '<' : '≤'} ${upperText}`);
+  }
+  return parts.join(', ');
+}
+
 export function ToolsSection() {
   const { t } = useTranslation();
   const [state, setState] = useState<ToolOptionsState | null>(null);
@@ -41,6 +176,7 @@ export function ToolsSection() {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState<ToolKey | null>(null);
   const [saved, setSaved] = useState<ToolKey | null>(null);
+  const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -59,11 +195,18 @@ export function ToolsSection() {
       });
     return () => {
       live = false;
+      if (savedTimer.current) clearTimeout(savedTimer.current);
     };
   }, []);
 
-  // setField stores one knob; an undefined value clears it, which the
-  // host writes as "provider default".
+  const markSaved = (tool: ToolKey) => {
+    setSaved(tool);
+    if (savedTimer.current) clearTimeout(savedTimer.current);
+    savedTimer.current = setTimeout(() => setSaved(null), 2500);
+  };
+
+  // setField stores one knob; an undefined or empty value clears it,
+  // which the host writes as "provider default".
   const setField = (
     tool: ToolKey,
     instanceID: string,
@@ -102,7 +245,7 @@ export function ToolsSection() {
         image: initialValues(st.image),
         video: initialValues(st.video),
       });
-      setSaved(tool);
+      markSaved(tool);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -117,58 +260,59 @@ export function ToolsSection() {
   ) => {
     const value = values[tool][instance.id]?.[field.name];
     const label = t(fieldLabelKey(field.name), { defaultValue: field.name });
-    const bounds =
-      field.kind === 'int' || field.kind === 'float'
-        ? [field.min, field.max]
-            .map((bound) =>
-              bound === undefined || bound === null ? '' : bound,
-            )
-            .filter((bound) => bound !== '')
-            .join('–')
-        : '';
+    const hint =
+      field.kind === 'enum'
+        ? (field.values ?? []).join(' · ')
+        : boundsOf(field);
     let control;
-    if (field.kind === 'enum') {
-      control = (
-        <select
-          value={typeof value === 'string' ? value : ''}
-          onChange={(e) =>
-            setField(tool, instance.id, field.name, e.target.value)
-          }
-          className="w-full rounded-lg border border-edge bg-panel px-2 py-1.5 text-xs outline-none focus:border-accent"
-        >
-          <option value="">{t('config.toolsUnset')}</option>
-          {(field.values ?? []).map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </select>
-      );
-    } else if (field.kind === 'bool') {
+    if (field.kind === 'enum' || field.kind === 'bool') {
+      const options =
+        field.kind === 'enum'
+          ? [
+              { value: '', label: t('config.toolsUnset') },
+              ...(field.values ?? []).map((option) => ({
+                value: option,
+                label: option,
+              })),
+            ]
+          : [
+              { value: '', label: t('config.toolsUnset') },
+              { value: 'true', label: t('config.toolsOn') },
+              { value: 'false', label: t('config.toolsOff') },
+            ];
       const current =
-        value === undefined ? '' : value === true ? 'true' : 'false';
+        field.kind === 'bool'
+          ? value === undefined
+            ? ''
+            : value === true
+              ? 'true'
+              : 'false'
+          : typeof value === 'string'
+            ? value
+            : '';
       control = (
-        <select
+        <ToolOptionMenu
+          label={label}
           value={current}
-          onChange={(e) => {
-            const raw = e.target.value;
+          options={options}
+          onChange={(next) => {
+            if (field.kind !== 'bool') {
+              setField(tool, instance.id, field.name, next);
+              return;
+            }
             setField(
               tool,
               instance.id,
               field.name,
-              raw === '' ? undefined : raw === 'true',
+              next === '' ? undefined : next === 'true',
             );
           }}
-          className="w-full rounded-lg border border-edge bg-panel px-2 py-1.5 text-xs outline-none focus:border-accent"
-        >
-          <option value="">{t('config.toolsUnset')}</option>
-          <option value="true">{t('config.toolsOn')}</option>
-          <option value="false">{t('config.toolsOff')}</option>
-        </select>
+        />
       );
     } else {
       control = (
         <input
+          aria-label={label}
           type={field.kind === 'string' ? 'text' : 'number'}
           value={value === undefined ? '' : String(value)}
           min={field.min ?? undefined}
@@ -187,93 +331,126 @@ export function ToolsSection() {
                   : Number(raw),
             );
           }}
-          className="w-full rounded-lg border border-edge bg-panel px-2 py-1.5 text-xs outline-none focus:border-accent"
+          className={controlClass}
         />
       );
     }
     return (
-      <label key={field.name} className="min-w-0 space-y-1">
-        <span className="flex items-baseline gap-1.5">
-          <span className="text-xs text-dim">{label}</span>
-          {bounds && (
-            <span className="text-[0.7143rem] text-dim/70">{bounds}</span>
-          )}
-        </span>
-        {control}
-      </label>
+      <div
+        key={field.name}
+        className="flex items-center gap-4 px-3 py-2 hover:bg-panel2/40"
+      >
+        <div className="min-w-0 flex-1">
+          <span className="block truncate text-xs text-fg">{label}</span>
+          <span className="block truncate font-mono text-[0.7143rem] text-dim/80">
+            {field.name}
+            {hint && <span className="ml-1.5 text-dim/60">· {hint}</span>}
+          </span>
+        </div>
+        <div className="w-40 shrink-0">{control}</div>
+      </div>
     );
   };
 
-  const renderCard = (tool: ToolKey, view: ToolOptionsToolView | undefined) => (
-    <section className="space-y-3 rounded-xl border border-edge bg-panel2 p-4">
-      <header className="flex items-center gap-2">
-        <Wrench size="1rem" className="shrink-0 text-accent" />
-        <h3 className="text-sm font-medium">
-          {t(
-            tool === 'image'
-              ? 'config.toolsImageTitle'
-              : 'config.toolsVideoTitle',
-          )}
-        </h3>
-      </header>
-      <p className="text-xs text-dim">
-        {t(
-          tool === 'image' ? 'config.toolsImageHint' : 'config.toolsVideoHint',
+  const renderInstance = (tool: ToolKey, instance: ToolOptionInstanceView) => (
+    <div
+      key={instance.id}
+      className="overflow-hidden rounded-lg border border-edge/70 bg-panel/40"
+    >
+      <div className="flex items-center gap-2 border-b border-edge/60 px-3 py-2">
+        <span className="truncate text-xs font-medium text-fg">
+          {instance.label}
+        </span>
+        {instance.managed && (
+          <span className="shrink-0 rounded-full border border-edge px-1.5 py-0.5 text-[0.7143rem] text-dim">
+            {t('config.toolsManaged')}
+          </span>
         )}
-      </p>
-      {(view?.instances ?? []).length === 0 && (
-        <p className="text-xs text-dim">{t('config.toolsNoInstances')}</p>
-      )}
-      {(view?.instances ?? []).map((instance) => (
-        <div
-          key={instance.id}
-          className="space-y-2 rounded-lg border border-edge bg-panel p-3"
-        >
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm text-fg">{instance.label}</span>
-            <code className="rounded bg-panel2 px-1.5 py-0.5 text-[0.7143rem] text-dim">
-              {instance.id}
-            </code>
-            {instance.managed && (
-              <span className="rounded bg-panel2 px-1.5 py-0.5 text-[0.7143rem] text-dim">
-                {t('config.toolsManaged')}
-              </span>
-            )}
-          </div>
-          {(instance.fields ?? []).length === 0 ? (
-            <p className="text-xs text-dim">{t('config.toolsNoFields')}</p>
-          ) : (
-            <div className="grid gap-2 sm:grid-cols-2">
-              {(instance.fields ?? []).map((field) =>
-                renderField(tool, instance, field),
-              )}
-            </div>
+        <span className="flex-1" />
+        <code className="shrink-0 font-mono text-[0.7143rem] text-dim">
+          {instance.id}
+        </code>
+      </div>
+      {(instance.fields ?? []).length === 0 ? (
+        <p className="px-3 py-2.5 text-xs text-dim/80">
+          {t('config.toolsNoFields')}
+        </p>
+      ) : (
+        <div className="divide-y divide-edge/50">
+          {(instance.fields ?? []).map((field) =>
+            renderField(tool, instance, field),
           )}
         </div>
-      ))}
-      <div className="flex items-center gap-3">
-        <button
-          type="button"
-          onClick={() => void save(tool)}
-          disabled={saving !== null}
-          className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
-        >
-          {saving === tool && (
-            <Loader2 size="1.0000rem" className="animate-spin" />
-          )}
-          {t('setup.saveApply')}
-        </button>
-        {saved === tool && (
-          <span className="text-xs text-ok">{t('config.toolsSaved')}</span>
-        )}
-      </div>
-    </section>
+      )}
+    </div>
   );
+
+  const renderCard = (tool: ToolKey, view: ToolOptionsToolView | undefined) => {
+    const instances = view?.instances ?? [];
+    const Icon = tool === 'image' ? ImageIcon : Film;
+    return (
+      <section className="rounded-xl border border-edge bg-panel2 p-3">
+        <header className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <Icon size="1.0000rem" className="shrink-0 text-accent" />
+              {t(
+                tool === 'image'
+                  ? 'config.toolsImageTitle'
+                  : 'config.toolsVideoTitle',
+              )}
+            </div>
+            <p className="mt-1 text-xs text-dim/80">
+              {t(
+                tool === 'image'
+                  ? 'config.toolsImageHint'
+                  : 'config.toolsVideoHint',
+              )}
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {saved === tool && (
+              <span className="inline-flex items-center gap-1 text-[0.7143rem] text-ok">
+                <Check size="0.8571rem" />
+                {t('config.toolsSaved')}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => void save(tool)}
+              disabled={saving !== null || instances.length === 0}
+              className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs text-white hover:opacity-90 disabled:opacity-40"
+            >
+              {saving === tool && (
+                <Loader2 size="0.8571rem" className="animate-spin" />
+              )}
+              {t('setup.saveApply')}
+            </button>
+          </div>
+        </header>
+        <div className="mt-3 space-y-2">
+          {instances.length === 0 ? (
+            <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-edge/70 px-3 py-6 text-xs text-dim/80">
+              <Wrench size="0.9286rem" className="shrink-0" />
+              {t('config.toolsNoInstances')}
+            </div>
+          ) : (
+            instances.map((instance) => renderInstance(tool, instance))
+          )}
+        </div>
+      </section>
+    );
+  };
 
   if (state === null && error === '') {
     return (
-      <div className="flex items-center justify-center gap-2 p-4 text-dim">
-        <Loader2 size="0.9286rem" className="animate-spin" />
+      <div className="space-y-3">
+        {[0, 1].map((key) => (
+          <div
+            key={key}
+            className="h-40 animate-pulse rounded-xl border border-edge/70 bg-panel/70"
+          />
+        ))}
       </div>
     );
   }
@@ -282,7 +459,7 @@ export function ToolsSection() {
       {renderCard('image', state?.image)}
       {renderCard('video', state?.video)}
       {error !== '' && (
-        <p className="whitespace-pre-wrap break-all text-xs text-err">
+        <p className="whitespace-pre-wrap break-all rounded-lg border border-err/40 bg-err/5 px-3 py-2 text-xs text-err">
           {error}
         </p>
       )}
