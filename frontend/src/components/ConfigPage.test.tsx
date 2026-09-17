@@ -396,6 +396,61 @@ describe('ConfigPage inference', () => {
     );
   });
 
+  it('explains that hosted web search depends on the upstream', async () => {
+    // A ticked box is a capability claim the deployment has to honour:
+    // DeepSeek's flash models and the chat surface ignore the tool, so
+    // the form says so instead of leaving the user with a silent no-op.
+    (apiMock.configState as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      model: '',
+      router: { max_attempts: 2, fallback_on_retry_exhausted: true },
+      instances: [
+        {
+          stable_id: 'inst-aaa',
+          type: 'openai',
+          name: 'deepseek',
+          api: 'responses',
+          endpoint: 'https://api.deepseek.com',
+          key_source: 'env',
+          key_ref: '',
+          key_set: true,
+          key_env: true,
+          key_keychain: false,
+          models: [
+            {
+              name: 'deepseek-v4-pro',
+              kind: 'generate',
+              capabilities: {
+                inputs: ['text'],
+                outputs: ['text'],
+                hosted_web_search: true,
+              },
+              endpoint: '',
+            },
+          ],
+          advanced: {},
+          enabled: true,
+          managed: false,
+        },
+      ],
+    });
+    render(<ConfigPage />);
+    const checkbox = await screen.findByRole('checkbox', {
+      name: 'hosted web search',
+    });
+    expect(checkbox).toBeChecked();
+    expect(
+      screen.getByText(/Requires upstream support/),
+    ).toBeInTheDocument();
+
+    // Unticking it takes the note away: nothing is being claimed.
+    fireEvent.click(checkbox);
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/Requires upstream support/),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
   it('lists the drivers and saves the advanced knobs', async () => {
     render(<ConfigPage />);
 

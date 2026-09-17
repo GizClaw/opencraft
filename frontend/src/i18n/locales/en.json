@@ -804,7 +804,8 @@
     "selectProvider": "Select at least one provider",
     "subtitle": "Select the providers you have keys for and order them by priority; the config is written to ~/.opencraft/config/opencraft.yaml",
     "title": "Inference setup",
-    "webSearch": "hosted web search"
+    "webSearch": "hosted web search",
+    "webSearchHint": "Requires upstream support (OpenAI Responses, DeepSeek V4 Pro, ByteDance Ark). Chat-surface and unsupported models ignore it; every generate model in this deployment has to allow it too."
   },
   "tool": {
     "running": "running",
