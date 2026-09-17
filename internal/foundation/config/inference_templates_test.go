@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/GizClaw/flowcraft/core/inference/model"
 	"github.com/GizClaw/flowcraft/core/message"
 )
 
@@ -210,6 +211,66 @@ func TestInferenceCatalogVideoTemplateIsComplete(t *testing.T) {
 			"zhipu-glm-video model %s does not declare video input",
 			models[0].Name,
 		)
+	}
+}
+
+// TestInferenceCatalogReasoningTemplateIsComplete pins the other
+// built-in template whose provider knobs are an endpoint fact: DeepSeek's
+// Responses API serves thinking-mode traces as reasoning_text content
+// and returns an encrypted payload when the request asks for one (both
+// verified live on 2026-09-17, stream and unary). The driver's
+// default channel is "summary", which replays a summary list plus an
+// encrypted payload; the plain channel replays the reasoning_text
+// content the endpoint emits, which is why the template pins it. The pin
+// and the declaration ship together: a template that pins a channel its
+// models do not declare cannot round-trip anything, so neither half may
+// be dropped on its own.
+func TestInferenceCatalogReasoningTemplateIsComplete(t *testing.T) {
+	catalog, err := LoadInferenceCatalog()
+	if err != nil {
+		t.Fatalf("load inference catalog: %v", err)
+	}
+	var template InferenceCatalogTemplate
+	found := false
+	for _, candidate := range catalog.Templates() {
+		if candidate.ID == "deepseek-official" {
+			template, found = candidate, true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("catalog carries no deepseek-official template")
+	}
+	if template.API != "responses" {
+		t.Fatalf(
+			"deepseek-official uses api %q; its reasoning round-trip is the "+
+				"Responses dialect", template.API,
+		)
+	}
+	if got := template.Advanced.ReasoningChannel; got != "text" {
+		t.Fatalf(
+			"deepseek-official reasoning channel = %q, want %q",
+			got, "text",
+		)
+	}
+	if payload := template.Advanced.IncludeReasoningPayload; payload != nil && *payload {
+		t.Fatal(
+			"deepseek-official pins the plain channel and asks for the " +
+				"encrypted payload, which the driver rejects",
+		)
+	}
+	models, err := catalog.TemplateModels(template)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range models {
+		if entry.Capabilities.Reasoning.Kind == model.ReasoningNone {
+			t.Fatalf(
+				"deepseek-official model %s declares no reasoning channel, so "+
+					"the plain channel it pins cannot apply",
+				entry.Name,
+			)
+		}
 	}
 }
 

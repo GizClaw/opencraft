@@ -756,6 +756,10 @@
       "vendor": "DeepSeek",
       "api": "responses",
       "endpoint": "https://api.deepseek.com",
+      "advanced": {
+        "reasoning_channel": "text"
+      },
+      "notes": "DeepSeek's Responses API serves thinking-mode traces as reasoning_text content items, and it returns an encrypted_content value when the request asks for one (include: [\"reasoning.encrypted_content\"]; verified live 2026-09-17, stream and unary). The driver defaults wire.reasoning_channel to \"summary\", which replays a reasoning item as a summary list plus an encrypted payload; the plain channel replays the same trace as reasoning_text content, the shape this endpoint emits, so the template pins the plain channel. Never pair it with include_reasoning_payload: the driver rejects that combination.",
       "models": ["deepseek/deepseek-flash"]
     },
     {
