@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -270,5 +272,101 @@ func TestModelServesImageAndVideo(t *testing.T) {
 	}
 	if plain.ServesImage() || plain.ServesVideo() {
 		t.Errorf("text model = %+v", plain)
+	}
+}
+
+// TestToolOptionDefaultsStayInsideTheirField pins the display-only
+// provider defaults the settings page shows: an enum default must name
+// a declared value, a bool default must read true/false, and a numeric
+// default must sit inside the declared bounds. A default that drifts
+// outside its own field would tell users to expect a value the save
+// path then rejects.
+func TestToolOptionDefaultsStayInsideTheirField(t *testing.T) {
+	for tool, byImpl := range toolOptionFields {
+		for impl, fields := range byImpl {
+			for _, field := range fields {
+				if field.Default == "" {
+					continue
+				}
+				switch field.Kind {
+				case ToolOptionEnum:
+					if !slices.Contains(field.Values, field.Default) {
+						t.Errorf(
+							"%s/%s %s: default %q is not one of %v",
+							tool, impl, field.Name, field.Default, field.Values,
+						)
+					}
+				case ToolOptionBool:
+					if field.Default != "true" && field.Default != "false" {
+						t.Errorf(
+							"%s/%s %s: bool default %q",
+							tool, impl, field.Name, field.Default,
+						)
+					}
+				case ToolOptionInt, ToolOptionFloat:
+					value, err := strconv.ParseFloat(field.Default, 64)
+					if err != nil {
+						t.Errorf(
+							"%s/%s %s: default %q is not numeric",
+							tool, impl, field.Name, field.Default,
+						)
+						continue
+					}
+					if field.Min != nil &&
+						(value < *field.Min ||
+							(field.ExclusiveMin && value == *field.Min)) {
+						t.Errorf(
+							"%s/%s %s: default %q is under min %v",
+							tool, impl, field.Name, field.Default, *field.Min,
+						)
+					}
+					if field.Max != nil &&
+						(value > *field.Max ||
+							(field.ExclusiveMax && value == *field.Max)) {
+						t.Errorf(
+							"%s/%s %s: default %q is over max %v",
+							tool, impl, field.Name, field.Default, *field.Max,
+						)
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestToolOptionPresetsMatchVocabulary keeps the one-click presets
+// inside the driver vocabulary they belong to. A preset naming a field
+// no longer declared (or a value the field rejects) would be offered by
+// the page and then refused by the save path, so the table and the
+// vocabulary must move together.
+func TestToolOptionPresetsMatchVocabulary(t *testing.T) {
+	for tool, byImpl := range toolOptionPresets {
+		for impl, presets := range byImpl {
+			schema := ToolOptionSchema(tool, impl)
+			if len(schema) == 0 {
+				t.Errorf("%s/%s: presets without a field vocabulary",
+					tool, impl)
+			}
+			seen := make(map[string]bool, len(presets))
+			for _, preset := range presets {
+				if preset.ID == "" {
+					t.Errorf("%s/%s: preset without an id", tool, impl)
+				}
+				if seen[preset.ID] {
+					t.Errorf("%s/%s: duplicate preset id %q",
+						tool, impl, preset.ID)
+				}
+				seen[preset.ID] = true
+				if len(preset.Fields) == 0 {
+					t.Errorf("%s/%s preset %s: no fields",
+						tool, impl, preset.ID)
+					continue
+				}
+				if _, err := NestToolOptions(schema, preset.Fields); err != nil {
+					t.Errorf("%s/%s preset %s: %v",
+						tool, impl, preset.ID, err)
+				}
+			}
+		}
 	}
 }

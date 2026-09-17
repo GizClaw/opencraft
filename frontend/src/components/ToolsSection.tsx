@@ -13,6 +13,7 @@ import { api } from '../lib/api';
 import type {
   ToolOptionFieldView,
   ToolOptionInstanceView,
+  ToolOptionPresetView,
   ToolOptionsRequest,
   ToolOptionsState,
   ToolOptionsToolView,
@@ -40,6 +41,26 @@ const TOOLS: ToolKey[] = ['image', 'video'];
 // fieldLabelKey maps a dotted field path onto its translation key.
 function fieldLabelKey(name: string): string {
   return `config.toolField.${name.replace(/\./g, '_')}`;
+}
+
+// fieldDescriptionKey maps a dotted field path onto the optional
+// one-line explanation shown under the label.
+function fieldDescriptionKey(name: string): string {
+  return `config.toolFieldDesc.${name.replace(/\./g, '_')}`;
+}
+
+// displayDefault renders a documented provider default for the hint
+// line: booleans read as on/off, everything else verbatim.
+function displayDefault(
+  field: ToolOptionFieldView,
+  on: string,
+  off: string,
+): string | null {
+  if (!field.default) return null;
+  if (field.kind === 'bool') {
+    return field.default === 'true' ? on : off;
+  }
+  return field.default;
 }
 
 // initialValues renders the stored values of one tool's instances.
@@ -238,6 +259,26 @@ export function ToolsSection() {
     });
   };
 
+  // applyPreset fills one provider's shortcut into the form. It merges
+  // only the knobs the preset names, and nothing reaches the user layer
+  // until the user saves the dialog.
+  const applyPreset = (
+    tool: ToolKey,
+    instanceID: string,
+    preset: ToolOptionPresetView,
+  ) => {
+    setSaved(null);
+    setError('');
+    setValues((prev) => {
+      const toolValues = { ...prev[tool] };
+      toolValues[instanceID] = {
+        ...(toolValues[instanceID] ?? {}),
+        ...preset.fields,
+      };
+      return { ...prev, [tool]: toolValues };
+    });
+  };
+
   const save = async (tool: ToolKey) => {
     setSaving(tool);
     setSaved(null);
@@ -274,6 +315,18 @@ export function ToolsSection() {
   ) => {
     const value = values[tool][instance.id]?.[field.name];
     const label = t(fieldLabelKey(field.name), { defaultValue: field.name });
+    const description = t(fieldDescriptionKey(field.name), {
+      defaultValue: '',
+    });
+    const providerDefault = t('config.toolsProviderDefault');
+    const documented = displayDefault(
+      field,
+      t('config.toolsOn'),
+      t('config.toolsOff'),
+    );
+    const defaultHint = documented
+      ? t('config.toolsFieldDefault', { value: documented })
+      : '';
     const hint =
       field.kind === 'enum'
         ? (field.values ?? []).join(' · ')
@@ -283,14 +336,14 @@ export function ToolsSection() {
       const options =
         field.kind === 'enum'
           ? [
-              { value: '', label: t('config.toolsUnset') },
+              { value: '', label: providerDefault },
               ...(field.values ?? []).map((option) => ({
                 value: option,
                 label: option,
               })),
             ]
           : [
-              { value: '', label: t('config.toolsUnset') },
+              { value: '', label: providerDefault },
               { value: 'true', label: t('config.toolsOn') },
               { value: 'false', label: t('config.toolsOff') },
             ];
@@ -328,6 +381,9 @@ export function ToolsSection() {
         <input
           aria-label={label}
           type={field.kind === 'string' ? 'text' : 'number'}
+          placeholder={
+            documented ? `${providerDefault} (${documented})` : providerDefault
+          }
           value={value === undefined ? '' : String(value)}
           min={field.min ?? undefined}
           max={field.max ?? undefined}
@@ -352,16 +408,24 @@ export function ToolsSection() {
     return (
       <div
         key={field.name}
-        className="flex items-center gap-4 px-3 py-2 hover:bg-panel2/40"
+        className="flex items-start gap-4 px-3 py-2 hover:bg-panel2/40"
       >
         <div className="min-w-0 flex-1">
           <span className="block truncate text-xs text-fg">{label}</span>
           <span className="block truncate font-mono text-[0.7143rem] text-dim/80">
             {field.name}
             {hint && <span className="ml-1.5 text-dim/60">· {hint}</span>}
+            {defaultHint && (
+              <span className="ml-1.5 text-dim/60">· {defaultHint}</span>
+            )}
           </span>
+          {description !== '' && (
+            <span className="mt-0.5 block text-[0.7143rem] leading-snug text-dim/70">
+              {description}
+            </span>
+          )}
         </div>
-        <div className="w-40 shrink-0">{control}</div>
+        <div className="w-40 shrink-0 self-center">{control}</div>
       </div>
     );
   };
@@ -385,6 +449,23 @@ export function ToolsSection() {
           {instance.id}
         </code>
       </div>
+      {(instance.presets ?? []).length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-edge/60 px-3 py-2">
+          <span className="text-[0.7143rem] text-dim/80">
+            {t('config.toolsPresets')}
+          </span>
+          {(instance.presets ?? []).map((preset) => (
+            <button
+              key={preset.id}
+              type="button"
+              onClick={() => applyPreset(tool, instance.id, preset)}
+              className="rounded-full border border-edge bg-panel px-2 py-0.5 text-[0.7143rem] text-dim transition-colors hover:border-accent/50 hover:text-fg"
+            >
+              {t(`config.toolPreset.${preset.id}`, { defaultValue: preset.id })}
+            </button>
+          ))}
+        </div>
+      )}
       {(instance.fields ?? []).length === 0 ? (
         <p className="px-3 py-2.5 text-xs text-dim/80">
           {t('config.toolsNoFields')}

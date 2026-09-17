@@ -18,10 +18,18 @@ const STATE = {
             name: 'background',
             kind: 'enum',
             values: ['auto', 'opaque', 'transparent'],
+            default: 'auto',
           },
           { name: 'output_compression', kind: 'int', min: 0, max: 100 },
+          {
+            name: 'input_fidelity',
+            kind: 'enum',
+            values: ['low', 'high'],
+            default: 'low',
+          },
         ],
         values: { background: 'transparent' },
+        presets: [{ id: 'edit_fidelity', fields: { input_fidelity: 'high' } }],
       },
     ],
   },
@@ -58,10 +66,19 @@ test('edits a generation tool from the tools tab', async ({ page }) => {
   const dialog = page.getByRole('dialog', { name: 'Image generation' });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByLabel('Background')).toContainText('transparent');
+  // The row names the default the driver documents.
+  await expect(dialog.getByText('· default auto')).toBeVisible();
 
   await dialog.getByLabel('Background').click();
+  // Leaving a knob alone is the documented path back to the provider
+  // default, and the row names the default the driver documents.
+  await expect(
+    dialog.getByRole('option', { name: 'Follow the provider default' }),
+  ).toBeVisible();
   await dialog.getByRole('option', { name: 'opaque' }).click();
   await dialog.getByLabel('Compression').fill('70');
+  // A preset stages its knobs in the form; the save below carries them.
+  await dialog.getByRole('button', { name: 'Match the input closely' }).click();
   await dialog.getByRole('button', { name: 'Save & apply' }).click();
 
   await expect
@@ -78,5 +95,19 @@ test('edits a generation tool from the tools tab', async ({ page }) => {
       ),
     )
     .toBe('opaque');
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            globalThis as unknown as {
+              __savedToolOptions?: {
+                image?: Record<string, Record<string, unknown>>;
+              };
+            }
+          ).__savedToolOptions?.image?.['openai-inst-1']?.input_fidelity,
+      ),
+    )
+    .toBe('high');
   await expect(dialog.getByText('Saved')).toBeVisible();
 });

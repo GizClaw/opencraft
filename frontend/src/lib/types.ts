@@ -705,6 +705,20 @@ export interface ToolOptionFieldView {
   max?: number | null;
   exclusive_min?: boolean;
   exclusive_max?: boolean;
+  /**
+   * default is the provider default the driver documents; the page shows
+   * it as a hint while the knob stays unset.
+   */
+  default?: string | null;
+}
+
+/**
+ * ToolOptionPresetView is a user-invoked starting point: the page fills
+ * its values into the form and nothing is stored until the user saves.
+ */
+export interface ToolOptionPresetView {
+  id: string;
+  fields: { [field: string]: unknown };
 }
 
 /** ToolOptionInstanceView is one deployment a tool card configures. */
@@ -714,6 +728,8 @@ export interface ToolOptionInstanceView {
   impl: string;
   managed: boolean;
   fields: ToolOptionFieldView[] | null;
+  /** The driver's one-click presets, in declaration order. */
+  presets?: ToolOptionPresetView[] | null;
   /** Configured knob values keyed by dotted field path. */
   values: { [key: string]: unknown } | null;
 }
