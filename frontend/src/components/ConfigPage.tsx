@@ -59,7 +59,7 @@ import { UsageChart } from './UsageChart';
 import { UsageHero } from './UsageHero';
 import { UsageModelSelect } from './UsageModelSelect';
 import { UsageRangePicker } from './UsageRangePicker';
-import { MCPLogo, MCPSection } from './ToolsPanel';
+import { MCPSection } from './ToolsPanel';
 import { AdvancedSection } from './InferenceAdvanced';
 import { ModelAdvanced } from './ModelAdvanced';
 import { PluginPanels } from '../plugins/components/PluginPanels';
@@ -124,7 +124,6 @@ type Tab =
   | 'display'
   | 'inference'
   | 'tools'
-  | 'mcp'
   | 'usage'
   | 'memory'
   | 'permissions'
@@ -306,7 +305,11 @@ export function ConfigPage() {
     `mcp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const { t } = useTranslation();
 
-  const [tab, setTab] = useState<Tab>(configTab as Tab);
+  // 'mcp' merged into the tools tab; a stored value from an older build
+  // still lands on a tab that renders the MCP section.
+  const [tab, setTab] = useState<Tab>(
+    configTab === 'mcp' ? 'tools' : (configTab as Tab),
+  );
   const importPanelCount = usePluginStore((s) =>
     s.panels.reduce(
       (n, p) => n + ((p.tab ?? 'plugins') === 'import' ? 1 : 0),
@@ -1064,7 +1067,6 @@ export function ConfigPage() {
     { id: 'display', label: t('config.tabDisplay'), icon: Palette },
     { id: 'inference', label: t('config.tabInference'), icon: Cpu },
     { id: 'tools', label: t('config.tabTools'), icon: Wrench },
-    { id: 'mcp', label: t('config.tabMCP'), icon: MCPLogo },
     { id: 'memory', label: t('config.tabMemory'), icon: Database },
     ...(yoloOnly
       ? []
@@ -1130,7 +1132,12 @@ export function ConfigPage() {
           <div className="min-w-0 flex-1 overflow-y-auto px-5 py-4">
             {tab === 'general' && <SettingsGeneral />}
             {tab === 'display' && <SettingsDisplay />}
-            {tab === 'tools' && <ToolsSection />}
+            {tab === 'tools' && (
+              <div className="space-y-4">
+                <ToolsSection />
+                <MCPSection />
+              </div>
+            )}
 
             {tab === 'inference' && (
               <div className="space-y-3">
@@ -2972,7 +2979,6 @@ export function ConfigPage() {
                 )}
               </div>
             )}
-            {tab === 'mcp' && <MCPSection />}
           </div>
         </div>
 

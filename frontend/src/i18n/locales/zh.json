@@ -502,6 +502,8 @@
     },
     "toolsImageHint": "生图工具的 provider 特有参数。只作用于配置所在的 provider；工具的公共参数仍然按次传入。",
     "toolsImageTitle": "生图工具",
+    "toolsHint": "Agent 可以调用的工具。provider 特有参数挂在各自工具上，模型可见的接口只保留公共参数。",
+    "toolsKnobCount": "已配置 {{count}} 项",
     "toolsManaged": "插件",
     "toolsNoFields": "该 provider 没有可配置的特有参数。",
     "toolsNoInstances": "还没有已启用、能出这类结果的部署。",

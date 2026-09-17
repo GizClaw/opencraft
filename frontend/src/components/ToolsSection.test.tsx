@@ -65,12 +65,20 @@ describe('ToolsSection', () => {
     apiMock.saveToolOptions.mockResolvedValue(undefined);
   });
 
-  it('renders both cards with the stored values', async () => {
+  it('lists the tools as items and opens one in a dialog', async () => {
+    const user = userEvent.setup();
     render(<ToolsSection />);
     expect(await screen.findByText('Image generation')).toBeInTheDocument();
-    expect(screen.getByText('OpenAI')).toBeInTheDocument();
     expect(screen.getByText('Video generation')).toBeInTheDocument();
-    expect(screen.getByText('Bytedance')).toBeInTheDocument();
+    expect(screen.getByText('OpenAI · custom (openai)')).toBeInTheDocument();
+    // Nothing but the item rows until one is opened.
+    expect(screen.queryByLabelText('Background')).not.toBeInTheDocument();
+
+    await user.click(screen.getByText('Image generation'));
+    expect(
+      screen.getByRole('dialog', { name: 'Image generation' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('OpenAI')).toBeInTheDocument();
     // The knob renders as the app's listbox pattern, showing the stored
     // value on the trigger.
     expect(screen.getByLabelText('Background')).toHaveTextContent(
@@ -83,15 +91,14 @@ describe('ToolsSection', () => {
     ).toBeInTheDocument();
   });
 
-  it('saves edits from both cards in one request', async () => {
+  it('saves edits together with the other tool unchanged', async () => {
     const user = userEvent.setup();
     render(<ToolsSection />);
     await screen.findByText('Image generation');
+    await user.click(screen.getByText('Image generation'));
     await user.click(screen.getByLabelText('Background'));
     await user.click(screen.getByRole('option', { name: 'opaque' }));
-    await user.click(screen.getByLabelText('Fixed camera'));
-    await user.click(screen.getByRole('option', { name: 'on' }));
-    await user.click(screen.getAllByRole('button', { name: /Save/i })[0]);
+    await user.click(screen.getByRole('button', { name: /Save/i }));
     await waitFor(() =>
       expect(apiMock.saveToolOptions).toHaveBeenCalledTimes(1),
     );
@@ -100,16 +107,18 @@ describe('ToolsSection', () => {
       video: Record<string, Record<string, unknown>>;
     };
     expect(req.image['openai-img'].background).toBe('opaque');
-    expect(req.video['bytedance-vid'].camera_fixed).toBe(true);
+    // The other tool travels along so its block is not cleared.
+    expect(req.video).toEqual({ 'bytedance-vid': {} });
   });
 
   it('clears a knob back to the provider default', async () => {
     const user = userEvent.setup();
     render(<ToolsSection />);
     await screen.findByText('Image generation');
+    await user.click(screen.getByText('Image generation'));
     await user.click(screen.getByLabelText('Background'));
     await user.click(screen.getByRole('option', { name: 'unset' }));
-    await user.click(screen.getAllByRole('button', { name: /Save/i })[0]);
+    await user.click(screen.getByRole('button', { name: /Save/i }));
     await waitFor(() =>
       expect(apiMock.saveToolOptions).toHaveBeenCalledTimes(1),
     );
@@ -124,7 +133,8 @@ describe('ToolsSection', () => {
     const user = userEvent.setup();
     render(<ToolsSection />);
     await screen.findByText('Image generation');
-    await user.click(screen.getAllByRole('button', { name: /Save/i })[0]);
+    await user.click(screen.getByText('Image generation'));
+    await user.click(screen.getByRole('button', { name: /Save/i }));
     expect(await screen.findByText(/nope/)).toBeInTheDocument();
   });
 });

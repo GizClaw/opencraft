@@ -502,6 +502,8 @@
     },
     "toolsImageHint": "Settings for the image generation tool. They apply to the provider they are configured on; the tool's common parameters stay per call.",
     "toolsImageTitle": "Image generation",
+    "toolsHint": "Tools the agent can call. Provider-specific settings live on each tool; the model-facing surface keeps the common parameters.",
+    "toolsKnobCount": "{{count}} configured",
     "toolsManaged": "plugin",
     "toolsNoFields": "This provider has no provider-specific options.",
     "toolsNoInstances": "No enabled deployment serves this output yet.",

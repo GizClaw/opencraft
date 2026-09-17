@@ -3,10 +3,11 @@ import { useTranslation } from 'react-i18next';
 import {
   Check,
   ChevronDown,
+  ChevronRight,
   Film,
   Image as ImageIcon,
   Loader2,
-  Wrench,
+  X,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import type {
@@ -17,9 +18,10 @@ import type {
   ToolOptionsToolView,
 } from '../lib/types';
 
-// The tools tab: provider-specific settings for the generation tools.
-// The model-facing tools keep the common parameters; the knobs a driver
-// models beyond that live here, per deployment.
+// The generation tools section of the Tools tab: one item per tool, the
+// way the MCP list works. Clicking an item opens a dialog with the
+// provider-specific settings that deployment configured; the
+// model-facing tools keep only the common parameters.
 
 type ToolValues = Record<string, Record<string, unknown>>;
 type ToolKey = 'image' | 'video';
@@ -28,6 +30,12 @@ const controlClass =
   'w-full rounded-lg border border-edge bg-panel px-2 py-1 text-xs text-fg ' +
   'outline-none transition-colors hover:border-accent/50 focus:border-accent ' +
   'disabled:opacity-40';
+
+const fieldClass =
+  'w-full rounded-lg border border-edge bg-panel px-2.5 py-1.5 text-xs text-fg ' +
+  'outline-none transition-colors hover:border-accent/50 focus:border-accent';
+
+const TOOLS: ToolKey[] = ['image', 'video'];
 
 // fieldLabelKey maps a dotted field path onto its translation key.
 function fieldLabelKey(name: string): string {
@@ -41,6 +49,31 @@ function initialValues(tool: ToolOptionsToolView | undefined): ToolValues {
     out[instance.id] = { ...(instance.values ?? {}) };
   }
   return out;
+}
+
+// boundsOf describes a numeric field's accepted range for the hint line.
+function boundsOf(field: ToolOptionFieldView): string {
+  const lower = field.min ?? undefined;
+  const upper = field.max ?? undefined;
+  if (lower === undefined && upper === undefined) return '';
+  const lowerText = lower === undefined ? '' : `${lower}`;
+  const upperText = upper === undefined ? '' : `${upper}`;
+  if (
+    lower !== undefined &&
+    upper !== undefined &&
+    !field.exclusive_min &&
+    !field.exclusive_max
+  ) {
+    return `${lowerText}–${upperText}`;
+  }
+  const parts: string[] = [];
+  if (lower !== undefined) {
+    parts.push(`${field.exclusive_min ? '>' : '≥'} ${lowerText}`);
+  }
+  if (upper !== undefined) {
+    parts.push(`${field.exclusive_max ? '<' : '≤'} ${upperText}`);
+  }
+  return parts.join(', ');
 }
 
 // ToolOptionMenu is the settings page's listbox pattern (a floating menu
@@ -77,21 +110,23 @@ function ToolOptionMenu({
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="flex h-7 w-full items-center gap-1.5 rounded-lg border border-edge bg-panel px-2 text-xs text-fg outline-none transition-colors hover:border-accent/60 focus:border-accent"
+        className={controlClass}
       >
-        <span
-          className={`min-w-0 flex-1 truncate text-left ${
-            selected ? '' : 'text-dim'
-          }`}
-        >
-          {selected?.label ?? ''}
+        <span className="flex items-center gap-1.5">
+          <span
+            className={`min-w-0 flex-1 truncate text-left ${
+              selected ? '' : 'text-dim'
+            }`}
+          >
+            {selected?.label ?? ''}
+          </span>
+          <ChevronDown
+            size="0.8571rem"
+            className={`shrink-0 text-dim transition-transform ${
+              open ? 'rotate-180' : ''
+            }`}
+          />
         </span>
-        <ChevronDown
-          size="0.8571rem"
-          className={`shrink-0 text-dim transition-transform ${
-            open ? 'rotate-180' : ''
-          }`}
-        />
       </button>
       {open && (
         <>
@@ -141,31 +176,6 @@ function ToolOptionMenu({
   );
 }
 
-// boundsOf describes a numeric field's accepted range for the hint line.
-function boundsOf(field: ToolOptionFieldView): string {
-  const lower = field.min ?? undefined;
-  const upper = field.max ?? undefined;
-  if (lower === undefined && upper === undefined) return '';
-  const lowerText = lower === undefined ? '' : `${lower}`;
-  const upperText = upper === undefined ? '' : `${upper}`;
-  if (
-    lower !== undefined &&
-    upper !== undefined &&
-    !field.exclusive_min &&
-    !field.exclusive_max
-  ) {
-    return `${lowerText}–${upperText}`;
-  }
-  const parts: string[] = [];
-  if (lower !== undefined) {
-    parts.push(`${field.exclusive_min ? '>' : '≥'} ${lowerText}`);
-  }
-  if (upper !== undefined) {
-    parts.push(`${field.exclusive_max ? '<' : '≤'} ${upperText}`);
-  }
-  return parts.join(', ');
-}
-
 export function ToolsSection() {
   const { t } = useTranslation();
   const [state, setState] = useState<ToolOptionsState | null>(null);
@@ -176,6 +186,7 @@ export function ToolsSection() {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState<ToolKey | null>(null);
   const [saved, setSaved] = useState<ToolKey | null>(null);
+  const [openTool, setOpenTool] = useState<ToolKey | null>(null);
   const savedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -231,8 +242,8 @@ export function ToolsSection() {
     setSaving(tool);
     setSaved(null);
     try {
-      // Both cards travel together: the host replaces each tool's block,
-      // so saving one must carry the other's current values unchanged.
+      // Both tools travel together: the host replaces each one's block,
+      // so saving the open dialog must carry the other's values unchanged.
       const req: ToolOptionsRequest = {
         image: values.image,
         video: values.video,
@@ -252,6 +263,9 @@ export function ToolsSection() {
       setSaving(null);
     }
   };
+
+  const title = (tool: ToolKey) =>
+    t(tool === 'image' ? 'config.toolsImageTitle' : 'config.toolsVideoTitle');
 
   const renderField = (
     tool: ToolKey,
@@ -331,7 +345,7 @@ export function ToolsSection() {
                   : Number(raw),
             );
           }}
-          className={controlClass}
+          className={fieldClass}
         />
       );
     }
@@ -355,7 +369,7 @@ export function ToolsSection() {
   const renderInstance = (tool: ToolKey, instance: ToolOptionInstanceView) => (
     <div
       key={instance.id}
-      className="overflow-hidden rounded-lg border border-edge/70 bg-panel/40"
+      className="overflow-hidden rounded-lg border border-edge/70 bg-panel2/40"
     >
       <div className="flex items-center gap-2 border-b border-edge/60 px-3 py-2">
         <span className="truncate text-xs font-medium text-fg">
@@ -385,60 +399,128 @@ export function ToolsSection() {
     </div>
   );
 
-  const renderCard = (tool: ToolKey, view: ToolOptionsToolView | undefined) => {
+  const renderItem = (tool: ToolKey, view: ToolOptionsToolView | undefined) => {
+    const instances = view?.instances ?? [];
+    const configured = instances.reduce(
+      (total, instance) => total + Object.keys(instance.values ?? {}).length,
+      0,
+    );
+    const Icon = tool === 'image' ? ImageIcon : Film;
+    return (
+      <li
+        key={tool}
+        className="[content-visibility:auto] [contain-intrinsic-size:auto_4.5rem] rounded-xl border border-edge bg-panel2 p-3 transition-colors hover:border-accent/40"
+      >
+        <button
+          type="button"
+          onClick={() => {
+            setSaved(null);
+            setOpenTool(tool);
+          }}
+          className="flex w-full min-w-0 items-center gap-2 text-left"
+        >
+          <Icon size="0.9286rem" className="shrink-0 text-accent" />
+          <span className="min-w-0 flex-1">
+            <span className="flex flex-wrap items-center gap-1.5">
+              <span className="min-w-0 truncate text-sm font-semibold">
+                {title(tool)}
+              </span>
+              {configured > 0 && (
+                <span className="shrink-0 rounded border border-edge bg-panel px-1.5 py-0.5 text-[0.7143rem] text-dim">
+                  {t('config.toolsKnobCount', { count: configured })}
+                </span>
+              )}
+            </span>
+            <span className="mt-1 block truncate text-xs text-dim">
+              {instances.length === 0
+                ? t('config.toolsNoInstances')
+                : instances.map((instance) => instance.label).join(' · ')}
+            </span>
+          </span>
+          <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
+        </button>
+      </li>
+    );
+  };
+
+  const renderDialog = (
+    tool: ToolKey,
+    view: ToolOptionsToolView | undefined,
+  ) => {
     const instances = view?.instances ?? [];
     const Icon = tool === 'image' ? ImageIcon : Film;
     return (
-      <section className="rounded-xl border border-edge bg-panel2 p-3">
-        <header className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <Icon size="1.0000rem" className="shrink-0 text-accent" />
-              {t(
-                tool === 'image'
-                  ? 'config.toolsImageTitle'
-                  : 'config.toolsVideoTitle',
-              )}
+      <div
+        className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-6"
+        onClick={() => setOpenTool(null)}
+      >
+        <div
+          className="flex max-h-[calc(100vh-2rem)] w-[38rem] max-w-full flex-col rounded-2xl border border-edge bg-panel shadow-2xl"
+          role="dialog"
+          aria-modal="true"
+          aria-label={title(tool)}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-edge px-4 py-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <Icon size="1.0714rem" className="shrink-0 text-accent" />
+              <h3 className="min-w-0 truncate text-sm font-semibold">
+                {title(tool)}
+              </h3>
             </div>
-            <p className="mt-1 text-xs text-dim/80">
+            <button
+              type="button"
+              onClick={() => setOpenTool(null)}
+              aria-label={t('tools.close')}
+              className="shrink-0 rounded-lg p-1 text-dim hover:bg-panel2 hover:text-fg"
+            >
+              <X size="1.0000rem" />
+            </button>
+          </div>
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
+            <p className="text-xs text-dim">
               {t(
                 tool === 'image'
                   ? 'config.toolsImageHint'
                   : 'config.toolsVideoHint',
               )}
             </p>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            {saved === tool && (
-              <span className="inline-flex items-center gap-1 text-[0.7143rem] text-ok">
-                <Check size="0.8571rem" />
-                {t('config.toolsSaved')}
-              </span>
+            {instances.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-edge/70 px-3 py-6 text-center text-xs text-dim/80">
+                {t('config.toolsNoInstances')}
+              </div>
+            ) : (
+              instances.map((instance) => renderInstance(tool, instance))
             )}
+          </div>
+          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-edge px-4 py-3">
+            <span className="flex min-w-0 items-center gap-2 text-xs">
+              {saved === tool && (
+                <span className="inline-flex items-center gap-1 text-ok">
+                  <Check size="0.8571rem" />
+                  {t('config.toolsSaved')}
+                </span>
+              )}
+              {error !== '' && (
+                <span className="min-w-0 truncate text-err" title={error}>
+                  {error}
+                </span>
+              )}
+            </span>
             <button
               type="button"
               onClick={() => void save(tool)}
               disabled={saving !== null || instances.length === 0}
-              className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs text-white hover:opacity-90 disabled:opacity-40"
+              className="flex shrink-0 items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
             >
               {saving === tool && (
-                <Loader2 size="0.8571rem" className="animate-spin" />
+                <Loader2 size="1.0000rem" className="animate-spin" />
               )}
               {t('setup.saveApply')}
             </button>
           </div>
-        </header>
-        <div className="mt-3 space-y-2">
-          {instances.length === 0 ? (
-            <div className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-edge/70 px-3 py-6 text-xs text-dim/80">
-              <Wrench size="0.9286rem" className="shrink-0" />
-              {t('config.toolsNoInstances')}
-            </div>
-          ) : (
-            instances.map((instance) => renderInstance(tool, instance))
-          )}
         </div>
-      </section>
+      </div>
     );
   };
 
@@ -448,7 +530,7 @@ export function ToolsSection() {
         {[0, 1].map((key) => (
           <div
             key={key}
-            className="h-40 animate-pulse rounded-xl border border-edge/70 bg-panel/70"
+            className="h-16 animate-pulse rounded-xl border border-edge/70 bg-panel/70"
           />
         ))}
       </div>
@@ -456,13 +538,16 @@ export function ToolsSection() {
   }
   return (
     <div className="space-y-3">
-      {renderCard('image', state?.image)}
-      {renderCard('video', state?.video)}
-      {error !== '' && (
-        <p className="whitespace-pre-wrap break-all rounded-lg border border-err/40 bg-err/5 px-3 py-2 text-xs text-err">
+      <p className="text-xs text-dim">{t('config.toolsHint')}</p>
+      <ul className="flex flex-col gap-2">
+        {TOOLS.map((tool) => renderItem(tool, state?.[tool]))}
+      </ul>
+      {error !== '' && openTool === null && (
+        <p className="rounded-lg border border-err/40 bg-err/5 px-3 py-2 text-xs break-words text-err">
           {error}
         </p>
       )}
+      {openTool !== null && renderDialog(openTool, state?.[openTool])}
     </div>
   );
 }

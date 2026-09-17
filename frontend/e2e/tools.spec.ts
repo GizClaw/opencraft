@@ -1,10 +1,10 @@
 import { expect, test } from '@playwright/test';
 import { mockBackend } from './mock/backend';
 
-// Settings > Tools: the provider-specific knobs of the generation tools.
-// The model-facing tools keep the common parameters, so this tab is the
-// only place a driver's own vocabulary (OpenAI editing knobs, Seedream
-// size tokens, …) is configured.
+// Settings > Tools: the generation tools (one item each, opened in a
+// dialog) sit above the MCP server list. The model-facing tools keep the
+// common parameters, so this tab is the only place a driver's own
+// vocabulary (OpenAI editing knobs, Seedream size tokens, …) is set.
 const STATE = {
   image: {
     instances: [
@@ -28,7 +28,7 @@ const STATE = {
   video: { instances: [] },
 };
 
-test('edits and saves provider knobs from the tools tab', async ({ page }) => {
+test('edits a generation tool from the tools tab', async ({ page }) => {
   await page.addInitScript(
     mockBackend as never,
     {
@@ -42,22 +42,27 @@ test('edits and saves provider knobs from the tools tab', async ({ page }) => {
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByRole('tab', { name: 'Tools' }).click();
 
+  // The generation tools are list items on the same tab as the MCP list.
   await expect(
     page.getByText('Image generation', { exact: true }),
   ).toBeVisible();
-  await expect(page.getByLabel('Background')).toContainText('transparent');
-  // A tool with no eligible deployment says so and cannot be saved.
+  await expect(
+    page.getByText('Video generation', { exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByText('No enabled deployment serves this output yet.'),
   ).toBeVisible();
-  await expect(
-    page.getByRole('button', { name: 'Save & apply' }).nth(1),
-  ).toBeDisabled();
+  await expect(page.getByText('No MCP servers configured yet.')).toBeVisible();
 
-  await page.getByLabel('Background').click();
-  await page.getByRole('option', { name: 'opaque' }).click();
-  await page.getByLabel('Compression').fill('70');
-  await page.getByRole('button', { name: 'Save & apply' }).first().click();
+  await page.getByText('Image generation', { exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Image generation' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByLabel('Background')).toContainText('transparent');
+
+  await dialog.getByLabel('Background').click();
+  await dialog.getByRole('option', { name: 'opaque' }).click();
+  await dialog.getByLabel('Compression').fill('70');
+  await dialog.getByRole('button', { name: 'Save & apply' }).click();
 
   await expect
     .poll(() =>
@@ -73,5 +78,5 @@ test('edits and saves provider knobs from the tools tab', async ({ page }) => {
       ),
     )
     .toBe('opaque');
-  await expect(page.getByText('Saved')).toBeVisible();
+  await expect(dialog.getByText('Saved')).toBeVisible();
 });
