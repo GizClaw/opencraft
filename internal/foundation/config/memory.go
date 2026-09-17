@@ -68,6 +68,7 @@ func WriteMemory(configDir string, settings MemorySettings) error {
 		fresh,
 		map[string]bool{"mem": true},
 		map[string]bool{},
+		map[string]bool{},
 		false, // memory does not own provider resources; preserve them
 	)
 	if err != nil {

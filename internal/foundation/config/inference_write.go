@@ -378,6 +378,7 @@ func writeInferenceLocked(configDir string, cfg InferenceConfig) error {
 		fresh,
 		managedResourceKeys(),
 		map[string]bool{},
+		map[string]bool{},
 		true, // inference owns every provider.* resource
 	)
 	if err != nil {
@@ -486,6 +487,7 @@ func removeInferenceConfigLocked(configDir string) error {
 		filepath.Join(configDir, "opencraft.yaml"),
 		fresh,
 		managedResourceKeys(),
+		map[string]bool{},
 		map[string]bool{},
 		true, // inference owns every provider.* resource
 	)
