@@ -58,6 +58,11 @@ type ToolOptionField struct {
 	// within (a positive guidance scale, say).
 	ExclusiveMin bool
 	ExclusiveMax bool
+	// Default is the provider-side default the driver documents for this
+	// knob, for display only: leaving the knob unset is what keeps the
+	// provider in charge of it. Empty means the driver does not state
+	// one, and the page falls back to "follows the provider default".
+	Default string
 }
 
 func enumField(name string, values ...string) ToolOptionField {
@@ -85,6 +90,14 @@ func positiveFloatField(name string) ToolOptionField {
 	}
 }
 
+// withDefault records the provider default a driver documents, so the
+// settings page can show what an unset knob resolves to instead of
+// guessing a value into the user layer.
+func withDefault(field ToolOptionField, value any) ToolOptionField {
+	field.Default = fmt.Sprint(value)
+	return field
+}
+
 // toolOptionFields is the driver vocabulary per tool and driver impl,
 // mirroring the image_options / video_options structs of the drivers
 // the host registers. The driver decoders stay the final authority: a
@@ -93,10 +106,13 @@ func positiveFloatField(name string) ToolOptionField {
 var toolOptionFields = map[string]map[string][]ToolOptionField{
 	ToolImage: {
 		"openai": {
-			enumField("background", "auto", "opaque", "transparent"),
-			intField("output_compression", 0, 100),
-			enumField("input_fidelity", "low", "high"),
-			enumField("moderation", "auto", "low"),
+			withDefault(
+				enumField("background", "auto", "opaque", "transparent"),
+				"auto",
+			),
+			withDefault(intField("output_compression", 0, 100), 100),
+			withDefault(enumField("input_fidelity", "low", "high"), "low"),
+			withDefault(enumField("moderation", "auto", "low"), "auto"),
 		},
 		"bytedance": {
 			positiveFloatField("guidance_scale"),
@@ -116,18 +132,95 @@ var toolOptionFields = map[string]map[string][]ToolOptionField{
 			boolField("camera_fixed"),
 			boolField("generate_audio"),
 			enumField("service_tier", "default", "flex"),
-			intField("execution_expires_after", 3600, 259200),
+			withDefault(
+				intField("execution_expires_after", 3600, 259200), 172800,
+			),
 			intField("priority", 0, 9),
-			enumField("output_format", "mp4", "mov"),
-			enumField("omni_reference_task_type", "auto", "reference", "edit", "extend"),
+			withDefault(enumField("output_format", "mp4", "mov"), "mp4"),
+			withDefault(
+				enumField(
+					"omni_reference_task_type",
+					"auto", "reference", "edit", "extend",
+				),
+				"auto",
+			),
 			boolField("web_search"),
 			stringField("callback_url"),
 			stringField("safety_identifier"),
 		},
 		"minimax": {
 			stringField("callback_url"),
-			boolField("prompt_optimizer"),
+			withDefault(boolField("prompt_optimizer"), true),
 			boolField("fast_pretreatment"),
+		},
+	},
+}
+
+// ToolOptionPreset is a named, user-invoked starting point for one
+// provider: the page fills these knobs into the form and nothing is
+// written until the user saves, so a recommendation never pins the
+// provider's own default. Fields are dotted vocabulary paths; ID is the
+// page's translation suffix (config.toolPreset.<id>).
+type ToolOptionPreset struct {
+	ID     string
+	Fields map[string]any
+}
+
+// toolOptionPresets are the shortcuts the settings page offers per
+// driver: values a user commonly wants that the provider does not
+// default to. Every entry must stay inside toolOptionFields above —
+// TestToolOptionPresetsMatchVocabulary pins that.
+var toolOptionPresets = map[string]map[string][]ToolOptionPreset{
+	ToolImage: {
+		"openai": {
+			{
+				ID:     "transparent_background",
+				Fields: map[string]any{"background": "transparent"},
+			},
+			{
+				ID:     "edit_fidelity",
+				Fields: map[string]any{"input_fidelity": "high"},
+			},
+		},
+		"bytedance": {
+			{
+				ID:     "no_watermark",
+				Fields: map[string]any{"watermark": false},
+			},
+			{
+				ID:     "size_2k",
+				Fields: map[string]any{"size_token": "2k"},
+			},
+			{
+				ID:     "optimize_standard",
+				Fields: map[string]any{"optimize_prompt.mode": "standard"},
+			},
+		},
+	},
+	ToolVideo: {
+		"bytedance": {
+			{
+				ID:     "with_audio",
+				Fields: map[string]any{"generate_audio": true},
+			},
+			{
+				ID:     "flex_tier",
+				Fields: map[string]any{"service_tier": "flex"},
+			},
+			{
+				ID:     "camera_fixed",
+				Fields: map[string]any{"camera_fixed": true},
+			},
+		},
+		"minimax": {
+			{
+				ID:     "fast_pretreatment",
+				Fields: map[string]any{"fast_pretreatment": true},
+			},
+			{
+				ID:     "no_prompt_optimizer",
+				Fields: map[string]any{"prompt_optimizer": false},
+			},
 		},
 	},
 }
@@ -136,6 +229,16 @@ var toolOptionFields = map[string]map[string][]ToolOptionField{
 // for a driver impl, in declaration order. An unknown impl has none.
 func ToolOptionSchema(tool, impl string) []ToolOptionField {
 	byImpl, ok := toolOptionFields[tool]
+	if !ok {
+		return nil
+	}
+	return byImpl[impl]
+}
+
+// ToolOptionPresets returns the presets one tool offers for a driver
+// impl, in declaration order. An unknown impl has none.
+func ToolOptionPresets(tool, impl string) []ToolOptionPreset {
+	byImpl, ok := toolOptionPresets[tool]
 	if !ok {
 		return nil
 	}

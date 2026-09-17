@@ -23,6 +23,7 @@ const state = {
             name: 'background',
             kind: 'enum' as const,
             values: ['auto', 'opaque', 'transparent'],
+            default: 'auto',
           },
           {
             name: 'output_compression',
@@ -30,8 +31,15 @@ const state = {
             min: 0,
             max: 100,
           },
+          {
+            name: 'input_fidelity',
+            kind: 'enum' as const,
+            values: ['low', 'high'],
+            default: 'low',
+          },
         ],
         values: { background: 'transparent' },
+        presets: [{ id: 'edit_fidelity', fields: { input_fidelity: 'high' } }],
       },
       {
         id: 'custom-img',
@@ -52,6 +60,7 @@ const state = {
         managed: false,
         fields: [{ name: 'camera_fixed', kind: 'bool' as const }],
         values: {},
+        presets: [{ id: 'camera_fixed', fields: { camera_fixed: true } }],
       },
     ],
   },
@@ -117,7 +126,9 @@ describe('ToolsSection', () => {
     await screen.findByText('Image generation');
     await user.click(screen.getByText('Image generation'));
     await user.click(screen.getByLabelText('Background'));
-    await user.click(screen.getByRole('option', { name: 'unset' }));
+    await user.click(
+      screen.getByRole('option', { name: 'Follow the provider default' }),
+    );
     await user.click(screen.getByRole('button', { name: /Save/i }));
     await waitFor(() =>
       expect(apiMock.saveToolOptions).toHaveBeenCalledTimes(1),
@@ -126,6 +137,45 @@ describe('ToolsSection', () => {
       image: Record<string, Record<string, unknown>>;
     };
     expect(req.image['openai-img'].background).toBeUndefined();
+  });
+
+  it('shows what an unset knob falls back to', async () => {
+    const user = userEvent.setup();
+    render(<ToolsSection />);
+    await screen.findByText('Image generation');
+    await user.click(screen.getByText('Image generation'));
+    // The field row explains the knob and names the documented default,
+    // while the control itself stays on "follow the provider default".
+    expect(
+      screen.getByText(
+        'Output transparency; needs a format that carries alpha.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText('· default auto')).toBeInTheDocument();
+  });
+
+  it('fills a provider preset into the form', async () => {
+    const user = userEvent.setup();
+    render(<ToolsSection />);
+    await screen.findByText('Image generation');
+    await user.click(screen.getByText('Image generation'));
+    // Presets never write on their own: they stage values for the save
+    // the user still has to make, and they leave other knobs alone.
+    await user.click(
+      screen.getByRole('button', { name: 'Match the input closely' }),
+    );
+    expect(screen.getByLabelText('Input fidelity')).toHaveTextContent('high');
+    await user.click(screen.getByRole('button', { name: /Save/i }));
+    await waitFor(() =>
+      expect(apiMock.saveToolOptions).toHaveBeenCalledTimes(1),
+    );
+    const req = apiMock.saveToolOptions.mock.calls[0][0] as {
+      image: Record<string, Record<string, unknown>>;
+    };
+    expect(req.image['openai-img']).toEqual({
+      background: 'transparent',
+      input_fidelity: 'high',
+    });
   });
 
   it('surfaces a save failure', async () => {

@@ -21,6 +21,16 @@ type ToolOptionFieldView struct {
 	// ExclusiveMin/Max mark bounds the value must stay strictly within.
 	ExclusiveMin bool `json:"exclusive_min,omitempty"`
 	ExclusiveMax bool `json:"exclusive_max,omitempty"`
+	// Default is the provider default the driver documents, shown as a
+	// hint while the knob stays unset.
+	Default string `json:"default,omitempty"`
+}
+
+// ToolOptionPresetView is a user-invoked starting point: the page fills
+// these values into the form and nothing is stored until the user saves.
+type ToolOptionPresetView struct {
+	ID     string         `json:"id"`
+	Fields map[string]any `json:"fields"`
 }
 
 // ToolOptionInstanceView is one deployment a card can configure. Id is
@@ -33,6 +43,9 @@ type ToolOptionInstanceView struct {
 	Impl    string                `json:"impl"`
 	Managed bool                  `json:"managed"`
 	Fields  []ToolOptionFieldView `json:"fields"`
+	// Presets are the driver's user-invoked starting points, in
+	// declaration order.
+	Presets []ToolOptionPresetView `json:"presets,omitempty"`
 	// Values are the configured knob values keyed by dotted field path.
 	Values map[string]any `json:"values"`
 }
@@ -120,6 +133,15 @@ func toolOptionInstance(
 			Max:          field.Max,
 			ExclusiveMin: field.ExclusiveMin,
 			ExclusiveMax: field.ExclusiveMax,
+			Default:      field.Default,
+		})
+	}
+	presets := config.ToolOptionPresets(tool, prov.Impl)
+	views := make([]ToolOptionPresetView, 0, len(presets))
+	for _, preset := range presets {
+		views = append(views, ToolOptionPresetView{
+			ID:     preset.ID,
+			Fields: preset.Fields,
 		})
 	}
 	return ToolOptionInstanceView{
@@ -128,6 +150,7 @@ func toolOptionInstance(
 		Impl:    prov.Impl,
 		Managed: managed,
 		Fields:  fields,
+		Presets: views,
 		Values:  config.FlattenToolOptions(schema, values),
 	}
 }
