@@ -23,6 +23,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/workspace"
 
 	"github.com/GizClaw/opencraft/internal/foundation/utils/imageutil"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/wsread"
 )
 
 // Name is the canonical view_image tool name.
@@ -117,7 +118,7 @@ func (t *Tool) Execute(
 			"%s: path is required", Name,
 		)
 	}
-	data, err := readSource(ctx, t.ws, args.Path)
+	data, err := wsread.Capped(ctx, t.ws, args.Path, maxSourceBytes)
 	if err != nil {
 		return message.Content{}, fmt.Errorf(
 			"%s: read %s: %w", Name, args.Path, err,
@@ -144,39 +145,4 @@ func (t *Tool) Execute(
 		)},
 		message.ImagePart{Source: source},
 	}}, nil
-}
-
-// readSource reads one workspace file under the per-image cap. A
-// workspace that supports bounded reads fails an oversized file instead
-// of materializing it; other workspaces fall back to a full read.
-func readSource(
-	ctx context.Context, ws workspace.Workspace, path string,
-) ([]byte, error) {
-	if lr, ok := ws.(workspace.LimitedReader); ok {
-		data, err := lr.ReadLimited(ctx, path, int64(maxSourceBytes))
-		if err != nil {
-			return nil, err
-		}
-		if len(data) > maxSourceBytes {
-			// Defensive: the interface rejects oversized files, but a
-			// backend that returns more than it was asked for must not
-			// reach the decoder either.
-			return nil, errdefs.Validationf(
-				"%s: %s is over the %d-byte limit",
-				Name, path, maxSourceBytes,
-			)
-		}
-		return data, nil
-	}
-	data, err := ws.Read(ctx, path)
-	if err != nil {
-		return nil, err
-	}
-	if len(data) > maxSourceBytes {
-		return nil, errdefs.Validationf(
-			"%s: %s is %d bytes, over the %d-byte limit",
-			Name, path, len(data), maxSourceBytes,
-		)
-	}
-	return data, nil
 }

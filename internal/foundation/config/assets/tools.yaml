@@ -60,7 +60,9 @@ resources:
       max_bytes: 786000
   # Text-to-image generation: routes an image-output request through the
   # inference router, which selects an image-capable model from the
-  # user's generate targets; generated files land under generated/.
+  # user's generate targets. Reference images carry image-to-image /
+  # edits, mask and partial_images travel as provider extensions, and
+  # the generated files (plus streamed previews) land under generated/.
   tool.imagegen:
     kind: tool.Source
     impl: opencraft/imagegen
@@ -68,8 +70,10 @@ resources:
       router: router
       hostworkspace: hostws
   # Text-to-video generation: routes a video-output request through the
-  # inference router (MiniMax Hailuo / ByteDance Seedance), downloads
-  # the finished artifact, and persists it under generated/.
+  # inference router (MiniMax Hailuo / ByteDance Seedance). First/last
+  # frames and reference inputs ride as media parts, provider knobs
+  # travel as video_options extensions, and the finished artifact is
+  # downloaded and persisted under generated/.
   tool.videogen:
     kind: tool.Source
     impl: opencraft/videogen

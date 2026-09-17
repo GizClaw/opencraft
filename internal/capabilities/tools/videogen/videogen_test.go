@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/inference/model"
 	"github.com/GizClaw/flowcraft/core/inference/route"
@@ -52,20 +53,20 @@ func TestExecuteDownloadsAndSavesVideo(t *testing.T) {
 		) (inference.GenerateResponse, route.Trace, error) {
 			gotRequest = req
 			return inference.GenerateResponse{
-					Message: message.Message{
-						Role: message.RoleAssistant,
-						Content: message.Content{
-							Parts: []message.Part{videoPart(t, srv.URL)},
-						},
+				Message: message.Message{
+					Role: message.RoleAssistant,
+					Content: message.Content{
+						Parts: []message.Part{videoPart(t, srv.URL)},
 					},
-				}, route.Trace{
-					Executed: model.ModelRef{
-						ID: model.ModelID{
-							Provider: "bytedance",
-							Name:     "doubao-seedance-2-0",
-						},
+				},
+			}, route.Trace{
+				Executed: model.ModelRef{
+					ID: model.ModelID{
+						Provider: "bytedance",
+						Name:     "doubao-seedance-2-0",
 					},
-				}, nil
+				},
+			}, nil
 		},
 	}
 
@@ -165,6 +166,358 @@ func TestExecuteFirstFrameReadsWorkspaceImage(t *testing.T) {
 	}
 }
 
+func writePNG(t *testing.T, ws workspace.Workspace, path string) {
+	t.Helper()
+	if err := ws.Write(context.Background(), path, pngBytes); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestExecuteLowersRequestKnobs pins the canonical controls and the
+// model hint onto the routed request.
+func TestExecuteLowersRequestKnobs(t *testing.T) {
+	ws, err := workspace.NewLocalWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotRequest inference.GenerateRequest
+	tool := &Tool{
+		ws:     ws,
+		client: &http.Client{},
+		generate: func(
+			_ context.Context, req inference.GenerateRequest,
+		) (inference.GenerateResponse, route.Trace, error) {
+			gotRequest = req
+			return inference.GenerateResponse{}, route.Trace{}, nil
+		},
+	}
+	_, err = tool.Execute(context.Background(), `{
+		"prompt":"a cat",
+		"model":"minimax-inst-a/MiniMax-Hailuo-2.3",
+		"aspect_ratio":"16:9",
+		"seed":7,
+		"resolution":"1080P"
+	}`)
+	if err == nil || !strings.Contains(err.Error(), "no video parts") {
+		t.Fatalf("error = %v, want no-video-parts error", err)
+	}
+	if gotRequest.ModelHint != "minimax-inst-a/MiniMax-Hailuo-2.3" {
+		t.Errorf("model hint = %q", gotRequest.ModelHint)
+	}
+	intent := gotRequest.Input.Content.Intent.Video
+	if intent.AspectRatio != media.AspectRatio("16:9") {
+		t.Errorf("aspect ratio = %q, want 16:9", intent.AspectRatio)
+	}
+	if intent.Seed == nil || *intent.Seed != 7 {
+		t.Errorf("seed = %v, want 7", intent.Seed)
+	}
+	if intent.Resolution != "1080p" {
+		t.Errorf("resolution = %q, want the lowercased tier", intent.Resolution)
+	}
+}
+
+// TestExecuteBookendFrames pins the count-based input contract: two
+// frames arrive as ordered image parts, and a lone last_frame carries
+// the closing-frame-only knob.
+func TestExecuteBookendFrames(t *testing.T) {
+	ws, err := workspace.NewLocalWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	writePNG(t, ws, "first.png")
+	writePNG(t, ws, "last.png")
+	var gotRequest inference.GenerateRequest
+	var gotFields map[string]any
+	tool := &Tool{
+		ws:     ws,
+		client: &http.Client{},
+		generate: func(
+			_ context.Context, req inference.GenerateRequest,
+		) (inference.GenerateResponse, route.Trace, error) {
+			gotRequest = req
+			return inference.GenerateResponse{}, route.Trace{}, nil
+		},
+		extensions: func(fields map[string]any) (inference.Extensions, error) {
+			gotFields = fields
+			return nil, nil
+		},
+	}
+	_, err = tool.Execute(context.Background(),
+		`{"prompt":"x","first_frame":"first.png","last_frame":"last.png"}`)
+	if err == nil || !strings.Contains(err.Error(), "no video parts") {
+		t.Fatalf("error = %v, want no-video-parts error", err)
+	}
+	parts := gotRequest.Input.Content.Parts
+	if len(parts) != 3 {
+		t.Fatalf("parts = %d, want first + last + prompt", len(parts))
+	}
+	for index, want := range []string{"first.png", "last.png"} {
+		img, ok := parts[index].(message.ImagePart)
+		if !ok {
+			t.Fatalf("part %d = %T, want ImagePart", index, parts[index])
+		}
+		if img.Source.Kind() != media.SourceInline {
+			t.Errorf("part %d is %s, want inline", index, img.Source.Kind())
+		}
+		_ = want
+	}
+	if _, ok := gotFields["last_frame_only"]; ok {
+		t.Errorf("two frames must not set last_frame_only: %+v", gotFields)
+	}
+
+	// A lone closing frame asks for the provider knob, because one image
+	// is otherwise read as the opening frame.
+	if _, err := tool.Execute(
+		context.Background(), `{"prompt":"x","last_frame":"last.png"}`,
+	); err == nil || !strings.Contains(err.Error(), "no video parts") {
+		t.Fatalf("error = %v, want no-video-parts error", err)
+	}
+	if gotFields["last_frame_only"] != true {
+		t.Fatalf("lone last_frame fields = %+v, want last_frame_only", gotFields)
+	}
+	parts = gotRequest.Input.Content.Parts
+	if len(parts) != 2 {
+		t.Fatalf("parts = %d, want closing frame + prompt", len(parts))
+	}
+}
+
+// TestExecuteReferenceInputs pins the omni-reference path: reference
+// images stay inline, reference videos and audio ride as provider-
+// fetched URLs, and the ambiguous one/two-image shapes are rejected.
+func TestExecuteReferenceInputs(t *testing.T) {
+	ws, err := workspace.NewLocalWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"a.png", "b.png", "c.png"} {
+		writePNG(t, ws, name)
+	}
+	var gotRequest inference.GenerateRequest
+	var gotFields map[string]any
+	tool := &Tool{
+		ws:     ws,
+		client: &http.Client{},
+		generate: func(
+			_ context.Context, req inference.GenerateRequest,
+		) (inference.GenerateResponse, route.Trace, error) {
+			gotRequest = req
+			return inference.GenerateResponse{}, route.Trace{}, nil
+		},
+		extensions: func(fields map[string]any) (inference.Extensions, error) {
+			gotFields = fields
+			return nil, nil
+		},
+	}
+	_, err = tool.Execute(context.Background(), `{
+		"prompt":"x",
+		"reference_images":["a.png","b.png","c.png"],
+		"reference_videos":["https://cdn.example/clip.mp4"],
+		"reference_audios":["https://cdn.example/track.mp3"]
+	}`)
+	if err == nil || !strings.Contains(err.Error(), "no video parts") {
+		t.Fatalf("error = %v, want no-video-parts error", err)
+	}
+	parts := gotRequest.Input.Content.Parts
+	if len(parts) != 6 {
+		t.Fatalf("parts = %d, want 3 images + video + audio + prompt", len(parts))
+	}
+	for index := range 3 {
+		if _, ok := parts[index].(message.ImagePart); !ok {
+			t.Errorf("part %d = %T, want ImagePart", index, parts[index])
+		}
+	}
+	video, ok := parts[3].(message.VideoPart)
+	if !ok || video.Source.Kind() != media.SourceURL {
+		t.Fatalf("part 3 = %#v, want a URL video reference", parts[3])
+	}
+	audio, ok := parts[4].(message.AudioPart)
+	if !ok || audio.Source.Kind() != media.SourceURL {
+		t.Fatalf("part 4 = %#v, want a URL audio reference", parts[4])
+	}
+	if _, ok := parts[5].(message.TextPart); !ok {
+		t.Fatalf("part 5 = %T, want the prompt last", parts[5])
+	}
+	if _, ok := gotFields["omni_reference_task_type"]; ok {
+		t.Errorf("knobs must stay empty when not requested: %+v", gotFields)
+	}
+
+	for _, tc := range []struct {
+		name string
+		args string
+		want string
+	}{
+		{"two reference images",
+			`{"prompt":"x","reference_images":["a.png","b.png"]}`,
+			"at least three images"},
+		{"frames and references",
+			`{"prompt":"x","first_frame":"a.png","reference_images":["a.png","b.png","c.png"]}`,
+			"mutually exclusive"},
+		{"local reference video",
+			`{"prompt":"x","reference_videos":["clip.mp4"]}`,
+			"absolute http(s) URL"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := tool.Execute(context.Background(), tc.args)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("Execute(%s) error = %v, want containing %q",
+					tc.args, err, tc.want)
+			}
+		})
+	}
+}
+
+// TestExecuteProviderKnobs pins that the driver-specific knobs travel
+// as provider extension fields rather than being dropped.
+func TestExecuteProviderKnobs(t *testing.T) {
+	ws, err := workspace.NewLocalWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotFields map[string]any
+	tool := &Tool{
+		ws:     ws,
+		client: &http.Client{},
+		generate: func(
+			_ context.Context, _ inference.GenerateRequest,
+		) (inference.GenerateResponse, route.Trace, error) {
+			return inference.GenerateResponse{}, route.Trace{}, nil
+		},
+		extensions: func(fields map[string]any) (inference.Extensions, error) {
+			gotFields = fields
+			return nil, nil
+		},
+	}
+	_, err = tool.Execute(context.Background(), `{
+		"prompt":"x",
+		"camera_fixed":true,
+		"generate_audio":true,
+		"service_tier":"flex",
+		"output_format":"mov",
+		"omni_reference_task_type":"extend",
+		"web_search":true,
+		"callback_url":"https://example/hook",
+		"safety_identifier":"user-1",
+		"prompt_optimizer":false,
+		"fast_pretreatment":true,
+		"priority":5,
+		"execution_expires_after":7200
+	}`)
+	if err == nil || !strings.Contains(err.Error(), "no video parts") {
+		t.Fatalf("error = %v, want no-video-parts error", err)
+	}
+	want := map[string]any{
+		"camera_fixed":             true,
+		"generate_audio":           true,
+		"service_tier":             "flex",
+		"output_format":            "mov",
+		"omni_reference_task_type": "extend",
+		"web_search":               true,
+		"callback_url":             "https://example/hook",
+		"safety_identifier":        "user-1",
+		"prompt_optimizer":         false,
+		"fast_pretreatment":        true,
+		"priority":                 int32(5),
+		"execution_expires_after":  int64(7200),
+	}
+	for name, value := range want {
+		if got, ok := gotFields[name]; !ok || got != value {
+			t.Errorf("field %s = %v (present %v), want %v", name, got, ok, value)
+		}
+	}
+}
+
+// TestExecuteVerifiesAppliedKnobs pins the post-call guard: a provider
+// that never received the knob (route fallback) must fail the call
+// instead of returning a video without it.
+func TestExecuteVerifiesAppliedKnobs(t *testing.T) {
+	ws, err := workspace.NewLocalWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	attached := fakeExtension{
+		provider: "bytedance-inst-a",
+		id:       videoExtensionID,
+		fields:   []inference.ExtensionField{"camera_fixed"},
+	}
+	tool := &Tool{
+		ws:     ws,
+		client: &http.Client{},
+		generate: func(
+			_ context.Context, _ inference.GenerateRequest,
+		) (inference.GenerateResponse, route.Trace, error) {
+			return inference.GenerateResponse{
+				Metadata: inference.Metadata{
+					Model: model.ModelID{
+						Provider: "minimax-inst-b",
+						Name:     "MiniMax-Hailuo-2.3",
+					},
+				},
+			}, route.Trace{}, nil
+		},
+		extensions: func(map[string]any) (inference.Extensions, error) {
+			return inference.Extensions{attached}, nil
+		},
+	}
+	_, err = tool.Execute(context.Background(),
+		`{"prompt":"x","camera_fixed":true}`)
+	if err == nil || !strings.Contains(err.Error(), "does not support camera_fixed") {
+		t.Fatalf("error = %v, want an unsupported-knob rejection", err)
+	}
+}
+
+// TestExecuteExplainsRejectionCause pins the cause-chain surfacing: an
+// inference rejection renders only kind and field, so the tool has to
+// append the readable reason.
+func TestExecuteExplainsRejectionCause(t *testing.T) {
+	ws, err := workspace.NewLocalWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := &Tool{
+		ws:     ws,
+		client: &http.Client{},
+		generate: func(
+			_ context.Context, _ inference.GenerateRequest,
+		) (inference.GenerateResponse, route.Trace, error) {
+			return inference.GenerateResponse{}, route.Trace{},
+				inference.NewError(
+					inference.UnsupportedFeature,
+					model.OperationGenerate,
+					inference.FieldGenerateIntentVideoResolution,
+					errdefs.Validation(errors.New(
+						"MiniMax-Hailuo-2.3 serves 768P/1080P tiers, not \"4k\"")),
+				)
+		},
+	}
+	_, err = tool.Execute(context.Background(),
+		`{"prompt":"x","resolution":"4k"}`)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	for _, want := range []string{
+		"unsupported_feature",
+		`serves 768P/1080P tiers, not "4k"`,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error missing %q: %v", want, err)
+		}
+	}
+}
+
+func TestVideoExtension(t *testing.T) {
+	for mediaType, want := range map[string]string{
+		"video/mp4":              ".mp4",
+		"video/webm":             ".webm",
+		"video/quicktime":        ".mov",
+		"application/x-matroska": ".mp4",
+		"":                       ".mp4",
+	} {
+		if got := videoExtension(mediaType); got != want {
+			t.Errorf("videoExtension(%q) = %q, want %q", mediaType, got, want)
+		}
+	}
+}
+
 func TestExecuteValidation(t *testing.T) {
 	ws, err := workspace.NewLocalWorkspace(t.TempDir())
 	if err != nil {
@@ -192,6 +545,10 @@ func TestExecuteValidation(t *testing.T) {
 			"png, jpg, or webp"},
 		{"missing frame", `{"prompt":"x","first_frame":"nope.png"}`,
 			"first_frame"},
+		{"bad ratio", `{"prompt":"x","aspect_ratio":"16x9"}`,
+			"aspect ratio must use width:height"},
+		{"knob without router", `{"prompt":"x","camera_fixed":true}`,
+			"router is not wired"},
 		{"junk json", `{`, "parse arguments"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -341,3 +698,19 @@ func TestExecuteUnwiredRouter(t *testing.T) {
 }
 
 var pngBytes = []byte("\x89PNG\r\n\x1a\nfake-first-frame")
+
+// fakeExtension stands in for a typed provider extension in the
+// applied-knob verification.
+type fakeExtension struct {
+	provider string
+	id       string
+	fields   []inference.ExtensionField
+}
+
+func (e fakeExtension) ProviderID() string  { return e.provider }
+func (e fakeExtension) ExtensionID() string { return e.id }
+func (e fakeExtension) ActiveFields() []inference.ExtensionField {
+	return e.fields
+}
+func (fakeExtension) Validate() error              { return nil }
+func (e fakeExtension) Clone() inference.Extension { return e }
