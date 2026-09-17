@@ -159,7 +159,7 @@
       "type": "openai",
       "vendor": "DeepSeek",
       "label": "DeepSeek V4 Pro",
-      "source": "https://api-docs.deepseek.com/quick_start/pricing + /guides/thinking_mode (2026-09-15)",
+      "source": "https://api-docs.deepseek.com/guides/responses_api + /quick_start/pricing + /guides/thinking_mode (2026-09-17; hosted web_search verified live against the Responses API on V4 Pro)",
       "name": "deepseek-v4-pro",
       "kind": "generate",
       "capabilities": {
@@ -174,7 +174,8 @@
             "high": "high",
             "xhigh": "max"
           }
-        }
+        },
+        "hosted_web_search": true
       },
       "limits": {
         "max_input_tokens": 1000000,

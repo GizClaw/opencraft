@@ -224,3 +224,33 @@ func setCatalogEnv(t *testing.T) {
 		}
 	}
 }
+
+// TestInferenceCatalogHostedSearchFacts pins the provider-side search
+// declarations the catalog ships. DeepSeek's Responses API executes
+// web_search on V4 Pro and ignores it for the flash models, so a row
+// added from the catalog must start with the checkbox in the state the
+// upstream can honour: a pre-ticked box that does nothing is worse than
+// no box at all. These facts are maintenance data — when a provider
+// changes what it honours, this test is where the catalog update lands.
+func TestInferenceCatalogHostedSearchFacts(t *testing.T) {
+	setCatalogEnv(t)
+	catalog, err := LoadInferenceCatalog()
+	if err != nil {
+		t.Fatalf("load inference catalog: %v", err)
+	}
+	for id, want := range map[string]bool{
+		"deepseek/deepseek-v4-pro":      true,
+		"deepseek/deepseek-flash":       false,
+		"openai/gpt-5.6-sol":            true,
+		"bytedance/doubao-seed-2-1-pro": true,
+	} {
+		entry, ok := catalog.Model(id)
+		if !ok {
+			t.Fatalf("catalog model %s is missing", id)
+		}
+		if got := entry.Capabilities.HostedWebSearch; got != want {
+			t.Errorf("catalog model %s hosted_web_search = %v, want %v",
+				id, got, want)
+		}
+	}
+}
