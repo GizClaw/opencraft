@@ -475,6 +475,7 @@
     "tabUsage": "Usage",
     "templatesGroup": "Templates",
     "toolField": {
+      "aspect_ratio": "Aspect ratio",
       "background": "Background",
       "callback_url": "Callback URL",
       "camera_fixed": "Fixed camera",
@@ -501,6 +502,7 @@
       "web_search": "Web search"
     },
     "toolFieldDesc": {
+      "aspect_ratio": "Pins the output shape; conflicts with a per-call size.",
       "background": "Output transparency; needs a format that carries alpha.",
       "callback_url": "Provider POSTs task updates here after a challenge handshake.",
       "camera_fixed": "Keep the camera static while the subject moves.",
@@ -534,6 +536,7 @@
       "no_prompt_optimizer": "Keep the prompt as-is",
       "no_watermark": "No watermark",
       "optimize_standard": "Thorough prompt rewrite",
+      "portrait_9_16": "Portrait 9:16",
       "size_2k": "2K output",
       "transparent_background": "Transparent background",
       "with_audio": "With audio"

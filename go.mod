@@ -3,11 +3,11 @@ module github.com/GizClaw/opencraft
 go 1.25.13
 
 require (
-	github.com/GizClaw/flowcraft/core v0.4.3
-	github.com/GizClaw/flowcraft/driver/anthropic v0.3.1
-	github.com/GizClaw/flowcraft/driver/bytedance v0.3.1
-	github.com/GizClaw/flowcraft/driver/minimax v0.3.1
-	github.com/GizClaw/flowcraft/driver/openai v0.3.1
+	github.com/GizClaw/flowcraft/core v0.4.4
+	github.com/GizClaw/flowcraft/driver/anthropic v0.3.2
+	github.com/GizClaw/flowcraft/driver/bytedance v0.3.2
+	github.com/GizClaw/flowcraft/driver/minimax v0.3.2
+	github.com/GizClaw/flowcraft/driver/openai v0.3.2
 	github.com/PuerkitoBio/goquery v1.12.0
 	github.com/disintegration/imaging v1.6.2
 	github.com/go-shiori/go-readability v0.0.0-20251205110129-5db1dc9836f0
