@@ -804,7 +804,8 @@
     "selectProvider": "至少选择一个 provider",
     "subtitle": "勾选你拥有的 provider，按优先级排序；配置写入 ~/.opencraft/config/opencraft.yaml",
     "title": "推理配置",
-    "webSearch": "hosted web search"
+    "webSearch": "hosted web search",
+    "webSearchHint": "需要上游支持 provider 侧搜索（OpenAI Responses、DeepSeek V4 Pro、ByteDance Ark）；chat 面或不支持的模型会忽略这个设置，同一个 deployment 里的其他 generate 模型也必须勾选。"
   },
   "tool": {
     "running": "运行中",

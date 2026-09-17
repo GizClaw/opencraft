@@ -1811,7 +1811,10 @@ export function ConfigPage() {
                                     </div>
                                   )}
                                   <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-edge pt-2.5">
-                                    <label className="flex items-center gap-1.5 whitespace-nowrap text-dim hover:text-fg">
+                                    <label
+                                      className="flex items-center gap-1.5 whitespace-nowrap text-dim hover:text-fg"
+                                      title={t('setup.webSearchHint')}
+                                    >
                                       <input
                                         type="checkbox"
                                         checked={m.webSearch}
@@ -1825,6 +1828,11 @@ export function ConfigPage() {
                                       />
                                       {t('setup.webSearch')}
                                     </label>
+                                    {m.webSearch && (
+                                      <span className="max-w-96 text-[0.7rem] text-dim">
+                                        {t('setup.webSearchHint')}
+                                      </span>
+                                    )}
                                     <label className="flex items-center gap-2 whitespace-nowrap">
                                       <span className="font-medium text-dim">
                                         {t('setup.maxInputTokens')}

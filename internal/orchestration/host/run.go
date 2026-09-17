@@ -11,6 +11,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/message"
+	runtimecore "github.com/GizClaw/flowcraft/core/runtime"
 	coresession "github.com/GizClaw/flowcraft/core/runtime/session"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	otellog "go.opentelemetry.io/otel/log"
@@ -236,12 +237,14 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 	// The assistant graph attaches provider-side web search through
 	// board:llm_extensions. The bag is computed from the inference
 	// config (every enabled deployment whose generate models declare
-	// hosted web search), not from this turn's model choice: flowcraft
-	// strips entries whose deployment id is not selected, so seeding
-	// the full bag keeps search available whichever deployment the
-	// router picks. Leave the key unset (the graph defaults to an
-	// empty bag) when nothing is eligible or config cannot be read.
-	if exts := hostedWebSearchExtensions(h.userDir); len(exts) > 0 {
+	// hosted web search) and filtered against the live runtime's
+	// provider registry, not computed from this turn's model choice:
+	// flowcraft strips entries whose deployment id is not selected, so
+	// seeding the full bag keeps search available whichever deployment
+	// the router picks. Leave the key unset (the graph defaults to an
+	// empty bag) when nothing is eligible, the config cannot be read,
+	// or the live runtime cannot decode the entry.
+	if exts := h.hostedWebSearchExtensions(ctx, ctrl.Runtime()); len(exts) > 0 {
 		inputs["llm_extensions"] = exts
 	}
 	turn, err := lease.Session().StartWithOptions(ctx, agent.Request{
@@ -331,18 +334,78 @@ func reasoningCapableThink(userDir, model, think string) string {
 	return think
 }
 
+// inferenceResourceName is the deploy-document resource id of the
+// inference assembly the assistant graph binds. Reading it from the
+// live runtime yields the provider registry of the generation that
+// will serve the turn.
+const inferenceResourceName = "infer"
+
 // hostedWebSearchExtensions builds the board extension bag for the
-// assistant graph from the current inference configuration. A config
-// read failure degrades to an empty bag (search stays off) instead of
-// failing the turn.
-func hostedWebSearchExtensions(userDir string) []config.HostedWebSearchExtension {
-	cfg, err := config.LoadInference(userDir)
+// assistant graph from the current inference configuration, keeping
+// only the entries the live runtime generation can decode.
+//
+// The bag is derived from the config file while the decoders come from
+// the assembled runtime, so the two can disagree: a deferred rebuild
+// keeps serving the previous generation after the file changed, and a
+// generation swap can interleave with the read below. Seeding an entry
+// the runtime does not serve fails the whole turn at the inference node
+// — flowcraft rejects unregistered extension identities rather than
+// ignoring them — so unknown deployments are dropped instead. A config
+// read failure and an unresolvable runtime both degrade to an empty bag:
+// search stays off for that turn, and the next generation picks the
+// entry up.
+func (h *Host) hostedWebSearchExtensions(
+	ctx context.Context,
+	rt *runtimecore.Runtime,
+) []config.HostedWebSearchExtension {
+	if h == nil {
+		return nil
+	}
+	cfg, err := config.LoadInference(h.userDir)
 	if err != nil {
-		telemetry.WarnErr(context.Background(),
+		telemetry.WarnErr(ctx,
 			"host: load inference config for hosted web search failed", err)
 		return nil
 	}
-	return cfg.WebSearchExtensions()
+	exts := cfg.WebSearchExtensions()
+	if len(exts) == 0 {
+		return nil
+	}
+	decoders := inferenceExtensionDecoders(rt)
+	if len(decoders) == 0 {
+		telemetry.Warn(ctx, "host: hosted web search disabled: "+
+			"the live runtime exposes no inference providers")
+		return nil
+	}
+	out := make([]config.HostedWebSearchExtension, 0, len(exts))
+	for _, ext := range exts {
+		if _, ok := decoders[ext.Provider+"/"+ext.ID]; !ok {
+			telemetry.Warn(ctx, "host: hosted web search extension dropped",
+				otellog.String("provider", ext.Provider))
+			continue
+		}
+		out = append(out, ext)
+	}
+	return out
+}
+
+// inferenceExtensionDecoders returns the live runtime generation's
+// provider-carried extension decoders, keyed "provider/extension".
+func inferenceExtensionDecoders(
+	rt *runtimecore.Runtime,
+) map[string]inference.ExtensionDecoder {
+	if rt == nil {
+		return nil
+	}
+	value, ok := rt.Resource(inferenceResourceName)
+	if !ok {
+		return nil
+	}
+	assembly, ok := value.(*inference.Assembly)
+	if !ok || assembly == nil {
+		return nil
+	}
+	return assembly.ExtensionDecoders()
 }
 
 func validateUserMessage(msg message.Message) error {

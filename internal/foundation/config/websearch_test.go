@@ -121,6 +121,100 @@ func TestWebSearchExtensionsSkipsDisabledAndUnsupported(t *testing.T) {
 	}
 }
 
+// TestWebSearchExtensionsCustomDriver covers rows outside the built-in
+// presets (plugin-declared providers and settings-page rows with an
+// explicit driver): the extension gate is the driver impl, so a custom
+// provider type must still reach its wire.
+func TestWebSearchExtensionsCustomDriver(t *testing.T) {
+	custom := webSearchInstance("vendorx", "onboarding", "responses", true)
+	custom.Driver = "openai"
+	cfg := InferenceConfig{Instances: []Instance{custom}}
+	out := cfg.WebSearchExtensions()
+	if len(out) != 1 {
+		t.Fatalf("extensions = %+v, want one", out)
+	}
+	if out[0].Provider != "vendorx-onboarding" {
+		t.Fatalf("provider = %q, want vendorx-onboarding", out[0].Provider)
+	}
+	ws, ok := out[0].Fields["web_search"].(map[string]any)
+	if !ok {
+		t.Fatalf("fields = %+v, want web_search knob", out[0].Fields)
+	}
+	if _, ok := ws["tool_choice"].(map[string]any); !ok {
+		t.Fatalf("web_search fields = %+v, want the OpenAI tool_choice", ws)
+	}
+}
+
+func TestWebSearchExtensionsCustomDriverBytedance(t *testing.T) {
+	custom := webSearchInstance("vendorx", "onboarding", "", true)
+	custom.Driver = "bytedance"
+	cfg := InferenceConfig{Instances: []Instance{custom}}
+	out := cfg.WebSearchExtensions()
+	if len(out) != 1 {
+		t.Fatalf("extensions = %+v, want one", out)
+	}
+	ws, ok := out[0].Fields["web_search"].(map[string]any)
+	if !ok {
+		t.Fatalf("fields = %+v, want web_search knob", out[0].Fields)
+	}
+	if _, hasToolChoice := ws["tool_choice"]; hasToolChoice {
+		t.Fatalf("bytedance web_search must not carry tool_choice: %+v", ws)
+	}
+}
+
+func TestWebSearchExtensionsCustomDriverGates(t *testing.T) {
+	// A custom row whose driver has no hosted web search, and one whose
+	// OpenAI-wire driver sits on the chat surface (the compiler rejects
+	// the knob there), both stay out of the bag.
+	unsupported := webSearchInstance("vendorx", "onboarding", "responses", true)
+	unsupported.Driver = "anthropic"
+	chat := webSearchInstance("vendory", "chat", "chat", true)
+	chat.Driver = "openai"
+	cfg := InferenceConfig{Instances: []Instance{unsupported, chat}}
+	if out := cfg.WebSearchExtensions(); len(out) != 0 {
+		t.Fatalf("extensions = %+v, want none", out)
+	}
+}
+
+// TestWebSearchExtensionsCustomDriverRoundTrip covers the write and
+// read paths the settings page and inference.upsert share: a custom
+// provider type carries its driver through the document and the
+// reloaded row still reaches the driver's wire.
+func TestWebSearchExtensionsCustomDriverRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	written := InferenceConfig{Instances: []Instance{{
+		StableID:  "onboarding",
+		Type:      "vendorx",
+		Driver:    "openai",
+		API:       "responses",
+		Endpoint:  "https://example.invalid/v1",
+		KeySource: KeyLiteral,
+		KeyValue:  "test-key",
+		Enabled:   true,
+		Models: []Model{{
+			Name: "vendorx-chat",
+			Kind: "generate",
+			Capabilities: model.ModelCapabilities{
+				HostedWebSearch: true,
+			},
+		}},
+	}}}
+	if err := WriteInference(dir, written); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadInference(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := loaded.WebSearchExtensions()
+	if len(out) != 1 {
+		t.Fatalf("extensions = %+v, want one", out)
+	}
+	if out[0].Provider != "vendorx-onboarding" {
+		t.Fatalf("provider = %q, want vendorx-onboarding", out[0].Provider)
+	}
+}
+
 func TestWebSearchExtensionsAzure(t *testing.T) {
 	cfg := InferenceConfig{Instances: []Instance{
 		webSearchInstance("openai", "inst-aaa", "", true),
