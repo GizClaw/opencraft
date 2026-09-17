@@ -126,6 +126,12 @@ var toolOptionFields = map[string]map[string][]ToolOptionField{
 			boolField("layer_decomposition"),
 			enumField("background", "transparent", "opaque"),
 		},
+		"minimax": {
+			enumField(
+				"aspect_ratio",
+				"1:1", "16:9", "4:3", "3:2", "2:3", "3:4", "9:16", "21:9",
+			),
+		},
 	},
 	ToolVideo: {
 		"bytedance": {
@@ -194,6 +200,12 @@ var toolOptionPresets = map[string]map[string][]ToolOptionPreset{
 			{
 				ID:     "optimize_standard",
 				Fields: map[string]any{"optimize_prompt.mode": "standard"},
+			},
+		},
+		"minimax": {
+			{
+				ID:     "portrait_9_16",
+				Fields: map[string]any{"aspect_ratio": "9:16"},
 			},
 		},
 	},

@@ -475,6 +475,7 @@
     "tabUsage": "用量",
     "templatesGroup": "模板",
     "toolField": {
+      "aspect_ratio": "画面比例",
       "background": "背景",
       "callback_url": "回调地址",
       "camera_fixed": "固定镜头",
@@ -501,6 +502,7 @@
       "web_search": "联网搜索"
     },
     "toolFieldDesc": {
+      "aspect_ratio": "固定输出画面比例；与按次传入的尺寸互斥。",
       "background": "输出透明通道；需要带 alpha 的输出格式。",
       "callback_url": "provider 在握手校验后把任务进度回调到这个地址。",
       "camera_fixed": "镜头保持静止，只让主体运动。",
@@ -534,6 +536,7 @@
       "no_prompt_optimizer": "不改写提示词",
       "no_watermark": "去掉水印",
       "optimize_standard": "充分改写提示词",
+      "portrait_9_16": "竖屏 9:16",
       "size_2k": "2K 出图",
       "transparent_background": "透明背景",
       "with_audio": "带音轨"

@@ -231,18 +231,18 @@ resources:
           dir: ${ocraft:AUDIT_DIR}
       dynamic:
         default: deferred
-        # Per-round visible budget and discovery pool. The core
-        # defaults (32 definitions / 16 KiB visible, 16 KiB pool) are
-        # sized for the always-visible baseline alone: opencraft's
-        # always set already measures ~11 KiB, so a single tool_search
-        # batch of large schemas (the media tools are 2.4-2.7 KiB each,
-        # MCP servers add ~0.6-1.3 KiB per tool) overflowed the visible
-        # set. tool_search reported those tools as exposed while the
-        # round's definitions silently dropped them, so the model was
-        # rejected with "tool ... is not exposed in this round's tool
-        # set" and looped on tool_search instead of doing the work.
-        # The pool stays smaller than (visible - always) so a tool that
-        # entered the pool can actually be shown in the next round.
+        # Per-round visible budget and discovery pool. The core defaults
+        # (32 definitions / 16 KiB visible) are sized for the
+        # always-visible baseline alone: opencraft's always set already
+        # measures ~11 KiB, so a tool_search batch of large schemas (the
+        # media tools are 2.4-2.7 KiB each, MCP servers add ~0.6-1.3 KiB
+        # per tool) does not fit and the tools the model just searched
+        # for never reach the wire. Core >= v0.4.4 reports such a name
+        # as "visible_budget" instead of claiming exposure, so the model
+        # learns the truth either way — this budget is what makes the
+        # search succeed in the first place.
+        # The pool stays smaller than (visible - always), so a tool that
+        # entered the pool is always in the next round's definitions.
         budget:
           max_definitions: 64
           max_bytes: 49152

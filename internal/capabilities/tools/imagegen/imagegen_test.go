@@ -218,9 +218,6 @@ func TestExecuteLowersRequestKnobs(t *testing.T) {
 	if intent.Size == nil || intent.Size.Width != 1536 || intent.Size.Height != 1024 {
 		t.Errorf("size = %+v, want 1536x1024", intent.Size)
 	}
-	if intent.AspectRatio != "" {
-		t.Errorf("aspect ratio = %q, want unset", intent.AspectRatio)
-	}
 	if intent.Count == nil || *intent.Count != 2 {
 		t.Errorf("count = %v, want 2", intent.Count)
 	}

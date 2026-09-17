@@ -180,6 +180,17 @@ func TestValidateToolOptions(t *testing.T) {
 				Outputs: []message.PartKind{message.PartImage},
 			},
 		}},
+	}, Instance{
+		StableID:  "d",
+		Type:      "anthropic",
+		KeySource: KeyEnv,
+		Enabled:   true,
+		Models: []Model{{
+			Name: "claude-x",
+			Capabilities: model.ModelCapabilities{
+				Outputs: []message.PartKind{message.PartText},
+			},
+		}},
 	})
 	for _, tc := range []struct {
 		name string
@@ -190,7 +201,7 @@ func TestValidateToolOptions(t *testing.T) {
 			Image: map[string]map[string]any{"nope": {"background": "auto"}},
 		}, "unknown provider"},
 		{"provider without vocabulary", ToolOptions{
-			Image: map[string]map[string]any{"minimax-c": {"background": "auto"}},
+			Image: map[string]map[string]any{"anthropic-d": {"background": "auto"}},
 		}, "does not support image-specific options"},
 		{"unknown field", ToolOptions{
 			Image: map[string]map[string]any{"openai-a": {"nope": true}},
@@ -485,5 +496,26 @@ func TestSettingsSavePrunesToolOptionsOfRemovedProviders(t *testing.T) {
 	if strings.Contains(string(raw), "camera_fixed") {
 		t.Errorf("user layer still carries the removed provider's knobs:\n%s",
 			raw)
+	}
+}
+
+// TestMinimaxImageVocabulary pins the shape-only image extension the
+// minimax driver registers (core v0.4.4 / driver v0.3.2): the ratio is
+// the one knob it carries, and only the documented values pass.
+func TestMinimaxImageVocabulary(t *testing.T) {
+	schema := ToolOptionSchema(ToolImage, "minimax")
+	if len(schema) != 1 || schema[0].Name != "aspect_ratio" {
+		t.Fatalf("minimax image vocabulary = %+v, want only aspect_ratio",
+			schema)
+	}
+	if _, err := NestToolOptions(schema, map[string]any{
+		"aspect_ratio": "9:16",
+	}); err != nil {
+		t.Errorf("documented ratio rejected: %v", err)
+	}
+	if _, err := NestToolOptions(schema, map[string]any{
+		"aspect_ratio": "5:4",
+	}); err == nil {
+		t.Error("undocumented ratio accepted")
 	}
 }
