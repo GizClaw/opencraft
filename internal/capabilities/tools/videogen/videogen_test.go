@@ -178,6 +178,48 @@ func writePNG(t *testing.T, ws workspace.Workspace, path string) {
 	}
 }
 
+// TestReadImageTypesFrameByContent pins that a frame's media type comes
+// from its bytes: a JPEG saved as .png is sent as image/jpeg instead of
+// a mislabeled part, and text saved as .png is not a frame at all.
+func TestReadImageTypesFrameByContent(t *testing.T) {
+	ws, err := workspace.NewLocalWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// SOI plus an APP0 segment, the bytes a JPEG starts with.
+	jpeg := []byte{0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10}
+	jpeg = append(jpeg, []byte("JFIF\x00")...)
+	jpeg = append(jpeg, make([]byte, 16)...)
+	for name, data := range map[string][]byte{
+		"frame.png": jpeg,
+		"notes.png": []byte("just a note\n"),
+	} {
+		if err := ws.Write(context.Background(), name, data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tool := &Tool{ws: ws, client: &http.Client{}}
+	ctx := context.Background()
+
+	part, err := tool.readImage(ctx, "frame.png", "first_frame")
+	if err != nil {
+		t.Fatal(err)
+	}
+	imagePart, ok := part.(message.ImagePart)
+	if !ok {
+		t.Fatalf("part is %T, want ImagePart", part)
+	}
+	if got := imagePart.Source.MediaType(); got != "image/jpeg" {
+		t.Errorf("media type = %q, want image/jpeg", got)
+	}
+
+	_, err = tool.readImage(ctx, "notes.png", "first_frame")
+	if err == nil || !strings.Contains(err.Error(), "png, jpg, or webp") ||
+		!strings.Contains(err.Error(), "text/plain") {
+		t.Errorf("text frame error = %v, want a format rejection", err)
+	}
+}
+
 // TestExecuteLowersRequestKnobs pins the canonical controls and the
 // model hint onto the routed request.
 func TestExecuteLowersRequestKnobs(t *testing.T) {
@@ -569,6 +611,16 @@ func TestExecuteValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A real GIF and a text file under image names: the frame format is
+	// decided by the bytes, so both are rejected for what they are.
+	for name, data := range map[string][]byte{
+		"a.gif":    append([]byte("GIF89a"), make([]byte, 16)...),
+		"text.png": []byte("just a note\n"),
+	} {
+		if err := ws.Write(context.Background(), name, data); err != nil {
+			t.Fatal(err)
+		}
+	}
 	tool := &Tool{
 		ws:     ws,
 		client: &http.Client{},
@@ -587,7 +639,9 @@ func TestExecuteValidation(t *testing.T) {
 	}{
 		{"missing prompt", `{}`, "prompt is required"},
 		{"empty prompt", `{"prompt":"  "}`, "prompt is required"},
-		{"bad frame ext", `{"prompt":"x","first_frame":"a.gif"}`,
+		{"bad frame format", `{"prompt":"x","first_frame":"a.gif"}`,
+			"png, jpg, or webp"},
+		{"text under an image name", `{"prompt":"x","first_frame":"text.png"}`,
 			"png, jpg, or webp"},
 		{"missing frame", `{"prompt":"x","first_frame":"nope.png"}`,
 			"first_frame"},

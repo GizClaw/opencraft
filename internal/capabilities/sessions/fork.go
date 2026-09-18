@@ -4,9 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"mime"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/GizClaw/flowcraft/core/agent"
@@ -17,6 +15,7 @@ import (
 	otellog "go.opentelemetry.io/otel/log"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions/state"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/filetype"
 )
 
 // ForkResult describes one newly forked conversation. Turns contains
@@ -315,17 +314,15 @@ func forkLocalFilePath(raw string) (string, bool) {
 	return path, true
 }
 
+// mediaTypeOr returns mediaType when the caller declared one, and
+// otherwise the type classified from the copied file's content, so a
+// forked attachment stored without a type is described by its bytes
+// rather than its name.
 func mediaTypeOr(path, mediaType string) string {
 	if mediaType != "" {
 		return mediaType
 	}
-	if t := mime.TypeByExtension(filepath.Ext(path)); t != "" {
-		if i := strings.IndexByte(t, ';'); i >= 0 {
-			t = t[:i]
-		}
-		return strings.TrimSpace(t)
-	}
-	return ""
+	return filetype.OfPath(path).MediaType
 }
 
 func forkImageSource(path, mediaType string) (media.ImageSource, error) {

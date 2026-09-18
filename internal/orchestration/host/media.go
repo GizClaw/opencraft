@@ -2,15 +2,14 @@ package host
 
 import (
 	"encoding/json"
-	"mime"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/message/media"
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/filetype"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/imageutil"
 )
 
@@ -144,17 +143,13 @@ func localFilePath(raw string) (string, bool) {
 	return path, true
 }
 
-// mediaTypeOr returns mediaType when non-empty, otherwise the type
-// derived from path's extension.
+// mediaTypeOr returns mediaType when the caller declared one, and
+// otherwise the type classified from the file's content, so a file the
+// archive stored without a type is described by its bytes rather than
+// its name.
 func mediaTypeOr(path, mediaType string) string {
 	if mediaType != "" {
 		return mediaType
 	}
-	if t := mime.TypeByExtension(filepath.Ext(path)); t != "" {
-		if i := strings.IndexByte(t, ';'); i >= 0 {
-			t = t[:i]
-		}
-		return strings.TrimSpace(t)
-	}
-	return ""
+	return filetype.OfPath(path).MediaType
 }

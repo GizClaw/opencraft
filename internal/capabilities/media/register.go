@@ -15,9 +15,7 @@ package media
 import (
 	"context"
 	"fmt"
-	"mime"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/GizClaw/flowcraft/core/agent"
@@ -26,6 +24,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/message/media"
 	"github.com/GizClaw/flowcraft/core/resource"
 
+	"github.com/GizClaw/opencraft/internal/foundation/utils/filetype"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/imageutil"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
@@ -289,17 +288,15 @@ func localPath(raw string) (string, bool) {
 	return path, true
 }
 
+// mediaTypeOr returns mediaType when the caller declared one, and
+// otherwise the type classified from the file's content, so an archived
+// attachment stored without a type is described by its bytes rather than
+// its name.
 func mediaTypeOr(path, mediaType string) string {
 	if mediaType != "" {
 		return mediaType
 	}
-	if t := mime.TypeByExtension(filepath.Ext(path)); t != "" {
-		if i := strings.IndexByte(t, ';'); i >= 0 {
-			t = t[:i]
-		}
-		return strings.TrimSpace(t)
-	}
-	return ""
+	return filetype.OfPath(path).MediaType
 }
 
 func checkSize(path string) error {

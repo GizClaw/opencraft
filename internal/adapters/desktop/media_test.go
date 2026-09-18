@@ -11,11 +11,15 @@ import (
 	"testing"
 )
 
-// mp4Bytes carries a real ftyp box so the served content type is
-// video/mp4 even where the OS MIME table is empty.
+// mp4Bytes carries an ftyp box with an mp4-compatible brand, so the
+// content classifier names video/mp4 on every platform: the stream
+// handler reads the type from the bytes, and a platform whose extension
+// table cannot vouch for .mp4 still serves the right one.
 func mp4Bytes() []byte {
 	data := []byte{0x00, 0x00, 0x00, 0x18}
 	data = append(data, []byte("ftypisom")...)
+	data = append(data, 0x00, 0x00, 0x00, 0x00)
+	data = append(data, []byte("mp41")...)
 	return append(data, bytes.Repeat([]byte{0x42}, 32)...)
 }
 
@@ -59,6 +63,49 @@ func TestMediaServerStreamsWorkspaceFiles(t *testing.T) {
 	}
 	if !bytes.Equal(body, data) {
 		t.Errorf("body = %d bytes, want %d", len(body), len(data))
+	}
+}
+
+// TestMediaServerTypesByContent pins that the streamed type follows the
+// payload: session output is regenerated and renamed, so a player must
+// open an mp4 that was saved as .txt, and must not be told a text file
+// is a video just because of its name.
+func TestMediaServerTypesByContent(t *testing.T) {
+	root := t.TempDir()
+	for name, data := range map[string][]byte{
+		"clip.txt":  mp4Bytes(),
+		"notes.mp4": []byte("a note, not a video\n"),
+	} {
+		if err := os.WriteFile(filepath.Join(root, name), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server, err := newMediaServer(func() string { return root })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+
+	for name, want := range map[string]string{
+		"clip.txt":  "video/mp4",
+		"notes.mp4": "text/plain",
+	} {
+		link, err := server.URL(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := http.Get(link)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := resp.Header.Get("Content-Type")
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s status = %d, want 200", name, resp.StatusCode)
+		}
+		if got != want {
+			t.Errorf("%s content type = %q, want %q", name, got, want)
+		}
 	}
 }
 

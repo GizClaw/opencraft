@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"net/http"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -22,6 +21,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/workspace"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/toolargs"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/filetype"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/fshidden"
 )
 
@@ -153,11 +153,14 @@ func (t *readFileTool) execute(ctx context.Context, arguments string) (string, e
 	}
 	// Binary image bytes are not text: returning them as a JSON string
 	// would hand the model mojibake. Point at the tool that can show it.
-	if mediaType := http.DetectContentType(data); strings.HasPrefix(mediaType, "image/") {
+	// The bytes name the type (see the filetype package), so a picture
+	// saved under a text name still gets the pointer.
+	kind := filetype.OfData(args.FilePath, data)
+	if filetype.Family(kind.MediaType) == "image" {
 		return fmt.Sprintf(
 			"%s is an image (%s). Use view_image to look at it; read_file "+
 				"returns text only.",
-			args.FilePath, mediaType,
+			args.FilePath, kind.MediaType,
 		), nil
 	}
 

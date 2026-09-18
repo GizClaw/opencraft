@@ -70,6 +70,8 @@ function languageFor(name: string): Extension | undefined {
       return StreamLanguage.define(go);
     case 'ts':
     case 'tsx':
+    case 'mts':
+    case 'cts':
       return javascript({ jsx: true, typescript: true });
     case 'js':
     case 'jsx':
