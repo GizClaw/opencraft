@@ -4,6 +4,8 @@ import {
   ChevronDown,
   ChevronRight,
   Copy,
+  Eye,
+  EyeOff,
   ExternalLink,
   File as FileGlyph,
   FileCode,
@@ -474,6 +476,9 @@ function FileTreePanel({
   const { t } = useTranslation();
   const openFileTarget = useStore((s) => s.openFileTarget);
   const showDir = useStore((s) => s.showFileDir);
+  const uiSettings = useStore((s) => s.uiSettings);
+  const setUISettings = useStore((s) => s.setUISettings);
+  const showHidden = uiSettings.showHiddenFiles;
   const treeDir = useStore((s) => s.viewers[sessionID]?.fileTreeDir ?? '.');
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<{ path: string; is_dir: boolean }[]>([]);
@@ -481,6 +486,15 @@ function FileTreePanel({
   const [expanded, setExpanded] = useState<Record<string, boolean>>({
     '.': true,
   });
+
+  // The switch is a durable preference (desktop.json), so the panel
+  // writes it the way Settings > Interface does and rolls the applied
+  // value back when the document rejects the save.
+  const toggleHidden = () => {
+    const next = { ...uiSettings, showHiddenFiles: !showHidden };
+    setUISettings(next);
+    void api.setUISettings(next).catch(() => setUISettings(uiSettings));
+  };
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -493,10 +507,18 @@ function FileTreePanel({
     return () => window.removeEventListener('keydown', onKey, true);
   }, [onClose]);
 
+  // Flipping the switch changes what every directory holds; stale
+  // children would keep rendering the previous answer, so collapse back
+  // to the root and let the listing effect below refill it.
+  useEffect(() => {
+    setEntries({});
+    setExpanded({ '.': true });
+  }, [showHidden]);
+
   useEffect(() => {
     if (!expanded['.']) return;
     void api
-      .listDir('.')
+      .listDir('.', showHidden)
       .then((nodes) => setEntries((e) => ({ ...e, '.': nodes })))
       .catch(() => undefined);
     // The tree follows directory navigation from breadcrumbs/links.
@@ -509,7 +531,7 @@ function FileTreePanel({
     }
     setExpanded(expandedNext);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [treeDir]);
+  }, [treeDir, showHidden]);
 
   useEffect(() => {
     const q = query.trim();
@@ -519,19 +541,19 @@ function FileTreePanel({
     }
     const timer = window.setTimeout(() => {
       void api
-        .searchFiles(q, 50)
+        .searchFiles(q, 50, showHidden)
         .then((h) => setHits(h))
         .catch(() => setHits([]));
     }, 150);
     return () => window.clearTimeout(timer);
-  }, [query]);
+  }, [query, showHidden]);
 
   const toggle = (rel: string) => {
     const next = { ...expanded, [rel]: !expanded[rel] };
     setExpanded(next);
     if (next[rel] && !entries[rel]) {
       void api
-        .listDir(rel)
+        .listDir(rel, showHidden)
         .then((nodes) => setEntries((e) => ({ ...e, [rel]: nodes })))
         .catch(() => undefined);
     }
@@ -606,6 +628,16 @@ function FileTreePanel({
           placeholder={t('files.quickOpenHint')}
           className="min-w-0 flex-1 bg-transparent text-xs outline-none"
         />
+        <button
+          onClick={toggleHidden}
+          aria-pressed={showHidden}
+          title={showHidden ? t('files.hideHidden') : t('files.showHidden')}
+          className={`grid h-6 w-6 shrink-0 place-items-center rounded-tight hover:bg-panel2 ${
+            showHidden ? 'text-accent' : 'text-dim hover:text-fg'
+          }`}
+        >
+          {showHidden ? <Eye size={ICON.xs} /> : <EyeOff size={ICON.xs} />}
+        </button>
         <button
           onClick={onClose}
           className="grid h-6 w-6 shrink-0 place-items-center rounded-tight text-dim hover:bg-panel2 hover:text-fg"

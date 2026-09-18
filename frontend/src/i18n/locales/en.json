@@ -775,6 +775,8 @@
     "selectFromTree": "Choose a file from the file tree.",
     "toggleTree": "Toggle file tree",
     "hideTree": "Hide file tree",
+    "showHidden": "Show hidden files",
+    "hideHidden": "Hide hidden files",
     "togglePanel": "Show / hide file viewer",
     "quickOpenHint": "Type to search workspace files…",
     "noMatches": "No matches",

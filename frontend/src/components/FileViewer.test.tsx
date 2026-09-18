@@ -1,13 +1,17 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useStore } from '../lib/store';
+import { DEFAULT_UI_SETTINGS } from '../lib/appearance';
 import type { FilePreview } from '../lib/types';
 import { stateRoot } from '../state/app';
 import { FileViewer } from './FileViewer';
 
 const apiMock = vi.hoisted(() => ({
-  listDir: vi.fn(async () => []),
+  listDir: vi.fn(
+    async (): Promise<{ name: string; path: string; is_dir: boolean }[]> => [],
+  ),
   searchFiles: vi.fn(async () => []),
+  setUISettings: vi.fn(async () => undefined),
   readPreview: vi.fn(async (): Promise<FilePreview> => ({
     path: '/tmp/w/internal/a.go',
     rel: 'internal/a.go',
@@ -64,6 +68,37 @@ describe('FileViewer', () => {
       { timeout: 5000 },
     );
     expect(screen.getAllByText('a.go').length).toBeGreaterThan(0);
+  });
+
+  it('lists hidden entries only after the switch is on', async () => {
+    useStore.setState({ uiSettings: { ...DEFAULT_UI_SETTINGS } });
+    apiMock.listDir.mockResolvedValue([]);
+    render(<FileViewer sessionID="s-1" />);
+    (await screen.findByTitle('Toggle file tree')).click();
+
+    // Off by default: a directory holding only dot-entries reads empty.
+    // The panel is open: its section header and the root row both read
+    // "Workspace".
+    expect(await screen.findAllByText('Workspace')).not.toHaveLength(0);
+    expect(apiMock.listDir).toHaveBeenCalledWith('.', false);
+    expect(screen.queryByText('.env')).not.toBeInTheDocument();
+
+    // The switch asks the binding for hidden entries and persists the
+    // preference so the next panel opens with the same answer.
+    apiMock.listDir.mockResolvedValue([
+      { name: '.github', path: '.github', is_dir: true },
+      { name: '.env', path: '.env', is_dir: false },
+    ]);
+    (await screen.findByTitle('Show hidden files')).click();
+
+    expect(await screen.findByText('.env')).toBeInTheDocument();
+    expect(await screen.findByText('.github')).toBeInTheDocument();
+    expect(apiMock.listDir).toHaveBeenCalledWith('.', true);
+    expect(apiMock.setUISettings).toHaveBeenCalledWith(
+      expect.objectContaining({ showHiddenFiles: true }),
+    );
+
+    useStore.setState({ uiSettings: { ...DEFAULT_UI_SETTINGS } });
   });
 
   it('plays a video preview from the loopback stream URL', async () => {

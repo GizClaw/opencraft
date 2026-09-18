@@ -7,8 +7,9 @@ import (
 	"unicode"
 )
 
-// Desktop appearance preferences (Settings > Interface): the interface font,
-// the code/mono font and the whole-UI scale.
+// Desktop interface preferences (Settings > Interface): the interface font,
+// the code/mono font, the whole-UI scale and the workspace tree's
+// hidden-file switch.
 //
 // A font is stored as a preset id plus, for the "custom" preset, the family
 // name to render with. The catalogue of names comes from the host
@@ -45,7 +46,7 @@ var uiCodeFontPresetIDs = map[string]bool{
 	FontPresetCustom: true,
 }
 
-// UIPrefs is the persisted appearance section of the desktop preference
+// UIPrefs is the persisted interface section of the desktop preference
 // document. The family names are only meaningful while their selection is
 // "custom".
 type UIPrefs struct {
@@ -54,6 +55,10 @@ type UIPrefs struct {
 	CodeFont       string  `json:"codeFont,omitempty"`
 	CodeFontName   string  `json:"codeFontName,omitempty"`
 	FontScale      float64 `json:"fontScale,omitempty"`
+	// ShowHiddenFiles lists dot-entries in the chat rail's workspace
+	// tree and quick-open search. Off by default: a fresh workspace
+	// reads as its tracked content, not as .git and editor litter.
+	ShowHiddenFiles bool `json:"showHiddenFiles,omitempty"`
 }
 
 // defaultUIPrefs returns the appearance defaults written on first run.

@@ -2571,10 +2571,12 @@ export function ChatView() {
           )}
           {/* The composer floats over the transcript rather than taking a
               row below it, so the conversation keeps the whole column and
-              the card reads as lifted off it. The wrapper stays
-              click-through — only the card (and the workspace picker)
-              take pointer events, so the wheel and clicks still reach the
-              transcript in the margins around the card. */}
+              the card reads as lifted off it. Nothing is painted around
+              the card — no scrim, no fade: rows scroll up behind it and
+              are covered by it. The wrapper stays click-through — only
+              the card (and the workspace picker) take pointer events, so
+              the wheel and clicks still reach the transcript in the
+              margins around the card. */}
           <div
             ref={setComposerBox}
             className={
@@ -2583,15 +2585,6 @@ export function ChatView() {
                 : 'pointer-events-none absolute inset-x-0 bottom-0 z-10 px-6 pb-4'
             }
           >
-            {/* The transcript fades into the page background instead of
-                being cut off by the card's top edge. It is part of the
-                measured box, so the reserved space covers it too. */}
-            {!centerComposer && (
-              <div
-                aria-hidden="true"
-                className="h-6 bg-linear-to-t from-bg to-transparent"
-              />
-            )}
             {centerComposer && (
               <div className="pointer-events-none absolute inset-x-6 bottom-full mb-3 text-center">
                 <div className="text-lg font-semibold text-fg">

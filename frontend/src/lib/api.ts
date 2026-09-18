@@ -501,9 +501,12 @@ export const api = {
   cancelTurn: (runID: string) => Conversation.CancelTurn(runID),
   listAgents: () => Agent.List() as unknown as Promise<AgentSummary[]>,
   unregisterAgent: (name: string) => Agent.Unregister(name),
-  listDir: (dir: string) => File.List(dir) as unknown as Promise<FileNode[]>,
-  searchFiles: (query: string, limit?: number) =>
-    File.Search(query, limit ?? 50) as unknown as Promise<SearchFileHit[]>,
+  listDir: (dir: string, showHidden = false) =>
+    File.List(dir, showHidden) as unknown as Promise<FileNode[]>,
+  searchFiles: (query: string, limit = 50, showHidden = false) =>
+    File.Search(query, limit, showHidden) as unknown as Promise<
+      SearchFileHit[]
+    >,
   resolveTarget: (target: string, base?: string) =>
     File.ResolveTarget(
       target,

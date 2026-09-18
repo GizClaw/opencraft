@@ -19,6 +19,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/fshidden"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/imageutil"
 	patchutil "github.com/GizClaw/opencraft/internal/foundation/utils/patch"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
@@ -69,8 +70,12 @@ type FileNode struct {
 	Size  int64  `json:"size,omitempty"`
 }
 
-// List returns one directory level, sorted dirs-first.
-func (b *File) List(dir string) ([]FileNode, error) {
+// List returns one directory level, sorted dirs-first. showHidden adds
+// the entries fshidden classifies as hidden (dot-prefixed off Windows,
+// Explorer-hidden attributes on it); the setting is the desktop
+// document's ui.showHiddenFiles. The agent-facing file tools keep their
+// own include_hidden switch.
+func (b *File) List(dir string, showHidden bool) ([]FileNode, error) {
 	workspace := b.core.ActiveWorkDir()
 	if workspace == "" {
 		return nil, errors.New("file: no workspace selected")
@@ -88,7 +93,7 @@ func (b *File) List(dir string) ([]FileNode, error) {
 	}
 	out := make([]FileNode, 0, len(entries))
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), ".") {
+		if !showHidden && fshidden.Hidden(e) {
 			continue
 		}
 		info, err := e.Info()
@@ -118,8 +123,10 @@ type SearchFileHit struct {
 	IsDir bool   `json:"is_dir"`
 }
 
-// Search returns workspace-relative paths containing query.
-func (b *File) Search(query string, limit int) ([]SearchFileHit, error) {
+// Search returns workspace-relative paths containing query. showHidden
+// matches hidden paths too, so the panel's quick-open finds everything
+// the tree shows.
+func (b *File) Search(query string, limit int, showHidden bool) ([]SearchFileHit, error) {
 	root := b.core.ActiveWorkDir()
 	if root == "" {
 		return nil, errors.New("file: no workspace selected")
@@ -137,8 +144,7 @@ func (b *File) Search(query string, limit int) ([]SearchFileHit, error) {
 		if err != nil || path == root {
 			return nil
 		}
-		name := d.Name()
-		if strings.HasPrefix(name, ".") {
+		if !showHidden && fshidden.Hidden(d) {
 			if d.IsDir() {
 				return filepath.SkipDir
 			}
