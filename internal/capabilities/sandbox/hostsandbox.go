@@ -8,7 +8,6 @@ package sandbox
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	goruntime "runtime"
 
@@ -26,6 +25,17 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 )
+
+// execdPolicy renders the workspace sandbox policy for the execd wire.
+func (s HostSandboxSettings) execdPolicy() *execd.SandboxPolicy {
+	env := s.Env()
+	return &execd.SandboxPolicy{
+		WritablePaths: s.WritablePaths,
+		EnvAllow:      env.Allow,
+		EnvInject:     env.Inject,
+		EnvAllowSet:   env.Allow != nil,
+	}
+}
 
 // Approver is the slice of the exec policy the confined chain needs:
 // the approval decision plus the live allowlist it wraps.
@@ -288,19 +298,33 @@ func (HostSandboxFactory) New(
 	// start request carries Unconfined).
 	var backend coresandbox.Runner
 	if s.Remote {
-		polJSON, err := json.Marshal(s.SandboxPolicy())
-		if err != nil {
-			return nil, errdefs.Validationf(
-				"opencraft sandbox: encode env policy: %v", err)
+		policy := s.execdPolicy()
+		var (
+			remote *execd.RemoteRunner
+			err    error
+		)
+		if pool := execd.DefaultPool(); pool != nil {
+			remote, err = pool.Lease(ctx, s.Root, policy)
+		} else {
+			var (
+				client *execd.Client
+				stop   func()
+			)
+			client, stop, err = execd.Launch(ctx)
+			if err == nil {
+				remote, err = execd.NewRemoteRunner(
+					ctx, client, stop, s.Root, policy)
+			}
 		}
-		client, _, stop, err := execd.Launch(ctx, s.Root, string(polJSON))
 		if err != nil {
 			return nil, err
 		}
-		remote, err := execd.NewRemoteRunner(ctx, client, stop)
-		if err != nil {
-			return nil, err
-		}
+		// The watchdog restarts a dead or wedged child in the background;
+		// the relaunch repeats the same fork handshake, and the runner
+		// rebinds the workspace on its next call.
+		remote.SetRelauncher(func() (*execd.Client, func(), error) {
+			return execd.Launch(context.WithoutCancel(ctx))
+		})
 		remote.SetModeFunc(func(ctx context.Context) bool {
 			// The child picks its unconfined runner from this flag,
 			// so an approved escalation must travel with it: the

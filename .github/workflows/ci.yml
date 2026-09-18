@@ -71,6 +71,11 @@ jobs:
             exit 1
           fi
 
+      - name: execd protobuf drift
+        run: |
+          sudo apt-get install -y protobuf-compiler
+          make gen-proto-check
+
       - name: Vet (go vet)
         run: go vet ./...
 

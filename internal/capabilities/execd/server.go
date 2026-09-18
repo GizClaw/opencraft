@@ -1,658 +1,695 @@
 package execd
 
 import (
+	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
-	"os"
-	"strings"
+	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/sandbox"
 	"github.com/GizClaw/flowcraft/core/telemetry"
+	otellog "go.opentelemetry.io/otel/log"
 
 	"github.com/rs/xid"
 )
 
-// Server serves the exec JSON-RPC protocol over an io.Reader/io.Writer
-// pair (stdio or a unix-socket connection). One session per Serve call:
-// processes started on a session belong to it and are terminated when
-// the connection ends.
-type Server struct {
-	backend    sandbox.Runner
-	unconfined sandbox.Runner // optional; used for Unconfined (YOLO) starts
-	in         io.Reader
-	out        io.Writer
-	mu         sync.Mutex
+const (
+	// defaultWriteTimeout bounds one process/write RPC so a child that
+	// never drains stdin cannot pin a handler forever.
+	defaultWriteTimeout = 2 * time.Minute
+	// defaultReapAfter is how long an exited process stays readable
+	// before the reaper drops its entry. Clients normally release the
+	// entry explicitly; the TTL is the safety net.
+	defaultReapAfter = 5 * time.Minute
+	// defaultReapInterval is how often the reaper sweeps the session.
+	defaultReapInterval = time.Minute
+	// frameQueueSize bounds the outbound frame queue.
+	frameQueueSize = 256
+	// maxQueuedNotifyBytes soft-caps the queued notification payload;
+	// responses are never dropped and may exceed it briefly.
+	maxQueuedNotifyBytes = 2 << 20
+	// maxReadWaitMs caps one long-poll read window.
+	maxReadWaitMs = 30_000
+	// maxReadBytes caps one process/read response.
+	maxReadBytes = 1 << 20
+	// stopHandlerGrace bounds how long Serve waits for in-flight request
+	// handlers after teardown interrupted them.
+	stopHandlerGrace = 3 * time.Second
+)
 
+var errFrameWriterStopped = errors.New("execd: frame writer stopped")
+
+// RunnerSet is the pair of sandbox runners bound to one workspace.
+type RunnerSet struct {
+	Confined   sandbox.Runner
+	Unconfined sandbox.Runner
 	// DefaultEnv is applied to a start request that carries no explicit
-	// environment policy (the execd child injects the Go build/tmp
-	// cache paths this way).
+	// environment policy.
 	DefaultEnv sandbox.EnvPolicy
 }
 
-// maxReadBytes caps one process/read response so a client cannot ask
-// the server to buffer an unbounded output window.
-const maxReadBytes = 1 << 20 // 1 MiB
+// RunnerFactory builds the workspace-bound runners for one Bind.
+type RunnerFactory func(
+	ctx context.Context,
+	workdir string,
+	policy *SandboxPolicy,
+) (RunnerSet, error)
 
-// maxWaitMs caps the server-side wait window of one empty read.
-const maxWaitMs = 30_000
+// Server serves the execd protocol over one bidirectional channel.
+//
+// A connection starts unbound, receives Hello, then Bind. Every
+// request after Hello runs on its own goroutine; a blocking read or
+// wait must never stall another request. Outbound frames go through
+// one writer goroutine, notifications are dropped under backpressure,
+// and responses are never dropped.
+type Server struct {
+	in         io.Reader
+	out        io.Writer
+	newRunners RunnerFactory
 
-// New creates a Server over the given backend and transport.
-func New(backend sandbox.Runner, in io.Reader, out io.Writer) *Server {
-	return &Server{backend: backend, in: in, out: out}
+	mu     sync.Mutex
+	writer *frameWriter
+
+	stateMu sync.RWMutex
+	state   *boundState
+
+	inflightMu sync.Mutex
+	inflight   map[uint64]*inflightRequest
+
+	handlers sync.WaitGroup
+
+	stats     serverStats
+	startedAt time.Time
+
+	// Test hooks. Zero values fall back to the package defaults.
+	writeTimeout time.Duration
+	reapAfter    time.Duration
+	reapInterval time.Duration
 }
 
-// SetUnconfinedBackend installs the runner used for Unconfined start
-// requests (YOLO mode). Optional: requests without one fall back to
-// the platform backend.
-func (s *Server) SetUnconfinedBackend(r sandbox.Runner) { s.unconfined = r }
-
-type processEntry struct {
-	proc     sandbox.Session
-	watcher  sandbox.SessionWatcher
-	writeIDs map[string]bool
-	mu       sync.Mutex
-	exit     *sandbox.SessionExit
+type boundState struct {
+	workdir    string
+	sess       *session
+	runners    RunnerSet
+	reapCancel context.CancelFunc
 }
 
-func (e *processEntry) noteWrite(id string) bool {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if e.writeIDs[id] {
+// inflightRequest is the registration a Cancel notification resolves
+// to. It is a pointer so a finishing handler can tell its own
+// registration from a newer request that reused the same id.
+type inflightRequest struct {
+	cancel context.CancelFunc
+}
+
+type serverStats struct {
+	droppedNotifications atomic.Int64
+	releasedProcesses    atomic.Int64
+	reapedProcesses      atomic.Int64
+}
+
+// New creates a Server over the given transport. factory is required
+// and is called once per Bind.
+func New(factory RunnerFactory, in io.Reader, out io.Writer) *Server {
+	return &Server{
+		in:         in,
+		out:        out,
+		newRunners: factory,
+		inflight:   make(map[uint64]*inflightRequest),
+		startedAt:  time.Now(),
+	}
+}
+
+// Stats returns the current counter snapshot.
+func (s *Server) Stats() ServerStats {
+	return ServerStats{
+		DroppedNotifications: s.stats.droppedNotifications.Load(),
+		ReleasedProcesses:    s.stats.releasedProcesses.Load(),
+		ReapedProcesses:      s.stats.reapedProcesses.Load(),
+	}
+}
+
+// ServerStats is a snapshot of the server's resilience counters.
+type ServerStats struct {
+	DroppedNotifications int64 `json:"droppedNotifications"`
+	ReleasedProcesses    int64 `json:"releasedProcesses"`
+	ReapedProcesses      int64 `json:"reapedProcesses"`
+}
+
+// frameWriter serialises outbound frames through one goroutine and a
+// bounded queue: a slow peer backpressures the queue instead of holding
+// a lock (or a handler goroutine) across a transport write.
+type frameWriter struct {
+	ctx         context.Context
+	out         io.Writer
+	queue       chan []byte
+	closed      chan struct{}
+	once        sync.Once
+	queuedBytes atomic.Int64
+	dropped     atomic.Int64
+}
+
+func newFrameWriter(out io.Writer, ctx context.Context) *frameWriter {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return &frameWriter{
+		ctx:    ctx,
+		out:    out,
+		queue:  make(chan []byte, frameQueueSize),
+		closed: make(chan struct{}),
+	}
+}
+
+func (w *frameWriter) run() {
+	for {
+		select {
+		case frame := <-w.queue:
+			w.write(frame)
+		case <-w.closed:
+			for {
+				select {
+				case frame := <-w.queue:
+					w.write(frame)
+				default:
+					return
+				}
+			}
+		}
+	}
+}
+
+func (w *frameWriter) write(frame []byte) {
+	defer w.queuedBytes.Add(-int64(len(frame)))
+	for len(frame) > 0 {
+		n, err := w.out.Write(frame)
+		if err != nil {
+			if !connectionClosed(err) {
+				telemetry.WarnErr(context.Background(),
+					"execd: write frame failed", err)
+			}
+			w.stop()
+			return
+		}
+		if n <= 0 {
+			w.stop()
+			return
+		}
+		frame = frame[n:]
+	}
+}
+
+func (w *frameWriter) stop() { w.once.Do(func() { close(w.closed) }) }
+
+// enqueue delivers a frame that must not be dropped (a response).
+func (w *frameWriter) enqueue(frame *Frame) error {
+	raw, err := encodeFrame(frame)
+	if err != nil {
+		return err
+	}
+	select {
+	case w.queue <- raw:
+		w.queuedBytes.Add(int64(len(raw)))
+		return nil
+	case <-w.closed:
+		return errFrameWriterStopped
+	case <-w.ctx.Done():
+		return w.ctx.Err()
+	}
+}
+
+// offer delivers a frame that may be dropped (a notification). The
+// authoritative state always rides on read/wait responses, so dropping
+// a notification is safe; it is counted for diagnostics.
+func (w *frameWriter) offer(frame *Frame) bool {
+	raw, err := encodeFrame(frame)
+	if err != nil {
 		return false
 	}
-	e.writeIDs[id] = true
-	return true
-}
-
-type session struct {
-	id        string
-	processes map[string]*processEntry
-	mu        sync.Mutex
-}
-
-// Serve processes requests until EOF or ctx cancellation.
-func (s *Server) Serve(ctx context.Context) error {
-	sess := &session{
-		id:        xid.New().String(),
-		processes: make(map[string]*processEntry),
+	if len(w.queue) >= frameQueueSize/2 ||
+		w.queuedBytes.Load() >= maxQueuedNotifyBytes {
+		w.dropped.Add(1)
+		return false
 	}
-	defer sess.closeAll()
+	select {
+	case w.queue <- raw:
+		w.queuedBytes.Add(int64(len(raw)))
+		return true
+	case <-w.closed:
+		return false
+	default:
+		w.dropped.Add(1)
+		return false
+	}
+}
 
-	dec := json.NewDecoder(s.in)
-	initialized := false
+func (w *frameWriter) depth() (frames int, bytes int64) {
+	return len(w.queue), w.queuedBytes.Load()
+}
+
+// Serve processes frames until EOF, the channel closes, or ctx is
+// canceled. On return every process the child owns has been stopped.
+func (s *Server) Serve(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	writer := newFrameWriter(s.out, ctx)
+	s.mu.Lock()
+	s.writer = writer
+	s.mu.Unlock()
+	go writer.run()
+
+	done := make(chan error, 1)
+	go func() { done <- s.serveLoop(ctx) }()
+
+	var err error
+	select {
+	case err = <-done:
+	case <-ctx.Done():
+	}
+	// Tear down first: stopping the processes is what interrupts the
+	// handlers still parked in a long-poll read, so they can answer and
+	// finish. Only then stop the writer, so their responses still go
+	// through the single writer (and its queue drains) instead of racing
+	// an inline write on the same transport.
+	s.teardown()
+	s.waitHandlers(stopHandlerGrace)
+	writer.stop()
+	s.mu.Lock()
+	if s.writer == writer {
+		s.writer = nil
+	}
+	s.mu.Unlock()
+	return err
+}
+
+func (s *Server) serveLoop(ctx context.Context) error {
+	decoder := bufio.NewReaderSize(s.in, 64<<10)
+	hello := false
 	for {
-		var req RPCRequest
-		if err := dec.Decode(&req); err != nil {
-			if err == io.EOF {
+		frame, err := decodeFrame(decoder)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
 				return nil
 			}
 			return err
 		}
-		if req.ID == nil {
-			continue // notification
-		}
-		if !initialized && req.Method != MethodInitialize {
-			s.respond(Response{
-				JSONRPC: "2.0",
-				ID:      req.ID,
-				Error:   &RPCError{Code: ErrInvalid, Message: "not initialized"},
-			})
+		if notification := frame.GetNotification(); notification != nil {
+			s.handleNotification(notification)
 			continue
 		}
-		if req.Method == MethodInitialize && initialized {
-			s.respond(Response{
-				JSONRPC: "2.0",
-				ID:      req.ID,
-				Error:   &RPCError{Code: ErrInvalid, Message: "already initialized"},
-			})
+		req := frame.GetRequest()
+		if req == nil {
 			continue
 		}
-		if req.Method == MethodProcessWait {
-			// A wait can block for as long as the process lives; serve
-			// it on a separate goroutine so terminate/read requests on
-			// the same connection keep working while it waits.
-			go func(req RPCRequest) {
-				s.respond(s.handle(ctx, sess, req))
-			}(req)
-			continue
-		}
-		resp := s.handle(ctx, sess, req)
-		s.respond(resp)
-		if req.Method == MethodInitialize && resp.Error == nil {
-			initialized = true
-		}
-	}
-}
-
-func (s *Server) handle(
-	ctx context.Context,
-	sess *session,
-	req RPCRequest,
-) Response {
-	var result any
-	var rpcErr *RPCError
-	switch req.Method {
-	case MethodInitialize:
-		result = InitializeResponse{SessionID: sess.id}
-	case MethodProcessStart:
-		var p ExecParams
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			rpcErr = invalid("process/start params: " + err.Error())
-			break
-		}
-		result, rpcErr = s.start(ctx, sess, p)
-	case MethodProcessRead:
-		var p ReadParams
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			rpcErr = invalid("process/read params: " + err.Error())
-			break
-		}
-		result, rpcErr = s.read(ctx, sess, p)
-	case MethodProcessWrite:
-		var p WriteParams
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			rpcErr = invalid("process/write params: " + err.Error())
-			break
-		}
-		result, rpcErr = s.write(ctx, sess, p)
-	case MethodProcessCloseInput:
-		var p CloseInputParams
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			rpcErr = invalid("process/close_input params: " + err.Error())
-			break
-		}
-		result, rpcErr = s.closeInput(ctx, sess, p)
-	case MethodProcessSignal:
-		var p SignalParams
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			rpcErr = invalid("process/signal params: " + err.Error())
-			break
-		}
-		result, rpcErr = s.signal(ctx, sess, p)
-	case MethodProcessResize:
-		var p ResizeParams
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			rpcErr = invalid("process/resize params: " + err.Error())
-			break
-		}
-		result, rpcErr = s.resize(ctx, sess, p)
-	case MethodProcessTerminate:
-		var p TerminateParams
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			rpcErr = invalid("process/terminate params: " + err.Error())
-			break
-		}
-		result, rpcErr = s.terminate(ctx, sess, p)
-	case MethodProcessWait:
-		var p WaitParams
-		if err := json.Unmarshal(req.Params, &p); err != nil {
-			rpcErr = invalid("process/wait params: " + err.Error())
-			break
-		}
-		result, rpcErr = s.wait(ctx, sess, p)
-	case MethodEnvironmentInfo:
-		features := s.backend.Capabilities().Features
-		caps := []string{string(CapExec), string(CapSession)}
-		if features.TTY {
-			caps = append(caps, string(CapPTY))
-		}
-		if features.Signal {
-			caps = append(caps, string(CapSignal))
-		}
-		result = EnvironmentInfoResponse{
-			Shell:        defaultShell(),
-			Cwd:          "",
-			TmpDir:       os.TempDir(),
-			Capabilities: caps,
-		}
-	default:
-		rpcErr = &RPCError{Code: ErrMethod, Message: "method not found"}
-	}
-
-	resp := Response{JSONRPC: "2.0", ID: req.ID}
-	if rpcErr != nil {
-		resp.Error = rpcErr
-		return resp
-	}
-	raw, err := json.Marshal(result)
-	if err != nil {
-		resp.Error = &RPCError{Code: ErrInternal, Message: err.Error()}
-		return resp
-	}
-	resp.Result = raw
-	return resp
-}
-
-func (s *Server) start(
-	ctx context.Context,
-	sess *session,
-	p ExecParams,
-) (any, *RPCError) {
-	if p.ProcessID == "" || len(p.Argv) == 0 {
-		return nil, invalid("process/start: processId and argv are required")
-	}
-	sess.mu.Lock()
-	if _, exists := sess.processes[p.ProcessID]; exists {
-		sess.mu.Unlock()
-		return nil, &RPCError{Code: ErrInvalid, Message: "duplicate processId"}
-	}
-	sess.mu.Unlock()
-
-	spec := sandbox.SessionSpec{
-		ID:   p.ProcessID,
-		Argv: p.Argv,
-		TTY:  p.TTY,
-		Rows: p.Rows,
-		Cols: p.Cols,
-	}
-	backend := s.backend
-	if p.Sandbox != nil {
-		spec.Opts = *p.Sandbox
-	}
-	if p.Cwd != "" {
-		spec.Opts.WorkDir = strings.TrimPrefix(p.Cwd, "file://")
-	}
-	if p.Timeout > 0 {
-		spec.Opts.Timeout = p.Timeout
-	}
-	if p.Unconfined {
-		// YOLO: direct host execution with the full environment; the
-		// configured env policy and default injection are skipped.
-		if s.unconfined != nil {
-			backend = s.unconfined
-		}
-		spec.Opts.Env = sandbox.EnvPolicy{}
-	} else {
-		if p.Sandbox == nil && len(p.Env) > 0 {
-			spec.Opts.Env = sandbox.EnvPolicy{Inject: p.Env}
-		}
-		if isZeroEnvPolicy(spec.Opts.Env) {
-			spec.Opts.Env = s.DefaultEnv
-		}
-	}
-
-	proc, err := backend.Start(ctx, spec)
-	if err != nil {
-		return nil, internal(err)
-	}
-	entry := &processEntry{
-		proc:     proc,
-		writeIDs: make(map[string]bool),
-	}
-	sess.mu.Lock()
-	sess.processes[p.ProcessID] = entry
-	sess.mu.Unlock()
-
-	if watcher, err := proc.Watch(ctx); err == nil {
-		entry.watcher = watcher
-		go s.pushEvents(p.ProcessID, entry, watcher)
-	}
-	return ExecResponse{ProcessID: p.ProcessID, PID: proc.PID()}, nil
-}
-
-func (s *Server) read(
-	ctx context.Context,
-	sess *session,
-	p ReadParams,
-) (any, *RPCError) {
-	entry, ok := sess.get(p.ProcessID)
-	if !ok {
-		return nil, &RPCError{Code: ErrInvalid, Message: "unknown process"}
-	}
-	afterSeq := int64(0)
-	if p.AfterSeq != nil {
-		afterSeq = *p.AfterSeq
-	}
-	maxBytes := 4096
-	if p.MaxBytes != nil {
-		maxBytes = *p.MaxBytes
-	}
-	if maxBytes <= 0 || maxBytes > maxReadBytes {
-		maxBytes = maxReadBytes
-	}
-	// WaitMs turns an empty read into a bounded wait for output (or
-	// process exit) instead of returning immediately, so a client's
-	// Wait loop does not busy-poll the RPC channel.
-	waitMs := 0
-	if p.WaitMs != nil {
-		waitMs = *p.WaitMs
-	}
-	if waitMs > maxWaitMs {
-		waitMs = maxWaitMs
-	}
-	var deadline time.Time
-	if waitMs > 0 {
-		deadline = time.Now().Add(time.Duration(waitMs) * time.Millisecond)
-	}
-	var out sandbox.SessionOutput
-	for {
-		var err error
-		out, err = entry.proc.Read(ctx, afterSeq, maxBytes)
-		if err != nil {
-			if errors.Is(err, sandbox.ErrSequenceGap) {
-				return nil, &RPCError{Code: ErrInvalid, Message: "sequence gap; restart from cursor 0"}
+		if !hello {
+			if req.GetHello() == nil {
+				s.respond(frame.GetId(),
+					errorResponse(CodeInvalid, "hello must be the first request"))
+				continue
 			}
-			return nil, internal(err)
+			resp := s.handle(ctx, req)
+			s.respond(frame.GetId(), resp)
+			if resp.GetError() == nil {
+				hello = true
+			}
+			continue
 		}
-		if len(out.Chunks) > 0 || out.EOF || waitMs <= 0 || !time.Now().Before(deadline) {
-			break
-		}
-		select {
-		case <-ctx.Done():
-			return nil, internal(ctx.Err())
-		case <-time.After(15 * time.Millisecond):
-		}
+		// Register the request's cancellation *before* the handler
+		// goroutine starts: a Cancel notification arrives on this same
+		// connection right behind the request, and resolving it against
+		// an empty table would silently drop the cancellation.
+		reqCtx, cancel := requestContext(ctx, frame)
+		registered := s.registerRequest(frame.GetId(), cancel)
+		s.handlers.Add(1)
+		go func(frame *Frame, req *Request, reqCtx context.Context) {
+			defer s.handlers.Done()
+			defer s.finishRequest(frame.GetId(), registered)
+			s.dispatch(reqCtx, frame, req)
+		}(frame, req, reqCtx)
 	}
-	chunks := make([]OutputChunk, 0, len(out.Chunks))
-	for _, ch := range out.Chunks {
-		chunks = append(chunks, OutputChunk{
-			Seq: ch.Seq, Stream: ch.Stream.String(), Data: ch.Data,
-		})
-	}
-	entry.mu.Lock()
-	// Process exit is authoritative only when a watcher is running: EOF
-	// on the output stream merely means the process closed its
-	// descriptors (it may still be alive, e.g. a daemonised child), and
-	// the watcher's exit event carries the real code/reason. Without a
-	// watcher (backend without Watch support) EOF is the only exit
-	// signal we have, so fall back to it.
-	exited := out.EOF
-	if entry.watcher != nil {
-		exited = entry.exit != nil
-	}
-	resp := ReadResponse{
-		Chunks:  chunks,
-		NextSeq: out.NextSeq,
-		EOF:     out.EOF,
-		Exited:  exited,
-	}
-	if entry.exit != nil {
-		code := int32(entry.exit.Code)
-		resp.ExitCode = &code
-		resp.Reason = exitReasonWire(entry.exit.Reason)
-	}
-	entry.mu.Unlock()
-	return resp, nil
 }
 
-func (s *Server) closeInput(
-	ctx context.Context,
-	sess *session,
-	p CloseInputParams,
-) (any, *RPCError) {
-	entry, ok := sess.get(p.ProcessID)
-	if !ok {
-		return nil, &RPCError{Code: ErrInvalid, Message: "unknown process"}
+// requestContext applies the frame's relative deadline to the parent
+// context.
+func requestContext(
+	parent context.Context, frame *Frame,
+) (context.Context, context.CancelFunc) {
+	if frame.GetDeadlineMs() > 0 {
+		return context.WithTimeout(
+			parent, time.Duration(frame.GetDeadlineMs())*time.Millisecond)
 	}
-	if err := entry.proc.CloseInput(); err != nil {
-		return nil, internal(err)
-	}
-	return map[string]bool{"ok": true}, nil
+	return context.WithCancel(parent)
 }
 
-func (s *Server) write(
-	ctx context.Context,
-	sess *session,
-	p WriteParams,
-) (any, *RPCError) {
-	entry, ok := sess.get(p.ProcessID)
-	if !ok {
-		return WriteResponse{Status: WriteUnknownProc}, nil
-	}
-	if !entry.noteWrite(p.WriteID) {
-		return WriteResponse{Status: WriteAccepted}, nil // idempotent
-	}
-	if err := entry.proc.Write(ctx, p.Chunk); err != nil {
-		if errors.Is(err, sandbox.ErrSessionClosed) {
-			return WriteResponse{Status: WriteStdinClosed}, nil
-		}
-		return nil, internal(err)
-	}
-	return WriteResponse{Status: WriteAccepted}, nil
+// registerRequest records one in-flight request and returns the handle
+// finishRequest must pass back.
+func (s *Server) registerRequest(
+	id uint64, cancel context.CancelFunc,
+) *inflightRequest {
+	request := &inflightRequest{cancel: cancel}
+	s.inflightMu.Lock()
+	s.inflight[id] = request
+	s.inflightMu.Unlock()
+	return request
 }
 
-func (s *Server) signal(
-	ctx context.Context,
-	sess *session,
-	p SignalParams,
-) (any, *RPCError) {
-	if p.Signal != string(SignalInterrupt) {
-		return nil, invalid("signal must be \"interrupt\"")
+// finishRequest unregisters the handler's own registration (never a
+// newer request that reused the id) and releases its context.
+func (s *Server) finishRequest(id uint64, request *inflightRequest) {
+	request.cancel()
+	s.inflightMu.Lock()
+	if s.inflight[id] == request {
+		delete(s.inflight, id)
 	}
-	entry, ok := sess.get(p.ProcessID)
-	if !ok {
-		return nil, &RPCError{Code: ErrInvalid, Message: "unknown process"}
-	}
-	if err := entry.proc.Signal(ctx, sandbox.SessionSignalInterrupt); err != nil {
-		return nil, internal(err)
-	}
-	return map[string]bool{"ok": true}, nil
+	s.inflightMu.Unlock()
 }
 
-func (s *Server) resize(
-	ctx context.Context,
-	sess *session,
-	p ResizeParams,
-) (any, *RPCError) {
-	entry, ok := sess.get(p.ProcessID)
-	if !ok {
-		return nil, &RPCError{Code: ErrInvalid, Message: "unknown process"}
-	}
-	if err := entry.proc.Resize(ctx, p.Rows, p.Cols); err != nil {
-		return nil, internal(err)
-	}
-	return map[string]bool{"ok": true}, nil
-}
-
-func (s *Server) terminate(
-	ctx context.Context,
-	sess *session,
-	p TerminateParams,
-) (any, *RPCError) {
-	entry, ok := sess.get(p.ProcessID)
-	if !ok {
-		return nil, &RPCError{Code: ErrInvalid, Message: "unknown process"}
-	}
-	if err := entry.proc.Terminate(ctx); err != nil {
-		return nil, internal(err)
-	}
-	// The exit event arrives asynchronously through the watcher; give it
-	// a short window before reporting Running.
-	deadline := time.Now().Add(time.Second)
-	running := true
-	for {
-		entry.mu.Lock()
-		running = entry.exit == nil
-		entry.mu.Unlock()
-		if !running || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	return TerminateResponse{Running: running}, nil
-}
-
-// wait blocks until the process exits and returns its exit state
-// without reading any buffered output. The client can keep pulling the
-// retained output with process/read after Wait returns.
-func (s *Server) wait(
-	ctx context.Context,
-	sess *session,
-	p WaitParams,
-) (any, *RPCError) {
-	entry, ok := sess.get(p.ProcessID)
-	if !ok {
-		return nil, &RPCError{Code: ErrInvalid, Message: "unknown process"}
-	}
-	exit, err := entry.proc.Wait(ctx)
-	if err != nil {
-		return nil, internal(err)
-	}
-	return WaitResponse{
-		ExitCode: int32(exit.Code),
-		Reason:   exitReasonWire(exit.Reason),
-	}, nil
-}
-
-// pushEvents forwards watcher events as notifications.
-func (s *Server) pushEvents(
-	processID string,
-	entry *processEntry,
-	watcher sandbox.SessionWatcher,
-) {
-	defer func() {
-		telemetry.WarnErr(context.Background(),
-			"execd: close session watcher failed", watcher.Close())
+// waitHandlers waits for the request handlers Serve started, bounded by
+// grace so a wedged handler cannot delay process exit forever.
+func (s *Server) waitHandlers(grace time.Duration) {
+	done := make(chan struct{})
+	go func() {
+		s.handlers.Wait()
+		close(done)
 	}()
-	for ev := range watcher.Events() {
-		switch ev.Type {
-		case sandbox.SessionEventOutput:
-			s.notify(MethodProcessOutput, OutputNotification{
-				ProcessID: processID,
-				Seq:       ev.Seq,
-				Stream:    ev.Stream.String(),
-				Data:      ev.Data,
-			})
-		case sandbox.SessionEventExited:
-			reason := ReasonExited
-			if ev.Exit != nil {
-				entry.mu.Lock()
-				entry.exit = ev.Exit
-				entry.mu.Unlock()
-				reason = exitReasonWire(ev.Exit.Reason)
-			}
-			code := int32(0)
-			if ev.Exit != nil {
-				code = int32(ev.Exit.Code)
-			}
-			s.notify(MethodProcessExited, ExitedNotification{
-				ProcessID: processID,
-				Seq:       ev.Seq,
-				ExitCode:  code,
-				Reason:    reason,
-			})
-			// The session stays readable via process/read (tail window),
-			// but live push ends: emit closed right after exited.
-			s.notify(MethodProcessClosed, ClosedNotification{
-				ProcessID: processID, Seq: ev.Seq,
-			})
-			return
-		case sandbox.SessionEventClosed:
-			s.notify(MethodProcessClosed, ClosedNotification{
-				ProcessID: processID, Seq: ev.Seq,
-			})
-			return
-		case sandbox.SessionEventLag:
-			s.notify(MethodProcessLag, LagNotification{
-				ProcessID: processID, Seq: ev.Seq,
-			})
-			return
-		}
+	select {
+	case <-done:
+	case <-time.After(grace):
+		telemetry.Warn(context.Background(),
+			"execd: request handlers still running during teardown")
 	}
 }
 
-func (s *Server) respond(resp Response) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.encodeFrame(context.Background(),
-		"execd: encode JSON-RPC response failed", resp)
+// dispatch runs one request and sends the response.
+func (s *Server) dispatch(reqCtx context.Context, frame *Frame, req *Request) {
+	resp := handleSafely(func() *Response { return s.handle(reqCtx, req) })
+	switch {
+	case errors.Is(reqCtx.Err(), context.DeadlineExceeded):
+		resp = errorResponse(CodeDeadlineExceeded, "request deadline exceeded")
+	case errors.Is(reqCtx.Err(), context.Canceled):
+		resp = errorResponse(CodeCanceled, "request canceled")
+	}
+	s.respond(frame.GetId(), resp)
 }
 
-func (s *Server) notify(method string, params any) {
-	raw, err := json.Marshal(params)
-	if err != nil {
-		telemetry.WarnErr(context.Background(),
-			"execd: marshal JSON-RPC notification failed", err)
+func (s *Server) handleNotification(notification *Notification) {
+	cancel := notification.GetCancel()
+	if cancel == nil {
 		return
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.encodeFrame(context.Background(),
-		"execd: encode JSON-RPC notification failed",
-		map[string]any{
-			"jsonrpc": "2.0",
-			"method":  method,
-			"params":  json.RawMessage(raw),
-		})
-}
-
-// encodeFrame writes one frame to the transport. A peer that already
-// hung up is teardown, not news: the reader loop ends on the same
-// condition, and a warning here would be emitted with a background
-// context, so it lands in whatever log pipeline is installed by then —
-// in tests, the next test's capture, which is how a closed client used
-// to fail someone else's assertion.
-func (s *Server) encodeFrame(ctx context.Context, what string, v any) {
-	err := json.NewEncoder(s.out).Encode(v)
-	if err != nil && !connectionClosed(err) {
-		telemetry.WarnErr(ctx, what, err)
+	s.inflightMu.Lock()
+	request := s.inflight[cancel.GetRequestId()]
+	s.inflightMu.Unlock()
+	if request != nil {
+		request.cancel()
 	}
 }
 
-func (sess *session) get(id string) (*processEntry, bool) {
-	sess.mu.Lock()
-	defer sess.mu.Unlock()
-	e, ok := sess.processes[id]
-	return e, ok
+func (s *Server) handle(ctx context.Context, req *Request) *Response {
+	switch {
+	case req.GetHello() != nil:
+		return s.handleHello(req.GetHello())
+	case req.GetBind() != nil:
+		return s.handleBind(ctx, req.GetBind())
+	case req.GetUnbind() != nil:
+		s.teardown()
+		return &Response{Body: &Response_Ack{Ack: &Ack{Status: "ok"}}}
+	case req.GetPing() != nil:
+		return &Response{Body: &Response_PingOk{PingOk: &PingOk{
+			UptimeMs: time.Since(s.startedAt).Milliseconds(),
+			Version:  Build,
+		}}}
+	case req.GetDiagnostics() != nil:
+		return s.handleDiagnostics()
+	}
+	st := s.bound()
+	if st == nil {
+		return errorResponse(CodeNotBound, "no workspace is bound")
+	}
+	switch {
+	case req.GetStart() != nil:
+		ok, errResp := s.start(ctx, st, req.GetStart())
+		if errResp != nil {
+			return errResp
+		}
+		return &Response{Body: &Response_StartOk{StartOk: ok}}
+	case req.GetRead() != nil:
+		ok, errResp := s.read(ctx, st, req.GetRead())
+		if errResp != nil {
+			return errResp
+		}
+		return &Response{Body: &Response_ReadOk{ReadOk: ok}}
+	case req.GetWrite() != nil:
+		status, errResp := s.write(ctx, st, req.GetWrite())
+		if errResp != nil {
+			return errResp
+		}
+		return &Response{Body: &Response_Ack{Ack: &Ack{Status: status}}}
+	case req.GetCloseInput() != nil:
+		if errResp := s.closeInput(ctx, st, req.GetCloseInput()); errResp != nil {
+			return errResp
+		}
+		return &Response{Body: &Response_Ack{Ack: &Ack{Status: "ok"}}}
+	case req.GetSignal() != nil:
+		if errResp := s.signal(ctx, st, req.GetSignal()); errResp != nil {
+			return errResp
+		}
+		return &Response{Body: &Response_Ack{Ack: &Ack{Status: "ok"}}}
+	case req.GetResize() != nil:
+		if errResp := s.resize(ctx, st, req.GetResize()); errResp != nil {
+			return errResp
+		}
+		return &Response{Body: &Response_Ack{Ack: &Ack{Status: "ok"}}}
+	case req.GetTerminate() != nil:
+		ok, errResp := s.terminate(ctx, st, req.GetTerminate())
+		if errResp != nil {
+			return errResp
+		}
+		return &Response{Body: &Response_TerminateOk{TerminateOk: ok}}
+	case req.GetRelease() != nil:
+		ok, errResp := s.release(st, req.GetRelease())
+		if errResp != nil {
+			return errResp
+		}
+		return &Response{Body: &Response_ReleaseOk{ReleaseOk: ok}}
+	case req.GetWait() != nil:
+		ok, errResp := s.wait(ctx, st, req.GetWait())
+		if errResp != nil {
+			return errResp
+		}
+		return &Response{Body: &Response_WaitOk{WaitOk: ok}}
+	default:
+		return errorResponse(CodeMethodNotFound, "unknown request")
+	}
 }
 
-func (sess *session) closeAll() {
+func (s *Server) handleHello(hello *Hello) *Response {
+	if hello.GetProtocolVersion() != ProtocolVersion {
+		return errorResponse(CodeVersionMismatch,
+			"child protocol %d, host protocol %d",
+			ProtocolVersion, hello.GetProtocolVersion())
+	}
+	return &Response{Body: &Response_HelloOk{HelloOk: &HelloOk{
+		ProtocolVersion: ProtocolVersion,
+		Build:           Build,
+		Capabilities:    []string{"exec", "session", "signal", "bind"},
+		SessionId:       xid.New().String(),
+	}}}
+}
+
+func (s *Server) handleDiagnostics() *Response {
+	frames, bytes := 0, int64(0)
+	s.mu.Lock()
+	writer := s.writer
+	s.mu.Unlock()
+	if writer != nil {
+		frames, bytes = writer.depth()
+	}
+	bound := false
+	workdir := ""
+	processes := 0
+	if st := s.bound(); st != nil {
+		bound = true
+		workdir = st.workdir
+		processes = st.sess.count()
+	}
+	return &Response{Body: &Response_DiagnosticsOk{DiagnosticsOk: &DiagnosticsOk{
+		Version:              Build,
+		ProtocolVersion:      ProtocolVersion,
+		UptimeMs:             time.Since(s.startedAt).Milliseconds(),
+		Bound:                bound,
+		Workdir:              workdir,
+		Processes:            int32(processes),
+		Goroutines:           int32(runtime.NumGoroutine()),
+		QueuedFrames:         int32(frames),
+		QueuedBytes:          bytes,
+		DroppedNotifications: s.stats.droppedNotifications.Load(),
+		ReleasedProcesses:    s.stats.releasedProcesses.Load(),
+		ReapedProcesses:      s.stats.reapedProcesses.Load(),
+	}}}
+}
+
+// bound returns the current workspace state, or nil when unbound.
+func (s *Server) bound() *boundState {
+	s.stateMu.RLock()
+	defer s.stateMu.RUnlock()
+	return s.state
+}
+
+func (s *Server) handleBind(ctx context.Context, bind *Bind) *Response {
+	if bind.GetWorkdir() == "" {
+		return errorResponse(CodeInvalid, "bind: workdir is required")
+	}
+	if s.newRunners == nil {
+		return errorResponse(CodeInternal, "bind: no runner factory configured")
+	}
+	s.stateMu.Lock()
+	if s.state != nil {
+		s.stateMu.Unlock()
+		return errorResponse(CodeAlreadyBound, "a workspace is already bound")
+	}
+	s.stateMu.Unlock()
+
+	runners, err := s.newRunners(ctx, bind.GetWorkdir(), bind.GetPolicy())
+	if err != nil {
+		return errorResponse(CodeInternal, "bind: %v", err)
+	}
+	sess := &session{
+		id:        xid.New().String(),
+		processes: make(map[string]*processEntry),
+		starting:  make(map[string]struct{}),
+	}
+	reapCtx, reapCancel := context.WithCancel(context.WithoutCancel(ctx))
+	state := &boundState{
+		workdir:    bind.GetWorkdir(),
+		sess:       sess,
+		runners:    runners,
+		reapCancel: reapCancel,
+	}
+	s.stateMu.Lock()
+	if s.state != nil {
+		s.stateMu.Unlock()
+		reapCancel()
+		closeLog(ctx, "execd: close confined runner after bind race failed",
+			runners.Confined)
+		closeLog(ctx, "execd: close unconfined runner after bind race failed",
+			runners.Unconfined)
+		return errorResponse(CodeAlreadyBound, "a workspace is already bound")
+	}
+	s.state = state
+	s.stateMu.Unlock()
+	go s.reapLoop(reapCtx, sess)
+	return &Response{Body: &Response_BindOk{BindOk: &BindOk{}}}
+}
+
+// teardown stops every process and releases the bound runners. It is
+// safe to call when unbound.
+func (s *Server) teardown() {
+	s.stateMu.Lock()
+	state := s.state
+	s.state = nil
+	s.stateMu.Unlock()
+	if state == nil {
+		return
+	}
+	if state.reapCancel != nil {
+		state.reapCancel()
+	}
+	if state.sess != nil {
+		s.closeAll(state.sess)
+	}
+	if state.runners.Confined != nil {
+		telemetry.WarnErr(context.Background(),
+			"execd: close confined runner failed", state.runners.Confined.Close())
+	}
+	if state.runners.Unconfined != nil {
+		telemetry.WarnErr(context.Background(),
+			"execd: close unconfined runner failed", state.runners.Unconfined.Close())
+	}
+}
+
+func (s *Server) respond(id uint64, resp *Response) {
+	s.writeFrame(&Frame{
+		Id:   id,
+		Body: &Frame_Response{Response: resp},
+	}, false)
+}
+
+func (s *Server) notify(notification *Notification) {
+	s.writeFrame(&Frame{
+		Body: &Frame_Notification{Notification: notification},
+	}, true)
+}
+
+func (s *Server) writeFrame(frame *Frame, bestEffort bool) {
+	s.mu.Lock()
+	writer := s.writer
+	if writer == nil {
+		// No Serve loop owns a writer (tests, embedded hosts): write
+		// inline so the caller observes the result synchronously.
+		defer s.mu.Unlock()
+		raw, err := encodeFrame(frame)
+		if err != nil {
+			return
+		}
+		if _, err := s.out.Write(raw); err != nil && !connectionClosed(err) {
+			telemetry.WarnErr(context.Background(), "execd: write frame failed", err)
+		}
+		return
+	}
+	s.mu.Unlock()
+
+	if bestEffort {
+		if !writer.offer(frame) {
+			if s.stats.droppedNotifications.Add(1) == 1 {
+				telemetry.Warn(context.Background(),
+					"execd: dropping notifications under backpressure",
+					otellog.Int64("execd.dropped_total",
+						writer.dropped.Load()))
+			}
+		}
+		return
+	}
+	if err := writer.enqueue(frame); err != nil &&
+		!errors.Is(err, errFrameWriterStopped) {
+		telemetry.WarnErr(context.Background(), "execd: enqueue response failed", err)
+	}
+}
+
+// handleSafely turns a handler panic into an error response instead of
+// killing the connection.
+func handleSafely(fn func() *Response) (resp *Response) {
+	defer func() {
+		if r := recover(); r != nil {
+			resp = errorResponse(CodeInternal, "handler panic: %v", r)
+		}
+	}()
+	return fn()
+}
+
+// closeAll stops every process in the session. Each entry's actor is
+// interrupted and waited for (bounded), and the processes are SIGKILLed
+// through their session Close, so a wedged command cannot delay
+// teardown.
+func (s *Server) closeAll(sess *session) {
 	sess.mu.Lock()
 	entries := make([]*processEntry, 0, len(sess.processes))
-	for _, e := range sess.processes {
-		entries = append(entries, e)
+	for _, entry := range sess.processes {
+		entries = append(entries, entry)
 	}
+	sess.processes = make(map[string]*processEntry)
 	sess.mu.Unlock()
-
-	// closeAll runs after the owning connection/session is already
-	// gone, so teardown needs its own detached timeout.
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	for _, e := range entries {
-		if e.watcher != nil {
-			telemetry.WarnErr(ctx, "execd: close watcher during teardown failed",
-				e.watcher.Close())
-		}
-		telemetry.WarnErr(ctx, "execd: terminate session during teardown failed",
-			e.proc.Terminate(ctx))
-		telemetry.WarnErr(ctx, "execd: close session during teardown failed",
-			e.proc.Close())
+	for _, entry := range entries {
+		s.stopEntry(entry)
 	}
 }
 
-func exitReasonWire(r sandbox.SessionExitReason) string {
-	switch r {
-	case sandbox.SessionExited:
-		return ReasonExited
-	case sandbox.SessionSignaled:
-		return ReasonSignaled
-	case sandbox.SessionTerminated:
-		return ReasonTerminated
-	default:
-		return ReasonUnknown
-	}
-}
-
-func invalid(msg string) *RPCError {
-	return &RPCError{Code: ErrInvalid, Message: msg}
-}
-
-func internal(err error) *RPCError {
-	if err == nil {
-		return nil
-	}
-	if errdefs.IsNotAvailable(err) {
-		return &RPCError{Code: ErrInternal, Message: err.Error()}
-	}
-	return &RPCError{Code: ErrInternal, Message: fmt.Sprintf("%v", err)}
-}
-
-func isZeroEnvPolicy(p sandbox.EnvPolicy) bool {
-	return p.Allow == nil && p.Inject == nil
+func (sess *session) count() int {
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	return len(sess.processes)
 }

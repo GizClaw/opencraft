@@ -8,6 +8,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	petfeed "github.com/GizClaw/opencraft/internal/adapters/desktop/pet"
+	"github.com/GizClaw/opencraft/internal/capabilities/execd"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -795,6 +796,29 @@ func (s *Shell) SetPathPrepend(dirs []string) error {
 	return s.commit(func(p *DesktopPrefs) {
 		p.Path = prefs
 	})
+}
+
+// ExecPool returns the configured exec supervisor pool settings.
+func (s *Shell) ExecPool() execd.PoolSettings {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.prefs.Exec.PoolSettings()
+}
+
+// SetExecPool persists new pool settings and applies them to the live
+// pool. Existing children keep serving; only future leases and reaping
+// use the new values.
+func (s *Shell) SetExecPool(settings execd.PoolSettings) error {
+	prefs := PoolPrefs(settings)
+	if err := s.commit(func(p *DesktopPrefs) {
+		p.Exec = prefs
+	}); err != nil {
+		return err
+	}
+	if pool := execd.DefaultPool(); pool != nil {
+		pool.SetSettings(settings)
+	}
+	return nil
 }
 
 // commit applies one mutation to the in-memory preference document and

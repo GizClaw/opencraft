@@ -240,6 +240,29 @@ export function mockBackend(cfg?: MockConfig) {
       ReportFrontendError: noop,
       ReportFrontendPerf: noop,
       RunSandboxProbe: async () => ({ ok: true }),
+      // The command-pool card reads and writes desktop.json; a fixed
+      // shape is enough for the UI tests.
+      ExecPool: async () => ({
+        prewarm: 1,
+        maxIdle: 4,
+        maxActive: 16,
+        idleMinutes: 5,
+        idle: 1,
+        active: 0,
+      }),
+      SetExecPool: async (
+        prewarm: number,
+        maxIdle: number,
+        maxActive: number,
+        idleMinutes: number,
+      ) => ({
+        prewarm,
+        maxIdle,
+        maxActive,
+        idleMinutes,
+        idle: 0,
+        active: 0,
+      }),
       // The PATH card reads the process environment on mount and the
       // runtime reload is the host's business, so a fixed shape is enough.
       PathEnvironment: async () => ({

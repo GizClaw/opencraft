@@ -21,7 +21,17 @@ func writeFakeInferenceConfig(t *testing.T, dir, baseURL string) {
 	// test binary cannot fork itself into execd mode (that branch lives
 	// in the real main package), so headless E2E uses the in-process
 	// platform backend. WriteInference below preserves this key.
-	seed := []byte("version: v1\nresources:\n  box:\n    settings:\n      remote: false\n")
+	writeFakeConfig(t, dir, baseURL, "remote: false")
+}
+
+// writeFakeConfig seeds the user layer with one sandbox setting plus a
+// single fake inference instance. remote: true asks the runtime to run
+// sandboxed commands through the forked execd child, which only the
+// real binary can do.
+func writeFakeConfig(t *testing.T, dir, baseURL, sandboxSetting string) {
+	t.Helper()
+	seed := []byte("version: v1\nresources:\n  box:\n    settings:\n      " +
+		sandboxSetting + "\n")
 	if err := os.WriteFile(filepath.Join(dir, "opencraft.yaml"), seed, 0o600); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}

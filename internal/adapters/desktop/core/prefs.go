@@ -6,9 +6,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
+	"github.com/GizClaw/opencraft/internal/capabilities/execd"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/profile"
@@ -44,6 +46,44 @@ type DesktopPrefs struct {
 	// Path carries the user's PATH override (Settings > Diagnostics),
 	// applied once at startup by foundation/utils/envpath.
 	Path PathPrefs `json:"path,omitempty"`
+	// Exec carries the exec supervisor pool knobs (Settings >
+	// Diagnostics). Saving applies to future leases; existing children
+	// are not restarted.
+	Exec ExecPrefs `json:"exec,omitempty"`
+}
+
+// ExecPrefs is the desktop preference section that configures the exec
+// child pool.
+type ExecPrefs struct {
+	Prewarm     int `json:"prewarm,omitempty"`
+	MaxIdle     int `json:"maxIdle,omitempty"`
+	MaxActive   int `json:"maxActive,omitempty"`
+	IdleMinutes int `json:"idleMinutes,omitempty"`
+}
+
+// PoolSettings converts the preference shape to the execd pool shape.
+func (p ExecPrefs) PoolSettings() execd.PoolSettings {
+	if p.Prewarm == 0 && p.MaxIdle == 0 &&
+		p.MaxActive == 0 && p.IdleMinutes == 0 {
+		return execd.DefaultPoolSettings()
+	}
+	return execd.NormalizePoolSettings(execd.PoolSettings{
+		Prewarm:   p.Prewarm,
+		MaxIdle:   p.MaxIdle,
+		MaxActive: p.MaxActive,
+		IdleTTL:   time.Duration(p.IdleMinutes) * time.Minute,
+	})
+}
+
+// PoolPrefs renders pool settings back into the preference shape.
+func PoolPrefs(settings execd.PoolSettings) ExecPrefs {
+	settings = execd.NormalizePoolSettings(settings)
+	return ExecPrefs{
+		Prewarm:     settings.Prewarm,
+		MaxIdle:     settings.MaxIdle,
+		MaxActive:   settings.MaxActive,
+		IdleMinutes: int(settings.IdleTTL / time.Minute),
+	}
 }
 
 // PetPrefs is the desktop pet section of the preference document.
@@ -113,6 +153,7 @@ func DefaultPrefs() DesktopPrefs {
 		DefaultThink: think,
 		UI:           defaultUIPrefs(),
 		Telemetry:    TelemetryPrefs{PluginExport: true},
+		Exec:         PoolPrefs(execd.DefaultPoolSettings()),
 	}
 }
 
@@ -122,6 +163,7 @@ func normalizePrefs(prefs DesktopPrefs) DesktopPrefs {
 	defaults := DefaultPrefs()
 	prefs.UI = normalizeUIPrefs(prefs.UI)
 	prefs.Path = normalizePathPrefs(prefs.Path)
+	prefs.Exec = PoolPrefs(prefs.Exec.PoolSettings())
 	// The yoloonly build has a single available mode: repair any
 	// preference document (possibly written by the regular build) so
 	// new sessions cannot start confined.

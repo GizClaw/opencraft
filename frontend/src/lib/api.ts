@@ -61,6 +61,7 @@ import type {
   WebSearchState,
   WebSearchTestRequest,
   WebSearchTestResult,
+  ExecPool,
   PathEnvironment,
   PolicyDecision,
   PetsSettings,
@@ -406,6 +407,21 @@ export const api = {
     Diagnostics.SetPathPrepend(dirs) as unknown as Promise<PathEnvironment>,
   resolvePath: () =>
     Diagnostics.ResolvePath() as unknown as Promise<PathEnvironment>,
+  // execPool configures the exec supervisor pool: pre-warmed children,
+  // the idle ceiling, the active-workspace cap and the idle TTL.
+  execPool: () => Diagnostics.ExecPool() as unknown as Promise<ExecPool>,
+  setExecPool: (
+    prewarm: number,
+    maxIdle: number,
+    maxActive: number,
+    idleMinutes: number,
+  ) =>
+    Diagnostics.SetExecPool(
+      prewarm,
+      maxIdle,
+      maxActive,
+      idleMinutes,
+    ) as unknown as Promise<ExecPool>,
   getCloseToTray: () => Lifecycle.GetCloseToTray(),
   setCloseToTray: (closeToTray: boolean) =>
     Lifecycle.SetCloseToTray(closeToTray),
