@@ -235,4 +235,80 @@ describe('ApplyPatchView', () => {
     ).toBeInTheDocument();
     expect(apiMock.renderPatch).not.toHaveBeenCalled();
   });
+
+  it('summarizes the patch instead of repeating the result envelope', async () => {
+    const patch =
+      '*** Begin Patch\n*** Update File: a.txt\n@@\n-old\n+new\n*** End Patch\n';
+    apiMock.renderPatch.mockResolvedValueOnce([
+      {
+        path: 'a.txt',
+        action: 'update',
+        added: 1,
+        removed: 1,
+        lines: [{ kind: 'add', old_num: 0, new_num: 3, text: 'new' }],
+      },
+    ]);
+    render(
+      <ApplyPatchView
+        tool={tool({
+          name: 'apply_patch',
+          args: JSON.stringify({ patch }),
+          result: JSON.stringify({
+            files: [{ path: 'a.txt', action: 'update' }],
+          }),
+        })}
+      />,
+    );
+    // The card header carries the summary; the envelope JSON and the
+    // per-file result list would only repeat what the diff shows.
+    expect(await screen.findByText('1 file changed')).toBeInTheDocument();
+    expect(
+      screen.queryByText('{"files":[{"path":"a.txt","action":"update"}]}'),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByText('a.txt')).toHaveLength(1);
+  });
+
+  it('keeps the error text when the call failed without a diff', async () => {
+    render(
+      <ApplyPatchView
+        tool={tool({
+          name: 'apply_patch',
+          args: JSON.stringify({ input: '*** Begin Patch\n*** End Patch\n' }),
+          result: 'apply_patch: patch context does not match a.txt',
+          status: 'error',
+        })}
+      />,
+    );
+    expect(
+      await screen.findByText(
+        'apply_patch: patch context does not match a.txt',
+      ),
+    ).toBeInTheDocument();
+    // Nothing rendered a diff, so the header falls back to the tool name.
+    expect(screen.getByText('apply_patch')).toBeInTheDocument();
+  });
+
+  it('falls back to the result file list when the renderer fails', async () => {
+    const patch =
+      '*** Begin Patch\n*** Update File: a.txt\n@@\n-old\n+new\n*** End Patch\n';
+    apiMock.renderPatch.mockRejectedValueOnce(
+      new Error('apply_patch: patch context does not match a.txt'),
+    );
+    render(
+      <ApplyPatchView
+        tool={tool({
+          name: 'apply_patch',
+          args: JSON.stringify({ patch }),
+          result: JSON.stringify({
+            files: [{ path: 'a.txt', action: 'update' }],
+          }),
+          status: 'error',
+        })}
+      />,
+    );
+    // The raw patch stays visible (it is all the user has), and the list
+    // below names what the backend did change.
+    expect(await screen.findByText(/Begin Patch/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'a.txt' })).toBeInTheDocument();
+  });
 });

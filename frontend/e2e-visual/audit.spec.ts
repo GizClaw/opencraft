@@ -469,3 +469,195 @@ test('automations', async ({ page }) => {
   await page.waitForTimeout(700);
   await shot(page, '60-automations');
 });
+
+// The apply_patch card is the densest tool surface in the transcript:
+// header summary, per-file diff headers, and code that must stay inside
+// the card however long a line is. The fixture deliberately carries a
+// line far wider than the card (and one >200 char comment) so the shot
+// proves wrap instead of sideways scroll.
+const PATCH_TEXT = [
+  '*** Begin Patch',
+  '*** Update File: frontend/src/lib/store.ts',
+  '@@ -582,7 +582,9 @@',
+  ' // mergeTurnDoc appends a produced file, or refreshes its byte count',
+  '-function mergeTurnDoc(docs: TurnDoc[], path: string, bytes: number) {',
+  '+function mergeTurnDoc(',
+  '+  docs: TurnDoc[], path: string, bytes: number, note: string,',
+  '+) {',
+  '*** Add File: frontend/src/lib/seq.ts',
+  '+export const nextSeq = (counter: { value: number }) => ++counter.value;',
+  '*** Delete File: frontend/src/lib/legacy.ts',
+  '*** End Patch',
+].join('\n');
+
+const PATCH_FILES = [
+  {
+    path: 'frontend/src/lib/store.ts',
+    action: 'update',
+    added: 3,
+    removed: 1,
+    lines: [
+      {
+        kind: 'context',
+        old_num: 582,
+        new_num: 582,
+        text: '  // mergeTurnDoc appends a produced file, or refreshes its byte count',
+      },
+      {
+        kind: 'delete',
+        old_num: 583,
+        new_num: 0,
+        text: '  function mergeTurnDoc(docs: TurnDoc[], path: string, bytes: number) {',
+      },
+      {
+        kind: 'add',
+        old_num: 0,
+        new_num: 583,
+        text: '  // A comment that runs well past the width of the chat card on purpose, so the audit shot shows long diff lines wrapping under the code column instead of scrolling the card sideways.',
+      },
+      {
+        kind: 'add',
+        old_num: 0,
+        new_num: 584,
+        text: '  function mergeTurnDoc(',
+      },
+      {
+        kind: 'add',
+        old_num: 0,
+        new_num: 585,
+        text: '    docs: TurnDoc[], path: string, bytes: number, note: string,',
+      },
+      { kind: 'context', old_num: 584, new_num: 586, text: '  ) {' },
+    ],
+  },
+  {
+    path: 'frontend/src/lib/seq.ts',
+    action: 'add',
+    added: 1,
+    removed: 0,
+    lines: [
+      {
+        kind: 'add',
+        old_num: 0,
+        new_num: 1,
+        text: 'export const nextSeq = (counter: { value: number }) => ++counter.value;',
+      },
+    ],
+  },
+  {
+    path: 'frontend/src/lib/legacy.ts',
+    action: 'delete',
+    added: 0,
+    removed: 2,
+    lines: [
+      {
+        kind: 'delete',
+        old_num: 1,
+        new_num: 0,
+        text: 'export const legacy = 1;',
+      },
+      {
+        kind: 'delete',
+        old_num: 2,
+        new_num: 0,
+        text: 'export const stale = 2;',
+      },
+    ],
+  },
+];
+
+test('apply patch card', async ({ page }) => {
+  await page.addInitScript(
+    mockBackend as never,
+    {
+      workspace: WS,
+      startTurn: { run_id: 'r-1', context_id: 's-1' },
+      handlers: {
+        // The Go binding renders the patch against the workspace; the
+        // audit runs without one, so the fixture supplies the DTOs.
+        'File.RenderPatch': `async () => (${JSON.stringify(PATCH_FILES)})`,
+      },
+    } as never,
+  );
+  await page.goto('/');
+  await typeComposerMessage(page, 'Tidy up the merge helper');
+  await page.getByRole('button', { name: 'Send' }).click();
+  const emit = emitter(page);
+  await emit('opencraft:ui', {
+    type: 'stream',
+    data: {
+      run_id: 'r-1',
+      conversation_id: 's-1',
+      delta: {
+        type: 'part',
+        part: { type: 'text', text: 'Refactoring the diff merge path:\n' },
+      },
+    },
+  });
+  await emit('opencraft:ui', {
+    type: 'stream',
+    data: {
+      run_id: 'r-1',
+      conversation_id: 's-1',
+      delta: {
+        type: 'part',
+        part: {
+          type: 'tool_call',
+          call: {
+            id: 'call-patch',
+            name: 'apply_patch',
+            arguments: { patch: PATCH_TEXT },
+          },
+        },
+      },
+    },
+  });
+  await emit('opencraft:ui', {
+    type: 'stream',
+    data: {
+      run_id: 'r-1',
+      conversation_id: 's-1',
+      delta: {
+        type: 'part',
+        part: {
+          type: 'tool_result',
+          result: {
+            call_id: 'call-patch',
+            content: {
+              parts: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({
+                    files: PATCH_FILES.map((f) => ({
+                      path: f.path,
+                      action: f.action,
+                    })),
+                  }),
+                },
+              ],
+            },
+            is_error: false,
+          },
+        },
+      },
+    },
+  });
+  await page.waitForTimeout(500);
+  await shot(page, '42-patch');
+  // The viewport hides the third file; the footer is the way to the
+  // rest of the diff and the fade above it is the hint that it exists.
+  await page.getByRole('button', { name: 'Show full diff' }).click();
+  await page.waitForTimeout(300);
+  await shot(page, '42b-patch-expanded');
+  // Back to the collapsed viewport before switching themes: the light
+  // shots are about the fade and the footer, not another expanded pass.
+  await page.getByRole('button', { name: 'Collapse diff' }).click();
+  await page.evaluate(() => {
+    document.documentElement.classList.add('theme-light');
+  });
+  await page.waitForTimeout(200);
+  await shot(page, '43-patch-light');
+  await page.getByRole('button', { name: 'Show full diff' }).click();
+  await page.waitForTimeout(300);
+  await shot(page, '43b-patch-light-expanded');
+});
