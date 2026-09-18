@@ -70,6 +70,27 @@ test('floats over the transcript and keeps the newest reply clear', async ({
   // Pinned to the bottom, the newest row stops above the card.
   expect(await bottom(page.getByText('reply-59'))).toBeLessThan(cardBox.y);
 
+  // Nothing fades and nothing is painted around the card: the wrapper is
+  // exactly as tall as the card plus its bottom gap (no band above it),
+  // and neither the wrapper nor anything inside it lays down a gradient
+  // scrim, so a row's contrast survives right up to the card's edge.
+  const overlay = card.locator('..');
+  const overlayBox = await overlay.boundingBox();
+  expect(overlayBox?.y).toBeCloseTo(cardBox.y, 0);
+  expect(overlayBox?.height).toBeCloseTo(cardBox.height + 16, 0);
+  const paint = await overlay.evaluate((el) => ({
+    image: getComputedStyle(el).backgroundImage,
+    gradient: [...el.querySelectorAll('*')]
+      .map((node) => getComputedStyle(node).backgroundImage)
+      .filter((image) => image.includes('gradient')),
+  }));
+  expect(paint.image).toBe('none');
+  expect(paint.gradient).toEqual([]);
+  // A fade faked with a mask on the scroller would count too.
+  expect(await scroll.evaluate((el) => getComputedStyle(el).maskImage)).toBe(
+    'none',
+  );
+
   // Scrolling down the middle of the transcript still leaves the newest
   // row — and the card — where they were: the card floats, it is not a
   // row that the scroll position can move.
@@ -154,8 +175,9 @@ test('the margins around the card still scroll the transcript', async ({
   const scroll = page.getByTestId('chat-scroll');
   const card = await page.getByTestId('composer').boundingBox();
   if (!card) return;
-  // The gutter beside the card belongs to the transcript: the wrapper is
-  // click-through, so the wheel reaches the scroller behind it.
+  // The wrapper paints nothing but stays click-through: the gutter beside
+  // the card belongs to the transcript, so the wheel still reaches the
+  // scroller behind it.
   const before = await scroll.evaluate((el) => el.scrollTop);
   await page.mouse.move(card.x - 10, card.y + card.height / 2);
   await page.mouse.wheel(0, -400);
