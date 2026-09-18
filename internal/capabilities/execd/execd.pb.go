@@ -1080,8 +1080,13 @@ func (x *Bind) GetPolicy() *SandboxPolicy {
 	return nil
 }
 
+// BindOk reports the capabilities of the backend this workspace is now
+// bound to. The Hello answer can only describe the static surface (no
+// workspace is bound yet), so this is the honest one: it carries "pty",
+// "signal" and "events" only when the platform backend really has them.
 type BindOk struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	Capabilities  []string               `protobuf:"bytes,1,rep,name=capabilities,proto3" json:"capabilities,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1114,6 +1119,13 @@ func (x *BindOk) ProtoReflect() protoreflect.Message {
 // Deprecated: Use BindOk.ProtoReflect.Descriptor instead.
 func (*BindOk) Descriptor() ([]byte, []int) {
 	return file_internal_capabilities_execd_execd_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *BindOk) GetCapabilities() []string {
+	if x != nil {
+		return x.Capabilities
+	}
+	return nil
 }
 
 type Unbind struct {
@@ -2822,8 +2834,9 @@ const file_internal_capabilities_execd_execd_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"[\n" +
 	"\x04Bind\x12\x18\n" +
 	"\aworkdir\x18\x01 \x01(\tR\aworkdir\x129\n" +
-	"\x06policy\x18\x02 \x01(\v2!.opencraft.execd.v1.SandboxPolicyR\x06policy\"\b\n" +
-	"\x06BindOk\"\b\n" +
+	"\x06policy\x18\x02 \x01(\v2!.opencraft.execd.v1.SandboxPolicyR\x06policy\",\n" +
+	"\x06BindOk\x12\"\n" +
+	"\fcapabilities\x18\x01 \x03(\tR\fcapabilities\"\b\n" +
 	"\x06Unbind\"\xfc\x03\n" +
 	"\vExecOptions\x12\x19\n" +
 	"\bwork_dir\x18\x01 \x01(\tR\aworkDir\x12\x14\n" +

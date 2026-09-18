@@ -759,6 +759,18 @@ func TestSessionCloseAfterReapIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestBindAdvertisesBackendCapabilities pins that the client adopts the
+// capabilities of the bound backend: the Hello answer only describes the
+// static surface (no workspace is bound yet), so pty/signal/events have
+// to travel on BindOk or they are silently reported as absent.
+func TestBindAdvertisesBackendCapabilities(t *testing.T) {
+	runner := testRunner(t)
+	want := local.New(t.TempDir()).Capabilities().Features
+	if got := runner.Capabilities().Features; got != want {
+		t.Fatalf("features = %+v, want the backend's %+v", got, want)
+	}
+}
+
 func pgrepMarker(marker string) string {
 	out, _ := exec.Command("pgrep", "-f", marker).Output()
 	return strings.TrimSpace(string(out))

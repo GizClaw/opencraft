@@ -583,7 +583,30 @@ func (s *Server) handleBind(ctx context.Context, bind *Bind) *Response {
 	s.state = state
 	s.stateMu.Unlock()
 	go s.reapLoop(reapCtx, sess)
-	return &Response{Body: &Response_BindOk{BindOk: &BindOk{}}}
+	return &Response{Body: &Response_BindOk{BindOk: &BindOk{
+		Capabilities: runnerCapabilities(runners),
+	}}}
+}
+
+// runnerCapabilities renders the bound backend's session features as
+// wire capability names. The Hello response advertises the static
+// surface only; this is the one that tracks the platform backend.
+func runnerCapabilities(runners RunnerSet) []string {
+	caps := []string{"exec", "session", "bind"}
+	if runners.Confined == nil {
+		return caps
+	}
+	features := runners.Confined.Capabilities().Features
+	if features.TTY {
+		caps = append(caps, "pty")
+	}
+	if features.Signal {
+		caps = append(caps, "signal")
+	}
+	if features.Events {
+		caps = append(caps, "events")
+	}
+	return caps
 }
 
 // teardown stops every process and releases the bound runners. It is

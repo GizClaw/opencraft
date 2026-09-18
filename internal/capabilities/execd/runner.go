@@ -161,28 +161,55 @@ func NewRemoteRunner(
 		}
 	}
 	runner.caps = capabilitiesFromHello(client.HelloInfo())
-	if _, err := client.Bind(ctx, workdir, policy); err != nil {
+	if err := runner.bindAndAdopt(ctx, client); err != nil {
 		if stop != nil {
 			stop()
 		}
 		return nil, err
 	}
-	runner.bound = true
 	go runner.watch(context.WithoutCancel(ctx))
 	return runner, nil
 }
 
 func capabilitiesFromHello(hello *HelloOk) sandbox.Capabilities {
+	return capabilitiesFromNames(hello.GetCapabilities())
+}
+
+// capabilitiesFromNames maps wire capability names onto the session
+// features core exposes.
+func capabilitiesFromNames(names []string) sandbox.Capabilities {
 	features := sandbox.SessionFeatures{}
-	for _, capability := range hello.GetCapabilities() {
+	for _, capability := range names {
 		switch capability {
 		case "pty":
 			features.TTY = true
 		case "signal":
 			features.Signal = true
+		case "events":
+			features.Events = true
 		}
 	}
 	return sandbox.Capabilities{Features: features}
+}
+
+// bindAndAdopt binds the child to this runner's workspace and adopts the
+// capabilities the child reports for the bound backend: the Hello answer
+// can only describe the static surface, because no workspace is bound
+// yet.
+func (r *RemoteRunner) bindAndAdopt(ctx context.Context, client *Client) error {
+	ok, err := client.Bind(ctx, r.workdir, r.policy)
+	if err != nil {
+		return err
+	}
+	if caps := ok.GetCapabilities(); len(caps) > 0 {
+		r.mu.Lock()
+		r.caps = capabilitiesFromNames(caps)
+		r.mu.Unlock()
+	}
+	r.mu.Lock()
+	r.bound = true
+	r.mu.Unlock()
+	return nil
 }
 
 // SetModeFunc wires a per-request YOLO resolver: it receives the start
@@ -239,12 +266,9 @@ func (r *RemoteRunner) ensureBound(ctx context.Context) (*Client, error) {
 	if bound {
 		return client, nil
 	}
-	if _, err := client.Bind(ctx, r.workdir, r.policy); err != nil {
+	if err := r.bindAndAdopt(ctx, client); err != nil {
 		return nil, err
 	}
-	r.mu.Lock()
-	r.bound = true
-	r.mu.Unlock()
 	return client, nil
 }
 
@@ -370,7 +394,6 @@ func (r *RemoteRunner) restart(ctx context.Context) error {
 		r.stop = newStop
 		r.dead = false
 		r.bound = false
-		r.caps = capabilitiesFromHello(newClient.HelloInfo())
 		r.mu.Unlock()
 		r.stats.restarts.Add(1)
 		telemetry.Info(context.Background(), "execd: sandbox child restarted")

@@ -108,7 +108,13 @@ message Bind {
   SandboxPolicy policy = 2;
 }
 
-message BindOk {}
+// BindOk reports the capabilities of the backend this workspace is now
+// bound to. The Hello answer can only describe the static surface (no
+// workspace is bound yet), so this is the honest one: it carries "pty",
+// "signal" and "events" only when the platform backend really has them.
+message BindOk {
+  repeated string capabilities = 1;
+}
 
 message Unbind {}
 
