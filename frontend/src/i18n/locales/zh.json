@@ -775,6 +775,8 @@
     "selectFromTree": "请从文件树中选择一个文件。",
     "toggleTree": "切换目录树",
     "hideTree": "收起目录树",
+    "showHidden": "显示隐藏文件",
+    "hideHidden": "不显示隐藏文件",
     "togglePanel": "显示 / 隐藏文件面板",
     "quickOpenHint": "输入以搜索工作区文件…",
     "noMatches": "无匹配结果",

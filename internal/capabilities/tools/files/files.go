@@ -22,6 +22,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/workspace"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/toolargs"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/fshidden"
 )
 
 const (
@@ -394,7 +395,7 @@ func (t *listDirTool) execute(ctx context.Context, arguments string) (string, er
 		if entry.IsDir() && name == alwaysSkipDir {
 			return filepath.SkipDir
 		}
-		if !args.IncludeHidden && strings.HasPrefix(name, ".") {
+		if !args.IncludeHidden && fshidden.Hidden(entry) {
 			if entry.IsDir() {
 				return filepath.SkipDir
 			}
@@ -544,12 +545,12 @@ func (t *grepTool) execute(ctx context.Context, arguments string) (string, error
 		if entry.IsDir() {
 			name := entry.Name()
 			if name == alwaysSkipDir ||
-				(!args.IncludeHidden && strings.HasPrefix(name, ".")) {
+				(!args.IncludeHidden && fshidden.Hidden(entry)) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if !args.IncludeHidden && strings.HasPrefix(entry.Name(), ".") {
+		if !args.IncludeHidden && fshidden.Hidden(entry) {
 			return nil
 		}
 		if len(matches) >= maxMatches {

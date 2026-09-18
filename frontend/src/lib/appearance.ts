@@ -24,6 +24,8 @@ export interface UISettings {
   codeFontName: string;
   /** Whole-UI scale applied to the 14px design base. */
   fontScale: number;
+  /** List dot-entries in the chat rail's workspace tree and quick-open. */
+  showHiddenFiles: boolean;
 }
 
 export interface FontPreset {
@@ -88,6 +90,7 @@ export const DEFAULT_UI_SETTINGS: UISettings = {
   codeFont: FONT_PRESET_SYSTEM,
   codeFontName: '',
   fontScale: DEFAULT_FONT_SCALE,
+  showHiddenFiles: false,
 };
 
 const UI_CACHE_KEY = 'opencraft.ui';
@@ -209,6 +212,9 @@ export function normalizeUISettings(raw: unknown): UISettings | null {
         ? source.fontScale
         : DEFAULT_FONT_SCALE,
     ),
+    // A hand-edited or older document has no switch; false keeps the
+    // tree showing the tracked content only.
+    showHiddenFiles: source.showHiddenFiles === true,
   };
 }
 

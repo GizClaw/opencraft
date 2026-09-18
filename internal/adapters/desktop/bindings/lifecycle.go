@@ -67,27 +67,30 @@ func (b *Lifecycle) SetPetsSettings(settings PetsSettings) error {
 	return nil
 }
 
-// UISettings is the desktop appearance preference surface (Settings >
+// UISettings is the desktop interface preference surface (Settings >
 // Interface). A font is a preset id plus, for "custom", the family name from
 // the system catalogue; the renderer turns that into a CSS font stack (see
-// frontend/src/lib/appearance.ts).
+// frontend/src/lib/appearance.ts). ShowHiddenFiles drives the workspace
+// tree's dotfile switch.
 type UISettings struct {
-	FontFamily     string  `json:"fontFamily"`
-	FontFamilyName string  `json:"fontFamilyName,omitempty"`
-	CodeFont       string  `json:"codeFont"`
-	CodeFontName   string  `json:"codeFontName,omitempty"`
-	FontScale      float64 `json:"fontScale"`
+	FontFamily      string  `json:"fontFamily"`
+	FontFamilyName  string  `json:"fontFamilyName,omitempty"`
+	CodeFont        string  `json:"codeFont"`
+	CodeFontName    string  `json:"codeFontName,omitempty"`
+	FontScale       float64 `json:"fontScale"`
+	ShowHiddenFiles bool    `json:"showHiddenFiles"`
 }
 
 // GetUISettings returns the persisted appearance preferences.
 func (b *Lifecycle) GetUISettings() UISettings {
 	ui := b.core.Shell.UISettings()
 	return UISettings{
-		FontFamily:     ui.FontFamily,
-		FontFamilyName: ui.FontFamilyName,
-		CodeFont:       ui.CodeFont,
-		CodeFontName:   ui.CodeFontName,
-		FontScale:      ui.FontScale,
+		FontFamily:      ui.FontFamily,
+		FontFamilyName:  ui.FontFamilyName,
+		CodeFont:        ui.CodeFont,
+		CodeFontName:    ui.CodeFontName,
+		FontScale:       ui.FontScale,
+		ShowHiddenFiles: ui.ShowHiddenFiles,
 	}
 }
 
@@ -95,11 +98,12 @@ func (b *Lifecycle) GetUISettings() UISettings {
 // them immediately; the desktop document is the durable copy.
 func (b *Lifecycle) SetUISettings(settings UISettings) error {
 	return b.core.Shell.SetUISettings(core.UIPrefs{
-		FontFamily:     settings.FontFamily,
-		FontFamilyName: settings.FontFamilyName,
-		CodeFont:       settings.CodeFont,
-		CodeFontName:   settings.CodeFontName,
-		FontScale:      settings.FontScale,
+		FontFamily:      settings.FontFamily,
+		FontFamilyName:  settings.FontFamilyName,
+		CodeFont:        settings.CodeFont,
+		CodeFontName:    settings.CodeFontName,
+		FontScale:       settings.FontScale,
+		ShowHiddenFiles: settings.ShowHiddenFiles,
 	})
 }
 

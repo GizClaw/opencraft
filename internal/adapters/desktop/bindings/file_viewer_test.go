@@ -278,7 +278,7 @@ func TestListReturnsRelativePaths(t *testing.T) {
 	c := core.NewCore(t.TempDir(), t.TempDir(), workDir)
 	b := NewFileBinding(c)
 
-	nodes, err := b.List(".")
+	nodes, err := b.List(".", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func TestListReturnsRelativePaths(t *testing.T) {
 		t.Fatalf("paths = %v", got)
 	}
 
-	docs, err := b.List("docs")
+	docs, err := b.List("docs", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -305,10 +305,10 @@ func TestListRejectsTraversal(t *testing.T) {
 	c := core.NewCore(t.TempDir(), dataDir, workDir)
 	b := NewFileBinding(c)
 
-	if _, err := b.List(".."); err == nil {
+	if _, err := b.List("..", false); err == nil {
 		t.Fatal("listing the parent of the workspace unexpectedly allowed")
 	}
-	if _, err := b.List(dataDir); err == nil {
+	if _, err := b.List(dataDir, false); err == nil {
 		t.Fatal("listing a readable root outside the workspace unexpectedly allowed")
 	}
 }

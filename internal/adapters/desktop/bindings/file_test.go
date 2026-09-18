@@ -22,19 +22,95 @@ func TestFileListAndSearch(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "main.go"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	nodes, err := b.List(".")
+	nodes, err := b.List(".", false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(nodes) != 1 || nodes[0].Name != "main.go" {
 		t.Fatalf("nodes = %+v", nodes)
 	}
-	hits, err := b.Search("main", 10)
+	hits, err := b.Search("main", 10, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(hits) != 1 || hits[0].Path != "main.go" {
 		t.Fatalf("hits = %+v", hits)
+	}
+}
+
+// Hidden entries stay out of the tree and the quick-open search until
+// ui.showHiddenFiles asks for them; once it does, both surfaces list
+// and match them so the tree and the search box agree.
+func TestFileListAndSearchFollowShowHidden(t *testing.T) {
+	root := t.TempDir()
+	c := core.NewCore(t.TempDir(), t.TempDir(), root)
+	b := NewFileBinding(c)
+
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, ".github", "workflows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(root, ".github", "workflows", "ci.yml"),
+		[]byte("x"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	nodes, err := b.List(".", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, n := range nodes {
+		names = append(names, n.Name)
+	}
+	if len(names) != 0 {
+		t.Fatalf("hidden entries leaked into the default listing: %v", names)
+	}
+	if hits, err := b.Search("ci.yml", 10, false); err != nil {
+		t.Fatal(err)
+	} else if len(hits) != 0 {
+		t.Fatalf("hidden entries leaked into the default search: %+v", hits)
+	}
+
+	nodes, err = b.List(".", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names = nil
+	for _, n := range nodes {
+		names = append(names, n.Name)
+	}
+	// Dirs first, then files; both hidden entries are part of the listing.
+	if len(names) != 2 || names[0] != ".github" || names[1] != ".env" {
+		t.Fatalf("names = %v", names)
+	}
+
+	nested, err := b.List(".github", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nested) != 1 || nested[0].Path != ".github/workflows" {
+		t.Fatalf("nested = %+v", nested)
+	}
+
+	hits, err := b.Search("workflows/ci", 10, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].Path != ".github/workflows/ci.yml" {
+		t.Fatalf("hits = %+v", hits)
+	}
+	envHits, err := b.Search(".env", 10, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(envHits) != 1 || envHits[0].Path != ".env" {
+		t.Fatalf("env hits = %+v", envHits)
 	}
 }
 

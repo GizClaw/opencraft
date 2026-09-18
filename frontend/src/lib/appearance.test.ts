@@ -179,6 +179,22 @@ describe('normalizeUISettings', () => {
       codeFont: 'system',
       codeFontName: '',
       fontScale: MAX_FONT_SCALE,
+      showHiddenFiles: false,
     });
+  });
+
+  it('keeps the hidden-file switch only when it is really on', () => {
+    expect(normalizeUISettings({ showHiddenFiles: true })).toEqual({
+      ...DEFAULT_UI_SETTINGS,
+      showHiddenFiles: true,
+    });
+    // Hand-edited documents carry strings and nulls; anything but a real
+    // boolean true falls back to the tracked-content view.
+    expect(normalizeUISettings({ showHiddenFiles: 'yes' })).toEqual(
+      DEFAULT_UI_SETTINGS,
+    );
+    expect(normalizeUISettings({ showHiddenFiles: null })).toEqual(
+      DEFAULT_UI_SETTINGS,
+    );
   });
 });
