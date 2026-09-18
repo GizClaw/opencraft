@@ -504,7 +504,9 @@ export const api = {
   listDir: (dir: string, showHidden = false) =>
     File.List(dir, showHidden) as unknown as Promise<FileNode[]>,
   searchFiles: (query: string, limit = 50, showHidden = false) =>
-    File.Search(query, limit, showHidden) as unknown as Promise<SearchFileHit[]>,
+    File.Search(query, limit, showHidden) as unknown as Promise<
+      SearchFileHit[]
+    >,
   resolveTarget: (target: string, base?: string) =>
     File.ResolveTarget(
       target,
