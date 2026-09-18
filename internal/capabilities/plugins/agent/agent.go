@@ -285,20 +285,17 @@ func hasPerm(m *plugins.Manifest, perm string) bool {
 }
 
 // resolveInside resolves a relative path against root, rejecting
-// lexical escapes and symlinks that leave the root.
+// lexical escapes and symlinks that leave the root. The containment
+// check resolves through the longest existing ancestor, so a path
+// that does not exist yet cannot hide behind a symlinked directory.
 func resolveInside(root, rel string) (string, bool) {
 	clean := filepath.Clean(rel)
 	if !pathsafe.RelRef(clean) {
 		return "", false
 	}
 	abs := filepath.Join(root, clean)
-	rootReal, rootErr := filepath.EvalSymlinks(root)
-	absReal, absErr := filepath.EvalSymlinks(abs)
-	if rootErr == nil && absErr == nil {
-		if absReal != rootReal &&
-			!strings.HasPrefix(absReal, rootReal+string(filepath.Separator)) {
-			return "", false
-		}
+	if !pathsafe.RealWithin(root, abs) {
+		return "", false
 	}
 	return filepath.Clean(abs), true
 }

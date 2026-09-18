@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/resource"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 )
 
@@ -154,7 +154,7 @@ type confinedWithReadonly struct {
 
 func (w *confinedWithReadonly) readonlyPath(full string) bool {
 	for _, root := range w.readonly {
-		if full == root || strings.HasPrefix(full, root+string(filepath.Separator)) {
+		if pathsafe.Within(root, full) {
 			return true
 		}
 	}

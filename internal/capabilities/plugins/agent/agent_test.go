@@ -192,3 +192,56 @@ func TestHostMCPServerPrefixSanitizesPluginID(t *testing.T) {
 		t.Fatalf("MCPServers = %+v, want sanitized prefix", servers)
 	}
 }
+
+// TestResolveInside pins the containment rule for plugin
+// manifest-declared paths: staying inside the plugin directory is
+// allowed, and "../", absolute paths and symlinks out of it are not —
+// including a sibling directory whose name merely starts with the
+// plugin directory's.
+func TestResolveInside(t *testing.T) {
+	root := t.TempDir()
+	sibling := filepath.Join(filepath.Dir(root), filepath.Base(root)+"-evil")
+	t.Cleanup(func() {
+		if err := os.RemoveAll(sibling); err != nil {
+			t.Errorf("remove sibling: %v", err)
+		}
+	})
+	if err := os.MkdirAll(filepath.Join(root, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(sibling, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(sibling, "out.txt"), []byte("x"), 0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(
+		filepath.Join(root, "sub"), filepath.Join(root, "inward"),
+	); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	if err := os.Symlink(sibling, filepath.Join(root, "escape")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	cases := []struct {
+		rel  string
+		want bool
+	}{
+		{"sub/new.txt", true},     // missing leaf under a real directory
+		{"inward/new.txt", true},  // symlink that stays inside
+		{"../out.txt", false},     // lexical escape
+		{"/etc/hosts", false},     // absolute path
+		{"escape/out.txt", false}, // existing file behind the symlink
+		{"escape/new.txt", false}, // missing leaf behind the symlink
+	}
+	for _, tc := range cases {
+		got, ok := resolveInside(root, tc.rel)
+		if ok != tc.want {
+			t.Errorf("resolveInside(%q) = %q, %v; want ok=%v",
+				tc.rel, got, ok, tc.want)
+		}
+	}
+}

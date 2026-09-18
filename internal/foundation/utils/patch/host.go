@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
+
+	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
 
 // ApplyToDir applies a codex-format patch to files under dir on the
@@ -29,10 +31,6 @@ func ApplyToDir(dir, patch string) ([]FileResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	insideRoot := func(p string) bool {
-		return p == rootResolved ||
-			strings.HasPrefix(p, rootResolved+string(os.PathSeparator))
-	}
 
 	var results []FileResult
 	for _, op := range ops {
@@ -40,14 +38,12 @@ func ApplyToDir(dir, patch string) ([]FileResult, error) {
 			continue
 		}
 		clean := filepath.Clean(filepath.FromSlash(op.path))
-		if filepath.IsAbs(clean) ||
-			clean == ".." ||
-			strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
+		if !pathsafe.RelRef(clean) {
 			return results, errdefs.Validationf(
 				"apply_patch: path %q escapes %s", op.path, dir)
 		}
 		fp := filepath.Join(root, clean)
-		if err := ensureDirInside(rootResolved, filepath.Dir(fp), insideRoot); err != nil {
+		if err := ensureDirInside(rootResolved, filepath.Dir(fp)); err != nil {
 			return results, err
 		}
 
@@ -64,7 +60,7 @@ func ApplyToDir(dir, patch string) ([]FileResult, error) {
 			results = append(results, FileResult{Path: op.path, Action: "add"})
 		case opUpdate:
 			resolved, err := filepath.EvalSymlinks(fp)
-			if err != nil || !insideRoot(resolved) {
+			if err != nil || !pathsafe.Within(rootResolved, resolved) {
 				return results, errdefs.Validationf(
 					"apply_patch: file %q does not exist or escapes %s",
 					op.path, dir)
@@ -107,7 +103,6 @@ func ApplyToDir(dir, patch string) ([]FileResult, error) {
 func ensureDirInside(
 	rootResolved string,
 	parent string,
-	insideRoot func(string) bool,
 ) error {
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return err
@@ -116,7 +111,7 @@ func ensureDirInside(
 	if err != nil {
 		return err
 	}
-	if !insideRoot(resolved) {
+	if !pathsafe.Within(rootResolved, resolved) {
 		return errdefs.Validationf(
 			"apply_patch: directory %q escapes the target", parent)
 	}

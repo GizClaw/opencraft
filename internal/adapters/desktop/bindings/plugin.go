@@ -275,9 +275,7 @@ func pluginOwnerForSkillPath(
 			continue
 		}
 		for _, root := range pluginSkillRoots(m, dir) {
-			root = filepath.Clean(root)
-			if skillPath == root ||
-				strings.HasPrefix(skillPath, root+string(filepath.Separator)) {
+			if pathsafe.Within(root, skillPath) {
 				return p.ID, p.Name, true
 			}
 		}
