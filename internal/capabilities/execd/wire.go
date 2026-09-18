@@ -78,6 +78,25 @@ func errorFromResponse(method string, e *Error) error {
 	return &RPCError{Method: method, Code: e.GetCode(), Message: e.GetMessage()}
 }
 
+// contextErrorResponse maps an operation that stopped because its
+// context ended onto the matching wire code. The actor cancels the
+// in-flight operation when a queued caller gives up, and that must not
+// look like a server fault to the operation's own caller.
+func contextErrorResponse(
+	opCtx context.Context, method string, err error,
+) *Response {
+	switch {
+	case errors.Is(err, context.Canceled),
+		errors.Is(opCtx.Err(), context.Canceled):
+		return errorResponse(CodeCanceled, "%s: canceled", method)
+	case errors.Is(err, context.DeadlineExceeded),
+		errors.Is(opCtx.Err(), context.DeadlineExceeded):
+		return errorResponse(CodeDeadlineExceeded, "%s: deadline exceeded", method)
+	default:
+		return nil
+	}
+}
+
 // deadlineMillis renders ctx's remaining budget as the relative
 // deadline the wire carries. Zero means "no wire deadline".
 func deadlineMillis(ctx context.Context) int64 {

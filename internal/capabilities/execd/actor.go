@@ -54,9 +54,11 @@ func (a *processActor) run() {
 			continue
 		}
 		opCtx, cancel := context.WithCancel(req.ctx)
+		a.entry.setBusy(true)
 		a.entry.setCurrent(cancel)
 		value, errResp := req.run(opCtx)
 		a.entry.clearCurrent()
+		a.entry.setBusy(false)
 		cancel()
 		req.reply <- actorReply{value: value, err: errResp}
 	}
@@ -134,3 +136,10 @@ func (e *processEntry) clearCurrent() {
 	e.currentCancel = nil
 	e.mu.Unlock()
 }
+
+// busy reports whether the actor is running an operation right now, so a
+// read that arrives meanwhile can be served as a non-blocking peek
+// instead of queueing behind a long-poll.
+func (e *processEntry) busy() bool { return e.acting.Load() }
+
+func (e *processEntry) setBusy(busy bool) { e.acting.Store(busy) }

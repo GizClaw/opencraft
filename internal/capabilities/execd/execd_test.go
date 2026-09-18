@@ -48,8 +48,27 @@ func testPairConfigured(
 	configure func(*Server),
 ) (*Client, *Server) {
 	t.Helper()
+	return testPairFull(t, localFactory(t), configure)
+}
+
+// testPairWithFactory builds a pair over an explicit runner factory, for
+// tests that need a backend with different capabilities.
+func testPairWithFactory(
+	t *testing.T,
+	factory RunnerFactory,
+) (*Client, *Server) {
+	t.Helper()
+	return testPairFull(t, factory, nil)
+}
+
+func testPairFull(
+	t *testing.T,
+	factory RunnerFactory,
+	configure func(*Server),
+) (*Client, *Server) {
+	t.Helper()
 	serverConn, clientConn := net.Pipe()
-	srv := New(localFactory(t), serverConn, serverConn)
+	srv := New(factory, serverConn, serverConn)
 	if configure != nil {
 		configure(srv)
 	}
@@ -766,8 +785,64 @@ func TestSessionCloseAfterReapIsIdempotent(t *testing.T) {
 func TestBindAdvertisesBackendCapabilities(t *testing.T) {
 	runner := testRunner(t)
 	want := local.New(t.TempDir()).Capabilities().Features
-	if got := runner.Capabilities().Features; got != want {
+	got := runner.Capabilities().Features
+	if got.TTY != want.TTY || got.Signal != want.Signal {
 		t.Fatalf("features = %+v, want the backend's %+v", got, want)
+	}
+	// The protocol's event stream has no consumers yet, so the remote
+	// surface must not claim it even though the backend supports it.
+	if got.Events {
+		t.Fatal("runner advertises events while remote Watch is NotAvailable")
+	}
+}
+
+// TestInterruptedWaitIsCanceledAndReadsPeek pins two behaviours a queued
+// caller depends on: a read that arrives while the actor is busy is
+// served as a non-blocking peek instead of queueing behind the
+// outstanding wait, and interrupting that wait reports a cancellation
+// rather than a server fault.
+func TestInterruptedWaitIsCanceledAndReadsPeek(t *testing.T) {
+	client, _ := testPair(t)
+	ctx := context.Background()
+	if _, err := client.Bind(ctx, t.TempDir(), &SandboxPolicy{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Start(ctx, &Start{
+		ProcessId: "busy",
+		Argv:      []string{"/bin/sh", "-c", "sleep 30"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitDone := make(chan error, 1)
+	go func() {
+		_, err := client.Wait(ctx, "busy")
+		waitDone <- err
+	}()
+	time.Sleep(200 * time.Millisecond) // let the wait reach the actor
+
+	start := time.Now()
+	read, err := client.Read(ctx, &Read{ProcessId: "busy", WaitMs: 500})
+	if err != nil {
+		t.Fatalf("peek read: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 400*time.Millisecond {
+		t.Fatalf("read behind a wait took %v, want a non-blocking peek",
+			elapsed)
+	}
+	if len(read.GetChunks()) != 0 || read.GetEof() {
+		t.Fatalf("peek read = %+v, want an empty non-EOF result", read)
+	}
+
+	if _, err := client.Terminate(ctx, "busy", true); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-waitDone:
+		if !IsCanceled(err) {
+			t.Fatalf("interrupted wait = %v, want a cancelled code", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("interrupted wait did not return")
 	}
 }
 

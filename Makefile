@@ -64,14 +64,23 @@ gen-proto:
 		internal/capabilities/execd/execd.proto
 
 # gen-proto-check fails when execd.pb.go no longer matches execd.proto.
-# The protoc version comment is ignored: the plugin (which shapes the
-# code) is pinned above, while protoc itself comes from the host.
-gen-proto-check: gen-proto
+# It generates into a temp directory and leaves the worktree alone, so a
+# host protoc that formats things differently cannot "pass" by dirtying
+# the checked-in file. The protoc version comment is ignored: the plugin
+# (which shapes the code) is pinned above, while protoc comes from the
+# host.
+gen-proto-check:
 	@tmpdir="$$(mktemp -d)"; trap 'rm -rf "$$tmpdir"' EXIT; \
+	GOBIN="$$tmpdir/bin" go install \
+		google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION); \
+	mkdir -p "$$tmpdir/out"; \
+	protoc --plugin=protoc-gen-go="$$tmpdir/bin/protoc-gen-go" \
+		--go_out="$$tmpdir/out" --go_opt=paths=source_relative \
+		internal/capabilities/execd/execd.proto; \
 	git show :internal/capabilities/execd/execd.pb.go \
 		| grep -v '^//[[:space:]]*protoc' > "$$tmpdir/want.go"; \
 	grep -v '^//[[:space:]]*protoc' \
-		internal/capabilities/execd/execd.pb.go > "$$tmpdir/got.go"; \
+		"$$tmpdir/out/internal/capabilities/execd/execd.pb.go" > "$$tmpdir/got.go"; \
 	if ! diff -u "$$tmpdir/want.go" "$$tmpdir/got.go" > "$$tmpdir/diff"; then \
 		echo "execd.pb.go is out of sync with execd.proto; run 'make gen-proto'"; \
 		head -40 "$$tmpdir/diff"; \

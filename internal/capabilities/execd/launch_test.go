@@ -133,3 +133,22 @@ func TestLaunchReportsChildStderr(t *testing.T) {
 		t.Fatalf("error = %v, want the child's stderr", err)
 	}
 }
+
+// TestLaunchFailsFastWhenTheContextIsCancelled pins that the handshake
+// honours the caller's context: this is what lets Pool.Close abort an
+// in-flight pre-warm instead of waiting out the handshake timeout.
+func TestLaunchFailsFastWhenTheContextIsCancelled(t *testing.T) {
+	bin := buildOpencraft(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	start := time.Now()
+	_, _, err := LaunchExe(ctx, bin)
+	if err == nil {
+		t.Fatal("launch with a cancelled context succeeded")
+	}
+	elapsed := time.Since(start)
+	t.Logf("cancelled launch returned after %v", elapsed)
+	if elapsed > 8*time.Second {
+		t.Fatalf("cancelled launch took %v, want a fast failure", elapsed)
+	}
+}

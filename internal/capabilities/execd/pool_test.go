@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -322,5 +323,52 @@ func TestRemoteRunnerCloseStopsRelaunchedChild(t *testing.T) {
 	}
 	if stopped.Load() == 0 {
 		t.Fatal("relaunched child was not stopped on Close")
+	}
+}
+
+// TestPoolReplacesADeadIdleChild pins the health check: an idle child
+// whose transport died must not turn the next lease into a failure, the
+// way it did when acquire handed out whatever sat in the idle list.
+func TestPoolReplacesADeadIdleChild(t *testing.T) {
+	settings := DefaultPoolSettings()
+	settings.Prewarm = 0
+	pool := NewPool(settings)
+	defer pool.Close()
+	var (
+		mu      sync.Mutex
+		clients []*Client
+	)
+	pool.SetLauncher(func(context.Context) (*Client, func(), error) {
+		client, stop, err := testChild(t)
+		if err == nil {
+			mu.Lock()
+			clients = append(clients, client)
+			mu.Unlock()
+		}
+		return client, stop, err
+	})
+	ctx := context.Background()
+	first, err := pool.Lease(ctx, t.TempDir(), &SandboxPolicy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	dead := clients[0]
+	mu.Unlock()
+	_ = dead.Close() // the idle child's transport dies unnoticed
+
+	second, err := pool.Lease(ctx, t.TempDir(), &SandboxPolicy{})
+	if err != nil {
+		t.Fatalf("lease after the idle child died: %v", err)
+	}
+	defer func() { _ = second.Close() }()
+	mu.Lock()
+	launches := len(clients)
+	mu.Unlock()
+	if launches != 2 {
+		t.Fatalf("launches = %d, want the dead child replaced", launches)
 	}
 }

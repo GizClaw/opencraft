@@ -209,25 +209,39 @@ func (p *Pool) signalWarm() {
 // acquire returns an idle child (pooled) or a dedicated one when the
 // pool is at capacity (not pooled).
 func (p *Pool) acquire(ctx context.Context) (*idleChild, bool, error) {
-	p.mu.Lock()
-	if p.closed {
-		p.mu.Unlock()
-		return nil, false, errdefs.NotAvailablef("execd: pool is closed")
-	}
-	// Take the freshest idle child; expired ones are stopped as we go.
-	now := time.Now()
-	for len(p.idle) > 0 {
+	// Take the freshest idle child; expired or dead ones are stopped as
+	// we go. The watchdog only pings leased children, so an idle child
+	// can die unnoticed and would otherwise turn the next lease into a
+	// failure.
+	for {
+		p.mu.Lock()
+		if p.closed {
+			p.mu.Unlock()
+			return nil, false, errdefs.NotAvailablef("execd: pool is closed")
+		}
+		if len(p.idle) == 0 {
+			break
+		}
 		child := p.idle[len(p.idle)-1]
 		p.idle = p.idle[:len(p.idle)-1]
-		if now.Sub(child.since) < p.settings.IdleTTL {
-			p.active++
-			p.mu.Unlock()
-			return child, true, nil
-		}
+		idleTTL := p.settings.IdleTTL
 		p.mu.Unlock()
-		child.stop()
+		if time.Since(child.since) >= idleTTL || !p.healthy(child) {
+			child.stop()
+			continue
+		}
 		p.mu.Lock()
+		if p.closed {
+			p.mu.Unlock()
+			child.stop()
+			return nil, false, errdefs.NotAvailablef("execd: pool is closed")
+		}
+		p.active++
+		p.mu.Unlock()
+		return child, true, nil
 	}
+	// No idle child left: decide between a pooled launch and a dedicated
+	// one. The lock is held here.
 	launcher := p.launcher
 	if p.active >= p.settings.MaxActive {
 		maxActive := p.settings.MaxActive
@@ -253,6 +267,15 @@ func (p *Pool) acquire(ctx context.Context) (*idleChild, bool, error) {
 	return &idleChild{client: client, stop: stop, since: time.Now()}, true, nil
 }
 
+// healthy pings an idle child before the pool hands it out or keeps it:
+// the watchdog only covers leased children.
+func (p *Pool) healthy(child *idleChild) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err := child.client.Ping(ctx)
+	return err == nil
+}
+
 func (p *Pool) dropSlot() {
 	p.mu.Lock()
 	if p.active > 0 {
@@ -275,10 +298,7 @@ func (p *Pool) releaseChild(child *idleChild) {
 		child.stop()
 		return
 	}
-	pingCtx, cancel := context.WithTimeout(context.Background(), time.Second)
-	_, err := child.client.Ping(pingCtx)
-	cancel()
-	if err != nil {
+	if !p.healthy(child) {
 		child.stop()
 		return
 	}

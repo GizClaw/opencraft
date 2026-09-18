@@ -179,14 +179,15 @@ func capabilitiesFromHello(hello *HelloOk) sandbox.Capabilities {
 // features core exposes.
 func capabilitiesFromNames(names []string) sandbox.Capabilities {
 	features := sandbox.SessionFeatures{}
+	// "events" is deliberately not mapped: core defines the feature as
+	// "push event streams (Watch)" and the remote session has no Watch
+	// yet, so mapping it would make Runner.Capabilities lie.
 	for _, capability := range names {
 		switch capability {
 		case "pty":
 			features.TTY = true
 		case "signal":
 			features.Signal = true
-		case "events":
-			features.Events = true
 		}
 	}
 	return sandbox.Capabilities{Features: features}
@@ -379,9 +380,8 @@ func (r *RemoteRunner) restart(ctx context.Context) error {
 			continue
 		}
 		r.mu.Lock()
-		closed = r.closed
-		r.mu.Unlock()
-		if closed {
+		if r.closed {
+			r.mu.Unlock()
 			telemetry.WarnErr(context.Background(),
 				"execd: close discarded child client failed", newClient.Close())
 			if newStop != nil {
@@ -389,7 +389,9 @@ func (r *RemoteRunner) restart(ctx context.Context) error {
 			}
 			return nil
 		}
-		r.mu.Lock()
+		// Install the child in the same critical section that checks
+		// closed: a Close running between the two would otherwise
+		// release the lease and leave this child owned by nobody.
 		r.client = newClient
 		r.stop = newStop
 		r.dead = false

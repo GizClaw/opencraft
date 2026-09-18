@@ -603,9 +603,9 @@ func runnerCapabilities(runners RunnerSet) []string {
 	if features.Signal {
 		caps = append(caps, "signal")
 	}
-	if features.Events {
-		caps = append(caps, "events")
-	}
+	// "events" stays out until the parent can consume it: core defines
+	// the feature as "push event streams (Watch)" and the remote runner
+	// has no Watch yet, so advertising it would make the surface lie.
 	return caps
 }
 

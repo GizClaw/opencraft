@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/sandbox"
@@ -20,6 +21,9 @@ type processEntry struct {
 	watcher  sandbox.SessionWatcher
 	writeIDs *recentWrites
 	actor    *processActor
+	// acting is set while the actor runs an operation, so a concurrent
+	// read can degrade to a non-blocking peek.
+	acting atomic.Bool
 
 	mu            sync.Mutex
 	exit          *sandbox.SessionExit
@@ -219,6 +223,20 @@ func (s *Server) read(
 		return nil, errorResponse(CodeNotFound, "unknown process %q",
 			p.GetProcessId())
 	}
+	// A read that lands while the actor is busy must not queue behind a
+	// long-poll read or an outstanding wait: serve it as a non-blocking
+	// peek and let the caller re-poll from the cursor it got back.
+	if entry.busy() {
+		value, errResp := s.readOp(ctx, entry, &Read{
+			ProcessId: p.GetProcessId(),
+			AfterSeq:  p.GetAfterSeq(),
+			MaxBytes:  p.GetMaxBytes(),
+		})
+		if errResp != nil {
+			return nil, errResp
+		}
+		return value.(*ReadOk), nil
+	}
 	value, errResp := entry.actor.submit(ctx, func(opCtx context.Context) (any, *Response) {
 		return s.readOp(opCtx, entry, p)
 	})
@@ -330,6 +348,9 @@ func (s *Server) write(
 			if errors.Is(err, sandbox.ErrSessionClosed) {
 				return writeStdinClosed, nil
 			}
+			if resp := contextErrorResponse(writeCtx, "write", err); resp != nil {
+				return nil, resp
+			}
 			return nil, errorResponse(CodeInternal, "write: %v", err)
 		}
 		return writeAccepted, nil
@@ -348,8 +369,11 @@ func (s *Server) closeInput(
 		return errorResponse(CodeNotFound, "unknown process %q", p.GetProcessId())
 	}
 	_, errResp := entry.actor.submit(ctx,
-		func(context.Context) (any, *Response) {
+		func(opCtx context.Context) (any, *Response) {
 			if err := entry.proc.CloseInput(); err != nil {
+				if resp := contextErrorResponse(opCtx, "close_input", err); resp != nil {
+					return nil, resp
+				}
 				return nil, errorResponse(CodeInternal, "close_input: %v", err)
 			}
 			return nil, nil
@@ -372,6 +396,9 @@ func (s *Server) signal(
 	}
 	_, errResp := entry.actor.submit(ctx, func(opCtx context.Context) (any, *Response) {
 		if err := entry.proc.Signal(opCtx, coreSig); err != nil {
+			if resp := contextErrorResponse(opCtx, "signal", err); resp != nil {
+				return nil, resp
+			}
 			return nil, errorResponse(CodeInternal, "signal: %v", err)
 		}
 		return nil, nil
@@ -390,6 +417,9 @@ func (s *Server) resize(
 	}
 	_, errResp := entry.actor.submit(ctx, func(opCtx context.Context) (any, *Response) {
 		if err := entry.proc.Resize(opCtx, int(p.GetRows()), int(p.GetCols())); err != nil {
+			if resp := contextErrorResponse(opCtx, "resize", err); resp != nil {
+				return nil, resp
+			}
 			return nil, errorResponse(CodeInternal, "resize: %v", err)
 		}
 		return nil, nil
@@ -422,6 +452,9 @@ func (s *Server) terminate(
 				err = entry.proc.Terminate(opCtx)
 			}
 			if err != nil {
+				if resp := contextErrorResponse(opCtx, "terminate", err); resp != nil {
+					return nil, resp
+				}
 				return nil, errorResponse(CodeInternal, "terminate: %v", err)
 			}
 			// Running is a best-effort snapshot: the exit state is
@@ -463,6 +496,9 @@ func (s *Server) wait(
 	value, errResp := entry.actor.submit(ctx, func(opCtx context.Context) (any, *Response) {
 		exit, err := entry.proc.Wait(opCtx)
 		if err != nil {
+			if resp := contextErrorResponse(opCtx, "wait", err); resp != nil {
+				return nil, resp
+			}
 			return nil, errorResponse(CodeInternal, "wait: %v", err)
 		}
 		return &WaitOk{

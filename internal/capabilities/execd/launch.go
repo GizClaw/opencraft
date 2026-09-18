@@ -103,8 +103,12 @@ func LaunchExe(ctx context.Context, executable string) (*Client, func(), error) 
 	tail := newStderrTail(stderrTailBytes)
 	stderrForwarded := forwardChildStderrAsync(ctx, cmd.Process.Pid, stderr, tail)
 
-	handshakeCtx, cancelHandshake := context.WithTimeout(
-		context.WithoutCancel(ctx), handshakeTimeout)
+	// The handshake honours the caller's context (plus the package
+	// timeout): a cancelled launch must fail fast and kill the child it
+	// just forked, which is what lets Pool.Close abort an in-flight
+	// pre-warm. The child's lifetime is still detached from ctx - stop()
+	// owns it once the handshake succeeds.
+	handshakeCtx, cancelHandshake := context.WithTimeout(ctx, handshakeTimeout)
 	conn, err := plan.attach(handshakeCtx)
 	var client *Client
 	if err == nil {

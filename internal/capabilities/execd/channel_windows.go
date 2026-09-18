@@ -54,7 +54,12 @@ func ChildChannel(_ int, pipe string) (net.Conn, error) {
 	if pipe == "" {
 		return nil, errors.New("execd: -execd-pipe is required")
 	}
-	conn, err := winio.DialPipeContext(context.Background(), pipe)
+	// A parent that dies before accepting must not leave this process
+	// blocking forever; the journal sweep only runs on the next host
+	// start.
+	ctx, cancel := context.WithTimeout(context.Background(), handshakeTimeout)
+	defer cancel()
+	conn, err := winio.DialPipeContext(ctx, pipe)
 	if err != nil {
 		return nil, fmt.Errorf("execd: dial pipe: %w", err)
 	}

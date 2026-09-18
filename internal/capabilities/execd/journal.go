@@ -95,7 +95,7 @@ func recordChild(ctx context.Context, pid int, nonce string) func() {
 var sweepOnce sync.Once
 
 // sweepOrphansOnce reaps children left behind by an earlier host. It
-// runs once per process, from the pool's construction.
+// runs once per process, right before the first fork.
 func sweepOrphansOnce(ctx context.Context) {
 	sweepOnce.Do(func() { sweepOrphans(ctx) })
 }
