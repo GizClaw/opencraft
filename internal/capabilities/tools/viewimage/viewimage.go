@@ -13,7 +13,7 @@ package viewimage
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
@@ -22,6 +22,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/tool"
 	"github.com/GizClaw/flowcraft/core/workspace"
 
+	"github.com/GizClaw/opencraft/internal/capabilities/tools/toolargs"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/imageutil"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/wsread"
 )
@@ -108,10 +109,8 @@ func (t *Tool) Execute(
 	ctx context.Context, arguments string,
 ) (message.Content, error) {
 	var args Args
-	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
-		return message.Content{}, errdefs.Validationf(
-			"%s: parse arguments: %v", Name, err,
-		)
+	if err := toolargs.Decode(Name, arguments, nil, &args); err != nil {
+		return message.Content{}, err
 	}
 	if args.Path == "" {
 		return message.Content{}, errdefs.Validationf(
@@ -120,6 +119,14 @@ func (t *Tool) Execute(
 	}
 	data, err := wsread.Capped(ctx, t.ws, args.Path, maxSourceBytes)
 	if err != nil {
+		// The workspace error says "workspace: not found: <path>",
+		// which reads like the workspace itself is missing; name the
+		// file instead.
+		if errors.Is(err, workspace.ErrNotFound) {
+			return message.Content{}, errdefs.NotFoundf(
+				"%s: file not found: %s; check the path or list the "+
+					"directory with list_dir", Name, args.Path)
+		}
 		return message.Content{}, fmt.Errorf(
 			"%s: read %s: %w", Name, args.Path, err,
 		)

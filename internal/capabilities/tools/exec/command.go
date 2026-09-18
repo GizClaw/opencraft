@@ -20,11 +20,19 @@ import (
 	"github.com/GizClaw/flowcraft/core/tool"
 
 	ocsandbox "github.com/GizClaw/opencraft/internal/capabilities/sandbox"
+	"github.com/GizClaw/opencraft/internal/capabilities/tools/toolargs"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/shelldetect"
 )
 
 // CommandName is the canonical exec_command tool name.
 const CommandName = "exec_command"
+
+// commandAliases maps the argument name several other harnesses use
+// for a command line onto this tool's canonical "command". The alias
+// stays undocumented in the schema, like apply_patch's "input": it
+// exists so a model habit costs nothing to the model, not as a second
+// public name for the argument.
+var commandAliases = map[string]string{"cmd": "command"}
 
 // CommandTool runs a command string either as direct argv (simple
 // commands) or through the platform shell (commands with shell
@@ -145,8 +153,8 @@ func (t *CommandTool) execute(ctx context.Context, arguments string) (string, er
 		Stdin          string   `json:"stdin"`
 		TimeoutSeconds *float64 `json:"timeout_seconds"`
 	}
-	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
-		return "", errdefs.Validationf("exec_command: parse arguments: %v", err)
+	if err := toolargs.Decode(CommandName, arguments, commandAliases, &args); err != nil {
+		return "", err
 	}
 	if args.Command == "" {
 		return "", errInvalid("command is required")

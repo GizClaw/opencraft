@@ -74,12 +74,12 @@ func ApplyToDir(dir, patch string) ([]FileResult, error) {
 				return results, err
 			}
 			lines := splitLines(string(data))
-			for _, h := range op.hunks {
+			for i, h := range op.hunks {
 				next, found := applyHunk(lines, h)
 				if !found {
 					return results, errdefs.Validationf(
-						"apply_patch: hunk in %q did not match (anchor %q)",
-						op.path, h.anchor)
+						"apply_patch: hunk %d in %q did not match: %s",
+						i+1, op.path, hunkProblem(h))
 				}
 				lines = next
 			}

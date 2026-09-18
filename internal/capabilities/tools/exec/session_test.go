@@ -193,3 +193,22 @@ func TestMaxSessions(t *testing.T) {
 		t.Fatalf("cap error = %v", err)
 	}
 }
+
+func TestSessionNamesUnknownArgument(t *testing.T) {
+	tool, _ := newSessionTool()
+	_, err := tool.Execute(context.Background(),
+		`{"action":"read","process_id":"s1","timeout":5}`)
+	if err == nil {
+		t.Fatal("unknown argument accepted")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"exec_session: unknown argument \"timeout\"",
+		"accepted arguments:",
+		"process_id",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q missing %q", msg, want)
+		}
+	}
+}

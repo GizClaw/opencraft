@@ -5,8 +5,10 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"strings"
 	"testing"
 
+	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/message/media"
 	"github.com/GizClaw/flowcraft/core/workspace"
@@ -124,6 +126,53 @@ func TestViewImageRejectsNonImagesAndMissingFiles(t *testing.T) {
 	} {
 		if _, err := tool.Execute(context.Background(), args); err == nil {
 			t.Fatalf("args %s: expected an error", args)
+		}
+	}
+}
+
+// TestViewImageMissingFileSaysFileNotFound: the workspace error reads
+// "workspace: not found: shot.png", which sounds like the workspace
+// itself is gone; the tool must name the file instead.
+func TestViewImageMissingFileSaysFileNotFound(t *testing.T) {
+	tool, err := New(newWorkspace(t), Settings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = tool.Execute(context.Background(),
+		`{"path":"frontend/e2e-visual/shots/23-git-rail.png"}`)
+	if err == nil {
+		t.Fatal("missing file accepted")
+	}
+	if !errdefs.IsNotFound(err) {
+		t.Fatalf("error = %v, want a not-found class error", err)
+	}
+	if msg := err.Error(); !strings.Contains(msg,
+		"view_image: file not found: frontend/e2e-visual/shots/23-git-rail.png") ||
+		!strings.Contains(msg, "list_dir") {
+		t.Fatalf("error = %q", msg)
+	}
+}
+
+func TestViewImageNamesUnknownArgument(t *testing.T) {
+	ws := newWorkspace(t)
+	writeImage(t, ws, "small.png", 16, 16)
+	tool, err := New(ws, Settings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = tool.Execute(context.Background(),
+		`{"file_path":"small.png","path":"small.png"}`)
+	if err == nil {
+		t.Fatal("unknown argument accepted")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		`view_image: unknown argument "file_path"`,
+		"accepted arguments:",
+		"path",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q missing %q", msg, want)
 		}
 	}
 }
