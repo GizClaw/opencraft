@@ -11,6 +11,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	patchutil "github.com/GizClaw/opencraft/internal/foundation/utils/patch"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 
 	"sigs.k8s.io/yaml"
 )
@@ -44,10 +45,7 @@ func validRelPath(rel string) (string, error) {
 		return "", fmt.Errorf("skills: empty file path")
 	}
 	clean := filepath.Clean(filepath.FromSlash(rel))
-	if clean == "." ||
-		filepath.IsAbs(clean) ||
-		clean == ".." ||
-		strings.HasPrefix(clean, ".."+string(os.PathSeparator)) {
+	if clean == "." || !pathsafe.RelRef(clean) {
 		return "", fmt.Errorf("skills: file path %q escapes the skill directory", rel)
 	}
 	if clean == "SKILL.md" {
@@ -431,7 +429,7 @@ func (s *Service) Delete(skillPath string) error {
 		if err != nil {
 			continue
 		}
-		if dir == abs || strings.HasPrefix(dir, abs+string(os.PathSeparator)) {
+		if pathsafe.Within(abs, dir) {
 			inside = true
 			break
 		}

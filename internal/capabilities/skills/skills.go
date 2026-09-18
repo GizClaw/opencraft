@@ -515,13 +515,11 @@ func cleanedRoots(roots []string) []string {
 	return out
 }
 
-// insideAnyRoot reports whether resolved stays inside one of roots,
-// both lexically and through symlinks (callers resolve first).
+// insideAnyRoot reports whether resolved stays inside one of roots.
+// Callers resolve symlinks first; the comparison is lexical.
 func insideAnyRoot(resolved string, roots []string) bool {
-	clean := filepath.Clean(resolved)
 	for _, root := range roots {
-		if clean == root ||
-			strings.HasPrefix(clean, root+string(filepath.Separator)) {
+		if pathsafe.Within(root, resolved) {
 			return true
 		}
 	}

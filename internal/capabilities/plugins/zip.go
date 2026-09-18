@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
@@ -76,12 +75,10 @@ func extractPluginZip(zipPath string) (string, func(), error) {
 		}
 		total += int64(f.UncompressedSize64)
 
+		// RelRef on the cleaned name is the zip-slip gate: absolute
+		// names and ".." components are rejected above, so this join
+		// can no longer leave the extraction root.
 		target := filepath.Join(tmp, name)
-		if !strings.HasPrefix(target, tmp+string(filepath.Separator)) {
-			cleanup()
-			return "", nil, fmt.Errorf(
-				"plugins: zip entry escapes archive: %q", f.Name)
-		}
 		if filepath.Base(name) == "plugin.json" {
 			manifestDir = filepath.Dir(name)
 		}

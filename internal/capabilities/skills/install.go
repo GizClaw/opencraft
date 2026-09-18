@@ -194,8 +194,7 @@ func ensureNoEscapingSkillSymlink(root, path string) error {
 	if resolved, err := filepath.EvalSymlinks(rootAbs); err == nil {
 		rootAbs = resolved
 	}
-	if target != rootAbs &&
-		!strings.HasPrefix(target, rootAbs+string(filepath.Separator)) {
+	if !pathsafe.Within(rootAbs, target) {
 		return fmt.Errorf(
 			"skills: SKILL.md symlink %q escapes the skill tree", path)
 	}
