@@ -85,22 +85,39 @@ func ListWorkspaces(dataDir string) ([]WorkspaceMeta, error) {
 		}
 		out = append(out, meta)
 	}
-	sort.Slice(out, func(i, j int) bool {
-		ti, err := time.Parse(time.RFC3339Nano, out[i].LastOpened)
+	// Rank by last opened, newest first. The parse happens once per
+	// entry here rather than inside the comparator, and ties (equal or
+	// unparsable stamps) fall back to title/path: callers render this
+	// order verbatim, so it must not shuffle between reloads the way an
+	// unstable sort over equal keys would.
+	type ranked struct {
+		meta WorkspaceMeta
+		at   time.Time
+	}
+	order := make([]ranked, 0, len(out))
+	for _, m := range out {
+		at, err := time.Parse(time.RFC3339Nano, m.LastOpened)
 		if err != nil {
 			telemetry.WarnErr(context.Background(),
 				"config: parse workspace last opened failed", err,
-				otellog.String("workspace.id", out[i].ID))
+				otellog.String("workspace.id", m.ID))
 		}
-		tj, err := time.Parse(time.RFC3339Nano, out[j].LastOpened)
-		if err != nil {
-			telemetry.WarnErr(context.Background(),
-				"config: parse workspace last opened failed", err,
-				otellog.String("workspace.id", out[j].ID))
+		order = append(order, ranked{meta: m, at: at})
+	}
+	sort.SliceStable(order, func(i, j int) bool {
+		if !order[i].at.Equal(order[j].at) {
+			return order[i].at.After(order[j].at)
 		}
-		return ti.After(tj)
+		if order[i].meta.Title != order[j].meta.Title {
+			return order[i].meta.Title < order[j].meta.Title
+		}
+		return order[i].meta.Path < order[j].meta.Path
 	})
-	return out, nil
+	rankedOut := make([]WorkspaceMeta, 0, len(order))
+	for _, r := range order {
+		rankedOut = append(rankedOut, r.meta)
+	}
+	return rankedOut, nil
 }
 
 // RemoveWorkspace removes one workspace's meta/state directory. The

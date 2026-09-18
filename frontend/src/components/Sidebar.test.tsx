@@ -160,4 +160,42 @@ describe('Sidebar workspace history', () => {
     // The spinner is the only row icon; there is no leading icon.
     expect(rowButton.querySelectorAll('svg')).toHaveLength(1);
   });
+
+  it('leads with the active workspace even when the backend ranks it lower', async () => {
+    // History is still [A, B] from the backend: A was the last one
+    // recorded, so its last_opened is newer. The user has just switched
+    // to B, which is exactly the window where the stored order lags.
+    switchWorkspace(workspaceB.path, []);
+    const { container } = render(<Sidebar isMac={false} />);
+
+    const headers = Array.from(
+      container.querySelectorAll('[role="button"][title]'),
+    ).map((el) => el.getAttribute('title'));
+    expect(headers).toEqual([workspaceB.path, workspaceA.path]);
+  });
+
+  it('keeps the remaining rows in backend order behind the active one', async () => {
+    const workspaceC: WorkspaceMeta = {
+      id: 'w-c',
+      path: '/tmp/c',
+      title: 'Workspace C',
+      last_opened: '2026-09-07T00:00:00Z',
+    };
+    // Backend ranks C newest; the promoted active workspace B must not
+    // disturb the relative order of the rows that follow it.
+    useStore.setState({
+      workspaces: [workspaceC, workspaceA, workspaceB],
+      workspace: workspaceB.path,
+    });
+    const { container } = render(<Sidebar isMac={false} />);
+
+    const headers = Array.from(
+      container.querySelectorAll('[role="button"][title]'),
+    ).map((el) => el.getAttribute('title'));
+    expect(headers).toEqual([
+      workspaceB.path,
+      workspaceC.path,
+      workspaceA.path,
+    ]);
+  });
 });

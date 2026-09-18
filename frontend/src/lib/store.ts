@@ -579,6 +579,27 @@ export function friendlyFailure(kind?: string): string | null {
   }
 }
 
+// sameWorkspaceList reports whether a refreshed history equals the one
+// already in the store. Refreshes fire on every ready event and after
+// every switch, and an unchanged list must not replace the array: the
+// sidebar re-flattens its history tree off it.
+function sameWorkspaceList(
+  prev: WorkspaceMeta[],
+  next: WorkspaceMeta[],
+): boolean {
+  if (prev === next) return true;
+  if (prev.length !== next.length) return false;
+  return prev.every((w, i) => {
+    const other = next[i];
+    return (
+      w.id === other.id &&
+      w.path === other.path &&
+      w.title === other.title &&
+      w.last_opened === other.last_opened
+    );
+  });
+}
+
 // mergeTurnDoc appends a produced file, or refreshes its byte count in
 // place when the same path is written again.
 function mergeTurnDoc(docs: TurnDoc[], path: string, bytes: number): TurnDoc[] {
@@ -822,6 +843,11 @@ export const useStore = create<StoreState>((set, get) => {
   // Workspace switches are applied in order. Older restores ignore
   // their result once a newer switch has been requested.
   let workspaceSwitchSeq = 0;
+  // Workspace history refreshes race each other: a switch triggers one
+  // reload from the "ready" event (before the backend has stamped
+  // last_opened) and one from the caller once the binding returned.
+  // Only the newest request may apply its snapshot.
+  let workspacesLoadSeq = 0;
   let workspaceRestoreInFlight = false;
   let workspaceRestorePromise: Promise<void> | null = null;
   // suppressRestoreFor skips the automatic session restore after one
@@ -2439,8 +2465,12 @@ export const useStore = create<StoreState>((set, get) => {
     },
 
     loadWorkspaces: async () => {
+      const seq = (workspacesLoadSeq += 1);
       try {
-        set({ workspaces: (await api.workspaces()) ?? [] });
+        const next = (await api.workspaces()) ?? [];
+        if (seq !== workspacesLoadSeq) return;
+        if (sameWorkspaceList(get().workspaces, next)) return;
+        set({ workspaces: next });
       } catch {
         // best-effort
       }
@@ -2490,7 +2520,10 @@ export const useStore = create<StoreState>((set, get) => {
         await api.openWorkspace(path);
         // The runtime rebuild emits "ready"; the ready handler
         // restores the target workspace's session and refreshes
-        // sessions/workspaces.
+        // sessions. Its workspace refresh is not enough to rely on:
+        // it runs before the backend stamped last_opened (see
+        // Workspace.Open), so read the history again here.
+        void get().loadWorkspaces();
       } catch (err) {
         set({ statusText: String(err) });
       }
@@ -2511,6 +2544,7 @@ export const useStore = create<StoreState>((set, get) => {
         if (get().workspace !== workspacePath) {
           throw new Error('workspace switch did not complete');
         }
+        void get().loadWorkspaces();
         await waitForWorkspaceRestore();
       }
       await get().resume(sessionID);
@@ -2541,6 +2575,7 @@ export const useStore = create<StoreState>((set, get) => {
           if (get().workspace !== target) {
             throw new Error('workspace switch did not complete');
           }
+          void get().loadWorkspaces();
         } catch (err) {
           suppressRestoreFor = null;
           set({ statusText: String(err) });

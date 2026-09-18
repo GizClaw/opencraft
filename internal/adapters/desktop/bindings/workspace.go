@@ -45,10 +45,14 @@ func (b *Workspace) Open(workDir string) error {
 	}
 	ctx := b.core.Shell.Context()
 	b.core.SetWorkDir(workDir)
+	// Record the open before the rebuild: RebuildRuntime emits "ready"
+	// from inside, and the UI reloads workspace history on that event.
+	// Writing first keeps the invariant that anything observing a
+	// finished open already sees this workspace's new last_opened.
+	b.core.RecordWorkspace(workDir)
 	if err := b.core.RebuildRuntime(ctx); err != nil {
 		return err
 	}
-	b.core.RecordWorkspace(workDir)
 	return nil
 }
 

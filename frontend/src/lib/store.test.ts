@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MessageView } from './store';
+import type { WorkspaceMeta } from './types';
 import { stateRoot } from '../state/app';
 import {
   firstMessageTitle,
@@ -29,6 +30,7 @@ const apiMock = vi.hoisted(() => ({
   loadWorkspaces: vi.fn(),
   loadAutomations: vi.fn(),
   openWorkspace: vi.fn(),
+  workspaces: vi.fn(),
   setSessionMode: vi.fn(),
   setThink: vi.fn(),
   setModel: vi.fn(),
@@ -1654,6 +1656,72 @@ describe('store: first-message workspace attribution', () => {
     expect(stateRoot.focusSnapshot.value).toBe('active');
     const conv = useStore.getState().conversations['s-new'];
     expect(conv.messages[0]).toMatchObject({ role: 'user', text: 'hello b' });
+  });
+});
+
+describe('store: workspace history refresh', () => {
+  const workspaceA: WorkspaceMeta = {
+    id: 'w-a',
+    path: '/tmp/a',
+    title: 'a',
+    last_opened: '2026-09-01T00:00:00Z',
+  };
+  const workspaceB: WorkspaceMeta = {
+    id: 'w-b',
+    path: '/tmp/b',
+    title: 'b',
+    last_opened: '2026-09-02T00:00:00Z',
+  };
+
+  it('keeps the newest snapshot when an older refresh resolves late', async () => {
+    let resolveStale: (rows: WorkspaceMeta[]) => void = () => {};
+    apiMock.workspaces
+      .mockImplementationOnce(
+        () =>
+          new Promise<WorkspaceMeta[]>((resolve) => {
+            resolveStale = resolve;
+          }),
+      )
+      .mockResolvedValueOnce([workspaceB, workspaceA]);
+
+    const stale = useStore.getState().loadWorkspaces();
+    await useStore.getState().loadWorkspaces();
+    resolveStale([workspaceA, workspaceB]);
+    await stale;
+
+    expect(useStore.getState().workspaces).toEqual([workspaceB, workspaceA]);
+  });
+
+  it('keeps the applied array when a refresh returns identical rows', async () => {
+    apiMock.workspaces.mockResolvedValueOnce([workspaceA]);
+    await useStore.getState().loadWorkspaces();
+    const applied = useStore.getState().workspaces;
+
+    // Same content, fresh array: the sidebar must not re-flatten its
+    // history tree for a no-op refresh.
+    apiMock.workspaces.mockResolvedValueOnce([{ ...workspaceA }]);
+    await useStore.getState().loadWorkspaces();
+
+    expect(useStore.getState().workspaces).toBe(applied);
+  });
+
+  it('refreshes history after the switch binding resolves', async () => {
+    const calls: string[] = [];
+    apiMock.openWorkspace.mockImplementation(async () => {
+      calls.push('open');
+    });
+    apiMock.workspaces.mockImplementation(async () => {
+      calls.push('list');
+      return [];
+    });
+
+    await useStore.getState().openWorkspace('/tmp/b');
+
+    // The binding records last_opened before it returns, so the
+    // caller-side refresh is the one that observes the new order.
+    expect(calls).toEqual(['open', 'list']);
+    apiMock.openWorkspace.mockReset();
+    apiMock.workspaces.mockReset();
   });
 });
 
