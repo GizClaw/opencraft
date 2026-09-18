@@ -6,6 +6,7 @@ import {
   within,
 } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mountOutsideAct, pressEscape } from '../../test/outsideAct';
 import i18n from '../../i18n';
 import { useStore } from '../../lib/store';
 import type { FilePreview, ResolvedTarget } from '../../lib/types';
@@ -71,6 +72,24 @@ describe('FilePreviewModal', () => {
 
     fireEvent.keyDown(document, { key: 'Escape' });
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it('handles an Escape that arrives before passive effects flush', async () => {
+    apiMock.readPreview.mockResolvedValue(preview('# Steps'));
+    const onClose = vi.fn();
+    const mount = mountOutsideAct(
+      <FilePreviewModal initial={target()} onClose={onClose} />,
+    );
+    try {
+      await mount.waitForDom(
+        () => mount.container.querySelector('[role="dialog"]') !== null,
+      );
+      pressEscape();
+      // The dialog is on screen, so it must own Escape already.
+      expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      await mount.unmount();
+    }
   });
 
   it('pushes a nested reference and pops it with the back arrow', async () => {
