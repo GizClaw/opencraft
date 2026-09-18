@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
-  Check,
   ChevronDown,
   ChevronRight,
   Globe,
@@ -16,6 +15,8 @@ import type {
   WebSearchState,
   WebSearchTestResult,
 } from '../lib/types';
+import { ICON } from './ui/icon';
+import { SaveBar } from './ui/SaveBar';
 
 // The web search item of the Tools tab. Like the generation tools it is
 // one list item that opens a dialog; the dialog configures the
@@ -25,7 +26,7 @@ import type {
 // raise the quota.
 
 const inputClass =
-  'w-full rounded-lg border border-edge bg-panel px-2.5 py-1.5 text-xs text-fg ' +
+  'w-full rounded-control border border-edge bg-panel px-2.5 py-1.5 text-xs text-fg ' +
   'outline-none transition-colors hover:border-accent/50 focus:border-accent ' +
   'disabled:opacity-40';
 
@@ -141,14 +142,14 @@ export function WebSearchSection() {
 
   if (state === null && error === '') {
     return (
-      <div className="h-16 animate-pulse rounded-xl border border-edge/70 bg-panel/70" />
+      <div className="h-16 animate-pulse rounded-card border border-edge/70 bg-panel/70" />
     );
   }
 
   return (
     <>
       <ul className="flex flex-col gap-2">
-        <li className="[content-visibility:auto] [contain-intrinsic-size:auto_4.5rem] rounded-xl border border-edge bg-panel2 p-3 transition-colors hover:border-accent/40">
+        <li className="[content-visibility:auto] [contain-intrinsic-size:auto_4.5rem] rounded-card border border-edge bg-panel2 p-3 transition-colors hover:border-accent/40">
           <button
             type="button"
             onClick={() => {
@@ -157,17 +158,17 @@ export function WebSearchSection() {
             }}
             className="flex w-full min-w-0 items-center gap-2 text-left"
           >
-            <Globe size="0.9286rem" className="shrink-0 text-accent" />
+            <Globe size={ICON.sm} className="shrink-0 text-accent" />
             <span className="min-w-0 flex-1">
               <span className="flex flex-wrap items-center gap-1.5">
                 <span className="min-w-0 truncate text-sm font-semibold">
                   {t('config.webSearchTitle')}
                 </span>
-                <span className="shrink-0 rounded border border-edge bg-panel px-1.5 py-0.5 text-[0.7143rem] text-dim">
+                <span className="shrink-0 rounded-tight border border-edge bg-panel px-1.5 py-0.5 text-micro text-dim">
                   {providerLabel(state?.provider ?? provider)}
                 </span>
                 {state && !state.enabled && (
-                  <span className="shrink-0 rounded border border-edge bg-panel px-1.5 py-0.5 text-[0.7143rem] text-dim">
+                  <span className="shrink-0 rounded-tight border border-edge bg-panel px-1.5 py-0.5 text-micro text-dim">
                     {t('config.toolsOff')}
                   </span>
                 )}
@@ -176,7 +177,7 @@ export function WebSearchSection() {
                 {t('config.webSearchHint')}
               </span>
             </span>
-            <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
+            <ChevronRight size={ICON.sm} className="shrink-0 text-dim" />
           </button>
         </li>
       </ul>
@@ -187,7 +188,7 @@ export function WebSearchSection() {
           onClick={() => setOpen(false)}
         >
           <div
-            className="flex max-h-[calc(100vh-2rem)] w-[38rem] max-w-full flex-col rounded-2xl border border-edge bg-panel shadow-2xl"
+            className="flex max-h-[calc(100vh-2rem)] w-[38rem] max-w-full flex-col rounded-card border border-edge bg-panel shadow-modal"
             role="dialog"
             aria-modal="true"
             aria-label={t('config.webSearchTitle')}
@@ -195,7 +196,7 @@ export function WebSearchSection() {
           >
             <div className="flex shrink-0 items-center justify-between gap-3 border-b border-edge px-4 py-3">
               <div className="flex min-w-0 items-center gap-2">
-                <Globe size="1.0714rem" className="shrink-0 text-accent" />
+                <Globe size={ICON.md} className="shrink-0 text-accent" />
                 <h3 className="min-w-0 truncate text-sm font-semibold">
                   {t('config.webSearchTitle')}
                 </h3>
@@ -204,9 +205,9 @@ export function WebSearchSection() {
                 type="button"
                 onClick={() => setOpen(false)}
                 aria-label={t('tools.close')}
-                className="shrink-0 rounded-lg p-1 text-dim hover:bg-panel2 hover:text-fg"
+                className="shrink-0 rounded-control p-1 text-dim hover:bg-panel2 hover:text-fg"
               >
-                <X size="1.0000rem" />
+                <X size={ICON.sm} />
               </button>
             </div>
 
@@ -238,7 +239,7 @@ export function WebSearchSection() {
                       setTestResult(null);
                       setTestError('');
                     }}
-                    className={`rounded-lg border px-2.5 py-1 text-xs transition-colors ${
+                    className={`rounded-control border px-2.5 py-1 text-xs transition-colors ${
                       provider === 'auto'
                         ? 'border-accent/60 bg-accent/10 text-accent'
                         : 'border-edge text-dim hover:border-accent/40 hover:text-fg'
@@ -255,14 +256,14 @@ export function WebSearchSection() {
                         setTestResult(null);
                         setTestError('');
                       }}
-                      className={`rounded-lg border px-2.5 py-1 text-xs transition-colors ${
+                      className={`rounded-control border px-2.5 py-1 text-xs transition-colors ${
                         provider === p.id
                           ? 'border-accent/60 bg-accent/10 text-accent'
                           : 'border-edge text-dim hover:border-accent/40 hover:text-fg'
                       }`}
                     >
                       {providerLabel(p.id)}
-                      <span className="ml-1.5 text-[0.7143rem] opacity-70">
+                      <span className="ml-1.5 text-micro opacity-70">
                         {p.keyless
                           ? t('config.webSearchKeyless')
                           : t('config.webSearchRequiresKey')}
@@ -297,13 +298,13 @@ export function WebSearchSection() {
                           setClearKeys([...new Set([...clearKeys, provider])]);
                           setKeys({ ...keys, [provider]: '' });
                         }}
-                        className="shrink-0 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim hover:border-err/40 hover:text-err"
+                        className="shrink-0 rounded-control border border-edge px-2.5 py-1 text-xs text-dim hover:border-err/40 hover:text-err"
                       >
                         {t('config.webSearchClearKey')}
                       </button>
                     )}
                   </div>
-                  <p className="text-[0.7143rem] text-dim">
+                  <p className="text-micro text-dim">
                     {selected?.key_set
                       ? t('config.webSearchKeySet')
                       : t('config.webSearchKeyMissing')}
@@ -323,7 +324,7 @@ export function WebSearchSection() {
                       setMaxResults(Number(e.target.value));
                       setSaved(false);
                     }}
-                    className="w-16 rounded-lg border border-edge bg-panel px-2 py-1 text-xs text-fg outline-none focus:border-accent"
+                    className="w-16 rounded-control border border-edge bg-panel px-2 py-1 text-xs text-fg outline-none focus:border-accent"
                   />
                 </label>
                 <button
@@ -332,16 +333,16 @@ export function WebSearchSection() {
                   className="flex items-center gap-1 text-xs text-dim hover:text-fg"
                 >
                   {advanced ? (
-                    <ChevronDown size="0.8571rem" />
+                    <ChevronDown size={ICON.xs} />
                   ) : (
-                    <ChevronRight size="0.8571rem" />
+                    <ChevronRight size={ICON.xs} />
                   )}
                   {t('config.webSearchAdvanced')}
                 </button>
               </div>
 
               {advanced && (
-                <div className="space-y-2 rounded-lg border border-edge/70 bg-panel/40 p-2.5">
+                <div className="space-y-2 rounded-card border border-edge/70 bg-panel/40 p-2.5">
                   <label className="flex items-center gap-2 text-xs text-dim">
                     <span className="w-32 shrink-0">
                       {t('config.webSearchTimeout')}
@@ -380,13 +381,13 @@ export function WebSearchSection() {
                       />
                     </label>
                   )}
-                  <p className="text-[0.7143rem] text-dim">
+                  <p className="text-micro text-dim">
                     {t('config.webSearchPrivacy')}
                   </p>
                 </div>
               )}
 
-              <div className="space-y-2 rounded-lg border border-edge/70 bg-panel/40 p-2.5">
+              <div className="space-y-2 rounded-card border border-edge/70 bg-panel/40 p-2.5">
                 <div className="flex flex-wrap items-center gap-2">
                   <input
                     value={testQuery}
@@ -400,25 +401,25 @@ export function WebSearchSection() {
                       testing || provider === 'auto' || !testQuery.trim()
                     }
                     onClick={() => void runTest()}
-                    className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-xs text-dim hover:border-accent/40 hover:text-fg disabled:opacity-40"
+                    className="flex items-center gap-1.5 rounded-control border border-edge px-3 py-1.5 text-xs text-dim hover:border-accent/40 hover:text-fg disabled:opacity-40"
                   >
                     {testing ? (
-                      <Loader2 size="0.8571rem" className="animate-spin" />
+                      <Loader2 size={ICON.xs} className="animate-spin" />
                     ) : (
-                      <Search size="0.8571rem" />
+                      <Search size={ICON.xs} />
                     )}
                     {t('config.webSearchTest')}
                   </button>
                 </div>
                 {provider === 'auto' && (
-                  <p className="text-[0.7143rem] text-dim">
+                  <p className="text-micro text-dim">
                     {t('config.webSearchTestPickProvider')}
                   </p>
                 )}
                 {testError && <p className="text-xs text-err">{testError}</p>}
                 {testResult && (
                   <div className="space-y-1">
-                    <p className="text-[0.7143rem] text-dim">
+                    <p className="text-micro text-dim">
                       {testResult.provider} · {testResult.results.length}{' '}
                       {t('tool.hits')}
                     </p>
@@ -433,7 +434,7 @@ export function WebSearchSection() {
                           {hit.title || hit.url}
                         </a>
                         {hit.snippet && (
-                          <p className="truncate text-[0.7143rem] text-dim">
+                          <p className="truncate text-micro text-dim">
                             {hit.snippet}
                           </p>
                         )}
@@ -449,32 +450,12 @@ export function WebSearchSection() {
               </div>
             </div>
 
-            <div className="flex shrink-0 items-center justify-between gap-3 border-t border-edge px-4 py-3">
-              <span className="flex min-w-0 items-center gap-2 text-xs">
-                {saved && (
-                  <span className="inline-flex items-center gap-1 text-ok">
-                    <Check size="0.8571rem" />
-                    {t('config.toolsSaved')}
-                  </span>
-                )}
-                {error !== '' && (
-                  <span className="min-w-0 truncate text-err" title={error}>
-                    {error}
-                  </span>
-                )}
-              </span>
-              <button
-                type="button"
-                onClick={() => void save()}
-                disabled={saving}
-                className="flex shrink-0 items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
-              >
-                {saving && (
-                  <Loader2 size="1.0000rem" className="animate-spin" />
-                )}
-                {t('setup.saveApply')}
-              </button>
-            </div>
+            <SaveBar
+              saved={saved}
+              error={error}
+              saving={saving}
+              onSave={() => void save()}
+            />
           </div>
         </div>
       )}

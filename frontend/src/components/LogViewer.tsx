@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Copy, Loader2, RefreshCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { ICON } from './ui/icon';
+import { Segmented } from './ui/Segmented';
 
 interface LogEntry {
   ts: string;
@@ -121,31 +123,25 @@ export function LogViewer({ fetchLogs }: { fetchLogs: () => Promise<string> }) {
   return (
     <div className="flex h-full min-h-0 flex-col gap-2">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex overflow-hidden rounded-lg border border-edge text-xs">
-          {levels.map((lv) => (
-            <button
-              key={lv}
-              onClick={() => setLevel(lv)}
-              className={`px-2 py-1 ${
-                level === lv
-                  ? 'bg-accent text-white'
-                  : 'text-dim hover:bg-panel2 hover:text-fg'
-              }`}
-            >
-              {t(
-                `config.logs${lv === 'ALL' ? 'All' : lv[0] + lv.slice(1).toLowerCase()}`,
-              )}
-              <span className="ml-1 opacity-60">{counts[lv] ?? 0}</span>
-            </button>
-          ))}
-        </div>
+        <Segmented
+          size="sm"
+          value={level}
+          onChange={setLevel}
+          options={levels.map((lv) => ({
+            value: lv,
+            label: t(
+              `config.logs${lv === 'ALL' ? 'All' : lv[0] + lv.slice(1).toLowerCase()}`,
+            ),
+            content: <span className="ml-1 opacity-60">{counts[lv] ?? 0}</span>,
+          }))}
+        />
         <span className="text-xs text-dim">
           {t('config.logsLines', { count: visible.length })}
         </span>
         <span className="flex-1" />
         <button
           onClick={() => setFollow((v) => !v)}
-          className={`rounded-lg border px-2 py-1 text-xs ${
+          className={`rounded-control border px-2 py-1 text-xs ${
             follow
               ? 'border-accent/40 bg-accent/10 text-accent'
               : 'border-edge text-dim hover:text-fg'
@@ -155,7 +151,7 @@ export function LogViewer({ fetchLogs }: { fetchLogs: () => Promise<string> }) {
         </button>
         <button
           onClick={() => setAuto((v) => !v)}
-          className={`rounded-lg border px-2 py-1 text-xs ${
+          className={`rounded-control border px-2 py-1 text-xs ${
             auto
               ? 'border-accent/40 bg-accent/10 text-accent'
               : 'border-edge text-dim hover:text-fg'
@@ -165,20 +161,20 @@ export function LogViewer({ fetchLogs }: { fetchLogs: () => Promise<string> }) {
         </button>
         <button
           onClick={() => void copy()}
-          className="flex items-center gap-1 rounded-lg border border-edge px-2 py-1 text-xs text-dim hover:text-fg"
+          className="flex items-center gap-1 rounded-control border border-edge px-2 py-1 text-xs text-dim hover:text-fg"
           aria-label={t('config.logsCopy')}
         >
-          {copied ? <Check size="0.8571rem" /> : <Copy size="0.8571rem" />}
+          {copied ? <Check size={ICON.xs} /> : <Copy size={ICON.xs} />}
         </button>
         <button
           onClick={() => void load()}
           disabled={loading}
-          className="flex items-center gap-1 rounded-lg border border-edge px-2 py-1 text-xs text-dim hover:text-fg disabled:opacity-50"
+          className="flex items-center gap-1 rounded-control border border-edge px-2 py-1 text-xs text-dim hover:text-fg disabled:opacity-50"
         >
           {loading ? (
-            <Loader2 size="0.8571rem" className="animate-spin" />
+            <Loader2 size={ICON.xs} className="animate-spin" />
           ) : (
-            <RefreshCw size="0.8571rem" />
+            <RefreshCw size={ICON.xs} />
           )}
           {t('config.logsRefresh')}
         </button>
@@ -189,22 +185,22 @@ export function LogViewer({ fetchLogs }: { fetchLogs: () => Promise<string> }) {
       ) : (
         <div
           ref={scrollRef}
-          className="flex-1 min-h-0 overflow-y-auto rounded-xl border border-edge bg-panel2"
+          className="flex-1 min-h-0 overflow-y-auto rounded-card border border-edge bg-panel2"
         >
           {visible.map((e, i) => (
             <div
               key={i}
               className="flex items-start gap-2 border-b border-edge/40 px-3 py-1 hover:bg-panel"
             >
-              <span className="w-28 shrink-0 truncate font-mono text-[0.7857rem] text-dim">
+              <span className="w-28 shrink-0 truncate font-mono text-label text-dim">
                 {e.ts ? e.ts.replace('T', ' ').slice(5, 23) : ''}
               </span>
               <span
-                className={`w-12 shrink-0 font-mono text-[0.7857rem] font-medium ${levelClass(e.level)}`}
+                className={`w-12 shrink-0 font-mono text-label font-medium ${levelClass(e.level)}`}
               >
                 {e.level || '—'}
               </span>
-              <span className="min-w-0 flex-1 break-all font-mono text-[0.7857rem] leading-relaxed">
+              <span className="min-w-0 flex-1 break-all font-mono text-label leading-relaxed">
                 <span className="text-fg">{e.message}</span>{' '}
                 {e.attrs.map((a) => (
                   <span key={a.key} className="whitespace-nowrap">

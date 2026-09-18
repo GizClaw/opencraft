@@ -78,6 +78,7 @@ func (p *Prompt) Ask(ctx context.Context, spec interact.Spec) (interact.Reply, e
 			"id":          spec.ID,
 			"run_id":      spec.RunID,
 			"kind":        string(spec.Kind),
+			"severity":    string(spec.Severity),
 			"title":       spec.Title,
 			"body":        body,
 			"options":     options,

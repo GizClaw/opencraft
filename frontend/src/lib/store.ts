@@ -9,6 +9,7 @@ import {
   type UISettings,
 } from './appearance';
 import { sanitizeToolResult } from './ansi';
+import { followLinkTarget } from './linkTarget';
 import { coalesceStreamEvents } from './stream';
 import { toolResultText } from './toolresult';
 import type {
@@ -2005,57 +2006,24 @@ export const useStore = create<StoreState>((set, get) => {
     openFiles: () => viewerPatch(activeConversationID(), { filesOpen: true }),
     closeFiles: () => viewerPatch(activeConversationID(), { filesOpen: false }),
 
-    // openFileTarget is the single link/file opening router. Leading
-    // schemes are external by definition (http(s) reaches the system
-    // browser through the validated binding); everything else is a
-    // local target resolved under the document base into the viewer.
-    openFileTarget: async (target, base = '') => {
-      const sessionID = activeConversationID();
-      const raw = target.trim();
-      if (!raw || raw.startsWith('#')) return;
-      // Windows absolute paths start with a drive letter and must be
-      // treated as local targets, not URL schemes.
-      if (
-        !/^[A-Za-z]:[\\/]/.test(raw) &&
-        /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(raw)
-      ) {
-        try {
-          await api.openExternal(raw);
-        } catch (err) {
-          get().flash(String(err));
-        }
-        return;
-      }
-      try {
-        const res = await api.resolveTarget(raw, base);
-        if (res.is_dir) {
-          if (res.root === 'workspace') {
-            viewerPatch(sessionID, {
-              filesOpen: true,
-              fileTreeDir: res.rel || '.',
-            });
-          } else {
-            // Non-workspace roots have no tree; reveal the directory
-            // in the system file manager instead.
-            try {
-              await api.revealArtifact(res.path);
-            } catch (err) {
-              get().flash(String(err));
-            }
-          }
-          return;
-        }
-        if (!sessionID) return;
-        get().openResolvedTarget(res);
-      } catch (err) {
-        const message = String(err);
-        get().flash(
-          message.includes('outside the readable roots')
-            ? i18n.t('files.outsideRoots')
-            : message,
-        );
-      }
-    },
+    // openFileTarget is the chat's link/file opening router: URL
+    // schemes reach the system browser through the validated binding,
+    // local targets resolve under the document base into the viewer
+    // panel of the active conversation. Workspace directories open the
+    // file tree; the other roots have no tree and go to the system file
+    // manager instead.
+    openFileTarget: (target, base = '') =>
+      followLinkTarget(target, base, {
+        openFile: (res) => get().openResolvedTarget(res),
+        openDir: (res) => {
+          if (res.root !== 'workspace') return api.revealArtifact(res.path);
+          viewerPatch(activeConversationID(), {
+            filesOpen: true,
+            fileTreeDir: res.rel || '.',
+          });
+        },
+        onError: (message) => get().flash(message),
+      }),
 
     openResolvedTarget: (res) =>
       set((state) => {

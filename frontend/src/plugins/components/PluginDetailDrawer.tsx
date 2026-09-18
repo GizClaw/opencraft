@@ -5,6 +5,7 @@ import { usePluginStore } from '../store';
 import type { PluginSummary } from '../types';
 import { PluginCapabilitiesSection } from './PluginCapabilities';
 import { PluginPanels } from './PluginPanels';
+import { ICON } from '../../components/ui/icon';
 
 // PluginDetailDrawer is the right-side plugin detail page. It shows the
 // plugin's metadata and embeds the agent-facing capabilities inline.
@@ -23,14 +24,14 @@ export function PluginDetailDrawer({
     <>
       <div className="fixed inset-0 z-40 bg-black/30" onClick={onClose} />
       <aside
-        className="fixed inset-y-0 right-0 z-50 flex w-[42rem] max-w-[94vw] flex-col border-l border-edge bg-panel shadow-2xl"
+        className="fixed inset-y-0 right-0 z-50 flex w-[42rem] max-w-[94vw] flex-col border-l border-edge bg-panel shadow-modal"
         role="dialog"
         aria-modal="true"
         aria-label={plugin.name}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-edge px-4 py-3">
           <div className="flex min-w-0 items-center gap-2">
-            <Puzzle size="1.0714rem" className="shrink-0 text-dim" />
+            <Puzzle size={ICON.md} className="shrink-0 text-dim" />
             <h3 className="min-w-0 truncate text-sm font-semibold">
               {plugin.name}
             </h3>
@@ -41,7 +42,7 @@ export function PluginDetailDrawer({
             aria-label={t('tools.close')}
             className="text-dim hover:text-fg"
           >
-            <X size="1.1428rem" />
+            <X size={ICON.md} />
           </button>
         </div>
 
@@ -53,7 +54,7 @@ export function PluginDetailDrawer({
           {plugin.shadowsBuiltin &&
             plugin.builtinVersion &&
             compareVersions(plugin.version, plugin.builtinVersion) < 0 && (
-              <p className="break-words text-[0.7857rem] text-warn">
+              <p className="break-words text-label text-warn">
                 {t('config.pluginsShadowOlder', {
                   version: plugin.version,
                   builtinVersion: plugin.builtinVersion,
@@ -62,7 +63,7 @@ export function PluginDetailDrawer({
             )}
 
           {plugin.error && (
-            <p className="rounded-lg border border-err/40 bg-err/10 px-3 py-2 text-xs text-err break-words">
+            <p className="rounded-control border border-err/40 bg-err/10 px-3 py-2 text-xs text-err break-words">
               {plugin.error}
             </p>
           )}
@@ -85,7 +86,7 @@ export function PluginDetailDrawer({
                   <button
                     key={cmd.id}
                     onClick={() => cmd.run()}
-                    className="max-w-full break-words rounded-lg border border-edge bg-panel2 px-2.5 py-1.5 text-left text-xs hover:border-accent/50"
+                    className="max-w-full break-words rounded-control border border-edge bg-panel2 px-2.5 py-1.5 text-left text-xs hover:border-accent/50"
                   >
                     {cmd.title}
                   </button>
@@ -123,7 +124,7 @@ export function PluginDetailDrawer({
                 {plugin.permissions.map((perm) => (
                   <li
                     key={perm}
-                    className="rounded border border-edge bg-panel2 px-1.5 py-0.5 font-mono text-[0.7143rem] text-dim"
+                    className="rounded-tight border border-edge bg-panel2 px-1.5 py-0.5 font-mono text-micro text-dim"
                   >
                     {perm}
                   </li>

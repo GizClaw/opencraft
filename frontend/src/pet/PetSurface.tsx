@@ -13,6 +13,7 @@ import { toPetView, type PetStatePayload, type PetView } from './state';
 import { petToolCategory, petToolIcon } from './toolCategory';
 import type { PetRuntimeStatus } from './validate';
 import './pet.css';
+import { ICON } from '../components/ui/icon';
 
 interface PendingRivePack {
   pack: PetPack;
@@ -513,7 +514,7 @@ export default function PetSurface() {
           title={pet.toolName}
         >
           <span className="pet-tool__badge" aria-hidden="true">
-            <ToolIcon size="0.7143rem" strokeWidth={2.4} />
+            <ToolIcon size={ICON.xs} strokeWidth={2.4} />
           </span>
           <span className="pet-tool__name">{pet.toolName}</span>
         </div>

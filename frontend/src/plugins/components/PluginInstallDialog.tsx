@@ -5,6 +5,7 @@ import { api } from '../../lib/api';
 import { usePluginStore } from '../store';
 import { compareVersions } from '../version';
 import type { PluginSummary } from '../types';
+import { ICON } from '../../components/ui/icon';
 
 // PluginInstallDialog installs or updates a plugin from a local
 // directory containing plugin.json or from a zip package. When
@@ -105,7 +106,7 @@ export function PluginInstallDialog({
       onClick={onClose}
     >
       <div
-        className="w-[32.8571rem] rounded-2xl border border-edge bg-panel shadow-2xl"
+        className="w-[32.8571rem] rounded-card border border-edge bg-panel shadow-modal"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-edge px-4 py-3">
@@ -113,7 +114,7 @@ export function PluginInstallDialog({
             {t(isUpdate ? 'config.pluginsUpdate' : 'config.pluginsInstall')}
           </h3>
           <button onClick={onClose} className="text-dim hover:text-fg">
-            <X size="1.1429rem" />
+            <X size={ICON.md} />
           </button>
         </div>
         <div className="flex flex-col gap-3 p-4">
@@ -139,26 +140,26 @@ export function PluginInstallDialog({
                   ? 'config.pluginsUpdatePathPlaceholder'
                   : 'config.pluginsInstallPathPlaceholder',
               )}
-              className="min-w-0 flex-1 rounded-lg border border-edge bg-panel2 px-2.5 py-1.5 text-xs text-fg outline-none focus:border-accent"
+              className="min-w-0 flex-1 rounded-control border border-edge bg-panel2 px-2.5 py-1.5 text-xs text-fg outline-none focus:border-accent"
               autoFocus
             />
             <button
               onClick={() => void pick()}
-              className="flex items-center gap-1.5 rounded-lg border border-edge bg-panel2 px-2.5 py-1.5 text-xs text-dim hover:text-fg"
+              className="flex items-center gap-1.5 rounded-control border border-edge bg-panel2 px-2.5 py-1.5 text-xs text-dim hover:text-fg"
             >
-              <FolderOpen size="0.8571rem" />
+              <FolderOpen size={ICON.xs} />
               {t('config.pluginsChooseFolder')}
             </button>
             <button
               onClick={() => void pickZip()}
-              className="flex items-center gap-1.5 rounded-lg border border-edge bg-panel2 px-2.5 py-1.5 text-xs text-dim hover:text-fg"
+              className="flex items-center gap-1.5 rounded-control border border-edge bg-panel2 px-2.5 py-1.5 text-xs text-dim hover:text-fg"
             >
-              <FileArchive size="0.8571rem" />
+              <FileArchive size={ICON.xs} />
               {t('config.pluginsChooseZip')}
             </button>
           </div>
           {shadow?.shadowsBuiltin && (
-            <div className="rounded-lg border border-warn/30 bg-warn/10 px-2.5 py-2 text-xs text-warn">
+            <div className="rounded-control border border-warn/30 bg-warn/10 px-2.5 py-2 text-xs text-warn">
               {t('config.pluginsShadowInstallWarn', {
                 name: shadow.name,
                 builtinVersion: shadow.builtinVersion ?? '',
@@ -174,22 +175,20 @@ export function PluginInstallDialog({
                 )}
             </div>
           )}
-          {error && (
-            <p className="text-[0.7857rem] text-err break-words">{error}</p>
-          )}
+          {error && <p className="text-label text-err break-words">{error}</p>}
           <div className="flex justify-end gap-2">
             <button
               onClick={onClose}
-              className="rounded-lg px-3 py-1.5 text-xs text-dim hover:text-fg"
+              className="rounded-control px-3 py-1.5 text-xs text-dim hover:text-fg"
             >
               {t('config.cancel')}
             </button>
             <button
               onClick={() => void install()}
               disabled={busy || !path.trim()}
-              className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs text-white hover:opacity-90 disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-control bg-accent px-3 py-1.5 text-xs text-white hover:opacity-90 disabled:opacity-50"
             >
-              {busy && <Loader2 size="0.8571rem" className="animate-spin" />}
+              {busy && <Loader2 size={ICON.xs} className="animate-spin" />}
               {t(isUpdate ? 'config.pluginsUpdate' : 'config.pluginsInstall')}
             </button>
           </div>

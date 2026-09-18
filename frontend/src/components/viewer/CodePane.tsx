@@ -20,6 +20,7 @@ import { yaml } from '@codemirror/legacy-modes/mode/yaml';
 import { toml } from '@codemirror/legacy-modes/mode/toml';
 import type { Extension } from '@codemirror/state';
 import { Eye } from 'lucide-react';
+import { ICON } from '../ui/icon';
 
 // Viewer theme: match the chat's small mono text instead of the editor
 // defaults (which inherit the UI base and look bulky). Both values are
@@ -141,9 +142,9 @@ export function CodePane({
       {sourceView && onSource && (
         <button
           onClick={onSource}
-          className="m-2 flex w-fit items-center gap-1 self-end rounded border border-edge bg-panel2 px-2 py-1 text-xs text-dim hover:text-fg"
+          className="m-2 flex w-fit items-center gap-1 self-end rounded-tight border border-edge bg-panel2 px-2 py-1 text-xs text-dim hover:text-fg"
         >
-          <Eye size="0.7857rem" />
+          <Eye size={ICON.xs} />
           {t('files.previewRendered')}
         </button>
       )}

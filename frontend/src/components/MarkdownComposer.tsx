@@ -27,6 +27,7 @@ import { File, Folder, Loader2, Sparkles } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import type { SkillDTO } from '../lib/types';
+import { ICON } from './ui/icon';
 
 type MentionKind = 'file' | 'skill';
 
@@ -110,11 +111,11 @@ const MentionPopup = forwardRef<MentionPopupHandle, MentionPopupProps>(
     return (
       <div
         ref={rootRef}
-        className="z-50 max-w-96 min-w-72 overflow-hidden rounded-lg border border-edge bg-panel2 shadow-2xl"
+        className="z-50 max-w-96 min-w-72 overflow-hidden rounded-control border border-edge bg-panel2 shadow-modal"
       >
         {loading && items.length === 0 ? (
           <div className="flex items-center gap-2 px-3 py-2 text-xs text-dim">
-            <Loader2 size="0.8571rem" className="animate-spin text-accent" />
+            <Loader2 size={ICON.xs} className="animate-spin text-accent" />
             {hint}
           </div>
         ) : items.length === 0 ? (
@@ -139,12 +140,12 @@ const MentionPopup = forwardRef<MentionPopupHandle, MentionPopupProps>(
               >
                 {kind === 'file' ? (
                   item.isDir ? (
-                    <Folder size="0.9286rem" className="shrink-0 text-accent" />
+                    <Folder size={ICON.sm} className="shrink-0 text-accent" />
                   ) : (
-                    <File size="0.9286rem" className="shrink-0 text-dim" />
+                    <File size={ICON.sm} className="shrink-0 text-dim" />
                   )
                 ) : (
-                  <Sparkles size="0.9286rem" className="shrink-0 text-accent" />
+                  <Sparkles size={ICON.sm} className="shrink-0 text-accent" />
                 )}
                 <span className="min-w-0 flex-1 truncate">{item.label}</span>
                 {item.sub && (

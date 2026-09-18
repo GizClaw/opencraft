@@ -1,6 +1,7 @@
 import { Check, ChevronDown } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { ICON } from './ui/icon';
 
 // MenuSelect is the dropdown the settings page uses everywhere else: a
 // panel-styled trigger with a chevron that opens a floating menu of
@@ -99,7 +100,7 @@ export function MenuSelect({
         aria-expanded={open}
         disabled={disabled}
         onClick={toggle}
-        className={`inline-flex h-[1.875rem] w-full items-center gap-1.5 rounded-lg border bg-panel px-2 text-xs transition-colors outline-none hover:border-accent/60 focus:border-accent disabled:opacity-40 ${
+        className={`inline-flex h-[1.875rem] w-full items-center gap-1.5 rounded-control border bg-panel px-2 text-xs transition-colors outline-none hover:border-accent/60 focus:border-accent disabled:opacity-40 ${
           open ? 'border-accent' : 'border-edge'
         }`}
       >
@@ -111,7 +112,7 @@ export function MenuSelect({
           {current?.label ?? placeholder ?? ''}
         </span>
         <ChevronDown
-          size="0.875rem"
+          size={ICON.xs}
           className={`shrink-0 text-dim transition-transform ${
             open ? 'rotate-180' : ''
           }`}
@@ -129,7 +130,7 @@ export function MenuSelect({
               left: rect.left,
               width: Math.max(rect.width, 160),
             }}
-            className="fixed z-[100] overflow-y-auto rounded-xl border border-edge bg-panel py-1 shadow-xl"
+            className="fixed z-[100] overflow-y-auto rounded-card border border-edge bg-panel py-1 shadow-popover"
           >
             {options.map((option) => (
               <button
@@ -147,7 +148,7 @@ export function MenuSelect({
                 }`}
               >
                 <Check
-                  size="0.8rem"
+                  size={ICON.xs}
                   className={`shrink-0 ${
                     option.value === value ? 'text-accent' : 'invisible'
                   }`}

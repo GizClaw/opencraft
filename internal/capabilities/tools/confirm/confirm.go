@@ -36,9 +36,10 @@ func Confirm(ctx context.Context, title, body string) (bool, error) {
 		Parts:  []message.Part{message.TextPart{Text: body}},
 		Source: "opencraft.confirm",
 		Metadata: map[string]string{
-			interact.MetaKind:    string(interact.KindConfirm),
-			interact.MetaTitle:   title,
-			interact.MetaOptions: string(rawOpts),
+			interact.MetaKind:     string(interact.KindConfirm),
+			interact.MetaTitle:    title,
+			interact.MetaOptions:  string(rawOpts),
+			interact.MetaSeverity: string(interact.SeverityNotice),
 		},
 	})
 	if err != nil {

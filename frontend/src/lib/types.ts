@@ -429,11 +429,18 @@ export interface InteractOption {
   value: string;
 }
 
+// How loudly one interaction is presented: info asks a question,
+// notice grants something (permissions, an allowlist entry) and
+// danger widens access beyond the sandbox. The host decides it; the UI
+// only styles it.
+export type InteractSeverity = 'info' | 'notice' | 'danger';
+
 export interface InteractDTO {
   id: string;
   run_id: string;
   conversation_id?: string;
   kind: string;
+  severity: InteractSeverity;
   title: string;
   body: StreamPart[];
   options: InteractOption[];

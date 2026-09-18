@@ -174,7 +174,7 @@ export default function App() {
   if (fatal) {
     return (
       <div className="h-full grid place-items-center">
-        <div className="max-w-md rounded-xl border border-err/40 bg-panel p-6 text-sm">
+        <div className="max-w-md rounded-card border border-err/40 bg-panel p-6 text-sm">
           <h2 className="font-semibold text-err mb-2">
             {t('app.startupFailed')}
           </h2>

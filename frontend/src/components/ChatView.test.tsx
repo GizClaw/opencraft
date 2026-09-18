@@ -463,20 +463,22 @@ describe('ChatView transcript windowing', () => {
     render(<ChatView />);
 
     const user = userEvent.setup();
-    const text = document.querySelector('.rounded-2xl p');
+    // The bubble is the only element carrying its own bottom-right
+    // corner radius; `.rounded-card` alone matches a dozen containers.
+    const text = document.querySelector('.rounded-br-tight p');
     expect(text).not.toBeNull();
-    const bubble = text!.closest('.rounded-2xl');
+    const bubble = text!.closest('.rounded-br-tight');
     expect(bubble).not.toBeNull();
 
     // Images render above the bubble, the file chip below it, and
     // neither keeps a bubble background behind it.
     const image = screen.getByRole('img', { name: 'pic.png' });
-    expect(image.closest('.rounded-2xl')).toBeNull();
+    expect(image.closest('.rounded-br-tight')).toBeNull();
     expect(
       image.compareDocumentPosition(text!) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     const fileChip = screen.getByRole('button', { name: '5 files' });
-    expect(fileChip.closest('.rounded-2xl')).toBeNull();
+    expect(fileChip.closest('.rounded-br-tight')).toBeNull();
     expect(
       text!.compareDocumentPosition(fileChip) &
         Node.DOCUMENT_POSITION_FOLLOWING,

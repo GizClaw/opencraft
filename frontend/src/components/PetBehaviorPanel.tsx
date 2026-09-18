@@ -84,7 +84,7 @@ export function PetBehaviorPanel() {
 
   if (!debug) {
     return (
-      <div className="rounded-xl border border-edge bg-panel2 p-4 text-xs text-dim">
+      <div className="rounded-card border border-edge bg-panel2 p-4 text-xs text-dim">
         {t('config.petDiagEmpty')}
       </div>
     );
@@ -94,32 +94,32 @@ export function PetBehaviorPanel() {
     {
       key: t('config.petDiagAttention'),
       value: debug.drives.attention,
-      bar: 'bg-sky-400',
+      bar: 'bg-accent',
     },
     {
       key: t('config.petDiagEnergy'),
       value: debug.drives.energy,
-      bar: 'bg-emerald-400',
+      bar: 'bg-ok',
     },
     {
       key: t('config.petDiagComfort'),
       value: debug.drives.comfort,
-      bar: 'bg-violet-400',
+      bar: 'bg-subagent',
     },
   ];
 
   return (
-    <div className="rounded-xl border border-edge bg-panel2 p-4">
+    <div className="rounded-card border border-edge bg-panel2 p-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="text-xs font-medium uppercase tracking-wide text-dim">
             {t('config.petDiagTitle')}
           </span>
-          <span className="rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[0.7rem] text-accent">
+          <span className="rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-micro text-accent">
             {t('config.petExperimental')}
           </span>
         </div>
-        <span className="rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[0.7rem] text-accent">
+        <span className="rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-micro text-accent">
           {moodLabel(debug.mood, t)}
         </span>
       </div>
@@ -131,9 +131,9 @@ export function PetBehaviorPanel() {
                 <span>{drive.key}</span>
                 <span className="font-mono">{Math.round(drive.value)}/100</span>
               </div>
-              <div className="mt-1 h-1.5 overflow-hidden rounded bg-panel">
+              <div className="mt-1 h-1.5 overflow-hidden rounded-tight bg-panel">
                 <div
-                  className={`h-full rounded ${drive.bar}`}
+                  className={`h-full rounded-tight ${drive.bar}`}
                   style={{
                     width: `${Math.max(0, Math.min(100, drive.value))}%`,
                   }}
@@ -182,11 +182,7 @@ export function PetBehaviorPanel() {
           <div className="mt-1 space-y-1">
             <div className="flex justify-between text-dim">
               <span>{t('config.petDiagMount')}</span>
-              <span
-                className={
-                  runtime.status.ok ? 'text-emerald-400' : 'text-red-400'
-                }
-              >
+              <span className={runtime.status.ok ? 'text-ok' : 'text-err'}>
                 {runtime.status.ok
                   ? t('config.petDiagMountOk')
                   : t('config.petDiagMountDegraded')}
@@ -202,10 +198,10 @@ export function PetBehaviorPanel() {
               </span>
             </div>
             {runtime.status.error && (
-              <div className="text-red-400">{runtime.status.error}</div>
+              <div className="text-err">{runtime.status.error}</div>
             )}
             {runtime.status.missing && runtime.status.missing.length > 0 && (
-              <ul className="list-disc pl-4 font-mono text-[0.7rem] text-red-400">
+              <ul className="list-disc pl-4 font-mono text-micro text-err">
                 {runtime.status.missing.map((item) => (
                   <li key={item}>{item}</li>
                 ))}

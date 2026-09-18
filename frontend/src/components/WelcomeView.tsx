@@ -1,6 +1,7 @@
 import { FolderOpen, Settings } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '../lib/store';
+import { ICON } from './ui/icon';
 
 // WelcomeView is the first-run landing screen shown when no workspace
 // is selected: the app refuses to silently open a default directory
@@ -14,8 +15,8 @@ export function WelcomeView() {
   return (
     <div className="flex-1 grid place-items-center">
       <div className="text-center space-y-5 max-w-md px-6">
-        <div className="mx-auto w-14 h-14 rounded-2xl border border-edge bg-panel2 grid place-items-center">
-          <FolderOpen size="1.7143rem" className="text-accent" />
+        <div className="mx-auto w-14 h-14 rounded-card border border-edge bg-panel2 grid place-items-center">
+          <FolderOpen size={ICON.xl} className="text-accent" />
         </div>
         <div className="space-y-2">
           <h2 className="text-lg font-semibold text-fg">
@@ -28,17 +29,17 @@ export function WelcomeView() {
         <div className="flex items-center justify-center gap-3">
           <button
             onClick={() => void chooseWorkspace()}
-            className="flex items-center gap-2 rounded-lg bg-accent px-4 py-2 text-sm text-white hover:opacity-90 transition-opacity"
+            className="flex items-center gap-2 rounded-control bg-accent px-4 py-2 text-sm text-white hover:opacity-90 transition-opacity"
           >
-            <FolderOpen size="1.0714rem" />
+            <FolderOpen size={ICON.md} />
             {t('welcome.chooseWorkspace')}
           </button>
           {!configured && (
             <button
               onClick={() => openConfig()}
-              className="flex items-center gap-2 rounded-lg border border-edge px-4 py-2 text-sm text-fg hover:border-accent/50 transition-colors"
+              className="flex items-center gap-2 rounded-control border border-edge px-4 py-2 text-sm text-fg hover:border-accent/50 transition-colors"
             >
-              <Settings size="1.0714rem" />
+              <Settings size={ICON.md} />
               {t('chat.openSettings')}
             </button>
           )}

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
+import { ICON } from './ui/icon';
 
 // One row of the picker. The value is what the series query receives,
 // so the all-models entry uses the empty string the backend treats as
@@ -84,11 +85,11 @@ export function UsageModelSelect({
         aria-haspopup="listbox"
         aria-expanded={open}
         title={title ?? selectedLabel}
-        className="flex h-9 max-w-[24.2857rem] items-center gap-2 rounded-lg border border-edge/70 bg-panel/70 px-3 text-xs font-mono text-fg backdrop-blur-sm transition-colors hover:bg-panel focus:border-accent"
+        className="flex h-9 max-w-[24.2857rem] items-center gap-2 rounded-control border border-edge/70 bg-panel/70 px-3 text-xs font-mono text-fg backdrop-blur-sm transition-colors hover:bg-panel focus:border-accent"
       >
         <span className="truncate">{selectedLabel}</span>
         <ChevronDown
-          size="1rem"
+          size={ICON.sm}
           className={`ml-auto shrink-0 text-dim transition-transform ${
             open ? 'rotate-180' : ''
           }`}
@@ -102,7 +103,7 @@ export function UsageModelSelect({
           />
           <div
             role="listbox"
-            className="absolute left-0 top-full z-40 mt-1 w-full min-w-[15rem] max-w-[24.2857rem] rounded-lg border border-edge/80 bg-panel/95 p-1 shadow-xl backdrop-blur-md"
+            className="absolute left-0 top-full z-40 mt-1 w-full min-w-[15rem] max-w-[24.2857rem] rounded-control border border-edge/80 bg-panel/95 p-1 shadow-popover backdrop-blur-md"
           >
             {options.length === 0 ? (
               <div className="px-2.5 py-2 text-xs text-dim">—</div>
@@ -117,7 +118,7 @@ export function UsageModelSelect({
                     aria-selected={selected}
                     onMouseEnter={() => setActive(i)}
                     onClick={() => pick(option)}
-                    className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left font-mono text-xs transition-colors ${
+                    className={`flex w-full items-center gap-2 rounded-control px-2.5 py-1.5 text-left font-mono text-xs transition-colors ${
                       active === i
                         ? 'bg-panel2 text-fg'
                         : 'text-dim hover:text-fg'
@@ -125,7 +126,7 @@ export function UsageModelSelect({
                   >
                     <span className="truncate">{option.label}</span>
                     {selected && (
-                      <Check size="0.9286rem" className="ml-auto shrink-0" />
+                      <Check size={ICON.sm} className="ml-auto shrink-0" />
                     )}
                   </button>
                 );

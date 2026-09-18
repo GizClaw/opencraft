@@ -1,6 +1,7 @@
 import { AlertTriangle, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '../lib/store';
+import { ICON } from './ui/icon';
 
 export function Toaster() {
   const toasts = useStore((s) => s.toasts);
@@ -12,7 +13,7 @@ export function Toaster() {
       {toasts.map((item) => (
         <div
           key={item.id}
-          className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-sm shadow-xl ${
+          className={`flex items-start gap-2 rounded-control border px-3 py-2 text-sm shadow-popover ${
             item.kind === 'warning'
               ? 'border-warn/40 bg-warn/10'
               : 'border-edge bg-panel'
@@ -20,7 +21,7 @@ export function Toaster() {
         >
           {item.kind === 'warning' && (
             <AlertTriangle
-              size="0.9286rem"
+              size={ICON.sm}
               className="mt-0.5 shrink-0 text-warn"
             />
           )}
@@ -30,7 +31,7 @@ export function Toaster() {
             aria-label={t('chat.dismiss')}
             className="shrink-0 text-dim hover:text-fg"
           >
-            <X size="0.9286rem" />
+            <X size={ICON.sm} />
           </button>
         </div>
       ))}

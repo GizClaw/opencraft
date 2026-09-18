@@ -6,8 +6,6 @@ import {
   ChevronRight,
   Film,
   Image as ImageIcon,
-  Loader2,
-  X,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import type {
@@ -18,6 +16,9 @@ import type {
   ToolOptionsState,
   ToolOptionsToolView,
 } from '../lib/types';
+import { ICON } from './ui/icon';
+import { Modal } from './ui/Modal';
+import { SaveBar } from './ui/SaveBar';
 
 // The generation tools section of the Tools tab: one item per tool, the
 // way the MCP list works. Clicking an item opens a dialog with the
@@ -28,12 +29,12 @@ type ToolValues = Record<string, Record<string, unknown>>;
 type ToolKey = 'image' | 'video';
 
 const controlClass =
-  'w-full rounded-lg border border-edge bg-panel px-2 py-1 text-xs text-fg ' +
+  'w-full rounded-control border border-edge bg-panel px-2 py-1 text-xs text-fg ' +
   'outline-none transition-colors hover:border-accent/50 focus:border-accent ' +
   'disabled:opacity-40';
 
 const fieldClass =
-  'w-full rounded-lg border border-edge bg-panel px-2.5 py-1.5 text-xs text-fg ' +
+  'w-full rounded-control border border-edge bg-panel px-2.5 py-1.5 text-xs text-fg ' +
   'outline-none transition-colors hover:border-accent/50 focus:border-accent';
 
 const TOOLS: ToolKey[] = ['image', 'video'];
@@ -142,7 +143,7 @@ function ToolOptionMenu({
             {selected?.label ?? ''}
           </span>
           <ChevronDown
-            size="0.8571rem"
+            size={ICON.xs}
             className={`shrink-0 text-dim transition-transform ${
               open ? 'rotate-180' : ''
             }`}
@@ -157,7 +158,7 @@ function ToolOptionMenu({
           />
           <div
             role="listbox"
-            className="absolute top-full right-0 z-40 mt-1 min-w-full rounded-lg border border-edge/80 bg-panel/95 p-1 shadow-xl backdrop-blur-md"
+            className="absolute top-full right-0 z-40 mt-1 min-w-full rounded-control border border-edge/80 bg-panel/95 p-1 shadow-popover backdrop-blur-md"
           >
             {options.map((option) => {
               const isSelected = option.value === value;
@@ -171,7 +172,7 @@ function ToolOptionMenu({
                     onChange(option.value);
                     setOpen(false);
                   }}
-                  className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors ${
+                  className={`flex w-full items-center gap-2 rounded-control px-2.5 py-1.5 text-left text-xs transition-colors ${
                     isSelected
                       ? 'bg-accent/10 text-accent'
                       : 'text-dim hover:bg-panel2 hover:text-fg'
@@ -184,9 +185,7 @@ function ToolOptionMenu({
                   >
                     {option.label}
                   </span>
-                  {isSelected && (
-                    <Check size="0.8571rem" className="shrink-0" />
-                  )}
+                  {isSelected && <Check size={ICON.xs} className="shrink-0" />}
                 </button>
               );
             })}
@@ -412,7 +411,7 @@ export function ToolsSection() {
       >
         <div className="min-w-0 flex-1">
           <span className="block truncate text-xs text-fg">{label}</span>
-          <span className="block truncate font-mono text-[0.7143rem] text-dim/80">
+          <span className="block truncate font-mono text-micro text-dim/80">
             {field.name}
             {hint && <span className="ml-1.5 text-dim/60">· {hint}</span>}
             {defaultHint && (
@@ -420,7 +419,7 @@ export function ToolsSection() {
             )}
           </span>
           {description !== '' && (
-            <span className="mt-0.5 block text-[0.7143rem] leading-snug text-dim/70">
+            <span className="mt-0.5 block text-micro leading-snug text-dim/70">
               {description}
             </span>
           )}
@@ -433,25 +432,25 @@ export function ToolsSection() {
   const renderInstance = (tool: ToolKey, instance: ToolOptionInstanceView) => (
     <div
       key={instance.id}
-      className="overflow-hidden rounded-lg border border-edge/70 bg-panel2/40"
+      className="overflow-hidden rounded-control border border-edge/70 bg-panel2/40"
     >
       <div className="flex items-center gap-2 border-b border-edge/60 px-3 py-2">
         <span className="truncate text-xs font-medium text-fg">
           {instance.label}
         </span>
         {instance.managed && (
-          <span className="shrink-0 rounded-full border border-edge px-1.5 py-0.5 text-[0.7143rem] text-dim">
+          <span className="shrink-0 rounded-full border border-edge px-1.5 py-0.5 text-micro text-dim">
             {t('config.toolsManaged')}
           </span>
         )}
         <span className="flex-1" />
-        <code className="shrink-0 font-mono text-[0.7143rem] text-dim">
+        <code className="shrink-0 font-mono text-micro text-dim">
           {instance.id}
         </code>
       </div>
       {(instance.presets ?? []).length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5 border-b border-edge/60 px-3 py-2">
-          <span className="text-[0.7143rem] text-dim/80">
+          <span className="text-micro text-dim/80">
             {t('config.toolsPresets')}
           </span>
           {(instance.presets ?? []).map((preset) => (
@@ -459,7 +458,7 @@ export function ToolsSection() {
               key={preset.id}
               type="button"
               onClick={() => applyPreset(tool, instance.id, preset)}
-              className="rounded-full border border-edge bg-panel px-2 py-0.5 text-[0.7143rem] text-dim transition-colors hover:border-accent/50 hover:text-fg"
+              className="rounded-full border border-edge bg-panel px-2 py-0.5 text-micro text-dim transition-colors hover:border-accent/50 hover:text-fg"
             >
               {t(`config.toolPreset.${preset.id}`, { defaultValue: preset.id })}
             </button>
@@ -490,7 +489,7 @@ export function ToolsSection() {
     return (
       <li
         key={tool}
-        className="[content-visibility:auto] [contain-intrinsic-size:auto_4.5rem] rounded-xl border border-edge bg-panel2 p-3 transition-colors hover:border-accent/40"
+        className="[content-visibility:auto] [contain-intrinsic-size:auto_4.5rem] rounded-card border border-edge bg-panel2 p-3 transition-colors hover:border-accent/40"
       >
         <button
           type="button"
@@ -500,14 +499,14 @@ export function ToolsSection() {
           }}
           className="flex w-full min-w-0 items-center gap-2 text-left"
         >
-          <Icon size="0.9286rem" className="shrink-0 text-accent" />
+          <Icon size={ICON.sm} className="shrink-0 text-accent" />
           <span className="min-w-0 flex-1">
             <span className="flex flex-wrap items-center gap-1.5">
               <span className="min-w-0 truncate text-sm font-semibold">
                 {title(tool)}
               </span>
               {configured > 0 && (
-                <span className="shrink-0 rounded border border-edge bg-panel px-1.5 py-0.5 text-[0.7143rem] text-dim">
+                <span className="shrink-0 rounded-tight border border-edge bg-panel px-1.5 py-0.5 text-micro text-dim">
                   {t('config.toolsKnobCount', { count: configured })}
                 </span>
               )}
@@ -518,7 +517,7 @@ export function ToolsSection() {
                 : instances.map((instance) => instance.label).join(' · ')}
             </span>
           </span>
-          <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronRight size={ICON.sm} className="shrink-0 text-dim" />
         </button>
       </li>
     );
@@ -531,77 +530,37 @@ export function ToolsSection() {
     const instances = view?.instances ?? [];
     const Icon = tool === 'image' ? ImageIcon : Film;
     return (
-      <div
-        className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-6"
-        onClick={() => setOpenTool(null)}
+      <Modal
+        open
+        onClose={() => setOpenTool(null)}
+        title={title(tool)}
+        icon={Icon}
+        width="38rem"
+        footer={
+          <SaveBar
+            saved={saved === tool}
+            error={error}
+            saving={saving === tool}
+            disabled={saving !== null || instances.length === 0}
+            onSave={() => void save(tool)}
+          />
+        }
       >
-        <div
-          className="flex max-h-[calc(100vh-2rem)] w-[38rem] max-w-full flex-col rounded-2xl border border-edge bg-panel shadow-2xl"
-          role="dialog"
-          aria-modal="true"
-          aria-label={title(tool)}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-edge px-4 py-3">
-            <div className="flex min-w-0 items-center gap-2">
-              <Icon size="1.0714rem" className="shrink-0 text-accent" />
-              <h3 className="min-w-0 truncate text-sm font-semibold">
-                {title(tool)}
-              </h3>
-            </div>
-            <button
-              type="button"
-              onClick={() => setOpenTool(null)}
-              aria-label={t('tools.close')}
-              className="shrink-0 rounded-lg p-1 text-dim hover:bg-panel2 hover:text-fg"
-            >
-              <X size="1.0000rem" />
-            </button>
+        <p className="text-xs text-dim">
+          {t(
+            tool === 'image'
+              ? 'config.toolsImageHint'
+              : 'config.toolsVideoHint',
+          )}
+        </p>
+        {instances.length === 0 ? (
+          <div className="rounded-control border border-dashed border-edge/70 px-3 py-6 text-center text-xs text-dim/80">
+            {t('config.toolsNoInstances')}
           </div>
-          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
-            <p className="text-xs text-dim">
-              {t(
-                tool === 'image'
-                  ? 'config.toolsImageHint'
-                  : 'config.toolsVideoHint',
-              )}
-            </p>
-            {instances.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-edge/70 px-3 py-6 text-center text-xs text-dim/80">
-                {t('config.toolsNoInstances')}
-              </div>
-            ) : (
-              instances.map((instance) => renderInstance(tool, instance))
-            )}
-          </div>
-          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-edge px-4 py-3">
-            <span className="flex min-w-0 items-center gap-2 text-xs">
-              {saved === tool && (
-                <span className="inline-flex items-center gap-1 text-ok">
-                  <Check size="0.8571rem" />
-                  {t('config.toolsSaved')}
-                </span>
-              )}
-              {error !== '' && (
-                <span className="min-w-0 truncate text-err" title={error}>
-                  {error}
-                </span>
-              )}
-            </span>
-            <button
-              type="button"
-              onClick={() => void save(tool)}
-              disabled={saving !== null || instances.length === 0}
-              className="flex shrink-0 items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
-            >
-              {saving === tool && (
-                <Loader2 size="1.0000rem" className="animate-spin" />
-              )}
-              {t('setup.saveApply')}
-            </button>
-          </div>
-        </div>
-      </div>
+        ) : (
+          instances.map((instance) => renderInstance(tool, instance))
+        )}
+      </Modal>
     );
   };
 
@@ -611,7 +570,7 @@ export function ToolsSection() {
         {[0, 1].map((key) => (
           <div
             key={key}
-            className="h-16 animate-pulse rounded-xl border border-edge/70 bg-panel/70"
+            className="h-16 animate-pulse rounded-card border border-edge/70 bg-panel/70"
           />
         ))}
       </div>
@@ -624,7 +583,7 @@ export function ToolsSection() {
         {TOOLS.map((tool) => renderItem(tool, state?.[tool]))}
       </ul>
       {error !== '' && openTool === null && (
-        <p className="rounded-lg border border-err/40 bg-err/5 px-3 py-2 text-xs break-words text-err">
+        <p className="rounded-control border border-err/40 bg-err/5 px-3 py-2 text-xs break-words text-err">
           {error}
         </p>
       )}

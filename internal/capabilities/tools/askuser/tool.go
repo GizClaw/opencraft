@@ -128,6 +128,10 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 		interact.MetaKind:    string(kind),
 		interact.MetaTitle:   args.Question,
 		interact.MetaOptions: string(rawOpts),
+		// The assistant asking a question grants nothing, so it never
+		// wears the warning chrome of a permission gate — even when it
+		// offers options.
+		interact.MetaSeverity: string(interact.SeverityInfo),
 	}
 	if multiple {
 		meta[interact.MetaMulti] = "true"

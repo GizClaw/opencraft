@@ -7,6 +7,7 @@ import {
   quoteFontFamily,
   type FontPreset,
 } from '../lib/appearance';
+import { ICON } from './ui/icon';
 
 // FontPicker is the Settings > Interface font control: the built-in presets
 // plus the families the host reports (internal/foundation/sysfont), in one
@@ -205,7 +206,7 @@ export function FontPicker({
         aria-haspopup="listbox"
         aria-expanded={open}
         onClick={toggle}
-        className={`inline-flex h-[1.875rem] w-full items-center gap-1.5 rounded-lg border bg-panel px-2 text-xs transition-colors outline-none hover:border-accent/60 focus:border-accent ${
+        className={`inline-flex h-[1.875rem] w-full items-center gap-1.5 rounded-control border bg-panel px-2 text-xs transition-colors outline-none hover:border-accent/60 focus:border-accent ${
           open ? 'border-accent' : 'border-edge'
         }`}
       >
@@ -220,7 +221,7 @@ export function FontPicker({
           {triggerLabel}
         </span>
         <ChevronDown
-          size="0.875rem"
+          size={ICON.xs}
           className={`shrink-0 text-dim transition-transform ${
             open ? 'rotate-180' : ''
           }`}
@@ -237,10 +238,10 @@ export function FontPicker({
               width: anchor.width,
               maxHeight: anchor.maxHeight,
             }}
-            className="fixed z-[100] flex flex-col overflow-hidden rounded-xl border border-edge bg-panel shadow-xl"
+            className="fixed z-[100] flex flex-col overflow-hidden rounded-card border border-edge bg-panel shadow-popover"
           >
             <label className="flex items-center gap-1.5 border-b border-edge px-2 py-1.5">
-              <Search size="0.8rem" className="shrink-0 text-dim" />
+              <Search size={ICON.xs} className="shrink-0 text-dim" />
               <input
                 type="text"
                 autoFocus
@@ -283,7 +284,7 @@ export function FontPicker({
                     } ${selected ? 'text-accent' : 'text-fg'}`}
                   >
                     <Check
-                      size="0.8rem"
+                      size={ICON.xs}
                       className={`shrink-0 ${
                         selected ? 'text-accent' : 'invisible'
                       }`}

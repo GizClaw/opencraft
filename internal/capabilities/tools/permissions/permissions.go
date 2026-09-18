@@ -135,6 +135,7 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 			interact.MetaTitle:      "Grant permissions?",
 			interact.MetaOptions:    string(opts),
 			interact.MetaAllowOther: "false",
+			interact.MetaSeverity:   string(interact.SeverityNotice),
 		},
 	})
 	if err != nil {

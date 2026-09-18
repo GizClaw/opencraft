@@ -33,6 +33,7 @@ func TestPromptAskEmitsCompleteInteractDTO(t *testing.T) {
 		ID:         "p-1",
 		RunID:      "r-1",
 		Kind:       interact.KindConfirm,
+		Severity:   interact.SeverityDanger,
 		Title:      "Allow running ls?",
 		Body:       []message.Part{message.TextPart{Text: "run ls"}},
 		Options:    []interact.Option{{Label: "Yes", Value: "yes"}, {Label: "No", Value: "no"}},
@@ -56,6 +57,7 @@ func TestPromptAskEmitsCompleteInteractDTO(t *testing.T) {
 			RunID          string `json:"run_id"`
 			ConversationID string `json:"conversation_id"`
 			Kind           string `json:"kind"`
+			Severity       string `json:"severity"`
 			Title          string `json:"title"`
 			Body           []struct {
 				Type string `json:"type"`
@@ -74,6 +76,9 @@ func TestPromptAskEmitsCompleteInteractDTO(t *testing.T) {
 		}
 		if dto.ID != "p-1" || dto.RunID != "r-1" || dto.Kind != "confirm" {
 			t.Errorf("identity/kind = %+v", dto)
+		}
+		if dto.Severity != string(interact.SeverityDanger) {
+			t.Errorf("severity = %q, want %q", dto.Severity, interact.SeverityDanger)
 		}
 		if dto.ConversationID != sessionID {
 			t.Errorf("conversation_id = %q, want %q", dto.ConversationID, sessionID)

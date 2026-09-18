@@ -216,7 +216,7 @@ export function UsageChart({
 
   if (startMs <= 0 || endMs <= 0 || filled.length === 0 || !hasData) {
     return (
-      <div className="grid h-[18rem] place-items-center rounded-xl border border-edge/70 bg-panel/70 text-sm text-dim backdrop-blur-sm">
+      <div className="grid h-[18rem] place-items-center rounded-card border border-edge/70 bg-panel/70 text-sm text-dim backdrop-blur-sm">
         {t(
           allModels
             ? 'config.usageSeriesEmptyRange'
@@ -236,7 +236,7 @@ export function UsageChart({
     if (!active || !payload || payload.length === 0) return null;
     const point = payload[0]?.payload;
     return (
-      <div className="rounded-lg border border-edge bg-panel/95 p-3 shadow-lg backdrop-blur-md">
+      <div className="rounded-card border border-edge bg-panel/95 p-3 shadow-popover backdrop-blur-md">
         <p className="mb-2 font-medium text-fg">{point?.fullLabel}</p>
         {payload.map((entry) => {
           const stream = STREAMS.find((s) => s.key === entry.dataKey);
@@ -264,7 +264,7 @@ export function UsageChart({
   };
 
   return (
-    <div className="rounded-xl border border-edge/60 bg-panel/60 p-4 backdrop-blur-sm md:p-6">
+    <div className="rounded-card border border-edge/60 bg-panel/60 p-4 backdrop-blur-sm md:p-6">
       <div className="mb-4 flex items-center justify-between md:mb-6">
         <h3 className="text-base font-semibold text-fg">
           {t('config.usageTrend')}

@@ -25,6 +25,7 @@ test('renders an approval prompt and submits the choice', async ({ page }) => {
           run_id: 'r-1',
           conversation_id: 's-1',
           kind: 'select',
+          severity: 'notice',
           title: 'Allow running rm -rf?',
           body: [{ type: 'text', text: 'Command is not allowed' }],
           options: [

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Copy, Minus, Square, X } from 'lucide-react';
 import { Window } from '@wailsio/runtime';
 import { api } from '../lib/api';
+import { ICON } from './ui/icon';
 
 // WindowControls renders the custom minimize/maximize/close buttons for
 // the frameless Windows/Linux window. It is only mounted inside the
@@ -49,14 +50,14 @@ export function WindowControls() {
         aria-label="Minimize"
         className="grid w-12 place-items-center text-dim transition-colors hover:bg-panel2 hover:text-fg"
       >
-        <Minus size="1.0714rem" />
+        <Minus size={ICON.md} />
       </button>
       <button
         onClick={toggleMaximise}
         aria-label={maximised ? 'Restore' : 'Maximize'}
         className="grid w-12 place-items-center text-dim transition-colors hover:bg-panel2 hover:text-fg"
       >
-        {maximised ? <Copy size="0.9286rem" /> : <Square size="0.8571rem" />}
+        {maximised ? <Copy size={ICON.sm} /> : <Square size={ICON.xs} />}
       </button>
       <button
         // Route through Go: the "close to tray / quit" setting decides
@@ -65,7 +66,7 @@ export function WindowControls() {
         aria-label="Close"
         className="grid w-12 place-items-center text-dim transition-colors hover:bg-[#e81123] hover:text-white"
       >
-        <X size="1.1429rem" />
+        <X size={ICON.md} />
       </button>
     </div>
   );

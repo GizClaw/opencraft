@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { api } from '../../lib/api';
 import type { SkillDTO } from '../../lib/types';
 import type { PluginToolDTO } from '../types';
+import { ICON } from '../../components/ui/icon';
 
 // PluginCapabilitiesSection renders the agent-facing tools and skills a
 // plugin contributes. It is embedded in the plugin detail drawer and
@@ -49,14 +50,14 @@ export function PluginCapabilitiesSection({
       {error && <p className="break-words text-xs text-err">{error}</p>}
       {!loaded && !error && (
         <div className="flex items-center gap-2 text-xs text-dim">
-          <Loader2 size="0.8571rem" className="animate-spin" />
+          <Loader2 size={ICON.xs} className="animate-spin" />
           {t('config.pluginsCapabilitiesLoading')}
         </div>
       )}
       {loaded && hasTools && (
         <section>
-          <h4 className="mb-1.5 flex items-center gap-1.5 text-[0.7rem] font-semibold uppercase tracking-wide text-dim">
-            <Wrench size="0.75rem" />
+          <h4 className="mb-1.5 flex items-center gap-1.5 text-micro font-semibold uppercase tracking-wide text-dim">
+            <Wrench size={ICON.xs} />
             {t('config.pluginsCapabilitiesTools')}
           </h4>
           {tools!.length === 0 ? (
@@ -66,14 +67,14 @@ export function PluginCapabilitiesSection({
               {tools!.map((tool) => (
                 <div
                   key={tool.name}
-                  className="min-w-0 overflow-hidden rounded-md border border-edge bg-panel px-2.5 py-2"
+                  className="min-w-0 overflow-hidden rounded-control border border-edge bg-panel px-2.5 py-2"
                 >
                   <div className="flex min-w-0 items-center gap-2">
                     <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-fg">
                       {tool.name}
                     </span>
                     {tool.mutates_state && (
-                      <span className="shrink-0 rounded bg-warn/10 px-1.5 py-0.5 text-[0.65rem] text-warn">
+                      <span className="shrink-0 rounded-tight bg-warn/10 px-1.5 py-0.5 text-micro text-warn">
                         {t('config.pluginsToolMutates')}
                       </span>
                     )}
@@ -83,7 +84,7 @@ export function PluginCapabilitiesSection({
                       {tool.description}
                     </p>
                   )}
-                  <p className="mt-1 break-all font-mono text-[0.7rem] text-dim/70">
+                  <p className="mt-1 break-all font-mono text-micro text-dim/70">
                     {tool.method}
                   </p>
                 </div>
@@ -94,8 +95,8 @@ export function PluginCapabilitiesSection({
       )}
       {loaded && hasSkills && (
         <section>
-          <h4 className="mb-1.5 flex items-center gap-1.5 text-[0.7rem] font-semibold uppercase tracking-wide text-dim">
-            <BookOpen size="0.75rem" />
+          <h4 className="mb-1.5 flex items-center gap-1.5 text-micro font-semibold uppercase tracking-wide text-dim">
+            <BookOpen size={ICON.xs} />
             {t('config.pluginsCapabilitiesSkills')}
           </h4>
           {skills!.length === 0 ? (
@@ -105,20 +106,20 @@ export function PluginCapabilitiesSection({
               {skills!.map((skill) => (
                 <div
                   key={skill.path}
-                  className="min-w-0 overflow-hidden rounded-md border border-edge bg-panel px-2.5 py-2"
+                  className="min-w-0 overflow-hidden rounded-control border border-edge bg-panel px-2.5 py-2"
                 >
                   <div className="flex min-w-0 items-center gap-2">
                     <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium text-fg">
                       {skill.name}
                     </span>
                     {skill.plugin_id ? (
-                      <span className="max-w-[14rem] shrink-0 truncate rounded border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[0.65rem] text-accent">
+                      <span className="max-w-[14rem] shrink-0 truncate rounded-tight border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-micro text-accent">
                         {t('config.skillsPluginFrom', {
                           name: skill.plugin_name || skill.plugin_id,
                         })}
                       </span>
                     ) : skill.scope ? (
-                      <span className="max-w-[14rem] shrink-0 truncate rounded bg-panel px-1.5 py-0.5 text-[0.65rem] text-dim">
+                      <span className="max-w-[14rem] shrink-0 truncate rounded-tight bg-panel px-1.5 py-0.5 text-micro text-dim">
                         {skill.scope}
                       </span>
                     ) : null}
@@ -128,7 +129,7 @@ export function PluginCapabilitiesSection({
                       {skill.description}
                     </p>
                   )}
-                  <p className="mt-1 break-all font-mono text-[0.7rem] text-dim/60">
+                  <p className="mt-1 break-all font-mono text-micro text-dim/60">
                     {skill.path}
                   </p>
                 </div>

@@ -17,6 +17,8 @@ import { SESSION_MODES } from '../lib/sessionModes';
 import { useStore } from '../lib/store';
 import { PluginPanels } from '../plugins/components/PluginPanels';
 import { YoloConfirmDialog } from './YoloConfirmDialog';
+import { ICON } from './ui/icon';
+import { Segmented } from './ui/Segmented';
 
 // The think slider persists on a short debounce so dragging across
 // several levels writes the file once instead of once per step.
@@ -67,16 +69,16 @@ function PetPackSelect({ packs, value, onChange, label }: PetPackSelectProps) {
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={label}
-        className="flex h-9 w-full items-center gap-2 rounded-lg border border-edge/70 bg-panel/70 px-3 text-xs text-fg backdrop-blur-sm transition-colors hover:bg-panel focus:border-accent"
+        className="flex h-9 w-full items-center gap-2 rounded-control border border-edge/70 bg-panel/70 px-3 text-xs text-fg backdrop-blur-sm transition-colors hover:bg-panel focus:border-accent"
       >
         <span className="truncate">{selected?.displayName ?? label}</span>
         {selected?.pluginId && (
-          <span className="shrink-0 rounded bg-panel2 px-1.5 py-0.5 text-[0.65rem] text-dim">
+          <span className="shrink-0 rounded-tight bg-panel2 px-1.5 py-0.5 text-micro text-dim">
             {selected.pluginId}
           </span>
         )}
         <ChevronDown
-          size="1rem"
+          size={ICON.sm}
           className={`ml-auto shrink-0 text-dim transition-transform ${
             open ? 'rotate-180' : ''
           }`}
@@ -90,7 +92,7 @@ function PetPackSelect({ packs, value, onChange, label }: PetPackSelectProps) {
           />
           <div
             role="listbox"
-            className="absolute left-0 top-full z-40 mt-1 w-full min-w-[16rem] rounded-lg border border-edge/80 bg-panel/95 p-1 shadow-xl backdrop-blur-md"
+            className="absolute left-0 top-full z-40 mt-1 w-full min-w-[16rem] rounded-control border border-edge/80 bg-panel/95 p-1 shadow-popover backdrop-blur-md"
           >
             {packs.map((pack, i) => {
               const selectedPack = pack.id === value;
@@ -102,7 +104,7 @@ function PetPackSelect({ packs, value, onChange, label }: PetPackSelectProps) {
                   aria-selected={selectedPack}
                   onMouseEnter={() => setActive(i)}
                   onClick={() => pick(pack.id)}
-                  className={`flex w-full items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors ${
+                  className={`flex w-full items-center gap-2 rounded-control px-2.5 py-1.5 text-left text-xs transition-colors ${
                     active === i
                       ? 'bg-panel2 text-fg'
                       : 'text-dim hover:text-fg'
@@ -110,12 +112,12 @@ function PetPackSelect({ packs, value, onChange, label }: PetPackSelectProps) {
                 >
                   <span className="truncate">{pack.displayName}</span>
                   {pack.pluginId && (
-                    <span className="shrink-0 text-[0.65rem] opacity-70">
+                    <span className="shrink-0 text-micro opacity-70">
                       {pack.pluginId}
                     </span>
                   )}
                   {selectedPack && (
-                    <Check size="0.9286rem" className="ml-auto shrink-0" />
+                    <Check size={ICON.sm} className="ml-auto shrink-0" />
                   )}
                 </button>
               );
@@ -312,11 +314,11 @@ export function SettingsGeneral() {
   return (
     <div className="space-y-3">
       <PluginPanels tab="general" />
-      <div className="rounded-xl border border-edge bg-panel2 p-4">
+      <div className="rounded-card border border-edge bg-panel2 p-4">
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 text-sm font-medium">
-              <Sparkles size="1.0714rem" className="text-accent" />
+              <Sparkles size={ICON.md} className="text-accent" />
               {t('config.generalNewSessionDefaults')}
             </div>
             <p className="mt-1 text-xs text-dim">
@@ -331,12 +333,12 @@ export function SettingsGeneral() {
                 <div className="text-xs font-medium text-dim">
                   {t('config.generalDefaultMode')}
                 </div>
-                <p className="mt-0.5 text-[0.7857rem] text-dim/80">
+                <p className="mt-0.5 text-label text-dim/80">
                   {t('config.generalDefaultModeHint')}
                 </p>
               </div>
-              <div className="flex shrink-0 items-center gap-1.5 rounded-lg border border-yolo/50 bg-yolo/15 px-2.5 py-1.5 text-xs text-yolo">
-                <Flame size="0.9286rem" />
+              <div className="flex shrink-0 items-center gap-1.5 rounded-control border border-yolo/50 bg-yolo/15 px-2.5 py-1.5 text-xs text-yolo">
+                <Flame size={ICON.sm} />
                 {t('chat.yoloMode')}
               </div>
             </div>
@@ -346,7 +348,7 @@ export function SettingsGeneral() {
                 <div className="text-xs font-medium text-dim">
                   {t('config.generalDefaultMode')}
                 </div>
-                <p className="mt-0.5 text-[0.7857rem] text-dim/80">
+                <p className="mt-0.5 text-label text-dim/80">
                   {t('config.generalDefaultModeHint')}
                 </p>
               </div>
@@ -356,7 +358,7 @@ export function SettingsGeneral() {
                   aria-label={t('config.generalDefaultMode')}
                   aria-haspopup="menu"
                   aria-expanded={modeMenuOpen}
-                  className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
+                  className={`flex items-center gap-1.5 rounded-control border px-2.5 py-1.5 text-xs transition-colors ${
                     mode === 'yolo'
                       ? 'border-yolo/50 bg-yolo/15 text-yolo hover:bg-yolo/25'
                       : mode === 'read-only'
@@ -364,10 +366,10 @@ export function SettingsGeneral() {
                         : 'border-edge text-dim hover:text-fg'
                   }`}
                 >
-                  <ModeIcon size="0.8571rem" />
+                  <ModeIcon size={ICON.xs} />
                   <span>{activeMode.label}</span>
                   <ChevronDown
-                    size="0.7857rem"
+                    size={ICON.xs}
                     className={`text-dim transition-transform ${
                       modeMenuOpen ? 'rotate-180' : ''
                     }`}
@@ -381,7 +383,7 @@ export function SettingsGeneral() {
                     />
                     <div
                       role="menu"
-                      className="absolute right-0 top-full z-40 mt-1.5 w-80 rounded-xl border border-edge bg-panel p-1 shadow-xl"
+                      className="absolute right-0 top-full z-40 mt-1.5 w-80 rounded-card border border-edge bg-panel p-1 shadow-popover"
                     >
                       {modes.map((m) => {
                         const Icon = m.icon;
@@ -394,20 +396,17 @@ export function SettingsGeneral() {
                               setModeMenuOpen(false);
                               chooseMode(m.value);
                             }}
-                            className={`flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left text-xs ${
+                            className={`flex w-full items-start gap-2 rounded-control px-2 py-1.5 text-left text-xs ${
                               active
                                 ? 'bg-accent/10 text-accent'
                                 : 'text-dim hover:bg-panel2 hover:text-fg'
                             }`}
                           >
-                            <Icon
-                              size="0.8571rem"
-                              className="mt-0.5 shrink-0"
-                            />
+                            <Icon size={ICON.xs} className="mt-0.5 shrink-0" />
                             <span className="min-w-0 flex-1">
                               <span className="flex items-center gap-1.5 font-medium text-fg">
                                 {m.label}
-                                {active && <Check size="0.7857rem" />}
+                                {active && <Check size={ICON.xs} />}
                               </span>
                               <span className="mt-0.5 block leading-snug">
                                 {m.banner}
@@ -428,7 +427,7 @@ export function SettingsGeneral() {
                 <div className="text-xs font-medium text-dim">
                   {t('config.generalDefaultThink')}
                 </div>
-                <p className="mt-0.5 text-[0.7857rem] text-dim/80">
+                <p className="mt-0.5 text-label text-dim/80">
                   {t('config.generalDefaultThinkHint')}
                 </p>
               </div>
@@ -450,7 +449,7 @@ export function SettingsGeneral() {
               className="mt-2 w-full accent-accent"
               aria-label={t('config.generalDefaultThink')}
             />
-            <div className="flex justify-between text-[0.7143rem] text-dim">
+            <div className="flex justify-between text-micro text-dim">
               {thinkLevels.map((l) => (
                 <span key={l.value}>{l.label}</span>
               ))}
@@ -459,52 +458,44 @@ export function SettingsGeneral() {
         </div>
       </div>
       {closeToTray !== null && (
-        <div className="rounded-xl border border-edge bg-panel2 p-4">
+        <div className="rounded-card border border-edge bg-panel2 p-4">
           <div className="flex items-start justify-between gap-4">
             <div>
               <div className="flex items-center gap-2 text-sm font-medium">
-                <Minimize2 size="1.0714rem" className="text-accent" />
+                <Minimize2 size={ICON.md} className="text-accent" />
                 {t('config.uiCloseToTray')}
               </div>
               <p className="mt-1 text-xs text-dim">
                 {t('config.uiCloseToTrayHint')}
               </p>
             </div>
-            <div className="flex shrink-0 overflow-hidden rounded-lg border border-edge text-sm">
-              <button
-                onClick={() => setClose(true)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
-                  closeToTray
-                    ? 'bg-accent text-white'
-                    : 'text-dim hover:bg-panel hover:text-fg'
-                }`}
-              >
-                <Minimize2 size="0.9286rem" />
-                {t('config.uiCloseToTrayHide')}
-              </button>
-              <button
-                onClick={() => setClose(false)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
-                  !closeToTray
-                    ? 'bg-accent text-white'
-                    : 'text-dim hover:bg-panel hover:text-fg'
-                }`}
-              >
-                <Power size="0.9286rem" />
-                {t('config.uiCloseToTrayQuit')}
-              </button>
-            </div>
+            <Segmented
+              value={closeToTray ? 'tray' : 'quit'}
+              onChange={(next) => setClose(next === 'tray')}
+              options={[
+                {
+                  value: 'tray',
+                  icon: Minimize2,
+                  label: t('config.uiCloseToTrayHide'),
+                },
+                {
+                  value: 'quit',
+                  icon: Power,
+                  label: t('config.uiCloseToTrayQuit'),
+                },
+              ]}
+            />
           </div>
         </div>
       )}
       {petsEnabled !== null && (
-        <div className="rounded-xl border border-edge bg-panel2 p-4">
+        <div className="rounded-card border border-edge bg-panel2 p-4">
           <div className="flex items-start justify-between gap-4">
             <div>
               <div className="flex items-center gap-2 text-sm font-medium">
-                <PawPrint size="1.0714rem" className="text-accent" />
+                <PawPrint size={ICON.md} className="text-accent" />
                 {t('config.petEnabled')}
-                <span className="rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-[0.7rem] font-normal text-accent">
+                <span className="rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-micro font-normal text-accent">
                   {t('config.petExperimental')}
                 </span>
               </div>
@@ -512,30 +503,14 @@ export function SettingsGeneral() {
                 {t('config.petEnabledHint')}
               </p>
             </div>
-            <div className="flex shrink-0 overflow-hidden rounded-lg border border-edge text-sm">
-              <button
-                onClick={() => void setPets(true)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
-                  petsEnabled
-                    ? 'bg-accent text-white'
-                    : 'text-dim hover:bg-panel hover:text-fg'
-                }`}
-              >
-                <PawPrint size="0.9286rem" />
-                {t('config.petOn')}
-              </button>
-              <button
-                onClick={() => void setPets(false)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
-                  !petsEnabled
-                    ? 'bg-accent text-white'
-                    : 'text-dim hover:bg-panel hover:text-fg'
-                }`}
-              >
-                <Power size="0.9286rem" />
-                {t('config.petOff')}
-              </button>
-            </div>
+            <Segmented
+              value={petsEnabled ? 'on' : 'off'}
+              onChange={(next) => void setPets(next === 'on')}
+              options={[
+                { value: 'on', icon: PawPrint, label: t('config.petOn') },
+                { value: 'off', icon: Power, label: t('config.petOff') },
+              ]}
+            />
           </div>
           {petsEnabled && petPacks.length > 0 && (
             <div className="mt-4 flex items-center gap-4 border-t border-edge pt-3">

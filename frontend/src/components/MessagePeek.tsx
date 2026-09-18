@@ -1,7 +1,9 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { Markdown } from './Markdown';
+import { useStore } from '../lib/store';
+import { Markdown, type MarkdownLinkHandler } from './Markdown';
+import { ICON } from './ui/icon';
 
 // With a normal number of turns the ticks form a compact, vertically
 // centered ruler: every turn is one short line and the gap between
@@ -56,6 +58,11 @@ export const MessagePeek = memo(function MessagePeek({
   revision?: unknown;
 }) {
   const { t } = useTranslation();
+  const openFileTarget = useStore((s) => s.openFileTarget);
+  // Links inside a preview follow the chat's own rule: they open in the
+  // session's file panel, exactly like a link in the transcript.
+  const openLink: MarkdownLinkHandler = (href, base) =>
+    void openFileTarget(href, base ?? '');
   const rootRef = useRef<HTMLDivElement>(null);
   const scrubberRef = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState<number | null>(null);
@@ -176,7 +183,7 @@ export const MessagePeek = memo(function MessagePeek({
                   setHovered(null);
                   onJump(item.index);
                 }}
-                className="group pointer-events-auto flex h-2 w-6 items-center justify-center rounded hover:bg-accent/10"
+                className="group pointer-events-auto flex h-2 w-6 items-center justify-center rounded-tight hover:bg-accent/10"
               >
                 <span
                   className={`h-[3px] rounded-full transition-all duration-150 ${
@@ -265,17 +272,20 @@ export const MessagePeek = memo(function MessagePeek({
       {preview && (
         <div
           role="tooltip"
-          className="pointer-events-none absolute left-8 z-50 w-[22rem] rounded-2xl border border-edge/80 bg-panel/95 p-4 shadow-2xl ring-1 ring-edge/40 backdrop-blur-sm"
+          className="pointer-events-none absolute left-8 z-50 w-[22rem] rounded-card border border-edge/80 bg-panel/95 p-4 shadow-modal ring-1 ring-edge/40 backdrop-blur-sm"
           style={{ top: tooltipTop }}
         >
           {preview.user ? (
             <div className="flex items-start justify-between gap-3">
               <div className="prose-chat min-w-0 flex-1 text-sm font-semibold leading-relaxed text-fg [&_p:first-child]:my-0 [&_p:first-child]:line-clamp-2 [&_p:first-child]:whitespace-pre-wrap [&_p:first-child]:break-words">
-                <Markdown text={boundedMarkdown(preview.user, 800)} />
+                <Markdown
+                  text={boundedMarkdown(preview.user, 800)}
+                  onOpen={openLink}
+                />
               </div>
               {preview.running && (
                 <span className="mt-0.5 flex shrink-0 items-center gap-1 text-xs text-accent">
-                  <Loader2 size="0.8571rem" className="animate-spin" />
+                  <Loader2 size={ICON.xs} className="animate-spin" />
                   {t('chat.messagePeekRunning')}
                 </span>
               )}
@@ -283,7 +293,7 @@ export const MessagePeek = memo(function MessagePeek({
           ) : (
             preview.running && (
               <div className="flex items-center gap-1.5 text-xs text-accent">
-                <Loader2 size="0.8571rem" className="animate-spin" />
+                <Loader2 size={ICON.xs} className="animate-spin" />
                 {t('chat.messagePeekRunning')}
               </div>
             )
@@ -293,7 +303,7 @@ export const MessagePeek = memo(function MessagePeek({
           )}
           {preview.answer ? (
             <div>
-              <div className="text-[0.7143rem] font-semibold uppercase tracking-wider text-dim">
+              <div className="text-micro font-semibold uppercase tracking-wider text-dim">
                 {t('chat.messagePeekAssistant')}
               </div>
               <div className="prose-chat mt-1.5 max-h-44 overflow-y-auto pr-1 text-xs opacity-75 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_p]:break-words [&_p]:whitespace-pre-wrap">
@@ -302,6 +312,7 @@ export const MessagePeek = memo(function MessagePeek({
                     preview.answer,
                     MAX_PEEK_MARKDOWN_CHARS,
                   )}
+                  onOpen={openLink}
                 />
               </div>
             </div>

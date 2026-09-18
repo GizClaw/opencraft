@@ -10,6 +10,7 @@ import { dateLabel } from '../lib/format';
 import type { GitHubPull } from '../lib/types';
 import { PRDetailModal } from './PRDetailModal';
 import { AvatarBadge } from './viewer/AvatarBadge';
+import { ICON } from './ui/icon';
 
 export function PRView({ nonce }: { nonce: number }) {
   const { t } = useTranslation();
@@ -38,11 +39,11 @@ export function PRView({ nonce }: { nonce: number }) {
     <div className="flex h-full min-h-0 flex-col">
       {error ? (
         <div className="flex items-center gap-2 border-b border-err/20 bg-err/5 px-3 py-2 text-xs text-err">
-          <AlertTriangle size="0.8571rem" className="shrink-0" />
+          <AlertTriangle size={ICON.xs} className="shrink-0" />
           <span className="min-w-0 flex-1 break-words">{error}</span>
           <button
             onClick={() => void load()}
-            className="shrink-0 rounded-md px-2 py-1 text-err hover:bg-err/10"
+            className="shrink-0 rounded-control px-2 py-1 text-err hover:bg-err/10"
           >
             {t('git.retry')}
           </button>
@@ -52,7 +53,7 @@ export function PRView({ nonce }: { nonce: number }) {
       <div className="min-h-0 flex-1 overflow-y-auto pb-2">
         {rows === null ? (
           <div className="grid h-full place-items-center text-dim">
-            <Loader2 size="1.1429rem" className="animate-spin" />
+            <Loader2 size={ICON.md} className="animate-spin" />
           </div>
         ) : rows.length === 0 ? (
           <div className="grid h-full place-items-center px-4 text-center text-xs text-dim">
@@ -67,7 +68,7 @@ export function PRView({ nonce }: { nonce: number }) {
               className="flex w-full items-start gap-2.5 border-b border-edge/60 px-3 py-2 text-left hover:bg-panel2/60"
             >
               <GitPullRequest
-                size="0.9286rem"
+                size={ICON.sm}
                 className={`mt-0.5 shrink-0 ${
                   pr.state === 'open'
                     ? 'text-ok'
@@ -81,16 +82,16 @@ export function PRView({ nonce }: { nonce: number }) {
                   <span className="min-w-0 truncate text-xs font-medium text-fg">
                     {pr.title}
                   </span>
-                  <span className="shrink-0 text-[0.7143rem] text-dim">
+                  <span className="shrink-0 text-micro text-dim">
                     #{pr.number}
                   </span>
                   {pr.draft && (
-                    <span className="shrink-0 rounded border border-dim/30 px-1 py-px text-[0.6429rem] text-dim">
+                    <span className="shrink-0 rounded-tight border border-dim/30 px-1 py-px text-micro text-dim">
                       {t('git.draft')}
                     </span>
                   )}
                 </span>
-                <span className="mt-0.5 flex items-center gap-1.5 text-[0.7143rem] text-dim">
+                <span className="mt-0.5 flex items-center gap-1.5 text-micro text-dim">
                   <AvatarBadge login={pr.author.login} />
                   <span className="truncate">
                     {pr.author.login} · {pr.base} ← {pr.head}

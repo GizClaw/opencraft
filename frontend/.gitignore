@@ -17,3 +17,7 @@ test-results/
 test-results/**
 playwright-report/
 playwright-report/**
+
+# The UI audit harness (frontend/e2e-visual) is tracked, but its
+# generated screenshots are not: they are re-taken on demand.
+e2e-visual/shots/

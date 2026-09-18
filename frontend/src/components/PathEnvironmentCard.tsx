@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import { useStore } from '../lib/store';
 import type { PathEnvironment, PathSegment } from '../lib/types';
+import { ICON } from './ui/icon';
 
 // PathEnvironmentCard is the diagnostics view of the PATH the app runs
 // with. The desktop app is usually started from Finder/Dock, which
@@ -124,11 +125,11 @@ export function PathEnvironmentCard() {
   };
 
   return (
-    <div className="rounded-xl border border-edge bg-panel2 p-3">
+    <div className="rounded-card border border-edge bg-panel2 p-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-sm font-medium">
-            <Route size="1.0000rem" className="shrink-0 text-accent" />
+            <Route size={ICON.sm} className="shrink-0 text-accent" />
             {t('config.diagPathTitle')}
           </div>
           <p className="mt-1 text-xs text-dim/80">{t('config.diagPathHint')}</p>
@@ -140,7 +141,7 @@ export function PathEnvironmentCard() {
                 ? t('config.diagPathReloaded')
                 : t('config.diagPathReloadSkipped')
             }
-            className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[0.7143rem] ${
+            className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-micro ${
               env.reloaded ? 'border-ok/40 text-ok' : 'border-warn/40 text-warn'
             }`}
           >
@@ -157,9 +158,9 @@ export function PathEnvironmentCard() {
             onClick={() => void copyPath()}
             title={t('config.diagPathCopy')}
             aria-label={t('config.diagPathCopy')}
-            className="rounded-md border border-edge p-1 text-dim transition-colors hover:bg-panel hover:text-fg"
+            className="rounded-control border border-edge p-1 text-dim transition-colors hover:bg-panel hover:text-fg"
           >
-            <Copy size="0.8571rem" />
+            <Copy size={ICON.xs} />
           </button>
         </div>
       </div>
@@ -167,7 +168,7 @@ export function PathEnvironmentCard() {
       <div className="mt-2.5 space-y-2">
         {groups.map((group) => (
           <div key={group.source}>
-            <div className="flex items-baseline gap-1.5 text-[0.7143rem] text-dim">
+            <div className="flex items-baseline gap-1.5 text-micro text-dim">
               <span
                 className={`h-1.5 w-1.5 rounded-full ${sourceDot(group.source)}`}
               />
@@ -181,7 +182,7 @@ export function PathEnvironmentCard() {
                   title={
                     segment.present ? undefined : t('config.diagPathAbsent')
                   }
-                  className={`inline-flex max-w-full items-baseline rounded-md border px-1.5 py-0.5 font-mono text-[0.7143rem] break-all ${pillClass(segment)}`}
+                  className={`inline-flex max-w-full items-baseline rounded-control border px-1.5 py-0.5 font-mono text-micro break-all ${pillClass(segment)}`}
                 >
                   {segment.dir}
                   {!segment.present && (
@@ -199,22 +200,22 @@ export function PathEnvironmentCard() {
       {(rejected.length > 0 || missing.length > 0) && (
         <div className="mt-2.5 space-y-1">
           {rejected.length > 0 && (
-            <p className="flex items-start gap-1.5 text-[0.7857rem] text-warn">
-              <AlertTriangle size="0.8571rem" className="mt-0.5 shrink-0" />
+            <p className="flex items-start gap-1.5 text-label text-warn">
+              <AlertTriangle size={ICON.xs} className="mt-0.5 shrink-0" />
               <span className="break-words">
                 {t('config.diagPathRejectedLabel')}{' '}
-                <span className="font-mono text-[0.7143rem]">
+                <span className="font-mono text-micro">
                   {rejected.join(', ')}
                 </span>
               </span>
             </p>
           )}
           {missing.length > 0 && (
-            <p className="flex items-start gap-1.5 text-[0.7857rem] text-dim">
-              <Info size="0.8571rem" className="mt-0.5 shrink-0" />
+            <p className="flex items-start gap-1.5 text-label text-dim">
+              <Info size={ICON.xs} className="mt-0.5 shrink-0" />
               <span className="break-words">
                 {t('config.diagPathMissingLabel')}{' '}
-                <span className="font-mono text-[0.7143rem]">
+                <span className="font-mono text-micro">
                   {missing.join(', ')}
                 </span>
               </span>
@@ -223,7 +224,7 @@ export function PathEnvironmentCard() {
         </div>
       )}
 
-      <p className="mt-2.5 text-[0.7857rem] text-dim/80">
+      <p className="mt-2.5 text-label text-dim/80">
         {t('config.diagPathDeployNote')}
       </p>
 
@@ -237,27 +238,27 @@ export function PathEnvironmentCard() {
           spellCheck={false}
           rows={3}
           placeholder={t('config.diagPathPrependPlaceholder')}
-          className="mt-1 w-full resize-y rounded-lg border border-edge bg-panel px-2 py-1.5 font-mono text-[0.7857rem] text-fg outline-none transition-colors focus:border-accent"
+          className="mt-1 w-full resize-y rounded-control border border-edge bg-panel px-2 py-1.5 font-mono text-label text-fg outline-none transition-colors focus:border-accent"
         />
         <div className="mt-2 flex items-center gap-2">
           <button
             onClick={() => void run(() => api.setPathPrepend(dirs))}
             disabled={busy}
-            className="rounded-lg bg-accent px-3 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
+            className="rounded-control bg-accent px-3 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
           >
             {t('config.diagPathSave')}
           </button>
           <button
             onClick={() => void run(() => api.resolvePath())}
             disabled={busy}
-            className="rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:bg-panel hover:text-fg disabled:opacity-40"
+            className="rounded-control border border-edge px-3 py-1.5 text-sm text-dim hover:bg-panel hover:text-fg disabled:opacity-40"
           >
             {t('config.diagPathReresolve')}
           </button>
         </div>
         {error && (
-          <p className="mt-1.5 flex items-start gap-1.5 text-[0.7857rem] text-err">
-            <AlertTriangle size="0.8571rem" className="mt-0.5 shrink-0" />
+          <p className="mt-1.5 flex items-start gap-1.5 text-label text-err">
+            <AlertTriangle size={ICON.xs} className="mt-0.5 shrink-0" />
             <span className="break-words">{error}</span>
           </p>
         )}

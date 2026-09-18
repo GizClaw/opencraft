@@ -1,9 +1,38 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { HelpCircle, X } from 'lucide-react';
+import { AlertTriangle, HelpCircle, ShieldAlert, X } from 'lucide-react';
 import { Markdown } from './Markdown';
 import { useStore } from '../lib/store';
-import type { InteractDTO } from '../lib/types';
+import type { InteractDTO, InteractSeverity } from '../lib/types';
+import { Button } from './ui/Button';
+import { Input } from './ui/Input';
+import { ICON } from './ui/icon';
+
+// One prompt used to look the same whatever it asked: a sandbox
+// escalation that hands a command the whole host wore the same amber
+// border as "which rollout strategy do you prefer?". The host tags each
+// prompt with a severity; this is the only place that turns it into
+// chrome, so the ladder stays in one place.
+const SEVERITY: Record<
+  InteractSeverity,
+  { border: string; icon: string; Icon: typeof HelpCircle }
+> = {
+  info: {
+    border: 'border-accent/40',
+    icon: 'text-accent',
+    Icon: HelpCircle,
+  },
+  notice: {
+    border: 'border-warn/40',
+    icon: 'text-warn',
+    Icon: AlertTriangle,
+  },
+  danger: {
+    border: 'border-err/50',
+    icon: 'text-err',
+    Icon: ShieldAlert,
+  },
+};
 
 export function InteractionCard({ spec }: { spec: InteractDTO }) {
   const replyInteract = useStore((s) => s.replyInteract);
@@ -13,7 +42,11 @@ export function InteractionCard({ spec }: { spec: InteractDTO }) {
   const [other, setOther] = useState('');
   const { t } = useTranslation();
 
-  const bodyText = spec.body
+  // An unknown severity renders as notice: a prompt that arrived
+  // without a tag is a decision, not small talk.
+  const tone = SEVERITY[spec.severity] ?? SEVERITY.notice;
+  const { Icon } = tone;
+  const bodyText = (spec.body ?? [])
     .map((p) => (p.type === 'text' ? (p.text ?? '') : ''))
     .join('\n');
 
@@ -47,13 +80,13 @@ export function InteractionCard({ spec }: { spec: InteractDTO }) {
   };
 
   return (
-    <div className="rounded-xl border border-warn/40 bg-panel2 p-4 my-3">
+    <div className={`my-3 rounded-card border bg-panel2 p-4 ${tone.border}`}>
       <div className="flex items-center gap-2 text-sm font-medium">
-        <HelpCircle size="1.1429rem" className="text-warn" />
+        <Icon size={ICON.md} className={`shrink-0 ${tone.icon}`} />
         {spec.title || t('interact.needConfirm')}
       </div>
       {bodyText && (
-        <div className="prose-chat text-sm mt-2">
+        <div className="prose-chat mt-2 text-sm">
           <Markdown
             text={bodyText}
             onOpen={(href, base) => void openFileTarget(href, base ?? '')}
@@ -66,7 +99,7 @@ export function InteractionCard({ spec }: { spec: InteractDTO }) {
           {spec.options.map((opt) => (
             <label
               key={opt.value}
-              className="flex items-center gap-2 rounded-lg border border-edge bg-panel px-3 py-2 text-sm cursor-pointer hover:border-accent/50"
+              className="flex cursor-pointer items-center gap-2 rounded-control border border-edge bg-panel px-3 py-2 text-sm hover:border-accent/50"
             >
               <input
                 type={spec.multi ? 'checkbox' : 'radio'}
@@ -79,11 +112,10 @@ export function InteractionCard({ spec }: { spec: InteractDTO }) {
             </label>
           ))}
           {spec.allow_other && (
-            <input
+            <Input
               value={other}
               onChange={(e) => setOther(e.target.value)}
               placeholder={t('interact.otherPlaceholder')}
-              className="w-full rounded-lg border border-edge bg-panel px-3 py-2 text-sm outline-none focus:border-accent"
             />
           )}
         </div>
@@ -96,25 +128,22 @@ export function InteractionCard({ spec }: { spec: InteractDTO }) {
           rows={3}
           autoFocus
           placeholder={t('interact.answerPlaceholder')}
-          className="mt-3 w-full rounded-lg border border-edge bg-panel px-3 py-2 text-sm outline-none focus:border-accent resize-y"
+          className="mt-3 w-full resize-y rounded-control border border-edge bg-panel px-3 py-2 text-sm outline-none focus:border-accent"
         />
       )}
 
       <div className="mt-3 flex gap-2">
-        <button
-          onClick={submit}
-          className="rounded-lg bg-accent text-white px-4 py-1.5 text-sm hover:opacity-90"
-        >
+        <Button variant="primary" onClick={submit}>
           {t('interact.submit')}
-        </button>
-        <button
+        </Button>
+        <Button
+          variant="quiet"
           onClick={() =>
             void replyInteract(spec.id, { text: '', cancel: true })
           }
-          className="flex items-center gap-1 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
         >
-          <X size="0.9286rem" /> {t('interact.cancel')}
-        </button>
+          <X size={ICON.sm} /> {t('interact.cancel')}
+        </Button>
       </div>
     </div>
   );

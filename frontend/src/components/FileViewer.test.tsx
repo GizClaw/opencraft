@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useStore } from '../lib/store';
 import type { FilePreview } from '../lib/types';
@@ -103,6 +103,123 @@ describe('FileViewer', () => {
         'http://127.0.0.1:1/media/token/generated/clip.mp4',
       );
     });
+  });
+
+  it('hides the tab strip scrollbar and keeps the active tab in view', async () => {
+    const scrollIntoView = vi
+      .spyOn(Element.prototype, 'scrollIntoView')
+      .mockImplementation(() => {});
+    try {
+      const fileTab = (name: string) => ({
+        key: `/tmp/w/internal/${name}`,
+        path: `/tmp/w/internal/${name}`,
+        rel: `internal/${name}`,
+        root: 'workspace',
+        name,
+        media_type: 'text/plain',
+      });
+      const tabs = ['a.go', 'b.go', 'c.go'].map(fileTab);
+      useStore.setState({
+        viewers: {
+          's-1': {
+            filesOpen: true,
+            panelMode: 'files',
+            fileTabs: tabs,
+            fileActive: tabs[0].key,
+            fileTreeDir: '.',
+          },
+        },
+      });
+      const { container } = render(<FileViewer sessionID="s-1" />);
+
+      const strip = container.querySelector('.no-scrollbar');
+      expect(strip).not.toBeNull();
+      // The new-tab button must not scroll away with the tabs.
+      expect(
+        strip?.contains(screen.getByRole('button', { name: 'New blank tab' })),
+      ).toBe(false);
+      await waitFor(() =>
+        expect(scrollIntoView).toHaveBeenCalledWith({
+          inline: 'nearest',
+          block: 'nearest',
+        }),
+      );
+
+      scrollIntoView.mockClear();
+      useStore.setState((state) => ({
+        viewers: {
+          ...state.viewers,
+          's-1': { ...state.viewers['s-1'], fileActive: tabs[2].key },
+        },
+      }));
+      await waitFor(() => expect(scrollIntoView).toHaveBeenCalledTimes(1));
+    } finally {
+      scrollIntoView.mockRestore();
+    }
+  });
+
+  it('maps a vertical wheel over the strip to horizontal tab scrolling', () => {
+    render(<FileViewer sessionID="s-1" />);
+    const strip = document.querySelector<HTMLDivElement>('.no-scrollbar');
+    expect(strip).not.toBeNull();
+    if (!strip) return;
+    // jsdom has no layout: give the strip an overflowing box by hand.
+    let scrollLeft = 0;
+    Object.defineProperty(strip, 'scrollLeft', {
+      configurable: true,
+      get: () => scrollLeft,
+      set: (value: number) => {
+        scrollLeft = value;
+      },
+    });
+    Object.defineProperty(strip, 'scrollWidth', { value: 600 });
+    Object.defineProperty(strip, 'clientWidth', { value: 300 });
+
+    const event = new WheelEvent('wheel', {
+      deltaY: 120,
+      bubbles: true,
+      cancelable: true,
+    });
+    strip.dispatchEvent(event);
+
+    expect(strip.scrollLeft).toBe(120);
+    expect(event.defaultPrevented).toBe(true);
+  });
+
+  it('fades only the strip edges that hide tabs', () => {
+    render(<FileViewer sessionID="s-1" />);
+    const strip = document.querySelector<HTMLDivElement>('.no-scrollbar');
+    expect(strip).not.toBeNull();
+    if (!strip) return;
+    // jsdom has no layout: give the strip an overflowing box by hand.
+    let scrollLeft = 0;
+    Object.defineProperty(strip, 'scrollLeft', {
+      configurable: true,
+      get: () => scrollLeft,
+      set: (value: number) => {
+        scrollLeft = value;
+      },
+    });
+    Object.defineProperty(strip, 'scrollWidth', { value: 600 });
+    Object.defineProperty(strip, 'clientWidth', { value: 300 });
+    const sync = () => act(() => void strip.dispatchEvent(new Event('scroll')));
+
+    // At the start only the right edge hides tabs.
+    sync();
+    expect(strip.style.maskImage).toContain('calc(100% - 1.25rem)');
+    expect(strip.style.maskImage).not.toContain('transparent 0');
+
+    // Mid-scroll both edges hide tabs.
+    scrollLeft = 150;
+    sync();
+    expect(strip.style.maskImage).toContain('transparent 0');
+    expect(strip.style.maskImage).toContain('calc(100% - 1.25rem)');
+
+    // At the end only the left edge hides tabs.
+    scrollLeft = 300;
+    sync();
+    expect(strip.style.maskImage).toContain('transparent 0');
+    expect(strip.style.maskImage).not.toContain('calc(100% - 1.25rem)');
   });
 
   it('opens a blank tab and shows the file tree on plus', async () => {

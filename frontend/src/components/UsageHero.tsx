@@ -11,6 +11,7 @@ import {
   Zap,
 } from 'lucide-react';
 import type { ModelUsageStat } from '../lib/types';
+import { ICON } from './ui/icon';
 
 // Palette mirrors the trend chart (cc-switch style): input blue,
 // output green, cache write orange, cache read purple.
@@ -38,8 +39,8 @@ function MiniStat({
   color: string;
 }) {
   return (
-    <div className="flex flex-col gap-1 rounded-xl border border-edge/60 bg-panel/50 p-3 shadow-sm">
-      <div className="flex items-center gap-1.5 text-[11px] font-medium text-dim">
+    <div className="flex flex-col gap-1 rounded-card border border-edge/60 bg-panel/50 p-3 shadow-raised">
+      <div className="flex items-center gap-1.5 text-label font-medium text-dim">
         <span style={{ color }}>{icon}</span>
         <span className="tracking-wide">{label}</span>
       </div>
@@ -95,7 +96,7 @@ export function UsageHero({
     : '';
 
   return (
-    <div className="usage-hero relative overflow-hidden rounded-xl border border-edge/60 bg-panel/60 p-4 shadow-sm backdrop-blur-sm md:p-5">
+    <div className="usage-hero relative overflow-hidden rounded-card border border-edge/60 bg-panel/60 p-4 shadow-raised backdrop-blur-sm md:p-5">
       <div
         aria-hidden
         className="pointer-events-none absolute -right-20 -top-28 h-56 w-72 rounded-full opacity-70 blur-3xl"
@@ -108,16 +109,16 @@ export function UsageHero({
         <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
           <div className="flex items-center gap-3">
             <div
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl shadow-sm"
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-card shadow-raised"
               style={{
                 background:
                   'linear-gradient(135deg, rgba(59,130,246,0.18), rgba(59,130,246,0.05))',
               }}
             >
-              <Zap size="1.4286rem" style={{ color: ACCENT_BLUE }} />
+              <Zap size={ICON.lg} style={{ color: ACCENT_BLUE }} />
             </div>
             <div>
-              <div className="mb-0.5 flex items-center gap-1.5 text-[11px] font-medium text-dim">
+              <div className="mb-0.5 flex items-center gap-1.5 text-label font-medium text-dim">
                 <span>{t('config.usageTokensTotal')}</span>
                 <span className="text-dim/30">•</span>
                 <span>{t('config.usageAllCumulative')}</span>
@@ -129,30 +130,30 @@ export function UsageHero({
                 >
                   {mainNumber}
                 </span>
-                <span className="rounded-md bg-panel px-1.5 py-0.5 text-xs font-medium text-dim">
+                <span className="rounded-control bg-panel px-1.5 py-0.5 text-xs font-medium text-dim">
                   ≈ {fmtShort(totals.total)}
                 </span>
               </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-5 rounded-xl border border-edge/60 bg-panel/60 px-4 py-2.5 shadow-sm">
+          <div className="flex items-center gap-5 rounded-card border border-edge/60 bg-panel/60 px-4 py-2.5 shadow-raised">
             <div className="flex flex-col">
-              <span className="text-[10px] font-medium uppercase tracking-wider text-dim">
+              <span className="text-micro font-medium uppercase tracking-wider text-dim">
                 {t('config.usageSessions')}
               </span>
               <span className="flex items-center gap-1.5 text-sm font-semibold tabular-nums text-fg">
-                <Activity size="1rem" style={{ color: ACCENT_BLUE }} />
+                <Activity size={ICON.sm} style={{ color: ACCENT_BLUE }} />
                 {sessions.toLocaleString()}
               </span>
             </div>
             <div className="h-8 w-px bg-edge/80" />
             <div className="flex flex-col">
-              <span className="text-[10px] font-medium uppercase tracking-wider text-dim">
+              <span className="text-micro font-medium uppercase tracking-wider text-dim">
                 {t('config.usageModels')}
               </span>
               <span className="flex items-center gap-1.5 text-sm font-semibold tabular-nums text-fg">
-                <LayoutGrid size="1rem" style={{ color: ACCENT_PURPLE }} />
+                <LayoutGrid size={ICON.sm} style={{ color: ACCENT_PURPLE }} />
                 {totals.models.toLocaleString()}
               </span>
             </div>
@@ -160,7 +161,7 @@ export function UsageHero({
               <>
                 <div className="h-8 w-px bg-edge/80" />
                 <div className="flex flex-col">
-                  <span className="text-[10px] font-medium uppercase tracking-wider text-dim">
+                  <span className="text-micro font-medium uppercase tracking-wider text-dim">
                     {t('config.usageUpdated')}
                   </span>
                   <span className="text-sm font-semibold tabular-nums text-dim">
@@ -174,34 +175,34 @@ export function UsageHero({
 
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
           <MiniStat
-            icon={<ArrowDownToLine size="1rem" />}
+            icon={<ArrowDownToLine size={ICON.sm} />}
             label={t('config.usageInput')}
             value={fmtShort(totals.input)}
             color={ACCENT_BLUE}
           />
           <MiniStat
-            icon={<ArrowUpFromLine size="1rem" />}
+            icon={<ArrowUpFromLine size={ICON.sm} />}
             label={t('config.usageOutput')}
             value={fmtShort(totals.output)}
             color={ACCENT_GREEN}
           />
           <MiniStat
-            icon={<Database size="1rem" />}
+            icon={<Database size={ICON.sm} />}
             label={t('config.usageCacheWrite')}
             value={fmtShort(totals.cacheWrite)}
             color={ACCENT_ORANGE}
           />
           <MiniStat
-            icon={<Sparkles size="1rem" />}
+            icon={<Sparkles size={ICON.sm} />}
             label={t('config.usageCache')}
             value={fmtShort(totals.cacheRead)}
             color={ACCENT_PURPLE}
           />
           <div
-            className="col-span-2 flex flex-col justify-center rounded-xl border border-edge/60 bg-panel/50 p-3 shadow-sm lg:col-span-1"
+            className="col-span-2 flex flex-col justify-center rounded-card border border-edge/60 bg-panel/50 p-3 shadow-raised lg:col-span-1"
             title={t('config.usageCacheHitHint')}
           >
-            <div className="mb-2 flex items-center justify-between text-[11px]">
+            <div className="mb-2 flex items-center justify-between text-label">
               <span className="font-medium text-dim">
                 {t('config.usageCacheHitRate')}
               </span>
@@ -221,7 +222,7 @@ export function UsageHero({
                 }}
               />
             </div>
-            <div className="mt-1.5 text-[10px] tabular-nums text-dim">
+            <div className="mt-1.5 text-micro tabular-nums text-dim">
               {fmtShort(totals.cacheRead)} / {fmtShort(totals.input)}
             </div>
           </div>

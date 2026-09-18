@@ -23,6 +23,8 @@ import {
 import { useStore } from '../lib/store';
 import { FontPicker } from './FontPicker';
 import { PluginPanels } from '../plugins/components/PluginPanels';
+import { ICON } from './ui/icon';
+import { Segmented } from './ui/Segmented';
 
 // SettingsDisplay is the interface/display settings tab: language,
 // light/dark theme, interface/code font and text size, plus the plugin
@@ -99,11 +101,11 @@ export function SettingsDisplay() {
   return (
     <div className="space-y-3">
       <PluginPanels tab="display" />
-      <div className="rounded-xl border border-edge bg-panel2 p-4">
+      <div className="rounded-card border border-edge bg-panel2 p-4">
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 text-sm font-medium">
-              <Languages size="1.0714rem" className="text-accent" />
+              <Languages size={ICON.md} className="text-accent" />
               {t('config.uiLanguage')}
             </div>
             <p className="mt-1 text-xs text-dim">
@@ -113,12 +115,12 @@ export function SettingsDisplay() {
           <div className="relative shrink-0">
             <button
               onClick={() => setLangMenuOpen((v) => !v)}
-              className="flex items-center gap-1.5 rounded-lg border border-edge bg-panel px-2.5 py-1.5 text-sm text-fg transition-colors hover:border-accent/50"
+              className="flex items-center gap-1.5 rounded-control border border-edge bg-panel px-2.5 py-1.5 text-sm text-fg transition-colors hover:border-accent/50"
             >
-              <Languages size="0.8571rem" className="text-dim" />
+              <Languages size={ICON.xs} className="text-dim" />
               {lang === 'zh' ? '中文' : 'English'}
               <ChevronDown
-                size="0.8571rem"
+                size={ICON.xs}
                 className={`text-dim transition-transform ${
                   langMenuOpen ? 'rotate-180' : ''
                 }`}
@@ -130,34 +132,34 @@ export function SettingsDisplay() {
                   className="fixed inset-0 z-30"
                   onClick={() => setLangMenuOpen(false)}
                 />
-                <div className="absolute right-0 top-full z-40 mt-1.5 w-40 rounded-xl border border-edge bg-panel p-1 shadow-xl">
+                <div className="absolute right-0 top-full z-40 mt-1.5 w-40 rounded-card border border-edge bg-panel p-1 shadow-popover">
                   <button
                     onClick={() => {
                       setLangMenuOpen(false);
                       void i18n.changeLanguage('zh');
                     }}
-                    className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm ${
+                    className={`flex w-full items-center justify-between rounded-control px-2 py-1.5 text-left text-sm ${
                       lang === 'zh'
                         ? 'bg-accent/10 text-accent'
                         : 'text-dim hover:bg-panel2 hover:text-fg'
                     }`}
                   >
                     <span>中文</span>
-                    {lang === 'zh' && <Check size="0.8571rem" />}
+                    {lang === 'zh' && <Check size={ICON.xs} />}
                   </button>
                   <button
                     onClick={() => {
                       setLangMenuOpen(false);
                       void i18n.changeLanguage('en');
                     }}
-                    className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-sm ${
+                    className={`flex w-full items-center justify-between rounded-control px-2 py-1.5 text-left text-sm ${
                       lang === 'en'
                         ? 'bg-accent/10 text-accent'
                         : 'text-dim hover:bg-panel2 hover:text-fg'
                     }`}
                   >
                     <span>English</span>
-                    {lang === 'en' && <Check size="0.8571rem" />}
+                    {lang === 'en' && <Check size={ICON.xs} />}
                   </button>
                 </div>
               </>
@@ -165,55 +167,41 @@ export function SettingsDisplay() {
           </div>
         </div>
       </div>
-      <div className="rounded-xl border border-edge bg-panel2 p-4">
+      <div className="rounded-card border border-edge bg-panel2 p-4">
         <div className="flex items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 text-sm font-medium">
-              <Palette size="1.0714rem" className="text-accent" />
+              <Palette size={ICON.md} className="text-accent" />
               {t('config.uiTheme')}
             </div>
             <p className="mt-1 text-xs text-dim">{t('config.uiThemeHint')}</p>
           </div>
-          <div className="flex shrink-0 overflow-hidden rounded-lg border border-edge text-sm">
-            <button
-              onClick={() => setTheme('dark')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
-                theme === 'dark'
-                  ? 'bg-accent text-white'
-                  : 'text-dim hover:bg-panel hover:text-fg'
-              }`}
-            >
-              <Moon size="0.9286rem" />
-              {t('config.uiThemeDark')}
-            </button>
-            <button
-              onClick={() => setTheme('light')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
-                theme === 'light'
-                  ? 'bg-accent text-white'
-                  : 'text-dim hover:bg-panel hover:text-fg'
-              }`}
-            >
-              <Sun size="0.9286rem" />
-              {t('config.uiThemeLight')}
-            </button>
-            <button
-              onClick={() => setTheme('auto')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 transition-colors ${
-                theme === 'auto'
-                  ? 'bg-accent text-white'
-                  : 'text-dim hover:bg-panel hover:text-fg'
-              }`}
-            >
-              <Monitor size="0.9286rem" />
-              {t('config.uiThemeAuto')}
-            </button>
-          </div>
+          <Segmented
+            value={theme}
+            onChange={setTheme}
+            options={[
+              {
+                value: 'dark',
+                icon: Moon,
+                label: t('config.uiThemeDark'),
+              },
+              {
+                value: 'light',
+                icon: Sun,
+                label: t('config.uiThemeLight'),
+              },
+              {
+                value: 'auto',
+                icon: Monitor,
+                label: t('config.uiThemeAuto'),
+              },
+            ]}
+          />
         </div>
       </div>
-      <div className="rounded-xl border border-edge bg-panel2 p-4">
+      <div className="rounded-card border border-edge bg-panel2 p-4">
         <div className="flex items-center gap-2 text-sm font-medium">
-          <Type size="1.0714rem" className="text-accent" />
+          <Type size={ICON.md} className="text-accent" />
           {t('config.uiFonts')}
         </div>
         <p className="mt-1 text-xs text-dim">{t('config.uiFontsHint')}</p>
@@ -265,7 +253,7 @@ export function SettingsDisplay() {
                 aria-label={t('config.uiFontSizeDecrease')}
                 disabled={fontScaleIndex === 0}
                 onClick={() => stepFontScale(-1)}
-                className="grid h-6 w-6 place-items-center rounded-md text-[0.75rem] leading-none text-dim transition-colors hover:bg-panel hover:text-fg disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-dim"
+                className="grid h-6 w-6 place-items-center rounded-control text-xs leading-none text-dim transition-colors hover:bg-panel hover:text-fg disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-dim"
               >
                 A
               </button>
@@ -291,13 +279,13 @@ export function SettingsDisplay() {
                 aria-label={t('config.uiFontSizeIncrease')}
                 disabled={fontScaleIndex === FONT_SCALE_STEPS.length - 1}
                 onClick={() => stepFontScale(1)}
-                className="grid h-6 w-6 place-items-center rounded-md text-[1.15rem] leading-none text-fg transition-colors hover:bg-panel disabled:opacity-30 disabled:hover:bg-transparent"
+                className="grid h-6 w-6 place-items-center rounded-control text-lg leading-none text-fg transition-colors hover:bg-panel disabled:opacity-30 disabled:hover:bg-transparent"
               >
                 A
               </button>
             </div>
           </div>
-          <div className="rounded-lg border border-edge bg-panel px-3 py-2">
+          <div className="rounded-card border border-edge bg-panel px-3 py-2">
             <div
               className="text-sm"
               style={{ fontFamily: resolveSansStack(uiSettings) }}

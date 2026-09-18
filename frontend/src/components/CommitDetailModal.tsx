@@ -23,6 +23,7 @@ import type {
   GitChangeKind,
 } from '../lib/types';
 import { GitDiffView } from './viewer/DiffView';
+import { ICON } from './ui/icon';
 
 export function CommitDetailModal({
   entry,
@@ -126,73 +127,70 @@ export function CommitDetailModal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="flex h-[min(92vh,760px)] w-[min(96vw,1040px)] flex-col overflow-hidden rounded-xl border border-edge bg-panel shadow-2xl">
+      <div className="flex h-[min(92vh,760px)] w-[min(96vw,1040px)] flex-col overflow-hidden rounded-card border border-edge bg-panel shadow-modal">
         <div className="flex h-11 shrink-0 items-center gap-2 border-b border-edge bg-panel2/40 px-3">
           <GitCommitHorizontal
-            size="0.9286rem"
+            size={ICON.sm}
             className="shrink-0 text-accent"
           />
           <span className="min-w-0 flex-1 truncate text-xs font-medium text-fg">
             {entry.subject}
           </span>
-          <span className="shrink-0 font-mono text-[0.7143rem] text-dim">
+          <span className="shrink-0 font-mono text-micro text-dim">
             {entry.short_oid}
           </span>
           {snapshot && files.length > 0 && (
-            <span className="shrink-0 text-[0.7143rem] text-dim tabular-nums">
+            <span className="shrink-0 text-micro text-dim tabular-nums">
               {index + 1}/{files.length}
             </span>
           )}
           <button
             onClick={() => openAt(index - 1)}
             disabled={index <= 0}
-            className="grid h-7 w-7 place-items-center rounded-lg text-dim hover:bg-panel2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+            className="grid h-7 w-7 place-items-center rounded-control text-dim hover:bg-panel2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
             title={t('git.previousChange')}
             aria-label={t('git.previousChange')}
           >
-            <ArrowUp size="0.9286rem" />
+            <ArrowUp size={ICON.sm} />
           </button>
           <button
             onClick={() => openAt(index + 1)}
             disabled={index < 0 || index >= files.length - 1}
-            className="grid h-7 w-7 place-items-center rounded-lg text-dim hover:bg-panel2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+            className="grid h-7 w-7 place-items-center rounded-control text-dim hover:bg-panel2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
             title={t('git.nextChange')}
             aria-label={t('git.nextChange')}
           >
-            <ArrowDown size="0.9286rem" />
+            <ArrowDown size={ICON.sm} />
           </button>
           <button
             onClick={onClose}
-            className="grid h-7 w-7 place-items-center rounded-lg text-dim hover:bg-panel2 hover:text-fg"
+            className="grid h-7 w-7 place-items-center rounded-control text-dim hover:bg-panel2 hover:text-fg"
             aria-label={t('chat.dismiss')}
           >
-            <X size="0.9286rem" />
+            <X size={ICON.sm} />
           </button>
         </div>
 
         <div className="flex min-h-0 flex-1">
           <div className="flex w-72 shrink-0 flex-col border-r border-edge bg-panel/60">
-            <div className="flex h-8 shrink-0 items-center border-b border-edge px-3 text-[0.7143rem] uppercase tracking-wide text-dim">
+            <div className="flex h-8 shrink-0 items-center border-b border-edge px-3 text-micro uppercase tracking-wide text-dim">
               {t('git.commitFiles')}
               {files.length > 0 ? ` · ${files.length}` : ''}
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto">
               {!snapshot && !listError ? (
                 <div className="grid h-full place-items-center text-dim">
-                  <Loader2 size="1.1429rem" className="animate-spin" />
+                  <Loader2 size={ICON.md} className="animate-spin" />
                 </div>
               ) : listError ? (
                 <div className="flex flex-col items-start gap-2 p-3">
                   <span className="flex items-start gap-1.5 text-xs text-err">
-                    <AlertTriangle
-                      size="0.8571rem"
-                      className="mt-0.5 shrink-0"
-                    />
+                    <AlertTriangle size={ICON.xs} className="mt-0.5 shrink-0" />
                     <span className="break-words">{listError}</span>
                   </span>
                   <button
                     onClick={() => void loadFiles()}
-                    className="rounded-lg border border-edge px-2 py-1 text-xs text-fg hover:bg-panel2"
+                    className="rounded-control border border-edge px-2 py-1 text-xs text-fg hover:bg-panel2"
                   >
                     {t('git.retry')}
                   </button>
@@ -213,7 +211,7 @@ export function CommitDetailModal({
               )}
             </div>
             {snapshot?.truncated && (
-              <div className="shrink-0 border-t border-edge px-3 py-1.5 text-[0.7143rem] text-dim">
+              <div className="shrink-0 border-t border-edge px-3 py-1.5 text-micro text-dim">
                 {t('git.truncatedList')}
               </div>
             )}
@@ -222,7 +220,7 @@ export function CommitDetailModal({
           <div className="min-h-0 min-w-0 flex-1 overflow-auto bg-panel/40 p-3">
             {diffLoading ? (
               <div className="grid h-full place-items-center text-dim">
-                <Loader2 size="1.1429rem" className="animate-spin" />
+                <Loader2 size={ICON.md} className="animate-spin" />
               </div>
             ) : diffError ? (
               <div className="break-words text-xs text-err">{diffError}</div>
@@ -244,7 +242,7 @@ export function CommitDetailModal({
               <div className="p-3 text-xs text-dim">{t('git.noDiffHint')}</div>
             ) : null}
             {diff?.truncated && (
-              <div className="px-3 pb-2 text-[0.7143rem] text-dim">
+              <div className="px-3 pb-2 text-micro text-dim">
                 {t('git.truncatedDiff')}
               </div>
             )}
@@ -299,7 +297,7 @@ function CommitFileRow({
       }`}
     >
       <span
-        className={`mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded text-[0.6429rem] font-semibold ${kindClass(file.kind)}`}
+        className={`mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-tight text-micro font-semibold ${kindClass(file.kind)}`}
         title={file.kind}
       >
         {mark}
@@ -309,15 +307,13 @@ function CommitFileRow({
           {renamed ? `${file.orig_path} → ${file.path}` : file.path}
         </span>
         {!file.is_binary && (file.additions > 0 || file.deletions > 0) && (
-          <span className="text-[0.7143rem] tabular-nums">
+          <span className="text-micro tabular-nums">
             <span className="text-ok">+{file.additions}</span>{' '}
             <span className="text-err">−{file.deletions}</span>
           </span>
         )}
         {file.is_binary && (
-          <span className="text-[0.7143rem] text-dim">
-            {t('git.binaryFile')}
-          </span>
+          <span className="text-micro text-dim">{t('git.binaryFile')}</span>
         )}
       </span>
     </button>

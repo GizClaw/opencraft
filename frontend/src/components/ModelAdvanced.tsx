@@ -1,5 +1,6 @@
 import { ChevronDown } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { ICON } from './ui/icon';
 
 // ModelAdvancedValue is the model-row state this section edits:
 // discovery metadata plus the driver-specific leaves opencraft does not
@@ -30,9 +31,9 @@ export function ModelAdvanced({
   const specError = specJsonError(value.specJson);
 
   return (
-    <details className="rounded-lg border border-edge bg-panel/40">
+    <details className="rounded-control border border-edge bg-panel/40">
       <summary className="flex cursor-pointer list-none items-center gap-1.5 px-3 py-1.5 text-xs text-dim hover:text-fg">
-        <ChevronDown size="0.8571rem" />
+        <ChevronDown size={ICON.xs} />
         {t('config.modelAdvanced.title')}
       </summary>
       <div className="grid grid-cols-1 gap-2 px-3 pt-1 pb-3 md:grid-cols-2">
@@ -44,7 +45,7 @@ export function ModelAdvanced({
             value={value.lifecycleStatus}
             disabled={disabled}
             onChange={(e) => onUpdate({ lifecycleStatus: e.target.value })}
-            className="w-full rounded-lg border border-edge bg-panel px-2 py-1 text-xs outline-none focus:border-accent disabled:opacity-40"
+            className="w-full rounded-control border border-edge bg-panel px-2 py-1 text-xs outline-none focus:border-accent disabled:opacity-40"
           >
             <option value="">{t('config.modelAdvanced.active')}</option>
             <option value="deprecated">
@@ -66,7 +67,7 @@ export function ModelAdvanced({
                   onUpdate({ lifecycleReplacementProvider: e.target.value })
                 }
                 placeholder="openai"
-                className="w-full rounded-lg border border-edge bg-panel px-2 py-1 text-xs outline-none focus:border-accent disabled:opacity-40"
+                className="w-full rounded-control border border-edge bg-panel px-2 py-1 text-xs outline-none focus:border-accent disabled:opacity-40"
               />
             </label>
             <label className="flex flex-col gap-1">
@@ -79,7 +80,7 @@ export function ModelAdvanced({
                 onChange={(e) =>
                   onUpdate({ lifecycleReplacementName: e.target.value })
                 }
-                className="w-full rounded-lg border border-edge bg-panel px-2 py-1 text-xs outline-none focus:border-accent disabled:opacity-40"
+                className="w-full rounded-control border border-edge bg-panel px-2 py-1 text-xs outline-none focus:border-accent disabled:opacity-40"
               />
             </label>
             <label className="flex flex-col gap-1 md:col-span-2">
@@ -90,7 +91,7 @@ export function ModelAdvanced({
                 value={value.lifecycleNotes}
                 disabled={disabled}
                 onChange={(e) => onUpdate({ lifecycleNotes: e.target.value })}
-                className="w-full rounded-lg border border-edge bg-panel px-2 py-1 text-xs outline-none focus:border-accent disabled:opacity-40"
+                className="w-full rounded-control border border-edge bg-panel px-2 py-1 text-xs outline-none focus:border-accent disabled:opacity-40"
               />
             </label>
           </>
@@ -106,7 +107,7 @@ export function ModelAdvanced({
             rows={2}
             placeholder={t('config.modelAdvanced.driverFieldsPlaceholder')}
             onChange={(e) => onUpdate({ specJson: e.target.value })}
-            className="w-full rounded-lg border border-edge bg-panel px-2 py-1 font-mono text-xs outline-none focus:border-accent disabled:opacity-40"
+            className="w-full rounded-control border border-edge bg-panel px-2 py-1 font-mono text-xs outline-none focus:border-accent disabled:opacity-40"
           />
           {specError && (
             <span className="text-xs text-err">

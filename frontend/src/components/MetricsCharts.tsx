@@ -207,11 +207,11 @@ export function MetricsCharts() {
     return (
       <div
         key={def.name}
-        className="rounded-lg border border-edge bg-panel2 px-3 py-2"
+        className="rounded-card border border-edge bg-panel2 px-3 py-2"
       >
         <div className="flex items-baseline justify-between gap-2">
           <span className="font-mono text-xs text-fg">{def.name}</span>
-          <span className="text-[0.6875rem] text-dim">
+          <span className="text-micro text-dim">
             {def.unit || (def.split ? 'status' : '')}
           </span>
         </div>
@@ -288,7 +288,7 @@ export function MetricsCharts() {
               <button
                 key={r.key}
                 onClick={() => setRange(r.key)}
-                className={`rounded-md border px-2 py-1 text-xs ${
+                className={`rounded-control border px-2 py-1 text-xs ${
                   range === r.key
                     ? 'border-accent/60 text-accent'
                     : 'border-edge text-dim hover:text-fg'
