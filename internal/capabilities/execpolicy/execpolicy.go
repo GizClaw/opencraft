@@ -212,6 +212,7 @@ func (m *Manager) Approve(
 			interact.MetaTitle:      "Allow running " + command + "?",
 			interact.MetaOptions:    string(opts),
 			interact.MetaAllowOther: "false",
+			interact.MetaSeverity:   string(interact.SeverityNotice),
 		},
 	})
 	if err != nil {
@@ -286,6 +287,8 @@ func (m *Manager) Escalate(
 			interact.MetaTitle:      "Run outside the sandbox?",
 			interact.MetaOptions:    string(opts),
 			interact.MetaAllowOther: "false",
+			// The one prompt that hands a command the whole host.
+			interact.MetaSeverity: string(interact.SeverityDanger),
 		},
 	})
 	if err != nil {

@@ -1667,6 +1667,7 @@ describe('store: interactions and artifacts', () => {
         run_id: 'r-1',
         conversation_id: 's-1',
         kind: 'confirm',
+        severity: 'notice',
         title: 'Allow?',
         body: [],
         options: [],

@@ -60,6 +60,7 @@ import type {
 import { PRView } from './PRView';
 import { CommitDetailModal } from './CommitDetailModal';
 import { GitDiffView } from './viewer/DiffView';
+import { ICON } from './ui/icon';
 
 const KIND_MARK: Record<GitChangeKind, string> = {
   added: 'A',
@@ -454,7 +455,7 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
           }}
         />
         {repo?.upstream ? (
-          <span className="shrink-0 text-[0.7143rem] text-dim tabular-nums">
+          <span className="shrink-0 text-micro text-dim tabular-nums">
             {repo.ahead > 0 && `↑${repo.ahead} `}
             {repo.behind > 0 && `↓${repo.behind}`}
           </span>
@@ -465,14 +466,14 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
           disabled={disabled || !repo?.upstream}
           onClick={() => void runWrite('pull', () => api.gitPull())}
         >
-          <GitPullRequest size="0.8571rem" />
+          <GitPullRequest size={ICON.xs} />
         </HeaderAction>
         <HeaderAction
           label={t('git.push')}
           disabled={disabled || !repo?.upstream}
           onClick={() => void runWrite('push', () => api.gitPush(false))}
         >
-          <UploadCloud size="0.8571rem" />
+          <UploadCloud size={ICON.xs} />
         </HeaderAction>
         <HeaderAction
           label={t('git.forcePush')}
@@ -482,7 +483,7 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
             setForceOpen(true);
           }}
         >
-          <AlertTriangle size="0.8571rem" />
+          <AlertTriangle size={ICON.xs} />
         </HeaderAction>
         <RefreshControl
           spinning={spinning || loading}
@@ -498,20 +499,20 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
       <div className="flex h-9 shrink-0 items-center gap-1 border-b border-edge px-2">
         <ViewToggle
           active={view === 'changes'}
-          icon={<GitCommitHorizontal size="0.8571rem" />}
+          icon={<GitCommitHorizontal size={ICON.xs} />}
           label={t('git.changes')}
           onClick={() => setView('changes')}
         />
         <ViewToggle
           active={view === 'history'}
-          icon={<History size="0.8571rem" />}
+          icon={<History size={ICON.xs} />}
           label={t('git.history')}
           onClick={() => setView('history')}
         />
         {prAvailable && (
           <ViewToggle
             active={view === 'pr'}
-            icon={<GitPullRequest size="0.8571rem" />}
+            icon={<GitPullRequest size={ICON.xs} />}
             label={t('git.pr')}
             onClick={() => setView('pr')}
           />
@@ -519,7 +520,7 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
         {view === 'changes' && (
           <>
             {groups.staged.length > 0 && (
-              <span className="ml-auto text-[0.7143rem] text-dim tabular-nums">
+              <span className="ml-auto text-micro text-dim tabular-nums">
                 {groups.staged.length} {t('git.staged').toLowerCase()}
               </span>
             )}
@@ -530,13 +531,13 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
             >
               <ViewToggle
                 active={listMode === 'list'}
-                icon={<List size="0.8571rem" />}
+                icon={<List size={ICON.xs} />}
                 label={t('git.listView')}
                 onClick={() => setListMode('list')}
               />
               <ViewToggle
                 active={listMode === 'tree'}
-                icon={<ListTree size="0.8571rem" />}
+                icon={<ListTree size={ICON.xs} />}
                 label={t('git.treeView')}
                 onClick={() => setListMode('tree')}
               />
@@ -547,7 +548,7 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
 
       {error ? (
         <div className="flex items-start gap-2 border-b border-err/20 bg-err/5 px-3 py-2 text-xs text-err">
-          <AlertTriangle size="0.8571rem" className="mt-0.5 shrink-0" />
+          <AlertTriangle size={ICON.xs} className="mt-0.5 shrink-0" />
           <span className="break-words">{error}</span>
         </div>
       ) : null}
@@ -555,7 +556,7 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
       <div className="min-h-0 flex-1">
         {loading && !status ? (
           <div className="grid h-full place-items-center text-dim">
-            <Loader2 size="1.1429rem" className="animate-spin" />
+            <Loader2 size={ICON.md} className="animate-spin" />
           </div>
         ) : view === 'pr' && prAvailable ? (
           <PRView nonce={prNonce} />
@@ -692,7 +693,7 @@ function ViewToggle({
   return (
     <button
       onClick={onClick}
-      className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs transition-colors ${
+      className={`flex items-center gap-1.5 rounded-control px-2.5 py-1 text-xs transition-colors ${
         active
           ? 'bg-accent/15 text-accent'
           : 'text-dim hover:bg-panel2 hover:text-fg'
@@ -728,19 +729,19 @@ function BranchMenu({
         onClick={onToggle}
         disabled={disabled}
         aria-label={t('git.switchBranch')}
-        className="flex items-center gap-1.5 rounded-lg border border-edge px-2 py-1 text-xs text-fg hover:border-accent/50 disabled:opacity-50"
+        className="flex items-center gap-1.5 rounded-control border border-edge px-2 py-1 text-xs text-fg hover:border-accent/50 disabled:opacity-50"
         title={t('git.switchBranch')}
       >
-        <GitBranchIcon size="0.8571rem" className="text-accent" />
+        <GitBranchIcon size={ICON.xs} className="text-accent" />
         <span className="max-w-40 truncate font-mono">
           {repo?.branch || '…'}
         </span>
-        <ChevronDown size="0.7857rem" className="text-dim" />
+        <ChevronDown size={ICON.xs} className="text-dim" />
       </button>
       {open && (
         <>
           <div className="fixed inset-0 z-30" onClick={onToggle} />
-          <div className="absolute top-full left-0 z-40 mt-1.5 max-h-72 w-64 overflow-y-auto rounded-lg border border-edge bg-panel py-1 shadow-xl">
+          <div className="absolute top-full left-0 z-40 mt-1.5 max-h-72 w-64 overflow-y-auto rounded-control border border-edge bg-panel py-1 shadow-popover">
             {branches.map((b) => (
               <button
                 key={b.name}
@@ -758,7 +759,7 @@ function BranchMenu({
                 <span className="min-w-0 flex-1 truncate font-mono">
                   {b.name}
                 </span>
-                {b.current && <Check size="0.8571rem" />}
+                {b.current && <Check size={ICON.xs} />}
               </button>
             ))}
             <div className="border-t border-edge p-1">
@@ -767,9 +768,9 @@ function BranchMenu({
                   onToggle();
                   onNew();
                 }}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
+                className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
               >
-                <GitBranchPlus size="0.8571rem" />
+                <GitBranchPlus size={ICON.xs} />
                 {t('git.newBranch')}
               </button>
             </div>
@@ -797,7 +798,7 @@ function HeaderAction({
       disabled={disabled}
       title={label}
       aria-label={label}
-      className="grid h-7 w-7 place-items-center rounded-lg text-dim hover:bg-panel2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+      className="grid h-7 w-7 place-items-center rounded-control text-dim hover:bg-panel2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
     >
       {children}
     </button>
@@ -807,7 +808,7 @@ function HeaderAction({
 function SectionLabel({ label, count }: { label: string; count: number }) {
   if (count === 0) return null;
   return (
-    <div className="sticky top-0 z-10 bg-panel px-3 pb-1 pt-2 text-[0.7143rem] font-medium uppercase tracking-wide text-dim">
+    <div className="sticky top-0 z-10 bg-panel px-3 pb-1 pt-2 text-micro font-medium uppercase tracking-wide text-dim">
       {label} <span className="tabular-nums">{count}</span>
     </div>
   );
@@ -820,27 +821,27 @@ function ChangeStateIcon({ entry }: { entry: GitChange }) {
   if (entry.unmerged) {
     return (
       <AlertTriangle
-        size="0.7857rem"
+        size={ICON.xs}
         className="shrink-0 text-warn"
         aria-label="unmerged"
       />
     );
   }
   if (entry.untracked) {
-    return <CircleDot size="0.7857rem" className="shrink-0 text-dim" />;
+    return <CircleDot size={ICON.xs} className="shrink-0 text-dim" />;
   }
   return (
     <span className="flex shrink-0 items-center">
       {entry.staged && (
         <CircleCheck
-          size="0.7857rem"
+          size={ICON.xs}
           className="text-accent"
           aria-label="staged"
         />
       )}
       {entry.unstaged && (
         <CircleDot
-          size="0.7857rem"
+          size={ICON.xs}
           className={entry.staged ? '-ml-1 text-warn' : 'text-warn'}
           aria-label="unstaged"
         />
@@ -882,7 +883,7 @@ function ChangeRow({
       >
         <ChangeStateIcon entry={entry} />
         <span
-          className={`grid h-4 w-4 shrink-0 place-items-center rounded font-mono text-[0.6429rem] ${kindClass(
+          className={`grid h-4 w-4 shrink-0 place-items-center rounded-tight font-mono text-micro ${kindClass(
             entry.kind,
           )}`}
         >
@@ -895,12 +896,12 @@ function ChangeRow({
           {name}
         </span>
         {!entry.in_workspace && (
-          <span className="shrink-0 rounded border border-edge px-1 text-[0.6429rem] text-dim">
+          <span className="shrink-0 rounded-tight border border-edge px-1 text-micro text-dim">
             {t('git.outsideWorkspace')}
           </span>
         )}
         {!entry.is_binary && (entry.additions > 0 || entry.deletions > 0) && (
-          <span className="shrink-0 text-[0.7143rem] tabular-nums">
+          <span className="shrink-0 text-micro tabular-nums">
             <span className="text-ok">+{entry.additions}</span>{' '}
             <span className="text-err">−{entry.deletions}</span>
           </span>
@@ -913,7 +914,7 @@ function ChangeRow({
             disabled={disabled}
             onClick={() => onAction('stage')}
           >
-            <PlusCircle size="0.8571rem" className="text-ok" />
+            <PlusCircle size={ICON.xs} className="text-ok" />
           </RowAction>
         )}
         {entry.staged && (
@@ -922,7 +923,7 @@ function ChangeRow({
             disabled={disabled}
             onClick={() => onAction('unstage')}
           >
-            <Undo2 size="0.8571rem" />
+            <Undo2 size={ICON.xs} />
           </RowAction>
         )}
         {!entry.untracked && !entry.unmerged && (
@@ -931,7 +932,7 @@ function ChangeRow({
             disabled={disabled}
             onClick={() => onAction('discard')}
           >
-            <Trash2 size="0.8571rem" className="text-err" />
+            <Trash2 size={ICON.xs} className="text-err" />
           </RowAction>
         )}
         {entry.untracked && (
@@ -940,7 +941,7 @@ function ChangeRow({
             disabled={disabled}
             onClick={() => onAction('clean')}
           >
-            <Trash2 size="0.8571rem" className="text-err" />
+            <Trash2 size={ICON.xs} className="text-err" />
           </RowAction>
         )}
       </span>
@@ -965,7 +966,7 @@ function RowAction({
       disabled={disabled}
       title={label}
       aria-label={label}
-      className="grid h-6 w-6 place-items-center rounded text-dim hover:bg-panel2 disabled:cursor-not-allowed disabled:opacity-40"
+      className="grid h-6 w-6 place-items-center rounded-tight text-dim hover:bg-panel2 disabled:cursor-not-allowed disabled:opacity-40"
     >
       {children}
     </button>
@@ -1062,7 +1063,7 @@ function ChangesView({
         )
       )}
       {truncated && (
-        <div className="px-3 pt-2 text-[0.7143rem] text-dim">
+        <div className="px-3 pt-2 text-micro text-dim">
           {t('git.truncatedList')}
         </div>
       )}
@@ -1249,18 +1250,18 @@ function DirRow({
     >
       <button
         onClick={onToggle}
-        className="grid h-5 w-5 shrink-0 place-items-center rounded text-dim hover:text-fg"
+        className="grid h-5 w-5 shrink-0 place-items-center rounded-tight text-dim hover:text-fg"
         aria-label={`${node.name} ${open ? t('git.collapse') : t('git.expand')}`}
       >
         {open ? (
-          <ChevronDown size="0.8571rem" />
+          <ChevronDown size={ICON.xs} />
         ) : (
-          <ChevronRight size="0.8571rem" />
+          <ChevronRight size={ICON.xs} />
         )}
       </button>
       {open ? (
         <FolderOpen
-          size="0.9286rem"
+          size={ICON.sm}
           className={
             node.unmergedCount > 0
               ? 'shrink-0 text-warn'
@@ -1273,7 +1274,7 @@ function DirRow({
         />
       ) : (
         <Folder
-          size="0.9286rem"
+          size={ICON.sm}
           className={
             node.unmergedCount > 0
               ? 'shrink-0 text-warn'
@@ -1287,27 +1288,27 @@ function DirRow({
       )}
       <span className="min-w-0 flex-1 truncate font-mono">{node.name}</span>
       {node.stagedCount > 0 && (
-        <span className="shrink-0 text-[0.7143rem] text-accent tabular-nums">
+        <span className="shrink-0 text-micro text-accent tabular-nums">
           {node.stagedCount}
         </span>
       )}
       {node.unstagedCount > 0 && (
-        <span className="shrink-0 text-[0.7143rem] text-warn tabular-nums">
+        <span className="shrink-0 text-micro text-warn tabular-nums">
           {node.unstagedCount}
         </span>
       )}
       {node.untrackedCount > 0 && (
-        <span className="shrink-0 text-[0.7143rem] text-dim tabular-nums">
+        <span className="shrink-0 text-micro text-dim tabular-nums">
           {node.untrackedCount}
         </span>
       )}
       {node.unmergedCount > 0 && (
-        <span className="shrink-0 text-[0.7143rem] text-warn tabular-nums">
+        <span className="shrink-0 text-micro text-warn tabular-nums">
           {node.unmergedCount}
         </span>
       )}
       {(node.additions > 0 || node.deletions > 0) && (
-        <span className="shrink-0 text-[0.7143rem] tabular-nums">
+        <span className="shrink-0 text-micro tabular-nums">
           <span className="text-ok">+{node.additions}</span>{' '}
           <span className="text-err">−{node.deletions}</span>
         </span>
@@ -1340,12 +1341,12 @@ function CommitBar({
           }
         }}
         placeholder={t('git.commitPlaceholder')}
-        className="min-w-0 flex-1 rounded-lg border border-edge bg-panel2/50 px-2.5 py-1.5 text-xs text-fg placeholder:text-dim focus:border-accent/60 focus:outline-none"
+        className="min-w-0 flex-1 rounded-control border border-edge bg-panel2/50 px-2.5 py-1.5 text-xs text-fg placeholder:text-dim focus:border-accent/60 focus:outline-none"
       />
       <button
         onClick={onCommit}
         disabled={disabled}
-        className="shrink-0 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+        className="shrink-0 rounded-control bg-accent px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
       >
         {t('git.commit')}
       </button>
@@ -1393,7 +1394,7 @@ function DiffModal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="flex max-h-[85vh] w-[min(94vw,960px)] flex-col overflow-hidden rounded-xl border border-edge bg-panel shadow-2xl">
+      <div className="flex max-h-[85vh] w-[min(94vw,960px)] flex-col overflow-hidden rounded-card border border-edge bg-panel shadow-modal">
         <div className="flex h-11 shrink-0 items-center gap-2 border-b border-edge bg-panel2/40 px-3">
           <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg">
             {entry.path}
@@ -1402,13 +1403,13 @@ function DiffModal({
             <span
               role="group"
               aria-label={t('git.diffSide')}
-              className="flex shrink-0 items-center gap-0.5 rounded-lg border border-edge p-0.5"
+              className="flex shrink-0 items-center gap-0.5 rounded-control border border-edge p-0.5"
             >
               <button
                 type="button"
                 aria-pressed={side === 'staged'}
                 onClick={() => onSide('staged')}
-                className={`rounded px-1.5 py-0.5 text-[0.7143rem] transition-colors ${
+                className={`rounded-tight px-1.5 py-0.5 text-micro transition-colors ${
                   side === 'staged'
                     ? 'bg-accent/15 text-accent'
                     : 'text-dim hover:bg-panel2 hover:text-fg'
@@ -1420,7 +1421,7 @@ function DiffModal({
                 type="button"
                 aria-pressed={side === 'worktree'}
                 onClick={() => onSide('worktree')}
-                className={`rounded px-1.5 py-0.5 text-[0.7143rem] transition-colors ${
+                className={`rounded-tight px-1.5 py-0.5 text-micro transition-colors ${
                   side === 'worktree'
                     ? 'bg-accent/15 text-accent'
                     : 'text-dim hover:bg-panel2 hover:text-fg'
@@ -1430,51 +1431,51 @@ function DiffModal({
               </button>
             </span>
           ) : detail?.label ? (
-            <span className="shrink-0 text-[0.7143rem] text-dim">
+            <span className="shrink-0 text-micro text-dim">
               {t(`git.${detail.label}`)}
             </span>
           ) : null}
           {!entry.is_binary &&
             !entry.untracked &&
             (entry.additions > 0 || entry.deletions > 0) && (
-              <span className="shrink-0 text-[0.7143rem] tabular-nums">
+              <span className="shrink-0 text-micro tabular-nums">
                 <span className="text-ok">+{entry.additions}</span>{' '}
                 <span className="text-err">−{entry.deletions}</span>
               </span>
             )}
-          <span className="shrink-0 text-[0.7143rem] text-dim tabular-nums">
+          <span className="shrink-0 text-micro text-dim tabular-nums">
             {index + 1}/{total}
           </span>
           <button
             onClick={onPrev}
             disabled={index <= 0}
-            className="grid h-7 w-7 place-items-center rounded-lg text-dim hover:bg-panel2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+            className="grid h-7 w-7 place-items-center rounded-control text-dim hover:bg-panel2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
             title={t('git.previousChange')}
             aria-label={t('git.previousChange')}
           >
-            <ArrowUp size="0.9286rem" />
+            <ArrowUp size={ICON.sm} />
           </button>
           <button
             onClick={onNext}
             disabled={index < 0 || index >= total - 1}
-            className="grid h-7 w-7 place-items-center rounded-lg text-dim hover:bg-panel2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+            className="grid h-7 w-7 place-items-center rounded-control text-dim hover:bg-panel2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
             title={t('git.nextChange')}
             aria-label={t('git.nextChange')}
           >
-            <ArrowDown size="0.9286rem" />
+            <ArrowDown size={ICON.sm} />
           </button>
           <button
             onClick={onClose}
-            className="grid h-7 w-7 place-items-center rounded-lg text-dim hover:bg-panel2 hover:text-fg"
+            className="grid h-7 w-7 place-items-center rounded-control text-dim hover:bg-panel2 hover:text-fg"
             aria-label={t('chat.dismiss')}
           >
-            <X size="0.9286rem" />
+            <X size={ICON.sm} />
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-auto bg-panel/60 p-3">
           {!detail ? (
             <div className="grid h-full place-items-center text-dim">
-              <Loader2 size="1.1429rem" className="animate-spin" />
+              <Loader2 size={ICON.md} className="animate-spin" />
             </div>
           ) : detail.error ? (
             <div className="break-words p-3 text-xs text-err">
@@ -1494,7 +1495,7 @@ function DiffModal({
             <div className="p-3 text-xs text-dim">{t('git.noDiffHint')}</div>
           )}
           {detail?.diff?.truncated && (
-            <div className="px-3 pb-2 text-[0.7143rem] text-dim">
+            <div className="px-3 pb-2 text-micro text-dim">
               {t('git.truncatedDiff')}
             </div>
           )}
@@ -1530,12 +1531,12 @@ function HistoryView({
           className="flex w-full items-start gap-2 border-b border-edge/60 px-3 py-2 text-left hover:bg-panel2/60"
         >
           <GitCommitHorizontal
-            size="0.9286rem"
+            size={ICON.sm}
             className="mt-0.5 shrink-0 text-accent"
           />
           <div className="min-w-0 flex-1">
             <div className="truncate text-xs text-fg">{e.subject}</div>
-            <div className="mt-0.5 truncate text-[0.7143rem] text-dim">
+            <div className="mt-0.5 truncate text-micro text-dim">
               <span className="font-mono">{e.short_oid}</span> · {e.author} ·{' '}
               {dateLabel(e.date)}
             </div>
@@ -1559,7 +1560,7 @@ function ConfirmDialog({
       <div
         role="alertdialog"
         aria-modal="true"
-        className="w-96 max-w-full rounded-xl border border-edge bg-panel p-4 shadow-2xl"
+        className="w-96 max-w-full rounded-card border border-edge bg-panel p-4 shadow-modal"
       >
         <h2 className="text-sm font-semibold text-fg">{spec.title}</h2>
         <p className="mt-1 break-words font-mono text-xs text-dim">
@@ -1568,13 +1569,13 @@ function ConfirmDialog({
         <div className="mt-4 flex justify-end gap-2">
           <button
             onClick={onCancel}
-            className="rounded-lg border border-edge px-3 py-1.5 text-xs text-dim hover:text-fg"
+            className="rounded-control border border-edge px-3 py-1.5 text-xs text-dim hover:text-fg"
           >
             {t('interact.cancel')}
           </button>
           <button
             onClick={() => void spec.action()}
-            className={`rounded-lg px-3 py-1.5 text-xs font-medium text-white ${
+            className={`rounded-control px-3 py-1.5 text-xs font-medium text-white ${
               spec.danger
                 ? 'bg-err hover:opacity-90'
                 : 'bg-accent hover:opacity-90'
@@ -1608,7 +1609,7 @@ function ForcePushDialog({
       <div
         role="alertdialog"
         aria-modal="true"
-        className="w-96 max-w-full rounded-xl border border-edge bg-panel p-4 shadow-2xl"
+        className="w-96 max-w-full rounded-card border border-edge bg-panel p-4 shadow-modal"
       >
         <h2 className="text-sm font-semibold text-err">{t('git.forcePush')}</h2>
         <p className="mt-1 text-xs leading-relaxed text-dim">
@@ -1618,19 +1619,19 @@ function ForcePushDialog({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={branch}
-          className="mt-3 w-full rounded-lg border border-edge bg-panel2/50 px-2.5 py-1.5 font-mono text-xs text-fg focus:border-err/60 focus:outline-none"
+          className="mt-3 w-full rounded-control border border-edge bg-panel2/50 px-2.5 py-1.5 font-mono text-xs text-fg focus:border-err/60 focus:outline-none"
         />
         <div className="mt-4 flex justify-end gap-2">
           <button
             onClick={onCancel}
-            className="rounded-lg border border-edge px-3 py-1.5 text-xs text-dim hover:text-fg"
+            className="rounded-control border border-edge px-3 py-1.5 text-xs text-dim hover:text-fg"
           >
             {t('interact.cancel')}
           </button>
           <button
             onClick={onConfirm}
             disabled={!ready}
-            className="rounded-lg bg-err px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded-control bg-err px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {t('git.forcePush')}
           </button>
@@ -1657,7 +1658,7 @@ function NewBranchDialog({
       <div
         role="alertdialog"
         aria-modal="true"
-        className="w-96 max-w-full rounded-xl border border-edge bg-panel p-4 shadow-2xl"
+        className="w-96 max-w-full rounded-card border border-edge bg-panel p-4 shadow-modal"
       >
         <h2 className="text-sm font-semibold text-fg">{t('git.newBranch')}</h2>
         <input
@@ -1670,19 +1671,19 @@ function NewBranchDialog({
             }
           }}
           placeholder={t('git.newBranchPlaceholder')}
-          className="mt-3 w-full rounded-lg border border-edge bg-panel2/50 px-2.5 py-1.5 font-mono text-xs text-fg focus:border-accent/60 focus:outline-none"
+          className="mt-3 w-full rounded-control border border-edge bg-panel2/50 px-2.5 py-1.5 font-mono text-xs text-fg focus:border-accent/60 focus:outline-none"
         />
         <div className="mt-4 flex justify-end gap-2">
           <button
             onClick={onCancel}
-            className="rounded-lg border border-edge px-3 py-1.5 text-xs text-dim hover:text-fg"
+            className="rounded-control border border-edge px-3 py-1.5 text-xs text-dim hover:text-fg"
           >
             {t('interact.cancel')}
           </button>
           <button
             onClick={onConfirm}
             disabled={!value.trim()}
-            className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded-control bg-accent px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {t('git.createBranch')}
           </button>

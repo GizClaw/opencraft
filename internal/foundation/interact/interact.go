@@ -26,6 +26,38 @@ const (
 	KindSelect  Kind = "select"
 )
 
+// Severity is how loudly the UI should present one prompt. It exists
+// because every prompt used to render identically: a sandbox
+// escalation that hands a command the whole host looked exactly like
+// the assistant asking which plan to follow.
+type Severity string
+
+const (
+	// SeverityInfo: a plain question, nothing is granted. Default for
+	// free-form text prompts.
+	SeverityInfo Severity = "info"
+	// SeverityNotice: the answer grants something (permissions, an
+	// allowlist entry). Default for confirm/select prompts.
+	SeverityNotice Severity = "notice"
+	// SeverityDanger: the answer widens access beyond the sandbox or
+	// is otherwise not reversible by answering again.
+	SeverityDanger Severity = "danger"
+)
+
+// parseSeverity maps a metadata value onto a known severity. Unknown
+// or empty values fall back to the kind's default, so a producer that
+// misspells the value cannot render a danger prompt as a question.
+func parseSeverity(raw string, kind Kind) Severity {
+	switch Severity(raw) {
+	case SeverityInfo, SeverityNotice, SeverityDanger:
+		return Severity(raw)
+	}
+	if kind == KindConfirm || kind == KindSelect {
+		return SeverityNotice
+	}
+	return SeverityInfo
+}
+
 // Option is one selectable choice in a select/confirm interaction.
 type Option struct {
 	Label string `json:"label"`
@@ -39,6 +71,7 @@ type Spec struct {
 	RunID      string
 	TurnID     string
 	Kind       Kind
+	Severity   Severity
 	Title      string
 	Body       []message.Part
 	Options    []Option
@@ -104,6 +137,7 @@ const (
 	MetaOptions    = "opencraft.interact.options"     // JSON array of Option
 	MetaMulti      = "opencraft.interact.multi"       // "true" enables multi-select
 	MetaAllowOther = "opencraft.interact.allow_other" // "false" hides the other input
+	MetaSeverity   = "opencraft.interact.severity"    // "info" | "notice" | "danger"
 )
 
 // Reply metadata produced when converting a Reply back to core.
@@ -137,6 +171,7 @@ func FromPrompt(p agent.UserPrompt, id, runID, turnID string) Spec {
 	}
 	spec.Multi = spec.Kind == KindSelect && meta[MetaMulti] == "true"
 	spec.AllowOther = spec.Kind == KindSelect && meta[MetaAllowOther] != "false"
+	spec.Severity = parseSeverity(meta[MetaSeverity], spec.Kind)
 	spec.Title = meta[MetaTitle]
 	if spec.Title == "" {
 		spec.Title = PromptText(p)

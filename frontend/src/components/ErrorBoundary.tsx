@@ -29,26 +29,26 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.state.error) {
       return (
         <div className="h-full grid place-items-center bg-bg px-6">
-          <div className="max-w-lg rounded-2xl border border-err/40 bg-panel p-6 shadow-2xl">
+          <div className="max-w-lg rounded-card border border-err/40 bg-panel p-6 shadow-modal">
             <h1 className="text-base font-semibold text-err">
               {i18n.t('app.crashed')}
             </h1>
             <p className="mt-2 text-sm text-dim break-words">
               {String(this.state.error?.message ?? this.state.error)}
             </p>
-            <pre className="mt-3 max-h-48 overflow-auto rounded-lg bg-panel2 border border-edge p-3 text-xs text-dim whitespace-pre-wrap">
+            <pre className="mt-3 max-h-48 overflow-auto rounded-card bg-panel2 border border-edge p-3 text-xs text-dim whitespace-pre-wrap">
               {this.state.error?.stack}
             </pre>
             <div className="mt-4 flex justify-end gap-2">
               <button
                 onClick={() => this.setState({ error: null })}
-                className="rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
+                className="rounded-control border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
               >
                 {i18n.t('app.tryAgain')}
               </button>
               <button
                 onClick={() => window.location.reload()}
-                className="rounded-lg bg-accent px-3 py-1.5 text-sm text-white hover:opacity-90"
+                className="rounded-control bg-accent px-3 py-1.5 text-sm text-white hover:opacity-90"
               >
                 {i18n.t('app.reload')}
               </button>

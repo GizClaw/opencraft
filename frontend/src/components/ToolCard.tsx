@@ -31,6 +31,7 @@ import {
 import { useStore, type ToolView } from '../lib/store';
 import type { FilePreview, PatchFileDTO } from '../lib/types';
 import { GitDiffView } from './viewer/DiffView';
+import { ICON } from './ui/icon';
 
 function parseArgs(tool: ToolView): Record<string, unknown> | null {
   try {
@@ -291,7 +292,7 @@ function ExecView({ tool }: { tool: ToolView }) {
             setOpen(!open);
           }
         }}
-        className={`flex w-full cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+        className={`flex w-full cursor-pointer items-center gap-2 rounded-control border px-3 py-2 text-left text-sm transition-colors ${
           running
             ? 'border-accent/40 bg-panel2'
             : failed
@@ -301,13 +302,13 @@ function ExecView({ tool }: { tool: ToolView }) {
       >
         {running ? (
           <Loader2
-            size="1.0000rem"
+            size={ICON.sm}
             className="animate-spin shrink-0 text-accent"
           />
         ) : failed ? (
-          <X size="1.0000rem" className="shrink-0 text-err" />
+          <X size={ICON.sm} className="shrink-0 text-err" />
         ) : (
-          <Check size="1.0000rem" className="shrink-0 text-ok" />
+          <Check size={ICON.sm} className="shrink-0 text-ok" />
         )}
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg">
           <span className="select-none text-dim">$ </span>
@@ -315,7 +316,7 @@ function ExecView({ tool }: { tool: ToolView }) {
         </span>
         {!running && exec !== null && (
           <span
-            className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-[0.7143rem] ${
+            className={`shrink-0 rounded-tight px-1.5 py-0.5 font-mono text-micro ${
               failed ? 'bg-err/10 text-err' : 'bg-ok/10 text-ok'
             }`}
           >
@@ -324,7 +325,7 @@ function ExecView({ tool }: { tool: ToolView }) {
         )}
         {hasOutput && !running && (
           <span
-            className={`shrink-0 truncate font-mono text-[0.7143rem] max-w-[40%] ${
+            className={`shrink-0 truncate font-mono text-micro max-w-[40%] ${
               failed ? 'text-err' : 'text-ok'
             }`}
           >
@@ -337,27 +338,27 @@ function ExecView({ tool }: { tool: ToolView }) {
               e.stopPropagation();
               void copyOutput();
             }}
-            className="shrink-0 rounded border border-edge px-1.5 py-0.5 text-[0.7143rem] text-dim hover:text-fg"
+            className="shrink-0 rounded-tight border border-edge px-1.5 py-0.5 text-micro text-dim hover:text-fg"
             aria-label={t('tool.copyResult')}
           >
             {copied ? (
-              <Check size="0.7857rem" />
+              <Check size={ICON.xs} />
             ) : (
-              <ClipboardList size="0.7857rem" />
+              <ClipboardList size={ICON.xs} />
             )}
           </button>
         )}
         {open ? (
-          <ChevronDown size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
         ) : (
-          <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronRight size={ICON.sm} className="shrink-0 text-dim" />
         )}
       </div>
       {open && (
-        <div className="mt-1 overflow-hidden rounded-md border border-edge bg-panel/60">
+        <div className="mt-1 overflow-hidden rounded-control border border-edge bg-panel/60">
           {running && (
             <div className="flex items-center gap-1.5 px-2.5 py-2 text-xs text-dim">
-              <Loader2 size="0.8571rem" className="animate-spin" />
+              <Loader2 size={ICON.xs} className="animate-spin" />
               {t('tool.running')}
             </div>
           )}
@@ -365,7 +366,7 @@ function ExecView({ tool }: { tool: ToolView }) {
             <div className="max-h-72 overflow-y-auto px-2.5 py-2 space-y-1.5">
               {stderr && (
                 <div>
-                  <div className="mb-0.5 flex items-center gap-2 text-[0.7143rem] text-dim">
+                  <div className="mb-0.5 flex items-center gap-2 text-micro text-dim">
                     <span className="uppercase tracking-wider">stderr</span>
                     <span className="tabular-nums">{stderrLines}</span>
                   </div>
@@ -376,7 +377,7 @@ function ExecView({ tool }: { tool: ToolView }) {
               )}
               {stdout && (
                 <div>
-                  <div className="mb-0.5 flex items-center gap-2 text-[0.7143rem] text-dim">
+                  <div className="mb-0.5 flex items-center gap-2 text-micro text-dim">
                     <span className="uppercase tracking-wider">stdout</span>
                     <span className="tabular-nums">{stdoutLines}</span>
                   </div>
@@ -464,7 +465,7 @@ function ReadView({ tool }: { tool: ToolView }) {
             setOpen(!open);
           }
         }}
-        className={`flex w-full cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+        className={`flex w-full cursor-pointer items-center gap-2 rounded-control border px-3 py-2 text-left text-sm transition-colors ${
           failed
             ? 'border-err/40 bg-err/5'
             : running
@@ -474,19 +475,19 @@ function ReadView({ tool }: { tool: ToolView }) {
       >
         {running ? (
           <Loader2
-            size="1.0000rem"
+            size={ICON.sm}
             className="animate-spin shrink-0 text-accent"
           />
         ) : failed ? (
-          <X size="1.0000rem" className="shrink-0 text-err" />
+          <X size={ICON.sm} className="shrink-0 text-err" />
         ) : (
-          <File size="1.0000rem" className="shrink-0 text-dim" />
+          <File size={ICON.sm} className="shrink-0 text-dim" />
         )}
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg">
           {path}
         </span>
         {parsed !== null && !running && (
-          <span className="shrink-0 rounded bg-panel px-1.5 py-0.5 font-mono text-[0.7143rem] text-dim tabular-nums">
+          <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 font-mono text-micro text-dim tabular-nums">
             {lines} {t('tool.lines')}
             {typeof parsed.bytes === 'number'
               ? ` · ${fmtSize(parsed.bytes)}`
@@ -499,27 +500,27 @@ function ReadView({ tool }: { tool: ToolView }) {
               e.stopPropagation();
               void copyContent();
             }}
-            className="shrink-0 rounded border border-edge px-1.5 py-0.5 text-[0.7143rem] text-dim hover:text-fg"
+            className="shrink-0 rounded-tight border border-edge px-1.5 py-0.5 text-micro text-dim hover:text-fg"
             aria-label={t('tool.copyResult')}
           >
             {copied ? (
-              <Check size="0.7857rem" />
+              <Check size={ICON.xs} />
             ) : (
-              <ClipboardList size="0.7857rem" />
+              <ClipboardList size={ICON.xs} />
             )}
           </button>
         )}
         {open ? (
-          <ChevronDown size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
         ) : (
-          <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronRight size={ICON.sm} className="shrink-0 text-dim" />
         )}
       </div>
       {open && (
-        <div className="mt-1 overflow-hidden rounded-md border border-edge bg-panel/60">
+        <div className="mt-1 overflow-hidden rounded-control border border-edge bg-panel/60">
           {running && (
             <div className="flex items-center gap-1.5 px-2.5 py-2 text-xs text-dim">
-              <Loader2 size="0.8571rem" className="animate-spin" />
+              <Loader2 size={ICON.xs} className="animate-spin" />
               {t('tool.running')}
             </div>
           )}
@@ -556,7 +557,7 @@ export const WriteView = memo(function WriteView({ tool }: { tool: ToolView }) {
     <div className="my-1.5 space-y-1">
       {running && (
         <div className="flex items-center gap-1.5 px-2.5 py-2 text-xs text-dim">
-          <Loader2 size="0.8571rem" className="animate-spin" />
+          <Loader2 size={ICON.xs} className="animate-spin" />
           {t('tool.running')}
         </div>
       )}
@@ -635,7 +636,7 @@ function AskUserView({ tool }: { tool: ToolView }) {
     <div className="my-1.5">
       <button
         onClick={() => setOpen(!open)}
-        className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+        className={`flex w-full items-center gap-2 rounded-control border px-3 py-2 text-left text-sm transition-colors ${
           failed
             ? 'border-err/40 bg-err/5'
             : running
@@ -645,20 +646,20 @@ function AskUserView({ tool }: { tool: ToolView }) {
       >
         {running ? (
           <Loader2
-            size="1.0000rem"
+            size={ICON.sm}
             className="animate-spin shrink-0 text-accent"
           />
         ) : failed ? (
-          <X size="1.0000rem" className="shrink-0 text-err" />
+          <X size={ICON.sm} className="shrink-0 text-err" />
         ) : (
-          <HelpCircle size="1.0000rem" className="shrink-0 text-warn" />
+          <HelpCircle size={ICON.sm} className="shrink-0 text-warn" />
         )}
         <span className="min-w-0 flex-1 truncate text-sm text-fg">
           {question}
         </span>
         {!running && parsed !== null && (
           <span
-            className={`shrink-0 rounded px-1.5 py-0.5 text-[0.7143rem] ${
+            className={`shrink-0 rounded-tight px-1.5 py-0.5 text-micro ${
               parsed.cancelled ? 'bg-panel text-dim' : 'bg-ok/10 text-ok'
             }`}
           >
@@ -670,16 +671,16 @@ function AskUserView({ tool }: { tool: ToolView }) {
           </span>
         )}
         {open ? (
-          <ChevronDown size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
         ) : (
-          <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronRight size={ICON.sm} className="shrink-0 text-dim" />
         )}
       </button>
       {open && (
-        <div className="mt-1 overflow-hidden rounded-md border border-edge bg-panel/60 px-2.5 py-2 space-y-1.5">
+        <div className="mt-1 overflow-hidden rounded-control border border-edge bg-panel/60 px-2.5 py-2 space-y-1.5">
           {running && (
             <div className="flex items-center gap-1.5 text-xs text-dim">
-              <Loader2 size="0.8571rem" className="animate-spin" />
+              <Loader2 size={ICON.xs} className="animate-spin" />
               {t('tool.waitingAnswer')}
             </div>
           )}
@@ -703,7 +704,7 @@ function AskUserView({ tool }: { tool: ToolView }) {
                     return (
                       <span
                         key={o}
-                        className={`rounded border px-1.5 py-0.5 text-[0.7143rem] ${
+                        className={`rounded-tight border px-1.5 py-0.5 text-micro ${
                           chosen
                             ? 'border-ok/40 bg-ok/10 text-ok'
                             : 'border-edge bg-panel text-dim'
@@ -769,7 +770,7 @@ function SkillSearchView({ tool }: { tool: ToolView }) {
     <div className="my-1.5">
       <button
         onClick={() => setOpen(!open)}
-        className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+        className={`flex w-full items-center gap-2 rounded-control border px-3 py-2 text-left text-sm transition-colors ${
           failed
             ? 'border-err/40 bg-err/5'
             : running
@@ -779,34 +780,34 @@ function SkillSearchView({ tool }: { tool: ToolView }) {
       >
         {running ? (
           <Loader2
-            size="1.0000rem"
+            size={ICON.sm}
             className="animate-spin shrink-0 text-accent"
           />
         ) : failed ? (
-          <X size="1.0000rem" className="shrink-0 text-err" />
+          <X size={ICON.sm} className="shrink-0 text-err" />
         ) : (
-          <Sparkles size="1.0000rem" className="shrink-0 text-accent" />
+          <Sparkles size={ICON.sm} className="shrink-0 text-accent" />
         )}
         <span className="min-w-0 flex-1 truncate text-sm text-fg">
           {t('tool.searchSkills')}
           {query && <span className="text-dim">: {query}</span>}
         </span>
         {hits !== null && !running && (
-          <span className="shrink-0 rounded bg-panel px-1.5 py-0.5 font-mono text-[0.7143rem] text-dim tabular-nums">
+          <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 font-mono text-micro text-dim tabular-nums">
             {hits.length} {t('tool.hits')}
           </span>
         )}
         {open ? (
-          <ChevronDown size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
         ) : (
-          <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronRight size={ICON.sm} className="shrink-0 text-dim" />
         )}
       </button>
       {open && (
-        <div className="mt-1 overflow-hidden rounded-md border border-edge bg-panel/60 px-2.5 py-2">
+        <div className="mt-1 overflow-hidden rounded-control border border-edge bg-panel/60 px-2.5 py-2">
           {running && (
             <div className="flex items-center gap-1.5 text-xs text-dim">
-              <Loader2 size="0.8571rem" className="animate-spin" />
+              <Loader2 size={ICON.xs} className="animate-spin" />
               {t('tool.running')}
             </div>
           )}
@@ -821,21 +822,18 @@ function SkillSearchView({ tool }: { tool: ToolView }) {
               {hits.map((h) => (
                 <div
                   key={h.name}
-                  className="rounded-md border border-edge bg-panel px-2 py-1.5"
+                  className="rounded-control border border-edge bg-panel px-2 py-1.5"
                 >
                   <div className="flex items-center gap-1.5">
-                    <Sparkles
-                      size="0.8571rem"
-                      className="shrink-0 text-accent"
-                    />
+                    <Sparkles size={ICON.xs} className="shrink-0 text-accent" />
                     <span className="font-mono text-xs text-fg">{h.name}</span>
                     {typeof h.score === 'number' && h.score > 0 && (
-                      <span className="shrink-0 rounded bg-panel2 px-1 py-0.5 font-mono text-[0.7143rem] text-dim tabular-nums">
+                      <span className="shrink-0 rounded-tight bg-panel2 px-1 py-0.5 font-mono text-micro text-dim tabular-nums">
                         {h.score.toFixed(3)}
                       </span>
                     )}
                     {h.scope && (
-                      <span className="shrink-0 rounded bg-panel2 px-1 py-0.5 text-[0.7143rem] text-dim">
+                      <span className="shrink-0 rounded-tight bg-panel2 px-1 py-0.5 text-micro text-dim">
                         {h.scope}
                       </span>
                     )}
@@ -846,7 +844,7 @@ function SkillSearchView({ tool }: { tool: ToolView }) {
                     </div>
                   )}
                   {h.path && (
-                    <div className="mt-0.5 truncate font-mono text-[0.7143rem] text-dim">
+                    <div className="mt-0.5 truncate font-mono text-micro text-dim">
                       {h.path}
                     </div>
                   )}
@@ -927,7 +925,7 @@ function DelegateView({ tool }: { tool: ToolView }) {
     <div className="my-1.5">
       <button
         onClick={() => setOpen(!open)}
-        className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+        className={`flex w-full items-center gap-2 rounded-control border px-3 py-2 text-left text-sm transition-colors ${
           failed
             ? 'border-err/40 bg-err/5'
             : running
@@ -937,13 +935,13 @@ function DelegateView({ tool }: { tool: ToolView }) {
       >
         {running ? (
           <Loader2
-            size="1.0000rem"
+            size={ICON.sm}
             className="animate-spin shrink-0 text-accent"
           />
         ) : failed ? (
-          <X size="1.0000rem" className="shrink-0 text-err" />
+          <X size={ICON.sm} className="shrink-0 text-err" />
         ) : (
-          <Send size="1.0000rem" className="shrink-0 text-accent" />
+          <Send size={ICON.sm} className="shrink-0 text-accent" />
         )}
         <span className="min-w-0 flex-1 truncate text-sm text-fg">
           {t('tool.delegated')}
@@ -954,21 +952,21 @@ function DelegateView({ tool }: { tool: ToolView }) {
             </>
           )}
           {mode && (
-            <span className="ml-1.5 rounded bg-panel px-1 py-0.5 align-middle text-[0.7143rem] text-dim">
+            <span className="ml-1.5 rounded-tight bg-panel px-1 py-0.5 align-middle text-micro text-dim">
               {mode}
             </span>
           )}
         </span>
         {result !== null && (
           <span
-            className={`shrink-0 rounded px-1.5 py-0.5 text-[0.7143rem] ${statusBadgeClass(result.status)}`}
+            className={`shrink-0 rounded-tight px-1.5 py-0.5 text-micro ${statusBadgeClass(result.status)}`}
           >
             {statusLabel || result.status}
           </span>
         )}
         {terminal && (output || error) && (
           <span
-            className={`hidden shrink-0 truncate font-mono text-[0.7143rem] max-w-[30%] lg:inline ${
+            className={`hidden shrink-0 truncate font-mono text-micro max-w-[30%] lg:inline ${
               error ? 'text-err' : 'text-ok'
             }`}
           >
@@ -976,16 +974,16 @@ function DelegateView({ tool }: { tool: ToolView }) {
           </span>
         )}
         {open ? (
-          <ChevronDown size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
         ) : (
-          <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronRight size={ICON.sm} className="shrink-0 text-dim" />
         )}
       </button>
       {open && (
-        <div className="mt-1 space-y-1.5 overflow-hidden rounded-md border border-edge bg-panel/60 px-2.5 py-2">
+        <div className="mt-1 space-y-1.5 overflow-hidden rounded-control border border-edge bg-panel/60 px-2.5 py-2">
           {running && (
             <div className="flex items-center gap-1.5 text-xs text-dim">
-              <Loader2 size="0.8571rem" className="animate-spin" />
+              <Loader2 size={ICON.xs} className="animate-spin" />
               {t('tool.running')}
             </div>
           )}
@@ -1017,7 +1015,7 @@ function DelegateView({ tool }: { tool: ToolView }) {
               {Object.entries(metadata).map(([k, v]) => (
                 <span
                   key={k}
-                  className="rounded border border-edge bg-panel px-1.5 py-0.5 text-[0.7143rem] text-dim"
+                  className="rounded-tight border border-edge bg-panel px-1.5 py-0.5 text-micro text-dim"
                 >
                   {k}: {v}
                 </span>
@@ -1055,7 +1053,7 @@ function DelegationStatusView({ tool }: { tool: ToolView }) {
     <div className="my-1.5">
       <button
         onClick={() => setOpen(!open)}
-        className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+        className={`flex w-full items-center gap-2 rounded-control border px-3 py-2 text-left text-sm transition-colors ${
           failed
             ? 'border-err/40 bg-err/5'
             : running
@@ -1065,13 +1063,13 @@ function DelegationStatusView({ tool }: { tool: ToolView }) {
       >
         {running ? (
           <Loader2
-            size="1.0000rem"
+            size={ICON.sm}
             className="animate-spin shrink-0 text-accent"
           />
         ) : failed ? (
-          <X size="1.0000rem" className="shrink-0 text-err" />
+          <X size={ICON.sm} className="shrink-0 text-err" />
         ) : (
-          <Send size="1.0000rem" className="shrink-0 text-dim" />
+          <Send size={ICON.sm} className="shrink-0 text-dim" />
         )}
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg">
           {t('tool.delegationStatus')}
@@ -1079,22 +1077,22 @@ function DelegationStatusView({ tool }: { tool: ToolView }) {
         </span>
         {result !== null && (
           <span
-            className={`shrink-0 rounded px-1.5 py-0.5 text-[0.7143rem] ${statusBadgeClass(result.status)}`}
+            className={`shrink-0 rounded-tight px-1.5 py-0.5 text-micro ${statusBadgeClass(result.status)}`}
           >
             {statusLabel || result.status}
           </span>
         )}
         {open ? (
-          <ChevronDown size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
         ) : (
-          <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronRight size={ICON.sm} className="shrink-0 text-dim" />
         )}
       </button>
       {open && (
-        <div className="mt-1 space-y-1.5 overflow-hidden rounded-md border border-edge bg-panel/60 px-2.5 py-2">
+        <div className="mt-1 space-y-1.5 overflow-hidden rounded-control border border-edge bg-panel/60 px-2.5 py-2">
           {running && (
             <div className="flex items-center gap-1.5 text-xs text-dim">
-              <Loader2 size="0.8571rem" className="animate-spin" />
+              <Loader2 size={ICON.xs} className="animate-spin" />
               {t('tool.running')}
             </div>
           )}
@@ -1162,7 +1160,7 @@ function DelegationTargetsView({ tool }: { tool: ToolView }) {
     <div className="my-1.5">
       <button
         onClick={() => setOpen(!open)}
-        className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+        className={`flex w-full items-center gap-2 rounded-control border px-3 py-2 text-left text-sm transition-colors ${
           failed
             ? 'border-err/40 bg-err/5'
             : running
@@ -1172,33 +1170,33 @@ function DelegationTargetsView({ tool }: { tool: ToolView }) {
       >
         {running ? (
           <Loader2
-            size="1.0000rem"
+            size={ICON.sm}
             className="animate-spin shrink-0 text-accent"
           />
         ) : failed ? (
-          <X size="1.0000rem" className="shrink-0 text-err" />
+          <X size={ICON.sm} className="shrink-0 text-err" />
         ) : (
-          <Users size="1.0000rem" className="shrink-0 text-accent" />
+          <Users size={ICON.sm} className="shrink-0 text-accent" />
         )}
         <span className="min-w-0 flex-1 truncate text-sm text-fg">
           {t('tool.delegationTargets')}
         </span>
         {targets !== null && !running && (
-          <span className="shrink-0 rounded bg-panel px-1.5 py-0.5 font-mono text-[0.7143rem] text-dim tabular-nums">
+          <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 font-mono text-micro text-dim tabular-nums">
             {targets.length} {t('tool.targets')}
           </span>
         )}
         {open ? (
-          <ChevronDown size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
         ) : (
-          <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronRight size={ICON.sm} className="shrink-0 text-dim" />
         )}
       </button>
       {open && (
-        <div className="mt-1 space-y-1.5 overflow-hidden rounded-md border border-edge bg-panel/60 px-2.5 py-2">
+        <div className="mt-1 space-y-1.5 overflow-hidden rounded-control border border-edge bg-panel/60 px-2.5 py-2">
           {running && (
             <div className="flex items-center gap-1.5 text-xs text-dim">
-              <Loader2 size="0.8571rem" className="animate-spin" />
+              <Loader2 size={ICON.xs} className="animate-spin" />
               {t('tool.running')}
             </div>
           )}
@@ -1213,7 +1211,7 @@ function DelegationTargetsView({ tool }: { tool: ToolView }) {
               {targets.map((target) => (
                 <div
                   key={target.id}
-                  className="rounded-md border border-edge bg-panel px-2 py-1.5"
+                  className="rounded-control border border-edge bg-panel px-2 py-1.5"
                 >
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span className="font-mono text-xs text-fg">
@@ -1223,7 +1221,7 @@ function DelegationTargetsView({ tool }: { tool: ToolView }) {
                       target.modes.map((m) => (
                         <span
                           key={m}
-                          className="rounded bg-panel2 px-1 py-0.5 text-[0.7143rem] text-dim"
+                          className="rounded-tight bg-panel2 px-1 py-0.5 text-micro text-dim"
                         >
                           {m}
                         </span>
@@ -1240,7 +1238,7 @@ function DelegationTargetsView({ tool }: { tool: ToolView }) {
                         {Object.entries(target.metadata).map(([k, v]) => (
                           <span
                             key={k}
-                            className="rounded border border-edge bg-panel2 px-1 py-0.5 text-[0.7143rem] text-dim"
+                            className="rounded-tight border border-edge bg-panel2 px-1 py-0.5 text-micro text-dim"
                           >
                             {k}: {v}
                           </span>
@@ -1295,7 +1293,7 @@ function McpToolView({ tool }: { tool: ToolView }) {
     <div className="my-1.5">
       <button
         onClick={() => setOpen(!open)}
-        className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+        className={`flex w-full items-center gap-2 rounded-control border px-3 py-2 text-left text-sm transition-colors ${
           failed
             ? 'border-err/40 bg-err/5'
             : running
@@ -1305,16 +1303,16 @@ function McpToolView({ tool }: { tool: ToolView }) {
       >
         {running ? (
           <Loader2
-            size="1.0000rem"
+            size={ICON.sm}
             className="animate-spin shrink-0 text-accent"
           />
         ) : failed ? (
-          <X size="1.0000rem" className="shrink-0 text-err" />
+          <X size={ICON.sm} className="shrink-0 text-err" />
         ) : (
-          <Puzzle size="1.0000rem" className="shrink-0 text-accent" />
+          <Puzzle size={ICON.sm} className="shrink-0 text-accent" />
         )}
         {parts && (
-          <span className="shrink-0 rounded bg-panel px-1.5 py-0.5 font-mono text-[0.7143rem] text-accent">
+          <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 font-mono text-micro text-accent">
             {parts.server}
           </span>
         )}
@@ -1322,26 +1320,26 @@ function McpToolView({ tool }: { tool: ToolView }) {
           {parts ? parts.tool : tool.name}
         </span>
         {summaryTail && (
-          <span className="hidden shrink-0 truncate font-mono text-[0.7143rem] max-w-[35%] text-dim lg:inline">
+          <span className="hidden shrink-0 truncate font-mono text-micro max-w-[35%] text-dim lg:inline">
             {summaryTail}
           </span>
         )}
         {!running && tool.result !== undefined && (
-          <span className="shrink-0 rounded bg-panel px-1.5 py-0.5 font-mono text-[0.7143rem] text-dim tabular-nums">
+          <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 font-mono text-micro text-dim tabular-nums">
             {tool.result.split('\n').length} {t('tool.lines')}
           </span>
         )}
         {open ? (
-          <ChevronDown size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
         ) : (
-          <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronRight size={ICON.sm} className="shrink-0 text-dim" />
         )}
       </button>
       {open && (
-        <div className="mt-1 space-y-1.5 overflow-hidden rounded-md border border-edge bg-panel/60 px-2.5 py-2">
+        <div className="mt-1 space-y-1.5 overflow-hidden rounded-control border border-edge bg-panel/60 px-2.5 py-2">
           {running && (
             <div className="flex items-center gap-1.5 text-xs text-dim">
-              <Loader2 size="0.8571rem" className="animate-spin" />
+              <Loader2 size={ICON.xs} className="animate-spin" />
               {t('tool.running')}
             </div>
           )}
@@ -1352,25 +1350,25 @@ function McpToolView({ tool }: { tool: ToolView }) {
           )}
           {args && Object.keys(args).length > 0 && (
             <div>
-              <div className="mb-0.5 text-[0.7143rem] uppercase tracking-wider text-dim">
+              <div className="mb-0.5 text-micro uppercase tracking-wider text-dim">
                 {t('tool.arguments')}
               </div>
-              <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel px-2 py-1.5 font-mono text-xs text-dim">
+              <pre className="max-h-48 overflow-y-auto whitespace-pre-wrap break-all rounded-tight border border-edge bg-panel px-2 py-1.5 font-mono text-xs text-dim">
                 {JSON.stringify(args, null, 2)}
               </pre>
             </div>
           )}
           {!running && !failed && tool.result !== undefined && (
             <div>
-              <div className="mb-0.5 text-[0.7143rem] uppercase tracking-wider text-dim">
+              <div className="mb-0.5 text-micro uppercase tracking-wider text-dim">
                 {t('tool.result')}
               </div>
               {resultIsJson !== null ? (
-                <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel px-2 py-1.5 font-mono text-xs text-fg">
+                <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap break-all rounded-tight border border-edge bg-panel px-2 py-1.5 font-mono text-xs text-fg">
                   {JSON.stringify(resultIsJson, null, 2)}
                 </pre>
               ) : (
-                <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel px-2 py-1.5 font-mono text-xs text-fg">
+                <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap break-all rounded-tight border border-edge bg-panel px-2 py-1.5 font-mono text-xs text-fg">
                   {tool.result}
                 </pre>
               )}
@@ -1418,7 +1416,7 @@ function GrepView({ tool }: { tool: ToolView }) {
     <div className="my-1.5">
       <button
         onClick={() => setOpen(!open)}
-        className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+        className={`flex w-full items-center gap-2 rounded-control border px-3 py-2 text-left text-sm transition-colors ${
           failed
             ? 'border-err/40 bg-err/5'
             : running
@@ -1428,19 +1426,19 @@ function GrepView({ tool }: { tool: ToolView }) {
       >
         {running ? (
           <Loader2
-            size="1.0000rem"
+            size={ICON.sm}
             className="animate-spin shrink-0 text-accent"
           />
         ) : failed ? (
-          <X size="1.0000rem" className="shrink-0 text-err" />
+          <X size={ICON.sm} className="shrink-0 text-err" />
         ) : (
-          <SearchIcon size="1.0000rem" className="shrink-0 text-accent" />
+          <SearchIcon size={ICON.sm} className="shrink-0 text-accent" />
         )}
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg">
           {pattern || tool.name}
         </span>
         {result !== null && !running && (
-          <span className="shrink-0 rounded bg-panel px-1.5 py-0.5 font-mono text-[0.7143rem] text-dim tabular-nums">
+          <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 font-mono text-micro text-dim tabular-nums">
             {matches.length} {t('tool.matches')}
             {result.truncated ? ' · …' : ''}
             {typeof result.skipped_large === 'number' &&
@@ -1450,16 +1448,16 @@ function GrepView({ tool }: { tool: ToolView }) {
           </span>
         )}
         {open ? (
-          <ChevronDown size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
         ) : (
-          <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronRight size={ICON.sm} className="shrink-0 text-dim" />
         )}
       </button>
       {open && (
-        <div className="mt-1 overflow-hidden rounded-md border border-edge bg-panel/60">
+        <div className="mt-1 overflow-hidden rounded-control border border-edge bg-panel/60">
           {running && (
             <div className="flex items-center gap-1.5 px-2.5 py-2 text-xs text-dim">
-              <Loader2 size="0.8571rem" className="animate-spin" />
+              <Loader2 size={ICON.xs} className="animate-spin" />
               {t('tool.running')}
             </div>
           )}
@@ -1478,10 +1476,10 @@ function GrepView({ tool }: { tool: ToolView }) {
                   key={i}
                   className="flex items-start gap-2 font-mono text-xs"
                 >
-                  <span className="shrink-0 text-[0.7143rem] text-dim tabular-nums">
+                  <span className="shrink-0 text-micro text-dim tabular-nums">
                     {m.line_number ?? ''}
                   </span>
-                  <span className="shrink-0 text-[0.7143rem] text-accent">
+                  <span className="shrink-0 text-micro text-accent">
                     {m.path ?? ''}
                   </span>
                   <span className="min-w-0 flex-1 truncate whitespace-pre text-fg">
@@ -1525,7 +1523,7 @@ function GlobView({ tool }: { tool: ToolView }) {
     <div className="my-1.5">
       <button
         onClick={() => setOpen(!open)}
-        className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+        className={`flex w-full items-center gap-2 rounded-control border px-3 py-2 text-left text-sm transition-colors ${
           failed
             ? 'border-err/40 bg-err/5'
             : running
@@ -1535,33 +1533,33 @@ function GlobView({ tool }: { tool: ToolView }) {
       >
         {running ? (
           <Loader2
-            size="1.0000rem"
+            size={ICON.sm}
             className="animate-spin shrink-0 text-accent"
           />
         ) : failed ? (
-          <X size="1.0000rem" className="shrink-0 text-err" />
+          <X size={ICON.sm} className="shrink-0 text-err" />
         ) : (
-          <FileSearch size="1.0000rem" className="shrink-0 text-accent" />
+          <FileSearch size={ICON.sm} className="shrink-0 text-accent" />
         )}
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg">
           {pattern || tool.name}
         </span>
         {matches !== null && !running && (
-          <span className="shrink-0 rounded bg-panel px-1.5 py-0.5 font-mono text-[0.7143rem] text-dim tabular-nums">
+          <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 font-mono text-micro text-dim tabular-nums">
             {matches.length} {t('tool.matches')}
           </span>
         )}
         {open ? (
-          <ChevronDown size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
         ) : (
-          <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronRight size={ICON.sm} className="shrink-0 text-dim" />
         )}
       </button>
       {open && (
-        <div className="mt-1 overflow-hidden rounded-md border border-edge bg-panel/60 px-2.5 py-2">
+        <div className="mt-1 overflow-hidden rounded-control border border-edge bg-panel/60 px-2.5 py-2">
           {running && (
             <div className="flex items-center gap-1.5 text-xs text-dim">
-              <Loader2 size="0.8571rem" className="animate-spin" />
+              <Loader2 size={ICON.xs} className="animate-spin" />
               {t('tool.running')}
             </div>
           )}
@@ -1631,7 +1629,7 @@ function PermissionsView({ tool }: { tool: ToolView }) {
     <div className="my-1.5">
       <button
         onClick={() => setOpen(!open)}
-        className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+        className={`flex w-full items-center gap-2 rounded-control border px-3 py-2 text-left text-sm transition-colors ${
           failed
             ? 'border-err/40 bg-err/5'
             : running
@@ -1641,23 +1639,23 @@ function PermissionsView({ tool }: { tool: ToolView }) {
       >
         {running ? (
           <Loader2
-            size="1.0000rem"
+            size={ICON.sm}
             className="animate-spin shrink-0 text-accent"
           />
         ) : failed ? (
-          <X size="1.0000rem" className="shrink-0 text-err" />
+          <X size={ICON.sm} className="shrink-0 text-err" />
         ) : (
-          <ShieldCheck size="1.0000rem" className="shrink-0 text-accent" />
+          <ShieldCheck size={ICON.sm} className="shrink-0 text-accent" />
         )}
         <span className="min-w-0 flex-1 truncate text-sm text-fg">
           {t('tool.requestPermissions')}
-          <span className="ml-1.5 rounded bg-panel px-1 py-0.5 align-middle text-[0.7143rem] text-dim tabular-nums">
+          <span className="ml-1.5 rounded-tight bg-panel px-1 py-0.5 align-middle text-micro text-dim tabular-nums">
             {rules.length}
           </span>
         </span>
         {outcome && (
           <span
-            className={`shrink-0 rounded px-1.5 py-0.5 text-[0.7143rem] ${
+            className={`shrink-0 rounded-tight px-1.5 py-0.5 text-micro ${
               parsed?.granted
                 ? 'bg-ok/10 text-ok'
                 : parsed?.cancelled
@@ -1669,16 +1667,16 @@ function PermissionsView({ tool }: { tool: ToolView }) {
           </span>
         )}
         {open ? (
-          <ChevronDown size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
         ) : (
-          <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronRight size={ICON.sm} className="shrink-0 text-dim" />
         )}
       </button>
       {open && (
-        <div className="mt-1 space-y-1.5 overflow-hidden rounded-md border border-edge bg-panel/60 px-2.5 py-2">
+        <div className="mt-1 space-y-1.5 overflow-hidden rounded-control border border-edge bg-panel/60 px-2.5 py-2">
           {running && (
             <div className="flex items-center gap-1.5 text-xs text-dim">
-              <Loader2 size="0.8571rem" className="animate-spin" />
+              <Loader2 size={ICON.xs} className="animate-spin" />
               {t('tool.waitingAnswer')}
             </div>
           )}
@@ -1697,7 +1695,7 @@ function PermissionsView({ tool }: { tool: ToolView }) {
                   {parsed?.granted &&
                     Array.isArray(parsed.permissions) &&
                     parsed.permissions.includes(rule) && (
-                      <Check size="0.8571rem" className="shrink-0 text-ok" />
+                      <Check size={ICON.xs} className="shrink-0 text-ok" />
                     )}
                 </div>
               ))}
@@ -1745,7 +1743,7 @@ function SkillReadView({ tool }: { tool: ToolView }) {
     <div className="my-1.5">
       <button
         onClick={() => setOpen(!open)}
-        className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+        className={`flex w-full items-center gap-2 rounded-control border px-3 py-2 text-left text-sm transition-colors ${
           failed
             ? 'border-err/40 bg-err/5'
             : running
@@ -1755,34 +1753,34 @@ function SkillReadView({ tool }: { tool: ToolView }) {
       >
         {running ? (
           <Loader2
-            size="1.0000rem"
+            size={ICON.sm}
             className="animate-spin shrink-0 text-accent"
           />
         ) : failed ? (
-          <X size="1.0000rem" className="shrink-0 text-err" />
+          <X size={ICON.sm} className="shrink-0 text-err" />
         ) : (
-          <Sparkles size="1.0000rem" className="shrink-0 text-accent" />
+          <Sparkles size={ICON.sm} className="shrink-0 text-accent" />
         )}
         <span className="min-w-0 flex-1 truncate text-sm text-fg">
           {t('tool.readSkill')}{' '}
           <code className="font-mono text-xs">{name}</code>
         </span>
         {content && !running && (
-          <span className="shrink-0 rounded bg-panel px-1.5 py-0.5 font-mono text-[0.7143rem] text-dim tabular-nums">
+          <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 font-mono text-micro text-dim tabular-nums">
             {lines} {t('tool.lines')}
           </span>
         )}
         {open ? (
-          <ChevronDown size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
         ) : (
-          <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronRight size={ICON.sm} className="shrink-0 text-dim" />
         )}
       </button>
       {open && (
-        <div className="mt-1 overflow-hidden rounded-md border border-edge bg-panel/60">
+        <div className="mt-1 overflow-hidden rounded-control border border-edge bg-panel/60">
           {running && (
             <div className="flex items-center gap-1.5 px-2.5 py-2 text-xs text-dim">
-              <Loader2 size="0.8571rem" className="animate-spin" />
+              <Loader2 size={ICON.xs} className="animate-spin" />
               {t('tool.running')}
             </div>
           )}
@@ -1847,7 +1845,7 @@ function WebSearchView({ tool }: { tool: ToolView }) {
     <div className="my-1.5">
       <button
         onClick={() => setOpen(!open)}
-        className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+        className={`flex w-full items-center gap-2 rounded-control border px-3 py-2 text-left text-sm transition-colors ${
           failed
             ? 'border-err/40 bg-err/5'
             : running
@@ -1857,36 +1855,36 @@ function WebSearchView({ tool }: { tool: ToolView }) {
       >
         {running ? (
           <Loader2
-            size="1.0000rem"
+            size={ICON.sm}
             className="animate-spin shrink-0 text-accent"
           />
         ) : failed ? (
-          <X size="1.0000rem" className="shrink-0 text-err" />
+          <X size={ICON.sm} className="shrink-0 text-err" />
         ) : (
-          <Globe size="1.0000rem" className="shrink-0 text-accent" />
+          <Globe size={ICON.sm} className="shrink-0 text-accent" />
         )}
         <span className="min-w-0 flex-1 truncate text-sm text-fg">
           {t('tool.searchedWeb')}
           {query && <span className="text-dim">: {query}</span>}
         </span>
         {parsed?.provider && (
-          <span className="shrink-0 text-[0.7143rem] text-dim">
+          <span className="shrink-0 text-micro text-dim">
             {t('tool.webSearchVia', { provider: parsed.provider })}
           </span>
         )}
         {!running && parsed && (
-          <span className="shrink-0 rounded bg-panel px-1.5 py-0.5 font-mono text-[0.7143rem] text-dim tabular-nums">
+          <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 font-mono text-micro text-dim tabular-nums">
             {results.length}
           </span>
         )}
         {open ? (
-          <ChevronDown size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
         ) : (
-          <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronRight size={ICON.sm} className="shrink-0 text-dim" />
         )}
       </button>
       {open && (
-        <div className="mt-1.5 space-y-2 rounded-lg border border-edge/70 bg-panel/40 p-2.5">
+        <div className="mt-1.5 space-y-2 rounded-card border border-edge/70 bg-panel/40 p-2.5">
           {failed && tool.result !== undefined && (
             <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs text-err">
               {tool.result}
@@ -1902,7 +1900,7 @@ function WebSearchView({ tool }: { tool: ToolView }) {
               >
                 {hit.title || hit.url}
               </a>
-              <p className="truncate text-[0.7143rem] text-dim">
+              <p className="truncate text-micro text-dim">
                 {hit.url}
                 {hit.published ? ` · ${hit.published}` : ''}
               </p>
@@ -1921,17 +1919,17 @@ function WebSearchView({ tool }: { tool: ToolView }) {
             <div>
               <button
                 onClick={() => setShowContext(!showContext)}
-                className="flex items-center gap-1 text-[0.7143rem] text-dim hover:text-fg"
+                className="flex items-center gap-1 text-micro text-dim hover:text-fg"
               >
                 {showContext ? (
-                  <ChevronDown size="0.7857rem" />
+                  <ChevronDown size={ICON.xs} />
                 ) : (
-                  <ChevronRight size="0.7857rem" />
+                  <ChevronRight size={ICON.xs} />
                 )}
                 {t('tool.webSearchContext')}
               </button>
               {showContext && (
-                <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded border border-edge/60 bg-panel p-2 text-[0.7143rem] text-dim">
+                <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-tight border border-edge/60 bg-panel p-2 text-micro text-dim">
                   {parsed.context}
                 </pre>
               )}
@@ -1980,7 +1978,7 @@ function WebFetchView({ tool }: { tool: ToolView }) {
     <div className="my-1.5">
       <button
         onClick={() => setOpen(!open)}
-        className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+        className={`flex w-full items-center gap-2 rounded-control border px-3 py-2 text-left text-sm transition-colors ${
           failed
             ? 'border-err/40 bg-err/5'
             : running
@@ -1990,38 +1988,38 @@ function WebFetchView({ tool }: { tool: ToolView }) {
       >
         {running ? (
           <Loader2
-            size="1.0000rem"
+            size={ICON.sm}
             className="animate-spin shrink-0 text-accent"
           />
         ) : failed ? (
-          <X size="1.0000rem" className="shrink-0 text-err" />
+          <X size={ICON.sm} className="shrink-0 text-err" />
         ) : (
-          <Globe size="1.0000rem" className="shrink-0 text-accent" />
+          <Globe size={ICON.sm} className="shrink-0 text-accent" />
         )}
         <span className="min-w-0 flex-1 truncate text-sm text-fg">
           {parsed?.title || url}
         </span>
         {parsed?.site_name && !running && (
-          <span className="shrink-0 rounded bg-panel px-1.5 py-0.5 text-[0.7143rem] text-dim">
+          <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 text-micro text-dim">
             {parsed.site_name}
           </span>
         )}
         {parsed?.truncated && (
-          <span className="shrink-0 text-[0.7143rem] text-warn">
+          <span className="shrink-0 text-micro text-warn">
             {t('tool.truncated')}
           </span>
         )}
         {open ? (
-          <ChevronDown size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
         ) : (
-          <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronRight size={ICON.sm} className="shrink-0 text-dim" />
         )}
       </button>
       {open && (
-        <div className="mt-1 space-y-1.5 overflow-hidden rounded-md border border-edge bg-panel/60 px-2.5 py-2">
+        <div className="mt-1 space-y-1.5 overflow-hidden rounded-control border border-edge bg-panel/60 px-2.5 py-2">
           {running && (
             <div className="flex items-center gap-1.5 text-xs text-dim">
-              <Loader2 size="0.8571rem" className="animate-spin" />
+              <Loader2 size={ICON.xs} className="animate-spin" />
               {t('tool.running')}
             </div>
           )}
@@ -2041,12 +2039,12 @@ function WebFetchView({ tool }: { tool: ToolView }) {
                 <div className="text-xs text-dim">{parsed.description}</div>
               )}
               {parsed.url && (
-                <div className="truncate font-mono text-[0.7143rem] text-dim">
+                <div className="truncate font-mono text-micro text-dim">
                   {parsed.url}
                 </div>
               )}
               {parsed.content && (
-                <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap break-all rounded border border-edge bg-panel px-2 py-1.5 font-mono text-xs text-fg">
+                <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap break-all rounded-tight border border-edge bg-panel px-2 py-1.5 font-mono text-xs text-fg">
                   {parsed.content}
                 </pre>
               )}
@@ -2162,7 +2160,7 @@ function GenerateView({ tool }: { tool: ToolView }) {
           type="button"
           onClick={() => openPath(path)}
           title={t('chat.openArtifact', { path })}
-          className="overflow-hidden rounded-md border border-edge transition-colors hover:border-accent/60"
+          className="overflow-hidden rounded-control border border-edge transition-colors hover:border-accent/60"
         >
           <img
             src={preview.data_url}
@@ -2179,7 +2177,7 @@ function GenerateView({ tool }: { tool: ToolView }) {
             src={preview.stream_url}
             controls
             preload="metadata"
-            className="max-h-64 max-w-full rounded-md border border-edge bg-black"
+            className="max-h-64 max-w-full rounded-control border border-edge bg-black"
           />
           {pathButton(path)}
         </div>
@@ -2192,7 +2190,7 @@ function GenerateView({ tool }: { tool: ToolView }) {
     <div className="my-1.5">
       <button
         onClick={() => setOpen(!open)}
-        className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+        className={`flex w-full items-center gap-2 rounded-control border px-3 py-2 text-left text-sm transition-colors ${
           failed
             ? 'border-err/40 bg-err/5'
             : running
@@ -2202,34 +2200,34 @@ function GenerateView({ tool }: { tool: ToolView }) {
       >
         {running ? (
           <Loader2
-            size="1.0000rem"
+            size={ICON.sm}
             className="animate-spin shrink-0 text-accent"
           />
         ) : failed ? (
-          <X size="1.0000rem" className="shrink-0 text-err" />
+          <X size={ICON.sm} className="shrink-0 text-err" />
         ) : (
-          <ImageIcon size="1.0000rem" className="shrink-0 text-accent" />
+          <ImageIcon size={ICON.sm} className="shrink-0 text-accent" />
         )}
         <span className="min-w-0 flex-1 truncate text-sm text-fg">
           {prompt ||
             (isImage ? t('tool.generateImage') : t('tool.generateVideo'))}
         </span>
         {!running && parsed !== null && (
-          <span className="shrink-0 rounded bg-panel px-1.5 py-0.5 font-mono text-[0.7143rem] text-dim tabular-nums">
+          <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 font-mono text-micro text-dim tabular-nums">
             {paths.length} {t('tool.files')}
           </span>
         )}
         {open ? (
-          <ChevronDown size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
         ) : (
-          <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronRight size={ICON.sm} className="shrink-0 text-dim" />
         )}
       </button>
       {open && (
-        <div className="mt-1 space-y-1.5 overflow-hidden rounded-md border border-edge bg-panel/60 px-2.5 py-2">
+        <div className="mt-1 space-y-1.5 overflow-hidden rounded-control border border-edge bg-panel/60 px-2.5 py-2">
           {running && (
             <div className="flex items-center gap-1.5 text-xs text-dim">
-              <Loader2 size="0.8571rem" className="animate-spin" />
+              <Loader2 size={ICON.xs} className="animate-spin" />
               {t('tool.running')}
             </div>
           )}
@@ -2247,7 +2245,7 @@ function GenerateView({ tool }: { tool: ToolView }) {
               )}
               {previewPaths.length > 0 && (
                 <div className="space-y-0.5">
-                  <div className="text-[0.7143rem] uppercase tracking-wider text-dim">
+                  <div className="text-micro uppercase tracking-wider text-dim">
                     {t('tool.previews')}
                   </div>
                   <div className="flex flex-wrap items-start gap-1.5">
@@ -2262,7 +2260,7 @@ function GenerateView({ tool }: { tool: ToolView }) {
                 </div>
               )}
               {parsed.hint && (
-                <div className="text-[0.7143rem] text-dim">{parsed.hint}</div>
+                <div className="text-micro text-dim">{parsed.hint}</div>
               )}
             </>
           )}
@@ -2296,7 +2294,7 @@ function SkillManageView({ tool }: { tool: ToolView }) {
     <div className="my-1.5">
       <button
         onClick={() => setOpen(!open)}
-        className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+        className={`flex w-full items-center gap-2 rounded-control border px-3 py-2 text-left text-sm transition-colors ${
           failed
             ? 'border-err/40 bg-err/5'
             : running
@@ -2306,13 +2304,13 @@ function SkillManageView({ tool }: { tool: ToolView }) {
       >
         {running ? (
           <Loader2
-            size="1.0000rem"
+            size={ICON.sm}
             className="animate-spin shrink-0 text-accent"
           />
         ) : failed ? (
-          <X size="1.0000rem" className="shrink-0 text-err" />
+          <X size={ICON.sm} className="shrink-0 text-err" />
         ) : (
-          <Sparkles size="1.0000rem" className="shrink-0 text-accent" />
+          <Sparkles size={ICON.sm} className="shrink-0 text-accent" />
         )}
         <span className="min-w-0 flex-1 truncate text-sm text-fg">
           {title}
@@ -2320,22 +2318,22 @@ function SkillManageView({ tool }: { tool: ToolView }) {
             <code className="ml-1.5 font-mono text-xs">{subject}</code>
           )}
           {scope && (
-            <span className="ml-1.5 rounded bg-panel px-1 py-0.5 align-middle text-[0.7143rem] text-dim">
+            <span className="ml-1.5 rounded-tight bg-panel px-1 py-0.5 align-middle text-micro text-dim">
               {scope}
             </span>
           )}
         </span>
         {open ? (
-          <ChevronDown size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
         ) : (
-          <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronRight size={ICON.sm} className="shrink-0 text-dim" />
         )}
       </button>
       {open && (
-        <div className="mt-1 overflow-hidden rounded-md border border-edge bg-panel/60 px-2.5 py-2">
+        <div className="mt-1 overflow-hidden rounded-control border border-edge bg-panel/60 px-2.5 py-2">
           {running && (
             <div className="flex items-center gap-1.5 text-xs text-dim">
-              <Loader2 size="0.8571rem" className="animate-spin" />
+              <Loader2 size={ICON.xs} className="animate-spin" />
               {t('tool.running')}
             </div>
           )}
@@ -2397,7 +2395,7 @@ function AgentView({ tool }: { tool: ToolView }) {
     <div className="my-1.5">
       <button
         onClick={() => setOpen(!open)}
-        className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+        className={`flex w-full items-center gap-2 rounded-control border px-3 py-2 text-left text-sm transition-colors ${
           failed
             ? 'border-err/40 bg-err/5'
             : running
@@ -2407,33 +2405,33 @@ function AgentView({ tool }: { tool: ToolView }) {
       >
         {running ? (
           <Loader2
-            size="1.0000rem"
+            size={ICON.sm}
             className="animate-spin shrink-0 text-accent"
           />
         ) : failed ? (
-          <X size="1.0000rem" className="shrink-0 text-err" />
+          <X size={ICON.sm} className="shrink-0 text-err" />
         ) : (
-          <Bot size="1.0000rem" className="shrink-0 text-accent" />
+          <Bot size={ICON.sm} className="shrink-0 text-accent" />
         )}
         <span className="min-w-0 flex-1 truncate text-sm text-fg">
           {verb} <code className="font-mono text-xs">{name}</code>
         </span>
         {!running && parsed !== null && (
-          <span className="shrink-0 rounded bg-panel px-1.5 py-0.5 text-[0.7143rem] text-dim">
+          <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 text-micro text-dim">
             {parsed.status ?? ''}
           </span>
         )}
         {open ? (
-          <ChevronDown size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
         ) : (
-          <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronRight size={ICON.sm} className="shrink-0 text-dim" />
         )}
       </button>
       {open && (
-        <div className="mt-1 space-y-1.5 overflow-hidden rounded-md border border-edge bg-panel/60 px-2.5 py-2">
+        <div className="mt-1 space-y-1.5 overflow-hidden rounded-control border border-edge bg-panel/60 px-2.5 py-2">
           {running && (
             <div className="flex items-center gap-1.5 text-xs text-dim">
-              <Loader2 size="0.8571rem" className="animate-spin" />
+              <Loader2 size={ICON.xs} className="animate-spin" />
               {t('tool.running')}
             </div>
           )}
@@ -2448,12 +2446,12 @@ function AgentView({ tool }: { tool: ToolView }) {
                 <div className="text-xs text-dim">{parsed.description}</div>
               )}
               {parsed.persisted_to && (
-                <div className="truncate font-mono text-[0.7143rem] text-dim">
+                <div className="truncate font-mono text-micro text-dim">
                   {parsed.persisted_to}
                 </div>
               )}
               {parsed.hint && (
-                <div className="text-[0.7143rem] text-dim">{parsed.hint}</div>
+                <div className="text-micro text-dim">{parsed.hint}</div>
               )}
             </>
           )}
@@ -2498,7 +2496,7 @@ function ToolSearchView({ tool }: { tool: ToolView }) {
     <div className="my-1.5">
       <button
         onClick={() => setOpen(!open)}
-        className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+        className={`flex w-full items-center gap-2 rounded-control border px-3 py-2 text-left text-sm transition-colors ${
           failed
             ? 'border-err/40 bg-err/5'
             : running
@@ -2508,20 +2506,20 @@ function ToolSearchView({ tool }: { tool: ToolView }) {
       >
         {running ? (
           <Loader2
-            size="1.0000rem"
+            size={ICON.sm}
             className="animate-spin shrink-0 text-accent"
           />
         ) : failed ? (
-          <X size="1.0000rem" className="shrink-0 text-err" />
+          <X size={ICON.sm} className="shrink-0 text-err" />
         ) : (
-          <Wrench size="1.0000rem" className="shrink-0 text-accent" />
+          <Wrench size={ICON.sm} className="shrink-0 text-accent" />
         )}
         <span className="min-w-0 flex-1 truncate text-sm text-fg">
           {t('tool.searchedTools')}
           {query && <span className="text-dim">: {query}</span>}
         </span>
         {parsed !== null && !running && (
-          <span className="shrink-0 rounded bg-panel px-1.5 py-0.5 font-mono text-[0.7143rem] text-dim tabular-nums">
+          <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 font-mono text-micro text-dim tabular-nums">
             {parsed.hits.length} {t('tool.hits')}
             {exposedSet.size > 0
               ? ` · ${exposedSet.size} ${t('tool.exposed')}`
@@ -2529,16 +2527,16 @@ function ToolSearchView({ tool }: { tool: ToolView }) {
           </span>
         )}
         {open ? (
-          <ChevronDown size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
         ) : (
-          <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronRight size={ICON.sm} className="shrink-0 text-dim" />
         )}
       </button>
       {open && (
-        <div className="mt-1 space-y-1.5 overflow-hidden rounded-md border border-edge bg-panel/60 px-2.5 py-2">
+        <div className="mt-1 space-y-1.5 overflow-hidden rounded-control border border-edge bg-panel/60 px-2.5 py-2">
           {running && (
             <div className="flex items-center gap-1.5 text-xs text-dim">
-              <Loader2 size="0.8571rem" className="animate-spin" />
+              <Loader2 size={ICON.xs} className="animate-spin" />
               {t('tool.running')}
             </div>
           )}
@@ -2563,7 +2561,7 @@ function ToolSearchView({ tool }: { tool: ToolView }) {
                     </code>
                     {isExposed && (
                       <Check
-                        size="0.8571rem"
+                        size={ICON.xs}
                         className="mt-0.5 shrink-0 text-ok"
                       />
                     )}
@@ -2599,9 +2597,9 @@ function DirTree({
         <li key={node.name}>
           <div className="flex items-center gap-1.5 py-0.5">
             {node.type === 'dir' ? (
-              <Folder size="0.9286rem" className="text-accent shrink-0" />
+              <Folder size={ICON.sm} className="text-accent shrink-0" />
             ) : (
-              <File size="0.8571rem" className="text-dim shrink-0" />
+              <File size={ICON.xs} className="text-dim shrink-0" />
             )}
             <button
               type="button"
@@ -2615,7 +2613,7 @@ function DirTree({
               {node.name}
             </button>
             {node.type === 'file' && fmtSize(node.size) && (
-              <span className="ml-auto shrink-0 text-[0.7143rem] text-dim tabular-nums">
+              <span className="ml-auto shrink-0 text-micro text-dim tabular-nums">
                 {fmtSize(node.size)}
               </span>
             )}
@@ -2663,7 +2661,7 @@ function resultSummary(
 function DiffBlock({ patch }: { patch: string }) {
   const lines = patch.split('\n');
   return (
-    <pre className="max-h-80 overflow-y-auto overflow-x-auto whitespace-pre-wrap break-all rounded-lg border border-edge bg-panel/60 p-2 font-mono text-xs">
+    <pre className="max-h-80 overflow-y-auto overflow-x-auto whitespace-pre-wrap break-all rounded-card border border-edge bg-panel/60 p-2 font-mono text-xs">
       {lines.map((line, idx) => {
         let cls = 'text-dim';
         if (line.startsWith('+')) cls = 'text-ok';
@@ -2768,7 +2766,7 @@ export const ApplyPatchView = memo(function ApplyPatchView({
     <div className="my-1.5 space-y-1">
       {running && (
         <div className="flex items-center gap-1.5 px-2.5 py-2 text-xs text-dim">
-          <Loader2 size="0.8571rem" className="animate-spin" />
+          <Loader2 size={ICON.xs} className="animate-spin" />
           {t('tool.running')}
         </div>
       )}
@@ -2785,7 +2783,7 @@ export const ApplyPatchView = memo(function ApplyPatchView({
         <div className="space-y-0.5 px-2.5 py-1 text-xs">
           {resultFiles.map((f, i) => (
             <div key={i} className="flex items-center gap-1.5 font-mono">
-              <Check size="0.8571rem" className="shrink-0 text-ok" />
+              <Check size={ICON.xs} className="shrink-0 text-ok" />
               {f.path ? (
                 <button
                   type="button"
@@ -2796,7 +2794,7 @@ export const ApplyPatchView = memo(function ApplyPatchView({
                 </button>
               ) : null}
               {f.action && (
-                <span className="shrink-0 rounded bg-panel px-1 py-0.5 text-[0.7143rem] text-dim">
+                <span className="shrink-0 rounded-tight bg-panel px-1 py-0.5 text-micro text-dim">
                   {f.action}
                 </span>
               )}
@@ -2839,15 +2837,15 @@ function ResultBlock({ tool }: { tool: ToolView }) {
       return (
         <div className="space-y-1">
           <div className="flex items-center gap-1.5 text-xs">
-            <Folder size="0.9286rem" className="text-accent shrink-0" />
+            <Folder size={ICON.sm} className="text-accent shrink-0" />
             <code className="font-mono">{dir.path || '.'}</code>
             {dir.truncated && (
-              <span className="text-[0.7143rem] text-warn">
+              <span className="text-micro text-warn">
                 {t('tool.truncated')}
               </span>
             )}
           </div>
-          <div className="max-h-64 overflow-y-auto rounded-md border border-edge bg-panel/60 px-2 py-1">
+          <div className="max-h-64 overflow-y-auto rounded-control border border-edge bg-panel/60 px-2 py-1">
             <DirTree nodes={nodes} depth={0} />
           </div>
         </div>
@@ -2989,7 +2987,7 @@ export const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
 
   return (
     <div
-      className={`rounded-lg border overflow-hidden my-1.5 ${
+      className={`rounded-control border overflow-hidden my-1.5 ${
         running
           ? 'border-accent/40 bg-panel2'
           : failed
@@ -3003,13 +3001,13 @@ export const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
       >
         {running ? (
           <Loader2
-            size="1.0000rem"
+            size={ICON.sm}
             className="text-accent animate-spin shrink-0"
           />
         ) : failed ? (
-          <X size="1.0000rem" className="text-err shrink-0" />
+          <X size={ICON.sm} className="text-err shrink-0" />
         ) : (
-          <Check size="1.0000rem" className="text-ok shrink-0" />
+          <Check size={ICON.sm} className="text-ok shrink-0" />
         )}
         {summary ? (
           <span className="truncate min-w-0">
@@ -3026,9 +3024,9 @@ export const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
           {t(`tool.${tool.status}`)}
         </span>
         {open ? (
-          <ChevronDown size="1.0000rem" className="text-dim shrink-0" />
+          <ChevronDown size={ICON.sm} className="text-dim shrink-0" />
         ) : (
-          <ChevronRight size="1.0000rem" className="text-dim shrink-0" />
+          <ChevronRight size={ICON.sm} className="text-dim shrink-0" />
         )}
       </button>
       {!open && summaryLine && (
@@ -3053,19 +3051,19 @@ export const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
               {!resultOnly && (
                 <div className="flex items-center justify-between pt-1">
                   <div className="text-xs text-dim">{t('tool.result')}:</div>
-                  <div className="flex items-center gap-2 text-[0.7143rem] text-dim">
+                  <div className="flex items-center gap-2 text-micro text-dim">
                     <span className="tabular-nums">
                       {tool.result.split('\n').length} {t('tool.lines')}
                     </span>
                     <button
                       onClick={() => void copyResult()}
-                      className="flex items-center gap-1 rounded border border-edge px-1.5 py-0.5 text-dim hover:text-fg"
+                      className="flex items-center gap-1 rounded-tight border border-edge px-1.5 py-0.5 text-dim hover:text-fg"
                       aria-label={t('tool.copyResult')}
                     >
                       {copied ? (
-                        <Check size="0.7857rem" />
+                        <Check size={ICON.xs} />
                       ) : (
-                        <ClipboardList size="0.7857rem" />
+                        <ClipboardList size={ICON.xs} />
                       )}
                     </button>
                   </div>
@@ -3075,7 +3073,7 @@ export const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
             </>
           ) : resultOnly && running ? (
             <div className="flex items-center gap-1.5 text-xs text-dim">
-              <Loader2 size="0.8571rem" className="animate-spin" />
+              <Loader2 size={ICON.xs} className="animate-spin" />
               {t('tool.running')}
             </div>
           ) : null}

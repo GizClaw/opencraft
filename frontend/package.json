@@ -12,6 +12,7 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "audit:ui": "playwright test --config playwright.visual.config.ts",
     "bench": "vitest bench"
   },
   "dependencies": {

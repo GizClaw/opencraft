@@ -25,7 +25,7 @@ export function PluginPanels({
       {visible.map((panel) => (
         <section
           key={panel.id}
-          className="min-w-0 overflow-x-auto rounded-xl border border-edge bg-panel2 p-3"
+          className="min-w-0 overflow-x-auto rounded-card border border-edge bg-panel2 p-3"
         >
           <h3 className="mb-2 break-words text-xs font-semibold text-dim">
             {panel.title}

@@ -9,11 +9,17 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { PlanSnapshot } from '../lib/plan';
+import { ICON } from './ui/icon';
 
 export type { PlanPanelState, PlanSnapshot, PlanStepView } from '../lib/plan';
 
 // PlanPanel renders the conversation's current plan as a collapsible
-// card pinned to the top-left of the chat area. Fully completed plans
+// card pinned to the top-left of the chat area. It is an overlay, not
+// a row above the transcript: a docked card reflows with the chat
+// column, so opening and closing the file panel stretches it and the
+// conversation loses that height for as long as the plan lives. Being
+// an overlay, the card keeps one size of its own and is capped to the
+// column height, scrolling its own checklist. Fully completed plans
 // start collapsed; active ones start expanded so the checklist stays
 // visible while work is running. When the plan content updates, the
 // open state resets accordingly (new progress re-expands, completion
@@ -42,7 +48,10 @@ export function PlanPanel({
   }, [planKey]);
   const done = plan.items.filter((s) => s.status === 'completed').length;
   return (
-    <div className="absolute left-4 top-3 z-30 w-80 max-w-[calc(100%-2rem)] overflow-hidden rounded-lg border border-edge bg-panel2 shadow-xl">
+    <div
+      data-testid="plan-panel"
+      className="absolute left-4 top-3 z-30 flex max-h-[min(50%,30rem)] w-80 max-w-[calc(100%-2rem)] flex-col overflow-hidden rounded-card border border-edge bg-panel2 shadow-popover"
+    >
       <div className="flex items-center">
         <button
           onClick={() => setOpen((v) => !v)}
@@ -50,11 +59,11 @@ export function PlanPanel({
         >
           {live ? (
             <Loader2
-              size="0.9286rem"
+              size={ICON.sm}
               className="shrink-0 animate-spin text-accent"
             />
           ) : (
-            <ClipboardList size="0.9286rem" className="shrink-0 text-ok" />
+            <ClipboardList size={ICON.sm} className="shrink-0 text-ok" />
           )}
           <span className="truncate font-medium text-fg">
             {t('chat.planTitle')}
@@ -66,9 +75,9 @@ export function PlanPanel({
           )}
           <span className="flex-1" />
           {open ? (
-            <ChevronDown size="1.0000rem" className="shrink-0 text-dim" />
+            <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
           ) : (
-            <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
+            <ChevronRight size={ICON.sm} className="shrink-0 text-dim" />
           )}
         </button>
         {onClose && (
@@ -76,17 +85,17 @@ export function PlanPanel({
             onClick={onClose}
             title={t('tools.close')}
             aria-label={t('tools.close')}
-            className="mr-1.5 shrink-0 rounded p-1 text-dim transition-colors hover:text-fg"
+            className="mr-1.5 shrink-0 rounded-tight p-1 text-dim transition-colors hover:text-fg"
           >
-            <X size="0.8571rem" />
+            <X size={ICON.xs} />
           </button>
         )}
       </div>
       {open && (
-        <div className="space-y-1.5 border-t border-edge px-3 py-2">
+        <div className="min-h-0 space-y-1.5 overflow-y-auto border-t border-edge px-3 py-2">
           {plan.items.length === 0 ? (
             <div className="flex items-center gap-2 text-xs text-dim">
-              <Loader2 size="0.8571rem" className="animate-spin text-accent" />
+              <Loader2 size={ICON.xs} className="animate-spin text-accent" />
               {t('chat.planLoading')}
             </div>
           ) : (
@@ -104,12 +113,12 @@ export function PlanPanel({
                   <div key={idx} className="flex items-start gap-2 text-xs">
                     {inProgress ? (
                       <Loader2
-                        size="0.8571rem"
+                        size={ICON.xs}
                         className="mt-0.5 shrink-0 animate-spin text-accent"
                       />
                     ) : completed ? (
                       <Check
-                        size="0.8571rem"
+                        size={ICON.xs}
                         className="mt-0.5 shrink-0 text-ok"
                       />
                     ) : (

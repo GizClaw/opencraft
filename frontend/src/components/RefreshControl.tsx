@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown, RefreshCw } from 'lucide-react';
+import { ICON } from './ui/icon';
 
 const REFRESH_INTERVALS_MS = [0, 5000, 10_000, 30_000, 60_000];
 
@@ -39,7 +40,7 @@ export function RefreshControl({
   const label = value > 0 ? `${value / 1000} s` : offLabel;
   return (
     <div className="relative" ref={ref}>
-      <div className="flex items-center overflow-hidden rounded-lg border border-edge">
+      <div className="flex items-center overflow-hidden rounded-control border border-edge">
         <button
           onClick={() => {
             setOpen(false);
@@ -50,26 +51,26 @@ export function RefreshControl({
           aria-label={refreshLabel}
         >
           <RefreshCw
-            size="0.9286rem"
+            size={ICON.sm}
             className={spinning ? 'animate-spin' : ''}
           />
         </button>
         <button
           onClick={() => setOpen((v) => !v)}
-          className="flex h-7 items-center gap-1 border-l border-edge px-1.5 text-[0.7143rem] text-dim hover:bg-panel2 hover:text-fg"
+          className="flex h-7 items-center gap-1 border-l border-edge px-1.5 text-micro text-dim hover:bg-panel2 hover:text-fg"
           title={intervalLabel}
           aria-label={intervalLabel}
           aria-haspopup="listbox"
           aria-expanded={open}
         >
           {label}
-          <ChevronDown size="0.7857rem" />
+          <ChevronDown size={ICON.xs} />
         </button>
       </div>
       {open && (
         <div
           role="listbox"
-          className="absolute right-0 top-full z-40 mt-1.5 w-44 rounded-lg border border-edge bg-panel p-1 shadow-xl"
+          className="absolute right-0 top-full z-40 mt-1.5 w-44 rounded-control border border-edge bg-panel p-1 shadow-popover"
         >
           {REFRESH_INTERVALS_MS.map((ms) => {
             const optionLabel = ms > 0 ? `${ms / 1000} s` : offLabel;
@@ -83,14 +84,14 @@ export function RefreshControl({
                   setOpen(false);
                   onChange(ms);
                 }}
-                className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs ${
+                className={`flex w-full items-center justify-between rounded-control px-2 py-1.5 text-left text-xs ${
                   active
                     ? 'bg-accent/10 text-accent'
                     : 'text-dim hover:bg-panel2 hover:text-fg'
                 }`}
               >
                 <span>{optionLabel}</span>
-                {active && <Check size="0.8571rem" />}
+                {active && <Check size={ICON.xs} />}
               </button>
             );
           })}

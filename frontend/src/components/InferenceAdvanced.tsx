@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 
 import { MenuSelect, type MenuOption } from './MenuSelect';
 import type { ProviderAdvanced } from '../lib/types';
+import { ICON } from './ui/icon';
 
 // AdvancedSection is the collapsible provider-spec editor on one
 // inference instance card. The knobs are the ones flowcraft's drivers
@@ -132,11 +133,11 @@ export function AdvancedSection({
   const group = (title: string, children: ReactNode, hint?: string) => (
     <section className="flex flex-col gap-2.5">
       <div className="flex items-baseline gap-2">
-        <h4 className="text-[0.6923rem] font-medium tracking-wide text-dim/90 uppercase">
+        <h4 className="text-micro font-medium tracking-wide text-dim/90 uppercase">
           {title}
         </h4>
         {hint !== undefined && (
-          <span className="text-[0.6923rem] text-dim/70">{hint}</span>
+          <span className="text-micro text-dim/70">{hint}</span>
         )}
       </div>
       <div className="grid grid-cols-1 gap-x-4 gap-y-3 md:grid-cols-2">
@@ -324,20 +325,20 @@ export function AdvancedSection({
   return (
     <details
       data-testid="provider-advanced"
-      className="group rounded-xl border border-edge bg-panel/30"
+      className="group rounded-card border border-edge bg-panel/30"
     >
       <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs text-dim hover:text-fg">
         <ChevronDown
-          size="0.8571rem"
+          size={ICON.xs}
           className="shrink-0 transition-transform group-open:rotate-180"
         />
         <span className="font-medium">{t('config.advanced.title')}</span>
         {setCount > 0 && (
-          <span className="rounded-full bg-panel2 px-1.5 py-0.5 text-[0.6923rem] text-dim">
+          <span className="rounded-full bg-panel2 px-1.5 py-0.5 text-micro text-dim">
             {t('config.advanced.setCount', { n: setCount })}
           </span>
         )}
-        <span className="ml-auto text-[0.6923rem] text-dim/70">
+        <span className="ml-auto text-micro text-dim/70">
           {disabled
             ? t('config.advanced.managedHint')
             : t('config.advanced.defaultsHint')}
@@ -359,7 +360,7 @@ export function AdvancedSection({
 }
 
 const inputClass =
-  'h-[1.875rem] w-full rounded-lg border border-edge bg-panel px-2 text-xs text-fg outline-none transition-colors focus:border-accent disabled:opacity-40';
+  'h-[1.875rem] w-full rounded-control border border-edge bg-panel px-2 text-xs text-fg outline-none transition-colors focus:border-accent disabled:opacity-40';
 
 // countSet reports how many provider knobs the row states, so the
 // collapsed header can say whether anything is configured at all. A
@@ -425,7 +426,7 @@ export function KeyValueEditor({
                 ) as [string, string][],
               )
             }
-            className="h-[1.875rem] w-2/5 rounded-lg border border-edge bg-panel px-2 font-mono text-xs text-fg outline-none transition-colors focus:border-accent disabled:opacity-40"
+            className="h-[1.875rem] w-2/5 rounded-control border border-edge bg-panel px-2 font-mono text-xs text-fg outline-none transition-colors focus:border-accent disabled:opacity-40"
           />
           <input
             value={entry}
@@ -439,14 +440,14 @@ export function KeyValueEditor({
                 ) as [string, string][],
               )
             }
-            className="h-[1.875rem] min-w-0 flex-1 rounded-lg border border-edge bg-panel px-2 font-mono text-xs text-fg outline-none transition-colors focus:border-accent disabled:opacity-40"
+            className="h-[1.875rem] min-w-0 flex-1 rounded-control border border-edge bg-panel px-2 font-mono text-xs text-fg outline-none transition-colors focus:border-accent disabled:opacity-40"
           />
           {!disabled && (
             <button
               type="button"
               aria-label={`${label} remove ${idx + 1}`}
               onClick={() => commit(rows.filter((_, i) => i !== idx))}
-              className="rounded-md border border-edge px-1.5 py-1 text-xs text-dim transition-colors hover:border-err/60 hover:text-err"
+              className="rounded-control border border-edge px-1.5 py-1 text-xs text-dim transition-colors hover:border-err/60 hover:text-err"
             >
               ×
             </button>
@@ -457,7 +458,7 @@ export function KeyValueEditor({
         <button
           type="button"
           onClick={() => setRows([...rows, ['', '']])}
-          className="self-start rounded-md border border-dashed border-edge px-2 py-1 text-xs text-dim transition-colors hover:border-accent hover:text-fg"
+          className="self-start rounded-control border border-dashed border-edge px-2 py-1 text-xs text-dim transition-colors hover:border-accent hover:text-fg"
         >
           {addLabel ?? '+ add'}
         </button>

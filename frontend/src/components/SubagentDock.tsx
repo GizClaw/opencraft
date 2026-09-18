@@ -12,20 +12,25 @@ interface DockRow {
   conversationId?: string;
 }
 
+// Phase dots use the semantic tokens so they flip with the theme
+// (the raw Tailwind palette they replaced stayed dark-theme colored in
+// the light theme).
 function phaseDot(phase: PetActivityDTO['phase']): string {
   switch (phase) {
     case 'thinking':
-      return 'bg-amber-400 animate-pulse';
+      return 'bg-warn animate-pulse';
     case 'tool':
-      return 'bg-sky-400 animate-pulse';
+      return 'bg-accent animate-pulse';
     case 'answering':
-      return 'bg-emerald-400';
+      return 'bg-ok';
     case 'asking':
-      return 'bg-violet-400 animate-bounce';
+      return 'bg-subagent animate-bounce';
     case 'error':
-      return 'bg-red-500';
+      return 'bg-err';
     case 'done':
-      return 'bg-green-500';
+      // Finished and answering are both "good"; the finished dot is the
+      // quieter one so a dock of idle rows does not read as activity.
+      return 'bg-ok/50';
     default:
       return 'bg-dim';
   }
@@ -84,7 +89,7 @@ export function SubagentDock() {
 
   return (
     <div className="flex items-center gap-2 border-t border-edge bg-panel2 px-3 py-1.5">
-      <span className="text-[0.7rem] font-medium uppercase tracking-wide text-dim">
+      <span className="text-micro font-medium uppercase tracking-wide text-dim">
         {t('config.petSubagents')}
       </span>
       <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
@@ -98,7 +103,7 @@ export function SubagentDock() {
                 openTools('agents');
               }
             }}
-            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-edge bg-panel px-2 py-1 text-xs text-fg transition-colors hover:border-accent/50"
+            className="flex shrink-0 items-center gap-1.5 rounded-control border border-edge bg-panel px-2 py-1 text-xs text-fg transition-colors hover:border-accent/50"
             title={`${row.phase}${row.toolName ? ` · ${row.toolName}` : ''}`}
           >
             <span className={`h-2 w-2 rounded-full ${phaseDot(row.phase)}`} />

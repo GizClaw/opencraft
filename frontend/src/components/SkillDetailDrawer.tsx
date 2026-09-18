@@ -2,13 +2,15 @@ import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2, Sparkles, X } from 'lucide-react';
 import { api } from '../lib/api';
-import { useStore } from '../lib/store';
 import type { SkillDTO } from '../lib/types';
 import { Markdown } from './Markdown';
+import { ICON } from './ui/icon';
+import { useFilePreview } from './viewer/FilePreviewModal';
 
 // SkillDetailDrawer is the right-side skill detail page. It shows the
 // skill's metadata and renders the full SKILL.md body as markdown, so
-// clicking a skill card behaves like clicking a plugin card.
+// clicking a skill card behaves like clicking a plugin card. References
+// in that body open in a preview dialog above the drawer.
 export function SkillDetailDrawer({
   skill,
   onClose,
@@ -17,12 +19,16 @@ export function SkillDetailDrawer({
   onClose: () => void;
 }) {
   const { t } = useTranslation();
-  const openFileTarget = useStore((s) => s.openFileTarget);
   const slash = skill.path.lastIndexOf('/');
   const skillDir = slash > 0 ? skill.path.slice(0, slash) : skill.path;
   const [body, setBody] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  // References inside a SKILL.md open in a dialog on top of this
+  // drawer: the chat's file panel belongs to the session, and a
+  // settings page has no business repainting it behind the modal.
+  const { openLink, modal } = useFilePreview();
 
   useEffect(() => {
     let alive = true;
@@ -58,25 +64,25 @@ export function SkillDetailDrawer({
     <>
       <div className="fixed inset-0 z-40 bg-black/30" onClick={onClose} />
       <aside
-        className="fixed inset-y-0 right-0 z-50 flex w-[46rem] max-w-[94vw] flex-col border-l border-edge bg-panel shadow-2xl"
+        className="fixed inset-y-0 right-0 z-50 flex w-[46rem] max-w-[94vw] flex-col border-l border-edge bg-panel shadow-modal"
         role="dialog"
         aria-modal="true"
         aria-label={skill.name}
       >
         <div className="flex shrink-0 items-center justify-between border-b border-edge px-4 py-3">
           <div className="flex min-w-0 items-center gap-2">
-            <Sparkles size="1.0714rem" className="shrink-0 text-accent" />
+            <Sparkles size={ICON.md} className="shrink-0 text-accent" />
             <h3 className="min-w-0 truncate text-sm font-semibold">
               {skill.name}
             </h3>
             {skill.plugin_id ? (
-              <span className="shrink-0 rounded border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[0.7143rem] text-accent">
+              <span className="shrink-0 rounded-tight border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-micro text-accent">
                 {t('config.skillsPluginFrom', {
                   name: skill.plugin_name || skill.plugin_id,
                 })}
               </span>
             ) : (
-              <span className="shrink-0 rounded border border-edge bg-panel2 px-1.5 py-0.5 text-[0.7143rem] text-dim">
+              <span className="shrink-0 rounded-tight border border-edge bg-panel2 px-1.5 py-0.5 text-micro text-dim">
                 {scopeLabel}
               </span>
             )}
@@ -86,7 +92,7 @@ export function SkillDetailDrawer({
             aria-label={t('tools.close')}
             className="text-dim hover:text-fg"
           >
-            <X size="1.1429rem" />
+            <X size={ICON.md} />
           </button>
         </div>
 
@@ -109,25 +115,22 @@ export function SkillDetailDrawer({
             </h4>
             {loading ? (
               <div className="flex items-center gap-2 text-xs text-dim">
-                <Loader2 size="0.9286rem" className="animate-spin" />
+                <Loader2 size={ICON.sm} className="animate-spin" />
                 {t('config.skillsDetailLoading')}
               </div>
             ) : error ? (
-              <p className="rounded-lg border border-err/40 bg-err/10 px-3 py-2 text-xs text-err break-words">
+              <p className="rounded-control border border-err/40 bg-err/10 px-3 py-2 text-xs text-err break-words">
                 {t('config.skillsReadError')}: {error}
               </p>
             ) : (
               <div className="prose-chat text-sm">
-                <Markdown
-                  text={body}
-                  basePath={skillDir}
-                  onOpen={(href, base) => void openFileTarget(href, base ?? '')}
-                />
+                <Markdown text={body} basePath={skillDir} onOpen={openLink} />
               </div>
             )}
           </section>
         </div>
       </aside>
+      {modal}
     </>
   );
 }

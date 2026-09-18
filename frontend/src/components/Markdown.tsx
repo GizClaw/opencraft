@@ -3,6 +3,12 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import { Check, Copy } from 'lucide-react';
+import { ICON } from './ui/icon';
+
+// MarkdownLinkHandler is the shape every markdown surface hands its
+// anchors: the href plus the base path (directory of the document
+// being rendered) the handler resolves it against.
+export type MarkdownLinkHandler = (href: string, basePath?: string) => void;
 
 // Markdown renders assistant content with GFM. Code blocks get a copy
 // button, syntax highlighting via rehype-highlight, and tables are
@@ -18,7 +24,7 @@ export const Markdown = memo(function Markdown({
 }: {
   text: string;
   basePath?: string;
-  onOpen?: (href: string, basePath?: string) => void;
+  onOpen?: MarkdownLinkHandler;
 }) {
   return (
     <ReactMarkdown
@@ -75,7 +81,7 @@ function CodeBlock({
           className="codeblock-copy"
           aria-label="Copy code"
         >
-          {copied ? <Check size="0.7857rem" /> : <Copy size="0.7857rem" />}
+          {copied ? <Check size={ICON.xs} /> : <Copy size={ICON.xs} />}
         </button>
       )}
     </div>

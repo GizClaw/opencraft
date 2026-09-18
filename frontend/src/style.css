@@ -1,5 +1,18 @@
 @import 'tailwindcss';
 
+/* Design tokens.
+ *
+ * Ladders — pick the rung, never a raw rem literal:
+ *   Type   micro 10px · label 11px · (Tailwind xs/sm/base/lg for the
+ *          rest, read at the 14px design base the rem sizes assume)
+ *   Icons  see src/components/ui/icon.ts (xs 12 · sm 14 · md 16 ·
+ *          lg 20 · xl 24 · hero 32)
+ *   Radius tight 4 · control 7 · card 10.5 (+ rounded-full for pills)
+ *   Elevation raised (inline lifts) · popover (menus, floating cards) ·
+ *          modal (dialogs, drawers)
+ * The contracts test (src/components/ui/scale.test.ts) fails on raw
+ * `text-[..rem]` / `size="..rem"` values and on Tailwind's own radius
+ * and shadow utilities, so the ladders stay the only vocabulary. */
 @theme {
   --color-bg: #0f1218;
   --color-panel: #141923;
@@ -13,6 +26,29 @@
   --color-err: #f87171;
   --color-yolo: #ff6b3d;
   --color-subagent: #a78bfa;
+
+  /* 10 design px: chips, badges, metadata, timestamps. */
+  --text-micro: 0.7143rem;
+  /* 11 design px: field labels, captions, tab strips. */
+  --text-label: 0.7857rem;
+
+  /* 4 design px: badges, keycaps, tree rows. */
+  --radius-tight: 0.2857rem;
+  /* 7 design px: buttons, inputs, menu items, list rows. */
+  --radius-control: 0.5rem;
+  /* 10.5 design px: cards, panels, dialogs, popovers. */
+  --radius-card: 0.75rem;
+
+  /* Elevation ladder. The shadow colors are theme variables so the
+     light theme uses a softer, bluer shadow instead of black. */
+  --shadow-raised:
+    0 1px 2px var(--oc-shadow-key), 0 1px 3px -1px var(--oc-shadow-ambient);
+  --shadow-popover:
+    0 6px 16px -6px var(--oc-shadow-ambient),
+    0 2px 6px -2px var(--oc-shadow-key);
+  --shadow-modal:
+    0 18px 40px -18px var(--oc-shadow-ambient),
+    0 6px 14px -8px var(--oc-shadow-key);
 }
 
 /* Fonts follow Settings > Interface. The runtime variables are written by
@@ -25,6 +61,8 @@
 
 :root {
   color-scheme: dark;
+  --oc-shadow-key: rgb(0 0 0 / 0.5);
+  --oc-shadow-ambient: rgb(0 0 0 / 0.6);
   /* Appearance knobs, overwritten on documentElement by appearance.ts from
      the persisted desktop preferences. The defaults below match the
      built-in system preset. */
@@ -39,6 +77,8 @@
    overriding them on one class flips the whole palette. */
 .theme-light {
   color-scheme: light;
+  --oc-shadow-key: rgb(15 23 42 / 0.14);
+  --oc-shadow-ambient: rgb(15 23 42 / 0.2);
   --color-bg: #f5f7fa;
   --color-panel: #ffffff;
   --color-panel2: #edf1f6;

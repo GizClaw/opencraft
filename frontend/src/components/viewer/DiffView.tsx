@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { useStore } from '../../lib/store';
 import type { PatchFileDTO, PatchLineDTO } from '../../lib/types';
+import { ICON } from '../ui/icon';
 
 interface DiffHunk {
   oldStart: number;
@@ -109,9 +110,9 @@ function FileHeader({
           title={open ? 'Collapse' : 'Expand'}
         >
           {open ? (
-            <ChevronDown size="0.9286rem" />
+            <ChevronDown size={ICON.sm} />
           ) : (
-            <ChevronRight size="0.9286rem" />
+            <ChevronRight size={ICON.sm} />
           )}
         </button>
       )}
@@ -124,12 +125,8 @@ function FileHeader({
         {file.path}
       </button>
       <span className="flex-1" />
-      <span className="text-[0.7143rem] text-ok tabular-nums">
-        +{file.added}
-      </span>
-      <span className="text-[0.7143rem] text-err tabular-nums">
-        −{file.removed}
-      </span>
+      <span className="text-micro text-ok tabular-nums">+{file.added}</span>
+      <span className="text-micro text-err tabular-nums">−{file.removed}</span>
     </div>
   );
 }
@@ -154,7 +151,7 @@ function FileDiff({
       {(!collapsible || open) &&
         hunks.map((h, i) => (
           <div key={i}>
-            <div className="select-none bg-panel2/60 px-3 py-0.5 text-center font-mono text-[0.7143rem] text-accent">
+            <div className="select-none bg-panel2/60 px-3 py-0.5 text-center font-mono text-micro text-accent">
               {hunkHeader(h)}
             </div>
             {h.lines.map((line, j) => (
@@ -177,7 +174,7 @@ export function GitDiffView({
 }) {
   return (
     <div
-      className={`${maxHeight} overflow-y-auto rounded-lg border border-edge bg-panel/60`}
+      className={`${maxHeight} overflow-y-auto rounded-control border border-edge bg-panel/60`}
     >
       {files.map((f) => (
         <FileDiff key={f.path} file={f} collapsible={collapsible} />

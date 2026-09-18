@@ -2,7 +2,8 @@
 // from the Git rail's PR view: header, CI checks, description, commits,
 // inline review threads (with the code snippet each comment refers to)
 // and the conversation timeline. Everything is read-only; "Open in
-// GitHub" hands the thread to the system browser.
+// GitHub" hands the thread to the system browser. Document links inside
+// the markdown bodies open in a preview dialog on top of this page.
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
@@ -27,8 +28,10 @@ import type {
   PatchFileDTO,
   PatchLineDTO,
 } from '../lib/types';
-import { Markdown } from './Markdown';
+import { Markdown, type MarkdownLinkHandler } from './Markdown';
 import { AvatarBadge } from './viewer/AvatarBadge';
+import { useFilePreview } from './viewer/FilePreviewModal';
+import { ICON } from './ui/icon';
 
 export function PRDetailModal({
   pr,
@@ -38,6 +41,7 @@ export function PRDetailModal({
   onClose: () => void;
 }) {
   const { t } = useTranslation();
+  const { openLink, modal } = useFilePreview();
   const [detail, setDetail] = useState<GitHubPRDetail | null>(null);
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
@@ -81,14 +85,14 @@ export function PRDetailModal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="flex max-h-[92vh] w-[min(96vw,1080px)] flex-col overflow-hidden rounded-xl border border-edge bg-panel shadow-2xl">
+      <div className="flex max-h-[92vh] w-[min(96vw,1080px)] flex-col overflow-hidden rounded-card border border-edge bg-panel shadow-modal">
         <div className="flex h-12 shrink-0 items-center gap-2 border-b border-edge bg-panel2/40 px-3">
           <StateChip state={pr.state} />
-          <span className="shrink-0 font-mono text-[0.7143rem] text-dim">
+          <span className="shrink-0 font-mono text-micro text-dim">
             #{pr.number}
           </span>
           {pr.draft && (
-            <span className="shrink-0 rounded border border-dim/30 px-1 py-px text-[0.6429rem] text-dim">
+            <span className="shrink-0 rounded-tight border border-dim/30 px-1 py-px text-micro text-dim">
               {t('git.draft')}
             </span>
           )}
@@ -97,50 +101,57 @@ export function PRDetailModal({
           </span>
           <button
             onClick={() => void api.openExternal(openURL)}
-            className="flex shrink-0 items-center gap-1.5 rounded-lg px-2 py-1.5 text-[0.7143rem] text-accent hover:bg-accent/10"
+            className="flex shrink-0 items-center gap-1.5 rounded-control px-2 py-1.5 text-micro text-accent hover:bg-accent/10"
           >
-            <ExternalLink size="0.7857rem" />
+            <ExternalLink size={ICON.xs} />
             {t('git.openInGithub')}
           </button>
           <button
             onClick={onClose}
-            className="grid h-7 w-7 place-items-center rounded-lg text-dim hover:bg-panel2 hover:text-fg"
+            className="grid h-7 w-7 place-items-center rounded-control text-dim hover:bg-panel2 hover:text-fg"
             aria-label={t('chat.dismiss')}
           >
-            <X size="0.9286rem" />
+            <X size={ICON.sm} />
           </button>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto bg-panel/40">
           {!detail && !error ? (
             <div className="grid h-full place-items-center text-dim">
-              <Loader2 size="1.1429rem" className="animate-spin" />
+              <Loader2 size={ICON.md} className="animate-spin" />
             </div>
           ) : error ? (
             <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-              <AlertTriangle size="1.1429rem" className="text-err" />
+              <AlertTriangle size={ICON.md} className="text-err" />
               <div className="break-words text-xs text-err">{error}</div>
               <button
                 onClick={() => setAttempt((n) => n + 1)}
-                className="rounded-lg border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel2"
+                className="rounded-control border border-edge px-3 py-1.5 text-xs text-fg hover:bg-panel2"
               >
                 {t('git.retry')}
               </button>
             </div>
           ) : detail ? (
-            <DetailBody detail={detail} />
+            <DetailBody detail={detail} onOpen={openLink} />
           ) : null}
         </div>
       </div>
+      {modal}
     </div>
   );
 }
 
-function DetailBody({ detail }: { detail: GitHubPRDetail }) {
+function DetailBody({
+  detail,
+  onOpen,
+}: {
+  detail: GitHubPRDetail;
+  onOpen: MarkdownLinkHandler;
+}) {
   const { t } = useTranslation();
   return (
     <div className="pb-4">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-edge px-4 py-2 text-[0.7143rem] text-dim">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-edge px-4 py-2 text-micro text-dim">
         <span className="flex items-center gap-1.5">
           <AvatarBadge login={detail.author.login} />
           {detail.author.login}
@@ -173,7 +184,7 @@ function DetailBody({ detail }: { detail: GitHubPRDetail }) {
       <div className="border-b border-edge px-4 py-3">
         {detail.body ? (
           <div className="prose-chat text-sm">
-            <Markdown text={detail.body} />
+            <Markdown text={detail.body} onOpen={onOpen} />
           </div>
         ) : (
           <span className="text-xs text-dim">{t('git.prNoBody')}</span>
@@ -186,11 +197,12 @@ function DetailBody({ detail }: { detail: GitHubPRDetail }) {
             label={t('git.reviewThreads')}
             count={detail.threads.length}
           />
-          <div className="mt-2 overflow-hidden rounded-lg border border-edge">
+          <div className="mt-2 overflow-hidden rounded-control border border-edge">
             {detail.threads.map((thread) => (
               <ReviewThreadBlock
                 key={`${thread.path}:${thread.comments[0]?.id ?? thread.line}`}
                 thread={thread}
+                onOpen={onOpen}
               />
             ))}
           </div>
@@ -212,14 +224,14 @@ function DetailBody({ detail }: { detail: GitHubPRDetail }) {
                 className="flex items-start gap-2 border-b border-edge/60 py-1.5 last:border-b-0"
               >
                 <GitCommitHorizontal
-                  size="0.8571rem"
+                  size={ICON.xs}
                   className="mt-0.5 shrink-0 text-accent"
                 />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-xs text-fg">
                     {c.message.split('\n')[0]}
                   </span>
-                  <span className="text-[0.7143rem] text-dim">
+                  <span className="text-micro text-dim">
                     <span className="font-mono">{c.short_sha}</span> ·{' '}
                     {c.author} · {dateLabel(c.date)}
                   </span>
@@ -240,16 +252,14 @@ function DetailBody({ detail }: { detail: GitHubPRDetail }) {
         ) : (
           <div className="mt-2">
             {detail.conversation.map((item) => (
-              <TimelineEntry key={item.id} item={item} />
+              <TimelineEntry key={item.id} item={item} onOpen={onOpen} />
             ))}
           </div>
         )}
       </div>
 
       {detail.truncated && (
-        <p className="px-4 pt-1 text-[0.7143rem] text-dim">
-          {t('git.prTruncated')}
-        </p>
+        <p className="px-4 pt-1 text-micro text-dim">{t('git.prTruncated')}</p>
       )}
     </div>
   );
@@ -284,7 +294,7 @@ function StateChip({ state }: { state: GitHubPRDetail['state'] }) {
   const m = meta[state];
   return (
     <span
-      className={`shrink-0 rounded border px-1.5 py-px text-[0.6429rem] font-semibold ${m.cls}`}
+      className={`shrink-0 rounded-tight border px-1.5 py-px text-micro font-semibold ${m.cls}`}
     >
       {m.label}
     </span>
@@ -342,12 +352,12 @@ function CheckChip({ check }: { check: GitHubCheck }) {
       type="button"
       title={title}
       onClick={() => check.url && void api.openExternal(check.url)}
-      className={`flex items-center gap-1.5 rounded border bg-panel2/40 px-1.5 py-0.5 text-[0.7143rem] ${cls} ${
+      className={`flex items-center gap-1.5 rounded-tight border bg-panel2/40 px-1.5 py-0.5 text-micro ${cls} ${
         check.url ? 'hover:bg-panel2' : 'cursor-default'
       }`}
     >
       <Icon
-        size="0.7857rem"
+        size={ICON.xs}
         className={check.state === 'pending' ? 'animate-spin' : ''}
       />
       <span className="max-w-56 truncate">{check.name}</span>
@@ -357,18 +367,24 @@ function CheckChip({ check }: { check: GitHubCheck }) {
 
 // ---- inline review threads ----
 
-function ReviewThreadBlock({ thread }: { thread: GitHubReviewThread }) {
+function ReviewThreadBlock({
+  thread,
+  onOpen,
+}: {
+  thread: GitHubReviewThread;
+  onOpen: MarkdownLinkHandler;
+}) {
   const { t } = useTranslation();
   const anchor = anchorLabel(thread);
   const first = thread.comments[0];
   return (
     <div className="border-b border-edge last:border-b-0">
       <div className="flex items-center gap-2 bg-panel2/40 px-2.5 py-1.5">
-        <span className="min-w-0 truncate font-mono text-[0.7143rem] text-fg">
+        <span className="min-w-0 truncate font-mono text-micro text-fg">
           {thread.path}:{anchor}
         </span>
         {thread.side === 'LEFT' && (
-          <span className="shrink-0 rounded bg-dim/10 px-1 text-[0.6429rem] text-dim">
+          <span className="shrink-0 rounded-tight bg-dim/10 px-1 text-micro text-dim">
             {t('git.sideOld')}
           </span>
         )}
@@ -380,14 +396,19 @@ function ReviewThreadBlock({ thread }: { thread: GitHubReviewThread }) {
             title={t('git.openInGithub')}
             aria-label={t('git.openInGithub')}
           >
-            <ExternalLink size="0.7857rem" />
+            <ExternalLink size={ICON.xs} />
           </button>
         )}
       </div>
       <div className="px-2.5 pb-2">
         <ReviewSnippet thread={thread} />
         {thread.comments.map((c, i) => (
-          <CommentBlock key={c.id} comment={c} indented={i > 0} />
+          <CommentBlock
+            key={c.id}
+            comment={c}
+            indented={i > 0}
+            onOpen={onOpen}
+          />
         ))}
       </div>
     </div>
@@ -443,7 +464,7 @@ function ReviewSnippet({ thread }: { thread: GitHubReviewThread }) {
   const files = parseThreadFiles(thread);
   if (!files || files.length === 0) {
     return (
-      <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-panel2/40 px-2.5 py-2 font-mono text-[0.7143rem] text-dim">
+      <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded-card bg-panel2/40 px-2.5 py-2 font-mono text-micro text-dim">
         {thread.diff_hunk}
       </pre>
     );
@@ -451,7 +472,7 @@ function ReviewSnippet({ thread }: { thread: GitHubReviewThread }) {
   const isLeft = (thread.side ?? 'RIGHT') === 'LEFT';
   const range = anchorRange(thread);
   return (
-    <div className="mt-2 max-h-72 overflow-auto rounded-lg border border-edge bg-panel/60">
+    <div className="mt-2 max-h-72 overflow-auto rounded-control border border-edge bg-panel/60">
       {files
         .flatMap((file) => file.lines)
         .map((line, i) => (
@@ -481,7 +502,7 @@ function SnippetRow({
     line.kind === 'add' ? 'bg-ok/5' : line.kind === 'delete' ? 'bg-err/5' : '';
   return (
     <div
-      className={`grid grid-cols-[3rem_minmax(0,1fr)] font-mono text-[0.7143rem] leading-5 ${
+      className={`grid grid-cols-[3rem_minmax(0,1fr)] font-mono text-micro leading-5 ${
         anchor ? 'bg-warn/15' : kindBg
       }`}
     >
@@ -501,22 +522,24 @@ function SnippetRow({
 function CommentBlock({
   comment,
   indented,
+  onOpen,
 }: {
   comment: GitHubComment;
   indented?: boolean;
+  onOpen: MarkdownLinkHandler;
 }) {
   return (
     <div className={`mt-2 flex gap-2 ${indented ? 'ml-5' : ''}`}>
       <AvatarBadge login={comment.author.login} />
       <div className="min-w-0 flex-1">
-        <p className="text-[0.7143rem] text-dim">
+        <p className="text-micro text-dim">
           <span className="font-medium text-fg">{comment.author.login}</span>
           {' · '}
           {dateLabel(comment.created_at)}
         </p>
         {comment.body ? (
           <div className="prose-chat mt-1 text-xs [&_p]:my-1">
-            <Markdown text={comment.body} />
+            <Markdown text={comment.body} onOpen={onOpen} />
           </div>
         ) : null}
       </div>
@@ -524,7 +547,13 @@ function CommentBlock({
   );
 }
 
-function TimelineEntry({ item }: { item: GitHubTimelineItem }) {
+function TimelineEntry({
+  item,
+  onOpen,
+}: {
+  item: GitHubTimelineItem;
+  onOpen: MarkdownLinkHandler;
+}) {
   const { t } = useTranslation();
   const action =
     item.kind === 'review' ? reviewActionLabel(item, t) : t('git.commented');
@@ -538,7 +567,7 @@ function TimelineEntry({ item }: { item: GitHubTimelineItem }) {
     <div className="flex gap-2 border-b border-edge/60 py-2 last:border-b-0">
       <AvatarBadge login={item.author.login} size="md" />
       <div className="min-w-0 flex-1">
-        <p className="text-[0.7143rem] text-dim">
+        <p className="text-micro text-dim">
           <span className="font-medium text-fg">{item.author.login}</span>{' '}
           <span className={actionCls}>{action}</span>
           {' · '}
@@ -546,7 +575,7 @@ function TimelineEntry({ item }: { item: GitHubTimelineItem }) {
         </p>
         {item.body ? (
           <div className="prose-chat mt-1 text-xs [&_p]:my-1">
-            <Markdown text={item.body} />
+            <Markdown text={item.body} onOpen={onOpen} />
           </div>
         ) : null}
       </div>

@@ -18,6 +18,14 @@ const (
 	KindSelect  = protocol.KindSelect
 )
 
+type Severity = protocol.Severity
+
+const (
+	SeverityInfo   = protocol.SeverityInfo
+	SeverityNotice = protocol.SeverityNotice
+	SeverityDanger = protocol.SeverityDanger
+)
+
 type Option = protocol.Option
 type Spec = protocol.Spec
 type ReplyStatus = protocol.ReplyStatus
@@ -39,6 +47,7 @@ const (
 	MetaOptions    = protocol.MetaOptions
 	MetaMulti      = protocol.MetaMulti
 	MetaAllowOther = protocol.MetaAllowOther
+	MetaSeverity   = protocol.MetaSeverity
 	MetaChoice     = protocol.MetaChoice
 	MetaChoices    = protocol.MetaChoices
 	MetaOther      = protocol.MetaOther

@@ -27,6 +27,8 @@ import type {
   AutomationTask,
   SessionMeta,
 } from '../lib/types';
+import { ICON } from './ui/icon';
+import { Button } from './ui/Button';
 
 interface FormState {
   id: string;
@@ -186,15 +188,15 @@ function CapsuleSelect({
         onClick={() => setOpen((v) => !v)}
         className={
           buttonClassName ??
-          'flex w-full items-center justify-between gap-1.5 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm text-dim hover:text-fg'
+          'flex w-full items-center justify-between gap-1.5 rounded-control border border-edge bg-panel px-3 py-1.5 text-sm text-dim hover:text-fg'
         }
       >
         <span className="flex-1 min-w-0 truncate text-left">{label}</span>
-        <ChevronUp size="0.7857rem" />
+        <ChevronUp size={ICON.xs} />
       </button>
       {open && (
         <div
-          className={`absolute top-full left-0 z-40 mt-1.5 rounded-xl border border-edge bg-panel p-1.5 shadow-xl ${menuClassName}`}
+          className={`absolute top-full left-0 z-40 mt-1.5 rounded-card border border-edge bg-panel p-1.5 shadow-popover ${menuClassName}`}
         >
           {options.map((o) => (
             <button
@@ -204,7 +206,7 @@ function CapsuleSelect({
                 setOpen(false);
                 onChange(o.value);
               }}
-              className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs ${
+              className={`flex w-full items-center justify-between rounded-control px-2 py-1.5 text-left text-xs ${
                 value === o.value
                   ? 'bg-accent/10 text-accent'
                   : 'text-dim hover:bg-panel2 hover:text-fg'
@@ -213,7 +215,7 @@ function CapsuleSelect({
               <span className="truncate" title={o.label}>
                 {o.label}
               </span>
-              {value === o.value && <Check size="0.8571rem" />}
+              {value === o.value && <Check size={ICON.xs} />}
             </button>
           ))}
         </div>
@@ -239,7 +241,7 @@ function Field({
   );
 }
 
-// SectionCard is the settings-page card pattern: a rounded panel2 card
+// SectionCard is the settings-page card pattern: a rounded-tight panel2 card
 // with an icon + title header.
 function SectionCard({
   title,
@@ -251,7 +253,7 @@ function SectionCard({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-edge bg-panel2 p-4 space-y-3">
+    <div className="rounded-card border border-edge bg-panel2 p-4 space-y-3">
       <div className="flex items-center gap-2 text-sm font-medium">
         {icon && <span className="text-accent">{icon}</span>}
         {title}
@@ -504,7 +506,7 @@ export function AutomationsView() {
     const hours = Math.floor(mins / 60);
     if (hours < 24) return t('automations.inHours', { n: hours });
     const days = Math.floor(hours / 24);
-    return t('automations.inDays', { n: days });
+    return t('automations.inDays', { count: days });
   };
 
   const filters: {
@@ -522,37 +524,38 @@ export function AutomationsView() {
       <div className="flex items-start justify-between gap-3">
         <p className="text-xs text-dim">{t('automations.hint')}</p>
         <div className="relative">
-          <div className="flex items-center overflow-hidden rounded-lg bg-accent text-white">
-            <button
+          <div className="flex items-center overflow-hidden rounded-control">
+            <Button
+              variant="primary"
+              className="rounded-r-none"
               onClick={() => void openAICreate()}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm hover:opacity-90"
               title={t('automations.createByAssistant')}
             >
-              <Plus size="1.0000rem" />
+              <Plus size={ICON.sm} />
               {t('automations.new')}
-            </button>
+            </Button>
             <button
               onClick={() => setCreateMenuOpen((v) => !v)}
-              className="border-l border-white/25 px-1.5 py-1.5 hover:opacity-90"
+              className="h-full border-l border-white/25 bg-accent px-1.5 py-1.5 text-white hover:opacity-90"
               title={t('automations.createOptions')}
             >
-              <ChevronDown size="0.8571rem" />
+              <ChevronDown size={ICON.xs} />
             </button>
           </div>
           {createMenuOpen && (
             <div
               ref={createMenuRef}
-              className="absolute right-0 top-full z-40 mt-1.5 w-56 rounded-lg border border-edge bg-panel p-1 shadow-xl"
+              className="absolute right-0 top-full z-40 mt-1.5 w-56 rounded-control border border-edge bg-panel p-1 shadow-popover"
             >
               <button
                 onClick={() => void openAICreate()}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
+                className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
               >
-                <Sparkles size="0.8571rem" className="shrink-0 text-accent" />
+                <Sparkles size={ICON.xs} className="shrink-0 text-accent" />
                 <span className="flex-1 text-left">
                   {t('automations.createByAssistant')}
                 </span>
-                <Check size="0.8571rem" className="shrink-0 text-accent" />
+                <Check size={ICON.xs} className="shrink-0 text-accent" />
               </button>
               <div className="my-1 border-t border-edge" />
               <button
@@ -560,9 +563,9 @@ export function AutomationsView() {
                   setCreateMenuOpen(false);
                   openNew();
                 }}
-                className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
+                className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
               >
-                <Pencil size="0.8571rem" className="shrink-0" />
+                <Pencil size={ICON.xs} className="shrink-0" />
                 <span className="flex-1 text-left">
                   {t('automations.createManual')}
                 </span>
@@ -573,21 +576,21 @@ export function AutomationsView() {
       </div>
 
       {error && (
-        <div className="rounded-lg border border-err/40 bg-err/10 px-3 py-2 text-sm text-err">
+        <div className="rounded-control border border-err/40 bg-err/10 px-3 py-2 text-sm text-err">
           {error}
         </div>
       )}
 
       <div className="relative">
         <Search
-          size="0.8571rem"
+          size={ICON.xs}
           className="absolute left-2.5 top-1/2 -translate-y-1/2 text-dim"
         />
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder={t('automations.search')}
-          className="w-full rounded-lg border border-edge bg-panel pl-8 pr-3 py-1.5 text-sm outline-none focus:border-accent"
+          className="w-full rounded-control border border-edge bg-panel pl-8 pr-3 py-1.5 text-sm outline-none focus:border-accent"
         />
       </div>
 
@@ -596,7 +599,7 @@ export function AutomationsView() {
           <button
             key={f.value}
             onClick={() => setFilter(f.value)}
-            className={`rounded-lg px-3 py-1 text-xs border ${
+            className={`rounded-control px-3 py-1 text-xs border ${
               filter === f.value
                 ? 'border-accent/50 bg-accent/15 text-accent'
                 : 'border-edge bg-panel text-dim hover:text-fg'
@@ -608,7 +611,7 @@ export function AutomationsView() {
       </div>
 
       {filtered.length === 0 ? (
-        <div className="rounded-xl border border-edge bg-panel2 p-6 text-center text-sm text-dim">
+        <div className="rounded-card border border-edge bg-panel2 p-6 text-center text-sm text-dim">
           {t('automations.empty')}
         </div>
       ) : (
@@ -616,7 +619,7 @@ export function AutomationsView() {
           {filtered.map((task) => (
             <div
               key={task.id}
-              className="rounded-xl border border-edge bg-panel2 p-3 hover:border-accent/40 transition-colors space-y-1.5"
+              className="rounded-card border border-edge bg-panel2 p-3 hover:border-accent/40 transition-colors space-y-1.5"
             >
               <div className="flex items-start gap-2">
                 <button
@@ -628,13 +631,13 @@ export function AutomationsView() {
                       {task.name}
                     </span>
                     {!task.enabled && (
-                      <span className="rounded border border-edge px-1.5 py-0.5 text-[0.7143rem] text-dim">
+                      <span className="rounded-tight border border-edge px-1.5 py-0.5 text-micro text-dim">
                         {t('automations.paused')}
                       </span>
                     )}
                     {task.last_status && (
                       <span
-                        className={`rounded px-1.5 py-0.5 text-[0.7143rem] ${statusClass(
+                        className={`rounded-tight px-1.5 py-0.5 text-micro ${statusClass(
                           task.last_status,
                         )}`}
                       >
@@ -644,12 +647,22 @@ export function AutomationsView() {
                     <span className="flex-1" />
                   </div>
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-dim">
-                    <span>
-                      {t('automations.next')}: {fmtTime(task.next_run_at)}
-                    </span>
-                    {task.enabled && (
-                      <span className="text-accent">
-                        {timeUntil(task.next_run_at)}
+                    {/* An empty next_run_at used to print "Next: — —":
+                        the placeholder plus the countdown's own dash. */}
+                    {task.next_run_at ? (
+                      <>
+                        <span>
+                          {t('automations.next')}: {fmtTime(task.next_run_at)}
+                        </span>
+                        {task.enabled && (
+                          <span className="text-accent">
+                            {timeUntil(task.next_run_at)}
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      <span>
+                        {t('automations.next')}: {t('automations.noNextRun')}
                       </span>
                     )}
                   </div>
@@ -660,26 +673,26 @@ export function AutomationsView() {
                       setMenuFor(menuFor === task.id ? null : task.id)
                     }
                     title={t('automations.more')}
-                    className="rounded-lg p-1.5 text-dim hover:bg-panel hover:text-fg"
+                    className="rounded-control p-1.5 text-dim hover:bg-panel hover:text-fg"
                   >
-                    <MoreHorizontal size="1.0000rem" />
+                    <MoreHorizontal size={ICON.sm} />
                   </button>
                   {menuFor === task.id && (
                     <div
                       ref={menuRef}
-                      className="absolute right-0 top-full z-40 mt-1.5 w-44 rounded-lg border border-edge bg-panel p-1 shadow-xl"
+                      className="absolute right-0 top-full z-40 mt-1.5 w-44 rounded-control border border-edge bg-panel p-1 shadow-popover"
                     >
                       <button
                         onClick={() => {
                           setMenuFor(null);
                           void toggleEnabled(task);
                         }}
-                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
+                        className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
                       >
                         {task.enabled ? (
-                          <Pause size="0.8571rem" className="shrink-0" />
+                          <Pause size={ICON.xs} className="shrink-0" />
                         ) : (
-                          <Play size="0.8571rem" className="shrink-0" />
+                          <Play size={ICON.xs} className="shrink-0" />
                         )}
                         <span className="flex-1 text-left">
                           {task.enabled
@@ -697,15 +710,15 @@ export function AutomationsView() {
                           !task.enabled ||
                           runningFor(task.id)
                         }
-                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg disabled:opacity-40"
+                        className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg disabled:opacity-40"
                       >
                         {runningId === task.id || runningFor(task.id) ? (
                           <Loader2
-                            size="0.8571rem"
+                            size={ICON.xs}
                             className="shrink-0 animate-spin"
                           />
                         ) : (
-                          <Zap size="0.8571rem" className="shrink-0" />
+                          <Zap size={ICON.xs} className="shrink-0" />
                         )}
                         <span className="flex-1 text-left">
                           {t('automations.runNow')}
@@ -717,9 +730,9 @@ export function AutomationsView() {
                           setMenuFor(null);
                           setConfirmDelete(task.id);
                         }}
-                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-dim hover:bg-err/10 hover:text-err"
+                        className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-err/10 hover:text-err"
                       >
-                        <Trash2 size="0.8571rem" className="shrink-0" />
+                        <Trash2 size={ICON.xs} className="shrink-0" />
                         <span className="flex-1 text-left">
                           {t('automations.delete')}
                         </span>
@@ -729,19 +742,19 @@ export function AutomationsView() {
                 </div>
               </div>
               {confirmDelete === task.id && (
-                <div className="flex items-center gap-2 rounded-lg border border-err/40 bg-err/10 px-2 py-1.5 text-xs text-dim">
+                <div className="flex items-center gap-2 rounded-control border border-err/40 bg-err/10 px-2 py-1.5 text-xs text-dim">
                   <span className="flex-1 min-w-0 truncate">
                     {t('automations.deleteConfirm', { name: task.name })}
                   </span>
                   <button
                     onClick={() => void remove(task.id)}
-                    className="rounded bg-err px-2 py-1 text-white"
+                    className="rounded-tight bg-err px-2 py-1 text-white"
                   >
                     {t('automations.delete')}
                   </button>
                   <button
                     onClick={() => setConfirmDelete(null)}
-                    className="rounded border border-edge px-2 py-1"
+                    className="rounded-tight border border-edge px-2 py-1"
                   >
                     {t('interact.cancel')}
                   </button>
@@ -758,7 +771,7 @@ export function AutomationsView() {
             className="fixed inset-0 z-40 bg-black/30"
             onClick={() => setForm(null)}
           />
-          <aside className="fixed inset-y-0 right-0 z-50 flex w-[26rem] max-w-[92vw] flex-col border-l border-edge bg-panel shadow-2xl">
+          <aside className="fixed inset-y-0 right-0 z-50 flex w-[26rem] max-w-[92vw] flex-col border-l border-edge bg-panel shadow-modal">
             <div className="flex shrink-0 items-center justify-between border-b border-edge px-4 py-3">
               <h3 className="text-sm font-semibold">
                 {form.id ? t('automations.edit') : t('automations.new')}
@@ -768,7 +781,7 @@ export function AutomationsView() {
                 className="text-dim hover:text-fg"
                 title={t('tools.close')}
               >
-                <X size="1.1428rem" />
+                <X size={ICON.md} />
               </button>
             </div>
 
@@ -778,7 +791,7 @@ export function AutomationsView() {
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                   placeholder={t('automations.namePlaceholder')}
-                  className="w-full rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
+                  className="w-full rounded-control border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
                 />
               </Field>
 
@@ -788,13 +801,13 @@ export function AutomationsView() {
                   onChange={(e) => setForm({ ...form, prompt: e.target.value })}
                   placeholder={t('automations.promptPlaceholder')}
                   rows={4}
-                  className="w-full rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent resize-y"
+                  className="w-full rounded-control border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent resize-y"
                 />
               </Field>
 
               <SectionCard
                 title={t('automations.details')}
-                icon={<Settings2 size="1.0714rem" />}
+                icon={<Settings2 size={ICON.md} />}
               >
                 <Field label={t('automations.workspace')}>
                   <CapsuleSelect
@@ -802,7 +815,7 @@ export function AutomationsView() {
                     options={workspaceOptions(form.workspace)}
                     onChange={(v) => setForm({ ...form, workspace: v })}
                     menuClassName="w-80"
-                    buttonClassName="flex w-full items-center justify-between gap-1.5 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm text-dim hover:text-fg"
+                    buttonClassName="flex w-full items-center justify-between gap-1.5 rounded-control border border-edge bg-panel px-3 py-1.5 text-sm text-dim hover:text-fg"
                   />
                 </Field>
                 <Field label={t('automations.sessionMode')}>
@@ -833,7 +846,7 @@ export function AutomationsView() {
                       }))}
                       onChange={(v) => setForm({ ...form, sessionID: v })}
                       menuClassName="w-72"
-                      buttonClassName="flex w-full items-center justify-between gap-1.5 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm text-dim hover:text-fg"
+                      buttonClassName="flex w-full items-center justify-between gap-1.5 rounded-control border border-edge bg-panel px-3 py-1.5 text-sm text-dim hover:text-fg"
                     />
                     {sessionOptions.length === 0 && (
                       <p className="text-xs text-dim">
@@ -888,19 +901,19 @@ export function AutomationsView() {
                           type="button"
                           onClick={() => setModelMenuOpen((v) => !v)}
                           title={t('chat.modelLabel')}
-                          className="flex w-full items-center gap-1.5 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm text-dim hover:text-fg"
+                          className="flex w-full items-center gap-1.5 rounded-control border border-edge bg-panel px-3 py-1.5 text-sm text-dim hover:text-fg"
                         >
-                          <Sparkles size="0.8571rem" className="text-accent" />
+                          <Sparkles size={ICON.xs} className="text-accent" />
                           <span className="flex-1 truncate text-left">
                             {modelLabel}
                           </span>
                           <span className="text-edge">·</span>
                           <span>{thinkLabel}</span>
-                          <ChevronUp size="0.7857rem" />
+                          <ChevronUp size={ICON.xs} />
                         </button>
                         {modelMenuOpen && (
-                          <div className="absolute top-full left-0 z-40 mt-1.5 w-full rounded-xl border border-edge bg-panel p-1.5 shadow-xl">
-                            <div className="px-2 pb-1 pt-1.5 text-[0.7143rem] uppercase tracking-wider text-dim">
+                          <div className="absolute top-full left-0 z-40 mt-1.5 w-full rounded-card border border-edge bg-panel p-1.5 shadow-popover">
+                            <div className="px-2 pb-1 pt-1.5 text-micro uppercase tracking-wider text-dim">
                               {t('chat.modelLabel')}
                             </div>
                             <div className="max-h-52 overflow-y-auto">
@@ -910,14 +923,14 @@ export function AutomationsView() {
                                   setModelMenuOpen(false);
                                   setForm({ ...form, model: '' });
                                 }}
-                                className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs ${
+                                className={`flex w-full items-center justify-between rounded-control px-2 py-1.5 text-left text-xs ${
                                   !form.model
                                     ? 'bg-accent/10 text-accent'
                                     : 'text-dim hover:bg-panel2 hover:text-fg'
                                 }`}
                               >
                                 <span>{t('chat.modelAuto')}</span>
-                                {!form.model && <Check size="0.8571rem" />}
+                                {!form.model && <Check size={ICON.xs} />}
                               </button>
                               {modelOptions.map((m) => (
                                 <button
@@ -927,7 +940,7 @@ export function AutomationsView() {
                                     setModelMenuOpen(false);
                                     setForm({ ...form, model: m.id });
                                   }}
-                                  className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs ${
+                                  className={`flex w-full items-center justify-between rounded-control px-2 py-1.5 text-left text-xs ${
                                     form.model === m.id
                                       ? 'bg-accent/10 text-accent'
                                       : 'text-dim hover:bg-panel2 hover:text-fg'
@@ -935,7 +948,7 @@ export function AutomationsView() {
                                 >
                                   <span className="truncate">{m.label}</span>
                                   {form.model === m.id && (
-                                    <Check size="0.8571rem" />
+                                    <Check size={ICON.xs} />
                                   )}
                                 </button>
                               ))}
@@ -964,7 +977,7 @@ export function AutomationsView() {
                                 className="w-full accent-accent"
                               />
                             </div>
-                            <div className="flex justify-between px-2 pb-1.5 text-[0.7143rem] text-dim">
+                            <div className="flex justify-between px-2 pb-1.5 text-micro text-dim">
                               {thinkLevels.map((l) => (
                                 <span key={l.value}>{l.label}</span>
                               ))}
@@ -984,7 +997,7 @@ export function AutomationsView() {
 
               <SectionCard
                 title={t('automations.timeCard')}
-                icon={<CalendarClock size="1.0714rem" />}
+                icon={<CalendarClock size={ICON.md} />}
               >
                 <Field label={t('automations.scheduleField')}>
                   <CapsuleSelect
@@ -1012,7 +1025,7 @@ export function AutomationsView() {
                               intervalHours: Number(e.target.value) || 1,
                             })
                           }
-                          className="w-full rounded-lg border border-edge bg-panel px-2 py-1.5 text-sm outline-none focus:border-accent"
+                          className="w-full rounded-control border border-edge bg-panel px-2 py-1.5 text-sm outline-none focus:border-accent"
                         />
                         <span className="text-sm text-dim">h</span>
                       </div>
@@ -1028,7 +1041,7 @@ export function AutomationsView() {
                         onChange={(e) =>
                           setForm({ ...form, time: e.target.value })
                         }
-                        className="w-full rounded-lg border border-edge bg-panel px-2 py-1.5 text-sm outline-none focus:border-accent"
+                        className="w-full rounded-control border border-edge bg-panel px-2 py-1.5 text-sm outline-none focus:border-accent"
                       />
                     </Field>
                   )}
@@ -1044,7 +1057,7 @@ export function AutomationsView() {
                             intervalWeeks: Number(e.target.value) || 1,
                           })
                         }
-                        className="w-full rounded-lg border border-edge bg-panel px-2 py-1.5 text-sm outline-none focus:border-accent"
+                        className="w-full rounded-control border border-edge bg-panel px-2 py-1.5 text-sm outline-none focus:border-accent"
                       />
                     </Field>
                   )}
@@ -1075,16 +1088,16 @@ export function AutomationsView() {
                 <button
                   onClick={() => void save()}
                   disabled={saving}
-                  className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-50"
+                  className="flex items-center gap-1.5 rounded-control bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-50"
                 >
                   {saving && (
-                    <Loader2 size="1.0000rem" className="animate-spin" />
+                    <Loader2 size={ICON.sm} className="animate-spin" />
                   )}
                   {t('automations.save')}
                 </button>
                 <button
                   onClick={() => setForm(null)}
-                  className="rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
+                  className="rounded-control border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
                 >
                   {t('interact.cancel')}
                 </button>
@@ -1096,7 +1109,7 @@ export function AutomationsView() {
                     <h4 className="text-sm font-semibold">
                       {t('automations.history')}
                     </h4>
-                    <History size="0.8571rem" className="text-dim" />
+                    <History size={ICON.xs} className="text-dim" />
                   </div>
                   {historyRuns.length === 0 ? (
                     <p className="text-xs text-dim">
@@ -1106,11 +1119,11 @@ export function AutomationsView() {
                     historyRuns.map((run) => (
                       <div
                         key={run.id}
-                        className="rounded-lg border border-edge bg-panel p-2 space-y-1"
+                        className="rounded-card border border-edge bg-panel p-2 space-y-1"
                       >
                         <div className="flex items-center gap-2 text-xs">
                           <span
-                            className={`rounded px-1.5 py-0.5 ${statusClass(
+                            className={`rounded-tight px-1.5 py-0.5 ${statusClass(
                               run.status,
                             )}`}
                           >
@@ -1119,13 +1132,13 @@ export function AutomationsView() {
                           <span className="text-dim">{fmtTime(run.at)}</span>
                         </div>
                         {run.duration_ms > 0 && (
-                          <p className="text-[0.7143rem] text-dim">
+                          <p className="text-micro text-dim">
                             {t('automations.duration')}:{' '}
                             {(run.duration_ms / 1000).toFixed(1)}s
                           </p>
                         )}
                         {run.error && (
-                          <p className="text-[0.7143rem] text-err min-w-0 truncate">
+                          <p className="text-micro text-err min-w-0 truncate">
                             {runErrorMessage(run.error, t)}
                           </p>
                         )}

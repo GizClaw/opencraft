@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Loader2, Search } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { ICON } from './ui/icon';
 
 export interface GitHubRepo {
   full_name: string;
@@ -142,17 +143,17 @@ export function GitHubSearch({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder={placeholder}
-          className="flex-1 min-w-0 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
+          className="flex-1 min-w-0 rounded-control border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
         />
         <button
           type="submit"
           disabled={searching || busy}
-          className="flex shrink-0 items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg disabled:opacity-40"
+          className="flex shrink-0 items-center gap-1.5 rounded-control border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg disabled:opacity-40"
         >
           {searching ? (
-            <Loader2 size="0.9286rem" className="animate-spin" />
+            <Loader2 size={ICON.sm} className="animate-spin" />
           ) : (
-            <Search size="0.9286rem" />
+            <Search size={ICON.sm} />
           )}
           {t('config.githubSearch')}
         </button>
@@ -164,21 +165,21 @@ export function GitHubSearch({
       {results.map((repo) => (
         <div
           key={repo.full_name}
-          className="flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-panel"
+          className="flex items-center gap-2 rounded-control px-2 py-1 hover:bg-panel"
         >
           <span className="text-sm min-w-0 truncate">{repo.full_name}</span>
           <span className="flex-1 text-xs text-dim min-w-0 truncate">
             {repo.description ?? ''}
           </span>
           {repo.stargazers_count > 0 && (
-            <span className="shrink-0 text-[0.7143rem] text-dim">
+            <span className="shrink-0 text-micro text-dim">
               ★ {repo.stargazers_count}
             </span>
           )}
           <button
             onClick={() => onPick(repo)}
             disabled={busy}
-            className="shrink-0 rounded-md border border-accent/40 px-2 py-0.5 text-xs text-accent hover:bg-accent/10 disabled:opacity-40"
+            className="shrink-0 rounded-control border border-accent/40 px-2 py-0.5 text-xs text-accent hover:bg-accent/10 disabled:opacity-40"
           >
             {actionLabel}
           </button>

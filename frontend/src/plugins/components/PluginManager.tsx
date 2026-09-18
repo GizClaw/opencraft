@@ -18,6 +18,7 @@ import { compareVersions } from '../version';
 import { PluginDetailDrawer } from './PluginDetailDrawer';
 import { PluginInstallDialog } from './PluginInstallDialog';
 import type { PluginSummary, PluginUpdateInfo } from '../types';
+import { ICON } from '../../components/ui/icon';
 
 // PluginManager is the "插件" settings tab: a searchable plugin list
 // with a "..." action menu. Clicking a plugin opens the detail drawer,
@@ -159,19 +160,19 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
         <div className="flex items-center gap-2">
           <button
             onClick={() => void load()}
-            className="flex items-center gap-1.5 rounded-lg border border-edge bg-panel2 px-2.5 py-1 text-xs text-dim hover:text-fg"
+            className="flex items-center gap-1.5 rounded-control border border-edge bg-panel2 px-2.5 py-1 text-xs text-dim hover:text-fg"
           >
             <RefreshCw
-              size="0.8571rem"
+              size={ICON.xs}
               className={loading ? 'animate-spin' : ''}
             />
             {t('config.pluginsRefresh')}
           </button>
           <button
             onClick={() => setInstallOpen(true)}
-            className="flex items-center gap-1.5 rounded-lg bg-accent px-2.5 py-1 text-xs text-white hover:opacity-90"
+            className="flex items-center gap-1.5 rounded-control bg-accent px-2.5 py-1 text-xs text-white hover:opacity-90"
           >
-            <Download size="0.8571rem" />
+            <Download size={ICON.xs} />
             {t('config.pluginsInstall')}
           </button>
         </div>
@@ -181,19 +182,19 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
 
       <div className="relative">
         <Search
-          size="0.8571rem"
+          size={ICON.xs}
           className="absolute left-2.5 top-1/2 -translate-y-1/2 text-dim"
         />
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder={t('config.pluginsSearch')}
-          className="w-full rounded-lg border border-edge bg-panel pl-8 pr-3 py-1.5 text-sm outline-none focus:border-accent"
+          className="w-full rounded-control border border-edge bg-panel pl-8 pr-3 py-1.5 text-sm outline-none focus:border-accent"
         />
       </div>
 
       {filtered.length === 0 ? (
-        <div className="rounded-xl border border-edge bg-panel2 p-6 text-center text-sm text-dim">
+        <div className="rounded-card border border-edge bg-panel2 p-6 text-center text-sm text-dim">
           {plugins.length === 0
             ? t('config.pluginsEmpty')
             : t('config.pluginsSearchEmpty')}
@@ -203,14 +204,14 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
           {filtered.map((p) => (
             <li
               key={p.id}
-              className="rounded-xl border border-edge bg-panel2 p-3"
+              className="rounded-card border border-edge bg-panel2 p-3"
             >
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => setSelectedId(p.id)}
                   className="flex min-w-0 flex-1 items-center gap-2 text-left"
                 >
-                  <Puzzle size="1.0000rem" className="shrink-0 text-dim" />
+                  <Puzzle size={ICON.sm} className="shrink-0 text-dim" />
                   <span className="min-w-0 flex-1">
                     <span className="flex flex-wrap items-center gap-1.5">
                       <span className="min-w-0 truncate text-sm font-semibold">
@@ -220,40 +221,40 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
                         v{p.version}
                       </span>
                       {!p.enabled && (
-                        <span className="shrink-0 rounded border border-edge px-1.5 py-0.5 text-[0.7143rem] text-dim">
+                        <span className="shrink-0 rounded-tight border border-edge px-1.5 py-0.5 text-micro text-dim">
                           {t('config.pluginsDisabled')}
                         </span>
                       )}
                       {p.builtin && (
                         <span
-                          className="shrink-0 rounded bg-panel px-1.5 py-0.5 text-[0.7143rem] text-dim"
+                          className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 text-micro text-dim"
                           title={t('config.pluginsBuiltinHint')}
                         >
                           {t('config.pluginsBuiltin')}
                         </span>
                       )}
                       {p.shadowsBuiltin && (
-                        <span className="shrink-0 rounded bg-warn/10 px-1.5 py-0.5 text-[0.7143rem] text-warn">
+                        <span className="shrink-0 rounded-tight bg-warn/10 px-1.5 py-0.5 text-micro text-warn">
                           {t('config.pluginsShadow')}
                         </span>
                       )}
                       {p.hasSkills && (
-                        <span className="shrink-0 rounded bg-panel px-1.5 py-0.5 text-[0.7143rem] text-dim">
+                        <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 text-micro text-dim">
                           {t('config.pluginsCapabilitySkills')}
                         </span>
                       )}
                       {p.hasMcp && (
-                        <span className="shrink-0 rounded bg-panel px-1.5 py-0.5 text-[0.7143rem] text-dim">
+                        <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 text-micro text-dim">
                           {t('config.pluginsCapabilityMcp')}
                         </span>
                       )}
                       {p.hasHooks && (
-                        <span className="shrink-0 rounded bg-panel px-1.5 py-0.5 text-[0.7143rem] text-dim">
+                        <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 text-micro text-dim">
                           {t('config.pluginsCapabilityHooks')}
                         </span>
                       )}
                       {p.hasTools && (
-                        <span className="shrink-0 rounded bg-panel px-1.5 py-0.5 text-[0.7143rem] text-dim">
+                        <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 text-micro text-dim">
                           {t('config.pluginsCapabilityTools')}
                         </span>
                       )}
@@ -269,23 +270,23 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
                     onClick={() => setMenuFor(menuFor === p.id ? null : p.id)}
                     aria-label={t('config.pluginsMore')}
                     title={t('config.pluginsMore')}
-                    className="rounded-lg p-1.5 text-dim hover:bg-panel hover:text-fg"
+                    className="rounded-control p-1.5 text-dim hover:bg-panel hover:text-fg"
                   >
-                    <MoreHorizontal size="1.0000rem" />
+                    <MoreHorizontal size={ICON.sm} />
                   </button>
                   {menuFor === p.id && (
                     <div
                       ref={menuRef}
-                      className="absolute right-0 top-full z-40 mt-1.5 w-48 rounded-lg border border-edge bg-panel p-1 shadow-xl"
+                      className="absolute right-0 top-full z-40 mt-1.5 w-48 rounded-control border border-edge bg-panel p-1 shadow-popover"
                     >
                       <button
                         onClick={() => void toggleEnabled(p)}
-                        className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
+                        className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
                       >
                         {p.enabled ? (
-                          <Pause size="0.8571rem" className="shrink-0" />
+                          <Pause size={ICON.xs} className="shrink-0" />
                         ) : (
-                          <Play size="0.8571rem" className="shrink-0" />
+                          <Play size={ICON.xs} className="shrink-0" />
                         )}
                         <span className="flex-1 text-left">
                           {p.enabled
@@ -299,9 +300,9 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
                             setMenuFor(null);
                             setUpdateId(p.id);
                           }}
-                          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
+                          className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
                         >
-                          <Pencil size="0.8571rem" className="shrink-0" />
+                          <Pencil size={ICON.xs} className="shrink-0" />
                           <span className="flex-1 text-left">
                             {t('config.pluginsUpdate')}
                           </span>
@@ -311,15 +312,15 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
                         <button
                           onClick={() => void checkUpdate(p.id)}
                           disabled={checkingUpdateId === p.id}
-                          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg disabled:opacity-40"
+                          className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg disabled:opacity-40"
                         >
                           {checkingUpdateId === p.id ? (
                             <Loader2
-                              size="0.8571rem"
+                              size={ICON.xs}
                               className="shrink-0 animate-spin"
                             />
                           ) : (
-                            <RefreshCw size="0.8571rem" className="shrink-0" />
+                            <RefreshCw size={ICON.xs} className="shrink-0" />
                           )}
                           <span className="flex-1 text-left">
                             {checkingUpdateId === p.id
@@ -338,10 +339,10 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
                               setConfirmRollbackId(p.id);
                             }
                           }}
-                          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
+                          className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
                         >
                           <RefreshCw
-                            size="0.8571rem"
+                            size={ICON.xs}
                             className="shrink-0 -scale-x-100"
                           />
                           <span className="flex-1 text-left">
@@ -358,9 +359,9 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
                             setMenuFor(null);
                             setConfirmUninstallId(p.id);
                           }}
-                          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-dim hover:bg-err/10 hover:text-err"
+                          className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-err/10 hover:text-err"
                         >
-                          <Trash2 size="0.8571rem" className="shrink-0" />
+                          <Trash2 size={ICON.xs} className="shrink-0" />
                           <span className="flex-1 text-left">
                             {t('config.pluginsUninstall')}
                           </span>
@@ -374,7 +375,7 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
               {p.shadowsBuiltin &&
                 p.builtinVersion &&
                 compareVersions(p.version, p.builtinVersion) < 0 && (
-                  <p className="mt-1.5 text-[0.7857rem] text-warn">
+                  <p className="mt-1.5 text-label text-warn">
                     {t('config.pluginsShadowOlder', {
                       version: p.version,
                       builtinVersion: p.builtinVersion,
@@ -383,35 +384,35 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
                 )}
 
               {p.error && (
-                <p className="mt-1.5 text-[0.7857rem] text-err break-words">
+                <p className="mt-1.5 text-label text-err break-words">
                   {p.error}
                 </p>
               )}
               {errors[p.id] && (
-                <p className="mt-1.5 text-[0.7857rem] text-err break-words">
+                <p className="mt-1.5 text-label text-err break-words">
                   {t('config.pluginLoadError')}: {errors[p.id]}
                 </p>
               )}
               {actionErrors[p.id] && (
-                <p className="mt-1.5 text-[0.7857rem] text-err break-words">
+                <p className="mt-1.5 text-label text-err break-words">
                   {actionErrors[p.id]}
                 </p>
               )}
 
               {confirmUninstallId === p.id && (
-                <div className="mt-2 flex items-center gap-2 rounded-lg border border-err/40 bg-err/10 px-2 py-1.5 text-xs text-dim">
+                <div className="mt-2 flex items-center gap-2 rounded-control border border-err/40 bg-err/10 px-2 py-1.5 text-xs text-dim">
                   <span className="min-w-0 flex-1 truncate">
                     {t('config.pluginsUninstallConfirm')}
                   </span>
                   <button
                     onClick={() => void uninstall(p.id)}
-                    className="rounded bg-err px-2 py-1 text-white"
+                    className="rounded-tight bg-err px-2 py-1 text-white"
                   >
                     {t('config.pluginsUninstall')}
                   </button>
                   <button
                     onClick={() => setConfirmUninstallId(null)}
-                    className="rounded border border-edge px-2 py-1"
+                    className="rounded-tight border border-edge px-2 py-1"
                   >
                     {t('interact.cancel')}
                   </button>
@@ -420,7 +421,7 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
 
               {updateInfo[p.id] && (
                 <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <span className="text-[0.7857rem] text-warn">
+                  <span className="text-label text-warn">
                     {t('config.pluginsUpdateAvailable', {
                       version: updateInfo[p.id].version,
                     })}
@@ -428,14 +429,14 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
                   <button
                     onClick={() => void applyUpdate(p.id)}
                     disabled={applyingUpdateId === p.id}
-                    className="rounded-md bg-accent px-2 py-0.5 text-xs text-white hover:opacity-90 disabled:opacity-50"
+                    className="rounded-control bg-accent px-2 py-0.5 text-xs text-white hover:opacity-90 disabled:opacity-50"
                   >
                     {applyingUpdateId === p.id
                       ? t('config.pluginsApplyingUpdate')
                       : t('config.pluginsApplyUpdate')}
                   </button>
                   {updateInfo[p.id].changelog && (
-                    <p className="w-full text-[0.7857rem] text-dim break-words">
+                    <p className="w-full text-label text-dim break-words">
                       {updateInfo[p.id].changelog}
                     </p>
                   )}

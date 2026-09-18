@@ -17,6 +17,7 @@ import { useConversationState } from '../state/react';
 import { Events } from '@wailsio/runtime';
 import { FileViewer } from './FileViewer';
 import { GitPanel } from './GitPanel';
+import { ICON } from './ui/icon';
 
 export function WorkspacePanel({ sessionID }: { sessionID: string }) {
   const { t } = useTranslation();
@@ -101,13 +102,13 @@ export function WorkspacePanel({ sessionID }: { sessionID: string }) {
         <div className="flex h-9 shrink-0 items-center gap-1 border-b border-edge px-2">
           <Segment
             active={modeSafe === 'files'}
-            icon={<Files size="0.8571rem" />}
+            icon={<Files size={ICON.xs} />}
             label={t('git.files')}
             onClick={() => setPanelMode('files')}
           />
           <Segment
             active={modeSafe === 'git'}
-            icon={<GitBranch size="0.8571rem" />}
+            icon={<GitBranch size={ICON.xs} />}
             label={t('git.git')}
             onClick={() => setPanelMode('git')}
           />
@@ -138,7 +139,7 @@ function Segment({
   return (
     <button
       onClick={onClick}
-      className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs transition-colors ${
+      className={`flex items-center gap-1.5 rounded-control px-2.5 py-1 text-xs transition-colors ${
         active
           ? 'bg-accent/15 text-accent'
           : 'text-dim hover:bg-panel2 hover:text-fg'

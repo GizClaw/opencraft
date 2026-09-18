@@ -3,6 +3,7 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -89,6 +90,8 @@ import { ToolCard } from './ToolCard';
 import { StreamItemView } from './StreamItemView';
 import { latestPlan, planNeedsRefresh } from '../lib/plan';
 import { groupToolCalls, type ToolCallItem } from '../lib/stream';
+import { ICON } from './ui/icon';
+import { IconButton } from './ui/Button';
 
 const isCommandTool = (name: string) =>
   name === 'exec_command' || name === 'exec_session';
@@ -141,7 +144,7 @@ const ToolGroupView = memo(
       <div className="my-1.5">
         <button
           onClick={() => setOpen(!open)}
-          className={`flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+          className={`flex w-full items-center gap-2 rounded-control border px-3 py-2 text-left text-sm transition-colors ${
             failed
               ? 'border-err/40 bg-err/5'
               : running
@@ -151,18 +154,18 @@ const ToolGroupView = memo(
         >
           {running ? (
             <Loader2
-              size="1.0000rem"
+              size={ICON.sm}
               className="animate-spin shrink-0 text-accent"
             />
           ) : failed ? (
-            <X size="1.0000rem" className="shrink-0 text-err" />
+            <X size={ICON.sm} className="shrink-0 text-err" />
           ) : (
-            <Check size="1.0000rem" className="shrink-0 text-ok" />
+            <Check size={ICON.sm} className="shrink-0 text-ok" />
           )}
           {allCommands ? (
-            <Terminal size="1.0000rem" className="shrink-0 text-accent" />
+            <Terminal size={ICON.sm} className="shrink-0 text-accent" />
           ) : (
-            <Bot size="1.0000rem" className="shrink-0 text-accent" />
+            <Bot size={ICON.sm} className="shrink-0 text-accent" />
           )}
           <span className="min-w-0 flex-1 truncate text-sm text-fg">
             {label}
@@ -173,9 +176,9 @@ const ToolGroupView = memo(
             </span>
           )}
           {open ? (
-            <ChevronDown size="1.0000rem" className="shrink-0 text-dim" />
+            <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
           ) : (
-            <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
+            <ChevronRight size={ICON.sm} className="shrink-0 text-dim" />
           )}
         </button>
         {open && (
@@ -285,12 +288,12 @@ function TurnEndNotice({
   return (
     <div
       role={failure ? 'alert' : 'status'}
-      className={`flex items-start gap-3 rounded-xl border px-4 py-3 text-sm ${container}`}
+      className={`flex items-start gap-3 rounded-card border px-4 py-3 text-sm ${container}`}
     >
       <span
-        className={`mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg border ${iconBox}`}
+        className={`mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-control border ${iconBox}`}
       >
-        <Icon size="0.9286rem" />
+        <Icon size={ICON.sm} />
       </span>
       <div className="min-w-0 flex-1">
         <p className="font-medium text-fg">{title}</p>
@@ -300,17 +303,17 @@ function TurnEndNotice({
           </p>
         )}
         {showRawDetail && (
-          <p className="mt-1 whitespace-pre-wrap break-words font-mono text-[0.7143rem] leading-relaxed text-dim/70">
+          <p className="mt-1 whitespace-pre-wrap break-words font-mono text-micro leading-relaxed text-dim/70">
             {error}
           </p>
         )}
         {!userStop && requestID && (
-          <p className="mt-1 break-all font-mono text-[0.7143rem] leading-relaxed text-dim/70">
+          <p className="mt-1 break-all font-mono text-micro leading-relaxed text-dim/70">
             {t('chat.requestId')}: {requestID}
           </p>
         )}
         {!userStop && responseID && (
-          <p className="mt-1 break-all font-mono text-[0.7143rem] leading-relaxed text-dim/70">
+          <p className="mt-1 break-all font-mono text-micro leading-relaxed text-dim/70">
             {t('chat.responseId')}: {responseID}
           </p>
         )}
@@ -324,9 +327,9 @@ function TurnEndNotice({
             }}
             title={t('chat.dismiss')}
             aria-label={t('chat.dismiss')}
-            className="grid h-7 w-7 place-items-center rounded-lg text-dim hover:bg-panel2 hover:text-fg"
+            className="grid h-7 w-7 place-items-center rounded-control text-dim hover:bg-panel2 hover:text-fg"
           >
-            <X size="0.9286rem" />
+            <X size={ICON.sm} />
           </button>
         )}
       </div>
@@ -395,7 +398,7 @@ const MessageRow = memo(function MessageRow({
             </div>
           )}
           {msg.text && (
-            <div className="rounded-2xl rounded-br-sm border border-accent/30 bg-accent/15 px-4 py-2.5 text-sm">
+            <div className="rounded-card rounded-br-tight border border-accent/30 bg-accent/15 px-4 py-2.5 text-sm">
               <div className="prose-chat user-bubble-md text-sm">
                 <Markdown
                   text={msg.text}
@@ -424,15 +427,11 @@ const MessageRow = memo(function MessageRow({
                     }
                   })();
                 }}
-                className="flex items-center rounded border border-edge p-1 text-dim hover:text-fg"
+                className="flex items-center rounded-tight border border-edge p-1 text-dim hover:text-fg"
                 aria-label={copied ? t('chat.copied') : t('chat.copyMessage')}
                 tabIndex={-1}
               >
-                {copied ? (
-                  <Check size="0.7857rem" />
-                ) : (
-                  <Copy size="0.7857rem" />
-                )}
+                {copied ? <Check size={ICON.xs} /> : <Copy size={ICON.xs} />}
               </button>
             )}
           </div>
@@ -493,22 +492,22 @@ const MessageRow = memo(function MessageRow({
           {forkable && onFork && (
             <button
               onClick={onFork}
-              className="flex items-center rounded border border-edge p-1 text-dim hover:text-accent"
+              className="flex items-center rounded-tight border border-edge p-1 text-dim hover:text-accent"
               aria-label={t('chat.forkTurn')}
               title={t('chat.forkTurn')}
               tabIndex={-1}
             >
-              <GitFork size="0.7857rem" />
+              <GitFork size={ICON.xs} />
             </button>
           )}
           {copyable && (
             <button
               onClick={() => void copyFinal()}
-              className="flex items-center rounded border border-edge p-1 text-dim hover:text-fg"
+              className="flex items-center rounded-tight border border-edge p-1 text-dim hover:text-fg"
               aria-label={copied ? t('chat.copied') : t('chat.copyOutput')}
               tabIndex={-1}
             >
-              {copied ? <Check size="0.7857rem" /> : <Copy size="0.7857rem" />}
+              {copied ? <Check size={ICON.xs} /> : <Copy size={ICON.xs} />}
             </button>
           )}
           {startedAt && (
@@ -520,7 +519,7 @@ const MessageRow = memo(function MessageRow({
       )}
       {msg.items.length === 0 && busy && (
         <div className="flex items-center gap-2 py-1 text-sm text-dim">
-          <Loader2 size="1.0000rem" className="animate-spin" />
+          <Loader2 size={ICON.sm} className="animate-spin" />
           {t('chat.thinking')}
         </div>
       )}
@@ -588,20 +587,20 @@ function CompactCard({
       data-msg-index={msgIndex}
       data-turn-index={turnIndex >= 0 ? turnIndex : undefined}
       data-turn-start={turnStart ? 'true' : undefined}
-      className="overflow-hidden rounded-lg border border-edge bg-panel2 my-1.5"
+      className="overflow-hidden rounded-control border border-edge bg-panel2 my-1.5"
     >
       <button
         onClick={() => setOpen(!open)}
         className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-panel2/70"
       >
-        <Archive size="1.0000rem" className="shrink-0 text-dim" />
+        <Archive size={ICON.sm} className="shrink-0 text-dim" />
         <span>{t('tool.compacted')}</span>
         <span className="flex-1" />
         <span className="text-xs text-dim">{t('tool.done')}</span>
         {open ? (
-          <ChevronDown size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
         ) : (
-          <ChevronRight size="1.0000rem" className="shrink-0 text-dim" />
+          <ChevronRight size={ICON.sm} className="shrink-0 text-dim" />
         )}
       </button>
       {open && body && (
@@ -625,22 +624,22 @@ function formatSize(n: number) {
 function docIcon(path: string) {
   const ext = path.split('.').pop()?.toLowerCase() ?? '';
   if (['md', 'markdown', 'txt', 'rst', 'doc', 'docx', 'pdf'].includes(ext)) {
-    return <FileText size="0.9286rem" className="text-accent" />;
+    return <FileText size={ICON.sm} className="text-accent" />;
   }
   if (['ppt', 'pptx', 'key'].includes(ext)) {
-    return <Presentation size="0.9286rem" className="text-warn" />;
+    return <Presentation size={ICON.sm} className="text-warn" />;
   }
   if (['xls', 'xlsx', 'csv'].includes(ext)) {
-    return <FileSpreadsheet size="0.9286rem" className="text-ok" />;
+    return <FileSpreadsheet size={ICON.sm} className="text-ok" />;
   }
   if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'bmp'].includes(ext)) {
-    return <FileImage size="0.9286rem" className="text-accent" />;
+    return <FileImage size={ICON.sm} className="text-accent" />;
   }
   if (['mp4', 'mov', 'webm', 'mkv', 'avi'].includes(ext)) {
-    return <Film size="0.9286rem" className="text-warn" />;
+    return <Film size={ICON.sm} className="text-warn" />;
   }
   if (['zip', 'gz', 'tar', '7z', 'rar'].includes(ext)) {
-    return <FileArchive size="0.9286rem" className="text-dim" />;
+    return <FileArchive size={ICON.sm} className="text-dim" />;
   }
   if (
     [
@@ -664,9 +663,9 @@ function docIcon(path: string) {
       'sql',
     ].includes(ext)
   ) {
-    return <FileCode size="0.9286rem" className="text-dim" />;
+    return <FileCode size={ICON.sm} className="text-dim" />;
   }
-  return <File size="0.9286rem" className="text-dim" />;
+  return <File size={ICON.sm} className="text-dim" />;
 }
 
 // absoluteArtifactPath joins workspace-relative artifact paths with the
@@ -730,7 +729,7 @@ function TurnStatusLine({
   if (running) {
     return (
       <div className="flex items-center gap-1.5 py-0.5 text-xs text-dim">
-        <Loader2 size="0.8571rem" className="animate-spin text-accent" />
+        <Loader2 size={ICON.xs} className="animate-spin text-accent" />
         <span>{t('chat.working')}</span>
       </div>
     );
@@ -795,11 +794,11 @@ const ArtifactStrip = memo(function ArtifactStrip({
       ? t('chat.artifactRevealWindows')
       : t('chat.artifactRevealLinux');
   return (
-    <div className="rounded-xl border border-edge bg-panel2 p-3 my-3">
+    <div className="rounded-card border border-edge bg-panel2 p-3 my-3">
       <div className="mb-2 flex items-center gap-2 text-xs text-dim">
-        <Package size="0.9286rem" className="text-accent" />
+        <Package size={ICON.sm} className="text-accent" />
         <span className="font-medium text-fg">{t('chat.turnArtifacts')}</span>
-        <span className="rounded bg-panel px-1.5 py-0.5 tabular-nums">
+        <span className="rounded-tight bg-panel px-1.5 py-0.5 tabular-nums">
           {docs.length}
         </span>
       </div>
@@ -816,7 +815,7 @@ const ArtifactStrip = memo(function ArtifactStrip({
               onContextMenu={(e) => openMenu(e, doc)}
               title={t('chat.openArtifact', { path: doc.path })}
               aria-haspopup="menu"
-              className="flex max-w-56 shrink-0 snap-start items-center gap-1.5 rounded-lg border border-edge bg-panel px-2.5 py-1.5 text-xs text-fg transition-colors hover:border-accent/50 hover:bg-panel2"
+              className="flex max-w-56 shrink-0 snap-start items-center gap-1.5 rounded-control border border-edge bg-panel px-2.5 py-1.5 text-xs text-fg transition-colors hover:border-accent/50 hover:bg-panel2"
             >
               {docIcon(doc.path)}
               <span className="truncate">{name}</span>
@@ -836,13 +835,13 @@ const ArtifactStrip = memo(function ArtifactStrip({
           />
           <div
             role="menu"
-            className="fixed z-[60] min-w-52 rounded-lg border border-edge bg-panel p-1 shadow-xl"
+            className="fixed z-[60] min-w-52 rounded-control border border-edge bg-panel p-1 shadow-popover"
             style={{ left: menu.x, top: menu.y }}
             onContextMenu={(e) => e.preventDefault()}
           >
             <button
               role="menuitem"
-              className="flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
+              className="flex w-full items-center rounded-control px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
               onClick={() => {
                 void openFileTarget(menu.doc.path);
                 closeMenu();
@@ -852,7 +851,7 @@ const ArtifactStrip = memo(function ArtifactStrip({
             </button>
             <button
               role="menuitem"
-              className="flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
+              className="flex w-full items-center rounded-control px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
               onClick={() =>
                 void runMenuAction(() => api.openArtifactWith(menu.doc.path))
               }
@@ -862,7 +861,7 @@ const ArtifactStrip = memo(function ArtifactStrip({
             <div role="separator" className="my-1 border-t border-edge" />
             <button
               role="menuitem"
-              className="flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
+              className="flex w-full items-center rounded-control px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
               onClick={() =>
                 void runMenuAction(() => api.saveArtifactAs(menu.doc.path))
               }
@@ -871,7 +870,7 @@ const ArtifactStrip = memo(function ArtifactStrip({
             </button>
             <button
               role="menuitem"
-              className="flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
+              className="flex w-full items-center rounded-control px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
               onClick={() =>
                 void runMenuAction(async () => {
                   await navigator.clipboard.writeText(
@@ -884,7 +883,7 @@ const ArtifactStrip = memo(function ArtifactStrip({
             </button>
             <button
               role="menuitem"
-              className="flex w-full items-center rounded-md px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
+              className="flex w-full items-center rounded-control px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
               onClick={() =>
                 void runMenuAction(() => api.revealArtifact(menu.doc.path))
               }
@@ -942,9 +941,9 @@ function TurnSummaryHeader({
     >
       <span>{label}</span>
       {open ? (
-        <ChevronDown size="0.9286rem" className="shrink-0" />
+        <ChevronDown size={ICON.sm} className="shrink-0" />
       ) : (
-        <ChevronRight size="0.9286rem" className="shrink-0" />
+        <ChevronRight size={ICON.sm} className="shrink-0" />
       )}
     </button>
   );
@@ -1107,27 +1106,27 @@ function AttachmentImage({ att }: { att: AttachmentView }) {
       <button
         type="button"
         onClick={() => void openFileTarget(att.path)}
-        className="max-h-44 max-w-64 cursor-pointer rounded-lg border border-edge object-contain transition-colors hover:border-accent/60"
+        className="max-h-44 max-w-64 cursor-pointer rounded-control border border-edge object-contain transition-colors hover:border-accent/60"
         title={att.path}
       >
         <img
           src={url}
           alt={att.name}
-          className="max-h-44 max-w-64 rounded-lg object-contain"
+          className="max-h-44 max-w-64 rounded-control object-contain"
         />
       </button>
     );
   }
   if (url === 'missing') {
     return (
-      <div className="flex h-24 w-36 items-center justify-center rounded-lg border border-edge bg-panel2 px-2 text-center text-[0.7143rem] text-dim">
+      <div className="flex h-24 w-36 items-center justify-center rounded-control border border-edge bg-panel2 px-2 text-center text-micro text-dim">
         <span className="truncate">{att.name}</span>
       </div>
     );
   }
   return (
-    <div className="flex h-24 w-36 items-center justify-center rounded-lg border border-edge bg-panel2">
-      <Loader2 size="1.0000rem" className="animate-spin text-dim" />
+    <div className="flex h-24 w-36 items-center justify-center rounded-control border border-edge bg-panel2">
+      <Loader2 size={ICON.sm} className="animate-spin text-dim" />
     </div>
   );
 }
@@ -1187,7 +1186,7 @@ function AttachmentFileGlyph({
   if (badge) {
     return (
       <span
-        className={`grid h-6 min-w-9 shrink-0 place-items-center rounded-md border px-1 text-[0.55rem] font-bold ${badge.className}`}
+        className={`grid h-6 min-w-9 shrink-0 place-items-center rounded-control border px-1 text-micro font-bold ${badge.className}`}
       >
         {badge.label}
       </span>
@@ -1224,7 +1223,7 @@ function AttachmentFileGlyph({
           : codeExts.includes(ext)
             ? FileCode
             : File;
-  return <Icon size="1.1429rem" className="shrink-0 text-dim" />;
+  return <Icon size={ICON.md} className="shrink-0 text-dim" />;
 }
 
 // AttachmentFiles renders non-image attachments below the user bubble.
@@ -1313,12 +1312,12 @@ function AttachmentFiles({ attachments }: { attachments: AttachmentView[] }) {
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={toggle}
-        className="flex items-center gap-1.5 rounded-md border border-edge bg-panel2/70 px-2 py-1 text-xs text-dim hover:text-fg"
+        className="flex items-center gap-1.5 rounded-control border border-edge bg-panel2/70 px-2 py-1 text-xs text-dim hover:text-fg"
       >
-        <Paperclip size="0.8571rem" />
+        <Paperclip size={ICON.xs} />
         {t('chat.files', { count: attachments.length })}
         <ChevronDown
-          size="0.8571rem"
+          size={ICON.xs}
           className={`transition-transform ${open ? 'rotate-180' : ''}`}
         />
       </button>
@@ -1327,7 +1326,7 @@ function AttachmentFiles({ attachments }: { attachments: AttachmentView[] }) {
           <div
             ref={menuRef}
             role="menu"
-            className="fixed z-[70] w-72 rounded-xl border border-edge bg-panel p-1 shadow-xl"
+            className="fixed z-[70] w-72 rounded-card border border-edge bg-panel p-1 shadow-popover"
             style={pos ?? { visibility: 'hidden' }}
           >
             <div className="max-h-[6.75rem] overflow-y-auto">
@@ -1341,7 +1340,7 @@ function AttachmentFiles({ attachments }: { attachments: AttachmentView[] }) {
                     void openFileTarget(a.path);
                   }}
                   title={a.path}
-                  className="flex h-9 w-full items-center gap-2 rounded-md px-2 text-left text-xs hover:bg-panel2"
+                  className="flex h-9 w-full items-center gap-2 rounded-control px-2 text-left text-xs hover:bg-panel2"
                 >
                   <AttachmentFileGlyph name={a.name} kind={a.kind} />
                   <span className="min-w-0 flex-1 truncate">{a.name}</span>
@@ -1627,6 +1626,24 @@ export function ChatView() {
   const composerDraft = useStore((s) => s.composerDraft);
   const clearComposerDraft = useStore((s) => s.clearComposerDraft);
   const composerRef = useRef<MarkdownComposerHandle>(null);
+  const [composerBox, setComposerBox] = useState<HTMLDivElement | null>(null);
+  const [composerInset, setComposerInset] = useState(0);
+  // The composer is an overlay, so the transcript reserves the card's
+  // height (plus a gap) as bottom padding instead of stacking above it.
+  // The measurement follows what the card actually holds — attachments,
+  // staged banners, a multi-line draft — so the newest reply always
+  // clears the card instead of hiding behind it. The ref is state, not
+  // useRef: a session that opens (or a blocked history) renders a shell
+  // without a composer first, and a plain ref would stay empty for the
+  // life of the view.
+  useLayoutEffect(() => {
+    if (!composerBox) return;
+    const measure = () => setComposerInset(composerBox.offsetHeight);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(composerBox);
+    return () => observer.disconnect();
+  }, [composerBox]);
   useEffect(() => {
     if (!composerDraft) return;
     composerRef.current?.setMarkdown(composerDraft);
@@ -2029,7 +2046,7 @@ export function ChatView() {
       if (el && stickRef.current) el.scrollTop = el.scrollHeight;
     });
     return () => cancelAnimationFrame(frame);
-  }, [messages, pendingInteracts, stick]);
+  }, [messages, pendingInteracts, stick, composerInset]);
 
   useEffect(() => {
     const frame = requestAnimationFrame(refreshPeekCurrent);
@@ -2221,7 +2238,7 @@ export function ChatView() {
     return (
       <main className="relative flex-1 min-w-0 grid place-items-center">
         <div className="flex items-center gap-2 text-sm text-dim">
-          <Loader2 size="0.9286rem" className="animate-spin text-accent" />
+          <Loader2 size={ICON.sm} className="animate-spin text-accent" />
           {t('chat.opening')}
         </div>
       </main>
@@ -2231,9 +2248,9 @@ export function ChatView() {
   if (focus.name === 'failed') {
     return (
       <main className="relative flex-1 min-w-0 grid place-items-center">
-        <div className="max-w-md w-full space-y-3 rounded-xl border border-err/40 bg-err/10 px-5 py-4 text-sm">
+        <div className="max-w-md w-full space-y-3 rounded-card border border-err/40 bg-err/10 px-5 py-4 text-sm">
           <div className="flex items-center gap-2 font-medium text-fg">
-            <AlertTriangle size="0.9286rem" className="text-err" />
+            <AlertTriangle size={ICON.sm} className="text-err" />
             {t('chat.switchFailed')}
           </div>
           <p className="whitespace-pre-wrap break-all text-dim">
@@ -2243,17 +2260,17 @@ export function ChatView() {
             {focus.from.kind === 'session' && (
               <button
                 onClick={backFromFailure}
-                className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-dim hover:text-fg"
+                className="flex items-center gap-1.5 rounded-control border border-edge px-3 py-1.5 text-dim hover:text-fg"
               >
-                <ArrowLeft size="0.8571rem" />
+                <ArrowLeft size={ICON.xs} />
                 {t('chat.backToSession')}
               </button>
             )}
             <button
               onClick={retryFocusSwitch}
-              className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-dim hover:text-accent"
+              className="flex items-center gap-1.5 rounded-control border border-edge px-3 py-1.5 text-dim hover:text-accent"
             >
-              <RotateCcw size="0.8571rem" />
+              <RotateCcw size={ICON.xs} />
               {t('chat.retrySwitch')}
             </button>
           </div>
@@ -2279,7 +2296,7 @@ export function ChatView() {
         <div className="text-center space-y-3 px-6">
           {historyFailed ? (
             <>
-              <AlertTriangle size="1.25rem" className="mx-auto text-err" />
+              <AlertTriangle size={ICON.lg} className="mx-auto text-err" />
               <p className="text-sm text-dim">{t('chat.historyFailed')}</p>
               <p className="max-w-md text-xs text-dim">
                 {conversationState?.transcript.name === 'failed' &&
@@ -2288,15 +2305,15 @@ export function ChatView() {
               </p>
               <button
                 onClick={() => current && void retryTranscript(current)}
-                className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-accent"
+                className="flex items-center gap-1.5 rounded-control border border-edge px-3 py-1.5 text-sm text-dim hover:text-accent"
               >
-                <RotateCcw size="0.8571rem" />
+                <RotateCcw size={ICON.xs} />
                 {t('chat.retryHistory')}
               </button>
             </>
           ) : (
             <div className="flex items-center gap-2 text-sm text-dim">
-              <Loader2 size="0.9286rem" className="animate-spin text-accent" />
+              <Loader2 size={ICON.sm} className="animate-spin text-accent" />
               {t('chat.loadingHistory')}
             </div>
           )}
@@ -2314,7 +2331,7 @@ export function ChatView() {
         <span className="text-sm font-medium truncate">{headerTitle}</span>
         {busy && (
           <span className="flex items-center gap-1 text-xs text-accent">
-            <Loader2 size="0.8571rem" className="animate-spin" /> {stageLabel}
+            <Loader2 size={ICON.xs} className="animate-spin" /> {stageLabel}
           </span>
         )}
         <span className="flex-1" />
@@ -2323,12 +2340,12 @@ export function ChatView() {
           title={t('files.togglePanel')}
           aria-label={t('files.togglePanel')}
           aria-pressed={filesOpen}
-          className="grid h-7 w-7 place-items-center rounded-lg text-dim hover:bg-panel2 hover:text-fg"
+          className="grid h-7 w-7 place-items-center rounded-control text-dim hover:bg-panel2 hover:text-fg"
         >
           {filesOpen ? (
-            <PanelRightClose size="1.0000rem" />
+            <PanelRightClose size={ICON.sm} />
           ) : (
-            <PanelRightOpen size="1.0000rem" />
+            <PanelRightOpen size={ICON.sm} />
           )}
         </button>
       </header>
@@ -2381,15 +2398,18 @@ export function ChatView() {
             }}
             data-testid="chat-scroll"
             className="flex-1 overflow-y-auto [overflow-anchor:none] px-6 py-4"
+            style={
+              centerComposer ? undefined : { paddingBottom: composerInset + 12 }
+            }
           >
             {loadingEarlier && (
-              <div className="pointer-events-none fixed left-1/2 top-14 z-20 -translate-x-1/2 rounded-full border border-edge bg-panel p-2 shadow-xl">
-                <Loader2 size="1.0000rem" className="animate-spin text-dim" />
+              <div className="pointer-events-none fixed left-1/2 top-14 z-20 -translate-x-1/2 rounded-full border border-edge bg-panel p-2 shadow-popover">
+                <Loader2 size={ICON.sm} className="animate-spin text-dim" />
               </div>
             )}
             {historyWarning && (
-              <div className="mb-3 flex items-center gap-2 rounded-lg border border-edge bg-panel2/70 px-3 py-2 text-xs text-dim">
-                <AlertTriangle size="0.8571rem" className="text-accent" />
+              <div className="mb-3 flex items-center gap-2 rounded-card border border-edge bg-panel2/70 px-3 py-2 text-xs text-dim">
+                <AlertTriangle size={ICON.xs} className="text-accent" />
                 {t('chat.liveWithoutHistory')}
               </div>
             )}
@@ -2402,7 +2422,7 @@ export function ChatView() {
                     </div>
                     <button
                       onClick={() => openConfig()}
-                      className="rounded-lg border border-edge px-3 py-1.5 text-sm text-fg hover:border-accent/50 transition-colors"
+                      className="rounded-control border border-edge px-3 py-1.5 text-sm text-fg hover:border-accent/50 transition-colors"
                     >
                       {t('chat.openSettings')}
                     </button>
@@ -2549,13 +2569,29 @@ export function ChatView() {
               onClose={() => setPlanDismissed(true)}
             />
           )}
+          {/* The composer floats over the transcript rather than taking a
+              row below it, so the conversation keeps the whole column and
+              the card reads as lifted off it. The wrapper stays
+              click-through — only the card (and the workspace picker)
+              take pointer events, so the wheel and clicks still reach the
+              transcript in the margins around the card. */}
           <div
+            ref={setComposerBox}
             className={
               centerComposer
-                ? 'absolute inset-x-0 top-[calc(50%+1.375rem)] z-10 mx-auto w-full max-w-4xl -translate-y-1/2 px-6'
-                : 'shrink-0 px-6 pb-4'
+                ? 'pointer-events-none absolute inset-x-0 top-[calc(50%+1.375rem)] z-10 -translate-y-1/2 px-6'
+                : 'pointer-events-none absolute inset-x-0 bottom-0 z-10 px-6 pb-4'
             }
           >
+            {/* The transcript fades into the page background instead of
+                being cut off by the card's top edge. It is part of the
+                measured box, so the reserved space covers it too. */}
+            {!centerComposer && (
+              <div
+                aria-hidden="true"
+                className="h-6 bg-linear-to-t from-bg to-transparent"
+              />
+            )}
             {centerComposer && (
               <div className="pointer-events-none absolute inset-x-6 bottom-full mb-3 text-center">
                 <div className="text-lg font-semibold text-fg">
@@ -2563,7 +2599,10 @@ export function ChatView() {
                 </div>
               </div>
             )}
-            <div className="relative max-w-4xl mx-auto rounded-xl border border-edge bg-panel focus-within:border-accent/60 transition-colors">
+            <div
+              data-testid="composer"
+              className="pointer-events-auto relative mx-auto max-w-4xl rounded-card border border-edge bg-panel shadow-popover transition-colors focus-within:border-accent/60"
+            >
               {/* The pill floats above the composer while the reader is
                   away from the newest output; reaching the bottom or
                   clicking it pins the view again. */}
@@ -2574,13 +2613,13 @@ export function ChatView() {
                 tabIndex={showJumpLatest ? 0 : -1}
                 aria-label={t('chat.jumpToLatest')}
                 title={t('chat.jumpToLatest')}
-                className={`absolute bottom-full left-1/2 z-30 mb-3 grid h-9 w-9 -translate-x-1/2 place-items-center rounded-full border border-edge bg-panel/95 text-dim shadow-xl backdrop-blur transition-all duration-200 hover:border-accent/50 hover:text-fg ${
+                className={`absolute bottom-full left-1/2 z-30 mb-3 grid h-9 w-9 -translate-x-1/2 place-items-center rounded-full border border-edge bg-panel/95 text-dim shadow-popover backdrop-blur transition-all duration-200 hover:border-accent/50 hover:text-fg ${
                   showJumpLatest
                     ? 'translate-y-0 opacity-100'
                     : 'pointer-events-none translate-y-1 opacity-0'
                 }`}
               >
-                <ChevronDown size="1.0000rem" className="shrink-0" />
+                <ChevronDown size={ICON.sm} className="shrink-0" />
               </button>
               {attachments.length > 0 && (
                 <div className="flex flex-wrap gap-2 px-3 pt-2">
@@ -2590,10 +2629,10 @@ export function ChatView() {
                         <img
                           src={a.data_url}
                           alt={a.name}
-                          className="h-16 w-16 rounded-lg border border-edge object-cover"
+                          className="h-16 w-16 rounded-control border border-edge object-cover"
                         />
                       ) : (
-                        <div className="flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-lg border border-edge bg-panel2 p-1 text-[0.7143rem] text-dim">
+                        <div className="flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-control border border-edge bg-panel2 p-1 text-micro text-dim">
                           <AttachmentFileGlyph name={a.name} kind={a.kind} />
                           <span className="w-full truncate text-center">
                             {a.name}
@@ -2605,7 +2644,7 @@ export function ChatView() {
                         aria-label={t('chat.removeAttachment')}
                         className="absolute -right-1.5 -top-1.5 rounded-full bg-err p-0.5 text-white opacity-80 hover:opacity-100"
                       >
-                        <X size="0.7143rem" />
+                        <X size={ICON.xs} />
                       </button>
                     </div>
                   ))}
@@ -2616,7 +2655,7 @@ export function ChatView() {
                   data-testid="chat-staged-banner"
                   className="flex items-center gap-2 border-b border-edge px-3 py-1.5 text-xs text-dim"
                 >
-                  <Clock size="0.8571rem" className="shrink-0 text-accent" />
+                  <Clock size={ICON.xs} className="shrink-0 text-accent" />
                   <span className="min-w-0 truncate">{queueBannerText}</span>
                   <div className="ml-auto flex shrink-0 items-center gap-1">
                     {queued && (
@@ -2625,9 +2664,9 @@ export function ChatView() {
                         onClick={cancelQueued}
                         aria-label={t('chat.queuedCancel')}
                         title={t('chat.queuedCancel')}
-                        className="rounded-md px-1.5 py-0.5 text-dim hover:bg-panel2 hover:text-fg"
+                        className="rounded-control px-1.5 py-0.5 text-dim hover:bg-panel2 hover:text-fg"
                       >
-                        <X size="0.8571rem" />
+                        <X size={ICON.xs} />
                       </button>
                     )}
                     {bargeWaiting && (
@@ -2636,9 +2675,9 @@ export function ChatView() {
                         onClick={() => void cancelRun()}
                         aria-label={t('chat.stop')}
                         title={t('chat.stop')}
-                        className="grid h-6 w-6 place-items-center rounded-md text-err hover:bg-panel2"
+                        className="grid h-6 w-6 place-items-center rounded-control text-err hover:bg-panel2"
                       >
-                        <Square size="0.7143rem" fill="currentColor" />
+                        <Square size={ICON.xs} fill="currentColor" />
                       </button>
                     )}
                   </div>
@@ -2665,7 +2704,7 @@ export function ChatView() {
                 />
               </div>
               {showBusyKeyHint && (
-                <div className="mt-1.5 px-4 text-right text-[0.7143rem] leading-relaxed text-dim">
+                <div className="mt-1.5 px-4 text-right text-micro leading-relaxed text-dim">
                   {t('chat.busyKeyHint')}
                 </div>
               )}
@@ -2676,44 +2715,44 @@ export function ChatView() {
                     disabled={!configured || busy}
                     title={t('chat.attach')}
                     aria-label={t('chat.attach')}
-                    className="flex items-center gap-1 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim hover:text-fg disabled:opacity-50"
+                    className="flex items-center gap-1 rounded-control px-2.5 py-1 text-xs text-dim transition-colors hover:bg-panel2 hover:text-fg disabled:opacity-50"
                   >
-                    <Paperclip size="0.9286rem" />
+                    <Paperclip size={ICON.sm} />
                   </button>
                   {yoloOnly ? (
                     <div
-                      className="flex items-center gap-1.5 rounded-lg border border-yolo/50 bg-yolo/15 px-2.5 py-1 text-xs text-yolo"
+                      className="flex items-center gap-1.5 rounded-control border border-yolo/50 bg-yolo/15 px-2.5 py-1 text-xs text-yolo"
                       title={t('chat.sandboxMode')}
                     >
-                      <Flame size="0.9286rem" />
+                      <Flame size={ICON.sm} />
                       {t('chat.yoloMode')}
                     </div>
                   ) : (
                     <div className="relative">
                       <button
                         onClick={() => setModeMenuOpen((v) => !v)}
-                        className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs transition-colors ${
+                        className={`flex items-center gap-1.5 rounded-control border px-2.5 py-1 text-xs transition-colors ${
                           yolo
                             ? 'border-yolo/50 bg-yolo/15 text-yolo hover:bg-yolo/25'
                             : readOnly
                               ? 'border-accent/40 bg-accent/10 text-accent hover:bg-accent/20'
-                              : 'border-edge text-dim hover:text-fg'
+                              : 'border-transparent text-dim hover:bg-panel2 hover:text-fg'
                         }`}
                         title={t('chat.sandboxMode')}
                       >
                         {yolo ? (
-                          <Flame size="0.9286rem" />
+                          <Flame size={ICON.sm} />
                         ) : readOnly ? (
-                          <Lock size="0.9286rem" />
+                          <Lock size={ICON.sm} />
                         ) : (
-                          <ShieldCheck size="0.9286rem" />
+                          <ShieldCheck size={ICON.sm} />
                         )}
                         {yolo
                           ? t('chat.yoloMode')
                           : readOnly
                             ? t('chat.readOnlyMode')
                             : t('chat.workspaceMode')}
-                        <ChevronUp size="0.7857rem" />
+                        <ChevronUp size={ICON.xs} />
                       </button>
                       {modeMenuOpen && (
                         <>
@@ -2721,7 +2760,7 @@ export function ChatView() {
                             className="fixed inset-0 z-30"
                             onClick={() => setModeMenuOpen(false)}
                           />
-                          <div className="absolute bottom-full left-0 z-40 mb-1.5 w-80 rounded-lg border border-edge bg-panel p-1 shadow-xl">
+                          <div className="absolute bottom-full left-0 z-40 mb-1.5 w-80 rounded-control border border-edge bg-panel p-1 shadow-popover">
                             {SESSION_MODES.map((option) => {
                               const Icon = option.icon;
                               const active = mode === option.value;
@@ -2736,14 +2775,13 @@ export function ChatView() {
                                       applyMode(option.value);
                                     }
                                   }}
-                                  className={`w-full rounded-md px-2 py-1.5 text-left text-xs ${modeMenuTint(option, active)}`}
+                                  className={`w-full rounded-control px-2 py-1.5 text-left text-xs ${modeMenuTint(option, active)}`}
                                 >
                                   <span className="flex items-center gap-2">
-                                    <Icon size="0.8571rem" />{' '}
-                                    {t(option.labelKey)}
+                                    <Icon size={ICON.xs} /> {t(option.labelKey)}
                                   </span>
                                   <span
-                                    className={`mt-0.5 block pl-5 text-[0.7143rem] leading-snug ${
+                                    className={`mt-0.5 block pl-5 text-micro leading-snug ${
                                       option.value === 'yolo'
                                         ? 'text-yolo/80'
                                         : 'text-dim'
@@ -2766,9 +2804,9 @@ export function ChatView() {
                       <button
                         onClick={() => setModelMenuOpen((v) => !v)}
                         title={t('chat.modelLabel')}
-                        className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1 text-xs text-dim hover:text-fg"
+                        className="flex items-center gap-1.5 rounded-control px-2.5 py-1 text-xs text-dim transition-colors hover:bg-panel2 hover:text-fg"
                       >
-                        <Sparkles size="0.8571rem" className="text-accent" />
+                        <Sparkles size={ICON.xs} className="text-accent" />
                         <span className="max-w-32 truncate">{modelLabel}</span>
                         {thinkSupported && (
                           <>
@@ -2776,7 +2814,7 @@ export function ChatView() {
                             <span>{thinkLabel}</span>
                           </>
                         )}
-                        <ChevronUp size="0.7857rem" />
+                        <ChevronUp size={ICON.xs} />
                       </button>
                       {modelMenuOpen && (
                         <>
@@ -2784,34 +2822,34 @@ export function ChatView() {
                             className="fixed inset-0 z-30"
                             onClick={() => setModelMenuOpen(false)}
                           />
-                          <div className="absolute bottom-full right-0 z-40 mb-1.5 w-64 rounded-xl border border-edge bg-panel p-1.5 shadow-xl">
-                            <div className="px-2 pb-1 pt-1.5 text-[0.7143rem] uppercase tracking-wider text-dim">
+                          <div className="absolute bottom-full right-0 z-40 mb-1.5 w-64 rounded-card border border-edge bg-panel p-1.5 shadow-popover">
+                            <div className="px-2 pb-1 pt-1.5 text-micro uppercase tracking-wider text-dim">
                               {t('chat.modelLabel')}
                             </div>
                             <div className="max-h-52 overflow-y-auto">
                               <button
                                 onClick={() => applyModel('')}
-                                className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs ${
+                                className={`flex w-full items-center justify-between rounded-control px-2 py-1.5 text-left text-xs ${
                                   !model
                                     ? 'bg-accent/10 text-accent'
                                     : 'text-dim hover:bg-panel2 hover:text-fg'
                                 }`}
                               >
                                 <span>{t('chat.modelAuto')}</span>
-                                {!model && <Check size="0.8571rem" />}
+                                {!model && <Check size={ICON.xs} />}
                               </button>
                               {modelOptions.map((m) => (
                                 <button
                                   key={m.id}
                                   onClick={() => applyModel(m.id)}
-                                  className={`flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs ${
+                                  className={`flex w-full items-center justify-between rounded-control px-2 py-1.5 text-left text-xs ${
                                     model === m.id
                                       ? 'bg-accent/10 text-accent'
                                       : 'text-dim hover:bg-panel2 hover:text-fg'
                                   }`}
                                 >
                                   <span className="truncate">{m.label}</span>
-                                  {model === m.id && <Check size="0.8571rem" />}
+                                  {model === m.id && <Check size={ICON.xs} />}
                                 </button>
                               ))}
                             </div>
@@ -2840,7 +2878,7 @@ export function ChatView() {
                                     className="w-full accent-accent"
                                   />
                                 </div>
-                                <div className="flex justify-between px-2 pb-1.5 text-[0.7143rem] text-dim">
+                                <div className="flex justify-between px-2 pb-1.5 text-micro text-dim">
                                   {thinkLevels.map((l) => (
                                     <span key={l.value}>{l.label}</span>
                                   ))}
@@ -2853,48 +2891,49 @@ export function ChatView() {
                     </div>
                   )}
                   {switchingWs ? (
-                    <button
+                    <IconButton
+                      label={t('chat.send')}
+                      tone="primary"
+                      size="lg"
                       disabled
-                      aria-label={t('chat.send')}
-                      title={t('chat.send')}
-                      className="grid h-8 w-8 place-items-center rounded-lg bg-accent text-white opacity-60"
+                      className="opacity-60"
                     >
-                      <Loader2 size="1.0000rem" className="animate-spin" />
-                    </button>
+                      <Loader2 size={ICON.sm} className="animate-spin" />
+                    </IconButton>
                   ) : busy && composerEmpty && !bargeWaiting ? (
-                    <button
+                    <IconButton
+                      label={t('chat.stop')}
+                      tone="danger"
+                      size="lg"
                       onClick={() => void cancelRun()}
-                      aria-label={t('chat.stop')}
-                      title={t('chat.stop')}
-                      className="grid h-8 w-8 place-items-center rounded-lg border border-edge text-err hover:bg-panel2"
                     >
-                      <Square size="0.9286rem" fill="currentColor" />
-                    </button>
+                      <Square size={ICON.sm} fill="currentColor" />
+                    </IconButton>
                   ) : (
                     // While a turn runs with a draft, the button sends
                     // and interrupts the active reply, matching Enter;
                     // Stop is only shown when the composer is empty.
                     // A barge-in wait carries its own Stop in the
                     // banner, so it stays available while typing.
-                    <button
+                    <IconButton
+                      label={t('chat.send')}
+                      tone="primary"
+                      size="lg"
                       onClick={() => void submitInterrupt()}
                       disabled={composerEmpty && (!busy || bargeWaiting)}
-                      aria-label={t('chat.send')}
-                      title={t('chat.send')}
-                      className="grid h-8 w-8 place-items-center rounded-lg bg-accent text-white hover:opacity-90 disabled:opacity-40"
                     >
-                      <ArrowUp size="1.1429rem" />
-                    </button>
+                      <ArrowUp size={ICON.md} />
+                    </IconButton>
                   )}
                 </div>
               </div>
             </div>
             {showWorkspacePicker && (
-              <div className="relative z-10 mx-auto -mt-2 flex items-center rounded-lg border border-edge bg-panel2/90 px-1.5 py-1.5 shadow-md">
+              <div className="pointer-events-auto relative z-10 mx-auto -mt-2 flex w-fit items-center rounded-control border border-edge bg-panel2/90 px-1.5 py-1.5 shadow-raised">
                 <div className="relative">
                   <button
                     onClick={() => setWsPickerOpen((v) => !v)}
-                    className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors ${
+                    className={`flex items-center gap-1.5 rounded-control border px-2 py-1 text-xs transition-colors ${
                       pickerWorkspace !== workspace
                         ? 'border-accent/50 bg-accent/10 text-accent hover:bg-accent/20'
                         : 'border-transparent text-dim hover:text-fg hover:bg-panel2'
@@ -2902,9 +2941,9 @@ export function ChatView() {
                     title={t('chat.newChatWorkspace')}
                     aria-label={t('chat.chooseWorkspace')}
                   >
-                    <FolderOpen size="0.8571rem" className="shrink-0" />
+                    <FolderOpen size={ICON.xs} className="shrink-0" />
                     <span className="max-w-56 truncate">{pickerLabel}</span>
-                    <ChevronDown size="0.7857rem" />
+                    <ChevronDown size={ICON.xs} />
                   </button>
                   {wsPickerOpen && (
                     <>
@@ -2912,7 +2951,7 @@ export function ChatView() {
                         className="fixed inset-0 z-30"
                         onClick={() => setWsPickerOpen(false)}
                       />
-                      <div className="absolute top-full left-0 z-40 mt-1.5 w-72 rounded-lg border border-edge bg-panel py-1 shadow-xl">
+                      <div className="absolute top-full left-0 z-40 mt-1.5 w-72 rounded-control border border-edge bg-panel py-1 shadow-popover">
                         {pickerOptions.map((w) => (
                           <button
                             key={w.path}
@@ -2926,17 +2965,17 @@ export function ChatView() {
                                 : 'text-dim hover:bg-panel2 hover:text-fg'
                             }`}
                           >
-                            <FolderOpen size="0.8571rem" className="shrink-0" />
+                            <FolderOpen size={ICON.xs} className="shrink-0" />
                             <span className="min-w-0 flex-1">
                               <span className="block truncate">
                                 {w.title || pathBase(w.path)}
                               </span>
-                              <span className="block truncate text-[0.7143rem] text-dim">
+                              <span className="block truncate text-micro text-dim">
                                 {w.path}
                               </span>
                             </span>
                             {w.path === pickerWorkspace && (
-                              <Check size="0.8571rem" className="shrink-0" />
+                              <Check size={ICON.xs} className="shrink-0" />
                             )}
                           </button>
                         ))}
@@ -2955,11 +2994,11 @@ export function ChatView() {
           <div
             role="alertdialog"
             aria-modal="true"
-            className="w-[34rem] max-w-[calc(100vw-3rem)] rounded-2xl border border-edge bg-panel p-5 shadow-2xl"
+            className="w-[34rem] max-w-[calc(100vw-3rem)] rounded-card border border-edge bg-panel p-5 shadow-modal"
           >
             <div className="flex items-start gap-3">
-              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-accent/40 bg-accent/10 text-accent">
-                <GitFork size="1.1429rem" />
+              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-card border border-accent/40 bg-accent/10 text-accent">
+                <GitFork size={ICON.md} />
               </div>
               <div className="min-w-0">
                 <h2 className="text-sm font-semibold leading-snug text-fg">
@@ -2973,16 +3012,16 @@ export function ChatView() {
             <div className="mt-4 flex justify-end gap-2">
               <button
                 onClick={() => setForkTarget(null)}
-                className="rounded-lg border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg"
+                className="rounded-control border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg"
               >
                 {t('interact.cancel')}
               </button>
               <button
                 onClick={confirmFork}
                 disabled={forking}
-                className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
+                className="flex items-center gap-1.5 rounded-control bg-accent px-4 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
               >
-                <GitFork size="0.9286rem" />
+                <GitFork size={ICON.sm} />
                 {t('chat.forkTurnConfirm')}
               </button>
             </div>

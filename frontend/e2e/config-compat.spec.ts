@@ -30,7 +30,7 @@ test('repairs obsolete config references from Settings > Diagnostics', async ({
     .click();
   await expect(
     page.getByText(
-      'Removed 1 obsolete config declaration(s): ' +
+      'Removed 1 obsolete config declaration: ' +
         'agents.assistant.prepare[0]. Reload the runtime to apply.',
     ),
   ).toBeVisible();

@@ -2,6 +2,7 @@ import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '../lib/store';
 import { useConversationState, useFocusState } from '../state/react';
+import { ICON } from './ui/icon';
 
 export function StatusBar() {
   const focus = useFocusState();
@@ -20,7 +21,7 @@ export function StatusBar() {
     <footer className="h-8 shrink-0 border-t border-edge bg-panel flex items-center gap-3 px-4 text-xs text-dim">
       <span className="flex items-center gap-1.5 min-w-0">
         {busy && (
-          <Loader2 size="0.9286rem" className="animate-spin text-accent" />
+          <Loader2 size={ICON.sm} className="animate-spin text-accent" />
         )}
         <span className="truncate">
           {statusText || (busy ? t('status.running') : t('status.ready'))}
@@ -43,7 +44,7 @@ export function StatusBar() {
         </span>
       )}
       {model && (
-        <span className="rounded bg-panel2 border border-edge px-2 py-0.5 whitespace-nowrap">
+        <span className="rounded-tight bg-panel2 border border-edge px-2 py-0.5 whitespace-nowrap">
           {model}
         </span>
       )}

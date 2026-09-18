@@ -68,6 +68,8 @@ import { usePluginStore } from '../plugins/store';
 import { Events } from '@wailsio/runtime';
 import { SettingsGeneral } from './SettingsGeneral';
 import { SettingsDisplay } from './SettingsDisplay';
+import { ICON } from './ui/icon';
+import { SaveBar } from './ui/SaveBar';
 
 // InstanceRow is one editable inference instance in the settings page.
 interface RowModel {
@@ -429,6 +431,7 @@ export function ConfigPage() {
     replay_full_history: false,
   });
   const [memorySaving, setMemorySaving] = useState(false);
+  const [memorySaved, setMemorySaved] = useState(false);
   const [diag, setDiag] = useState<DiagnosticsReport | null>(null);
   const [probe, setProbe] = useState<SandboxProbeResult | null>(null);
   const [policyInput, setPolicyInput] = useState('');
@@ -612,11 +615,20 @@ export function ConfigPage() {
     try {
       await api.saveMemory(memory);
       setError('');
+      setMemorySaved(true);
     } catch (err) {
+      setMemorySaved(false);
       setError(String(err));
     } finally {
       setMemorySaving(false);
     }
+  };
+
+  // Any edit invalidates the saved check, so the bar never claims the
+  // form on screen is what the runtime is using.
+  const editMemory = (patch: Partial<MemorySettings>) => {
+    setMemory((m) => ({ ...m, ...patch }));
+    setMemorySaved(false);
   };
 
   useEffect(() => {
@@ -1085,9 +1097,9 @@ export function ConfigPage() {
 
   return (
     <div className="fixed bottom-0 top-11 left-0 right-0 z-50 bg-black/70 grid place-items-center">
-      <div className="w-[68.5714rem] max-w-[calc(100vw-3.4286rem)] h-[45.7143rem] max-h-[calc(100vh-6.8571rem)] flex flex-col rounded-2xl border border-edge bg-panel shadow-2xl">
+      <div className="w-[68.5714rem] max-w-[calc(100vw-3.4286rem)] h-[45.7143rem] max-h-[calc(100vh-6.8571rem)] flex flex-col rounded-card border border-edge bg-panel shadow-modal">
         <div className="flex items-center gap-4 px-5 py-4 border-b border-edge">
-          <Settings size="1.2857rem" className="text-accent" />
+          <Settings size={ICON.lg} className="text-accent" />
           <h2 className="text-base font-semibold">{t('config.title')}</h2>
           <span className="flex-1" />
           <button
@@ -1095,7 +1107,7 @@ export function ConfigPage() {
             className="text-dim hover:text-fg"
             aria-label={t('tools.close')}
           >
-            <X size="1.2857rem" />
+            <X size={ICON.lg} />
           </button>
         </div>
 
@@ -1117,13 +1129,13 @@ export function ConfigPage() {
                     setTab(tb.id);
                     setError('');
                   }}
-                  className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
+                  className={`flex w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm transition-colors ${
                     active
                       ? 'bg-accent/10 font-medium text-accent'
                       : 'text-dim hover:bg-panel2 hover:text-fg'
                   }`}
                 >
-                  <Icon size="1.0714rem" className="shrink-0" />
+                  <Icon size={ICON.md} className="shrink-0" />
                   <span className="truncate">{tb.label}</span>
                 </button>
               );
@@ -1163,15 +1175,12 @@ export function ConfigPage() {
                         openFieldMenu(e, 'add-driver');
                       }
                     }}
-                    className="inline-flex min-w-48 max-w-64 items-center gap-1.5 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent"
+                    className="inline-flex min-w-48 max-w-64 items-center gap-1.5 rounded-control border border-edge bg-panel px-3 py-1.5 text-sm transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent"
                   >
                     <span className="min-w-0 flex-1 truncate text-fg">
                       {catalog.find((p) => p.id === newType)?.name ?? ''}
                     </span>
-                    <ChevronDown
-                      size="1.0000rem"
-                      className="shrink-0 text-dim"
-                    />
+                    <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
                   </button>
                   {menuRect &&
                     fieldMenu === 'add-driver' &&
@@ -1183,7 +1192,7 @@ export function ConfigPage() {
                           left: menuRect.left,
                           width: Math.max(menuRect.width, 192),
                         }}
-                        className="fixed z-[100] overflow-y-auto rounded-xl border border-edge bg-panel py-1 shadow-xl"
+                        className="fixed z-[100] overflow-y-auto rounded-card border border-edge bg-panel py-1 shadow-popover"
                       >
                         {catalog.map((p) => (
                           <button
@@ -1199,7 +1208,7 @@ export function ConfigPage() {
                             }`}
                           >
                             <Check
-                              size="0.8rem"
+                              size={ICON.xs}
                               className={`shrink-0 ${
                                 newType === p.id ? 'text-accent' : 'invisible'
                               }`}
@@ -1212,18 +1221,18 @@ export function ConfigPage() {
                     )}
                   <button
                     onClick={() => addInstance(newType)}
-                    className="flex items-center gap-1.5 rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
+                    className="flex items-center gap-1.5 rounded-control border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
                   >
-                    <Plus size="1.0000rem" />
+                    <Plus size={ICON.sm} />
                     {t('config.addInstance')}
                   </button>
                 </div>
                 {templates.length > 0 && (
-                  <div className="space-y-2 rounded-xl border border-edge/70 bg-panel/40 p-3">
+                  <div className="space-y-2 rounded-card border border-edge/70 bg-panel/40 p-3">
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-1.5 text-xs font-medium text-dim">
                         <Sparkles
-                          size="0.8571rem"
+                          size={ICON.xs}
                           className="shrink-0 text-accent"
                         />
                         <span>{t('config.templatesGroup')}</span>
@@ -1233,7 +1242,7 @@ export function ConfigPage() {
                         onChange={(e) => setTemplateQuery(e.target.value)}
                         placeholder={t('config.templateSearchPlaceholder')}
                         aria-label={t('config.templateSearch')}
-                        className="w-44 rounded-lg border border-edge bg-panel px-2 py-0.5 text-xs outline-none focus:border-accent"
+                        className="w-44 rounded-control border border-edge bg-panel px-2 py-0.5 text-xs outline-none focus:border-accent"
                       />
                     </div>
                     {templates.filter((template) =>
@@ -1261,13 +1270,13 @@ export function ConfigPage() {
                               className="group inline-flex max-w-full items-center gap-1.5 rounded-full border border-edge bg-panel2 py-1 pl-2 pr-2.5 text-xs text-dim transition-colors hover:border-accent/60 hover:bg-accent/10 hover:text-fg focus-visible:border-accent focus-visible:outline-none"
                             >
                               <Plus
-                                size="0.7857rem"
+                                size={ICON.xs}
                                 className="shrink-0 text-accent/70 transition-colors group-hover:text-accent"
                               />
                               <span className="shrink-0 font-medium text-fg/90">
                                 {template.label}
                               </span>
-                              <span className="min-w-0 max-w-40 truncate font-mono text-[0.7rem] text-dim">
+                              <span className="min-w-0 max-w-40 truncate font-mono text-micro text-dim">
                                 {models}
                               </span>
                             </button>
@@ -1289,7 +1298,7 @@ export function ConfigPage() {
                   return (
                     <div
                       key={row.id}
-                      className={`rounded-xl border overflow-hidden ${
+                      className={`rounded-card border overflow-hidden ${
                         row.enabled
                           ? 'border-edge bg-panel2'
                           : 'border-edge/50 bg-panel2/50'
@@ -1310,14 +1319,14 @@ export function ConfigPage() {
                         </span>
                         {row.driver !== '' && (
                           <span
-                            className="shrink-0 rounded bg-panel px-1.5 py-0.5 text-[0.7143rem] text-dim"
+                            className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 text-micro text-dim"
                             title={t('config.instanceDriver')}
                           >
                             {row.driver}
                           </span>
                         )}
                         {row.managed && (
-                          <span className="shrink-0 rounded bg-panel px-1.5 py-0.5 text-[0.7143rem] text-dim">
+                          <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 text-micro text-dim">
                             {t('config.managedBadge')}
                           </span>
                         )}
@@ -1328,7 +1337,7 @@ export function ConfigPage() {
                             update(row.id, { name: e.target.value })
                           }
                           placeholder={t('config.instanceName')}
-                          className="flex-1 min-w-0 rounded-lg border border-edge bg-panel px-2 py-1 text-sm outline-none focus:border-accent"
+                          className="flex-1 min-w-0 rounded-control border border-edge bg-panel px-2 py-1 text-sm outline-none focus:border-accent"
                         />
                         <button
                           onClick={() => moveInstance(row.id, -1)}
@@ -1337,7 +1346,7 @@ export function ConfigPage() {
                           title={t('config.moveUp')}
                           aria-label={t('config.moveUp')}
                         >
-                          <ArrowUp size="1.0000rem" />
+                          <ArrowUp size={ICON.sm} />
                         </button>
                         <button
                           onClick={() => moveInstance(row.id, 1)}
@@ -1346,7 +1355,7 @@ export function ConfigPage() {
                           title={t('config.moveDown')}
                           aria-label={t('config.moveDown')}
                         >
-                          <ArrowDown size="1.0000rem" />
+                          <ArrowDown size={ICON.sm} />
                         </button>
                         {!row.managed && (
                           <button
@@ -1358,7 +1367,7 @@ export function ConfigPage() {
                             className="text-dim hover:text-err shrink-0"
                             title={t('config.removeInstance')}
                           >
-                            <Trash2 size="1.0000rem" />
+                            <Trash2 size={ICON.sm} />
                           </button>
                         )}
                       </div>
@@ -1377,7 +1386,7 @@ export function ConfigPage() {
                                 update(row.id, { endpoint: e.target.value })
                               }
                               placeholder={t('setup.endpointPlaceholder')}
-                              className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
+                              className="w-full rounded-control border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
                             />
                             {/* responses | chat is an OpenAI-wire surface;
                                 other drivers have no such choice. */}
@@ -1402,13 +1411,13 @@ export function ConfigPage() {
                                         openFieldMenu(e, key);
                                       }
                                     }}
-                                    className="inline-flex max-w-56 min-w-0 flex-1 items-center gap-1.5 rounded-lg border border-edge bg-panel px-2 py-1 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
+                                    className="inline-flex max-w-56 min-w-0 flex-1 items-center gap-1.5 rounded-control border border-edge bg-panel px-2 py-1 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
                                   >
                                     <span className="min-w-0 flex-1 truncate font-mono text-fg">
                                       {row.api === '' ? 'auto' : row.api}
                                     </span>
                                     <ChevronDown
-                                      size="0.875rem"
+                                      size={ICON.xs}
                                       className="shrink-0 text-dim"
                                     />
                                   </button>
@@ -1424,7 +1433,7 @@ export function ConfigPage() {
                                         left: menuRect.left,
                                         width: menuRect.width,
                                       }}
-                                      className="fixed z-[100] overflow-y-auto rounded-xl border border-edge bg-panel py-1 shadow-xl"
+                                      className="fixed z-[100] overflow-y-auto rounded-card border border-edge bg-panel py-1 shadow-popover"
                                     >
                                       {[
                                         ['responses', 'responses'],
@@ -1447,7 +1456,7 @@ export function ConfigPage() {
                                           }`}
                                         >
                                           <Check
-                                            size="0.8rem"
+                                            size={ICON.xs}
                                             className={`shrink-0 ${
                                               row.api === value
                                                 ? 'text-accent'
@@ -1483,7 +1492,7 @@ export function ConfigPage() {
                                   onClick={() => addModel(row.id)}
                                   className="flex items-center gap-1 text-xs text-dim hover:text-fg"
                                 >
-                                  <Plus size="0.8571rem" />
+                                  <Plus size={ICON.xs} />
                                   {t('config.addModel')}
                                 </button>
                               )}
@@ -1491,7 +1500,7 @@ export function ConfigPage() {
                             {row.models.map((m, mi) => (
                               <div
                                 key={mi}
-                                className="space-y-3 rounded-lg border border-edge bg-panel p-3"
+                                className="space-y-3 rounded-card border border-edge bg-panel p-3"
                               >
                                 <div className="flex items-center gap-2">
                                   <div className="relative flex-1 min-w-36">
@@ -1504,7 +1513,7 @@ export function ConfigPage() {
                                         })
                                       }
                                       placeholder={t('setup.model')}
-                                      className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
+                                      className="w-full rounded-control border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
                                     />
                                   </div>
                                   {!row.managed &&
@@ -1532,9 +1541,9 @@ export function ConfigPage() {
                                             openFieldMenu(e, key);
                                           }
                                         }}
-                                        className="shrink-0 rounded-lg border border-edge px-1.5 py-1.5 text-dim transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent"
+                                        className="shrink-0 rounded-control border border-edge px-1.5 py-1.5 text-dim transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent"
                                       >
-                                        <ListPlus size="0.9286rem" />
+                                        <ListPlus size={ICON.sm} />
                                       </button>
                                     )}
                                   {!row.managed &&
@@ -1548,7 +1557,7 @@ export function ConfigPage() {
                                           left: rightAlignedMenuLeft(256),
                                           width: Math.max(menuRect.width, 256),
                                         }}
-                                        className="fixed z-[100] max-h-72 overflow-y-auto rounded-xl border border-edge bg-panel py-1 shadow-xl"
+                                        className="fixed z-[100] max-h-72 overflow-y-auto rounded-card border border-edge bg-panel py-1 shadow-popover"
                                       >
                                         <div className="sticky top-0 z-10 bg-panel px-2 pb-1 pt-1">
                                           <input
@@ -1561,7 +1570,7 @@ export function ConfigPage() {
                                               'config.modelSearchPlaceholder',
                                             )}
                                             aria-label={t('config.modelSearch')}
-                                            className="w-full rounded-lg border border-edge bg-panel px-2 py-1 text-xs outline-none focus:border-accent"
+                                            className="w-full rounded-control border border-edge bg-panel px-2 py-1 text-xs outline-none focus:border-accent"
                                           />
                                         </div>
                                         {catalogModelsFor(
@@ -1587,7 +1596,7 @@ export function ConfigPage() {
                                             <span className="min-w-0 flex-1 truncate font-mono">
                                               {entry.model.name}
                                             </span>
-                                            <span className="shrink-0 truncate text-[0.7143rem] text-dim">
+                                            <span className="shrink-0 truncate text-micro text-dim">
                                               {entry.label ??
                                                 entry.vendor ??
                                                 ''}
@@ -1612,7 +1621,7 @@ export function ConfigPage() {
                                     title={t('config.moveUp')}
                                     aria-label={t('config.moveUp')}
                                   >
-                                    <ArrowUp size="0.9286rem" />
+                                    <ArrowUp size={ICON.sm} />
                                   </button>
                                   <button
                                     onClick={() => moveModel(row.id, mi, 1)}
@@ -1621,7 +1630,7 @@ export function ConfigPage() {
                                     title={t('config.moveDown')}
                                     aria-label={t('config.moveDown')}
                                   >
-                                    <ArrowDown size="0.9286rem" />
+                                    <ArrowDown size={ICON.sm} />
                                   </button>
                                   {!row.managed && (
                                     <button
@@ -1630,7 +1639,7 @@ export function ConfigPage() {
                                       title={t('config.removeModel')}
                                       aria-label={t('config.removeModel')}
                                     >
-                                      <X size="1.0000rem" />
+                                      <X size={ICON.sm} />
                                     </button>
                                   )}
                                 </div>
@@ -1658,7 +1667,7 @@ export function ConfigPage() {
                                             openFieldMenu(e, key);
                                           }
                                         }}
-                                        className="flex min-w-0 w-full items-center gap-1.5 rounded-lg border border-edge bg-panel px-2 py-1.5 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
+                                        className="flex min-w-0 w-full items-center gap-1.5 rounded-control border border-edge bg-panel px-2 py-1.5 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
                                       >
                                         <span className="min-w-0 flex-1 truncate font-mono text-fg">
                                           {m.outputs.length > 0
@@ -1666,7 +1675,7 @@ export function ConfigPage() {
                                             : '—'}
                                         </span>
                                         <ChevronDown
-                                          size="0.875rem"
+                                          size={ICON.xs}
                                           className="shrink-0 text-dim"
                                         />
                                       </button>
@@ -1693,7 +1702,7 @@ export function ConfigPage() {
                                             openFieldMenu(e, key);
                                           }
                                         }}
-                                        className="flex min-w-0 w-full items-center gap-1.5 rounded-lg border border-edge bg-panel px-2 py-1.5 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
+                                        className="flex min-w-0 w-full items-center gap-1.5 rounded-control border border-edge bg-panel px-2 py-1.5 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
                                       >
                                         <span className="min-w-0 flex-1 truncate font-mono text-fg">
                                           {m.inputs.length > 0
@@ -1701,7 +1710,7 @@ export function ConfigPage() {
                                             : '—'}
                                         </span>
                                         <ChevronDown
-                                          size="0.875rem"
+                                          size={ICON.xs}
                                           className="shrink-0 text-dim"
                                         />
                                       </button>
@@ -1728,13 +1737,13 @@ export function ConfigPage() {
                                             openFieldMenu(e, key);
                                           }
                                         }}
-                                        className="flex min-w-0 w-full items-center gap-1.5 rounded-lg border border-edge bg-panel px-2 py-1.5 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
+                                        className="flex min-w-0 w-full items-center gap-1.5 rounded-control border border-edge bg-panel px-2 py-1.5 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
                                       >
                                         <span className="min-w-0 flex-1 truncate text-fg">
                                           {m.kind === '' ? 'auto' : m.kind}
                                         </span>
                                         <ChevronDown
-                                          size="0.875rem"
+                                          size={ICON.xs}
                                           className="shrink-0 text-dim"
                                         />
                                       </button>
@@ -1761,7 +1770,7 @@ export function ConfigPage() {
                                             openFieldMenu(e, key);
                                           }
                                         }}
-                                        className="flex min-w-0 w-full items-center gap-1.5 rounded-lg border border-edge bg-panel px-2 py-1.5 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
+                                        className="flex min-w-0 w-full items-center gap-1.5 rounded-control border border-edge bg-panel px-2 py-1.5 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
                                       >
                                         <span className="min-w-0 flex-1 truncate text-fg">
                                           {m.reasoning === ''
@@ -1769,16 +1778,16 @@ export function ConfigPage() {
                                             : m.reasoning}
                                         </span>
                                         <ChevronDown
-                                          size="0.875rem"
+                                          size={ICON.xs}
                                           className="shrink-0 text-dim"
                                         />
                                       </button>
                                     </div>
                                   </div>
                                   {m.reasoning !== '' && (
-                                    <div className="rounded-lg border border-edge bg-panel2 px-3 py-2.5">
+                                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2.5">
                                       <div className="mb-2 flex items-center justify-between gap-2">
-                                        <span className="text-[11px] font-semibold tracking-wider text-dim uppercase">
+                                        <span className="text-label font-semibold tracking-wider text-dim uppercase">
                                           {t('setup.effortMap')}
                                         </span>
                                         <button
@@ -1789,7 +1798,7 @@ export function ConfigPage() {
                                               reasoningEffortMap: {},
                                             })
                                           }
-                                          className="rounded-md border border-edge px-2 py-0.5 text-xs text-dim transition-colors hover:text-fg disabled:opacity-50"
+                                          className="rounded-control border border-edge px-2 py-0.5 text-xs text-dim transition-colors hover:text-fg disabled:opacity-50"
                                         >
                                           {t('setup.effortMapClear')}
                                         </button>
@@ -1829,7 +1838,7 @@ export function ConfigPage() {
                                                   reasoningEffortMap: next,
                                                 });
                                               }}
-                                              className="min-w-0 flex-1 rounded-md border border-edge bg-panel px-1.5 py-1 text-xs outline-none focus:border-accent"
+                                              className="min-w-0 flex-1 rounded-control border border-edge bg-panel px-1.5 py-1 text-xs outline-none focus:border-accent"
                                             />
                                           </label>
                                         ))}
@@ -1855,7 +1864,7 @@ export function ConfigPage() {
                                       {t('setup.webSearch')}
                                     </label>
                                     {m.webSearch && (
-                                      <span className="max-w-96 text-[0.7rem] text-dim">
+                                      <span className="max-w-96 text-micro text-dim">
                                         {t('setup.webSearchHint')}
                                       </span>
                                     )}
@@ -1884,7 +1893,7 @@ export function ConfigPage() {
                                                 : next,
                                           });
                                         }}
-                                        className="h-[1.875rem] w-40 rounded-lg border border-edge bg-panel px-2 text-xs text-fg outline-none transition-colors focus:border-accent disabled:opacity-40"
+                                        className="h-[1.875rem] w-40 rounded-control border border-edge bg-panel px-2 text-xs text-fg outline-none transition-colors focus:border-accent disabled:opacity-40"
                                       />
                                     </label>
                                   </div>
@@ -1901,7 +1910,7 @@ export function ConfigPage() {
                                         left: menuRect.left,
                                         width: menuRect.width,
                                       }}
-                                      className="fixed z-[100] max-h-56 overflow-y-auto rounded-xl border border-edge bg-panel py-1 shadow-xl"
+                                      className="fixed z-[100] max-h-56 overflow-y-auto rounded-card border border-edge bg-panel py-1 shadow-popover"
                                     >
                                       {(fieldMenu === `${row.id}:${mi}:outputs`
                                         ? ['text', 'image', 'audio', 'video']
@@ -1955,7 +1964,7 @@ export function ConfigPage() {
                                             }`}
                                           >
                                             <Check
-                                              size="0.8rem"
+                                              size={ICON.xs}
                                               className={`shrink-0 ${
                                                 active
                                                   ? 'text-accent'
@@ -1982,7 +1991,7 @@ export function ConfigPage() {
                                         left: menuRect.left,
                                         width: menuRect.width,
                                       }}
-                                      className="fixed z-[100] overflow-y-auto rounded-xl border border-edge bg-panel py-1 shadow-xl"
+                                      className="fixed z-[100] overflow-y-auto rounded-card border border-edge bg-panel py-1 shadow-popover"
                                     >
                                       {[
                                         ['', 'auto'],
@@ -2010,7 +2019,7 @@ export function ConfigPage() {
                                           }`}
                                         >
                                           <Check
-                                            size="0.8rem"
+                                            size={ICON.xs}
                                             className={`shrink-0 ${
                                               m.kind === value
                                                 ? 'text-accent'
@@ -2036,7 +2045,7 @@ export function ConfigPage() {
                                         left: menuRect.left,
                                         width: menuRect.width,
                                       }}
-                                      className="fixed z-[100] overflow-y-auto rounded-xl border border-edge bg-panel py-1 shadow-xl"
+                                      className="fixed z-[100] overflow-y-auto rounded-card border border-edge bg-panel py-1 shadow-popover"
                                     >
                                       {[
                                         ['', t('setup.reasoningOff')],
@@ -2065,7 +2074,7 @@ export function ConfigPage() {
                                           }`}
                                         >
                                           <Check
-                                            size="0.8rem"
+                                            size={ICON.xs}
                                             className={`shrink-0 ${
                                               m.reasoning === value
                                                 ? 'text-accent'
@@ -2096,7 +2105,7 @@ export function ConfigPage() {
                                       })
                                     }
                                     placeholder={t('setup.endpoint')}
-                                    className="w-full rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
+                                    className="w-full rounded-control border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
                                   />
                                 )}
                                 <ModelAdvanced
@@ -2130,7 +2139,7 @@ export function ConfigPage() {
                                           var: prov?.env_var ?? '',
                                         })
                                 }
-                                className="flex-1 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent disabled:opacity-40"
+                                className="flex-1 rounded-control border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent disabled:opacity-40"
                               />
                               <label className="flex items-center gap-1.5 text-xs text-dim whitespace-nowrap">
                                 <input
@@ -2154,7 +2163,7 @@ export function ConfigPage() {
                   );
                 })}
 
-                <div className="rounded-xl border border-edge bg-panel2 p-3">
+                <div className="rounded-card border border-edge bg-panel2 p-3">
                   <div className="text-xs text-dim mb-2">
                     {t('config.router.title')}
                   </div>
@@ -2173,7 +2182,7 @@ export function ConfigPage() {
                             max_attempts: Number(e.target.value) || 1,
                           })
                         }
-                        className="w-full rounded-lg border border-edge bg-panel px-2 py-1 text-xs outline-none focus:border-accent"
+                        className="w-full rounded-control border border-edge bg-panel px-2 py-1 text-xs outline-none focus:border-accent"
                       />
                     </label>
                     <label className="flex items-center gap-2 pt-4">
@@ -2196,7 +2205,7 @@ export function ConfigPage() {
                 </div>
 
                 {enabledRows.length > 1 && (
-                  <div className="rounded-xl border border-edge bg-panel2 p-3">
+                  <div className="rounded-card border border-edge bg-panel2 p-3">
                     <div className="text-xs text-dim mb-2">
                       {t('setup.routerPriority')}
                     </div>
@@ -2204,7 +2213,7 @@ export function ConfigPage() {
                       {enabledRows.map((row, idx) => (
                         <div
                           key={row.id}
-                          className="flex items-center gap-2 rounded-lg border border-edge bg-panel px-3 py-1.5 text-sm"
+                          className="flex items-center gap-2 rounded-control border border-edge bg-panel px-3 py-1.5 text-sm"
                         >
                           <span className="text-xs text-dim w-5">
                             {idx + 1}
@@ -2227,7 +2236,7 @@ export function ConfigPage() {
                             title={t('config.moveUp')}
                             aria-label={t('config.moveUp')}
                           >
-                            <ArrowUp size="1.0000rem" />
+                            <ArrowUp size={ICON.sm} />
                           </button>
                           <button
                             onClick={() => move(idx, 1)}
@@ -2236,7 +2245,7 @@ export function ConfigPage() {
                             title={t('config.moveDown')}
                             aria-label={t('config.moveDown')}
                           >
-                            <ArrowDown size="1.0000rem" />
+                            <ArrowDown size={ICON.sm} />
                           </button>
                         </div>
                       ))}
@@ -2264,20 +2273,20 @@ export function ConfigPage() {
                       setUsageReload((n) => n + 1);
                     }}
                     disabled={usageLoading}
-                    className="flex items-center gap-1.5 rounded-lg border border-edge px-2.5 py-1.5 text-xs text-dim transition-colors hover:text-fg disabled:opacity-50"
+                    className="flex items-center gap-1.5 rounded-control border border-edge px-2.5 py-1.5 text-xs text-dim transition-colors hover:text-fg disabled:opacity-50"
                     aria-label={t('config.logsRefresh')}
                   >
                     {usageLoading ? (
-                      <Loader2 size="0.9286rem" className="animate-spin" />
+                      <Loader2 size={ICON.sm} className="animate-spin" />
                     ) : (
-                      <RefreshCw size="0.9286rem" />
+                      <RefreshCw size={ICON.sm} />
                     )}
                     {t('config.logsRefresh')}
                   </button>
                 </div>
                 {usageError && <p className="text-xs text-err">{usageError}</p>}
                 {usageLoading && usageRows.length === 0 ? (
-                  <div className="h-72 animate-pulse rounded-xl border border-edge/70 bg-panel/70" />
+                  <div className="h-72 animate-pulse rounded-card border border-edge/70 bg-panel/70" />
                 ) : usageRows.length > 0 ? (
                   <UsageHero rows={usageRows} sessions={usageSessions} />
                 ) : null}
@@ -2301,7 +2310,7 @@ export function ConfigPage() {
                         onChange={setUsageModel}
                         title={t('config.usageModel')}
                       />
-                      <div className="flex items-center rounded-lg border border-edge/70 bg-panel/40 p-1 backdrop-blur-sm">
+                      <div className="flex items-center rounded-control border border-edge/70 bg-panel/40 p-1 backdrop-blur-sm">
                         {(
                           [
                             ['today', t('config.usageRangeToday')],
@@ -2314,9 +2323,9 @@ export function ConfigPage() {
                           <button
                             key={value}
                             onClick={() => setUsageRange(value)}
-                            className={`h-7 rounded-md px-2.5 text-xs transition-all ${
+                            className={`h-7 rounded-control px-2.5 text-xs transition-all ${
                               usageRange === value
-                                ? 'bg-panel text-accent shadow-sm'
+                                ? 'bg-panel text-accent shadow-raised'
                                 : 'text-dim hover:bg-panel/60 hover:text-fg'
                             }`}
                           >
@@ -2333,7 +2342,7 @@ export function ConfigPage() {
                       />
                       {usageLoading && (
                         <Loader2
-                          size="1.0000rem"
+                          size={ICON.sm}
                           className="animate-spin text-dim"
                         />
                       )}
@@ -2346,7 +2355,7 @@ export function ConfigPage() {
                       rangeLabel={usageRangeLabel()}
                       allModels={usageModel === ''}
                     />
-                    <div className="overflow-x-auto rounded-xl border border-edge/60 bg-panel/60 shadow-sm backdrop-blur-sm">
+                    <div className="overflow-x-auto rounded-card border border-edge/60 bg-panel/60 shadow-raised backdrop-blur-sm">
                       <table className="w-full text-xs">
                         <thead>
                           <tr className="text-left text-dim border-b border-edge">
@@ -2470,12 +2479,11 @@ export function ConfigPage() {
                       min={0}
                       value={memory.max_raw_messages}
                       onChange={(e) =>
-                        setMemory((m) => ({
-                          ...m,
+                        editMemory({
                           max_raw_messages: Number(e.target.value) || 0,
-                        }))
+                        })
                       }
-                      className="w-full rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
+                      className="w-full rounded-control border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
                     />
                   </label>
                   <label className="space-y-1.5">
@@ -2489,12 +2497,11 @@ export function ConfigPage() {
                       min={0}
                       value={memory.preserve_recent}
                       onChange={(e) =>
-                        setMemory((m) => ({
-                          ...m,
+                        editMemory({
                           preserve_recent: Number(e.target.value) || 0,
-                        }))
+                        })
                       }
-                      className="w-full rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
+                      className="w-full rounded-control border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
                     />
                   </label>
                   <label className="space-y-1.5">
@@ -2509,24 +2516,20 @@ export function ConfigPage() {
                       step={1024}
                       value={memory.max_summary_bytes}
                       onChange={(e) =>
-                        setMemory((m) => ({
-                          ...m,
+                        editMemory({
                           max_summary_bytes: Number(e.target.value) || 0,
-                        }))
+                        })
                       }
-                      className="w-full rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
+                      className="w-full rounded-control border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
                     />
                   </label>
                 </div>
-                <label className="flex items-center gap-2 rounded-lg border border-edge bg-panel2 px-3 py-2.5">
+                <label className="flex items-center gap-2 rounded-card border border-edge bg-panel2 px-3 py-2.5">
                   <input
                     type="checkbox"
                     checked={memory.replay_full_history}
                     onChange={(e) =>
-                      setMemory((m) => ({
-                        ...m,
-                        replay_full_history: e.target.checked,
-                      }))
+                      editMemory({ replay_full_history: e.target.checked })
                     }
                     className="accent-accent"
                   />
@@ -2537,16 +2540,12 @@ export function ConfigPage() {
                     </p>
                   </div>
                 </label>
-                <button
-                  onClick={() => void saveMemory()}
-                  disabled={memorySaving}
-                  className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
-                >
-                  {memorySaving && (
-                    <Loader2 size="1.0000rem" className="animate-spin" />
-                  )}
-                  {t('setup.saveApply')}
-                </button>
+                <SaveBar
+                  saved={memorySaved}
+                  error={error}
+                  saving={memorySaving}
+                  onSave={() => void saveMemory()}
+                />
               </div>
             )}
 
@@ -2556,13 +2555,13 @@ export function ConfigPage() {
                   {t('config.permissionsHint')}
                 </p>
                 <div className="flex items-center gap-2 text-xs text-dim">
-                  <ShieldCheck size="1.0000rem" className="text-ok" />
+                  <ShieldCheck size={ICON.sm} className="text-ok" />
                   {t('config.permissionsCount', { count: rules.length })}
                 </div>
                 {rules.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-edge px-6 py-10 text-center">
+                  <div className="rounded-card border border-dashed border-edge px-6 py-10 text-center">
                     <ShieldCheck
-                      size="2.0000rem"
+                      size={ICON.hero}
                       className="mx-auto mb-2 text-dim/60"
                     />
                     <p className="text-sm text-dim">
@@ -2573,7 +2572,7 @@ export function ConfigPage() {
                     </p>
                   </div>
                 ) : (
-                  <div className="overflow-hidden rounded-xl border border-edge bg-panel">
+                  <div className="overflow-hidden rounded-card border border-edge bg-panel">
                     {rules.map((rule, i) => (
                       <div
                         key={rule}
@@ -2582,7 +2581,7 @@ export function ConfigPage() {
                         }`}
                       >
                         <Terminal
-                          size="1.0000rem"
+                          size={ICON.sm}
                           className="shrink-0 text-dim"
                         />
                         <code className="flex-1 truncate font-mono text-sm text-fg">
@@ -2601,17 +2600,17 @@ export function ConfigPage() {
                           }
                           title={t('config.permissionsRemove')}
                           aria-label={t('config.permissionsRemove')}
-                          className="shrink-0 rounded p-1 text-dim opacity-0 transition-opacity hover:text-err group-hover:opacity-100"
+                          className="shrink-0 rounded-tight p-1 text-dim opacity-0 transition-opacity hover:text-err group-hover:opacity-100"
                         >
-                          <Trash2 size="1.0000rem" />
+                          <Trash2 size={ICON.sm} />
                         </button>
                       </div>
                     ))}
                   </div>
                 )}
-                <div className="flex items-center gap-2 rounded-xl border border-edge bg-panel2 p-2">
+                <div className="flex items-center gap-2 rounded-card border border-edge bg-panel2 p-2">
                   <ShieldPlus
-                    size="1.0714rem"
+                    size={ICON.md}
                     className="ml-1 shrink-0 text-dim"
                   />
                   <input
@@ -2648,7 +2647,7 @@ export function ConfigPage() {
                         })
                         .catch((err) => setError(String(err)));
                     }}
-                    className="rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
+                    className="rounded-control bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
                     disabled={!ruleInput.trim()}
                   >
                     {t('config.permissionsAdd')}
@@ -2659,16 +2658,16 @@ export function ConfigPage() {
                     sandbox entirely. Strictly stronger than the
                     allowlist above, so they get their own bordered
                     section instead of being mixed into that list. */}
-                <div className="space-y-3 rounded-xl border border-warn/40 bg-warn/5 p-3">
+                <div className="space-y-3 rounded-card border border-warn/40 bg-warn/5 p-3">
                   <div className="flex items-start gap-2 text-xs text-dim">
                     <ShieldAlert
-                      size="1.0000rem"
+                      size={ICON.sm}
                       className="mt-0.5 shrink-0 text-warn"
                     />
                     <span>{t('config.escalatedHint')}</span>
                   </div>
                   {escalatedRules.length > 0 && (
-                    <div className="overflow-hidden rounded-lg border border-edge bg-panel">
+                    <div className="overflow-hidden rounded-control border border-edge bg-panel">
                       {escalatedRules.map((rule, i) => (
                         <div
                           key={rule}
@@ -2677,7 +2676,7 @@ export function ConfigPage() {
                           }`}
                         >
                           <ShieldAlert
-                            size="1.0000rem"
+                            size={ICON.sm}
                             className="shrink-0 text-warn"
                           />
                           <code className="flex-1 truncate font-mono text-sm text-fg">
@@ -2696,17 +2695,17 @@ export function ConfigPage() {
                             }
                             title={t('config.permissionsRemove')}
                             aria-label={t('config.permissionsRemove')}
-                            className="shrink-0 rounded p-1 text-dim opacity-0 transition-opacity hover:text-err group-hover:opacity-100"
+                            className="shrink-0 rounded-tight p-1 text-dim opacity-0 transition-opacity hover:text-err group-hover:opacity-100"
                           >
-                            <Trash2 size="1.0000rem" />
+                            <Trash2 size={ICON.sm} />
                           </button>
                         </div>
                       ))}
                     </div>
                   )}
-                  <div className="flex items-center gap-2 rounded-xl border border-edge bg-panel2 p-2">
+                  <div className="flex items-center gap-2 rounded-card border border-edge bg-panel2 p-2">
                     <ShieldAlert
-                      size="1.0714rem"
+                      size={ICON.md}
                       className="ml-1 shrink-0 text-dim"
                     />
                     <input
@@ -2742,7 +2741,7 @@ export function ConfigPage() {
                           })
                           .catch((err) => setError(String(err)));
                       }}
-                      className="rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
+                      className="rounded-control bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
                       disabled={!escalatedInput.trim()}
                     >
                       {t('config.permissionsAdd')}
@@ -2758,13 +2757,13 @@ export function ConfigPage() {
                 <PetBehaviorPanel />
                 {diag && (
                   <div className="grid grid-cols-2 gap-3 text-sm">
-                    <div className="rounded-lg border border-edge bg-panel2 px-3 py-2">
+                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
                       <span className="text-xs text-dim">
                         {t('config.diagVersion')}
                       </span>
                       <p className="font-mono">{diag.version}</p>
                     </div>
-                    <div className="rounded-lg border border-edge bg-panel2 px-3 py-2">
+                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
                       <span className="text-xs text-dim">
                         {t('config.diagPlatform')}
                       </span>
@@ -2772,7 +2771,7 @@ export function ConfigPage() {
                         {diag.platform}/{diag.arch}
                       </p>
                     </div>
-                    <div className="rounded-lg border border-edge bg-panel2 px-3 py-2">
+                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
                       <span className="text-xs text-dim">
                         {t('config.diagRuntime')}
                       </span>
@@ -2783,7 +2782,7 @@ export function ConfigPage() {
                           : ''}
                       </p>
                     </div>
-                    <div className="rounded-lg border border-edge bg-panel2 px-3 py-2">
+                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
                       <span className="text-xs text-dim">
                         {t('config.diagSandbox')}
                       </span>
@@ -2796,13 +2795,13 @@ export function ConfigPage() {
                         {diag.sandbox_available ? ' ✓' : ' ✗'}
                       </p>
                     </div>
-                    <div className="rounded-lg border border-edge bg-panel2 px-3 py-2">
+                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
                       <span className="text-xs text-dim">
                         {t('config.diagShell')}
                       </span>
                       <p className="font-mono">{diag.exec_shell}</p>
                     </div>
-                    <div className="rounded-lg border border-edge bg-panel2 px-3 py-2">
+                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
                       <span className="text-xs text-dim">
                         {t('config.diagConfig')}
                       </span>
@@ -2816,7 +2815,7 @@ export function ConfigPage() {
                           : diag.config_error || t('config.diagBroken')}
                       </p>
                     </div>
-                    <div className="rounded-lg border border-edge bg-panel2 px-3 py-2">
+                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
                       <span className="text-xs text-dim">
                         {t('config.diagInference')}
                       </span>
@@ -2830,7 +2829,7 @@ export function ConfigPage() {
                           : t('config.diagMissing')}
                       </p>
                     </div>
-                    <div className="rounded-lg border border-edge bg-panel2 px-3 py-2">
+                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
                       <span className="text-xs text-dim">
                         {t('config.diagGit')}
                       </span>
@@ -2840,16 +2839,21 @@ export function ConfigPage() {
                           : t('config.diagNoRepo')}
                       </p>
                     </div>
-                    <div className="rounded-lg border border-edge bg-panel2 px-3 py-2">
+                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
                       <span className="text-xs text-dim">
                         {t('config.diagSessions')}
                       </span>
                       <p className="font-mono">
-                        {diag.session_count} · {diag.active_runs}{' '}
-                        {t('config.diagActiveRuns')}
+                        {t('config.diagSessionCount', {
+                          count: diag.session_count,
+                        })}{' '}
+                        ·{' '}
+                        {t('config.diagActiveRuns', {
+                          count: diag.active_runs,
+                        })}
                       </p>
                     </div>
-                    <div className="rounded-lg border border-edge bg-panel2 px-3 py-2 col-span-2">
+                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2 col-span-2">
                       <span className="text-xs text-dim">
                         {t('config.diagPaths')}
                       </span>
@@ -2866,14 +2870,14 @@ export function ConfigPage() {
                   <button
                     onClick={() => void runProbe()}
                     disabled={diagBusy}
-                    className="rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
+                    className="rounded-control bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
                   >
                     {t('config.diagProbe')}
                   </button>
                   <button
                     onClick={() => void clearCaches()}
                     disabled={diagBusy}
-                    className="rounded-lg border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg disabled:opacity-40"
+                    className="rounded-control border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg disabled:opacity-40"
                   >
                     {t('config.diagClearCache')}
                   </button>
@@ -2881,21 +2885,21 @@ export function ConfigPage() {
                     onClick={() =>
                       void api.reload().catch((err) => toast(String(err)))
                     }
-                    className="rounded-lg border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg"
+                    className="rounded-control border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg"
                   >
                     {t('config.diagReload')}
                   </button>
                   <button
                     onClick={() => void repairConfigCompat()}
                     disabled={diagBusy}
-                    className="rounded-lg border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg disabled:opacity-40"
+                    className="rounded-control border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg disabled:opacity-40"
                   >
                     {t('config.diagRepairCompat')}
                   </button>
                 </div>
                 {probe && (
                   <div
-                    className={`rounded-lg border px-3 py-2 text-xs ${
+                    className={`rounded-control border px-3 py-2 text-xs ${
                       probe.ok
                         ? 'border-ok/40 text-ok'
                         : 'border-err/40 text-err'
@@ -2916,7 +2920,7 @@ export function ConfigPage() {
                   <p className="text-xs text-dim">
                     {t('config.diagCacheDone', {
                       bytes: fmtBytes(cacheResult.bytes),
-                      dirs: cacheResult.dirs.length,
+                      count: cacheResult.dirs.length,
                     })}
                   </p>
                 )}
@@ -2931,12 +2935,12 @@ export function ConfigPage() {
                         if (e.key === 'Enter') void checkPolicy();
                       }}
                       placeholder={t('config.diagPolicyPlaceholder')}
-                      className="flex-1 rounded-lg border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
+                      className="flex-1 rounded-control border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
                     />
                     <button
                       onClick={() => void checkPolicy()}
                       disabled={diagBusy}
-                      className="rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
+                      className="rounded-control bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
                     >
                       {t('config.diagPolicyCheck')}
                     </button>
@@ -2971,11 +2975,8 @@ export function ConfigPage() {
                 <p className="text-xs text-dim">{t('config.importIntro')}</p>
                 <PluginPanels tab="import" />
                 {importPanelCount === 0 && (
-                  <div className="rounded-xl border border-dashed border-edge bg-panel2/50 p-8 text-center">
-                    <Import
-                      size="1.5714rem"
-                      className="mx-auto mb-2 text-dim"
-                    />
+                  <div className="rounded-card border border-dashed border-edge bg-panel2/50 p-8 text-center">
+                    <Import size={ICON.lg} className="mx-auto mb-2 text-dim" />
                     <p className="text-xs text-dim">
                       {t('config.importEmpty')}
                     </p>
@@ -2986,20 +2987,23 @@ export function ConfigPage() {
           </div>
         </div>
 
-        <div className="px-5 py-4 border-t border-edge flex items-center gap-3">
-          {error && <span className="text-xs text-err flex-1">{error}</span>}
-          <span className="flex-1" />
-          {tab === 'inference' && (
-            <button
-              onClick={() => void save()}
-              disabled={saving}
-              className="flex items-center gap-1.5 rounded-lg bg-accent px-5 py-2 text-sm text-white hover:opacity-90 disabled:opacity-50"
-            >
-              {saving && <Loader2 size="1.0000rem" className="animate-spin" />}
-              {t('setup.saveApply')}
-            </button>
-          )}
-        </div>
+        {tab === 'inference' ? (
+          <div className="px-5 py-4 border-t border-edge">
+            <SaveBar
+              bare
+              error={error}
+              saving={saving}
+              onSave={() => void save()}
+            />
+          </div>
+        ) : (
+          error &&
+          tab !== 'memory' && (
+            <div className="px-5 py-4 border-t border-edge">
+              <span className="text-xs text-err">{error}</span>
+            </div>
+          )
+        )}
       </div>
     </div>
   );

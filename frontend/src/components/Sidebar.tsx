@@ -34,6 +34,7 @@ import {
 import type { ComponentType } from 'react';
 import type { SessionMeta, WorkspaceMeta } from '../lib/types';
 import { AppMark } from './AppMark';
+import { ICON } from './ui/icon';
 
 function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
@@ -550,7 +551,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
     return (
       <div key={row.id}>
         <div
-          className={`group relative rounded-lg text-left ${
+          className={`group relative rounded-control text-left ${
             isActive
               ? 'bg-accent/15 border border-accent/40'
               : 'border border-transparent hover:bg-panel2'
@@ -573,7 +574,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                   }
                 }}
                 onBlur={() => setRenameId(null)}
-                className="w-full min-w-0 rounded border border-accent bg-panel px-1 py-0 text-xs outline-none"
+                className="w-full min-w-0 rounded-tight border border-accent bg-panel px-1 py-0 text-xs outline-none"
               />
             </div>
           ) : (
@@ -596,7 +597,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                     }`}
                   >
                     <Loader2
-                      size="0.9286rem"
+                      size={ICON.sm}
                       className="animate-spin text-accent"
                     />
                   </span>
@@ -615,11 +616,11 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                       setHoverCard(null);
                       setMenuOpenId(menuOpenId === row.id ? null : row.id);
                     }}
-                    className="rounded-md bg-panel/90 p-1 text-dim hover:bg-panel2 hover:text-fg"
+                    className="rounded-control bg-panel/90 p-1 text-dim hover:bg-panel2 hover:text-fg"
                     title={t('sidebar.sessionActions')}
                     aria-label={t('sidebar.sessionActions')}
                   >
-                    <MoreHorizontal size="1.0000rem" />
+                    <MoreHorizontal size={ICON.sm} />
                   </button>
                   {menuOpenId === row.id && (
                     <>
@@ -627,7 +628,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                         className="fixed inset-0 z-20"
                         onClick={() => setMenuOpenId(null)}
                       />
-                      <div className="absolute right-0 top-full z-30 mt-1 w-44 rounded-lg border border-edge bg-panel py-1 shadow-xl">
+                      <div className="absolute right-0 top-full z-30 mt-1 w-44 rounded-control border border-edge bg-panel py-1 shadow-popover">
                         <button
                           onClick={() => {
                             setMenuOpenId(null);
@@ -636,7 +637,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                           }}
                           className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
                         >
-                          <Pencil size="0.8571rem" className="text-dim" />
+                          <Pencil size={ICON.xs} className="text-dim" />
                           {t('sidebar.renameSession')}
                         </button>
                         <button
@@ -651,7 +652,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                           }}
                           className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
                         >
-                          <Download size="0.8571rem" className="text-dim" />
+                          <Download size={ICON.xs} className="text-dim" />
                           {t('sidebar.exportSession')}
                         </button>
                         <button
@@ -666,7 +667,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                           }}
                           className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
                         >
-                          <Download size="0.8571rem" className="text-dim" />
+                          <Download size={ICON.xs} className="text-dim" />
                           {t('sidebar.exportSessionBundle')}
                         </button>
                         <button
@@ -676,7 +677,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                           }}
                           className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-err hover:bg-panel2"
                         >
-                          <Trash2 size="0.8571rem" className="text-err" />
+                          <Trash2 size={ICON.xs} className="text-err" />
                           {t('sidebar.deleteSession')}
                         </button>
                       </div>
@@ -706,7 +707,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
             toggleWorkspace(w);
           }
         }}
-        className={`group flex items-center gap-1 rounded-lg px-1.5 py-1 text-left text-sm cursor-pointer select-none ${
+        className={`group flex items-center gap-1 rounded-control px-1.5 py-1 text-left text-sm cursor-pointer select-none ${
           isCurrent
             ? 'bg-accent/10 border border-accent/25'
             : 'border border-transparent hover:bg-panel2'
@@ -714,7 +715,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
         title={w.path}
       >
         <FolderIcon
-          size="0.9286rem"
+          size={ICON.sm}
           className={`shrink-0 ${isCurrent ? 'text-accent' : 'text-dim'}`}
         />
         <span
@@ -733,7 +734,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
           title={t('sidebar.removeWorkspace')}
           aria-label={t('sidebar.removeWorkspace')}
         >
-          <Trash2 size="0.8571rem" />
+          <Trash2 size={ICON.xs} />
         </button>
       </div>
     );
@@ -841,15 +842,15 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
       case 'loading':
         return (
           <div className="ml-3 pt-1">
-            <div className="h-9 animate-pulse rounded-lg bg-panel2" />
+            <div className="h-9 animate-pulse rounded-control bg-panel2" />
           </div>
         );
       case 'empty':
         return (
           <div className="ml-3 pt-1">
-            <div className="flex h-9 items-center justify-center gap-1.5 rounded-lg border border-dashed border-edge/70 bg-panel2/40 px-2 text-xs text-dim">
+            <div className="flex h-9 items-center justify-center gap-1.5 rounded-control border border-dashed border-edge/70 bg-panel2/40 px-2 text-xs text-dim">
               <MessageSquarePlus
-                size="0.9286rem"
+                size={ICON.sm}
                 className="shrink-0 text-dim/70"
               />
               {t('sidebar.noSessions')}
@@ -861,11 +862,11 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
           <div className="ml-3 pt-1">
             <button
               onClick={() => expandWorkspaceSessions(item.workspacePath)}
-              className="flex w-full items-center gap-1 rounded-md px-1.5 py-1 text-xs text-dim hover:bg-panel2 hover:text-fg transition-colors"
+              className="flex w-full items-center gap-1 rounded-control px-1.5 py-1 text-xs text-dim hover:bg-panel2 hover:text-fg transition-colors"
             >
-              <ChevronDown size="0.8571rem" className="shrink-0" />
+              <ChevronDown size={ICON.xs} className="shrink-0" />
               {t('sidebar.moreSessions')}
-              <span className="ml-auto tabular-nums text-[0.7143rem] text-dim/80">
+              <span className="ml-auto tabular-nums text-micro text-dim/80">
                 +{item.count}
               </span>
             </button>
@@ -917,7 +918,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
     if (rows.length === 0) return null;
     return (
       <div
-        className="pointer-events-none fixed z-[70] rounded-lg border border-edge bg-panel2/95 p-3 shadow-xl backdrop-blur"
+        className="pointer-events-none fixed z-[70] rounded-card border border-edge bg-panel2/95 p-3 shadow-popover backdrop-blur"
         style={{ left: card.left, top: card.top, width: 288 }}
       >
         <p className="break-words text-sm font-medium leading-5 text-fg line-clamp-3">
@@ -967,9 +968,9 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
       <div className="px-3 pt-1">
         <button
           onClick={openDraftChat}
-          className="w-full flex items-center gap-2 rounded-lg border border-edge bg-panel2 px-3 py-2 text-sm hover:border-accent/50 transition-colors"
+          className="w-full flex items-center gap-2 rounded-card border border-edge bg-panel2 px-3 py-2 text-sm hover:border-accent/50 transition-colors"
         >
-          <Plus size="1.0714rem" className="text-accent" />
+          <Plus size={ICON.md} className="text-accent" />
           {t('sidebar.newChat')}
         </button>
       </div>
@@ -981,7 +982,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
             <button
               key={btn.id}
               onClick={btn.onClick}
-              className={`w-full flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm text-left transition-colors ${
+              className={`w-full flex items-center gap-2 rounded-control px-3 py-1.5 text-sm text-left transition-colors ${
                 btn.active
                   ? 'bg-accent/15 border border-accent/40'
                   : 'border border-transparent text-dim hover:text-fg hover:bg-panel2'
@@ -1008,9 +1009,9 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
               aria-label={t('sidebar.importSession')}
             >
               {importing ? (
-                <Loader2 size="0.9286rem" className="animate-spin" />
+                <Loader2 size={ICON.sm} className="animate-spin" />
               ) : (
-                <Upload size="0.9286rem" />
+                <Upload size={ICON.sm} />
               )}
             </button>
             <button
@@ -1019,20 +1020,18 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
               title={t('sidebar.addWorkspace')}
               aria-label={t('sidebar.addWorkspace')}
             >
-              <Plus size="0.9286rem" />
+              <Plus size={ICON.sm} />
             </button>
           </div>
         </div>
         {workspaceInputOpen && (
-          <div className="mb-2 flex flex-col gap-1.5 rounded-lg border border-edge bg-panel2 p-2">
+          <div className="mb-2 flex flex-col gap-1.5 rounded-card border border-edge bg-panel2 p-2">
             {workspaceError && (
-              <p className="text-[0.7857rem] text-red-400 break-words">
+              <p className="text-label text-err break-words">
                 {workspaceError}
               </p>
             )}
-            <p className="text-[0.7857rem] text-dim">
-              {t('sidebar.pickerFallback')}
-            </p>
+            <p className="text-label text-dim">{t('sidebar.pickerFallback')}</p>
             <input
               value={workspacePath}
               onChange={(e) => setWorkspacePath(e.target.value)}
@@ -1041,19 +1040,19 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                 if (e.key === 'Escape') setWorkspaceInputOpen(false);
               }}
               placeholder="/path/to/workspace"
-              className="w-full rounded-md border border-edge bg-panel px-2 py-1 text-xs text-fg outline-none focus:border-accent"
+              className="w-full rounded-control border border-edge bg-panel px-2 py-1 text-xs text-fg outline-none focus:border-accent"
               autoFocus
             />
             <div className="flex gap-2">
               <button
                 onClick={() => void handleOpenPath()}
-                className="rounded-md bg-accent px-2 py-1 text-xs text-white hover:opacity-90"
+                className="rounded-control bg-accent px-2 py-1 text-xs text-white hover:opacity-90"
               >
                 {t('sidebar.open')}
               </button>
               <button
                 onClick={() => setWorkspaceInputOpen(false)}
-                className="rounded-md px-2 py-1 text-xs text-dim hover:text-fg"
+                className="rounded-control px-2 py-1 text-xs text-dim hover:text-fg"
               >
                 {t('sidebar.cancel')}
               </button>
@@ -1094,7 +1093,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
           onClick={() => openConfig()}
           className="flex items-center gap-1.5 text-xs text-dim hover:text-fg"
         >
-          <Settings size="0.9286rem" />
+          <Settings size={ICON.sm} />
           {t('sidebar.settings')}
         </button>
       </div>
@@ -1105,7 +1104,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
           onClick={() => setConfirmDelete(null)}
         >
           <div
-            className="w-[26.0000rem] rounded-2xl border border-edge bg-panel p-5 shadow-2xl"
+            className="w-[26.0000rem] rounded-card border border-edge bg-panel p-5 shadow-modal"
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-base font-semibold">
@@ -1120,7 +1119,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
             <div className="mt-4 flex justify-end gap-2">
               <button
                 onClick={() => setConfirmDelete(null)}
-                className="rounded-lg border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
+                className="rounded-control border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
               >
                 {t('interact.cancel')}
               </button>
@@ -1129,7 +1128,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                   void deleteSession(confirmDelete);
                   setConfirmDelete(null);
                 }}
-                className="rounded-lg bg-err px-3 py-1.5 text-sm text-white hover:opacity-90"
+                className="rounded-control bg-err px-3 py-1.5 text-sm text-white hover:opacity-90"
               >
                 {t('sidebar.deleteSession')}
               </button>
@@ -1144,7 +1143,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
           onClick={() => setConfirmWorkspace(null)}
         >
           <div
-            className="w-[26.0000rem] rounded-2xl border border-edge bg-panel p-5 shadow-2xl"
+            className="w-[26.0000rem] rounded-card border border-edge bg-panel p-5 shadow-modal"
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-base font-semibold">
@@ -1158,13 +1157,13 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
             <div className="mt-4 flex justify-end gap-2">
               <button
                 onClick={() => setConfirmWorkspace(null)}
-                className="rounded border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
+                className="rounded-tight border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
               >
                 {t('interact.cancel')}
               </button>
               <button
                 onClick={confirmRemoveWorkspace}
-                className="rounded bg-err px-3 py-1.5 text-sm text-white hover:opacity-90"
+                className="rounded-tight bg-err px-3 py-1.5 text-sm text-white hover:opacity-90"
               >
                 {t('sidebar.removeWorkspace')}
               </button>

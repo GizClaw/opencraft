@@ -1,6 +1,21 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { useStore } from '../lib/store';
+import { stateRoot } from '../state/app';
 import { MessagePeek, type MessagePeekItem } from './MessagePeek';
+
+const apiMock = vi.hoisted(() => ({
+  resolveTarget: vi.fn(),
+  openExternal: vi.fn(),
+}));
+
+vi.mock('../lib/api', () => ({ api: apiMock }));
 
 const turns: MessagePeekItem[] = [{ index: 0 }, { index: 1 }];
 const previews = [
@@ -11,6 +26,21 @@ const previews = [
 const previewFor = (index: number) => previews[index];
 
 describe('MessagePeek', () => {
+  beforeEach(() => {
+    apiMock.resolveTarget.mockReset();
+    apiMock.openExternal.mockReset();
+    // The preview's links open into the active conversation's file
+    // panel, so the store needs one focus snapshot to resolve against.
+    stateRoot.resetWorkspace();
+    stateRoot.sendFocus({ type: 'RESTORE_FOCUS', sessionID: 's-1' });
+    stateRoot.registry.ensure('s-1', {
+      workspaceGeneration: stateRoot.generation(),
+      readyEmpty: true,
+      workspace: '/tmp/w',
+    });
+    useStore.setState({ viewers: {} });
+  });
+
   it('renders one tick per turn and highlights the current turn', () => {
     render(
       <MessagePeek
@@ -100,6 +130,45 @@ describe('MessagePeek', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Jump to turn 2' }));
 
     expect(onJump).toHaveBeenCalledWith(1);
+  });
+
+  it('opens a link from the hover preview in the chat file panel', async () => {
+    apiMock.resolveTarget.mockResolvedValue({
+      path: '/tmp/w/docs/guide.md',
+      rel: 'docs/guide.md',
+      root: 'workspace',
+      name: 'guide.md',
+      is_dir: false,
+      size: 12,
+      media_type: 'text/markdown',
+    });
+    render(
+      <MessagePeek
+        items={[{ index: 0 }]}
+        activeRange={{ start: 0, end: 0 }}
+        onJump={vi.fn()}
+        getPreview={() => ({
+          user: 'Add search',
+          answer: 'See [guide](docs/guide.md) for the search API.',
+          running: false,
+        })}
+      />,
+    );
+
+    fireEvent.mouseEnter(
+      screen.getByRole('button', { name: 'Jump to turn 1' }),
+    );
+    fireEvent.click(await screen.findByRole('link', { name: 'guide' }));
+
+    // Chat surfaces share one rule: the file opens as a viewer tab of
+    // the session, never as a dialog of its own.
+    await waitFor(() =>
+      expect(useStore.getState().viewers['s-1']?.fileActive).toBe(
+        '/tmp/w/docs/guide.md',
+      ),
+    );
+    expect(apiMock.resolveTarget).toHaveBeenCalledWith('docs/guide.md', '');
+    expect(apiMock.openExternal).not.toHaveBeenCalled();
   });
 
   it('renders nothing without turns', () => {
