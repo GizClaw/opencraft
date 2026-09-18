@@ -6,6 +6,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
+
+	"github.com/GizClaw/opencraft/internal/testing/logcapture"
 )
 
 func initRepo(t *testing.T, root string) {
@@ -78,6 +81,35 @@ func TestChangedPathsNonRepo(t *testing.T) {
 	if got != nil {
 		t.Fatalf("non-repo changed paths = %v, want nil", got)
 	}
+}
+
+// TestRunBoundedFailureCarriesContext pins the diagnosability of a bare
+// "exit status 128": the record has to name the repository and the argv,
+// otherwise the warning cannot be traced back to a workspace.
+func TestRunBoundedFailureCarriesContext(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	root := t.TempDir()
+	capture := logcapture.Install(t)
+	if _, truncated := RunBounded(context.Background(), root, 4096,
+		10*time.Second, "rev-parse", "--show-toplevel"); truncated {
+		t.Fatal("failed run must not report truncation")
+	}
+	for _, record := range capture.Records() {
+		if record.Body().AsString() != "gitx: git command failed" {
+			continue
+		}
+		if got := logcapture.Attribute(record, "git.root"); got != root {
+			t.Fatalf("git.root = %q, want %q", got, root)
+		}
+		want := "rev-parse --show-toplevel"
+		if got := logcapture.Attribute(record, "git.args"); got != want {
+			t.Fatalf("git.args = %q, want %q", got, want)
+		}
+		return
+	}
+	t.Fatal("missing gitx: git command failed record")
 }
 
 func TestRunBoundedTruncates(t *testing.T) {

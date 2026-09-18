@@ -373,6 +373,11 @@ func (d *Desktop) Shutdown(ctx context.Context) {
 	if mgr := d.core.Runtime.AutomationManager(); mgr != nil {
 		mgr.Stop()
 	}
+	// Detach the notification sink before the runtime closes. A turn
+	// that finishes while shutdown is in flight still raises turn_end,
+	// and resolving its session title against a closed store would log
+	// "database is closed" on every exit.
+	d.core.Shell.SetNotificationSink(nil)
 	d.core.Runtime.Close()
 	d.core.Plugin.Close()
 	if d.execPool != nil {

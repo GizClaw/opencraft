@@ -57,6 +57,10 @@ type SkillMetadata struct {
 type SkillError struct {
 	Path    string `json:"path"`
 	Message string `json:"message"`
+	// Warning marks a tolerated shape issue (a third-party name that
+	// differs from its directory, for example) that discovery accepted.
+	// Callers log these at a lower severity than real errors.
+	Warning bool `json:"warning,omitempty"`
 }
 
 // SkillLoadOutcome is the result of one discovery pass.
@@ -636,7 +640,9 @@ func (c *collector) scanRoot(root string, depth int, scope string) {
 				continue
 			}
 			for _, w := range res.Warnings {
-				c.errors = append(c.errors, SkillError{Path: full, Message: w})
+				c.errors = append(c.errors, SkillError{
+					Path: full, Message: w, Warning: true,
+				})
 			}
 			sk := res.Metadata
 			sk.Depth = depth

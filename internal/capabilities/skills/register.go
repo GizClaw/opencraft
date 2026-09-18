@@ -91,14 +91,27 @@ func (Factory) New(ctx context.Context, in resource.Input) (any, error) {
 		ExtraRoots: extraRoots,
 		Disabled:   settings.Disabled,
 	})
-	if errs := svc.Errors(); len(errs) > 0 {
-		msgs := make([]string, 0, len(errs))
-		for _, e := range errs {
-			msgs = append(msgs, e.Path+": "+e.Message)
+	// Accepted shape issues (a third-party name that differs from its
+	// directory, for example) repeat on every runtime assembly, so they
+	// are logged apart from real discovery failures and at a lower
+	// severity.
+	var errs, warnings []string
+	for _, e := range svc.Errors() {
+		if e.Warning {
+			warnings = append(warnings, e.Path+": "+e.Message)
+			continue
 		}
+		errs = append(errs, e.Path+": "+e.Message)
+	}
+	if len(errs) > 0 {
 		telemetry.Warn(ctx, "skills: discovery errors",
 			log.Int("count", len(errs)),
-			log.String("errors", strings.Join(msgs, "; ")))
+			log.String("errors", strings.Join(errs, "; ")))
+	}
+	if len(warnings) > 0 {
+		telemetry.Info(ctx, "skills: discovery warnings",
+			log.Int("count", len(warnings)),
+			log.String("warnings", strings.Join(warnings, "; ")))
 	}
 	return svc, nil
 }

@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/GizClaw/flowcraft/core/agent"
+	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/resource"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 	otellog "go.opentelemetry.io/otel/log"
@@ -70,6 +71,15 @@ type activateObserver struct {
 
 var _ agent.Observer = (*activateObserver)(nil)
 
+// invalidConversation reports whether the store rejected the
+// conversation id itself. Subagent contexts ("ctx-...") are not
+// persisted sessions, so activation state has nowhere to live there and
+// the turn simply runs without it — warning on every subagent turn
+// would be pure noise.
+func invalidConversation(err error) bool {
+	return errdefs.IsValidation(err)
+}
+
 func (o *activateObserver) OnRunEnd(ctx context.Context, id agent.Identity, res *agent.Result) {
 	if res == nil || res.Status != agent.StatusCompleted {
 		return
@@ -92,6 +102,9 @@ func (o *activateObserver) OnRunEnd(ctx context.Context, id agent.Identity, res 
 	defer o.mu.Unlock()
 	byAgent := map[string][]string{}
 	if err := o.store.ReadState(id.ConversationID, activationsStateKey, &byAgent); err != nil {
+		if invalidConversation(err) {
+			return
+		}
 		if !errors.Is(err, os.ErrNotExist) {
 			telemetry.WarnErr(ctx,
 				"worldstate: load skill activations failed", err,
@@ -119,6 +132,9 @@ func (s *Service) consumeActivations(
 	}
 	var byAgent map[string][]string
 	if err := s.sessionStore.ReadState(contextID, activationsStateKey, &byAgent); err != nil {
+		if invalidConversation(err) {
+			return nil
+		}
 		if !errors.Is(err, os.ErrNotExist) {
 			telemetry.WarnErr(ctx, "worldstate: read skill activations failed", err,
 				otellog.String("conversation.id", contextID),

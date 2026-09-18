@@ -75,6 +75,42 @@ func TestDiscoverRepoLevelsAndUserDirs(t *testing.T) {
 	}
 }
 
+// TestDiscoveryDiagnosticsMarkAcceptedWarnings separates the two
+// diagnostic kinds discovery produces: a tolerated shape issue (a name
+// that differs from its directory) is a warning the resource registers
+// at INFO, while a file that cannot load stays an error.
+func TestDiscoveryDiagnosticsMarkAcceptedWarnings(t *testing.T) {
+	workBase := t.TempDir()
+	userDir := t.TempDir()
+	writeSkill(t, filepath.Join(workBase, ".agents", "skills"), "mismatch",
+		"name: something-else\ndescription: tolerated name mismatch\n")
+	writeSkill(t, filepath.Join(workBase, ".agents", "skills"), "broken",
+		"name: broken\n")
+
+	svc := NewService(context.Background(),
+		Options{WorkBase: workBase, UserDir: userDir, Enabled: true})
+
+	var sawWarning, sawError bool
+	for _, e := range svc.Errors() {
+		switch {
+		case strings.Contains(e.Path, "mismatch"):
+			if !e.Warning {
+				t.Errorf("tolerated name mismatch must be a warning: %+v", e)
+			}
+			sawWarning = true
+		case strings.Contains(e.Path, "broken"):
+			if e.Warning {
+				t.Errorf("unparsable SKILL.md must stay an error: %+v", e)
+			}
+			sawError = true
+		}
+	}
+	if !sawWarning || !sawError {
+		t.Fatalf("diagnostics warning=%v error=%v: %+v",
+			sawWarning, sawError, svc.Errors())
+	}
+}
+
 func TestParseFileFallbackAndWarnings(t *testing.T) {
 	root := t.TempDir()
 	// Invalid name (uppercase + underscore): falls back to the

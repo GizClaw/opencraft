@@ -651,12 +651,25 @@ func clipFrontendErrorDetail(s string) string {
 	return s
 }
 
+// escapeLogLine keeps a renderer-supplied message on one physical log
+// line. console.error and stack payloads carry newlines, and an
+// unescaped record breaks every line-oriented reader of the file
+// (grep/awk, Loki, the diagnostics log view).
+func escapeLogLine(s string) string {
+	if !strings.ContainsAny(s, "\r\n") {
+		return s
+	}
+	s = strings.ReplaceAll(s, "\r\n", `\r\n`)
+	s = strings.ReplaceAll(s, "\r", `\r`)
+	return strings.ReplaceAll(s, "\n", `\n`)
+}
+
 // ReportFrontendError records an uncaught renderer-side error (window error,
 // unhandled rejection, React render crash, or console.error) through the OTel
 // logger so frontend failures land in the same log file and OTLP sinks as Go
 // diagnostics.
 func (b *Diagnostics) ReportFrontendError(source, message, stack string) {
 	flowtelemetry.Error(b.core.Shell.Context(), "frontend: "+source,
-		log.String("message", clipFrontendErrorDetail(message)),
-		log.String("stack", clipFrontendErrorDetail(stack)))
+		log.String("message", escapeLogLine(clipFrontendErrorDetail(message))),
+		log.String("stack", escapeLogLine(clipFrontendErrorDetail(stack))))
 }

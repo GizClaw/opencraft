@@ -16,6 +16,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/plan"
 	"github.com/GizClaw/opencraft/internal/foundation/profile"
+	"github.com/GizClaw/opencraft/internal/testing/logcapture"
 	"github.com/GizClaw/opencraft/internal/testing/sessionstore"
 )
 
@@ -912,6 +913,46 @@ func TestModelRequestedActivation(t *testing.T) {
 	for _, sec := range unmarshalSections(t, board2) {
 		if sec.ID == "skill" && contains(sec.Content.Text(), "requested by the model") {
 			t.Fatalf("activation must be consumed after one turn: %+v", sec)
+		}
+	}
+}
+
+// TestSubagentContextSkipsActivationStore pins the subagent path: a
+// "ctx-..." conversation id addresses no persisted session, so skill
+// activation state is not written, not read and not logged as a
+// failure. Warnings here used to fire on every subagent turn.
+func TestSubagentContextSkipsActivationStore(t *testing.T) {
+	workBase := t.TempDir()
+	writeSkillFile(t, workBase, "review", "review code and docs")
+	sess := newSessionStore(t)
+	svc := skills.NewService(context.Background(),
+		skills.Options{WorkBase: workBase, Enabled: true})
+	capture := logcapture.Install(t)
+
+	const contextID = "ctx-0f1e2d3c4b5a6978"
+	obs := &activateObserver{svc: svc, store: sess}
+	obs.OnRunEnd(context.Background(),
+		agent.Identity{AgentID: "assistant", ConversationID: contextID},
+		&agent.Result{
+			Status: agent.StatusCompleted,
+			Messages: []message.Message{
+				message.NewTextMessage(message.RoleAssistant, "use $review"),
+			},
+		})
+
+	ws := New(Options{WorkBase: workBase})
+	ws.SetSkills(svc)
+	ws.SetSessions(sess)
+	if names := ws.consumeActivations(
+		context.Background(), "assistant", contextID,
+	); names != nil {
+		t.Fatalf("subagent activations = %v, want nil", names)
+	}
+	for _, record := range capture.Records() {
+		if strings.Contains(record.Body().AsString(), "skill activations") {
+			t.Fatalf("subagent context must not warn: %q (%s)",
+				record.Body().AsString(),
+				logcapture.Attribute(record, "error.message"))
 		}
 	}
 }
