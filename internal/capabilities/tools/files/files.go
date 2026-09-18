@@ -20,6 +20,8 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/tool"
 	"github.com/GizClaw/flowcraft/core/workspace"
+
+	"github.com/GizClaw/opencraft/internal/capabilities/tools/toolargs"
 )
 
 const (
@@ -132,8 +134,8 @@ func (t *readFileTool) execute(ctx context.Context, arguments string) (string, e
 		Offset   int    `json:"offset"`
 		Limit    int    `json:"limit"`
 	}
-	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
-		return "", errdefs.Validationf("%s: parse arguments: %v", ReadFileName, err)
+	if err := toolargs.Decode(ReadFileName, arguments, nil, &args); err != nil {
+		return "", err
 	}
 	if err := validateFilePath(args.FilePath); err != nil {
 		return "", err
@@ -277,8 +279,8 @@ func (t *writeFileTool) execute(ctx context.Context, arguments string) (string, 
 		FilePath string `json:"file_path"`
 		Content  string `json:"content"`
 	}
-	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
-		return "", errdefs.Validationf("%s: parse arguments: %v", WriteFileName, err)
+	if err := toolargs.Decode(WriteFileName, arguments, nil, &args); err != nil {
+		return "", err
 	}
 	if err := validateFilePath(args.FilePath); err != nil {
 		return "", err
@@ -351,8 +353,8 @@ func (t *listDirTool) execute(ctx context.Context, arguments string) (string, er
 		IncludeHidden bool   `json:"include_hidden"`
 		MaxDepth      int    `json:"max_depth"`
 	}
-	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
-		return "", errdefs.Validationf("%s: parse arguments: %v", ListDirName, err)
+	if err := toolargs.Decode(ListDirName, arguments, nil, &args); err != nil {
+		return "", err
 	}
 	root := args.Path
 	if root == "" {
@@ -493,8 +495,8 @@ func (t *grepTool) execute(ctx context.Context, arguments string) (string, error
 		MaxMatches      int    `json:"max_matches"`
 		IncludeHidden   bool   `json:"include_hidden"`
 	}
-	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
-		return "", errdefs.Validationf("%s: parse arguments: %v", GrepName, err)
+	if err := toolargs.Decode(GrepName, arguments, nil, &args); err != nil {
+		return "", err
 	}
 	if strings.TrimSpace(args.Pattern) == "" {
 		return "", errdefs.Validationf("%s: pattern is required", GrepName)
@@ -505,6 +507,15 @@ func (t *grepTool) execute(ctx context.Context, arguments string) (string, error
 	}
 	if err := validateDirPath(root); err != nil {
 		return "", err
+	}
+	info, err := t.ws.Stat(ctx, root)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", errdefs.Validationf(
+			"%s: path %q is a file, not a directory; pass the directory "+
+				"that contains it, or read the file instead", GrepName, root)
 	}
 	expr := args.Pattern
 	if args.FixedStrings {
@@ -627,8 +638,8 @@ func (t *globTool) execute(ctx context.Context, arguments string) (string, error
 		Pattern string `json:"pattern"`
 		Path    string `json:"path"`
 	}
-	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
-		return "", errdefs.Validationf("%s: parse arguments: %v", GlobName, err)
+	if err := toolargs.Decode(GlobName, arguments, nil, &args); err != nil {
+		return "", err
 	}
 	if strings.TrimSpace(args.Pattern) == "" {
 		return "", errdefs.Validationf("%s: pattern is required", GlobName)

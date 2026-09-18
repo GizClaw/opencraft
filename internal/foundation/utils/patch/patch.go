@@ -7,6 +7,7 @@ package patch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -242,16 +243,38 @@ func applyUpdate(ctx context.Context, ws workspace.Workspace, op *op) error {
 		return err
 	}
 	lines := splitLines(string(data))
-	for _, h := range op.hunks {
+	for i, h := range op.hunks {
 		next, found := applyHunk(lines, h)
 		if !found {
 			return errdefs.Validationf(
-				"apply_patch: hunk in %q did not match (anchor %q)",
-				op.path, h.anchor)
+				"apply_patch: hunk %d in %q did not match: %s",
+				i+1, op.path, hunkProblem(h))
 		}
 		lines = next
 	}
 	return ws.Write(ctx, op.path, []byte(strings.Join(lines, "\n")+"\n"))
+}
+
+// hunkProblem explains why a hunk could not be located in terms a
+// model can act on. Naming only the anchor is useless for the common
+// failure — the context lines the model guessed from memory do not
+// match the file any more — and it says nothing at all for an
+// insertion hunk that carries no anchor.
+func hunkProblem(h hunk) string {
+	switch {
+	case len(h.removed) == 0 && h.anchor == "":
+		return "insertion hunk has no anchor and no context lines to " +
+			"locate it; add surrounding context lines or a non-empty " +
+			"\"@@\" anchor"
+	case len(h.removed) == 0:
+		return fmt.Sprintf(
+			"no line contains the \"@@\" anchor %q; copy an exact line "+
+				"from the file", h.anchor)
+	default:
+		return fmt.Sprintf(
+			"no match for the first context line %q; re-read the file "+
+				"and copy the exact lines", h.removed[0])
+	}
 }
 
 // applyHunk replaces the first match of removed lines with added lines.

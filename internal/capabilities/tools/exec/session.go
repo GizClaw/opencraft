@@ -9,6 +9,8 @@ import (
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/sandbox"
 	"github.com/GizClaw/flowcraft/core/tool"
+
+	"github.com/GizClaw/opencraft/internal/capabilities/tools/toolargs"
 )
 
 // SessionName is the canonical exec_session tool name.
@@ -118,8 +120,8 @@ func (t *SessionTool) Execute(ctx context.Context, arguments string) (message.Co
 // execute renders the tool's text result.
 func (t *SessionTool) execute(ctx context.Context, arguments string) (string, error) {
 	var a args
-	if err := json.Unmarshal([]byte(arguments), &a); err != nil {
-		return "", errdefs.Validationf("exec_session: parse arguments: %v", err)
+	if err := toolargs.Decode(SessionName, arguments, nil, &a); err != nil {
+		return "", err
 	}
 	if a.Action == "" || a.ProcessID == "" {
 		return "", errdefs.Validationf(

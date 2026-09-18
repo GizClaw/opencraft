@@ -2,10 +2,56 @@ package patch
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/GizClaw/flowcraft/core/workspace"
 )
+
+// TestHunkMismatchExplainsWhy: the old error only echoed the anchor,
+// which is empty for the common failure and told the model nothing.
+func TestHunkMismatchExplainsWhy(t *testing.T) {
+	ctx := context.Background()
+	ws := memWorkspace(t)
+	if err := ws.Write(ctx, "a.txt", []byte("one\ntwo\n")); err != nil {
+		t.Fatal(err)
+	}
+
+	// A context line that no longer exists in the file.
+	ops, err := Parse("*** Begin Patch\n*** Update File: a.txt\n@@\n" +
+		"-missing line\n+new line\n*** End Patch\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Apply(ctx, ws, ops); err == nil {
+		t.Fatal("mismatched hunk accepted")
+	} else {
+		msg := err.Error()
+		for _, want := range []string{
+			`apply_patch: hunk 1 in "a.txt" did not match`,
+			`no match for the first context line "missing line"`,
+			"re-read the file",
+		} {
+			if !strings.Contains(msg, want) {
+				t.Errorf("error %q missing %q", msg, want)
+			}
+		}
+	}
+
+	// An insertion hunk with neither an anchor nor context can never
+	// match: say so instead of printing an empty anchor.
+	ops, err = Parse("*** Begin Patch\n*** Update File: a.txt\n@@\n" +
+		"+new line\n*** End Patch\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Apply(ctx, ws, ops); err == nil {
+		t.Fatal("anchorless insertion accepted")
+	} else if !strings.Contains(err.Error(),
+		"insertion hunk has no anchor and no context lines") {
+		t.Fatalf("error = %v", err)
+	}
+}
 
 func memWorkspace(t *testing.T) workspace.Workspace {
 	t.Helper()

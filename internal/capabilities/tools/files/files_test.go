@@ -120,6 +120,48 @@ func TestWriteFileCreatesParentsAndOverwrites(t *testing.T) {
 	}
 }
 
+// TestFileToolsNameUnknownArguments: a misspelled argument must name
+// the key the model sent instead of silently defaulting (or answering
+// "required" for a key it did send).
+func TestFileToolsNameUnknownArguments(t *testing.T) {
+	tool, _ := newTestTool(t)
+	writeTree(t, tool.ws, map[string]string{"a.txt": "one\n"})
+	_, err := execute(t, tool.read(), `{"file_path":"a.txt","maximum":1}`)
+	if err == nil {
+		t.Fatal("unknown argument accepted")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		"read_file: unknown argument \"maximum\"",
+		"accepted arguments:",
+		"file_path",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q missing %q", msg, want)
+		}
+	}
+}
+
+// TestGrepPathMustBeDirectory: grep walks directories; handing it a
+// file used to surface the raw walk error ("workspace: list …").
+func TestGrepPathMustBeDirectory(t *testing.T) {
+	tool, _ := newTestTool(t)
+	writeTree(t, tool.ws, map[string]string{"src/main.go": "package main\n"})
+	_, err := execute(t, tool.grep(), `{"pattern":"main","path":"src/main.go"}`)
+	if err == nil {
+		t.Fatal("grep on a file path accepted")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		`grep: path "src/main.go" is a file, not a directory`,
+		"read the file instead",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q missing %q", msg, want)
+		}
+	}
+}
+
 func TestListDirRecursiveAndHidden(t *testing.T) {
 	tool, _ := newTestTool(t)
 	writeTree(t, tool.ws, map[string]string{

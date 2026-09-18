@@ -303,3 +303,47 @@ func TestCommandDefinition(t *testing.T) {
 		t.Fatal("exec_command must be mutating")
 	}
 }
+
+// TestCommandAcceptsCmdAlias: several model harnesses name the command
+// line "cmd". The alias costs nothing, while the schema keeps
+// "command" as the documented name.
+func TestCommandAcceptsCmdAlias(t *testing.T) {
+	tool, runner := newCommandTool()
+	if _, err := tool.Execute(context.Background(),
+		`{"cmd":"rg --files","workdir":"internal"}`); err != nil {
+		t.Fatalf("cmd alias: %v", err)
+	}
+	if len(runner.started) != 1 {
+		t.Fatalf("started = %d sessions", len(runner.started))
+	}
+	if want := []string{"rg", "--files"}; !reflect.DeepEqual(
+		runner.started[0].Argv, want) {
+		t.Fatalf("argv = %v, want %v", runner.started[0].Argv, want)
+	}
+	if runner.started[0].Opts.WorkDir != "internal" {
+		t.Fatalf("workdir = %q", runner.started[0].Opts.WorkDir)
+	}
+}
+
+// TestCommandNamesUnknownArgument: the old loose decode dropped "cwd"
+// and answered "command is required", which named neither the typo nor
+// the accepted arguments.
+func TestCommandNamesUnknownArgument(t *testing.T) {
+	tool, _ := newCommandTool()
+	_, err := tool.Execute(context.Background(),
+		`{"cwd":"/tmp","command":"ls"}`)
+	if err == nil {
+		t.Fatal("unknown argument accepted")
+	}
+	msg := err.Error()
+	for _, want := range []string{
+		`unknown argument "cwd"`,
+		"accepted arguments:",
+		"workdir",
+		"command (alias: cmd)",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q missing %q", msg, want)
+		}
+	}
+}

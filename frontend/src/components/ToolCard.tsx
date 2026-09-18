@@ -46,6 +46,16 @@ interface Summary {
   rest: string;
 }
 
+// execCommandLine reads the command line from the canonical "command"
+// argument or the "cmd" alias several model harnesses emit; the backend
+// accepts both, so the card must show both.
+function execCommandLine(args: Record<string, unknown> | null): string {
+  if (!args) return '';
+  if (typeof args.command === 'string') return args.command;
+  if (typeof args.cmd === 'string') return args.cmd;
+  return Array.isArray(args.argv) ? args.argv.join(' ') : '';
+}
+
 function summaryOf(tool: ToolView): Summary | null {
   const args = parseArgs(tool);
   if (!args) return null;
@@ -53,12 +63,7 @@ function summaryOf(tool: ToolView): Summary | null {
   switch (tool.name) {
     case 'exec_command':
     case 'exec_session':
-      return {
-        verb: 'ran',
-        rest:
-          str(args.command) ||
-          (Array.isArray(args.argv) ? args.argv.join(' ') : ''),
-      };
+      return { verb: 'ran', rest: execCommandLine(args) };
     case 'read_file':
       return { verb: 'read', rest: str(args.file_path) };
     case 'write_file':
@@ -244,12 +249,7 @@ function ExecView({ tool }: { tool: ToolView }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const args = parseArgs(tool);
-  const command =
-    args && typeof args.command === 'string'
-      ? args.command
-      : args && Array.isArray(args.argv)
-        ? args.argv.join(' ')
-        : '';
+  const command = execCommandLine(args);
   const exec = tool.result !== undefined ? execResult(tool.result) : null;
   const running = tool.status === 'running';
   const failed =

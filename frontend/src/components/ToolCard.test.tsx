@@ -110,6 +110,18 @@ describe('ToolCard', () => {
     expect(screen.getAllByText('README.md').length).toBeGreaterThan(0);
   });
 
+  it('shows the command when the model used the cmd alias', () => {
+    render(
+      <ToolCard
+        tool={tool({
+          args: '{"cmd":"git status --short"}',
+          result: '{"exit_code":0,"stdout":"","stderr":""}',
+        })}
+      />,
+    );
+    expect(screen.getByText('git status --short')).toBeInTheDocument();
+  });
+
   it('renders read_file content', async () => {
     const user = userEvent.setup();
     render(
