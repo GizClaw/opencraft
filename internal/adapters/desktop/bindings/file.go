@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"mime"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +18,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/filetype"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/fshidden"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/imageutil"
 	patchutil "github.com/GizClaw/opencraft/internal/foundation/utils/patch"
@@ -302,7 +302,7 @@ func (b *File) ResolveTarget(target, base string) (ResolvedTarget, error) {
 		Name:      filepath.Base(full),
 		IsDir:     info.IsDir(),
 		Size:      info.Size(),
-		MediaType: mediaTypeFor(full),
+		MediaType: filetype.OfPath(full).MediaType,
 	}, nil
 }
 
@@ -332,6 +332,9 @@ type FilePreview struct {
 // ReadPreview returns a bounded preview for one viewer target: text
 // (capped at previewTextLimit), small/normalizable images as data
 // URLs, or bare metadata for formats the viewer does not render.
+// The file's type comes from its content (see the filetype package),
+// so a source file named .ts opens in the code viewer while a
+// transport stream beside it plays as video.
 func (b *File) ReadPreview(path string) (FilePreview, error) {
 	full, root, err := b.locatePath(path, "")
 	if err != nil {
@@ -344,7 +347,8 @@ func (b *File) ReadPreview(path string) (FilePreview, error) {
 	if !info.Mode().IsRegular() {
 		return FilePreview{}, fmt.Errorf("file: %q is not a regular file", path)
 	}
-	mediaType := mediaTypeFor(full)
+	kind := filetype.OfPath(full)
+	mediaType := kind.MediaType
 	rel := ""
 	if root == "workspace" {
 		rel = relOf(b.core.ActiveWorkDir(), full)
@@ -364,7 +368,7 @@ func (b *File) ReadPreview(path string) (FilePreview, error) {
 		return out, nil
 	}
 	if info.Size() > previewTextLimit {
-		if isTextExt(full) {
+		if kind.Text {
 			out.TooLarge = true
 			return out, nil
 		}
@@ -381,7 +385,9 @@ func (b *File) ReadPreview(path string) (FilePreview, error) {
 	if err != nil {
 		return FilePreview{}, fmt.Errorf("file: read %q: %w", path, err)
 	}
-	if looksLikeText(data, mediaType) {
+	// The sample decided text; the whole payload confirms it, and a NUL
+	// past the sample demotes the file to the metadata pane.
+	if kind.Text && filetype.IsText(data) {
 		out.Text = string(data)
 		out.Kind = "text"
 		return out, nil
@@ -400,7 +406,7 @@ func (b *File) ReadPreview(path string) (FilePreview, error) {
 // when the file is not a workspace video or streaming is unavailable.
 func (b *File) streamURL(root, rel, mediaType string) string {
 	if b.mediaURL == nil || root != "workspace" || rel == "" ||
-		!strings.HasPrefix(mediaType, "video/") {
+		filetype.Family(mediaType) != "video" {
 		return ""
 	}
 	url, err := b.mediaURL(rel)
@@ -413,34 +419,15 @@ func (b *File) streamURL(root, rel, mediaType string) string {
 // previewableMediaType reports whether the viewer tries to embed this
 // type inline (image or PDF); everything else is a metadata-only file.
 func previewableMediaType(mediaType string) bool {
-	return strings.HasPrefix(mediaType, "image/") ||
-		mediaType == "application/pdf"
-}
-
-// isTextExt reports whether an extension belongs to the text/code
-// family the viewer renders inline even when the OS MIME table does
-// not know it (e.g. .go, .rs, .md).
-func isTextExt(path string) bool {
-	switch strings.ToLower(filepath.Ext(path)) {
-	case ".go", ".md", ".markdown", ".txt", ".text", ".csv",
-		".json", ".yaml", ".yml", ".toml", ".ts", ".tsx", ".js",
-		".jsx", ".mjs", ".cjs", ".py", ".rs", ".java", ".c", ".h",
-		".cpp", ".cc", ".hpp", ".cs", ".html", ".htm", ".css",
-		".scss", ".less", ".sh", ".bash", ".zsh", ".sql", ".xml",
-		".svg", ".ini", ".conf", ".log", ".diff", ".patch":
-		return true
-	default:
-		return false
-	}
+	family := filetype.Family(mediaType)
+	return family == "image" || family == "pdf"
 }
 
 // previewKind maps an inline-previewable media type to the UI kind.
 func previewKind(mediaType string) string {
-	if strings.HasPrefix(mediaType, "image/") {
-		return "image"
-	}
-	if mediaType == "application/pdf" {
-		return "pdf"
+	family := filetype.Family(mediaType)
+	if family == "image" || family == "pdf" {
+		return family
 	}
 	return "meta"
 }
@@ -449,7 +436,7 @@ func previewKind(mediaType string) string {
 // as a data URL. Unsupported types return an error so the caller marks
 // the file as not previewable instead of failing the whole request.
 func previewDataURL(path, mediaType string, size int64) (string, error) {
-	if strings.HasPrefix(mediaType, "image/") {
+	if filetype.Family(mediaType) == "image" {
 		return imagePreviewDataURL(path, mediaType, size)
 	}
 	if mediaType == "application/pdf" && size <= previewPdfLimit {
@@ -461,41 +448,6 @@ func previewDataURL(path, mediaType string, size int64) (string, error) {
 			base64.StdEncoding.EncodeToString(data), nil
 	}
 	return "", fmt.Errorf("file: %s is not inline-previewable", mediaType)
-}
-
-// mediaTypeFor maps a file extension to its trimmed MIME type.
-func mediaTypeFor(path string) string {
-	t := mime.TypeByExtension(filepath.Ext(path))
-	if i := strings.IndexByte(t, ';'); i >= 0 {
-		t = t[:i]
-	}
-	return t
-}
-
-// looksLikeText treats a payload as text unless it contains a NUL
-// byte, which common text formats and source files never do. Empty
-// files count as text so an empty source file still opens in the
-// code viewer.
-func looksLikeText(data []byte, mediaType string) bool {
-	if strings.HasPrefix(mediaType, "text/") ||
-		mediaType == "application/json" ||
-		mediaType == "application/xml" ||
-		mediaType == "application/x-yaml" ||
-		mediaType == "application/javascript" {
-		return true
-	}
-	// Anything else the system recognizes as an application payload
-	// (pdf, office, archives, executables) is not rendered as text even
-	// when the first bytes happen to contain no NUL.
-	if strings.HasPrefix(mediaType, "application/") {
-		return false
-	}
-	for _, b := range data {
-		if b == 0 {
-			return false
-		}
-	}
-	return true
 }
 
 // OpenExternal opens an http(s) URL in the default browser.
@@ -610,17 +562,14 @@ func (b *File) ReadAttachment(path string) (Attachment, error) {
 	if !info.Mode().IsRegular() {
 		return Attachment{}, fmt.Errorf("%s is not a regular file", path)
 	}
-	mediaType := mime.TypeByExtension(filepath.Ext(path))
-	if i := strings.IndexByte(mediaType, ';'); i >= 0 {
-		mediaType = mediaType[:i]
-	}
+	mediaType := filetype.OfPath(path).MediaType
 	dto := Attachment{
 		Name:      filepath.Base(path),
 		Path:      path,
 		Size:      info.Size(),
 		MediaType: mediaType,
 	}
-	if strings.HasPrefix(mediaType, "image/") {
+	if filetype.Family(mediaType) == "image" {
 		dataURL, err := imagePreviewDataURL(path, mediaType, info.Size())
 		if err != nil {
 			return Attachment{}, err
@@ -737,7 +686,7 @@ func decodeImageDataURL(dataURL string) ([]byte, string, error) {
 			"file: pasted image must be base64 encoded")
 	}
 	mediaType := strings.ToLower(strings.TrimSpace(rest[:marker]))
-	if !strings.HasPrefix(mediaType, "image/") {
+	if filetype.Family(mediaType) != "image" {
 		return nil, "", fmt.Errorf(
 			"file: pasted payload is not an image (%q)", mediaType)
 	}

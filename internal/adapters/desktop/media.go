@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
+	"github.com/GizClaw/opencraft/internal/foundation/utils/filetype"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
 
@@ -151,9 +151,11 @@ func (m *mediaServer) handle(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if contentType := mime.TypeByExtension(filepath.Ext(full)); contentType != "" {
-		w.Header().Set("Content-Type", contentType)
-	}
+	// The content names the type, not the extension: the files streamed
+	// here are session output, and a player handed text/plain for an mp4
+	// that was saved as .txt refuses to open it. The extension table
+	// still backs up the formats the sniffer cannot name.
+	w.Header().Set("Content-Type", filetype.OfPath(full).MediaType)
 	// Generated files are session output; replaying a stale body for a
 	// regenerated path would be worse than re-reading it.
 	w.Header().Set("Cache-Control", "no-store")

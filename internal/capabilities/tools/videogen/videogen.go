@@ -17,7 +17,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -31,6 +30,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/workspace"
 	"github.com/rs/xid"
 
+	"github.com/GizClaw/opencraft/internal/foundation/utils/filetype"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/inferenceext"
 )
 
@@ -530,15 +530,13 @@ func checkHTTPURL(raw string) error {
 }
 
 // readImage loads one workspace frame or reference image as an inline
-// media source.
+// media source. The bytes name the format: the provider inlines png,
+// jpeg and webp, so anything else is rejected here instead of being
+// sent as a mislabeled part. A JPEG saved as .png goes out as
+// image/jpeg, and text saved as .png is not a frame at all.
 func (t *Tool) readImage(
 	ctx context.Context, path, role string,
 ) (message.Part, error) {
-	mediaType, err := imageMediaType(path)
-	if err != nil {
-		return nil, errdefs.Validationf(
-			"%s: %s: %v", Name, role, err)
-	}
 	info, err := t.ws.Stat(ctx, path)
 	if err != nil {
 		return nil, errdefs.Validationf(
@@ -553,6 +551,14 @@ func (t *Tool) readImage(
 	if err != nil {
 		return nil, errdefs.Validationf(
 			"%s: %s: read %s: %v", Name, role, path, err)
+	}
+	mediaType := filetype.OfData(path, data).MediaType
+	switch mediaType {
+	case "image/png", "image/jpeg", "image/webp":
+	default:
+		return nil, errdefs.Validationf(
+			"%s: %s: %s is %s, but the frame must be png, jpg, or webp",
+			Name, role, path, mediaType)
 	}
 	source, err := media.NewImageBytes(data, mediaType)
 	if err != nil {
@@ -660,22 +666,6 @@ func (t *Tool) download(ctx context.Context, url string) ([]byte, error) {
 		return nil, errdefs.Internalf("%s: download: %v", Name, closeErr)
 	}
 	return data, nil
-}
-
-// imageMediaType maps a first-frame file extension to a media type.
-func imageMediaType(path string) (string, error) {
-	switch strings.ToLower(filepath.Ext(path)) {
-	case ".png":
-		return "image/png", nil
-	case ".jpg", ".jpeg":
-		return "image/jpeg", nil
-	case ".webp":
-		return "image/webp", nil
-	default:
-		return "", fmt.Errorf(
-			"image must be png, jpg, or webp, got %q",
-			filepath.Ext(path))
-	}
 }
 
 // videoExtension maps a media type to a file extension, defaulting to

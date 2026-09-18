@@ -64,20 +64,24 @@ func TestReadFileRange(t *testing.T) {
 
 // TestReadFilePointsImagesAtViewImage: binary image bytes are not text,
 // so read_file answers with a pointer to view_image instead of handing
-// the model a mojibake string.
+// the model a mojibake string. The bytes decide, so the pointer follows
+// a picture saved under a text name too.
 func TestReadFilePointsImagesAtViewImage(t *testing.T) {
 	tool, _ := newTestTool(t)
 	png := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13}
 	writeTree(t, tool.ws, map[string]string{})
-	if err := tool.ws.Write(context.Background(), "shot.png", png); err != nil {
-		t.Fatalf("write image: %v", err)
-	}
-	got, err := execute(t, tool.read(), `{"file_path":"shot.png"}`)
-	if err != nil {
-		t.Fatalf("read_file: %v", err)
-	}
-	if !strings.Contains(got, "view_image") {
-		t.Fatalf("read_file result = %q, want a view_image pointer", got)
+	for _, name := range []string{"shot.png", "notes.md"} {
+		if err := tool.ws.Write(context.Background(), name, png); err != nil {
+			t.Fatalf("write image: %v", err)
+		}
+		got, err := execute(t, tool.read(), `{"file_path":"`+name+`"}`)
+		if err != nil {
+			t.Fatalf("read_file: %v", err)
+		}
+		if !strings.Contains(got, "view_image") {
+			t.Fatalf("read_file %s result = %q, want a view_image pointer",
+				name, got)
+		}
 	}
 }
 

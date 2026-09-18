@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
+	"github.com/GizClaw/opencraft/internal/foundation/utils/filetype"
 )
 
 func TestFileListAndSearch(t *testing.T) {
@@ -137,7 +138,11 @@ func TestReadAttachmentOutsideWorkspace(t *testing.T) {
 	workDir := t.TempDir()
 	outside := t.TempDir()
 	src := filepath.Join(outside, "photo.png")
-	if err := os.WriteFile(src, []byte("png-bytes"), 0o600); err != nil {
+	var pngBuf bytes.Buffer
+	if err := png.Encode(&pngBuf, image.NewNRGBA(image.Rect(0, 0, 2, 2))); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(src, pngBuf.Bytes(), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	c := core.NewCore(t.TempDir(), t.TempDir(), workDir)
@@ -146,8 +151,60 @@ func TestReadAttachmentOutsideWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if att.Path != src || att.DataURL == "" {
+	if att.Path != src || att.MediaType != "image/png" || att.DataURL == "" {
 		t.Fatalf("attachment = %+v", att)
+	}
+}
+
+// TestReadAttachmentClassifiesByContent pins what an attachment reports
+// for the composer: the frontend builds image/audio/video parts from the
+// media type, so the type has to follow the bytes. Source code under a
+// .ts or .mp4 name must not stage as a video, and a picture under a text
+// name must still stage as an image.
+func TestReadAttachmentClassifiesByContent(t *testing.T) {
+	workDir := t.TempDir()
+	sources := map[string]string{
+		"app.ts":   "export const answer = 42;\n",
+		"clip.mp4": "not a video at all\n",
+		"logo.svg": "<svg viewBox=\"0 0 1 1\"></svg>\n",
+	}
+	for name, content := range sources {
+		if err := os.WriteFile(
+			filepath.Join(workDir, name), []byte(content), 0o600,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var pngBuf bytes.Buffer
+	if err := png.Encode(&pngBuf, image.NewNRGBA(image.Rect(0, 0, 2, 2))); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(workDir, "screenshot.txt"), pngBuf.Bytes(), 0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	c := core.NewCore(t.TempDir(), t.TempDir(), workDir)
+	b := NewFileBinding(c)
+
+	for name := range sources {
+		att, err := b.ReadAttachment(filepath.Join(workDir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if family := filetype.Family(att.MediaType); family != "" ||
+			att.DataURL != "" {
+			t.Errorf("%s attachment = %+v, want no media family", name, att)
+		}
+	}
+
+	att, err := b.ReadAttachment(filepath.Join(workDir, "screenshot.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if att.MediaType != "image/png" || att.DataURL == "" {
+		t.Fatalf("attachment = %+v, want the PNG its bytes are", att)
 	}
 }
 
