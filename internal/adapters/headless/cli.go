@@ -7,11 +7,21 @@ import (
 	"io"
 	"os"
 	"strings"
+
+	"github.com/GizClaw/opencraft/internal/capabilities/execd"
 )
 
 // Main implements `opencraft run`. Exit codes: 0 completed, 1 failed,
 // 2 usage/runtime setup error.
 func Main(args []string) int {
+	// `opencraft run` gets the same exec supervisor pool as the desktop
+	// shell, with the shipped defaults (there is no settings UI here).
+	pool := execd.NewPool(execd.DefaultPoolSettings())
+	execd.SetDefaultPool(pool)
+	defer func() {
+		execd.SetDefaultPool(nil)
+		pool.Close()
+	}()
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	workdir := fs.String("workdir", "", "workspace root (default: current directory)")
 	configDir := fs.String("config", "", "user config directory (default: ~/.opencraft/config)")

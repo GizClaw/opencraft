@@ -42,7 +42,8 @@ keep everything inside a macOS / Linux / Windows desktop app (Wails v3 + React).
   apply_patch, web_fetch, update_plan, request_permissions, and skill tools,
   protected by a middleware chain: truncation cache, 32k result cap, secret
   redaction, and a JSONL audit trail.
-- **Runtime & sandbox** — local execd (stdio + unix socket, self-fork,
+- **Runtime & sandbox** — local execd (protobuf over a private per-child
+  channel: a socketpair on Unix, a named pipe on Windows; self-fork,
   parent-death cleanup), workspace-scoped SQLite store, buffer-fold memory
   summary, AGENTS.md worldstate, layered config, and seatbelt/bwrap sandbox
   with approvals kept outside the project

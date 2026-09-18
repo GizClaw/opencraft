@@ -855,6 +855,19 @@ export interface PathSegment {
 }
 
 /**
+ * ExecPool is the diagnostics view of the exec supervisor pool: the
+ * persisted knobs plus the live idle/active child counts.
+ */
+export interface ExecPool {
+  prewarm: number;
+  maxIdle: number;
+  maxActive: number;
+  idleMinutes: number;
+  idle: number;
+  active: number;
+}
+
+/**
  * PathEnvironment is the diagnostics view of the PATH every command, MCP
  * server and sandbox child inherits. The desktop app is usually started
  * from Finder/Dock, which inherits launchd's minimal PATH instead of the

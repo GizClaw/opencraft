@@ -33,6 +33,7 @@ import { alignUsageWindow } from '../lib/usageWindow';
 import { LogViewer } from './LogViewer';
 import { MetricsCharts } from './MetricsCharts';
 import { PathEnvironmentCard } from './PathEnvironmentCard';
+import { ExecPoolCard } from './ExecPoolCard';
 import { PetBehaviorPanel } from './PetBehaviorPanel';
 import { TelemetryExportCard } from './TelemetryExportCard';
 import { ToolsSection } from './ToolsSection';
@@ -2961,6 +2962,7 @@ export function ConfigPage() {
                 <div className="space-y-2 border-t border-edge pt-3">
                   <TelemetryExportCard />
                   <PathEnvironmentCard />
+                  <ExecPoolCard />
                   <p className="text-xs text-dim">{t('config.logsHint')}</p>
                   <div className="h-[22rem]">
                     <LogViewer fetchLogs={() => api.readLog(300)} />

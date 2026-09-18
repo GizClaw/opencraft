@@ -1,21 +1,18 @@
 package execd
 
 import (
-	"encoding/json"
+	"bufio"
+	"bytes"
 	"testing"
 )
 
-func FuzzRPCRequest(f *testing.F) {
-	for _, seed := range []string{
-		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`,
-		`{"id":null,"method":"process/start"}`,
-		"garbage",
-		"",
-	} {
-		f.Add(seed)
-	}
-	f.Fuzz(func(t *testing.T, input string) {
-		var req RPCRequest
-		_ = json.Unmarshal([]byte(input), &req)
+// FuzzDecodeFrame pins that arbitrary bytes cannot panic the frame
+// decoder or allocate unbounded memory.
+func FuzzDecodeFrame(f *testing.F) {
+	f.Add([]byte{0, 0, 0, 0})
+	f.Add([]byte{0, 0, 0, 1, 0xFF})
+	f.Add([]byte{0x7F, 0xFF, 0xFF, 0xFF})
+	f.Fuzz(func(t *testing.T, data []byte) {
+		_, _ = decodeFrame(bufio.NewReader(bytes.NewReader(data)))
 	})
 }

@@ -20,6 +20,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
+	"github.com/GizClaw/opencraft/internal/capabilities/execd"
 	"github.com/GizClaw/opencraft/internal/capabilities/execpolicy"
 	ocsandbox "github.com/GizClaw/opencraft/internal/capabilities/sandbox"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
@@ -37,6 +38,54 @@ type Diagnostics struct {
 // NewDiagnosticsBinding wires the diagnostics binding.
 func NewDiagnosticsBinding(c *core.Core) *Diagnostics {
 	return &Diagnostics{core: c}
+}
+
+// ExecPoolDTO is the diagnostics view of the exec supervisor pool: the
+// persisted knobs plus the live idle/active child counts.
+type ExecPoolDTO struct {
+	Prewarm     int `json:"prewarm"`
+	MaxIdle     int `json:"maxIdle"`
+	MaxActive   int `json:"maxActive"`
+	IdleMinutes int `json:"idleMinutes"`
+	Idle        int `json:"idle"`
+	Active      int `json:"active"`
+}
+
+// ExecPool reports the configured pool settings and live counts.
+func (b *Diagnostics) ExecPool() ExecPoolDTO {
+	dto := execPoolDTO(b.core.Shell.ExecPool())
+	if pool := execd.DefaultPool(); pool != nil {
+		dto.Idle, dto.Active = pool.Stats()
+	}
+	return dto
+}
+
+// SetExecPool persists new pool settings and applies them to the live
+// pool. Existing children keep serving; future leases and reaping use
+// the new values.
+func (b *Diagnostics) SetExecPool(
+	prewarm, maxIdle, maxActive, idleMinutes int,
+) (ExecPoolDTO, error) {
+	settings := execd.NormalizePoolSettings(execd.PoolSettings{
+		Prewarm:   prewarm,
+		MaxIdle:   maxIdle,
+		MaxActive: maxActive,
+		IdleTTL:   time.Duration(idleMinutes) * time.Minute,
+	})
+	if err := b.core.Shell.SetExecPool(settings); err != nil {
+		return ExecPoolDTO{}, err
+	}
+	return b.ExecPool(), nil
+}
+
+func execPoolDTO(settings execd.PoolSettings) ExecPoolDTO {
+	prefs := core.PoolPrefs(settings)
+	return ExecPoolDTO{
+		Prewarm:     prefs.Prewarm,
+		MaxIdle:     prefs.MaxIdle,
+		MaxActive:   prefs.MaxActive,
+		IdleMinutes: prefs.IdleMinutes,
+	}
 }
 
 // PathSegmentDTO is one entry of the resolved process PATH. Source is

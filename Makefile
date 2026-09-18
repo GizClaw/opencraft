@@ -1,5 +1,5 @@
 .PHONY: all fmt fmt-check lint check-boundaries test test-yoloonly \
-	gen-bindings build-macos
+	gen-bindings gen-proto gen-proto-check build-macos
 
 all: fmt lint check-boundaries test
 
@@ -45,6 +45,47 @@ check-boundaries:
 # route by service/method instead of numeric IDs.
 gen-bindings:
 	wails3 generate bindings -d frontend/bindings -ts -i -names ./...
+
+# gen-proto regenerates the execd wire protocol (protobuf). The child
+# is always the same binary as the parent, and the Hello handshake
+# compares ProtocolVersion, so the schema is rewritten wholesale.
+#
+# protoc itself is an external build dependency (brew install protobuf /
+# apt-get install protobuf-compiler); protoc-gen-go is pinned here so the
+# checked-in execd.pb.go cannot drift with whatever plugin is on PATH.
+PROTOC_GEN_GO_VERSION := v1.36.11
+
+gen-proto:
+	@tmpdir="$$(mktemp -d)"; trap 'rm -rf "$$tmpdir"' EXIT; \
+	GOBIN="$$tmpdir" go install \
+		google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION); \
+	protoc --plugin=protoc-gen-go="$$tmpdir/protoc-gen-go" \
+		--go_out=. --go_opt=paths=source_relative \
+		internal/capabilities/execd/execd.proto
+
+# gen-proto-check fails when execd.pb.go no longer matches execd.proto.
+# It generates into a temp directory and leaves the worktree alone, so a
+# host protoc that formats things differently cannot "pass" by dirtying
+# the checked-in file. The protoc version comment is ignored: the plugin
+# (which shapes the code) is pinned above, while protoc comes from the
+# host.
+gen-proto-check:
+	@tmpdir="$$(mktemp -d)"; trap 'rm -rf "$$tmpdir"' EXIT; \
+	GOBIN="$$tmpdir/bin" go install \
+		google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION); \
+	mkdir -p "$$tmpdir/out"; \
+	protoc --plugin=protoc-gen-go="$$tmpdir/bin/protoc-gen-go" \
+		--go_out="$$tmpdir/out" --go_opt=paths=source_relative \
+		internal/capabilities/execd/execd.proto; \
+	git show :internal/capabilities/execd/execd.pb.go \
+		| grep -v '^//[[:space:]]*protoc' > "$$tmpdir/want.go"; \
+	grep -v '^//[[:space:]]*protoc' \
+		"$$tmpdir/out/internal/capabilities/execd/execd.pb.go" > "$$tmpdir/got.go"; \
+	if ! diff -u "$$tmpdir/want.go" "$$tmpdir/got.go" > "$$tmpdir/diff"; then \
+		echo "execd.pb.go is out of sync with execd.proto; run 'make gen-proto'"; \
+		head -40 "$$tmpdir/diff"; \
+		exit 1; \
+	fi
 
 test:
 	go test ./...

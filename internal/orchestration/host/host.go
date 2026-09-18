@@ -21,6 +21,7 @@ import (
 
 	ocsagents "github.com/GizClaw/opencraft/internal/capabilities/agents"
 	"github.com/GizClaw/opencraft/internal/capabilities/automations"
+	"github.com/GizClaw/opencraft/internal/capabilities/execd"
 	"github.com/GizClaw/opencraft/internal/capabilities/hooks"
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
 	pluginagent "github.com/GizClaw/opencraft/internal/capabilities/plugins/agent"
@@ -130,6 +131,10 @@ func NewManager(userDir string) *Manager {
 func NewManagerAt(dataDir, userDir string) *Manager {
 	m := NewManager(userDir)
 	m.dataDir = dataDir
+	// The exec supervisor keeps its orphan journal under the user data
+	// root. Resolving that root is assembly's job (AGENTS.md §6), so
+	// execd is handed the directory instead of looking it up itself.
+	execd.SetJournalRoot(dataDir)
 	return m
 }
 

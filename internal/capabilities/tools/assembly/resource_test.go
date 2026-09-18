@@ -300,6 +300,57 @@ func TestAssemblyTruncatePersistsRedactedContent(t *testing.T) {
 	}
 }
 
+// The text policy must run before the hard ceiling on the way out:
+// otherwise a result above the ceiling is cut as raw text and a JSON
+// envelope reaches the model (and the UI) unparseable.
+func TestAssemblyKeepsOver32kJSONEnvelopeValid(t *testing.T) {
+	work := t.TempDir()
+	cacheDir := filepath.Join(work, ".opencraft", "cache", "tools")
+	settings := `{
+		"middlewares": {
+			"truncate": {
+				"enabled": true,
+				"max_chars": 8000,
+				"dir": "` + cacheDir + `",
+				"work_dir": "` + work + `"
+			},
+			"result_limit": {"max_chars": 32768}
+		}
+	}`
+	full, err := json.Marshal(map[string]any{
+		"file_path":    "big.go",
+		"content":      strings.Repeat("x", 40_000),
+		"total_lines":  1000,
+		"is_truncated": false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	asm := newAssembly(t, settings, stubSource{t: probeTool(string(full))})
+	res := runProbe(asm)
+	out := res.Content.Text()
+	if got := len([]rune(out)); got > 8000 {
+		t.Fatalf("truncated result = %d runes, want <= 8000", got)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(out), &envelope); err != nil {
+		t.Fatalf("over-ceiling result is not valid JSON: %v\n%.120s", err, out)
+	}
+	if got := envelope["total_lines"]; got != float64(1000) {
+		t.Fatalf("total_lines = %v, want 1000", got)
+	}
+	if got := envelope["is_truncated"]; got != true {
+		t.Fatalf("is_truncated = %v, want true", got)
+	}
+	raw, err := os.ReadFile(filepath.Join(cacheDir, "call-1.output"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != string(full) {
+		t.Fatal("persisted output must hold the full result, not the ceiling cut")
+	}
+}
+
 func TestAssemblyRejectsInvalidMiddlewareSettings(t *testing.T) {
 	cases := []struct {
 		name     string

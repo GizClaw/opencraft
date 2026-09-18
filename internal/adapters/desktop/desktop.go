@@ -24,6 +24,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	petfeed "github.com/GizClaw/opencraft/internal/adapters/desktop/pet"
 	"github.com/GizClaw/opencraft/internal/capabilities/automations"
+	"github.com/GizClaw/opencraft/internal/capabilities/execd"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	octelemetry "github.com/GizClaw/opencraft/internal/capabilities/telemetry"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
@@ -48,6 +49,7 @@ type Desktop struct {
 	core               *core.Core
 	notifications      *notifications.NotificationService
 	telemetryPipeline  *octelemetry.Pipeline
+	execPool           *execd.Pool
 	runtimeMetricsStop chan struct{}
 	runtimeMetricsDone chan struct{}
 	// media streams workspace files (generated videos) to the webview
@@ -152,6 +154,12 @@ func New(opts Options) (*Desktop, error) {
 		notifications:     notifications.New(),
 		telemetryPipeline: pipeline,
 	}
+	// The exec supervisor pool is process-wide: it pre-warms children
+	// and caps how many workspaces hold one at a time. Settings come
+	// from desktop.json (Settings > Diagnostics).
+	execPool := execd.NewPool(c.Shell.ExecPool())
+	execd.SetDefaultPool(execPool)
+	d.execPool = execPool
 	c.Shell.SetNotificationSink(d.handleDesktopNotification)
 	// Media playback needs http(s): the webview loads the frontend over
 	// wails:// (or the Vite dev server), which WebKit/AVFoundation
@@ -367,6 +375,12 @@ func (d *Desktop) Shutdown(ctx context.Context) {
 	}
 	d.core.Runtime.Close()
 	d.core.Plugin.Close()
+	if d.execPool != nil {
+		// Runtimes closed first: their runners released every lease back
+		// to the pool, and only then is there nothing left to serve.
+		execd.SetDefaultPool(nil)
+		d.execPool.Close()
+	}
 	if d.telemetryPipeline != nil {
 		// The Wails shutdown context may already be canceled by the
 		// time this runs; derive the flush deadline from a fresh

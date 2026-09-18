@@ -1,0 +1,289 @@
+// execd is the wire protocol between the OpenCraft host process and its
+// self-forked exec supervisor child. The child is always the same
+// binary as the parent, and the Hello handshake compares the protocol
+// version before anything else, so the schema can be rewritten
+// wholesale (no backward compatibility is kept).
+//
+// Frames are written as a 4-byte big-endian length followed by the
+// serialized Frame.
+
+syntax = "proto3";
+
+package opencraft.execd.v1;
+
+option go_package = "github.com/GizClaw/opencraft/internal/capabilities/execd";
+
+message Frame {
+  // Request/response correlation. Zero on notifications.
+  uint64 id = 1;
+  // Request only: relative budget in milliseconds. Zero means no
+  // deadline beyond the connection lifetime.
+  int64 deadline_ms = 2;
+  oneof body {
+    Request request = 3;
+    Response response = 4;
+    Notification notification = 5;
+  }
+}
+
+message Request {
+  oneof method {
+    Hello hello = 1;
+    Bind bind = 2;
+    Unbind unbind = 3;
+    Start start = 4;
+    Read read = 5;
+    Write write = 6;
+    CloseInput close_input = 7;
+    Signal signal = 8;
+    Resize resize = 9;
+    Terminate terminate = 10;
+    Release release = 11;
+    Wait wait = 12;
+    Ping ping = 13;
+    Diagnostics diagnostics = 14;
+  }
+}
+
+message Response {
+  oneof body {
+    Error error = 1;
+    HelloOk hello_ok = 2;
+    BindOk bind_ok = 3;
+    Ack ack = 4;
+    StartOk start_ok = 5;
+    ReadOk read_ok = 6;
+    TerminateOk terminate_ok = 7;
+    ReleaseOk release_ok = 8;
+    WaitOk wait_ok = 9;
+    PingOk ping_ok = 10;
+    DiagnosticsOk diagnostics_ok = 11;
+  }
+}
+
+message Notification {
+  oneof body {
+    Cancel cancel = 1;
+    Output output = 2;
+    Exited exited = 3;
+    Closed closed = 4;
+    Lag lag = 5;
+  }
+}
+
+message Error {
+  string code = 1;
+  string message = 2;
+}
+
+// --- handshake ---
+
+message Hello {
+  uint32 protocol_version = 1;
+  string build = 2;
+  string client = 3;
+}
+
+message HelloOk {
+  uint32 protocol_version = 1;
+  string build = 2;
+  repeated string capabilities = 3;
+  string session_id = 4;
+}
+
+// --- workspace binding ---
+
+// SandboxPolicy mirrors opencraft's per-workspace sandbox policy.
+// env_allow_set distinguishes "no allow list" (inherit) from an empty
+// allow list (empty environment).
+message SandboxPolicy {
+  repeated string writable_paths = 1;
+  repeated string env_allow = 2;
+  map<string, string> env_inject = 3;
+  bool env_allow_set = 4;
+}
+
+message Bind {
+  string workdir = 1;
+  SandboxPolicy policy = 2;
+}
+
+// BindOk reports the capabilities of the backend this workspace is now
+// bound to. The Hello answer can only describe the static surface (no
+// workspace is bound yet), so this is the honest one: it carries "pty",
+// "signal" and "events" only when the platform backend really has them.
+message BindOk {
+  repeated string capabilities = 1;
+}
+
+message Unbind {}
+
+// --- process lifecycle ---
+
+// ExecOptions mirrors sandbox.ExecOptions. net_policy_json carries the
+// flowcraft net policy as JSON: it is a large, rarely changing struct
+// owned by core, and duplicating it in protobuf would couple this
+// schema to every core release.
+message ExecOptions {
+  string work_dir = 1;
+  bytes stdin = 2;
+  int64 timeout_ms = 3;
+  repeated string env_allow = 4;
+  map<string, string> env_inject = 5;
+  bool env_allow_set = 6;
+  // WritePolicy: 0 = workspace (default), 1 = read-only.
+  uint32 write = 7;
+  int64 memory_bytes = 8;
+  int64 cpu_millicores = 9;
+  int64 disk_bytes = 10;
+  int64 max_output_bytes = 11;
+  bytes net_policy_json = 12;
+}
+
+message Start {
+  string process_id = 1;
+  repeated string argv = 2;
+  string cwd = 3;
+  map<string, string> env = 4;
+  bool tty = 5;
+  int32 rows = 6;
+  int32 cols = 7;
+  int64 timeout_ms = 8;
+  bool unconfined = 9;
+  ExecOptions sandbox = 10;
+}
+
+message StartOk {
+  int32 pid = 1;
+}
+
+message Read {
+  string process_id = 1;
+  int64 after_seq = 2;
+  int32 max_bytes = 3;
+  int64 wait_ms = 4;
+}
+
+message Chunk {
+  int64 seq = 1;
+  // sandbox.SessionStream: 0 stdout, 1 stderr, 2 tty.
+  uint32 stream = 2;
+  bytes data = 3;
+}
+
+message ReadOk {
+  repeated Chunk chunks = 1;
+  int64 next_seq = 2;
+  bool eof = 3;
+  bool exited = 4;
+  int32 exit_code = 5;
+  // sandbox.SessionExitReason: 0 exited, 1 signaled, 2 terminated.
+  uint32 reason = 6;
+}
+
+message Write {
+  string process_id = 1;
+  bytes chunk = 2;
+  string write_id = 3;
+}
+
+message Ack {
+  string status = 1;
+}
+
+message CloseInput {
+  string process_id = 1;
+}
+
+message Signal {
+  string process_id = 1;
+  // sandbox.SessionSignal: 0 interrupt.
+  uint32 signal = 2;
+}
+
+message Resize {
+  string process_id = 1;
+  int32 rows = 2;
+  int32 cols = 3;
+}
+
+message Terminate {
+  string process_id = 1;
+  // Force skips the SIGTERM grace window (session Close semantics).
+  bool force = 2;
+}
+
+message TerminateOk {
+  bool running = 1;
+}
+
+message Release {
+  string process_id = 1;
+}
+
+message ReleaseOk {
+  bool released = 1;
+}
+
+message Wait {
+  string process_id = 1;
+}
+
+message WaitOk {
+  int32 exit_code = 1;
+  uint32 reason = 2;
+}
+
+message Ping {}
+
+message PingOk {
+  int64 uptime_ms = 1;
+  string version = 2;
+}
+
+message Diagnostics {}
+
+message DiagnosticsOk {
+  string version = 1;
+  uint32 protocol_version = 2;
+  int64 uptime_ms = 3;
+  bool bound = 4;
+  string workdir = 5;
+  int32 processes = 6;
+  int32 goroutines = 7;
+  int32 queued_frames = 8;
+  int64 queued_bytes = 9;
+  int64 dropped_notifications = 10;
+  int64 released_processes = 11;
+  int64 reaped_processes = 12;
+}
+
+// --- notifications (child -> host) ---
+
+message Cancel {
+  uint64 request_id = 1;
+}
+
+message Output {
+  string process_id = 1;
+  int64 seq = 2;
+  uint32 stream = 3;
+  bytes data = 4;
+}
+
+message Exited {
+  string process_id = 1;
+  int64 seq = 2;
+  int32 exit_code = 3;
+  uint32 reason = 4;
+}
+
+message Closed {
+  string process_id = 1;
+  int64 seq = 2;
+}
+
+message Lag {
+  string process_id = 1;
+  int64 seq = 2;
+}

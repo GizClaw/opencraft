@@ -1,19 +1,17 @@
 package main
 
 // This file hosts the internal execd child mode of the opencraft
-// binary: the desktop process self-forks (`opencraft execd ...`) when
-// the sandbox needs an isolated process server, so the child serves
-// the exec JSON-RPC protocol on stdio or a unix socket.
+// binary: the host self-forks (`opencraft execd ...`) and hands the
+// child a private IPC channel (a socketpair fd on Unix, a named pipe on
+// Windows). The child starts unbound and receives its workspace through
+// the Bind request.
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
-	"net"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
 
@@ -25,13 +23,11 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 )
 
-// initChildLogging sends this process's warnings to stderr. The child is
-// forked before the desktop installs its log pipeline, so without a
+// initChildLogging sends this process's warnings to stderr. The child
+// is forked before the desktop installs its log pipeline, so without a
 // provider of its own every telemetry call inside it would be a no-op.
-// Stderr is the one channel the parent can pick up (stdout carries the
-// JSON-RPC protocol in stdio mode); fork.go forwards what lands there
-// into the application log. It returns nil when the pipeline could not
-// be installed, in which case the failure itself is the last diagnostic.
+// Stderr is the one channel the parent can pick up (stdout and the IPC
+// channel carry nothing but the protocol).
 func initChildLogging(ctx context.Context) func(context.Context) error {
 	opts := make([]telemetry.LogOption, 0, 2)
 	for _, processor := range telemetry.ConsoleProcessors(otellog.SeverityWarn) {
@@ -48,21 +44,18 @@ func initChildLogging(ctx context.Context) func(context.Context) error {
 
 func runExecServer() {
 	fs := flag.NewFlagSet("execd", flag.ExitOnError)
-	listen := fs.String("listen", "",
-		"unix socket path to listen on (empty: serve on stdio)")
-	workDir := fs.String("workdir", "", "working directory (default: current)")
-	sandboxPolicy := fs.String("sandbox-policy", "",
-		"JSON-encoded sandbox policy from the parent (writable paths + env policy)")
-	sandboxPolicyFile := fs.String("sandbox-policy-file", "",
-		"path to a 0600 JSON sandbox policy file from the parent; read once and removed")
-	parentPid := fs.Int("parent-pid", 0,
-		"exit when this parent process dies (0: disabled)")
+	execdFD := fs.Int("execd-fd", 0,
+		"inherited socketpair descriptor (unix)")
+	execdPipe := fs.String("execd-pipe", "",
+		"named pipe path (windows)")
+	_ = fs.String("execd-nonce", "",
+		"per-launch identity nonce recorded in the parent's orphan journal")
 	if err := fs.Parse(os.Args[2:]); err != nil {
 		execdFatal(2, "opencraft execd: %v", err)
 	}
 
-	ctx := context.Background()
-	if stopLog := initChildLogging(ctx); stopLog != nil {
+	baseCtx := context.Background()
+	if stopLog := initChildLogging(baseCtx); stopLog != nil {
 		defer func() {
 			shutdownCtx, cancel := context.WithTimeout(
 				context.Background(), 5*time.Second)
@@ -76,145 +69,64 @@ func runExecServer() {
 	if _, err := config.EnsureUserConfig(); err != nil {
 		execdFatal(1, "opencraft execd: seed config: %v", err)
 	}
-	var pol sandbox.SandboxPolicy
-	var policyJSON string
-	if *sandboxPolicyFile != "" {
-		data, err := os.ReadFile(*sandboxPolicyFile)
-		if err != nil {
-			execdFatal(1, "opencraft execd: sandbox policy file: %v", err)
-		}
-		policyJSON = string(data)
-		// The policy is only needed at startup; remove it so it does
-		// not linger on disk (and is never visible through argv).
-		telemetry.WarnErr(ctx, "execd main: remove sandbox policy file failed",
-			os.Remove(*sandboxPolicyFile))
-	} else {
-		policyJSON = *sandboxPolicy
-	}
-	if policyJSON != "" {
-		if err := json.Unmarshal([]byte(policyJSON), &pol); err != nil {
-			execdFatal(1, "opencraft execd: sandbox policy: %v", err)
-		}
-	}
-	runner, policy, err := sandbox.SandboxRunner(ctx, *workDir, pol)
+
+	conn, err := execd.ChildChannel(*execdFD, *execdPipe)
 	if err != nil {
-		execdFatal(1, "opencraft execd: %v", err)
+		execdFatal(1, "opencraft execd: channel: %v", err)
 	}
 
-	if *listen == "" {
-		srv := execd.New(runner, os.Stdin, os.Stdout)
-		srv.DefaultEnv = policy
-		unconfined, err := sandbox.UnconfinedRunner(*workDir)
-		if err != nil {
-			execdFatal(1, "opencraft execd: %v", err)
+	factory := func(
+		ctx context.Context,
+		workdir string,
+		policy *execd.SandboxPolicy,
+	) (execd.RunnerSet, error) {
+		sandboxPolicy := sandbox.SandboxPolicy{
+			WritablePaths: policy.GetWritablePaths(),
 		}
-		srv.SetUnconfinedBackend(unconfined)
-		if err := srv.Serve(ctx); err != nil {
-			execdFatal(1, "opencraft execd: %v", err)
-		}
-		telemetry.WarnErr(ctx, "execd main: close stdio runner failed",
-			runner.Close())
-		return
-	}
-	// Create the socket user-only from the start: chmod after Listen
-	// leaves a window where the file is world-visible per the umask.
-	restoreUmask := execdSocketUmask()
-	listener, err := net.Listen("unix", *listen)
-	restoreUmask()
-	if err != nil {
-		execdFatal(1, "opencraft execd: listen: %v", err)
-	}
-	defer func() {
-		telemetry.WarnErr(context.Background(),
-			"execd main: close listener failed", listener.Close())
-	}()
-	defer func() {
-		telemetry.WarnErr(context.Background(),
-			"execd main: remove listen socket failed", os.Remove(*listen))
-	}()
-	telemetry.WarnErr(context.Background(),
-		"execd main: secure listen socket failed", os.Chmod(*listen, 0o600))
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	const serveGrace = 5 * time.Second
-	var serveWG sync.WaitGroup
-	var connMu sync.Mutex
-	conns := make(map[net.Conn]struct{})
-
-	shutdown := make(chan struct{})
-	var shutdownOnce sync.Once
-	stopAccepting := func() {
-		shutdownOnce.Do(func() {
-			close(shutdown)
-			telemetry.WarnErr(context.Background(),
-				"execd main: close listener during shutdown failed",
-				listener.Close())
-			connMu.Lock()
-			for c := range conns {
-				telemetry.WarnErr(context.Background(),
-					"execd main: close connection during shutdown failed",
-					c.Close())
+		if policy.GetEnvAllowSet() || len(policy.GetEnvInject()) > 0 {
+			sandboxPolicy.EnvPolicy = &sandbox.EnvPolicyConfig{
+				Allow:  policy.GetEnvAllow(),
+				Inject: policy.GetEnvInject(),
 			}
-			connMu.Unlock()
-		})
+			if policy.GetEnvAllowSet() && sandboxPolicy.EnvPolicy.Allow == nil {
+				sandboxPolicy.EnvPolicy.Allow = []string{}
+			}
+		}
+		confined, env, err := sandbox.SandboxRunner(ctx, workdir, sandboxPolicy)
+		if err != nil {
+			return execd.RunnerSet{}, err
+		}
+		unconfined, err := sandbox.UnconfinedRunner(workdir)
+		if err != nil {
+			telemetry.WarnErr(ctx,
+				"opencraft execd: close confined runner after unconfined failure",
+				confined.Close())
+			return execd.RunnerSet{}, err
+		}
+		return execd.RunnerSet{
+			Confined:   confined,
+			Unconfined: unconfined,
+			DefaultEnv: env,
+		}, nil
 	}
 
-	if *parentPid > 0 {
-		go watchParent(*parentPid, stopAccepting)
-	}
+	ctx, cancel := context.WithCancel(baseCtx)
+	defer cancel()
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 	defer signal.Stop(sigCh)
 	go func() {
 		select {
 		case <-sigCh:
-			stopAccepting()
-		case <-shutdown:
+			cancel()
+		case <-ctx.Done():
 		}
 	}()
 
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			break
-		}
-		connMu.Lock()
-		conns[conn] = struct{}{}
-		connMu.Unlock()
-		serveWG.Add(1)
-		go func() {
-			defer serveWG.Done()
-			defer func() {
-				connMu.Lock()
-				delete(conns, conn)
-				connMu.Unlock()
-				telemetry.WarnErr(ctx,
-					"execd main: close connection failed", conn.Close())
-			}()
-			srv := execd.New(runner, conn, conn)
-			srv.DefaultEnv = policy
-			unconfined, err := sandbox.UnconfinedRunner(*workDir)
-			if err != nil {
-				execdFatal(1, "opencraft execd: %v", err)
-			}
-			srv.SetUnconfinedBackend(unconfined)
-			telemetry.WarnErr(ctx, "execd main: serve connection failed",
-				srv.Serve(ctx))
-		}()
+	server := execd.New(factory, conn, conn)
+	if err := server.Serve(ctx); err != nil {
+		execdFatal(1, "opencraft execd: %v", err)
 	}
-	servesDone := make(chan struct{})
-	go func() {
-		serveWG.Wait()
-		close(servesDone)
-	}()
-	select {
-	case <-servesDone:
-	case <-time.After(serveGrace):
-	}
-	telemetry.WarnErr(ctx, "execd main: close socket runner failed",
-		runner.Close())
 }
 
 func execdFatal(code int, format string, args ...any) {

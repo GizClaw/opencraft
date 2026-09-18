@@ -200,19 +200,10 @@ resources:
           enabled: true
         timeout:
           default: 5m
-        # Oversized tool outputs are persisted in full under
-        # .opencraft/cache/tools/<call_id>.output and truncated in
-        # context, keeping the loop's MainChannel from growing unbounded
-        # on a single tool result.
-        truncate:
-          enabled: true
-          max_chars: 8000
-          dir: ${ocraft:TOOL_CACHE}
-          work_dir: ${ocraft:WORKDIR}
-        # Hard ceiling on any single tool result that may reach the
-        # model context. Truncate then turns oversized-but-bounded
-        # outputs into a persisted head+tail excerpt; together they keep
-        # the loop's MainChannel bounded even for pathological outputs.
+        # Backstop hard ceiling. The text policy below runs first on
+        # the way out, so with truncate enabled this normally only
+        # enforces the non-text part budget; the text ceiling still
+        # applies when a deployment turns truncate off.
         result_limit:
           max_chars: 32768
           # Non-text parts (view_image output, structured data) share
@@ -220,6 +211,18 @@ resources:
           # (message.MarshalPart): an inline image spends base64 bytes,
           # so view_image's raw max_bytes target stays below it.
           part_budget_bytes: 1048576
+        # Primary text policy: oversized tool outputs are persisted in
+        # full under .opencraft/cache/tools/<call_id>.output and
+        # excerpted in context, keeping the loop's MainChannel from
+        # growing unbounded. JSON envelopes are excerpted inside their
+        # own string fields and re-encoded, so structured results
+        # (read_file, exec_command, ...) stay parseable for the model
+        # and the UI; non-JSON text keeps the plain head+tail excerpt.
+        truncate:
+          enabled: true
+          max_chars: 8000
+          dir: ${ocraft:TOOL_CACHE}
+          work_dir: ${ocraft:WORKDIR}
         # Best-effort secret stripping from tool results before the
         # model sees them. The same rules always apply to the audit
         # trail below, even when this middleware is disabled.
