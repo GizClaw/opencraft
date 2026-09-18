@@ -170,6 +170,30 @@ func newTestManagerWithHelper(t *testing.T, mode string) (*Manager, *memSecrets)
 	return m, sec
 }
 
+// TestRedactStderrLine pins the stderr redaction contract: a plugin that
+// prints a connection URL must not put the credential values into the
+// host log, while the rest of the line (including the parameter names)
+// stays readable.
+func TestRedactStderrLine(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{
+			in:   "sdk: connected to wss://host/ws/v2?fpid=493&access_key=SECRET&ticket=TICKET[conn_id=1]",
+			want: "sdk: connected to wss://host/ws/v2?fpid=493&access_key=***&ticket=***[conn_id=1]",
+		},
+		{
+			in:   "retry https://api.example/v1?token=abc&page=2",
+			want: "retry https://api.example/v1?token=***&page=2",
+		},
+		{in: "plain diagnostic, nothing to hide", want: "plain diagnostic, nothing to hide"},
+		{in: "flags: --key=value", want: "flags: --key=value"},
+	}
+	for _, tc := range cases {
+		if got := redactStderrLine(tc.in); got != tc.want {
+			t.Errorf("redactStderrLine(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestMalformedPluginFailsHandshake(t *testing.T) {
 	m, _ := newTestManagerWithHelper(t, "2")
 	if _, err := m.Invoke(context.Background(), "test-plugin", "auth.begin", nil); err == nil {

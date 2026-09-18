@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
+	otellog "go.opentelemetry.io/otel/log"
 )
 
 // Root walks upward from dir looking for a .git marker. Empty means
@@ -47,18 +48,22 @@ func RunBounded(
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, "git", append([]string{"-C", root}, args...)...)
+	attrs := []otellog.KeyValue{
+		otellog.String("git.root", root),
+		otellog.String("git.args", strings.Join(args, " ")),
+	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		telemetry.WarnErr(ctx, "gitx: create stdout pipe failed", err)
+		telemetry.WarnErr(ctx, "gitx: create stdout pipe failed", err, attrs...)
 		return "", false
 	}
 	if err := cmd.Start(); err != nil {
-		telemetry.WarnErr(ctx, "gitx: start git failed", err)
+		telemetry.WarnErr(ctx, "gitx: start git failed", err, attrs...)
 		return "", false
 	}
 	data, err := io.ReadAll(io.LimitReader(stdout, limit+1))
 	if err != nil {
-		telemetry.WarnErr(ctx, "gitx: read git output failed", err)
+		telemetry.WarnErr(ctx, "gitx: read git output failed", err, attrs...)
 		telemetry.WarnErr(ctx, "gitx: kill git after read failure",
 			cmd.Process.Kill())
 		telemetry.WarnErr(ctx, "gitx: wait git after read failure", cmd.Wait())
@@ -72,7 +77,7 @@ func RunBounded(
 		return "", true
 	}
 	if err := cmd.Wait(); err != nil {
-		telemetry.WarnErr(ctx, "gitx: git command failed", err)
+		telemetry.WarnErr(ctx, "gitx: git command failed", err, attrs...)
 		return "", false
 	}
 	return strings.TrimRight(string(data), "\n"), false

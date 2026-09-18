@@ -30,8 +30,9 @@
 // record per line, tagged with the plugin id (message "plugin stderr",
 // attributes plugin.id / plugin.line): that stream is where a plugin
 // explains a failed handshake, a provider problem or a crash, and the
-// host has no other way to see it. The host forwards it verbatim and
-// does not interpret it, so plugins must keep credentials out of stderr.
+// host has no other way to see it. Credential-looking query values
+// (access_key, token, ticket, ...) are masked on the way to the log;
+// plugins must still keep every other form of credential out of stderr.
 //
 // telemetry.configure points OTLP export at the plugin's own collector:
 //
@@ -59,6 +60,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	goruntime "runtime"
 	"strconv"
 	"strings"
@@ -471,6 +473,22 @@ func (m *Manager) get(ctx context.Context, id string) (*process, error) {
 	}
 }
 
+// stderrSecretQuery matches credential-carrying query parameters in a
+// forwarded plugin stderr line. Capability children print connection
+// URLs that carry short-lived credentials (a websocket handshake, for
+// example); the log file is on disk, so the key stays readable and the
+// value never lands.
+var stderrSecretQuery = regexp.MustCompile(
+	`(?i)([?&](?:access_key|api_key|apikey|authorization|key|password|` +
+		`secret|sig|signature|ticket|token)=)([^&\s\[]*)`)
+
+// redactStderrLine masks credential values in one forwarded stderr
+// line, leaving the rest of the message (including the parameter names)
+// untouched so the plugin's own diagnostics stay readable.
+func redactStderrLine(line string) string {
+	return stderrSecretQuery.ReplaceAllString(line, "${1}***")
+}
+
 func (m *Manager) start(id string, cap Capability, bin string) (*process, error) {
 	cmd := exec.Command(bin)
 	if len(m.env) > 0 {
@@ -515,7 +533,7 @@ func (m *Manager) start(id string, cap Capability, bin string) (*process, error)
 		for sc.Scan() {
 			telemetry.Warn(m.baseCtx, "plugin stderr",
 				otellog.String("plugin.id", id),
-				otellog.String("plugin.line", sc.Text()))
+				otellog.String("plugin.line", redactStderrLine(sc.Text())))
 		}
 		telemetry.WarnErr(m.baseCtx,
 			"plugin runtime: drain capability stderr failed", sc.Err())

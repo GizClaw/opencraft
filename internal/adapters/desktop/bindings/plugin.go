@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
+	otellog "go.opentelemetry.io/otel/log"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/plugins"
@@ -232,7 +233,8 @@ func scanPluginSkillRoot(root string) []SkillSummary {
 		parsed, parseErr := skills.ParseFile(path)
 		if parseErr != nil {
 			telemetry.WarnErr(context.Background(),
-				"desktop plugin: parse skill file failed", parseErr)
+				"desktop plugin: parse skill file failed", parseErr,
+				otellog.String("path", path))
 			return nil
 		}
 		meta := parsed.Metadata

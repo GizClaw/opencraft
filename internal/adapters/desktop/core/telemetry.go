@@ -151,7 +151,9 @@ func (c *Core) handlePluginTelemetryConfigure(
 	}
 	normalized := sink.Normalize()
 	c.rememberPluginTelemetry(pluginID, normalized)
-	telemetry.Warn(ctx, "plugin telemetry: OTLP export sink installed",
+	// Installing a sink is a configuration event the user asked for,
+	// not a warning: it repeats on every plugin reconnect.
+	telemetry.Info(ctx, "plugin telemetry: OTLP export sink installed",
 		otellog.String("plugin.id", pluginID),
 		otellog.String("telemetry.endpoint", normalized.Endpoint),
 		otellog.Bool("telemetry.insecure", normalized.Insecure),
