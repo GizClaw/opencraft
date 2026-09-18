@@ -2,13 +2,22 @@
 // persisted under <workdir>/.opencraft/cache/tools/<call_id>.output and
 // the in-context content is replaced with a head+tail excerpt plus a
 // pointer to the file, so the model can read the rest on demand.
+//
+// Structured results stay structured: JSON envelopes are excerpted
+// inside their own string fields and re-encoded, so tools that answer
+// with a JSON payload (read_file, exec_command, web_fetch, ...) remain
+// parseable for both the model and the UI instead of degrading into
+// invalid JSON.
 package assembly
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
+	"unicode/utf8"
 
 	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
@@ -46,8 +55,7 @@ func truncateMiddleware(cfg TruncateSettings) tool.Middleware {
 			// (images, audio, structured data) are carried through
 			// untouched instead of being flattened away.
 			full := res.Content.Text()
-			runes := []rune(full)
-			if len(runes) <= cfg.MaxChars {
+			if utf8.RuneCountInString(full) <= cfg.MaxChars {
 				return res
 			}
 			path := filepath.Join(cfg.Dir, res.CallID+".output")
@@ -78,21 +86,278 @@ func truncateMiddleware(cfg TruncateSettings) tool.Middleware {
 						err)
 				}
 			}
-			markerRunes := []rune(fmt.Sprintf("\n…[truncated; full output: %s]", ref))
+			marker := fmt.Sprintf("\n…[truncated; full output: %s]", ref)
+			if out, ok := truncateJSONResult(full, cfg.MaxChars, ref, marker); ok {
+				res.Content = replaceTextParts(res.Content, out)
+				return res
+			}
+			// Plain text keeps the historical head+tail excerpt. A
+			// valid JSON result never reaches this branch: either it
+			// shrank in place, or it became a pointer envelope.
+			markerRunes := []rune(marker)
 			if len(markerRunes) > cfg.MaxChars {
 				markerRunes = markerRunes[:cfg.MaxChars]
 			}
 			keep := cfg.MaxChars - len(markerRunes)
-			head := keep * 7 / 10
-			tail := keep - head
-			out := make([]rune, 0, cfg.MaxChars)
-			out = append(out, runes[:head]...)
-			out = append(out, markerRunes...)
-			out = append(out, runes[len(runes)-tail:]...)
-			res.Content = replaceTextParts(res.Content, string(out))
+			res.Content = replaceTextParts(res.Content,
+				headTailString(full, keep, markerRunes))
 			return res
 		}
 	}
+}
+
+// truncateJSONResult shrinks an oversized JSON result while keeping it
+// parseable. Oversized top-level string fields (read_file's content,
+// exec_command's stdout/stderr, web_fetch's content) are excerpted in
+// place and the object is re-encoded. A valid JSON value with no
+// shrinkable string field — a long array, or a non-object value —
+// becomes a small pointer envelope instead of a broken text excerpt.
+// The second return value is false when the input is not JSON, or when
+// even the pointer envelope cannot fit maxChars; the caller then falls
+// back to the plain-text excerpt.
+func truncateJSONResult(text string, maxChars int, ref, marker string) (string, bool) {
+	if out, ok := truncateJSONFields(text, maxChars, marker); ok {
+		return out, true
+	}
+	if !json.Valid([]byte(text)) {
+		return "", false
+	}
+	return jsonPointerResult(text, maxChars, ref, marker)
+}
+
+// truncateJSONFields shortens the oversized top-level string fields of
+// a JSON object until the re-encoded object fits maxChars. Each field
+// gets a share of the free budget proportional to its current encoded
+// size; short fields (paths, ids, enums) stay byte-identical. It
+// reports false when the object has no field that can donate more than
+// the marker itself.
+func truncateJSONFields(text string, maxChars int, marker string) (string, bool) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(text), &obj); err != nil || len(obj) == 0 {
+		return "", false
+	}
+	keys := make([]string, 0, len(obj))
+	for key, raw := range obj {
+		var s string
+		if err := json.Unmarshal(raw, &s); err == nil {
+			keys = append(keys, key)
+		}
+	}
+	if len(keys) == 0 {
+		return "", false
+	}
+	sort.Strings(keys)
+
+	markerRunes := []rune(marker)
+	truncated := false
+	// Exact encoded-budget shares converge in one pass; a couple of
+	// extra passes absorb rounding and escape-ratio drift.
+	const maxPasses = 4
+	for range maxPasses {
+		encoded, err := json.Marshal(obj)
+		if err != nil {
+			return "", false
+		}
+		if utf8.RuneCount(encoded) <= maxChars {
+			if truncated {
+				markTruncatedFlags(obj)
+				encoded, err = json.Marshal(obj)
+				if err != nil || utf8.RuneCount(encoded) > maxChars {
+					return "", false
+				}
+			}
+			return string(encoded), true
+		}
+
+		type candidate struct {
+			key    string
+			raw    string
+			rawLen int
+			encLen int
+		}
+		candidates := make([]candidate, 0, len(keys))
+		totalEnc := 0
+		for _, key := range keys {
+			var s string
+			if err := json.Unmarshal(obj[key], &s); err != nil {
+				continue
+			}
+			rawLen := utf8.RuneCountInString(s)
+			// A field that cannot hold the marker plus some of its own
+			// text would have to be emptied entirely; leave it alone
+			// and let the pointer envelope handle the result instead.
+			if rawLen <= len(markerRunes) {
+				continue
+			}
+			encLen := utf8.RuneCount(obj[key])
+			candidates = append(candidates,
+				candidate{key: key, raw: s, rawLen: rawLen, encLen: encLen})
+			totalEnc += encLen
+		}
+		if len(candidates) == 0 {
+			return "", false
+		}
+		// Budget left for the string contents once the JSON structure
+		// and every untouched field are paid for.
+		probe := make(map[string]json.RawMessage, len(obj))
+		for key, raw := range obj {
+			probe[key] = raw
+		}
+		for _, c := range candidates {
+			probe[c.key] = json.RawMessage(`""`)
+		}
+		probeJSON, err := json.Marshal(probe)
+		if err != nil {
+			return "", false
+		}
+		avail := maxChars - utf8.RuneCount(probeJSON)
+		if avail <= 0 {
+			return "", false
+		}
+		changed := false
+		for _, c := range candidates {
+			share := avail * c.encLen / totalEnc
+			if share >= c.encLen {
+				continue
+			}
+			next, ok := excerptWithinBudget(c.raw, markerRunes, share)
+			if !ok {
+				continue
+			}
+			encodedNext, err := json.Marshal(next)
+			if err != nil {
+				return "", false
+			}
+			obj[c.key] = encodedNext
+			changed = true
+		}
+		if !changed {
+			return "", false
+		}
+		truncated = true
+	}
+	return "", false
+}
+
+// excerptWithinBudget returns the longest head+marker+tail excerpt of
+// raw whose JSON encoding fits budget runes. It reports false when even
+// a marker-only excerpt does not fit.
+func excerptWithinBudget(raw string, marker []rune, budget int) (string, bool) {
+	// Every candidate costs at least its own rune count plus the
+	// marker, so a larger probe could never fit; clamping the search
+	// keeps it from building slices of the rejected input.
+	length := utf8.RuneCountInString(raw)
+	high := budget - len(marker)
+	if high < 0 {
+		high = 0
+	}
+	if length < high {
+		high = length
+	}
+	low := 0
+	best := ""
+	for low <= high {
+		mid := (low + high) / 2
+		candidate := headTailAtMost(raw, length, mid, marker)
+		encoded, err := json.Marshal(candidate)
+		if err != nil {
+			return "", false
+		}
+		if utf8.RuneCount(encoded) <= budget {
+			best = candidate
+			low = mid + 1
+		} else {
+			high = mid - 1
+		}
+	}
+	if best == "" {
+		return "", false
+	}
+	return best, true
+}
+
+// jsonPointerResult replaces a valid JSON value the field shrinker
+// cannot bound with a small, valid envelope that carries a head+tail
+// preview of the original text and the pointer to the persisted full
+// output.
+func jsonPointerResult(text string, maxChars int, ref, marker string) (string, bool) {
+	type pointerResult struct {
+		Truncated  bool   `json:"truncated"`
+		FullOutput string `json:"full_output"`
+		Preview    string `json:"preview,omitempty"`
+	}
+	base, err := json.Marshal(pointerResult{Truncated: true, FullOutput: ref})
+	if err != nil || utf8.RuneCount(base) > maxChars {
+		return "", false
+	}
+	// Measure the envelope with a placeholder preview to learn exactly
+	// how many encoded runes the preview value may spend.
+	probe, err := json.Marshal(pointerResult{
+		Truncated: true, FullOutput: ref, Preview: "x",
+	})
+	if err != nil {
+		return "", false
+	}
+	quoted := utf8.RuneCount([]byte(`"x"`))
+	room := maxChars - utf8.RuneCount(probe) + quoted
+	if room > 0 {
+		if preview, ok := excerptWithinBudget(text, []rune(marker), room); ok {
+			out, err := json.Marshal(pointerResult{
+				Truncated: true, FullOutput: ref, Preview: preview,
+			})
+			if err == nil && utf8.RuneCount(out) <= maxChars {
+				return string(out), true
+			}
+		}
+	}
+	return string(base), true
+}
+
+// markTruncatedFlags keeps conventional truncation booleans honest:
+// an envelope whose content this middleware shortened must not keep
+// claiming it was untouched.
+func markTruncatedFlags(obj map[string]json.RawMessage) {
+	for _, key := range []string{"is_truncated", "truncated"} {
+		var flag bool
+		if err := json.Unmarshal(obj[key], &flag); err == nil && !flag {
+			obj[key] = json.RawMessage("true")
+		}
+	}
+}
+
+// headTailString returns up to keep runes of raw plus the marker: 70%
+// from the head and 30% from the tail, so both the start and the end of
+// a long value stay visible. It slices at UTF-8 boundaries without
+// converting the whole input to runes, so an oversized result pays only
+// for the excerpt it keeps.
+func headTailString(raw string, keep int, marker []rune) string {
+	return headTailAtMost(raw, utf8.RuneCountInString(raw), keep, marker)
+}
+
+// headTailAtMost is headTailString with the rune count already known,
+// so a binary search over one long field does not recount it per probe.
+func headTailAtMost(raw string, length, keep int, marker []rune) string {
+	if keep <= 0 {
+		return string(marker)
+	}
+	if keep >= length {
+		return raw
+	}
+	head := keep * 7 / 10
+	tail := keep - head
+	headEnd := 0
+	for i := 0; i < head; i++ {
+		_, size := utf8.DecodeRuneInString(raw[headEnd:])
+		headEnd += size
+	}
+	tailStart := len(raw)
+	for i := 0; i < tail; i++ {
+		tailStart--
+		for tailStart > 0 && !utf8.RuneStart(raw[tailStart]) {
+			tailStart--
+		}
+	}
+	return raw[:headEnd] + string(marker) + raw[tailStart:]
 }
 
 // replaceTextParts swaps every text part for one truncated text part

@@ -161,17 +161,22 @@ func buildMiddleware(
 		}
 		mws = append(mws, mw)
 	}
-	if s.Truncate != nil {
-		if mw := truncateMiddleware(*s.Truncate); mw != nil {
-			mws = append(mws, mw)
-		}
-	}
+	// The hard ceiling sits inside the text policy: on the way out,
+	// truncate persists the full output and bounds text first (keeping
+	// JSON envelopes parseable), so result_limit normally only has to
+	// enforce the non-text part budget. Its text ceiling still applies
+	// when a deployment leaves truncate off.
 	mw, err := resultLimitMiddleware(s.ResultLimit)
 	if err != nil {
 		return nil, err
 	}
 	if mw != nil {
 		mws = append(mws, mw)
+	}
+	if s.Truncate != nil {
+		if mw := truncateMiddleware(*s.Truncate); mw != nil {
+			mws = append(mws, mw)
+		}
 	}
 	if s.Redact != nil && s.Redact.Enabled && len(rules) > 0 {
 		mws = append(mws, toolmiddleware.Redact(rules...))
