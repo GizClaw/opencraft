@@ -4,10 +4,10 @@ go 1.25.13
 
 require (
 	github.com/GizClaw/flowcraft/core v0.4.5
-	github.com/GizClaw/flowcraft/driver/anthropic v0.3.2
-	github.com/GizClaw/flowcraft/driver/bytedance v0.3.2
+	github.com/GizClaw/flowcraft/driver/anthropic v0.3.3
+	github.com/GizClaw/flowcraft/driver/bytedance v0.3.3
 	github.com/GizClaw/flowcraft/driver/minimax v0.3.2
-	github.com/GizClaw/flowcraft/driver/openai v0.3.2
+	github.com/GizClaw/flowcraft/driver/openai v0.3.3
 	github.com/Microsoft/go-winio v0.6.2
 	github.com/PuerkitoBio/goquery v1.12.0
 	github.com/disintegration/imaging v1.6.2
