@@ -33,6 +33,13 @@ import '@xyflow/react/dist/style.css';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import type { GraphDTO, GraphNodeDTO } from '../lib/types';
+import {
+  FIELD_CATALOGS,
+  FIELD_LABELS,
+  NESTED_FIELDS,
+  defaultFor,
+  type FieldSpec,
+} from './graphFieldCatalog';
 import { ICON } from './ui/icon';
 
 // ---- layout ---------------------------------------------------------
@@ -437,81 +444,6 @@ function inferKind(
   return 'string';
 }
 
-// FieldSpec describes one valid config field of a node type (mirrors
-// the flowcraft node config structs). The editor uses the catalog to
-// offer fields that are not yet present in the node's config.
-type FieldSpec = {
-  key: string;
-  kind: 'string' | 'number' | 'bool' | 'array' | 'object';
-};
-
-const FIELD_CATALOGS: Record<string, FieldSpec[]> = {
-  inference: [
-    { key: 'model', kind: 'object' },
-    { key: 'model_hint', kind: 'string' },
-    { key: 'messages_channel', kind: 'string' },
-    { key: 'system_prompt', kind: 'string' },
-    { key: 'output_key', kind: 'string' },
-    { key: 'usage_key', kind: 'string' },
-    { key: 'tool_pending_key', kind: 'string' },
-    { key: 'undefined_tool_recovery', kind: 'object' },
-    { key: 'recover_pending_key', kind: 'string' },
-    { key: 'recover_count_key', kind: 'string' },
-    { key: 'stream', kind: 'bool' },
-    { key: 'tools', kind: 'array' },
-    { key: 'all_tools', kind: 'bool' },
-    { key: 'tool_choice', kind: 'object' },
-    { key: 'intent', kind: 'object' },
-    { key: 'extensions', kind: 'array' },
-  ],
-  tool: [
-    { key: 'messages_channel', kind: 'string' },
-    { key: 'results_key', kind: 'string' },
-  ],
-  script: [
-    { key: 'runtime', kind: 'string' },
-    { key: 'name', kind: 'string' },
-    { key: 'source', kind: 'string' },
-    { key: 'config', kind: 'object' },
-  ],
-};
-
-// Nested catalogs for object fields whose contents are also known.
-// NESTED_FIELDS is exported for the catalog contract test: it is a
-// hand-maintained mirror of the node configurations this editor edits, and a
-// key no node reads is a silent no-op for whoever sets it here (the panel
-// suggests the field, the node ignores it).
-export const NESTED_FIELDS: Record<string, FieldSpec[]> = {
-  'inference.undefined_tool_recovery': [
-    { key: 'enabled', kind: 'bool' },
-    { key: 'max_per_run', kind: 'number' },
-  ],
-  'script.config': [
-    { key: 'preserve_recent', kind: 'number' },
-    { key: 'budget_chars', kind: 'number' },
-    { key: 'threshold_ratio', kind: 'number' },
-    { key: 'max_consecutive_failures', kind: 'number' },
-    { key: 'max_folds_per_turn', kind: 'number' },
-    { key: 'max_input_tokens', kind: 'number' },
-    { key: 'system_prompt_tokens', kind: 'number' },
-  ],
-};
-
-function defaultFor(spec: FieldSpec): unknown {
-  switch (spec.kind) {
-    case 'bool':
-      return false;
-    case 'number':
-      return 0;
-    case 'array':
-      return [];
-    case 'object':
-      return {};
-    default:
-      return '';
-  }
-}
-
 function AddFieldSelect({
   specs,
   onAdd,
@@ -539,27 +471,6 @@ function AddFieldSelect({
     </select>
   );
 }
-
-// Common field labels; anything not listed falls back to the raw key.
-const FIELD_LABELS: Record<string, string> = {
-  model_hint: 'graph.modelHint',
-  all_tools: 'graph.allTools',
-  stream: 'graph.stream',
-  reasoning_effort: 'graph.reasoningEffort',
-  max_per_run: 'graph.maxPerRun',
-  tool_pending_key: 'graph.toolPendingKey',
-  recover_pending_key: 'graph.recoverPendingKey',
-  recover_count_key: 'graph.recoverCountKey',
-  runtime: 'graph.runtime',
-  preserve_recent: 'graph.preserveRecent',
-  budget_chars: 'graph.budgetChars',
-  threshold_ratio: 'graph.thresholdRatio',
-  max_consecutive_failures: 'graph.maxConsecutiveFailures',
-  max_folds_per_turn: 'graph.maxFoldsPerTurn',
-  max_input_tokens: 'graph.maxInputTokens',
-  system_prompt_tokens: 'graph.systemPromptTokens',
-  results_key: 'graph.resultsKey',
-};
 
 function FieldLabel({ raw }: { raw: string }) {
   const { t } = useTranslation();
