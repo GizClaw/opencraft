@@ -19,6 +19,25 @@ import (
 // the summary is never persisted as real conversation.
 const SummaryPrefix = "Another language model started to solve this problem and produced a summary of its thinking process."
 
+// ContextNoticePrefix marks a harness notice injected into the
+// conversation when automatic compaction can no longer keep the prompt
+// inside the model's window (repeated condensation failures, or the
+// per-turn fold budget spent). The notice exists so the model can wrap
+// up — finish the step in flight, prefer short tool output — instead of
+// running into a provider context error with no warning.
+//
+// It is a user-role message for provider portability, and it is filtered
+// out of the persisted conversation exactly like a compaction summary:
+// the graph node writes this literal, so the Go constant and
+// graphs/nodes/compact.js must stay in step (pinned by
+// foundation/config/graph_contract_test.go).
+const ContextNoticePrefix = "Context notice:"
+
+// IsContextNotice reports whether text is a harness context notice.
+func IsContextNotice(text string) bool {
+	return strings.HasPrefix(text, ContextNoticePrefix)
+}
+
 // ToolActivity returns the rendered tool_call / tool_result lines of
 // m, or nil when the message carries no tool activity.
 func ToolActivity(m message.Message) []string {

@@ -261,6 +261,14 @@ export interface TurnArtifacts {
   // for provider-side correlation.
   requestID?: string;
   responseID?: string;
+  // compaction is what automatic context compaction did during this turn
+  // (live only): folds rewrite the conversation prefix, so the note
+  // explains the cost and context change the transcript cannot show.
+  compaction?: {
+    folds: number;
+    failures?: number;
+    notified?: boolean;
+  };
 }
 
 // attachmentPart lowers one staged attachment into the message wire
@@ -1280,6 +1288,11 @@ export const useStore = create<StoreState>((set, get) => {
             response_id?: string;
             finished_at?: string;
             duration_ms?: number;
+            compaction?: {
+              folds: number;
+              failures?: number;
+              notified?: boolean;
+            };
           };
           const conv = ensureConversation(conversationID);
           if (!conv) break;
@@ -1304,6 +1317,7 @@ export const useStore = create<StoreState>((set, get) => {
                     errorKind: data.error_kind ?? t.errorKind,
                     requestID: data.request_id ?? t.requestID,
                     responseID: data.response_id ?? t.responseID,
+                    compaction: data.compaction ?? t.compaction,
                   }
                 : t,
             );
@@ -2400,7 +2414,20 @@ export const useStore = create<StoreState>((set, get) => {
       try {
         await api.setModel(model);
         const convID = activeConversationID();
-        if (convID) updateConv(convID, { model });
+        if (!convID) return;
+        const previous = get().conversations[convID]?.model ?? '';
+        updateConv(convID, { model });
+        // Provider prompt caches are scoped to the model, so switching
+        // mid-conversation re-reads the whole transcript at undiscounted
+        // input price once. Worth one line: the user otherwise reads the
+        // bill (or the sudden latency) as a bug. A conversation that has
+        // not exchanged anything yet has no cache to lose, so it stays
+        // quiet.
+        const hasContent =
+          (get().conversations[convID]?.messages.length ?? 0) > 0;
+        if (hasContent && previous !== '' && previous !== model) {
+          get().toast(i18n.t('chat.modelSwitchCost', { model }), 'warning');
+        }
       } catch (err) {
         set({ statusText: String(err) });
       }

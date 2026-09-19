@@ -2166,3 +2166,57 @@ describe('firstMessageTitle', () => {
     expect(firstMessageTitle([])).toBe('');
   });
 });
+
+// The cost of switching models mid-conversation is invisible in the
+// transcript: provider prompt caches are scoped to the model, so the next
+// request re-reads everything at undiscounted input price. The store says
+// so once, and only when there is a cache to lose.
+describe('store: model switch cost notice', () => {
+  it('warns when a conversation with content switches model', async () => {
+    useStore.setState({
+      conversations: {
+        's-1': {
+          messages: [
+            {
+              id: 'm-1',
+              role: 'user',
+              text: 'hello',
+              parts: [],
+              at: '2026-09-03T00:00:00Z',
+            },
+          ] as never,
+          turnArtifacts: [],
+          mode: 'workspace',
+          think: 'medium',
+          model: 'provider/m-1',
+          pendingInteracts: [],
+        },
+      },
+    });
+    await useStore.getState().setModel('provider/m-2');
+    const toasts = useStore.getState().toasts;
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].kind).toBe('warning');
+    expect(toasts[0].text).toContain('provider/m-2');
+  });
+
+  it('stays quiet for an empty conversation, a re-pick, and no model', async () => {
+    await useStore.getState().setModel('provider/m-1');
+    expect(useStore.getState().toasts).toHaveLength(0);
+
+    useStore.setState({
+      conversations: {
+        's-1': {
+          messages: [] as never,
+          turnArtifacts: [],
+          mode: 'workspace',
+          think: 'medium',
+          model: 'provider/m-1',
+          pendingInteracts: [],
+        },
+      },
+    });
+    await useStore.getState().setModel('provider/m-2');
+    expect(useStore.getState().toasts).toHaveLength(0);
+  });
+});

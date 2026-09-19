@@ -226,6 +226,7 @@
     "inferenceBase": "Base config",
     "inferenceCurrent": "Current default model: {{model}}",
     "inferenceKey": "API key",
+    "inferenceKeyCacheHint": "Provider prompt caches are scoped to the credential as well as the model: after a key change the next request re-reads the whole conversation at full input price once.",
     "instanceEnabled": "Enable for routing",
     "instanceName": "Label (optional)",
     "instanceDriver": "driver",
@@ -635,7 +636,8 @@
     "usageAllModels": "All models",
     "usageAtRefresh": "at refresh",
     "usageCache": "Cache read",
-    "usageCacheHitHint": "cache-read tokens ÷ input tokens (lifetime, all models)",
+    "usageCacheHitHint": "cache-read tokens ÷ prompt tokens, cache reads included (lifetime, all models). Rows recorded before prompt tokens became inclusive cannot state a ratio and show a dash.",
+    "usageCacheHitUnknown": "—",
     "usageCacheHitRate": "Cache hit rate",
     "usageCacheWrite": "Cache write",
     "usageCustom": "Custom",
@@ -662,6 +664,12 @@
     "usageUpdated": "Last used"
   },
   "chat": {
+    "modelSwitchCost": "Switched to {{model}}. Prompt caches are scoped to the model, so this conversation's next request re-reads the transcript at full input price once.",
+    "compactionFolded": "Context compacted ({{count}} fold)",
+    "compactionFoldedDetail": "Older rounds were folded into a summary: the turn kept running with a shorter history. The prompt prefix changed, so the next request is billed at full input price once.",
+    "compactionStrained": "Context compaction is out of options",
+    "compactionStrainedDetail": "This conversation is close to the model's input window and automatic folding cannot reduce it further ({{count}} failed attempt(s) standing). Prefer shorter tool output and finish the step in flight; start a new conversation for a fresh window.",
+
     "running": "Running",
     "stageReasoning": "Thinking…",
     "stageTool": "Using {{tool}}…",
@@ -1137,7 +1145,8 @@
     "preserveRecent": "Preserve recent rounds (preserve_recent)",
     "budgetChars": "Budget chars (budget_chars)",
     "thresholdRatio": "Compact threshold (threshold_ratio)",
-    "maxCompactions": "Max compactions (max_compactions)",
+    "maxConsecutiveFailures": "Failed folds before folding stops (max_consecutive_failures)",
+    "maxFoldsPerTurn": "Successful folds per turn (max_folds_per_turn)",
     "maxInputTokens": "Max input tokens (max_input_tokens)",
     "systemPromptTokens": "System prompt tokens (system_prompt_tokens)",
     "resultsKey": "Results key (results_key)"

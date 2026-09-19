@@ -234,8 +234,11 @@ func TestRenderToBoardFullSectionOrder(t *testing.T) {
 	}
 	sections := unmarshalSections(t, board)
 	assertSystemFirst(t, sections)
+	// The cache-stable prefix keeps the harness-owned content and the
+	// conversation prefix (folded summary, raw window) in stable-first
+	// order; the per-turn tail is asserted below.
 	want := []string{
-		"agents_md", "memory_summary", "plan", "skills", "skill", "memory_raw",
+		"agents_md", "memory_summary", "memory_raw",
 	}
 	pos := -1
 	for _, id := range want {
@@ -250,6 +253,127 @@ func TestRenderToBoardFullSectionOrder(t *testing.T) {
 			t.Fatalf("section %q missing or out of order in %v", id, ids(sections))
 		}
 		pos = next
+	}
+	// The per-turn tail (plan, skills list, activated skill) rides with
+	// the user's message instead of becoming channel messages: it must
+	// not appear in world.sections, and it must all be in the block.
+	for _, id := range []string{"plan", "skills", "skill"} {
+		for _, sec := range sections {
+			if sec.ID == id {
+				t.Fatalf("per-turn section %q must not be in world.sections (%v)",
+					id, ids(sections))
+			}
+		}
+	}
+	block := board.GetVarString("world.tail_block")
+	for _, frag := range []string{
+		"inspect",          // plan item
+		"## Skills",        // ranked skills list
+		"## Skill: review", // activated skill body
+	} {
+		if !strings.Contains(block, frag) {
+			t.Fatalf("tail block is missing %q:\n%s", frag, block)
+		}
+	}
+}
+
+// TestRenderToBoardPrefixIsStableAcrossTurns is the caching contract that
+// the stable/volatile split exists for: within one session, a turn that only
+// differs by the user's wording must render a byte-identical world.sections,
+// so a provider's prompt cache can reuse everything up to the conversation.
+// Everything that legitimately changes per turn is expected in
+// world.tail_block instead.
+func TestRenderToBoardPrefixIsStableAcrossTurns(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, "AGENTS.md"), "project rules")
+	writeSkillFile(t, root, "review", "review code and docs")
+	writeSkillFile(t, root, "plan", "build execution plans")
+	svc := skills.NewService(context.Background(), skills.Options{
+		WorkBase: root, Enabled: true, TopN: 5,
+	})
+	ws := New(Options{WorkBase: root})
+	ws.SetSkills(svc)
+	ws.memory = stubMemory{items: []corememory.ContextItem{{
+		Kind: corememory.ContextSummary,
+		Content: message.Content{Parts: []message.Part{
+			message.TextPart{Text: "folded summary"},
+		}},
+	}}}
+	sess := newSessionStore(t)
+	if _, err := plan.NewStore(sess).Update("assistant", "s-c1",
+		plan.UpdatePlanArgs{Plan: []plan.PlanItem{
+			{Step: "inspect", Status: plan.StatusInProgress},
+		}}); err != nil {
+		t.Fatal(err)
+	}
+	ws.SetSessions(sess)
+
+	sectionsA := boardOf(t, ws, "s-c1", "use $review").GetVarString("world.sections")
+	blockA := tailBlockOf(t, ws, "s-c1", "use $review")
+	sectionsB := boardOf(t, ws, "s-c1", "what does this repo do?").GetVarString("world.sections")
+	blockB := tailBlockOf(t, ws, "s-c1", "what does this repo do?")
+
+	if sectionsA != sectionsB {
+		t.Fatalf("world.sections changed between two turns of one session:\n--- A\n%s\n--- B\n%s",
+			sectionsA, sectionsB)
+	}
+	if blockA == blockB {
+		t.Fatalf("the tail block should differ when the skills ranking does:\n%s", blockA)
+	}
+}
+
+// TestRenderTailBlock pins the framing rules the block depends on: an empty
+// tail stays unset so the node leaves the turn message untouched, and a
+// non-empty tail is marked as injected context (never as the user's words).
+func TestRenderTailBlock(t *testing.T) {
+	if got := renderTailBlock(nil); got != "" {
+		t.Fatalf("empty tail = %q, want \"\"", got)
+	}
+	blank := []Section{newTextSection("plan", message.RoleUser, "   \n")}
+	if got := renderTailBlock(blank); got != "" {
+		t.Fatalf("blank tail = %q, want \"\"", got)
+	}
+	got := renderTailBlock([]Section{
+		newTextSection("plan", message.RoleUser, "Current plan:\n- [~] inspect (in_progress)"),
+		newTextSection("skills", message.RoleUser, "## Skills\n- review: review code"),
+	})
+	if !strings.HasPrefix(got, tailBlockHeader) ||
+		!strings.HasSuffix(got, tailBlockFooter) {
+		t.Fatalf("tail block is not framed:\n%s", got)
+	}
+	if !strings.Contains(got, "Current plan:") ||
+		!strings.Contains(got, "## Skills") {
+		t.Fatalf("tail block lost a section:\n%s", got)
+	}
+	if listAt := strings.Index(got, "## Skills"); listAt < strings.Index(got, "Current plan:") {
+		t.Fatalf("tail block order = plan last, want plan first:\n%s", got)
+	}
+}
+
+// TestRenderToBoardClearsAStaleTailBlock pins the reused-board case. A
+// resume restores the previous run's board and its vars, so a turn whose
+// tail is empty must clear the var: otherwise the last turn's plan and
+// skills would be appended to this turn's message as if they were current.
+func TestRenderToBoardClearsAStaleTailBlock(t *testing.T) {
+	workBase := t.TempDir()
+	writeSkillFile(t, workBase, "review", "review code and docs")
+	ws := New(Options{WorkBase: workBase})
+	ws.SetSkills(skills.NewService(context.Background(), skills.Options{
+		WorkBase: workBase, Enabled: true,
+	}))
+	board := agent.NewBoard()
+	board.SetVar("world.tail_block",
+		"<opencraft-context>\nstale plan\n</opencraft-context>")
+
+	// A turn with no plan and no matching skill has nothing to inject.
+	if err := ws.RenderToBoard(
+		context.Background(), "assistant", "s-c1",
+		"zzzzqqqq nothing relevant", nil, board,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if got := board.GetVarString("world.tail_block"); got != "" {
+		t.Fatalf("stale tail block survived: %q", got)
 	}
 }
 
@@ -286,6 +410,25 @@ func indexOf(s, sub string) int {
 }
 
 func strptr(s string) *string { return &s }
+
+// boardOf renders one turn and returns the board the world node reads.
+func boardOf(t *testing.T, ws *Service, contextID, prompt string) *agent.Board {
+	t.Helper()
+	board := agent.NewBoard()
+	if err := ws.RenderToBoard(
+		context.Background(), "assistant", contextID, prompt, nil, board,
+	); err != nil {
+		t.Fatal(err)
+	}
+	return board
+}
+
+// tailBlockOf renders one turn and returns the per-turn block the world
+// node appends to the user's own message ("" when the turn has none).
+func tailBlockOf(t *testing.T, ws *Service, contextID, prompt string) string {
+	t.Helper()
+	return boardOf(t, ws, contextID, prompt).GetVarString("world.tail_block")
+}
 
 type stubPrefixProvider []string
 
@@ -630,34 +773,18 @@ func TestRenderToBoardInjectsLatestPlan(t *testing.T) {
 	}
 	svc := New(Options{WorkBase: t.TempDir()})
 	svc.SetSessions(sess)
-	board := agent.NewBoard()
-	if err := svc.RenderToBoard(
-		context.Background(), "assistant", "s-c1", "", nil, board,
-	); err != nil {
-		t.Fatal(err)
+	// The plan is per-turn state: it rides in the tail block appended to
+	// the user's own message, never as a channel message of its own.
+	block := tailBlockOf(t, svc, "s-c1", "")
+	if !contains(block, "inspect") ||
+		!contains(block, plan.StatusInProgress) ||
+		!contains(block, "fix the bug") {
+		t.Fatalf("tail block = %q, want checklist with explanation", block)
 	}
-	raw := board.GetVarString("world.sections")
-	var sections []Section
-	if err := json.Unmarshal([]byte(raw), &sections); err != nil {
-		t.Fatalf("sections = %q: %v", raw, err)
-	}
-	var planSec *Section
-	for i := range sections {
-		if sections[i].ID == "plan" {
-			planSec = &sections[i]
-			break
+	for _, sec := range unmarshalSections(t, boardOf(t, svc, "s-c1", "")) {
+		if sec.ID == "plan" {
+			t.Fatal("plan must not be a channel section")
 		}
-	}
-	if planSec == nil {
-		t.Fatalf("no plan section in %+v", sections)
-	}
-	if planSec.Role != "user" {
-		t.Fatalf("plan role = %q, want user (plan is user-side state)", planSec.Role)
-	}
-	if !contains(planSec.Content.Text(), "inspect") ||
-		!contains(planSec.Content.Text(), plan.StatusInProgress) ||
-		!contains(planSec.Content.Text(), "fix the bug") {
-		t.Fatalf("plan section = %q, want checklist with explanation", planSec.Content.Text())
 	}
 
 	// An empty store injects no plan section.
@@ -693,21 +820,8 @@ func TestRenderToBoardInjectsLatestPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 	done.SetSessions(doneSess)
-	board3 := agent.NewBoard()
-	if err := done.RenderToBoard(
-		context.Background(), "assistant", "s-c3", "", nil, board3,
-	); err != nil {
-		t.Fatal(err)
-	}
-	raw3 := board3.GetVarString("world.sections")
-	var sections3 []Section
-	if err := json.Unmarshal([]byte(raw3), &sections3); err != nil {
-		t.Fatal(err)
-	}
-	for _, sec := range sections3 {
-		if sec.ID == "plan" {
-			t.Fatalf("completed plan must not be injected: %+v", sections3)
-		}
+	if got := tailBlockOf(t, done, "s-c3", ""); got != "" {
+		t.Fatalf("completed plan must not be injected, tail block = %q", got)
 	}
 }
 
@@ -743,25 +857,17 @@ func TestRenderToBoardInjectsRankedSkills(t *testing.T) {
 		t.Fatal(err)
 	}
 	sections := unmarshalSections(t, board)
-	var skillsSec *Section
-	for i := range sections {
-		if sections[i].ID == "skills" {
-			skillsSec = &sections[i]
-		}
-		if sections[i].ID == "skill" {
-			t.Fatal("no mention, no full-text skill section expected")
+	for _, sec := range sections {
+		if sec.ID == "skills" || sec.ID == "skill" {
+			t.Fatalf("skills must not be channel sections: %+v", sec)
 		}
 	}
-	if skillsSec == nil {
-		t.Fatalf("no skills section in %+v", sections)
-	}
-	if skillsSec.Role != "user" {
-		t.Fatalf("skills list role = %q, want user (skill content is not system rules)",
-			skillsSec.Role)
-	}
-	if !contains(skillsSec.Content.Text(), "review") ||
-		contains(skillsSec.Content.Text(), "Do the review thing.") {
-		t.Fatalf("skills section = %q, want metadata only", skillsSec.Content.Text())
+	// The ranked list is per-turn state and rides in the tail block, which
+	// is always user-role content: it is appended to the user's message.
+	block := board.GetVarString("world.tail_block")
+	if !contains(block, "review") ||
+		contains(block, "Do the review thing.") {
+		t.Fatalf("tail block = %q, want skill metadata only", block)
 	}
 	assertSystemFirst(t, sections)
 }
@@ -799,29 +905,14 @@ func TestRenderToBoardMentionInjectsFullText(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	var list, full *Section
-	listAt, fullAt := -1, -1
-	sections := unmarshalSections(t, board)
-	for i, sec := range sections {
-		switch sec.ID {
-		case "skills":
-			list, listAt = &sec, i
-		case "skill":
-			full, fullAt = &sec, i
-		}
+	block := board.GetVarString("world.tail_block")
+	if !contains(block, "Do the review thing.") {
+		t.Fatalf("mention must inject the full skill body:\n%s", block)
 	}
-	if full == nil {
-		t.Fatalf("mention must inject a full-text skill section")
-	}
-	if full.Role != "user" || !contains(full.Content.Text(), "Do the review thing.") {
-		t.Fatalf("skill section = %+v, want user role with full body", full)
-	}
-	if list == nil || list.Role != "user" {
-		t.Fatalf("skills list = %+v, want user role next to its activation", list)
-	}
-	if fullAt <= listAt {
-		t.Fatalf("skill activation (%d) must follow the skills list (%d): %v",
-			fullAt, listAt, ids(sections))
+	listAt, fullAt := strings.Index(block, "## Skills"),
+		strings.Index(block, "Do the review thing.")
+	if listAt < 0 || fullAt <= listAt {
+		t.Fatalf("skill activation must follow the skills list:\n%s", block)
 	}
 }
 
@@ -847,14 +938,8 @@ func TestMentionStagesSkillToCache(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	var full *Section
-	for _, sec := range unmarshalSections(t, board) {
-		if sec.ID == "skill" {
-			full = &sec
-		}
-	}
-	if full == nil || !contains(full.Content.Text(), "staged copy for execution") {
-		t.Fatalf("mention must stage the skill: %+v", full)
+	if block := board.GetVarString("world.tail_block"); !contains(block, "staged copy for execution") {
+		t.Fatalf("mention must stage the skill:\n%s", block)
 	}
 	staged := filepath.Join(userDir, "cache", "staged", "s-c1",
 		"review", "scripts", "run.sh")
@@ -892,15 +977,10 @@ func TestModelRequestedActivation(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	var injected *Section
-	for _, sec := range unmarshalSections(t, board) {
-		if sec.ID == "skill" && contains(sec.Content.Text(), "requested by the model") {
-			injected = &sec
-		}
-	}
-	if injected == nil || !contains(injected.Content.Text(), "Do the review thing.") {
-		t.Fatalf("model-requested activation missing: %+v",
-			unmarshalSections(t, board))
+	block := board.GetVarString("world.tail_block")
+	if !contains(block, "requested by the model") ||
+		!contains(block, "Do the review thing.") {
+		t.Fatalf("model-requested activation missing:\n%s", block)
 	}
 
 	// consume-on-read: the next turn injects nothing.
@@ -910,10 +990,8 @@ func TestModelRequestedActivation(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	for _, sec := range unmarshalSections(t, board2) {
-		if sec.ID == "skill" && contains(sec.Content.Text(), "requested by the model") {
-			t.Fatalf("activation must be consumed after one turn: %+v", sec)
-		}
+	if block := board2.GetVarString("world.tail_block"); contains(block, "requested by the model") {
+		t.Fatalf("activation must be consumed after one turn:\n%s", block)
 	}
 }
 

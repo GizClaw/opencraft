@@ -415,6 +415,18 @@ export interface TurnEnd {
   finished_at?: string;
   duration_ms?: number;
   notify?: boolean;
+  /**
+   * What automatic context compaction did during the turn, when the turn
+   * reached the compaction node. A fold rewrites the conversation prefix,
+   * which invalidates the provider's prompt cache, so the turn that folded
+   * is the turn that pays full input price next — the transcript cannot
+   * show that, so the UI says it once here.
+   */
+  compaction?: {
+    folds: number;
+    failures?: number;
+    notified?: boolean;
+  };
 }
 
 export interface ReplyRequest {

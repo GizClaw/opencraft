@@ -516,6 +516,113 @@ describe('ChatView transcript windowing', () => {
     expect(screen.getByText('Worked for 1h 2m 3s')).toBeInTheDocument();
   });
 
+  // A fold rewrites the conversation prefix, which invalidates the
+  // provider's prompt cache: the note is the only place the user can learn
+  // why the next request cost more, and why the session is under pressure
+  // once folding stops working.
+  it('explains a folded turn and a strained compaction', () => {
+    setConversation(
+      [
+        {
+          id: 'm-1',
+          role: 'user',
+          text: 'long task',
+          items: [],
+          attachments: [],
+        },
+        {
+          id: 'm-2',
+          role: 'assistant',
+          text: '',
+          items: [{ kind: 'text', id: 't-1', text: 'still going' }],
+          attachments: [],
+        },
+      ],
+      [
+        {
+          id: 'turn-1',
+          start: 0,
+          docs: [],
+          compaction: { folds: 2 },
+        },
+      ],
+    );
+    const view = render(<ChatView />);
+    expect(screen.getByText('Context compacted (2 fold)')).toBeInTheDocument();
+    expect(
+      screen.getByText(/billed at full input price once/),
+    ).toBeInTheDocument();
+    view.unmount();
+
+    setConversation(
+      [
+        {
+          id: 'm-1',
+          role: 'user',
+          text: 'long task',
+          items: [],
+          attachments: [],
+        },
+        {
+          id: 'm-2',
+          role: 'assistant',
+          text: '',
+          items: [{ kind: 'text', id: 't-1', text: 'still going' }],
+          attachments: [],
+        },
+      ],
+      [
+        {
+          id: 'turn-1',
+          start: 0,
+          docs: [],
+          compaction: { folds: 0, failures: 3, notified: true },
+        },
+      ],
+    );
+    render(<ChatView />);
+    expect(
+      screen.getByText('Context compaction is out of options'),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/3 failed attempt\(s\) standing/),
+    ).toBeInTheDocument();
+  });
+
+  it('shows no compaction note for a turn that did not fold', () => {
+    setConversation(
+      [
+        {
+          id: 'm-1',
+          role: 'user',
+          text: 'short task',
+          items: [],
+          attachments: [],
+        },
+        {
+          id: 'm-2',
+          role: 'assistant',
+          text: '',
+          items: [{ kind: 'text', id: 't-1', text: 'done' }],
+          attachments: [],
+        },
+      ],
+      [
+        {
+          id: 'turn-1',
+          start: 0,
+          docs: [],
+          compaction: { folds: 0 },
+        },
+      ],
+    );
+    render(<ChatView />);
+    expect(screen.queryByText(/Context compacted/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/compaction is out of options/),
+    ).not.toBeInTheDocument();
+  });
+
   it('shows worked duration even when the turn produced no artifacts', () => {
     setConversation(
       [

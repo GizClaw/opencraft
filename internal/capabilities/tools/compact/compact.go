@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
 	"github.com/GizClaw/flowcraft/core/inference"
@@ -257,9 +258,19 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 			otellog.String("request.id", resp.Metadata.RequestID))
 		return "", errors.New("compact: condensation returned no text")
 	}
-	if runes := []rune(summary); len(runes) > budget {
-		summary = string(runes[:budget])
-	}
+	// Identifiers the summarizer is entitled to paraphrase away ride
+	// along verbatim: a folded region is only usable if a later turn can
+	// still name the file it changed, the commit it landed, the issue it
+	// closed. Extraction is mechanical (regex over the folded messages),
+	// so this never invents anything and costs no model call.
+	//
+	// The block is reserved out of the summary budget rather than appended
+	// on top of it: the artifact feeds the next fold as its "previous
+	// summary", so an unbudgeted append would grow the conversation's
+	// compaction state on every fold.
+	index := summarytext.ExtractAnchors(fresh)
+	index.AddText(art.Summary)
+	summary = fitSummary(summary, index.Render(), budget)
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -352,6 +363,48 @@ func condenseMaxOutput(budget int) int {
 
 func containsID(ids []string, want string) bool {
 	return slices.Contains(ids, want)
+}
+
+// fitSummary fits generated prose plus its identifier block into the
+// node's summary budget. The budget is a cap, not a target: the artifact is
+// stored as the conversation's compaction state and handed back as the
+// previous summary on the next fold, so anything over it grows every time.
+//
+// The identifier block is what a later turn cannot reconstruct (paths,
+// commits, issue numbers), so it is reserved first and the prose takes what
+// is left. When the block alone would exceed the budget the budget still
+// wins — the block is bounded and internally ordered (files first), so
+// truncating it drops the least useful end.
+func fitSummary(prose, anchors string, budget int) string {
+	if budget <= 0 {
+		budget = DefaultBudgetChars
+	}
+	anchors = strings.TrimSpace(anchors)
+	if anchors == "" {
+		return truncateRunes(prose, budget)
+	}
+	block := "\n\n" + anchors
+	remaining := budget - utf8.RuneCountInString(block)
+	if remaining <= 0 {
+		return truncateRunes(anchors, budget)
+	}
+	prose = truncateRunes(prose, remaining)
+	if prose == "" {
+		return anchors
+	}
+	return prose + block
+}
+
+// truncateRunes cuts s to at most n runes, never inside one.
+func truncateRunes(s string, n int) string {
+	if n <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= n {
+		return s
+	}
+	return string(runes[:n])
 }
 
 func setsEqual(a, b []string) bool {

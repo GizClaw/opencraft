@@ -58,6 +58,12 @@ agents:
         deps:
           memory: mem
           sessions: sessions
+      # Records the provider-measured prompt size of the turn so the next
+      # turn's fold decision starts from a measurement instead of a
+      # character estimate (worldstate's usage anchor).
+      - type: opencraft.usageanchor
+        deps:
+          sessions: sessions
     observe:
       # Archives turns that did not complete (Ctrl+C / Esc / engine
       # errors) so /resume keeps the interrupted conversation context.

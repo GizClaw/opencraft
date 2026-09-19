@@ -213,7 +213,7 @@ func extractConversation(req *agent.Request, res *agent.Result) []message.Messag
 	}
 	out := make([]message.Message, 0, len(msgs))
 	for _, m := range msgs {
-		if isSummaryMessage(m) {
+		if isInjectedContext(m) {
 			continue
 		}
 		out = append(out, m)
@@ -234,14 +234,18 @@ func renderConversation(msgs []message.Message) []message.Message {
 	return out
 }
 
-// isSummaryMessage reports whether m is a compaction summary injected
-// by the compact graph node (a marked user message). Keeping them out
-// of the archive and the memory raw window means the summary only
-// shapes the current turn's context; cross-turn continuity stays with
+// isInjectedContext reports whether m is derived context injected by the
+// harness rather than something the turn exchanged: a compaction summary,
+// or a context notice telling the model that compaction is out of options.
+// Keeping them out of the archive and the memory raw window means they only
+// shape the turn they were written for; cross-turn continuity stays with
 // the memory assembly.
-func isSummaryMessage(m message.Message) bool {
-	return m.Role == message.RoleUser &&
-		summarytext.IsSummaryText(m.Content.Text())
+func isInjectedContext(m message.Message) bool {
+	if m.Role != message.RoleUser {
+		return false
+	}
+	text := m.Content.Text()
+	return summarytext.IsSummaryText(text) || summarytext.IsContextNotice(text)
 }
 
 // sectionCount reads the world node's prepend count off the board. The

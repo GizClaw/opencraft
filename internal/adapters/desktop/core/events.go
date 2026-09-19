@@ -52,6 +52,25 @@ type TurnEndEvent struct {
 	// Notify lets an automation task suppress the system notification
 	// for this turn (nil = notify, the default for user turns).
 	Notify *bool `json:"notify,omitempty"`
+	// Compaction is what automatic context compaction did during this
+	// turn, when the turn reached the compaction node. A fold rewrites the
+	// conversation prefix, which invalidates the provider's prompt cache:
+	// the turn that folded pays full input price on its next request, and
+	// the UI says so once instead of leaving the user to wonder why a
+	// familiar conversation suddenly cost more.
+	Compaction *CompactionEvent `json:"compaction,omitempty"`
+}
+
+// CompactionEvent mirrors worldstate.CompactionReport onto the wire.
+type CompactionEvent struct {
+	// Folds is the number of successful folds in the turn.
+	Folds int `json:"folds"`
+	// Failures is the number of consecutive failed condensations standing
+	// at the end of the turn.
+	Failures int `json:"failures,omitempty"`
+	// Notified reports whether the model was told that compaction is out
+	// of options while the prompt is still over budget.
+	Notified bool `json:"notified,omitempty"`
 }
 
 // NewTurnEnd builds a wire turn-end event with the RFC3339 end time

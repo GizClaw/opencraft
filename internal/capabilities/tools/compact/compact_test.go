@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/message"
@@ -311,5 +312,69 @@ func TestExecuteRejectsEmptyConversation(t *testing.T) {
 	tool := &Tool{store: store}
 	if _, err := tool.Execute(context.Background(), `{"conversation":[]}`); err == nil {
 		t.Fatal("empty conversation must fail")
+	}
+}
+
+// TestFitSummaryKeepsTheArtifactInsideItsBudget pins the accounting rule:
+// the identifier block is reserved out of the node's budget instead of
+// appended on top of it. The artifact becomes the previous summary of the
+// next fold, so an unbudgeted append would grow the conversation's
+// compaction state on every fold.
+func TestFitSummaryKeepsTheArtifactInsideItsBudget(t *testing.T) {
+	anchors := "## Identifiers (extracted verbatim from the folded messages)\n" +
+		"Files: internal/a.go, internal/b.go\nCommits: 4f2a1bc"
+	prose := strings.Repeat("long prose ", 200) // 2200 runes
+
+	got := fitSummary(prose, anchors, 512)
+	if n := utf8.RuneCountInString(got); n > 512 {
+		t.Fatalf("fitted summary = %d runes, want at most the budget 512", n)
+	}
+	if !strings.Contains(got, "Files: internal/a.go") {
+		t.Fatalf("the identifier block must survive budgeting:\n%s", got)
+	}
+
+	// Without anchors the prose simply takes the whole budget.
+	plain := fitSummary(prose, "", 100)
+	if n := utf8.RuneCountInString(plain); n != 100 {
+		t.Fatalf("plain summary = %d runes, want exactly the budget 100", n)
+	}
+	if !strings.HasPrefix(plain, "long prose ") {
+		t.Fatalf("plain summary was rewritten: %q", plain)
+	}
+
+	// A budget too small for even the block still wins: it is the cap the
+	// graph asked for, and the block is ordered (files first).
+	tiny := fitSummary(prose, anchors, 40)
+	if n := utf8.RuneCountInString(tiny); n > 40 {
+		t.Fatalf("tiny-budget summary = %d runes, want at most 40", n)
+	}
+	if !strings.HasPrefix(tiny, "## Identifiers") {
+		t.Fatalf("tiny-budget summary = %q, want the head of the block", tiny)
+	}
+
+	// Prose that fits alongside the block is left alone.
+	short := fitSummary("small summary", anchors, 4096)
+	if !strings.HasPrefix(short, "small summary\n\n## Identifiers") {
+		t.Fatalf("fitted summary = %q, want prose then the block", short)
+	}
+}
+
+// TestTruncateRunesNeverSplitsARune pins the encoding rule: the summary is
+// re-tokenized by a provider, so a multi-byte character must not be cut in
+// half.
+func TestTruncateRunesNeverSplitsARune(t *testing.T) {
+	cn := "中文摘要内容"
+	got := truncateRunes(cn, 3)
+	if got != "中文摘" {
+		t.Fatalf("truncateRunes = %q, want three runes", got)
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("truncateRunes produced invalid UTF-8: %q", got)
+	}
+	if truncateRunes(cn, 0) != "" || truncateRunes(cn, -1) != "" {
+		t.Fatal("a non-positive budget must truncate to nothing")
+	}
+	if truncateRunes(cn, 99) != cn {
+		t.Fatal("a budget past the input must return it unchanged")
 	}
 }

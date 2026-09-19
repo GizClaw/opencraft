@@ -78,7 +78,16 @@ function boardStub(main: BoardMessage[], vars: Vars = {}) {
 
 function runNode(board: unknown): void {
   const source = readFileSync(NODE_SOURCE, 'utf8');
-  const config = { preserve_recent: 2, max_compactions: 3, budget_chars: 4096 };
+  // The node's own knobs: `max_compactions` was replaced by a consecutive
+  // failure streak plus a per-turn fold budget (see compactNode.test.ts for
+  // the stop conditions themselves). This file pins the fold geometry, so
+  // it sets the budget explicitly instead of riding the defaults.
+  const config = {
+    preserve_recent: 2,
+    max_consecutive_failures: 3,
+    max_folds_per_turn: 3,
+    budget_chars: 4096,
+  };
   const run = { get_context_id: () => 's-test' };
   const inference = {
     routeExplain: () => ({ limits: { max_input_tokens: 1 } }),

@@ -12,6 +12,9 @@ import (
 	"github.com/GizClaw/flowcraft/core/agent"
 	corememory "github.com/GizClaw/flowcraft/core/memory"
 	"github.com/GizClaw/flowcraft/core/message"
+
+	"github.com/GizClaw/opencraft/internal/capabilities/skills"
+	"github.com/GizClaw/opencraft/internal/capabilities/tools/plan"
 )
 
 // The world node is the one graph script that prepends model-visible
@@ -36,6 +39,9 @@ type worldNodeCase struct {
 	// History is the string Go writes to world.history; empty when the
 	// turn does not replay history, in which case the var is unset.
 	History string `json:"history,omitempty"`
+	// TailBlock is the string Go writes to world.tail_block; empty when
+	// the turn has no per-turn context, in which case the var is unset.
+	TailBlock string `json:"tail_block,omitempty"`
 	// Existing is the channel the node finds on the board when it runs.
 	Existing []json.RawMessage `json:"existing"`
 }
@@ -46,27 +52,49 @@ type worldNodeFixture struct {
 }
 
 // worldNodeFixtureCases renders real world state for the cases the
-// node has to survive: an ordinary turn, and a full-history replay turn
-// where world.history is set as well.
+// node has to survive: an ordinary turn, a full-history replay turn
+// where world.history is set as well, and a turn carrying a per-turn
+// tail block (plan + skills) that the node has to append to the turn's
+// own message.
 func worldNodeFixtureCases(t *testing.T, workBase string) []worldNodeCase {
 	t.Helper()
+	// Skill discovery always scans the user's own ~/.agents/skills, and the
+	// skills section embeds every discovered SKILL.md path. Without
+	// isolating HOME this fixture would bake the developer's home paths and
+	// skill names into a checked-in golden file, and every machine with a
+	// different HOME would fail the comparison. userDir is pointed at a
+	// temp dir for the same reason (its skills root would otherwise be
+	// scanned in addition to the home one).
+	userDir := isolateUserHome(t)
 	existing := []message.Message{
 		message.NewTextMessage(message.RoleUser, "the user's current turn"),
 	}
-	build := func(name string, svc *Service) worldNodeCase {
+	// normalize keeps the fixture stable across runs and machines: the
+	// environment section embeds the workspace root, and an activated skill
+	// embeds the user data dir (the staged copy it points at). Both live in
+	// per-test temp dirs.
+	replacer := strings.NewReplacer(
+		workBase, "<workbase>",
+		userDir, "<userdir>",
+	)
+	normalize := func(s string) string { return replacer.Replace(s) }
+	build := func(name, prompt string, svc *Service, ch []message.Message) worldNodeCase {
 		t.Helper()
 		board := agent.NewBoard()
 		if err := svc.RenderToBoard(
-			context.Background(), "assistant", "s-c1", "hi", nil, board,
+			context.Background(), "assistant", "s-c1", prompt, nil, board,
 		); err != nil {
 			t.Fatalf("%s: render: %v", name, err)
 		}
 		entry := worldNodeCase{
-			Name:     name,
-			Sections: normalizePath(board.GetVarString("world.sections"), workBase),
-			History:  normalizePath(board.GetVarString("world.history"), workBase),
+			Name:      name,
+			Sections:  normalize(board.GetVarString("world.sections")),
+			History:   normalize(board.GetVarString("world.history")),
+			TailBlock: normalize(board.GetVarString("world.tail_block")),
+			// Always an array, never null: the mirror test iterates it.
+			Existing: []json.RawMessage{},
 		}
-		for _, m := range existing {
+		for _, m := range ch {
 			raw, err := json.Marshal(m)
 			if err != nil {
 				t.Fatalf("%s: marshal existing: %v", name, err)
@@ -77,10 +105,12 @@ func worldNodeFixtureCases(t *testing.T, workBase string) []worldNodeCase {
 	}
 	plain := New(Options{
 		WorkBase:          workBase,
+		UserDir:           userDir,
 		CollaborationMode: "workspace",
 	})
 	replay := New(Options{
 		WorkBase:          workBase,
+		UserDir:           userDir,
 		CollaborationMode: "workspace",
 	})
 	replay.memory = replayMemory{stubMemory{items: []corememory.ContextItem{
@@ -99,19 +129,49 @@ func worldNodeFixtureCases(t *testing.T, workBase string) []worldNodeCase {
 			}},
 		},
 	}}}
+
+	// Tail case: a live plan plus a $mentioned skill, i.e. exactly the
+	// content that must ride with the user's message instead of becoming
+	// messages of its own.
+	writeSkillFile(t, workBase, "review", "review code and docs")
+	tail := New(Options{
+		WorkBase:          workBase,
+		UserDir:           userDir,
+		CollaborationMode: "workspace",
+	})
+	tail.SetSkills(skills.NewService(context.Background(), skills.Options{
+		WorkBase: workBase, UserDir: userDir, Enabled: true, TopN: 5,
+	}))
+	sess := newSessionStore(t)
+	if _, err := plan.NewStore(sess).Update("assistant", "s-c1",
+		plan.UpdatePlanArgs{Plan: []plan.PlanItem{
+			{Step: "inspect the fixture", Status: plan.StatusInProgress},
+		}}); err != nil {
+		t.Fatalf("tail case plan: %v", err)
+	}
+	tail.SetSessions(sess)
 	return []worldNodeCase{
-		build("plain turn", plain),
-		build("full-history replay", replay),
+		build("plain turn", "hi", plain, existing),
+		build("full-history replay", "hi", replay, existing),
+		build("per-turn tail (plan + skills)", "use $review", tail, existing),
+		// A board the node finds with no turn message at all (a custom
+		// engine that seeds its own channel): the block must still reach
+		// the model, as its own message.
+		build("tail without a turn message", "use $review", tail, nil),
 	}
 }
 
-// normalizePath keeps the fixture stable across runs: the environment
-// section embeds the workspace root, which lives in a temp dir.
-func normalizePath(s, workBase string) string {
-	if workBase == "" {
-		return s
-	}
-	return strings.ReplaceAll(s, workBase, "<workbase>")
+// isolateUserHome points HOME (and USERPROFILE, so the Windows path of
+// os.UserHomeDir behaves the same way) at a temp dir and returns a temp
+// user data dir. Anything that scans user-level skill roots must call it
+// before the first discovery, or the golden fixture captures whatever is
+// installed on the machine running the test.
+func isolateUserHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	return t.TempDir()
 }
 
 // TestWorldNodeFixtureMatchesRenderedState pins the fixture to what Go

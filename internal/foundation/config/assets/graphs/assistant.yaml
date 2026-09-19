@@ -20,7 +20,12 @@ nodes:
         preserve_recent: 10
         budget_chars: 4096
         threshold_ratio: 0.85
-        max_compactions: 3
+        # Consecutive failed folds before folding stops for the turn
+        # (reset on success: a failure says nothing about the next
+        # attempt), and successful folds per turn (each costs a
+        # summarization call).
+        max_consecutive_failures: 3
+        max_folds_per_turn: 6
         max_input_tokens: 0
   - id: llm
     type: inference
@@ -68,6 +73,11 @@ nodes:
       request_metadata:
         thread_id: ${board:oc_thread_id}
         turn_id: ${board:oc_turn_id}
+      # The call's usage, read by the compact node: together with the
+      # channel length it stamped before this call, it is the measurement
+      # the next round's fold decision starts from
+      # (internal/capabilities/worldstate/anchor.go).
+      usage_key: llm_usage
       intent:
         text:
           reasoning_effort: ${board:think_level:}

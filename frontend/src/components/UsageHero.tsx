@@ -11,6 +11,7 @@ import {
   Zap,
 } from 'lucide-react';
 import type { ModelUsageStat } from '../lib/types';
+import { cacheHitPercent, formatHitPercent } from '../lib/usageRate';
 import { ICON } from './ui/icon';
 
 // Palette mirrors the trend chart (cc-switch style): input blue,
@@ -85,11 +86,14 @@ export function UsageHero({
     };
   }, [rows]);
 
-  const hitRate =
-    totals.input > 0
-      ? Math.min(100, Math.max(0, (totals.cacheRead / totals.input) * 100))
-      : 0;
-  const hitLabel = hitRate.toFixed(hitRate >= 99.95 ? 0 : 1);
+  // undefined when the aggregate cannot state a ratio: nothing measured
+  // yet, or a row whose input column predates the inclusive normalization
+  // (see lib/usageRate.ts).
+  const hitPercent = cacheHitPercent({
+    input: totals.input,
+    cacheRead: totals.cacheRead,
+  });
+  const hitLabel = formatHitPercent(hitPercent);
   const mainNumber = totals.total.toLocaleString();
   const lastUsed = totals.updatedAt
     ? new Date(totals.updatedAt).toLocaleDateString()
@@ -210,7 +214,9 @@ export function UsageHero({
                 className="font-bold tabular-nums"
                 style={{ color: ACCENT_EMERALD }}
               >
-                {hitLabel}%
+                {hitLabel === undefined
+                  ? t('config.usageCacheHitUnknown')
+                  : `${hitLabel}%`}
               </span>
             </div>
             <div className="relative h-1.5 overflow-hidden rounded-full bg-panel">
@@ -218,7 +224,7 @@ export function UsageHero({
                 className="usage-hit-fill absolute inset-y-0 left-0 rounded-full"
                 style={{
                   backgroundColor: ACCENT_EMERALD,
-                  ['--uc-hit-width' as string]: `${hitRate}%`,
+                  ['--uc-hit-width' as string]: `${hitPercent ?? 0}%`,
                 }}
               />
             </div>
