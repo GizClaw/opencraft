@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useLayoutEffect, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArrowLeft, File as FileGlyph } from 'lucide-react';
 import { followLinkTarget } from '../../lib/linkTarget';
@@ -27,7 +27,13 @@ export function FilePreviewModal({
   const [pages, setPages] = useState<ResolvedTarget[]>([initial]);
   const active = pages[pages.length - 1];
 
-  useEffect(() => {
+  // A layout effect, not a passive one: Escape must belong to this
+  // dialog from the commit that put it on screen. A passive effect
+  // leaves a window between the dialog appearing and the listener being
+  // installed, and an Escape landing there is swallowed by whatever
+  // surface owns the key underneath (the page this was opened from),
+  // leaving the dialog open.
+  useLayoutEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       // This dialog can open above another overlay (the PR detail page
@@ -111,6 +117,10 @@ export function useFilePreview(): {
 } {
   const flash = useStore((s) => s.flash);
   const [target, setTarget] = useState<ResolvedTarget | null>(null);
+  // Stable identities: every parent render would otherwise hand the
+  // dialog a new onClose, tearing the Escape listener down and back up
+  // for no reason (and reopening the gap it is meant to close).
+  const close = useCallback(() => setTarget(null), []);
   const openLink = useCallback<MarkdownLinkHandler>(
     (href, base = '') =>
       void followLinkTarget(href, base, {
@@ -122,7 +132,7 @@ export function useFilePreview(): {
   return {
     openLink,
     modal: target ? (
-      <FilePreviewModal initial={target} onClose={() => setTarget(null)} />
+      <FilePreviewModal initial={target} onClose={close} />
     ) : null,
   };
 }

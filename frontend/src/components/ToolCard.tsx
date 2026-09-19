@@ -6,6 +6,7 @@ import {
   ChevronRight,
   ClipboardList,
   File,
+  FileDiff,
   FileSearch,
   Folder,
   Globe,
@@ -566,6 +567,8 @@ export const WriteView = memo(function WriteView({ tool }: { tool: ToolView }) {
       )}
       {!running && !failed && content && (
         <GitDiffView
+          wrap
+          expandable
           files={[
             {
               path,
@@ -2661,7 +2664,7 @@ function resultSummary(
 function DiffBlock({ patch }: { patch: string }) {
   const lines = patch.split('\n');
   return (
-    <pre className="max-h-80 overflow-y-auto overflow-x-auto whitespace-pre-wrap break-all rounded-card border border-edge bg-panel/60 p-2 font-mono text-xs">
+    <pre className="max-h-80 overflow-y-auto whitespace-pre-wrap break-words px-2.5 py-2 font-mono text-xs">
       {lines.map((line, idx) => {
         let cls = 'text-dim';
         if (line.startsWith('+')) cls = 'text-ok';
@@ -2732,10 +2735,29 @@ function usePatchFiles(tool: ToolView): {
   return { files, failed, patch };
 }
 
-// ApplyPatchView renders the apply_patch diff directly in the chat
-// stream in full: the git diff is always visible in a ~10-line
-// scrollable viewport, with a lightweight status line only while
-// running or on failure.
+// patchResultFiles unwraps the tool result envelope
+// ({files: [{path, action}]}) the apply_patch tool returns.
+function patchResultFiles(
+  result: string | undefined,
+): { path?: string; action?: string }[] | null {
+  if (result === undefined) return null;
+  try {
+    const v = JSON.parse(result);
+    if (v && typeof v === 'object' && Array.isArray(v.files)) {
+      return v.files as { path?: string; action?: string }[];
+    }
+  } catch {
+    // not JSON
+  }
+  return null;
+}
+
+// ApplyPatchView renders one apply_patch call as a card: a summary
+// header (files changed, total add/delete counts, run status) over the
+// diff itself. The diff is always visible, wraps long lines instead of
+// scrolling sideways, and the raw patch text only replaces it while
+// the backend renderer is unavailable (loading is a skeleton, failure
+// falls back to the colored patch).
 export const ApplyPatchView = memo(function ApplyPatchView({
   tool,
 }: {
@@ -2744,44 +2766,86 @@ export const ApplyPatchView = memo(function ApplyPatchView({
   const { t } = useTranslation();
   const openFileTarget = useStore((s) => s.openFileTarget);
   const running = tool.status === 'running';
-  const { files, failed, patch } = usePatchFiles(tool);
-  const resultFiles =
-    tool.result !== undefined
-      ? (() => {
-          try {
-            const v = JSON.parse(tool.result);
-            if (v && typeof v === 'object' && Array.isArray(v.files)) {
-              return v.files as {
-                path?: string;
-                action?: string;
-              }[];
-            }
-          } catch {
-            // not JSON
-          }
-          return null;
-        })()
+  const errored = tool.status === 'error';
+  const { files, failed: renderFailed, patch } = usePatchFiles(tool);
+  const resultFiles = running ? null : patchResultFiles(tool.result);
+  // Totals come from the rendered diff when it is available; a call
+  // that never rendered (unparseable args) still has the result
+  // envelope, which is enough for the file list but not for counts.
+  const totals = files
+    ? files.reduce(
+        (acc, f) => ({
+          added: acc.added + f.added,
+          removed: acc.removed + f.removed,
+        }),
+        {
+          added: 0,
+          removed: 0,
+        },
+      )
+    : null;
+  const headerLabel = files
+    ? t('tool.filesChanged', { count: files.length })
+    : t('tool.patch');
+  // The diff is the message. The result envelope only adds rows when
+  // there is no rendered diff, and the raw text only when it carries
+  // something the UI cannot show otherwise (an error, or a result the
+  // envelope parser did not understand).
+  const showResultFiles = (renderFailed || files === null) && resultFiles;
+  const rawText =
+    tool.result !== undefined && (errored || resultFiles === null)
+      ? tool.result
       : null;
+
   return (
-    <div className="my-1.5 space-y-1">
-      {running && (
-        <div className="flex items-center gap-1.5 px-2.5 py-2 text-xs text-dim">
-          <Loader2 size={ICON.xs} className="animate-spin" />
-          {t('tool.running')}
-        </div>
-      )}
-      {failed || files === null ? (
+    <div className="my-1.5 overflow-hidden rounded-card border border-edge bg-panel2/40">
+      <div className="flex items-center gap-2 border-b border-edge bg-panel2/60 px-2.5 py-1.5">
+        {running ? (
+          <Loader2
+            size={ICON.sm}
+            className="shrink-0 animate-spin text-accent"
+          />
+        ) : errored ? (
+          <X size={ICON.sm} className="shrink-0 text-err" />
+        ) : (
+          <FileDiff size={ICON.sm} className="shrink-0 text-accent" />
+        )}
+        <span className="min-w-0 flex-1 truncate text-xs text-fg">
+          {running ? t('tool.running') : headerLabel}
+        </span>
+        {totals && (
+          <span className="shrink-0 font-mono text-micro tabular-nums">
+            <span className="text-ok">+{totals.added}</span>
+            <span className="text-dim"> </span>
+            <span className="text-err">−{totals.removed}</span>
+          </span>
+        )}
+      </div>
+      {renderFailed ? (
         <DiffBlock patch={patch} />
+      ) : files === null ? (
+        running ? (
+          <div className="space-y-1.5 px-3 py-2.5" aria-hidden="true">
+            <div className="h-3 w-3/4 animate-pulse rounded-tight bg-panel2" />
+            <div className="h-3 w-1/2 animate-pulse rounded-tight bg-panel2" />
+            <div className="h-3 w-2/3 animate-pulse rounded-tight bg-panel2" />
+          </div>
+        ) : (
+          <DiffBlock patch={patch} />
+        )
       ) : (
         <GitDiffView
           files={files}
           collapsible={false}
-          maxHeight="max-h-[12.5rem]"
+          wrap
+          framed={false}
+          expandable
+          maxHeight="max-h-64"
         />
       )}
-      {!running && resultFiles !== null && resultFiles.length > 0 && (
-        <div className="space-y-0.5 px-2.5 py-1 text-xs">
-          {resultFiles.map((f, i) => (
+      {showResultFiles && showResultFiles.length > 0 && (
+        <div className="space-y-0.5 border-t border-edge px-2.5 py-1.5 text-xs">
+          {showResultFiles.map((f, i) => (
             <div key={i} className="flex items-center gap-1.5 font-mono">
               <Check size={ICON.xs} className="shrink-0 text-ok" />
               {f.path ? (
@@ -2802,13 +2866,13 @@ export const ApplyPatchView = memo(function ApplyPatchView({
           ))}
         </div>
       )}
-      {tool.result !== undefined && (
+      {rawText !== null && (
         <div
-          className={`whitespace-pre-wrap break-all px-2.5 py-1 font-mono text-xs ${
-            tool.status === 'error' ? 'text-err' : 'text-ok'
+          className={`whitespace-pre-wrap break-words px-2.5 py-1.5 font-mono text-xs ${
+            errored ? 'text-err' : 'text-ok'
           }`}
         >
-          {tool.result}
+          {rawText}
         </div>
       )}
     </div>
@@ -2872,7 +2936,7 @@ function ResultBlock({ tool }: { tool: ToolView }) {
     ? parseUnifiedDiff(candidate)
     : null;
   if (diffFiles) {
-    return <GitDiffView files={diffFiles} maxHeight="max-h-64" />;
+    return <GitDiffView files={diffFiles} wrap maxHeight="max-h-64" />;
   }
   return (
     <pre

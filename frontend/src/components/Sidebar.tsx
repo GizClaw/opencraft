@@ -740,6 +740,21 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
     );
   };
 
+  // The active workspace leads the list. The backend ranks by
+  // last_opened, which only advances once the open has been recorded,
+  // so without this the workspace the user just switched to can still
+  // render below the one they left. Every other row keeps the backend
+  // order.
+  const orderedWorkspaces = useMemo(() => {
+    const index = workspaces.findIndex((w) => w.path === workspace);
+    if (index <= 0) return workspaces;
+    return [
+      workspaces[index],
+      ...workspaces.slice(0, index),
+      ...workspaces.slice(index + 1),
+    ];
+  }, [workspaces, workspace]);
+
   // historyScrollRef + historyItems flatten the tree into one
   // windowed list. Only the workspace rows and sessions near the
   // sidebar viewport are mounted, no matter how many workspaces and
@@ -747,7 +762,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   const historyScrollRef = useRef<HTMLDivElement | null>(null);
   const historyItems = useMemo<HistoryItem[]>(() => {
     const items: HistoryItem[] = [];
-    for (const w of workspaces) {
+    for (const w of orderedWorkspaces) {
       items.push({ key: `ws:${w.id}`, kind: 'workspace', w });
       if (!expandedWorkspaces.has(w.path)) continue;
       const isCurrent = w.path === workspace;
@@ -803,12 +818,12 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     expandedWorkspaces,
+    orderedWorkspaces,
     runningIdsByWorkspace,
     sessions,
     showAllSessions,
     t,
     workspace,
-    workspaces,
     wsLists,
     wsLoading,
     conversations,

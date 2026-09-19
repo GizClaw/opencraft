@@ -638,6 +638,20 @@ textarea:focus-visible {
   will-change: transform;
 }
 
+/* Diff viewports that hide lines below the fold fade into the surface
+   so the cut is visible. A painted scrim instead of a CSS mask: these
+   boxes grow by thousands of pixels when expanded, and a mask on a
+   resizing scroll box is a repaint hazard on WebKit. Anchored to the
+   viewport (absolute), not the scrolled content. */
+.diff-fade-bottom {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 0;
+  height: 1.5rem;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--color-bg));
+}
+
 /* Usage stats (cc-switch-style hero + chart) ------------------------- */
 @keyframes uc-fade-in {
   from {

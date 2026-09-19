@@ -13,6 +13,7 @@ import type {
   ResolvedTarget,
 } from '../lib/types';
 import { PRDetailModal } from './PRDetailModal';
+import { mountOutsideAct, pressEscape } from '../test/outsideAct';
 
 const apiMock = vi.hoisted(() => ({
   gitHubPRDetail: vi.fn(),
@@ -185,6 +186,25 @@ describe('PRDetailModal', () => {
     // Escape peels one layer: the PR page it opened from survives.
     expect(screen.getAllByRole('dialog')).toHaveLength(1);
     expect(screen.getByText('Add search')).toBeInTheDocument();
+  });
+
+  it('owns Escape from the commit that shows the page', async () => {
+    apiMock.gitHubPRDetail.mockResolvedValue(detail());
+    const onClose = vi.fn();
+    const mount = mountOutsideAct(
+      <PRDetailModal pr={pull} onClose={onClose} />,
+    );
+    try {
+      await mount.waitForDom(
+        () => mount.container.querySelector('[role="dialog"]') !== null,
+      );
+      pressEscape();
+      // Without this the page can be on screen while Escape belongs to
+      // nobody — or, worse in a stack, to a surface underneath it.
+      expect(onClose).toHaveBeenCalledTimes(1);
+    } finally {
+      await mount.unmount();
+    }
   });
 
   it('swallows a backdrop click meant for the dialog only', async () => {

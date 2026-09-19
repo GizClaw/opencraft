@@ -10,6 +10,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -403,8 +404,11 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
   );
 
   // Modal keyboard support: Escape closes, ArrowUp/ArrowDown move
-  // between changed files.
-  useEffect(() => {
+  // between changed files. A layout effect so the modal owns Escape from
+  // the commit that shows it: a passive effect leaves a task-wide window
+  // where the key is delivered to the panel underneath instead (and just
+  // moves its selection).
+  useLayoutEffect(() => {
     if (!selected) return;
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {

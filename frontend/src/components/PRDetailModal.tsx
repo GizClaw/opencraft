@@ -4,7 +4,7 @@
 // and the conversation timeline. Everything is read-only; "Open in
 // GitHub" hands the thread to the system browser. Document links inside
 // the markdown bodies open in a preview dialog on top of this page.
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   AlertTriangle,
@@ -63,7 +63,11 @@ export function PRDetailModal({
     };
   }, [pr.number, attempt]);
 
-  useEffect(() => {
+  // A layout effect so Escape is owned from the commit that shows the
+  // page: registered a task later (useEffect), an Escape arriving right
+  // after opening is lost, and this listener is the one that would
+  // otherwise swallow Escape meant for a preview dialog pushed above it.
+  useLayoutEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();

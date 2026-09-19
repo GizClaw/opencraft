@@ -7,6 +7,7 @@ import {
 } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mountOutsideAct, pressEscape } from '../test/outsideAct';
 import { useStore } from '../lib/store';
 import { GitPanel } from './GitPanel';
 
@@ -432,6 +433,37 @@ describe('GitPanel', () => {
       await screen.findByText('Untracked file: nothing to diff yet.'),
     ).toBeInTheDocument();
     expect(await screen.findByText('2/2')).toBeInTheDocument();
+  });
+
+  it('owns Escape from the commit that shows the diff modal', async () => {
+    // Escape closes the diff modal. The listener is registered in a
+    // layout effect so the modal owns the key from the commit that shows
+    // it — with a passive effect the ownership waits on the scheduler,
+    // which this app defers while a turn is streaming. That timing is
+    // covered by the outside-act tests on the other overlays
+    // (CommitDetailModal, FilePreviewModal); a click-opened modal cannot
+    // exercise it here, because React flushes a sync render's passive
+    // effects before yielding back to the event loop.
+    const mount = mountOutsideAct(<GitPanel sessionID="s-1" />);
+    try {
+      const row = () =>
+        [...mount.container.querySelectorAll('button')].find((el) =>
+          (el.textContent ?? '').includes('internal/a.go'),
+        ) ?? null;
+      await mount.waitForDom(() => row() !== null);
+      row()!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      await mount.waitForDom(
+        () => mount.container.querySelector('[role="dialog"]') !== null,
+      );
+
+      pressEscape();
+
+      await mount.waitForDom(
+        () => mount.container.querySelector('[role="dialog"]') === null,
+      );
+    } finally {
+      await mount.unmount();
+    }
   });
 
   it('refreshes status when the window regains focus', async () => {

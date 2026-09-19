@@ -628,11 +628,38 @@ func TestStderrTailKeepsRecentLines(t *testing.T) {
 	}
 }
 
+// waitActorIdle blocks until the named process's actor has finished the
+// operation it was running.
+//
+// A read that lands while the actor is busy is answered by a
+// non-blocking peek, without consulting the in-flight table at all: the
+// peek returns an empty success within microseconds, i.e. before the
+// Cancel notification written behind the request has even been decoded.
+// That is the documented behavior (see TestInterruptedWaitIsCanceledAndReadsPeek),
+// so a test that asserts "the Cancel wins" has to make sure the read it
+// cancels is the one holding the actor rather than a peek racing a
+// previous read's teardown.
+func waitActorIdle(t *testing.T, srv *Server, processID string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if state := srv.bound(); state != nil {
+			if entry, ok := state.sess.get(processID); ok && !entry.busy() {
+				return
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatalf("process %q never went idle", processID)
+}
+
 // TestCancelNotificationBeatsHandlerStart pins the registration order:
 // a Cancel that arrives right behind its request must find the request
-// already registered instead of being dropped on the floor.
+// already registered instead of being dropped on the floor. Each attempt
+// waits for the actor to go idle first, so the read it cancels is a real
+// long poll instead of a peek (see waitActorIdle).
 func TestCancelNotificationBeatsHandlerStart(t *testing.T) {
-	client, _ := testPair(t)
+	client, srv := testPair(t)
 	ctx := context.Background()
 	if _, err := client.Bind(ctx, t.TempDir(), &SandboxPolicy{}); err != nil {
 		t.Fatal(err)
@@ -644,6 +671,7 @@ func TestCancelNotificationBeatsHandlerStart(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 5; i++ {
+		waitActorIdle(t, srv, "quiet")
 		id, ch := client.register()
 		if err := client.writeFrame(&Frame{Id: id, Body: &Frame_Request{
 			Request: &Request{Method: &Request_Read{Read: &Read{
