@@ -3,7 +3,13 @@
 // against their first parent (the backend resolves that). The layout
 // follows the diff modal language: centered dialog, file list on the
 // left, the selected file's diff on the right, ↑/↓ navigation.
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useState,
+} from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   AlertTriangle,
@@ -96,7 +102,12 @@ export function CommitDetailModal({
     [files, selectFile],
   );
 
-  useEffect(() => {
+  // A layout effect, not a passive one: this dialog owns Escape from the
+  // commit that puts it on screen. Between that commit and a useEffect
+  // there is a task-wide window in which the key reaches whatever
+  // surface is open underneath (the Git panel's own diff modal, the
+  // viewer) instead of closing this dialog.
+  useLayoutEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
