@@ -10,6 +10,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/resource"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/resourcedep"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/summarytext"
 )
@@ -83,8 +84,11 @@ func (commitHookFactory) New(ctx context.Context, in resource.Input) (any, error
 		}
 		persistCtx := context.WithoutCancel(ctx)
 		if atomic, ok := sink.(atomicTurnSink); ok {
+			// Same rule as the archive observer: a Referee may accept a
+			// canceled/interrupted run into the committer path, so the
+			// store write must not inherit the run's cancellation.
 			if err := store.AppendTurnWithRunIDAndHook(
-				ctx, req.ContextID, res.RunID, raw,
+				persistCtx, req.ContextID, res.RunID, raw,
 				func(ctx context.Context, tx *sql.Tx) error {
 					return atomic.AppendMessagesTx(
 						ctx, tx, req.ContextID, res.RunID,
@@ -97,7 +101,7 @@ func (commitHookFactory) New(ctx context.Context, in resource.Input) (any, error
 			return atomic.FoldOnly(persistCtx, req.ContextID)
 		}
 		if err := store.AppendTurnWithRunID(
-			ctx, req.ContextID, res.RunID, raw,
+			persistCtx, req.ContextID, res.RunID, raw,
 		); err != nil {
 			return err
 		}
@@ -139,26 +143,66 @@ const worldSectionsCountVar = "world.sections.count"
 func extractConversation(req *agent.Request, res *agent.Result) []message.Message {
 	var msgs []message.Message
 	if res != nil && res.LastBoard != nil {
-		channel := res.LastBoard.Channel(agent.MainChannel)
+		board := res.LastBoard
+		channel := board.Channel(agent.MainChannel)
 		if n, ok := sectionCount(res.LastBoard); ok && n >= 0 && n <= len(channel) {
-			msgs = channel[n:]
+			// The compact node moves the prefix it folds onto a side
+			// channel before shrinking MainChannel for the model. That
+			// channel holds the folded messages in order, so the union
+			// with the remaining MainChannel restores the turn's full
+			// conversation while the model only ever sees the compacted
+			// view. The compact node protects the turn's user message
+			// (world.compact.turn_start) so a fold that runs later can
+			// leave it behind while newer rounds move to the side
+			// channel: the message is then re-anchored in front.
+			archived := board.Channel(config.CompactArchiveChannel)
 			// Full-history replay prepends the persisted conversation
 			// between the world sections and this turn's messages.
 			// Those replayed messages are context, not new
 			// conversation, so they must be dropped before persisting
 			// the turn.
-			if h, ok := historyCount(res.LastBoard); ok && h >= 0 && h < len(msgs) &&
-				msgs[h].Role == message.RoleUser {
-				// The model-facing board carries the user's turn
-				// message with inline media (the opencraft.media
-				// prepare hook inlined URL sources before the LLM).
-				// The archive keeps the URL form from the original
-				// request so attachments stay compact and
-				// re-renderable on resume.
-				restored := make([]message.Message, 0, len(msgs)-h)
+			h, hasHistory := historyCount(board)
+			if !hasHistory || h < 0 {
+				h = 0
+			}
+			joined := make([]message.Message, 0, len(archived)+len(channel)-n)
+			joined = append(joined, archived...)
+			joined = append(joined, channel[n:]...)
+			if h > len(joined) {
+				h = len(joined)
+			}
+			turn := joined[h:]
+			// The model-facing board carries the user's turn
+			// message with inline media (the opencraft.media
+			// prepare hook inlined URL sources before the LLM).
+			// The archive keeps the URL form from the original
+			// request so attachments stay compact and
+			// re-renderable on resume.
+			askPos := -1
+			if ts, ok := compactTurnStart(board); ok &&
+				ts >= n && ts < len(channel) &&
+				channel[ts].Role == message.RoleUser {
+				askPos = len(archived) + (ts - n) - h
+			}
+			if askPos < 0 && len(turn) > 0 &&
+				turn[0].Role == message.RoleUser {
+				askPos = 0
+			}
+			if askPos >= 0 && askPos < len(turn) &&
+				turn[askPos].Role == message.RoleUser {
+				restored := make([]message.Message, 0, len(turn)+1)
 				restored = append(restored, req.Message)
-				restored = append(restored, msgs[h+1:]...)
+				for i, m := range turn {
+					if i == askPos {
+						continue
+					}
+					restored = append(restored, m)
+				}
 				msgs = restored
+			} else {
+				// No usable anchor (custom graph or an older
+				// board): keep every turn message as exchanged.
+				msgs = turn
 			}
 		}
 	}
@@ -233,6 +277,32 @@ func historyCount(board *agent.Board) (int, bool) {
 		return 0, false
 	}
 	v, ok := board.GetVar("world.history.count")
+	if !ok {
+		return 0, false
+	}
+	switch n := v.(type) {
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	case float64:
+		return int(n), true
+	case float32:
+		return int(n), true
+	}
+	return 0, false
+}
+
+// compactTurnStart reads the compact node's index of the current
+// turn's user message on the MainChannel. The node keeps that message
+// out of every fold and moves the index down as folded messages leave
+// the channel, so the archive can re-anchor the turn even when older
+// rounds were folded after it.
+func compactTurnStart(board *agent.Board) (int, bool) {
+	if board == nil {
+		return 0, false
+	}
+	v, ok := board.GetVar("world.compact.turn_start")
 	if !ok {
 		return 0, false
 	}

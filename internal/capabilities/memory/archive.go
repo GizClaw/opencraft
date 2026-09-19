@@ -93,6 +93,10 @@ func (o *archiveObserver) OnRunEnd(ctx context.Context, id agent.Identity, res *
 	delete(o.requests, id.RunID)
 	o.mu.Unlock()
 	if req == nil {
+		telemetry.Warn(ctx, "memory: archive skipped run with no captured request",
+			otellog.String("conversation", id.ConversationID),
+			otellog.String("run", id.RunID),
+			otellog.String("status", string(res.Status)))
 		return
 	}
 
@@ -110,6 +114,10 @@ func (o *archiveObserver) OnRunEnd(ctx context.Context, id agent.Identity, res *
 	// its intermediate tool activity for /resume and memory.
 	raw := extractConversation(req, res)
 	if len(raw) == 0 {
+		telemetry.Warn(ctx, "memory: archive skipped run with no conversation",
+			otellog.String("conversation", id.ConversationID),
+			otellog.String("run", id.RunID),
+			otellog.String("status", string(res.Status)))
 		return
 	}
 	// Memory folding needs at least one produced message; a turn that
@@ -120,8 +128,12 @@ func (o *archiveObserver) OnRunEnd(ctx context.Context, id agent.Identity, res *
 	// the derived values but detaches the cancellation.
 	persistCtx := context.WithoutCancel(ctx)
 	if atomic, ok := o.sink.(atomicTurnSink); ok {
+		// The write must outlive the run context: canceled turns deliver
+		// OnRunEnd with an already-canceled ctx, and SQLite observes it
+		// on the first query. Without WithoutCancel a stopped turn's
+		// whole transcript is silently dropped.
 		if err := o.store.AppendTurnWithRunIDAndHook(
-			ctx, id.ConversationID, id.RunID, raw,
+			persistCtx, id.ConversationID, id.RunID, raw,
 			func(ctx context.Context, tx *sql.Tx) error {
 				return atomic.AppendMessagesTx(
 					ctx, tx, id.ConversationID, id.RunID,
@@ -129,6 +141,10 @@ func (o *archiveObserver) OnRunEnd(ctx context.Context, id agent.Identity, res *
 				)
 			},
 		); err != nil {
+			telemetry.WarnErr(ctx, "memory: archive turn failed", err,
+				otellog.String("conversation", id.ConversationID),
+				otellog.String("run", id.RunID),
+				otellog.String("status", string(res.Status)))
 			return
 		}
 		if len(raw) <= 1 {
@@ -143,8 +159,12 @@ func (o *archiveObserver) OnRunEnd(ctx context.Context, id agent.Identity, res *
 		return
 	}
 	if err := o.store.AppendTurnWithRunID(
-		ctx, id.ConversationID, id.RunID, raw,
+		persistCtx, id.ConversationID, id.RunID, raw,
 	); err != nil {
+		telemetry.WarnErr(ctx, "memory: archive turn failed", err,
+			otellog.String("conversation", id.ConversationID),
+			otellog.String("run", id.RunID),
+			otellog.String("status", string(res.Status)))
 		return
 	}
 	if len(raw) <= 1 {
