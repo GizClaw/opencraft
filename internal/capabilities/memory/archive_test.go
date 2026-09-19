@@ -90,6 +90,53 @@ func TestArchiveObserverArchivesCanceledTurn(t *testing.T) {
 	}
 }
 
+// TestArchiveObserverArchivesCanceledTurnOnCanceledContext guards the
+// production call shape: flowcraft fires OnRunEnd with the run's own
+// context, which is already canceled for a stopped run. Reusing that
+// context for the store write made the first SQLite call fail and
+// silently dropped the whole turn — including turns that had already
+// committed and pushed code.
+func TestArchiveObserverArchivesCanceledTurnOnCanceledContext(t *testing.T) {
+	obs, store, sink := newArchiveObserver(t)
+	runCtx, cancel := context.WithCancel(context.Background())
+	id := agent.Identity{
+		RunID:          "run-1",
+		AgentID:        "assistant",
+		ConversationID: "s-1",
+	}
+	req := &agent.Request{
+		ContextID: "s-1",
+		Message:   message.NewTextMessage(message.RoleUser, "先停下"),
+	}
+	obs.OnRunStart(runCtx, id, req)
+	cancel()
+	obs.OnRunEnd(runCtx, id, &agent.Result{
+		RunID:  "run-1",
+		Status: agent.StatusCanceled,
+		Messages: []message.Message{{
+			Role: message.RoleAssistant,
+			Content: message.Content{Parts: []message.Part{
+				message.TextPart{Text: "partial output"},
+			}},
+		}},
+	})
+
+	hist, err := store.History(context.Background(), "s-1", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hist) != 2 {
+		t.Fatalf("history = %d messages, want user request + partial output: %+v",
+			len(hist), hist)
+	}
+	if hist[0].Role != message.RoleUser || hist[1].Content.Text() != "partial output" {
+		t.Fatalf("history = %+v, want the stopped turn's transcript", hist)
+	}
+	if sink.count() != 1 {
+		t.Errorf("memory sink turns = %d, want 1", sink.count())
+	}
+}
+
 // TestArchiveObserverKeepsIntermediateToolActivity verifies an
 // interrupted turn persists its partial conversation from the final
 // board: world-state sections excluded, tool-call and tool-result

@@ -14,6 +14,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/resource"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/memory/summary"
+	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/summarytext"
 )
 
@@ -672,5 +673,119 @@ func TestCommitSettingsScopeFor(t *testing.T) {
 	noUser := commitSettings{RuntimeID: "rt"}
 	if got := noUser.scopeFor(agent.Identity{AgentID: "x"}); got.UserID != "" {
 		t.Errorf("user id = %q, want empty", got.UserID)
+	}
+}
+
+// compactedBoard builds the board shape the compact node leaves behind:
+// world sections, the protected user ask, the kept tail and the summary
+// on MainChannel, and the folded messages on the side channel in fold
+// order (replayed history first, then older turn rounds).
+func compactedBoard(
+	replay []message.Message,
+	ask string,
+	moved []message.Message,
+	kept []message.Message,
+) *agent.Board {
+	board := agent.NewBoard()
+	board.AppendChannelMessage(agent.MainChannel,
+		message.NewTextMessage(message.RoleSystem, "environment section"))
+	board.AppendChannelMessage(agent.MainChannel,
+		message.NewTextMessage(message.RoleSystem, "memory summary section"))
+	board.AppendChannelMessage(agent.MainChannel,
+		message.NewTextMessage(message.RoleUser, ask))
+	for _, m := range kept {
+		board.AppendChannelMessage(agent.MainChannel, m)
+	}
+	board.AppendChannelMessage(agent.MainChannel, message.NewTextMessage(
+		message.RoleUser, summarytext.SummaryPrefix+"\nfolded rounds"))
+	board.SetVar("world.sections.count", int64(2))
+	board.SetVar("world.history.count", int64(len(replay)))
+	board.SetVar("world.compact.turn_start", int64(2))
+	for _, m := range append(append([]message.Message{}, replay...), moved...) {
+		board.AppendChannelMessage(config.CompactArchiveChannel, m)
+	}
+	return board
+}
+
+// TestExtractConversationRejoinsCompactArchive verifies a compacted
+// turn still persists every message it exchanged: the replayed history
+// and the summary are context and are dropped, while messages the
+// model no longer sees (moved to the side channel) stay in the archive.
+func TestExtractConversationRejoinsCompactArchive(t *testing.T) {
+	round := message.Message{
+		Role: message.RoleAssistant,
+		Content: message.Content{Parts: []message.Part{
+			message.ToolCallPart{Call: message.ToolCall{
+				ID: "c1", Name: "exec_command",
+				Arguments: json.RawMessage(`{"cmd":"ls"}`),
+			}},
+		}},
+	}
+	result := message.Message{
+		Role: message.RoleTool,
+		Content: message.Content{Parts: []message.Part{
+			message.ToolResultPart{Result: message.ToolResult{
+				CallID: "c1", Content: message.NewTextContent("App.tsx"),
+			}},
+		}},
+	}
+	board := compactedBoard(
+		[]message.Message{
+			message.NewTextMessage(message.RoleUser, "上一轮的问题"),
+			message.NewTextMessage(message.RoleAssistant, "上一轮的回答"),
+		},
+		"看一下仓库",
+		[]message.Message{round, result},
+		[]message.Message{message.NewTextMessage(message.RoleAssistant, "看完了")},
+	)
+	req := &agent.Request{
+		ContextID: "s-1",
+		Message:   message.NewTextMessage(message.RoleUser, "看一下仓库"),
+	}
+	got := extractConversation(req, &agent.Result{RunID: "run-1", LastBoard: board})
+	if len(got) != 4 {
+		t.Fatalf("conversation = %d messages, want ask + folded round + kept reply: %+v",
+			len(got), got)
+	}
+	if got[0].Content.Text() != "看一下仓库" {
+		t.Errorf("first message = %q, want the user ask", got[0].Content.Text())
+	}
+	if got[1].Role != message.RoleAssistant || got[2].Role != message.RoleTool {
+		t.Errorf("folded round roles = %s/%s, want assistant/tool",
+			got[1].Role, got[2].Role)
+	}
+	if got[3].Content.Text() != "看完了" {
+		t.Errorf("last message = %q, want the kept reply", got[3].Content.Text())
+	}
+	for _, m := range got {
+		if summarytext.IsSummaryText(m.Content.Text()) {
+			t.Errorf("summary leaked into the archive: %+v", m)
+		}
+	}
+}
+
+// TestExtractConversationCompactedWithoutMovedTurnRounds covers the
+// first fold of a resumed conversation: only the replayed history sits
+// on the side channel, the ask and the whole turn stay on MainChannel.
+func TestExtractConversationCompactedWithoutMovedTurnRounds(t *testing.T) {
+	board := compactedBoard(
+		[]message.Message{
+			message.NewTextMessage(message.RoleUser, "旧的用户消息"),
+			message.NewTextMessage(message.RoleAssistant, "旧的回答"),
+		},
+		"继续",
+		nil,
+		[]message.Message{message.NewTextMessage(message.RoleAssistant, "好的")},
+	)
+	req := &agent.Request{
+		ContextID: "s-1",
+		Message:   message.NewTextMessage(message.RoleUser, "继续"),
+	}
+	got := extractConversation(req, &agent.Result{RunID: "run-1", LastBoard: board})
+	if len(got) != 2 {
+		t.Fatalf("conversation = %+v, want ask + reply", got)
+	}
+	if got[0].Content.Text() != "继续" || got[1].Content.Text() != "好的" {
+		t.Fatalf("conversation = %+v, want the turn only", got)
 	}
 }

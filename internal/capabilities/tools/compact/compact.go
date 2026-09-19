@@ -222,6 +222,39 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 	}
 	summary := strings.TrimSpace(resp.Message.Content.Text())
 	if summary == "" {
+		// A hidden provider is the likely cause (reasoning models that
+		// spend the whole output budget thinking return an empty text
+		// part). Report enough to tell the two apart: the terminal
+		// finish reason, which part kinds came back, and how the output
+		// tokens split between reasoning and text.
+		textParts, reasoningParts := 0, 0
+		for _, part := range resp.Message.Content.Parts {
+			switch part.(type) {
+			case message.TextPart:
+				textParts++
+			case message.ReasoningPart:
+				reasoningParts++
+			}
+		}
+		reasoningTokens := int64(-1)
+		if rt := resp.Usage.Output.ReasoningTokens; rt != nil {
+			reasoningTokens = *rt
+		}
+		telemetry.Warn(ctx, "compact: condensation returned no text",
+			otellog.String("conversation.id", args.ConversationID),
+			otellog.String("provider", resp.Metadata.Model.Provider),
+			otellog.String("model", resp.Metadata.Model.Name),
+			otellog.String("finish.reason", string(resp.FinishReason)),
+			otellog.Bool("finish.synthesized", resp.FinishSynthesized),
+			otellog.Int("message.parts", len(resp.Message.Content.Parts)),
+			otellog.Int("text.parts", textParts),
+			otellog.Int("reasoning.parts", reasoningParts),
+			otellog.Int("fresh.messages", len(fresh)),
+			otellog.Int("input.chars", len(raw)),
+			otellog.Int("max.output.tokens", condenseMaxOutput(budget)),
+			otellog.Int64("output.tokens", resp.Usage.OutputTokens),
+			otellog.Int64("reasoning.tokens", reasoningTokens),
+			otellog.String("request.id", resp.Metadata.RequestID))
 		return "", errors.New("compact: condensation returned no text")
 	}
 	if runes := []rune(summary); len(runes) > budget {
@@ -287,7 +320,7 @@ func condenseRequest(raw string, budget int) (inference.GenerateRequest, error) 
 		return inference.GenerateRequest{}, fmt.Errorf(
 			"compact: render condense prompt: %w", err)
 	}
-	maxOut := max(budget/3, 256)
+	maxOut := condenseMaxOutput(budget)
 	return inference.GenerateRequest{
 		// The instruction is a system message; the transcript is the
 		// current user turn, so the provider applies the instruction
@@ -307,6 +340,14 @@ func condenseRequest(raw string, budget int) (inference.GenerateRequest, error) 
 			},
 		},
 	}, nil
+}
+
+// condenseMaxOutput derives the condensation call's output budget from
+// the summary character budget. The empty-text warning reports it so a
+// reasoning model that exhausts the budget before emitting text can be
+// told apart from a provider that returned nothing at all.
+func condenseMaxOutput(budget int) int {
+	return max(budget/3, 256)
 }
 
 func containsID(ids []string, want string) bool {
