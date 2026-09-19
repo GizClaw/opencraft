@@ -33,6 +33,7 @@ import {
   Flame,
   FolderOpen,
   GitFork,
+  Layers,
   Lock,
   Loader2,
   Music2,
@@ -332,6 +333,61 @@ function TurnEndNotice({
             <X size={ICON.sm} />
           </button>
         )}
+      </div>
+    </div>
+  );
+}
+
+// CompactionNotice explains what automatic context compaction did to the
+// conversation during one turn. It is deliberately a note and not an
+// error: a fold is the harness keeping a long conversation inside the
+// model's window. Two things are worth saying out loud, though, because
+// neither is visible in the transcript:
+//
+//   - a fold rewrites the conversation prefix, which invalidates the
+//     provider's prompt cache, so the fold is why the next request pays
+//     full input price;
+//   - once compaction is out of options (consecutive failures, or the
+//     per-turn fold budget spent) the model is told to wrap up, and the
+//     user should know the session is near the window limit.
+function CompactionNotice({
+  folds,
+  failures,
+  notified,
+}: {
+  folds: number;
+  failures?: number;
+  notified?: boolean;
+}) {
+  const { t } = useTranslation();
+  const strained = (failures ?? 0) > 0 || notified === true;
+  const title = strained
+    ? t('chat.compactionStrained')
+    : t('chat.compactionFolded', { count: folds });
+  const detail = strained
+    ? t('chat.compactionStrainedDetail', { count: failures ?? 0 })
+    : t('chat.compactionFoldedDetail');
+  return (
+    <div
+      role="status"
+      className={`flex items-start gap-3 rounded-card border px-4 py-2.5 text-sm ${
+        strained ? 'border-warn/40 bg-warn/10' : 'border-edge bg-panel2'
+      }`}
+    >
+      <span
+        className={`mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-control border ${
+          strained
+            ? 'border-warn/30 bg-warn/10 text-warn'
+            : 'border-edge bg-panel text-dim'
+        }`}
+      >
+        <Layers size={ICON.sm} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="font-medium text-fg">{title}</p>
+        <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-relaxed text-dim">
+          {detail}
+        </p>
       </div>
     </div>
   );
@@ -1039,6 +1095,20 @@ function TurnBlock({
         onDismiss={liveEnd ? onDismissFailure : undefined}
       />
     ) : null;
+  // The compaction note stays live-only (like the correlation ids above):
+  // it explains a cost the user sees now, and a resumed session's archive
+  // does not carry it.
+  const compactionNotice =
+    turn?.compaction &&
+    (turn.compaction.folds > 0 ||
+      (turn.compaction.failures ?? 0) > 0 ||
+      turn.compaction.notified) ? (
+      <CompactionNotice
+        folds={turn.compaction.folds}
+        failures={turn.compaction.failures}
+        notified={turn.compaction.notified}
+      />
+    ) : null;
 
   return (
     <div data-turn-index={turnIdx} className="space-y-2">
@@ -1076,6 +1146,7 @@ function TurnBlock({
         </>
       )}
       {footer}
+      {compactionNotice}
       {endNotice}
     </div>
   );

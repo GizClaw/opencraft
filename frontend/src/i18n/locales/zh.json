@@ -226,6 +226,7 @@
     "inferenceBase": "基础配置",
     "inferenceCurrent": "当前默认模型：{{model}}",
     "inferenceKey": "API 密钥",
+    "inferenceKeyCacheHint": "提示缓存同时按凭据与模型隔离：更换密钥后，下一次请求会把整段对话按原价重新读取一次。",
     "instanceEnabled": "启用路由",
     "instanceName": "名称（可选）",
     "instanceDriver": "驱动",
@@ -635,7 +636,8 @@
     "usageAllModels": "全部模型",
     "usageAtRefresh": "刷新时",
     "usageCache": "缓存读取",
-    "usageCacheHitHint": "缓存命中 tokens ÷ 输入 tokens（累计、全部模型口径）",
+    "usageCacheHitHint": "缓存命中 tokens ÷ 提示词 tokens（含缓存读取；累计、全部模型口径）。提示词口径统一之前记录的历史行无法给出比率，显示为「—」。",
+    "usageCacheHitUnknown": "—",
     "usageCacheHitRate": "缓存命中率",
     "usageCacheWrite": "缓存写入",
     "usageCustom": "自定义",
@@ -662,6 +664,12 @@
     "usageUpdated": "最近使用"
   },
   "chat": {
+    "modelSwitchCost": "已切换到 {{model}}。提示缓存按模型隔离，本会话的下一次请求会把整段对话按原价重新读取一次。",
+    "compactionFolded": "上下文已折叠（{{count}} 次）",
+    "compactionFoldedDetail": "较早的对话已被折叠为摘要，本轮在更短的历史上继续。提示词前缀已变化，因此下一次请求的输入会按原价计费一次。",
+    "compactionStrained": "上下文压缩已无法再压缩",
+    "compactionStrainedDetail": "本会话已接近模型的输入窗口，自动折叠无法继续缩小（当前有 {{count}} 次失败）。建议减少冗长的工具输出并尽快收尾当前步骤；新会话可获得干净的窗口。",
+
     "running": "运行中",
     "stageReasoning": "思考中…",
     "stageTool": "正在使用 {{tool}}…",
@@ -1137,7 +1145,8 @@
     "preserveRecent": "保留最近轮次 (preserve_recent)",
     "budgetChars": "预算字符 (budget_chars)",
     "thresholdRatio": "压缩阈值 (threshold_ratio)",
-    "maxCompactions": "最大压缩次数 (max_compactions)",
+    "maxConsecutiveFailures": "连续失败多少次后停止折叠 (max_consecutive_failures)",
+    "maxFoldsPerTurn": "每轮最多成功折叠次数 (max_folds_per_turn)",
     "maxInputTokens": "最大输入 token (max_input_tokens)",
     "systemPromptTokens": "系统提示 token (system_prompt_tokens)",
     "resultsKey": "结果键 (results_key)"

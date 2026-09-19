@@ -20,6 +20,7 @@ import (
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
 	"github.com/GizClaw/opencraft/internal/capabilities/tools/plan"
+	"github.com/GizClaw/opencraft/internal/foundation/config"
 )
 
 // Section is one world-state fragment written to the board for the
@@ -103,14 +104,27 @@ func (s *Service) SetPrefixProvider(p PrefixProvider) { s.prefixes = p }
 func (s *Service) SetSessions(st *ocsessions.Store) { s.sessionStore = st }
 
 // RenderToBoard writes the world state into board vars:
-//   - world.sections: a fixed system-role prefix (base instructions,
-//     environment, permissions), then a user-role context block ordered
-//     from stable to volatile (AGENTS.md, memory summary, plan, skills
-//     list and activations, extras, raw history) immediately before the
-//     user's own message; always injected since each turn starts with
-//     a fresh board
+//   - world.sections: the cache-stable context prefix — base
+//     instructions, environment, permissions, AGENTS.md, then the
+//     conversation prefix the deployment replays (the folded memory
+//     summary and raw window, or world.history in full-replay mode).
+//     Nothing here changes between turns unless the user edits a project
+//     doc, approves a new command prefix, or a fold runs, so a provider
+//     can reuse its cached prompt prefix across turns.
+//   - world.tail_block: the per-turn context block (current plan, skills
+//     list and activations, caller extras) rendered as one text block.
+//     The world node appends it to the user's own message rather than
+//     giving it messages of its own: content that changes on nearly every
+//     turn must not sit in front of the conversation, because a provider
+//     cache only reuses the longest common prefix — one changing message
+//     in front of the history makes every later byte a cache miss.
 //   - world.workspace_root / world.collaboration_mode /
 //     world.permission_profile
+//
+// The stable/volatile split is the point of the two vars. Keep new
+// injections on their natural side: harness-owned session facts go to
+// world.sections, conversation-scoped per-turn context goes to the tail
+// block.
 func (s *Service) RenderToBoard(
 	ctx context.Context,
 	agentID, contextID, reqText string,
@@ -141,10 +155,10 @@ func (s *Service) RenderToBoard(
 		}
 	}
 
-	// Everything below is user-role context, ordered stable-first so
-	// the volatile conversation tail never invalidates longer-lived
-	// content: AGENTS.md, folded memory, plan, skills (list + bodies),
-	// extras, then raw history last.
+	// Everything below is user-role context, ordered stable-first:
+	// AGENTS.md, folded memory, then the replayed conversation prefix.
+	// The per-turn plan / skills / extras split off into the tail block
+	// further down.
 	var summaries, raw []Section
 	if s.memory != nil {
 		if rp, ok := s.memory.(interface {
@@ -172,28 +186,49 @@ func (s *Service) RenderToBoard(
 		sections = append(sections, agents)
 	}
 	sections = append(sections, summaries...)
+	sections = append(sections, raw...)
+
+	// Per-turn tail: everything that is expected to change between turns.
+	// It rides with the user's message (world.tail_block), not as channel
+	// messages of its own.
+	var tail []Section
 	if s.sessionStore != nil {
 		// Inject only while there is still work: a fully completed
 		// plan is stale context, so it is dropped from the prompt.
 		if p, ok := plan.NewStore(s.sessionStore).Latest(
 			agentID, contextID,
 		); ok && !p.Done() {
-			sections = append(sections, newTextSection(
+			tail = append(tail, newTextSection(
 				"plan", message.RoleUser, renderPlanSection(p)))
 		}
 	}
 	if s.opts.Skills != nil && s.opts.Skills.Enabled() {
-		sections = append(sections,
+		tail = append(tail,
 			s.skillsSections(ctx, agentID, contextID, reqText)...)
 	}
-	sections = append(sections, extras...)
-	sections = append(sections, raw...)
+	tail = append(tail, extras...)
 
 	data, err := json.Marshal(sections)
 	if err != nil {
 		return err
 	}
 	board.SetVar("world.sections", string(data))
+	if block := renderTailBlock(tail); block != "" {
+		board.SetVar(config.BoardVarTailBlock, block)
+	} else {
+		// Clear it, do not just skip the write: the board can be a reused
+		// one (a resume restores the previous run's board and its vars), and
+		// a stale block would be appended to this turn's message as if it
+		// were current context.
+		board.DeleteVar(config.BoardVarTailBlock)
+	}
+	// The previous turn's own measurement of this conversation, for the
+	// graph's compaction node. It rides the board rather than the sections
+	// above: it is a number the harness budgets with, not content the model
+	// reads (see anchor.go).
+	if anchor, ok := s.usageAnchorBoardValue(ctx, contextID); ok {
+		board.SetVar(config.BoardVarUsageAnchor, string(anchor))
+	}
 	board.SetVar("world.workspace_root", s.opts.WorkBase)
 	board.SetVar("world.collaboration_mode", s.opts.CollaborationMode)
 	board.SetVar("world.permission_profile", s.opts.PermissionProfile)

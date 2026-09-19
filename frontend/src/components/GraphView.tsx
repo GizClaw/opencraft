@@ -477,7 +477,11 @@ const FIELD_CATALOGS: Record<string, FieldSpec[]> = {
 };
 
 // Nested catalogs for object fields whose contents are also known.
-const NESTED_FIELDS: Record<string, FieldSpec[]> = {
+// NESTED_FIELDS is exported for the catalog contract test: it is a
+// hand-maintained mirror of the node configurations this editor edits, and a
+// key no node reads is a silent no-op for whoever sets it here (the panel
+// suggests the field, the node ignores it).
+export const NESTED_FIELDS: Record<string, FieldSpec[]> = {
   'inference.undefined_tool_recovery': [
     { key: 'enabled', kind: 'bool' },
     { key: 'max_per_run', kind: 'number' },
@@ -486,7 +490,8 @@ const NESTED_FIELDS: Record<string, FieldSpec[]> = {
     { key: 'preserve_recent', kind: 'number' },
     { key: 'budget_chars', kind: 'number' },
     { key: 'threshold_ratio', kind: 'number' },
-    { key: 'max_compactions', kind: 'number' },
+    { key: 'max_consecutive_failures', kind: 'number' },
+    { key: 'max_folds_per_turn', kind: 'number' },
     { key: 'max_input_tokens', kind: 'number' },
     { key: 'system_prompt_tokens', kind: 'number' },
   ],
@@ -549,7 +554,8 @@ const FIELD_LABELS: Record<string, string> = {
   preserve_recent: 'graph.preserveRecent',
   budget_chars: 'graph.budgetChars',
   threshold_ratio: 'graph.thresholdRatio',
-  max_compactions: 'graph.maxCompactions',
+  max_consecutive_failures: 'graph.maxConsecutiveFailures',
+  max_folds_per_turn: 'graph.maxFoldsPerTurn',
   max_input_tokens: 'graph.maxInputTokens',
   system_prompt_tokens: 'graph.systemPromptTokens',
   results_key: 'graph.resultsKey',

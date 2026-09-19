@@ -13,6 +13,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
+	"github.com/GizClaw/opencraft/internal/capabilities/worldstate"
 	"github.com/GizClaw/opencraft/internal/foundation/profile"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
@@ -181,6 +182,16 @@ func (b *Conversation) waitTurn(
 		requestID, responseID,
 		lastAssistantOutput(res), finishedAt, durationMs,
 	)
+	if res != nil {
+		if report, ok := worldstate.CompactionReportFromBoard(res.LastBoard); ok &&
+			!report.Empty() {
+			end.Compaction = &core.CompactionEvent{
+				Folds:    report.Folds,
+				Failures: report.Failures,
+				Notified: report.Notified,
+			}
+		}
+	}
 	class := host.ClassifyRunError(resultErr(res), err)
 	end.InterruptCause = class.InterruptCause
 	end.ErrorKind = class.ErrorKind

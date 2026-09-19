@@ -39,6 +39,7 @@ interface WorldCase {
   name: string;
   sections: string;
   history?: string;
+  tail_block?: string;
   existing: BoardMessage[];
 }
 
@@ -52,7 +53,11 @@ function runWorldNode(testCase: WorldCase) {
     'world.sections': testCase.sections,
   };
   if (testCase.history) vars['world.history'] = testCase.history;
-  let channel: BoardMessage[] = testCase.existing;
+  if (testCase.tail_block) vars['world.tail_block'] = testCase.tail_block;
+  // Deep copy: the node is allowed to replace a message's content when it
+  // appends the tail block, and the fixture objects are shared by the
+  // whole test file.
+  let channel: BoardMessage[] = structuredClone(testCase.existing);
   const board = {
     MAIN_CHANNEL: 'main',
     getVar: (key: string) => vars[key],
@@ -87,12 +92,67 @@ describe('world node mirrors the Go board payload', () => {
       expect(vars['world.history.count']).toBe(history.length);
 
       // Sections first, then replayed history, then whatever the
-      // channel already held.
+      // channel already held. The per-turn tail block (plan, skills) has
+      // no message of its own: it is appended to the turn's own message,
+      // because a block that changes every turn must not sit in front of
+      // the conversation and invalidate the provider's cached prefix.
+      const tail = testCase.tail_block ?? '';
+      // The block rides the turn's own message, and only a message the
+      // model can attribute it to (the user's). Otherwise it becomes its
+      // own message, emitted last.
+      const lastExisting = testCase.existing[testCase.existing.length - 1];
+      const ridesTurnMessage =
+        tail !== '' &&
+        lastExisting !== undefined &&
+        lastExisting.role === 'user';
+      const existing = testCase.existing.map((msg, index) => {
+        if (!ridesTurnMessage || index !== testCase.existing.length - 1) {
+          return msg;
+        }
+        return {
+          role: msg.role,
+          content: {
+            parts: [...msg.content.parts, { type: 'text', text: tail }],
+          },
+        };
+      });
       expect(channel).toEqual([
         ...sections.map(({ role, content }) => ({ role, content })),
         ...history.map(({ role, content }) => ({ role, content })),
-        ...testCase.existing,
+        ...existing,
+        ...(tail !== '' && !ridesTurnMessage
+          ? [
+              {
+                role: 'user',
+                content: { parts: [{ type: 'text', text: tail }] },
+              },
+            ]
+          : []),
       ]);
+
+      // The tail must not add a message of its own, and it must leave the
+      // turn message's own parts untouched.
+      expect(channel.length).toBe(
+        sections.length +
+          history.length +
+          testCase.existing.length +
+          (tail !== '' && !ridesTurnMessage ? 1 : 0),
+      );
+      if (tail !== '') {
+        const tailCarrier = channel[channel.length - 1] as unknown as {
+          role: string;
+          content: { parts: { type?: string; text?: string }[] };
+        };
+        // Injected context is never attributed to an assistant or a tool
+        // message: the model must read it as context behind the user's ask.
+        expect(tailCarrier.role).toBe('user');
+        expect(
+          tailCarrier.content.parts[tailCarrier.content.parts.length - 1],
+        ).toEqual({
+          type: 'text',
+          text: tail,
+        });
+      }
 
       // Every seeded message must be a message the engine accepts: a
       // role plus at least one content part. A renamed field on the Go

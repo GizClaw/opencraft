@@ -21,6 +21,7 @@ func Register(r *resource.Registry) error {
 	return errors.Join(
 		r.Register(prepareFactory{}),
 		r.Register(activateObserverFactory{}),
+		r.Register(usageAnchorCommitFactory{}),
 	)
 }
 

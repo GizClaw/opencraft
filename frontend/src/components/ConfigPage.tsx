@@ -29,6 +29,7 @@ import {
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
+import { cacheHitPercent, formatHitPercent } from '../lib/usageRate';
 import { alignUsageWindow } from '../lib/usageWindow';
 import { LogViewer } from './LogViewer';
 import { MetricsCharts } from './MetricsCharts';
@@ -1015,10 +1016,12 @@ export function ConfigPage() {
     return String(n);
   };
 
+  // A dash when the row cannot state a ratio at all: nothing measured
+  // yet, or cache reads that overrun the prompt total (rows written
+  // before the input column became inclusive — see lib/usageRate.ts).
   const usageHitLabel = (input: number, cacheRead: number) => {
-    if (input <= 0) return '—';
-    const rate = Math.min(100, Math.max(0, (cacheRead / input) * 100));
-    return `${rate.toFixed(rate >= 99.95 ? 0 : 1)}%`;
+    const label = formatHitPercent(cacheHitPercent({ input, cacheRead }));
+    return label === undefined ? '—' : `${label}%`;
   };
 
   const fmtBytes = (n: number) => {
@@ -2157,6 +2160,16 @@ export function ConfigPage() {
                                 })}
                               </label>
                             </div>
+                            {/* Changing a key (or moving to the env var)
+                                puts this instance on a different
+                                credential, and provider prompt caches are
+                                scoped to it: the next request re-reads the
+                                whole conversation at undiscounted input
+                                price. Saying so here costs one line; the
+                                user would otherwise read it as a bug. */}
+                            <p className="text-micro leading-relaxed text-dim/80">
+                              {t('config.inferenceKeyCacheHint')}
+                            </p>
                           </div>
                         </div>
                       )}

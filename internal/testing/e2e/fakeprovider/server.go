@@ -48,6 +48,26 @@ type Server struct {
 	calls   int
 	hold    *Gate
 	bodies  [][]byte
+	noUsage bool
+}
+
+// WithoutUsage makes every response omit its usage block, the way a
+// provider that does not report tokens (or a proxy that strips them) does.
+// Callers use it to exercise the paths that must survive a missing
+// measurement instead of assuming one: the turnaround is zero-token usage,
+// not an error.
+func (s *Server) WithoutUsage() *Server {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.noUsage = true
+	return s
+}
+
+// reportsUsage tells the response writers whether to emit a usage block.
+func (s *Server) reportsUsage() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return !s.noUsage
 }
 
 // Gate pauses the next completion request until Release. It lets
@@ -223,7 +243,7 @@ func (s *Server) completion(reply Reply) map[string]any {
 		msg["tool_calls"] = calls
 		finish = "tool_calls"
 	}
-	return map[string]any{
+	out := map[string]any{
 		"id":      responseID,
 		"object":  "chat.completion",
 		"created": 1,
@@ -233,12 +253,15 @@ func (s *Server) completion(reply Reply) map[string]any {
 			"message":       msg,
 			"finish_reason": finish,
 		}},
-		"usage": map[string]any{
+	}
+	if s.reportsUsage() {
+		out["usage"] = map[string]any{
 			"prompt_tokens":     10,
 			"completion_tokens": 5,
 			"total_tokens":      15,
-		},
+		}
 	}
+	return out
 }
 
 func (s *Server) writeStream(w http.ResponseWriter, reply Reply) {
@@ -299,7 +322,41 @@ func (s *Server) writeStream(w http.ResponseWriter, reply Reply) {
 		}
 		chunk(map[string]any{}, "stop")
 	}
+	// Real providers report usage on their terminal chunk (OpenAI with
+	// stream_options.include_usage). Without it the caller sees a response
+	// whose token counts are all zero, which is how a streaming driver that
+	// never reads usage would pass every test: the counts are what the
+	// compaction anchor and the usage tables are built from. Servers built
+	// with WithoutUsage drop it to keep that path covered too.
+	if s.reportsUsage() {
+		writeUsageChunk(w, flusher, responseID)
+	}
 	if _, err := io.WriteString(w, "data: [DONE]\n\n"); err != nil {
+		return
+	}
+	flusher.Flush()
+}
+
+// writeUsageChunk emits one usage-only chunk, the shape OpenAI sends when
+// include_usage is set: an empty choices array plus a usage object.
+func writeUsageChunk(w http.ResponseWriter, flusher http.Flusher, responseID string) {
+	payload := map[string]any{
+		"id":      responseID,
+		"object":  "chat.completion.chunk",
+		"created": 1,
+		"model":   "fake-model",
+		"choices": []map[string]any{},
+		"usage": map[string]any{
+			"prompt_tokens":     10,
+			"completion_tokens": 5,
+			"total_tokens":      15,
+		},
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	if _, err := fmt.Fprintf(w, "data: %s\n\n", data); err != nil {
 		return
 	}
 	flusher.Flush()
