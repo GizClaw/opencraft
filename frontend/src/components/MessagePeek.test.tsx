@@ -205,38 +205,58 @@ describe('MessagePeek', () => {
     const scrubber = screen.getByRole('slider', {
       name: 'Message peek: turn scrubber',
     });
-    fireEvent.keyDown(scrubber, { key: 'End' });
+    // Arrows walk the block one turn at a time, and the preview follows
+    // the cursor.
+    fireEvent.keyDown(scrubber, { key: 'ArrowDown' });
     await act(async () => {
       await vi.advanceTimersByTimeAsync(100);
     });
     const tooltip = screen.getByRole('tooltip');
-    expect(tooltip).toHaveTextContent('user-69');
-    expect(tooltip).toHaveTextContent('answer-69');
-    expect(tooltip).not.toHaveTextContent('Turn 70');
+    expect(tooltip).toHaveTextContent('user-1');
+    expect(tooltip).toHaveTextContent('answer-1');
+    expect(tooltip).not.toHaveTextContent('Turn 2');
 
     fireEvent.keyDown(scrubber, { key: 'Enter' });
+    expect(onJump).toHaveBeenCalledWith(1);
+
+    // Home/End leave the window: they scroll the transcript to the ends
+    // of the conversation instead of moving a cursor the block cannot
+    // draw.
+    fireEvent.keyDown(scrubber, { key: 'End' });
     expect(onJump).toHaveBeenCalledWith(69);
     vi.useRealTimers();
   });
 
-  it('draws one dash per turn on a dense ruler that still has room', () => {
-    const turns42 = Array.from({ length: 42 }, (_, i) => ({ index: i }));
+  it('draws the slice around the viewport, one dash per turn', () => {
+    const manyTurns = Array.from({ length: 140 }, (_, i) => ({ index: i }));
     const { container } = render(
       <MessagePeek
-        items={turns42}
-        activeRange={{ start: 41, end: 41 }}
+        items={manyTurns}
+        activeRange={{ start: 69, end: 71 }}
         onJump={vi.fn()}
         getPreview={previewFor}
       />,
     );
 
     const dashes = container.querySelectorAll<HTMLElement>('[data-peek-tick]');
-    expect(dashes).toHaveLength(42);
-    expect(dashes[41].className).toContain('bg-accent');
-    expect(dashes[40].className).not.toContain('bg-accent');
+    // 41 turns around the anchor rather than all 140: the block stays
+    // the compact ruler instead of a hatch the column has to clip.
+    expect(dashes).toHaveLength(41);
+    expect(dashes[0].dataset.peekTick).toBe('50');
+    expect(dashes[40].dataset.peekTick).toBe('90');
+    // The turns on screen are the accent dashes, and they sit in the
+    // middle of the block.
+    const accent = Array.from(dashes)
+      .filter((dash) => dash.className.includes('bg-accent'))
+      .map((dash) => dash.dataset.peekTick);
+    expect(accent).toEqual(['69', '70', '71']);
+    // Cut at both ends: the transcript keeps going in either direction.
+    expect(
+      container.querySelector('[data-peek-cut]')?.getAttribute('data-peek-cut'),
+    ).toBe('both');
   });
 
-  it('buckets turns into even stops once the dense ruler is at its cap', () => {
+  it('clamps the slice at the newest turn and fades only the cut end', () => {
     const manyTurns = Array.from({ length: 140 }, (_, i) => ({ index: i }));
     const { container } = render(
       <MessagePeek
@@ -248,11 +268,75 @@ describe('MessagePeek', () => {
     );
 
     const dashes = container.querySelectorAll<HTMLElement>('[data-peek-tick]');
-    expect(dashes).toHaveLength(48);
-    // The last stop lands on the newest turn instead of a fixed stride
-    // running past it, so the accent tracks the bottom of the ruler.
-    expect(dashes[47].dataset.peekTick).toBe('137');
-    expect(dashes[47].className).toContain('bg-accent');
-    expect(dashes[46].className).not.toContain('bg-accent');
+    // The window stops at the last turn instead of running past it, so
+    // the block is short, the newest turn is its bottom dash, and only
+    // the top was cut.
+    expect(dashes).toHaveLength(21);
+    expect(dashes[0].dataset.peekTick).toBe('119');
+    expect(dashes[20].dataset.peekTick).toBe('139');
+    expect(dashes[20].className).toContain('bg-accent');
+    expect(dashes[19].className).not.toContain('bg-accent');
+    expect(
+      container.querySelector('[data-peek-cut]')?.getAttribute('data-peek-cut'),
+    ).toBe('top');
+  });
+
+  it('draws every turn when the whole conversation fits the window', () => {
+    const turns41 = Array.from({ length: 41 }, (_, i) => ({ index: i }));
+    const { container } = render(
+      <MessagePeek
+        items={turns41}
+        activeRange={{ start: 20, end: 20 }}
+        onJump={vi.fn()}
+        getPreview={previewFor}
+      />,
+    );
+
+    const dashes = container.querySelectorAll<HTMLElement>('[data-peek-tick]');
+    expect(dashes).toHaveLength(41);
+    expect(dashes[0].dataset.peekTick).toBe('0');
+    expect(dashes[40].dataset.peekTick).toBe('40');
+    // Nothing was cut, so the block keeps hard edges all around.
+    expect(
+      container.querySelector('[data-peek-cut]')?.getAttribute('data-peek-cut'),
+    ).toBe('none');
+  });
+
+  it('maps the pointer onto the turns the slice draws', () => {
+    const manyTurns = Array.from({ length: 140 }, (_, i) => ({ index: i }));
+    const rect = {
+      top: 200,
+      height: 205,
+      bottom: 405,
+      left: 0,
+      right: 0,
+      width: 0,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect;
+    const spy = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockReturnValue(rect);
+    const onJump = vi.fn();
+    render(
+      <MessagePeek
+        items={manyTurns}
+        activeRange={{ start: 69, end: 71 }}
+        onJump={onJump}
+        getPreview={previewFor}
+      />,
+    );
+
+    const scrubber = screen.getByRole('slider', {
+      name: 'Message peek: turn scrubber',
+    });
+    // A quarter of the way down the block is a quarter of the way
+    // through its 41 turns: 50 + floor(41 / 4) = 60. The pointer used to
+    // be mapped across the whole conversation instead.
+    fireEvent.click(scrubber, { clientY: 200 + 205 / 4 });
+
+    expect(onJump).toHaveBeenCalledWith(60);
+    spy.mockRestore();
   });
 });

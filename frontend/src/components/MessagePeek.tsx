@@ -7,13 +7,19 @@ import { ICON } from './ui/icon';
 
 // With a normal number of turns the ticks form a compact, vertically
 // centered ruler: every turn is one short line and the gap between
-// lines stays small. Long sessions switch to a full-height scrubber
-// whose length maps to turn order, so every turn stays reachable, and
-// past DENSE_TICK_LIMIT turns the ruler draws one dash per bucket of
-// turns: one dash per turn would sit closer together than a dash is
-// tall and read as a solid hatch instead of a scale.
+// lines stays small. Long sessions keep exactly that face: the ruler
+// draws the turns around the middle of the viewport (the slice) and
+// slides that block as the transcript scrolls, so one dash always
+// means one turn and a session with thousands of turns never ends up
+// drawing a hatch that runs past the column. Near either end of the
+// conversation the slice clamps and the block itself gets shorter, and
+// the end it was cut at fades out while the transcript's own end stays
+// a hard edge.
 const DENSE_TICK_THRESHOLD = 40;
-const DENSE_TICK_LIMIT = 48;
+// Turns drawn on either side of the anchor. 41 dashes stack to 478px at
+// the compact pitch — the block a 40-turn ruler draws — so the middle
+// of a long session is the same ruler a short session shows.
+const DENSE_SLICE_HALF = 20;
 // Preview Markdown is bounded so a hover over a huge assistant reply
 // does not pay the full parse cost; the chat transcript stays the
 // place for the complete answer.
@@ -68,23 +74,40 @@ export const MessagePeek = memo(function MessagePeek({
     void openFileTarget(href, base ?? '');
   const rootRef = useRef<HTMLDivElement>(null);
   const scrubberRef = useRef<HTMLDivElement>(null);
+  const cardRef = useRef<HTMLDivElement>(null);
   const [hovered, setHovered] = useState<number | null>(null);
   const [tooltipTop, setTooltipTop] = useState(0);
   const [preview, setPreview] = useState<MessagePeekPreview | null>(null);
   const dense = items.length > DENSE_TICK_THRESHOLD;
-  // Stops are spread evenly across the turn range instead of taking a
-  // fixed stride, so the pitch stays even and the last dash lands on
-  // the newest turn. Pointing at the ruler still resolves to a single
-  // turn (indexFromPointer), so bucketing changes only how many dashes
-  // are drawn, never what a click or a hover means.
-  const denseStops = useMemo(() => {
-    if (!dense) return [];
-    const count = Math.min(items.length, DENSE_TICK_LIMIT);
-    return Array.from({ length: count }, (_, stop) => ({
-      start: Math.floor((stop * items.length) / count),
-      end: Math.floor(((stop + 1) * items.length) / count) - 1,
-    }));
-  }, [dense, items.length]);
+  const hasActiveRange =
+    activeRange !== null &&
+    activeRange.start >= 0 &&
+    activeRange.end >= 0 &&
+    activeRange.end < items.length &&
+    activeRange.start <= activeRange.end;
+  // The slice is anchored on the turn in the middle of the viewport, so
+  // the accent dashes (every turn on screen) land in the middle of the
+  // block. Before the transcript has been measured there is no current
+  // range yet, and a session opens at its newest turn, so that stands
+  // in until the first measurement lands.
+  const newestTurn = Math.max(0, items.length - 1);
+  const currentStart =
+    activeRange !== null && hasActiveRange ? activeRange.start : newestTurn;
+  const currentEnd =
+    activeRange !== null && hasActiveRange ? activeRange.end : newestTurn;
+  const anchor = Math.floor((currentStart + currentEnd) / 2);
+  // The slice is the window the dense ruler draws: one dash per turn
+  // for the turns around the anchor, clamped at both ends of the
+  // conversation. The block hugs its content exactly like the compact
+  // ruler, so it stays centered and gets shorter near the ends instead
+  // of spilling out of the column.
+  const slice = useMemo(() => {
+    if (!dense) return null;
+    return {
+      start: Math.max(0, anchor - DENSE_SLICE_HALF),
+      end: Math.min(items.length - 1, anchor + DENSE_SLICE_HALF),
+    };
+  }, [anchor, dense, items.length]);
   // Preview markdown is expensive enough that rapid scrubber moves
   // should not parse every crossed turn. Debounce the fetch and cache
   // one preview per turn; the cache resets when the archive revision
@@ -92,37 +115,43 @@ export const MessagePeek = memo(function MessagePeek({
   const previewCacheRef = useRef<Map<number, MessagePeekPreview>>(new Map());
   const previewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const revisionRef = useRef<unknown>(revision);
-  const hasActiveRange =
-    activeRange !== null &&
-    activeRange.start >= 0 &&
-    activeRange.end >= 0 &&
-    activeRange.end < items.length &&
-    activeRange.start <= activeRange.end;
-  const focusTurn =
-    activeRange !== null && hasActiveRange ? activeRange.start : 0;
+  // focusTurn is where the ruler starts when it takes focus: the middle
+  // of the slice, because the window is all the dense ruler can point
+  // at, or the first turn on screen for the compact ruler.
+  const focusTurn = dense
+    ? anchor
+    : activeRange !== null && hasActiveRange
+      ? activeRange.start
+      : 0;
 
   useEffect(() => {
     if (hovered == null || !rootRef.current) return;
-    if (dense) {
-      const height = rootRef.current.clientHeight || 1;
-      const tick = ((hovered + 0.5) / items.length) * height;
-      const cardHeight = Math.max(120, Math.min(280, height - 16));
-      const top = Math.max(
-        8,
-        Math.min(tick - cardHeight / 2, height - cardHeight - 8),
-      );
-      setTooltipTop(Math.max(8, top));
-      return;
-    }
-    const button = rootRef.current.querySelector<HTMLElement>(
-      `[data-peek-index="${hovered}"]`,
-    );
+    // The slice moves with the transcript, so a hovered turn can slide
+    // out of the window; there is no dash to point at until the pointer
+    // finds it again.
+    if (slice && (hovered < slice.start || hovered > slice.end)) return;
     const rootRect = rootRef.current.getBoundingClientRect();
-    const buttonRect = button?.getBoundingClientRect();
-    if (buttonRect && rootRect.height) {
-      setTooltipTop(buttonRect.top - rootRect.top + buttonRect.height / 2);
-    }
-  }, [dense, hovered, items.length]);
+    const tickRect = rootRef.current
+      .querySelector<HTMLElement>(
+        `[data-peek-tick="${hovered}"], [data-peek-index="${hovered}"]`,
+      )
+      ?.getBoundingClientRect();
+    if (!tickRect || !rootRect.height) return;
+    // The card is taller than a dash and the block sits close to the
+    // edge near either end of the transcript, so center the card on its
+    // dash but keep it inside the column. Its own height is the honest
+    // measure; before the card has rendered, fall back to an estimate.
+    const cardHeight =
+      cardRef.current?.offsetHeight ??
+      Math.max(120, Math.min(280, rootRect.height - 16));
+    const center = tickRect.top - rootRect.top + tickRect.height / 2;
+    setTooltipTop(
+      Math.max(
+        8,
+        Math.min(center - cardHeight / 2, rootRect.height - cardHeight - 8),
+      ),
+    );
+  }, [hovered, items.length, preview, slice]);
 
   useEffect(() => {
     if (hovered == null || hovered >= items.length) {
@@ -157,14 +186,48 @@ export const MessagePeek = memo(function MessagePeek({
 
   if (items.length === 0) return null;
 
+  // The scrubber's hit area covers the slice rather than the column:
+  // pointer position maps onto the turns the block draws, so a quarter
+  // of the way down means the same thing whether the session has 41
+  // turns or 4100. Reaching turns outside the window is the
+  // transcript's job — the block slides there as it scrolls.
   const indexFromPointer = (clientY: number) => {
-    const el = scrubberRef.current ?? rootRef.current;
-    if (!el) return 0;
+    const el = scrubberRef.current;
+    if (!el || !slice) return 0;
     const rect = el.getBoundingClientRect();
-    const y = clientY - rect.top;
-    const progress = Math.max(0, Math.min(1, y / Math.max(1, rect.height)));
-    return Math.min(items.length - 1, Math.floor(progress * items.length));
+    const progress = Math.max(
+      0,
+      Math.min(1, (clientY - rect.top) / Math.max(1, rect.height)),
+    );
+    return Math.min(
+      slice.end,
+      slice.start + Math.floor(progress * (slice.end - slice.start + 1)),
+    );
   };
+  // A slice that was cut at either end fades over the last rung of its
+  // own scale: the block says "there is more in that direction" while
+  // the transcript's own ends stay hard edges, so the block itself is
+  // the position signal.
+  const cutTop = slice !== null && slice.start > 0;
+  const cutBottom = slice !== null && slice.end < items.length - 1;
+  const cut = cutTop
+    ? cutBottom
+      ? 'both'
+      : 'top'
+    : cutBottom
+      ? 'bottom'
+      : 'none';
+  const fadeWidth = '2rem';
+  const fade =
+    cutTop || cutBottom
+      ? `linear-gradient(to bottom, ${
+          cutTop ? `transparent 0, black ${fadeWidth}` : 'black 0'
+        }, ${
+          cutBottom
+            ? `black calc(100% - ${fadeWidth}), transparent 100%`
+            : 'black 100%'
+        })`
+      : null;
 
   // The root is exactly as wide as one tick button, so a compact tick
   // and a dense dash center on the same line inside the left gutter.
@@ -215,93 +278,95 @@ export const MessagePeek = memo(function MessagePeek({
           })}
         </div>
       )}
-      {dense && (
+      {dense && slice && (
         <div
-          ref={scrubberRef}
-          role="slider"
-          tabIndex={0}
-          aria-label={t('chat.messagePeekScrubber')}
-          aria-valuemin={1}
-          aria-valuemax={items.length}
-          aria-valuenow={Math.max(1, (hovered ?? focusTurn) + 1)}
-          aria-valuetext={t('chat.messagePeekTurn', {
-            count: Math.max(1, (hovered ?? focusTurn) + 1),
-          })}
-          onPointerMove={(event) => {
-            const index = indexFromPointer(event.clientY);
-            setHovered((prev) => (prev === index ? prev : index));
-          }}
-          onPointerDown={(event) => {
-            const index = indexFromPointer(event.clientY);
-            setHovered(index);
-          }}
-          onClick={(event) => {
-            const index = indexFromPointer(event.clientY);
-            setHovered(null);
-            onJump(index);
-          }}
-          onPointerLeave={() => setHovered(null)}
-          onFocus={() => setHovered(focusTurn)}
-          onBlur={() => setHovered(null)}
-          onKeyDown={(event) => {
-            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-              event.preventDefault();
-              const direction = event.key === 'ArrowDown' ? 1 : -1;
-              const current = Math.max(0, hovered ?? focusTurn);
-              const next = Math.min(
-                items.length - 1,
-                Math.max(0, current + direction),
-              );
-              setHovered(next);
-            } else if (event.key === 'Home') {
-              event.preventDefault();
-              setHovered(0);
-            } else if (event.key === 'End') {
-              event.preventDefault();
-              setHovered(items.length - 1);
-            } else if (event.key === 'Enter') {
-              event.preventDefault();
-              onJump(Math.max(0, hovered ?? focusTurn));
-            }
-          }}
-          className="pointer-events-auto absolute inset-y-1.5 left-1/2 w-8 -translate-x-1/2 cursor-pointer rounded-full outline-none transition-colors hover:bg-accent/5 focus-visible:ring-2 focus-visible:ring-accent/50"
-        />
-      )}
-      {dense && (
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-y-1.5 left-1/2 w-8 -translate-x-1/2"
+          data-peek-cut={cut}
+          className="relative flex flex-col items-center gap-1"
+          style={fade ? { maskImage: fade, WebkitMaskImage: fade } : undefined}
         >
-          {denseStops.map((stop) => {
+          {items.slice(slice.start, slice.end + 1).map((item) => {
             const active =
               activeRange !== null &&
-              stop.end >= activeRange.start &&
-              stop.start <= activeRange.end;
-            const hot =
-              hovered !== null && hovered >= stop.start && hovered <= stop.end;
+              item.index >= activeRange.start &&
+              item.index <= activeRange.end;
+            const hot = hovered === item.index;
             return (
               <span
-                key={stop.start}
-                data-peek-tick={stop.start}
-                className={`absolute left-1/2 h-[3px] -translate-x-1/2 -translate-y-1/2 rounded-full transition-all duration-150 ${
-                  active
-                    ? 'w-4 bg-accent'
-                    : hot
-                      ? 'w-3.5 bg-accent/70'
-                      : 'w-2 bg-dim/45'
-                }`}
-                style={{
-                  top: `${
-                    ((stop.start + stop.end + 1) / (2 * items.length)) * 100
-                  }%`,
-                }}
-              />
+                key={item.index}
+                className="pointer-events-none flex h-2 w-6 items-center justify-center"
+              >
+                <span
+                  data-peek-tick={item.index}
+                  className={`h-[3px] rounded-full transition-all duration-150 ${
+                    active
+                      ? 'w-4 bg-accent'
+                      : hot
+                        ? 'w-3.5 bg-accent/70'
+                        : 'w-2 bg-dim/45'
+                  }`}
+                />
+              </span>
             );
           })}
+          <div
+            ref={scrubberRef}
+            role="slider"
+            tabIndex={0}
+            aria-label={t('chat.messagePeekScrubber')}
+            aria-valuemin={1}
+            aria-valuemax={items.length}
+            aria-valuenow={Math.max(1, (hovered ?? focusTurn) + 1)}
+            aria-valuetext={t('chat.messagePeekTurn', {
+              count: Math.max(1, (hovered ?? focusTurn) + 1),
+            })}
+            onPointerMove={(event) => {
+              const index = indexFromPointer(event.clientY);
+              setHovered((prev) => (prev === index ? prev : index));
+            }}
+            onPointerDown={(event) => {
+              setHovered(indexFromPointer(event.clientY));
+            }}
+            onClick={(event) => {
+              const index = indexFromPointer(event.clientY);
+              setHovered(null);
+              onJump(index);
+            }}
+            onPointerLeave={() => setHovered(null)}
+            onFocus={() => setHovered(focusTurn)}
+            onBlur={() => setHovered(null)}
+            onKeyDown={(event) => {
+              if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault();
+                const direction = event.key === 'ArrowDown' ? 1 : -1;
+                // Arrows walk the block; the window itself follows the
+                // transcript, not the keyboard.
+                const current = Math.max(slice.start, hovered ?? focusTurn);
+                setHovered(
+                  Math.min(
+                    slice.end,
+                    Math.max(slice.start, current + direction),
+                  ),
+                );
+              } else if (event.key === 'Home' || event.key === 'End') {
+                // The ends of the conversation are outside the window,
+                // so Home/End scroll the transcript there instead of
+                // moving a cursor the block cannot show; the ruler
+                // re-anchors on the turn that arrives.
+                event.preventDefault();
+                setHovered(null);
+                onJump(event.key === 'Home' ? 0 : items.length - 1);
+              } else if (event.key === 'Enter') {
+                event.preventDefault();
+                onJump(Math.max(slice.start, hovered ?? focusTurn));
+              }
+            }}
+            className="pointer-events-auto absolute inset-y-0 left-1/2 w-8 -translate-x-1/2 cursor-pointer rounded-full outline-none transition-colors hover:bg-accent/5 focus-visible:ring-2 focus-visible:ring-accent/50"
+          />
         </div>
       )}
       {preview && (
         <div
+          ref={cardRef}
           role="tooltip"
           className="pointer-events-none absolute left-8 z-[var(--oc-z-popover)] w-[22rem] rounded-card border border-edge/80 bg-panel/95 p-4 shadow-modal ring-1 ring-edge/40 backdrop-blur-sm"
           style={{ top: tooltipTop }}
