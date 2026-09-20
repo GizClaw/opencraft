@@ -21,6 +21,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Window } from '@wailsio/runtime';
 import { api } from '../lib/api';
+import { formatCompact } from '../lib/compactNumber';
 import {
   firstMessageTitle,
   pendingConversationIDs,
@@ -377,10 +378,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   };
 
   const fmtTokens = (n: number) => {
-    const trim = (s: string) => s.replace(/\.?0+$/, '');
-    if (n >= 1_000_000) return `${trim((n / 1_000_000).toFixed(2))}M`;
-    if (n >= 1_000) return `${trim((n / 1_000).toFixed(1))}k`;
-    return n > 0 ? String(n) : '';
+    return n > 0 ? formatCompact(n, { trim: true }) : '';
   };
 
   // Running conversations stay visible under the workspace that owns
@@ -448,6 +446,30 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expandedWorkspaces, workspace, workspaces, wsLists, wsLoading]);
 
+  // showWorkspaceSessions flips one workspace to the full list; the flag
+  // lives in state (never localStorage) because it describes the node
+  // only while it is open.
+  const showWorkspaceSessions = (workspacePath: string) => {
+    setShowAllSessions((prev) => {
+      const next = new Set(prev);
+      next.add(workspacePath);
+      return next;
+    });
+  };
+
+  // resetWorkspaceSessions returns one workspace to the preview window:
+  // called when its node is collapsed or removed, so a later expansion
+  // shows the 10 newest rows plus "More sessions" again instead of every
+  // session the workspace ever had.
+  const resetWorkspaceSessions = (workspacePath: string) => {
+    setShowAllSessions((prev) => {
+      if (!prev.has(workspacePath)) return prev;
+      const next = new Set(prev);
+      next.delete(workspacePath);
+      return next;
+    });
+  };
+
   const toggleWorkspace = (w: WorkspaceMeta) => {
     const next = new Set(expandedWorkspaces);
     const expanding = !next.has(w.path);
@@ -457,6 +479,10 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
       void ensureWorkspaceSessions(w);
     } else {
       next.delete(w.path);
+      // Folding the node back folds the list too: "show all sessions"
+      // belongs to the expanded view, so re-expanding starts from the
+      // preview window with the "More sessions" row on offer again.
+      resetWorkspaceSessions(w.path);
     }
     persistExpanded(next);
   };
@@ -854,14 +880,6 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
     getItemKey: (index) => historyItems[index]?.key ?? String(index),
   });
 
-  const expandWorkspaceSessions = (workspacePath: string) => {
-    setShowAllSessions((prev) => {
-      const next = new Set(prev);
-      next.add(workspacePath);
-      return next;
-    });
-  };
-
   const renderHistoryItem = (item: HistoryItem) => {
     switch (item.kind) {
       case 'workspace':
@@ -894,7 +912,8 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
         return (
           <div className="ml-3 pt-1">
             <button
-              onClick={() => expandWorkspaceSessions(item.workspacePath)}
+              onClick={() => showWorkspaceSessions(item.workspacePath)}
+              data-testid="more-sessions"
               className="flex w-full items-center gap-1 rounded-control px-1.5 py-1 text-xs text-dim hover:bg-panel2 hover:text-fg transition-colors"
             >
               <ChevronDown size={ICON.xs} className="shrink-0" />
@@ -925,6 +944,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
     });
     attemptedFetch.current.delete(target.path);
     wsListGen.current[target.path] = (wsListGen.current[target.path] ?? 0) + 1;
+    resetWorkspaceSessions(target.path);
     const next = new Set(expandedWorkspaces);
     next.delete(target.path);
     persistExpanded(next);
