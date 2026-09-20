@@ -891,6 +891,14 @@ describe('store: send and stream', () => {
                           type: 'text',
                           text: '{"exit_code":0,"stdout":"README.md\\n"}',
                         },
+                        {
+                          type: 'image',
+                          source: {
+                            kind: 'inline',
+                            media_type: 'image/jpeg',
+                            data: 'QUJD',
+                          },
+                        },
                       ],
                     },
                   },
@@ -916,6 +924,15 @@ describe('store: send and stream', () => {
         result: '{"exit_code":0,"stdout":"README.md\\n"}',
       },
     });
+    const item = items[0];
+    if (item.kind !== 'tool_call') throw new Error('expected a tool call');
+    // An archived call carries no per-call timing, so it must not grow a
+    // duration this client never measured; the image part it does carry
+    // is kept as the model's frame.
+    expect(item.tool.seenAt).toBeUndefined();
+    expect(item.tool.images).toEqual([
+      { data_url: 'data:image/jpeg;base64,QUJD', media_type: 'image/jpeg' },
+    ]);
   });
 
   it('does not duplicate an archived assistant message', async () => {
@@ -1121,6 +1138,78 @@ describe('store: send and stream', () => {
       },
     });
     expect(items[2]).toMatchObject({ kind: 'text', text: 'done' });
+  });
+
+  it('stamps a live tool call and keeps the image part of its result', () => {
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    useStore.setState({ runConvs: { 'r-1': 's-1' } });
+    const handle = useStore.getState().handleEvent;
+
+    handle({
+      type: 'stream',
+      data: {
+        run_id: 'r-1',
+        conversation_id: 's-1',
+        delta: {
+          type: 'part',
+          part: {
+            type: 'tool_call',
+            call: {
+              id: 'call-1',
+              name: 'view_image',
+              arguments: { path: 'shots/hero.png' },
+            },
+          },
+        },
+      },
+    });
+    handle({
+      type: 'stream',
+      data: {
+        run_id: 'r-1',
+        conversation_id: 's-1',
+        delta: {
+          type: 'part',
+          part: {
+            type: 'tool_result',
+            result: {
+              call_id: 'call-1',
+              content: {
+                parts: [
+                  {
+                    type: 'image',
+                    source: {
+                      kind: 'inline',
+                      media_type: 'image/jpeg',
+                      data: 'QUJD',
+                    },
+                  },
+                  {
+                    type: 'text',
+                    text: 'view_image: shots/hero.png (1440x900, 123456 bytes)',
+                  },
+                ],
+              },
+              is_error: false,
+            },
+          },
+        },
+      },
+    });
+    useStore.getState().flushStreams();
+
+    const items = useStore.getState().conversations['s-1'].messages[0].items;
+    const item = items[0];
+    if (item.kind !== 'tool_call') throw new Error('expected a tool call');
+    // The card measures a live call itself: the call is stamped when this
+    // client sees it, the result when it lands, and the image part of the
+    // result travels with it.
+    expect(item.tool.status).toBe('done');
+    expect(typeof item.tool.seenAt).toBe('number');
+    expect(item.tool.endedAt).toBeGreaterThanOrEqual(item.tool.seenAt ?? 0);
+    expect(item.tool.images).toEqual([
+      { data_url: 'data:image/jpeg;base64,QUJD', media_type: 'image/jpeg' },
+    ]);
   });
 
   it('coalesces queued text deltas into one store update per flush', () => {

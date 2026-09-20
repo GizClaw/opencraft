@@ -66,4 +66,26 @@ describe('Markdown', () => {
     expect(container.textContent).toContain('const x: number = 1;');
     expect(screen.getByRole('table')).toBeInTheDocument();
   });
+
+  it('keeps react-markdown internals out of the DOM', () => {
+    // react-markdown hands every component the hast `node` next to the
+    // DOM props. Spreading it onto <pre>/<table> leaks a prop the DOM
+    // never asked for - React 19 writes it out as an attribute.
+    const warn = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { container } = render(
+      <Markdown
+        text={'```ts\nconst x = 1;\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |'}
+      />,
+    );
+
+    const pre = container.querySelector('pre');
+    expect(pre).not.toBeNull();
+    expect(pre!.hasAttribute('node')).toBe(false);
+    expect(screen.getByRole('table').hasAttribute('node')).toBe(false);
+    expect(
+      warn.mock.calls.map((call) => String(call[0])).join('\n'),
+    ).not.toMatch(/`node` prop/);
+
+    warn.mockRestore();
+  });
 });

@@ -670,3 +670,278 @@ test('apply patch card', async ({ page }) => {
   await page.waitForTimeout(300);
   await shot(page, '43b-patch-light-expanded');
 });
+
+// Tool cards carry most of a transcript's scroll, so this surface pins
+// the three shapes around them: a command burst that is still running
+// (folds to one line with the step in flight, its elapsed time and the
+// progress counter on the right), a burst that failed (names the step),
+// and a view_image result that renders the frame the model was shown.
+test('tool cards', async ({ page }) => {
+  await page.addInitScript(mockBackend as never, {
+    workspace: WS,
+    startTurn: { run_id: 'r-1', context_id: 's-1' },
+  });
+  await page.goto('/');
+  await typeComposerMessage(page, 'Fix the flaky suite');
+  await page.getByRole('button', { name: 'Send' }).click();
+  const emit = emitter(page);
+  const delta = (part: unknown) =>
+    emit('opencraft:ui', {
+      type: 'stream',
+      data: {
+        run_id: 'r-1',
+        conversation_id: 's-1',
+        delta: { type: 'part', part },
+      },
+    });
+  const call = (id: string, name: string, args: unknown) =>
+    delta({ type: 'tool_call', call: { id, name, arguments: args } });
+  const result = (id: string, parts: unknown[], isError = false) =>
+    delta({
+      type: 'tool_result',
+      result: { call_id: id, content: { parts }, is_error: isError },
+    });
+  const text = (body: string) => [{ type: 'text', text: body }];
+
+  await call('call-b1', 'exec_command', {
+    command: 'npm run build --prefix frontend',
+  });
+  await result(
+    'call-b1',
+    text('{"exit_code":0,"stdout":"✓ built in 4.24s","stderr":""}'),
+  );
+  await call('call-b2', 'exec_command', {
+    command: 'npm test --prefix frontend',
+  });
+  await result(
+    'call-b2',
+    text('{"exit_code":1,"stdout":"","stderr":"1 failed | 63 passed (64)"}'),
+    true,
+  );
+  // Left in flight on purpose: the burst stays live for the screenshot.
+  await call('call-b3', 'exec_command', { command: 'go vet ./...' });
+
+  await delta({ type: 'text', text: 'The suite fails here:' });
+  // The bytes the backend ships are a downscaled JPEG data URL; drawn
+  // here instead of checked in as a fixture so the audit stays one file.
+  const frame = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 480;
+    canvas.height = 300;
+    const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
+    ctx.fillStyle = '#0f1115';
+    ctx.fillRect(0, 0, 480, 300);
+    ctx.fillStyle = '#161a22';
+    ctx.fillRect(0, 0, 480, 36);
+    ctx.fillStyle = '#7c9cff';
+    ctx.fillRect(16, 13, 10, 10);
+    ctx.fillStyle = '#2a3140';
+    ctx.fillRect(0, 36, 160, 264);
+    ctx.fillStyle = '#1c212b';
+    ctx.fillRect(184, 60, 272, 60);
+    ctx.fillRect(184, 136, 272, 60);
+    ctx.fillRect(184, 212, 272, 60);
+    ctx.fillStyle = '#8b98ad';
+    ctx.font = '13px sans-serif';
+    ctx.fillText('Commands', 200, 84);
+    ctx.fillText('Files', 200, 160);
+    ctx.fillText('Usage', 200, 236);
+    ctx.fillStyle = '#5b6678';
+    ctx.fillRect(200, 92, 180, 6);
+    ctx.fillRect(200, 168, 140, 6);
+    ctx.fillRect(200, 244, 200, 6);
+    return canvas.toDataURL('image/jpeg');
+  });
+  const base64 = frame.replace(/^data:image\/jpeg;base64,/, '');
+  await call('call-v1', 'view_image', { path: 'shots/preview.png' });
+  await result('call-v1', [
+    {
+      type: 'image',
+      source: { kind: 'inline', media_type: 'image/jpeg', data: base64 },
+    },
+    {
+      type: 'text',
+      text: 'view_image: shots/preview.png (960x600, 48210 bytes)',
+    },
+  ]);
+  await page.getByRole('button', { name: /shots\/preview\.png/ }).click();
+  // The running step's clock only shows whole seconds.
+  await page.waitForTimeout(1200);
+  await shot(page, '44-tool-cards');
+});
+
+// A burst that is already finished while the answer is still streaming:
+// the header holds the call that just ran — its name and a frozen clock,
+// with no progress counter left to show — instead of blanking between
+// calls, which is what made a fast burst unreadable.
+test('settled tool burst', async ({ page }) => {
+  await page.addInitScript(mockBackend as never, {
+    workspace: WS,
+    startTurn: { run_id: 'r-1', context_id: 's-1' },
+  });
+  await page.goto('/');
+  await typeComposerMessage(page, 'Run the suite');
+  await page.getByRole('button', { name: 'Send' }).click();
+  const emit = emitter(page);
+  const delta = (part: unknown) =>
+    emit('opencraft:ui', {
+      type: 'stream',
+      data: {
+        run_id: 'r-1',
+        conversation_id: 's-1',
+        delta: { type: 'part', part },
+      },
+    });
+  const call = (id: string, name: string, args: unknown) =>
+    delta({ type: 'tool_call', call: { id, name, arguments: args } });
+  const result = (id: string, stdout: string) =>
+    delta({
+      type: 'tool_result',
+      result: {
+        call_id: id,
+        content: {
+          parts: [
+            {
+              type: 'text',
+              text: `{"exit_code":0,"stdout":"${stdout}","stderr":""}`,
+            },
+          ],
+        },
+      },
+    });
+
+  await call('call-s1', 'exec_command', { command: 'go build ./...' });
+  await result('call-s1', '');
+  await call('call-s2', 'exec_command', { command: 'go test ./...' });
+  await page.waitForTimeout(1200);
+  await result('call-s2', 'ok all packages');
+  // The answer keeps streaming, so the burst is live but no longer
+  // running: the header still names the call that just finished.
+  await delta({ type: 'text', text: 'The suite passes.' });
+  await page.waitForTimeout(300);
+  await shot(page, '44b-tool-cards-settled');
+});
+
+// The user bubble renders its text as Markdown. This surface pins the
+// block shapes a bubble has to carry (heading, list, quote, inline code
+// chip, fenced block) against the tinted background in both themes.
+test('markdown user bubble', async ({ page }) => {
+  await page.addInitScript(mockBackend as never, {
+    workspace: WS,
+    listSessions: [
+      {
+        id: 's-md',
+        title: 'Markdown bubble',
+        created_at: '2026-01-01T00:00:00Z',
+        updated_at: '2026-01-02T00:00:00Z',
+        messages: 2,
+        total_tokens: 0,
+      },
+    ],
+    sessionTurns: [
+      {
+        seq: 1,
+        at: '2026-01-01T00:00:00Z',
+        messages: [
+          {
+            role: 'user',
+            content: {
+              parts: [
+                {
+                  type: 'text',
+                  text: [
+                    '## Usage units',
+                    '',
+                    '- keep the range picker sticky',
+                    '- move `formatCompact` into `lib/`',
+                    '',
+                    '> fold anything past 999 into the next unit',
+                    '',
+                    '```ts',
+                    'formatCompact(4_739_140_000) // 4.74B',
+                    '```',
+                  ].join('\n'),
+                },
+              ],
+            },
+          },
+          {
+            role: 'assistant',
+            content: { parts: [{ type: 'text', text: 'On it.' }] },
+          },
+        ],
+        artifacts: [],
+      },
+    ],
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Markdown bubble' }).click();
+  await page.waitForTimeout(400);
+  await shot(page, '45-bubble-markdown');
+  await page.evaluate(() => {
+    document.documentElement.classList.add('theme-light');
+  });
+  await page.waitForTimeout(200);
+  await shot(page, '45b-bubble-markdown-light');
+});
+
+// The collapsed group header of a finished turn: it keeps saying what
+// the burst ran — the count, the last command, and the failure count
+// closing the row on the right — instead of collapsing back to a bare
+// count once the turn ends. Nothing on this screen is live.
+test('collapsed tool group header', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.addInitScript(mockBackend as never, {
+    workspace: WS,
+    startTurn: { run_id: 'r-1', context_id: 's-1' },
+  });
+  await page.goto('/');
+  await typeComposerMessage(page, 'Run the checks');
+  await page.getByRole('button', { name: 'Send' }).click();
+  const emit = emitter(page);
+  const delta = (part: unknown) =>
+    emit('opencraft:ui', {
+      type: 'stream',
+      data: {
+        run_id: 'r-1',
+        conversation_id: 's-1',
+        delta: { type: 'part', part },
+      },
+    });
+  const call = (id: string, command: string) =>
+    delta({
+      type: 'tool_call',
+      call: { id, name: 'exec_command', arguments: { command } },
+    });
+  const result = (id: string, text: string, isError = false) =>
+    delta({
+      type: 'tool_result',
+      result: {
+        call_id: id,
+        content: { parts: [{ type: 'text', text }] },
+        is_error: isError,
+      },
+    });
+
+  await call('call-1', 'go build ./...');
+  await result('call-1', '{"exit_code":0,"stdout":"","stderr":""}');
+  await call('call-2', 'go test ./...');
+  await result('call-2', '{"exit_code":1,"stdout":"","stderr":"FAIL"}', true);
+  await call(
+    'call-3',
+    'go test ./internal/foundation/utils/summarytext/... -run TestCompactFold',
+  );
+  await result('call-3', '{"exit_code":0,"stdout":"ok","stderr":""}');
+  await delta({ type: 'text', text: 'One suite failed; the rest is green.' });
+  await emit('opencraft:ui', {
+    type: 'turn_end',
+    data: { run_id: 'r-1', conversation_id: 's-1', status: 'completed' },
+  });
+  await page.waitForTimeout(300);
+  await shot(page, '46-tool-group-header');
+  await page.evaluate(() => {
+    document.documentElement.classList.add('theme-light');
+  });
+  await page.waitForTimeout(200);
+  await shot(page, '46b-tool-group-header-light');
+});
