@@ -218,4 +218,41 @@ describe('MessagePeek', () => {
     expect(onJump).toHaveBeenCalledWith(69);
     vi.useRealTimers();
   });
+
+  it('draws one dash per turn on a dense ruler that still has room', () => {
+    const turns42 = Array.from({ length: 42 }, (_, i) => ({ index: i }));
+    const { container } = render(
+      <MessagePeek
+        items={turns42}
+        activeRange={{ start: 41, end: 41 }}
+        onJump={vi.fn()}
+        getPreview={previewFor}
+      />,
+    );
+
+    const dashes = container.querySelectorAll<HTMLElement>('[data-peek-tick]');
+    expect(dashes).toHaveLength(42);
+    expect(dashes[41].className).toContain('bg-accent');
+    expect(dashes[40].className).not.toContain('bg-accent');
+  });
+
+  it('buckets turns into even stops once the dense ruler is at its cap', () => {
+    const manyTurns = Array.from({ length: 140 }, (_, i) => ({ index: i }));
+    const { container } = render(
+      <MessagePeek
+        items={manyTurns}
+        activeRange={{ start: 139, end: 139 }}
+        onJump={vi.fn()}
+        getPreview={previewFor}
+      />,
+    );
+
+    const dashes = container.querySelectorAll<HTMLElement>('[data-peek-tick]');
+    expect(dashes).toHaveLength(48);
+    // The last stop lands on the newest turn instead of a fixed stride
+    // running past it, so the accent tracks the bottom of the ruler.
+    expect(dashes[47].dataset.peekTick).toBe('137');
+    expect(dashes[47].className).toContain('bg-accent');
+    expect(dashes[46].className).not.toContain('bg-accent');
+  });
 });
