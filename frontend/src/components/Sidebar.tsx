@@ -34,7 +34,9 @@ import {
 import type { ComponentType } from 'react';
 import type { SessionMeta, WorkspaceMeta } from '../lib/types';
 import { AppMark } from './AppMark';
+import { ConfirmDialog } from './ui/ConfirmDialog';
 import { ICON } from './ui/icon';
+import { Popover } from './ui/Popover';
 
 function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
@@ -199,7 +201,13 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   const [renameId, setRenameId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [importing, setImporting] = useState(false);
-  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  // A row's action menu anchors to the button that opened it. The row is
+  // virtualized, so the anchor lives in state rather than in a ref: a ref
+  // would follow whichever row rendered last.
+  const [menuOpen, setMenuOpen] = useState<{
+    id: string;
+    anchor: HTMLElement;
+  } | null>(null);
   const [workspaceInputOpen, setWorkspaceInputOpen] = useState(false);
   const [workspacePath, setWorkspacePath] = useState('');
   const [workspaceError, setWorkspaceError] = useState('');
@@ -589,7 +597,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
                   <span
                     aria-hidden="true"
                     className={`shrink-0 transition-opacity ${
-                      actionsAllowed && menuOpenId === row.id
+                      actionsAllowed && menuOpen?.id === row.id
                         ? 'opacity-0'
                         : actionsAllowed
                           ? 'group-hover:opacity-0'
@@ -606,83 +614,93 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
               {actionsAllowed && (
                 <div
                   className={`absolute inset-y-0 right-0 flex items-center pr-0.5 transition-opacity ${
-                    menuOpenId === row.id
+                    menuOpen?.id === row.id
                       ? 'opacity-100'
                       : 'invisible opacity-0 group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100'
                   }`}
                 >
                   <button
-                    onClick={() => {
+                    aria-haspopup="menu"
+                    aria-expanded={menuOpen?.id === row.id}
+                    onClick={(e) => {
                       setHoverCard(null);
-                      setMenuOpenId(menuOpenId === row.id ? null : row.id);
+                      setMenuOpen(
+                        menuOpen?.id === row.id
+                          ? null
+                          : { id: row.id, anchor: e.currentTarget },
+                      );
                     }}
-                    className="rounded-control bg-panel/90 p-1 text-dim hover:bg-panel2 hover:text-fg"
-                    title={t('sidebar.sessionActions')}
+                    className="rounded-control bg-panel p-1 text-dim hover:bg-panel2 hover:text-fg"
+                    data-tip={t('sidebar.sessionActions')}
                     aria-label={t('sidebar.sessionActions')}
                   >
                     <MoreHorizontal size={ICON.sm} />
                   </button>
-                  {menuOpenId === row.id && (
-                    <>
-                      <div
-                        className="fixed inset-0 z-20"
-                        onClick={() => setMenuOpenId(null)}
-                      />
-                      <div className="absolute right-0 top-full z-30 mt-1 w-44 rounded-control border border-edge bg-panel py-1 shadow-popover">
-                        <button
-                          onClick={() => {
-                            setMenuOpenId(null);
-                            setRenameId(row.id);
-                            setRenameValue(row.meta?.title ?? row.title);
-                          }}
-                          className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
-                        >
-                          <Pencil size={ICON.xs} className="text-dim" />
-                          {t('sidebar.renameSession')}
-                        </button>
-                        <button
-                          onClick={() => {
-                            setMenuOpenId(null);
-                            void api
-                              .exportSession(row.id)
-                              .then((path) =>
-                                flash(t('sidebar.exportedTo', { path })),
-                              )
-                              .catch((err) => flash(String(err)));
-                          }}
-                          className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
-                        >
-                          <Download size={ICON.xs} className="text-dim" />
-                          {t('sidebar.exportSession')}
-                        </button>
-                        <button
-                          onClick={() => {
-                            setMenuOpenId(null);
-                            void api
-                              .exportSessionBundle(row.id)
-                              .then((path) =>
-                                flash(t('sidebar.exportedTo', { path })),
-                              )
-                              .catch((err) => flash(String(err)));
-                          }}
-                          className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
-                        >
-                          <Download size={ICON.xs} className="text-dim" />
-                          {t('sidebar.exportSessionBundle')}
-                        </button>
-                        <button
-                          onClick={() => {
-                            setMenuOpenId(null);
-                            setConfirmDelete(row.id);
-                          }}
-                          className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-err hover:bg-panel2"
-                        >
-                          <Trash2 size={ICON.xs} className="text-err" />
-                          {t('sidebar.deleteSession')}
-                        </button>
-                      </div>
-                    </>
-                  )}
+                  <Popover
+                    open={menuOpen?.id === row.id}
+                    onClose={() => setMenuOpen(null)}
+                    anchor={menuOpen?.anchor ?? null}
+                    role="menu"
+                    keyboard
+                    align="end"
+                    panelClassName="w-44 rounded-control border border-edge bg-panel py-1 shadow-popover"
+                  >
+                    <button
+                      role="menuitem"
+                      onClick={() => {
+                        setMenuOpen(null);
+                        setRenameId(row.id);
+                        setRenameValue(row.meta?.title ?? row.title);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
+                    >
+                      <Pencil size={ICON.xs} className="text-dim" />
+                      {t('sidebar.renameSession')}
+                    </button>
+                    <button
+                      role="menuitem"
+                      onClick={() => {
+                        setMenuOpen(null);
+                        void api
+                          .exportSession(row.id)
+                          .then((path) =>
+                            flash(t('sidebar.exportedTo', { path })),
+                          )
+                          .catch((err) => flash(String(err)));
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
+                    >
+                      <Download size={ICON.xs} className="text-dim" />
+                      {t('sidebar.exportSession')}
+                    </button>
+                    <button
+                      role="menuitem"
+                      onClick={() => {
+                        setMenuOpen(null);
+                        void api
+                          .exportSessionBundle(row.id)
+                          .then((path) =>
+                            flash(t('sidebar.exportedTo', { path })),
+                          )
+                          .catch((err) => flash(String(err)));
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs hover:bg-panel2"
+                    >
+                      <Download size={ICON.xs} className="text-dim" />
+                      {t('sidebar.exportSessionBundle')}
+                    </button>
+                    <button
+                      role="menuitem"
+                      onClick={() => {
+                        setMenuOpen(null);
+                        setConfirmDelete(row.id);
+                      }}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-xs text-err hover:bg-panel2"
+                    >
+                      <Trash2 size={ICON.xs} className="text-err" />
+                      {t('sidebar.deleteSession')}
+                    </button>
+                  </Popover>
                 </div>
               )}
             </>
@@ -712,7 +730,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
             ? 'bg-accent/10 border border-accent/25'
             : 'border border-transparent hover:bg-panel2'
         }`}
-        title={w.path}
+        data-tip={w.path}
       >
         <FolderIcon
           size={ICON.sm}
@@ -731,7 +749,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
             setConfirmWorkspace(w.id);
           }}
           className="text-dim opacity-0 group-hover:opacity-100 hover:text-err shrink-0"
-          title={t('sidebar.removeWorkspace')}
+          data-tip={t('sidebar.removeWorkspace')}
           aria-label={t('sidebar.removeWorkspace')}
         >
           <Trash2 size={ICON.xs} />
@@ -863,10 +881,10 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
       case 'empty':
         return (
           <div className="ml-3 pt-1">
-            <div className="flex h-9 items-center justify-center gap-1.5 rounded-control border border-dashed border-edge/70 bg-panel2/40 px-2 text-xs text-dim">
+            <div className="flex h-9 items-center justify-center gap-1.5 rounded-control border border-dashed border-edge/70 bg-panel2 px-2 text-xs text-dim">
               <MessageSquarePlus
                 size={ICON.sm}
-                className="shrink-0 text-dim/70"
+                className="shrink-0 text-faint"
               />
               {t('sidebar.noSessions')}
             </div>
@@ -881,7 +899,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
             >
               <ChevronDown size={ICON.xs} className="shrink-0" />
               {t('sidebar.moreSessions')}
-              <span className="ml-auto tabular-nums text-micro text-dim/80">
+              <span className="ml-auto tabular-nums text-micro text-faint">
                 +{item.count}
               </span>
             </button>
@@ -933,7 +951,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
     if (rows.length === 0) return null;
     return (
       <div
-        className="pointer-events-none fixed z-[70] rounded-card border border-edge bg-panel2/95 p-3 shadow-popover backdrop-blur"
+        className="pointer-events-none fixed z-[var(--oc-z-tooltip)] rounded-card border border-edge bg-panel2/95 p-3 shadow-popover backdrop-blur"
         style={{ left: card.left, top: card.top, width: 288 }}
       >
         <p className="break-words text-sm font-medium leading-5 text-fg line-clamp-3">
@@ -1019,8 +1037,8 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
             <button
               onClick={() => void handleImportSession()}
               disabled={!workspace || importing}
-              className="text-dim hover:text-fg disabled:text-dim/40 disabled:hover:text-dim/40"
-              title={t('sidebar.importSession')}
+              className="text-dim hover:text-fg disabled:text-faint disabled:hover:text-faint"
+              data-tip={t('sidebar.importSession')}
               aria-label={t('sidebar.importSession')}
             >
               {importing ? (
@@ -1032,7 +1050,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
             <button
               onClick={() => void handleAddWorkspace()}
               className="text-dim hover:text-fg"
-              title={t('sidebar.addWorkspace')}
+              data-tip={t('sidebar.addWorkspace')}
               aria-label={t('sidebar.addWorkspace')}
             >
               <Plus size={ICON.sm} />
@@ -1113,79 +1131,32 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
         </button>
       </div>
 
-      {confirmDelete && (
-        <div
-          className="fixed bottom-0 top-11 left-0 right-0 z-50 grid place-items-center bg-black/60 p-6"
-          onClick={() => setConfirmDelete(null)}
-        >
-          <div
-            className="w-[26.0000rem] rounded-card border border-edge bg-panel p-5 shadow-modal"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="text-base font-semibold">
-              {t('sidebar.deleteSessionTitle', {
-                title:
-                  sessions.find((s) => s.id === confirmDelete)?.title ?? '',
-              })}
-            </h3>
-            <p className="mt-2 text-sm leading-relaxed text-dim">
-              {t('sidebar.deleteSessionBody')}
-            </p>
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                onClick={() => setConfirmDelete(null)}
-                className="rounded-control border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
-              >
-                {t('interact.cancel')}
-              </button>
-              <button
-                onClick={() => {
-                  void deleteSession(confirmDelete);
-                  setConfirmDelete(null);
-                }}
-                className="rounded-control bg-err px-3 py-1.5 text-sm text-white hover:opacity-90"
-              >
-                {t('sidebar.deleteSession')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        open={confirmDelete !== null}
+        tone="danger"
+        title={t('sidebar.deleteSessionTitle', {
+          title: sessions.find((s) => s.id === confirmDelete)?.title ?? '',
+        })}
+        body={t('sidebar.deleteSessionBody')}
+        confirmLabel={t('sidebar.deleteSession')}
+        onCancel={() => setConfirmDelete(null)}
+        onConfirm={() => {
+          if (confirmDelete) void deleteSession(confirmDelete);
+          setConfirmDelete(null);
+        }}
+      />
 
-      {confirmWorkspace && removingWorkspace && (
-        <div
-          className="fixed bottom-0 top-11 left-0 right-0 z-50 grid place-items-center bg-black/60 p-6"
-          onClick={() => setConfirmWorkspace(null)}
-        >
-          <div
-            className="w-[26.0000rem] rounded-card border border-edge bg-panel p-5 shadow-modal"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="text-base font-semibold">
-              {t('sidebar.removeWorkspaceTitle', {
-                title: removingWorkspace.title,
-              })}
-            </h3>
-            <p className="mt-2 text-sm leading-relaxed text-dim">
-              {t('sidebar.removeWorkspaceBody')}
-            </p>
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                onClick={() => setConfirmWorkspace(null)}
-                className="rounded-tight border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
-              >
-                {t('interact.cancel')}
-              </button>
-              <button
-                onClick={confirmRemoveWorkspace}
-                className="rounded-tight bg-err px-3 py-1.5 text-sm text-white hover:opacity-90"
-              >
-                {t('sidebar.removeWorkspace')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        open={confirmWorkspace !== null && removingWorkspace !== null}
+        tone="danger"
+        title={t('sidebar.removeWorkspaceTitle', {
+          title: removingWorkspace?.title ?? '',
+        })}
+        body={t('sidebar.removeWorkspaceBody')}
+        confirmLabel={t('sidebar.removeWorkspace')}
+        onCancel={() => setConfirmWorkspace(null)}
+        onConfirm={confirmRemoveWorkspace}
+      />
       {renderHoverCard()}
     </aside>
   );

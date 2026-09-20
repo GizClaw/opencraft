@@ -10,6 +10,7 @@ import { dateLabel } from '../lib/format';
 import type { GitHubPull } from '../lib/types';
 import { PRDetailModal } from './PRDetailModal';
 import { AvatarBadge } from './viewer/AvatarBadge';
+import { EmptyState } from './ui/EmptyState';
 import { ICON } from './ui/icon';
 
 export function PRView({ nonce }: { nonce: number }) {
@@ -56,16 +57,14 @@ export function PRView({ nonce }: { nonce: number }) {
             <Loader2 size={ICON.md} className="animate-spin" />
           </div>
         ) : rows.length === 0 ? (
-          <div className="grid h-full place-items-center px-4 text-center text-xs text-dim">
-            {t('git.prEmpty')}
-          </div>
+          <EmptyState icon={GitPullRequest} title={t('git.prEmpty')} />
         ) : (
           rows.map((pr) => (
             <button
               key={pr.number}
               type="button"
               onClick={() => setSelected(pr)}
-              className="flex w-full items-start gap-2.5 border-b border-edge/60 px-3 py-2 text-left hover:bg-panel2/60"
+              className="flex w-full items-start gap-2.5 border-b border-edge/60 px-3 py-2 text-left hover:bg-panel2"
             >
               <GitPullRequest
                 size={ICON.sm}

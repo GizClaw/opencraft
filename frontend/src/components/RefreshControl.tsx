@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Check, ChevronDown, RefreshCw } from 'lucide-react';
+import { Popover } from './ui/Popover';
 import { ICON } from './ui/icon';
 
 const REFRESH_INTERVALS_MS = [0, 5000, 10_000, 30_000, 60_000];
@@ -26,20 +27,10 @@ export function RefreshControl({
   offLabel: string;
 }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: PointerEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener('pointerdown', onDown);
-    return () => document.removeEventListener('pointerdown', onDown);
-  }, [open]);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const label = value > 0 ? `${value / 1000} s` : offLabel;
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative">
       <div className="flex items-center overflow-hidden rounded-control border border-edge">
         <button
           onClick={() => {
@@ -47,7 +38,7 @@ export function RefreshControl({
             onRefresh();
           }}
           className="grid h-7 w-7 place-items-center text-dim hover:bg-panel2 hover:text-fg"
-          title={refreshLabel}
+          data-tip={refreshLabel}
           aria-label={refreshLabel}
         >
           <RefreshCw
@@ -56,9 +47,10 @@ export function RefreshControl({
           />
         </button>
         <button
+          ref={triggerRef}
           onClick={() => setOpen((v) => !v)}
           className="flex h-7 items-center gap-1 border-l border-edge px-1.5 text-micro text-dim hover:bg-panel2 hover:text-fg"
-          title={intervalLabel}
+          data-tip={intervalLabel}
           aria-label={intervalLabel}
           aria-haspopup="listbox"
           aria-expanded={open}
@@ -67,36 +59,40 @@ export function RefreshControl({
           <ChevronDown size={ICON.xs} />
         </button>
       </div>
-      {open && (
-        <div
-          role="listbox"
-          className="absolute right-0 top-full z-40 mt-1.5 w-44 rounded-control border border-edge bg-panel p-1 shadow-popover"
-        >
-          {REFRESH_INTERVALS_MS.map((ms) => {
-            const optionLabel = ms > 0 ? `${ms / 1000} s` : offLabel;
-            const active = value === ms;
-            return (
-              <button
-                key={ms}
-                role="option"
-                aria-selected={active}
-                onClick={() => {
-                  setOpen(false);
-                  onChange(ms);
-                }}
-                className={`flex w-full items-center justify-between rounded-control px-2 py-1.5 text-left text-xs ${
-                  active
-                    ? 'bg-accent/10 text-accent'
-                    : 'text-dim hover:bg-panel2 hover:text-fg'
-                }`}
-              >
-                <span>{optionLabel}</span>
-                {active && <Check size={ICON.xs} />}
-              </button>
-            );
-          })}
-        </div>
-      )}
+      <Popover
+        open={open}
+        onClose={() => setOpen(false)}
+        anchor={triggerRef.current}
+        role="listbox"
+        ariaLabel={intervalLabel}
+        align="end"
+        keyboard
+        panelClassName="w-44 rounded-control border border-edge bg-panel p-1 shadow-popover"
+      >
+        {REFRESH_INTERVALS_MS.map((ms) => {
+          const optionLabel = ms > 0 ? `${ms / 1000} s` : offLabel;
+          const active = value === ms;
+          return (
+            <button
+              key={ms}
+              role="option"
+              aria-selected={active}
+              onClick={() => {
+                setOpen(false);
+                onChange(ms);
+              }}
+              className={`flex w-full items-center justify-between rounded-control px-2 py-1.5 text-left text-xs ${
+                active
+                  ? 'bg-accent/10 text-accent'
+                  : 'text-dim hover:bg-panel2 hover:text-fg'
+              }`}
+            >
+              <span>{optionLabel}</span>
+              {active && <Check size={ICON.xs} />}
+            </button>
+          );
+        })}
+      </Popover>
     </div>
   );
 }

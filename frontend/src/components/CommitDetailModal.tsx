@@ -15,6 +15,7 @@ import {
   AlertTriangle,
   ArrowDown,
   ArrowUp,
+  FileText,
   GitCommitHorizontal,
   Loader2,
   X,
@@ -29,7 +30,9 @@ import type {
   GitChangeKind,
 } from '../lib/types';
 import { GitDiffView } from './viewer/DiffView';
+import { EmptyState } from './ui/EmptyState';
 import { ICON } from './ui/icon';
+import { Overlay } from './ui/Overlay';
 
 export function CommitDetailModal({
   entry,
@@ -102,17 +105,11 @@ export function CommitDetailModal({
     [files, selectFile],
   );
 
-  // A layout effect, not a passive one: this dialog owns Escape from the
-  // commit that puts it on screen. Between that commit and a useEffect
-  // there is a task-wide window in which the key reaches whatever
-  // surface is open underneath (the Git panel's own diff modal, the
-  // viewer) instead of closing this dialog.
+  // A layout effect so the arrow keys keep moving between files from the
+  // commit that shows the dialog; the overlay layer owns Escape.
   useLayoutEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        onClose();
-      } else if (e.key === 'ArrowDown') {
+      if (e.key === 'ArrowDown') {
         e.preventDefault();
         openAt(index + 1);
       } else if (e.key === 'ArrowUp') {
@@ -122,7 +119,7 @@ export function CommitDetailModal({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [index, openAt, onClose]);
+  }, [index, openAt]);
 
   const parsed = useMemo(
     () => (diff?.content ? parseUnifiedDiff(diff.content) : null),
@@ -130,137 +127,131 @@ export function CommitDetailModal({
   );
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
+    <Overlay
+      open
+      onClose={onClose}
+      panelClassName="flex h-[min(92vh,760px)] w-[min(96vw,1040px)] flex-col overflow-hidden rounded-card border border-edge bg-panel shadow-modal"
     >
-      <div className="flex h-[min(92vh,760px)] w-[min(96vw,1040px)] flex-col overflow-hidden rounded-card border border-edge bg-panel shadow-modal">
-        <div className="flex h-11 shrink-0 items-center gap-2 border-b border-edge bg-panel2/40 px-3">
-          <GitCommitHorizontal
-            size={ICON.sm}
-            className="shrink-0 text-accent"
-          />
-          <span className="min-w-0 flex-1 truncate text-xs font-medium text-fg">
-            {entry.subject}
+      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-edge bg-panel2 px-3">
+        <GitCommitHorizontal size={ICON.sm} className="shrink-0 text-accent" />
+        <span className="min-w-0 flex-1 truncate text-xs font-medium text-fg">
+          {entry.subject}
+        </span>
+        <span className="shrink-0 font-mono text-micro text-dim">
+          {entry.short_oid}
+        </span>
+        {snapshot && files.length > 0 && (
+          <span className="shrink-0 text-micro text-dim tabular-nums">
+            {index + 1}/{files.length}
           </span>
-          <span className="shrink-0 font-mono text-micro text-dim">
-            {entry.short_oid}
-          </span>
-          {snapshot && files.length > 0 && (
-            <span className="shrink-0 text-micro text-dim tabular-nums">
-              {index + 1}/{files.length}
-            </span>
-          )}
-          <button
-            onClick={() => openAt(index - 1)}
-            disabled={index <= 0}
-            className="grid h-7 w-7 place-items-center rounded-control text-dim hover:bg-panel2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
-            title={t('git.previousChange')}
-            aria-label={t('git.previousChange')}
-          >
-            <ArrowUp size={ICON.sm} />
-          </button>
-          <button
-            onClick={() => openAt(index + 1)}
-            disabled={index < 0 || index >= files.length - 1}
-            className="grid h-7 w-7 place-items-center rounded-control text-dim hover:bg-panel2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
-            title={t('git.nextChange')}
-            aria-label={t('git.nextChange')}
-          >
-            <ArrowDown size={ICON.sm} />
-          </button>
-          <button
-            onClick={onClose}
-            className="grid h-7 w-7 place-items-center rounded-control text-dim hover:bg-panel2 hover:text-fg"
-            aria-label={t('chat.dismiss')}
-          >
-            <X size={ICON.sm} />
-          </button>
-        </div>
+        )}
+        <button
+          onClick={() => openAt(index - 1)}
+          disabled={index <= 0}
+          className="grid h-7 w-7 place-items-center rounded-control text-dim hover:bg-panel2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+          data-tip={t('git.previousChange')}
+          aria-label={t('git.previousChange')}
+        >
+          <ArrowUp size={ICON.sm} />
+        </button>
+        <button
+          onClick={() => openAt(index + 1)}
+          disabled={index < 0 || index >= files.length - 1}
+          className="grid h-7 w-7 place-items-center rounded-control text-dim hover:bg-panel2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+          data-tip={t('git.nextChange')}
+          aria-label={t('git.nextChange')}
+        >
+          <ArrowDown size={ICON.sm} />
+        </button>
+        <button
+          onClick={onClose}
+          className="grid h-7 w-7 place-items-center rounded-control text-dim hover:bg-panel2 hover:text-fg"
+          aria-label={t('chat.dismiss')}
+        >
+          <X size={ICON.sm} />
+        </button>
+      </div>
 
-        <div className="flex min-h-0 flex-1">
-          <div className="flex w-72 shrink-0 flex-col border-r border-edge bg-panel/60">
-            <div className="flex h-8 shrink-0 items-center border-b border-edge px-3 text-micro uppercase tracking-wide text-dim">
-              {t('git.commitFiles')}
-              {files.length > 0 ? ` · ${files.length}` : ''}
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              {!snapshot && !listError ? (
-                <div className="grid h-full place-items-center text-dim">
-                  <Loader2 size={ICON.md} className="animate-spin" />
-                </div>
-              ) : listError ? (
-                <div className="flex flex-col items-start gap-2 p-3">
-                  <span className="flex items-start gap-1.5 text-xs text-err">
-                    <AlertTriangle size={ICON.xs} className="mt-0.5 shrink-0" />
-                    <span className="break-words">{listError}</span>
-                  </span>
-                  <button
-                    onClick={() => void loadFiles()}
-                    className="rounded-control border border-edge px-2 py-1 text-xs text-fg hover:bg-panel2"
-                  >
-                    {t('git.retry')}
-                  </button>
-                </div>
-              ) : files.length === 0 ? (
-                <div className="grid h-full place-items-center px-3 text-center text-xs text-dim">
-                  {t('git.commitNoFiles')}
-                </div>
-              ) : (
-                files.map((file) => (
-                  <CommitFileRow
-                    key={file.path}
-                    file={file}
-                    active={file.path === selectedPath}
-                    onPick={() => void selectFile(file)}
-                  />
-                ))
-              )}
-            </div>
-            {snapshot?.truncated && (
-              <div className="shrink-0 border-t border-edge px-3 py-1.5 text-micro text-dim">
-                {t('git.truncatedList')}
-              </div>
-            )}
+      <div className="flex min-h-0 flex-1">
+        <div className="flex w-72 shrink-0 flex-col border-r border-edge bg-panel">
+          <div className="flex h-8 shrink-0 items-center border-b border-edge px-3 text-micro uppercase tracking-wide text-dim">
+            {t('git.commitFiles')}
+            {files.length > 0 ? ` · ${files.length}` : ''}
           </div>
-
-          <div className="min-h-0 min-w-0 flex-1 overflow-auto bg-panel/40 p-3">
-            {diffLoading ? (
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {!snapshot && !listError ? (
               <div className="grid h-full place-items-center text-dim">
                 <Loader2 size={ICON.md} className="animate-spin" />
               </div>
-            ) : diffError ? (
-              <div className="break-words text-xs text-err">{diffError}</div>
-            ) : diffMessage ? (
-              <div className="p-3 text-xs text-dim">
-                {t(`git.${diffMessage}`)}
+            ) : listError ? (
+              <div className="flex flex-col items-start gap-2 p-3">
+                <span className="flex items-start gap-1.5 text-xs text-err">
+                  <AlertTriangle size={ICON.xs} className="mt-0.5 shrink-0" />
+                  <span className="break-words">{listError}</span>
+                </span>
+                <button
+                  onClick={() => void loadFiles()}
+                  className="rounded-control border border-edge px-2 py-1 text-xs text-fg hover:bg-panel2"
+                >
+                  {t('git.retry')}
+                </button>
               </div>
-            ) : parsed ? (
-              <GitDiffView
-                files={parsed}
-                collapsible={false}
-                maxHeight="h-full"
+            ) : files.length === 0 ? (
+              <EmptyState
+                icon={FileText}
+                title={t('git.commitNoFiles')}
+                size="sm"
               />
-            ) : diff?.content ? (
-              <pre className="whitespace-pre-wrap break-all px-3 py-2 font-mono text-xs text-fg">
-                {diff.content}
-              </pre>
-            ) : selectedPath ? (
-              <div className="p-3 text-xs text-dim">{t('git.noDiffHint')}</div>
-            ) : null}
-            {diff?.truncated && (
-              <div className="px-3 pb-2 text-micro text-dim">
-                {t('git.truncatedDiff')}
-              </div>
+            ) : (
+              files.map((file) => (
+                <CommitFileRow
+                  key={file.path}
+                  file={file}
+                  active={file.path === selectedPath}
+                  onPick={() => void selectFile(file)}
+                />
+              ))
             )}
           </div>
+          {snapshot?.truncated && (
+            <div className="shrink-0 border-t border-edge px-3 py-1.5 text-micro text-dim">
+              {t('git.truncatedList')}
+            </div>
+          )}
+        </div>
+
+        <div className="min-h-0 min-w-0 flex-1 overflow-auto bg-panel p-3">
+          {diffLoading ? (
+            <div className="grid h-full place-items-center text-dim">
+              <Loader2 size={ICON.md} className="animate-spin" />
+            </div>
+          ) : diffError ? (
+            <div className="break-words text-xs text-err">{diffError}</div>
+          ) : diffMessage ? (
+            <div className="p-3 text-xs text-dim">
+              {t(`git.${diffMessage}`)}
+            </div>
+          ) : parsed ? (
+            <GitDiffView
+              files={parsed}
+              collapsible={false}
+              maxHeight="h-full"
+            />
+          ) : diff?.content ? (
+            <pre className="whitespace-pre-wrap break-all px-3 py-2 font-mono text-xs text-fg">
+              {diff.content}
+            </pre>
+          ) : selectedPath ? (
+            <div className="p-3 text-xs text-dim">{t('git.noDiffHint')}</div>
+          ) : null}
+          {diff?.truncated && (
+            <div className="px-3 pb-2 text-micro text-dim">
+              {t('git.truncatedDiff')}
+            </div>
+          )}
         </div>
       </div>
-    </div>
+    </Overlay>
   );
 }
 
@@ -304,12 +295,12 @@ function CommitFileRow({
       type="button"
       onClick={onPick}
       className={`flex w-full items-start gap-2 border-b border-edge/60 px-2.5 py-2 text-left ${
-        active ? 'bg-accent/10' : 'hover:bg-panel2/60'
+        active ? 'bg-accent/10' : 'hover:bg-panel2'
       }`}
     >
       <span
         className={`mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-tight text-micro font-semibold ${kindClass(file.kind)}`}
-        title={file.kind}
+        data-tip={file.kind}
       >
         {mark}
       </span>

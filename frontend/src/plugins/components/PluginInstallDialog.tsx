@@ -1,4 +1,4 @@
-import { FileArchive, FolderOpen, Loader2, X } from 'lucide-react';
+import { FileArchive, FolderOpen, Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../../lib/api';
@@ -6,6 +6,7 @@ import { usePluginStore } from '../store';
 import { compareVersions } from '../version';
 import type { PluginSummary } from '../types';
 import { ICON } from '../../components/ui/icon';
+import { Modal } from '../../components/ui/Modal';
 
 // PluginInstallDialog installs or updates a plugin from a local
 // directory containing plugin.json or from a zip package. When
@@ -101,99 +102,87 @@ export function PluginInstallDialog({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-6"
-      onClick={onClose}
+    <Modal
+      open
+      onClose={onClose}
+      title={t(isUpdate ? 'config.pluginsUpdate' : 'config.pluginsInstall')}
+      width="32.8571rem"
+      bodyClassName="p-0"
     >
-      <div
-        className="w-[32.8571rem] rounded-card border border-edge bg-panel shadow-modal"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex items-center justify-between border-b border-edge px-4 py-3">
-          <h3 className="text-sm font-semibold">
-            {t(isUpdate ? 'config.pluginsUpdate' : 'config.pluginsInstall')}
-          </h3>
-          <button onClick={onClose} className="text-dim hover:text-fg">
-            <X size={ICON.md} />
+      <div className="flex flex-col gap-3 p-4">
+        <p className="text-xs text-dim">
+          {t(
+            isUpdate ? 'config.pluginsUpdateHint' : 'config.pluginsInstallHint',
+          )}
+        </p>
+        <div className="flex gap-2">
+          <input
+            value={path}
+            onChange={(e) => {
+              setPath(e.target.value);
+              void inspect(e.target.value);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void install();
+            }}
+            placeholder={t(
+              isUpdate
+                ? 'config.pluginsUpdatePathPlaceholder'
+                : 'config.pluginsInstallPathPlaceholder',
+            )}
+            className="min-w-0 flex-1 rounded-control border border-edge bg-panel2 px-2.5 py-1.5 text-xs text-fg outline-none focus:border-accent"
+            autoFocus
+          />
+          <button
+            onClick={() => void pick()}
+            className="flex items-center gap-1.5 rounded-control border border-edge bg-panel2 px-2.5 py-1.5 text-xs text-dim hover:text-fg"
+          >
+            <FolderOpen size={ICON.xs} />
+            {t('config.pluginsChooseFolder')}
+          </button>
+          <button
+            onClick={() => void pickZip()}
+            className="flex items-center gap-1.5 rounded-control border border-edge bg-panel2 px-2.5 py-1.5 text-xs text-dim hover:text-fg"
+          >
+            <FileArchive size={ICON.xs} />
+            {t('config.pluginsChooseZip')}
           </button>
         </div>
-        <div className="flex flex-col gap-3 p-4">
-          <p className="text-xs text-dim">
-            {t(
-              isUpdate
-                ? 'config.pluginsUpdateHint'
-                : 'config.pluginsInstallHint',
-            )}
-          </p>
-          <div className="flex gap-2">
-            <input
-              value={path}
-              onChange={(e) => {
-                setPath(e.target.value);
-                void inspect(e.target.value);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void install();
-              }}
-              placeholder={t(
-                isUpdate
-                  ? 'config.pluginsUpdatePathPlaceholder'
-                  : 'config.pluginsInstallPathPlaceholder',
+        {shadow?.shadowsBuiltin && (
+          <div className="rounded-control border border-warn/30 bg-warn/10 px-2.5 py-2 text-xs text-warn">
+            {t('config.pluginsShadowInstallWarn', {
+              name: shadow.name,
+              builtinVersion: shadow.builtinVersion ?? '',
+            })}
+            {shadow.builtinVersion &&
+              compareVersions(shadow.version, shadow.builtinVersion) < 0 && (
+                <p className="mt-1">
+                  {t('config.pluginsShadowInstallTooOld', {
+                    version: shadow.version,
+                    builtinVersion: shadow.builtinVersion,
+                  })}
+                </p>
               )}
-              className="min-w-0 flex-1 rounded-control border border-edge bg-panel2 px-2.5 py-1.5 text-xs text-fg outline-none focus:border-accent"
-              autoFocus
-            />
-            <button
-              onClick={() => void pick()}
-              className="flex items-center gap-1.5 rounded-control border border-edge bg-panel2 px-2.5 py-1.5 text-xs text-dim hover:text-fg"
-            >
-              <FolderOpen size={ICON.xs} />
-              {t('config.pluginsChooseFolder')}
-            </button>
-            <button
-              onClick={() => void pickZip()}
-              className="flex items-center gap-1.5 rounded-control border border-edge bg-panel2 px-2.5 py-1.5 text-xs text-dim hover:text-fg"
-            >
-              <FileArchive size={ICON.xs} />
-              {t('config.pluginsChooseZip')}
-            </button>
           </div>
-          {shadow?.shadowsBuiltin && (
-            <div className="rounded-control border border-warn/30 bg-warn/10 px-2.5 py-2 text-xs text-warn">
-              {t('config.pluginsShadowInstallWarn', {
-                name: shadow.name,
-                builtinVersion: shadow.builtinVersion ?? '',
-              })}
-              {shadow.builtinVersion &&
-                compareVersions(shadow.version, shadow.builtinVersion) < 0 && (
-                  <p className="mt-1">
-                    {t('config.pluginsShadowInstallTooOld', {
-                      version: shadow.version,
-                      builtinVersion: shadow.builtinVersion,
-                    })}
-                  </p>
-                )}
-            </div>
-          )}
-          {error && <p className="text-label text-err break-words">{error}</p>}
-          <div className="flex justify-end gap-2">
-            <button
-              onClick={onClose}
-              className="rounded-control px-3 py-1.5 text-xs text-dim hover:text-fg"
-            >
-              {t('config.cancel')}
-            </button>
-            <button
-              onClick={() => void install()}
-              disabled={busy || !path.trim()}
-              className="flex items-center gap-1.5 rounded-control bg-accent px-3 py-1.5 text-xs text-white hover:opacity-90 disabled:opacity-50"
-            >
-              {busy && <Loader2 size={ICON.xs} className="animate-spin" />}
-              {t(isUpdate ? 'config.pluginsUpdate' : 'config.pluginsInstall')}
-            </button>
-          </div>
+        )}
+        {error && <p className="text-label text-err break-words">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onClose}
+            className="rounded-control px-3 py-1.5 text-xs text-dim hover:text-fg"
+          >
+            {t('config.cancel')}
+          </button>
+          <button
+            onClick={() => void install()}
+            disabled={busy || !path.trim()}
+            className="flex items-center gap-1.5 rounded-control bg-accent px-3 py-1.5 text-xs text-white hover:opacity-90 disabled:opacity-50"
+          >
+            {busy && <Loader2 size={ICON.xs} className="animate-spin" />}
+            {t(isUpdate ? 'config.pluginsUpdate' : 'config.pluginsInstall')}
+          </button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

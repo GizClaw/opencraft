@@ -20,6 +20,8 @@ import { api } from '../lib/api';
 import { useStore } from '../lib/store';
 import type { FileNode, FileTab } from '../lib/types';
 import { Button } from './ui/Button';
+import { useOverlayLayer } from '../lib/overlay';
+import { Popover } from './ui/Popover';
 import { ICON } from './ui/icon';
 import { FilePreviewPane, isMarkdownFile } from './viewer/FilePreviewPane';
 
@@ -146,7 +148,7 @@ export function FileViewer({
         embedded ? undefined : { width: 'min(49.6vw, 896px)', minWidth: 448 }
       }
     >
-      <div className="flex h-9 shrink-0 items-end border-b border-edge bg-panel2/30 px-2 pt-1 text-xs">
+      <div className="flex h-9 shrink-0 items-end border-b border-edge bg-panel2 px-2 pt-1 text-xs">
         <div
           ref={stripRef}
           className="no-scrollbar overscroll-none flex min-w-0 flex-1 items-end gap-0 overflow-x-auto"
@@ -170,7 +172,7 @@ export function FileViewer({
             setTreeOpen(true);
           }}
           className="mb-1 ml-1 grid h-6 w-7 shrink-0 place-items-center rounded-control border border-transparent text-dim transition-colors hover:border-edge hover:bg-panel2 hover:text-fg"
-          title={t('files.newTab')}
+          data-tip={t('files.newTab')}
           aria-label={t('files.newTab')}
         >
           <Plus size={ICON.xs} />
@@ -250,12 +252,12 @@ function TabChip({
       }`}
       data-tab-active={active ? 'true' : undefined}
       onClick={onActivate}
-      title={placeholder ? t('files.newFile') : tab.rel || tab.path}
+      data-tip={placeholder ? t('files.newFile') : tab.rel || tab.path}
     >
       {placeholder ? (
         <FileGlyph size={ICON.xs} className="shrink-0 text-dim" />
       ) : isMarkdownFile(tab.name) ? (
-        <FileText size={ICON.xs} className="shrink-0 text-accent/80" />
+        <FileText size={ICON.xs} className="shrink-0 text-accent" />
       ) : (
         <FileCode size={ICON.xs} className="shrink-0 text-dim" />
       )}
@@ -306,7 +308,7 @@ function ToolbarRow({
     <div className="relative flex h-9 shrink-0 items-center gap-1 border-b border-edge px-2">
       {outsideWorkspace ? (
         <span className="min-w-0 flex-1 truncate px-1 text-xs text-dim">
-          <span className="text-accent/80">{tab.root}</span>
+          <span className="text-accent">{tab.root}</span>
           <span className="ml-1 truncate">{tab.path}</span>
         </span>
       ) : (
@@ -314,7 +316,7 @@ function ToolbarRow({
           <button
             onClick={() => onDir('.')}
             className="shrink-0 hover:text-fg"
-            title={workspacePath}
+            data-tip={workspacePath}
           >
             {workspaceLabel}
           </button>
@@ -341,7 +343,8 @@ function ToolbarRow({
       )}
       <button
         onClick={onToggleTree}
-        title={treeOpen ? t('files.hideTree') : t('files.toggleTree')}
+        data-tip={treeOpen ? t('files.hideTree') : t('files.toggleTree')}
+        aria-label={treeOpen ? t('files.hideTree') : t('files.toggleTree')}
         aria-pressed={treeOpen}
         className={`grid h-7 w-7 shrink-0 place-items-center rounded-control ${
           treeOpen
@@ -362,6 +365,7 @@ function ViewerActions({ tab }: { tab: FileTab }) {
   const { t } = useTranslation();
   const flash = useStore((s) => s.flash);
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const [copied, setCopied] = useState<'path' | 'content' | null>(null);
 
   const run = (fn: () => Promise<unknown>) => {
@@ -391,6 +395,7 @@ function ViewerActions({ tab }: { tab: FileTab }) {
   return (
     <div className="relative shrink-0">
       <button
+        ref={triggerRef}
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
@@ -403,62 +408,57 @@ function ViewerActions({ tab }: { tab: FileTab }) {
           className={`transition-transform ${open ? 'rotate-180' : ''}`}
         />
       </button>
-      {open && (
-        <>
-          <div
-            className="fixed inset-0 z-30"
-            onMouseDown={() => setOpen(false)}
-          />
-          <div
-            role="menu"
-            className="absolute right-0 top-full z-40 mt-1 min-w-52 rounded-control border border-edge bg-panel p-1 shadow-popover"
-          >
-            <button
-              role="menuitem"
-              className="flex w-full items-center gap-2 rounded-control px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
-              onClick={() => run(() => api.openPath(tab.path))}
-            >
-              <ExternalLink size={ICON.xs} className="text-dim" />
-              {t('files.openSystem')}
-            </button>
-            <button
-              role="menuitem"
-              className="flex w-full items-center gap-2 rounded-control px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
-              onClick={() => run(() => api.openArtifactWith(tab.path))}
-            >
-              <ExternalLink size={ICON.xs} className="text-dim" />
-              {t('files.openWith')}
-            </button>
-            <button
-              role="menuitem"
-              className="flex w-full items-center gap-2 rounded-control px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
-              onClick={() => run(() => api.revealArtifact(tab.path))}
-            >
-              <FolderOpen size={ICON.xs} className="text-dim" />
-              {t('files.reveal')}
-            </button>
-            <div role="separator" className="my-1 border-t border-edge" />
-            <button
-              role="menuitem"
-              className="flex w-full items-center gap-2 rounded-control px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
-              onClick={() => void copy('path')}
-            >
-              <Copy size={ICON.xs} className="text-dim" />
-              {copied === 'path' ? t('files.copied') : t('files.copyPath')}
-            </button>
-            <button
-              role="menuitem"
-              className="flex w-full items-center gap-2 rounded-control px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
-              onClick={() => void copy('content')}
-            >
-              <Copy size={ICON.xs} className="text-dim" />
-              {copied === 'content'
-                ? t('files.copied')
-                : t('files.copyContent')}
-            </button>
-          </div>
-        </>
-      )}
+      <Popover
+        open={open}
+        onClose={() => setOpen(false)}
+        anchor={triggerRef.current}
+        role="menu"
+        align="end"
+        keyboard
+        panelClassName="min-w-52 rounded-control border border-edge bg-panel p-1 shadow-popover"
+      >
+        <button
+          role="menuitem"
+          className="flex w-full items-center gap-2 rounded-control px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
+          onClick={() => run(() => api.openPath(tab.path))}
+        >
+          <ExternalLink size={ICON.xs} className="text-dim" />
+          {t('files.openSystem')}
+        </button>
+        <button
+          role="menuitem"
+          className="flex w-full items-center gap-2 rounded-control px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
+          onClick={() => run(() => api.openArtifactWith(tab.path))}
+        >
+          <ExternalLink size={ICON.xs} className="text-dim" />
+          {t('files.openWith')}
+        </button>
+        <button
+          role="menuitem"
+          className="flex w-full items-center gap-2 rounded-control px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
+          onClick={() => run(() => api.revealArtifact(tab.path))}
+        >
+          <FolderOpen size={ICON.xs} className="text-dim" />
+          {t('files.reveal')}
+        </button>
+        <div role="separator" className="my-1 border-t border-edge" />
+        <button
+          role="menuitem"
+          className="flex w-full items-center gap-2 rounded-control px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
+          onClick={() => void copy('path')}
+        >
+          <Copy size={ICON.xs} className="text-dim" />
+          {copied === 'path' ? t('files.copied') : t('files.copyPath')}
+        </button>
+        <button
+          role="menuitem"
+          className="flex w-full items-center gap-2 rounded-control px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
+          onClick={() => void copy('content')}
+        >
+          <Copy size={ICON.xs} className="text-dim" />
+          {copied === 'content' ? t('files.copied') : t('files.copyContent')}
+        </button>
+      </Popover>
     </div>
   );
 }
@@ -496,16 +496,18 @@ function FileTreePanel({
     void api.setUISettings(next).catch(() => setUISettings(uiSettings));
   };
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [onClose]);
+  // The panel is a floating surface, so Escape goes through the shared
+  // layer stack: opening a menu or a preview on top of it hands the key
+  // to that surface instead of closing the panel underneath.
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  useOverlayLayer({
+    active: true,
+    containerRef: panelRef,
+    onDismiss: onClose,
+    trap: false,
+    lock: false,
+    restoreFocus: false,
+  });
 
   // Flipping the switch changes what every directory holds; stale
   // children would keep rendering the previous answer, so collapse back
@@ -585,13 +587,10 @@ function FileTreePanel({
                   {childOpen ? (
                     <FolderOpen
                       size={ICON.sm}
-                      className="shrink-0 text-accent/70"
+                      className="shrink-0 text-accent"
                     />
                   ) : (
-                    <Folder
-                      size={ICON.sm}
-                      className="shrink-0 text-accent/70"
-                    />
+                    <Folder size={ICON.sm} className="shrink-0 text-accent" />
                   )}
                   <span className="truncate">{n.name}</span>
                 </button>
@@ -607,7 +606,7 @@ function FileTreePanel({
               onClick={() => void openFileTarget(n.path)}
               style={{ paddingLeft: 8 + (depth + 1) * 12 }}
               className="flex w-full items-center gap-1 rounded-tight px-1 py-0.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
-              title={n.path}
+              data-tip={n.path}
             >
               <FileCode size={ICON.xs} className="shrink-0" />
               <span className="truncate">{n.name}</span>
@@ -618,7 +617,10 @@ function FileTreePanel({
   };
 
   return (
-    <div className="absolute inset-y-0 right-0 z-20 flex w-80 max-w-[85%] flex-col border-l border-edge bg-panel shadow-popover">
+    <div
+      ref={panelRef}
+      className="absolute inset-y-0 right-0 z-[var(--oc-z-raised)] flex w-80 max-w-[85%] flex-col border-l border-edge bg-panel shadow-popover"
+    >
       <div className="flex h-9 shrink-0 items-center gap-1.5 border-b border-edge px-2">
         <Search size={ICON.xs} className="shrink-0 text-dim" />
         <input
@@ -631,7 +633,10 @@ function FileTreePanel({
         <button
           onClick={toggleHidden}
           aria-pressed={showHidden}
-          title={showHidden ? t('files.hideHidden') : t('files.showHidden')}
+          aria-label={
+            showHidden ? t('files.hideHidden') : t('files.showHidden')
+          }
+          data-tip={showHidden ? t('files.hideHidden') : t('files.showHidden')}
           className={`grid h-6 w-6 shrink-0 place-items-center rounded-tight hover:bg-panel2 ${
             showHidden ? 'text-accent' : 'text-dim hover:text-fg'
           }`}
@@ -663,7 +668,7 @@ function FileTreePanel({
                 className="flex w-full items-center gap-1.5 truncate rounded-tight px-2 py-1 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
               >
                 {hit.is_dir ? (
-                  <Folder size={ICON.xs} className="shrink-0 text-accent/70" />
+                  <Folder size={ICON.xs} className="shrink-0 text-accent" />
                 ) : (
                   <FileCode size={ICON.xs} className="shrink-0" />
                 )}
@@ -686,9 +691,9 @@ function FileTreePanel({
                 <ChevronRight size={ICON.xs} />
               )}
               {expanded['.'] ? (
-                <FolderOpen size={ICON.sm} className="text-accent/70" />
+                <FolderOpen size={ICON.sm} className="text-accent" />
               ) : (
-                <Folder size={ICON.sm} className="text-accent/70" />
+                <Folder size={ICON.sm} className="text-accent" />
               )}
               <span className="truncate">{t('files.workspace')}</span>
             </button>

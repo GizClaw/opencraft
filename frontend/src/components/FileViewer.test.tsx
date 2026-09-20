@@ -74,7 +74,7 @@ describe('FileViewer', () => {
     useStore.setState({ uiSettings: { ...DEFAULT_UI_SETTINGS } });
     apiMock.listDir.mockResolvedValue([]);
     render(<FileViewer sessionID="s-1" />);
-    (await screen.findByTitle('Toggle file tree')).click();
+    (await screen.findByLabelText('Toggle file tree')).click();
 
     // Off by default: a directory holding only dot-entries reads empty.
     // The panel is open: its section header and the root row both read
@@ -89,7 +89,7 @@ describe('FileViewer', () => {
       { name: '.github', path: '.github', is_dir: true },
       { name: '.env', path: '.env', is_dir: false },
     ]);
-    (await screen.findByTitle('Show hidden files')).click();
+    (await screen.findByLabelText('Show hidden files')).click();
 
     expect(await screen.findByText('.env')).toBeInTheDocument();
     expect(await screen.findByText('.github')).toBeInTheDocument();

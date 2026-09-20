@@ -17,6 +17,7 @@ import { SESSION_MODES } from '../lib/sessionModes';
 import { useStore } from '../lib/store';
 import { PluginPanels } from '../plugins/components/PluginPanels';
 import { YoloConfirmDialog } from './YoloConfirmDialog';
+import { Popover } from './ui/Popover';
 import { ICON } from './ui/icon';
 import { Segmented } from './ui/Segmented';
 
@@ -37,22 +38,13 @@ interface PetPackSelectProps {
 function PetPackSelect({ packs, value, onChange, label }: PetPackSelectProps) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(-1);
-  const rootRef = useRef<HTMLDivElement>(null);
+  const anchorRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!open) return;
     const index = packs.findIndex((pack) => pack.id === value);
     setActive(index >= 0 ? index : 0);
   }, [open, packs, value]);
-
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', onDown);
-    return () => document.removeEventListener('mousedown', onDown);
-  }, [open]);
 
   const pick = (id: string) => {
     onChange(id);
@@ -62,14 +54,15 @@ function PetPackSelect({ packs, value, onChange, label }: PetPackSelectProps) {
   const selected = packs.find((pack) => pack.id === value);
 
   return (
-    <div ref={rootRef} className="relative min-w-0">
+    <div className="relative min-w-0">
       <button
+        ref={anchorRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={label}
-        className="flex h-9 w-full items-center gap-2 rounded-control border border-edge/70 bg-panel/70 px-3 text-xs text-fg backdrop-blur-sm transition-colors hover:bg-panel focus:border-accent"
+        className="flex h-9 w-full items-center gap-2 rounded-control border border-edge bg-panel px-3 text-xs text-fg transition-colors hover:border-accent/60 focus:border-accent"
       >
         <span className="truncate">{selected?.displayName ?? label}</span>
         {selected?.pluginId && (
@@ -85,45 +78,42 @@ function PetPackSelect({ packs, value, onChange, label }: PetPackSelectProps) {
         />
       </button>
       {open && (
-        <>
-          <div
-            className="fixed inset-0 z-30"
-            onMouseDown={() => setOpen(false)}
-          />
-          <div
-            role="listbox"
-            className="absolute left-0 top-full z-40 mt-1 w-full min-w-[16rem] rounded-control border border-edge/80 bg-panel/95 p-1 shadow-popover backdrop-blur-md"
-          >
-            {packs.map((pack, i) => {
-              const selectedPack = pack.id === value;
-              return (
-                <button
-                  key={pack.id}
-                  type="button"
-                  role="option"
-                  aria-selected={selectedPack}
-                  onMouseEnter={() => setActive(i)}
-                  onClick={() => pick(pack.id)}
-                  className={`flex w-full items-center gap-2 rounded-control px-2.5 py-1.5 text-left text-xs transition-colors ${
-                    active === i
-                      ? 'bg-panel2 text-fg'
-                      : 'text-dim hover:text-fg'
-                  } ${selectedPack ? 'text-accent' : ''}`}
-                >
-                  <span className="truncate">{pack.displayName}</span>
-                  {pack.pluginId && (
-                    <span className="shrink-0 text-micro opacity-70">
-                      {pack.pluginId}
-                    </span>
-                  )}
-                  {selectedPack && (
-                    <Check size={ICON.sm} className="ml-auto shrink-0" />
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </>
+        <Popover
+          open
+          onClose={() => setOpen(false)}
+          anchor={anchorRef.current}
+          ariaLabel={label}
+          matchWidth
+          maxHeight={288}
+          panelClassName="min-w-[16rem] rounded-control border border-edge bg-panel p-1 shadow-popover"
+        >
+          {packs.map((pack, i) => {
+            const selectedPack = pack.id === value;
+            return (
+              <button
+                key={pack.id}
+                type="button"
+                role="option"
+                aria-selected={selectedPack}
+                onMouseEnter={() => setActive(i)}
+                onClick={() => pick(pack.id)}
+                className={`flex w-full items-center gap-2 rounded-control px-2.5 py-1.5 text-left text-xs transition-colors ${
+                  active === i ? 'bg-panel2 text-fg' : 'text-dim hover:text-fg'
+                } ${selectedPack ? 'text-accent' : ''}`}
+              >
+                <span className="truncate">{pack.displayName}</span>
+                {pack.pluginId && (
+                  <span className="shrink-0 text-micro opacity-70">
+                    {pack.pluginId}
+                  </span>
+                )}
+                {selectedPack && (
+                  <Check size={ICON.sm} className="ml-auto shrink-0" />
+                )}
+              </button>
+            );
+          })}
+        </Popover>
       )}
     </div>
   );
@@ -145,6 +135,7 @@ export function SettingsGeneral() {
   const [think, setThink] = useState(storeDefaults.think);
   const [confirmYolo, setConfirmYolo] = useState(false);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
+  const modeTriggerRef = useRef<HTMLButtonElement>(null);
   // null until the persisted value loads; the pet row renders once the
   // backend answered so the highlighted option never flashes.
   const [petsEnabled, setPetsEnabled] = useState<boolean | null>(null);
@@ -317,7 +308,7 @@ export function SettingsGeneral() {
       <div className="rounded-card border border-edge bg-panel2 p-4">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2 text-sm font-medium">
+            <div className="flex items-center gap-2 text-title font-semibold">
               <Sparkles size={ICON.md} className="text-accent" />
               {t('config.generalNewSessionDefaults')}
             </div>
@@ -333,7 +324,7 @@ export function SettingsGeneral() {
                 <div className="text-xs font-medium text-dim">
                   {t('config.generalDefaultMode')}
                 </div>
-                <p className="mt-0.5 text-label text-dim/80">
+                <p className="mt-0.5 text-label text-dim">
                   {t('config.generalDefaultModeHint')}
                 </p>
               </div>
@@ -348,12 +339,13 @@ export function SettingsGeneral() {
                 <div className="text-xs font-medium text-dim">
                   {t('config.generalDefaultMode')}
                 </div>
-                <p className="mt-0.5 text-label text-dim/80">
+                <p className="mt-0.5 text-label text-dim">
                   {t('config.generalDefaultModeHint')}
                 </p>
               </div>
               <div className="relative shrink-0">
                 <button
+                  ref={modeTriggerRef}
                   onClick={() => setModeMenuOpen((v) => !v)}
                   aria-label={t('config.generalDefaultMode')}
                   aria-haspopup="menu"
@@ -376,47 +368,45 @@ export function SettingsGeneral() {
                   />
                 </button>
                 {modeMenuOpen && (
-                  <>
-                    <div
-                      className="fixed inset-0 z-30"
-                      onClick={() => setModeMenuOpen(false)}
-                    />
-                    <div
-                      role="menu"
-                      className="absolute right-0 top-full z-40 mt-1.5 w-80 rounded-card border border-edge bg-panel p-1 shadow-popover"
-                    >
-                      {modes.map((m) => {
-                        const Icon = m.icon;
-                        const active = m.value === mode;
-                        return (
-                          <button
-                            key={m.value}
-                            role="menuitem"
-                            onClick={() => {
-                              setModeMenuOpen(false);
-                              chooseMode(m.value);
-                            }}
-                            className={`flex w-full items-start gap-2 rounded-control px-2 py-1.5 text-left text-xs ${
-                              active
-                                ? 'bg-accent/10 text-accent'
-                                : 'text-dim hover:bg-panel2 hover:text-fg'
-                            }`}
-                          >
-                            <Icon size={ICON.xs} className="mt-0.5 shrink-0" />
-                            <span className="min-w-0 flex-1">
-                              <span className="flex items-center gap-1.5 font-medium text-fg">
-                                {m.label}
-                                {active && <Check size={ICON.xs} />}
-                              </span>
-                              <span className="mt-0.5 block leading-snug">
-                                {m.banner}
-                              </span>
+                  <Popover
+                    open
+                    onClose={() => setModeMenuOpen(false)}
+                    anchor={modeTriggerRef.current}
+                    role="menu"
+                    align="end"
+                    panelClassName="w-80 rounded-card border border-edge bg-panel p-1 shadow-popover"
+                  >
+                    {modes.map((m) => {
+                      const Icon = m.icon;
+                      const active = m.value === mode;
+                      return (
+                        <button
+                          key={m.value}
+                          role="menuitem"
+                          onClick={() => {
+                            setModeMenuOpen(false);
+                            chooseMode(m.value);
+                          }}
+                          className={`flex w-full items-start gap-2 rounded-control px-2 py-1.5 text-left text-xs ${
+                            active
+                              ? 'bg-accent/10 text-accent'
+                              : 'text-dim hover:bg-panel2 hover:text-fg'
+                          }`}
+                        >
+                          <Icon size={ICON.xs} className="mt-0.5 shrink-0" />
+                          <span className="min-w-0 flex-1">
+                            <span className="flex items-center gap-1.5 font-medium text-fg">
+                              {m.label}
+                              {active && <Check size={ICON.xs} />}
                             </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </>
+                            <span className="mt-0.5 block leading-snug">
+                              {m.banner}
+                            </span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </Popover>
                 )}
               </div>
             </div>
@@ -427,7 +417,7 @@ export function SettingsGeneral() {
                 <div className="text-xs font-medium text-dim">
                   {t('config.generalDefaultThink')}
                 </div>
-                <p className="mt-0.5 text-label text-dim/80">
+                <p className="mt-0.5 text-label text-dim">
                   {t('config.generalDefaultThinkHint')}
                 </p>
               </div>
@@ -461,7 +451,7 @@ export function SettingsGeneral() {
         <div className="rounded-card border border-edge bg-panel2 p-4">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <div className="flex items-center gap-2 text-sm font-medium">
+              <div className="flex items-center gap-2 text-title font-semibold">
                 <Minimize2 size={ICON.md} className="text-accent" />
                 {t('config.uiCloseToTray')}
               </div>
@@ -492,7 +482,7 @@ export function SettingsGeneral() {
         <div className="rounded-card border border-edge bg-panel2 p-4">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <div className="flex items-center gap-2 text-sm font-medium">
+              <div className="flex items-center gap-2 text-title font-semibold">
                 <PawPrint size={ICON.md} className="text-accent" />
                 {t('config.petEnabled')}
                 <span className="rounded-full border border-accent/40 bg-accent/10 px-2 py-0.5 text-micro font-normal text-accent">
@@ -547,7 +537,6 @@ export function SettingsGeneral() {
       )}
       {confirmYolo && (
         <YoloConfirmDialog
-          layer="z-[70]"
           title={t('config.generalYoloConfirmTitle')}
           intro={t('config.generalYoloConfirmIntro')}
           scope={t('config.generalYoloConfirmScope')}

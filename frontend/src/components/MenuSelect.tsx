@@ -1,15 +1,15 @@
+import { useRef, useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { Popover } from './ui/Popover';
 import { ICON } from './ui/icon';
 
 // MenuSelect is the dropdown the settings page uses everywhere else: a
 // panel-styled trigger with a chevron that opens a floating menu of
 // options, instead of the platform's native select control (whose
-// arrow, height and hit area differ per browser). The menu is portaled
-// to the document body so it is not clipped by the settings modal's
-// scroll container, and it closes on outside click, Escape, scroll or
-// resize.
+// arrow, height and hit area differ per browser). The floating menu is
+// the shared <Popover>: portaled past the settings scroller, animated,
+// closed by outside click / Escape / scroll / resize, and reachable with
+// the arrow keys.
 export interface MenuOption {
   value: string;
   label: string;
@@ -23,6 +23,7 @@ export function MenuSelect({
   placeholder,
   disabled,
   mono,
+  testId,
 }: {
   /** Accessible name of the control, also used by tests. */
   label: string;
@@ -34,60 +35,17 @@ export function MenuSelect({
   disabled?: boolean;
   /** Render the value and options in the mono face (wire tokens). */
   mono?: boolean;
+  testId?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const [rect, setRect] = useState<{
-    top: number;
-    left: number;
-    width: number;
-  } | null>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
 
   const toggle = () => {
     if (disabled) return;
-    const trigger = triggerRef.current;
-    if (trigger === null) return;
-    const box = trigger.getBoundingClientRect();
-    setRect({ top: box.bottom + 4, left: box.left, width: box.width });
+    setAnchor(triggerRef.current);
     setOpen((wasOpen) => !wasOpen);
   };
-
-  useEffect(() => {
-    if (!open) return;
-    const close = () => setOpen(false);
-    const onPointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (menuRef.current?.contains(target)) return;
-      if (triggerRef.current?.contains(target)) return;
-      close();
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      // Escape belongs to the open menu first: stopping here keeps the
-      // settings dialog (a window-level listener) from closing underneath.
-      event.stopPropagation();
-      close();
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    // A scroll or resize invalidates the measured anchor. The menu's own list
-    // scrolls independently — resting a trackpad on it must not close the menu
-    // it is scrolling.
-    const onScroll = (event: Event) => {
-      const target = event.target;
-      if (target instanceof Node && menuRef.current?.contains(target)) return;
-      close();
-    };
-    window.addEventListener('scroll', onScroll, true);
-    window.addEventListener('resize', close);
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('scroll', onScroll, true);
-      window.removeEventListener('resize', close);
-    };
-  }, [open]);
 
   const current = options.find((option) => option.value === value);
   return (
@@ -98,6 +56,7 @@ export function MenuSelect({
         aria-label={label}
         aria-haspopup="listbox"
         aria-expanded={open}
+        data-testid={testId}
         disabled={disabled}
         onClick={toggle}
         className={`inline-flex h-[1.875rem] w-full items-center gap-1.5 rounded-control border bg-panel px-2 text-xs transition-colors outline-none hover:border-accent/60 focus:border-accent disabled:opacity-40 ${
@@ -107,7 +66,7 @@ export function MenuSelect({
         <span
           className={`min-w-0 flex-1 truncate text-left ${
             mono === true ? 'font-mono' : ''
-          } ${current === undefined ? 'text-dim' : 'text-fg'}`}
+          } ${current === undefined ? 'text-faint' : 'text-fg'}`}
         >
           {current?.label ?? placeholder ?? ''}
         </span>
@@ -118,53 +77,48 @@ export function MenuSelect({
           }`}
         />
       </button>
-      {open &&
-        rect !== null &&
-        createPortal(
-          <div
-            ref={menuRef}
-            role="listbox"
-            aria-label={label}
-            style={{
-              top: rect.top,
-              left: rect.left,
-              width: Math.max(rect.width, 160),
-            }}
-            className="fixed z-[100] overflow-y-auto rounded-card border border-edge bg-panel py-1 shadow-popover"
-          >
-            {options.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                role="option"
-                aria-selected={option.value === value}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => {
-                  onChange(option.value);
-                  setOpen(false);
-                }}
-                className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-panel2 ${
-                  option.value === value ? 'text-fg' : 'text-dim'
+      <Popover
+        open={open}
+        onClose={() => setOpen(false)}
+        anchor={anchor}
+        ariaLabel={label}
+        matchWidth
+        keyboard
+        maxHeight={288}
+        panelClassName="rounded-card border border-edge bg-panel py-1 shadow-popover"
+      >
+        {options.map((option) => {
+          const selected = option.value === value;
+          return (
+            <button
+              key={option.value}
+              type="button"
+              role="option"
+              aria-selected={selected}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                onChange(option.value);
+                setOpen(false);
+              }}
+              className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-panel2 ${
+                selected ? 'text-fg' : 'text-dim'
+              }`}
+            >
+              <Check
+                size={ICON.xs}
+                className={`shrink-0 ${selected ? 'text-accent' : 'invisible'}`}
+              />
+              <span
+                className={`min-w-0 flex-1 truncate ${
+                  mono === true ? 'font-mono' : ''
                 }`}
               >
-                <Check
-                  size={ICON.xs}
-                  className={`shrink-0 ${
-                    option.value === value ? 'text-accent' : 'invisible'
-                  }`}
-                />
-                <span
-                  className={`min-w-0 flex-1 truncate ${
-                    mono === true ? 'font-mono' : ''
-                  }`}
-                >
-                  {option.label}
-                </span>
-              </button>
-            ))}
-          </div>,
-          document.body,
-        )}
+                {option.label}
+              </span>
+            </button>
+          );
+        })}
+      </Popover>
     </>
   );
 }
