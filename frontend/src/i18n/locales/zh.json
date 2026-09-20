@@ -50,7 +50,9 @@
     "noAgents": "暂无子代理",
     "noAgentsHint": "助手可通过 create_agent 创建",
     "inferenceConfig": "推理配置",
-    "settings": "设置"
+    "settings": "设置",
+    "resize": "调整侧栏宽度",
+    "resizeHint": "拖动调整宽度 · 双击复位 · ←/→ 微调"
   },
   "welcome": {
     "title": "选择工作区开始",
@@ -684,6 +686,9 @@
     "running": "运行中",
     "stageReasoning": "思考中…",
     "stageTool": "正在使用 {{tool}}…",
+    "metaTurns_one": "{{count}} 回合",
+    "metaTurns_other": "{{count}} 回合",
+    "metaTokens": "{{tokens}} tokens",
     "newSession": "新会话",
     "loadEarlier": "显示更早的 {{hidden}} 条消息",
     "jumpToLatest": "回到最新",

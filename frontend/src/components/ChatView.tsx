@@ -54,6 +54,7 @@ import { Events } from '@wailsio/runtime';
 import { api } from '../lib/api';
 import { reportFrontendError } from '../lib/frontendErrors';
 import { COMPACT_SUMMARY_PREFIX } from '../lib/compact';
+import { formatCompact } from '../lib/compactNumber';
 import { SESSION_MODES, type SessionModeOption } from '../lib/sessionModes';
 import {
   friendlyFailure,
@@ -158,6 +159,24 @@ function failedSteps(tools: ToolCallItem[]): ToolView[] {
     if (item.tool.status === 'error') out.push(item.tool);
   }
   return out;
+}
+
+// liveStep finds the call the turn is on right now, so the header's run
+// read-out can borrow the tool group's clock and the two agree on how
+// long the step has taken. It walks the tail of the transcript only —
+// the call in flight always belongs to the last turn, and the walk stops
+// at the user message that opened it, so a long session costs nothing
+// per stream flush.
+function liveStep(messages: MessageView[]): ToolView | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'user') return null;
+    const tools = messages[i].items.filter(
+      (item): item is ToolCallItem => item.kind === 'tool_call',
+    );
+    const step = runningStep(tools);
+    if (step) return step;
+  }
+  return null;
 }
 
 // ToolGroupView renders a burst of consecutive tool calls as one
@@ -1426,6 +1445,48 @@ function modeMenuTint(option: SessionModeOption, active: boolean) {
     : 'text-dim hover:bg-panel2 hover:text-fg';
 }
 
+// The header's mode read-out: the sandbox policy this session runs
+// under. The composer owns the *control*; this is the read-out, so a
+// session that runs with the sandbox off still says so while the
+// composer is scrolled out of the way. A status light plus the policy's
+// own name — not the bordered glyph box this replaces: the word carries
+// the meaning, and the color only has to carry the exception. Kept
+// quiet for the default workspace policy (that is what the app does
+// unless it is told otherwise) and tinted once the policy actually
+// changes what the agent may touch.
+const MODE_DOT_TONE: Record<SessionModeOption['value'], string> = {
+  workspace: 'bg-dim',
+  'read-only': 'bg-accent',
+  yolo: 'bg-yolo',
+};
+
+const MODE_LABEL_TONE: Record<SessionModeOption['value'], string> = {
+  // The policy is a statement about the session, so it sits one rung
+  // above the counts beside it even when the policy is the default one.
+  workspace: 'text-dim',
+  'read-only': 'text-accent',
+  yolo: 'text-yolo',
+};
+
+// A stopped turn reports itself in the header the way the transcript's
+// own notice does — one state, one set of words. TurnState.failed is
+// every end that is not a clean finish, so the tone splits four ways: a
+// failure is an error, an engine interruption is a warning, and the two
+// stop kinds the user asked for (cancel, barge-in) stay quiet.
+const TURN_STOP_TONE: Record<TurnEndKind, string> = {
+  failed: 'text-err',
+  aborted: 'text-err',
+  interrupted: 'text-warn',
+  canceled: 'text-dim',
+};
+
+const TURN_STOP_LABEL: Record<TurnEndKind, string> = {
+  failed: 'chat.lastFailed',
+  aborted: 'chat.lastAborted',
+  interrupted: 'chat.lastInterrupted',
+  canceled: 'chat.lastCancelled',
+};
+
 export function ChatView() {
   const focus = useFocusState();
   const current = focus.name === 'active' ? focus.sessionID : '';
@@ -2110,6 +2171,11 @@ export function ChatView() {
       : stage.startsWith('tool:')
         ? t('chat.stageTool', { tool: stage.slice(5) })
         : t('chat.running');
+  // The header's live read-out ticks, because a number that moves is the
+  // difference between "a run is happening" and "this run is fine". It
+  // measures the call in flight off the same clock the tool group uses,
+  // and reads nothing while the turn is between calls.
+  const runElapsed = useToolElapsedLabel(busy ? liveStep(messages) : null);
 
   useEffect(() => {
     const off = Events.On('opencraft:ui', (e) => {
@@ -2297,14 +2363,36 @@ export function ChatView() {
     void forkTurn(target.runID).finally(() => setForking(false));
   };
 
-  const sessionTitle = sessions.find((s) => s.id === current)?.title;
+  const session = sessions.find((s) => s.id === current);
+  const sessionTitle = session?.title;
   const liveTitle = firstMessageTitle(messages);
   const headerTitle =
     sessionTitle && sessionTitle !== '(empty)'
       ? sessionTitle
       : liveTitle || t('chat.newSession');
+  // The header's lower tier answers "what is this session", so it carries
+  // the two facts the transcript cannot show at a glance: how many turns
+  // it holds and how much they cost. Zero is not a fact (a session that
+  // just opened has neither) and a conversation with no meta row yet
+  // renders no facts at all.
+  const metaFacts: string[] = [];
+  if (session && session.turns > 0) {
+    metaFacts.push(t('chat.metaTurns', { count: session.turns }));
+  }
+  if (session && session.total_tokens > 0) {
+    metaFacts.push(
+      t('chat.metaTokens', {
+        tokens: formatCompact(session.total_tokens, { trim: true }),
+      }),
+    );
+  }
   const yolo = mode === 'yolo';
   const readOnly = mode === 'read-only';
+  // The header's mode mark reads the same table the composer's switcher
+  // does, so a new policy can never be listed in one place and drawn
+  // from a stale icon in the other.
+  const modeOption =
+    SESSION_MODES.find((option) => option.value === mode) ?? SESSION_MODES[1];
   const centerComposer = messages.length === 0 && configured;
   const showJumpLatest = !stick && messages.length > 0;
 
@@ -2408,29 +2496,144 @@ export function ChatView() {
   return (
     <main className="relative flex-1 min-w-0 flex flex-col min-h-0">
       <header
-        className="h-11 shrink-0 border-b border-edge bg-panel flex items-center px-4 gap-2"
+        className="oc-chat-header animate-rise-in relative flex h-11 shrink-0 select-none items-center gap-3 border-b border-edge px-4"
         style={{ ['--wails-draggable' as string]: 'drag' }}
       >
-        <span className="text-sm font-medium truncate">{headerTitle}</span>
+        {/* Two tiers inside the 44px strip the sidebar's own top row is
+            cut to, so the seam between the two columns stays one line.
+            The name is the headline; under it the session's policy and
+            weight on the left, the live run on the right. One tier with
+            a badge, a title and a pill is what made the bar read as a
+            toolbar that had lost its second half. */}
+        <div className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
+          {/* Keyed on the title so an auto-title landing on a live
+              session replaces the first-message placeholder in place
+              instead of editing the line under the reader's eye. */}
+          <span
+            key={headerTitle}
+            data-testid="chat-title"
+            className="animate-swap-in truncate text-sm font-semibold leading-tight tracking-tight text-fg"
+          >
+            {headerTitle}
+          </span>
+          <div
+            data-testid="chat-meta"
+            // Clipped rather than wrapped: in a column dragged this
+            // narrow, a state line that folds onto a third row would push
+            // the toggle out of reach.
+            className="flex min-w-0 items-center gap-2 overflow-hidden text-micro leading-tight"
+          >
+            {/* The left half of the state tier is labels and reads as one
+                voice: small caps, wide tracking, quiet. The right half is
+                the live state and keeps its sentence case and its color,
+                which is what tells the two halves apart at a glance. */}
+            <span className="flex min-w-0 items-center gap-2 uppercase tracking-wider">
+              <span
+                aria-hidden="true"
+                data-testid="chat-mode-mark"
+                data-mode={mode}
+                className={`h-1.5 w-1.5 shrink-0 rounded-full ${MODE_DOT_TONE[modeOption.value]}`}
+              />
+              <span
+                data-testid="chat-mode-label"
+                data-tip={t(modeOption.labelKey)}
+                className={`shrink-0 ${MODE_LABEL_TONE[modeOption.value]}`}
+              >
+                {t(modeOption.labelKey)}
+              </span>
+              {/* The counts are the first thing to go when the column gets
+                  narrow: the policy read-out and the run state both say
+                  something the counts only summarize. */}
+              {metaFacts.length > 0 && (
+                <span className="hidden min-w-0 items-center gap-2 min-[720px]:flex">
+                  {metaFacts.map((fact) => (
+                    <Fragment key={fact}>
+                      <span
+                        aria-hidden="true"
+                        className="h-2.5 w-px shrink-0 bg-edge"
+                      />
+                      <span className="shrink-0 tabular-nums text-faint">
+                        {fact}
+                      </span>
+                    </Fragment>
+                  ))}
+                </span>
+              )}
+            </span>
+            <span className="min-w-0 flex-1" />
+            {busy && (
+              <span
+                data-testid="chat-run-state"
+                className="animate-swap-in flex min-w-0 items-center gap-1.5 text-accent"
+              >
+                <Loader2 size={ICON.xs} className="shrink-0 animate-spin" />
+                <span
+                  key={stageLabel}
+                  className="animate-swap-in max-w-64 truncate"
+                >
+                  {stageLabel}
+                </span>
+                {runElapsed && (
+                  <span
+                    data-testid="chat-run-elapsed"
+                    className="shrink-0 tabular-nums text-faint"
+                  >
+                    {runElapsed}
+                  </span>
+                )}
+              </span>
+            )}
+            {failedTurn && (
+              <span
+                data-testid="chat-turn-stop"
+                data-status={failedTurn.status}
+                // The transcript's notice carries the full reason and the
+                // correlation ids; the header only has to say that the
+                // last turn did not finish.
+                data-tip={failedTurn.error}
+                className={`animate-swap-in flex shrink-0 items-center gap-1.5 ${TURN_STOP_TONE[failedTurn.status]}`}
+              >
+                {failedTurn.status === 'canceled' ? (
+                  <Ban size={ICON.xs} />
+                ) : (
+                  <AlertTriangle size={ICON.xs} />
+                )}
+                {t(TURN_STOP_LABEL[failedTurn.status])}
+              </span>
+            )}
+          </div>
+        </div>
+        <IconButton
+          label={t('files.togglePanel')}
+          onClick={() => (filesOpen ? closeFiles() : openFiles())}
+          aria-pressed={filesOpen}
+          className={filesOpen ? 'bg-panel3 text-fg' : ''}
+        >
+          {/* The viewer opens beside the transcript without a transition
+              of its own, so the toggle is where the switch is felt. */}
+          <span
+            key={filesOpen ? 'open' : 'closed'}
+            className="animate-swap-in grid place-items-center"
+          >
+            {filesOpen ? (
+              <PanelRightClose size={ICON.sm} />
+            ) : (
+              <PanelRightOpen size={ICON.sm} />
+            )}
+          </span>
+        </IconButton>
+        {/* The run sweep rides the header's own hairline: a turn that is
+            live is visible from the bottom edge of the transcript even
+            when the stage read-out is truncated away. */}
         {busy && (
-          <span className="flex items-center gap-1 text-xs text-accent">
-            <Loader2 size={ICON.xs} className="animate-spin" /> {stageLabel}
+          <span
+            aria-hidden="true"
+            data-testid="chat-run-sweep"
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-px overflow-hidden"
+          >
+            <span className="oc-run-sweep animate-run-sweep block h-full w-1/3" />
           </span>
         )}
-        <span className="flex-1" />
-        <button
-          onClick={() => (filesOpen ? closeFiles() : openFiles())}
-          data-tip={t('files.togglePanel')}
-          aria-label={t('files.togglePanel')}
-          aria-pressed={filesOpen}
-          className="grid h-7 w-7 place-items-center rounded-control text-dim hover:bg-panel2 hover:text-fg"
-        >
-          {filesOpen ? (
-            <PanelRightClose size={ICON.sm} />
-          ) : (
-            <PanelRightOpen size={ICON.sm} />
-          )}
-        </button>
       </header>
 
       <div className="flex min-h-0 min-w-0 flex-1" data-file-drop-target>

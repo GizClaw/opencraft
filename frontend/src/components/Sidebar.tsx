@@ -992,8 +992,12 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
     );
   };
 
+  // No right border: the seam that separates this column from the work
+  // column is the drag handle's own hairline (see .oc-sidebar-handle), so
+  // the two panels meet on one line instead of leaving a strip of canvas
+  // between them.
   return (
-    <aside className="h-full border-r border-edge bg-panel flex flex-col min-h-0">
+    <aside className="h-full bg-panel flex flex-col min-h-0">
       {/* macOS: the native traffic lights float here, so the strip
           leaves them room and doubles as the window drag area; its
           height matches the chat header (h-11) so both rows align.
