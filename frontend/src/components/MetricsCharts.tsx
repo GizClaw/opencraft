@@ -13,6 +13,7 @@ import {
 import * as Diagnostics from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/diagnostics';
 import { RefreshControl } from './RefreshControl';
 import { CHART_AXIS, CHART_GRID, SERIES } from '../lib/chartPalette';
+import { formatCompact } from '../lib/compactNumber';
 
 interface MetricPoint {
   ts: number;
@@ -69,9 +70,7 @@ const SECTIONS: {
 const COLORS = SERIES;
 
 function compactNumber(value: number): string {
-  if (Math.abs(value) >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
-  if (Math.abs(value) >= 1_000) return `${(value / 1_000).toFixed(1)}k`;
-  return String(Math.round(value * 100) / 100);
+  return formatCompact(value);
 }
 
 function fmtBytes(value: number): string {
