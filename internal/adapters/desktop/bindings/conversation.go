@@ -356,6 +356,19 @@ func (b *Conversation) CancelTurn(runID string) error {
 	return h.CancelRun(runID)
 }
 
+// Steer hands one mid-turn message to the run a run id identifies: the
+// engine delivers it at its next round boundary instead of waiting for
+// the turn to end. A rejected message leaves the turn running, so the
+// caller keeps its text and decides whether to interrupt, queue it for
+// the next turn, or surface the rejection.
+func (b *Conversation) Steer(runID, text string) error {
+	h := b.core.Runtime.Current()
+	if h == nil {
+		return fmt.Errorf("conversation: runtime is not ready")
+	}
+	return h.SteerRun(runID, text)
+}
+
 // ReplyPrompt answers one pending interaction.
 func (b *Conversation) ReplyPrompt(
 	promptID, text, option string,
