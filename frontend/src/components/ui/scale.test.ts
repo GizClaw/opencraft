@@ -31,6 +31,28 @@ const FOREIGN_SHADOW = /\bshadow-(?:2xs|xs|sm|md|lg|xl|2xl)\b/g;
 // accent fill, modal scrims).
 const FOREIGN_PALETTE =
   /\b(?:bg|text|border|ring|from|to|via|fill|stroke|divide|outline|decoration|placeholder|caret|accent)-(?:red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose|slate|gray|grey|zinc|neutral|stone)-\d{2,3}\b/g;
+// Layer ladder: a floating surface names the rung it belongs to
+// (`z-[var(--oc-z-popover)]`), never a literal — a number is how a menu
+// ends up underneath the dialog it was opened from.
+const RAW_Z = /\bz-\[?\d/g;
+// Text ladder: quieter text picks the `dim` / `faint` rung instead of an
+// alpha on a louder one. Deliberately a list of rungs, so Tailwind's
+// `text-sm/6` size/leading pairs are not mistaken for alphas.
+const ALPHA_TEXT =
+  /\btext-(?:fg|dim|faint|accent|ok|warn|err|yolo|subagent)\/\d+/g;
+// Filled absolutes: scrims are tokens (both rungs flip with the theme),
+// so nothing may paint a surface `bg-black` / `bg-white`. As *text* on
+// an accent fill they are still the one thing the palette cannot name.
+const FILLED_ABSOLUTE = /\bbg-(?:black|white)\b/g;
+// Color literals in components: the palette lives in style.css, and a
+// hex tuned for one theme is invisible on the other.
+const RAW_COLOR = /#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(/g;
+// Translucent surface fills. The surface ladder says panels and cards
+// pick a rung, because an alpha reads differently on every parent; the
+// one exception is a *floating* surface, which frosts on purpose so the
+// content it covers stays legible. That is the whole rule: an alpha fill
+// must come with the blur that makes it intentional.
+const TRANSLUCENT_FILL = /\bbg-(?:panel|panel2|panel3|bg)\/\d+/g;
 
 function sourceFiles(): string[] {
   const files: string[] = [];
@@ -66,6 +88,56 @@ function offenders(pattern: RegExp): string[] {
   return found;
 }
 
+/** brokenLines lists file:line of every match whose line fails `ok`. */
+function brokenLines(pattern: RegExp, ok: (line: string) => boolean): string[] {
+  const found: string[] = [];
+  for (const file of sourceFiles()) {
+    const lines = readFileSync(file, 'utf8').split('\n');
+    lines.forEach((line, i) => {
+      pattern.lastIndex = 0;
+      if (pattern.test(line) && !ok(line)) {
+        const rel = file.slice(SRC_DIR.length + 1);
+        found.push(`${rel}:${i + 1}`);
+      }
+    });
+  }
+  return found;
+}
+
+/**
+ * domTitleAttributes lists file:line of `title=` attributes set on a
+ * DOM element. `title` on a component is a prop (a dialog heading, an
+ * empty state); on a DOM element the browser draws its own tooltip,
+ * which ignores the theme, waits a second, and cannot be styled — the
+ * app hints through `data-tip` and src/components/ui/Tooltip.tsx.
+ */
+function domTitleAttributes(): string[] {
+  const found: string[] = [];
+  for (const file of sourceFiles()) {
+    const text = readFileSync(file, 'utf8');
+    const pattern = /(?<![\w.$])title=/g;
+    for (const match of text.matchAll(pattern)) {
+      const at = match.index;
+      let tag = at;
+      while (
+        tag >= 0 &&
+        !(text[tag] === '<' && /[A-Za-z]/.test(text[tag + 1] ?? ''))
+      ) {
+        tag -= 1;
+      }
+      const name =
+        tag < 0
+          ? ''
+          : (text.slice(tag + 1).match(/^[A-Za-z][\w.]*/)?.[0] ?? '');
+      if (/^[a-z]/.test(name)) {
+        const line = text.slice(0, at).split('\n').length;
+        found.push(`${file.slice(SRC_DIR.length + 1)}:${line} <${name}>`);
+      }
+    }
+  }
+  return found;
+}
+
 describe('design scale', () => {
   it('sizes text and icons from the ladders, not raw rem literals', () => {
     expect({
@@ -83,6 +155,41 @@ describe('design scale', () => {
 
   it('colors only from the semantic palette', () => {
     expect(offenders(FOREIGN_PALETTE)).toEqual([]);
+  });
+
+  it('lifts surfaces through the layer ladder, not a literal z-index', () => {
+    expect(offenders(RAW_Z)).toEqual([]);
+    const css = readFileSync(join(SRC_DIR, 'style.css'), 'utf8');
+    for (const rung of [
+      'raised',
+      'popover',
+      'dialog',
+      'overlay',
+      'menu',
+      'toast',
+      'tooltip',
+    ]) {
+      expect(css).toContain(`--oc-z-${rung}:`);
+    }
+  });
+
+  it('quiets text with a rung instead of an alpha', () => {
+    expect(offenders(ALPHA_TEXT)).toEqual([]);
+  });
+
+  it('fills a surface with a rung; only a frosted float carries an alpha', () => {
+    expect(
+      brokenLines(TRANSLUCENT_FILL, (line) => line.includes('backdrop-blur')),
+    ).toEqual([]);
+    expect(offenders(FILLED_ABSOLUTE)).toEqual([]);
+  });
+
+  it('takes colors from the palette, not from literals', () => {
+    expect(offenders(RAW_COLOR)).toEqual([]);
+  });
+
+  it('hints through data-tip, not the native title attribute', () => {
+    expect(domTitleAttributes()).toEqual([]);
   });
 
   it('defines the ladder the comments promise', () => {

@@ -201,6 +201,15 @@ test('settings light', async ({ page }) => {
 test('usage with data', async ({ page }) => {
   await page.addInitScript(mockBackend as never, {
     workspace: WS,
+    // Without these three the tab renders its empty state and the shot
+    // proves nothing about the hero card or the trend chart.
+    handlers: {
+      'Config.ModelUsage': `async () => (${JSON.stringify(USAGE_SUMMARY)})`,
+      'Config.ModelUsageSessionCount': 'async () => 25',
+      'Config.ModelUsageSeries': `async () => (${JSON.stringify(
+        USAGE_AGGREGATE,
+      )})`,
+    },
     listSessions: [
       {
         id: 's-1',
