@@ -10,6 +10,15 @@ import { ICON } from './ui/icon';
 // being rendered) the handler resolves it against.
 export type MarkdownLinkHandler = (href: string, basePath?: string) => void;
 
+// withoutNode strips the hast `node` react-markdown hands every component
+// alongside the DOM props. Spreading it onto a real element writes the node
+// itself into the markup (React 19 renders `node="[object Object]"`).
+function withoutNode<T extends { node?: unknown }>(props: T): Omit<T, 'node'> {
+  const { node, ...rest } = props;
+  void node;
+  return rest;
+}
+
 // Markdown renders assistant content with GFM. Code blocks get a copy
 // button, syntax highlighting via rehype-highlight, and tables are
 // wrapped so they scroll instead of overflowing the chat column.
@@ -47,7 +56,7 @@ export const Markdown = memo(function Markdown({
         pre: CodeBlock,
         table: (props) => (
           <div className="overflow-x-auto">
-            <table {...props} />
+            <table {...withoutNode(props)} />
           </div>
         ),
       }}
@@ -57,12 +66,11 @@ export const Markdown = memo(function Markdown({
   );
 });
 
-function CodeBlock({
-  children,
-  ...props
-}: React.HTMLAttributes<HTMLPreElement>) {
+function CodeBlock(
+  props: React.HTMLAttributes<HTMLPreElement> & { node?: unknown },
+) {
   const [copied, setCopied] = useState(false);
-  const text = extractText(children);
+  const text = extractText(props.children);
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(text);
@@ -74,7 +82,7 @@ function CodeBlock({
   };
   return (
     <div className="codeblock">
-      <pre {...props}>{children}</pre>
+      <pre {...withoutNode(props)} />
       {text && (
         <button
           onClick={() => void copy()}

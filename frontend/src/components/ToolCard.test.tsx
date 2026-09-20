@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ToolView } from '../lib/store';
@@ -122,6 +122,141 @@ describe('ToolCard', () => {
     expect(screen.getByText('git status --short')).toBeInTheDocument();
   });
 
+  it('renders an exec_session read with the output it pulled', async () => {
+    const user = userEvent.setup();
+    render(
+      <ToolCard
+        tool={tool({
+          name: 'exec_session',
+          args: '{"action":"read","process_id":"dev","after_seq":0}',
+          result: JSON.stringify({
+            process_id: 'dev',
+            chunks: [
+              { seq: 0, stream: 'stdout', data: 'VITE ready in 240 ms\n' },
+              { seq: 24, stream: 'stderr', data: 'warning: no lockfile\n' },
+            ],
+            next_seq: 48,
+            eof: true,
+          }),
+        })}
+      />,
+    );
+    // The collapsed header names the session and the action, peeks at
+    // the newest output and carries the cursor of the read.
+    // The accessible name concatenates the spans ("sessiondev· read…"),
+    // so match on the pieces rather than on the visual spacing.
+    const header = screen.getByRole('button', { name: /session.*dev.*read/ });
+    expect(header).toHaveTextContent('VITE ready in 240 ms');
+    expect(header).toHaveTextContent('#48');
+    expect(header).toHaveTextContent('eof');
+    await user.click(header);
+    // Both streams of the read are rendered rather than swallowed.
+    expect(screen.getByText('warning: no lockfile')).toBeInTheDocument();
+    expect(screen.getAllByText('VITE ready in 240 ms').length).toBeGreaterThan(
+      0,
+    );
+  });
+
+  it('marks an exec_session read that pulled nothing new', async () => {
+    const user = userEvent.setup();
+    render(
+      <ToolCard
+        tool={tool({
+          name: 'exec_session',
+          args: '{"action":"read","process_id":"dev","after_seq":48}',
+          result: '{"process_id":"dev","chunks":[],"next_seq":48,"eof":false}',
+        })}
+      />,
+    );
+    await user.click(
+      screen.getByRole('button', { name: /session.*dev.*read/ }),
+    );
+    expect(screen.getByText('No new output')).toBeInTheDocument();
+  });
+
+  it('renders an exec_session start with its spec', async () => {
+    const user = userEvent.setup();
+    render(
+      <ToolCard
+        tool={tool({
+          name: 'exec_session',
+          args: JSON.stringify({
+            action: 'start',
+            process_id: 'dev',
+            argv: ['npm', 'run', 'dev'],
+            tty: true,
+            rows: 40,
+            cols: 120,
+            workdir: '/srv/app',
+          }),
+          result: '{"process_id":"dev","started":true}',
+        })}
+      />,
+    );
+    // The start card shows the argv command line, not the tool name.
+    await user.click(screen.getByRole('button', { name: /npm run dev/ }));
+    expect(screen.getByText('/srv/app')).toBeInTheDocument();
+    expect(screen.getByText('40×120')).toBeInTheDocument();
+  });
+
+  it('renders an exec_session wait with its exit code and reason', async () => {
+    const user = userEvent.setup();
+    render(
+      <ToolCard
+        tool={tool({
+          name: 'exec_session',
+          args: '{"action":"wait","process_id":"dev"}',
+          result: '{"process_id":"dev","exit_code":1,"reason":"signaled"}',
+        })}
+      />,
+    );
+    const header = screen.getByRole('button', { name: /session.*dev.*wait/ });
+    expect(header).toHaveTextContent('exit 1');
+    expect(header).toHaveTextContent('signaled');
+    await user.click(header);
+    expect(screen.getByText('Reason:')).toBeInTheDocument();
+    // The envelope JSON never leaks into the card.
+    expect(screen.queryByText(/"exit_code"/)).not.toBeInTheDocument();
+  });
+
+  it('renders exec_session control actions as their ack', async () => {
+    const user = userEvent.setup();
+    render(
+      <ToolCard
+        tool={tool({
+          name: 'exec_session',
+          args: '{"action":"terminate","process_id":"dev"}',
+          result: '{"terminated":true}',
+        })}
+      />,
+    );
+    await user.click(
+      screen.getByRole('button', { name: /session.*dev.*terminate/ }),
+    );
+    expect(screen.getByText('Terminated')).toBeInTheDocument();
+    expect(
+      screen.queryByText('Completed with no output'),
+    ).not.toBeInTheDocument();
+  });
+
+  it('keeps the error text when a session action fails', async () => {
+    const user = userEvent.setup();
+    render(
+      <ToolCard
+        tool={tool({
+          name: 'exec_session',
+          args: '{"action":"read","process_id":"gone"}',
+          result: 'exec_session: unknown process "gone"',
+          status: 'error',
+        })}
+      />,
+    );
+    await user.click(
+      screen.getByRole('button', { name: /session.*gone.*read/ }),
+    );
+    expect(screen.getByText(/unknown process/)).toBeInTheDocument();
+  });
+
   it('renders read_file content', async () => {
     const user = userEvent.setup();
     render(
@@ -136,6 +271,126 @@ describe('ToolCard', () => {
     );
     await user.click(screen.getByRole('button', { name: /a\.go/i }));
     expect(screen.getByText('package main')).toBeInTheDocument();
+  });
+
+  it('names the window a read_file result came from', async () => {
+    const user = userEvent.setup();
+    render(
+      <ToolCard
+        tool={tool({
+          name: 'read_file',
+          args: '{"file_path":"src/a.go","offset":40,"limit":2}',
+          result: JSON.stringify({
+            file_path: 'src/a.go',
+            content: 'line 40\nline 41\n',
+            offset: 40,
+            limit: 2,
+            total_lines: 200,
+            is_truncated: true,
+          }),
+        })}
+      />,
+    );
+    // "2 lines" alone would read as the whole file; the badge names the
+    // range this call returned and flags what is still unread.
+    const badge = screen.getByText('Lines 40–41 of 200');
+    expect(badge).toHaveAttribute('data-tip', '159 more lines');
+    await user.click(screen.getByRole('button', { name: /a\.go/i }));
+    expect(screen.getByText(/line 40/)).toBeInTheDocument();
+  });
+
+  it('shows the frame the model saw when view_image expands', async () => {
+    const user = userEvent.setup();
+    const dataUrl = 'data:image/jpeg;base64,ZmFrZQ==';
+    render(
+      <ToolCard
+        tool={tool({
+          name: 'view_image',
+          args: '{"path":"shots/hero.png"}',
+          result: 'view_image: shots/hero.png (1440x900, 123456 bytes)',
+          images: [{ data_url: dataUrl, media_type: 'image/jpeg' }],
+        })}
+      />,
+    );
+    const header = screen.getByRole('button', { name: /shots\/hero\.png/ });
+    expect(header).toHaveTextContent('1440×900');
+    // Collapsed until asked: the picture is the payload, not the header.
+    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+    await user.click(header);
+    // The inline part renders as-is — no round trip to disk, and the
+    // caption names the frame as the (downscaled) one handed to the
+    // model rather than the original on disk.
+    expect(screen.getByRole('img')).toHaveAttribute('src', dataUrl);
+    expect(screen.getByText('Model saw 1440×900 · 123.5k')).toBeInTheDocument();
+    expect(apiMock.readPreview).not.toHaveBeenCalled();
+  });
+
+  it('renders the file from disk when the result carries no image part', async () => {
+    const user = userEvent.setup();
+    const dataUrl = 'data:image/png;base64,ZGlzaw==';
+    apiMock.readPreview.mockResolvedValue({
+      path: 'shots/hero.png',
+      rel: 'shots/hero.png',
+      root: 'workspace',
+      name: 'hero.png',
+      size: 2048,
+      media_type: 'image/png',
+      kind: 'image',
+      data_url: dataUrl,
+    });
+    render(
+      <ToolCard
+        tool={tool({
+          name: 'view_image',
+          args: '{"path":"shots/hero.png"}',
+          result: 'view_image: shots/hero.png (1440x900, 123456 bytes)',
+        })}
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: /shots\/hero\.png/ }));
+    // An archive that dropped the bytes, or a call that only described
+    // the file: the picture still exists on disk, so show that one — and
+    // say it is the file rather than crediting the model with it.
+    expect(await screen.findByRole('img')).toHaveAttribute('src', dataUrl);
+    // The model's frame is no longer what is on screen, so its
+    // dimensions go with it.
+    expect(screen.queryByText('1440×900')).not.toBeInTheDocument();
+    expect(
+      screen.getByText('Rendered from hero.png · 2.0k'),
+    ).toBeInTheDocument();
+  });
+
+  it('ticks a running call and invents no duration for a replayed one', async () => {
+    vi.useFakeTimers();
+    const args = '{"command":"go build ./..."}';
+    const { rerender } = render(
+      <ToolCard
+        tool={tool({
+          name: 'exec_command',
+          args,
+          status: 'running',
+          seenAt: Date.now(),
+        })}
+      />,
+    );
+    expect(screen.queryByText('<1s')).not.toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(screen.getAllByText('1s').length).toBeGreaterThan(0);
+    // A result this client never saw start (a replayed session) carries
+    // no local timing, so the card shows none instead of a guess.
+    rerender(
+      <ToolCard
+        tool={tool({
+          name: 'exec_command',
+          args,
+          result: '{"exit_code":0,"stdout":"","stderr":""}',
+        })}
+      />,
+    );
+    expect(screen.queryByText('1s')).not.toBeInTheDocument();
+    vi.useRealTimers();
   });
 
   it('renders list_dir as a tree', async () => {

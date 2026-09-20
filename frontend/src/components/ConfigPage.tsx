@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
+import { formatCompact } from '../lib/compactNumber';
 import { cacheHitPercent, formatHitPercent } from '../lib/usageRate';
 import { alignUsageWindow } from '../lib/usageWindow';
 import { LogViewer } from './LogViewer';
@@ -982,11 +983,7 @@ export function ConfigPage() {
     }
   };
 
-  const fmtUsageTokens = (n: number) => {
-    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-    return String(n);
-  };
+  const fmtUsageTokens = (n: number) => formatCompact(n);
 
   // A dash when the row cannot state a ratio at all: nothing measured
   // yet, or cache reads that overrun the prompt total (rows written

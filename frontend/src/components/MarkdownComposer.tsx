@@ -19,9 +19,16 @@ import {
   type JSONContent,
 } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state';
-import { Decoration, DecorationSet } from '@tiptap/pm/view';
-import type { Node as PMNode } from '@tiptap/pm/model';
+import { lift, setBlockType } from '@tiptap/pm/commands';
+import { liftListItem } from '@tiptap/pm/schema-list';
+import {
+  Plugin,
+  PluginKey,
+  TextSelection,
+  type EditorState,
+} from '@tiptap/pm/state';
+import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view';
+import type { Node as PMNode, ResolvedPos } from '@tiptap/pm/model';
 import type { SuggestionProps } from '@tiptap/suggestion';
 import { File, Folder, Loader2, Sparkles } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -404,6 +411,125 @@ const MentionHighlight = Extension.create({
   },
 });
 
+// Markdown prefixes typed at the start of a line ("- ", "1. ", "> ",
+// "# ") wrap that line in a list item, quote or heading. Enter is the
+// send key here, and a soft break stays inside the wrapper, so without
+// an escape hatch a list would keep the caret indented forever. The
+// helpers below implement one: Shift+Enter on an empty line steps out
+// to a plain paragraph (the line above keeps its bullet, quote marker
+// or heading), and Backspace at the very start of a wrapped line drops
+// the formatting and keeps the text.
+
+// markdownWrapper names the markdown wrapper the caret sits in.
+function markdownWrapper(
+  $from: ResolvedPos,
+): 'listItem' | 'blockquote' | 'heading' | null {
+  for (let depth = $from.depth; depth > 0; depth--) {
+    const name = $from.node(depth).type.name;
+    if (name === 'listItem' || name === 'blockquote' || name === 'heading') {
+      return name;
+    }
+  }
+  return null;
+}
+
+// caretLineEmpty reports whether the caret sits on an empty line of its
+// text block: nothing but whitespace since the last soft break.
+function caretLineEmpty(state: EditorState): boolean {
+  const { $from } = state.selection;
+  if (!$from.parent.isTextblock) return false;
+  const limit = $from.parentOffset;
+  let offset = 0;
+  let empty = true;
+  for (let i = 0; i < $from.parent.childCount && offset < limit; i++) {
+    const child = $from.parent.child(i);
+    if (child.type.name === 'hardBreak') {
+      empty = true;
+    } else if (child.isText) {
+      if (child.text?.slice(0, limit - offset).trim()) empty = false;
+    } else {
+      // An atom (mention, image) is content, not an empty line.
+      empty = false;
+    }
+    offset += child.nodeSize;
+  }
+  return empty;
+}
+
+// wrapperDepth is the depth of the outermost wrapper around the caret.
+// A list is left through its list node: stepping out of the item alone
+// would only move the caret to the next bullet.
+function wrapperDepth($from: ResolvedPos): number {
+  for (let depth = 1; depth <= $from.depth; depth++) {
+    const name = $from.node(depth).type.name;
+    if (name === 'listItem') return depth - 1;
+    if (name === 'blockquote' || name === 'heading') return depth;
+  }
+  return 0;
+}
+
+// stripWrapper takes the formatting off without moving the text.
+function stripWrapper(view: EditorView): boolean {
+  const { state } = view;
+  const wrapper = markdownWrapper(state.selection.$from);
+  if (wrapper === 'listItem') {
+    return liftListItem(state.schema.nodes.listItem)(state, view.dispatch);
+  }
+  if (wrapper === 'blockquote') return lift(state, view.dispatch);
+  if (wrapper === 'heading') {
+    return setBlockType(state.schema.nodes.paragraph)(state, view.dispatch);
+  }
+  return false;
+}
+
+// stepOutOfWrapper moves the caret to the plain paragraph after the
+// wrapper it sits in. The paragraph behind the block is reused when
+// there is one (a list input rule already leaves an empty one below the
+// list) and created otherwise.
+function stepOutOfWrapper(view: EditorView): boolean {
+  const { state } = view;
+  const { $from } = state.selection;
+  const depth = wrapperDepth($from);
+  if (depth === 0) return false;
+  const after = $from.after(depth);
+  const next = state.doc.resolve(after).nodeAfter;
+  const tr = state.tr;
+  if (next?.type.name !== 'paragraph') {
+    const paragraph = state.schema.nodes.paragraph.createAndFill();
+    if (!paragraph) return false;
+    tr.insert(after, paragraph);
+  }
+  view.dispatch(
+    tr.setSelection(TextSelection.create(tr.doc, after + 1)).scrollIntoView(),
+  );
+  return true;
+}
+
+// leaveMarkdownBlock handles Shift+Enter on an empty line: the caret
+// steps out to a plain paragraph instead of adding another soft break
+// that stays wrapped. Anywhere else the break is a normal soft break.
+function leaveMarkdownBlock(view: EditorView): boolean {
+  const { state } = view;
+  const { $from } = state.selection;
+  if (!caretLineEmpty(state) || !markdownWrapper($from)) return false;
+  // With no text above it the empty line is the wrapper itself (a "- "
+  // or "> " prefix typed by accident): drop it in place rather than
+  // stepping past the empty block it would leave behind.
+  if ($from.parent.content.size === 0) return stripWrapper(view);
+  return stepOutOfWrapper(view);
+}
+
+// unwindMarkdownBlock handles Backspace at the very start of a wrapped
+// line: the wrapper goes away and the text stays, so a prefix typed by
+// accident is one keystroke from plain text.
+function unwindMarkdownBlock(view: EditorView): boolean {
+  const { state } = view;
+  const { selection } = state;
+  if (!selection.empty || selection.$from.parentOffset !== 0) return false;
+  if (!markdownWrapper(selection.$from)) return false;
+  return stripWrapper(view);
+}
+
 export interface MarkdownComposerHandle {
   getMarkdown(): string;
   setMarkdown(markdown: string): void;
@@ -566,6 +692,32 @@ export const MarkdownComposer = forwardRef<
           );
           _view.dispatch(tr);
           return true;
+        }
+        if (
+          event.key === 'Enter' &&
+          event.shiftKey &&
+          !event.isComposing &&
+          event.keyCode !== 229
+        ) {
+          if (leaveMarkdownBlock(_view)) {
+            event.preventDefault();
+            return true;
+          }
+          return false;
+        }
+        if (
+          event.key === 'Backspace' &&
+          !event.isComposing &&
+          event.keyCode !== 229 &&
+          !event.metaKey &&
+          !event.ctrlKey &&
+          !event.altKey
+        ) {
+          if (unwindMarkdownBlock(_view)) {
+            event.preventDefault();
+            return true;
+          }
+          return false;
         }
         if (
           event.key === 'Enter' &&

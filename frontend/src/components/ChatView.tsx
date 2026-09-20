@@ -67,6 +67,7 @@ import type { AttachmentDTO, AttachmentView } from '../lib/types';
 import type {
   AssistantItem,
   MessageView,
+  ToolView,
   TurnArtifacts,
   TurnDoc,
   TurnStatus,
@@ -86,10 +87,11 @@ import {
 } from './MarkdownComposer';
 import { Markdown } from './Markdown';
 import { PlanPanel } from './PlanPanel';
-import { ToolCard } from './ToolCard';
+import { ToolCard, toolActivityDetail } from './ToolCard';
 import { StreamItemView } from './StreamItemView';
 import { latestPlan, planNeedsRefresh } from '../lib/plan';
 import { groupToolCalls, type ToolCallItem } from '../lib/stream';
+import { useToolElapsedLabel, workedForLabel } from '../lib/toolTiming';
 import { ICON } from './ui/icon';
 import { Overlay } from './ui/Overlay';
 import { Popover } from './ui/Popover';
@@ -127,17 +129,66 @@ function assistantPreviewText(items: AssistantItem[], limit: number): string {
   return out.trim();
 }
 
+// runningStep picks the call a group is executing right now: the
+// newest call still marked running. Calls are issued in order, but a
+// slow step can still be in flight while the next one arrives.
+function runningStep(tools: ToolCallItem[]): ToolView | null {
+  for (let i = tools.length - 1; i >= 0; i--) {
+    if (tools[i].tool.status === 'running') return tools[i].tool;
+  }
+  return null;
+}
+
+// lastStep is the newest call the group has seen, finished or not. It
+// keeps the header's step line on screen between calls: a burst of fast
+// commands would otherwise flash a label nobody can read, and a burst
+// that has gone quiet — mid-answer or after the turn ended — would
+// blank the line that says what it ran.
+function lastStep(tools: ToolCallItem[]): ToolView | null {
+  return tools.length > 0 ? tools[tools.length - 1].tool : null;
+}
+
+// failedSteps picks the calls a group reported as failed, in order.
+// The header counts them; a lone failure also names its step, because
+// "1 step failed · go test ./..." says where to look without opening
+// the group — unless the step line already shows that same command.
+function failedSteps(tools: ToolCallItem[]): ToolView[] {
+  const out: ToolView[] = [];
+  for (const item of tools) {
+    if (item.tool.status === 'error') out.push(item.tool);
+  }
+  return out;
+}
+
 // ToolGroupView renders a burst of consecutive tool calls as one
 // collapsible block ("Ran 4 commands"), defaulting to collapsed; the
-// individual tool cards appear once expanded.
+// individual tool cards appear once expanded. The header reads left to
+// right so a collapsed burst still says what happened: the count, then
+// the step it is on — the call in flight with its elapsed time and
+// progress counter, or the call that ran last, which stays on screen
+// after the turn ends — and, pinned to the far right, the failure
+// count once something failed.
 const ToolGroupView = memo(
   function ToolGroupView({ tools }: { tools: ToolCallItem[] }) {
     const { t } = useTranslation();
     const [open, setOpen] = useState(false);
     const allCommands = tools.every((ti) => isCommandTool(ti.tool.name));
     const running = tools.some((ti) => ti.tool.status === 'running');
-    const failed = tools.some((ti) => ti.tool.status === 'error');
-    const done = tools.filter((ti) => ti.tool.status === 'done').length;
+    const failed = failedSteps(tools);
+    // Settled covers done and failed: the counter says how far the
+    // burst has come, and a step that failed has been reached too.
+    const settled = tools.filter((ti) => ti.tool.status !== 'running').length;
+    // The step line tracks the call in flight, falling back to the last
+    // call the burst ran. That fallback is what keeps a settled burst —
+    // and a whole finished turn, replayed from the archive or not —
+    // saying what it did instead of collapsing back to a bare count.
+    const step = runningStep(tools) ?? lastStep(tools);
+    const elapsed = useToolElapsedLabel(step);
+    const stepLabel = step ? toolActivityDetail(step) : '';
+    const failedStep =
+      failed.length === 1 && failed[0] !== step
+        ? toolActivityDetail(failed[0])
+        : '';
     const label = allCommands
       ? t('chat.ranCommands', { count: tools.length })
       : t('chat.ranTools', { count: tools.length });
@@ -146,8 +197,9 @@ const ToolGroupView = memo(
       <div className="my-1.5">
         <button
           onClick={() => setOpen(!open)}
+          aria-expanded={open}
           className={`flex w-full items-center gap-2 rounded-control border px-3 py-2 text-left text-sm transition-colors ${
-            failed
+            failed.length > 0
               ? 'border-err/40 bg-err/5'
               : running
                 ? 'border-accent/40 bg-panel2'
@@ -159,7 +211,7 @@ const ToolGroupView = memo(
               size={ICON.sm}
               className="animate-spin shrink-0 text-accent"
             />
-          ) : failed ? (
+          ) : failed.length > 0 ? (
             <X size={ICON.sm} className="shrink-0 text-err" />
           ) : (
             <Check size={ICON.sm} className="shrink-0 text-ok" />
@@ -169,12 +221,49 @@ const ToolGroupView = memo(
           ) : (
             <Bot size={ICON.sm} className="shrink-0 text-accent" />
           )}
-          <span className="min-w-0 flex-1 truncate text-sm text-fg">
-            {label}
+          <span className="shrink-0 text-sm text-fg">{label}</span>
+          {/* The step takes every pixel the row has left: the command
+              is the one thing here that can be arbitrarily long, and
+              the tooltip carries the tail the ellipsis hides. */}
+          <span
+            data-testid="tool-group-step"
+            className="flex min-w-0 flex-1 items-center gap-2 text-xs text-faint"
+          >
+            {stepLabel && (
+              <span className="min-w-0 truncate font-mono" data-tip={stepLabel}>
+                {stepLabel}
+              </span>
+            )}
+            {elapsed && (
+              <span className="shrink-0 tabular-nums">{elapsed}</span>
+            )}
+            {/* The counter is progress: once nothing runs, the call that
+                just finished is all there is to say. */}
+            {running && (
+              <span className="shrink-0 tabular-nums">
+                {settled}/{tools.length}
+              </span>
+            )}
           </span>
-          {running && (
-            <span className="shrink-0 text-xs text-dim tabular-nums">
-              {done}/{tools.length}
+          {/* Failures are the other end of the row: the count is what a
+              long burst has to shout, and it lines up under the chevron
+              instead of drifting with the command length. */}
+          {failed.length > 0 && (
+            <span
+              data-testid="tool-group-failed"
+              className="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-faint"
+            >
+              <span className="text-err">
+                {t('chat.stepsFailed', { count: failed.length })}
+              </span>
+              {failedStep && (
+                <span
+                  className="max-w-32 truncate font-mono"
+                  data-tip={failedStep}
+                >
+                  {failedStep}
+                </span>
+              )}
             </span>
           )}
           {open ? (
@@ -745,31 +834,6 @@ function absoluteArtifactPath(path: string, workspace: string | undefined) {
       .filter(Boolean)
       .join(sep)
   );
-}
-
-// workedForLabel renders the backend-computed execution time as
-// "1h 2m 3s" (or "<1s" for sub-second runs). It intentionally does not
-// fall back to started/finished timestamps: live turns receive
-// duration_ms on turn_end and resumed turns load it from the archive,
-// so second-precision event times are never used as an estimate.
-function workedForLabel(durationMs?: number) {
-  if (
-    durationMs === undefined ||
-    !Number.isFinite(durationMs) ||
-    durationMs < 0
-  ) {
-    return '';
-  }
-  if (durationMs < 1000) return '<1s';
-  const total = Math.floor(durationMs / 1000);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  const parts = [];
-  if (h > 0) parts.push(`${h}h`);
-  if (m > 0 || h > 0) parts.push(`${m}m`);
-  parts.push(`${s}s`);
-  return parts.join(' ');
 }
 
 // TurnStatusLine sits at the top of a turn's output: "Working…" while

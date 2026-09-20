@@ -98,6 +98,90 @@ describe('MarkdownComposer', () => {
     expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 
+  it('still sends on Enter inside a markdown wrapper', async () => {
+    const onSubmit = vi.fn();
+    const user = userEvent.setup();
+    render(<MarkdownComposer placeholder="Write…" onSubmit={onSubmit} />);
+    await user.type(screen.getByRole('textbox'), '- one');
+    await user.keyboard('{Enter}');
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it('steps out of a list on Shift+Enter so the next line starts flush left', async () => {
+    const ref = createRef<MarkdownComposerHandle>();
+    const user = userEvent.setup();
+    render(<MarkdownComposer ref={ref} placeholder="Write…" />);
+    const box = screen.getByRole('textbox');
+
+    await user.type(box, '- one');
+    expect(box.querySelector('li')).not.toBeNull();
+
+    // The first break opens a second line inside the bullet …
+    await user.keyboard('{Shift>}{Enter}{/Shift}');
+    expect(box.querySelector('li p')?.textContent).toBe('one');
+
+    // … and the next one steps out of the list: what follows is a plain
+    // paragraph at the left margin, not another indented line.
+    await user.keyboard('{Shift>}{Enter}{/Shift}');
+    await user.type(box, 'plain');
+    const paragraph = [...box.querySelectorAll('p')].find(
+      (node) => node.textContent === 'plain',
+    );
+    expect(paragraph).toBeDefined();
+    expect(paragraph?.closest('li')).toBeNull();
+    expect(box.querySelector('li')?.textContent).toBe('one');
+  });
+
+  it('drops the markdown wrapper on Backspace at the start of a line', async () => {
+    const ref = createRef<MarkdownComposerHandle>();
+    const user = userEvent.setup();
+    render(<MarkdownComposer ref={ref} placeholder="Write…" />);
+    const box = screen.getByRole('textbox');
+
+    await user.type(box, '- one');
+    await user.keyboard('{Home}{Backspace}');
+    expect(box.querySelector('ul')).toBeNull();
+    expect(box.querySelector('p')?.textContent).toBe('one');
+    expect(ref.current?.getMarkdown()).not.toContain('- ');
+
+    ref.current?.clear();
+    await user.type(box, '> quoted');
+    expect(box.querySelector('blockquote')).not.toBeNull();
+    await user.keyboard('{Home}{Backspace}');
+    expect(box.querySelector('blockquote')).toBeNull();
+    expect(ref.current?.getMarkdown()).toContain('quoted');
+    expect(ref.current?.getMarkdown()).not.toContain('>');
+
+    ref.current?.clear();
+    await user.type(box, '# title');
+    expect(box.querySelector('h1')).not.toBeNull();
+    await user.keyboard('{Home}{Backspace}');
+    expect(box.querySelector('h1')).toBeNull();
+    expect(ref.current?.getMarkdown()).toContain('title');
+  });
+
+  it('leaves Backspace alone away from the start of a wrapped line', async () => {
+    const ref = createRef<MarkdownComposerHandle>();
+    const user = userEvent.setup();
+    render(<MarkdownComposer ref={ref} placeholder="Write…" />);
+    const box = screen.getByRole('textbox');
+
+    await user.type(box, '- one');
+    await user.keyboard('{End}{Backspace}');
+    expect(box.querySelector('li')).not.toBeNull();
+    expect(ref.current?.getMarkdown()).toContain('- on');
+  });
+
+  it('keeps Shift+Enter a soft break outside markdown wrappers', async () => {
+    const user = userEvent.setup();
+    render(<MarkdownComposer placeholder="Write…" />);
+    const box = screen.getByRole('textbox');
+
+    await user.type(box, 'first line');
+    await user.keyboard('{Shift>}{Enter}{/Shift}');
+    expect(box.querySelector('p br')).not.toBeNull();
+  });
+
   it('surfaces pasted image files through onPasteImages', () => {
     const onPasteImages = vi.fn();
     render(

@@ -474,8 +474,26 @@ textarea:focus-visible {
 /* User bubbles keep single line breaks readable: the TipTap composer
    serializes Shift+Enter hard breaks as newlines, and the Markdown
    renderer should not collapse them back into spaces. */
-.user-bubble-md p {
+.user-bubble-md p,
+.user-bubble-md li {
   white-space: pre-wrap;
+}
+
+/* The bubble's own padding defines its edges, so the outermost Markdown
+   blocks drop their margins instead of stacking on top of it. */
+.user-bubble-md > :first-child {
+  margin-top: 0;
+}
+.user-bubble-md > :last-child {
+  margin-bottom: 0;
+}
+
+/* Inline code already sits on the bubble's accent tint; a second accent
+   chip on top of it washes out, so it reads as a neutral code chip. */
+.user-bubble-md :not(pre) > code {
+  background: var(--color-panel2);
+  border-color: var(--color-edge);
+  color: var(--color-fg);
 }
 
 .prose-chat h1,

@@ -45,3 +45,44 @@ test('resumes a long session with windowed transcript', async ({ page }) => {
   await scroller.evaluate((el) => el.scrollTo(0, 0));
   await expect(page.getByText('message-0')).toBeVisible();
 });
+
+test('collapsing a workspace folds an expanded session list back', async ({
+  page,
+}) => {
+  const WS = '/Users/me/projects/opencraft';
+  // Twelve sessions: the sidebar previews the ten newest and offers the
+  // rest behind "More sessions".
+  const sessions = Array.from({ length: 12 }, (_, i) => ({
+    id: `s-${i}`,
+    title: `session ${i}`,
+    created_at: '2026-01-01T00:00:00Z',
+    updated_at: '2026-01-02T00:00:00Z',
+    messages: 1,
+    total_tokens: 0,
+  }));
+  await page.addInitScript(mockBackend as never, {
+    workspace: WS,
+    listSessions: sessions,
+  });
+  await page.goto('/');
+
+  const rows = page.locator('[data-session-id]');
+  const more = page.getByTestId('more-sessions');
+  const header = page.locator(`[data-tip="${WS}"]`);
+
+  await expect(rows).toHaveCount(10);
+  await expect(more).toBeVisible();
+
+  await more.click();
+  await expect(rows).toHaveCount(12);
+  await expect(more).toHaveCount(0);
+
+  // Folding the node folds the list too: the next expansion starts from
+  // the preview window, with the offer to see the rest back on the table.
+  await header.click();
+  await expect(rows).toHaveCount(0);
+
+  await header.click();
+  await expect(rows).toHaveCount(10);
+  await expect(more).toBeVisible();
+});

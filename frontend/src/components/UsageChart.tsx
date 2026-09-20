@@ -10,6 +10,7 @@ import {
   YAxis,
 } from 'recharts';
 import type { UsagePoint } from '../lib/types';
+import { formatCompact } from '../lib/compactNumber';
 import {
   ceilHourMs,
   ceilLocalDayMs,
@@ -66,11 +67,7 @@ const STREAMS: {
   },
 ];
 
-function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 100_000 ? 0 : 1)}k`;
-  return String(n);
-}
+const fmtTokens = (n: number) => formatCompact(n);
 
 function hourKey(ts: number): string {
   return `${new Date(ts).toISOString().slice(0, 13)}:00:00Z`;

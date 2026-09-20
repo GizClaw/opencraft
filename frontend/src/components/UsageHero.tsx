@@ -11,6 +11,7 @@ import {
   Zap,
 } from 'lucide-react';
 import type { ModelUsageStat } from '../lib/types';
+import { formatCompact } from '../lib/compactNumber';
 import { cacheHitPercent, formatHitPercent } from '../lib/usageRate';
 import {
   SERIES_CACHE_READ,
@@ -30,11 +31,7 @@ const ACCENT_ORANGE = SERIES_CACHE_WRITE;
 const ACCENT_PURPLE = SERIES_CACHE_READ;
 const ACCENT_EMERALD = SERIES_REASONING;
 
-function fmtShort(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
-}
+const fmtShort = (n: number) => formatCompact(n);
 
 function MiniStat({
   icon,

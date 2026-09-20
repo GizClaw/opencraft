@@ -185,3 +185,46 @@ test('the margins around the card still scroll the transcript', async ({
     expect(await scroll.evaluate((el) => el.scrollTop)).toBeLessThan(before);
   }).toPass();
 });
+
+// Regression: a markdown prefix must not trap the caret. Typing "- "
+// turns the line into a list, and since Enter is the send key a soft
+// break was the only way to a second line — inside the bullet, with no
+// route back to the left margin.
+test('lets a markdown list go without leaving the composer', async ({
+  page,
+}) => {
+  await page.addInitScript(mockBackend as never, {
+    workspace: WS,
+    startTurn: { run_id: 'r-1', context_id: 's-1' },
+  });
+  await page.goto('/');
+  const editor = page.locator('.ProseMirror').first();
+
+  await typeComposerMessage(page, '- one');
+  await expect(editor.locator('li')).toHaveText('one');
+  // The first break continues the bullet …
+  await editor.press('Shift+Enter');
+  // … and the next one steps out of the list, so the draft carries on at
+  // the left margin instead of another indented line.
+  await editor.press('Shift+Enter');
+  await editor.pressSequentially('plain');
+  await expect(editor.locator('li')).toHaveText('one');
+  await expect(editor.locator('p', { hasText: 'plain' })).toHaveText('plain');
+  expect(await editor.locator('li p', { hasText: 'plain' }).count()).toBe(0);
+
+  // What is sent keeps both: the bullet above and the plain line below.
+  await page.getByRole('button', { name: 'Send' }).click();
+  const transcript = page.getByTestId('chat-scroll');
+  await expect(transcript.locator('li')).toContainText('one');
+  await expect(transcript.locator('li p', { hasText: 'plain' })).toHaveCount(0);
+  await expect(transcript.getByText('plain')).toBeVisible();
+
+  // … and the same escape backwards: Backspace at the start of a bullet
+  // drops the prefix and keeps the text.
+  await typeComposerMessage(page, '- two');
+  await expect(editor.locator('li')).toHaveText('two');
+  await editor.press('Home');
+  await editor.press('Backspace');
+  await expect(editor.locator('li')).toHaveCount(0);
+  await expect(editor.locator('p').first()).toHaveText('two');
+});

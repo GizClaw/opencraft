@@ -1072,6 +1072,652 @@ describe('ChatView projections', () => {
 });
 
 describe('ChatView draft session defaults', () => {
+  it('names the failed step of a group that has one', () => {
+    setConversation(
+      [
+        {
+          id: 'm-user',
+          role: 'user',
+          text: 'build it',
+          items: [],
+          attachments: [],
+        },
+        {
+          id: 'm-tools',
+          role: 'assistant',
+          text: '',
+          items: [
+            {
+              kind: 'tool_call',
+              id: 'p-1',
+              tool: {
+                id: 'call-1',
+                name: 'exec_command',
+                args: '{"command":"go build ./..."}',
+                status: 'done',
+                result: '{"exit_code":0,"stdout":"","stderr":""}',
+              },
+            },
+            {
+              kind: 'tool_call',
+              id: 'p-2',
+              tool: {
+                id: 'call-2',
+                name: 'exec_command',
+                args: '{"command":"go test ./..."}',
+                status: 'error',
+                result: '{"exit_code":1,"stdout":"","stderr":"FAIL"}',
+              },
+            },
+            {
+              kind: 'tool_call',
+              id: 'p-3',
+              tool: {
+                id: 'call-3',
+                name: 'exec_command',
+                args: '{"command":"go vet ./..."}',
+                status: 'done',
+                result: '{"exit_code":0,"stdout":"","stderr":""}',
+              },
+            },
+          ],
+          attachments: [],
+        },
+      ],
+      [{ id: 'turn-1', start: 0, docs: [], runID: 'r-1' }],
+    );
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    render(<ChatView />);
+
+    const header = screen.getByRole('button', { name: /Ran 3 commands/ });
+    expect(header).toHaveTextContent('1 step failed');
+    // One failure names the step, so a collapsed burst still says where
+    // to look.
+    expect(header).toHaveTextContent('go test ./...');
+    expect(header).not.toHaveTextContent('3/3');
+    // The row reads left to right: the burst's count, the step it ended
+    // on, and the failure report closing the row on the right.
+    const step = within(header).getByTestId('tool-group-step');
+    const failed = within(header).getByTestId('tool-group-failed');
+    expect(step).toHaveTextContent('go vet ./...');
+    expect(step.compareDocumentPosition(failed)).toBe(
+      Node.DOCUMENT_POSITION_FOLLOWING,
+    );
+  });
+
+  it('counts failures without naming a step when several failed', () => {
+    setConversation(
+      [
+        {
+          id: 'm-user',
+          role: 'user',
+          text: 'build it',
+          items: [],
+          attachments: [],
+        },
+        {
+          id: 'm-tools',
+          role: 'assistant',
+          text: '',
+          items: [
+            {
+              kind: 'tool_call',
+              id: 'p-1',
+              tool: {
+                id: 'call-1',
+                name: 'exec_command',
+                args: '{"command":"go build ./..."}',
+                status: 'error',
+                result: '{"exit_code":1,"stdout":"","stderr":"boom"}',
+              },
+            },
+            {
+              kind: 'tool_call',
+              id: 'p-2',
+              tool: {
+                id: 'call-2',
+                name: 'exec_command',
+                args: '{"command":"go test ./..."}',
+                status: 'error',
+                result: '{"exit_code":1,"stdout":"","stderr":"FAIL"}',
+              },
+            },
+            {
+              kind: 'tool_call',
+              id: 'p-3',
+              tool: {
+                id: 'call-3',
+                name: 'exec_command',
+                args: '{"command":"go vet ./..."}',
+                status: 'done',
+                result: '{"exit_code":0,"stdout":"","stderr":""}',
+              },
+            },
+          ],
+          attachments: [],
+        },
+      ],
+      [{ id: 'turn-1', start: 0, docs: [], runID: 'r-1' }],
+    );
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    render(<ChatView />);
+
+    const header = screen.getByRole('button', { name: /Ran 3 commands/ });
+    expect(header).toHaveTextContent('2 steps failed');
+    // The step line still holds the call the burst stopped on; naming
+    // both failures as well would crowd the row without saying which
+    // one to look at first, so the expanded cards carry them.
+    expect(header).toHaveTextContent('go vet ./...');
+    expect(header).not.toHaveTextContent('go build ./...');
+    expect(header).not.toHaveTextContent('go test ./...');
+  });
+
+  it('counts a failed step as settled while the burst still runs', () => {
+    setConversation(
+      [
+        {
+          id: 'm-user',
+          role: 'user',
+          text: 'build it',
+          items: [],
+          attachments: [],
+        },
+        {
+          id: 'm-tools',
+          role: 'assistant',
+          text: '',
+          items: [
+            {
+              kind: 'tool_call',
+              id: 'p-1',
+              tool: {
+                id: 'call-1',
+                name: 'exec_command',
+                args: '{"command":"go build ./..."}',
+                status: 'done',
+                result: '{"exit_code":0,"stdout":"","stderr":""}',
+              },
+            },
+            {
+              kind: 'tool_call',
+              id: 'p-2',
+              tool: {
+                id: 'call-2',
+                name: 'exec_command',
+                args: '{"command":"go test ./..."}',
+                status: 'error',
+                result: '{"exit_code":1,"stdout":"","stderr":"FAIL"}',
+              },
+            },
+            {
+              kind: 'tool_call',
+              id: 'p-3',
+              tool: {
+                id: 'call-3',
+                name: 'exec_command',
+                args: '{"command":"go vet ./..."}',
+                status: 'running',
+                seenAt: Date.now(),
+              },
+            },
+          ],
+          attachments: [],
+        },
+      ],
+      [{ id: 'turn-1', start: 0, docs: [], runID: 'r-1' }],
+    );
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    render(<ChatView />);
+
+    // The header carries both halves of the state at once: what failed
+    // and what is still in flight.
+    const header = screen.getByRole('button', { name: /Ran 3 commands/ });
+    expect(header).toHaveTextContent('1 step failed');
+    expect(header).toHaveTextContent('go test ./...');
+    expect(header).toHaveTextContent('go vet ./...');
+    expect(header).toHaveTextContent('2/3');
+  });
+
+  it('shows the running step and progress in a grouped tool burst', () => {
+    setConversation(
+      [
+        {
+          id: 'm-user',
+          role: 'user',
+          text: 'build it',
+          items: [],
+          attachments: [],
+        },
+        {
+          id: 'm-tools',
+          role: 'assistant',
+          text: '',
+          items: [
+            {
+              kind: 'tool_call',
+              id: 'p-1',
+              tool: {
+                id: 'call-1',
+                name: 'exec_command',
+                args: '{"command":"go build ./..."}',
+                status: 'done',
+                result: '{"exit_code":0,"stdout":"","stderr":""}',
+              },
+            },
+            {
+              kind: 'tool_call',
+              id: 'p-2',
+              tool: {
+                id: 'call-2',
+                name: 'exec_command',
+                args: '{"command":"go test ./..."}',
+                status: 'done',
+                result: '{"exit_code":0,"stdout":"ok","stderr":""}',
+              },
+            },
+            {
+              kind: 'tool_call',
+              id: 'p-3',
+              tool: {
+                id: 'call-3',
+                name: 'exec_command',
+                args: '{"command":"go vet ./..."}',
+                status: 'running',
+              },
+            },
+          ],
+          attachments: [],
+        },
+      ],
+      [{ id: 'turn-1', start: 0, docs: [], runID: 'r-1' }],
+    );
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    render(<ChatView />);
+
+    expect(screen.getByText('Ran 3 commands')).toBeInTheDocument();
+    expect(screen.getByText('go vet ./...')).toBeInTheDocument();
+    expect(screen.getByText('2/3')).toBeInTheDocument();
+  });
+
+  it('keeps the last step on screen after the turn ends', () => {
+    setConversation(
+      [
+        {
+          id: 'm-user',
+          role: 'user',
+          text: 'build it',
+          items: [],
+          attachments: [],
+        },
+        {
+          id: 'm-tools',
+          role: 'assistant',
+          text: '',
+          items: [
+            {
+              kind: 'tool_call',
+              id: 'p-1',
+              tool: {
+                id: 'call-1',
+                name: 'read_file',
+                args: '{"file_path":"src/a.go"}',
+                status: 'done',
+                result: 'package main',
+              },
+            },
+            {
+              kind: 'tool_call',
+              id: 'p-2',
+              tool: {
+                id: 'call-2',
+                name: 'read_file',
+                args: '{"file_path":"src/b.go"}',
+                status: 'done',
+                result: 'package main',
+              },
+            },
+          ],
+          attachments: [],
+        },
+      ],
+      [{ id: 'turn-1', start: 0, docs: [], runID: 'r-1' }],
+    );
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    render(<ChatView />);
+
+    expect(screen.getByText('Ran 2 tools')).toBeInTheDocument();
+    // The burst is over but the answer is still streaming: the header
+    // keeps the call that just ran instead of blanking between calls.
+    expect(screen.getByText('src/b.go')).toBeInTheDocument();
+    // Nothing is running, so there is no progress left to count.
+    expect(screen.queryByText('2/2')).not.toBeInTheDocument();
+
+    act(() => {
+      stateRoot.registry
+        .get('s-1')
+        ?.send({ type: 'TURN_ENDED', runID: 'r-1', status: 'completed' });
+    });
+    // The turn ending does not blank the line: a collapsed burst keeps
+    // naming the call it ran, so scrolling back through history still
+    // says what happened without opening every group.
+    expect(screen.getByText('src/b.go')).toBeInTheDocument();
+    expect(screen.getByText('Ran 2 tools')).toBeInTheDocument();
+  });
+
+  it('keeps the last step of every burst, not just the newest', () => {
+    setConversation(
+      [
+        {
+          id: 'm-user',
+          role: 'user',
+          text: 'build it',
+          items: [],
+          attachments: [],
+        },
+        {
+          id: 'm-tools',
+          role: 'assistant',
+          text: '',
+          items: [
+            {
+              kind: 'tool_call',
+              id: 'p-1',
+              tool: {
+                id: 'call-1',
+                name: 'read_file',
+                args: '{"file_path":"src/a.go"}',
+                status: 'done',
+                result: 'package main',
+              },
+            },
+            {
+              kind: 'tool_call',
+              id: 'p-2',
+              tool: {
+                id: 'call-2',
+                name: 'read_file',
+                args: '{"file_path":"src/b.go"}',
+                status: 'done',
+                result: 'package main',
+              },
+            },
+            { kind: 'text', id: 't-1', text: 'First pass done.' },
+            {
+              kind: 'tool_call',
+              id: 'p-3',
+              tool: {
+                id: 'call-3',
+                name: 'read_file',
+                args: '{"file_path":"src/c.go"}',
+                status: 'done',
+                result: 'package main',
+              },
+            },
+            {
+              kind: 'tool_call',
+              id: 'p-4',
+              tool: {
+                id: 'call-4',
+                name: 'read_file',
+                args: '{"file_path":"src/d.go"}',
+                status: 'done',
+                result: 'package main',
+              },
+            },
+          ],
+          attachments: [],
+        },
+      ],
+      [{ id: 'turn-1', start: 0, docs: [], runID: 'r-1' }],
+    );
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    render(<ChatView />);
+
+    // Each burst keeps its own last call in its header: the one the
+    // model is working through and the one above it, which is already
+    // history.
+    expect(screen.getByText('src/d.go')).toBeInTheDocument();
+    expect(screen.getByText('src/b.go')).toBeInTheDocument();
+  });
+
+  it('keeps the last command in the header once the turn ends', () => {
+    setConversation(
+      [
+        {
+          id: 'm-user',
+          role: 'user',
+          text: 'run the checks',
+          items: [],
+          attachments: [],
+        },
+        {
+          id: 'm-tools',
+          role: 'assistant',
+          text: '',
+          items: [
+            {
+              kind: 'tool_call',
+              id: 'p-1',
+              tool: {
+                id: 'call-1',
+                name: 'exec_command',
+                args: '{"command":"go build ./..."}',
+                status: 'done',
+                result: '{"exit_code":0,"stdout":"","stderr":""}',
+              },
+            },
+            {
+              kind: 'tool_call',
+              id: 'p-2',
+              tool: {
+                id: 'call-2',
+                name: 'exec_command',
+                args: '{"command":"go test ./..."}',
+                status: 'done',
+                result: '{"exit_code":0,"stdout":"ok","stderr":""}',
+              },
+            },
+            {
+              kind: 'tool_call',
+              id: 'p-3',
+              tool: {
+                id: 'call-3',
+                name: 'exec_command',
+                args: '{"command":"go vet ./..."}',
+                status: 'done',
+                result: '{"exit_code":0,"stdout":"","stderr":""}',
+              },
+            },
+          ],
+          attachments: [],
+        },
+      ],
+      [{ id: 'turn-1', start: 0, docs: [], runID: 'r-1' }],
+    );
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    render(<ChatView />);
+    act(() => {
+      stateRoot.registry
+        .get('s-1')
+        ?.send({ type: 'TURN_ENDED', runID: 'r-1', status: 'completed' });
+    });
+
+    const header = screen.getByRole('button', { name: /Ran 3 commands/ });
+    expect(within(header).getByTestId('tool-group-step')).toHaveTextContent(
+      'go vet ./...',
+    );
+    // Nothing is running, so no progress counter outlives the turn.
+    expect(header).not.toHaveTextContent('3/3');
+  });
+
+  it('shows the last command of a turn replayed from the archive', () => {
+    setConversation(
+      [
+        {
+          id: 'm-user',
+          role: 'user',
+          text: 'run the checks',
+          items: [],
+          attachments: [],
+        },
+        {
+          id: 'm-tools',
+          role: 'assistant',
+          text: 'All green.',
+          items: [
+            {
+              kind: 'tool_call',
+              id: 'p-1',
+              tool: {
+                id: 'call-1',
+                name: 'exec_command',
+                args: '{"command":"go build ./..."}',
+                status: 'done',
+                result: '{"exit_code":0,"stdout":"","stderr":""}',
+              },
+            },
+            {
+              kind: 'tool_call',
+              id: 'p-2',
+              tool: {
+                id: 'call-2',
+                name: 'exec_command',
+                args: '{"command":"go test ./..."}',
+                status: 'done',
+                result: '{"exit_code":0,"stdout":"ok","stderr":""}',
+              },
+            },
+          ],
+          attachments: [],
+        },
+      ],
+      [{ id: 'turn-1', start: 0, docs: [], runID: 'r-1' }],
+    );
+    // No RUN_STARTED: this transcript came out of the archive, so it is
+    // history from the first frame.
+    render(<ChatView />);
+
+    const header = screen.getByRole('button', { name: /Ran 2 commands/ });
+    expect(within(header).getByTestId('tool-group-step')).toHaveTextContent(
+      'go test ./...',
+    );
+  });
+
+  it('does not name a lone failure twice when it is the last step', () => {
+    setConversation(
+      [
+        {
+          id: 'm-user',
+          role: 'user',
+          text: 'run the suite',
+          items: [],
+          attachments: [],
+        },
+        {
+          id: 'm-tools',
+          role: 'assistant',
+          text: '',
+          items: [
+            {
+              kind: 'tool_call',
+              id: 'p-1',
+              tool: {
+                id: 'call-1',
+                name: 'exec_command',
+                args: '{"command":"go build ./..."}',
+                status: 'done',
+                result: '{"exit_code":0,"stdout":"","stderr":""}',
+              },
+            },
+            {
+              kind: 'tool_call',
+              id: 'p-2',
+              tool: {
+                id: 'call-2',
+                name: 'exec_command',
+                args: '{"command":"go test ./..."}',
+                status: 'error',
+                result: '{"exit_code":1,"stdout":"","stderr":"FAIL"}',
+              },
+            },
+          ],
+          attachments: [],
+        },
+      ],
+      [{ id: 'turn-1', start: 0, docs: [], runID: 'r-1' }],
+    );
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    render(<ChatView />);
+
+    const header = screen.getByRole('button', { name: /Ran 2 commands/ });
+    expect(within(header).getByTestId('tool-group-step')).toHaveTextContent(
+      'go test ./...',
+    );
+    expect(within(header).getByTestId('tool-group-failed')).toHaveTextContent(
+      '1 step failed',
+    );
+    // The step line already spells the command out; repeating it beside
+    // the failure count would print the same command twice in one row.
+    expect(within(header).getAllByText('go test ./...')).toHaveLength(1);
+  });
+
+  it('ticks the elapsed time of the step in flight', async () => {
+    vi.useFakeTimers();
+    setConversation(
+      [
+        {
+          id: 'm-user',
+          role: 'user',
+          text: 'build it',
+          items: [],
+          attachments: [],
+        },
+        {
+          id: 'm-tools',
+          role: 'assistant',
+          text: '',
+          items: [
+            {
+              kind: 'tool_call',
+              id: 'p-1',
+              tool: {
+                id: 'call-1',
+                name: 'grep',
+                args: '{"pattern":"buildMu"}',
+                status: 'running',
+                seenAt: Date.now(),
+              },
+            },
+            {
+              kind: 'tool_call',
+              id: 'p-2',
+              tool: {
+                id: 'call-2',
+                name: 'grep',
+                args: '{"pattern":"engines"}',
+                status: 'running',
+                seenAt: Date.now(),
+              },
+            },
+          ],
+          attachments: [],
+        },
+      ],
+      [{ id: 'turn-1', start: 0, docs: [], runID: 'r-1' }],
+    );
+    stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    render(<ChatView />);
+
+    // The newest running call is the step in flight.
+    expect(screen.getByText('engines')).toBeInTheDocument();
+    expect(screen.getByText('0/2')).toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000);
+    });
+    expect(screen.getByText('1s')).toBeInTheDocument();
+    vi.useRealTimers();
+  });
+
   it('follows changed defaults until the user picks a mode manually', async () => {
     const user = userEvent.setup();
     stateRoot.resetWorkspace();
@@ -1108,5 +1754,51 @@ describe('ChatView draft session defaults', () => {
     expect(
       screen.getByRole('button', { name: 'Workspace mode' }),
     ).toBeInTheDocument();
+  });
+});
+
+describe('ChatView user bubbles', () => {
+  it('renders the sent text as markdown inside the bubble', () => {
+    setConversation([
+      {
+        id: 'm-1',
+        role: 'user',
+        text: [
+          '## Plan',
+          '',
+          '- first step',
+          '- second step',
+          '',
+          '**bold** and `code`',
+          '',
+          '```ts',
+          'const x = 1;',
+          '```',
+          '',
+          'line one',
+          'line two',
+        ].join('\n'),
+        items: [],
+        attachments: [],
+      },
+    ]);
+    render(<ChatView />);
+
+    const bubble = document.querySelector('.user-bubble-md') as HTMLElement;
+    expect(bubble).not.toBeNull();
+    const scope = within(bubble);
+    expect(scope.getByRole('heading', { name: 'Plan' })).toBeInTheDocument();
+    expect(scope.getAllByRole('listitem')).toHaveLength(2);
+    expect(scope.getByText('bold').tagName).toBe('STRONG');
+    expect(scope.getByText('code').tagName).toBe('CODE');
+    // The fence renders highlighted tokens, so match on the bubble text.
+    expect(bubble.textContent).toContain('const x = 1;');
+    // A soft break inside one paragraph keeps its own line: the bubble
+    // styles preserve the newlines the composer recorded.
+    expect(
+      Array.from(bubble.querySelectorAll('p')).some((p) =>
+        p.textContent?.includes('line one\nline two'),
+      ),
+    ).toBe(true);
   });
 });

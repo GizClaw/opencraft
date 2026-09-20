@@ -30,6 +30,7 @@ import {
   recoverJsonContent,
 } from '../lib/diff';
 import { useStore, type ToolView } from '../lib/store';
+import { useToolElapsedLabel } from '../lib/toolTiming';
 import type { FilePreview, PatchFileDTO } from '../lib/types';
 import { GitDiffView } from './viewer/DiffView';
 import { ICON } from './ui/icon';
@@ -50,7 +51,8 @@ interface Summary {
 
 // execCommandLine reads the command line from the canonical "command"
 // argument or the "cmd" alias several model harnesses emit; the backend
-// accepts both, so the card must show both.
+// accepts both, so the card must show both. exec_session's start passes
+// an argv array instead, which joins to the same one-line form.
 function execCommandLine(args: Record<string, unknown> | null): string {
   if (!args) return '';
   if (typeof args.command === 'string') return args.command;
@@ -58,78 +60,131 @@ function execCommandLine(args: Record<string, unknown> | null): string {
   return Array.isArray(args.argv) ? args.argv.join(' ') : '';
 }
 
-function summaryOf(tool: ToolView): Summary | null {
-  const args = parseArgs(tool);
-  if (!args) return null;
+// TOOL_VERBS maps a tool name to the i18n key of its past-tense verb
+// (tool.<verb>). Tools outside the map have no summary line: either
+// they render a dedicated card (exec, session, read, ...) or the
+// generic card shows the raw tool name.
+const TOOL_VERBS: Record<string, string> = {
+  read_file: 'read',
+  write_file: 'wrote',
+  list_dir: 'listed',
+  grep: 'grep',
+  glob: 'glob',
+  request_permissions: 'requestPermissions',
+  update_plan: 'updatePlan',
+  apply_patch: 'patch',
+  skill_create: 'createdSkill',
+  skill_modify: 'modifiedSkill',
+  skill_install: 'installedSkill',
+  plugin_install: 'installedPlugin',
+  plugin_update: 'updatedPlugin',
+  plugin_list: 'listedPlugins',
+  web_fetch: 'fetched',
+  web_search: 'searchedWeb',
+  generate_image: 'generatedImage',
+  generate_video: 'generatedVideo',
+  ask_user: 'askUser',
+  skill_search: 'searchedSkill',
+  skill_read: 'readSkill',
+  create_agent: 'createdAgent',
+  update_agent: 'updatedAgent',
+  unregister_agent: 'unregisteredAgent',
+  tool_search: 'searchedTools',
+};
+
+// toolTarget names what one call is working on, without its verb: the
+// command line for exec_*, the path for file tools, the query for
+// search tools. It is the single source for both the card summary and
+// the live step shown in a collapsed tool group, so the two never
+// drift. Calls whose arguments carry no such field return ''.
+function toolTarget(tool: ToolView, args: Record<string, unknown>): string {
   const str = (v: unknown): string => (typeof v === 'string' ? v : '');
   switch (tool.name) {
     case 'exec_command':
-    case 'exec_session':
-      return { verb: 'ran', rest: execCommandLine(args) };
+      return execCommandLine(args);
+    case 'exec_session': {
+      const action = str(args.action);
+      if (action === '' || action === 'start') return execCommandLine(args);
+      // Control actions carry no command line: name the input, the
+      // signal, or the session they target.
+      return (
+        str(args.data) ||
+        str(args.signal) ||
+        (str(args.process_id) ? `session ${str(args.process_id)}` : '')
+      );
+    }
     case 'read_file':
-      return { verb: 'read', rest: str(args.file_path) };
     case 'write_file':
-      return { verb: 'wrote', rest: str(args.file_path) };
+    case 'view_image':
+      return str(args.file_path) || str(args.path);
     case 'list_dir':
-      return { verb: 'listed', rest: str(args.path) || '.' };
+      return str(args.path) || '.';
     case 'grep': {
       const parts = [str(args.pattern)];
       if (str(args.path)) parts.push(`in ${args.path}`);
-      return { verb: 'grep', rest: parts.join(' ') };
+      return parts.join(' ');
     }
     case 'glob':
-      return { verb: 'glob', rest: str(args.pattern) };
+      return str(args.pattern);
     case 'request_permissions':
-      return {
-        verb: 'requestPermissions',
-        rest: Array.isArray(args.permissions)
-          ? String(args.permissions.length)
-          : '',
-      };
-    case 'update_plan':
-      return { verb: 'updatePlan', rest: '' };
+      return Array.isArray(args.permissions)
+        ? String(args.permissions.length)
+        : '';
     case 'apply_patch':
-      return { verb: 'patch', rest: '' };
-    case 'skill_create':
-      return { verb: 'createdSkill', rest: str(args.name) };
-    case 'skill_modify':
-      return { verb: 'modifiedSkill', rest: str(args.name) };
-    case 'skill_install':
-      return { verb: 'installedSkill', rest: str(args.name) || str(args.repo) };
-    case 'plugin_install':
-      return { verb: 'installedPlugin', rest: str(args.path) };
-    case 'plugin_update':
-      return {
-        verb: 'updatedPlugin',
-        rest: str(args.id) || str(args.path),
-      };
+    case 'update_plan':
     case 'plugin_list':
-      return { verb: 'listedPlugins', rest: '' };
-    case 'web_fetch':
-      return { verb: 'fetched', rest: str(args.url) };
-    case 'web_search':
-      return { verb: 'searchedWeb', rest: str(args.query) };
-    case 'generate_image':
-      return { verb: 'generatedImage', rest: str(args.prompt) };
-    case 'generate_video':
-      return { verb: 'generatedVideo', rest: str(args.prompt) };
-    case 'ask_user':
-      return { verb: 'askUser', rest: str(args.question) };
-    case 'skill_search':
-      return { verb: 'searchedSkill', rest: str(args.query) };
+    case 'delegation_targets':
+      return '';
+    case 'skill_create':
+    case 'skill_modify':
     case 'skill_read':
-      return { verb: 'readSkill', rest: str(args.name) };
-    case 'create_agent':
-      return { verb: 'createdAgent', rest: str(args.name) };
-    case 'update_agent':
-      return { verb: 'updatedAgent', rest: str(args.name) };
-    case 'unregister_agent':
-      return { verb: 'unregisteredAgent', rest: str(args.name) };
+      return str(args.name);
+    case 'skill_install':
+      return str(args.name) || str(args.repo);
+    case 'plugin_install':
+      return str(args.path);
+    case 'plugin_update':
+      return str(args.id) || str(args.path);
+    case 'web_fetch':
+      return str(args.url);
+    case 'web_search':
+    case 'skill_search':
     case 'tool_search':
-      return { verb: 'searchedTools', rest: str(args.query) };
+      return str(args.query);
+    case 'generate_image':
+    case 'generate_video':
+      return str(args.prompt);
+    case 'ask_user':
+      return str(args.question);
+    case 'create_agent':
+    case 'update_agent':
+    case 'unregister_agent':
+      return str(args.name);
+    case 'delegate':
+      return str(args.target);
+    case 'delegation_status':
+      return str(args.delegation_id);
     default:
-      return null;
+      return '';
   }
+}
+
+// summaryOf pairs a tool's verb with its target for the generic card
+// header; tools that render their own card (or have unparseable
+// arguments) return null.
+function summaryOf(tool: ToolView): Summary | null {
+  const verb = TOOL_VERBS[tool.name];
+  const args = parseArgs(tool);
+  if (!verb || !args) return null;
+  return { verb, rest: toolTarget(tool, args) };
+}
+
+// toolActivityDetail is the live counterpart of summaryOf: the step a
+// call is on right now, without its verb. The collapsed tool group
+// header shows it next to the progress counter while a call runs.
+export function toolActivityDetail(tool: ToolView): string {
+  const args = parseArgs(tool);
+  return args ? toolTarget(tool, args) : '';
 }
 
 interface ExecResult {
@@ -141,10 +196,10 @@ interface ExecResult {
 function execResult(content: string): ExecResult | null {
   try {
     const v = JSON.parse(content);
-    // Only exec_command / exec_session results carry exit_code; other
-    // tools return JSON objects too (read_file, apply_patch, ...) and
-    // must not be treated as exec output (that rendered "exit code
-    // undefined" in the expanded card).
+    // Only exec_command results carry exit_code; other tools return
+    // JSON objects too (read_file, apply_patch, ...) and must not be
+    // treated as exec output (that rendered "exit code undefined" in
+    // the expanded card).
     if (v && typeof v === 'object' && typeof v.exit_code === 'number') {
       return v;
     }
@@ -225,6 +280,10 @@ function buildDirTree(entries: DirEntry[]): DirNode[] {
 
 function fmtSize(n?: number): string {
   if (n === undefined || n < 0) return '';
+  // Byte ladder, not the token one: `B` here means bytes, so the units
+  // climb k → M → G → T and never print "4739.1M" for a 4.7 GB file.
+  if (n >= 1_000_000_000_000) return `${(n / 1_000_000_000_000).toFixed(1)}T`;
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}G`;
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
   return n > 0 ? `${n}B` : '';
@@ -243,9 +302,84 @@ function tailLine(text: string): string {
   return line.length > 120 ? `${line.slice(0, 120)}…` : line;
 }
 
-// ExecView renders exec_command / exec_session as a standalone
-// collapsible terminal-style block: the header shows the command,
-// status, exit code and output tail; expanding reveals stdout / stderr.
+// countLines counts the lines a text block renders as: a trailing
+// newline terminates the last line instead of opening an empty one.
+function countLines(text: string): number {
+  if (!text) return 0;
+  const body = text.endsWith('\n') ? text.slice(0, -1) : text;
+  return body.split('\n').length;
+}
+
+// ToolElapsed shows how long one call has been taking, ticking while it
+// runs and freezing at the measured span once its result lands. Calls
+// the client never saw start (replayed sessions) render nothing.
+function ToolElapsed({
+  tool,
+  className = '',
+}: {
+  tool: ToolView;
+  className?: string;
+}) {
+  const elapsed = useToolElapsedLabel(tool);
+  if (!elapsed) return null;
+  return (
+    <span
+      className={`shrink-0 font-mono text-micro tabular-nums text-faint ${className}`}
+    >
+      {elapsed}
+    </span>
+  );
+}
+
+// OutputPane renders a long text block: the visible window stays capped
+// so a 5k-line log cannot swallow the transcript, and the footer names
+// how much there is with a toggle that opens the pane to most of the
+// viewport. Nothing is cut from the text itself — the cap is scroll
+// height, not content — so the counter reads as "there is more to see
+// here", not as a truncation notice.
+function OutputPane({
+  text,
+  className = '',
+  cap = 'max-h-72',
+}: {
+  text: string;
+  className?: string;
+  cap?: string;
+}) {
+  const { t } = useTranslation();
+  const [full, setFull] = useState(false);
+  const lines = countLines(text);
+  const long = lines > 24 || text.length > 4000;
+  return (
+    <div className="min-w-0">
+      <pre
+        className={`overflow-y-auto whitespace-pre-wrap break-all font-mono text-xs ${
+          full ? 'max-h-[70vh]' : cap
+        } ${className}`}
+      >
+        {text}
+      </pre>
+      {long && (
+        <div className="flex items-center justify-end gap-2 border-t border-edge/60 px-2.5 py-1 text-micro text-dim">
+          <span className="tabular-nums">
+            {lines} {t('tool.lines')}
+          </span>
+          <button
+            type="button"
+            onClick={() => setFull(!full)}
+            className="rounded-tight border border-edge px-1.5 py-0.5 hover:text-fg"
+          >
+            {full ? t('tool.collapseOutput') : t('tool.showAll')}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ExecView renders exec_command as a standalone collapsible
+// terminal-style block: the header shows the command, status, exit code
+// and output tail; expanding reveals stdout / stderr.
 function ExecView({ tool }: { tool: ToolView }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
@@ -258,8 +392,6 @@ function ExecView({ tool }: { tool: ToolView }) {
     tool.status === 'error' || (exec !== null && exec.exit_code !== 0);
   const stdout = exec?.stdout ?? '';
   const stderr = exec?.stderr ?? '';
-  const stdoutLines = stdout ? stdout.split('\n').length : 0;
-  const stderrLines = stderr ? stderr.split('\n').length : 0;
   const hasOutput = Boolean(stdout || stderr);
   const summaryTail = failed
     ? tailLine(stderr || stdout)
@@ -315,6 +447,7 @@ function ExecView({ tool }: { tool: ToolView }) {
           <span className="select-none text-dim">$ </span>
           {command || tool.name}
         </span>
+        <ToolElapsed tool={tool} />
         {!running && exec !== null && (
           <span
             className={`shrink-0 rounded-tight px-1.5 py-0.5 font-mono text-micro ${
@@ -364,27 +497,29 @@ function ExecView({ tool }: { tool: ToolView }) {
             </div>
           )}
           {!running && hasOutput && (
-            <div className="max-h-72 overflow-y-auto px-2.5 py-2 space-y-1.5">
+            <div className="px-2.5 py-2 space-y-2">
               {stderr && (
                 <div>
-                  <div className="mb-0.5 flex items-center gap-2 text-micro text-dim">
+                  <div className="mb-0.5 text-micro text-dim">
                     <span className="uppercase tracking-wider">stderr</span>
-                    <span className="tabular-nums">{stderrLines}</span>
                   </div>
-                  <pre className="whitespace-pre-wrap break-all font-mono text-xs text-err">
-                    {stderr}
-                  </pre>
+                  <OutputPane
+                    text={stderr}
+                    cap="max-h-56"
+                    className="text-err"
+                  />
                 </div>
               )}
               {stdout && (
                 <div>
-                  <div className="mb-0.5 flex items-center gap-2 text-micro text-dim">
+                  <div className="mb-0.5 text-micro text-dim">
                     <span className="uppercase tracking-wider">stdout</span>
-                    <span className="tabular-nums">{stdoutLines}</span>
                   </div>
-                  <pre className="whitespace-pre-wrap break-all font-mono text-xs text-fg">
-                    {stdout}
-                  </pre>
+                  <OutputPane
+                    text={stdout}
+                    cap="max-h-56"
+                    className="text-fg"
+                  />
                 </div>
               )}
             </div>
@@ -394,6 +529,351 @@ function ExecView({ tool }: { tool: ToolView }) {
               {failed ? t('tool.noOutput') : t('tool.completed')}
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface SessionChunk {
+  seq?: number;
+  stream?: string;
+  data?: string;
+}
+
+// SessionResult is the envelope every exec_session action returns. The
+// fields that are set depend on the action (start → started, read →
+// chunks/next_seq/eof, wait → exit_code/reason, the rest → one ack
+// flag), so the card lays itself out from the action instead of from a
+// command's exit code.
+interface SessionResult {
+  process_id?: string;
+  started?: boolean;
+  chunks?: SessionChunk[];
+  next_seq?: number;
+  eof?: boolean;
+  exit_code?: number;
+  reason?: string;
+  written?: boolean;
+  resized?: boolean;
+  signaled?: boolean;
+  terminated?: boolean;
+  closed?: boolean;
+}
+
+function sessionResult(content: string): SessionResult | null {
+  try {
+    const v = JSON.parse(content);
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      return v as SessionResult;
+    }
+  } catch {
+    // not JSON
+  }
+  return null;
+}
+
+interface SessionOutput {
+  stdout: string;
+  stderr: string;
+  tty: boolean;
+}
+
+// sessionOutput joins the chunks of one read in cursor order and splits
+// them back into their streams. TTY sessions merge stdout and stderr
+// into the "tty" stream; that bucket is flagged so the card labels it
+// honestly instead of calling every line stdout.
+function sessionOutput(chunks: SessionChunk[]): SessionOutput {
+  const ordered = [...chunks].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+  let stdout = '';
+  let stderr = '';
+  let tty = false;
+  for (const chunk of ordered) {
+    const data = typeof chunk.data === 'string' ? chunk.data : '';
+    if (chunk.stream === 'stderr') {
+      stderr += data;
+      continue;
+    }
+    if (chunk.stream === 'tty') tty = true;
+    stdout += data;
+  }
+  return { stdout, stderr, tty };
+}
+
+// MetaRow is the label/value line the session card uses for everything
+// that is not the payload itself (workdir, pty size, exit reason).
+function MetaRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="text-xs">
+      <span className="text-dim">{label}: </span>
+      <span className="font-mono text-fg">{value}</span>
+    </div>
+  );
+}
+
+// SessionView renders exec_session as a standalone collapsible
+// terminal-style block. Its result is per action rather than the
+// stdout/stderr envelope exec_command returns, so the header names the
+// session and the action and the expanded body shows what that action
+// produced: a read's output (or that there was none), a wait's outcome,
+// the bytes written to stdin, or the ack of a control action.
+function SessionView({ tool }: { tool: ToolView }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const args = parseArgs(tool);
+  const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+  const action = str(args?.action);
+  const command = execCommandLine(args);
+  const workdir = str(args?.workdir);
+  const ttyRequested = args?.tty === true;
+  const rows = typeof args?.rows === 'number' ? args.rows : 0;
+  const cols = typeof args?.cols === 'number' ? args.cols : 0;
+  const stdin = str(args?.data);
+  const result = tool.result !== undefined ? sessionResult(tool.result) : null;
+  const processID = result?.process_id || str(args?.process_id);
+  const running = tool.status === 'running';
+  const exitCode =
+    typeof result?.exit_code === 'number' ? result.exit_code : null;
+  const failed =
+    tool.status === 'error' || (exitCode !== null && exitCode !== 0);
+  const output = sessionOutput(result?.chunks ?? []);
+  const hasOutput = Boolean(output.stdout || output.stderr);
+  const outputTail = failed
+    ? tailLine(output.stderr || output.stdout)
+    : tailLine(output.stdout || output.stderr);
+  // Copy carries what the card shows: the command, the read's output or
+  // the bytes written to stdin. Control actions have nothing to copy.
+  const copyText =
+    action === 'start'
+      ? command
+      : action === 'read'
+        ? [output.stderr, output.stdout].filter(Boolean).join('\n')
+        : action === 'write'
+          ? stdin
+          : '';
+  const ack =
+    action === 'signal'
+      ? t('tool.sessionSignaled')
+      : action === 'resize'
+        ? t('tool.sessionResized')
+        : action === 'terminate'
+          ? t('tool.sessionTerminated')
+          : action === 'close'
+            ? t('tool.sessionClosed')
+            : '';
+
+  const copyOutput = async () => {
+    if (!copyText) return;
+    try {
+      await navigator.clipboard.writeText(copyText);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard unavailable
+    }
+  };
+
+  const body = (() => {
+    if (action === 'read') {
+      if (!hasOutput) {
+        return (
+          <div className="text-xs text-dim">{t('tool.sessionNoNewOutput')}</div>
+        );
+      }
+      const section = (name: string, text: string, color: string) => (
+        <div>
+          <div className="mb-0.5 text-micro text-dim">
+            <span className="uppercase tracking-wider">{name}</span>
+          </div>
+          <OutputPane text={text} cap="max-h-56" className={color} />
+        </div>
+      );
+      return (
+        <div className="space-y-1.5">
+          {output.stderr && section('stderr', output.stderr, 'text-err')}
+          {output.stdout &&
+            section(output.tty ? 'tty' : 'stdout', output.stdout, 'text-fg')}
+        </div>
+      );
+    }
+    if (action === 'start') {
+      return (
+        <div className="space-y-1.5">
+          {command && (
+            <pre className="whitespace-pre-wrap break-all font-mono text-xs text-fg">
+              {command}
+            </pre>
+          )}
+          {workdir && <MetaRow label="workdir" value={workdir} />}
+          {ttyRequested && (rows > 0 || cols > 0) && (
+            <MetaRow label="tty" value={`${rows}×${cols}`} />
+          )}
+        </div>
+      );
+    }
+    if (action === 'write') {
+      return stdin ? (
+        <pre className="whitespace-pre-wrap break-all font-mono text-xs text-fg">
+          {stdin}
+        </pre>
+      ) : (
+        <div className="text-xs text-dim">{t('tool.sessionWritten')}</div>
+      );
+    }
+    if (action === 'wait') {
+      return result?.reason ? (
+        <MetaRow label={t('tool.reason')} value={result.reason} />
+      ) : null;
+    }
+    if (action === 'resize') {
+      return (
+        <div className="space-y-1.5">
+          <div className="text-xs text-dim">{t('tool.sessionResized')}</div>
+          {(rows > 0 || cols > 0) && (
+            <MetaRow label="tty" value={`${rows}×${cols}`} />
+          )}
+        </div>
+      );
+    }
+    return ack ? <div className="text-xs text-dim">{ack}</div> : null;
+  })();
+
+  return (
+    <div className="my-1.5">
+      {/* Same shape as ExecView: the row toggles on click and carries
+          its own copy button, so it is a div with button semantics. */}
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={() => setOpen(!open)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setOpen(!open);
+          }
+        }}
+        className={`flex w-full cursor-pointer items-center gap-2 rounded-control border px-3 py-2 text-left text-sm transition-colors ${
+          running
+            ? 'border-accent/40 bg-panel2'
+            : failed
+              ? 'border-err/40 bg-err/5'
+              : 'border-edge bg-panel2'
+        } hover:bg-panel2`}
+      >
+        {running ? (
+          <Loader2
+            size={ICON.sm}
+            className="animate-spin shrink-0 text-accent"
+          />
+        ) : failed ? (
+          <X size={ICON.sm} className="shrink-0 text-err" />
+        ) : (
+          <Check size={ICON.sm} className="shrink-0 text-ok" />
+        )}
+        <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg">
+          {action === 'start' && command ? (
+            <>
+              <span className="select-none text-dim">$ </span>
+              {command}
+            </>
+          ) : (
+            <>
+              <span className="select-none text-dim">{t('tool.session')} </span>
+              {processID || tool.name}
+              <span className="text-dim"> · {action || tool.name}</span>
+            </>
+          )}
+        </span>
+        <ToolElapsed tool={tool} />
+        {action === 'start' && processID && (
+          <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 font-mono text-micro text-dim">
+            {t('tool.session')} {processID}
+          </span>
+        )}
+        {action === 'read' &&
+          !running &&
+          typeof result?.next_seq === 'number' && (
+            <span
+              className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 font-mono text-micro text-dim tabular-nums"
+              data-tip={t('tool.sessionCursor')}
+            >
+              #{result.next_seq}
+            </span>
+          )}
+        {action === 'read' && !running && result?.eof === true && (
+          <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 font-mono text-micro text-dim">
+            {t('tool.eof')}
+          </span>
+        )}
+        {action === 'resize' && (rows > 0 || cols > 0) && (
+          <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 font-mono text-micro text-dim tabular-nums">
+            {rows}×{cols}
+          </span>
+        )}
+        {!running && exitCode !== null && (
+          <span
+            className={`shrink-0 rounded-tight px-1.5 py-0.5 font-mono text-micro ${
+              failed ? 'bg-err/10 text-err' : 'bg-ok/10 text-ok'
+            }`}
+          >
+            {t('tool.exit')} {exitCode}
+          </span>
+        )}
+        {!running && result?.reason && (
+          <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 font-mono text-micro text-dim">
+            {result.reason}
+          </span>
+        )}
+        {!running && outputTail && (
+          <span
+            className={`shrink-0 truncate font-mono text-micro max-w-[40%] ${
+              failed ? 'text-err' : 'text-ok'
+            }`}
+          >
+            {outputTail}
+          </span>
+        )}
+        {copyText && !running && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              void copyOutput();
+            }}
+            className="shrink-0 rounded-tight border border-edge px-1.5 py-0.5 text-micro text-dim hover:text-fg"
+            aria-label={t('tool.copyResult')}
+          >
+            {copied ? (
+              <Check size={ICON.xs} />
+            ) : (
+              <ClipboardList size={ICON.xs} />
+            )}
+          </button>
+        )}
+        {open ? (
+          <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
+        ) : (
+          <ChevronRight size={ICON.sm} className="shrink-0 text-dim" />
+        )}
+      </div>
+      {open && (
+        <div className="mt-1 space-y-1.5 rounded-control border border-edge bg-panel px-2.5 py-2">
+          {running && (
+            <div className="flex items-center gap-1.5 text-xs text-dim">
+              <Loader2 size={ICON.xs} className="animate-spin" />
+              {t('tool.running')}
+            </div>
+          )}
+          {!running && tool.status === 'error' && (
+            <div className="text-xs text-err">{tool.result}</div>
+          )}
+          {!running &&
+            tool.status !== 'error' &&
+            (body ?? (
+              <pre className="whitespace-pre-wrap break-all font-mono text-xs text-dim">
+                {tool.result}
+              </pre>
+            ))}
         </div>
       )}
     </div>
@@ -419,6 +899,10 @@ function ReadView({ tool }: { tool: ToolView }) {
               return v as {
                 file_path?: string;
                 content: string;
+                offset?: number;
+                limit?: number;
+                total_lines?: number;
+                is_truncated?: boolean;
                 bytes?: number;
               };
             }
@@ -437,9 +921,33 @@ function ReadView({ tool }: { tool: ToolView }) {
     (tool.result !== undefined ? recoverJsonContent(tool.result) : '') ??
     '';
   const diffFiles = content ? parseUnifiedDiff(content) : null;
-  const lines = content ? content.split('\n').length : 0;
   const running = tool.status === 'running';
   const failed = tool.status === 'error';
+  // A read is a window on a file, not the whole file: the header names
+  // the range it actually returned and flags a read the tool capped, so
+  // "2000 lines" never reads as "the file is 2000 lines long".
+  const meta = (() => {
+    if (parsed === null) return null;
+    const shown = countLines(content);
+    const from = typeof parsed.offset === 'number' ? parsed.offset : 1;
+    const total = parsed.total_lines;
+    if (typeof total !== 'number' || total <= 0) {
+      return {
+        text: `${shown} ${t('tool.lines')}`,
+        truncated: false,
+        rest: 0,
+      };
+    }
+    return {
+      text: t('tool.lineRange', {
+        from,
+        to: from + shown - 1,
+        total,
+      }),
+      truncated: parsed.is_truncated === true,
+      rest: Math.max(0, total - (from + shown - 1)),
+    };
+  })();
 
   const copyContent = async () => {
     if (!content) return;
@@ -487,12 +995,19 @@ function ReadView({ tool }: { tool: ToolView }) {
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg">
           {path}
         </span>
-        {parsed !== null && !running && (
-          <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 font-mono text-micro text-dim tabular-nums">
-            {lines} {t('tool.lines')}
-            {typeof parsed.bytes === 'number'
-              ? ` · ${fmtSize(parsed.bytes)}`
-              : ''}
+        <ToolElapsed tool={tool} />
+        {meta !== null && !running && (
+          <span
+            className={`shrink-0 rounded-tight bg-panel px-1.5 py-0.5 font-mono text-micro tabular-nums ${
+              meta.truncated ? 'text-warn' : 'text-dim'
+            }`}
+            data-tip={
+              meta.truncated && meta.rest
+                ? t('tool.moreLines', { count: meta.rest })
+                : undefined
+            }
+          >
+            {meta.text}
           </span>
         )}
         {content && (
@@ -532,10 +1047,178 @@ function ReadView({ tool }: { tool: ToolView }) {
             <GitDiffView files={diffFiles} maxHeight="max-h-72" />
           )}
           {!running && parsed !== null && !diffFiles && (
-            <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap break-all px-2.5 py-2 font-mono text-xs text-fg">
-              {content}
-            </pre>
+            <OutputPane text={content} className="px-2.5 py-2 text-fg" />
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// parseViewImageCaption reads the line view_image prints next to the
+// image it encoded: "view_image: <path> (1440x900, 123456 bytes)". It
+// is the only place the encoded dimensions and payload size appear.
+function parseViewImageCaption(
+  text: string,
+): { width: number; height: number; bytes: number } | null {
+  const m = /\((\d+)x(\d+), (\d+) bytes\)/.exec(text);
+  if (!m) return null;
+  return { width: Number(m[1]), height: Number(m[2]), bytes: Number(m[3]) };
+}
+
+// ViewImageView renders view_image: the header names the file, and
+// expanding shows the picture itself — mirrored from the image part of
+// the tool result, which is the exact (downscaled) frame the model was
+// shown, so "the model missed that detail" is verifiable instead of
+// trusted. When a result carries no image part the card falls back to
+// the file on disk, then to the caption text.
+function ViewImageView({ tool }: { tool: ToolView }) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const [fromDisk, setFromDisk] = useState<FilePreview | null>(null);
+  const fetched = useRef(false);
+  const openFileTarget = useStore((s) => s.openFileTarget);
+  const args = parseArgs(tool);
+  const path =
+    args && typeof args.path === 'string'
+      ? args.path
+      : args && typeof args.file_path === 'string'
+        ? args.file_path
+        : '';
+  const running = tool.status === 'running';
+  const failed = tool.status === 'error';
+  const image = tool.images?.[0];
+  const caption =
+    tool.result !== undefined ? parseViewImageCaption(tool.result) : null;
+  // Without an inline image part (an archive that dropped the bytes, a
+  // tool that only described the file) the picture still exists on
+  // disk: resolve it once, on first expand.
+  useEffect(() => {
+    if (!open || image || fetched.current || failed || path === '') return;
+    fetched.current = true;
+    let live = true;
+    void api
+      .readPreview(path)
+      .then((preview) => {
+        if (live) setFromDisk(preview);
+      })
+      .catch(() => {
+        // The card falls back to the caption text.
+      });
+    return () => {
+      live = false;
+    };
+  }, [open, image, failed, path]);
+
+  const diskImage =
+    !image && fromDisk?.kind === 'image' && fromDisk.data_url ? fromDisk : null;
+  const src = image?.data_url ?? diskImage?.data_url ?? '';
+  // The frame badge describes the encoded image the model saw, so it
+  // stays only while that frame is the picture on screen: once the card
+  // has fallen back to the file on disk, the model's dimensions would
+  // describe something the user is not looking at.
+  const showFrameBadge = caption !== null && !running && (image || !diskImage);
+  const diskLabel = [diskImage?.name, fmtSize(diskImage?.size)]
+    .filter(Boolean)
+    .join(' · ');
+  // The caption names where the pixels came from: an inline part is the
+  // exact (downscaled) frame the model saw, a disk fallback is the
+  // original file — crediting the model with the latter would describe
+  // the wrong image.
+  const captionText = image
+    ? caption
+      ? t('tool.modelSaw', {
+          value: `${caption.width}×${caption.height} · ${fmtSize(caption.bytes)}`,
+        })
+      : ''
+    : diskLabel
+      ? t('tool.fromDisk', { value: diskLabel })
+      : '';
+  const openInViewer = () => {
+    if (path) void openFileTarget(path);
+  };
+
+  const body = (() => {
+    if (failed) {
+      return <div className="px-2.5 py-2 text-xs text-err">{tool.result}</div>;
+    }
+    if (src === '') {
+      return tool.result !== undefined ? (
+        <OutputPane
+          text={tool.result}
+          cap="max-h-48"
+          className="px-2.5 py-2 text-dim"
+        />
+      ) : null;
+    }
+    return (
+      <div className="space-y-1.5 px-2.5 py-2">
+        <button
+          type="button"
+          onClick={openInViewer}
+          disabled={path === ''}
+          data-tip={path ? t('chat.openArtifact', { path }) : undefined}
+          className="block max-w-full overflow-hidden rounded-control border border-edge transition-colors enabled:hover:border-accent/60"
+        >
+          <img
+            src={src}
+            alt={path || tool.name}
+            className="max-h-[60vh] max-w-full bg-[var(--color-media-backdrop)] object-contain"
+          />
+        </button>
+        {captionText && (
+          <div className="font-mono text-micro text-dim">{captionText}</div>
+        )}
+      </div>
+    );
+  })();
+
+  return (
+    <div className="my-1.5">
+      <button
+        onClick={() => setOpen(!open)}
+        className={`flex w-full items-center gap-2 rounded-control border px-3 py-2 text-left text-sm transition-colors ${
+          failed
+            ? 'border-err/40 bg-err/5'
+            : running
+              ? 'border-accent/40 bg-panel2'
+              : 'border-edge bg-panel2'
+        } hover:bg-panel2`}
+      >
+        {running ? (
+          <Loader2
+            size={ICON.sm}
+            className="animate-spin shrink-0 text-accent"
+          />
+        ) : failed ? (
+          <X size={ICON.sm} className="shrink-0 text-err" />
+        ) : (
+          <ImageIcon size={ICON.sm} className="shrink-0 text-accent" />
+        )}
+        <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg">
+          {path || tool.name}
+        </span>
+        <ToolElapsed tool={tool} />
+        {showFrameBadge && caption && (
+          <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 font-mono text-micro text-dim tabular-nums">
+            {caption.width}×{caption.height}
+          </span>
+        )}
+        {open ? (
+          <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
+        ) : (
+          <ChevronRight size={ICON.sm} className="shrink-0 text-dim" />
+        )}
+      </button>
+      {open && (
+        <div className="mt-1 overflow-hidden rounded-control border border-edge bg-panel">
+          {running && !src && (
+            <div className="flex items-center gap-1.5 px-2.5 py-2 text-xs text-dim">
+              <Loader2 size={ICON.xs} className="animate-spin" />
+              {t('tool.running')}
+            </div>
+          )}
+          {!running && body}
         </div>
       )}
     </div>
@@ -960,6 +1643,7 @@ function DelegateView({ tool }: { tool: ToolView }) {
             </span>
           )}
         </span>
+        <ToolElapsed tool={tool} />
         {result !== null && (
           <span
             className={`shrink-0 rounded-tight px-1.5 py-0.5 text-micro ${statusBadgeClass(result.status)}`}
@@ -1078,6 +1762,7 @@ function DelegationStatusView({ tool }: { tool: ToolView }) {
           {t('tool.delegationStatus')}
           {id && <span className="text-dim">: {id}</span>}
         </span>
+        <ToolElapsed tool={tool} />
         {result !== null && (
           <span
             className={`shrink-0 rounded-tight px-1.5 py-0.5 text-micro ${statusBadgeClass(result.status)}`}
@@ -1322,6 +2007,7 @@ function McpToolView({ tool }: { tool: ToolView }) {
         <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg">
           {parts ? parts.tool : tool.name}
         </span>
+        <ToolElapsed tool={tool} />
         {summaryTail && (
           <span className="hidden shrink-0 truncate font-mono text-micro max-w-[35%] text-dim lg:inline">
             {summaryTail}
@@ -1870,6 +2556,7 @@ function WebSearchView({ tool }: { tool: ToolView }) {
           {t('tool.searchedWeb')}
           {query && <span className="text-dim">: {query}</span>}
         </span>
+        <ToolElapsed tool={tool} />
         {parsed?.provider && (
           <span className="shrink-0 text-micro text-dim">
             {t('tool.webSearchVia', { provider: parsed.provider })}
@@ -2002,6 +2689,7 @@ function WebFetchView({ tool }: { tool: ToolView }) {
         <span className="min-w-0 flex-1 truncate text-sm text-fg">
           {parsed?.title || url}
         </span>
+        <ToolElapsed tool={tool} />
         {parsed?.site_name && !running && (
           <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 text-micro text-dim">
             {parsed.site_name}
@@ -2326,6 +3014,7 @@ function SkillManageView({ tool }: { tool: ToolView }) {
             </span>
           )}
         </span>
+        <ToolElapsed tool={tool} />
         {open ? (
           <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
         ) : (
@@ -2813,6 +3502,7 @@ export const ApplyPatchView = memo(function ApplyPatchView({
         <span className="min-w-0 flex-1 truncate text-xs text-fg">
           {running ? t('tool.running') : headerLabel}
         </span>
+        <ToolElapsed tool={tool} />
         {totals && (
           <span className="shrink-0 font-mono text-micro tabular-nums">
             <span className="text-ok">+{totals.added}</span>
@@ -2939,13 +3629,11 @@ function ResultBlock({ tool }: { tool: ToolView }) {
     return <GitDiffView files={diffFiles} wrap maxHeight="max-h-64" />;
   }
   return (
-    <pre
-      className={`text-xs whitespace-pre-wrap break-all font-mono max-h-64 overflow-y-auto ${
-        tool.status === 'error' ? 'text-err' : 'text-dim'
-      }`}
-    >
-      {tool.result}
-    </pre>
+    <OutputPane
+      text={tool.result}
+      cap="max-h-64"
+      className={`text-xs ${tool.status === 'error' ? 'text-err' : 'text-dim'}`}
+    />
   );
 }
 
@@ -2968,12 +3656,19 @@ export const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
   }, [running, tool.name]);
 
   // exec / read render their own standalone collapsible views without
-  // the generic tool card wrapper.
-  if (tool.name === 'exec_command' || tool.name === 'exec_session') {
+  // the generic tool card wrapper. The session tool returns a per-action
+  // envelope, so it gets its own terminal block.
+  if (tool.name === 'exec_command') {
     return <ExecView tool={tool} />;
+  }
+  if (tool.name === 'exec_session') {
+    return <SessionView tool={tool} />;
   }
   if (tool.name === 'read_file') {
     return <ReadView tool={tool} />;
+  }
+  if (tool.name === 'view_image') {
+    return <ViewImageView tool={tool} />;
   }
   if (tool.name === 'write_file') {
     return <WriteView tool={tool} />;
@@ -3084,6 +3779,7 @@ export const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
           <code className="font-mono text-xs truncate">{tool.name}</code>
         )}
         <span className="flex-1" />
+        <ToolElapsed tool={tool} />
         <span className="text-xs text-dim shrink-0">
           {t(`tool.${tool.status}`)}
         </span>

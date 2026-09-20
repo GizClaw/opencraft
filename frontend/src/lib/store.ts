@@ -11,7 +11,7 @@ import {
 import { sanitizeToolResult } from './ansi';
 import { followLinkTarget } from './linkTarget';
 import { coalesceStreamEvents } from './stream';
-import { toolResultText } from './toolresult';
+import { toolResultImages, toolResultText, type ToolImage } from './toolresult';
 import type {
   AgentSummary,
   AutomationRun,
@@ -45,6 +45,16 @@ export interface ToolView {
   args: string;
   status: 'running' | 'done' | 'error';
   result?: string;
+  // seenAt / endedAt are this client's clock for one call: stamped when
+  // the tool_call arrives and when its result lands. They stay
+  // undefined for calls replayed from the archive, which carries no
+  // per-call timing, so a card never renders an invented duration.
+  seenAt?: number;
+  endedAt?: number;
+  // images keeps the inline image parts a tool returned (view_image is
+  // the only built-in that produces them), so the card can show what
+  // the model saw instead of a caption about it.
+  images?: ToolImage[];
 }
 
 // FileViewerState is the memory-only file viewer state of one
@@ -381,6 +391,8 @@ const historyToMessages = (history: HistoryMessage[]): MessageView[] => {
           call.item.tool.result = sanitizeToolResult(
             toolResultText(p.result.content),
           );
+          const images = toolResultImages(p.result.content);
+          if (images.length > 0) call.item.tool.images = images;
         }
       }
       continue;
@@ -652,6 +664,7 @@ function applyStream(
             name: part.call.name,
             args: normalizeArgs(part.call.arguments),
             status: 'running',
+            seenAt: Date.now(),
           },
         },
       ];
@@ -675,6 +688,8 @@ function applyStream(
                 ? ('error' as const)
                 : ('done' as const),
               result: sanitizeToolResult(toolResultText(part.result.content)),
+              endedAt: Date.now(),
+              images: toolResultImages(part.result.content),
             },
           };
         });
