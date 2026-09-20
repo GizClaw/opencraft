@@ -1771,6 +1771,30 @@ export function ChatView() {
   // keep arriving.
   const userScrolledAwayRef = useRef(false);
   const lastScrollTopRef = useRef(0);
+  // The pin belongs to the transcript, not to the view: opening a
+  // conversation always starts at its newest message. A switch swaps the
+  // scroller out (the 'opening' placeholder replaces the whole
+  // transcript), and the fresh element starts at offset 0 — but the refs
+  // above survive, so an unpinned reader kept stickRef false, the
+  // follow effect bailed, and the session opened on its oldest mounted
+  // row with the jump-to-latest pill up. Reset before paint so the new
+  // transcript never flashes its top; the snap is repeated by the
+  // follow effect once the messages land.
+  useLayoutEffect(() => {
+    stickRef.current = true;
+    userScrolledAwayRef.current = false;
+    setStick(true);
+    const el = scrollRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+      lastScrollTopRef.current = el.scrollTop;
+    } else {
+      // Still on the switch placeholder: the scroller that mounts next
+      // starts at 0, so that is the offset the next scroll event must be
+      // measured against.
+      lastScrollTopRef.current = 0;
+    }
+  }, [current]);
   // refreshPeekCurrent derives the range of turns whose message rows
   // intersect the viewport, so every turn on screen is highlighted on
   // the ruler. Rows carry the turn they belong to even when the

@@ -996,6 +996,71 @@ describe('ChatView jump-to-latest pill', () => {
       screen.queryByRole('button', { name: 'Jump to latest' }),
     ).not.toBeInTheDocument();
   });
+
+  it('re-pins the follow when another conversation is opened', () => {
+    setConversation(manyMessages(250));
+    render(<ChatView />);
+
+    const scroller = screen.getByTestId('chat-scroll');
+    Object.defineProperty(scroller, 'scrollHeight', {
+      configurable: true,
+      value: 8000,
+    });
+    Object.defineProperty(scroller, 'clientHeight', {
+      configurable: true,
+      value: 600,
+    });
+    Object.defineProperty(scroller, 'scrollTop', {
+      configurable: true,
+      writable: true,
+      value: 0,
+    });
+
+    // Read the open conversation from its top: the view is unpinned and
+    // offers the pill.
+    scroller.scrollTop = 7400;
+    fireEvent.scroll(scroller);
+    scroller.scrollTop = 0;
+    fireEvent.scroll(scroller);
+    expect(
+      screen.getByRole('button', { name: 'Jump to latest' }),
+    ).toBeInTheDocument();
+
+    // Open another conversation. The pin belongs to the transcript, not
+    // to the view: the new session must start following its newest
+    // message instead of inheriting "the reader scrolled away".
+    act(() => {
+      stateRoot.sendFocus({ type: 'OPEN_SESSION', id: 's-2' });
+    });
+    const request = stateRoot.focusSnapshot.context.request;
+    act(() => {
+      stateRoot.registry
+        .ensure('s-2', { workspaceGeneration: stateRoot.generation() })
+        ?.send({ type: 'NEW_CHAT_READY' });
+      stateRoot.sendFocus({
+        type: 'OPEN_SUCCEEDED',
+        request,
+        sessionID: 's-2',
+      });
+      useStore.setState({
+        conversations: {
+          's-2': {
+            messages: manyMessages(250),
+            turnArtifacts: [],
+            mode: 'workspace',
+            think: 'medium',
+            model: '',
+            pendingInteracts: [],
+          },
+        },
+      });
+    });
+
+    expect(screen.getByText('message-249')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Jump to latest' }),
+    ).not.toBeInTheDocument();
+  });
 });
 
 describe('ChatView projections', () => {
