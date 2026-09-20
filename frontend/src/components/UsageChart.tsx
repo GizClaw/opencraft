@@ -16,6 +16,13 @@ import {
   floorHourMs,
   localMidnightMs,
 } from '../lib/usageWindow';
+import {
+  SERIES_CACHE_READ,
+  SERIES_CACHE_WRITE,
+  SERIES_INPUT,
+  SERIES_OUTPUT,
+  SERIES_REASONING,
+} from '../lib/chartPalette';
 
 // Chart palette mirrors cc-switch's usage trend: input blue, output
 // green, cache write orange, cache read purple, reasoning red dashed
@@ -33,27 +40,27 @@ const STREAMS: {
 }[] = [
   {
     key: 'input_tokens',
-    color: '#3b82f6',
+    color: SERIES_INPUT,
     labelKey: 'config.usageInput',
   },
   {
     key: 'output_tokens',
-    color: '#22c55e',
+    color: SERIES_OUTPUT,
     labelKey: 'config.usageOutput',
   },
   {
     key: 'cache_write_tokens',
-    color: '#f97316',
+    color: SERIES_CACHE_WRITE,
     labelKey: 'config.usageCacheWrite',
   },
   {
     key: 'cache_read_tokens',
-    color: '#a855f7',
+    color: SERIES_CACHE_READ,
     labelKey: 'config.usageCache',
   },
   {
     key: 'reasoning_tokens',
-    color: '#f43f5e',
+    color: SERIES_REASONING,
     labelKey: 'config.usageReasoning',
     dashed: true,
   },
@@ -216,7 +223,7 @@ export function UsageChart({
 
   if (startMs <= 0 || endMs <= 0 || filled.length === 0 || !hasData) {
     return (
-      <div className="grid h-[18rem] place-items-center rounded-card border border-edge/70 bg-panel/70 text-sm text-dim backdrop-blur-sm">
+      <div className="grid h-[18rem] place-items-center rounded-card border border-edge bg-panel text-sm text-dim">
         {t(
           allModels
             ? 'config.usageSeriesEmptyRange'
@@ -264,7 +271,7 @@ export function UsageChart({
   };
 
   return (
-    <div className="rounded-card border border-edge/60 bg-panel/60 p-4 backdrop-blur-sm md:p-6">
+    <div className="rounded-card border border-edge bg-panel p-4 md:p-6">
       <div className="mb-4 flex items-center justify-between md:mb-6">
         <h3 className="text-base font-semibold text-fg">
           {t('config.usageTrend')}

@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useState, type ReactNode } from 'react';
+import { useCallback, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArrowLeft, File as FileGlyph } from 'lucide-react';
 import { followLinkTarget } from '../../lib/linkTarget';
@@ -27,25 +27,6 @@ export function FilePreviewModal({
   const [pages, setPages] = useState<ResolvedTarget[]>([initial]);
   const active = pages[pages.length - 1];
 
-  // A layout effect, not a passive one: Escape must belong to this
-  // dialog from the commit that put it on screen. A passive effect
-  // leaves a window between the dialog appearing and the listener being
-  // installed, and an Escape landing there is swallowed by whatever
-  // surface owns the key underneath (the page this was opened from),
-  // leaving the dialog open.
-  useLayoutEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      // This dialog can open above another overlay (the PR detail page
-      // and the skill drawer both push it), so Escape belongs to the
-      // top layer: consuming it here keeps the page underneath open.
-      event.stopPropagation();
-      onClose();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
   // A directory has no page of its own, so it goes to the system file
   // manager; files push one more page on this dialog.
   const follow = (href: string, base: string) =>
@@ -71,13 +52,13 @@ export function FilePreviewModal({
             <button
               onClick={() => setPages((prev) => prev.slice(0, -1))}
               className="rounded-tight p-0.5 hover:bg-panel2 hover:text-fg"
-              title={t('files.linkBack')}
+              data-tip={t('files.linkBack')}
               aria-label={t('files.linkBack')}
             >
               <ArrowLeft size={ICON.sm} />
             </button>
           )}
-          <span className="min-w-0 flex-1 truncate font-mono" title={path}>
+          <span className="min-w-0 flex-1 truncate font-mono" data-tip={path}>
             {path}
           </span>
         </div>

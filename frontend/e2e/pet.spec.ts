@@ -319,7 +319,7 @@ test('degrades visibly when the pack no longer matches the asset', async ({
     'data-runtime-status',
     'degraded',
   );
-  const detail = await marker.getAttribute('title');
+  const detail = await marker.getAttribute('data-tip');
   expect(detail).toContain('binding "walking": property "galloping"');
   expect(detail).toContain('property "wave" is trigger, not boolean');
 
@@ -388,7 +388,7 @@ test('degrades visibly when the asset never arrives', async ({ page }) => {
   );
   // The character is still named, so the badge is attributable.
   await expect(surface(page)).toHaveAttribute('data-pack', 'assistant-default');
-  await expect(marker).toHaveAttribute('title', /pet asset is gone/);
+  await expect(marker).toHaveAttribute('data-tip', /pet asset is gone/);
 
   expect((await petReports(page)).at(-1)).toMatchObject({
     pack_id: 'assistant-default',
@@ -809,7 +809,7 @@ test('names the running tool in a tinted pill and flags a failure', async ({
   await expect(pill).toBeVisible();
   await expect(pill).toHaveAttribute('data-category', 'exec');
   await expect(pill).toHaveAttribute('data-state', 'running');
-  await expect(pill).toHaveAttribute('title', 'exec_command');
+  await expect(pill).toHaveAttribute('data-tip', 'exec_command');
   await expect(pill.locator('.pet-tool__name')).toHaveText('exec_command');
   await expect(pill.locator('.pet-tool__badge > svg')).toHaveClass(
     /lucide-terminal/,

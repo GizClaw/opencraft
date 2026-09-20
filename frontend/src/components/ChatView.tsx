@@ -9,7 +9,6 @@ import {
   useState,
   type MouseEvent,
 } from 'react';
-import { createPortal } from 'react-dom';
 import {
   AlertTriangle,
   Archive,
@@ -92,6 +91,8 @@ import { StreamItemView } from './StreamItemView';
 import { latestPlan, planNeedsRefresh } from '../lib/plan';
 import { groupToolCalls, type ToolCallItem } from '../lib/stream';
 import { ICON } from './ui/icon';
+import { Overlay } from './ui/Overlay';
+import { Popover } from './ui/Popover';
 import { IconButton } from './ui/Button';
 
 const isCommandTool = (name: string) =>
@@ -151,7 +152,7 @@ const ToolGroupView = memo(
               : running
                 ? 'border-accent/40 bg-panel2'
                 : 'border-edge bg-panel2'
-          } hover:bg-panel2/70`}
+          } hover:bg-panel2`}
         >
           {running ? (
             <Loader2
@@ -304,17 +305,17 @@ function TurnEndNotice({
           </p>
         )}
         {showRawDetail && (
-          <p className="mt-1 whitespace-pre-wrap break-words font-mono text-micro leading-relaxed text-dim/70">
+          <p className="mt-1 whitespace-pre-wrap break-words font-mono text-micro leading-relaxed text-faint">
             {error}
           </p>
         )}
         {!userStop && requestID && (
-          <p className="mt-1 break-all font-mono text-micro leading-relaxed text-dim/70">
+          <p className="mt-1 break-all font-mono text-micro leading-relaxed text-faint">
             {t('chat.requestId')}: {requestID}
           </p>
         )}
         {!userStop && responseID && (
-          <p className="mt-1 break-all font-mono text-micro leading-relaxed text-dim/70">
+          <p className="mt-1 break-all font-mono text-micro leading-relaxed text-faint">
             {t('chat.responseId')}: {responseID}
           </p>
         )}
@@ -326,7 +327,7 @@ function TurnEndNotice({
               setDismissed(true);
               onDismiss?.();
             }}
-            title={t('chat.dismiss')}
+            data-tip={t('chat.dismiss')}
             aria-label={t('chat.dismiss')}
             className="grid h-7 w-7 place-items-center rounded-control text-dim hover:bg-panel2 hover:text-fg"
           >
@@ -550,7 +551,7 @@ const MessageRow = memo(function MessageRow({
               onClick={onFork}
               className="flex items-center rounded-tight border border-edge p-1 text-dim hover:text-accent"
               aria-label={t('chat.forkTurn')}
-              title={t('chat.forkTurn')}
+              data-tip={t('chat.forkTurn')}
               tabIndex={-1}
             >
               <GitFork size={ICON.xs} />
@@ -647,7 +648,7 @@ function CompactCard({
     >
       <button
         onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-panel2/70"
+        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-panel2"
       >
         <Archive size={ICON.sm} className="shrink-0 text-dim" />
         <span>{t('tool.compacted')}</span>
@@ -815,8 +816,7 @@ const ArtifactStrip = memo(function ArtifactStrip({
   const scrollRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{
     doc: TurnDoc;
-    x: number;
-    y: number;
+    anchor: HTMLElement;
   } | null>(null);
   useEffect(() => {
     // Keep the newest artifact visible: the strip fills left-to-right
@@ -827,13 +827,7 @@ const ArtifactStrip = memo(function ArtifactStrip({
   const closeMenu = () => setMenu(null);
   const openMenu = (event: MouseEvent<HTMLButtonElement>, doc: TurnDoc) => {
     event.preventDefault();
-    const menuWidth = 220;
-    const menuHeight = 160;
-    setMenu({
-      doc,
-      x: Math.min(event.clientX, window.innerWidth - menuWidth - 8),
-      y: Math.min(event.clientY, window.innerHeight - menuHeight - 8),
-    });
+    setMenu({ doc, anchor: event.currentTarget });
   };
   const runMenuAction = async (action: () => Promise<unknown>) => {
     try {
@@ -869,7 +863,7 @@ const ArtifactStrip = memo(function ArtifactStrip({
               key={doc.path}
               onClick={() => void openFileTarget(doc.path)}
               onContextMenu={(e) => openMenu(e, doc)}
-              title={t('chat.openArtifact', { path: doc.path })}
+              data-tip={t('chat.openArtifact', { path: doc.path })}
               aria-haspopup="menu"
               className="flex max-w-56 shrink-0 snap-start items-center gap-1.5 rounded-control border border-edge bg-panel px-2.5 py-1.5 text-xs text-fg transition-colors hover:border-accent/50 hover:bg-panel2"
             >
@@ -880,74 +874,66 @@ const ArtifactStrip = memo(function ArtifactStrip({
         })}
       </div>
       {menu && (
-        <>
-          <div
-            className="fixed inset-0 z-50"
-            onMouseDown={closeMenu}
-            onContextMenu={(e) => {
-              e.preventDefault();
+        <Popover
+          open
+          onClose={closeMenu}
+          anchor={menu.anchor}
+          role="menu"
+          keyboard
+          panelClassName="min-w-52 rounded-control border border-edge bg-panel p-1 shadow-popover"
+        >
+          <button
+            role="menuitem"
+            className="flex w-full items-center rounded-control px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
+            onClick={() => {
+              void openFileTarget(menu.doc.path);
               closeMenu();
             }}
-          />
-          <div
-            role="menu"
-            className="fixed z-[60] min-w-52 rounded-control border border-edge bg-panel p-1 shadow-popover"
-            style={{ left: menu.x, top: menu.y }}
-            onContextMenu={(e) => e.preventDefault()}
           >
-            <button
-              role="menuitem"
-              className="flex w-full items-center rounded-control px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
-              onClick={() => {
-                void openFileTarget(menu.doc.path);
-                closeMenu();
-              }}
-            >
-              {t('files.openInViewer')}
-            </button>
-            <button
-              role="menuitem"
-              className="flex w-full items-center rounded-control px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
-              onClick={() =>
-                void runMenuAction(() => api.openArtifactWith(menu.doc.path))
-              }
-            >
-              {t('chat.artifactOpenWith')}
-            </button>
-            <div role="separator" className="my-1 border-t border-edge" />
-            <button
-              role="menuitem"
-              className="flex w-full items-center rounded-control px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
-              onClick={() =>
-                void runMenuAction(() => api.saveArtifactAs(menu.doc.path))
-              }
-            >
-              {t('chat.artifactSaveAs')}
-            </button>
-            <button
-              role="menuitem"
-              className="flex w-full items-center rounded-control px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
-              onClick={() =>
-                void runMenuAction(async () => {
-                  await navigator.clipboard.writeText(
-                    absoluteArtifactPath(menu.doc.path, workspace),
-                  );
-                })
-              }
-            >
-              {t('chat.artifactCopyPath')}
-            </button>
-            <button
-              role="menuitem"
-              className="flex w-full items-center rounded-control px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
-              onClick={() =>
-                void runMenuAction(() => api.revealArtifact(menu.doc.path))
-              }
-            >
-              {revealLabel}
-            </button>
-          </div>
-        </>
+            {t('files.openInViewer')}
+          </button>
+          <button
+            role="menuitem"
+            className="flex w-full items-center rounded-control px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
+            onClick={() =>
+              void runMenuAction(() => api.openArtifactWith(menu.doc.path))
+            }
+          >
+            {t('chat.artifactOpenWith')}
+          </button>
+          <div role="separator" className="my-1 border-t border-edge" />
+          <button
+            role="menuitem"
+            className="flex w-full items-center rounded-control px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
+            onClick={() =>
+              void runMenuAction(() => api.saveArtifactAs(menu.doc.path))
+            }
+          >
+            {t('chat.artifactSaveAs')}
+          </button>
+          <button
+            role="menuitem"
+            className="flex w-full items-center rounded-control px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
+            onClick={() =>
+              void runMenuAction(async () => {
+                await navigator.clipboard.writeText(
+                  absoluteArtifactPath(menu.doc.path, workspace),
+                );
+              })
+            }
+          >
+            {t('chat.artifactCopyPath')}
+          </button>
+          <button
+            role="menuitem"
+            className="flex w-full items-center rounded-control px-2.5 py-1.5 text-left text-xs text-fg hover:bg-panel2"
+            onClick={() =>
+              void runMenuAction(() => api.revealArtifact(menu.doc.path))
+            }
+          >
+            {revealLabel}
+          </button>
+        </Popover>
       )}
     </div>
   );
@@ -1178,7 +1164,7 @@ function AttachmentImage({ att }: { att: AttachmentView }) {
         type="button"
         onClick={() => void openFileTarget(att.path)}
         className="max-h-44 max-w-64 cursor-pointer rounded-control border border-edge object-contain transition-colors hover:border-accent/60"
-        title={att.path}
+        data-tip={att.path}
       >
         <img
           src={url}
@@ -1298,92 +1284,26 @@ function AttachmentFileGlyph({
 }
 
 // AttachmentFiles renders non-image attachments below the user bubble.
-// Clicking the count chip opens a floating menu (portaled to body so
-// the transcript scroll container cannot clip it) that shows at most
-// three rows at once and scrolls for the rest.
-const FILE_ROW_H = 36; // h-9 per row
-const FILE_MENU_W = 288; // w-72
-const FILE_MENU_VPAD = 10; // p-1 + 1px borders
-
+// Clicking the count chip opens the shared <Popover> (portaled to the
+// body so the transcript scroll container cannot clip it) that shows at
+// most three rows at once and scrolls for the rest.
 function AttachmentFiles({ attachments }: { attachments: AttachmentView[] }) {
   const { t } = useTranslation();
   const openFileTarget = useStore((s) => s.openFileTarget);
   const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
-  const buttonRef = useRef<HTMLButtonElement | null>(null);
-  const menuRef = useRef<HTMLDivElement | null>(null);
-  const panelH = Math.min(attachments.length, 3) * FILE_ROW_H + FILE_MENU_VPAD;
+  const chipRef = useRef<HTMLButtonElement | null>(null);
 
-  const close = useCallback(() => {
-    setOpen(false);
-    setPos(null);
-  }, []);
-
-  const toggle = () => {
-    if (open) return close();
-    const button = buttonRef.current;
-    if (!button) return;
-    const rect = button.getBoundingClientRect();
-    const gap = 6;
-    const margin = 8;
-    // Open below the chip when the viewport has room for the whole
-    // menu; otherwise flip above it so a file chip on the last
-    // transcript row still gets a fully visible list.
-    const belowTop = rect.bottom + gap;
-    const fitsBelow = belowTop + panelH <= window.innerHeight - margin;
-    const top = fitsBelow
-      ? belowTop
-      : Math.max(margin, rect.top - gap - panelH);
-    const maxLeft = Math.max(margin, window.innerWidth - FILE_MENU_W - margin);
-    const left = Math.min(Math.max(margin, rect.right - FILE_MENU_W), maxLeft);
-    setPos({ top, left });
-    setOpen(true);
-  };
-
-  useEffect(() => {
-    if (!open) return;
-    const onPointerDown = (event: PointerEvent) => {
-      const el = event.target;
-      if (
-        el instanceof Node &&
-        (menuRef.current?.contains(el) || buttonRef.current?.contains(el))
-      ) {
-        return;
-      }
-      close();
-    };
-    // Scrolling anywhere outside the floating list closes it (the
-    // transcript scrolls under the chip); scrolling inside the list
-    // keeps working.
-    const onScroll = (event: Event) => {
-      const el = event.target;
-      if (el instanceof Node && menuRef.current?.contains(el)) return;
-      close();
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close();
-    };
-    document.addEventListener('pointerdown', onPointerDown);
-    document.addEventListener('scroll', onScroll, true);
-    window.addEventListener('resize', close);
-    window.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      document.removeEventListener('scroll', onScroll, true);
-      window.removeEventListener('resize', close);
-      window.removeEventListener('keydown', onKey);
-    };
-  }, [open, close]);
+  const close = useCallback(() => setOpen(false), []);
 
   return (
     <>
       <button
-        ref={buttonRef}
+        ref={chipRef}
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
-        onClick={toggle}
-        className="flex items-center gap-1.5 rounded-control border border-edge bg-panel2/70 px-2 py-1 text-xs text-dim hover:text-fg"
+        onClick={() => setOpen((wasOpen) => !wasOpen)}
+        className="flex items-center gap-1.5 rounded-control border border-edge bg-panel2 px-2 py-1 text-xs text-dim hover:text-fg"
       >
         <Paperclip size={ICON.xs} />
         {t('chat.files', { count: attachments.length })}
@@ -1392,40 +1312,41 @@ function AttachmentFiles({ attachments }: { attachments: AttachmentView[] }) {
           className={`transition-transform ${open ? 'rotate-180' : ''}`}
         />
       </button>
-      {open &&
-        createPortal(
-          <div
-            ref={menuRef}
-            role="menu"
-            className="fixed z-[70] w-72 rounded-card border border-edge bg-panel p-1 shadow-popover"
-            style={pos ?? { visibility: 'hidden' }}
-          >
-            <div className="max-h-[6.75rem] overflow-y-auto">
-              {attachments.map((a) => (
-                <button
-                  key={a.id}
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    close();
-                    void openFileTarget(a.path);
-                  }}
-                  title={a.path}
-                  className="flex h-9 w-full items-center gap-2 rounded-control px-2 text-left text-xs hover:bg-panel2"
-                >
-                  <AttachmentFileGlyph name={a.name} kind={a.kind} />
-                  <span className="min-w-0 flex-1 truncate">{a.name}</span>
-                  {a.size != null && (
-                    <span className="shrink-0 text-dim tabular-nums">
-                      {formatSize(a.size)}
-                    </span>
-                  )}
-                </button>
-              ))}
-            </div>
-          </div>,
-          document.body,
-        )}
+      {open && (
+        <Popover
+          open
+          onClose={close}
+          anchor={chipRef.current}
+          role="menu"
+          align="end"
+          keyboard
+          panelClassName="w-72 rounded-card border border-edge bg-panel p-1 shadow-popover"
+        >
+          <div className="max-h-[6.75rem] overflow-y-auto">
+            {attachments.map((a) => (
+              <button
+                key={a.id}
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  close();
+                  void openFileTarget(a.path);
+                }}
+                data-tip={a.path}
+                className="flex h-9 w-full items-center gap-2 rounded-control px-2 text-left text-xs hover:bg-panel2"
+              >
+                <AttachmentFileGlyph name={a.name} kind={a.kind} />
+                <span className="min-w-0 flex-1 truncate">{a.name}</span>
+                {a.size != null && (
+                  <span className="shrink-0 text-dim tabular-nums">
+                    {formatSize(a.size)}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        </Popover>
+      )}
     </>
   );
 }
@@ -1694,6 +1615,9 @@ export function ChatView() {
   const [forking, setForking] = useState(false);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const modeTriggerRef = useRef<HTMLButtonElement>(null);
+  const modelTriggerRef = useRef<HTMLButtonElement>(null);
+  const wsTriggerRef = useRef<HTMLButtonElement>(null);
   const composerDraft = useStore((s) => s.composerDraft);
   const clearComposerDraft = useStore((s) => s.clearComposerDraft);
   const composerRef = useRef<MarkdownComposerHandle>(null);
@@ -2408,7 +2332,7 @@ export function ChatView() {
         <span className="flex-1" />
         <button
           onClick={() => (filesOpen ? closeFiles() : openFiles())}
-          title={t('files.togglePanel')}
+          data-tip={t('files.togglePanel')}
           aria-label={t('files.togglePanel')}
           aria-pressed={filesOpen}
           className="grid h-7 w-7 place-items-center rounded-control text-dim hover:bg-panel2 hover:text-fg"
@@ -2474,12 +2398,12 @@ export function ChatView() {
             }
           >
             {loadingEarlier && (
-              <div className="pointer-events-none fixed left-1/2 top-14 z-20 -translate-x-1/2 rounded-full border border-edge bg-panel p-2 shadow-popover">
+              <div className="pointer-events-none fixed left-1/2 top-14 z-[var(--oc-z-raised)] -translate-x-1/2 rounded-full border border-edge bg-panel p-2 shadow-popover">
                 <Loader2 size={ICON.sm} className="animate-spin text-dim" />
               </div>
             )}
             {historyWarning && (
-              <div className="mb-3 flex items-center gap-2 rounded-card border border-edge bg-panel2/70 px-3 py-2 text-xs text-dim">
+              <div className="mb-3 flex items-center gap-2 rounded-card border border-edge bg-panel2 px-3 py-2 text-xs text-dim">
                 <AlertTriangle size={ICON.xs} className="text-accent" />
                 {t('chat.liveWithoutHistory')}
               </div>
@@ -2652,8 +2576,8 @@ export function ChatView() {
             ref={setComposerBox}
             className={
               centerComposer
-                ? 'pointer-events-none absolute inset-x-0 top-[calc(50%+1.375rem)] z-10 -translate-y-1/2 px-6'
-                : 'pointer-events-none absolute inset-x-0 bottom-0 z-10 px-6 pb-4'
+                ? 'pointer-events-none absolute inset-x-0 top-[calc(50%+1.375rem)] z-[var(--oc-z-raised)] -translate-y-1/2 px-6'
+                : 'pointer-events-none absolute inset-x-0 bottom-0 z-[var(--oc-z-raised)] px-6 pb-4'
             }
           >
             {centerComposer && (
@@ -2676,8 +2600,8 @@ export function ChatView() {
                 aria-hidden={!showJumpLatest}
                 tabIndex={showJumpLatest ? 0 : -1}
                 aria-label={t('chat.jumpToLatest')}
-                title={t('chat.jumpToLatest')}
-                className={`absolute bottom-full left-1/2 z-30 mb-3 grid h-9 w-9 -translate-x-1/2 place-items-center rounded-full border border-edge bg-panel/95 text-dim shadow-popover backdrop-blur transition-all duration-200 hover:border-accent/50 hover:text-fg ${
+                data-tip={t('chat.jumpToLatest')}
+                className={`absolute bottom-full left-1/2 z-[var(--oc-z-raised)] mb-3 grid h-9 w-9 -translate-x-1/2 place-items-center rounded-full border border-edge bg-panel/95 text-dim shadow-popover backdrop-blur transition-all duration-200 hover:border-accent/50 hover:text-fg ${
                   showJumpLatest
                     ? 'translate-y-0 opacity-100'
                     : 'pointer-events-none translate-y-1 opacity-0'
@@ -2727,7 +2651,7 @@ export function ChatView() {
                         type="button"
                         onClick={cancelQueued}
                         aria-label={t('chat.queuedCancel')}
-                        title={t('chat.queuedCancel')}
+                        data-tip={t('chat.queuedCancel')}
                         className="rounded-control px-1.5 py-0.5 text-dim hover:bg-panel2 hover:text-fg"
                       >
                         <X size={ICON.xs} />
@@ -2738,7 +2662,7 @@ export function ChatView() {
                         type="button"
                         onClick={() => void cancelRun()}
                         aria-label={t('chat.stop')}
-                        title={t('chat.stop')}
+                        data-tip={t('chat.stop')}
                         className="grid h-6 w-6 place-items-center rounded-control text-err hover:bg-panel2"
                       >
                         <Square size={ICON.xs} fill="currentColor" />
@@ -2777,7 +2701,7 @@ export function ChatView() {
                   <button
                     onClick={() => void pickAttachment()}
                     disabled={!configured || busy}
-                    title={t('chat.attach')}
+                    data-tip={t('chat.attach')}
                     aria-label={t('chat.attach')}
                     className="flex items-center gap-1 rounded-control px-2.5 py-1 text-xs text-dim transition-colors hover:bg-panel2 hover:text-fg disabled:opacity-50"
                   >
@@ -2786,7 +2710,7 @@ export function ChatView() {
                   {yoloOnly ? (
                     <div
                       className="flex items-center gap-1.5 rounded-control border border-yolo/50 bg-yolo/15 px-2.5 py-1 text-xs text-yolo"
-                      title={t('chat.sandboxMode')}
+                      data-tip={t('chat.sandboxMode')}
                     >
                       <Flame size={ICON.sm} />
                       {t('chat.yoloMode')}
@@ -2794,6 +2718,7 @@ export function ChatView() {
                   ) : (
                     <div className="relative">
                       <button
+                        ref={modeTriggerRef}
                         onClick={() => setModeMenuOpen((v) => !v)}
                         className={`flex items-center gap-1.5 rounded-control border px-2.5 py-1 text-xs transition-colors ${
                           yolo
@@ -2802,7 +2727,7 @@ export function ChatView() {
                               ? 'border-accent/40 bg-accent/10 text-accent hover:bg-accent/20'
                               : 'border-transparent text-dim hover:bg-panel2 hover:text-fg'
                         }`}
-                        title={t('chat.sandboxMode')}
+                        data-tip={t('chat.sandboxMode')}
                       >
                         {yolo ? (
                           <Flame size={ICON.sm} />
@@ -2819,45 +2744,46 @@ export function ChatView() {
                         <ChevronUp size={ICON.xs} />
                       </button>
                       {modeMenuOpen && (
-                        <>
-                          <div
-                            className="fixed inset-0 z-30"
-                            onClick={() => setModeMenuOpen(false)}
-                          />
-                          <div className="absolute bottom-full left-0 z-40 mb-1.5 w-80 rounded-control border border-edge bg-panel p-1 shadow-popover">
-                            {SESSION_MODES.map((option) => {
-                              const Icon = option.icon;
-                              const active = mode === option.value;
-                              return (
-                                <button
-                                  key={option.value}
-                                  onClick={() => {
-                                    setModeMenuOpen(false);
-                                    if (option.value === 'yolo') {
-                                      setConfirmYolo(true);
-                                    } else {
-                                      applyMode(option.value);
-                                    }
-                                  }}
-                                  className={`w-full rounded-control px-2 py-1.5 text-left text-xs ${modeMenuTint(option, active)}`}
+                        <Popover
+                          open
+                          onClose={() => setModeMenuOpen(false)}
+                          anchor={modeTriggerRef.current}
+                          role="none"
+                          align="start"
+                          panelClassName="w-80 rounded-control border border-edge bg-panel p-1 shadow-popover"
+                        >
+                          {SESSION_MODES.map((option) => {
+                            const Icon = option.icon;
+                            const active = mode === option.value;
+                            return (
+                              <button
+                                key={option.value}
+                                onClick={() => {
+                                  setModeMenuOpen(false);
+                                  if (option.value === 'yolo') {
+                                    setConfirmYolo(true);
+                                  } else {
+                                    applyMode(option.value);
+                                  }
+                                }}
+                                className={`w-full rounded-control px-2 py-1.5 text-left text-xs ${modeMenuTint(option, active)}`}
+                              >
+                                <span className="flex items-center gap-2">
+                                  <Icon size={ICON.xs} /> {t(option.labelKey)}
+                                </span>
+                                <span
+                                  className={`mt-0.5 block pl-5 text-micro leading-snug ${
+                                    option.value === 'yolo'
+                                      ? 'text-yolo'
+                                      : 'text-dim'
+                                  }`}
                                 >
-                                  <span className="flex items-center gap-2">
-                                    <Icon size={ICON.xs} /> {t(option.labelKey)}
-                                  </span>
-                                  <span
-                                    className={`mt-0.5 block pl-5 text-micro leading-snug ${
-                                      option.value === 'yolo'
-                                        ? 'text-yolo/80'
-                                        : 'text-dim'
-                                    }`}
-                                  >
-                                    {t(option.bannerKey)}
-                                  </span>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </>
+                                  {t(option.bannerKey)}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </Popover>
                       )}
                     </div>
                   )}
@@ -2866,8 +2792,9 @@ export function ChatView() {
                   {(thinkSupported || modelOptions.length > 0) && (
                     <div className="relative">
                       <button
+                        ref={modelTriggerRef}
                         onClick={() => setModelMenuOpen((v) => !v)}
-                        title={t('chat.modelLabel')}
+                        data-tip={t('chat.modelLabel')}
                         className="flex items-center gap-1.5 rounded-control px-2.5 py-1 text-xs text-dim transition-colors hover:bg-panel2 hover:text-fg"
                       >
                         <Sparkles size={ICON.xs} className="text-accent" />
@@ -2881,76 +2808,77 @@ export function ChatView() {
                         <ChevronUp size={ICON.xs} />
                       </button>
                       {modelMenuOpen && (
-                        <>
-                          <div
-                            className="fixed inset-0 z-30"
-                            onClick={() => setModelMenuOpen(false)}
-                          />
-                          <div className="absolute bottom-full right-0 z-40 mb-1.5 w-64 rounded-card border border-edge bg-panel p-1.5 shadow-popover">
-                            <div className="px-2 pb-1 pt-1.5 text-micro uppercase tracking-wider text-dim">
-                              {t('chat.modelLabel')}
-                            </div>
-                            <div className="max-h-52 overflow-y-auto">
+                        <Popover
+                          open
+                          onClose={() => setModelMenuOpen(false)}
+                          anchor={modelTriggerRef.current}
+                          role="none"
+                          align="end"
+                          panelClassName="w-64 rounded-card border border-edge bg-panel p-1.5 shadow-popover"
+                        >
+                          <div className="px-2 pb-1 pt-1.5 text-micro uppercase tracking-wider text-dim">
+                            {t('chat.modelLabel')}
+                          </div>
+                          <div className="max-h-52 overflow-y-auto">
+                            <button
+                              onClick={() => applyModel('')}
+                              className={`flex w-full items-center justify-between rounded-control px-2 py-1.5 text-left text-xs ${
+                                !model
+                                  ? 'bg-accent/10 text-accent'
+                                  : 'text-dim hover:bg-panel2 hover:text-fg'
+                              }`}
+                            >
+                              <span>{t('chat.modelAuto')}</span>
+                              {!model && <Check size={ICON.xs} />}
+                            </button>
+                            {modelOptions.map((m) => (
                               <button
-                                onClick={() => applyModel('')}
+                                key={m.id}
+                                onClick={() => applyModel(m.id)}
                                 className={`flex w-full items-center justify-between rounded-control px-2 py-1.5 text-left text-xs ${
-                                  !model
+                                  model === m.id
                                     ? 'bg-accent/10 text-accent'
                                     : 'text-dim hover:bg-panel2 hover:text-fg'
                                 }`}
                               >
-                                <span>{t('chat.modelAuto')}</span>
-                                {!model && <Check size={ICON.xs} />}
+                                <span className="truncate">{m.label}</span>
+                                {model === m.id && <Check size={ICON.xs} />}
                               </button>
-                              {modelOptions.map((m) => (
-                                <button
-                                  key={m.id}
-                                  onClick={() => applyModel(m.id)}
-                                  className={`flex w-full items-center justify-between rounded-control px-2 py-1.5 text-left text-xs ${
-                                    model === m.id
-                                      ? 'bg-accent/10 text-accent'
-                                      : 'text-dim hover:bg-panel2 hover:text-fg'
-                                  }`}
-                                >
-                                  <span className="truncate">{m.label}</span>
-                                  {model === m.id && <Check size={ICON.xs} />}
-                                </button>
-                              ))}
-                            </div>
-                            {thinkSupported && (
-                              <>
-                                <div className="my-1 border-t border-edge" />
-                                <div className="flex items-center justify-between px-2 pt-1.5 text-xs">
-                                  <span className="text-dim">
-                                    {t('chat.thinkLabel')}
-                                  </span>
-                                  <span className="text-fg">{thinkLabel}</span>
-                                </div>
-                                <div className="px-2 pt-1.5">
-                                  <input
-                                    type="range"
-                                    min={0}
-                                    max={thinkLevels.length - 1}
-                                    step={1}
-                                    value={thinkIndex}
-                                    onChange={(e) => {
-                                      const v = Number(e.target.value);
-                                      applyThink(
-                                        thinkLevels[v]?.value ?? 'medium',
-                                      );
-                                    }}
-                                    className="w-full accent-accent"
-                                  />
-                                </div>
-                                <div className="flex justify-between px-2 pb-1.5 text-micro text-dim">
-                                  {thinkLevels.map((l) => (
-                                    <span key={l.value}>{l.label}</span>
-                                  ))}
-                                </div>
-                              </>
-                            )}
+                            ))}
                           </div>
-                        </>
+                          {thinkSupported && (
+                            <>
+                              <div className="my-1 border-t border-edge" />
+                              <div className="flex items-center justify-between px-2 pt-1.5 text-xs">
+                                <span className="text-dim">
+                                  {t('chat.thinkLabel')}
+                                </span>
+                                <span className="text-fg">{thinkLabel}</span>
+                              </div>
+                              <div className="px-2 pt-1.5">
+                                <input
+                                  type="range"
+                                  min={0}
+                                  max={thinkLevels.length - 1}
+                                  step={1}
+                                  value={thinkIndex}
+                                  onChange={(e) => {
+                                    const v = Number(e.target.value);
+                                    applyThink(
+                                      thinkLevels[v]?.value ?? 'medium',
+                                    );
+                                  }}
+                                  className="w-full accent-accent"
+                                />
+                              </div>
+                              <div className="flex justify-between px-2 pb-1.5 text-micro text-dim">
+                                {thinkLevels.map((l) => (
+                                  <span key={l.value}>{l.label}</span>
+                                ))}
+                              </div>
+                            </>
+                          )}
+                        </Popover>
                       )}
                     </div>
                   )}
@@ -2993,16 +2921,17 @@ export function ChatView() {
               </div>
             </div>
             {showWorkspacePicker && (
-              <div className="pointer-events-auto relative z-10 mx-auto -mt-2 flex w-fit items-center rounded-control border border-edge bg-panel2/90 px-1.5 py-1.5 shadow-raised">
+              <div className="pointer-events-auto relative z-[var(--oc-z-raised)] mx-auto -mt-2 flex w-fit items-center rounded-control border border-edge bg-panel2 px-1.5 py-1.5 shadow-raised">
                 <div className="relative">
                   <button
+                    ref={wsTriggerRef}
                     onClick={() => setWsPickerOpen((v) => !v)}
                     className={`flex items-center gap-1.5 rounded-control border px-2 py-1 text-xs transition-colors ${
                       pickerWorkspace !== workspace
                         ? 'border-accent/50 bg-accent/10 text-accent hover:bg-accent/20'
                         : 'border-transparent text-dim hover:text-fg hover:bg-panel2'
                     }`}
-                    title={t('chat.newChatWorkspace')}
+                    data-tip={t('chat.newChatWorkspace')}
                     aria-label={t('chat.chooseWorkspace')}
                   >
                     <FolderOpen size={ICON.xs} className="shrink-0" />
@@ -3010,41 +2939,42 @@ export function ChatView() {
                     <ChevronDown size={ICON.xs} />
                   </button>
                   {wsPickerOpen && (
-                    <>
-                      <div
-                        className="fixed inset-0 z-30"
-                        onClick={() => setWsPickerOpen(false)}
-                      />
-                      <div className="absolute top-full left-0 z-40 mt-1.5 w-72 rounded-control border border-edge bg-panel py-1 shadow-popover">
-                        {pickerOptions.map((w) => (
-                          <button
-                            key={w.path}
-                            onClick={() => {
-                              setDraftWorkspace(w.path);
-                              setWsPickerOpen(false);
-                            }}
-                            className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs ${
-                              w.path === pickerWorkspace
-                                ? 'bg-accent/10 text-accent'
-                                : 'text-dim hover:bg-panel2 hover:text-fg'
-                            }`}
-                          >
-                            <FolderOpen size={ICON.xs} className="shrink-0" />
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate">
-                                {w.title || pathBase(w.path)}
-                              </span>
-                              <span className="block truncate text-micro text-dim">
-                                {w.path}
-                              </span>
+                    <Popover
+                      open
+                      onClose={() => setWsPickerOpen(false)}
+                      anchor={wsTriggerRef.current}
+                      role="none"
+                      align="start"
+                      panelClassName="w-72 rounded-control border border-edge bg-panel py-1 shadow-popover"
+                    >
+                      {pickerOptions.map((w) => (
+                        <button
+                          key={w.path}
+                          onClick={() => {
+                            setDraftWorkspace(w.path);
+                            setWsPickerOpen(false);
+                          }}
+                          className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs ${
+                            w.path === pickerWorkspace
+                              ? 'bg-accent/10 text-accent'
+                              : 'text-dim hover:bg-panel2 hover:text-fg'
+                          }`}
+                        >
+                          <FolderOpen size={ICON.xs} className="shrink-0" />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate">
+                              {w.title || pathBase(w.path)}
                             </span>
-                            {w.path === pickerWorkspace && (
-                              <Check size={ICON.xs} className="shrink-0" />
-                            )}
-                          </button>
-                        ))}
-                      </div>
-                    </>
+                            <span className="block truncate text-micro text-dim">
+                              {w.path}
+                            </span>
+                          </span>
+                          {w.path === pickerWorkspace && (
+                            <Check size={ICON.xs} className="shrink-0" />
+                          )}
+                        </button>
+                      ))}
+                    </Popover>
                   )}
                 </div>
               </div>
@@ -3054,43 +2984,43 @@ export function ChatView() {
         {filesOpen && current ? <WorkspacePanel sessionID={current} /> : null}
       </div>
       {forkTarget && (
-        <div className="fixed bottom-0 top-11 left-0 right-0 z-40 grid place-items-center bg-black/60 p-6">
-          <div
-            role="alertdialog"
-            aria-modal="true"
-            className="w-[34rem] max-w-[calc(100vw-3rem)] rounded-card border border-edge bg-panel p-5 shadow-modal"
-          >
-            <div className="flex items-start gap-3">
-              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-card border border-accent/40 bg-accent/10 text-accent">
-                <GitFork size={ICON.md} />
-              </div>
-              <div className="min-w-0">
-                <h2 className="text-sm font-semibold leading-snug text-fg">
-                  {t('chat.forkTurnTitle')}
-                </h2>
-                <p className="mt-1 text-xs leading-relaxed text-dim">
-                  {t('chat.forkTurnBody')}
-                </p>
-              </div>
+        <Overlay
+          open
+          onClose={() => setForkTarget(null)}
+          role="alertdialog"
+          ariaLabel={t('chat.forkTurnTitle')}
+          panelClassName="w-[34rem] max-w-[calc(100vw-3rem)] rounded-card border border-edge bg-panel p-5 shadow-modal"
+        >
+          <div className="flex items-start gap-3">
+            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-card border border-accent/40 bg-accent/10 text-accent">
+              <GitFork size={ICON.md} />
             </div>
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                onClick={() => setForkTarget(null)}
-                className="rounded-control border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg"
-              >
-                {t('interact.cancel')}
-              </button>
-              <button
-                onClick={confirmFork}
-                disabled={forking}
-                className="flex items-center gap-1.5 rounded-control bg-accent px-4 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
-              >
-                <GitFork size={ICON.sm} />
-                {t('chat.forkTurnConfirm')}
-              </button>
+            <div className="min-w-0">
+              <h2 className="text-title font-semibold leading-snug text-fg">
+                {t('chat.forkTurnTitle')}
+              </h2>
+              <p className="mt-1 text-xs leading-relaxed text-dim">
+                {t('chat.forkTurnBody')}
+              </p>
             </div>
           </div>
-        </div>
+          <div className="mt-4 flex justify-end gap-2">
+            <button
+              onClick={() => setForkTarget(null)}
+              className="rounded-control border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg"
+            >
+              {t('interact.cancel')}
+            </button>
+            <button
+              onClick={confirmFork}
+              disabled={forking}
+              className="flex items-center gap-1.5 rounded-control bg-accent px-4 py-1.5 text-sm font-medium text-white hover:opacity-90 disabled:opacity-40"
+            >
+              <GitFork size={ICON.sm} />
+              {t('chat.forkTurnConfirm')}
+            </button>
+          </div>
+        </Overlay>
       )}
       {confirmYolo && (
         <YoloConfirmDialog

@@ -10,7 +10,7 @@ import {
   Search,
   Trash2,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { api } from '../../lib/api';
 import { usePluginStore } from '../store';
@@ -18,6 +18,9 @@ import { compareVersions } from '../version';
 import { PluginDetailDrawer } from './PluginDetailDrawer';
 import { PluginInstallDialog } from './PluginInstallDialog';
 import type { PluginSummary, PluginUpdateInfo } from '../types';
+import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { EmptyState } from '../../components/ui/EmptyState';
+import { Popover } from '../../components/ui/Popover';
 import { ICON } from '../../components/ui/icon';
 
 // PluginManager is the "插件" settings tab: a searchable plugin list
@@ -32,8 +35,13 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
   const setEnabled = usePluginStore((s) => s.setEnabled);
   const [query, setQuery] = useState('');
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [menuFor, setMenuFor] = useState<string | null>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
+  // The row menu anchors to the button that opened it (the same shape the
+  // Sidebar uses): a menu is a Popover, and a Popover is placed against
+  // the trigger element rather than against the row.
+  const [menuOpen, setMenuOpen] = useState<{
+    id: string;
+    anchor: HTMLElement;
+  } | null>(null);
   const [installOpen, setInstallOpen] = useState(false);
   const [updateId, setUpdateId] = useState<string | null>(null);
   const [confirmUninstallId, setConfirmUninstallId] = useState<string | null>(
@@ -49,18 +57,6 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
   const [checkingUpdateId, setCheckingUpdateId] = useState<string | null>(null);
   const [applyingUpdateId, setApplyingUpdateId] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!menuFor) return;
-    const onDown = (e: PointerEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuFor(null);
-        setConfirmRollbackId(null);
-      }
-    };
-    document.addEventListener('pointerdown', onDown);
-    return () => document.removeEventListener('pointerdown', onDown);
-  }, [menuFor]);
-
   const filtered = plugins.filter((p) => {
     const q = query.trim().toLowerCase();
     if (!q) return true;
@@ -72,6 +68,8 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
   });
 
   const selected = plugins.find((p) => p.id === selectedId) ?? null;
+  const nameOf = (id: string | null) =>
+    plugins.find((p) => p.id === id)?.name ?? id ?? '';
   useEffect(() => {
     if (selectedId && !plugins.some((p) => p.id === selectedId)) {
       setSelectedId(null);
@@ -89,6 +87,7 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
   };
 
   const rollback = async (id: string) => {
+    setConfirmRollbackId(null);
     try {
       await api.pluginRollback(id);
       setActionErrors((prev) => {
@@ -99,8 +98,6 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
       await load();
     } catch (err) {
       setActionErrors((prev) => ({ ...prev, [id]: String(err) }));
-    } finally {
-      setConfirmRollbackId(null);
     }
   };
 
@@ -139,7 +136,6 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
   };
 
   const toggleEnabled = async (p: PluginSummary) => {
-    setMenuFor(null);
     try {
       await setEnabled(p.id, !p.enabled);
     } catch (err) {
@@ -194,11 +190,14 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
       </div>
 
       {filtered.length === 0 ? (
-        <div className="rounded-card border border-edge bg-panel2 p-6 text-center text-sm text-dim">
-          {plugins.length === 0
-            ? t('config.pluginsEmpty')
-            : t('config.pluginsSearchEmpty')}
-        </div>
+        <EmptyState
+          icon={Puzzle}
+          title={
+            plugins.length === 0
+              ? t('config.pluginsEmpty')
+              : t('config.pluginsSearchEmpty')
+          }
+        />
       ) : (
         <ul className="flex flex-col gap-2">
           {filtered.map((p) => (
@@ -228,7 +227,7 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
                       {p.builtin && (
                         <span
                           className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 text-micro text-dim"
-                          title={t('config.pluginsBuiltinHint')}
+                          data-tip={t('config.pluginsBuiltinHint')}
                         >
                           {t('config.pluginsBuiltin')}
                         </span>
@@ -267,108 +266,118 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
 
                 <div className="relative shrink-0">
                   <button
-                    onClick={() => setMenuFor(menuFor === p.id ? null : p.id)}
+                    aria-haspopup="menu"
+                    aria-expanded={menuOpen?.id === p.id}
+                    onClick={(e) =>
+                      setMenuOpen(
+                        menuOpen?.id === p.id
+                          ? null
+                          : { id: p.id, anchor: e.currentTarget },
+                      )
+                    }
                     aria-label={t('config.pluginsMore')}
-                    title={t('config.pluginsMore')}
+                    data-tip={t('config.pluginsMore')}
                     className="rounded-control p-1.5 text-dim hover:bg-panel hover:text-fg"
                   >
                     <MoreHorizontal size={ICON.sm} />
                   </button>
-                  {menuFor === p.id && (
-                    <div
-                      ref={menuRef}
-                      className="absolute right-0 top-full z-40 mt-1.5 w-48 rounded-control border border-edge bg-panel p-1 shadow-popover"
+                  <Popover
+                    open={menuOpen?.id === p.id}
+                    onClose={() => setMenuOpen(null)}
+                    anchor={menuOpen?.anchor ?? null}
+                    role="menu"
+                    keyboard
+                    align="end"
+                    panelClassName="w-48 rounded-control border border-edge bg-panel p-1 shadow-popover"
+                  >
+                    <button
+                      role="menuitem"
+                      onClick={() => void toggleEnabled(p)}
+                      className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
                     >
+                      {p.enabled ? (
+                        <Pause size={ICON.xs} className="shrink-0" />
+                      ) : (
+                        <Play size={ICON.xs} className="shrink-0" />
+                      )}
+                      <span className="flex-1 text-left">
+                        {p.enabled
+                          ? t('config.pluginsDisable')
+                          : t('config.pluginsEnable')}
+                      </span>
+                    </button>
+                    {!p.builtin && (
                       <button
-                        onClick={() => void toggleEnabled(p)}
+                        role="menuitem"
+                        onClick={() => {
+                          setMenuOpen(null);
+                          setUpdateId(p.id);
+                        }}
                         className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
                       >
-                        {p.enabled ? (
-                          <Pause size={ICON.xs} className="shrink-0" />
-                        ) : (
-                          <Play size={ICON.xs} className="shrink-0" />
-                        )}
+                        <Pencil size={ICON.xs} className="shrink-0" />
                         <span className="flex-1 text-left">
-                          {p.enabled
-                            ? t('config.pluginsDisable')
-                            : t('config.pluginsEnable')}
+                          {t('config.pluginsUpdate')}
                         </span>
                       </button>
-                      {!p.builtin && (
-                        <button
-                          onClick={() => {
-                            setMenuFor(null);
-                            setUpdateId(p.id);
-                          }}
-                          className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
-                        >
-                          <Pencil size={ICON.xs} className="shrink-0" />
-                          <span className="flex-1 text-left">
-                            {t('config.pluginsUpdate')}
-                          </span>
-                        </button>
-                      )}
-                      {p.hasUpdate && (
-                        <button
-                          onClick={() => void checkUpdate(p.id)}
-                          disabled={checkingUpdateId === p.id}
-                          className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg disabled:opacity-40"
-                        >
-                          {checkingUpdateId === p.id ? (
-                            <Loader2
-                              size={ICON.xs}
-                              className="shrink-0 animate-spin"
-                            />
-                          ) : (
-                            <RefreshCw size={ICON.xs} className="shrink-0" />
-                          )}
-                          <span className="flex-1 text-left">
-                            {checkingUpdateId === p.id
-                              ? t('config.pluginsCheckingUpdate')
-                              : t('config.pluginsCheckUpdate')}
-                          </span>
-                        </button>
-                      )}
-                      {!p.builtin && p.canRollback && (
-                        <button
-                          onClick={() => {
-                            if (confirmRollbackId === p.id) {
-                              setMenuFor(null);
-                              void rollback(p.id);
-                            } else {
-                              setConfirmRollbackId(p.id);
-                            }
-                          }}
-                          className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
-                        >
-                          <RefreshCw
+                    )}
+                    {p.hasUpdate && (
+                      <button
+                        role="menuitem"
+                        onClick={() => void checkUpdate(p.id)}
+                        disabled={checkingUpdateId === p.id}
+                        className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg disabled:opacity-40"
+                      >
+                        {checkingUpdateId === p.id ? (
+                          <Loader2
                             size={ICON.xs}
-                            className="shrink-0 -scale-x-100"
+                            className="shrink-0 animate-spin"
                           />
-                          <span className="flex-1 text-left">
-                            {confirmRollbackId === p.id
-                              ? t('config.pluginsRollbackConfirm')
-                              : t('config.pluginsRollback')}
-                          </span>
-                        </button>
-                      )}
-                      <div className="my-1 border-t border-edge" />
-                      {!p.builtin && (
-                        <button
-                          onClick={() => {
-                            setMenuFor(null);
-                            setConfirmUninstallId(p.id);
-                          }}
-                          className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-err/10 hover:text-err"
-                        >
-                          <Trash2 size={ICON.xs} className="shrink-0" />
-                          <span className="flex-1 text-left">
-                            {t('config.pluginsUninstall')}
-                          </span>
-                        </button>
-                      )}
-                    </div>
-                  )}
+                        ) : (
+                          <RefreshCw size={ICON.xs} className="shrink-0" />
+                        )}
+                        <span className="flex-1 text-left">
+                          {checkingUpdateId === p.id
+                            ? t('config.pluginsCheckingUpdate')
+                            : t('config.pluginsCheckUpdate')}
+                        </span>
+                      </button>
+                    )}
+                    {!p.builtin && p.canRollback && (
+                      <button
+                        role="menuitem"
+                        onClick={() => {
+                          setMenuOpen(null);
+                          setConfirmRollbackId(p.id);
+                        }}
+                        className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
+                      >
+                        <RefreshCw
+                          size={ICON.xs}
+                          className="shrink-0 -scale-x-100"
+                        />
+                        <span className="flex-1 text-left">
+                          {t('config.pluginsRollback')}
+                        </span>
+                      </button>
+                    )}
+                    <div className="my-1 border-t border-edge" />
+                    {!p.builtin && (
+                      <button
+                        role="menuitem"
+                        onClick={() => {
+                          setMenuOpen(null);
+                          setConfirmUninstallId(p.id);
+                        }}
+                        className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-err/10 hover:text-err"
+                      >
+                        <Trash2 size={ICON.xs} className="shrink-0" />
+                        <span className="flex-1 text-left">
+                          {t('config.pluginsUninstall')}
+                        </span>
+                      </button>
+                    )}
+                  </Popover>
                 </div>
               </div>
 
@@ -397,26 +406,6 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
                 <p className="mt-1.5 text-label text-err break-words">
                   {actionErrors[p.id]}
                 </p>
-              )}
-
-              {confirmUninstallId === p.id && (
-                <div className="mt-2 flex items-center gap-2 rounded-control border border-err/40 bg-err/10 px-2 py-1.5 text-xs text-dim">
-                  <span className="min-w-0 flex-1 truncate">
-                    {t('config.pluginsUninstallConfirm')}
-                  </span>
-                  <button
-                    onClick={() => void uninstall(p.id)}
-                    className="rounded-tight bg-err px-2 py-1 text-white"
-                  >
-                    {t('config.pluginsUninstall')}
-                  </button>
-                  <button
-                    onClick={() => setConfirmUninstallId(null)}
-                    className="rounded-tight border border-edge px-2 py-1"
-                  >
-                    {t('interact.cancel')}
-                  </button>
-                </div>
               )}
 
               {updateInfo[p.id] && (
@@ -462,6 +451,33 @@ export function PluginManager({ showTitle = true }: { showTitle?: boolean }) {
           onClose={() => setUpdateId(null)}
         />
       )}
+
+      <ConfirmDialog
+        open={confirmRollbackId !== null}
+        tone="warning"
+        title={t('config.pluginsRollbackTitle', {
+          name: nameOf(confirmRollbackId),
+        })}
+        body={t('config.pluginsRollbackBody')}
+        confirmLabel={t('config.pluginsRollback')}
+        onCancel={() => setConfirmRollbackId(null)}
+        onConfirm={() => {
+          if (confirmRollbackId !== null) void rollback(confirmRollbackId);
+        }}
+      />
+      <ConfirmDialog
+        open={confirmUninstallId !== null}
+        tone="danger"
+        title={t('config.pluginsUninstallTitle', {
+          name: nameOf(confirmUninstallId),
+        })}
+        body={t('config.pluginsUninstallBody')}
+        confirmLabel={t('config.pluginsUninstall')}
+        onCancel={() => setConfirmUninstallId(null)}
+        onConfirm={() => {
+          if (confirmUninstallId !== null) void uninstall(confirmUninstallId);
+        }}
+      />
     </div>
   );
 }

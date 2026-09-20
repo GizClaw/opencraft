@@ -227,7 +227,30 @@ export function mockBackend(cfg?: MockConfig) {
     },
     Diagnostics: {
       ClearCaches: async () => ({ dirs: [], bytes: 0 }),
-      Diagnostics: async () => ({ exec_shell: '/bin/sh -c' }),
+      // The diagnostics tab renders the whole environment grid from this
+      // report: a partial one leaves every cell blank and prints the raw
+      // plural keys where the session counters are missing, so the mock
+      // answers with the same shape a real backend returns.
+      Diagnostics: async () => ({
+        version: '0.1.0-test',
+        go_version: 'go1.24.0',
+        node_version: 'v24.13.0',
+        git_version: 'git version 2.47.1',
+        platform: 'darwin',
+        arch: 'arm64',
+        work_dir: config.workspace ?? '/workspace',
+        user_dir: '/user',
+        config_valid: true,
+        inference_configured: true,
+        git_repo: true,
+        git_branch: 'main',
+        session_count: 12,
+        active_runs: 1,
+        sandbox_backend: 'seatbelt',
+        sandbox_available: true,
+        exec_shell: '/bin/zsh -c',
+        usage_total_tokens: 128400,
+      }),
       EvaluateCommandPolicy: async () => ({ command: '', allowed: true }),
       MetricRange: async () => [],
       // Mirrors the wire shape of a Go nil slice: the repair reports no

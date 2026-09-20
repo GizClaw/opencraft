@@ -183,7 +183,10 @@ vi.mock('../lib/api', () => ({ api: apiMock }));
 
 beforeEach(() => {
   vi.clearAllMocks();
-  useStore.setState({ configTab: 'inference' });
+  // The page renders through the shared overlay shell and stays mounted
+  // for its exit animation (App owns that lifetime), so a unit test has
+  // to say it is open.
+  useStore.setState({ configTab: 'inference', configOpen: true });
 });
 
 describe('ConfigPage inference', () => {
@@ -399,6 +402,12 @@ describe('ConfigPage inference', () => {
       ...rest
     }: Record<string, unknown>) => rest;
     const before = await saveAndRead(1);
+
+    // Applying the inference config closes the page (it is the apply
+    // step, not a form submit). Reopen it: the second half of the flow
+    // is about what a catalog pick writes into the row.
+    useStore.setState({ configOpen: true });
+    await screen.findByPlaceholderText('Model');
 
     const trigger = screen.getByLabelText('Fill from built-in models');
     trigger.click();

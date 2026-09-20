@@ -4,7 +4,7 @@
 // and the conversation timeline. Everything is read-only; "Open in
 // GitHub" hands the thread to the system browser. Document links inside
 // the markdown bodies open in a preview dialog on top of this page.
-import { useEffect, useLayoutEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   AlertTriangle,
@@ -13,6 +13,7 @@ import {
   ExternalLink,
   GitCommitHorizontal,
   Loader2,
+  MessageSquare,
   X,
 } from 'lucide-react';
 import { api } from '../lib/api';
@@ -31,7 +32,9 @@ import type {
 import { Markdown, type MarkdownLinkHandler } from './Markdown';
 import { AvatarBadge } from './viewer/AvatarBadge';
 import { useFilePreview } from './viewer/FilePreviewModal';
+import { EmptyState } from './ui/EmptyState';
 import { ICON } from './ui/icon';
+import { Overlay } from './ui/Overlay';
 
 export function PRDetailModal({
   pr,
@@ -63,34 +66,16 @@ export function PRDetailModal({
     };
   }, [pr.number, attempt]);
 
-  // A layout effect so Escape is owned from the commit that shows the
-  // page: registered a task later (useEffect), an Escape arriving right
-  // after opening is lost, and this listener is the one that would
-  // otherwise swallow Escape meant for a preview dialog pushed above it.
-  useLayoutEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        onClose();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
-
   const openURL = detail?.html_url || pr.html_url;
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-4"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div className="flex max-h-[92vh] w-[min(96vw,1080px)] flex-col overflow-hidden rounded-card border border-edge bg-panel shadow-modal">
-        <div className="flex h-12 shrink-0 items-center gap-2 border-b border-edge bg-panel2/40 px-3">
+    <>
+      <Overlay
+        open
+        onClose={onClose}
+        panelClassName="flex max-h-[92vh] w-[min(96vw,1080px)] flex-col overflow-hidden rounded-card border border-edge bg-panel shadow-modal"
+      >
+        <div className="flex h-12 shrink-0 items-center gap-2 border-b border-edge bg-panel2 px-3">
           <StateChip state={pr.state} />
           <span className="shrink-0 font-mono text-micro text-dim">
             #{pr.number}
@@ -119,7 +104,7 @@ export function PRDetailModal({
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto bg-panel/40">
+        <div className="min-h-0 flex-1 overflow-y-auto bg-panel">
           {!detail && !error ? (
             <div className="grid h-full place-items-center text-dim">
               <Loader2 size={ICON.md} className="animate-spin" />
@@ -139,9 +124,9 @@ export function PRDetailModal({
             <DetailBody detail={detail} onOpen={openLink} />
           ) : null}
         </div>
-      </div>
+      </Overlay>
       {modal}
-    </div>
+    </>
   );
 }
 
@@ -252,7 +237,7 @@ function DetailBody({
           count={detail.conversation.length}
         />
         {detail.conversation.length === 0 ? (
-          <p className="mt-2 text-xs text-dim">{t('git.prNoComments')}</p>
+          <EmptyState icon={MessageSquare} title={t('git.prNoComments')} />
         ) : (
           <div className="mt-2">
             {detail.conversation.map((item) => (
@@ -354,9 +339,9 @@ function CheckChip({ check }: { check: GitHubCheck }) {
   return (
     <button
       type="button"
-      title={title}
+      data-tip={title}
       onClick={() => check.url && void api.openExternal(check.url)}
-      className={`flex items-center gap-1.5 rounded-tight border bg-panel2/40 px-1.5 py-0.5 text-micro ${cls} ${
+      className={`flex items-center gap-1.5 rounded-tight border bg-panel2 px-1.5 py-0.5 text-micro ${cls} ${
         check.url ? 'hover:bg-panel2' : 'cursor-default'
       }`}
     >
@@ -383,7 +368,7 @@ function ReviewThreadBlock({
   const first = thread.comments[0];
   return (
     <div className="border-b border-edge last:border-b-0">
-      <div className="flex items-center gap-2 bg-panel2/40 px-2.5 py-1.5">
+      <div className="flex items-center gap-2 bg-panel2 px-2.5 py-1.5">
         <span className="min-w-0 truncate font-mono text-micro text-fg">
           {thread.path}:{anchor}
         </span>
@@ -397,7 +382,7 @@ function ReviewThreadBlock({
           <button
             onClick={() => void api.openExternal(first.html_url)}
             className="shrink-0 text-dim hover:text-accent"
-            title={t('git.openInGithub')}
+            data-tip={t('git.openInGithub')}
             aria-label={t('git.openInGithub')}
           >
             <ExternalLink size={ICON.xs} />
@@ -468,7 +453,7 @@ function ReviewSnippet({ thread }: { thread: GitHubReviewThread }) {
   const files = parseThreadFiles(thread);
   if (!files || files.length === 0) {
     return (
-      <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded-card bg-panel2/40 px-2.5 py-2 font-mono text-micro text-dim">
+      <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-all rounded-card bg-panel2 px-2.5 py-2 font-mono text-micro text-dim">
         {thread.diff_hunk}
       </pre>
     );
@@ -476,7 +461,7 @@ function ReviewSnippet({ thread }: { thread: GitHubReviewThread }) {
   const isLeft = (thread.side ?? 'RIGHT') === 'LEFT';
   const range = anchorRange(thread);
   return (
-    <div className="mt-2 max-h-72 overflow-auto rounded-control border border-edge bg-panel/60">
+    <div className="mt-2 max-h-72 overflow-auto rounded-control border border-edge bg-panel">
       {files
         .flatMap((file) => file.lines)
         .map((line, i) => (
@@ -513,9 +498,7 @@ function SnippetRow({
       <span className="select-none border-r border-edge/50 px-1.5 text-right text-dim tabular-nums">
         {num ?? ''}
       </span>
-      <span
-        className={`whitespace-pre px-1.5 ${anchor ? 'text-fg' : 'text-fg/80'}`}
-      >
+      <span className="whitespace-pre px-1.5 text-fg">
         <span className="select-none text-dim">{marker}</span>
         {line.text}
       </span>

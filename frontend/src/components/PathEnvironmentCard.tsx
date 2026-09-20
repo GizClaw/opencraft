@@ -132,11 +132,11 @@ export function PathEnvironmentCard() {
             <Route size={ICON.sm} className="shrink-0 text-accent" />
             {t('config.diagPathTitle')}
           </div>
-          <p className="mt-1 text-xs text-dim/80">{t('config.diagPathHint')}</p>
+          <p className="mt-1 text-xs text-faint">{t('config.diagPathHint')}</p>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           <span
-            title={
+            data-tip={
               env.reloaded
                 ? t('config.diagPathReloaded')
                 : t('config.diagPathReloadSkipped')
@@ -156,7 +156,7 @@ export function PathEnvironmentCard() {
           </span>
           <button
             onClick={() => void copyPath()}
-            title={t('config.diagPathCopy')}
+            data-tip={t('config.diagPathCopy')}
             aria-label={t('config.diagPathCopy')}
             className="rounded-control border border-edge p-1 text-dim transition-colors hover:bg-panel hover:text-fg"
           >
@@ -173,13 +173,13 @@ export function PathEnvironmentCard() {
                 className={`h-1.5 w-1.5 rounded-full ${sourceDot(group.source)}`}
               />
               <span>{sourceLabel(group.source)}</span>
-              <span className="text-dim/50">· {group.segments.length}</span>
+              <span className="text-faint">· {group.segments.length}</span>
             </div>
             <div className="mt-1 flex flex-wrap gap-1.5">
               {group.segments.map((segment) => (
                 <span
                   key={segment.dir}
-                  title={
+                  data-tip={
                     segment.present ? undefined : t('config.diagPathAbsent')
                   }
                   className={`inline-flex max-w-full items-baseline rounded-control border px-1.5 py-0.5 font-mono text-micro break-all ${pillClass(segment)}`}
@@ -224,7 +224,7 @@ export function PathEnvironmentCard() {
         </div>
       )}
 
-      <p className="mt-2.5 text-label text-dim/80">
+      <p className="mt-2.5 text-label text-faint">
         {t('config.diagPathDeployNote')}
       </p>
 

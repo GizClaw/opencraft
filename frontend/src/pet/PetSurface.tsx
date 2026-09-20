@@ -500,7 +500,7 @@ export default function PetSurface() {
         <div
           className="pet-degraded"
           data-testid="pet-degraded"
-          title={degradedDetail}
+          data-tip={degradedDetail}
         >
           !
         </div>
@@ -511,7 +511,7 @@ export default function PetSurface() {
           className="pet-tool"
           data-category={petToolCategory(pet.toolCategory)}
           data-state={toolFailed ? 'error' : 'running'}
-          title={pet.toolName}
+          data-tip={pet.toolName}
         >
           <span className="pet-tool__badge" aria-hidden="true">
             <ToolIcon size={ICON.xs} strokeWidth={2.4} />

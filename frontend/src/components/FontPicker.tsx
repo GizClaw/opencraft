@@ -1,23 +1,23 @@
 import { Check, ChevronDown, Search } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import {
   FONT_PRESET_CUSTOM,
   quoteFontFamily,
   type FontPreset,
 } from '../lib/appearance';
+import { Popover } from './ui/Popover';
 import { ICON } from './ui/icon';
 
 // FontPicker is the Settings > Interface font control: the built-in presets
 // plus the families the host reports (internal/foundation/sysfont), in one
 // searchable menu whose rows are drawn in their own face.
 //
-// The menu is portaled to the document body so the settings modal's scroll
-// container cannot clip it. It hangs off the trigger's right edge because the
-// controls sit at the card's right edge — a left-anchored menu would overhang
-// the dialog. It closes on outside click, Escape, scroll or resize, the same
-// contract as MenuSelect.
+// The menu is the shared <Popover>: portaled to the body so the settings
+// modal's scroll container cannot clip it, anchored to the trigger's right
+// edge because the controls sit at the card's right edge (a left-anchored
+// menu would overhang the dialog). Outside click, Escape, scroll and resize
+// close it, the same contract as MenuSelect.
 //
 // The search field is IME-aware: filtering pauses while a composition is in
 // flight and Enter/arrow handling is skipped, so confirming a pinyin/kana
@@ -27,13 +27,6 @@ import { ICON } from './ui/icon';
 type FontRow =
   | { kind: 'preset'; id: string; label: string; stack: string }
   | { kind: 'family'; family: string };
-
-interface MenuAnchor {
-  top: number;
-  right: number;
-  width: number;
-  maxHeight: number;
-}
 
 export function FontPicker({
   label,
@@ -58,9 +51,7 @@ export function FontPicker({
   const [query, setQuery] = useState('');
   const [composing, setComposing] = useState(false);
   const [active, setActive] = useState(0);
-  const [anchor, setAnchor] = useState<MenuAnchor | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
 
   const preset = presets.find((candidate) => candidate.id === presetId);
   const named = preset === undefined;
@@ -97,57 +88,7 @@ export function FontPicker({
     );
   }, [rows.length]);
 
-  useEffect(() => {
-    if (!open) return;
-    const close = () => setOpen(false);
-    const onPointerDown = (event: MouseEvent) => {
-      const target = event.target as Node;
-      if (menuRef.current?.contains(target)) return;
-      if (triggerRef.current?.contains(target)) return;
-      close();
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      // While a composition is running Escape cancels the candidate: the
-      // input method owns it, not the menu.
-      if (event.key !== 'Escape' || event.isComposing) return;
-      // Escape belongs to the open menu first: stopping here keeps the
-      // settings dialog (a window-level listener) from closing underneath.
-      event.stopPropagation();
-      close();
-    };
-    document.addEventListener('mousedown', onPointerDown);
-    document.addEventListener('keydown', onKeyDown);
-    // A scroll or resize invalidates the measured anchor. The menu's own list
-    // scrolls independently — resting a trackpad on it must not close the menu
-    // it is scrolling.
-    const onScroll = (event: Event) => {
-      const target = event.target;
-      if (target instanceof Node && menuRef.current?.contains(target)) return;
-      close();
-    };
-    window.addEventListener('scroll', onScroll, true);
-    window.addEventListener('resize', close);
-    return () => {
-      document.removeEventListener('mousedown', onPointerDown);
-      document.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('scroll', onScroll, true);
-      window.removeEventListener('resize', close);
-    };
-  }, [open]);
-
   const toggle = () => {
-    const trigger = triggerRef.current;
-    if (trigger === null) return;
-    const box = trigger.getBoundingClientRect();
-    const spaceBelow = window.innerHeight - box.bottom - 12;
-    setAnchor({
-      top: box.bottom + 4,
-      right: box.right,
-      width: Math.max(box.width, 240),
-      // Stay inside the window: a shorter list still scrolls, and the search
-      // field above it stays reachable.
-      maxHeight: Math.max(160, Math.min(352, spaceBelow)),
-    });
     setQuery('');
     setComposing(false);
     setActive(0);
@@ -227,97 +168,96 @@ export function FontPicker({
           }`}
         />
       </button>
-      {open &&
-        anchor !== null &&
-        createPortal(
+      {open && (
+        // The panel itself stays role-less and the scroll container keeps the
+        // listbox role: that is the element the wheel test and the e2e spec
+        // scroll, and the search field must stay outside the list.
+        <Popover
+          open
+          onClose={() => setOpen(false)}
+          anchor={triggerRef.current}
+          role="none"
+          align="end"
+          panelClassName="flex max-h-[22rem] min-w-[15rem] max-w-[24.2857rem] flex-col overflow-hidden rounded-card border border-edge bg-panel shadow-popover"
+        >
+          <label className="flex items-center gap-1.5 border-b border-edge px-2 py-1.5">
+            <Search size={ICON.xs} className="shrink-0 text-dim" />
+            <input
+              type="text"
+              autoFocus
+              data-autofocus
+              aria-label={t('config.uiFontSearch')}
+              value={query}
+              placeholder={t('config.uiFontSearch')}
+              spellCheck={false}
+              onChange={(event) => setQuery(event.target.value)}
+              onCompositionStart={() => setComposing(true)}
+              onCompositionEnd={(event) => {
+                setComposing(false);
+                setQuery(event.currentTarget.value);
+              }}
+              onKeyDown={onSearchKeyDown}
+              className="min-w-0 flex-1 bg-transparent text-xs text-fg outline-none placeholder:text-dim"
+            />
+          </label>
           <div
-            ref={menuRef}
-            style={{
-              top: anchor.top,
-              right: Math.max(window.innerWidth - anchor.right, 8),
-              width: anchor.width,
-              maxHeight: anchor.maxHeight,
-            }}
-            className="fixed z-[100] flex flex-col overflow-hidden rounded-card border border-edge bg-panel shadow-popover"
+            role="listbox"
+            aria-label={label}
+            className="min-h-0 flex-1 overflow-y-auto py-1"
           >
-            <label className="flex items-center gap-1.5 border-b border-edge px-2 py-1.5">
-              <Search size={ICON.xs} className="shrink-0 text-dim" />
-              <input
-                type="text"
-                autoFocus
-                aria-label={t('config.uiFontSearch')}
-                value={query}
-                placeholder={t('config.uiFontSearch')}
-                spellCheck={false}
-                onChange={(event) => setQuery(event.target.value)}
-                onCompositionStart={() => setComposing(true)}
-                onCompositionEnd={(event) => {
-                  setComposing(false);
-                  setQuery(event.currentTarget.value);
-                }}
-                onKeyDown={onSearchKeyDown}
-                className="min-w-0 flex-1 bg-transparent text-xs text-fg outline-none placeholder:text-dim"
-              />
-            </label>
-            <div
-              role="listbox"
-              aria-label={label}
-              className="min-h-0 flex-1 overflow-y-auto py-1"
-            >
-              {rows.map((row, index) => {
-                const selected = isSelected(row);
-                return (
-                  <button
-                    key={
-                      row.kind === 'preset'
-                        ? `preset:${row.id}`
-                        : `family:${row.family}`
+            {rows.map((row, index) => {
+              const selected = isSelected(row);
+              return (
+                <button
+                  key={
+                    row.kind === 'preset'
+                      ? `preset:${row.id}`
+                      : `family:${row.family}`
+                  }
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  onMouseEnter={() => setActive(index)}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => pick(row)}
+                  className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs ${
+                    active === index ? 'bg-panel2' : ''
+                  } ${selected ? 'text-accent' : 'text-fg'}`}
+                >
+                  <Check
+                    size={ICON.xs}
+                    className={`shrink-0 ${
+                      selected ? 'text-accent' : 'invisible'
+                    }`}
+                  />
+                  <span
+                    className="min-w-0 flex-1 truncate"
+                    style={
+                      row.kind === 'family'
+                        ? { fontFamily: quoteFontFamily(row.family) }
+                        : { fontFamily: row.stack }
                     }
-                    type="button"
-                    role="option"
-                    aria-selected={selected}
-                    onMouseEnter={() => setActive(index)}
-                    onMouseDown={(event) => event.preventDefault()}
-                    onClick={() => pick(row)}
-                    className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs ${
-                      active === index ? 'bg-panel2' : ''
-                    } ${selected ? 'text-accent' : 'text-fg'}`}
                   >
-                    <Check
-                      size={ICON.xs}
-                      className={`shrink-0 ${
-                        selected ? 'text-accent' : 'invisible'
-                      }`}
-                    />
-                    <span
-                      className="min-w-0 flex-1 truncate"
-                      style={
-                        row.kind === 'family'
-                          ? { fontFamily: quoteFontFamily(row.family) }
-                          : { fontFamily: row.stack }
-                      }
-                    >
-                      {row.kind === 'preset' ? row.label : row.family}
-                    </span>
-                  </button>
-                );
-              })}
-              {families === null && (
-                <p className="px-2.5 py-1.5 text-xs text-dim">
-                  {t('config.uiFontLoading')}
-                </p>
-              )}
-              {families !== null && filtered.length === 0 && (
-                <p className="px-2.5 py-1.5 text-xs text-dim">
-                  {families.length === 0
-                    ? t('config.uiFontUnavailable')
-                    : t('config.uiFontNoMatch')}
-                </p>
-              )}
-            </div>
-          </div>,
-          document.body,
-        )}
+                    {row.kind === 'preset' ? row.label : row.family}
+                  </span>
+                </button>
+              );
+            })}
+            {families === null && (
+              <p className="px-2.5 py-1.5 text-xs text-dim">
+                {t('config.uiFontLoading')}
+              </p>
+            )}
+            {families !== null && filtered.length === 0 && (
+              <p className="px-2.5 py-1.5 text-xs text-dim">
+                {families.length === 0
+                  ? t('config.uiFontUnavailable')
+                  : t('config.uiFontNoMatch')}
+              </p>
+            )}
+          </div>
+        </Popover>
+      )}
     </>
   );
 }

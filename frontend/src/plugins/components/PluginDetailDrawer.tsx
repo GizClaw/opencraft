@@ -6,6 +6,7 @@ import type { PluginSummary } from '../types';
 import { PluginCapabilitiesSection } from './PluginCapabilities';
 import { PluginPanels } from './PluginPanels';
 import { ICON } from '../../components/ui/icon';
+import { Overlay } from '../../components/ui/Overlay';
 
 // PluginDetailDrawer is the right-side plugin detail page. It shows the
 // plugin's metadata and embeds the agent-facing capabilities inline.
@@ -22,17 +23,17 @@ export function PluginDetailDrawer({
 
   return (
     <>
-      <div className="fixed inset-0 z-40 bg-black/30" onClick={onClose} />
-      <aside
-        className="fixed inset-y-0 right-0 z-50 flex w-[42rem] max-w-[94vw] flex-col border-l border-edge bg-panel shadow-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label={plugin.name}
+      <Overlay
+        open
+        onClose={onClose}
+        variant="drawer-right"
+        ariaLabel={plugin.name}
+        panelClassName="flex w-[42rem] max-w-[94vw] flex-col border-l border-edge bg-panel shadow-modal"
       >
         <div className="flex shrink-0 items-center justify-between border-b border-edge px-4 py-3">
           <div className="flex min-w-0 items-center gap-2">
             <Puzzle size={ICON.md} className="shrink-0 text-dim" />
-            <h3 className="min-w-0 truncate text-sm font-semibold">
+            <h3 className="min-w-0 truncate text-title font-semibold">
               {plugin.name}
             </h3>
             <span className="shrink-0 text-xs text-dim">v{plugin.version}</span>
@@ -137,7 +138,7 @@ export function PluginDetailDrawer({
             )}
           </section>
         </div>
-      </aside>
+      </Overlay>
     </>
   );
 }

@@ -5,6 +5,7 @@ import { api } from '../lib/api';
 import type { SkillDTO } from '../lib/types';
 import { Markdown } from './Markdown';
 import { ICON } from './ui/icon';
+import { Overlay } from './ui/Overlay';
 import { useFilePreview } from './viewer/FilePreviewModal';
 
 // SkillDetailDrawer is the right-side skill detail page. It shows the
@@ -62,17 +63,17 @@ export function SkillDetailDrawer({
 
   return (
     <>
-      <div className="fixed inset-0 z-40 bg-black/30" onClick={onClose} />
-      <aside
-        className="fixed inset-y-0 right-0 z-50 flex w-[46rem] max-w-[94vw] flex-col border-l border-edge bg-panel shadow-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label={skill.name}
+      <Overlay
+        open
+        onClose={onClose}
+        variant="drawer-right"
+        ariaLabel={skill.name}
+        panelClassName="flex w-[46rem] max-w-[94vw] flex-col border-l border-edge bg-panel shadow-modal"
       >
         <div className="flex shrink-0 items-center justify-between border-b border-edge px-4 py-3">
           <div className="flex min-w-0 items-center gap-2">
             <Sparkles size={ICON.md} className="shrink-0 text-accent" />
-            <h3 className="min-w-0 truncate text-sm font-semibold">
+            <h3 className="min-w-0 truncate text-title font-semibold">
               {skill.name}
             </h3>
             {skill.plugin_id ? (
@@ -103,7 +104,7 @@ export function SkillDetailDrawer({
             )}
             <p
               className="break-all font-mono text-xs text-dim"
-              title={skill.path}
+              data-tip={skill.path}
             >
               {skill.path}
             </p>
@@ -129,7 +130,7 @@ export function SkillDetailDrawer({
             )}
           </section>
         </div>
-      </aside>
+      </Overlay>
       {modal}
     </>
   );

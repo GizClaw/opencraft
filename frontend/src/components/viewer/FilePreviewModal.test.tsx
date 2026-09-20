@@ -65,7 +65,9 @@ describe('FilePreviewModal', () => {
     expect(
       await screen.findByRole('heading', { name: 'Steps' }),
     ).toBeInTheDocument();
-    expect(screen.getByTitle('SKILL.md')).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'SKILL.md' }),
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: i18n.t('files.linkBack') }),
     ).toBeNull();
@@ -116,7 +118,7 @@ describe('FilePreviewModal', () => {
     const dialog = await screen.findByRole('dialog', { name: 'deploy.md' });
     expect(await within(dialog).findByText('Deploy steps')).toBeInTheDocument();
     expect(
-      within(dialog).getByTitle('references/deploy.md'),
+      within(dialog).getByText('references/deploy.md'),
     ).toBeInTheDocument();
     expect(apiMock.resolveTarget).toHaveBeenCalledWith(
       'references/deploy.md',

@@ -204,7 +204,7 @@ export function LogViewer({ fetchLogs }: { fetchLogs: () => Promise<string> }) {
                 <span className="text-fg">{e.message}</span>{' '}
                 {e.attrs.map((a) => (
                   <span key={a.key} className="whitespace-nowrap">
-                    <span className="text-dim/70">{a.key}=</span>
+                    <span className="text-faint">{a.key}=</span>
                     <span className="text-accent">{a.value}</span>{' '}
                   </span>
                 ))}

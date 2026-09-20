@@ -50,12 +50,12 @@ export function PlanPanel({
   return (
     <div
       data-testid="plan-panel"
-      className="absolute left-4 top-3 z-30 flex max-h-[min(50%,30rem)] w-80 max-w-[calc(100%-2rem)] flex-col overflow-hidden rounded-card border border-edge bg-panel2 shadow-popover"
+      className="absolute left-4 top-3 z-[var(--oc-z-popover)] flex max-h-[min(50%,30rem)] w-80 max-w-[calc(100%-2rem)] flex-col overflow-hidden rounded-card border border-edge bg-panel2 shadow-popover"
     >
       <div className="flex items-center">
         <button
           onClick={() => setOpen((v) => !v)}
-          className="flex min-w-0 flex-1 items-center gap-2 px-3 py-1.5 text-xs hover:bg-panel2/70"
+          className="flex min-w-0 flex-1 items-center gap-2 px-3 py-1.5 text-xs hover:bg-panel2"
         >
           {live ? (
             <Loader2
@@ -83,7 +83,7 @@ export function PlanPanel({
         {onClose && (
           <button
             onClick={onClose}
-            title={t('tools.close')}
+            data-tip={t('tools.close')}
             aria-label={t('tools.close')}
             className="mr-1.5 shrink-0 rounded-tight p-1 text-dim transition-colors hover:text-fg"
           >

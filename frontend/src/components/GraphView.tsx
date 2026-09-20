@@ -41,11 +41,19 @@ import {
   type FieldSpec,
 } from './graphFieldCatalog';
 import { ICON } from './ui/icon';
+import {
+  SERIES_CACHE_READ,
+  SERIES_INPUT,
+  SERIES_OUTPUT,
+} from '../lib/chartPalette';
 
 // ---- layout ---------------------------------------------------------
 
 const NODE_W = 220;
 const NODE_H = 64;
+// Nodes and edges that belong to no accent family (the neutral flow, the
+// marker fallbacks) paint with the secondary text token.
+const NEUTRAL_STROKE = 'var(--color-dim)';
 const COL_GAP = 90;
 const ROW_GAP = 36;
 const PAD = 40;
@@ -245,9 +253,9 @@ function ConditionPill({
 // ---- React Flow node / edge types ----------------------------------
 
 const NODE_META: Record<string, { icon: typeof Bot; stroke: string }> = {
-  inference: { icon: Bot, stroke: '#4f8cff' },
-  script: { icon: Terminal, stroke: '#34d399' },
-  tool: { icon: Wrench, stroke: '#a78bfa' },
+  inference: { icon: Bot, stroke: SERIES_INPUT },
+  script: { icon: Terminal, stroke: SERIES_OUTPUT },
+  tool: { icon: Wrench, stroke: SERIES_CACHE_READ },
 };
 
 type GraphNodeData = {
@@ -281,7 +289,7 @@ function GraphNodeCard({ data, selected }: NodeProps<RFNode<GraphNodeData>>) {
   }
   const meta = NODE_META[node.type] ?? {
     icon: CircleDashed,
-    stroke: '#8b93a3',
+    stroke: NEUTRAL_STROKE,
   };
   const Icon = meta.icon;
   return (
@@ -289,7 +297,7 @@ function GraphNodeCard({ data, selected }: NodeProps<RFNode<GraphNodeData>>) {
       onClick={() => onSelect(node.id)}
       className={`flex h-full w-full cursor-pointer items-center gap-2.5 rounded-card border bg-panel px-3 py-2 shadow-popover transition-shadow ${
         selected
-          ? 'shadow-[0_0_0_0.2143rem_rgba(79,140,255,0.25)]'
+          ? 'shadow-[0_0_0_0.2143rem_color-mix(in_srgb,var(--color-accent)_25%,transparent)]'
           : 'hover:shadow-popover'
       }`}
       style={{
@@ -382,7 +390,7 @@ function GraphEdge({
           markerHeight="6"
           orient="auto"
         >
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="#8b93a3" />
+          <path d="M 0 0 L 10 5 L 0 10 z" fill={NEUTRAL_STROKE} />
         </marker>
         <marker
           id="rf-arrow-accent"
@@ -393,7 +401,7 @@ function GraphEdge({
           markerHeight="6"
           orient="auto"
         >
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="#4f8cff" />
+          <path d="M 0 0 L 10 5 L 0 10 z" fill={SERIES_INPUT} />
         </marker>
       </defs>
       <BaseEdge
@@ -499,11 +507,11 @@ function GenericField({
     const nestedCatalog = NESTED_FIELDS[nestedKey] ?? [];
     const presentNested = new Set(entries.map(([k]) => k));
     return (
-      <details className="overflow-hidden rounded-control border border-edge bg-panel/60">
+      <details className="overflow-hidden rounded-control border border-edge bg-panel">
         <summary className="cursor-pointer select-none px-2.5 py-1.5 text-xs text-dim">
           <FieldLabel raw={raw} />
           {entries.length === 0 && (
-            <span className="ml-1 text-micro text-dim/60">
+            <span className="ml-1 text-micro text-faint">
               ({t('graph.empty')})
             </span>
           )}
@@ -637,7 +645,7 @@ function GraphCanvas({
     return () => cancelAnimationFrame(raf);
   }, [rfNodes.length, fitView]);
   return (
-    <div className="relative min-w-0 flex-1 overflow-hidden rounded-card border border-edge bg-panel2/40">
+    <div className="relative min-w-0 flex-1 overflow-hidden rounded-card border border-edge bg-panel2">
       <ReactFlow
         nodes={rfNodes}
         edges={rfEdges}
@@ -658,7 +666,7 @@ function GraphCanvas({
           variant={BackgroundVariant.Dots}
           gap={26}
           size={1}
-          color="rgba(139,147,163,0.28)"
+          color="var(--color-graph-dot)"
         />
         <Controls
           showInteractive={false}
@@ -670,7 +678,7 @@ function GraphCanvas({
               '--xy-controls-button-color': 'var(--color-dim)',
               '--xy-controls-button-color-hover': 'var(--color-fg)',
               '--xy-controls-button-border-color': 'var(--color-edge)',
-              '--xy-controls-box-shadow': '0 0.2857rem 1rem rgba(0,0,0,0.45)',
+              '--xy-controls-box-shadow': 'var(--shadow-popover)',
             } as CSSProperties
           }
         />
@@ -679,12 +687,12 @@ function GraphCanvas({
           zoomable
           nodeColor={(n) => {
             const d = n.data as GraphNodeData | undefined;
-            return NODE_META[d?.node?.type ?? '']?.stroke ?? '#8b93a3';
+            return NODE_META[d?.node?.type ?? '']?.stroke ?? NEUTRAL_STROKE;
           }}
           style={
             {
               '--xy-minimap-background-color': 'var(--color-panel2)',
-              '--xy-minimap-mask-background-color': 'rgba(15,18,24,0.8)',
+              '--xy-minimap-mask-background-color': 'var(--color-scrim)',
               '--xy-minimap-mask-stroke-color': 'var(--color-edge)',
               '--xy-minimap-node-stroke-color': 'var(--color-edge)',
               border: '1px solid var(--color-edge)',
@@ -698,7 +706,7 @@ function GraphCanvas({
           onRelayout();
           void fitView({ padding: 0.2 });
         }}
-        className="absolute left-2 top-2 z-10 rounded-control border border-edge bg-panel/90 px-2.5 py-1 text-xs text-dim hover:bg-panel2 hover:text-fg"
+        className="absolute left-2 top-2 z-[var(--oc-z-raised)] rounded-control border border-edge bg-panel px-2.5 py-1 text-xs text-dim hover:bg-panel2 hover:text-fg"
       >
         {t('graph.relayout')}
       </button>
@@ -975,7 +983,7 @@ export function AgentGraphEditor({
             onClose();
           }}
           className="text-dim hover:text-fg"
-          title={
+          data-tip={
             dirty && !confirmClose ? t('graph.unsavedClose') : t('graph.back')
           }
           aria-label={
@@ -1024,7 +1032,7 @@ export function AgentGraphEditor({
             />
           </ReactFlowProvider>
 
-          <div className="flex w-72 shrink-0 flex-col gap-3 overflow-y-auto rounded-card border border-edge bg-panel2/60 p-3">
+          <div className="flex w-72 shrink-0 flex-col gap-3 overflow-y-auto rounded-card border border-edge bg-panel2 p-3">
             {selected?.kind === 'node' && selectedNode ? (
               <NodeInspector
                 node={selectedNode}
@@ -1161,7 +1169,7 @@ function NodeInspector({
           />
         );
       })()}
-      <details className="rounded-control border border-edge bg-panel/70">
+      <details className="rounded-control border border-edge bg-panel">
         <summary className="cursor-pointer px-2.5 py-1.5 text-xs text-dim select-none">
           {t('graph.advanced')}
         </summary>

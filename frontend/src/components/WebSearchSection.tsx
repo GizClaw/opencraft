@@ -6,7 +6,6 @@ import {
   Globe,
   Loader2,
   Search,
-  X,
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { useStore } from '../lib/store';
@@ -16,6 +15,7 @@ import type {
   WebSearchTestResult,
 } from '../lib/types';
 import { ICON } from './ui/icon';
+import { Modal } from './ui/Modal';
 import { SaveBar } from './ui/SaveBar';
 
 // The web search item of the Tools tab. Like the generation tools it is
@@ -142,7 +142,7 @@ export function WebSearchSection() {
 
   if (state === null && error === '') {
     return (
-      <div className="h-16 animate-pulse rounded-card border border-edge/70 bg-panel/70" />
+      <div className="h-16 animate-pulse rounded-card border border-edge/70 bg-panel" />
     );
   }
 
@@ -182,283 +182,257 @@ export function WebSearchSection() {
         </li>
       </ul>
 
-      {open && (
-        <div
-          className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-6"
-          onClick={() => setOpen(false)}
-        >
-          <div
-            className="flex max-h-[calc(100vh-2rem)] w-[38rem] max-w-full flex-col rounded-card border border-edge bg-panel shadow-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label={t('config.webSearchTitle')}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-edge px-4 py-3">
-              <div className="flex min-w-0 items-center gap-2">
-                <Globe size={ICON.md} className="shrink-0 text-accent" />
-                <h3 className="min-w-0 truncate text-sm font-semibold">
-                  {t('config.webSearchTitle')}
-                </h3>
-              </div>
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title={t('config.webSearchTitle')}
+        icon={Globe}
+        width="38rem"
+        bodyClassName="p-0"
+        footer={
+          <SaveBar
+            saved={saved}
+            error={error}
+            saving={saving}
+            onSave={() => void save()}
+          />
+        }
+      >
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
+          <p className="text-xs text-dim">{t('config.webSearchHint')}</p>
+
+          <label className="flex items-center gap-2 text-xs text-dim">
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(e) => {
+                setEnabled(e.target.checked);
+                setSaved(false);
+              }}
+              className="accent-[var(--color-accent)]"
+            />
+            {t('config.webSearchEnabled')}
+          </label>
+
+          <div className="space-y-1.5">
+            <p className="text-xs text-dim">{t('config.webSearchProvider')}</p>
+            <div className="flex flex-wrap items-center gap-1.5">
               <button
                 type="button"
-                onClick={() => setOpen(false)}
-                aria-label={t('tools.close')}
-                className="shrink-0 rounded-control p-1 text-dim hover:bg-panel2 hover:text-fg"
+                onClick={() => {
+                  setProvider('auto');
+                  setTestResult(null);
+                  setTestError('');
+                }}
+                className={`rounded-control border px-2.5 py-1 text-xs transition-colors ${
+                  provider === 'auto'
+                    ? 'border-accent/60 bg-accent/10 text-accent'
+                    : 'border-edge text-dim hover:border-accent/40 hover:text-fg'
+                }`}
               >
-                <X size={ICON.sm} />
+                {t('config.webSearchProviderAuto')}
               </button>
+              {(state?.providers ?? []).map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => {
+                    setProvider(p.id);
+                    setTestResult(null);
+                    setTestError('');
+                  }}
+                  className={`rounded-control border px-2.5 py-1 text-xs transition-colors ${
+                    provider === p.id
+                      ? 'border-accent/60 bg-accent/10 text-accent'
+                      : 'border-edge text-dim hover:border-accent/40 hover:text-fg'
+                  }`}
+                >
+                  {providerLabel(p.id)}
+                  <span className="ml-1.5 text-micro opacity-70">
+                    {p.keyless
+                      ? t('config.webSearchKeyless')
+                      : t('config.webSearchRequiresKey')}
+                  </span>
+                </button>
+              ))}
             </div>
+          </div>
 
-            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3">
-              <p className="text-xs text-dim">{t('config.webSearchHint')}</p>
-
-              <label className="flex items-center gap-2 text-xs text-dim">
+          {showKeyField && (
+            <div className="space-y-1.5">
+              <label className="text-xs text-dim">
+                {t('config.webSearchKeyLabel')}
+              </label>
+              <div className="flex items-center gap-2">
                 <input
-                  type="checkbox"
-                  checked={enabled}
+                  type="password"
+                  autoComplete="off"
+                  disabled={!state?.secrets_available}
+                  placeholder={t('config.webSearchKeyPlaceholder')}
+                  value={keys[provider] ?? ''}
                   onChange={(e) => {
-                    setEnabled(e.target.checked);
+                    setKeys({ ...keys, [provider]: e.target.value });
                     setSaved(false);
                   }}
-                  className="accent-[var(--color-accent)]"
+                  className={inputClass}
                 />
-                {t('config.webSearchEnabled')}
-              </label>
-
-              <div className="space-y-1.5">
-                <p className="text-xs text-dim">
-                  {t('config.webSearchProvider')}
-                </p>
-                <div className="flex flex-wrap items-center gap-1.5">
+                {selected?.key_set && (
                   <button
                     type="button"
                     onClick={() => {
-                      setProvider('auto');
-                      setTestResult(null);
-                      setTestError('');
+                      setClearKeys([...new Set([...clearKeys, provider])]);
+                      setKeys({ ...keys, [provider]: '' });
                     }}
-                    className={`rounded-control border px-2.5 py-1 text-xs transition-colors ${
-                      provider === 'auto'
-                        ? 'border-accent/60 bg-accent/10 text-accent'
-                        : 'border-edge text-dim hover:border-accent/40 hover:text-fg'
-                    }`}
+                    className="shrink-0 rounded-control border border-edge px-2.5 py-1 text-xs text-dim hover:border-err/40 hover:text-err"
                   >
-                    {t('config.webSearchProviderAuto')}
+                    {t('config.webSearchClearKey')}
                   </button>
-                  {(state?.providers ?? []).map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => {
-                        setProvider(p.id);
-                        setTestResult(null);
-                        setTestError('');
-                      }}
-                      className={`rounded-control border px-2.5 py-1 text-xs transition-colors ${
-                        provider === p.id
-                          ? 'border-accent/60 bg-accent/10 text-accent'
-                          : 'border-edge text-dim hover:border-accent/40 hover:text-fg'
-                      }`}
-                    >
-                      {providerLabel(p.id)}
-                      <span className="ml-1.5 text-micro opacity-70">
-                        {p.keyless
-                          ? t('config.webSearchKeyless')
-                          : t('config.webSearchRequiresKey')}
-                      </span>
-                    </button>
-                  ))}
-                </div>
+                )}
               </div>
+              <p className="text-micro text-dim">
+                {selected?.key_set
+                  ? t('config.webSearchKeySet')
+                  : t('config.webSearchKeyMissing')}
+              </p>
+            </div>
+          )}
 
-              {showKeyField && (
-                <div className="space-y-1.5">
-                  <label className="text-xs text-dim">
-                    {t('config.webSearchKeyLabel')}
-                  </label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="password"
-                      autoComplete="off"
-                      disabled={!state?.secrets_available}
-                      placeholder={t('config.webSearchKeyPlaceholder')}
-                      value={keys[provider] ?? ''}
-                      onChange={(e) => {
-                        setKeys({ ...keys, [provider]: e.target.value });
-                        setSaved(false);
-                      }}
-                      className={inputClass}
-                    />
-                    {selected?.key_set && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setClearKeys([...new Set([...clearKeys, provider])]);
-                          setKeys({ ...keys, [provider]: '' });
-                        }}
-                        className="shrink-0 rounded-control border border-edge px-2.5 py-1 text-xs text-dim hover:border-err/40 hover:text-err"
-                      >
-                        {t('config.webSearchClearKey')}
-                      </button>
-                    )}
-                  </div>
-                  <p className="text-micro text-dim">
-                    {selected?.key_set
-                      ? t('config.webSearchKeySet')
-                      : t('config.webSearchKeyMissing')}
-                  </p>
-                </div>
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="flex items-center gap-2 text-xs text-dim">
+              {t('config.webSearchMaxResults')}
+              <input
+                type="number"
+                min={1}
+                max={10}
+                value={maxResults}
+                onChange={(e) => {
+                  setMaxResults(Number(e.target.value));
+                  setSaved(false);
+                }}
+                className="w-16 rounded-control border border-edge bg-panel px-2 py-1 text-xs text-fg outline-none focus:border-accent"
+              />
+            </label>
+            <button
+              type="button"
+              onClick={() => setAdvanced(!advanced)}
+              className="flex items-center gap-1 text-xs text-dim hover:text-fg"
+            >
+              {advanced ? (
+                <ChevronDown size={ICON.xs} />
+              ) : (
+                <ChevronRight size={ICON.xs} />
               )}
+              {t('config.webSearchAdvanced')}
+            </button>
+          </div>
 
-              <div className="flex flex-wrap items-end gap-3">
+          {advanced && (
+            <div className="space-y-2 rounded-card border border-edge/70 bg-panel p-2.5">
+              <label className="flex items-center gap-2 text-xs text-dim">
+                <span className="w-32 shrink-0">
+                  {t('config.webSearchTimeout')}
+                </span>
+                <input
+                  value={timeout}
+                  onChange={(e) => {
+                    setTimeoutValue(e.target.value);
+                    setSaved(false);
+                  }}
+                  className={inputClass}
+                />
+              </label>
+              {provider !== 'auto' && (
                 <label className="flex items-center gap-2 text-xs text-dim">
-                  {t('config.webSearchMaxResults')}
+                  <span className="w-32 shrink-0">
+                    {t('config.webSearchEndpoint')}
+                  </span>
                   <input
-                    type="number"
-                    min={1}
-                    max={10}
-                    value={maxResults}
+                    placeholder={
+                      selected?.endpoint ??
+                      t('config.webSearchEndpointPlaceholder')
+                    }
+                    value={
+                      (endpoints[provider as keyof WebSearchEndpoints] as
+                        string | undefined) ?? ''
+                    }
                     onChange={(e) => {
-                      setMaxResults(Number(e.target.value));
+                      setEndpoints({
+                        ...endpoints,
+                        [provider]: e.target.value,
+                      });
                       setSaved(false);
                     }}
-                    className="w-16 rounded-control border border-edge bg-panel px-2 py-1 text-xs text-fg outline-none focus:border-accent"
+                    className={inputClass}
                   />
                 </label>
-                <button
-                  type="button"
-                  onClick={() => setAdvanced(!advanced)}
-                  className="flex items-center gap-1 text-xs text-dim hover:text-fg"
-                >
-                  {advanced ? (
-                    <ChevronDown size={ICON.xs} />
-                  ) : (
-                    <ChevronRight size={ICON.xs} />
-                  )}
-                  {t('config.webSearchAdvanced')}
-                </button>
-              </div>
-
-              {advanced && (
-                <div className="space-y-2 rounded-card border border-edge/70 bg-panel/40 p-2.5">
-                  <label className="flex items-center gap-2 text-xs text-dim">
-                    <span className="w-32 shrink-0">
-                      {t('config.webSearchTimeout')}
-                    </span>
-                    <input
-                      value={timeout}
-                      onChange={(e) => {
-                        setTimeoutValue(e.target.value);
-                        setSaved(false);
-                      }}
-                      className={inputClass}
-                    />
-                  </label>
-                  {provider !== 'auto' && (
-                    <label className="flex items-center gap-2 text-xs text-dim">
-                      <span className="w-32 shrink-0">
-                        {t('config.webSearchEndpoint')}
-                      </span>
-                      <input
-                        placeholder={
-                          selected?.endpoint ??
-                          t('config.webSearchEndpointPlaceholder')
-                        }
-                        value={
-                          (endpoints[provider as keyof WebSearchEndpoints] as
-                            string | undefined) ?? ''
-                        }
-                        onChange={(e) => {
-                          setEndpoints({
-                            ...endpoints,
-                            [provider]: e.target.value,
-                          });
-                          setSaved(false);
-                        }}
-                        className={inputClass}
-                      />
-                    </label>
-                  )}
-                  <p className="text-micro text-dim">
-                    {t('config.webSearchPrivacy')}
-                  </p>
-                </div>
               )}
+              <p className="text-micro text-dim">
+                {t('config.webSearchPrivacy')}
+              </p>
+            </div>
+          )}
 
-              <div className="space-y-2 rounded-card border border-edge/70 bg-panel/40 p-2.5">
-                <div className="flex flex-wrap items-center gap-2">
-                  <input
-                    value={testQuery}
-                    onChange={(e) => setTestQuery(e.target.value)}
-                    placeholder={t('config.webSearchTestPlaceholder')}
-                    className={`${inputClass} max-w-64`}
-                  />
-                  <button
-                    type="button"
-                    disabled={
-                      testing || provider === 'auto' || !testQuery.trim()
-                    }
-                    onClick={() => void runTest()}
-                    className="flex items-center gap-1.5 rounded-control border border-edge px-3 py-1.5 text-xs text-dim hover:border-accent/40 hover:text-fg disabled:opacity-40"
-                  >
-                    {testing ? (
-                      <Loader2 size={ICON.xs} className="animate-spin" />
-                    ) : (
-                      <Search size={ICON.xs} />
-                    )}
-                    {t('config.webSearchTest')}
-                  </button>
-                </div>
-                {provider === 'auto' && (
-                  <p className="text-micro text-dim">
-                    {t('config.webSearchTestPickProvider')}
-                  </p>
+          <div className="space-y-2 rounded-card border border-edge/70 bg-panel p-2.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                value={testQuery}
+                onChange={(e) => setTestQuery(e.target.value)}
+                placeholder={t('config.webSearchTestPlaceholder')}
+                className={`${inputClass} max-w-64`}
+              />
+              <button
+                type="button"
+                disabled={testing || provider === 'auto' || !testQuery.trim()}
+                onClick={() => void runTest()}
+                className="flex items-center gap-1.5 rounded-control border border-edge px-3 py-1.5 text-xs text-dim hover:border-accent/40 hover:text-fg disabled:opacity-40"
+              >
+                {testing ? (
+                  <Loader2 size={ICON.xs} className="animate-spin" />
+                ) : (
+                  <Search size={ICON.xs} />
                 )}
-                {testError && <p className="text-xs text-err">{testError}</p>}
-                {testResult && (
-                  <div className="space-y-1">
-                    <p className="text-micro text-dim">
-                      {testResult.provider} · {testResult.results.length}{' '}
-                      {t('tool.hits')}
-                    </p>
-                    {testResult.results.map((hit) => (
-                      <div key={hit.url} className="min-w-0">
-                        <a
-                          href={hit.url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="block truncate text-xs text-accent hover:underline"
-                        >
-                          {hit.title || hit.url}
-                        </a>
-                        {hit.snippet && (
-                          <p className="truncate text-micro text-dim">
-                            {hit.snippet}
-                          </p>
-                        )}
-                      </div>
-                    ))}
-                    {testResult.results.length === 0 && (
-                      <p className="text-xs text-dim">
-                        {t('config.webSearchTestEmpty')}
+                {t('config.webSearchTest')}
+              </button>
+            </div>
+            {provider === 'auto' && (
+              <p className="text-micro text-dim">
+                {t('config.webSearchTestPickProvider')}
+              </p>
+            )}
+            {testError && <p className="text-xs text-err">{testError}</p>}
+            {testResult && (
+              <div className="space-y-1">
+                <p className="text-micro text-dim">
+                  {testResult.provider} · {testResult.results.length}{' '}
+                  {t('tool.hits')}
+                </p>
+                {testResult.results.map((hit) => (
+                  <div key={hit.url} className="min-w-0">
+                    <a
+                      href={hit.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block truncate text-xs text-accent hover:underline"
+                    >
+                      {hit.title || hit.url}
+                    </a>
+                    {hit.snippet && (
+                      <p className="truncate text-micro text-dim">
+                        {hit.snippet}
                       </p>
                     )}
                   </div>
+                ))}
+                {testResult.results.length === 0 && (
+                  <p className="text-xs text-dim">
+                    {t('config.webSearchTestEmpty')}
+                  </p>
                 )}
               </div>
-            </div>
-
-            <SaveBar
-              saved={saved}
-              error={error}
-              saving={saving}
-              onSave={() => void save()}
-            />
+            )}
           </div>
         </div>
-      )}
+      </Modal>
     </>
   );
 }

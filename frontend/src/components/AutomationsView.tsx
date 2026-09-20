@@ -29,6 +29,9 @@ import type {
 } from '../lib/types';
 import { ICON } from './ui/icon';
 import { Button } from './ui/Button';
+import { ConfirmDialog } from './ui/ConfirmDialog';
+import { Overlay } from './ui/Overlay';
+import { Popover } from './ui/Popover';
 
 interface FormState {
   id: string;
@@ -169,22 +172,15 @@ function CapsuleSelect({
   buttonClassName?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: PointerEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener('pointerdown', onDown);
-    return () => document.removeEventListener('pointerdown', onDown);
-  }, [open]);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const label = options.find((o) => o.value === value)?.label ?? value;
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative">
       <button
         type="button"
+        ref={triggerRef}
+        aria-haspopup="listbox"
+        aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
         className={
           buttonClassName ??
@@ -194,32 +190,39 @@ function CapsuleSelect({
         <span className="flex-1 min-w-0 truncate text-left">{label}</span>
         <ChevronUp size={ICON.xs} />
       </button>
-      {open && (
-        <div
-          className={`absolute top-full left-0 z-40 mt-1.5 rounded-card border border-edge bg-panel p-1.5 shadow-popover ${menuClassName}`}
-        >
-          {options.map((o) => (
-            <button
-              key={o.value}
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                onChange(o.value);
-              }}
-              className={`flex w-full items-center justify-between rounded-control px-2 py-1.5 text-left text-xs ${
-                value === o.value
-                  ? 'bg-accent/10 text-accent'
-                  : 'text-dim hover:bg-panel2 hover:text-fg'
-              }`}
-            >
-              <span className="truncate" title={o.label}>
-                {o.label}
-              </span>
-              {value === o.value && <Check size={ICON.xs} />}
-            </button>
-          ))}
-        </div>
-      )}
+      <Popover
+        open={open}
+        onClose={() => setOpen(false)}
+        anchor={triggerRef.current}
+        role="listbox"
+        ariaLabel={label}
+        matchWidth
+        keyboard
+        panelClassName={`rounded-card border border-edge bg-panel p-1.5 shadow-popover ${menuClassName}`}
+      >
+        {options.map((o) => (
+          <button
+            key={o.value}
+            type="button"
+            role="option"
+            aria-selected={value === o.value}
+            onClick={() => {
+              setOpen(false);
+              onChange(o.value);
+            }}
+            className={`flex w-full items-center justify-between rounded-control px-2 py-1.5 text-left text-xs ${
+              value === o.value
+                ? 'bg-accent/10 text-accent'
+                : 'text-dim hover:bg-panel2 hover:text-fg'
+            }`}
+          >
+            <span className="truncate" data-tip={o.label}>
+              {o.label}
+            </span>
+            {value === o.value && <Check size={ICON.xs} />}
+          </button>
+        ))}
+      </Popover>
     </div>
   );
 }
@@ -286,49 +289,21 @@ export function AutomationsView() {
   const [runningId, setRunningId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // The three menus on this page — the model catalog, a row's actions and
+  // the split "new" button — are anchored popovers, and the layer stack
+  // owns Escape and the outside click. The two single-instance menus hold
+  // their trigger in a ref; the row menu holds it in state, because every
+  // row renders its own trigger and a shared ref would anchor the panel
+  // to whichever row happened to render last.
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
-  const modelMenuRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!modelMenuOpen) return;
-    const onDown = (e: PointerEvent) => {
-      if (
-        modelMenuRef.current &&
-        !modelMenuRef.current.contains(e.target as Node)
-      ) {
-        setModelMenuOpen(false);
-      }
-    };
-    document.addEventListener('pointerdown', onDown);
-    return () => document.removeEventListener('pointerdown', onDown);
-  }, [modelMenuOpen]);
+  const modelTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [query, setQuery] = useState('');
-  const [menuFor, setMenuFor] = useState<string | null>(null);
+  const [rowMenu, setRowMenu] = useState<{
+    id: string;
+    anchor: HTMLElement;
+  } | null>(null);
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-  const createMenuRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!menuFor) return;
-    const onDown = (e: PointerEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuFor(null);
-      }
-    };
-    document.addEventListener('pointerdown', onDown);
-    return () => document.removeEventListener('pointerdown', onDown);
-  }, [menuFor]);
-  useEffect(() => {
-    if (!createMenuOpen) return;
-    const onDown = (e: PointerEvent) => {
-      if (
-        createMenuRef.current &&
-        !createMenuRef.current.contains(e.target as Node)
-      ) {
-        setCreateMenuOpen(false);
-      }
-    };
-    document.addEventListener('pointerdown', onDown);
-    return () => document.removeEventListener('pointerdown', onDown);
-  }, [createMenuOpen]);
+  const createTriggerRef = useRef<HTMLButtonElement | null>(null);
   const [filter, setFilter] = useState<
     'all' | 'active' | 'paused' | 'completed'
   >('all');
@@ -524,7 +499,10 @@ export function AutomationsView() {
       <div className="flex items-start justify-between gap-3">
         <p className="text-xs text-dim">{t('automations.hint')}</p>
         <div className="relative">
-          <div className="flex items-center overflow-hidden rounded-control">
+          {/* A split button: both halves share one height, so the wrapper
+              stretches them (items-center would leave the icon half at its
+              own content height and inset it). */}
+          <div className="flex items-stretch overflow-hidden rounded-control">
             <Button
               variant="primary"
               className="rounded-r-none"
@@ -535,43 +513,51 @@ export function AutomationsView() {
               {t('automations.new')}
             </Button>
             <button
+              ref={createTriggerRef}
               onClick={() => setCreateMenuOpen((v) => !v)}
-              className="h-full border-l border-white/25 bg-accent px-1.5 py-1.5 text-white hover:opacity-90"
-              title={t('automations.createOptions')}
+              aria-haspopup="menu"
+              aria-expanded={createMenuOpen}
+              className="flex shrink-0 items-center justify-center border-l border-white/25 bg-accent px-1.5 text-white hover:opacity-90"
+              data-tip={t('automations.createOptions')}
             >
               <ChevronDown size={ICON.xs} />
             </button>
           </div>
-          {createMenuOpen && (
-            <div
-              ref={createMenuRef}
-              className="absolute right-0 top-full z-40 mt-1.5 w-56 rounded-control border border-edge bg-panel p-1 shadow-popover"
+          <Popover
+            open={createMenuOpen}
+            onClose={() => setCreateMenuOpen(false)}
+            anchor={createTriggerRef.current}
+            role="menu"
+            keyboard
+            align="end"
+            panelClassName="w-56 rounded-control border border-edge bg-panel p-1 shadow-popover"
+          >
+            <button
+              role="menuitem"
+              onClick={() => void openAICreate()}
+              className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
             >
-              <button
-                onClick={() => void openAICreate()}
-                className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
-              >
-                <Sparkles size={ICON.xs} className="shrink-0 text-accent" />
-                <span className="flex-1 text-left">
-                  {t('automations.createByAssistant')}
-                </span>
-                <Check size={ICON.xs} className="shrink-0 text-accent" />
-              </button>
-              <div className="my-1 border-t border-edge" />
-              <button
-                onClick={() => {
-                  setCreateMenuOpen(false);
-                  openNew();
-                }}
-                className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
-              >
-                <Pencil size={ICON.xs} className="shrink-0" />
-                <span className="flex-1 text-left">
-                  {t('automations.createManual')}
-                </span>
-              </button>
-            </div>
-          )}
+              <Sparkles size={ICON.xs} className="shrink-0 text-accent" />
+              <span className="flex-1 text-left">
+                {t('automations.createByAssistant')}
+              </span>
+              <Check size={ICON.xs} className="shrink-0 text-accent" />
+            </button>
+            <div className="my-1 border-t border-edge" />
+            <button
+              role="menuitem"
+              onClick={() => {
+                setCreateMenuOpen(false);
+                openNew();
+              }}
+              className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
+            >
+              <Pencil size={ICON.xs} className="shrink-0" />
+              <span className="flex-1 text-left">
+                {t('automations.createManual')}
+              </span>
+            </button>
+          </Popover>
         </div>
       </div>
 
@@ -669,496 +655,510 @@ export function AutomationsView() {
                 </button>
                 <div className="relative shrink-0">
                   <button
-                    onClick={() =>
-                      setMenuFor(menuFor === task.id ? null : task.id)
+                    aria-haspopup="menu"
+                    aria-expanded={rowMenu?.id === task.id}
+                    onClick={(e) =>
+                      setRowMenu(
+                        rowMenu?.id === task.id
+                          ? null
+                          : { id: task.id, anchor: e.currentTarget },
+                      )
                     }
-                    title={t('automations.more')}
+                    data-tip={t('automations.more')}
                     className="rounded-control p-1.5 text-dim hover:bg-panel hover:text-fg"
                   >
                     <MoreHorizontal size={ICON.sm} />
                   </button>
-                  {menuFor === task.id && (
-                    <div
-                      ref={menuRef}
-                      className="absolute right-0 top-full z-40 mt-1.5 w-44 rounded-control border border-edge bg-panel p-1 shadow-popover"
+                  <Popover
+                    open={rowMenu?.id === task.id}
+                    onClose={() => setRowMenu(null)}
+                    anchor={rowMenu?.anchor ?? null}
+                    role="menu"
+                    keyboard
+                    align="end"
+                    panelClassName="w-44 rounded-control border border-edge bg-panel p-1 shadow-popover"
+                  >
+                    <button
+                      role="menuitem"
+                      onClick={() => {
+                        setRowMenu(null);
+                        void toggleEnabled(task);
+                      }}
+                      className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
                     >
-                      <button
-                        onClick={() => {
-                          setMenuFor(null);
-                          void toggleEnabled(task);
-                        }}
-                        className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
-                      >
-                        {task.enabled ? (
-                          <Pause size={ICON.xs} className="shrink-0" />
-                        ) : (
-                          <Play size={ICON.xs} className="shrink-0" />
-                        )}
-                        <span className="flex-1 text-left">
-                          {task.enabled
-                            ? t('automations.pause')
-                            : t('automations.resume')}
-                        </span>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setMenuFor(null);
-                          void runNow(task);
-                        }}
-                        disabled={
-                          runningId === task.id ||
-                          !task.enabled ||
-                          runningFor(task.id)
-                        }
-                        className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg disabled:opacity-40"
-                      >
-                        {runningId === task.id || runningFor(task.id) ? (
-                          <Loader2
-                            size={ICON.xs}
-                            className="shrink-0 animate-spin"
-                          />
-                        ) : (
-                          <Zap size={ICON.xs} className="shrink-0" />
-                        )}
-                        <span className="flex-1 text-left">
-                          {t('automations.runNow')}
-                        </span>
-                      </button>
-                      <div className="my-1 border-t border-edge" />
-                      <button
-                        onClick={() => {
-                          setMenuFor(null);
-                          setConfirmDelete(task.id);
-                        }}
-                        className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-err/10 hover:text-err"
-                      >
-                        <Trash2 size={ICON.xs} className="shrink-0" />
-                        <span className="flex-1 text-left">
-                          {t('automations.delete')}
-                        </span>
-                      </button>
-                    </div>
-                  )}
+                      {task.enabled ? (
+                        <Pause size={ICON.xs} className="shrink-0" />
+                      ) : (
+                        <Play size={ICON.xs} className="shrink-0" />
+                      )}
+                      <span className="flex-1 text-left">
+                        {task.enabled
+                          ? t('automations.pause')
+                          : t('automations.resume')}
+                      </span>
+                    </button>
+                    <button
+                      role="menuitem"
+                      onClick={() => {
+                        setRowMenu(null);
+                        void runNow(task);
+                      }}
+                      disabled={
+                        runningId === task.id ||
+                        !task.enabled ||
+                        runningFor(task.id)
+                      }
+                      className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg disabled:opacity-40"
+                    >
+                      {runningId === task.id || runningFor(task.id) ? (
+                        <Loader2
+                          size={ICON.xs}
+                          className="shrink-0 animate-spin"
+                        />
+                      ) : (
+                        <Zap size={ICON.xs} className="shrink-0" />
+                      )}
+                      <span className="flex-1 text-left">
+                        {t('automations.runNow')}
+                      </span>
+                    </button>
+                    <div className="my-1 border-t border-edge" />
+                    <button
+                      role="menuitem"
+                      onClick={() => {
+                        setRowMenu(null);
+                        setConfirmDelete(task.id);
+                      }}
+                      className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-err/10 hover:text-err"
+                    >
+                      <Trash2 size={ICON.xs} className="shrink-0" />
+                      <span className="flex-1 text-left">
+                        {t('automations.delete')}
+                      </span>
+                    </button>
+                  </Popover>
                 </div>
               </div>
-              {confirmDelete === task.id && (
-                <div className="flex items-center gap-2 rounded-control border border-err/40 bg-err/10 px-2 py-1.5 text-xs text-dim">
-                  <span className="flex-1 min-w-0 truncate">
-                    {t('automations.deleteConfirm', { name: task.name })}
-                  </span>
-                  <button
-                    onClick={() => void remove(task.id)}
-                    className="rounded-tight bg-err px-2 py-1 text-white"
-                  >
-                    {t('automations.delete')}
-                  </button>
-                  <button
-                    onClick={() => setConfirmDelete(null)}
-                    className="rounded-tight border border-edge px-2 py-1"
-                  >
-                    {t('interact.cancel')}
-                  </button>
-                </div>
-              )}
             </div>
           ))}
         </div>
       )}
 
       {form && (
-        <>
-          <div
-            className="fixed inset-0 z-40 bg-black/30"
-            onClick={() => setForm(null)}
-          />
-          <aside className="fixed inset-y-0 right-0 z-50 flex w-[26rem] max-w-[92vw] flex-col border-l border-edge bg-panel shadow-modal">
-            <div className="flex shrink-0 items-center justify-between border-b border-edge px-4 py-3">
-              <h3 className="text-sm font-semibold">
-                {form.id ? t('automations.edit') : t('automations.new')}
-              </h3>
-              <button
-                onClick={() => setForm(null)}
-                className="text-dim hover:text-fg"
-                title={t('tools.close')}
-              >
-                <X size={ICON.md} />
-              </button>
-            </div>
+        <Overlay
+          open
+          onClose={() => setForm(null)}
+          variant="drawer-right"
+          ariaLabel={form.id ? t('automations.edit') : t('automations.new')}
+          panelClassName="flex w-[26rem] max-w-[92vw] flex-col border-l border-edge bg-panel shadow-modal"
+        >
+          <div className="flex shrink-0 items-center justify-between border-b border-edge px-4 py-3">
+            <h3 className="text-title font-semibold">
+              {form.id ? t('automations.edit') : t('automations.new')}
+            </h3>
+            <button
+              onClick={() => setForm(null)}
+              className="text-dim hover:text-fg"
+              data-tip={t('tools.close')}
+            >
+              <X size={ICON.md} />
+            </button>
+          </div>
 
-            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-              <Field label={t('automations.name')}>
-                <input
-                  value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  placeholder={t('automations.namePlaceholder')}
-                  className="w-full rounded-control border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+            <Field label={t('automations.name')}>
+              <input
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                placeholder={t('automations.namePlaceholder')}
+                className="w-full rounded-control border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
+              />
+            </Field>
+
+            <Field label={t('automations.prompt')}>
+              <textarea
+                value={form.prompt}
+                onChange={(e) => setForm({ ...form, prompt: e.target.value })}
+                placeholder={t('automations.promptPlaceholder')}
+                rows={4}
+                className="w-full rounded-control border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent resize-y"
+              />
+            </Field>
+
+            <SectionCard
+              title={t('automations.details')}
+              icon={<Settings2 size={ICON.md} />}
+            >
+              <Field label={t('automations.workspace')}>
+                <CapsuleSelect
+                  value={form.workspace}
+                  options={workspaceOptions(form.workspace)}
+                  onChange={(v) => setForm({ ...form, workspace: v })}
+                  menuClassName="w-80"
+                  buttonClassName="flex w-full items-center justify-between gap-1.5 rounded-control border border-edge bg-panel px-3 py-1.5 text-sm text-dim hover:text-fg"
                 />
               </Field>
-
-              <Field label={t('automations.prompt')}>
-                <textarea
-                  value={form.prompt}
-                  onChange={(e) => setForm({ ...form, prompt: e.target.value })}
-                  placeholder={t('automations.promptPlaceholder')}
-                  rows={4}
-                  className="w-full rounded-control border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent resize-y"
+              <Field label={t('automations.sessionMode')}>
+                <CapsuleSelect
+                  value={form.sessionMode}
+                  options={[
+                    { value: 'new', label: t('automations.newSession') },
+                    {
+                      value: 'existing',
+                      label: t('automations.existingSession'),
+                    },
+                  ]}
+                  onChange={(v) =>
+                    setForm({
+                      ...form,
+                      sessionMode: v === 'existing' ? 'existing' : 'new',
+                    })
+                  }
                 />
               </Field>
-
-              <SectionCard
-                title={t('automations.details')}
-                icon={<Settings2 size={ICON.md} />}
-              >
-                <Field label={t('automations.workspace')}>
+              {form.sessionMode === 'existing' && (
+                <Field label={t('automations.sessionField')}>
                   <CapsuleSelect
-                    value={form.workspace}
-                    options={workspaceOptions(form.workspace)}
-                    onChange={(v) => setForm({ ...form, workspace: v })}
-                    menuClassName="w-80"
+                    value={form.sessionID}
+                    options={sessionOptions.map((s) => ({
+                      value: s.id,
+                      label: `${s.title || s.id} · ${s.id}`,
+                    }))}
+                    onChange={(v) => setForm({ ...form, sessionID: v })}
+                    menuClassName="w-72"
                     buttonClassName="flex w-full items-center justify-between gap-1.5 rounded-control border border-edge bg-panel px-3 py-1.5 text-sm text-dim hover:text-fg"
                   />
-                </Field>
-                <Field label={t('automations.sessionMode')}>
-                  <CapsuleSelect
-                    value={form.sessionMode}
-                    options={[
-                      { value: 'new', label: t('automations.newSession') },
-                      {
-                        value: 'existing',
-                        label: t('automations.existingSession'),
-                      },
-                    ]}
-                    onChange={(v) =>
-                      setForm({
-                        ...form,
-                        sessionMode: v === 'existing' ? 'existing' : 'new',
-                      })
-                    }
-                  />
-                </Field>
-                {form.sessionMode === 'existing' && (
-                  <Field label={t('automations.sessionField')}>
-                    <CapsuleSelect
-                      value={form.sessionID}
-                      options={sessionOptions.map((s) => ({
-                        value: s.id,
-                        label: `${s.title || s.id} · ${s.id}`,
-                      }))}
-                      onChange={(v) => setForm({ ...form, sessionID: v })}
-                      menuClassName="w-72"
-                      buttonClassName="flex w-full items-center justify-between gap-1.5 rounded-control border border-edge bg-panel px-3 py-1.5 text-sm text-dim hover:text-fg"
-                    />
-                    {sessionOptions.length === 0 && (
-                      <p className="text-xs text-dim">
-                        {t('automations.noSessions')}
-                      </p>
-                    )}
-                  </Field>
-                )}
-                <div className="grid grid-cols-2 gap-3">
-                  {form.sessionMode === 'new' && !yoloOnly && (
-                    <Field label={t('automations.permission')}>
-                      <CapsuleSelect
-                        value={form.mode}
-                        options={[
-                          {
-                            value: 'workspace',
-                            label: t('automations.modeWorkspace'),
-                          },
-                          {
-                            value: 'read-only',
-                            label: t('automations.modeReadonly'),
-                          },
-                          { value: 'yolo', label: t('automations.modeYolo') },
-                        ]}
-                        onChange={(v) => setForm({ ...form, mode: v })}
-                      />
-                    </Field>
+                  {sessionOptions.length === 0 && (
+                    <p className="text-xs text-dim">
+                      {t('automations.noSessions')}
+                    </p>
                   )}
-                  <Field label={t('automations.notification')}>
+                </Field>
+              )}
+              <div className="grid grid-cols-2 gap-3">
+                {form.sessionMode === 'new' && !yoloOnly && (
+                  <Field label={t('automations.permission')}>
                     <CapsuleSelect
-                      value={form.notify}
+                      value={form.mode}
                       options={[
                         {
-                          value: 'always',
-                          label: t('automations.notifyAlways'),
+                          value: 'workspace',
+                          label: t('automations.modeWorkspace'),
                         },
                         {
-                          value: 'failed',
-                          label: t('automations.notifyFailed'),
+                          value: 'read-only',
+                          label: t('automations.modeReadonly'),
                         },
-                        { value: 'never', label: t('automations.notifyNever') },
+                        { value: 'yolo', label: t('automations.modeYolo') },
                       ]}
-                      onChange={(v) => setForm({ ...form, notify: v })}
+                      onChange={(v) => setForm({ ...form, mode: v })}
                     />
                   </Field>
-                </div>
-                {form.sessionMode === 'new' && (
-                  <>
-                    <Field label={t('automations.modelField')}>
-                      <div className="relative" ref={modelMenuRef}>
-                        <button
-                          type="button"
-                          onClick={() => setModelMenuOpen((v) => !v)}
-                          title={t('chat.modelLabel')}
-                          className="flex w-full items-center gap-1.5 rounded-control border border-edge bg-panel px-3 py-1.5 text-sm text-dim hover:text-fg"
-                        >
-                          <Sparkles size={ICON.xs} className="text-accent" />
-                          <span className="flex-1 truncate text-left">
-                            {modelLabel}
-                          </span>
-                          <span className="text-edge">·</span>
-                          <span>{thinkLabel}</span>
-                          <ChevronUp size={ICON.xs} />
-                        </button>
-                        {modelMenuOpen && (
-                          <div className="absolute top-full left-0 z-40 mt-1.5 w-full rounded-card border border-edge bg-panel p-1.5 shadow-popover">
-                            <div className="px-2 pb-1 pt-1.5 text-micro uppercase tracking-wider text-dim">
-                              {t('chat.modelLabel')}
-                            </div>
-                            <div className="max-h-52 overflow-y-auto">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setModelMenuOpen(false);
-                                  setForm({ ...form, model: '' });
-                                }}
-                                className={`flex w-full items-center justify-between rounded-control px-2 py-1.5 text-left text-xs ${
-                                  !form.model
-                                    ? 'bg-accent/10 text-accent'
-                                    : 'text-dim hover:bg-panel2 hover:text-fg'
-                                }`}
-                              >
-                                <span>{t('chat.modelAuto')}</span>
-                                {!form.model && <Check size={ICON.xs} />}
-                              </button>
-                              {modelOptions.map((m) => (
-                                <button
-                                  key={m.id}
-                                  type="button"
-                                  onClick={() => {
-                                    setModelMenuOpen(false);
-                                    setForm({ ...form, model: m.id });
-                                  }}
-                                  className={`flex w-full items-center justify-between rounded-control px-2 py-1.5 text-left text-xs ${
-                                    form.model === m.id
-                                      ? 'bg-accent/10 text-accent'
-                                      : 'text-dim hover:bg-panel2 hover:text-fg'
-                                  }`}
-                                >
-                                  <span className="truncate">{m.label}</span>
-                                  {form.model === m.id && (
-                                    <Check size={ICON.xs} />
-                                  )}
-                                </button>
-                              ))}
-                            </div>
-                            <div className="my-1 border-t border-edge" />
-                            <div className="flex items-center justify-between px-2 pt-1.5 text-xs">
-                              <span className="text-dim">
-                                {t('chat.thinkLabel')}
-                              </span>
-                              <span className="text-fg">{thinkLabel}</span>
-                            </div>
-                            <div className="px-2 pt-1.5">
-                              <input
-                                type="range"
-                                min={0}
-                                max={thinkLevels.length - 1}
-                                step={1}
-                                value={thinkIndex}
-                                onChange={(e) => {
-                                  const v = Number(e.target.value);
-                                  setForm({
-                                    ...form,
-                                    think: thinkLevels[v]?.value ?? 'medium',
-                                  });
-                                }}
-                                className="w-full accent-accent"
-                              />
-                            </div>
-                            <div className="flex justify-between px-2 pb-1.5 text-micro text-dim">
-                              {thinkLevels.map((l) => (
-                                <span key={l.value}>{l.label}</span>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </Field>
-                    {form.mode === 'yolo' && (
-                      <p className="text-xs text-err">
-                        {t('automations.yoloWarning')}
-                      </p>
-                    )}
-                  </>
                 )}
-              </SectionCard>
-
-              <SectionCard
-                title={t('automations.timeCard')}
-                icon={<CalendarClock size={ICON.md} />}
-              >
-                <Field label={t('automations.scheduleField')}>
+                <Field label={t('automations.notification')}>
                   <CapsuleSelect
-                    value={form.scheduleType}
+                    value={form.notify}
                     options={[
-                      { value: 'hourly', label: t('automations.hourly') },
-                      { value: 'daily', label: t('automations.daily') },
-                      { value: 'weekdays', label: t('automations.weekdays') },
-                      { value: 'weekly', label: t('automations.weekly') },
+                      {
+                        value: 'always',
+                        label: t('automations.notifyAlways'),
+                      },
+                      {
+                        value: 'failed',
+                        label: t('automations.notifyFailed'),
+                      },
+                      { value: 'never', label: t('automations.notifyNever') },
                     ]}
-                    onChange={(v) => setForm({ ...form, scheduleType: v })}
+                    onChange={(v) => setForm({ ...form, notify: v })}
                   />
                 </Field>
-                <div className="grid grid-cols-2 gap-3">
-                  {form.scheduleType === 'hourly' && (
-                    <Field label={t('automations.intervalField')}>
-                      <div className="flex items-center gap-1.5">
-                        <input
-                          type="number"
-                          min={1}
-                          value={form.intervalHours}
-                          onChange={(e) =>
-                            setForm({
-                              ...form,
-                              intervalHours: Number(e.target.value) || 1,
-                            })
-                          }
-                          className="w-full rounded-control border border-edge bg-panel px-2 py-1.5 text-sm outline-none focus:border-accent"
-                        />
-                        <span className="text-sm text-dim">h</span>
-                      </div>
-                    </Field>
+              </div>
+              {form.sessionMode === 'new' && (
+                <>
+                  <Field label={t('automations.modelField')}>
+                    <div className="relative">
+                      <button
+                        type="button"
+                        ref={modelTriggerRef}
+                        aria-haspopup="listbox"
+                        aria-expanded={modelMenuOpen}
+                        onClick={() => setModelMenuOpen((v) => !v)}
+                        data-tip={t('chat.modelLabel')}
+                        className="flex w-full items-center gap-1.5 rounded-control border border-edge bg-panel px-3 py-1.5 text-sm text-dim hover:text-fg"
+                      >
+                        <Sparkles size={ICON.xs} className="text-accent" />
+                        <span className="flex-1 truncate text-left">
+                          {modelLabel}
+                        </span>
+                        <span className="text-edge">·</span>
+                        <span>{thinkLabel}</span>
+                        <ChevronUp size={ICON.xs} />
+                      </button>
+                      <Popover
+                        open={modelMenuOpen}
+                        onClose={() => setModelMenuOpen(false)}
+                        anchor={modelTriggerRef.current}
+                        role="listbox"
+                        ariaLabel={t('chat.modelLabel')}
+                        matchWidth
+                        keyboard
+                        panelClassName="rounded-card border border-edge bg-panel p-1.5 shadow-popover"
+                      >
+                        <div className="px-2 pb-1 pt-1.5 text-micro uppercase tracking-wider text-dim">
+                          {t('chat.modelLabel')}
+                        </div>
+                        <div className="max-h-52 overflow-y-auto">
+                          <button
+                            type="button"
+                            role="option"
+                            aria-selected={!form.model}
+                            onClick={() => {
+                              setModelMenuOpen(false);
+                              setForm({ ...form, model: '' });
+                            }}
+                            className={`flex w-full items-center justify-between rounded-control px-2 py-1.5 text-left text-xs ${
+                              !form.model
+                                ? 'bg-accent/10 text-accent'
+                                : 'text-dim hover:bg-panel2 hover:text-fg'
+                            }`}
+                          >
+                            <span>{t('chat.modelAuto')}</span>
+                            {!form.model && <Check size={ICON.xs} />}
+                          </button>
+                          {modelOptions.map((m) => (
+                            <button
+                              key={m.id}
+                              type="button"
+                              role="option"
+                              aria-selected={form.model === m.id}
+                              onClick={() => {
+                                setModelMenuOpen(false);
+                                setForm({ ...form, model: m.id });
+                              }}
+                              className={`flex w-full items-center justify-between rounded-control px-2 py-1.5 text-left text-xs ${
+                                form.model === m.id
+                                  ? 'bg-accent/10 text-accent'
+                                  : 'text-dim hover:bg-panel2 hover:text-fg'
+                              }`}
+                            >
+                              <span className="truncate">{m.label}</span>
+                              {form.model === m.id && <Check size={ICON.xs} />}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="my-1 border-t border-edge" />
+                        <div className="flex items-center justify-between px-2 pt-1.5 text-xs">
+                          <span className="text-dim">
+                            {t('chat.thinkLabel')}
+                          </span>
+                          <span className="text-fg">{thinkLabel}</span>
+                        </div>
+                        <div className="px-2 pt-1.5">
+                          <input
+                            type="range"
+                            min={0}
+                            max={thinkLevels.length - 1}
+                            step={1}
+                            value={thinkIndex}
+                            onChange={(e) => {
+                              const v = Number(e.target.value);
+                              setForm({
+                                ...form,
+                                think: thinkLevels[v]?.value ?? 'medium',
+                              });
+                            }}
+                            className="w-full accent-accent"
+                          />
+                        </div>
+                        <div className="flex justify-between px-2 pb-1.5 text-micro text-dim">
+                          {thinkLevels.map((l) => (
+                            <span key={l.value}>{l.label}</span>
+                          ))}
+                        </div>
+                      </Popover>
+                    </div>
+                  </Field>
+                  {form.mode === 'yolo' && (
+                    <p className="text-xs text-err">
+                      {t('automations.yoloWarning')}
+                    </p>
                   )}
-                  {(form.scheduleType === 'daily' ||
-                    form.scheduleType === 'weekdays' ||
-                    form.scheduleType === 'weekly') && (
-                    <Field label={t('automations.timeField')}>
-                      <input
-                        type="time"
-                        value={form.time}
-                        onChange={(e) =>
-                          setForm({ ...form, time: e.target.value })
-                        }
-                        className="w-full rounded-control border border-edge bg-panel px-2 py-1.5 text-sm outline-none focus:border-accent"
-                      />
-                    </Field>
-                  )}
-                  {form.scheduleType === 'weekly' && (
-                    <Field label={t('automations.weeksField')}>
+                </>
+              )}
+            </SectionCard>
+
+            <SectionCard
+              title={t('automations.timeCard')}
+              icon={<CalendarClock size={ICON.md} />}
+            >
+              <Field label={t('automations.scheduleField')}>
+                <CapsuleSelect
+                  value={form.scheduleType}
+                  options={[
+                    { value: 'hourly', label: t('automations.hourly') },
+                    { value: 'daily', label: t('automations.daily') },
+                    { value: 'weekdays', label: t('automations.weekdays') },
+                    { value: 'weekly', label: t('automations.weekly') },
+                  ]}
+                  onChange={(v) => setForm({ ...form, scheduleType: v })}
+                />
+              </Field>
+              <div className="grid grid-cols-2 gap-3">
+                {form.scheduleType === 'hourly' && (
+                  <Field label={t('automations.intervalField')}>
+                    <div className="flex items-center gap-1.5">
                       <input
                         type="number"
                         min={1}
-                        value={form.intervalWeeks}
+                        value={form.intervalHours}
                         onChange={(e) =>
                           setForm({
                             ...form,
-                            intervalWeeks: Number(e.target.value) || 1,
+                            intervalHours: Number(e.target.value) || 1,
                           })
                         }
                         className="w-full rounded-control border border-edge bg-panel px-2 py-1.5 text-sm outline-none focus:border-accent"
                       />
-                    </Field>
-                  )}
-                </div>
-                {(form.scheduleType === 'hourly' ||
-                  form.scheduleType === 'weekly') && (
-                  <Field label={t('automations.weekdaysField')}>
-                    <div className="flex flex-wrap gap-1.5">
-                      {WEEKDAYS.map((d) => (
-                        <button
-                          key={d}
-                          onClick={() => toggleDay(d)}
-                          className={`rounded-full px-2.5 py-1 text-xs border ${
-                            form.days.includes(d)
-                              ? 'border-accent/50 bg-accent/15 text-accent'
-                              : 'border-edge bg-panel text-dim hover:text-fg'
-                          }`}
-                        >
-                          {d}
-                        </button>
-                      ))}
+                      <span className="text-sm text-dim">h</span>
                     </div>
                   </Field>
                 )}
-              </SectionCard>
-
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => void save()}
-                  disabled={saving}
-                  className="flex items-center gap-1.5 rounded-control bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-50"
-                >
-                  {saving && (
-                    <Loader2 size={ICON.sm} className="animate-spin" />
-                  )}
-                  {t('automations.save')}
-                </button>
-                <button
-                  onClick={() => setForm(null)}
-                  className="rounded-control border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
-                >
-                  {t('interact.cancel')}
-                </button>
+                {(form.scheduleType === 'daily' ||
+                  form.scheduleType === 'weekdays' ||
+                  form.scheduleType === 'weekly') && (
+                  <Field label={t('automations.timeField')}>
+                    <input
+                      type="time"
+                      value={form.time}
+                      onChange={(e) =>
+                        setForm({ ...form, time: e.target.value })
+                      }
+                      className="w-full rounded-control border border-edge bg-panel px-2 py-1.5 text-sm outline-none focus:border-accent"
+                    />
+                  </Field>
+                )}
+                {form.scheduleType === 'weekly' && (
+                  <Field label={t('automations.weeksField')}>
+                    <input
+                      type="number"
+                      min={1}
+                      value={form.intervalWeeks}
+                      onChange={(e) =>
+                        setForm({
+                          ...form,
+                          intervalWeeks: Number(e.target.value) || 1,
+                        })
+                      }
+                      className="w-full rounded-control border border-edge bg-panel px-2 py-1.5 text-sm outline-none focus:border-accent"
+                    />
+                  </Field>
+                )}
               </div>
-
-              {form.id && (
-                <div className="space-y-2 border-t border-edge pt-3">
-                  <div className="flex items-center gap-2">
-                    <h4 className="text-sm font-semibold">
-                      {t('automations.history')}
-                    </h4>
-                    <History size={ICON.xs} className="text-dim" />
-                  </div>
-                  {historyRuns.length === 0 ? (
-                    <p className="text-xs text-dim">
-                      {t('automations.noRuns')}
-                    </p>
-                  ) : (
-                    historyRuns.map((run) => (
-                      <div
-                        key={run.id}
-                        className="rounded-card border border-edge bg-panel p-2 space-y-1"
+              {(form.scheduleType === 'hourly' ||
+                form.scheduleType === 'weekly') && (
+                <Field label={t('automations.weekdaysField')}>
+                  <div className="flex flex-wrap gap-1.5">
+                    {WEEKDAYS.map((d) => (
+                      <button
+                        key={d}
+                        onClick={() => toggleDay(d)}
+                        className={`rounded-full px-2.5 py-1 text-xs border ${
+                          form.days.includes(d)
+                            ? 'border-accent/50 bg-accent/15 text-accent'
+                            : 'border-edge bg-panel text-dim hover:text-fg'
+                        }`}
                       >
-                        <div className="flex items-center gap-2 text-xs">
-                          <span
-                            className={`rounded-tight px-1.5 py-0.5 ${statusClass(
-                              run.status,
-                            )}`}
-                          >
-                            {run.status}
-                          </span>
-                          <span className="text-dim">{fmtTime(run.at)}</span>
-                        </div>
-                        {run.duration_ms > 0 && (
-                          <p className="text-micro text-dim">
-                            {t('automations.duration')}:{' '}
-                            {(run.duration_ms / 1000).toFixed(1)}s
-                          </p>
-                        )}
-                        {run.error && (
-                          <p className="text-micro text-err min-w-0 truncate">
-                            {runErrorMessage(run.error, t)}
-                          </p>
-                        )}
-                        {run.conversation_id && (
-                          <button
-                            onClick={() => void openRunSession(run)}
-                            className="text-xs text-accent hover:underline"
-                          >
-                            {t('automations.openSession')}
-                          </button>
-                        )}
-                      </div>
-                    ))
-                  )}
-                </div>
+                        {d}
+                      </button>
+                    ))}
+                  </div>
+                </Field>
               )}
+            </SectionCard>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => void save()}
+                disabled={saving}
+                className="flex items-center gap-1.5 rounded-control bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-50"
+              >
+                {saving && <Loader2 size={ICON.sm} className="animate-spin" />}
+                {t('automations.save')}
+              </button>
+              <button
+                onClick={() => setForm(null)}
+                className="rounded-control border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
+              >
+                {t('interact.cancel')}
+              </button>
             </div>
-          </aside>
-        </>
+
+            {form.id && (
+              <div className="space-y-2 border-t border-edge pt-3">
+                <div className="flex items-center gap-2">
+                  <h4 className="text-sm font-semibold">
+                    {t('automations.history')}
+                  </h4>
+                  <History size={ICON.xs} className="text-dim" />
+                </div>
+                {historyRuns.length === 0 ? (
+                  <p className="text-xs text-dim">{t('automations.noRuns')}</p>
+                ) : (
+                  historyRuns.map((run) => (
+                    <div
+                      key={run.id}
+                      className="rounded-card border border-edge bg-panel p-2 space-y-1"
+                    >
+                      <div className="flex items-center gap-2 text-xs">
+                        <span
+                          className={`rounded-tight px-1.5 py-0.5 ${statusClass(
+                            run.status,
+                          )}`}
+                        >
+                          {run.status}
+                        </span>
+                        <span className="text-dim">{fmtTime(run.at)}</span>
+                      </div>
+                      {run.duration_ms > 0 && (
+                        <p className="text-micro text-dim">
+                          {t('automations.duration')}:{' '}
+                          {(run.duration_ms / 1000).toFixed(1)}s
+                        </p>
+                      )}
+                      {run.error && (
+                        <p className="text-micro text-err min-w-0 truncate">
+                          {runErrorMessage(run.error, t)}
+                        </p>
+                      )}
+                      {run.conversation_id && (
+                        <button
+                          onClick={() => void openRunSession(run)}
+                          className="text-xs text-accent hover:underline"
+                        >
+                          {t('automations.openSession')}
+                        </button>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        </Overlay>
       )}
+
+      <ConfirmDialog
+        open={confirmDelete !== null}
+        tone="danger"
+        title={t('automations.deleteConfirm', {
+          name: automations.find((a) => a.id === confirmDelete)?.name ?? '',
+        })}
+        confirmLabel={t('automations.delete')}
+        onCancel={() => setConfirmDelete(null)}
+        onConfirm={() => {
+          if (confirmDelete !== null) void remove(confirmDelete);
+        }}
+      />
     </div>
   );
 }

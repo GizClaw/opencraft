@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Check,
   ChevronDown,
@@ -23,6 +23,7 @@ import {
 import { useStore } from '../lib/store';
 import { FontPicker } from './FontPicker';
 import { PluginPanels } from '../plugins/components/PluginPanels';
+import { Popover } from './ui/Popover';
 import { ICON } from './ui/icon';
 import { Segmented } from './ui/Segmented';
 
@@ -38,6 +39,7 @@ export function SettingsDisplay() {
   const setUISettings = useStore((s) => s.setUISettings);
   const toast = useStore((s) => s.toast);
   const [langMenuOpen, setLangMenuOpen] = useState(false);
+  const langTriggerRef = useRef<HTMLButtonElement>(null);
   // null keeps the picker in its "reading the catalogue" state; an empty array
   // means the host cannot enumerate fonts here.
   const [fontFamilies, setFontFamilies] = useState<string[] | null>(null);
@@ -104,7 +106,7 @@ export function SettingsDisplay() {
       <div className="rounded-card border border-edge bg-panel2 p-4">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2 text-sm font-medium">
+            <div className="flex items-center gap-2 text-title font-semibold">
               <Languages size={ICON.md} className="text-accent" />
               {t('config.uiLanguage')}
             </div>
@@ -114,7 +116,10 @@ export function SettingsDisplay() {
           </div>
           <div className="relative shrink-0">
             <button
+              ref={langTriggerRef}
               onClick={() => setLangMenuOpen((v) => !v)}
+              aria-haspopup="menu"
+              aria-expanded={langMenuOpen}
               className="flex items-center gap-1.5 rounded-control border border-edge bg-panel px-2.5 py-1.5 text-sm text-fg transition-colors hover:border-accent/50"
             >
               <Languages size={ICON.xs} className="text-dim" />
@@ -127,42 +132,47 @@ export function SettingsDisplay() {
               />
             </button>
             {langMenuOpen && (
-              <>
-                <div
-                  className="fixed inset-0 z-30"
-                  onClick={() => setLangMenuOpen(false)}
-                />
-                <div className="absolute right-0 top-full z-40 mt-1.5 w-40 rounded-card border border-edge bg-panel p-1 shadow-popover">
-                  <button
-                    onClick={() => {
-                      setLangMenuOpen(false);
-                      void i18n.changeLanguage('zh');
-                    }}
-                    className={`flex w-full items-center justify-between rounded-control px-2 py-1.5 text-left text-sm ${
-                      lang === 'zh'
-                        ? 'bg-accent/10 text-accent'
-                        : 'text-dim hover:bg-panel2 hover:text-fg'
-                    }`}
-                  >
-                    <span>中文</span>
-                    {lang === 'zh' && <Check size={ICON.xs} />}
-                  </button>
-                  <button
-                    onClick={() => {
-                      setLangMenuOpen(false);
-                      void i18n.changeLanguage('en');
-                    }}
-                    className={`flex w-full items-center justify-between rounded-control px-2 py-1.5 text-left text-sm ${
-                      lang === 'en'
-                        ? 'bg-accent/10 text-accent'
-                        : 'text-dim hover:bg-panel2 hover:text-fg'
-                    }`}
-                  >
-                    <span>English</span>
-                    {lang === 'en' && <Check size={ICON.xs} />}
-                  </button>
-                </div>
-              </>
+              <Popover
+                open
+                onClose={() => setLangMenuOpen(false)}
+                anchor={langTriggerRef.current}
+                role="menu"
+                align="end"
+                panelClassName="w-40 rounded-card border border-edge bg-panel p-1 shadow-popover"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setLangMenuOpen(false);
+                    void i18n.changeLanguage('zh');
+                  }}
+                  className={`flex w-full items-center justify-between rounded-control px-2 py-1.5 text-left text-sm ${
+                    lang === 'zh'
+                      ? 'bg-accent/10 text-accent'
+                      : 'text-dim hover:bg-panel2 hover:text-fg'
+                  }`}
+                >
+                  <span>中文</span>
+                  {lang === 'zh' && <Check size={ICON.xs} />}
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setLangMenuOpen(false);
+                    void i18n.changeLanguage('en');
+                  }}
+                  className={`flex w-full items-center justify-between rounded-control px-2 py-1.5 text-left text-sm ${
+                    lang === 'en'
+                      ? 'bg-accent/10 text-accent'
+                      : 'text-dim hover:bg-panel2 hover:text-fg'
+                  }`}
+                >
+                  <span>English</span>
+                  {lang === 'en' && <Check size={ICON.xs} />}
+                </button>
+              </Popover>
             )}
           </div>
         </div>
@@ -170,7 +180,7 @@ export function SettingsDisplay() {
       <div className="rounded-card border border-edge bg-panel2 p-4">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2 text-sm font-medium">
+            <div className="flex items-center gap-2 text-title font-semibold">
               <Palette size={ICON.md} className="text-accent" />
               {t('config.uiTheme')}
             </div>
@@ -200,7 +210,7 @@ export function SettingsDisplay() {
         </div>
       </div>
       <div className="rounded-card border border-edge bg-panel2 p-4">
-        <div className="flex items-center gap-2 text-sm font-medium">
+        <div className="flex items-center gap-2 text-title font-semibold">
           <Type size={ICON.md} className="text-accent" />
           {t('config.uiFonts')}
         </div>

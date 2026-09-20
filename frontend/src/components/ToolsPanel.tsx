@@ -1,6 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentType, MouseEvent } from 'react';
-import { createPortal } from 'react-dom';
 import {
   Bot,
   Check,
@@ -36,6 +35,11 @@ import { PluginManager } from '../plugins/components/PluginManager';
 import { ICON } from './ui/icon';
 import { Badge } from './ui/Badge';
 import { Button } from './ui/Button';
+import { ConfirmDialog } from './ui/ConfirmDialog';
+import { EmptyState } from './ui/EmptyState';
+import { Modal } from './ui/Modal';
+import { Overlay } from './ui/Overlay';
+import { Popover } from './ui/Popover';
 import { SaveBar } from './ui/SaveBar';
 const AgentGraphEditor = lazy(() =>
   import('./GraphView').then((m) => ({ default: m.AgentGraphEditor })),
@@ -139,36 +143,7 @@ function MCPDetailDialog({
     msg: string;
   } | null>(null);
   const [transportOpen, setTransportOpen] = useState(false);
-  const transportRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopImmediatePropagation();
-        if (transportOpen) {
-          setTransportOpen(false);
-        } else {
-          onClose();
-        }
-      }
-    };
-    document.addEventListener('keydown', onKey, true);
-    return () => document.removeEventListener('keydown', onKey, true);
-  }, [onClose, transportOpen]);
-
-  useEffect(() => {
-    if (!transportOpen) return;
-    const onDown = (e: PointerEvent) => {
-      if (
-        transportRef.current &&
-        !transportRef.current.contains(e.target as Node)
-      ) {
-        setTransportOpen(false);
-      }
-    };
-    document.addEventListener('pointerdown', onDown);
-    return () => document.removeEventListener('pointerdown', onDown);
-  }, [transportOpen]);
+  const transportTriggerRef = useRef<HTMLButtonElement>(null);
 
   const update = (patch: Partial<MCPRow>) => {
     setRow((prev) => ({ ...prev, ...patch }));
@@ -249,23 +224,18 @@ function MCPDetailDialog({
     'rounded-control border border-edge bg-panel2 px-2.5 py-1.5 text-xs outline-none focus:border-accent';
 
   return (
-    <div
-      className="fixed inset-0 z-[60] grid place-items-center bg-black/60 p-6"
-      onClick={onClose}
+    <Overlay
+      open
+      onClose={onClose}
+      ariaLabel={
+        isNew ? t('config.mcpAdd') : row.name.trim() || t('config.mcpName')
+      }
     >
-      <div
-        className="flex max-h-[calc(100vh-2rem)] w-[38rem] max-w-full flex-col rounded-card border border-edge bg-panel shadow-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label={
-          isNew ? t('config.mcpAdd') : row.name.trim() || t('config.mcpName')
-        }
-        onClick={(e) => e.stopPropagation()}
-      >
+      <div className="flex max-h-[calc(100vh-2rem)] w-[38rem] max-w-full flex-col rounded-card border border-edge bg-panel shadow-modal">
         <div className="flex shrink-0 items-center justify-between border-b border-edge px-4 py-3">
           <div className="flex min-w-0 items-center gap-2">
             <Plug size={ICON.md} className="shrink-0 text-accent" />
-            <h3 className="min-w-0 truncate text-sm font-semibold">
+            <h3 className="min-w-0 truncate text-title font-semibold">
               {isNew
                 ? t('config.mcpAdd')
                 : row.name.trim() || t('config.mcpName')}
@@ -278,7 +248,7 @@ function MCPDetailDialog({
                     .catch((err) => setError(String(err)))
                 }
                 className="text-dim hover:text-fg"
-                title={t('config.mcpOpenRepo')}
+                data-tip={t('config.mcpOpenRepo')}
                 aria-label={t('config.mcpOpenRepo')}
               >
                 <ExternalLink size={ICON.sm} />
@@ -319,10 +289,13 @@ function MCPDetailDialog({
               >
                 {t('config.mcpTransportLabel')}
               </label>
-              <div ref={transportRef} className="relative">
+              <div className="relative">
                 <button
+                  ref={transportTriggerRef}
                   id="mcp-dialog-transport"
                   type="button"
+                  aria-haspopup="listbox"
+                  aria-expanded={transportOpen}
                   onClick={() => setTransportOpen((v) => !v)}
                   className="flex w-full items-center justify-between gap-1.5 rounded-control border border-edge bg-panel px-2.5 py-1.5 text-sm text-fg transition-colors hover:border-accent/50"
                 >
@@ -335,7 +308,14 @@ function MCPDetailDialog({
                   />
                 </button>
                 {transportOpen && (
-                  <div className="absolute left-0 right-0 top-full z-50 mt-1.5 rounded-card border border-edge bg-panel p-1 shadow-popover">
+                  <Popover
+                    open
+                    onClose={() => setTransportOpen(false)}
+                    anchor={transportTriggerRef.current}
+                    role="none"
+                    matchWidth
+                    panelClassName="rounded-card border border-edge bg-panel p-1 shadow-popover"
+                  >
                     {(['stdio', 'http'] as const).map((value) => {
                       const selected = row.transport === value;
                       return (
@@ -357,7 +337,7 @@ function MCPDetailDialog({
                         </button>
                       );
                     })}
-                  </div>
+                  </Popover>
                 )}
               </div>
             </div>
@@ -435,7 +415,7 @@ function MCPDetailDialog({
                       type="button"
                       onClick={() => removeEnvRow(index)}
                       aria-label={t('config.mcpEnvRemove')}
-                      title={t('config.mcpEnvRemove')}
+                      data-tip={t('config.mcpEnvRemove')}
                       className="shrink-0 rounded-control p-1 text-dim hover:bg-err/10 hover:text-err"
                     >
                       <X size={ICON.sm} />
@@ -512,7 +492,7 @@ function MCPDetailDialog({
           </div>
         </div>
       </div>
-    </div>
+    </Overlay>
   );
 }
 
@@ -537,11 +517,7 @@ export function MCPSection() {
     isNew: boolean;
   } | null>(null);
   const [menuFor, setMenuFor] = useState<string | null>(null);
-  const [menuPos, setMenuPos] = useState<{
-    top: number;
-    left: number;
-  } | null>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const toast = useStore((s) => s.toast);
   const addedNames = useMemo(
     () => new Set(mcpRows.map((r) => r.name.trim()).filter(Boolean)),
@@ -599,27 +575,6 @@ export function MCPSection() {
       clearInterval(timer);
     };
   }, []);
-
-  useEffect(() => {
-    if (!menuFor) return;
-    const close = () => {
-      setMenuFor(null);
-      setMenuPos(null);
-    };
-    const onDown = (e: PointerEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        close();
-      }
-    };
-    document.addEventListener('pointerdown', onDown);
-    document.addEventListener('scroll', close, true);
-    window.addEventListener('resize', close);
-    return () => {
-      document.removeEventListener('pointerdown', onDown);
-      document.removeEventListener('scroll', close, true);
-      window.removeEventListener('resize', close);
-    };
-  }, [menuFor]);
 
   const rowToServer = (r: MCPRow): MCPServer => {
     const srv: MCPServer = {
@@ -686,7 +641,7 @@ export function MCPSection() {
       return (
         <span
           className={`${base} text-dim border border-edge bg-panel`}
-          title={t('config.mcpStatusConnectingHint')}
+          data-tip={t('config.mcpStatusConnectingHint')}
         >
           <Loader2 size={ICON.xs} className="animate-spin" />
           {t('config.mcpStatusConnecting')}
@@ -696,7 +651,7 @@ export function MCPSection() {
     return (
       <span
         className={`${base} text-err border border-err/40 bg-err/10`}
-        title={st.error}
+        data-tip={st.error}
       >
         <span className="h-1.5 w-1.5 rounded-full bg-err" />
         {t('config.mcpStatusError')}
@@ -755,23 +710,19 @@ export function MCPSection() {
   const toggleRowMenu = (e: MouseEvent<HTMLButtonElement>, rowId: string) => {
     if (menuFor === rowId) {
       setMenuFor(null);
-      setMenuPos(null);
       return;
     }
-    const rect = e.currentTarget.getBoundingClientRect();
-    setMenuPos({ top: rect.bottom + 6, left: rect.right });
+    setMenuAnchor(e.currentTarget);
     setMenuFor(rowId);
   };
 
   const openEdit = (row: MCPRow) => {
     setMenuFor(null);
-    setMenuPos(null);
     setEditing({ row: { ...row }, isNew: false });
   };
 
   const removeRow = (id: string) => {
     setMenuFor(null);
-    setMenuPos(null);
     setMCPRows((prev) => prev.filter((r) => r.id !== id));
   };
 
@@ -824,7 +775,7 @@ export function MCPSection() {
       <div className="rounded-card border border-edge bg-panel2">
         <button
           onClick={() => setDiscoverOpen((v) => !v)}
-          className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-panel2/70"
+          className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-panel3"
         >
           <Sparkles size={ICON.sm} className="text-accent shrink-0" />
           <span className="flex-1">{t('config.mcpDiscover')}</span>
@@ -891,13 +842,22 @@ export function MCPSection() {
           ))}
         </div>
       ) : mcpRows.length === 0 ? (
-        <div className="rounded-card border border-edge bg-panel2 p-6 text-center text-sm text-dim">
-          {t('config.mcpEmpty')}
-        </div>
+        <EmptyState
+          icon={Plug}
+          title={t('config.mcpEmpty')}
+          className="rounded-card border border-edge bg-panel2"
+        >
+          <Button variant="secondary" size="sm" onClick={openNew}>
+            <Plug size={ICON.xs} />
+            {t('config.mcpAdd')}
+          </Button>
+        </EmptyState>
       ) : filteredRows.length === 0 ? (
-        <div className="rounded-card border border-edge bg-panel2 p-6 text-center text-sm text-dim">
-          {t('config.mcpSearchEmpty')}
-        </div>
+        <EmptyState
+          icon={Search}
+          title={t('config.mcpSearchEmpty')}
+          className="rounded-card border border-edge bg-panel2"
+        />
       ) : (
         <ul className="flex flex-col gap-2">
           {filteredRows.map((row) => {
@@ -917,7 +877,7 @@ export function MCPSection() {
                     type="button"
                     onClick={() => openEdit(row)}
                     className="flex min-w-0 flex-1 items-start gap-2 text-left"
-                    title={commandLine || row.name}
+                    data-tip={commandLine || row.name}
                   >
                     <Plug
                       size={ICON.sm}
@@ -948,7 +908,7 @@ export function MCPSection() {
                           .catch((err) => setMCPLoadError(String(err)))
                       }
                       className="shrink-0 text-dim hover:text-fg"
-                      title={t('config.mcpOpenRepo')}
+                      data-tip={t('config.mcpOpenRepo')}
                       aria-label={t('config.mcpOpenRepo')}
                     >
                       <ExternalLink size={ICON.sm} />
@@ -956,35 +916,36 @@ export function MCPSection() {
                   )}
                   <div className="shrink-0">
                     <button
-                      onPointerDown={(e) => e.stopPropagation()}
+                      aria-haspopup="menu"
+                      aria-expanded={menuFor === row.id}
                       onClick={(e) => toggleRowMenu(e, row.id)}
                       aria-label={t('config.mcpMore')}
-                      title={t('config.mcpMore')}
+                      data-tip={t('config.mcpMore')}
                       className="rounded-control p-1.5 text-dim hover:bg-panel hover:text-fg"
                     >
                       <MoreHorizontal size={ICON.sm} />
                     </button>
                   </div>
-                  {menuFor === row.id &&
-                    menuPos &&
-                    createPortal(
-                      <div
-                        ref={menuRef}
-                        style={{ top: menuPos.top, left: menuPos.left }}
-                        className="fixed z-[100] w-48 -translate-x-full rounded-control border border-edge bg-panel p-1 shadow-popover"
-                      >
-                        <button
-                          onClick={() => removeRow(row.id)}
-                          className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-err/10 hover:text-err"
-                        >
-                          <Trash2 size={ICON.xs} className="shrink-0" />
-                          <span className="flex-1 text-left">
-                            {t('config.mcpRemove')}
-                          </span>
-                        </button>
-                      </div>,
-                      document.body,
-                    )}
+                  <Popover
+                    open={menuFor === row.id}
+                    onClose={() => setMenuFor(null)}
+                    anchor={menuAnchor}
+                    role="menu"
+                    keyboard
+                    align="end"
+                    panelClassName="w-48 rounded-control border border-edge bg-panel p-1 shadow-popover"
+                  >
+                    <button
+                      role="menuitem"
+                      onClick={() => removeRow(row.id)}
+                      className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-err/10 hover:text-err"
+                    >
+                      <Trash2 size={ICON.xs} className="shrink-0" />
+                      <span className="flex-1 text-left">
+                        {t('config.mcpRemove')}
+                      </span>
+                    </button>
+                  </Popover>
                 </div>
               </li>
             );
@@ -1051,7 +1012,7 @@ export function AgentsSection({ onEdit }: { onEdit: (name: string) => void }) {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <h3 className="text-sm font-semibold">{t('sidebar.subagents')}</h3>
+        <h3 className="text-title font-semibold">{t('sidebar.subagents')}</h3>
         <span className="rounded-tight border border-edge bg-panel2 px-1.5 py-0.5 text-xs text-dim tabular-nums">
           {agents.length}
         </span>
@@ -1059,9 +1020,11 @@ export function AgentsSection({ onEdit }: { onEdit: (name: string) => void }) {
       <p className="text-xs text-dim">{t('config.agentsHint')}</p>
       {error && <p className="text-xs text-err">{error}</p>}
       {agents.length === 0 ? (
-        <div className="grid place-items-center rounded-card border border-dashed border-edge bg-panel2/50 py-10 text-sm text-dim">
-          {t('config.agentsEmpty')}
-        </div>
+        <EmptyState
+          icon={Bot}
+          title={t('config.agentsEmpty')}
+          className="rounded-card border border-dashed border-edge"
+        />
       ) : (
         <ul className="space-y-2">
           {agents.map((a) => (
@@ -1087,7 +1050,7 @@ export function AgentsSection({ onEdit }: { onEdit: (name: string) => void }) {
                     {a.description}
                   </p>
                 ) : (
-                  <p className="mt-0.5 text-xs italic text-dim/60">
+                  <p className="mt-0.5 text-xs italic text-faint">
                     {t('config.agentsNoDesc')}
                   </p>
                 )}
@@ -1118,28 +1081,16 @@ export function AgentsSection({ onEdit }: { onEdit: (name: string) => void }) {
           ))}
         </ul>
       )}
-      {confirmDelete && (
-        <div className="rounded-card border border-err/40 bg-err/5 p-4">
-          <p className="text-sm">
-            {t('config.agentsDeleteConfirm', { name: confirmDelete })}
-          </p>
-          <div className="mt-3 flex justify-end gap-2">
-            <button
-              onClick={() => setConfirmDelete(null)}
-              className="rounded-control border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg"
-            >
-              {t('interact.cancel')}
-            </button>
-            <button
-              onClick={() => void deleteAgent(confirmDelete)}
-              className="flex items-center gap-1.5 rounded-control bg-err px-4 py-1.5 text-sm text-white hover:opacity-90"
-            >
-              <Trash2 size={ICON.sm} />
-              {t('config.agentsDelete')}
-            </button>
-          </div>
-        </div>
-      )}
+      <ConfirmDialog
+        open={confirmDelete !== null}
+        tone="danger"
+        title={t('config.agentsDeleteConfirm', { name: confirmDelete ?? '' })}
+        confirmLabel={t('config.agentsDelete')}
+        onCancel={() => setConfirmDelete(null)}
+        onConfirm={() => {
+          if (confirmDelete !== null) void deleteAgent(confirmDelete);
+        }}
+      />
     </div>
   );
 }
@@ -1172,7 +1123,7 @@ export function SkillsSection() {
   const [discoverOpen, setDiscoverOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [menuFor, setMenuFor] = useState<string | null>(null);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const [selectedSkill, setSelectedSkill] = useState<SkillRow | null>(null);
   const installedNames = useMemo(
     () => new Set(skills.map((s) => s.name)),
@@ -1209,17 +1160,6 @@ export function SkillsSection() {
   useEffect(() => {
     void reloadSkills();
   }, []);
-
-  useEffect(() => {
-    if (!menuFor) return;
-    const onDown = (e: PointerEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuFor(null);
-      }
-    };
-    document.addEventListener('pointerdown', onDown);
-    return () => document.removeEventListener('pointerdown', onDown);
-  }, [menuFor]);
 
   const reloadSkills = () => {
     setError('');
@@ -1333,7 +1273,7 @@ export function SkillsSection() {
       <div className="rounded-card border border-edge bg-panel2">
         <button
           onClick={() => setDiscoverOpen((v) => !v)}
-          className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-panel2/70"
+          className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-panel3"
         >
           <Sparkles size={ICON.sm} className="text-accent shrink-0" />
           <span className="flex-1">{t('config.skillsDiscover')}</span>
@@ -1387,11 +1327,24 @@ export function SkillsSection() {
         )}
       </div>
       {filteredSkills.length === 0 ? (
-        <div className="rounded-card border border-edge bg-panel2 p-6 text-center text-sm text-dim">
-          {skills.length === 0
-            ? t('config.skillsEmpty')
-            : t('config.skillsSearchEmpty')}
-        </div>
+        <EmptyState
+          icon={Sparkles}
+          title={
+            skills.length === 0
+              ? t('config.skillsEmpty')
+              : t('config.skillsSearchEmpty')
+          }
+          className="rounded-card border border-edge bg-panel2"
+        >
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => setImportOpen(true)}
+          >
+            <Download size={ICON.xs} />
+            {t('config.skillsImport')}
+          </Button>
+        </EmptyState>
       ) : (
         <ul className="flex flex-col gap-2">
           {filteredSkills.map((s) => {
@@ -1414,7 +1367,7 @@ export function SkillsSection() {
                     type="button"
                     onClick={() => setSelectedSkill(s)}
                     className="flex min-w-0 flex-1 items-start gap-2 text-left"
-                    title={s.name}
+                    data-tip={s.name}
                   >
                     <Sparkles
                       size={ICON.md}
@@ -1439,14 +1392,14 @@ export function SkillsSection() {
                       </span>
                       <span
                         className="mt-0.5 block truncate font-mono text-xs text-dim"
-                        title={s.path}
+                        data-tip={s.path}
                       >
                         {s.path}
                       </span>
                       {s.description && (
                         <span
                           className="mt-1 block truncate text-xs text-dim"
-                          title={s.description}
+                          data-tip={s.description}
                         >
                           {s.description}
                         </span>
@@ -1456,61 +1409,65 @@ export function SkillsSection() {
                   {removable && (
                     <div className="relative shrink-0">
                       <button
-                        onClick={() =>
-                          setMenuFor(menuFor === s.path ? null : s.path)
-                        }
+                        aria-haspopup="menu"
+                        aria-expanded={menuFor === s.path}
+                        onClick={(e) => {
+                          if (menuFor === s.path) {
+                            setMenuFor(null);
+                            return;
+                          }
+                          setMenuAnchor(e.currentTarget);
+                          setMenuFor(s.path);
+                        }}
                         aria-label={t('config.skillsMore')}
-                        title={t('config.skillsMore')}
+                        data-tip={t('config.skillsMore')}
                         className="rounded-control p-1.5 text-dim hover:bg-panel hover:text-fg"
                       >
                         <MoreHorizontal size={ICON.sm} />
                       </button>
-                      {menuFor === s.path && (
-                        <div
-                          ref={menuRef}
-                          className="absolute right-0 top-full z-40 mt-1.5 w-44 rounded-control border border-edge bg-panel p-1 shadow-popover"
+                      <Popover
+                        open={menuFor === s.path}
+                        onClose={() => setMenuFor(null)}
+                        anchor={menuAnchor}
+                        role="menu"
+                        keyboard
+                        align="end"
+                        panelClassName="w-44 rounded-control border border-edge bg-panel p-1 shadow-popover"
+                      >
+                        <button
+                          role="menuitem"
+                          onClick={() => {
+                            setMenuFor(null);
+                            setSkillToDelete({ name: s.name, path: s.path });
+                          }}
+                          className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-err/10 hover:text-err"
                         >
-                          <button
-                            onClick={() => {
-                              setMenuFor(null);
-                              setSkillToDelete({ name: s.name, path: s.path });
-                            }}
-                            className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-err/10 hover:text-err"
-                          >
-                            <Trash2 size={ICON.xs} className="shrink-0" />
-                            <span className="flex-1 text-left">
-                              {t('config.skillsDelete')}
-                            </span>
-                          </button>
-                        </div>
-                      )}
+                          <Trash2 size={ICON.xs} className="shrink-0" />
+                          <span className="flex-1 text-left">
+                            {t('config.skillsDelete')}
+                          </span>
+                        </button>
+                      </Popover>
                     </div>
                   )}
                 </div>
-                {skillToDelete?.path === s.path && (
-                  <div className="mt-2 flex items-center gap-2 rounded-control border border-err/40 bg-err/10 px-2 py-1.5 text-xs text-dim">
-                    <span className="min-w-0 flex-1 truncate">
-                      {t('config.skillsDeleteConfirm', { name: s.name })}
-                    </span>
-                    <button
-                      onClick={() => void deleteSkill(s.path)}
-                      className="shrink-0 rounded-tight bg-err px-2 py-1 text-white hover:opacity-90"
-                    >
-                      {t('config.skillsDelete')}
-                    </button>
-                    <button
-                      onClick={() => setSkillToDelete(null)}
-                      className="shrink-0 rounded-tight border border-edge px-2 py-1 hover:text-fg"
-                    >
-                      {t('interact.cancel')}
-                    </button>
-                  </div>
-                )}
               </li>
             );
           })}
         </ul>
       )}
+      <ConfirmDialog
+        open={skillToDelete !== null}
+        tone="danger"
+        title={t('config.skillsDeleteConfirm', {
+          name: skillToDelete?.name ?? '',
+        })}
+        confirmLabel={t('config.skillsDelete')}
+        onCancel={() => setSkillToDelete(null)}
+        onConfirm={() => {
+          if (skillToDelete !== null) void deleteSkill(skillToDelete.path);
+        }}
+      />
       {selectedSkill && (
         <SkillDetailDrawer
           skill={selectedSkill}
@@ -1518,83 +1475,61 @@ export function SkillsSection() {
         />
       )}
       {importOpen && (
-        <div
-          className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-6"
-          onClick={() => setImportOpen(false)}
+        <Modal
+          open
+          onClose={() => setImportOpen(false)}
+          title={t('config.skillsImport')}
+          icon={Download}
+          width="34rem"
         >
-          <div
-            className="w-[34rem] max-w-full rounded-card border border-edge bg-panel shadow-modal"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between border-b border-edge px-4 py-3">
-              <h3 className="text-sm font-semibold">
-                {t('config.skillsImport')}
-              </h3>
-              <button
-                onClick={() => setImportOpen(false)}
-                className="text-dim hover:text-fg"
-                aria-label={t('tools.close')}
-              >
-                <X size={ICON.md} />
-              </button>
-            </div>
-            <div className="flex flex-col gap-3 p-4">
-              <p className="text-xs text-dim">{t('config.skillsImportHint')}</p>
-              <input
-                value={repo}
-                onChange={(e) => setRepo(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') void installSkill();
-                }}
-                placeholder={t('config.skillsImportRepo')}
-                className="w-full rounded-control border border-edge bg-panel2 px-2.5 py-1.5 text-xs outline-none focus:border-accent"
-                autoFocus
-              />
-              <div className="flex gap-2">
-                <select
-                  value={scope}
-                  onChange={(e) => setScope(e.target.value)}
-                  title={t('config.skillsImportScope')}
-                  className="shrink-0 rounded-control border border-edge bg-panel2 px-2 py-1.5 text-xs outline-none"
-                >
-                  <option value="user">
-                    {t('config.skillsImportScopeUser')}
-                  </option>
-                  <option value="repo">
-                    {t('config.skillsImportScopeRepo')}
-                  </option>
-                </select>
-                <input
-                  value={subpath}
-                  onChange={(e) => setSubpath(e.target.value)}
-                  placeholder={t('config.skillsImportSubpath')}
-                  className="min-w-0 flex-1 rounded-control border border-edge bg-panel2 px-2.5 py-1.5 text-xs outline-none focus:border-accent"
-                />
-              </div>
-              {error && (
-                <p className="text-label text-err break-words">{error}</p>
-              )}
-              <div className="flex justify-end gap-2">
-                <button
-                  onClick={() => setImportOpen(false)}
-                  className="rounded-control px-3 py-1.5 text-xs text-dim hover:text-fg"
-                >
-                  {t('config.cancel')}
-                </button>
-                <button
-                  onClick={() => void installSkill()}
-                  disabled={installing || !repo.trim()}
-                  className="flex items-center gap-1.5 rounded-control bg-accent px-3 py-1.5 text-xs text-white hover:opacity-90 disabled:opacity-50"
-                >
-                  {installing && (
-                    <Loader2 size={ICON.xs} className="animate-spin" />
-                  )}
-                  {t('config.skillsImportRun')}
-                </button>
-              </div>
-            </div>
+          <p className="text-xs text-dim">{t('config.skillsImportHint')}</p>
+          <input
+            value={repo}
+            onChange={(e) => setRepo(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void installSkill();
+            }}
+            placeholder={t('config.skillsImportRepo')}
+            className="w-full rounded-control border border-edge bg-panel2 px-2.5 py-1.5 text-xs outline-none focus:border-accent"
+            data-autofocus
+          />
+          <div className="flex gap-2">
+            <select
+              value={scope}
+              onChange={(e) => setScope(e.target.value)}
+              data-tip={t('config.skillsImportScope')}
+              className="shrink-0 rounded-control border border-edge bg-panel2 px-2 py-1.5 text-xs outline-none"
+            >
+              <option value="user">{t('config.skillsImportScopeUser')}</option>
+              <option value="repo">{t('config.skillsImportScopeRepo')}</option>
+            </select>
+            <input
+              value={subpath}
+              onChange={(e) => setSubpath(e.target.value)}
+              placeholder={t('config.skillsImportSubpath')}
+              className="min-w-0 flex-1 rounded-control border border-edge bg-panel2 px-2.5 py-1.5 text-xs outline-none focus:border-accent"
+            />
           </div>
-        </div>
+          {error && <p className="text-label text-err break-words">{error}</p>}
+          <div className="flex justify-end gap-2">
+            <button
+              onClick={() => setImportOpen(false)}
+              className="rounded-control px-3 py-1.5 text-xs text-dim hover:text-fg"
+            >
+              {t('config.cancel')}
+            </button>
+            <button
+              onClick={() => void installSkill()}
+              disabled={installing || !repo.trim()}
+              className="flex items-center gap-1.5 rounded-control bg-accent px-3 py-1.5 text-xs text-white hover:opacity-90 disabled:opacity-50"
+            >
+              {installing && (
+                <Loader2 size={ICON.xs} className="animate-spin" />
+              )}
+              {t('config.skillsImportRun')}
+            </button>
+          </div>
+        </Modal>
       )}
     </div>
   );
@@ -1648,7 +1583,7 @@ export function ToolsPanel() {
           <button
             onClick={closeTools}
             className="text-dim hover:text-fg"
-            title={t('tools.close')}
+            data-tip={t('tools.close')}
           >
             <X size={ICON.lg} />
           </button>

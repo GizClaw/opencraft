@@ -299,7 +299,7 @@ function ExecView({ tool }: { tool: ToolView }) {
             : failed
               ? 'border-err/40 bg-err/5'
               : 'border-edge bg-panel2'
-        } hover:bg-panel2/70`}
+        } hover:bg-panel2`}
       >
         {running ? (
           <Loader2
@@ -356,7 +356,7 @@ function ExecView({ tool }: { tool: ToolView }) {
         )}
       </div>
       {open && (
-        <div className="mt-1 overflow-hidden rounded-control border border-edge bg-panel/60">
+        <div className="mt-1 overflow-hidden rounded-control border border-edge bg-panel">
           {running && (
             <div className="flex items-center gap-1.5 px-2.5 py-2 text-xs text-dim">
               <Loader2 size={ICON.xs} className="animate-spin" />
@@ -472,7 +472,7 @@ function ReadView({ tool }: { tool: ToolView }) {
             : running
               ? 'border-accent/40 bg-panel2'
               : 'border-edge bg-panel2'
-        } hover:bg-panel2/70`}
+        } hover:bg-panel2`}
       >
         {running ? (
           <Loader2
@@ -518,7 +518,7 @@ function ReadView({ tool }: { tool: ToolView }) {
         )}
       </div>
       {open && (
-        <div className="mt-1 overflow-hidden rounded-control border border-edge bg-panel/60">
+        <div className="mt-1 overflow-hidden rounded-control border border-edge bg-panel">
           {running && (
             <div className="flex items-center gap-1.5 px-2.5 py-2 text-xs text-dim">
               <Loader2 size={ICON.xs} className="animate-spin" />
@@ -645,7 +645,7 @@ function AskUserView({ tool }: { tool: ToolView }) {
             : running
               ? 'border-accent/40 bg-panel2'
               : 'border-edge bg-panel2'
-        } hover:bg-panel2/70`}
+        } hover:bg-panel2`}
       >
         {running ? (
           <Loader2
@@ -680,7 +680,7 @@ function AskUserView({ tool }: { tool: ToolView }) {
         )}
       </button>
       {open && (
-        <div className="mt-1 overflow-hidden rounded-control border border-edge bg-panel/60 px-2.5 py-2 space-y-1.5">
+        <div className="mt-1 overflow-hidden rounded-control border border-edge bg-panel px-2.5 py-2 space-y-1.5">
           {running && (
             <div className="flex items-center gap-1.5 text-xs text-dim">
               <Loader2 size={ICON.xs} className="animate-spin" />
@@ -779,7 +779,7 @@ function SkillSearchView({ tool }: { tool: ToolView }) {
             : running
               ? 'border-accent/40 bg-panel2'
               : 'border-edge bg-panel2'
-        } hover:bg-panel2/70`}
+        } hover:bg-panel2`}
       >
         {running ? (
           <Loader2
@@ -807,7 +807,7 @@ function SkillSearchView({ tool }: { tool: ToolView }) {
         )}
       </button>
       {open && (
-        <div className="mt-1 overflow-hidden rounded-control border border-edge bg-panel/60 px-2.5 py-2">
+        <div className="mt-1 overflow-hidden rounded-control border border-edge bg-panel px-2.5 py-2">
           {running && (
             <div className="flex items-center gap-1.5 text-xs text-dim">
               <Loader2 size={ICON.xs} className="animate-spin" />
@@ -934,7 +934,7 @@ function DelegateView({ tool }: { tool: ToolView }) {
             : running
               ? 'border-accent/40 bg-panel2'
               : 'border-edge bg-panel2'
-        } hover:bg-panel2/70`}
+        } hover:bg-panel2`}
       >
         {running ? (
           <Loader2
@@ -983,7 +983,7 @@ function DelegateView({ tool }: { tool: ToolView }) {
         )}
       </button>
       {open && (
-        <div className="mt-1 space-y-1.5 overflow-hidden rounded-control border border-edge bg-panel/60 px-2.5 py-2">
+        <div className="mt-1 space-y-1.5 overflow-hidden rounded-control border border-edge bg-panel px-2.5 py-2">
           {running && (
             <div className="flex items-center gap-1.5 text-xs text-dim">
               <Loader2 size={ICON.xs} className="animate-spin" />
@@ -1062,7 +1062,7 @@ function DelegationStatusView({ tool }: { tool: ToolView }) {
             : running
               ? 'border-accent/40 bg-panel2'
               : 'border-edge bg-panel2'
-        } hover:bg-panel2/70`}
+        } hover:bg-panel2`}
       >
         {running ? (
           <Loader2
@@ -1092,7 +1092,7 @@ function DelegationStatusView({ tool }: { tool: ToolView }) {
         )}
       </button>
       {open && (
-        <div className="mt-1 space-y-1.5 overflow-hidden rounded-control border border-edge bg-panel/60 px-2.5 py-2">
+        <div className="mt-1 space-y-1.5 overflow-hidden rounded-control border border-edge bg-panel px-2.5 py-2">
           {running && (
             <div className="flex items-center gap-1.5 text-xs text-dim">
               <Loader2 size={ICON.xs} className="animate-spin" />
@@ -1169,7 +1169,7 @@ function DelegationTargetsView({ tool }: { tool: ToolView }) {
             : running
               ? 'border-accent/40 bg-panel2'
               : 'border-edge bg-panel2'
-        } hover:bg-panel2/70`}
+        } hover:bg-panel2`}
       >
         {running ? (
           <Loader2
@@ -1196,7 +1196,7 @@ function DelegationTargetsView({ tool }: { tool: ToolView }) {
         )}
       </button>
       {open && (
-        <div className="mt-1 space-y-1.5 overflow-hidden rounded-control border border-edge bg-panel/60 px-2.5 py-2">
+        <div className="mt-1 space-y-1.5 overflow-hidden rounded-control border border-edge bg-panel px-2.5 py-2">
           {running && (
             <div className="flex items-center gap-1.5 text-xs text-dim">
               <Loader2 size={ICON.xs} className="animate-spin" />
@@ -1302,7 +1302,7 @@ function McpToolView({ tool }: { tool: ToolView }) {
             : running
               ? 'border-accent/40 bg-panel2'
               : 'border-edge bg-panel2'
-        } hover:bg-panel2/70`}
+        } hover:bg-panel2`}
       >
         {running ? (
           <Loader2
@@ -1339,7 +1339,7 @@ function McpToolView({ tool }: { tool: ToolView }) {
         )}
       </button>
       {open && (
-        <div className="mt-1 space-y-1.5 overflow-hidden rounded-control border border-edge bg-panel/60 px-2.5 py-2">
+        <div className="mt-1 space-y-1.5 overflow-hidden rounded-control border border-edge bg-panel px-2.5 py-2">
           {running && (
             <div className="flex items-center gap-1.5 text-xs text-dim">
               <Loader2 size={ICON.xs} className="animate-spin" />
@@ -1425,7 +1425,7 @@ function GrepView({ tool }: { tool: ToolView }) {
             : running
               ? 'border-accent/40 bg-panel2'
               : 'border-edge bg-panel2'
-        } hover:bg-panel2/70`}
+        } hover:bg-panel2`}
       >
         {running ? (
           <Loader2
@@ -1457,7 +1457,7 @@ function GrepView({ tool }: { tool: ToolView }) {
         )}
       </button>
       {open && (
-        <div className="mt-1 overflow-hidden rounded-control border border-edge bg-panel/60">
+        <div className="mt-1 overflow-hidden rounded-control border border-edge bg-panel">
           {running && (
             <div className="flex items-center gap-1.5 px-2.5 py-2 text-xs text-dim">
               <Loader2 size={ICON.xs} className="animate-spin" />
@@ -1532,7 +1532,7 @@ function GlobView({ tool }: { tool: ToolView }) {
             : running
               ? 'border-accent/40 bg-panel2'
               : 'border-edge bg-panel2'
-        } hover:bg-panel2/70`}
+        } hover:bg-panel2`}
       >
         {running ? (
           <Loader2
@@ -1559,7 +1559,7 @@ function GlobView({ tool }: { tool: ToolView }) {
         )}
       </button>
       {open && (
-        <div className="mt-1 overflow-hidden rounded-control border border-edge bg-panel/60 px-2.5 py-2">
+        <div className="mt-1 overflow-hidden rounded-control border border-edge bg-panel px-2.5 py-2">
           {running && (
             <div className="flex items-center gap-1.5 text-xs text-dim">
               <Loader2 size={ICON.xs} className="animate-spin" />
@@ -1638,7 +1638,7 @@ function PermissionsView({ tool }: { tool: ToolView }) {
             : running
               ? 'border-accent/40 bg-panel2'
               : 'border-edge bg-panel2'
-        } hover:bg-panel2/70`}
+        } hover:bg-panel2`}
       >
         {running ? (
           <Loader2
@@ -1676,7 +1676,7 @@ function PermissionsView({ tool }: { tool: ToolView }) {
         )}
       </button>
       {open && (
-        <div className="mt-1 space-y-1.5 overflow-hidden rounded-control border border-edge bg-panel/60 px-2.5 py-2">
+        <div className="mt-1 space-y-1.5 overflow-hidden rounded-control border border-edge bg-panel px-2.5 py-2">
           {running && (
             <div className="flex items-center gap-1.5 text-xs text-dim">
               <Loader2 size={ICON.xs} className="animate-spin" />
@@ -1752,7 +1752,7 @@ function SkillReadView({ tool }: { tool: ToolView }) {
             : running
               ? 'border-accent/40 bg-panel2'
               : 'border-edge bg-panel2'
-        } hover:bg-panel2/70`}
+        } hover:bg-panel2`}
       >
         {running ? (
           <Loader2
@@ -1780,7 +1780,7 @@ function SkillReadView({ tool }: { tool: ToolView }) {
         )}
       </button>
       {open && (
-        <div className="mt-1 overflow-hidden rounded-control border border-edge bg-panel/60">
+        <div className="mt-1 overflow-hidden rounded-control border border-edge bg-panel">
           {running && (
             <div className="flex items-center gap-1.5 px-2.5 py-2 text-xs text-dim">
               <Loader2 size={ICON.xs} className="animate-spin" />
@@ -1854,7 +1854,7 @@ function WebSearchView({ tool }: { tool: ToolView }) {
             : running
               ? 'border-accent/40 bg-panel2'
               : 'border-edge bg-panel2'
-        } hover:bg-panel2/70`}
+        } hover:bg-panel2`}
       >
         {running ? (
           <Loader2
@@ -1887,7 +1887,7 @@ function WebSearchView({ tool }: { tool: ToolView }) {
         )}
       </button>
       {open && (
-        <div className="mt-1.5 space-y-2 rounded-card border border-edge/70 bg-panel/40 p-2.5">
+        <div className="mt-1.5 space-y-2 rounded-card border border-edge/70 bg-panel p-2.5">
           {failed && tool.result !== undefined && (
             <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs text-err">
               {tool.result}
@@ -1908,7 +1908,7 @@ function WebSearchView({ tool }: { tool: ToolView }) {
                 {hit.published ? ` · ${hit.published}` : ''}
               </p>
               {hit.snippet && (
-                <p className="mt-0.5 break-words text-xs text-fg/80">
+                <p className="mt-0.5 break-words text-xs text-fg">
                   {hit.snippet}
                 </p>
               )}
@@ -1987,7 +1987,7 @@ function WebFetchView({ tool }: { tool: ToolView }) {
             : running
               ? 'border-accent/40 bg-panel2'
               : 'border-edge bg-panel2'
-        } hover:bg-panel2/70`}
+        } hover:bg-panel2`}
       >
         {running ? (
           <Loader2
@@ -2019,7 +2019,7 @@ function WebFetchView({ tool }: { tool: ToolView }) {
         )}
       </button>
       {open && (
-        <div className="mt-1 space-y-1.5 overflow-hidden rounded-control border border-edge bg-panel/60 px-2.5 py-2">
+        <div className="mt-1 space-y-1.5 overflow-hidden rounded-control border border-edge bg-panel px-2.5 py-2">
           {running && (
             <div className="flex items-center gap-1.5 text-xs text-dim">
               <Loader2 size={ICON.xs} className="animate-spin" />
@@ -2147,7 +2147,7 @@ function GenerateView({ tool }: { tool: ToolView }) {
       key={path}
       type="button"
       onClick={() => openPath(path)}
-      title={t('chat.openArtifact', { path })}
+      data-tip={t('chat.openArtifact', { path })}
       className="block max-w-full truncate font-mono text-xs text-fg hover:text-accent"
     >
       {path}
@@ -2162,7 +2162,7 @@ function GenerateView({ tool }: { tool: ToolView }) {
           key={path}
           type="button"
           onClick={() => openPath(path)}
-          title={t('chat.openArtifact', { path })}
+          data-tip={t('chat.openArtifact', { path })}
           className="overflow-hidden rounded-control border border-edge transition-colors hover:border-accent/60"
         >
           <img
@@ -2180,7 +2180,7 @@ function GenerateView({ tool }: { tool: ToolView }) {
             src={preview.stream_url}
             controls
             preload="metadata"
-            className="max-h-64 max-w-full rounded-control border border-edge bg-black"
+            className="max-h-64 max-w-full rounded-control border border-edge bg-[var(--color-media-backdrop)]"
           />
           {pathButton(path)}
         </div>
@@ -2199,7 +2199,7 @@ function GenerateView({ tool }: { tool: ToolView }) {
             : running
               ? 'border-accent/40 bg-panel2'
               : 'border-edge bg-panel2'
-        } hover:bg-panel2/70`}
+        } hover:bg-panel2`}
       >
         {running ? (
           <Loader2
@@ -2227,7 +2227,7 @@ function GenerateView({ tool }: { tool: ToolView }) {
         )}
       </button>
       {open && (
-        <div className="mt-1 space-y-1.5 overflow-hidden rounded-control border border-edge bg-panel/60 px-2.5 py-2">
+        <div className="mt-1 space-y-1.5 overflow-hidden rounded-control border border-edge bg-panel px-2.5 py-2">
           {running && (
             <div className="flex items-center gap-1.5 text-xs text-dim">
               <Loader2 size={ICON.xs} className="animate-spin" />
@@ -2303,7 +2303,7 @@ function SkillManageView({ tool }: { tool: ToolView }) {
             : running
               ? 'border-accent/40 bg-panel2'
               : 'border-edge bg-panel2'
-        } hover:bg-panel2/70`}
+        } hover:bg-panel2`}
       >
         {running ? (
           <Loader2
@@ -2333,7 +2333,7 @@ function SkillManageView({ tool }: { tool: ToolView }) {
         )}
       </button>
       {open && (
-        <div className="mt-1 overflow-hidden rounded-control border border-edge bg-panel/60 px-2.5 py-2">
+        <div className="mt-1 overflow-hidden rounded-control border border-edge bg-panel px-2.5 py-2">
           {running && (
             <div className="flex items-center gap-1.5 text-xs text-dim">
               <Loader2 size={ICON.xs} className="animate-spin" />
@@ -2404,7 +2404,7 @@ function AgentView({ tool }: { tool: ToolView }) {
             : running
               ? 'border-accent/40 bg-panel2'
               : 'border-edge bg-panel2'
-        } hover:bg-panel2/70`}
+        } hover:bg-panel2`}
       >
         {running ? (
           <Loader2
@@ -2431,7 +2431,7 @@ function AgentView({ tool }: { tool: ToolView }) {
         )}
       </button>
       {open && (
-        <div className="mt-1 space-y-1.5 overflow-hidden rounded-control border border-edge bg-panel/60 px-2.5 py-2">
+        <div className="mt-1 space-y-1.5 overflow-hidden rounded-control border border-edge bg-panel px-2.5 py-2">
           {running && (
             <div className="flex items-center gap-1.5 text-xs text-dim">
               <Loader2 size={ICON.xs} className="animate-spin" />
@@ -2505,7 +2505,7 @@ function ToolSearchView({ tool }: { tool: ToolView }) {
             : running
               ? 'border-accent/40 bg-panel2'
               : 'border-edge bg-panel2'
-        } hover:bg-panel2/70`}
+        } hover:bg-panel2`}
       >
         {running ? (
           <Loader2
@@ -2536,7 +2536,7 @@ function ToolSearchView({ tool }: { tool: ToolView }) {
         )}
       </button>
       {open && (
-        <div className="mt-1 space-y-1.5 overflow-hidden rounded-control border border-edge bg-panel/60 px-2.5 py-2">
+        <div className="mt-1 space-y-1.5 overflow-hidden rounded-control border border-edge bg-panel px-2.5 py-2">
           {running && (
             <div className="flex items-center gap-1.5 text-xs text-dim">
               <Loader2 size={ICON.xs} className="animate-spin" />
@@ -2611,7 +2611,7 @@ function DirTree({
                 void openFileTarget(rel);
               }}
               className="min-w-0 truncate text-left font-mono text-xs text-fg hover:text-accent"
-              title={base ? `${base}/${node.name}` : node.name}
+              data-tip={base ? `${base}/${node.name}` : node.name}
             >
               {node.name}
             </button>
@@ -2798,8 +2798,8 @@ export const ApplyPatchView = memo(function ApplyPatchView({
       : null;
 
   return (
-    <div className="my-1.5 overflow-hidden rounded-card border border-edge bg-panel2/40">
-      <div className="flex items-center gap-2 border-b border-edge bg-panel2/60 px-2.5 py-1.5">
+    <div className="my-1.5 overflow-hidden rounded-card border border-edge bg-panel2">
+      <div className="flex items-center gap-2 border-b border-edge bg-panel2 px-2.5 py-1.5">
         {running ? (
           <Loader2
             size={ICON.sm}
@@ -2909,7 +2909,7 @@ function ResultBlock({ tool }: { tool: ToolView }) {
               </span>
             )}
           </div>
-          <div className="max-h-64 overflow-y-auto rounded-control border border-edge bg-panel/60 px-2 py-1">
+          <div className="max-h-64 overflow-y-auto rounded-control border border-edge bg-panel px-2 py-1">
             <DirTree nodes={nodes} depth={0} />
           </div>
         </div>
@@ -3061,7 +3061,7 @@ export const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
     >
       <button
         onClick={() => setOpen(!open)}
-        className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-panel2/70"
+        className="w-full flex items-center gap-2 px-3 py-2 text-left text-sm hover:bg-panel2"
       >
         {running ? (
           <Loader2

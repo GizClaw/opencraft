@@ -169,8 +169,8 @@ describe('Sidebar workspace history', () => {
     const { container } = render(<Sidebar isMac={false} />);
 
     const headers = Array.from(
-      container.querySelectorAll('[role="button"][title]'),
-    ).map((el) => el.getAttribute('title'));
+      container.querySelectorAll('[role="button"][data-tip]'),
+    ).map((el) => el.getAttribute('data-tip'));
     expect(headers).toEqual([workspaceB.path, workspaceA.path]);
   });
 
@@ -190,8 +190,8 @@ describe('Sidebar workspace history', () => {
     const { container } = render(<Sidebar isMac={false} />);
 
     const headers = Array.from(
-      container.querySelectorAll('[role="button"][title]'),
-    ).map((el) => el.getAttribute('title'));
+      container.querySelectorAll('[role="button"][data-tip]'),
+    ).map((el) => el.getAttribute('data-tip'));
     expect(headers).toEqual([
       workspaceB.path,
       workspaceC.path,

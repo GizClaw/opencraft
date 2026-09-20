@@ -61,6 +61,9 @@ import type {
 import { PRView } from './PRView';
 import { CommitDetailModal } from './CommitDetailModal';
 import { GitDiffView } from './viewer/DiffView';
+import { Popover } from './ui/Popover';
+import { Overlay } from './ui/Overlay';
+import { ConfirmDialog } from './ui/ConfirmDialog';
 import { ICON } from './ui/icon';
 
 const KIND_MARK: Record<GitChangeKind, string> = {
@@ -403,18 +406,13 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
     [loadDiff, ordered],
   );
 
-  // Modal keyboard support: Escape closes, ArrowUp/ArrowDown move
-  // between changed files. A layout effect so the modal owns Escape from
-  // the commit that shows it: a passive effect leaves a task-wide window
-  // where the key is delivered to the panel underneath instead (and just
-  // moves its selection).
+  // ArrowUp/ArrowDown move between changed files. Escape is not here:
+  // the shared overlay layer owns it from the commit the modal is on
+  // screen, so the file list underneath never sees the key.
   useLayoutEffect(() => {
     if (!selected) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        closeDiff();
-      } else if (e.key === 'ArrowDown') {
+      if (e.key === 'ArrowDown') {
         e.preventDefault();
         openAt(selectedIndex + 1);
       } else if (e.key === 'ArrowUp') {
@@ -644,9 +642,19 @@ export function GitPanel({ sessionID }: { sessionID: string }) {
         />
       )}
 
-      {confirm && (
-        <ConfirmDialog spec={confirm} onCancel={() => setConfirm(null)} />
-      )}
+      <ConfirmDialog
+        open={confirm !== null}
+        tone={confirm?.danger ? 'danger' : 'info'}
+        title={confirm?.title ?? ''}
+        body={
+          <p className="mt-1 break-words font-mono text-xs text-dim">
+            {confirm?.body}
+          </p>
+        }
+        confirmLabel={confirm?.confirmLabel ?? ''}
+        onConfirm={() => void confirm?.action()}
+        onCancel={() => setConfirm(null)}
+      />
       {forceOpen && (
         <ForcePushDialog
           branch={repo?.branch ?? ''}
@@ -727,14 +735,16 @@ function BranchMenu({
   onNew: () => void;
 }) {
   const { t } = useTranslation();
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   return (
     <div className="relative">
       <button
+        ref={triggerRef}
         onClick={onToggle}
         disabled={disabled}
         aria-label={t('git.switchBranch')}
         className="flex items-center gap-1.5 rounded-control border border-edge px-2 py-1 text-xs text-fg hover:border-accent/50 disabled:opacity-50"
-        title={t('git.switchBranch')}
+        data-tip={t('git.switchBranch')}
       >
         <GitBranchIcon size={ICON.xs} className="text-accent" />
         <span className="max-w-40 truncate font-mono">
@@ -742,45 +752,46 @@ function BranchMenu({
         </span>
         <ChevronDown size={ICON.xs} className="text-dim" />
       </button>
-      {open && (
-        <>
-          <div className="fixed inset-0 z-30" onClick={onToggle} />
-          <div className="absolute top-full left-0 z-40 mt-1.5 max-h-72 w-64 overflow-y-auto rounded-control border border-edge bg-panel py-1 shadow-popover">
-            {branches.map((b) => (
-              <button
-                key={b.name}
-                disabled={disabled || b.current}
-                onClick={() => {
-                  onToggle();
-                  if (!b.current) onPick(b.name);
-                }}
-                className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs ${
-                  b.current
-                    ? 'text-accent'
-                    : 'text-dim hover:bg-panel2 hover:text-fg disabled:opacity-50'
-                }`}
-              >
-                <span className="min-w-0 flex-1 truncate font-mono">
-                  {b.name}
-                </span>
-                {b.current && <Check size={ICON.xs} />}
-              </button>
-            ))}
-            <div className="border-t border-edge p-1">
-              <button
-                onClick={() => {
-                  onToggle();
-                  onNew();
-                }}
-                className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
-              >
-                <GitBranchPlus size={ICON.xs} />
-                {t('git.newBranch')}
-              </button>
-            </div>
-          </div>
-        </>
-      )}
+      <Popover
+        open={open}
+        onClose={onToggle}
+        anchor={triggerRef.current}
+        role="menu"
+        keyboard
+        maxHeight={288}
+        panelClassName="w-64 rounded-control border border-edge bg-panel py-1 shadow-popover"
+      >
+        {branches.map((b) => (
+          <button
+            key={b.name}
+            disabled={disabled || b.current}
+            onClick={() => {
+              onToggle();
+              if (!b.current) onPick(b.name);
+            }}
+            className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs ${
+              b.current
+                ? 'text-accent'
+                : 'text-dim hover:bg-panel2 hover:text-fg disabled:opacity-50'
+            }`}
+          >
+            <span className="min-w-0 flex-1 truncate font-mono">{b.name}</span>
+            {b.current && <Check size={ICON.xs} />}
+          </button>
+        ))}
+        <div className="border-t border-edge p-1">
+          <button
+            onClick={() => {
+              onToggle();
+              onNew();
+            }}
+            className="flex w-full items-center gap-2 rounded-control px-2 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
+          >
+            <GitBranchPlus size={ICON.xs} />
+            {t('git.newBranch')}
+          </button>
+        </div>
+      </Popover>
     </div>
   );
 }
@@ -800,7 +811,7 @@ function HeaderAction({
     <button
       onClick={onClick}
       disabled={disabled}
-      title={label}
+      data-tip={label}
       aria-label={label}
       className="grid h-7 w-7 place-items-center rounded-control text-dim hover:bg-panel2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
     >
@@ -812,7 +823,7 @@ function HeaderAction({
 function SectionLabel({ label, count }: { label: string; count: number }) {
   if (count === 0) return null;
   return (
-    <div className="sticky top-0 z-10 bg-panel px-3 pb-1 pt-2 text-micro font-medium uppercase tracking-wide text-dim">
+    <div className="sticky top-0 z-[var(--oc-z-raised)] bg-panel px-3 pb-1 pt-2 text-micro font-medium uppercase tracking-wide text-dim">
       {label} <span className="tabular-nums">{count}</span>
     </div>
   );
@@ -895,7 +906,7 @@ function ChangeRow({
         </span>
         <span
           className="min-w-0 flex-1 truncate font-mono text-fg"
-          title={entry.path}
+          data-tip={entry.path}
         >
           {name}
         </span>
@@ -968,7 +979,7 @@ function RowAction({
     <button
       onClick={onClick}
       disabled={disabled}
-      title={label}
+      data-tip={label}
       aria-label={label}
       className="grid h-6 w-6 place-items-center rounded-tight text-dim hover:bg-panel2 disabled:cursor-not-allowed disabled:opacity-40"
     >
@@ -1345,7 +1356,7 @@ function CommitBar({
           }
         }}
         placeholder={t('git.commitPlaceholder')}
-        className="min-w-0 flex-1 rounded-control border border-edge bg-panel2/50 px-2.5 py-1.5 text-xs text-fg placeholder:text-dim focus:border-accent/60 focus:outline-none"
+        className="min-w-0 flex-1 rounded-control border border-edge bg-panel2 px-2.5 py-1.5 text-xs text-fg placeholder:text-dim focus:border-accent/60 focus:outline-none"
       />
       <button
         onClick={onCommit}
@@ -1390,122 +1401,116 @@ function DiffModal({
 }) {
   const { t } = useTranslation();
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-6"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
+    <Overlay
+      open
+      onClose={onClose}
+      ariaLabel={entry.path}
+      panelClassName="flex max-h-[85vh] w-[min(94vw,960px)] flex-col overflow-hidden rounded-card border border-edge bg-panel shadow-modal"
     >
-      <div className="flex max-h-[85vh] w-[min(94vw,960px)] flex-col overflow-hidden rounded-card border border-edge bg-panel shadow-modal">
-        <div className="flex h-11 shrink-0 items-center gap-2 border-b border-edge bg-panel2/40 px-3">
-          <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg">
-            {entry.path}
-          </span>
-          {dual ? (
-            <span
-              role="group"
-              aria-label={t('git.diffSide')}
-              className="flex shrink-0 items-center gap-0.5 rounded-control border border-edge p-0.5"
+      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-edge bg-panel2 px-3">
+        <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg">
+          {entry.path}
+        </span>
+        {dual ? (
+          <span
+            role="group"
+            aria-label={t('git.diffSide')}
+            className="flex shrink-0 items-center gap-0.5 rounded-control border border-edge p-0.5"
+          >
+            <button
+              type="button"
+              aria-pressed={side === 'staged'}
+              onClick={() => onSide('staged')}
+              className={`rounded-tight px-1.5 py-0.5 text-micro transition-colors ${
+                side === 'staged'
+                  ? 'bg-accent/15 text-accent'
+                  : 'text-dim hover:bg-panel2 hover:text-fg'
+              }`}
             >
-              <button
-                type="button"
-                aria-pressed={side === 'staged'}
-                onClick={() => onSide('staged')}
-                className={`rounded-tight px-1.5 py-0.5 text-micro transition-colors ${
-                  side === 'staged'
-                    ? 'bg-accent/15 text-accent'
-                    : 'text-dim hover:bg-panel2 hover:text-fg'
-                }`}
-              >
-                {t('git.staged')}
-              </button>
-              <button
-                type="button"
-                aria-pressed={side === 'worktree'}
-                onClick={() => onSide('worktree')}
-                className={`rounded-tight px-1.5 py-0.5 text-micro transition-colors ${
-                  side === 'worktree'
-                    ? 'bg-accent/15 text-accent'
-                    : 'text-dim hover:bg-panel2 hover:text-fg'
-                }`}
-              >
-                {t('git.workingTree')}
-              </button>
-            </span>
-          ) : detail?.label ? (
-            <span className="shrink-0 text-micro text-dim">
-              {t(`git.${detail.label}`)}
-            </span>
-          ) : null}
-          {!entry.is_binary &&
-            !entry.untracked &&
-            (entry.additions > 0 || entry.deletions > 0) && (
-              <span className="shrink-0 text-micro tabular-nums">
-                <span className="text-ok">+{entry.additions}</span>{' '}
-                <span className="text-err">−{entry.deletions}</span>
-              </span>
-            )}
-          <span className="shrink-0 text-micro text-dim tabular-nums">
-            {index + 1}/{total}
+              {t('git.staged')}
+            </button>
+            <button
+              type="button"
+              aria-pressed={side === 'worktree'}
+              onClick={() => onSide('worktree')}
+              className={`rounded-tight px-1.5 py-0.5 text-micro transition-colors ${
+                side === 'worktree'
+                  ? 'bg-accent/15 text-accent'
+                  : 'text-dim hover:bg-panel2 hover:text-fg'
+              }`}
+            >
+              {t('git.workingTree')}
+            </button>
           </span>
-          <button
-            onClick={onPrev}
-            disabled={index <= 0}
-            className="grid h-7 w-7 place-items-center rounded-control text-dim hover:bg-panel2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
-            title={t('git.previousChange')}
-            aria-label={t('git.previousChange')}
-          >
-            <ArrowUp size={ICON.sm} />
-          </button>
-          <button
-            onClick={onNext}
-            disabled={index < 0 || index >= total - 1}
-            className="grid h-7 w-7 place-items-center rounded-control text-dim hover:bg-panel2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
-            title={t('git.nextChange')}
-            aria-label={t('git.nextChange')}
-          >
-            <ArrowDown size={ICON.sm} />
-          </button>
-          <button
-            onClick={onClose}
-            className="grid h-7 w-7 place-items-center rounded-control text-dim hover:bg-panel2 hover:text-fg"
-            aria-label={t('chat.dismiss')}
-          >
-            <X size={ICON.sm} />
-          </button>
-        </div>
-        <div className="min-h-0 flex-1 overflow-auto bg-panel/60 p-3">
-          {!detail ? (
-            <div className="grid h-full place-items-center text-dim">
-              <Loader2 size={ICON.md} className="animate-spin" />
-            </div>
-          ) : detail.error ? (
-            <div className="break-words p-3 text-xs text-err">
-              {detail.error}
-            </div>
-          ) : detail.message ? (
-            <div className="p-3 text-xs text-dim">
-              {t(`git.${detail.message}`)}
-            </div>
-          ) : files ? (
-            <GitDiffView files={files} collapsible={false} maxHeight="h-full" />
-          ) : detail.diff?.content ? (
-            <pre className="whitespace-pre-wrap break-all px-3 py-2 font-mono text-xs text-fg">
-              {detail.diff.content}
-            </pre>
-          ) : (
-            <div className="p-3 text-xs text-dim">{t('git.noDiffHint')}</div>
+        ) : detail?.label ? (
+          <span className="shrink-0 text-micro text-dim">
+            {t(`git.${detail.label}`)}
+          </span>
+        ) : null}
+        {!entry.is_binary &&
+          !entry.untracked &&
+          (entry.additions > 0 || entry.deletions > 0) && (
+            <span className="shrink-0 text-micro tabular-nums">
+              <span className="text-ok">+{entry.additions}</span>{' '}
+              <span className="text-err">−{entry.deletions}</span>
+            </span>
           )}
-          {detail?.diff?.truncated && (
-            <div className="px-3 pb-2 text-micro text-dim">
-              {t('git.truncatedDiff')}
-            </div>
-          )}
-        </div>
+        <span className="shrink-0 text-micro text-dim tabular-nums">
+          {index + 1}/{total}
+        </span>
+        <button
+          onClick={onPrev}
+          disabled={index <= 0}
+          className="grid h-7 w-7 place-items-center rounded-control text-dim hover:bg-panel2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+          data-tip={t('git.previousChange')}
+          aria-label={t('git.previousChange')}
+        >
+          <ArrowUp size={ICON.sm} />
+        </button>
+        <button
+          onClick={onNext}
+          disabled={index < 0 || index >= total - 1}
+          className="grid h-7 w-7 place-items-center rounded-control text-dim hover:bg-panel2 hover:text-fg disabled:cursor-not-allowed disabled:opacity-40"
+          data-tip={t('git.nextChange')}
+          aria-label={t('git.nextChange')}
+        >
+          <ArrowDown size={ICON.sm} />
+        </button>
+        <button
+          onClick={onClose}
+          className="grid h-7 w-7 place-items-center rounded-control text-dim hover:bg-panel2 hover:text-fg"
+          aria-label={t('chat.dismiss')}
+        >
+          <X size={ICON.sm} />
+        </button>
       </div>
-    </div>
+      <div className="min-h-0 flex-1 overflow-auto bg-panel p-3">
+        {!detail ? (
+          <div className="grid h-full place-items-center text-dim">
+            <Loader2 size={ICON.md} className="animate-spin" />
+          </div>
+        ) : detail.error ? (
+          <div className="break-words p-3 text-xs text-err">{detail.error}</div>
+        ) : detail.message ? (
+          <div className="p-3 text-xs text-dim">
+            {t(`git.${detail.message}`)}
+          </div>
+        ) : files ? (
+          <GitDiffView files={files} collapsible={false} maxHeight="h-full" />
+        ) : detail.diff?.content ? (
+          <pre className="whitespace-pre-wrap break-all px-3 py-2 font-mono text-xs text-fg">
+            {detail.diff.content}
+          </pre>
+        ) : (
+          <div className="p-3 text-xs text-dim">{t('git.noDiffHint')}</div>
+        )}
+        {detail?.diff?.truncated && (
+          <div className="px-3 pb-2 text-micro text-dim">
+            {t('git.truncatedDiff')}
+          </div>
+        )}
+      </div>
+    </Overlay>
   );
 }
 
@@ -1531,8 +1536,8 @@ function HistoryView({
           key={e.oid}
           type="button"
           onClick={() => onPick(e)}
-          title={e.subject}
-          className="flex w-full items-start gap-2 border-b border-edge/60 px-3 py-2 text-left hover:bg-panel2/60"
+          data-tip={e.subject}
+          className="flex w-full items-start gap-2 border-b border-edge/60 px-3 py-2 text-left hover:bg-panel2"
         >
           <GitCommitHorizontal
             size={ICON.sm}
@@ -1547,48 +1552,6 @@ function HistoryView({
           </div>
         </button>
       ))}
-    </div>
-  );
-}
-
-function ConfirmDialog({
-  spec,
-  onCancel,
-}: {
-  spec: ConfirmSpec;
-  onCancel: () => void;
-}) {
-  const { t } = useTranslation();
-  return (
-    <div className="fixed inset-0 z-40 grid place-items-center bg-black/60 p-4">
-      <div
-        role="alertdialog"
-        aria-modal="true"
-        className="w-96 max-w-full rounded-card border border-edge bg-panel p-4 shadow-modal"
-      >
-        <h2 className="text-sm font-semibold text-fg">{spec.title}</h2>
-        <p className="mt-1 break-words font-mono text-xs text-dim">
-          {spec.body}
-        </p>
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            onClick={onCancel}
-            className="rounded-control border border-edge px-3 py-1.5 text-xs text-dim hover:text-fg"
-          >
-            {t('interact.cancel')}
-          </button>
-          <button
-            onClick={() => void spec.action()}
-            className={`rounded-control px-3 py-1.5 text-xs font-medium text-white ${
-              spec.danger
-                ? 'bg-err hover:opacity-90'
-                : 'bg-accent hover:opacity-90'
-            }`}
-          >
-            {spec.confirmLabel}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
@@ -1609,39 +1572,23 @@ function ForcePushDialog({
   const { t } = useTranslation();
   const ready = value.trim() === branch && branch !== '';
   return (
-    <div className="fixed inset-0 z-40 grid place-items-center bg-black/60 p-4">
-      <div
-        role="alertdialog"
-        aria-modal="true"
-        className="w-96 max-w-full rounded-card border border-edge bg-panel p-4 shadow-modal"
-      >
-        <h2 className="text-sm font-semibold text-err">{t('git.forcePush')}</h2>
-        <p className="mt-1 text-xs leading-relaxed text-dim">
-          {t('git.forcePushBody')}
-        </p>
-        <input
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder={branch}
-          className="mt-3 w-full rounded-control border border-edge bg-panel2/50 px-2.5 py-1.5 font-mono text-xs text-fg focus:border-err/60 focus:outline-none"
-        />
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            onClick={onCancel}
-            className="rounded-control border border-edge px-3 py-1.5 text-xs text-dim hover:text-fg"
-          >
-            {t('interact.cancel')}
-          </button>
-          <button
-            onClick={onConfirm}
-            disabled={!ready}
-            className="rounded-control bg-err px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {t('git.forcePush')}
-          </button>
-        </div>
-      </div>
-    </div>
+    <ConfirmDialog
+      open
+      tone="danger"
+      title={t('git.forcePush')}
+      body={t('git.forcePushBody')}
+      confirmLabel={t('git.forcePush')}
+      confirmDisabled={!ready}
+      onConfirm={onConfirm}
+      onCancel={onCancel}
+    >
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={branch}
+        className="mt-3 w-full rounded-control border border-edge bg-panel2 px-2.5 py-1.5 font-mono text-xs text-fg focus:border-err/60 focus:outline-none"
+      />
+    </ConfirmDialog>
   );
 }
 
@@ -1658,41 +1605,27 @@ function NewBranchDialog({
 }) {
   const { t } = useTranslation();
   return (
-    <div className="fixed inset-0 z-40 grid place-items-center bg-black/60 p-4">
-      <div
-        role="alertdialog"
-        aria-modal="true"
-        className="w-96 max-w-full rounded-card border border-edge bg-panel p-4 shadow-modal"
-      >
-        <h2 className="text-sm font-semibold text-fg">{t('git.newBranch')}</h2>
-        <input
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && value.trim()) {
-              e.preventDefault();
-              onConfirm();
-            }
-          }}
-          placeholder={t('git.newBranchPlaceholder')}
-          className="mt-3 w-full rounded-control border border-edge bg-panel2/50 px-2.5 py-1.5 font-mono text-xs text-fg focus:border-accent/60 focus:outline-none"
-        />
-        <div className="mt-4 flex justify-end gap-2">
-          <button
-            onClick={onCancel}
-            className="rounded-control border border-edge px-3 py-1.5 text-xs text-dim hover:text-fg"
-          >
-            {t('interact.cancel')}
-          </button>
-          <button
-            onClick={onConfirm}
-            disabled={!value.trim()}
-            className="rounded-control bg-accent px-3 py-1.5 text-xs font-medium text-white hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {t('git.createBranch')}
-          </button>
-        </div>
-      </div>
-    </div>
+    <ConfirmDialog
+      open
+      tone="info"
+      title={t('git.newBranch')}
+      confirmLabel={t('git.createBranch')}
+      confirmDisabled={!value.trim()}
+      onConfirm={onConfirm}
+      onCancel={onCancel}
+    >
+      <input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && value.trim()) {
+            e.preventDefault();
+            onConfirm();
+          }
+        }}
+        placeholder={t('git.newBranchPlaceholder')}
+        className="mt-3 w-full rounded-control border border-edge bg-panel2 px-2.5 py-1.5 font-mono text-xs text-fg focus:border-accent/60 focus:outline-none"
+      />
+    </ConfirmDialog>
   );
 }

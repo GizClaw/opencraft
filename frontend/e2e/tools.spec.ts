@@ -72,10 +72,12 @@ test('edits a generation tool from the tools tab', async ({ page }) => {
   await dialog.getByLabel('Background').click();
   // Leaving a knob alone is the documented path back to the provider
   // default, and the row names the default the driver documents.
+  // The listbox is a floating layer portaled out of the dialog, so it is
+  // queried at page level rather than under the dialog.
   await expect(
-    dialog.getByRole('option', { name: 'Follow the provider default' }),
+    page.getByRole('option', { name: 'Follow the provider default' }),
   ).toBeVisible();
-  await dialog.getByRole('option', { name: 'opaque' }).click();
+  await page.getByRole('option', { name: 'opaque' }).click();
   await dialog.getByLabel('Compression').fill('70');
   // A preset stages its knobs in the form; the save below carries them.
   await dialog.getByRole('button', { name: 'Match the input closely' }).click();
@@ -128,7 +130,8 @@ test('configures web search from the tools tab', async ({ page }) => {
 
   // The card sits between the generation tools and the MCP list.
   await page.getByText('Web search', { exact: true }).click();
-  const dialog = page.getByRole('dialog');
+  // The settings page is itself a dialog; name the card's dialog.
+  const dialog = page.getByRole('dialog', { name: 'Web search' });
   await expect(dialog).toBeVisible();
   await dialog.getByRole('button', { name: /Brave/ }).click();
   await page.getByPlaceholder('Paste the provider API key').fill('bv-123');

@@ -84,7 +84,7 @@ function GitDiffLine({ line, wrap }: { line: PatchLineDTO; wrap: boolean }) {
   const marker = line.kind === 'add' ? '+' : line.kind === 'delete' ? '-' : '';
   const isAdd = line.kind === 'add';
   const isDel = line.kind === 'delete';
-  const numBg = isAdd ? 'bg-ok/15' : isDel ? 'bg-err/15' : 'bg-panel2/50';
+  const numBg = isAdd ? 'bg-ok/15' : isDel ? 'bg-err/15' : 'bg-panel2';
   const lineBg = isAdd ? 'bg-ok/10' : isDel ? 'bg-err/10' : '';
   const markerCls = isAdd ? 'text-ok' : isDel ? 'text-err' : 'text-dim';
   return (
@@ -150,12 +150,12 @@ function FileHeader({
         ? 'text-err'
         : 'text-accent';
   return (
-    <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-edge bg-panel px-2 py-1.5">
+    <div className="sticky top-0 z-[var(--oc-z-raised)] flex items-center gap-2 border-b border-edge bg-panel px-2 py-1.5">
       {collapsible && (
         <button
           onClick={onToggle}
           className="text-dim hover:text-fg"
-          title={open ? 'Collapse' : 'Expand'}
+          data-tip={open ? 'Collapse' : 'Expand'}
         >
           {open ? (
             <ChevronDown size={ICON.sm} />
@@ -169,7 +169,7 @@ function FileHeader({
         type="button"
         onClick={() => void openFileTarget(file.path)}
         className="min-w-0 truncate text-left font-mono text-xs text-fg hover:text-accent"
-        title={file.path}
+        data-tip={file.path}
       >
         {file.path}
       </button>
@@ -208,7 +208,7 @@ function FileDiff({
         ) : (
           hunks.map((h, i) => (
             <div key={i}>
-              <div className="select-none bg-panel2/60 px-3 py-0.5 text-center font-mono text-micro text-dim">
+              <div className="select-none bg-panel2 px-3 py-0.5 text-center font-mono text-micro text-dim">
                 {hunkHeader(h)}
               </div>
               {h.lines.map((line, j) => (
@@ -273,8 +273,8 @@ export function GitDiffView({
     />
   ));
   const frameCls = framed
-    ? 'rounded-control border border-edge bg-panel/60'
-    : 'bg-panel/40';
+    ? 'rounded-control border border-edge bg-panel'
+    : 'bg-panel';
   // Non-expandable surfaces (the Git panels) keep the scroll box as the
   // root element: they size it with h-full against a definite-height
   // parent, which an extra wrapper would break.
@@ -291,13 +291,13 @@ export function GitDiffView({
     );
   }
   return (
-    <div className={framed ? `overflow-hidden ${frameCls}` : 'bg-panel/40'}>
+    <div className={framed ? `overflow-hidden ${frameCls}` : 'bg-panel'}>
       <div className="relative">
         <div
           ref={scrollRef}
           className={`${expanded ? '' : maxHeight} ${
             wrap ? 'overflow-x-hidden' : 'overflow-x-auto'
-          } overflow-y-auto ${framed ? '' : 'bg-panel/40'}`}
+          } overflow-y-auto ${framed ? '' : 'bg-panel'}`}
         >
           {fileViews}
         </div>
@@ -312,7 +312,7 @@ export function GitDiffView({
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
-          className="flex w-full items-center justify-center gap-1 border-t border-edge bg-panel2/40 px-2 py-1 text-micro text-dim transition-colors hover:text-fg"
+          className="flex w-full items-center justify-center gap-1 border-t border-edge bg-panel2 px-2 py-1 text-micro text-dim transition-colors hover:text-fg"
         >
           {expanded ? (
             <ChevronUp size={ICON.xs} />

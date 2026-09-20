@@ -28,3 +28,25 @@ test('automations view lists configured tasks', async ({ page }) => {
   await page.getByRole('button', { name: 'Automations' }).click();
   await expect(page.getByText('Daily brief')).toBeVisible();
 });
+
+test('the split button keeps both halves on one height', async ({ page }) => {
+  await page.addInitScript(mockBackend as never, { automations: [] });
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Automations' }).click();
+  const create = page.getByRole('button', { name: 'New task' }).first();
+  await create.waitFor();
+  // The caret used to be `h-full` inside an auto-height flex row, which
+  // resolves to `auto`: the icon half settled at its content height and
+  // hovered as a shorter inset slab next to the button.
+  const [a, b] = await Promise.all([
+    create.boundingBox(),
+    create.evaluate((node) =>
+      (node.nextElementSibling as HTMLElement).getBoundingClientRect().toJSON(),
+    ),
+  ]);
+  expect(a).not.toBeNull();
+  expect(b).not.toBeNull();
+  expect(Math.abs(a!.height - b!.height)).toBeLessThan(0.5);
+  expect(Math.abs(a!.y - b!.y)).toBeLessThan(0.5);
+  expect(b!.x).toBeCloseTo(a!.x + a!.width, 1);
+});

@@ -12,6 +12,7 @@ import {
 
 import * as Diagnostics from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/diagnostics';
 import { RefreshControl } from './RefreshControl';
+import { CHART_AXIS, CHART_GRID, SERIES } from '../lib/chartPalette';
 
 interface MetricPoint {
   ts: number;
@@ -65,7 +66,7 @@ const SECTIONS: {
   { key: 'gc', labelKey: 'config.metricsSectionGC' },
 ];
 
-const COLORS = ['#60a5fa', '#34d399', '#fbbf24', '#f87171', '#a78bfa'];
+const COLORS = SERIES;
 
 function compactNumber(value: number): string {
   if (Math.abs(value) >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
@@ -226,16 +227,16 @@ export function MetricsCharts() {
                 data={chartRows}
                 margin={{ top: 4, right: 4, bottom: 0, left: 0 }}
               >
-                <CartesianGrid stroke="rgba(148,163,184,0.15)" />
+                <CartesianGrid stroke={CHART_GRID} />
                 <XAxis
                   dataKey="ts"
                   tickFormatter={dateLabel}
-                  tick={{ fontSize: '0.7143rem', fill: '#94a3b8' }}
+                  tick={{ fontSize: '0.7143rem', fill: CHART_AXIS }}
                   minTickGap={24}
                 />
                 <YAxis
                   tickFormatter={(v: number) => fmtAxisValue(v, def.unit)}
-                  tick={{ fontSize: '0.7143rem', fill: '#94a3b8' }}
+                  tick={{ fontSize: '0.7143rem', fill: CHART_AXIS }}
                   width={52}
                 />
                 <Tooltip
@@ -251,8 +252,9 @@ export function MetricsCharts() {
                     ];
                   }}
                   contentStyle={{
-                    background: '#0f172a',
-                    border: '1px solid #334155',
+                    background: 'var(--color-panel3)',
+                    border: '1px solid var(--color-edge)',
+                    color: 'var(--color-fg)',
                     fontSize: '0.8571rem',
                   }}
                 />

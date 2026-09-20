@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MCPSection } from './ToolsPanel';
@@ -192,16 +192,20 @@ describe('MCPSection', () => {
     const moreButton = screen.getByRole('button', { name: 'More actions' });
     await user.click(moreButton);
     expect(
-      screen.getByRole('button', { name: 'Remove server' }),
+      screen.getByRole('menuitem', { name: 'Remove server' }),
     ).toBeInTheDocument();
 
     await user.click(moreButton);
-    expect(
-      screen.queryByRole('button', { name: 'Remove server' }),
-    ).not.toBeInTheDocument();
+    // The panel animates out, so it leaves the DOM one exit-frame after
+    // the menu closes rather than on the next render.
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('menuitem', { name: 'Remove server' }),
+      ).not.toBeInTheDocument(),
+    );
 
     await user.click(moreButton);
-    await user.click(screen.getByRole('button', { name: 'Remove server' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Remove server' }));
 
     expect(screen.queryByText('git')).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Save & apply' }));

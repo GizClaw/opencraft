@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '../lib/store';
@@ -7,10 +7,13 @@ import { ICON } from './ui/icon';
 
 // With a normal number of turns the ticks form a compact, vertically
 // centered ruler: every turn is one short line and the gap between
-// lines stays small. Long sessions switch to a dense scrubber whose
-// full height maps to turn order, so every turn remains reachable.
+// lines stays small. Long sessions switch to a full-height scrubber
+// whose length maps to turn order, so every turn stays reachable, and
+// past DENSE_TICK_LIMIT turns the ruler draws one dash per bucket of
+// turns: one dash per turn would sit closer together than a dash is
+// tall and read as a solid hatch instead of a scale.
 const DENSE_TICK_THRESHOLD = 40;
-const GRADIENT_TICK_LIMIT = 256;
+const DENSE_TICK_LIMIT = 48;
 // Preview Markdown is bounded so a hover over a huge assistant reply
 // does not pay the full parse cost; the chat transcript stays the
 // place for the complete answer.
@@ -69,6 +72,19 @@ export const MessagePeek = memo(function MessagePeek({
   const [tooltipTop, setTooltipTop] = useState(0);
   const [preview, setPreview] = useState<MessagePeekPreview | null>(null);
   const dense = items.length > DENSE_TICK_THRESHOLD;
+  // Stops are spread evenly across the turn range instead of taking a
+  // fixed stride, so the pitch stays even and the last dash lands on
+  // the newest turn. Pointing at the ruler still resolves to a single
+  // turn (indexFromPointer), so bucketing changes only how many dashes
+  // are drawn, never what a click or a hover means.
+  const denseStops = useMemo(() => {
+    if (!dense) return [];
+    const count = Math.min(items.length, DENSE_TICK_LIMIT);
+    return Array.from({ length: count }, (_, stop) => ({
+      start: Math.floor((stop * items.length) / count),
+      end: Math.floor(((stop + 1) * items.length) / count) - 1,
+    }));
+  }, [dense, items.length]);
   // Preview markdown is expensive enough that rapid scrubber moves
   // should not parse every crossed turn. Debounce the fetch and cache
   // one preview per turn; the cache resets when the archive revision
@@ -150,11 +166,13 @@ export const MessagePeek = memo(function MessagePeek({
     return Math.min(items.length - 1, Math.floor(progress * items.length));
   };
 
+  // The root is exactly as wide as one tick button, so a compact tick
+  // and a dense dash center on the same line inside the left gutter.
   return (
     <div
       ref={rootRef}
       data-testid="message-peek"
-      className="pointer-events-none absolute inset-y-0 left-2 z-20 hidden items-center md:flex"
+      className="pointer-events-none absolute inset-y-0 left-2 z-[var(--oc-z-raised)] hidden w-6 items-center md:flex"
     >
       {!dense && (
         <div className="flex flex-col items-center gap-1">
@@ -247,32 +265,45 @@ export const MessagePeek = memo(function MessagePeek({
             }
           }}
           className="pointer-events-auto absolute inset-y-1.5 left-1/2 w-8 -translate-x-1/2 cursor-pointer rounded-full outline-none transition-colors hover:bg-accent/5 focus-visible:ring-2 focus-visible:ring-accent/50"
-          style={{
-            backgroundImage:
-              items.length <= GRADIENT_TICK_LIMIT
-                ? `repeating-linear-gradient(to bottom, transparent 0, transparent calc(${100 / items.length}% - 1px), var(--color-dim) calc(${100 / items.length}% - 1px), var(--color-dim) ${100 / items.length}%)`
-                : undefined,
-          }}
         />
       )}
-      {dense && hasActiveRange && (
-        <span
+      {dense && (
+        <div
           aria-hidden="true"
-          className="pointer-events-none absolute left-1/2 w-5 -translate-x-1/2 rounded-full bg-accent/25"
-          style={{
-            top: `${((activeRange!.start + 0.5) / items.length) * 100}%`,
-            height: `${Math.max(
-              1,
-              ((activeRange!.end - activeRange!.start + 1) / items.length) *
-                100,
-            )}%`,
-          }}
-        />
+          className="pointer-events-none absolute inset-y-1.5 left-1/2 w-8 -translate-x-1/2"
+        >
+          {denseStops.map((stop) => {
+            const active =
+              activeRange !== null &&
+              stop.end >= activeRange.start &&
+              stop.start <= activeRange.end;
+            const hot =
+              hovered !== null && hovered >= stop.start && hovered <= stop.end;
+            return (
+              <span
+                key={stop.start}
+                data-peek-tick={stop.start}
+                className={`absolute left-1/2 h-[3px] -translate-x-1/2 -translate-y-1/2 rounded-full transition-all duration-150 ${
+                  active
+                    ? 'w-4 bg-accent'
+                    : hot
+                      ? 'w-3.5 bg-accent/70'
+                      : 'w-2 bg-dim/45'
+                }`}
+                style={{
+                  top: `${
+                    ((stop.start + stop.end + 1) / (2 * items.length)) * 100
+                  }%`,
+                }}
+              />
+            );
+          })}
+        </div>
       )}
       {preview && (
         <div
           role="tooltip"
-          className="pointer-events-none absolute left-8 z-50 w-[22rem] rounded-card border border-edge/80 bg-panel/95 p-4 shadow-modal ring-1 ring-edge/40 backdrop-blur-sm"
+          className="pointer-events-none absolute left-8 z-[var(--oc-z-popover)] w-[22rem] rounded-card border border-edge/80 bg-panel/95 p-4 shadow-modal ring-1 ring-edge/40 backdrop-blur-sm"
           style={{ top: tooltipTop }}
         >
           {preview.user ? (

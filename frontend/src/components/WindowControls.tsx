@@ -64,7 +64,7 @@ export function WindowControls() {
         // whether this hides the window or terminates the app.
         onClick={() => void api.closeRequested()}
         aria-label="Close"
-        className="grid w-12 place-items-center text-dim transition-colors hover:bg-[#e81123] hover:text-white"
+        className="grid w-12 place-items-center text-dim transition-colors hover:bg-[var(--color-win-close)] hover:text-white"
       >
         <X size={ICON.md} />
       </button>

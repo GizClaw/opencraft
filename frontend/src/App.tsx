@@ -8,7 +8,9 @@ import { StatusBar } from './components/StatusBar';
 import { SubagentDock } from './components/SubagentDock';
 import { TopBar } from './components/TopBar';
 import { Toaster } from './components/Toaster';
+import { TooltipLayer } from './components/ui/Tooltip';
 import { WelcomeView } from './components/WelcomeView';
+import { CommandPalette } from './components/CommandPalette';
 import { useStore } from './lib/store';
 import { usePluginStore } from './plugins/store';
 import type { UIEvent } from './lib/types';
@@ -32,10 +34,18 @@ export default function App() {
   const openDraftChat = useStore((s) => s.openDraftChat);
   const openConfig = useStore((s) => s.openConfig);
   const openFiles = useStore((s) => s.openFiles);
+  const togglePalette = useStore((s) => s.togglePalette);
   const { t } = useTranslation();
   const [sidebarW, setSidebarW] = useState(
     () => Number(localStorage.getItem('oc.sidebarW')) || 240,
   );
+  // The settings page is a lazy chunk that outlives its own close: it stays
+  // mounted once opened so its exit animation can play, and so reopening it
+  // is instant. First open still loads the chunk.
+  const [settingsMounted, setSettingsMounted] = useState(false);
+  useEffect(() => {
+    if (configOpen) setSettingsMounted(true);
+  }, [configOpen]);
   // Platform is known synchronously from the user agent so the
   // Windows/Linux top bar never flashes on macOS (or vice versa);
   // Environment() reconciles the canonical value right after.
@@ -109,6 +119,22 @@ export default function App() {
     });
     return off;
   }, [init, handleEvent]);
+
+  // ⌘K / Ctrl+K toggles the command palette. A capture-phase listener on
+  // window so the shortcut still works while a text field (or the
+  // composer's editor) has focus.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== 'k') return;
+      if (!event.metaKey && !event.ctrlKey) return;
+      if (event.altKey || event.shiftKey) return;
+      event.preventDefault();
+      event.stopPropagation();
+      togglePalette();
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [togglePalette]);
 
   // Feed the pet mind coarse "user is around" pulses from the main
   // window. Throttled to 2s; the pet only needs to notice presence,
@@ -223,12 +249,14 @@ export default function App() {
       </div>
       {workspace && !toolsView && <SubagentDock />}
       <StatusBar />
-      {configOpen && (
+      {settingsMounted && (
         <Suspense fallback={null}>
           <ConfigPage />
         </Suspense>
       )}
       <Toaster />
+      <CommandPalette />
+      <TooltipLayer />
     </div>
   );
 }

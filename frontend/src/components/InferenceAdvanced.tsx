@@ -133,11 +133,11 @@ export function AdvancedSection({
   const group = (title: string, children: ReactNode, hint?: string) => (
     <section className="flex flex-col gap-2.5">
       <div className="flex items-baseline gap-2">
-        <h4 className="text-micro font-medium tracking-wide text-dim/90 uppercase">
+        <h4 className="text-micro font-medium tracking-wide text-faint uppercase">
           {title}
         </h4>
         {hint !== undefined && (
-          <span className="text-micro text-dim/70">{hint}</span>
+          <span className="text-micro text-faint">{hint}</span>
         )}
       </div>
       <div className="grid grid-cols-1 gap-x-4 gap-y-3 md:grid-cols-2">
@@ -325,7 +325,7 @@ export function AdvancedSection({
   return (
     <details
       data-testid="provider-advanced"
-      className="group rounded-card border border-edge bg-panel/30"
+      className="group rounded-card border border-edge bg-panel"
     >
       <summary className="flex cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs text-dim hover:text-fg">
         <ChevronDown
@@ -338,7 +338,7 @@ export function AdvancedSection({
             {t('config.advanced.setCount', { n: setCount })}
           </span>
         )}
-        <span className="ml-auto text-micro text-dim/70">
+        <span className="ml-auto text-micro text-faint">
           {disabled
             ? t('config.advanced.managedHint')
             : t('config.advanced.defaultsHint')}
@@ -346,7 +346,7 @@ export function AdvancedSection({
       </summary>
       <div className="flex flex-col gap-3.5 border-t border-edge/60 px-3 pt-3 pb-3.5">
         {sections.length === 0 && (
-          <p className="text-xs text-dim/80">{t('config.advanced.noKnobs')}</p>
+          <p className="text-xs text-faint">{t('config.advanced.noKnobs')}</p>
         )}
         {sections.map((section, index) => (
           <Fragment key={index}>

@@ -18,6 +18,7 @@ import type {
 } from '../lib/types';
 import { ICON } from './ui/icon';
 import { Modal } from './ui/Modal';
+import { Popover } from './ui/Popover';
 import { SaveBar } from './ui/SaveBar';
 
 // The generation tools section of the Tools tab: one item per tool, the
@@ -112,26 +113,24 @@ function ToolOptionMenu({
   onChange: (value: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const selected = options.find((option) => option.value === value);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setOpen(false);
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open]);
+  const toggle = () => {
+    setAnchor(triggerRef.current);
+    setOpen((v) => !v);
+  };
 
   return (
-    <div ref={rootRef} className="relative">
+    <>
       <button
+        ref={triggerRef}
         type="button"
         aria-label={label}
         aria-haspopup="listbox"
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        onClick={toggle}
         className={controlClass}
       >
         <span className="flex items-center gap-1.5">
@@ -150,49 +149,47 @@ function ToolOptionMenu({
           />
         </span>
       </button>
-      {open && (
-        <>
-          <div
-            className="fixed inset-0 z-30"
-            onMouseDown={() => setOpen(false)}
-          />
-          <div
-            role="listbox"
-            className="absolute top-full right-0 z-40 mt-1 min-w-full rounded-control border border-edge/80 bg-panel/95 p-1 shadow-popover backdrop-blur-md"
-          >
-            {options.map((option) => {
-              const isSelected = option.value === value;
-              return (
-                <button
-                  key={option.value || 'unset'}
-                  type="button"
-                  role="option"
-                  aria-selected={isSelected}
-                  onClick={() => {
-                    onChange(option.value);
-                    setOpen(false);
-                  }}
-                  className={`flex w-full items-center gap-2 rounded-control px-2.5 py-1.5 text-left text-xs transition-colors ${
-                    isSelected
-                      ? 'bg-accent/10 text-accent'
-                      : 'text-dim hover:bg-panel2 hover:text-fg'
-                  }`}
-                >
-                  <span
-                    className={`min-w-0 flex-1 truncate ${
-                      option.value === '' ? '' : 'font-mono'
-                    }`}
-                  >
-                    {option.label}
-                  </span>
-                  {isSelected && <Check size={ICON.xs} className="shrink-0" />}
-                </button>
-              );
-            })}
-          </div>
-        </>
-      )}
-    </div>
+      <Popover
+        open={open}
+        onClose={() => setOpen(false)}
+        anchor={anchor}
+        ariaLabel={label}
+        align="end"
+        keyboard
+        maxHeight={288}
+        panelClassName="min-w-full rounded-control border border-edge bg-panel p-1 shadow-popover"
+      >
+        {options.map((option) => {
+          const isSelected = option.value === value;
+          return (
+            <button
+              key={option.value || 'unset'}
+              type="button"
+              role="option"
+              aria-selected={isSelected}
+              onClick={() => {
+                onChange(option.value);
+                setOpen(false);
+              }}
+              className={`flex w-full items-center gap-2 rounded-control px-2.5 py-1.5 text-left text-xs transition-colors ${
+                isSelected
+                  ? 'bg-accent/10 text-accent'
+                  : 'text-dim hover:bg-panel2 hover:text-fg'
+              }`}
+            >
+              <span
+                className={`min-w-0 flex-1 truncate ${
+                  option.value === '' ? '' : 'font-mono'
+                }`}
+              >
+                {option.label}
+              </span>
+              {isSelected && <Check size={ICON.xs} className="shrink-0" />}
+            </button>
+          );
+        })}
+      </Popover>
+    </>
   );
 }
 
@@ -407,19 +404,19 @@ export function ToolsSection() {
     return (
       <div
         key={field.name}
-        className="flex items-start gap-4 px-3 py-2 hover:bg-panel2/40"
+        className="flex items-start gap-4 px-3 py-2 hover:bg-panel2"
       >
         <div className="min-w-0 flex-1">
           <span className="block truncate text-xs text-fg">{label}</span>
-          <span className="block truncate font-mono text-micro text-dim/80">
+          <span className="block truncate font-mono text-micro text-dim">
             {field.name}
-            {hint && <span className="ml-1.5 text-dim/60">· {hint}</span>}
+            {hint && <span className="ml-1.5 text-faint">· {hint}</span>}
             {defaultHint && (
-              <span className="ml-1.5 text-dim/60">· {defaultHint}</span>
+              <span className="ml-1.5 text-faint">· {defaultHint}</span>
             )}
           </span>
           {description !== '' && (
-            <span className="mt-0.5 block text-micro leading-snug text-dim/70">
+            <span className="mt-0.5 block text-micro leading-snug text-dim">
               {description}
             </span>
           )}
@@ -432,7 +429,7 @@ export function ToolsSection() {
   const renderInstance = (tool: ToolKey, instance: ToolOptionInstanceView) => (
     <div
       key={instance.id}
-      className="overflow-hidden rounded-control border border-edge/70 bg-panel2/40"
+      className="overflow-hidden rounded-control border border-edge/70 bg-panel2"
     >
       <div className="flex items-center gap-2 border-b border-edge/60 px-3 py-2">
         <span className="truncate text-xs font-medium text-fg">
@@ -450,7 +447,7 @@ export function ToolsSection() {
       </div>
       {(instance.presets ?? []).length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5 border-b border-edge/60 px-3 py-2">
-          <span className="text-micro text-dim/80">
+          <span className="text-micro text-dim">
             {t('config.toolsPresets')}
           </span>
           {(instance.presets ?? []).map((preset) => (
@@ -466,7 +463,7 @@ export function ToolsSection() {
         </div>
       )}
       {(instance.fields ?? []).length === 0 ? (
-        <p className="px-3 py-2.5 text-xs text-dim/80">
+        <p className="px-3 py-2.5 text-xs text-dim">
           {t('config.toolsNoFields')}
         </p>
       ) : (
@@ -554,7 +551,7 @@ export function ToolsSection() {
           )}
         </p>
         {instances.length === 0 ? (
-          <div className="rounded-control border border-dashed border-edge/70 px-3 py-6 text-center text-xs text-dim/80">
+          <div className="rounded-control border border-dashed border-edge/70 px-3 py-6 text-center text-xs text-dim">
             {t('config.toolsNoInstances')}
           </div>
         ) : (
@@ -570,7 +567,7 @@ export function ToolsSection() {
         {[0, 1].map((key) => (
           <div
             key={key}
-            className="h-16 animate-pulse rounded-card border border-edge/70 bg-panel/70"
+            className="h-16 animate-pulse rounded-card border border-edge/70 bg-panel"
           />
         ))}
       </div>

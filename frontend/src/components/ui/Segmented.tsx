@@ -49,7 +49,7 @@ export function Segmented<T extends string>({
           <button
             key={option.value}
             type="button"
-            title={option.title}
+            data-tip={option.title}
             aria-pressed={active}
             disabled={option.disabled}
             onClick={() => onChange(option.value)}

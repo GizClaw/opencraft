@@ -111,7 +111,7 @@ const MentionPopup = forwardRef<MentionPopupHandle, MentionPopupProps>(
     return (
       <div
         ref={rootRef}
-        className="z-50 max-w-96 min-w-72 overflow-hidden rounded-control border border-edge bg-panel2 shadow-modal"
+        className="z-[var(--oc-z-popover)] max-w-96 min-w-72 overflow-hidden rounded-control border border-edge bg-panel2 shadow-modal"
       >
         {loading && items.length === 0 ? (
           <div className="flex items-center gap-2 px-3 py-2 text-xs text-dim">
