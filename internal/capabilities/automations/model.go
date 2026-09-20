@@ -214,12 +214,16 @@ type Task struct {
 	// run.
 	ConversationID string
 	Notify         string
-	Enabled        bool
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	LastRunAt      time.Time
-	LastStatus     string
-	NextRunAt      time.Time
+	// Timeout bounds one run of this task ("15m", "2h"; Go duration
+	// syntax). Empty means DefaultTaskTimeout. The scheduler cancels a
+	// run that outlives it and records the cause on the run row.
+	Timeout    string
+	Enabled    bool
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	LastRunAt  time.Time
+	LastStatus string
+	NextRunAt  time.Time
 }
 
 // Validate checks task-level fields. Workspace existence is checked by
@@ -254,7 +258,53 @@ func (t Task) Validate() error {
 	default:
 		return fmt.Errorf("unknown notify policy %q", t.Notify)
 	}
+	if s := strings.TrimSpace(t.Timeout); s != "" {
+		d, err := time.ParseDuration(s)
+		if err != nil {
+			return fmt.Errorf("timeout must be a duration like 15m")
+		}
+		if d <= 0 || d > maxTaskTimeout {
+			return fmt.Errorf("timeout must be positive and at most 24h")
+		}
+	}
 	return t.Schedule.Validate()
+}
+
+// DefaultTaskTimeout bounds one unattended run when the task leaves
+// Timeout empty. A scheduled run has nobody watching it, so "runs
+// forever" is never the intended answer; the field exists so a task
+// that legitimately needs longer can say so.
+const DefaultTaskTimeout = 15 * time.Minute
+
+// maxTaskTimeout caps the field: a bound nobody will ever watch for is
+// the same as no bound, and a garbage value should fail on save.
+const maxTaskTimeout = 24 * time.Hour
+
+// TimeoutDuration returns the effective per-run bound: the parsed
+// Timeout, or the default when unset or unparsable (Validate rejects
+// the latter on save).
+func (t Task) TimeoutDuration() time.Duration {
+	if s := strings.TrimSpace(t.Timeout); s != "" {
+		if d, err := time.ParseDuration(s); err == nil && d > 0 {
+			return d
+		}
+	}
+	return DefaultTaskTimeout
+}
+
+// TimeoutLabel renders the effective bound for text meant for people
+// and models ("15m" rather than "15m0s").
+func (t Task) TimeoutLabel() string {
+	return FormatTimeout(t.TimeoutDuration())
+}
+
+// FormatTimeout keeps whole minutes in minutes and falls back to the
+// duration format for anything else.
+func FormatTimeout(d time.Duration) string {
+	if d > 0 && d%time.Minute == 0 {
+		return fmt.Sprintf("%dm", int(d/time.Minute))
+	}
+	return d.String()
 }
 
 // Notification policies for one task.
@@ -271,7 +321,12 @@ const (
 	RunRunning   RunStatus = "running"
 	RunCompleted RunStatus = "completed"
 	RunFailed    RunStatus = "failed"
-	RunSkipped   RunStatus = "skipped"
+	// RunTimeout is a run the scheduler cut off at the task's timeout.
+	// It is kept apart from "failed" so the list can say why a task
+	// that used to finish suddenly stopped: the work was still going
+	// when the bound was reached.
+	RunTimeout RunStatus = "timeout"
+	RunSkipped RunStatus = "skipped"
 )
 
 // Run is one execution record of a task.

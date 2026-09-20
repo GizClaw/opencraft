@@ -191,6 +191,8 @@ func (t *Tool) Definition() message.ToolDefinition {
 					"string", "Optional existing session id to reuse; empty = new session per run."),
 				"notify": message.ToolProperty("notify", "string",
 					"Notification policy: always, failed or never."),
+				"timeout": message.ToolProperty("timeout", "string",
+					"Per-run limit as a duration (e.g. 15m, 2h); empty = the 15-minute default."),
 				"enabled": message.ToolProperty("enabled", "boolean",
 					"Whether the task is scheduled (default true)."),
 				"schedule": message.ToolObjectProperty("schedule",
@@ -345,6 +347,11 @@ func previewSummary(task automations.Task) string {
 	fmt.Fprintf(&b, "think: %s\n", think)
 	fmt.Fprintf(&b, "session: %s\n", session)
 	fmt.Fprintf(&b, "notify: %s\n", task.Notify)
+	timeout := task.TimeoutLabel()
+	if strings.TrimSpace(task.Timeout) == "" {
+		timeout += " (default)"
+	}
+	fmt.Fprintf(&b, "timeout: %s\n", timeout)
 	if !task.Enabled {
 		b.WriteString("enabled: false (paused)\n")
 	}
@@ -363,6 +370,7 @@ type taskView struct {
 	Think          string               `json:"think"`
 	ConversationID string               `json:"conversation_id,omitempty"`
 	Notify         string               `json:"notify"`
+	Timeout        string               `json:"timeout,omitempty"`
 	Enabled        bool                 `json:"enabled"`
 	NextRunAt      string               `json:"next_run_at,omitempty"`
 }
@@ -383,6 +391,7 @@ func (taskView) from(t automations.Task) taskView {
 		Think:          t.Think,
 		ConversationID: t.ConversationID,
 		Notify:         t.Notify,
+		Timeout:        t.Timeout,
 		Enabled:        t.Enabled,
 		NextRunAt:      next,
 	}

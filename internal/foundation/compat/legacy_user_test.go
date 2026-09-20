@@ -88,9 +88,9 @@ func TestUserLegacyUpgradesOldAutomationTable(t *testing.T) {
 	}
 	defer func() { _ = handle.Close() }()
 
-	// Simulate an automations table created before notify and
-	// conversation_id existed, plus a weekly task saved before the
-	// phase origin field was added.
+	// Simulate an automations table created before notify,
+	// conversation_id and timeout existed, plus a weekly task saved
+	// before the phase origin field was added.
 	if _, err := handle.SQLDB().ExecContext(ctx, `
 		CREATE TABLE automations (
 			id          TEXT PRIMARY KEY,
@@ -124,15 +124,16 @@ func TestUserLegacyUpgradesOldAutomationTable(t *testing.T) {
 		t.Fatalf("User migration: %v", err)
 	}
 
-	var notify, conversationID string
+	var notify, conversationID, timeout string
 	if err := handle.SQLDB().QueryRowContext(ctx,
-		`SELECT notify, conversation_id FROM automations WHERE id = ?`,
+		`SELECT notify, conversation_id, timeout FROM automations WHERE id = ?`,
 		"t-legacy",
-	).Scan(&notify, &conversationID); err != nil {
+	).Scan(&notify, &conversationID, &timeout); err != nil {
 		t.Fatalf("read legacy row after migration: %v", err)
 	}
-	if notify != "always" || conversationID != "" {
-		t.Fatalf("legacy columns = notify %q conversation %q", notify, conversationID)
+	if notify != "always" || conversationID != "" || timeout != "" {
+		t.Fatalf("legacy columns = notify %q conversation %q timeout %q",
+			notify, conversationID, timeout)
 	}
 
 	var raw string

@@ -20,6 +20,12 @@ import {
   Zap,
 } from 'lucide-react';
 import { api } from '../lib/api';
+import {
+  DEFAULT_AUTOMATION_TIMEOUT_MINUTES,
+  MAX_AUTOMATION_TIMEOUT_MINUTES,
+  timeoutDurationFromMinutes,
+  timeoutMinutesFromDuration,
+} from '../lib/automationTimeout';
 import { useStore } from '../lib/store';
 import type {
   AutomationRun,
@@ -47,6 +53,9 @@ interface FormState {
   model: string;
   think: string;
   notify: string;
+  // timeoutMinutes is the run bound in minutes; empty = the 15-minute
+  // default (the stored form is a Go duration).
+  timeoutMinutes: string;
   sessionMode: 'new' | 'existing';
   sessionID: string;
   enabled: boolean;
@@ -68,6 +77,7 @@ const emptyForm = (workspace: string, yoloOnly: boolean): FormState => ({
   model: '',
   think: '',
   notify: 'always',
+  timeoutMinutes: '',
   sessionMode: 'new',
   sessionID: '',
   enabled: true,
@@ -87,6 +97,7 @@ const taskToForm = (task: AutomationTask, yoloOnly: boolean): FormState => ({
   model: task.model ?? '',
   think: task.think ?? '',
   notify: task.notify || 'always',
+  timeoutMinutes: timeoutMinutesFromDuration(task.timeout),
   sessionMode: task.conversation_id ? 'existing' : 'new',
   sessionID: task.conversation_id ?? '',
   enabled: task.enabled,
@@ -114,6 +125,7 @@ const formToTask = (f: FormState): AutomationTask => {
     model: f.model.trim(),
     think: f.think,
     notify: f.notify,
+    timeout: timeoutDurationFromMinutes(f.timeoutMinutes) ?? '',
     conversation_id: f.sessionMode === 'existing' ? f.sessionID : '',
     enabled: f.enabled,
     created_at: '',
@@ -132,6 +144,8 @@ function statusClass(status: string): string {
       return 'text-err border border-err/40 bg-err/10';
     case 'running':
       return 'text-accent border border-accent/30 bg-accent/10';
+    case 'timeout':
+      return 'text-warn border border-warn/40 bg-warn/10';
     default:
       return 'text-dim border border-edge bg-panel';
   }
@@ -383,6 +397,11 @@ export function AutomationsView() {
 
   const save = async () => {
     if (!form) return;
+    const timeout = timeoutDurationFromMinutes(form.timeoutMinutes);
+    if (timeout === undefined) {
+      setError(t('automations.timeoutInvalid'));
+      return;
+    }
     setSaving(true);
     setError('');
     try {
@@ -873,6 +892,22 @@ export function AutomationsView() {
                   />
                 </Field>
               </div>
+              <Field label={t('automations.timeoutField')}>
+                <input
+                  type="number"
+                  min={1}
+                  max={MAX_AUTOMATION_TIMEOUT_MINUTES}
+                  value={form.timeoutMinutes}
+                  onChange={(e) =>
+                    setForm({ ...form, timeoutMinutes: e.target.value })
+                  }
+                  placeholder={`${DEFAULT_AUTOMATION_TIMEOUT_MINUTES}`}
+                  className="w-full rounded-control border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
+                />
+                <span className="block text-micro text-dim">
+                  {t('automations.timeoutHint')}
+                </span>
+              </Field>
               {form.sessionMode === 'new' && (
                 <>
                   <Field label={t('automations.modelField')}>

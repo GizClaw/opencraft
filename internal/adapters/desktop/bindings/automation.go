@@ -30,6 +30,7 @@ type AutomationTaskDTO struct {
 	Think          string                `json:"think"`
 	ConversationID string                `json:"conversation_id,omitempty"`
 	Notify         string                `json:"notify"`
+	Timeout        string                `json:"timeout"`
 	Enabled        bool                  `json:"enabled"`
 	CreatedAt      string                `json:"created_at"`
 	UpdatedAt      string                `json:"updated_at"`
@@ -169,6 +170,7 @@ func ToAutomationTaskDTO(task automations.Task) AutomationTaskDTO {
 		Think:          task.Think,
 		ConversationID: task.ConversationID,
 		Notify:         task.Notify,
+		Timeout:        task.Timeout,
 		Enabled:        task.Enabled,
 		CreatedAt:      fmtAutomationTime(task.CreatedAt),
 		UpdatedAt:      fmtAutomationTime(task.UpdatedAt),
@@ -192,6 +194,7 @@ func FromAutomationTaskDTO(dto AutomationTaskDTO) automations.Task {
 		Think:          strings.TrimSpace(dto.Think),
 		ConversationID: strings.TrimSpace(dto.ConversationID),
 		Notify:         dto.Notify,
+		Timeout:        strings.TrimSpace(dto.Timeout),
 		Enabled:        dto.Enabled,
 	}
 }

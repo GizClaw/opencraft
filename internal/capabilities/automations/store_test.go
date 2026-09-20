@@ -295,3 +295,46 @@ func TestStoreHasEnabled(t *testing.T) {
 		t.Fatal("HasEnabled with an enabled task = false, want true")
 	}
 }
+
+// TestStoreSaveTaskTimeout pins the round trip of the per-task run
+// bound, including the empty value that means "use the default".
+func TestStoreSaveTaskTimeout(t *testing.T) {
+	store := newTestStore(t)
+	ctx := context.Background()
+	task, err := store.SaveTask(ctx, testTask())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Timeout != "" {
+		t.Fatalf("new task timeout = %q, want empty", task.Timeout)
+	}
+	if got := task.TimeoutDuration(); got != DefaultTaskTimeout {
+		t.Fatalf("unset timeout = %s, want %s", got, DefaultTaskTimeout)
+	}
+
+	task.Timeout = "2h"
+	if _, err := store.SaveTask(ctx, task); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Timeout != "2h" || got.TimeoutDuration() != 2*time.Hour {
+		t.Fatalf("timeout = %q (%s), want 2h", got.Timeout, got.TimeoutDuration())
+	}
+	// An update that clears the field goes back to the default instead
+	// of keeping the old bound.
+	got.Timeout = ""
+	if _, err := store.SaveTask(ctx, got); err != nil {
+		t.Fatal(err)
+	}
+	cleared, err := store.GetTask(ctx, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleared.Timeout != "" || cleared.TimeoutDuration() != DefaultTaskTimeout {
+		t.Fatalf("cleared timeout = %q (%s), want the default",
+			cleared.Timeout, cleared.TimeoutDuration())
+	}
+}

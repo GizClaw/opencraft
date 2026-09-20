@@ -454,7 +454,22 @@ func (d *Desktop) runAutomation(
 			"conversation_id": contextID,
 		})
 	}
-	res, waitErr := run.Wait(ctx)
+	// Wait must not return before the turn is really finished: the
+	// archive write, the memory commit and the slot release all hang
+	// off the settle path. The manager bounds the run with the task
+	// timeout, so instead of handing that deadline to Wait (which
+	// would return early and leave the turn running), a watchdog
+	// cancels the turn when the deadline fires and the wait continues
+	// until it settles.
+	stopWatch := context.AfterFunc(ctx, func() {
+		if err := h.CancelRun(runID); err != nil {
+			telemetry.WarnErr(context.WithoutCancel(ctx),
+				"desktop: cancel automation run at its deadline failed",
+				err, otellog.String("run.id", runID))
+		}
+	})
+	defer stopWatch()
+	res, waitErr := run.Wait(context.WithoutCancel(ctx))
 	finishedAt, durationMs := run.FinishedTiming()
 	result := automations.RunResult{
 		ConversationID: contextID,

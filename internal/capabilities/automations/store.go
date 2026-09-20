@@ -44,7 +44,7 @@ func Attach(handle *db.DB) (*Store, error) {
 func (s *Store) ListTasks(ctx context.Context) ([]Task, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, name, prompt, schedule, workspace, mode, model, think,
-		       conversation_id, notify,
+		       conversation_id, notify, timeout,
 		       enabled, created_at, updated_at, last_run_at, last_status,
 		       next_run_at
 		FROM automations ORDER BY name`)
@@ -86,7 +86,7 @@ func (s *Store) HasEnabled(ctx context.Context) (bool, error) {
 func (s *Store) GetTask(ctx context.Context, id string) (Task, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, name, prompt, schedule, workspace, mode, model, think,
-		       conversation_id, notify,
+		       conversation_id, notify, timeout,
 		       enabled, created_at, updated_at, last_run_at, last_status,
 		       next_run_at
 		FROM automations WHERE id = ?`, id)
@@ -147,10 +147,10 @@ func (s *Store) SaveTask(ctx context.Context, task Task) (Task, error) {
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO automations (
 			id, name, prompt, schedule, workspace, mode, model, think,
-			conversation_id, notify, enabled, created_at, updated_at,
+			conversation_id, notify, timeout, enabled, created_at, updated_at,
 			last_run_at, last_status,
 			next_run_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			name = excluded.name,
 			prompt = excluded.prompt,
@@ -161,13 +161,14 @@ func (s *Store) SaveTask(ctx context.Context, task Task) (Task, error) {
 			think = excluded.think,
 			conversation_id = excluded.conversation_id,
 			notify = excluded.notify,
+			timeout = excluded.timeout,
 			enabled = excluded.enabled,
 			updated_at = excluded.updated_at,
 			next_run_at = excluded.next_run_at
 	`,
 		task.ID, task.Name, task.Prompt, string(scheduleJSON),
 		task.Workspace, task.Mode, task.Model, task.Think,
-		task.ConversationID, task.Notify,
+		task.ConversationID, task.Notify, task.Timeout,
 		boolInt(task.Enabled), fmtTime(task.CreatedAt), fmtTime(task.UpdatedAt),
 		fmtTime(task.LastRunAt), task.LastStatus, fmtTime(task.NextRunAt),
 	)
@@ -392,7 +393,8 @@ func scanTask(row rowScanner) (Task, error) {
 	)
 	if err := row.Scan(
 		&t.ID, &t.Name, &t.Prompt, &scheduleJSON, &t.Workspace,
-		&t.Mode, &t.Model, &t.Think, &t.ConversationID, &t.Notify, &enabled,
+		&t.Mode, &t.Model, &t.Think, &t.ConversationID, &t.Notify,
+		&t.Timeout, &enabled,
 		&createdAt, &updatedAt, &lastRunAt, &t.LastStatus, &nextRunAt,
 	); err != nil {
 		return Task{}, err
