@@ -499,7 +499,10 @@ export function AutomationsView() {
       <div className="flex items-start justify-between gap-3">
         <p className="text-xs text-dim">{t('automations.hint')}</p>
         <div className="relative">
-          <div className="flex items-center overflow-hidden rounded-control">
+          {/* A split button: both halves share one height, so the wrapper
+              stretches them (items-center would leave the icon half at its
+              own content height and inset it). */}
+          <div className="flex items-stretch overflow-hidden rounded-control">
             <Button
               variant="primary"
               className="rounded-r-none"
@@ -514,7 +517,7 @@ export function AutomationsView() {
               onClick={() => setCreateMenuOpen((v) => !v)}
               aria-haspopup="menu"
               aria-expanded={createMenuOpen}
-              className="h-full border-l border-white/25 bg-accent px-1.5 py-1.5 text-white hover:opacity-90"
+              className="flex shrink-0 items-center justify-center border-l border-white/25 bg-accent px-1.5 text-white hover:opacity-90"
               data-tip={t('automations.createOptions')}
             >
               <ChevronDown size={ICON.xs} />
