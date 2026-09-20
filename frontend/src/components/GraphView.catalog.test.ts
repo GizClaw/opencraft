@@ -7,12 +7,15 @@
 // but the catalog lacks can only be reached through the raw JSON editor.
 //
 // This test pins both directions against the compaction node, whose knobs are
-// the ones users actually tune (folding thresholds and budgets).
+// the ones users actually tune (folding thresholds and budgets). It reads the
+// catalog from its own module, not from GraphView: importing the component
+// would load `@wailsio/runtime`, whose drag module keeps a 50ms poll alive
+// past a short-lived test environment.
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { NESTED_FIELDS } from './GraphView';
+import { NESTED_FIELDS } from './graphFieldCatalog';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const COMPACT_NODE = join(
