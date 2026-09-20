@@ -12,20 +12,37 @@ import (
 
 // BufferObservedArtifact persists one workspace write into the owning
 // conversation's artifact buffer.
+//
+// Delegated subagent runs mint an ephemeral "ctx-" conversation id that the
+// session store rejects. Their fold and their writes are not persisted, so
+// buffering is skipped exactly like the committer and the archive observer
+// skip it — without the guard every file a subagent writes logs a rejected
+// store call.
 func BufferObservedArtifact(
 	store *ocsessions.Store,
 	ctx context.Context,
 	path string,
 	data []byte,
 ) {
-	info, ok := agent.RunInfoFromContext(ctx)
-	if !ok || info.ConversationID == "" || store == nil {
+	id := artifactConversation(ctx)
+	if id == "" || store == nil {
 		return
 	}
 	telemetry.WarnErr(ctx, "host: buffer observed artifact failed",
-		store.BufferArtifact(info.ConversationID, path, len(data)),
-		otellog.String("conversation.id", info.ConversationID),
+		store.BufferArtifact(id, path, len(data)),
+		otellog.String("conversation.id", id),
 		otellog.String("path", path))
+}
+
+// artifactConversation returns the conversation that buffers artifacts for
+// the run in ctx, or "" when the run has none: no engine run info, an empty
+// id, or an ephemeral id the session store cannot own.
+func artifactConversation(ctx context.Context) string {
+	info, ok := agent.RunInfoFromContext(ctx)
+	if !ok || !ocsessions.ValidID(info.ConversationID) {
+		return ""
+	}
+	return info.ConversationID
 }
 
 // onArtifactWrite notifies the external observer and buffers the write

@@ -109,6 +109,12 @@ func (s *Service) usageAnchorBoardValue(
 	if s == nil || s.sessionStore == nil || contextID == "" {
 		return nil, false
 	}
+	// Delegated subagent runs mint ephemeral "ctx-" ids the store rejects
+	// (recordUsageAnchor guards the write side the same way): there is no
+	// anchor to read, and asking would warn on every subagent turn.
+	if !ocsessions.ValidID(contextID) {
+		return nil, false
+	}
 	if !s.replaysFullHistory() {
 		return nil, false
 	}

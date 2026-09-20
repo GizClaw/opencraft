@@ -1160,3 +1160,26 @@ func TestAppendTurnArtifactsMergesIntoLatestTurn(t *testing.T) {
 		t.Fatal("AppendTurnArtifacts accepted invalid session id")
 	}
 }
+
+// TestClosedReportsShutdown pins the flag best-effort readers use: a
+// notification raised while the app shuts down must be able to skip its
+// title lookup instead of logging "sql: database is closed".
+func TestClosedReportsShutdown(t *testing.T) {
+	store, err := newMigratedStore(t.TempDir(), 40)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if store.Closed() {
+		t.Fatal("an open store must not report closed")
+	}
+	if err := store.CloseDB(); err != nil {
+		t.Fatalf("CloseDB: %v", err)
+	}
+	if !store.Closed() {
+		t.Fatal("a closed store must report closed")
+	}
+	var nilStore *Store
+	if !nilStore.Closed() {
+		t.Fatal("a nil store must read as closed")
+	}
+}

@@ -47,6 +47,22 @@ func imageSource(t *testing.T) media.ImageSource {
 	return src
 }
 
+// imageBytes builds one inline image source of n bytes. The estimate
+// charges the encoded length, so the fixture needs a payload whose size is
+// pinned rather than a real screenshot.
+func imageBytes(t *testing.T, n int) media.ImageSource {
+	t.Helper()
+	data := make([]byte, n)
+	for i := range data {
+		data[i] = byte(i % 251)
+	}
+	src, err := media.NewImageBytes(data, "image/png")
+	if err != nil {
+		t.Fatalf("image bytes: %v", err)
+	}
+	return src
+}
+
 // compactCaseMessages covers every branch of the renderer and the
 // estimate: text only, CJK, mixed scripts, astral code points (JS
 // counts two code units), tool calls and results alone and combined,
@@ -153,6 +169,26 @@ func compactCaseMessages(t *testing.T) []struct {
 					Content: message.Content{Parts: []message.Part{
 						message.TextPart{Text: "ok"},
 						message.ImagePart{Source: imageSource(t)},
+					}},
+				}},
+			}},
+		}}},
+		// An inline image is charged by its encoded length: the URL form
+		// above pays only the floor, a real screenshot payload pays more.
+		{"inline image", []message.Message{{
+			Role: message.RoleUser,
+			Content: message.Content{Parts: []message.Part{
+				message.ImagePart{Source: imageBytes(t, 4096)},
+			}},
+		}}},
+		{"tool result with inline image", []message.Message{{
+			Role: message.RoleTool,
+			Content: message.Content{Parts: []message.Part{
+				message.ToolResultPart{Result: message.ToolResult{
+					CallID: "c1",
+					Content: message.Content{Parts: []message.Part{
+						message.TextPart{Text: "view_image: shot.png"},
+						message.ImagePart{Source: imageBytes(t, 40960)},
 					}},
 				}},
 			}},

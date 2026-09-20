@@ -193,6 +193,41 @@ function resultPayload(content) {
   return resultText(content);
 }
 
+// imageTokens charges the prompt footprint of one image part, mirroring
+// summarytext.EstimateImageTokens. Text rendering cannot see this cost —
+// the prompt carries the payload, not words — but a conversation full of
+// screenshots is far larger than its text, and under-estimating is what
+// lets a request past the model window. The unit is the base64 character
+// count because that is the shape this node holds; Go counts the encoded
+// length of the decoded bytes, which is the same number.
+var IMAGE_FLOOR = 1024;
+var IMAGE_CHARS_PER_TOKEN = 16;
+
+function imageTokenCost(part) {
+  var src = (part && part.source) || {};
+  var chars = src.kind === "inline" && typeof src.data === "string"
+    ? src.data.length
+    : 0;
+  return Math.max(IMAGE_FLOOR, Math.floor(chars / IMAGE_CHARS_PER_TOKEN));
+}
+
+// imageTokensInParts descends into tool results: a screenshot arrives as
+// an image part inside the result's content, not beside it.
+function imageTokensInParts(parts) {
+  var total = 0;
+  for (var i = 0; i < parts.length; i++) {
+    var p = parts[i];
+    if (!p) continue;
+    if (p.type === "image") {
+      total += imageTokenCost(p);
+    } else if (p.type === "tool_result" && p.result) {
+      total += imageTokensInParts(
+        (p.result.content && p.result.content.parts) || []);
+    }
+  }
+  return total;
+}
+
 function estimateTokens(msgs) {
   var tokens = 0;
   for (var i = 0; i < msgs.length; i++) {
@@ -206,7 +241,9 @@ function estimateTokens(msgs) {
         cjk++;
       }
     }
-    tokens += cjk + Math.ceil((s.length - cjk) / 4) + 8;
+    var parts = (msgs[i] && msgs[i].content && msgs[i].content.parts) || [];
+    tokens += cjk + Math.ceil((s.length - cjk) / 4) + 8 +
+      imageTokensInParts(parts);
   }
   return tokens;
 }
@@ -476,9 +513,13 @@ while (
 }
 
 // A failed fold is not retried against an unchanged boundary: the next
-// new message moves the boundary and makes the retry meaningful.
+// new message moves the boundary and makes the retry meaningful. Past the
+// whole window that rule inverts — the request cannot be sent as it
+// stands, so the retry is the only way back inside the window (the compact
+// tool degrades to a mechanical digest when no model summary can be
+// produced, so the retry has a path to succeed).
 var failedEnd = Number(board.getVar("world.compact.failed_end") || -1);
-if (shouldCompact && failedEnd >= 0 && failedEnd === foldEnd) {
+if (shouldCompact && failedEnd >= 0 && failedEnd === foldEnd && !overWindow) {
   shouldCompact = false;
 }
 
@@ -511,10 +552,14 @@ if (shouldCompact) {
     board.setVar("world.compact.fold_end", foldEnd);
     return;
   }
+  // Nothing foldable this round (the preserved window covers the whole
+  // channel). Treat it like a spent fold budget so the notice below can
+  // still tell the model what to expect.
+  shouldCompact = false;
 }
 
 if (!shouldCompact && !deferred && overThreshold &&
-    (foldsSpent || failuresSpent)) {
+    (foldsSpent || failuresSpent || overWindow)) {
   // Compaction is out of options and the prompt is still over budget:
   // say so once, so the model can land the step in flight instead of
   // running into a provider error.
