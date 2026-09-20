@@ -242,6 +242,12 @@ type Manager struct {
 
 	mu    sync.Mutex
 	procs map[string]*process
+	// shuttingDown marks that Shutdown ran: no capability process may
+	// start afterwards (nothing would own its lifetime), and
+	// exitWatchers lets Shutdown wait for the exit handlers the deaths
+	// of the processes it stopped already started.
+	shuttingDown bool
+	exitWatchers sync.WaitGroup
 
 	baseCtx context.Context
 	cancel  context.CancelFunc
@@ -397,9 +403,15 @@ func (m *Manager) Cleanup(id string) error {
 	return err
 }
 
-// Shutdown stops every running plugin process.
+// Shutdown stops every running plugin process and waits for the exit
+// handlers those deaths started. It closes the manager: nothing may
+// start a new capability process afterwards. When Shutdown returns the
+// host's exit bookkeeping for a plugin that died (dropping its export
+// sink, appending the audit line) is finished, so a caller tearing the
+// data directory down no longer races it.
 func (m *Manager) Shutdown() {
 	m.mu.Lock()
+	m.shuttingDown = true
 	procs := make([]*process, 0, len(m.procs))
 	for id, p := range m.procs {
 		procs = append(procs, p)
@@ -409,6 +421,9 @@ func (m *Manager) Shutdown() {
 	for _, p := range procs {
 		p.stop()
 	}
+	// Handlers run host code (the telemetry fallback drains a pipeline
+	// under its own budget), so this waits on bounded work.
+	m.exitWatchers.Wait()
 	if m.cancel != nil {
 		m.cancel()
 	}
@@ -418,6 +433,10 @@ func (m *Manager) Shutdown() {
 // on first use.
 func (m *Manager) get(ctx context.Context, id string) (*process, error) {
 	m.mu.Lock()
+	if m.shuttingDown {
+		m.mu.Unlock()
+		return nil, errors.New("runtime: capability plugins are shut down")
+	}
 	if p, ok := m.procs[id]; ok {
 		select {
 		case <-p.done:
@@ -538,7 +557,14 @@ func (m *Manager) start(id string, cap Capability, bin string) (*process, error)
 		telemetry.WarnErr(m.baseCtx,
 			"plugin runtime: drain capability stderr failed", sc.Err())
 	}()
+	// The exit watcher runs the host's process-exit handler, so it is
+	// registered in exitWatchers: Shutdown has to be able to wait for
+	// work a crashed plugin started. start runs with m.mu held and
+	// Shutdown takes the same lock before waiting, which keeps every Add
+	// ahead of the Wait.
+	m.exitWatchers.Add(1)
 	go func() {
+		defer m.exitWatchers.Done()
 		<-p.done
 		m.mu.Lock()
 		if m.procs[id] == p {

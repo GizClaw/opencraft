@@ -517,6 +517,56 @@ func TestProcessExitHandlerSkipsHostStop(t *testing.T) {
 	}
 }
 
+// TestShutdownWaitsForExitHandler pins the shutdown contract: a caller
+// closing the manager — app quit, a test removing the data directory its
+// plugins write into — must not race the exit handler a crashed plugin
+// started. The handler carries the host's fallback work (dropping the
+// export sink, appending the audit line), and the crash path runs it on
+// its own goroutine.
+func TestShutdownWaitsForExitHandler(t *testing.T) {
+	m, _ := newTestManagerWithHelper(t, "4")
+	started := make(chan struct{})
+	finished := make(chan struct{})
+	m.SetProcessExitHandler(func(string) {
+		close(started)
+		time.Sleep(200 * time.Millisecond)
+		close(finished)
+	})
+
+	// The helper handshakes and then dies on its own; the invoke result
+	// is irrelevant, only the exit notification matters.
+	_, _ = m.Invoke(context.Background(), "test-plugin", "auth.begin", nil)
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("process exit handler did not fire for a crashed plugin")
+	}
+
+	m.Shutdown()
+
+	select {
+	case <-finished:
+	default:
+		t.Fatal("Shutdown returned before the exit handler finished")
+	}
+}
+
+// TestInvokeAfterShutdownRefused pins the other half of the contract: a
+// closed manager must not spawn a process nothing will ever stop.
+func TestInvokeAfterShutdownRefused(t *testing.T) {
+	m, _ := newTestManager(t)
+	m.Shutdown()
+	if _, err := m.Invoke(context.Background(), "test-plugin", "auth.poll", nil); err == nil {
+		t.Fatal("Invoke after Shutdown started a capability process")
+	}
+	m.mu.Lock()
+	n := len(m.procs)
+	m.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("%d processes registered after Shutdown", n)
+	}
+}
+
 func TestSessionImportPrimitive(t *testing.T) {
 	m, _ := newTestManager(t)
 	var gotPlugin string
