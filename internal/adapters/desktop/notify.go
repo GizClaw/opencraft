@@ -123,7 +123,10 @@ func (d *Desktop) sessionTitle(contextID string) string {
 		return ""
 	}
 	store := h.SessionsStore()
-	if store == nil {
+	// The banner is best-effort copy: during a reload or shutdown the store
+	// is already closed, and a missing title is not worth a driver error in
+	// the log. The caller falls back to the app name.
+	if store.Closed() {
 		return ""
 	}
 	title, err := store.Title(contextID)

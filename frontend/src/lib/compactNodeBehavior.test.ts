@@ -76,7 +76,7 @@ function boardStub(main: BoardMessage[], vars: Vars = {}) {
   return { board, store, channels };
 }
 
-function runNode(board: unknown): void {
+function runNode(board: unknown, maxInputTokens = 1): void {
   const source = readFileSync(NODE_SOURCE, 'utf8');
   // The node's own knobs: `max_compactions` was replaced by a consecutive
   // failure streak plus a per-turn fold budget (see compactNode.test.ts for
@@ -90,7 +90,9 @@ function runNode(board: unknown): void {
   };
   const run = { get_context_id: () => 's-test' };
   const inference = {
-    routeExplain: () => ({ limits: { max_input_tokens: 1 } }),
+    // The default window is absurdly small on purpose: every fixture is
+    // past it, so check mode folds without waiting for a measurement.
+    routeExplain: () => ({ limits: { max_input_tokens: maxInputTokens } }),
   };
   new Function('board', 'config', 'run', 'inference', source)(
     board,
@@ -223,8 +225,14 @@ describe('compact node channel handling', () => {
 
   it('keeps everything and skips the repeat when condensation fails', () => {
     const original = fixture();
-    const { board, store, channels } = boardStub(original);
-    runNode(board);
+    // A measured prompt inside the window: over the fold threshold but not
+    // past the model's limit (the shape where deferring is not an option).
+    const { board, store, channels } = boardStub(original, {
+      llm_usage: { input_tokens: 95 },
+      'world.compact.anchor_len': original.length,
+      'world.compact.anchor_epoch': 0,
+    });
+    runNode(board, 100);
     const foldEnd = store['world.compact.fold_end'];
     appendCompactResult(channels, '', true);
     runNode(board);
@@ -234,11 +242,35 @@ describe('compact node channel handling', () => {
     expect(channels[ARCHIVE]).toBeUndefined();
     expect(store['world.compact.failed_end']).toBe(foldEnd);
 
-    // The unchanged boundary is not retried: no new pending call.
+    // The unchanged boundary is not retried while the request still fits:
+    // waiting for the next message moves it and makes a retry meaningful.
     runNode(board);
     expect(store['world.compact.pending']).toBe(false);
     expect(store['world.compact.count']).toBe(1);
     expect(store['tool_pending']).toBe(false);
     expect(channels[MAIN]).toEqual(original);
+  });
+
+  it('retries the failed boundary once the prompt is past the window', () => {
+    const original = fixture();
+    const { board, store, channels } = boardStub(original);
+    runNode(board); // check mode, window far too small for this fixture
+    const foldEnd = store['world.compact.fold_end'];
+    appendCompactResult(channels, '', true);
+    runNode(board); // apply mode: the fold failed
+    expect(store['world.compact.failed_end']).toBe(foldEnd);
+
+    // Past the window the request cannot be sent as it stands, so the
+    // suppression above inverts: the retry is the only way back inside,
+    // and the compact tool degrades to a mechanical digest when no model
+    // summary arrives, which is what makes the retry worth attempting.
+    runNode(board);
+    expect(store['world.compact.pending']).toBe(true);
+    expect(store['world.compact.fold_end']).toBe(foldEnd);
+    // The retry is a fresh synthetic call, not a replay of the failed one.
+    const tail = channels[MAIN][channels[MAIN].length - 1];
+    expect((tail.content.parts[0] as { call?: { id?: string } }).call?.id).toBe(
+      'compact-2',
+    );
   });
 });

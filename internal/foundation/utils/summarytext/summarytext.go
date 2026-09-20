@@ -6,11 +6,13 @@ package summarytext
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"strings"
 	"unicode/utf16"
 
 	"github.com/GizClaw/flowcraft/core/message"
+	"github.com/GizClaw/flowcraft/core/message/media"
 )
 
 // SummaryPrefix marks a compaction summary injected into the
@@ -87,6 +89,17 @@ const (
 	estimateCharsPerToken = 4
 	// estimatePerMessage covers per-message scaffolding.
 	estimatePerMessage = 8
+	// estimateImageFloor charges an image whose payload this estimate
+	// cannot size: a URL source, where the prompt carries only the link
+	// and the provider fetches the pixels itself.
+	estimateImageFloor = 1024
+	// estimateImageCharsPerToken calibrates an inline payload. It is
+	// deliberately conservative: a real session showed a gateway billing
+	// ~100 KB inline JPEGs at roughly 8k input tokens each (about one
+	// token per 16 base64 characters), while the OpenAI-style tile
+	// formula would charge far less. Under-estimating an image is what
+	// lets a prompt past the model window, so the high end wins.
+	estimateImageCharsPerToken = 16
 )
 
 // EstimateText estimates the prompt footprint of one rendered message
@@ -115,7 +128,44 @@ func EstimateText(text string) int {
 func EstimateTokens(msgs []message.Message) int {
 	total := 0
 	for _, m := range msgs {
-		total += EstimateText(RenderMessage(m)) + estimatePerMessage
+		total += EstimateText(RenderMessage(m)) + estimatePerMessage +
+			imageTokensInParts(m.Content.Parts)
+	}
+	return total
+}
+
+// EstimateImageTokens approximates the prompt footprint of one image
+// part. Text rendering cannot see this cost: the prompt carries the base64
+// payload (or the URL) and a provider bills the pixels, so a conversation
+// full of screenshots is far larger than its text alone.
+//
+// The unit is the base64 character count rather than the decoded byte
+// count so the graph node's JS mirror — which only ever sees the encoded
+// string — computes the same number (see compact.js).
+func EstimateImageTokens(source media.ImageSource) int {
+	chars := 0
+	if source.Kind() == media.SourceInline {
+		chars = base64.StdEncoding.EncodedLen(len(source.Bytes()))
+	}
+	tokens := chars / estimateImageCharsPerToken
+	if tokens < estimateImageFloor {
+		tokens = estimateImageFloor
+	}
+	return tokens
+}
+
+// imageTokensInParts sums the image cost of a part list, descending into
+// tool results: a screenshot arrives as an image part inside the result's
+// content, not as a top-level part of the tool message.
+func imageTokensInParts(parts []message.Part) int {
+	total := 0
+	for _, p := range parts {
+		switch part := p.(type) {
+		case message.ImagePart:
+			total += EstimateImageTokens(part.Source)
+		case message.ToolResultPart:
+			total += imageTokensInParts(part.Result.Content.Parts)
+		}
 	}
 	return total
 }

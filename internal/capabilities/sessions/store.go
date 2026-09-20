@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/agent"
@@ -119,6 +120,11 @@ type Store struct {
 	window int
 	db     *state.Store
 
+	// closed flips when the database handle closes. Best-effort readers
+	// (a desktop notification raised while the app shuts down) check it
+	// instead of reporting a driver error that says nothing actionable.
+	closed atomic.Bool
+
 	mu          sync.Mutex
 	artifactBuf map[string][]Artifact
 	turnTiming  map[string]map[string]TurnTiming
@@ -173,7 +179,14 @@ func (s *Store) CloseDB() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
+	s.closed.Store(true)
 	return s.db.Close()
+}
+
+// Closed reports whether the store's database handle has been closed. A nil
+// store reads as closed: it cannot serve reads either.
+func (s *Store) Closed() bool {
+	return s == nil || s.closed.Load()
 }
 
 // Save implements agent.CheckpointStore.
