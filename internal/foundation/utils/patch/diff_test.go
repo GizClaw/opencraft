@@ -19,6 +19,60 @@ func (e notExistError) Error() string { return "no such file: " + e.path }
 
 func errNotExist(path string) error { return notExistError{path: path} }
 
+// TestDiffContextLinesWithoutSpaceMarker pins the shape models actually
+// emit: an update hunk whose context lines are written verbatim (a tab or
+// other content character where the optional leading space marker would
+// be). The parser used to reject the whole patch as an "unexpected line",
+// which dropped the chat card back to raw text and made the tool result
+// unreadable.
+func TestDiffContextLinesWithoutSpaceMarker(t *testing.T) {
+	const path = "internal/capabilities/memory/userstore/userstore.go"
+	content := "func stats() {\n" +
+		"\tif err := s.db.QueryRowContext(ctx,\n" +
+		"\t\t`SELECT COUNT(*)`,\n" +
+		"\t).Scan(&out.Profile); err != nil {\n" +
+		"\t\treturn Stats{}, err\n" +
+		"\t}\n" +
+		"\treturn out, nil\n" +
+		"}\n"
+	patchText := "*** Begin Patch\n" +
+		"*** Update File: " + path + "\n" +
+		"@@\n" +
+		"-\t).Scan(&out.Profile); err != nil {\n" +
+		"+\tvar profileChars int\n" +
+		"+\t).Scan(&out.Profile, &profileChars); err != nil {\n" +
+		"\treturn out, nil\n" +
+		"}\n" +
+		"*** End Patch"
+	diffs, err := Diff(patchText, testReadFile(map[string]string{path: content}))
+	if err != nil {
+		t.Fatalf("Diff: %v", err)
+	}
+	if len(diffs) != 1 {
+		t.Fatalf("diffs = %+v", diffs)
+	}
+	fd := diffs[0]
+	if fd.Path != path || fd.Action != "update" ||
+		fd.Added != 2 || fd.Removed != 1 {
+		t.Fatalf("file diff = %+v", fd)
+	}
+	// The context lines are kept and numbered against the real file, so
+	// the rendered card shows the unchanged tail of the hunk.
+	var contextText []string
+	for _, line := range fd.Lines {
+		if line.Kind == DiffLineContext {
+			contextText = append(contextText, line.Text)
+			if line.OldNum == 0 || line.NewNum == 0 {
+				t.Fatalf("context line without numbers: %+v", line)
+			}
+		}
+	}
+	if len(contextText) != 2 ||
+		contextText[0] != "\treturn out, nil" || contextText[1] != "}" {
+		t.Fatalf("context lines = %q", contextText)
+	}
+}
+
 func TestDiffAddFile(t *testing.T) {
 	diffs, err := Diff(`*** Begin Patch
 *** Add File: hello.go

@@ -776,6 +776,95 @@ describe('ChatView transcript windowing', () => {
     expect(screen.getByText('final answer')).toBeInTheDocument();
   });
 
+  it('windows a long process list instead of mounting every row', async () => {
+    const messages: MessageView[] = [
+      {
+        id: 'm-user',
+        role: 'user',
+        text: 'prompt',
+        items: [],
+        attachments: [],
+      },
+    ];
+    for (let i = 0; i < 120; i += 1) {
+      messages.push({
+        id: `m-${i}`,
+        role: 'assistant',
+        text: '',
+        items: [
+          {
+            kind: 'tool_call',
+            id: `part-${i}`,
+            tool: {
+              id: `call-${i}`,
+              name: 'exec_command',
+              args: '{}',
+              status: 'done',
+            },
+          },
+        ],
+        attachments: [],
+      });
+    }
+    messages.push({
+      id: 'm-final',
+      role: 'assistant',
+      text: '',
+      items: [{ kind: 'text', id: 't-final', text: 'final answer' }],
+      attachments: [],
+    });
+    setConversation(messages, [
+      { id: 'turn-1', start: 0, docs: [], durationMs: 123000, runID: 'r-1' },
+    ]);
+    render(<ChatView />);
+
+    // The virtualizer reads the scroller's geometry; jsdom has none.
+    const scroller = screen.getByTestId('chat-scroll');
+    Object.defineProperty(scroller, 'clientHeight', {
+      configurable: true,
+      value: 600,
+    });
+    Object.defineProperty(scroller, 'scrollHeight', {
+      configurable: true,
+      value: 600,
+    });
+    Object.defineProperty(scroller, 'scrollTop', {
+      configurable: true,
+      value: 0,
+      writable: true,
+    });
+    scroller.getBoundingClientRect = () =>
+      ({
+        top: 0,
+        left: 0,
+        right: 800,
+        bottom: 600,
+        width: 800,
+        height: 600,
+        x: 0,
+        y: 0,
+        toJSON: () => ({}),
+      }) as DOMRect;
+
+    await userEvent
+      .setup()
+      .click(screen.getByRole('button', { name: 'Worked for 2m 3s' }));
+
+    // jsdom has no layout, so the virtualizer cannot compute *which*
+    // rows are visible; what it can prove is that the list went virtual:
+    // the container reserves the estimated height of all 120 rows, and
+    // the rows themselves are not mounted eagerly. The real-browser
+    // behaviour is covered by the perf e2e spec.
+    const container = scroller.querySelector<HTMLElement>(
+      'div[style*="position: relative"]',
+    );
+    expect(container).not.toBeNull();
+    const height = Number.parseInt(container?.style.height ?? '0', 10);
+    expect(height).toBeGreaterThan(120 * 60);
+    expect(scroller.querySelectorAll('[data-index]').length).toBeLessThan(120);
+    expect(screen.getByText('final answer')).toBeInTheDocument();
+  });
+
   it('keeps the worked header for legacy turns without duration', async () => {
     setConversation(
       [

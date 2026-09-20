@@ -9,26 +9,39 @@ export function isPlanCall(item: AssistantItem): boolean {
   return item.kind === 'tool_call' && item.tool.name === 'update_plan';
 }
 
-// Tools rendered as always-visible full blocks are never folded into a
-// consecutive-run group: their content matters in place (patch diffs,
-// written file contents), not hidden behind a "Ran N tools" summary.
-export const nonGroupedTools = new Set(['apply_patch', 'write_file']);
+// groupCache memoizes the grouping per items array. Message items are
+// replaced immutably (applyStream swaps the array instead of mutating
+// it), so the array identity is a sound cache key: a message that did
+// not change keeps its groups across renders, which is what lets the
+// transcript rows — and the expanded process rows in particular — bail
+// out of the per-flush re-render instead of walking every item again.
+// Callers must treat the result (and the group arrays in it) as
+// read-only.
+const groupCache = new WeakMap<
+  AssistantItem[],
+  (AssistantItem | ToolCallItem[])[]
+>();
 
 // groupToolCalls merges consecutive tool calls into groups so a burst
 // of tool executions renders as one collapsible block instead of a
-// stack of cards. Non-tool items are passed through unchanged, except
+// stack of cards. Every tool takes part, patch and write calls
+// included: their bodies are the biggest thing a long turn can mount,
+// so they belong behind the same fold rather than inline in the
+// transcript. Non-tool items are passed through unchanged, except
 // hidden reasoning traces, which no longer split a visible tool burst
 // in the chat transcript.
 export function groupToolCalls(
   items: AssistantItem[],
 ): (AssistantItem | ToolCallItem[])[] {
+  const cached = groupCache.get(items);
+  if (cached) return cached;
   const out: (AssistantItem | ToolCallItem[])[] = [];
   let cur: ToolCallItem[] | null = null;
   for (const item of items) {
     if (isPlanCall(item) || item.kind === 'reasoning') {
       continue;
     }
-    if (item.kind === 'tool_call' && !nonGroupedTools.has(item.tool.name)) {
+    if (item.kind === 'tool_call') {
       if (!cur) cur = [];
       cur.push(item);
     } else {
@@ -40,6 +53,7 @@ export function groupToolCalls(
     }
   }
   if (cur) out.push(cur);
+  groupCache.set(items, out);
   return out;
 }
 

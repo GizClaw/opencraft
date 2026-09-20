@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { mockBackend } from './mock/backend';
+import { loadAllHistory } from './helpers';
 
 function turns(n: number, prefix = 'message') {
   return Array.from({ length: n }, (_, i) => ({
@@ -36,13 +37,16 @@ test('resumes a long session with windowed transcript', async ({ page }) => {
   await expect(page.getByText('message-249')).toBeVisible();
   await expect(page.getByText('message-0')).not.toBeVisible();
 
-  // Reaching the top auto-loads the next history window; the loaded
-  // rows appear above the current position, so scroll up again to read
-  // them once the window has been expanded.
+  // Hydration stops at the newest page: reaching the top asks the
+  // archive for one more page of older turns instead of the whole
+  // session arriving up front.
   const scroller = page.getByTestId('chat-scroll');
   await scroller.evaluate((el) => el.scrollTo(0, 0));
-  await expect(page.getByText('message-50')).toBeVisible();
-  await scroller.evaluate((el) => el.scrollTo(0, 0));
+  await expect(page.getByText('message-234')).toBeVisible();
+  await expect(page.getByText('message-0')).not.toBeVisible();
+
+  // Keep reading upwards and the first turn eventually lands.
+  await loadAllHistory(page);
   await expect(page.getByText('message-0')).toBeVisible();
 });
 

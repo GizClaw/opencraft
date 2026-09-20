@@ -11,6 +11,7 @@ import {
   reportFrontendError,
 } from './lib/frontendErrors';
 import { startRUM } from './lib/rum';
+import { installPerfProbe } from './lib/perfProbe';
 import PetSurface from './pet/PetSurface';
 
 // Surface uncaught errors instead of failing silently: render errors
@@ -18,6 +19,7 @@ import PetSurface from './pet/PetSurface';
 // are forwarded to the Go telemetry pipeline (and printed for devtools).
 installConsoleErrorCapture();
 startRUM();
+installPerfProbe();
 window.addEventListener('error', (e) => {
   reportFrontendError('window-error', e.error ?? new Error(e.message));
 });

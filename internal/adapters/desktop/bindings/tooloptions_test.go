@@ -9,6 +9,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/testing/configseed"
 )
 
 // toolOptionsBinding writes one image-capable and one video-capable
@@ -16,7 +17,7 @@ import (
 func toolOptionsBinding(t *testing.T) *Config {
 	t.Helper()
 	dir := t.TempDir()
-	if err := config.WriteInference(dir, config.InferenceConfig{
+	if err := configseed.Write(dir, config.InferenceConfig{
 		Instances: []config.Instance{
 			{
 				StableID:  "img",

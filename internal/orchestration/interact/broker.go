@@ -32,15 +32,6 @@ type Broker struct {
 	reasons map[string]error // promptID -> Ask error, consumed by PromptResolved
 }
 
-// New creates a Broker over rt with one backend.
-func New(rt Runtime, backend Backend) *Broker {
-	return &Broker{
-		rt:      rt,
-		backend: backend,
-		turns:   make(map[string]Replier),
-	}
-}
-
 // NewWithBackendResolver creates a Broker whose prompt backend is
 // chosen per run. When resolver returns nil, the fallback backend is
 // used.

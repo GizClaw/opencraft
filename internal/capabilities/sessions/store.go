@@ -649,14 +649,31 @@ func (s *Store) History(ctx context.Context, id string, n int) ([]message.Messag
 
 // Turns returns every archived turn, oldest first.
 func (s *Store) Turns(ctx context.Context, id string) ([]TurnRecord, error) {
+	return s.TurnsPage(ctx, id, 0, 0)
+}
+
+// TurnsPage returns archived turns oldest first. limit <= 0 returns
+// every turn; beforeSeq > 0 keeps only turns older than that seq, so the
+// UI can hydrate the newest turns first and page backwards on demand
+// instead of loading a whole long session at startup.
+func (s *Store) TurnsPage(
+	ctx context.Context, id string, limit int, beforeSeq int64,
+) ([]TurnRecord, error) {
 	if err := requireID(id); err != nil {
 		return nil, err
 	}
-	turns, err := s.db.ListArchiveTurns(ctx, id)
+	turns, err := s.db.ListArchiveTurnsPage(ctx, id, limit, beforeSeq)
 	if err != nil {
 		return nil, err
 	}
-	msgs, err := s.db.ListArchiveMessages(ctx, id)
+	if len(turns) == 0 {
+		return nil, nil
+	}
+	ids := make([]int64, 0, len(turns))
+	for _, t := range turns {
+		ids = append(ids, t.ID)
+	}
+	msgs, err := s.db.ListArchiveMessagesForTurns(ctx, id, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -1113,9 +1130,4 @@ func (f Factory) New(ctx context.Context, in resource.Input) (any, error) {
 				"centralized in internal/foundation/compat")
 	}
 	return f.StoreFor(ctx, s.Root, s.Window)
-}
-
-// Register adds the session store factory to r.
-func Register(r *resource.Registry) error {
-	return r.Register(Factory{})
 }

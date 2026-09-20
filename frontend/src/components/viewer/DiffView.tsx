@@ -184,14 +184,28 @@ function FileDiff({
   file,
   collapsible,
   wrap,
+  maxLines,
+  showAllLines,
+  onShowAllLines,
 }: {
   file: PatchFileDTO;
   collapsible: boolean;
   wrap: boolean;
+  // maxLines caps how many of the file's lines render at once; the
+  // footer offers the rest. Chat surfaces pass it so a multi-thousand
+  // line patch cannot mount one row per line just because a turn's
+  // process rows were expanded.
+  maxLines?: number;
+  showAllLines?: boolean;
+  onShowAllLines?: () => void;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(true);
-  const hunks = groupHunks(file.lines ?? []);
+  const allLines = file.lines ?? [];
+  const truncated =
+    maxLines !== undefined && !showAllLines && allLines.length > maxLines;
+  const lines = truncated ? allLines.slice(0, maxLines) : allLines;
+  const hunks = groupHunks(lines);
   return (
     <div className="border-b border-edge last:border-b-0">
       <FileHeader
@@ -200,23 +214,40 @@ function FileDiff({
         onToggle={() => setOpen((v) => !v)}
         collapsible={collapsible}
       />
-      {(!collapsible || open) &&
-        (hunks.length === 0 ? (
-          <div className="px-3 py-1.5 font-mono text-micro text-dim">
-            {t('tool.diffUnavailable')}
-          </div>
-        ) : (
-          hunks.map((h, i) => (
-            <div key={i}>
-              <div className="select-none bg-panel2 px-3 py-0.5 text-center font-mono text-micro text-dim">
-                {hunkHeader(h)}
-              </div>
-              {h.lines.map((line, j) => (
-                <GitDiffLine key={j} line={line} wrap={wrap} />
-              ))}
+      {(!collapsible || open) && (
+        <>
+          {hunks.length === 0 ? (
+            <div className="px-3 py-1.5 font-mono text-micro text-dim">
+              {t('tool.diffUnavailable')}
             </div>
-          ))
-        ))}
+          ) : (
+            hunks.map((h, i) => (
+              <div key={i}>
+                <div className="select-none bg-panel2 px-3 py-0.5 text-center font-mono text-micro text-dim">
+                  {hunkHeader(h)}
+                </div>
+                {h.lines.map((line, j) => (
+                  <GitDiffLine key={j} line={line} wrap={wrap} />
+                ))}
+              </div>
+            ))
+          )}
+          {truncated && (
+            <div className="flex items-center justify-end gap-2 border-t border-edge/60 px-3 py-1 text-micro text-dim">
+              <span className="tabular-nums">
+                {t('tool.moreLines', { count: allLines.length - lines.length })}
+              </span>
+              <button
+                type="button"
+                onClick={onShowAllLines}
+                className="rounded-tight border border-edge px-1.5 py-0.5 hover:text-fg"
+              >
+                {t('tool.showAll')}
+              </button>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -228,6 +259,7 @@ export function GitDiffView({
   framed = true,
   maxHeight = 'max-h-80',
   expandable = false,
+  maxLines,
 }: {
   files: PatchFileDTO[];
   collapsible?: boolean;
@@ -242,10 +274,13 @@ export function GitDiffView({
   // lines. Panels that fill a whole pane leave it off: they never hide
   // more than the pane already scrolls.
   expandable?: boolean;
+  // maxLines caps the lines rendered per file; see FileDiff.
+  maxLines?: number;
 }) {
   const { t } = useTranslation();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [showAllLines, setShowAllLines] = useState(false);
   const [overflowing, setOverflowing] = useState(false);
 
   // Track the real scroll box so the footer only appears when lines are
@@ -270,6 +305,9 @@ export function GitDiffView({
       file={f}
       collapsible={collapsible}
       wrap={wrap}
+      maxLines={maxLines}
+      showAllLines={showAllLines}
+      onShowAllLines={() => setShowAllLines(true)}
     />
   ));
   const frameCls = framed

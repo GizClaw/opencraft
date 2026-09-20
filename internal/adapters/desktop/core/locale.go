@@ -1,7 +1,6 @@
 package core
 
 import (
-	"os"
 	"strings"
 )
 
@@ -73,14 +72,4 @@ func NormalizeLanguage(language string) string {
 // TextsFor returns native copy for a language.
 func TextsFor(language string) DesktopTexts {
 	return desktopLocales[NormalizeLanguage(language)]
-}
-
-// DefaultLanguage prefers the process locale and falls back to English.
-func DefaultLanguage() string {
-	for _, key := range []string{"LC_ALL", "LC_MESSAGES", "LANG"} {
-		if strings.HasPrefix(strings.ToLower(os.Getenv(key)), "zh") {
-			return "zh"
-		}
-	}
-	return "en"
 }

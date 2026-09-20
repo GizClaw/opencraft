@@ -7,6 +7,7 @@
 // under the pointer.
 import { expect, test } from '@playwright/test';
 import { mockBackend } from './mock/backend';
+import { loadAllHistory } from './helpers';
 
 const WS = '/Users/me/projects/opencraft';
 
@@ -51,6 +52,15 @@ test('keeps the dense turn ruler inside the transcript gutter', async ({
   await expect(
     page.getByText('reply-139', { exact: true }).first(),
   ).toBeVisible();
+  // The ruler needs the session's turns, and hydration only pulls the
+  // newest page from the archive.
+  await loadAllHistory(page);
+  // Paging leaves the viewport at the oldest loaded rows; the ruler is
+  // asserted at the newest end, so return there first.
+  await page
+    .getByTestId('chat-scroll')
+    .evaluate((el) => el.scrollTo(0, el.scrollHeight));
+  await page.waitForTimeout(120);
 
   const scroll = page.getByTestId('chat-scroll');
   const scrollBox = await scroll.boundingBox();

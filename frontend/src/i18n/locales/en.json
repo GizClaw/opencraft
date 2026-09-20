@@ -5,6 +5,7 @@
     "unknownError": "Unknown error",
     "crashed": "OpenCraft UI crashed",
     "tryAgain": "Try again",
+    "surfaceFailed": "This panel failed to load",
     "reload": "Reload"
   },
   "sidebar": {
@@ -674,7 +675,19 @@
     "usageSessions": "Sessions",
     "usageTokensTotal": "Total tokens",
     "usageTrend": "Usage trend",
-    "usageUpdated": "Last used"
+    "usageUpdated": "Last used",
+    "heapProfileTitle": "Heap profile",
+    "heapProfileCapture": "Capture heap profile",
+    "heapProfileCapturing": "Capturing…",
+    "heapProfileHint": "Forces a GC and writes a pprof heap profile for offline analysis (go tool pprof -inuse_space). Capture one when a long session looks heavy.",
+    "heapProfileSaved": "Written to {{path}} ({{size}} KiB)",
+    "diagSecOverview": "Environment",
+    "diagSecPolicy": "Command policy",
+    "diagSecRuntime": "Runtime services",
+    "diagSecRuntimeHint": "Command pool, process PATH, telemetry export and heap snapshots.",
+    "diagSecObservability": "Logs and metrics",
+    "diagSecPet": "Pet",
+    "diagSecPetHint": "Assistant behavior and mood state (experimental)."
   },
   "chat": {
     "modelSwitchCost": "Switched to {{model}}. Prompt caches are scoped to the model, so this conversation's next request re-reads the transcript at full input price once.",
@@ -682,7 +695,6 @@
     "compactionFoldedDetail": "Older rounds were folded into a summary: the turn kept running with a shorter history. The prompt prefix changed, so the next request is billed at full input price once.",
     "compactionStrained": "Context compaction is out of options",
     "compactionStrainedDetail": "This conversation is close to the model's input window and automatic folding cannot reduce it further ({{count}} failed attempt(s) standing). Prefer shorter tool output and finish the step in flight; start a new conversation for a fresh window.",
-
     "running": "Running",
     "stageReasoning": "Thinking…",
     "stageTool": "Using {{tool}}…",
@@ -690,7 +702,7 @@
     "metaTurns_other": "{{count}} turns",
     "metaTokens": "{{tokens}} tokens",
     "newSession": "New session",
-    "loadEarlier": "Show {{hidden}} earlier messages",
+    "foldedSteps": "{{count}} earlier steps folded (full trail in the session archive)",
     "jumpToLatest": "Jump to latest",
     "empty": "What shall we craft today?",
     "emptyUnconfigured": "Inference is not configured yet",
@@ -994,6 +1006,7 @@
     "requestPermissions": "Request permissions",
     "updatePlan": "Update plan",
     "patch": "apply_patch",
+    "writeFile": "Write file",
     "createdSkill": "Created skill",
     "modifiedSkill": "Modified skill",
     "installedSkill": "Installed skill",
@@ -1082,7 +1095,10 @@
     "reason": "Reason",
     "applyPatch": "Apply patch",
     "generateImage": "Generate image",
-    "generateVideo": "Generate video"
+    "generateVideo": "Generate video",
+    "diffRawNotice": "Line-level diff unavailable (the patch did not match the file on disk); showing the raw patch.",
+    "copyUnifiedDiff": "Copy unified diff (git apply-able)",
+    "copyPatch": "Copy raw patch"
   },
   "automations": {
     "hint": "Scheduled agent runs: each trigger creates one independent session.",

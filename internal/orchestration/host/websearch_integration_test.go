@@ -13,6 +13,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
+	"github.com/GizClaw/opencraft/internal/testing/configseed"
 	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
@@ -121,7 +122,7 @@ func TestHostSearchBagFollowsLiveRuntime(t *testing.T) {
 		searchTestInstance("live-search", "https://example.invalid/v1",
 			"responses", true),
 	}}
-	if err := config.WriteInference(configDir, live); err != nil {
+	if err := configseed.Write(configDir, live); err != nil {
 		t.Fatal(err)
 	}
 
@@ -153,7 +154,7 @@ func TestHostSearchBagFollowsLiveRuntime(t *testing.T) {
 	drifted := append(append([]config.Instance(nil), live.Instances...),
 		searchTestInstance("drift-search", "https://example.invalid/v1",
 			"responses", true))
-	if err := config.WriteInference(configDir,
+	if err := configseed.Write(configDir,
 		config.InferenceConfig{Instances: drifted}); err != nil {
 		t.Fatal(err)
 	}

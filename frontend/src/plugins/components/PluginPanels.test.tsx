@@ -60,4 +60,30 @@ describe('PluginPanels tab filtering', () => {
     const { container } = render(<PluginPanels tab="import" />);
     expect(container.firstChild).toBeNull();
   });
+
+  it('keeps a crashing panel from taking the surface down', () => {
+    const Boom = () => {
+      throw new Error('plugin exploded');
+    };
+    usePluginStore.setState({
+      panels: [
+        {
+          pluginId: 'plug-a',
+          id: 'boom',
+          title: 'Broken panel',
+          order: 10,
+          tab: 'general',
+          Component: Boom,
+        },
+        panel('ok', 'Healthy panel', 'general'),
+      ],
+    });
+    render(<PluginPanels tab="general" />);
+
+    expect(screen.getByText('Broken panel')).toBeInTheDocument();
+    expect(screen.getByText('This panel failed to load')).toBeInTheDocument();
+    // The neighbouring plugin still renders; the failing one is replaced
+    // by the inline card instead of blanking the tree.
+    expect(screen.getByText('Healthy panel')).toBeInTheDocument();
+  });
 });

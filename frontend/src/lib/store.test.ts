@@ -6,6 +6,7 @@ import {
   firstMessageTitle,
   friendlyFailure,
   friendlyInterruption,
+  itemText,
   isUserStop,
   pendingConversationIDs,
   useStore,
@@ -774,7 +775,9 @@ describe('store: send and stream', () => {
     expect(conv.mode).toBe('workspace');
     expect(conv.think).toBe('medium');
     expect(conv.messages.map((m) => m.text || '')).toContain('history user');
-    expect(apiMock.sessionTurns).toHaveBeenCalledWith('s-2');
+    // Startup hydration asks for the newest page plus one turn, which is
+    // how the store learns whether older history exists.
+    expect(apiMock.sessionTurns).toHaveBeenCalledWith('s-2', 7, 0);
   });
 
   it('resume keeps archived turn status on the turn artifact', async () => {
@@ -1297,6 +1300,71 @@ describe('store: send and stream', () => {
     ).toEqual(['s-1', 's-2']);
   });
 
+  it('folds a live turn past the item cap and keeps the count', () => {
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    const handle = useStore.getState().handleEvent;
+    const call = (i: number) =>
+      handle({
+        type: 'stream',
+        data: {
+          run_id: 'r-1',
+          conversation_id: 's-1',
+          delta: {
+            type: 'part',
+            part: {
+              type: 'tool_call',
+              call: { id: `call-${i}`, name: 'exec_command', arguments: {} },
+            },
+          },
+        },
+      });
+    // 50 over the cap: the oldest blocks fold into the counter while the
+    // newest stay mounted.
+    const total = 450;
+    for (let i = 0; i < total; i += 1) call(i);
+    useStore.getState().flushStreams();
+
+    const message = useStore.getState().conversations['s-1']?.messages.at(-1);
+    expect(message?.droppedItems).toBe(total - 400);
+    expect(message?.items).toHaveLength(400);
+    const first = message?.items[0];
+    expect(first?.kind === 'tool_call' && first.tool.id).toBe(
+      `call-${total - 400}`,
+    );
+  });
+
+  it('caps reasoning and text blocks while streaming', () => {
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    const handle = useStore.getState().handleEvent;
+    const part = (type: 'text' | 'reasoning', text: string) =>
+      handle({
+        type: 'stream',
+        data: {
+          run_id: 'r-1',
+          conversation_id: 's-1',
+          delta: { type: 'part', part: { type, text } },
+        },
+      });
+    // Chunked pushes: a reasoning trace keeps only its tail, visible text
+    // keeps head and tail around a trim marker.
+    for (let i = 0; i < 40; i += 1) part('reasoning', 'r'.repeat(1024));
+    part('text', 'seed ');
+    for (let i = 0; i < 400; i += 1) part('text', 't'.repeat(1024));
+    useStore.getState().flushStreams();
+
+    const message = useStore.getState().conversations['s-1']?.messages.at(-1);
+    const reasoning = message?.items.find((it) => it.kind === 'reasoning');
+    const text = message?.items.find((it) => it.kind === 'text');
+    expect(reasoning && itemText(reasoning).length).toBeLessThanOrEqual(
+      16 * 1024 + 64,
+    );
+    expect(reasoning && itemText(reasoning)).toContain('[trimmed');
+    expect(text && itemText(text).length).toBeLessThanOrEqual(256 * 1024 + 64);
+    expect(text && itemText(text)).toContain('[trimmed');
+  });
+
   it('flushes interleaved streams in arrival order', () => {
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-1' });
     const handle = useStore.getState().handleEvent;
@@ -1326,7 +1394,7 @@ describe('store: send and stream', () => {
               { kind: 'text' }
             > => item.kind === 'text',
           )
-          .map((item) => item.text)
+          .map((item) => itemText(item))
           .join('') ?? ''
       );
     };
@@ -1877,7 +1945,7 @@ describe('store: transcript cap', () => {
     }));
   }
 
-  it('caps conversation messages at 800 and re-bases turn starts', () => {
+  it('caps conversation messages on a turn boundary and re-bases starts', () => {
     stateRoot.registry.get('s-1')?.send({ type: 'RUN_STARTED', runID: 'r-x' });
     useStore.setState({
       conversations: {
@@ -1897,11 +1965,12 @@ describe('store: transcript cap', () => {
     });
 
     const conv = useStore.getState().conversations['s-1'];
-    expect(conv.messages).toHaveLength(800);
-    expect(conv.messages[0].text).toBe('message-200');
-    // start 100 is below the drop window (200) and is removed; start 900
-    // re-bases to 700.
-    expect(conv.turnArtifacts.map((t) => t.start)).toEqual([700]);
+    // The exact cut (200) is mid-turn, so the trim backs up to the
+    // largest turn boundary at or below it (100) instead of leaving a
+    // partial turn behind: 900 messages kept, both starts re-based.
+    expect(conv.messages).toHaveLength(900);
+    expect(conv.messages[0].text).toBe('message-100');
+    expect(conv.turnArtifacts.map((t) => t.start)).toEqual([0, 800]);
   });
 });
 

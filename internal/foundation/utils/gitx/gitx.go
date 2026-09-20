@@ -5,7 +5,6 @@ package gitx
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -81,76 +80,4 @@ func RunBounded(
 		return "", false
 	}
 	return strings.TrimRight(string(data), "\n"), false
-}
-
-// ChangedOptions bounds the porcelain status snapshot.
-type ChangedOptions struct {
-	// MaxBytes caps the raw porcelain output; oversized repos are
-	// reported as nil so callers skip rather than buffer unbounded
-	// state.
-	MaxBytes int64
-	// MaxPaths caps the number of returned paths; nil is returned when
-	// a repository has more changes than this.
-	MaxPaths int
-}
-
-// ChangedPaths returns workspace-relative, slash-separated paths that
-// git reports as changed, staged, copied, renamed or untracked. It
-// returns nil when git is unavailable, output is over budget, or there
-// are more paths than MaxPaths.
-func ChangedPaths(
-	ctx context.Context,
-	root string,
-	opts ChangedOptions,
-) []string {
-	if opts.MaxBytes <= 0 {
-		opts.MaxBytes = 4 << 20
-	}
-	if opts.MaxPaths <= 0 {
-		opts.MaxPaths = 2000
-	}
-	out, truncated := RunBounded(ctx, root, opts.MaxBytes, 10*time.Second,
-		"status", "--porcelain", "--untracked-files=all", "-z")
-	if truncated {
-		return nil
-	}
-	if out == "" {
-		return nil
-	}
-	parts := strings.Split(out, "\x00")
-	var paths []string
-	for i := 0; i < len(parts); i++ {
-		rec := parts[i]
-		if len(rec) < 3 {
-			continue
-		}
-		code := rec[:2]
-		path := strings.TrimPrefix(rec[2:], " ")
-		if (code[0] == 'R' || code[0] == 'C') && i+1 < len(parts) &&
-			parts[i+1] != "" {
-			i++
-			path = parts[i]
-		}
-		if path == "" {
-			continue
-		}
-		paths = append(paths, filepath.ToSlash(path))
-		if len(paths) >= opts.MaxPaths {
-			return nil
-		}
-	}
-	return paths
-}
-
-// CapLines keeps the first max lines and appends a "+N more" marker.
-func CapLines(s string, max int) string {
-	if max <= 0 {
-		return s
-	}
-	lines := strings.Split(s, "\n")
-	if len(lines) <= max {
-		return s
-	}
-	return strings.Join(lines[:max], "\n") +
-		fmt.Sprintf("\n…(+%d more)", len(lines)-max)
 }

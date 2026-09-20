@@ -178,6 +178,12 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   },
   {
     tab: 'diagnostics',
+    section: 'diag-heap',
+    labelKey: 'config.heapProfileTitle',
+    keywords: 'heap profile memory pprof gc leak ' + '内存 快照 堆 分析 泄漏',
+  },
+  {
+    tab: 'diagnostics',
     section: 'diag-pet',
     labelKey: 'config.petDiagTitle',
     keywords: 'pet behavior mood phase energy 宠物 行为 心情 阶段 精力',

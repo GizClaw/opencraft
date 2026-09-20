@@ -28,7 +28,7 @@ func TestProviderOwnersSidecarLifecycle(t *testing.T) {
 		"sso-main":  "sso-haivivi",
 		"sso-embed": "sso-haivivi",
 	}
-	if err := WriteInferenceOwned(dir, cfg, owners); err != nil {
+	if err := seedInferenceOwned(dir, cfg, owners); err != nil {
 		t.Fatalf("WriteInferenceOwned: %v", err)
 	}
 	got, err := LoadProviderOwners(dir)
@@ -41,7 +41,7 @@ func TestProviderOwnersSidecarLifecycle(t *testing.T) {
 
 	// An ordinary settings save reconciles owners: removed rows drop
 	// their stale owner records, surviving rows stay owned.
-	if err := WriteInference(dir, ownedTestConfig("sso-embed")); err != nil {
+	if err := seedInference(dir, ownedTestConfig("sso-embed")); err != nil {
 		t.Fatalf("WriteInference: %v", err)
 	}
 	got, err = LoadProviderOwners(dir)
@@ -52,7 +52,7 @@ func TestProviderOwnersSidecarLifecycle(t *testing.T) {
 		t.Fatalf("owners after reconcile = %+v", got)
 	}
 
-	if err := RemoveInferenceConfig(dir); err != nil {
+	if err := removeInferenceConfig(dir); err != nil {
 		t.Fatalf("RemoveInferenceConfig: %v", err)
 	}
 	if _, err := os.Stat(providerOwnersPath(dir)); !os.IsNotExist(err) {
@@ -74,7 +74,7 @@ func TestDropProviderOwnersScopedByPlugin(t *testing.T) {
 		"a-main": "plug-a",
 		"b-main": "plug-b",
 	}
-	if err := WriteInferenceOwned(dir, cfg, owners); err != nil {
+	if err := seedInferenceOwned(dir, cfg, owners); err != nil {
 		t.Fatalf("WriteInferenceOwned: %v", err)
 	}
 	dropped, err := DropProviderOwners(dir, "plug-a")
@@ -111,7 +111,7 @@ func legacyPluginInstance() Instance {
 
 func TestLegacyPluginInstanceAdoptedAndRemovableAfterUpgrade(t *testing.T) {
 	dir := t.TempDir()
-	if err := WriteInference(dir, InferenceConfig{
+	if err := seedInference(dir, InferenceConfig{
 		Instances: []Instance{legacyPluginInstance()},
 	}); err != nil {
 		t.Fatalf("WriteInference: %v", err)
@@ -180,7 +180,7 @@ func TestUserInstanceMatchingPluginIDIsNotAdopted(t *testing.T) {
 	// A row whose stable id equals a plugin id but whose credentials do
 	// not live in the plugin namespace is a user row, not legacy
 	// plugin state; it must not be claimed.
-	if err := WriteInference(dir, InferenceConfig{
+	if err := seedInference(dir, InferenceConfig{
 		Instances: []Instance{{
 			StableID:  "sso-haivivi",
 			Type:      "openai",

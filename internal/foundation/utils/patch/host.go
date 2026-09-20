@@ -10,12 +10,13 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
 
-// ApplyToDir applies a codex-format patch to files under dir on the
-// host filesystem. Every operation path must stay inside dir:
+// ApplyToDir applies a codex-format patch (or a standard unified diff)
+// to files under dir on the host filesystem. Every operation path must
+// stay inside dir:
 // absolute paths, "..", and symlink escapes are rejected, so a patch
 // can never touch files outside the target directory.
 func ApplyToDir(dir, patch string) ([]FileResult, error) {
-	ops, err := Parse(patch)
+	ops, err := ParseAny(patch)
 	if err != nil {
 		return nil, err
 	}

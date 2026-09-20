@@ -288,7 +288,7 @@ func TestInferenceYAMLNestedDriverFieldWithOneKey(t *testing.T) {
 		t.Fatalf("composite driver field is not nested:\n%s", data)
 	}
 	dir := t.TempDir()
-	if err := WriteInference(dir, cfg); err != nil {
+	if err := seedInference(dir, cfg); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := LoadInference(dir)
@@ -349,7 +349,7 @@ func TestInferenceYAMLDropsRetiredCatalogKey(t *testing.T) {
 	// The retired key has no home in the typed configuration, and the
 	// rewrite below must drop it rather than keep it where the driver
 	// would reject it.
-	if err := WriteInference(dir, cfg); err != nil {
+	if err := seedInference(dir, cfg); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, "opencraft.yaml"))
@@ -432,7 +432,7 @@ func TestInferenceYAMLDriverFactsRoundTrip(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	if err := WriteInference(dir, cfg); err != nil {
+	if err := seedInference(dir, cfg); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := LoadInference(dir)
@@ -500,7 +500,7 @@ func TestInferenceYAMLPluginDeclaredProvider(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	if err := WriteInference(dir, cfg); err != nil {
+	if err := seedInference(dir, cfg); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := LoadInference(dir)
@@ -581,7 +581,7 @@ func TestInferenceYAMLWireOptionsRoundTrip(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	if err := WriteInference(dir, cfg); err != nil {
+	if err := seedInference(dir, cfg); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := LoadInference(dir)
@@ -703,7 +703,7 @@ func TestInferenceYAMLLimitsRoundTrip(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	if err := WriteInference(dir, cfg); err != nil {
+	if err := seedInference(dir, cfg); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := LoadInference(dir)
@@ -801,7 +801,7 @@ func TestInferenceYAMLReasoningEffortMap(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	if err := WriteInference(dir, cfg); err != nil {
+	if err := seedInference(dir, cfg); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := LoadInference(dir)
@@ -863,7 +863,7 @@ func TestInferenceYAMLMultipleModels(t *testing.T) {
 
 	// Round trip: both models and their capabilities survive.
 	dir := t.TempDir()
-	if err := WriteInference(dir, cfg); err != nil {
+	if err := seedInference(dir, cfg); err != nil {
 		t.Fatal(err)
 	}
 	got, err := LoadInference(dir)
@@ -967,7 +967,7 @@ func TestInferenceYAMLByTedanceEndpoints(t *testing.T) {
 	// Round trip: the endpoint rides per model and the unbound model
 	// stays unbound.
 	dir := t.TempDir()
-	if err := WriteInference(dir, cfg); err != nil {
+	if err := seedInference(dir, cfg); err != nil {
 		t.Fatal(err)
 	}
 	got, err := LoadInference(dir)
@@ -1106,7 +1106,7 @@ func TestInferenceYAMLAdvancedRoundTrip(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	if err := WriteInference(dir, cfg); err != nil {
+	if err := seedInference(dir, cfg); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := LoadInference(dir)
@@ -1184,7 +1184,7 @@ resources:
 		t.Fatalf("legacy chat options not folded: %+v", cfg.Instances[0].Advanced)
 	}
 
-	if err := WriteInference(dir, cfg); err != nil {
+	if err := seedInference(dir, cfg); err != nil {
 		t.Fatalf("write: %v", err)
 	}
 	raw, err := os.ReadFile(path)
@@ -1295,7 +1295,7 @@ func TestKeychainKeyRoundTrip(t *testing.T) {
 		KeyValue:  "inference/openai-inst-0a1b2c3d",
 		Enabled:   true,
 	}}}
-	if err := WriteInference(dir, cfg); err != nil {
+	if err := seedInference(dir, cfg); err != nil {
 		t.Fatal(err)
 	}
 	got, err := LoadInference(dir)
@@ -1318,7 +1318,7 @@ func TestKeychainKeyRoundTrip(t *testing.T) {
 // inherit a credential it never had.
 func TestSettingsSaveCarriesStoredCredential(t *testing.T) {
 	dir := t.TempDir()
-	if err := WriteInference(dir, InferenceConfig{Instances: []Instance{{
+	if err := seedInference(dir, InferenceConfig{Instances: []Instance{{
 		StableID:  "inst-a",
 		Type:      "openai",
 		Name:      "gateway",
@@ -1381,7 +1381,7 @@ func TestInferenceStableIDRoundTrip(t *testing.T) {
 		KeyValue:  "sk-roundtrip",
 		Enabled:   true,
 	}}}
-	if err := WriteInference(dir, cfg); err != nil {
+	if err := seedInference(dir, cfg); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "opencraft.yaml"))
@@ -1413,7 +1413,7 @@ func TestInferenceStableIDRoundTrip(t *testing.T) {
 func TestWriteAndRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	cfg := envKeyed(t, "openai")
-	if err := WriteInference(dir, cfg); err != nil {
+	if err := seedInference(dir, cfg); err != nil {
 		t.Fatal(err)
 	}
 	target := filepath.Join(dir, "opencraft.yaml")
@@ -1469,7 +1469,7 @@ func TestWriteInferenceMultipleModelsLoads(t *testing.T) {
 		},
 		Enabled: true,
 	}}}
-	if err := WriteInference(dir, cfg); err != nil {
+	if err := seedInference(dir, cfg); err != nil {
 		t.Fatal(err)
 	}
 	// The merged config view (strict resource decode) must accept one
@@ -1523,7 +1523,7 @@ agents:
 	// Re-save a different inference selection: openai now first,
 	// deepseek removed.
 	cfg := envKeyed(t, "openai")
-	if err := WriteInference(dir, cfg); err != nil {
+	if err := seedInference(dir, cfg); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "opencraft.yaml"))
@@ -1566,7 +1566,7 @@ func TestWriteInferenceRejectsNonMappingUserLayer(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "opencraft.yaml", "just a scalar\n")
 	cfg := envKeyed(t, "openai")
-	if err := WriteInference(dir, cfg); err == nil {
+	if err := seedInference(dir, cfg); err == nil {
 		t.Fatal("WriteInference over a non-mapping user layer must fail, not silently clobber it")
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "opencraft.yaml"))
@@ -1601,7 +1601,7 @@ resources:
                   name: deployment
 `
 	writeFile(t, dir, "opencraft.yaml", existing)
-	if err := WriteInference(dir, envKeyed(t, "openai")); err != nil {
+	if err := seedInference(dir, envKeyed(t, "openai")); err != nil {
 		t.Fatal(err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "opencraft.yaml"))
@@ -1639,7 +1639,7 @@ func TestLoadInferenceMissingConfig(t *testing.T) {
 func TestWriteInferenceOverwritesEmptyUserLayer(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "opencraft.yaml", "")
-	if err := WriteInference(dir, envKeyed(t, "openai")); err != nil {
+	if err := seedInference(dir, envKeyed(t, "openai")); err != nil {
 		t.Fatalf("WriteInference over empty layer: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(dir, "opencraft.yaml"))
@@ -1656,7 +1656,7 @@ func TestWriteInferenceOverwritesEmptyUserLayer(t *testing.T) {
 func TestWriteInferenceRefusesNonMappingLayer(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "opencraft.yaml", "just some text\n")
-	if err := WriteInference(dir, envKeyed(t, "openai")); err == nil {
+	if err := seedInference(dir, envKeyed(t, "openai")); err == nil {
 		t.Fatal("WriteInference over a scalar layer must refuse")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"github.com/GizClaw/flowcraft/core/inference/model"
 
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/testing/configseed"
 )
 
 func TestReasoningCapableThink(t *testing.T) {
@@ -25,7 +26,7 @@ func TestReasoningCapableThink(t *testing.T) {
 				},
 			}},
 		}}}
-		if err := config.WriteInference(dir, cfg); err != nil {
+		if err := configseed.Write(dir, cfg); err != nil {
 			t.Fatal(err)
 		}
 		if got := reasoningCapableThink(dir, "", "medium"); got != "medium" {
@@ -44,7 +45,7 @@ func TestReasoningCapableThink(t *testing.T) {
 				Name: "m0",
 			}},
 		}}}
-		if err := config.WriteInference(dir, cfg); err != nil {
+		if err := configseed.Write(dir, cfg); err != nil {
 			t.Fatal(err)
 		}
 		if got := reasoningCapableThink(dir, "", "medium"); got != "" {

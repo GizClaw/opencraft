@@ -2,10 +2,12 @@ package bindings
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
+	"runtime/pprof"
 	"strconv"
 	"strings"
 	"time"
@@ -296,6 +298,63 @@ func (b *Diagnostics) ReportFrontendPerf(samples []FrontendPerfSample) {
 			frontendVitalsScore.Record(ctx, sample.Value)
 		}
 	}
+}
+
+// HeapProfileResult is where one captured heap profile landed on disk.
+type HeapProfileResult struct {
+	Path  string `json:"path"`
+	Bytes int64  `json:"bytes"`
+}
+
+// CaptureHeapProfile writes a runtime/pprof heap profile next to the app
+// logs so a long-running process can be analyzed offline with
+// `go tool pprof -inuse_space <binary> <file>`.
+//
+// The profile is taken after a forced GC: what matters for a memory
+// investigation is what the process still retains, and without the
+// collection the sample is dominated by allocation churn that the
+// runtime is about to reclaim anyway.
+func (b *Diagnostics) CaptureHeapProfile() (HeapProfileResult, error) {
+	dir := filepath.Join(b.core.DataDir, "diagnostics")
+	result, err := writeHeapProfile(dir, time.Now().UTC())
+	if err != nil {
+		return HeapProfileResult{}, err
+	}
+	flowtelemetry.Info(b.core.Shell.Context(), "diagnostics: heap profile captured",
+		log.String("path", result.Path),
+		log.Int64("bytes", result.Bytes))
+	return result, nil
+}
+
+// writeHeapProfile is the testable half: it creates the directory, forces
+// a GC, and writes the profile.
+func writeHeapProfile(
+	dir string,
+	now time.Time,
+) (HeapProfileResult, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return HeapProfileResult{}, err
+	}
+	path := filepath.Join(dir,
+		fmt.Sprintf("heap-%s.pprof", now.Format("20060102-150405")))
+	f, err := os.Create(path)
+	if err != nil {
+		return HeapProfileResult{}, err
+	}
+	goruntime.GC()
+	writeErr := pprof.WriteHeapProfile(f)
+	closeErr := f.Close()
+	if writeErr != nil {
+		return HeapProfileResult{}, writeErr
+	}
+	if closeErr != nil {
+		return HeapProfileResult{}, closeErr
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return HeapProfileResult{}, err
+	}
+	return HeapProfileResult{Path: path, Bytes: info.Size()}, nil
 }
 
 // MetricPoint is one local metric sample shown in the diagnostics panel.

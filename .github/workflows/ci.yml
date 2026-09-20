@@ -182,7 +182,9 @@ jobs:
         run: npm run build --prefix frontend
 
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
+        # webkit runs the perf budget spec (it matches the desktop app's
+        # JSC/WKWebView engine); the rest of the suite stays on chromium.
+        run: npx playwright install --with-deps chromium webkit
         working-directory: frontend
 
       - name: Run Playwright E2E

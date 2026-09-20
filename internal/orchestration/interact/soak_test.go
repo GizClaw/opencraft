@@ -28,7 +28,7 @@ func (f *fakeSoakRuntime) Attach(
 func TestSoakBrokerAttachDetach(t *testing.T) {
 	rt := &fakeSoakRuntime{}
 	for i := 0; i < 100; i++ {
-		b := New(rt, Auto{})
+		b := NewWithBackendResolver(rt, Auto{}, nil)
 		if err := b.Attach(context.Background()); err != nil {
 			t.Fatalf("attach %d: %v", i, err)
 		}

@@ -37,6 +37,63 @@ func convMsg(role, text string) string {
 	return `{"role":"` + role + `","content":{"parts":[{"type":"text","text":"` + esc + `"}]}}`
 }
 
+// TestExecuteShardsOversizedFolds pins the bound on one condensation
+// request: a fold larger than maxCondenseChars is condensed in shards and
+// merged, so no single provider call carries the whole transcript, while
+// every message still ends up covered by the fold.
+func TestExecuteShardsOversizedFolds(t *testing.T) {
+	store, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var (
+		calls     int
+		maxPrompt int
+	)
+	tool := &Tool{
+		store: store,
+		generate: func(
+			_ context.Context, req inference.GenerateRequest,
+		) (inference.GenerateResponse, error) {
+			calls++
+			prompt := req.Input.Content.Text()
+			if len(prompt) > maxPrompt {
+				maxPrompt = len(prompt)
+			}
+			return inference.GenerateResponse{
+				Message: message.NewTextMessage(message.RoleAssistant,
+					"summary of a shard"),
+			}, nil
+		},
+	}
+
+	// Four messages of ~300 KiB each render to ~1.2 MiB, three times the
+	// per-request cap.
+	body := strings.Repeat("x", 300<<10)
+	args := `{"budget_chars":4096,"conversation":[` +
+		convMsg("user", body+" one") + `,` +
+		convMsg("assistant", body+" two") + `,` +
+		convMsg("user", body+" three") + `,` +
+		convMsg("assistant", body+" four") + `]}`
+	out, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if summary := patchSummary(t, out.Text()); summary == "" {
+		t.Fatal("fold produced an empty summary")
+	}
+	if calls < 2 {
+		t.Fatalf("condense calls = %d, want sharded passes", calls)
+	}
+	// Each request carries one shard; the merge pass carries the partial
+	// summaries and stays small. Allow a little headroom for the system
+	// instruction and the truncation marker.
+	if maxPrompt > maxCondenseChars+(64<<10) {
+		t.Fatalf("largest prompt = %d chars, want <= %d", maxPrompt,
+			maxCondenseChars+(64<<10))
+	}
+}
+
 func TestExecuteCondensesAndPersistsArtifact(t *testing.T) {
 	store, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
 	if err != nil {

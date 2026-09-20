@@ -199,7 +199,7 @@ func TestWebSearchExtensionsCustomDriverRoundTrip(t *testing.T) {
 			},
 		}},
 	}}}
-	if err := WriteInference(dir, written); err != nil {
+	if err := seedInference(dir, written); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := LoadInference(dir)

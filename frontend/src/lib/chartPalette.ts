@@ -31,8 +31,3 @@ export const SERIES_CACHE_WRITE = SERIES[2];
 export const SERIES_CACHE_READ = SERIES[3];
 /** Reasoning / thinking tokens. */
 export const SERIES_REASONING = SERIES[4];
-
-/** Series color by index, wrapping like the old per-chart palettes did. */
-export function seriesColor(index: number): string {
-  return SERIES[index % SERIES.length];
-}

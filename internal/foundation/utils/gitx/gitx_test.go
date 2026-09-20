@@ -48,41 +48,6 @@ func TestRootFindsRepoAncestor(t *testing.T) {
 	}
 }
 
-func TestChangedPaths(t *testing.T) {
-	root := t.TempDir()
-	initRepo(t, root)
-	ctx := context.Background()
-	if got := ChangedPaths(ctx, root, ChangedOptions{}); len(got) != 0 {
-		t.Fatalf("clean repo changed paths = %v", got)
-	}
-	for _, name := range []string{"keep.txt", "staged.txt", "new.txt"} {
-		if err := os.WriteFile(filepath.Join(root, name), []byte(name+"\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	cmd := exec.Command("git", "-C", root, "add", "staged.txt")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git add: %v\n%s", err, out)
-	}
-	got := ChangedPaths(ctx, root, ChangedOptions{})
-	want := map[string]bool{"keep.txt": true, "staged.txt": true, "new.txt": true}
-	if len(got) != len(want) {
-		t.Fatalf("changed paths = %v, want %v", got, want)
-	}
-	for _, p := range got {
-		if !want[p] {
-			t.Fatalf("unexpected changed path %q", p)
-		}
-	}
-}
-
-func TestChangedPathsNonRepo(t *testing.T) {
-	got := ChangedPaths(context.Background(), t.TempDir(), ChangedOptions{})
-	if got != nil {
-		t.Fatalf("non-repo changed paths = %v, want nil", got)
-	}
-}
-
 // TestRunBoundedFailureCarriesContext pins the diagnosability of a bare
 // "exit status 128": the record has to name the repository and the argv,
 // otherwise the warning cannot be traced back to a workspace.

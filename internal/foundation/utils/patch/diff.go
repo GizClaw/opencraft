@@ -41,13 +41,14 @@ type FileDiff struct {
 // workspace root.
 type ReadFile func(path string) (string, error)
 
-// Diff parses a codex-format patch and renders every file operation as
-// diff lines with line numbers. readFile supplies the current file
-// content (used to compute real line numbers for update/delete
-// operations); when a file cannot be read the lines still render, with
-// numbers falling back to hunk-relative positions.
+// Diff parses a codex-format patch (or a standard unified diff) and
+// renders every file operation as diff lines with line numbers. readFile
+// supplies the current file content (used to compute real line numbers
+// for update/delete operations); when a file cannot be read the lines
+// still render, with numbers falling back to hunk-relative positions.
 func Diff(patch string, readFile ReadFile) ([]FileDiff, error) {
-	if _, err := Parse(patch); err != nil {
+	parsed, err := ParseAny(patch)
+	if err != nil {
 		return nil, err
 	}
 	if readFile == nil {
@@ -55,7 +56,7 @@ func Diff(patch string, readFile ReadFile) ([]FileDiff, error) {
 			return "", os.ErrNotExist
 		}
 	}
-	ops := parsePatch(patch)
+	ops := opsToRenderOps(parsed, patch)
 	out := make([]FileDiff, 0, len(ops))
 	for _, op := range ops {
 		fd := FileDiff{Path: op.path, Action: op.kind.String()}
@@ -107,6 +108,9 @@ type patchOp struct {
 type patchHunk struct {
 	anchor string
 	lines  []diffEntry
+	// atLine is the insertion position a unified-diff hunk header carries
+	// when the hunk has no context to match ("@@ -5,0 +6,2 @@").
+	atLine int
 }
 
 type diffEntry struct {
@@ -182,10 +186,46 @@ func parsePatch(patch string) []*patchOp {
 					kind: DiffLineContext,
 					text: strings.TrimPrefix(line, " "),
 				})
+			case line == "":
+				// trailing blank inside a hunk: ignore
+			case strings.HasPrefix(strings.TrimSpace(line), "***"):
+				// Unknown directive: Parse already rejected it.
+			default:
+				// Context line written without the leading space marker
+				// (its own content starts with a tab or another
+				// character). Keep the line verbatim, matching Parse.
+				h := &current.hunks[len(current.hunks)-1]
+				h.lines = append(h.lines, diffEntry{
+					kind: DiffLineContext,
+					text: line,
+				})
 			}
 		}
 	}
 	return ops
+}
+
+// opsToRenderOps converts parsed ops into the render representation.
+// Envelope patches are re-read with parsePatch (the lenient pass the
+// renderer has always used); unified diffs already carry their hunk
+// lines in file order, so they convert directly.
+func opsToRenderOps(ops []*op, patch string) []*patchOp {
+	if !LooksLikeUnifiedDiff(patch) {
+		return parsePatch(patch)
+	}
+	out := make([]*patchOp, 0, len(ops))
+	for _, op := range ops {
+		po := &patchOp{kind: op.kind, path: op.path, body: op.body}
+		for _, h := range op.hunks {
+			ph := patchHunk{anchor: h.anchor, atLine: h.atLine}
+			for _, e := range h.entries {
+				ph.lines = append(ph.lines, diffEntry(e))
+			}
+			po.hunks = append(po.hunks, ph)
+		}
+		out = append(out, po)
+	}
+	return out
 }
 
 // renderUpdate renders update hunks against the real file content,
@@ -292,6 +332,15 @@ func findHunkStart(lines []string, h patchHunk) int {
 	}
 	if len(removed) == 0 {
 		if h.anchor == "" {
+			if h.atLine > 0 {
+				// Unified-diff insertion: the header names the line the
+				// added lines follow.
+				idx := h.atLine - 1
+				if idx > len(lines)-1 {
+					idx = len(lines) - 1
+				}
+				return idx
+			}
 			return -1
 		}
 		for i, line := range lines {

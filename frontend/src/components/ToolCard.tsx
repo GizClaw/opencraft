@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronRight,
   ClipboardList,
+  Copy,
   File,
   FileDiff,
   FileSearch,
@@ -25,6 +26,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import {
+  toUnifiedDiff,
   looksLikeUnifiedDiff,
   parseUnifiedDiff,
   recoverJsonContent,
@@ -34,6 +36,16 @@ import { useToolElapsedLabel } from '../lib/toolTiming';
 import type { FilePreview, PatchFileDTO } from '../lib/types';
 import { GitDiffView } from './viewer/DiffView';
 import { ICON } from './ui/icon';
+
+// INLINE_DIFF_LINE_LIMIT is how many diff lines a patch or written file
+// may render inline before the card folds its body behind one row. A
+// long turn can hold thousands of patch lines, and every rendered line
+// costs five elements (GitDiffLine), so expanding one turn's process
+// rows used to mount tens of thousands of nodes in a single commit.
+const INLINE_DIFF_LINE_LIMIT = 40;
+// DIFF_RENDER_LINE_LIMIT caps how many lines a diff renders once the
+// card is open; the diff footer offers the rest.
+const DIFF_RENDER_LINE_LIMIT = 400;
 
 function parseArgs(tool: ToolView): Record<string, unknown> | null {
   try {
@@ -1230,12 +1242,15 @@ function ViewImageView({ tool }: { tool: ToolView }) {
 // lightweight status line only while running or on failure.
 export const WriteView = memo(function WriteView({ tool }: { tool: ToolView }) {
   const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
   const args = parseArgs(tool);
   const path = args && typeof args.file_path === 'string' ? args.file_path : '';
   const content = args && typeof args.content === 'string' ? args.content : '';
   const running = tool.status === 'running';
   const failed = tool.status === 'error';
   const lines = content.split('\n').length;
+  const large = lines > INLINE_DIFF_LINE_LIMIT;
+  const showBody = !large || open;
 
   return (
     <div className="my-1.5 space-y-1">
@@ -1248,10 +1263,27 @@ export const WriteView = memo(function WriteView({ tool }: { tool: ToolView }) {
       {!running && failed && (
         <div className="px-2.5 py-2 text-xs text-err">{tool.result}</div>
       )}
-      {!running && !failed && content && (
+      {!running && !failed && content && !showBody && (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="flex w-full items-center gap-2 rounded-control border border-edge bg-panel2 px-3 py-2 text-left text-sm transition-colors hover:bg-panel"
+        >
+          <FileDiff size={ICON.sm} className="shrink-0 text-accent" />
+          <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg">
+            {path || t('tool.writeFile')}
+          </span>
+          <span className="shrink-0 text-micro text-dim tabular-nums">
+            {lines} {t('tool.lines')}
+          </span>
+          <ChevronRight size={ICON.sm} className="shrink-0 text-dim" />
+        </button>
+      )}
+      {!running && !failed && content && showBody && (
         <GitDiffView
           wrap
           expandable
+          maxLines={DIFF_RENDER_LINE_LIMIT}
           files={[
             {
               path,
@@ -3351,21 +3383,41 @@ function resultSummary(
 }
 
 function DiffBlock({ patch }: { patch: string }) {
+  const { t } = useTranslation();
+  const [showAll, setShowAll] = useState(false);
   const lines = patch.split('\n');
+  const truncated = !showAll && lines.length > DIFF_RENDER_LINE_LIMIT;
+  const shown = truncated ? lines.slice(0, DIFF_RENDER_LINE_LIMIT) : lines;
   return (
-    <pre className="max-h-80 overflow-y-auto whitespace-pre-wrap break-words px-2.5 py-2 font-mono text-xs">
-      {lines.map((line, idx) => {
-        let cls = 'text-dim';
-        if (line.startsWith('+')) cls = 'text-ok';
-        else if (line.startsWith('-')) cls = 'text-err';
-        else if (line.startsWith('@@')) cls = 'text-accent';
-        return (
-          <div key={idx} className={cls}>
-            {line}
-          </div>
-        );
-      })}
-    </pre>
+    <div>
+      <pre className="max-h-80 overflow-y-auto whitespace-pre-wrap break-words px-2.5 py-2 font-mono text-xs">
+        {shown.map((line, idx) => {
+          let cls = 'text-dim';
+          if (line.startsWith('+')) cls = 'text-ok';
+          else if (line.startsWith('-')) cls = 'text-err';
+          else if (line.startsWith('@@')) cls = 'text-accent';
+          return (
+            <div key={idx} className={cls}>
+              {line}
+            </div>
+          );
+        })}
+      </pre>
+      {truncated && (
+        <div className="flex items-center justify-end gap-2 border-t border-edge/60 px-2.5 py-1 text-micro text-dim">
+          <span className="tabular-nums">
+            {t('tool.moreLines', { count: lines.length - shown.length })}
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowAll(true)}
+            className="rounded-tight border border-edge px-1.5 py-0.5 hover:text-fg"
+          >
+            {t('tool.showAll')}
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -3424,6 +3476,20 @@ function usePatchFiles(tool: ToolView): {
   return { files, failed, patch };
 }
 
+// tallyRawPatch counts the +/- lines of a patch the line-level renderer
+// could not turn into rows, so the card header still summarizes it.
+// Envelope markers (*** Begin Patch, @@, ...) are ignored.
+function tallyRawPatch(patch: string): { added: number; removed: number } {
+  let added = 0;
+  let removed = 0;
+  for (const line of patch.split('\n')) {
+    if (line.startsWith('+++') || line.startsWith('---')) continue;
+    if (line.startsWith('+')) added += 1;
+    else if (line.startsWith('-')) removed += 1;
+  }
+  return { added, removed };
+}
+
 // patchResultFiles unwraps the tool result envelope
 // ({files: [{path, action}]}) the apply_patch tool returns.
 function patchResultFiles(
@@ -3454,6 +3520,8 @@ export const ApplyPatchView = memo(function ApplyPatchView({
 }) {
   const { t } = useTranslation();
   const openFileTarget = useStore((s) => s.openFileTarget);
+  const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
   const running = tool.status === 'running';
   const errored = tool.status === 'error';
   const { files, failed: renderFailed, patch } = usePatchFiles(tool);
@@ -3476,6 +3544,17 @@ export const ApplyPatchView = memo(function ApplyPatchView({
   const headerLabel = files
     ? t('tool.filesChanged', { count: files.length })
     : t('tool.patch');
+  // Count the raw patch when the renderer had nothing to show: that path
+  // renders the patch text line by line too, so it needs the same fold.
+  const totalLines = files
+    ? files.reduce((n, f) => n + f.lines.length, 0)
+    : patch.split('\n').length;
+  // The raw fallback still belongs to a diff-shaped card: tally its +/- so
+  // the header says what the patch does even when the行级 renderer could
+  // not match it against the file on disk.
+  const rawTotals = files ? null : tallyRawPatch(patch);
+  const large = totalLines > INLINE_DIFF_LINE_LIMIT;
+  const showBody = !large || expanded;
   // The diff is the message. The result envelope only adds rows when
   // there is no rendered diff, and the raw text only when it carries
   // something the UI cannot show otherwise (an error, or a result the
@@ -3485,6 +3564,21 @@ export const ApplyPatchView = memo(function ApplyPatchView({
     tool.result !== undefined && (errored || resultFiles === null)
       ? tool.result
       : null;
+
+  // copyPatch hands the patch to other tools: a rendered diff copies as a
+  // standard unified diff (`git apply`-able), while the raw fallback
+  // copies the original text unchanged.
+  const copyPatch = async () => {
+    const text = files && files.length > 0 ? toUnifiedDiff(files) : patch;
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard unavailable (e.g. non-secure context): ignore
+    }
+  };
 
   return (
     <div className="my-1.5 overflow-hidden rounded-card border border-edge bg-panel2">
@@ -3503,16 +3597,43 @@ export const ApplyPatchView = memo(function ApplyPatchView({
           {running ? t('tool.running') : headerLabel}
         </span>
         <ToolElapsed tool={tool} />
-        {totals && (
+        <button
+          type="button"
+          onClick={() => void copyPatch()}
+          className="flex shrink-0 items-center rounded-tight border border-edge p-1 text-dim hover:text-fg"
+          aria-label={
+            files && files.length > 0
+              ? t('tool.copyUnifiedDiff')
+              : t('tool.copyPatch')
+          }
+          data-tip={
+            files && files.length > 0
+              ? t('tool.copyUnifiedDiff')
+              : t('tool.copyPatch')
+          }
+          tabIndex={-1}
+        >
+          {copied ? <Check size={ICON.xs} /> : <Copy size={ICON.xs} />}
+        </button>
+        {(totals ?? rawTotals) && (
           <span className="shrink-0 font-mono text-micro tabular-nums">
-            <span className="text-ok">+{totals.added}</span>
+            <span className="text-ok">
+              +{(totals ?? rawTotals)?.added ?? 0}
+            </span>
             <span className="text-dim"> </span>
-            <span className="text-err">−{totals.removed}</span>
+            <span className="text-err">
+              −{(totals ?? rawTotals)?.removed ?? 0}
+            </span>
           </span>
         )}
       </div>
       {renderFailed ? (
-        <DiffBlock patch={patch} />
+        <>
+          <p className="border-b border-edge px-2.5 py-1 text-micro text-dim">
+            {t('tool.diffRawNotice')}
+          </p>
+          <DiffBlock patch={patch} />
+        </>
       ) : files === null ? (
         running ? (
           <div className="space-y-1.5 px-3 py-2.5" aria-hidden="true">
@@ -3521,17 +3642,35 @@ export const ApplyPatchView = memo(function ApplyPatchView({
             <div className="h-3 w-2/3 animate-pulse rounded-tight bg-panel2" />
           </div>
         ) : (
-          <DiffBlock patch={patch} />
+          <>
+            <p className="border-b border-edge px-2.5 py-1 text-micro text-dim">
+              {t('tool.diffRawNotice')}
+            </p>
+            <DiffBlock patch={patch} />
+          </>
         )
-      ) : (
+      ) : showBody ? (
         <GitDiffView
           files={files}
           collapsible={false}
           wrap
           framed={false}
           expandable
+          maxLines={DIFF_RENDER_LINE_LIMIT}
           maxHeight="max-h-64"
         />
+      ) : (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="flex w-full items-center justify-end gap-2 px-2.5 py-1.5 text-xs text-dim transition-colors hover:text-fg"
+        >
+          <span className="tabular-nums">
+            {totalLines} {t('tool.lines')}
+          </span>
+          <span>{t('tool.showFullDiff')}</span>
+          <ChevronRight size={ICON.sm} className="shrink-0" />
+        </button>
       )}
       {showResultFiles && showResultFiles.length > 0 && (
         <div className="space-y-0.5 border-t border-edge px-2.5 py-1.5 text-xs">
@@ -3672,6 +3811,13 @@ export const ToolCard = memo(function ToolCard({ tool }: { tool: ToolView }) {
   }
   if (tool.name === 'write_file') {
     return <WriteView tool={tool} />;
+  }
+  // apply_patch is dispatched here too, not only in StreamItemView: a
+  // patch inside a multi-call tool group renders through this card, and
+  // falling through to the generic card showed raw JSON arguments and a
+  // one-line result envelope instead of the diff.
+  if (tool.name === 'apply_patch') {
+    return <ApplyPatchView tool={tool} />;
   }
   if (tool.name === 'ask_user') {
     return <AskUserView tool={tool} />;

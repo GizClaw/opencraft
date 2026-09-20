@@ -3,9 +3,12 @@ package bindings
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+
+	flowtelemetry "github.com/GizClaw/flowcraft/core/telemetry"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/execpolicy"
@@ -311,19 +314,66 @@ func (b *Settings) RenderSkillPatch(
 }
 
 // ReadLog returns the tail of the app log file.
+//
+// The log is multi-megabyte after a long session and the diagnostics
+// viewer refreshes on demand, so the tail is read by seeking from the end
+// instead of loading the whole file: a window is read, and grown only
+// when it turned out to hold fewer lines than requested.
 func (b *Settings) ReadLog(n int) (string, error) {
 	if n <= 0 {
 		n = 200
 	}
-	data, err := os.ReadFile(
-		filepath.Join(b.core.DataDir, "logs", "opencraft.log"),
-	)
+	path := filepath.Join(b.core.DataDir, "logs", "opencraft.log")
+	f, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
-	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
+	defer func() {
+		flowtelemetry.WarnErr(b.core.Shell.Context(),
+			"settings: close log file failed", f.Close())
+	}()
+	info, err := f.Stat()
+	if err != nil {
+		return "", err
 	}
-	return strings.Join(lines, "\n"), nil
+	size := info.Size()
+	// maxWindow bounds one read even when the caller asks for a very long
+	// tail; 64 KiB per requested line is a generous average line estimate.
+	const minWindow = 64 << 10
+	maxWindow := int64(n) * 64 << 10
+	if maxWindow < minWindow {
+		maxWindow = minWindow
+	}
+	window := int64(minWindow)
+	for {
+		if window > size {
+			window = size
+		}
+		if window > maxWindow {
+			window = maxWindow
+		}
+		buf := make([]byte, window)
+		if _, err := f.ReadAt(buf, size-window); err != nil &&
+			!errors.Is(err, io.EOF) {
+			return "", err
+		}
+		reachedStart := window == size
+		body := strings.TrimRight(string(buf), "\n")
+		lines := []string{}
+		if body != "" {
+			lines = strings.Split(body, "\n")
+		}
+		if reachedStart || len(lines) > n || window >= maxWindow {
+			if !reachedStart && len(lines) > n {
+				// The window starts mid-line; that fragment is not a real
+				// first line, so drop it before keeping the tail.
+				lines = lines[1:]
+			}
+			if len(lines) > n {
+				lines = lines[len(lines)-n:]
+			}
+			return strings.Join(lines, "\n"), nil
+		}
+		window *= 4
+	}
 }

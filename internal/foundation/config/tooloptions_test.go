@@ -46,7 +46,7 @@ func toolOptionInstances() []Instance {
 func TestToolOptionsRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	instances := toolOptionInstances()
-	if err := WriteInference(dir, InferenceConfig{Instances: instances}); err != nil {
+	if err := seedInference(dir, InferenceConfig{Instances: instances}); err != nil {
 		t.Fatal(err)
 	}
 	opts := ToolOptions{
@@ -100,7 +100,7 @@ func TestToolOptionsRoundTrip(t *testing.T) {
 func TestSaveToolOptionsClearsRemovedBlocks(t *testing.T) {
 	dir := t.TempDir()
 	instances := toolOptionInstances()
-	if err := WriteInference(dir, InferenceConfig{Instances: instances}); err != nil {
+	if err := seedInference(dir, InferenceConfig{Instances: instances}); err != nil {
 		t.Fatal(err)
 	}
 	if err := SaveToolOptions(dir, ToolOptions{
@@ -123,7 +123,7 @@ func TestSaveToolOptionsClearsRemovedBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !got.IsZero() {
+	if len(got.Image) != 0 || len(got.Video) != 0 {
 		t.Fatalf("options = %+v, want empty", got)
 	}
 }
@@ -134,7 +134,7 @@ func TestSaveToolOptionsClearsRemovedBlocks(t *testing.T) {
 func TestToolOptionsReachTheDeployDocument(t *testing.T) {
 	dir := t.TempDir()
 	instances := toolOptionInstances()
-	if err := WriteInference(dir, InferenceConfig{Instances: instances}); err != nil {
+	if err := seedInference(dir, InferenceConfig{Instances: instances}); err != nil {
 		t.Fatal(err)
 	}
 	if err := SaveToolOptions(dir, ToolOptions{
@@ -455,7 +455,7 @@ func TestSettingsSavePrunesToolOptionsOfRemovedProviders(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "test-key")
 	dir := t.TempDir()
 	instances := toolOptionInstances()
-	if err := WriteInference(dir, InferenceConfig{Instances: instances}); err != nil {
+	if err := seedInference(dir, InferenceConfig{Instances: instances}); err != nil {
 		t.Fatal(err)
 	}
 	if err := SaveToolOptions(dir, ToolOptions{

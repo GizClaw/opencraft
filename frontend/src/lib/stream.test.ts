@@ -59,14 +59,12 @@ describe('groupToolCalls', () => {
     expect(groupToolCalls([a])).toEqual([[a]]);
   });
 
-  it('never groups apply_patch or write_file', () => {
+  it('groups apply_patch and write_file like any other tool', () => {
     const patch = tool('p', 'apply_patch');
     const write = tool('w', 'write_file');
     const exec = tool('e', 'exec_command');
     expect(groupToolCalls([patch, write, exec])).toEqual([
-      patch,
-      write,
-      [exec],
+      [patch, write, exec],
     ]);
   });
 
@@ -89,11 +87,7 @@ describe('groupToolCalls', () => {
     const patch = tool('p', 'apply_patch');
     const c = tool('c', 'exec_command');
     const d = tool('d', 'exec_command');
-    expect(groupToolCalls([a, b, patch, c, d])).toEqual([
-      [a, b],
-      patch,
-      [c, d],
-    ]);
+    expect(groupToolCalls([a, b, patch, c, d])).toEqual([[a, b, patch, c, d]]);
   });
 });
 
