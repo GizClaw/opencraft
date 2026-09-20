@@ -530,6 +530,11 @@ export const api = {
       !!reply.cancel,
     ),
   cancelTurn: (runID: string) => Conversation.CancelTurn(runID),
+  // steerTurn hands one mid-turn message to the live run: the engine
+  // delivers it at its next round boundary instead of waiting for the
+  // turn to end. A rejected message leaves the turn running, so the
+  // caller keeps its text and decides what to do next.
+  steerTurn: (runID: string, text: string) => Conversation.Steer(runID, text),
   listAgents: () => Agent.List() as unknown as Promise<AgentSummary[]>,
   unregisterAgent: (name: string) => Agent.Unregister(name),
   listDir: (dir: string, showHidden = false) =>

@@ -23,6 +23,7 @@ const apiMock = vi.hoisted(() => ({
   revealArtifact: vi.fn(async () => undefined),
   openArtifactWith: vi.fn(async () => undefined),
   startTurn: vi.fn(),
+  steerTurn: vi.fn(),
   cancelTurn: vi.fn(async () => undefined),
 }));
 
@@ -68,6 +69,7 @@ beforeEach(() => {
   stateRoot.resetWorkspace();
   vi.clearAllMocks();
   apiMock.workspace.mockResolvedValue('/tmp/w');
+  apiMock.steerTurn.mockResolvedValue(undefined);
 });
 
 describe('ChatView transcript windowing', () => {
@@ -304,17 +306,13 @@ describe('ChatView transcript windowing', () => {
 
     await userEvent.setup().click(screen.getByRole('textbox'));
     await userEvent.keyboard('next question');
-    expect(
-      screen.getByText(/Enter interrupts the reply · Tab queues the message/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Enter steers the reply/i)).toBeInTheDocument();
 
     // Tab stages the draft and clears the composer, which hides the
     // hint and surfaces the queue banner instead.
     await userEvent.keyboard('{Tab}');
     expect(
-      screen.queryByText(
-        /Enter interrupts the reply · Tab queues the message/i,
-      ),
+      screen.queryByText(/Enter steers the reply/i),
     ).not.toBeInTheDocument();
     expect(useStore.getState().conversations['s-1']?.queued).toMatchObject({
       text: 'next question',
@@ -339,7 +337,7 @@ describe('ChatView transcript windowing', () => {
       screen.queryByRole('button', { name: 'Send' }),
     ).not.toBeInTheDocument();
 
-    // Typing a draft restores Send; the button barges in like Enter.
+    // Typing a draft restores Send; the button steers like Enter.
     await userEvent.setup().click(screen.getByRole('textbox'));
     await userEvent.keyboard('next question');
     expect(
@@ -348,25 +346,64 @@ describe('ChatView transcript windowing', () => {
     expect(screen.getByRole('button', { name: 'Send' })).toBeInTheDocument();
 
     await userEvent.setup().click(screen.getByRole('button', { name: 'Send' }));
-    await vi.waitFor(() => expect(apiMock.startTurn).toHaveBeenCalled());
-    expect(apiMock.startTurn).toHaveBeenCalledWith(
-      's-1',
-      expect.objectContaining({
-        content: {
-          parts: [
-            expect.objectContaining({
-              type: 'text',
-              text: 'next question',
-            }),
-          ],
-        },
-      }),
-    );
-    // The draft was cleared by the interrupt, so Stop is primary again.
+    await vi.waitFor(() => expect(apiMock.steerTurn).toHaveBeenCalled());
+    expect(apiMock.steerTurn).toHaveBeenCalledWith('r-old', 'next question');
+    expect(apiMock.startTurn).not.toHaveBeenCalled();
+    // The draft became an optimistic transcript row, so Stop is primary
+    // again.
     expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
     expect(
       screen.queryByRole('button', { name: 'Send' }),
     ).not.toBeInTheDocument();
+  });
+
+  it('shows an undelivered steer as a card that can resend it', async () => {
+    setConversation([], []);
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    apiMock.startTurn.mockResolvedValue({
+      run_id: 'r-next',
+      context_id: 's-1',
+    });
+    render(<ChatView />);
+
+    // Mid-turn typing steers instead of interrupting.
+    await userEvent.setup().click(screen.getByRole('textbox'));
+    await userEvent.keyboard('changed my mind');
+    await userEvent.keyboard('{Enter}');
+    await vi.waitFor(() =>
+      expect(apiMock.steerTurn).toHaveBeenCalledWith(
+        'r-old',
+        'changed my mind',
+      ),
+    );
+    expect(apiMock.startTurn).not.toHaveBeenCalled();
+
+    // The turn ends without picking the steer up: the optimistic row
+    // gives way to a card so the text is still visible.
+    await act(async () => {
+      useStore.getState().handleEvent({
+        type: 'turn_end',
+        data: {
+          run_id: 'r-old',
+          conversation_id: 's-1',
+          status: 'completed',
+          steer_pending: 1,
+        },
+      });
+    });
+    const card = await screen.findByTestId('steer-undelivered');
+    expect(within(card).getByText('changed my mind')).toBeInTheDocument();
+    const scroller = screen.getByTestId('chat-scroll');
+    expect(within(scroller).queryByText('changed my mind')).toBeInTheDocument();
+
+    // Resending turns the card into a regular turn and drops it.
+    await userEvent
+      .setup()
+      .click(within(card).getByRole('button', { name: 'Send as a new turn' }));
+    await vi.waitFor(() => expect(apiMock.startTurn).toHaveBeenCalled());
+    expect(screen.queryByTestId('steer-undelivered')).not.toBeInTheDocument();
   });
 
   it('renders recognizable badges for common document attachments', async () => {

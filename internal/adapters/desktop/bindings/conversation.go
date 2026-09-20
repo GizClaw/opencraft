@@ -158,6 +158,27 @@ func resultErr(res *agent.Result) error {
 	return res.Err
 }
 
+// steerPendingStateKey is the core session result-state key recording
+// how many steered messages a settled turn left undelivered. Reading it
+// here (rather than from an event) follows the core contract: run-end
+// is published before the turn settles, so only the result knows.
+const steerPendingStateKey = "session.pending_steer"
+
+// pendingSteerCount reads the undelivered-steer count off a turn result.
+// Zero covers both "nothing was steered" and "everything was delivered".
+func pendingSteerCount(res *agent.Result) int {
+	if res == nil || res.State == nil {
+		return 0
+	}
+	switch v := res.State[steerPendingStateKey].(type) {
+	case int:
+		return v
+	case float64:
+		return int(v)
+	}
+	return 0
+}
+
 func (b *Conversation) waitTurn(
 	ctx context.Context,
 	run *host.Run,
@@ -182,6 +203,7 @@ func (b *Conversation) waitTurn(
 		requestID, responseID,
 		lastAssistantOutput(res), finishedAt, durationMs,
 	)
+	end.SteerPending = pendingSteerCount(res)
 	if res != nil {
 		if report, ok := worldstate.CompactionReportFromBoard(res.LastBoard); ok &&
 			!report.Empty() {

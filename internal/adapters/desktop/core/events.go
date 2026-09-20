@@ -59,6 +59,12 @@ type TurnEndEvent struct {
 	// the UI says so once instead of leaving the user to wonder why a
 	// familiar conversation suddenly cost more.
 	Compaction *CompactionEvent `json:"compaction,omitempty"`
+	// SteerPending is how many mid-turn steered messages the turn ended
+	// without delivering. The count lives on the turn result state, not
+	// in an event, because the run-end envelope is published before the
+	// turn settles; the UI reads it to keep the optimistic steer rows it
+	// drew from silently vanishing with archive reconciliation.
+	SteerPending int `json:"steer_pending,omitempty"`
 }
 
 // CompactionEvent mirrors worldstate.CompactionReport onto the wire.
