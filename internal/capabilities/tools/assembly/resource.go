@@ -1,8 +1,9 @@
 // Package assembly owns opencraft's tool.Assembly/opencraft factory:
 // the core middleware chain (recover / timeout / concurrency) plus the
-// result-quality and security middlewares — truncate (persisted
-// excerpt), result_limit (hard ceiling), redact (secret stripping)
-// and audit (append-only, redacted tool-call trail).
+// no-progress guard (repeat) and the result-quality and security
+// middlewares — truncate (persisted excerpt), result_limit (hard
+// ceiling), redact (secret stripping) and audit (append-only, redacted
+// tool-call trail).
 package assembly
 
 import (
@@ -36,6 +37,7 @@ type middlewareSettings struct {
 	Concurrency *toolmiddleware.ConcurrencySettings `json:"concurrency,omitempty"`
 	Truncate    *TruncateSettings                   `json:"truncate,omitempty"`
 	ResultLimit *ResultLimitSettings                `json:"result_limit,omitempty"`
+	Repeat      *RepeatSettings                     `json:"repeat,omitempty"`
 	Redact      *RedactSettings                     `json:"redact,omitempty"`
 	Audit       *AuditSettings                      `json:"audit,omitempty"`
 	// ResultPartBudgetBytes caps the encoded size of one result's
@@ -120,8 +122,6 @@ func buildMiddleware(
 	core := toolmiddleware.Settings{}
 	if s != nil {
 		core.Recover = s.Recover
-		core.Timeout = s.Timeout
-		core.Concurrency = s.Concurrency
 		// Non-text result parts are bounded even when the text limit is
 		// off: a tool result rides every later turn's context, and media
 		// has no natural size. flowcraft applies its own default (1 MiB)
@@ -141,6 +141,24 @@ func buildMiddleware(
 	if s == nil {
 		return mws, nil
 	}
+	// The repeat guard is spliced between recover and timeout: recover
+	// stays outermost (it contains the whole chain), while the guard has
+	// to see a call before the timeout wrapper does so a refused repeat
+	// never reaches execution. Timeout and concurrency are built after
+	// it in a second pass for the same reason.
+	if mw, err := repeatMiddleware(s.Repeat); err != nil {
+		return nil, err
+	} else if mw != nil {
+		mws = append(mws, mw)
+	}
+	built, err = toolmiddleware.FromSettings(toolmiddleware.Settings{
+		Timeout:     s.Timeout,
+		Concurrency: s.Concurrency,
+	})
+	if err != nil {
+		return nil, err
+	}
+	mws = append(mws, built...)
 
 	// Redaction rules are compiled once and shared: they drive both the
 	// model-facing middleware and the audit sink's redacted copies, so

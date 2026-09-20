@@ -212,15 +212,23 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Stream {
-		s.writeStream(w, reply)
+		s.writeStream(w, reply, idx)
 		return
 	}
-	if err := json.NewEncoder(w).Encode(s.completion(reply)); err != nil {
+	if err := json.NewEncoder(w).Encode(s.completion(reply, idx)); err != nil {
 		http.Error(w, "encode response", http.StatusInternalServerError)
 	}
 }
 
-func (s *Server) completion(reply Reply) map[string]any {
+// toolCallID mints one call id. Real providers issue a fresh id per
+// call, so a script whose model repeats the same call still produces
+// distinguishable ids; the request index keeps them unique per round
+// even when the reply itself repeats.
+func toolCallID(reqIdx, i int) string {
+	return fmt.Sprintf("call_%d_%d", reqIdx, i+1)
+}
+
+func (s *Server) completion(reply Reply, reqIdx int) map[string]any {
 	msg := map[string]any{"role": "assistant", "content": reply.Text}
 	finish := "stop"
 	responseID := reply.ResponseID
@@ -232,7 +240,7 @@ func (s *Server) completion(reply Reply) map[string]any {
 		var calls []map[string]any
 		for i, tc := range reply.ToolCalls {
 			calls = append(calls, map[string]any{
-				"id":   fmt.Sprintf("call_%d", i+1),
+				"id":   toolCallID(reqIdx, i),
 				"type": "function",
 				"function": map[string]any{
 					"name":      tc.Name,
@@ -264,7 +272,7 @@ func (s *Server) completion(reply Reply) map[string]any {
 	return out
 }
 
-func (s *Server) writeStream(w http.ResponseWriter, reply Reply) {
+func (s *Server) writeStream(w http.ResponseWriter, reply Reply, reqIdx int) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
@@ -305,7 +313,7 @@ func (s *Server) writeStream(w http.ResponseWriter, reply Reply) {
 		var calls []map[string]any
 		for i, tc := range reply.ToolCalls {
 			calls = append(calls, map[string]any{
-				"id":   fmt.Sprintf("call_%d", i+1),
+				"id":   toolCallID(reqIdx, i),
 				"type": "function",
 				"function": map[string]any{
 					"name":      tc.Name,
