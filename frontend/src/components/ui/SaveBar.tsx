@@ -49,7 +49,7 @@ export function SaveBar({
         )}
         {children}
         {error !== '' && (
-          <span className="min-w-0 truncate text-err" title={error}>
+          <span className="min-w-0 truncate text-err" data-tip={error}>
             {error}
           </span>
         )}

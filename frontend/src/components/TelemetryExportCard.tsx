@@ -70,7 +70,7 @@ export function TelemetryExportCard() {
             {t('config.diagTelemetryHint')}
           </p>
           {status.configured && (
-            <p className="mt-1 break-all font-mono text-micro text-dim/80">
+            <p className="mt-1 break-all font-mono text-micro text-faint">
               {t('config.diagTelemetryActive', {
                 endpoint: status.endpoint,
                 owner: status.owner || t('config.diagTelemetryApp'),

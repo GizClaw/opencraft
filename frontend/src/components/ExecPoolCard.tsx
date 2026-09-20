@@ -121,7 +121,7 @@ export function ExecPoolCard() {
             <Cpu size={ICON.sm} className="shrink-0 text-accent" />
             {t('config.diagExecPoolTitle')}
           </div>
-          <p className="mt-1 text-xs text-dim/80">
+          <p className="mt-1 text-xs text-faint">
             {t('config.diagExecPoolHint')}
           </p>
         </div>
@@ -161,7 +161,7 @@ export function ExecPoolCard() {
             />
           </label>
         ))}
-        <p className="col-span-2 text-micro text-dim/80">
+        <p className="col-span-2 text-micro text-faint">
           {t('config.diagExecPoolRanges')}
         </p>
       </div>

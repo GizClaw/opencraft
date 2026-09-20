@@ -84,7 +84,7 @@ export function PluginCapabilitiesSection({
                       {tool.description}
                     </p>
                   )}
-                  <p className="mt-1 break-all font-mono text-micro text-dim/70">
+                  <p className="mt-1 break-all font-mono text-micro text-faint">
                     {tool.method}
                   </p>
                 </div>
@@ -129,7 +129,7 @@ export function PluginCapabilitiesSection({
                       {skill.description}
                     </p>
                   )}
-                  <p className="mt-1 break-all font-mono text-micro text-dim/60">
+                  <p className="mt-1 break-all font-mono text-micro text-faint">
                     {skill.path}
                   </p>
                 </div>

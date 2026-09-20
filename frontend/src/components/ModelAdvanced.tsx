@@ -31,7 +31,7 @@ export function ModelAdvanced({
   const specError = specJsonError(value.specJson);
 
   return (
-    <details className="rounded-control border border-edge bg-panel/40">
+    <details className="rounded-control border border-edge bg-panel">
       <summary className="flex cursor-pointer list-none items-center gap-1.5 px-3 py-1.5 text-xs text-dim hover:text-fg">
         <ChevronDown size={ICON.xs} />
         {t('config.modelAdvanced.title')}

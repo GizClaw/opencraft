@@ -13,7 +13,7 @@ export function AvatarBadge({
   return (
     <span
       className={`grid shrink-0 select-none place-items-center rounded-full bg-accent/15 font-semibold text-accent ${cls}`}
-      title={login}
+      data-tip={login}
       aria-hidden="true"
     >
       {authorInitials(login)}

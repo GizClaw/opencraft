@@ -17,9 +17,19 @@
   --color-bg: #0f1218;
   --color-panel: #141923;
   --color-panel2: #1b2230;
+  /* Surface ladder — canvas → chrome → card → raised row. Panels and
+     cards pick a rung instead of a translucent fill: `bg-panel2/60`
+     reads differently on every parent surface, which is how the same
+     card ended up five shades of grey. */
+  --color-panel3: #232c3d;
   --color-edge: #262f40;
   --color-fg: #e6e9ef;
-  --color-dim: #8b93a3;
+  /* Text ladder — fg (body) → dim (secondary) → faint (meta: counts,
+     timestamps, hints). Every rung clears WCAG AA (4.5:1) on all three
+     surfaces, so meta text is quieter without becoming unreadable;
+     `text-dim/60` and friends are banned by the scale contract. */
+  --color-dim: #98a1b0;
+  --color-faint: #7f8a9c;
   --color-accent: #4f8cff;
   --color-ok: #34d399;
   --color-warn: #fbbf24;
@@ -27,10 +37,43 @@
   --color-yolo: #ff6b3d;
   --color-subagent: #a78bfa;
 
+  /* Scrim ladder for overlay surfaces. A single translucent black looks
+     like a power cut in the light theme; both rungs flip with it. */
+  --color-scrim: rgb(6 8 12 / 0.66);
+  --color-scrim-soft: rgb(6 8 12 / 0.4);
+
+  /* Chart / metric series. The one palette for usage, runtime metrics
+     and graph accents, so a chart blue is the same blue everywhere and
+     the light theme gets a darker set instead of the dark one washed
+     out on white. */
+  --color-series-1: #3b82f6;
+  --color-series-2: #22c55e;
+  --color-series-3: #f97316;
+  --color-series-4: #a855f7;
+  --color-series-5: #10b981;
+  --color-chart-grid: rgb(148 163 184 / 0.15);
+  --color-chart-axis: #94a3b8;
+  /* The graph canvas dot grid: a chart-grid cousin that has to stay
+     readable under the node strokes. */
+  --color-graph-dot: rgb(139 147 163 / 0.28);
+  /* PDF sheet backdrop and the Windows close button: platform colors the
+     theme should not recolor, but that still belong to one place. */
+  --color-viewer-backdrop: #3a3d45;
+  /* The stage under a video: near-black in both themes, because a player
+     letterboxes and a tinted stage would flash through the bars. */
+  --color-media-backdrop: rgb(0 0 0 / 0.95);
+  --color-win-close: #e81123;
+
   /* 10 design px: chips, badges, metadata, timestamps. */
   --text-micro: 0.7143rem;
   /* 11 design px: field labels, captions, tab strips. */
   --text-label: 0.7857rem;
+  /* 16 design px: card and dialog titles. Section headings used to be
+     the same size as body text, which is why a settings card and its
+     own description read as one undifferentiated block. */
+  --text-title: 1.1429rem;
+  /* 20 design px: page headlines (settings, tools, empty states). */
+  --text-display: 1.4286rem;
 
   /* 4 design px: badges, keycaps, tree rows. */
   --radius-tight: 0.2857rem;
@@ -49,6 +92,81 @@
   --shadow-modal:
     0 18px 40px -18px var(--oc-shadow-ambient),
     0 6px 14px -8px var(--oc-shadow-key);
+
+  /* Motion ladder. Overlay chrome moves on two durations and one
+     easing; nothing else in the app animates on purpose. The numbers
+     are mirrored by MOTION in lib/overlay.ts, which uses them to time
+     the unmount that follows an exit animation. */
+  --ease-out-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --animate-scrim-in: oc-scrim-in 160ms var(--ease-out-soft) both;
+  --animate-scrim-out: oc-scrim-out 120ms ease-in both;
+  --animate-panel-in: oc-panel-in 160ms var(--ease-out-soft) both;
+  --animate-panel-out: oc-panel-out 120ms ease-in both;
+  --animate-drawer-in: oc-drawer-in 180ms var(--ease-out-soft) both;
+  --animate-drawer-out: oc-drawer-out 130ms ease-in both;
+  --animate-popover-in: oc-popover-in 130ms var(--ease-out-soft) both;
+  --animate-popover-out: oc-popover-out 100ms ease-in both;
+  --animate-toast-in: oc-toast-in 180ms var(--ease-out-soft) both;
+  --animate-toast-out: oc-toast-out 140ms ease-in both;
+
+  @keyframes oc-scrim-in {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes oc-scrim-out {
+    to {
+      opacity: 0;
+    }
+  }
+  @keyframes oc-panel-in {
+    from {
+      opacity: 0;
+      transform: translateY(0.5rem) scale(0.985);
+    }
+  }
+  @keyframes oc-panel-out {
+    to {
+      opacity: 0;
+      transform: translateY(0.25rem) scale(0.99);
+    }
+  }
+  @keyframes oc-drawer-in {
+    from {
+      opacity: 0;
+      transform: translateX(1.5rem);
+    }
+  }
+  @keyframes oc-drawer-out {
+    to {
+      opacity: 0;
+      transform: translateX(1rem);
+    }
+  }
+  @keyframes oc-popover-in {
+    from {
+      opacity: 0;
+      transform: translateY(-0.2857rem) scale(0.98);
+    }
+  }
+  @keyframes oc-popover-out {
+    to {
+      opacity: 0;
+      transform: translateY(-0.1429rem) scale(0.99);
+    }
+  }
+  @keyframes oc-toast-in {
+    from {
+      opacity: 0;
+      transform: translateX(0.75rem) scale(0.98);
+    }
+  }
+  @keyframes oc-toast-out {
+    to {
+      opacity: 0;
+      transform: translateX(0.5rem) scale(0.99);
+    }
+  }
 }
 
 /* Fonts follow Settings > Interface. The runtime variables are written by
@@ -63,6 +181,16 @@
   color-scheme: dark;
   --oc-shadow-key: rgb(0 0 0 / 0.5);
   --oc-shadow-ambient: rgb(0 0 0 / 0.6);
+  /* Layer ladder. Every floating surface names the rung it belongs to
+     instead of a literal z-index, so a menu opened from inside a dialog
+     cannot end up under it by accident. */
+  --oc-z-raised: 10; /* a lift inside the content column */
+  --oc-z-popover: 30; /* a menu anchored in the content column */
+  --oc-z-dialog: 40; /* a dialog anchored in the content column */
+  --oc-z-overlay: 60; /* a window-level surface with a scrim */
+  --oc-z-menu: 100; /* a menu that must clear an open overlay */
+  --oc-z-toast: 140; /* notifications: above every panel, incl. dialogs */
+  --oc-z-tooltip: 160; /* hint layer: the topmost thing on screen */
   /* Appearance knobs, overwritten on documentElement by appearance.ts from
      the persisted desktop preferences. The defaults below match the
      built-in system preset. */
@@ -82,15 +210,44 @@
   --color-bg: #f5f7fa;
   --color-panel: #ffffff;
   --color-panel2: #edf1f6;
+  --color-panel3: #e2e8f1;
   --color-edge: #d8dee8;
   --color-fg: #1b2330;
-  --color-dim: #5c6777;
+  --color-dim: #4c5768;
+  --color-faint: #5f6a7e;
   --color-accent: #2f6fe0;
   --color-ok: #0f9d6e;
   --color-warn: #b47d00;
   --color-err: #d64545;
   --color-yolo: #c2410c;
   --color-subagent: #7c3aed;
+  --color-scrim: rgb(15 23 42 / 0.38);
+  --color-scrim-soft: rgb(15 23 42 / 0.2);
+  --color-series-1: #2f6fe0;
+  --color-series-2: #15803d;
+  --color-series-3: #c2410c;
+  --color-series-4: #7c3aed;
+  --color-series-5: #047857;
+  --color-chart-grid: rgb(15 23 42 / 0.1);
+  --color-chart-axis: #5c6777;
+  --color-graph-dot: rgb(100 116 139 / 0.3);
+  --color-viewer-backdrop: #ccd2dc;
+  --color-media-backdrop: rgb(9 12 18 / 0.92);
+}
+
+/* The app animates overlay chrome on purpose and nothing else; a user
+   who asks for reduced motion gets none of it. This is global rather
+   than per-effect so spinners, pulse dots and the sidebar title
+   marquee are covered too. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 html,

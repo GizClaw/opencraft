@@ -92,6 +92,7 @@ export function IconButton({
   className = '',
   children,
   type = 'button',
+  disabled,
   ...rest
 }: Omit<ComponentProps<'button'>, 'children' | 'title' | 'aria-label'> & {
   label: string;
@@ -100,15 +101,26 @@ export function IconButton({
   children: ReactNode;
 }) {
   const box = size === 'sm' ? 'h-6 w-6' : size === 'lg' ? 'h-8 w-8' : 'h-7 w-7';
-  return (
+  const button = (
     <button
       type={type}
-      title={label}
+      data-tip={label}
       aria-label={label}
+      disabled={disabled}
       className={`grid ${box} shrink-0 place-items-center rounded-control transition-colors disabled:opacity-40 ${ICON_TONES[tone]} ${className}`}
       {...rest}
     >
       {children}
     </button>
+  );
+  // A disabled control emits no pointer events, so the hint has to live on
+  // a wrapper; without it the "why can't I click this" hint would never
+  // appear exactly when it is needed.
+  return disabled === true ? (
+    <span data-tip={label} className="inline-flex shrink-0">
+      {button}
+    </span>
+  ) : (
+    button
   );
 }

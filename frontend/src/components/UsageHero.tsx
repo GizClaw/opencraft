@@ -12,15 +12,23 @@ import {
 } from 'lucide-react';
 import type { ModelUsageStat } from '../lib/types';
 import { cacheHitPercent, formatHitPercent } from '../lib/usageRate';
+import {
+  SERIES_CACHE_READ,
+  SERIES_CACHE_WRITE,
+  SERIES_INPUT,
+  SERIES_OUTPUT,
+  SERIES_REASONING,
+} from '../lib/chartPalette';
 import { ICON } from './ui/icon';
 
-// Palette mirrors the trend chart (cc-switch style): input blue,
-// output green, cache write orange, cache read purple.
-const ACCENT_BLUE = '#3b82f6';
-const ACCENT_GREEN = '#22c55e';
-const ACCENT_ORANGE = '#f97316';
-const ACCENT_PURPLE = '#a855f7';
-const ACCENT_EMERALD = '#10b981';
+// Palette (cc-switch style): input blue, output green, cache write
+// orange, cache read purple, reasoning emerald. The values live in
+// style.css so the light theme gets its own set — see lib/chartPalette.
+const ACCENT_BLUE = SERIES_INPUT;
+const ACCENT_GREEN = SERIES_OUTPUT;
+const ACCENT_ORANGE = SERIES_CACHE_WRITE;
+const ACCENT_PURPLE = SERIES_CACHE_READ;
+const ACCENT_EMERALD = SERIES_REASONING;
 
 function fmtShort(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
@@ -40,7 +48,7 @@ function MiniStat({
   color: string;
 }) {
   return (
-    <div className="flex flex-col gap-1 rounded-card border border-edge/60 bg-panel/50 p-3 shadow-raised">
+    <div className="flex flex-col gap-1 rounded-card border border-edge/60 bg-panel p-3 shadow-raised">
       <div className="flex items-center gap-1.5 text-label font-medium text-dim">
         <span style={{ color }}>{icon}</span>
         <span className="tracking-wide">{label}</span>
@@ -100,13 +108,13 @@ export function UsageHero({
     : '';
 
   return (
-    <div className="usage-hero relative overflow-hidden rounded-card border border-edge/60 bg-panel/60 p-4 shadow-raised backdrop-blur-sm md:p-5">
+    <div className="usage-hero relative overflow-hidden rounded-card border border-edge bg-panel p-4 shadow-raised md:p-5">
       <div
         aria-hidden
         className="pointer-events-none absolute -right-20 -top-28 h-56 w-72 rounded-full opacity-70 blur-3xl"
         style={{
           background:
-            'radial-gradient(closest-side, rgba(59,130,246,0.14), transparent)',
+            'radial-gradient(closest-side, color-mix(in srgb, var(--color-series-1) 14%, transparent), transparent)',
         }}
       />
       <div className="relative flex flex-col gap-4">
@@ -116,7 +124,7 @@ export function UsageHero({
               className="flex h-11 w-11 shrink-0 items-center justify-center rounded-card shadow-raised"
               style={{
                 background:
-                  'linear-gradient(135deg, rgba(59,130,246,0.18), rgba(59,130,246,0.05))',
+                  'linear-gradient(135deg, color-mix(in srgb, var(--color-series-1) 18%, transparent), color-mix(in srgb, var(--color-series-1) 5%, transparent))',
               }}
             >
               <Zap size={ICON.lg} style={{ color: ACCENT_BLUE }} />
@@ -124,13 +132,13 @@ export function UsageHero({
             <div>
               <div className="mb-0.5 flex items-center gap-1.5 text-label font-medium text-dim">
                 <span>{t('config.usageTokensTotal')}</span>
-                <span className="text-dim/30">•</span>
+                <span className="text-faint">•</span>
                 <span>{t('config.usageAllCumulative')}</span>
               </div>
               <div className="flex items-baseline gap-2">
                 <span
                   className="text-2xl font-bold leading-none tracking-tight tabular-nums text-fg md:text-3xl"
-                  title={mainNumber}
+                  data-tip={mainNumber}
                 >
                   {mainNumber}
                 </span>
@@ -141,7 +149,7 @@ export function UsageHero({
             </div>
           </div>
 
-          <div className="flex items-center gap-5 rounded-card border border-edge/60 bg-panel/60 px-4 py-2.5 shadow-raised">
+          <div className="flex items-center gap-5 rounded-card border border-edge/60 bg-panel px-4 py-2.5 shadow-raised">
             <div className="flex flex-col">
               <span className="text-micro font-medium uppercase tracking-wider text-dim">
                 {t('config.usageSessions')}
@@ -203,8 +211,8 @@ export function UsageHero({
             color={ACCENT_PURPLE}
           />
           <div
-            className="col-span-2 flex flex-col justify-center rounded-card border border-edge/60 bg-panel/50 p-3 shadow-raised lg:col-span-1"
-            title={t('config.usageCacheHitHint')}
+            className="col-span-2 flex flex-col justify-center rounded-card border border-edge/60 bg-panel p-3 shadow-raised lg:col-span-1"
+            data-tip={t('config.usageCacheHitHint')}
           >
             <div className="mb-2 flex items-center justify-between text-label">
               <span className="font-medium text-dim">

@@ -180,7 +180,7 @@ export function FilePreviewPane({
     // The loopback endpoint serves byte ranges, so the player streams
     // and seeks without pulling the file through the IPC bridge.
     return (
-      <div className="flex h-full items-center justify-center overflow-auto bg-black/95 p-4">
+      <div className="flex h-full items-center justify-center overflow-auto bg-[var(--color-media-backdrop)] p-4">
         <video
           src={preview.stream_url}
           controls

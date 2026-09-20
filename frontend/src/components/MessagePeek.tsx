@@ -154,7 +154,7 @@ export const MessagePeek = memo(function MessagePeek({
     <div
       ref={rootRef}
       data-testid="message-peek"
-      className="pointer-events-none absolute inset-y-0 left-2 z-20 hidden items-center md:flex"
+      className="pointer-events-none absolute inset-y-0 left-2 z-[var(--oc-z-raised)] hidden items-center md:flex"
     >
       {!dense && (
         <div className="flex flex-col items-center gap-1">
@@ -272,7 +272,7 @@ export const MessagePeek = memo(function MessagePeek({
       {preview && (
         <div
           role="tooltip"
-          className="pointer-events-none absolute left-8 z-50 w-[22rem] rounded-card border border-edge/80 bg-panel/95 p-4 shadow-modal ring-1 ring-edge/40 backdrop-blur-sm"
+          className="pointer-events-none absolute left-8 z-[var(--oc-z-popover)] w-[22rem] rounded-card border border-edge/80 bg-panel/95 p-4 shadow-modal ring-1 ring-edge/40 backdrop-blur-sm"
           style={{ top: tooltipTop }}
         >
           {preview.user ? (

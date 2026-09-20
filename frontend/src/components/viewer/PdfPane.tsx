@@ -80,7 +80,10 @@ export function PdfPane({ dataUrl, name }: { dataUrl: string; name: string }) {
   };
 
   return (
-    <div ref={hostRef} className="pdf-host h-full overflow-auto bg-[#3a3d45]">
+    <div
+      ref={hostRef}
+      className="pdf-host h-full overflow-auto bg-[var(--color-viewer-backdrop)]"
+    >
       {error && <div className="py-8 text-xs text-err">{error}</div>}
       <Document
         file={dataUrl}
