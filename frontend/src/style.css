@@ -614,6 +614,11 @@ body.oc-resizing * {
 .prose-chat {
   line-height: 1.7;
   color: var(--color-fg);
+  /* The transcript never scrolls sideways: a long path, URL or module
+     name in prose has to wrap, otherwise the line overflows the column
+     and the text is clipped at the right edge. Inline code gets the same
+     guard below, where paths have no line break opportunities at all. */
+  overflow-wrap: break-word;
 }
 
 .prose-chat p {
@@ -626,6 +631,9 @@ body.oc-resizing * {
 .user-bubble-md p,
 .user-bubble-md li {
   white-space: pre-wrap;
+  /* Hard breaks stay readable, but a long token must still wrap instead
+     of pushing the bubble past the column edge. */
+  overflow-wrap: break-word;
 }
 
 /* The bubble's own padding defines its edges, so the outermost Markdown
@@ -695,6 +703,12 @@ body.oc-resizing * {
   border-radius: 0.3571rem;
   padding: 0.0714rem 0.4286rem;
   color: var(--color-accent);
+  /* Paths like ./internal/capabilities/sessions{,/state} have no line
+     break opportunities. `break-word` first moves the chip to a line of
+     its own and only breaks inside it when it cannot fit one line at
+     all, which keeps the common case readable and still prevents any
+     horizontal overflow. */
+  overflow-wrap: break-word;
 }
 
 .prose-chat pre {

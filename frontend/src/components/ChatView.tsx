@@ -9,6 +9,7 @@ import {
   useState,
   type MouseEvent,
 } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   AlertTriangle,
   Archive,
@@ -55,12 +56,14 @@ import { api } from '../lib/api';
 import { reportFrontendError } from '../lib/frontendErrors';
 import { COMPACT_SUMMARY_PREFIX } from '../lib/compact';
 import { formatCompact } from '../lib/compactNumber';
+import { formatClockTime } from '../lib/datetime';
 import { SESSION_MODES, type SessionModeOption } from '../lib/sessionModes';
 import {
   friendlyFailure,
   friendlyInterruption,
   isUserStop,
   firstMessageTitle,
+  itemText,
   useStore,
 } from '../lib/store';
 import { useConversationState, useFocusState } from '../state/react';
@@ -114,17 +117,27 @@ function pathBase(path: string): string {
 const RENDER_WINDOW = 200;
 const RENDER_STEP = 100;
 
+// PROCESS_VIRTUAL_THRESHOLD is the row count past which an expanded
+// process list is windowed instead of mounted whole. Below it the rows
+// render directly (small turns keep exactly the old DOM, which keeps the
+// tests and the common case simple); above it only the rows around the
+// viewport exist, so expanding a 400-row turn costs a screenful instead
+// of the whole list.
+const PROCESS_VIRTUAL_THRESHOLD = 40;
+
 // assistantPreviewText builds the hover preview without ever copying
 // the full assistant answer: it stops as soon as the preview budget is
 // used, so one huge markdown reply stays cheap to peek.
 function assistantPreviewText(items: AssistantItem[], limit: number): string {
   let out = '';
   for (const item of items) {
-    if (item.kind !== 'text' || !item.text) continue;
+    if (item.kind !== 'text') continue;
+    const text = itemText(item);
+    if (!text) continue;
     if (out.length >= limit) break;
     const sep = out ? '\n' : '';
     const remaining = Math.max(0, limit - out.length - sep.length);
-    out += sep + item.text.slice(0, remaining);
+    out += sep + text.slice(0, remaining);
     if (out.length >= limit) break;
   }
   return out.trim();
@@ -609,7 +622,7 @@ const MessageRow = memo(function MessageRow({
       (it): it is Extract<AssistantItem, { kind: 'text' }> =>
         it.kind === 'text',
     )
-    .map((it) => it.text)
+    .map((it) => itemText(it))
     .join('\n')
     .trim();
   const copyable = isTurnLast && !streaming && finalText.length > 0;
@@ -636,6 +649,11 @@ const MessageRow = memo(function MessageRow({
       data-turn-start={turnStart ? 'true' : undefined}
       className="group flex flex-col gap-1"
     >
+      {(msg.droppedItems ?? 0) > 0 && (
+        <div className="px-1 py-0.5 text-xs text-dim">
+          {t('chat.foldedSteps', { count: msg.droppedItems })}
+        </div>
+      )}
       {groups.map((group, gi) => {
         if (Array.isArray(group)) {
           return group.length === 1 ? (
@@ -694,19 +712,10 @@ const MessageRow = memo(function MessageRow({
 
 // formatChatTime renders a message timestamp as a compact local clock
 // time. Older-than-today messages include the date so a resumed
-// session's timeline stays unambiguous.
-function formatChatTime(iso?: string) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  const sameDay = d.toDateString() === new Date().toDateString();
-  return d.toLocaleString(undefined, {
-    month: sameDay ? undefined : 'numeric',
-    day: sameDay ? undefined : 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
+// session's timeline stays unambiguous. Formatting goes through the
+// cached Intl formatter: this runs for every visible row, and the
+// transcript re-renders on every stream flush.
+const formatChatTime = (iso?: string) => formatClockTime(iso);
 
 // turnForIndex maps a transcript index to the turn entry that owns it.
 // Entries are ordered by first-message index, so the closest preceding
@@ -1074,27 +1083,45 @@ function TurnSummaryHeader({
   );
 }
 
-// TurnBlock renders one complete turn. Live turns stay fully expanded
-// with a Working… status line at the top; ended turns fold everything
-// except the final assistant message behind the process toggle.
-function TurnBlock({
-  turn,
-  turnIdx,
-  rows,
-  running,
-  busy,
-  endStatus,
-  endError,
-  requestID,
-  responseID,
-  liveEnd,
-  forking,
-  onFork,
-  onDismissFailure,
-}: {
+// sameTurnBlock reports whether a re-render would change anything this
+// block draws. ChatView rebuilds its element tree on every stream flush,
+// so without this a block whose rows did not change still re-rendered —
+// and with its process rows expanded that meant re-walking thousands of
+// mounted rows per flush.
+function sameTurnBlock(prev: TurnBlockProps, next: TurnBlockProps): boolean {
+  return (
+    prev.turn === next.turn &&
+    prev.turnIdx === next.turnIdx &&
+    prev.running === next.running &&
+    prev.busy === next.busy &&
+    prev.endStatus === next.endStatus &&
+    prev.endError === next.endError &&
+    prev.requestID === next.requestID &&
+    prev.responseID === next.responseID &&
+    prev.liveEnd === next.liveEnd &&
+    prev.forking === next.forking &&
+    prev.onFork === next.onFork &&
+    prev.onDismissFailure === next.onDismissFailure &&
+    sameTurnRows(prev.rows, next.rows)
+  );
+}
+
+function sameTurnRows(a: TurnRenderRow[], b: TurnRenderRow[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i].msg !== b[i].msg || a[i].i !== b[i].i) return false;
+  }
+  return true;
+}
+
+interface TurnBlockProps {
   turn: TurnArtifacts;
   turnIdx: number;
   rows: TurnRenderRow[];
+  // scrollContainer resolves the transcript scroller the process-row
+  // virtualizer measures against.
+  scrollContainer: () => HTMLElement | null;
   running: boolean;
   busy: boolean;
   endStatus?: TurnEndKind;
@@ -1105,7 +1132,27 @@ function TurnBlock({
   forking: boolean;
   onFork: (turn: TurnArtifacts) => void;
   onDismissFailure: () => void;
-}) {
+}
+
+// TurnBlock renders one complete turn. Live turns stay fully expanded
+// with a Working… status line at the top; ended turns fold everything
+// except the final assistant message behind the process toggle.
+const TurnBlock = memo(function TurnBlock({
+  turn,
+  turnIdx,
+  rows,
+  scrollContainer,
+  running,
+  busy,
+  endStatus,
+  endError,
+  requestID,
+  responseID,
+  liveEnd,
+  forking,
+  onFork,
+  onDismissFailure,
+}: TurnBlockProps) {
   const [processOpen, setProcessOpen] = useState(false);
   const userRows = rows.filter((row) => row.msg.role === 'user');
   const assistantRows = rows.filter((row) => row.msg.role === 'assistant');
@@ -1115,6 +1162,16 @@ function TurnBlock({
         (row) => row.i < finalRow.i && groupToolCalls(row.msg.items).length > 0,
       )
     : [];
+  // Windowed only past the threshold; short lists render directly so the
+  // DOM (and the tests) stay exactly as they were.
+  const windowedProcessRows = processRows.length > PROCESS_VIRTUAL_THRESHOLD;
+  const processVirtualizer = useVirtualizer({
+    count: processRows.length,
+    getScrollElement: () => scrollContainer(),
+    estimateSize: () => 72,
+    overscan: 6,
+    enabled: processOpen && windowedProcessRows,
+  });
   const worked = workedForLabel(turn.durationMs);
   const showTurnHeader = worked !== '' || processRows.length > 0;
   const lastAssistantStreaming = running && Boolean(finalRow);
@@ -1202,8 +1259,34 @@ function TurnBlock({
             open={processOpen}
             onToggle={() => setProcessOpen((open) => !open)}
           />
-          {processOpen &&
-            processRows.map((row) => renderRow(row, false, false))}
+          {processOpen && windowedProcessRows ? (
+            <div
+              style={{
+                height: `${processVirtualizer.getTotalSize()}px`,
+                position: 'relative',
+              }}
+            >
+              {processVirtualizer.getVirtualItems().map((item) => (
+                <div
+                  key={processRows[item.index].msg.id}
+                  data-index={item.index}
+                  ref={processVirtualizer.measureElement}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    transform: `translateY(${item.start}px)`,
+                  }}
+                >
+                  {renderRow(processRows[item.index], false, false)}
+                </div>
+              ))}
+            </div>
+          ) : (
+            processOpen &&
+            processRows.map((row) => renderRow(row, false, false))
+          )}
           {finalRow && (
             <>
               {showTurnHeader && (
@@ -1219,7 +1302,7 @@ function TurnBlock({
       {endNotice}
     </div>
   );
-}
+}, sameTurnBlock);
 
 // AttachmentImage renders one image attachment. Live sends carry the
 // data URL already; resumed history has only the stored path, so the
@@ -1504,6 +1587,8 @@ export function ChatView() {
   const openFiles = useStore((s) => s.openFiles);
   const closeFiles = useStore((s) => s.closeFiles);
   const messages = conv?.messages ?? [];
+  const hasMoreHistory = conv?.historyHasMore ?? false;
+  const loadEarlierHistory = useStore((s) => s.loadEarlierHistory);
   const turnState = conversationState?.turn;
   const busy = turnState?.name === 'starting' || turnState?.name === 'running';
   const turnArtifacts = conv?.turnArtifacts ?? [];
@@ -1940,13 +2025,17 @@ export function ChatView() {
       refreshPeekCurrent();
     });
   }, [refreshPeekCurrent]);
-  const loadEarlier = () => {
-    if (!truncated || loadingEarlier) return;
+  // loadEarlier widens the render window when the window is still
+  // inside the loaded messages; once the window reaches the oldest
+  // loaded turn it pages backwards through the archive instead, so a
+  // long session is read in bounded chunks rather than one payload.
+  const loadEarlier = async () => {
+    if (loadingEarlier) return;
+    if (!truncated && !hasMoreHistory) return;
     const el = scrollRef.current;
     const prevScrollHeight = el?.scrollHeight ?? 0;
     const prevScrollTop = el?.scrollTop ?? 0;
     setLoadingEarlier(true);
-    setVisibleCount((v) => v + RENDER_STEP);
     // The transcript is chronological, so loading earlier history
     // prepends rows above the current window. Anchor the viewport to
     // the content that was already visible; the newly inserted history
@@ -1954,14 +2043,26 @@ export function ChatView() {
     stickRef.current = false;
     userScrolledAwayRef.current = true;
     setStick(false);
-    requestAnimationFrame(() => {
-      const current = scrollRef.current;
-      if (!current) return;
-      const addedAbove = current.scrollHeight - prevScrollHeight;
-      current.scrollTop = prevScrollTop + addedAbove;
-      schedulePeekRefresh();
-    });
-    window.setTimeout(() => setLoadingEarlier(false), 250);
+    try {
+      if (start > 0) {
+        setVisibleCount((v) => Math.min(v + RENDER_STEP, messages.length));
+      } else if (hasMoreHistory && current) {
+        const added = await loadEarlierHistory(current);
+        if (added === 0) return;
+        setVisibleCount((v) => v + added);
+      } else {
+        return;
+      }
+      requestAnimationFrame(() => {
+        const scroller = scrollRef.current;
+        if (!scroller) return;
+        const addedAbove = scroller.scrollHeight - prevScrollHeight;
+        scroller.scrollTop = prevScrollTop + addedAbove;
+        schedulePeekRefresh();
+      });
+    } finally {
+      setLoadingEarlier(false);
+    }
   };
   const jumpToTurn = useCallback(
     (index: number) => {
@@ -2189,10 +2290,15 @@ export function ChatView() {
   }, []);
 
   useEffect(() => {
-    if (!stickRef.current) return;
+    if (!stickRef.current || document.hidden) return;
     const frame = requestAnimationFrame(() => {
       const el = scrollRef.current;
-      if (el && stickRef.current) el.scrollTop = el.scrollHeight;
+      // One read of scrollHeight per commit. With the stream flush paced
+      // at STREAM_FLUSH_INTERVAL_MS this runs ~10 times a second instead
+      // of once per frame, which is what made the forced layout visible.
+      if (el && stickRef.current && !document.hidden) {
+        el.scrollTop = el.scrollHeight;
+      }
     });
     return () => cancelAnimationFrame(frame);
   }, [messages, pendingInteracts, stick, composerInset]);
@@ -2675,10 +2781,10 @@ export function ChatView() {
               if (
                 !stickRef.current &&
                 el.scrollTop <= 8 &&
-                truncated &&
+                (truncated || hasMoreHistory) &&
                 !loadingEarlier
               ) {
-                loadEarlier();
+                void loadEarlier();
               }
               schedulePeekRefresh();
             }}
@@ -2741,6 +2847,7 @@ export function ChatView() {
                       responseID={turn.responseID}
                       liveEnd={Boolean(liveEnd)}
                       forking={forking}
+                      scrollContainer={() => scrollRef.current}
                       onFork={setForkTarget}
                       onDismissFailure={clearLastFailed}
                     />

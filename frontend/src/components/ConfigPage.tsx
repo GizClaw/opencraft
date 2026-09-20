@@ -36,6 +36,7 @@ import { LogViewer } from './LogViewer';
 import { MetricsCharts } from './MetricsCharts';
 import { PathEnvironmentCard } from './PathEnvironmentCard';
 import { ExecPoolCard } from './ExecPoolCard';
+import { HeapProfileCard } from './HeapProfileCard';
 import { PetBehaviorPanel } from './PetBehaviorPanel';
 import { TelemetryExportCard } from './TelemetryExportCard';
 import { ToolsSection } from './ToolsSection';
@@ -76,7 +77,7 @@ import { ICON } from './ui/icon';
 import { SaveBar } from './ui/SaveBar';
 import { Overlay } from './ui/Overlay';
 import { Popover } from './ui/Popover';
-import { IconButton } from './ui/Button';
+import { Button, IconButton } from './ui/Button';
 import { EmptyState } from './ui/EmptyState';
 import { searchSettings } from './settingsIndex';
 
@@ -306,6 +307,38 @@ function templateMatches(
     template.vendor ?? '',
     ...(template.models ?? []).map((m) => m.name),
   ].some((field) => field.toLowerCase().includes(needle));
+}
+
+// DiagSection groups the diagnostics tab into scannable blocks. The tab
+// used to be one flat column of cards — environment facts, maintenance
+// buttons, forms, runtime knobs, logs and charts all at the same visual
+// weight, with no headings to say what belonged together. Sections carry
+// the ids the settings search jumps to.
+function DiagSection({
+  id,
+  title,
+  hint,
+  children,
+}: {
+  id?: string;
+  title: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section
+      id={id}
+      className="scroll-mt-4 space-y-2 border-t border-edge pt-4 first:border-t-0 first:pt-0"
+    >
+      <div className="space-y-0.5">
+        <h3 className="text-label font-semibold uppercase tracking-wide text-dim">
+          {title}
+        </h3>
+        {hint && <p className="text-xs text-dim">{hint}</p>}
+      </div>
+      {children}
+    </section>
+  );
 }
 
 export function ConfigPage() {
@@ -2821,245 +2854,285 @@ export function ConfigPage() {
           )}
 
           {tab === 'diagnostics' && (
-            <div className="space-y-4">
+            <div className="space-y-5">
               <p className="text-xs text-dim">{t('config.diagHint')}</p>
-              <div id="settings-diag-pet" className="scroll-mt-4">
-                <PetBehaviorPanel />
-              </div>
-              {diag && (
-                <div
-                  id="settings-diag-runtime"
-                  className="scroll-mt-4 grid grid-cols-2 gap-3 text-sm"
-                >
-                  <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
-                    <span className="text-xs text-dim">
-                      {t('config.diagVersion')}
-                    </span>
-                    <p className="font-mono">{diag.version}</p>
-                  </div>
-                  <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
-                    <span className="text-xs text-dim">
-                      {t('config.diagPlatform')}
-                    </span>
-                    <p className="font-mono">
-                      {diag.platform}/{diag.arch}
-                    </p>
-                  </div>
-                  <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
-                    <span className="text-xs text-dim">
-                      {t('config.diagRuntime')}
-                    </span>
-                    <p className="font-mono">
-                      go {diag.go_version}
-                      {diag.node_version ? ` · node ${diag.node_version}` : ''}
-                    </p>
-                  </div>
-                  <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
-                    <span className="text-xs text-dim">
-                      {t('config.diagSandbox')}
-                    </span>
-                    <p
-                      className={`font-mono ${
-                        diag.sandbox_available ? 'text-ok' : 'text-err'
-                      }`}
-                    >
-                      {diag.sandbox_backend}
-                      {diag.sandbox_available ? ' ✓' : ' ✗'}
-                    </p>
-                  </div>
-                  <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
-                    <span className="text-xs text-dim">
-                      {t('config.diagShell')}
-                    </span>
-                    <p className="font-mono">{diag.exec_shell}</p>
-                  </div>
-                  <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
-                    <span className="text-xs text-dim">
-                      {t('config.diagConfig')}
-                    </span>
-                    <p
-                      className={`font-mono ${
-                        diag.config_valid ? 'text-ok' : 'text-err'
-                      }`}
-                    >
-                      {diag.config_valid
-                        ? t('config.diagOk')
-                        : diag.config_error || t('config.diagBroken')}
-                    </p>
-                  </div>
-                  <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
-                    <span className="text-xs text-dim">
-                      {t('config.diagInference')}
-                    </span>
-                    <p
-                      className={`font-mono ${
-                        diag.inference_configured ? 'text-ok' : 'text-warn'
-                      }`}
-                    >
-                      {diag.inference_configured
-                        ? t('config.diagConfigured')
-                        : t('config.diagMissing')}
-                    </p>
-                  </div>
-                  <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
-                    <span className="text-xs text-dim">
-                      {t('config.diagGit')}
-                    </span>
-                    <p className="font-mono">
-                      {diag.git_repo
-                        ? diag.git_branch || '(repo)'
-                        : t('config.diagNoRepo')}
-                    </p>
-                  </div>
-                  <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
-                    <span className="text-xs text-dim">
-                      {t('config.diagSessions')}
-                    </span>
-                    <p className="font-mono">
-                      {Number.isFinite(diag.session_count) &&
-                      Number.isFinite(diag.active_runs) ? (
-                        <>
-                          {t('config.diagSessionCount', {
-                            count: diag.session_count,
-                          })}{' '}
-                          ·{' '}
-                          {t('config.diagActiveRuns', {
-                            count: diag.active_runs,
-                          })}
-                        </>
-                      ) : (
-                        // A status without the counters (an older backend,
-                        // a partial probe) must not print the raw plural
-                        // keys, which is what t() returns for a missing
-                        // count.
-                        '—'
-                      )}
-                    </p>
-                  </div>
-                  <div className="rounded-card border border-edge bg-panel2 px-3 py-2 col-span-2">
-                    <span className="text-xs text-dim">
-                      {t('config.diagPaths')}
-                    </span>
-                    <p className="font-mono text-xs break-all mt-1">
-                      {diag.work_dir}
-                      <br />
-                      {diag.user_dir}
-                    </p>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex flex-wrap items-center gap-2 pt-1">
-                <button
-                  onClick={() => void runProbe()}
-                  disabled={diagBusy}
-                  className="rounded-control bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
-                >
-                  {t('config.diagProbe')}
-                </button>
-                <button
-                  onClick={() => void clearCaches()}
-                  disabled={diagBusy}
-                  className="rounded-control border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg disabled:opacity-40"
-                >
-                  {t('config.diagClearCache')}
-                </button>
-                <button
-                  onClick={() =>
-                    void api.reload().catch((err) => toast(String(err)))
-                  }
-                  className="rounded-control border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg"
-                >
-                  {t('config.diagReload')}
-                </button>
-                <button
-                  onClick={() => void repairConfigCompat()}
-                  disabled={diagBusy}
-                  className="rounded-control border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg disabled:opacity-40"
-                >
-                  {t('config.diagRepairCompat')}
-                </button>
-              </div>
-              {probe && (
-                <div
-                  className={`rounded-control border px-3 py-2 text-xs ${
-                    probe.ok ? 'border-ok/40 text-ok' : 'border-err/40 text-err'
-                  }`}
-                >
-                  {probe.ok
-                    ? t('config.diagProbeOk')
-                    : t('config.diagProbeFail')}
-                  {probe.output && (
-                    <pre className="mt-1 font-mono">{probe.output}</pre>
-                  )}
-                  {probe.error && (
-                    <pre className="mt-1 font-mono">{probe.error}</pre>
-                  )}
-                </div>
-              )}
-              {cacheResult && (
-                <p className="text-xs text-dim">
-                  {t('config.diagCacheDone', {
-                    bytes: fmtBytes(cacheResult.bytes),
-                    count: cacheResult.dirs.length,
-                  })}
-                </p>
-              )}
-
-              <div
-                id="settings-diag-policy"
-                className="scroll-mt-4 space-y-2 pt-1"
+              <DiagSection
+                id="settings-diag-runtime"
+                title={t('config.diagSecOverview')}
               >
-                <p className="text-xs text-dim">{t('config.diagPolicy')}</p>
-                <div className="flex items-center gap-2">
-                  <input
-                    value={policyInput}
-                    onChange={(e) => setPolicyInput(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') void checkPolicy();
-                    }}
-                    placeholder={t('config.diagPolicyPlaceholder')}
-                    className="flex-1 rounded-control border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
-                  />
-                  <button
-                    onClick={() => void checkPolicy()}
+                {diag && (
+                  <div className="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2">
+                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
+                      <span className="text-xs text-dim">
+                        {t('config.diagVersion')}
+                      </span>
+                      <p className="font-mono">{diag.version}</p>
+                    </div>
+                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
+                      <span className="text-xs text-dim">
+                        {t('config.diagPlatform')}
+                      </span>
+                      <p className="font-mono">
+                        {diag.platform}/{diag.arch}
+                      </p>
+                    </div>
+                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
+                      <span className="text-xs text-dim">
+                        {t('config.diagRuntime')}
+                      </span>
+                      <p className="font-mono">
+                        go {diag.go_version}
+                        {diag.node_version
+                          ? ` · node ${diag.node_version}`
+                          : ''}
+                      </p>
+                    </div>
+                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
+                      <span className="text-xs text-dim">
+                        {t('config.diagSandbox')}
+                      </span>
+                      <p
+                        className={`font-mono ${
+                          diag.sandbox_available ? 'text-ok' : 'text-err'
+                        }`}
+                      >
+                        {diag.sandbox_backend}
+                        {diag.sandbox_available ? ' ✓' : ' ✗'}
+                      </p>
+                    </div>
+                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
+                      <span className="text-xs text-dim">
+                        {t('config.diagShell')}
+                      </span>
+                      <p className="font-mono">{diag.exec_shell}</p>
+                    </div>
+                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
+                      <span className="text-xs text-dim">
+                        {t('config.diagConfig')}
+                      </span>
+                      <p
+                        className={`font-mono ${
+                          diag.config_valid ? 'text-ok' : 'text-err'
+                        }`}
+                      >
+                        {diag.config_valid
+                          ? t('config.diagOk')
+                          : diag.config_error || t('config.diagBroken')}
+                      </p>
+                    </div>
+                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
+                      <span className="text-xs text-dim">
+                        {t('config.diagInference')}
+                      </span>
+                      <p
+                        className={`font-mono ${
+                          diag.inference_configured ? 'text-ok' : 'text-warn'
+                        }`}
+                      >
+                        {diag.inference_configured
+                          ? t('config.diagConfigured')
+                          : t('config.diagMissing')}
+                      </p>
+                    </div>
+                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
+                      <span className="text-xs text-dim">
+                        {t('config.diagGit')}
+                      </span>
+                      <p className="font-mono">
+                        {diag.git_repo
+                          ? diag.git_branch || '(repo)'
+                          : t('config.diagNoRepo')}
+                      </p>
+                    </div>
+                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
+                      <span className="text-xs text-dim">
+                        {t('config.diagSessions')}
+                      </span>
+                      <p className="font-mono">
+                        {Number.isFinite(diag.session_count) &&
+                        Number.isFinite(diag.active_runs) ? (
+                          <>
+                            {t('config.diagSessionCount', {
+                              count: diag.session_count,
+                            })}{' '}
+                            ·{' '}
+                            {t('config.diagActiveRuns', {
+                              count: diag.active_runs,
+                            })}
+                          </>
+                        ) : (
+                          // A status without the counters (an older backend,
+                          // a partial probe) must not print the raw plural
+                          // keys, which is what t() returns for a missing
+                          // count.
+                          '—'
+                        )}
+                      </p>
+                    </div>
+                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
+                      <span className="text-xs text-dim">
+                        {t('config.diagPaths')}
+                      </span>
+                      <p className="mt-1 break-all font-mono text-xs">
+                        {diag.work_dir}
+                        <br />
+                        {diag.user_dir}
+                      </p>
+                    </div>
+                  </div>
+                )}
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <Button
+                    variant="primary"
+                    size="md"
+                    onClick={() => void runProbe()}
                     disabled={diagBusy}
-                    className="rounded-control bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
                   >
-                    {t('config.diagPolicyCheck')}
-                  </button>
+                    {t('config.diagProbe')}
+                  </Button>
+                  <Button
+                    variant="quiet"
+                    size="md"
+                    onClick={() => void clearCaches()}
+                    disabled={diagBusy}
+                  >
+                    {t('config.diagClearCache')}
+                  </Button>
+                  <Button
+                    variant="quiet"
+                    size="md"
+                    onClick={() =>
+                      void api.reload().catch((err) => toast(String(err)))
+                    }
+                  >
+                    {t('config.diagReload')}
+                  </Button>
+                  <Button
+                    variant="quiet"
+                    size="md"
+                    onClick={() => void repairConfigCompat()}
+                    disabled={diagBusy}
+                  >
+                    {t('config.diagRepairCompat')}
+                  </Button>
                 </div>
-                {policy && (
-                  <p
-                    className={`text-sm ${
-                      policy.allowed ? 'text-ok' : 'text-warn'
+                {probe && (
+                  <div
+                    className={`rounded-control border px-3 py-2 text-xs ${
+                      probe.ok
+                        ? 'border-ok/40 text-ok'
+                        : 'border-err/40 text-err'
                     }`}
                   >
-                    {policy.allowed
-                      ? t('config.diagPolicyAllowed')
-                      : t('config.diagPolicyAsk')}
+                    {probe.ok
+                      ? t('config.diagProbeOk')
+                      : t('config.diagProbeFail')}
+                    {probe.output && (
+                      <pre className="mt-1 font-mono">{probe.output}</pre>
+                    )}
+                    {probe.error && (
+                      <pre className="mt-1 font-mono">{probe.error}</pre>
+                    )}
+                  </div>
+                )}
+                {cacheResult && (
+                  <p className="text-xs text-dim">
+                    {t('config.diagCacheDone', {
+                      bytes: fmtBytes(cacheResult.bytes),
+                      count: cacheResult.dirs.length,
+                    })}
                   </p>
                 )}
-              </div>
+              </DiagSection>
 
-              <div className="space-y-2 border-t border-edge pt-3">
-                <div id="settings-diag-otlp" className="scroll-mt-4">
-                  <TelemetryExportCard />
+              <DiagSection
+                id="settings-diag-policy"
+                title={t('config.diagSecPolicy')}
+                hint={t('config.diagPolicy')}
+              >
+                <div className="rounded-card border border-edge bg-panel2 p-3">
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={policyInput}
+                      onChange={(e) => setPolicyInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') void checkPolicy();
+                      }}
+                      placeholder={t('config.diagPolicyPlaceholder')}
+                      className="flex-1 rounded-control border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
+                    />
+                    <Button
+                      variant="primary"
+                      size="md"
+                      onClick={() => void checkPolicy()}
+                      disabled={diagBusy}
+                    >
+                      {t('config.diagPolicyCheck')}
+                    </Button>
+                  </div>
+                  {policy && (
+                    <p
+                      className={`mt-2 text-sm ${
+                        policy.allowed ? 'text-ok' : 'text-warn'
+                      }`}
+                    >
+                      {policy.allowed
+                        ? t('config.diagPolicyAllowed')
+                        : t('config.diagPolicyAsk')}
+                    </p>
+                  )}
                 </div>
-                <div id="settings-diag-path" className="scroll-mt-4">
-                  <PathEnvironmentCard />
+              </DiagSection>
+
+              <DiagSection
+                title={t('config.diagSecRuntime')}
+                hint={t('config.diagSecRuntimeHint')}
+              >
+                <div className="space-y-3">
+                  <div id="settings-diag-execpool" className="scroll-mt-4">
+                    <ExecPoolCard />
+                  </div>
+                  <div id="settings-diag-path" className="scroll-mt-4">
+                    <PathEnvironmentCard />
+                  </div>
+                  <div id="settings-diag-otlp" className="scroll-mt-4">
+                    <TelemetryExportCard />
+                  </div>
+                  <div id="settings-diag-heap" className="scroll-mt-4">
+                    <HeapProfileCard />
+                  </div>
                 </div>
-                <div id="settings-diag-execpool" className="scroll-mt-4">
-                  <ExecPoolCard />
+              </DiagSection>
+
+              <DiagSection title={t('config.diagSecObservability')}>
+                <div className="space-y-3">
+                  <div
+                    id="settings-diag-logs"
+                    className="scroll-mt-4 space-y-2 rounded-card border border-edge bg-panel2 p-3"
+                  >
+                    <div className="space-y-0.5">
+                      <h4 className="text-xs font-semibold text-fg">
+                        {t('config.secDiagLogs')}
+                      </h4>
+                      <p className="text-xs text-dim">{t('config.logsHint')}</p>
+                    </div>
+                    <div className="h-[22rem]">
+                      <LogViewer fetchLogs={() => api.readLog(300)} />
+                    </div>
+                  </div>
+                  <div id="settings-diag-metrics" className="scroll-mt-4">
+                    <MetricsCharts />
+                  </div>
                 </div>
-                <p className="text-xs text-dim">{t('config.logsHint')}</p>
-                <div id="settings-diag-logs" className="h-[22rem] scroll-mt-4">
-                  <LogViewer fetchLogs={() => api.readLog(300)} />
-                </div>
-              </div>
-              <div id="settings-diag-metrics" className="scroll-mt-4">
-                <MetricsCharts />
-              </div>
+              </DiagSection>
+
+              <DiagSection
+                id="settings-diag-pet"
+                title={t('config.diagSecPet')}
+                hint={t('config.diagSecPetHint')}
+              >
+                <PetBehaviorPanel />
+              </DiagSection>
             </div>
           )}
 

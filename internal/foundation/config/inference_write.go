@@ -411,44 +411,6 @@ func writeInferenceLocked(configDir string, cfg InferenceConfig) error {
 	)
 }
 
-// WriteInference persists the inference configuration into the user
-// configuration directory (opencraft.yaml), merging over the existing
-// layer so resources the settings page does not manage (MCP servers,
-// sandbox policy, custom graphs) are preserved. Plugin ownership rows
-// whose instances survive the write are preserved; rows removed by the
-// write drop their stale ownership records.
-func WriteInference(configDir string, cfg InferenceConfig) error {
-	return WriteInferenceOwned(configDir, cfg, nil)
-}
-
-// WriteInferenceOwned writes the inference configuration and replaces
-// the plugin ownership sidecar while holding the config-state lock.
-// owners is the full ownership map; nil preserves and reconciles the
-// existing map against cfg.
-func WriteInferenceOwned(
-	configDir string,
-	cfg InferenceConfig,
-	owners map[string]string,
-) error {
-	inferenceStateMu.Lock()
-	defer inferenceStateMu.Unlock()
-	if err := writeInferenceLocked(configDir, cfg); err != nil {
-		return err
-	}
-	if owners == nil {
-		var err error
-		owners, err = loadProviderOwnersLocked(configDir)
-		if err != nil {
-			return err
-		}
-	}
-	adoptLegacyProviderOwners(cfg, owners)
-	return saveProviderOwnersLocked(
-		configDir,
-		reconcileProviderOwners(owners, cfg.Instances),
-	)
-}
-
 // UpdateInferenceState runs one load-modify-write transaction over the
 // inference config and its plugin ownership sidecar while holding the
 // config-state lock. update receives the current rows and owners and
@@ -524,19 +486,6 @@ func removeInferenceConfigLocked(configDir string) error {
 	return nil
 }
 
-// RemoveInferenceConfig drops every inference-managed resource
-// (router, infer and each provider.*) from the user layer, returning
-// the install to the unconfigured state. Non-inference resources are
-// preserved. Used when the last provider is removed (e.g. SSO logout).
-func RemoveInferenceConfig(configDir string) error {
-	inferenceStateMu.Lock()
-	defer inferenceStateMu.Unlock()
-	if err := removeInferenceConfigLocked(configDir); err != nil {
-		return err
-	}
-	return saveProviderOwnersLocked(configDir, map[string]string{})
-}
-
 // MigrateUserInferenceConfig rewrites the user inference document when
 // it still carries a shape the canonical writer drops (see
 // compat.UserLayerShapes). The rewrite re-emits the document from the
@@ -566,8 +515,8 @@ func MigrateUserInferenceConfig(configDir string) (changed bool, err error) {
 	return true, nil
 }
 
-// managedResourceKeys returns the user-layer resources WriteInference
-// replaces wholesale: the router policy and the infer dep wiring.
+// managedResourceKeys returns the user-layer resources an inference
+// write replaces wholesale: the router policy and the infer dep wiring.
 // Provider.* resources are managed separately by dropping every old
 // provider key and keeping only the freshly generated ones.
 func managedResourceKeys() map[string]bool {

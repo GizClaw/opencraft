@@ -82,6 +82,54 @@ func TestApplyToDir(t *testing.T) {
 	}
 }
 
+// TestApplyToDirContextLinesWithoutSpaceMarker: the marker-less context
+// line must also *apply*. Matching still happens against the real file, so
+// accepting it cannot patch the wrong place: a line that is not there
+// fails the hunk instead.
+func TestApplyToDirContextLinesWithoutSpaceMarker(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "stats.go")
+	if err := os.WriteFile(path, []byte(
+		"func stats() {\n"+
+			"\t).Scan(&out.Profile); err != nil {\n"+
+			"\treturn out, nil\n"+
+			"}\n",
+	), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ApplyToDir(dir, `*** Begin Patch
+*** Update File: stats.go
+@@
+-	).Scan(&out.Profile); err != nil {
++	var profileChars int
++	).Scan(&out.Profile, &profileChars); err != nil {
++	out.Chars += profileChars
+ 	return out, nil
+ }
+*** End Patch
+`); err != nil {
+		t.Fatalf("ApplyToDir: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	for _, want := range []string{
+		"var profileChars int",
+		").Scan(&out.Profile, &profileChars); err != nil {",
+		"out.Chars += profileChars",
+		"\treturn out, nil",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("patched file missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, ").Scan(&out.Profile); err != nil {") {
+		t.Errorf("removed line still present:\n%s", got)
+	}
+}
+
 func TestApplyToDirSymlinkEscape(t *testing.T) {
 	dir := t.TempDir()
 	outside := t.TempDir()

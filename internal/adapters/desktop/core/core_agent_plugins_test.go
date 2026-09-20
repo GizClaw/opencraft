@@ -9,6 +9,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
+	"github.com/GizClaw/opencraft/internal/testing/configseed"
 )
 
 func TestNewCoreWiresPluginSkillsIntoRuntime(t *testing.T) {
@@ -34,7 +35,7 @@ func TestNewCoreWiresPluginSkillsIntoRuntime(t *testing.T) {
 			Models:    []config.Model{{Name: "test-model"}},
 		}},
 	}
-	if err := config.WriteInference(configDir, cfg); err != nil {
+	if err := configseed.Write(configDir, cfg); err != nil {
 		t.Fatal(err)
 	}
 

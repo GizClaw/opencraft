@@ -221,8 +221,12 @@ export const api = {
   },
   sessionHistory: (id: string) =>
     Session.History(id, -1) as unknown as Promise<HistoryMessage[]>,
-  sessionTurns: (id: string) =>
-    Session.Turns(id) as unknown as Promise<SessionTurn[]>,
+  // sessionTurns returns archived turns oldest first. limit <= 0 reads
+  // every turn; beforeSeq pages backwards from a cursor. Startup
+  // hydration only asks for the newest turns so a long session does not
+  // cross the desktop bridge in one payload.
+  sessionTurns: (id: string, limit = 0, beforeSeq = 0) =>
+    Session.Turns(id, limit, beforeSeq) as unknown as Promise<SessionTurn[]>,
   turnByRunID: (conversationID: string, runID: string) =>
     Session.TurnByRunID(
       conversationID,
@@ -368,6 +372,17 @@ export const api = {
     Diagnostics.EvaluateCommandPolicy(
       command,
     ) as unknown as Promise<PolicyDecision>,
+  reportFrontendPerf: (
+    samples: Array<{ name: string; value: number; unit: string }>,
+  ) => Diagnostics.ReportFrontendPerf(samples),
+  // captureHeapProfile writes a pprof heap profile of the running app to
+  // the diagnostics directory; the returned path is what `go tool pprof`
+  // is pointed at.
+  captureHeapProfile: () =>
+    Diagnostics.CaptureHeapProfile() as unknown as Promise<{
+      path: string;
+      bytes: number;
+    }>,
   clearCaches: () =>
     Diagnostics.ClearCaches() as unknown as Promise<CacheClearResult>,
   repairConfigCompat: () =>

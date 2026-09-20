@@ -9,6 +9,7 @@ import (
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/testing/configseed"
 )
 
 // TestBuiltInCatalogBuildsRuntime keeps the shipped inference catalog
@@ -94,7 +95,7 @@ func buildCatalogRuntime(t *testing.T, instance config.Instance) {
 	}
 	userDir := filepath.Join(home, ".opencraft", "config")
 	seedLocalSandboxConfig(t, userDir)
-	if err := config.WriteInference(userDir, config.InferenceConfig{
+	if err := configseed.Write(userDir, config.InferenceConfig{
 		Instances: []config.Instance{instance},
 	}); err != nil {
 		t.Fatalf("write inference config: %v", err)

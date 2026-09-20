@@ -407,28 +407,6 @@ export interface ActiveRunDTO {
   run_id?: string;
 }
 
-export interface TurnEnd {
-  run_id: string;
-  conversation_id?: string;
-  status: string;
-  error?: string;
-  finished_at?: string;
-  duration_ms?: number;
-  notify?: boolean;
-  /**
-   * What automatic context compaction did during the turn, when the turn
-   * reached the compaction node. A fold rewrites the conversation prefix,
-   * which invalidates the provider's prompt cache, so the turn that folded
-   * is the turn that pays full input price next — the transcript cannot
-   * show that, so the UI says it once here.
-   */
-  compaction?: {
-    folds: number;
-    failures?: number;
-    notified?: boolean;
-  };
-}
-
 export interface ReplyRequest {
   text: string;
   option?: string | null;
@@ -461,11 +439,6 @@ export interface InteractDTO {
   source: string;
 }
 
-export interface StatusDTO {
-  text: string;
-  busy: boolean;
-}
-
 export interface UsageDTO {
   model: string;
   input_tokens: number;
@@ -475,13 +448,6 @@ export interface UsageDTO {
   cache_write_tokens: number;
   reasoning_tokens: number;
   latency_ms: number;
-}
-
-export interface ResolvedDTO {
-  id: string;
-  status: string;
-  reason: string;
-  conversation_id?: string;
 }
 
 export interface FileNode {
@@ -979,13 +945,6 @@ export interface AgentDetail {
   description: string;
   graph: GraphDTO;
   created_at?: string;
-}
-
-export interface AgentUpdateResult {
-  name: string;
-  description: string;
-  persisted_to: string;
-  created_at: string;
 }
 
 // ---- stream protocol ----

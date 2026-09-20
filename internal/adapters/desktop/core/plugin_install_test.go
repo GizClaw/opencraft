@@ -11,6 +11,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/capabilities/skills"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
+	"github.com/GizClaw/opencraft/internal/testing/configseed"
 )
 
 // writePluginSource writes a minimal plugin tree the registry accepts.
@@ -99,7 +100,7 @@ func newInstallerTestCore(t *testing.T) (*Core, string, string) {
 			Models:    []config.Model{{Name: "test-model"}},
 		}},
 	}
-	if err := config.WriteInference(configDir, cfg); err != nil {
+	if err := configseed.Write(configDir, cfg); err != nil {
 		t.Fatal(err)
 	}
 	c := NewCore(configDir, dataDir, "")

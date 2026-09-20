@@ -10,6 +10,7 @@ import (
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/testing/configseed"
 )
 
 // definitionBytes mirrors the core's per-definition budget accounting so
@@ -118,7 +119,7 @@ func buildEmbeddedToolAssembly(t *testing.T) *tool.Assembly {
 			Models:    []config.Model{{Name: "test-model"}},
 		}},
 	}
-	if err := config.WriteInference(userDir, cfg); err != nil {
+	if err := configseed.Write(userDir, cfg); err != nil {
 		t.Fatalf("write inference config: %v", err)
 	}
 	mgr, err := config.Open(config.Options{UserDir: userDir})

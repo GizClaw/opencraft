@@ -3,6 +3,7 @@ import {
   looksLikeUnifiedDiff,
   parseUnifiedDiff,
   recoverJsonContent,
+  toUnifiedDiff,
 } from './diff';
 
 const sampleDiff = `diff --git a/frontend/src/components/ChatView.tsx b/frontend/src/components/ChatView.tsx
@@ -27,6 +28,54 @@ index cd3b385..d838463 100644
 +const busy2 = conv?.busy ?? false;
  const turnArtifacts = conv?.turnArtifacts ?? [];
 `;
+
+describe('toUnifiedDiff', () => {
+  it('round-trips a parsed diff into git-applyable text', () => {
+    const files = parseUnifiedDiff(sampleDiff);
+    expect(files).not.toBeNull();
+    const unified = toUnifiedDiff(files ?? []);
+    // The output is a standard diff again: the markdown parser detects it
+    // and finds the same file with the same add/delete counts.
+    expect(looksLikeUnifiedDiff(unified)).toBe(true);
+    const reparsed = parseUnifiedDiff(unified);
+    expect(reparsed).toHaveLength(files?.length ?? 0);
+    expect(reparsed?.[0]?.path).toBe(files?.[0]?.path);
+    expect(reparsed?.[0]?.added).toBe(files?.[0]?.added);
+    expect(reparsed?.[0]?.removed).toBe(files?.[0]?.removed);
+    expect(unified).toContain('@@ -81,6 +82,11 @@');
+  });
+
+  it('marks added and deleted files with /dev/null headers', () => {
+    const added = toUnifiedDiff([
+      {
+        path: 'notes.md',
+        action: 'add',
+        added: 1,
+        removed: 0,
+        lines: [{ kind: 'add', old_num: 0, new_num: 1, text: '# Notes' }],
+      },
+    ]);
+    expect(added).toContain('new file mode 100644');
+    expect(added).toContain('--- /dev/null');
+    expect(added).toContain('+++ b/notes.md');
+    expect(added).toContain('@@ -0,0 +1,1 @@');
+    expect(added).toContain('+# Notes');
+
+    const deleted = toUnifiedDiff([
+      {
+        path: 'old.md',
+        action: 'delete',
+        added: 0,
+        removed: 1,
+        lines: [{ kind: 'delete', old_num: 1, new_num: 0, text: 'gone' }],
+      },
+    ]);
+    expect(deleted).toContain('deleted file mode 100644');
+    expect(deleted).toContain('--- a/old.md');
+    expect(deleted).toContain('+++ /dev/null');
+    expect(deleted).toContain('-gone');
+  });
+});
 
 describe('parseUnifiedDiff', () => {
   it('detects git diffs', () => {

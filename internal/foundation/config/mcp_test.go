@@ -13,7 +13,7 @@ func TestMCPRoundTripAndCrossPreservation(t *testing.T) {
 	// Save inference wiring first, then MCP servers: each write must
 	// preserve the other's resources.
 	cfg := envKeyed(t, "openai")
-	if err := WriteInference(dir, cfg); err != nil {
+	if err := seedInference(dir, cfg); err != nil {
 		t.Fatal(err)
 	}
 	servers := []MCPServer{{
@@ -49,7 +49,7 @@ func TestMCPRoundTripAndCrossPreservation(t *testing.T) {
 
 	// Re-saving inference keeps the MCP resources.
 	cfg2 := envKeyed(t, "openai")
-	if err := WriteInference(dir, cfg2); err != nil {
+	if err := seedInference(dir, cfg2); err != nil {
 		t.Fatal(err)
 	}
 	got, err = LoadMCP(dir)

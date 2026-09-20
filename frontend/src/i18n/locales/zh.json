@@ -5,6 +5,7 @@
     "unknownError": "未知错误",
     "crashed": "OpenCraft UI 崩溃了",
     "tryAgain": "重试",
+    "surfaceFailed": "这个面板加载失败",
     "reload": "重新加载"
   },
   "sidebar": {
@@ -674,7 +675,19 @@
     "usageSessions": "会话数",
     "usageTokensTotal": "总消耗 Tokens",
     "usageTrend": "用量趋势",
-    "usageUpdated": "最近使用"
+    "usageUpdated": "最近使用",
+    "heapProfileTitle": "内存快照",
+    "heapProfileCapture": "采集堆快照",
+    "heapProfileCapturing": "采集中…",
+    "heapProfileHint": "对当前进程做一次 GC 后写入 pprof 堆快照,用于离线分析(go tool pprof -inuse_space)。长会话内存偏高时采集一次即可。",
+    "heapProfileSaved": "已写入 {{path}}({{size}} KiB)",
+    "diagSecOverview": "环境概览",
+    "diagSecPolicy": "命令策略",
+    "diagSecRuntime": "运行时服务",
+    "diagSecRuntimeHint": "命令执行池、进程 PATH、遥测出口与内存快照。",
+    "diagSecObservability": "日志与指标",
+    "diagSecPet": "宠物",
+    "diagSecPetHint": "助手的行为与情绪状态(实验性)。"
   },
   "chat": {
     "modelSwitchCost": "已切换到 {{model}}。提示缓存按模型隔离，本会话的下一次请求会把整段对话按原价重新读取一次。",
@@ -682,7 +695,6 @@
     "compactionFoldedDetail": "较早的对话已被折叠为摘要，本轮在更短的历史上继续。提示词前缀已变化，因此下一次请求的输入会按原价计费一次。",
     "compactionStrained": "上下文压缩已无法再压缩",
     "compactionStrainedDetail": "本会话已接近模型的输入窗口，自动折叠无法继续缩小（当前有 {{count}} 次失败）。建议减少冗长的工具输出并尽快收尾当前步骤；新会话可获得干净的窗口。",
-
     "running": "运行中",
     "stageReasoning": "思考中…",
     "stageTool": "正在使用 {{tool}}…",
@@ -690,7 +702,7 @@
     "metaTurns_other": "{{count}} 回合",
     "metaTokens": "{{tokens}} tokens",
     "newSession": "新会话",
-    "loadEarlier": "显示更早的 {{hidden}} 条消息",
+    "foldedSteps": "已折叠 {{count}} 条较早过程(完整内容在会话归档里)",
     "jumpToLatest": "回到最新",
     "empty": "今天想打造点什么？",
     "emptyUnconfigured": "推理尚未配置，请打开设置添加模型",
@@ -994,6 +1006,7 @@
     "requestPermissions": "请求权限",
     "updatePlan": "更新计划",
     "patch": "apply_patch",
+    "writeFile": "写入文件",
     "createdSkill": "创建技能",
     "modifiedSkill": "修改技能",
     "installedSkill": "安装技能",
@@ -1082,7 +1095,10 @@
     "reason": "原因",
     "applyPatch": "应用补丁",
     "generateImage": "生成图片",
-    "generateVideo": "生成视频"
+    "generateVideo": "生成视频",
+    "diffRawNotice": "行级 diff 渲染不可用(无法与磁盘文件匹配),以下为原始 patch。",
+    "copyUnifiedDiff": "复制 unified diff（可用于 git apply）",
+    "copyPatch": "复制 patch 原文"
   },
   "automations": {
     "hint": "定时运行 agent：每次触发都会生成一个独立会话。",

@@ -23,6 +23,7 @@ import (
 	plugininstalltool "github.com/GizClaw/opencraft/internal/capabilities/tools/plugininstall"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/foundation/interact"
+	"github.com/GizClaw/opencraft/internal/testing/configseed"
 	"github.com/GizClaw/opencraft/internal/testing/sessionstore"
 )
 
@@ -176,7 +177,7 @@ func TestBuildRuntimeAssemblesNewTools(t *testing.T) {
 			Models:    []config.Model{{Name: "test-model"}},
 		}},
 	}
-	if err := config.WriteInference(userDir, cfg); err != nil {
+	if err := configseed.Write(userDir, cfg); err != nil {
 		t.Fatalf("write inference config: %v", err)
 	}
 
@@ -330,7 +331,7 @@ func TestBuildRuntimeWithPluginInstallerExposesTools(t *testing.T) {
 			Models:    []config.Model{{Name: "test-model"}},
 		}},
 	}
-	if err := config.WriteInference(userDir, cfg); err != nil {
+	if err := configseed.Write(userDir, cfg); err != nil {
 		t.Fatalf("write inference config: %v", err)
 	}
 
@@ -460,7 +461,7 @@ func TestBuildRuntimeWithPluginHostExposesAgentCapabilities(t *testing.T) {
 			Models:    []config.Model{{Name: "test-model"}},
 		}},
 	}
-	if err := config.WriteInference(userDir, cfg); err != nil {
+	if err := configseed.Write(userDir, cfg); err != nil {
 		t.Fatalf("write inference config: %v", err)
 	}
 
@@ -644,7 +645,7 @@ func TestRetiredPathRefsReportAndRepair(t *testing.T) {
 			Models:    []config.Model{{Name: "test-model"}},
 		}},
 	}
-	if err := config.WriteInference(userDir, cfg); err != nil {
+	if err := configseed.Write(userDir, cfg); err != nil {
 		t.Fatalf("write inference config: %v", err)
 	}
 	// A block copied out of an older embedded document.

@@ -273,11 +273,6 @@ func (o ToolOptions) optionsFor(tool string) map[string]map[string]any {
 	return o.Image
 }
 
-// IsZero reports whether nothing is configured.
-func (o ToolOptions) IsZero() bool {
-	return len(o.Image) == 0 && len(o.Video) == 0
-}
-
 // PruneToolOptions drops the knob blocks whose deployment id is no
 // longer a configured instance. Blocks are keyed by deployment id, so a
 // removed provider would otherwise leave its knobs behind: invisible in

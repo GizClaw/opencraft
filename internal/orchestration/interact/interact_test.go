@@ -183,7 +183,7 @@ func (r *fakeReplier) Reply(_ context.Context, promptID string, reply agent.User
 func TestBrokerRoutesPromptToTurnReply(t *testing.T) {
 	rt := &fakeRuntime{}
 	backend := &fakeBackend{reply: Reply{Status: ReplyOK, Text: "hello"}}
-	broker := New(rt, backend)
+	broker := NewWithBackendResolver(rt, backend, nil)
 	if err := broker.Attach(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +268,7 @@ func TestBrokerRoutesPromptByRunBackend(t *testing.T) {
 func TestBrokerBackendErrorResolvesEmpty(t *testing.T) {
 	rt := &fakeRuntime{}
 	backend := &fakeBackend{err: errTest}
-	broker := New(rt, backend)
+	broker := NewWithBackendResolver(rt, backend, nil)
 	if err := broker.Attach(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +306,7 @@ func TestBrokerForwardsResolved(t *testing.T) {
 		ch:       make(chan session.PromptStatus, 1),
 		reasonCh: make(chan string, 1),
 	}
-	broker := New(rt, backend)
+	broker := NewWithBackendResolver(rt, backend, nil)
 	if err := broker.Attach(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -341,7 +341,7 @@ func TestBrokerResolvedReasonFromAskError(t *testing.T) {
 		ch:       make(chan session.PromptStatus, 1),
 		reasonCh: make(chan string, 1),
 	}
-	broker := New(rt, backend)
+	broker := NewWithBackendResolver(rt, backend, nil)
 	if err := broker.Attach(context.Background()); err != nil {
 		t.Fatal(err)
 	}

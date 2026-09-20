@@ -15,6 +15,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/config"
 	"github.com/GizClaw/opencraft/internal/orchestration/host"
 	"github.com/GizClaw/opencraft/internal/orchestration/interact"
+	"github.com/GizClaw/opencraft/internal/testing/configseed"
 	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
@@ -240,7 +241,7 @@ func writeProviderConfig(t *testing.T, configDir, baseURL string) {
 			Models:    []config.Model{{Name: "fake-model"}},
 		}},
 	}
-	if err := config.WriteInference(configDir, cfg); err != nil {
+	if err := configseed.Write(configDir, cfg); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/GizClaw/opencraft/internal/adapters/headless"
 	"github.com/GizClaw/opencraft/internal/capabilities/rollout"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/testing/configseed"
 	"github.com/GizClaw/opencraft/internal/testing/e2e/fakeprovider"
 )
 
@@ -47,7 +48,7 @@ func writeFakeConfig(t *testing.T, dir, baseURL, sandboxSetting string) {
 			Models:    []config.Model{{Name: "fake-model"}},
 		}},
 	}
-	if err := config.WriteInference(dir, cfg); err != nil {
+	if err := configseed.Write(dir, cfg); err != nil {
 		t.Fatalf("WriteInference: %v", err)
 	}
 }

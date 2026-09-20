@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { useStore, type AssistantItem } from '../lib/store';
+import { itemText, useStore, type AssistantItem } from '../lib/store';
 import { Markdown } from './Markdown';
 import { ApplyPatchView, ToolCard, WriteView } from './ToolCard';
 
@@ -41,7 +41,7 @@ export const StreamItemView = memo(function StreamItemView({
     case 'reasoning':
       return null;
     case 'text':
-      return <AssistantText text={item.text} streaming={streaming} />;
+      return <AssistantText text={itemText(item)} streaming={streaming} />;
     case 'tool_call':
       return item.tool.name === 'apply_patch' ? (
         <ApplyPatchView key={item.id} tool={item.tool} />

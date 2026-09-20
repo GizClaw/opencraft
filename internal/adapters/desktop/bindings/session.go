@@ -315,13 +315,15 @@ func (b *Session) Delete(id string) (SessionDeleteResult, error) {
 // Turns returns every archived turn of one conversation.
 func (b *Session) Turns(
 	id string,
+	limit int,
+	beforeSeq int64,
 ) ([]SessionTurnDTO, error) {
 	ctx := b.core.Shell.Context()
 	h := b.core.Runtime.Current()
 	if h == nil || h.Sessions() == nil {
 		return nil, errNotReady("session")
 	}
-	turns, err := h.Sessions().Turns(ctx, id)
+	turns, err := h.Sessions().TurnsPage(ctx, id, limit, beforeSeq)
 	if err != nil {
 		return nil, err
 	}

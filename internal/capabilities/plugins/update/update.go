@@ -40,12 +40,8 @@ type Policy struct {
 	AllowPrivate bool
 }
 
-// Check fetches and validates the update manifest at sourceURL.
-func Check(ctx context.Context, sourceURL string) (plugins.UpdateInfo, error) {
-	return CheckWithPolicy(ctx, sourceURL, Policy{})
-}
-
-// CheckWithPolicy is Check with an explicit network policy.
+// CheckWithPolicy fetches and validates the update manifest at sourceURL
+// under an explicit network policy.
 func CheckWithPolicy(
 	ctx context.Context,
 	sourceURL string,

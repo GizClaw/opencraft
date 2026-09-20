@@ -1,4 +1,5 @@
 import { usePluginStore } from '../store';
+import { ErrorBoundary } from '../../components/ErrorBoundary';
 
 // PluginPanels renders the settingsPanels contribution point for one
 // settings surface, optionally scoped to one plugin's detail drawer.
@@ -30,7 +31,13 @@ export function PluginPanels({
           <h3 className="mb-2 break-words text-xs font-semibold text-dim">
             {panel.title}
           </h3>
-          <panel.Component />
+          {/* One plugin panel crashing on render used to take the whole
+              settings tree with it (React unmounts and rebuilds from the
+              nearest boundary). Scoping a boundary per panel keeps the
+              failure local and stops the remount churn. */}
+          <ErrorBoundary scope={`plugin-panel:${panel.pluginId}`} inline>
+            <panel.Component />
+          </ErrorBoundary>
         </section>
       ))}
     </div>

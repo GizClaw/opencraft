@@ -19,5 +19,3 @@ export const ICON = {
   xl: '1.7143rem',
   hero: '2.2857rem',
 } as const;
-
-export type IconSize = (typeof ICON)[keyof typeof ICON];

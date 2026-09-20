@@ -99,9 +99,6 @@ type inferenceCatalogDoc struct {
 // remote catalog compares versions to decide whether an update is older.
 func (c InferenceCatalog) Version() string { return c.version }
 
-// Notes returns the document-level maintenance note.
-func (c InferenceCatalog) Notes() string { return c.notes }
-
 // Models returns the model entries in document order.
 func (c InferenceCatalog) Models() []InferenceCatalogModel {
 	return append([]InferenceCatalogModel(nil), c.models...)

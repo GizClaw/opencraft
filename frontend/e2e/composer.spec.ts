@@ -4,7 +4,7 @@
 // newest reply always clears the card.
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { mockBackend } from './mock/backend';
-import { typeComposerMessage } from './helpers';
+import { loadAllHistory, typeComposerMessage } from './helpers';
 
 const WS = '/Users/me/projects/opencraft';
 
@@ -94,6 +94,10 @@ test('floats over the transcript and keeps the newest reply clear', async ({
   // Scrolling down the middle of the transcript still leaves the newest
   // row — and the card — where they were: the card floats, it is not a
   // row that the scroll position can move.
+  // Hydration starts from the newest turns only, so page the rest in
+  // first; the assertion below reads a row from the middle of the
+  // session.
+  await loadAllHistory(page);
   await scroll.evaluate((el) => el.scrollTo(0, 0));
   await expect(page.getByText('ask-20')).toBeVisible();
   const parked = await card.boundingBox();

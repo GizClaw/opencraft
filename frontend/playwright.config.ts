@@ -15,5 +15,16 @@ export default defineConfig({
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
   },
-  projects: [{ name: 'chromium', use: { browserName: 'chromium' } }],
+  projects: [
+    { name: 'chromium', use: { browserName: 'chromium' } },
+    // WebKit runs only the perf budget spec: the desktop app ships
+    // WKWebView (JSC), so that is where layout/GC budgets matter most,
+    // but a full second matrix would double CI time for no extra
+    // coverage of the interaction specs.
+    {
+      name: 'webkit-perf',
+      use: { browserName: 'webkit' },
+      testMatch: /perf\.spec\.ts/,
+    },
+  ],
 });

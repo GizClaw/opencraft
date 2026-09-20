@@ -3,6 +3,7 @@ package sessions
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -964,6 +965,67 @@ func TestRecordTurnTimingPersistsWithArchivedTurn(t *testing.T) {
 	if len(turns) != 1 {
 		t.Fatalf("Turns = %d records, want 1 after idempotent retry", len(turns))
 	}
+}
+
+// TestTurnsPagePagesBackwardsFromASeqCursor verifies the paged archive
+// read the desktop hydration path uses: newest page first, then older
+// turns below a seq cursor, each page carrying only its own messages.
+func TestTurnsPagePagesBackwardsFromASeqCursor(t *testing.T) {
+	store, err := newMigratedStore(t.TempDir(), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = store.CloseDB() }()
+	id, err := store.Create()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 5; i++ {
+		user := message.NewTextMessage(message.RoleUser,
+			fmt.Sprintf("prompt-%d", i))
+		assistant := message.NewTextMessage(message.RoleAssistant,
+			fmt.Sprintf("answer-%d", i))
+		if err := store.AppendTurnWithRunID(
+			context.Background(), id, fmt.Sprintf("run-%d", i),
+			[]message.Message{user, assistant},
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The UI asks for one turn more than it keeps.
+	newest, err := store.TurnsPage(context.Background(), id, 3, 0)
+	if err != nil {
+		t.Fatalf("TurnsPage newest: %v", err)
+	}
+	if len(newest) != 3 || newest[0].Seq != 3 || newest[2].Seq != 5 {
+		t.Fatalf("newest page seqs = %v", turnSeqs(newest))
+	}
+	if len(newest[0].Messages) != 2 ||
+		newest[0].Messages[0].Content.Text() != "prompt-3" {
+		t.Fatalf("newest page messages = %+v", newest[0].Messages)
+	}
+
+	older, err := store.TurnsPage(context.Background(), id, 3,
+		int64(newest[0].Seq))
+	if err != nil {
+		t.Fatalf("TurnsPage older: %v", err)
+	}
+	if len(older) != 2 || older[0].Seq != 1 || older[1].Seq != 2 {
+		t.Fatalf("older page seqs = %v", turnSeqs(older))
+	}
+	if len(older[1].Messages) != 2 ||
+		older[1].Messages[1].Content.Text() != "answer-2" {
+		t.Fatalf("older page messages = %+v", older[1].Messages)
+	}
+}
+
+func turnSeqs(turns []TurnRecord) []int {
+	out := make([]int, 0, len(turns))
+	for _, turn := range turns {
+		out = append(out, turn.Seq)
+	}
+	return out
 }
 
 // TestTurnByRunIDLoadsOneCompletedTurn verifies the frontend

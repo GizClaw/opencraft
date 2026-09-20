@@ -41,6 +41,19 @@ const DefaultBudgetChars = 4096
 // compaction does not re-summarize messages it already covered.
 const compactStateName = "compact"
 
+// maxCondenseChars bounds one condensation request. A fold can carry
+// megabytes of rendered messages — a single compaction call was observed
+// at 15 MiB — and a prompt that size is rejected or billed whole by the
+// provider, so larger folds are condensed in sequential shards and the
+// partial summaries are merged by a final pass. Folds under the cap keep
+// the single-call path, so ordinary compaction is unchanged.
+const maxCondenseChars = 400 << 10
+
+// maxCondenseRounds bounds the merge passes for a fold with many shards:
+// every pass replaces its input with summaries, so the size collapses
+// after the first round and the loop is a safety net, not the norm.
+const maxCondenseRounds = 3
+
 // Args is the compact tool input.
 type Args struct {
 	// Conversation is the messages to fold into the summary. Only the
@@ -229,13 +242,8 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 		return "", errdefs.NotAvailablef("compact: condensation not configured")
 	}
 
-	raw := renderMessages(fresh)
-	if art.Summary != "" {
-		raw = art.Summary + "\n\n" + raw
-	}
-	summary := t.condenseText(ctx, condenseInput{
+	summary := t.condenseFold(ctx, condenseInput{
 		conversationID: args.ConversationID,
-		raw:            raw,
 		fresh:          fresh,
 		prevSummary:    art.Summary,
 		budget:         budget,
@@ -522,6 +530,111 @@ type condenseInput struct {
 	fresh          []message.Message
 	prevSummary    string
 	budget         int
+}
+
+// condenseFold renders a fold and condenses it, sharding the transcript
+// when it exceeds one request. Shards follow message boundaries; a single
+// message larger than the cap is condensed on its own with its rendering
+// truncated, because no provider window can take it whole.
+func (t *Tool) condenseFold(ctx context.Context, in condenseInput) string {
+	raw := renderMessages(in.fresh)
+	if in.prevSummary != "" {
+		raw = in.prevSummary + "\n\n" + raw
+	}
+	if len(raw) <= maxCondenseChars {
+		in.raw = raw
+		return t.condenseText(ctx, in)
+	}
+	shards := shardMessages(in.fresh, maxCondenseChars)
+	telemetry.Info(ctx, "compact: condensing a large fold in shards",
+		otellog.String("conversation.id", in.conversationID),
+		otellog.Int("fold.chars", len(raw)),
+		otellog.Int("fold.shards", len(shards)))
+	partials := make([]string, 0, len(shards))
+	for i, shard := range shards {
+		shardRaw := renderMessages(shard)
+		if len(shardRaw) > maxCondenseChars {
+			shardRaw = truncateRunes(shardRaw, maxCondenseChars) + "\n…[truncated]"
+		}
+		if i == 0 && in.prevSummary != "" {
+			shardRaw = in.prevSummary + "\n\n" + shardRaw
+		}
+		partials = append(partials, t.condenseText(ctx, condenseInput{
+			conversationID: in.conversationID,
+			raw:            shardRaw,
+			fresh:          shard,
+			prevSummary:    in.prevSummary,
+			budget:         in.budget,
+		}))
+	}
+	merged := strings.Join(partials, "\n\n")
+	for round := 0; round < maxCondenseRounds && len(merged) > maxCondenseChars; round++ {
+		chunks := splitText(merged, maxCondenseChars)
+		parts := make([]string, 0, len(chunks))
+		for _, chunk := range chunks {
+			parts = append(parts, t.condenseText(ctx, condenseInput{
+				conversationID: in.conversationID,
+				raw:            chunk,
+				fresh:          in.fresh,
+				prevSummary:    in.prevSummary,
+				budget:         in.budget,
+			}))
+		}
+		merged = strings.Join(parts, "\n\n")
+	}
+	if len(merged) > maxCondenseChars {
+		// Every model pass returned something too long to merge: fall back
+		// to the mechanical digest so the fold still shrinks the channel.
+		return summarytext.MechanicalSummary(in.fresh, in.prevSummary, in.budget)
+	}
+	return merged
+}
+
+// shardMessages packs whole messages into shards of at most limit
+// characters of rendered text. A message that exceeds the limit on its
+// own becomes a shard of its own; the caller truncates its rendering.
+func shardMessages(msgs []message.Message, limit int) [][]message.Message {
+	if len(msgs) == 0 {
+		return nil
+	}
+	var out [][]message.Message
+	var cur []message.Message
+	size := 0
+	for _, m := range msgs {
+		rendered := len(renderMessages([]message.Message{m}))
+		if len(cur) > 0 && size+rendered > limit {
+			out = append(out, cur)
+			cur = nil
+			size = 0
+		}
+		cur = append(cur, m)
+		size += rendered
+	}
+	if len(cur) > 0 {
+		out = append(out, cur)
+	}
+	return out
+}
+
+// splitText cuts text into chunks of at most limit characters, preferring
+// line boundaries so a shard never starts mid-line when it can avoid it.
+func splitText(text string, limit int) []string {
+	if len(text) <= limit {
+		return []string{text}
+	}
+	var out []string
+	for len(text) > limit {
+		cut := strings.LastIndexByte(text[:limit], '\n')
+		if cut <= 0 {
+			cut = limit
+		}
+		out = append(out, text[:cut])
+		text = strings.TrimPrefix(text[cut:], "\n")
+	}
+	if text != "" {
+		out = append(out, text)
+	}
+	return out
 }
 
 // condenseText produces the fold's summary text. It walks a short ladder —

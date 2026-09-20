@@ -84,10 +84,37 @@ function viewerDefaults(): FileViewerState {
 // block (reasoning trace, tool call, or text), so renderers can show
 // output in the exact order the model produced it. Reasoning traces
 // are hidden from the chat transcript.
+// TextItemFields is the shared body of a streamed text/reasoning block.
+// While the block is still streaming its body lives in chunks: appending
+// a delta is then an array push instead of a copy of the whole answer,
+// and the per-item cap can drop the oldest chunks without touching the
+// rest. When the block ends (a tool call, the turn end) the chunks are
+// folded back into text.
+export interface TextItemFields {
+  id: string;
+  text: string;
+  chunks?: string[];
+}
+
+// AssistantItem preserves stream order; the two text kinds stay separate
+// union members so `Extract<AssistantItem, { kind: 'text' }>` — the
+// pattern the renderers use to pick text blocks — keeps working.
 export type AssistantItem =
-  | { kind: 'reasoning'; id: string; text: string }
-  | { kind: 'tool_call'; id: string; tool: ToolView }
-  | { kind: 'text'; id: string; text: string };
+  | ({ kind: 'reasoning' } & TextItemFields)
+  | ({ kind: 'text' } & TextItemFields)
+  | { kind: 'tool_call'; id: string; tool: ToolView };
+
+// TextItem is either text kind, for helpers that treat them alike.
+type TextItem = ({ kind: 'reasoning' } | { kind: 'text' }) & TextItemFields;
+
+// itemText returns the display text of a streaming block, joining the
+// accumulated chunks. Callers that render or copy the text use this
+// instead of reading item.text directly.
+export function itemText(item: { text: string; chunks?: string[] }): string {
+  if (!item.chunks || item.chunks.length === 0) return item.text;
+  if (item.chunks.length === 1) return item.chunks[0];
+  return item.chunks.join('');
+}
 
 export interface MessageView {
   id: string;
@@ -96,6 +123,11 @@ export interface MessageView {
   // their ordered items instead.
   text: string;
   items: AssistantItem[];
+  // droppedItems counts the oldest blocks a live turn folded away once
+  // the message hit MAX_ITEMS_PER_MESSAGE. The transcript renders the
+  // count so the beginning of a very long turn is not silently gone; the
+  // archive still holds every block.
+  droppedItems?: number;
   // attachments renders user message media: images above the bubble,
   // other files in a floating list below it.
   attachments: AttachmentView[];
@@ -128,6 +160,14 @@ export interface ConversationState {
   model: string;
   pendingInteracts: InteractDTO[];
   queued?: QueuedInput;
+  // historySeq is the smallest archived turn seq currently loaded and
+  // historyHasMore says whether older turns still exist in the archive.
+  // Startup hydration only pulls the newest page, so scrolling to the top
+  // asks the backend for the turns just below historySeq instead of the
+  // whole session. historyLoading guards concurrent page requests.
+  historySeq?: number;
+  historyHasMore?: boolean;
+  historyLoading?: boolean;
 }
 
 export type ToastKind = 'info' | 'warning';
@@ -158,23 +198,104 @@ const newTurnID = () => `live-${++turnSeq}`;
 // without bound on long-running sessions.
 const MAX_CONV_MESSAGES = 800;
 
-// STREAM_FLUSH_MAX_DELAY_MS bounds how long a burst of stream deltas
-// can stay queued when animation frames are paused (for example while
-// the webview is occluded). The rAF flush normally runs at frame rate;
-// this timer guarantees a commit still happens even when rAF is not
-// being driven.
-const STREAM_FLUSH_MAX_DELAY_MS = 50;
+// HISTORY_PAGE_TURNS / INITIAL_HISTORY_TURNS bound how much of a long
+// conversation is pulled from the archive at once. Startup hydration
+// takes the newest page only; scrolling above it pages backwards. Both
+// requests ask for one turn more than they keep, so the extra turn can
+// be dropped while still knowing whether older turns exist.
+const INITIAL_HISTORY_TURNS = 6;
+const HISTORY_PAGE_TURNS = 10;
+
+// MAX_ITEMS_PER_MESSAGE bounds how many blocks one assistant message
+// keeps while a turn streams. A long turn appends a reasoning block, a
+// text block and a tool call per round; past the cap the oldest blocks
+// fold into a counter, which is what keeps the message (and every
+// re-render that walks it) bounded. The archive keeps the full turn.
+const MAX_ITEMS_PER_MESSAGE = 400;
+
+// MAX_REASONING_CHARS keeps only the tail of a reasoning trace: the
+// transcript never renders it, so everything it holds is overhead.
+const MAX_REASONING_CHARS = 16 << 10;
+
+// MAX_ITEM_TEXT_CHARS caps one visible text block. The tail is what the
+// reader is watching while streaming, so head and tail are kept with a
+// marker between them; the archive still holds the full text.
+const MAX_ITEM_TEXT_CHARS = 256 << 10;
+
+// MAX_TOOL_ARGS_CHARS caps the stored argument text of one tool call.
+// write_file carries whole files, and the store keeps args as a compact
+// JSON string for the card to parse.
+const MAX_TOOL_ARGS_CHARS = 512 << 10;
+
+// flushDurations keeps the last few stream-flush timings so the optional
+// perf probe can report the transcript's per-frame cost without a
+// profiler attached. It is a fixed-size ring: no growth, no allocation
+// per flush beyond one number.
+const FLUSH_SAMPLE_SIZE = 256;
+const flushDurations: number[] = [];
+
+function recordFlushDuration(ms: number) {
+  flushDurations.push(ms);
+  if (flushDurations.length > FLUSH_SAMPLE_SIZE) flushDurations.shift();
+}
+
+// streamFlushStats summarizes the recorded flush timings. Percentiles use
+// the nearest-rank method, which is what the probe reports as P50/P95.
+export function streamFlushStats(): {
+  count: number;
+  p50: number;
+  p95: number;
+  max: number;
+} {
+  if (flushDurations.length === 0) {
+    return { count: 0, p50: 0, p95: 0, max: 0 };
+  }
+  const sorted = [...flushDurations].sort((a, b) => a - b);
+  const pick = (q: number) =>
+    sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))];
+  return {
+    count: sorted.length,
+    p50: pick(0.5),
+    p95: pick(0.95),
+    max: sorted[sorted.length - 1],
+  };
+}
+
+// STREAM_FLUSH_INTERVAL_MS is how long stream deltas coalesce before the
+// transcript commits. Flushing every animation frame redraws the
+// transcript ~60 times a second for text nobody reads that fast; 100ms
+// keeps streaming smooth while cutting the per-flush render work by
+// about six. The first delta after an idle moment still commits on the
+// next frame, and any non-stream event (turn_end, interact, artifacts)
+// flushes the queue synchronously first, so state never waits on the
+// timer.
+const STREAM_FLUSH_INTERVAL_MS = 100;
 
 // capConversation trims the oldest messages past the in-memory cap and
-// re-bases per-turn artifact strip indexes onto the trimmed array.
+// re-bases per-turn artifact strip indexes onto the trimmed array. The
+// cut lands on a turn boundary so a trim never leaves half a turn in
+// the store, and the history cursor moves with it: the next "load
+// earlier" page continues below the oldest turn still loaded.
 function capConversation(conv: ConversationState): ConversationState {
   if (conv.messages.length <= MAX_CONV_MESSAGES) return conv;
-  const drop = conv.messages.length - MAX_CONV_MESSAGES;
+  const above = conv.messages.length - MAX_CONV_MESSAGES;
+  // Drop whole turns: the largest turn boundary at or below the exact
+  // cut. Falling back to the exact cut when the oldest known turn starts
+  // past it keeps the cap a real bound; the overshoot in the normal case
+  // is one turn, and a mid-turn cut can leave a partial turn whose
+  // history cursor would be wrong.
+  let drop = 0;
+  for (const turn of conv.turnArtifacts) {
+    if (turn.start > above) break;
+    if (turn.start > drop) drop = turn.start;
+  }
+  if (drop === 0) drop = above;
   const messages = conv.messages.slice(drop);
   const turnArtifacts = conv.turnArtifacts
     .map((t) => ({ ...t, start: t.start - drop }))
     .filter((t) => t.start >= 0);
-  return { ...conv, messages, turnArtifacts };
+  const historySeq = turnArtifacts[0]?.seq ?? conv.historySeq;
+  return { ...conv, messages, turnArtifacts, historySeq };
 }
 
 // normalizeArgs coerces the wire form of tool arguments to a string:
@@ -183,7 +304,14 @@ function capConversation(conv: ConversationState): ConversationState {
 function normalizeArgs(args: unknown): string {
   if (typeof args === 'string') return args;
   try {
-    return JSON.stringify(args, null, 2);
+    // Compact, not pretty-printed: the card parses this string and
+    // pretty-prints it for display itself, so indentation here would only
+    // enlarge what the store holds (a written file can be megabytes).
+    const raw = JSON.stringify(args);
+    if (raw.length > MAX_TOOL_ARGS_CHARS) {
+      return `${raw.slice(0, MAX_TOOL_ARGS_CHARS)}…[args truncated]`;
+    }
+    return raw;
   } catch {
     return String(args);
   }
@@ -198,6 +326,8 @@ const emptyConv = (
   think: over?.think ?? 'medium',
   model: over?.model ?? '',
   pendingInteracts: [],
+  historySeq: 0,
+  historyHasMore: false,
 });
 
 // firstMessageTitle mirrors the backend's archive-title fallback: a
@@ -241,6 +371,10 @@ export type TurnStatus =
 export interface TurnArtifacts {
   id: string;
   start: number;
+  // seq is the archived turn's sequence number, set when the turn came
+  // from the per-turn archive. Paged hydration uses it as the cursor for
+  // "load older turns" and to keep the cursor honest after trimming.
+  seq?: number;
   docs: TurnDoc[];
   // requestedAt is when the user's message was accepted; startedAt is
   // when agent execution began; finishedAt/durationMs cover the run.
@@ -361,9 +495,14 @@ function historyPartsToAttachments(parts: HistoryPart[]): AttachmentView[] {
 // resumed sessions do not show a stack of repeated tool group cards.
 const historyToMessages = (history: HistoryMessage[]): MessageView[] => {
   const messages: MessageView[] = [];
-  const toolCalls: {
-    item: Extract<AssistantItem, { kind: 'tool_call' }>;
-  }[] = [];
+  // byCallID indexes the tool calls seen so far so a tool_result is O(1)
+  // to attach. Scanning the accumulated list (the old `.find`) made
+  // resuming a session quadratic in its number of tool calls, which is
+  // exactly the shape of a long turn's archive.
+  const byCallID = new Map<
+    string,
+    Extract<AssistantItem, { kind: 'tool_call' }>
+  >();
   for (const h of history) {
     const parts = h.content?.parts ?? [];
     if (h.role === 'user') {
@@ -383,16 +522,14 @@ const historyToMessages = (history: HistoryMessage[]): MessageView[] => {
     if (h.role === 'tool') {
       for (const p of parts) {
         if (p.type !== 'tool_result' || !p.result) continue;
-        const call = toolCalls.find(
-          (c) => c.item.tool.id === p.result!.call_id,
-        );
-        if (call) {
-          call.item.tool.status = p.result.is_error ? 'error' : 'done';
-          call.item.tool.result = sanitizeToolResult(
+        const item = byCallID.get(p.result.call_id);
+        if (item) {
+          item.tool.status = p.result.is_error ? 'error' : 'done';
+          item.tool.result = sanitizeToolResult(
             toolResultText(p.result.content),
           );
           const images = toolResultImages(p.result.content);
-          if (images.length > 0) call.item.tool.images = images;
+          if (images.length > 0) item.tool.images = images;
         }
       }
       continue;
@@ -415,16 +552,20 @@ const historyToMessages = (history: HistoryMessage[]): MessageView[] => {
       switch (p.type) {
         case 'text':
           if (p.text) {
-            msg.items.push({ kind: 'text', id: newID('part'), text: p.text });
+            msg.items.push(
+              capTextItem({ kind: 'text', id: newID('part'), text: p.text }),
+            );
           }
           break;
         case 'reasoning':
           if (p.text) {
-            msg.items.push({
-              kind: 'reasoning',
-              id: newID('part'),
-              text: p.text,
-            });
+            msg.items.push(
+              capTextItem({
+                kind: 'reasoning',
+                id: newID('part'),
+                text: p.text,
+              }),
+            );
           }
           break;
         case 'tool_call': {
@@ -441,7 +582,7 @@ const historyToMessages = (history: HistoryMessage[]): MessageView[] => {
             },
           };
           msg.items.push(item);
-          toolCalls.push({ item });
+          byCallID.set(call.id, item);
           break;
         }
       }
@@ -465,6 +606,7 @@ function historyTurnsToState(turns: SessionTurn[]): {
     turnArtifacts.push({
       id: `h-${turn.seq}`,
       start,
+      seq: turn.seq,
       runID: turn.run_id,
       requestedAt: turn.requested_at || turn.at,
       startedAt: turn.started_at || turn.at,
@@ -483,6 +625,30 @@ function historyTurnsToState(turns: SessionTurn[]): {
     });
   }
   return { messages, turnArtifacts };
+}
+
+// historyPage turns one Session.Turns response into conversation state.
+// The caller asks for one turn more than the page keeps: the extra turn
+// is dropped here, and its presence is what tells us older history
+// still exists on the backend.
+function historyPage(
+  turns: SessionTurn[],
+  pageSize: number,
+): {
+  messages: MessageView[];
+  turnArtifacts: TurnArtifacts[];
+  historySeq: number;
+  historyHasMore: boolean;
+} {
+  const historyHasMore = turns.length > pageSize;
+  const page = historyHasMore ? turns.slice(turns.length - pageSize) : turns;
+  const { messages, turnArtifacts } = historyTurnsToState(page);
+  return {
+    messages,
+    turnArtifacts,
+    historySeq: page[0]?.seq ?? 0,
+    historyHasMore,
+  };
 }
 
 // lastAssistant returns a mutable copy of the last assistant message
@@ -528,13 +694,84 @@ function mergeAppend(
   const items = msg.items;
   const lastItem = items[items.length - 1];
   if (lastItem && lastItem.kind === kind) {
+    // Append to the block's chunks instead of concatenating the whole
+    // answer: the join happens once per render, where the string is
+    // needed anyway, and the cap below can drop the oldest chunks.
+    const chunks = lastItem.chunks ?? [lastItem.text];
+    chunks.push(text);
     msg.items = [
       ...items.slice(0, -1),
-      { ...lastItem, text: lastItem.text + text },
+      capTextItem({ ...lastItem, chunks, text: '' }),
     ];
   } else {
-    msg.items = [...items, { kind, id: newID('part'), text }];
+    msg.items = [...items, capTextItem({ kind, id: newID('part'), text })];
   }
+}
+
+// capTextItem enforces the per-block text bound. Reasoning keeps its
+// tail (it is never rendered); visible text keeps head and tail with a
+// marker in between. The chunk array is trimmed in place, so a block that
+// already dropped its oldest chunks is not re-joined on every delta.
+function capTextItem<T extends TextItem>(item: T): T {
+  // Fold the chunks first: the bound is expressed over the whole text.
+  const total = itemText(item);
+  const limit =
+    item.kind === 'reasoning' ? MAX_REASONING_CHARS : MAX_ITEM_TEXT_CHARS;
+  if (total.length <= limit) {
+    return item;
+  }
+  if (item.chunks && item.chunks.length > 1) {
+    const chunks = item.chunks.slice();
+    let size = total.length;
+    while (chunks.length > 1 && size > limit) {
+      size -= chunks[0].length;
+      chunks.shift();
+    }
+    const marker = `…[trimmed ${total.length - size} chars]`;
+    if (chunks.length === 1) {
+      const tail = chunks[0].slice(-limit);
+      return { ...item, chunks: undefined, text: marker + tail };
+    }
+    return { ...item, chunks: [marker, ...chunks], text: '' };
+  }
+  if (item.kind === 'reasoning') {
+    return {
+      ...item,
+      text: `…[trimmed ${total.length - limit} chars]` + total.slice(-limit),
+    };
+  }
+  const head = Math.floor(limit / 2);
+  const tail = limit - head;
+  return {
+    ...item,
+    text: `${total.slice(0, head)}\n…[trimmed ${total.length - limit} chars]…\n${total.slice(-tail)}`,
+  };
+}
+
+// foldTextItem turns a streaming block's chunks back into one string.
+// Called when the block ends (a tool call arrives, the message ends), so
+// a settled message holds plain text and no chunk array.
+function foldTextItem<T extends TextItem>(item: T): T {
+  if (!item.chunks) return item;
+  const folded = { ...item, text: itemText(item) };
+  delete (folded as TextItem).chunks;
+  return folded;
+}
+
+// foldLastTextItem folds the trailing text block of a message, if any.
+function foldLastTextItem(msg: MessageView) {
+  const last = msg.items[msg.items.length - 1];
+  if (!last || last.kind === 'tool_call' || !last.chunks) return;
+  msg.items = [...msg.items.slice(0, -1), foldTextItem(last)];
+}
+
+// trimItems enforces MAX_ITEMS_PER_MESSAGE on one message, folding the
+// overflow into droppedItems.
+function trimItems(msg: MessageView) {
+  if (msg.items.length <= MAX_ITEMS_PER_MESSAGE) return;
+  const drop = msg.items.length - MAX_ITEMS_PER_MESSAGE;
+  msg.items = msg.items.slice(drop);
+  msg.droppedItems = (msg.droppedItems ?? 0) + drop;
 }
 
 // friendlyInterruption maps the engine's interrupt cause to user-facing
@@ -643,6 +880,7 @@ function applyStream(
       if (!text) return messages;
       const { msg, messages: next } = lastAssistant(messages);
       mergeAppend(msg, 'text', text);
+      trimItems(msg);
       return next;
     }
     case 'reasoning': {
@@ -650,10 +888,14 @@ function applyStream(
       if (!text) return messages;
       const { msg, messages: next } = lastAssistant(messages);
       mergeAppend(msg, 'reasoning', text);
+      trimItems(msg);
       return next;
     }
     case 'tool_call': {
+      // A tool call ends the preceding text block: fold it so a settled
+      // block holds plain text instead of a chunk array.
       const { msg, messages: next } = lastAssistant(messages);
+      foldLastTextItem(msg);
       msg.items = [
         ...msg.items,
         {
@@ -668,12 +910,16 @@ function applyStream(
           },
         },
       ];
+      trimItems(msg);
       return next;
     }
     case 'tool_result': {
       const id = part.result.call_id;
       let next = messages;
-      for (let i = 0; i < messages.length; i++) {
+      // Walk backwards: a result virtually always belongs to the newest
+      // assistant message, so the common case finds it in the first step
+      // instead of scanning the whole transcript for every tool result.
+      for (let i = messages.length - 1; i >= 0; i--) {
         const m = messages[i];
         if (m.role !== 'assistant') continue;
         let changed = false;
@@ -794,6 +1040,11 @@ interface StoreState {
   newEmptyTab: () => void;
   newChat: () => Promise<void>;
   resume: (id: string) => Promise<void>;
+  // loadEarlierHistory pulls the next page of archived turns below the
+  // ones already loaded and prepends them. It resolves to the number of
+  // message rows that were added, so the transcript can widen its render
+  // window by exactly that much and keep the viewport anchored.
+  loadEarlierHistory: (id: string) => Promise<number>;
   retryTranscript: (id: string) => Promise<void>;
   backFromFailure: () => void;
   deleteSession: (id: string) => Promise<void>;
@@ -864,6 +1115,8 @@ export const useStore = create<StoreState>((set, get) => {
   let pendingStreamEvents: UIEvent[] = [];
   let streamFlushRAF: number | null = null;
   let streamFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  // lastStreamFlushAt paces stream commits; see STREAM_FLUSH_INTERVAL_MS.
+  let lastStreamFlushAt = 0;
   // Session switches must land on the backend in the same order the
   // user requested them. Without this queue, an older resumeSession
   // can finish after a newer NewChat and move the backend context back
@@ -1544,19 +1797,30 @@ export const useStore = create<StoreState>((set, get) => {
     if (pendingStreamEvents.length === 0) return;
     const events = pendingStreamEvents;
     pendingStreamEvents = [];
+    const started = performance.now();
     for (const ev of coalesceStreamEvents(events)) {
       routeBackendEvent(ev, { root: stateRoot, data: eventDataSink });
     }
+    lastStreamFlushAt = performance.now();
+    recordFlushDuration(performance.now() - started);
   };
 
   const scheduleStreamFlush = () => {
     if (streamFlushRAF !== null || streamFlushTimer !== null) return;
     const flush = () => flushPendingStreams();
-    streamFlushRAF =
-      typeof requestAnimationFrame === 'function'
-        ? requestAnimationFrame(flush)
-        : null;
-    streamFlushTimer = setTimeout(flush, STREAM_FLUSH_MAX_DELAY_MS);
+    const sinceLast = performance.now() - lastStreamFlushAt;
+    if (sinceLast >= STREAM_FLUSH_INTERVAL_MS) {
+      // The queue has been idle: commit on the next frame so the first
+      // delta of a burst lands immediately instead of waiting out the
+      // interval.
+      streamFlushRAF =
+        typeof requestAnimationFrame === 'function'
+          ? requestAnimationFrame(flush)
+          : null;
+      if (streamFlushRAF === null) streamFlushTimer = setTimeout(flush, 0);
+      return;
+    }
+    streamFlushTimer = setTimeout(flush, STREAM_FLUSH_INTERVAL_MS - sinceLast);
   };
 
   // retainLiveConversations drops transcripts that are neither focused
@@ -1824,16 +2088,18 @@ export const useStore = create<StoreState>((set, get) => {
             generation,
           });
           void api
-            .sessionTurns(currentSession)
+            .sessionTurns(currentSession, INITIAL_HISTORY_TURNS + 1, 0)
             .then((turns) => {
-              const { messages, turnArtifacts } = historyTurnsToState(turns);
+              const page = historyPage(turns, INITIAL_HISTORY_TURNS);
               set((state) => ({
                 conversations: {
                   ...state.conversations,
                   [currentSession]: capConversation({
                     ...(state.conversations[currentSession] ?? emptyConv()),
-                    messages,
-                    turnArtifacts,
+                    messages: page.messages,
+                    turnArtifacts: page.turnArtifacts,
+                    historySeq: page.historySeq,
+                    historyHasMore: page.historyHasMore,
                   }),
                 },
               }));
@@ -2214,6 +2480,51 @@ export const useStore = create<StoreState>((set, get) => {
       stateRoot.sendFocus({ type: 'BACK' });
     },
 
+    // loadEarlierHistory pages backwards through the archive. Turns the
+    // user already paged in stay put: the trim in capConversation only
+    // runs when the transcript changes, so an explicit "scroll up" is
+    // never undone by a cap that would drop the page just fetched.
+    loadEarlierHistory: async (id) => {
+      const conv = get().conversations[id];
+      if (!conv || conv.historyLoading || !conv.historyHasMore) return 0;
+      const beforeSeq = conv.historySeq ?? 0;
+      updateConv(id, { historyLoading: true });
+      try {
+        const turns = await api.sessionTurns(
+          id,
+          HISTORY_PAGE_TURNS + 1,
+          beforeSeq,
+        );
+        const page = historyPage(turns, HISTORY_PAGE_TURNS);
+        const added = page.messages.length;
+        set((state) => {
+          const current = state.conversations[id];
+          if (!current) return state;
+          const shiftedTurns = current.turnArtifacts.map((t) => ({
+            ...t,
+            start: t.start + added,
+          }));
+          return {
+            conversations: {
+              ...state.conversations,
+              [id]: {
+                ...current,
+                messages: [...page.messages, ...current.messages],
+                turnArtifacts: [...page.turnArtifacts, ...shiftedTurns],
+                historySeq: page.historySeq,
+                historyHasMore: page.historyHasMore,
+                historyLoading: false,
+              },
+            },
+          };
+        });
+        return added;
+      } catch {
+        updateConv(id, { historyLoading: false });
+        return 0;
+      }
+    },
+
     retryTranscript: async (id) => {
       const actor = stateRoot.registry.ensure(id, {
         workspaceGeneration: stateRoot.generation(),
@@ -2226,8 +2537,8 @@ export const useStore = create<StoreState>((set, get) => {
       const generation = stateRoot.generation();
       actor?.send({ type: 'HYDRATE_REQUESTED', request, generation });
       try {
-        const turns = await api.sessionTurns(id);
-        const { messages, turnArtifacts } = historyTurnsToState(turns);
+        const turns = await api.sessionTurns(id, INITIAL_HISTORY_TURNS + 1, 0);
+        const page = historyPage(turns, INITIAL_HISTORY_TURNS);
         set((state) => ({
           conversations: {
             ...state.conversations,
@@ -2236,8 +2547,10 @@ export const useStore = create<StoreState>((set, get) => {
               mode: state.conversations[id]?.mode ?? 'workspace',
               think: state.conversations[id]?.think ?? 'medium',
               model: state.conversations[id]?.model ?? '',
-              messages,
-              turnArtifacts,
+              messages: page.messages,
+              turnArtifacts: page.turnArtifacts,
+              historySeq: page.historySeq,
+              historyHasMore: page.historyHasMore,
             }),
           },
         }));
@@ -2319,7 +2632,11 @@ export const useStore = create<StoreState>((set, get) => {
         }
         let turns: Awaited<ReturnType<typeof api.sessionTurns>>;
         try {
-          turns = await api.sessionTurns(resolvedID);
+          turns = await api.sessionTurns(
+            resolvedID,
+            INITIAL_HISTORY_TURNS + 1,
+            0,
+          );
         } catch (err) {
           actor?.send({
             type: 'HYDRATE_FAIL',
@@ -2337,7 +2654,9 @@ export const useStore = create<StoreState>((set, get) => {
           }
           return;
         }
-        const { messages, turnArtifacts } = historyTurnsToState(turns);
+        const page = historyPage(turns, INITIAL_HISTORY_TURNS);
+        const messages = page.messages;
+        const turnArtifacts = page.turnArtifacts;
         // A live shell may already hold the current run's streamed
         // messages. Keep them after the archived history; completed
         // shells are replaced by the archive instead of duplicated.
@@ -2358,6 +2677,8 @@ export const useStore = create<StoreState>((set, get) => {
               model: snapshot.model,
               messages: mergedMessages,
               turnArtifacts,
+              historySeq: page.historySeq,
+              historyHasMore: page.historyHasMore,
               pendingInteracts: existing?.pendingInteracts ?? [],
             }),
           },

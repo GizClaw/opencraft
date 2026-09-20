@@ -35,6 +35,34 @@ type hunk struct {
 	anchor  string
 	removed []string
 	added   []string
+	// atLine is the position a hunk with no context and no anchor
+	// applies to: a pure-insertion hunk in a unified diff
+	// ("@@ -5,0 +6,2 @@") means "insert after old line 5". Zero means
+	// unset.
+	atLine int
+	// entries keeps the hunk's lines in their original order for
+	// rendering. removed/added stay the apply-side projection.
+	entries []hunkEntry
+	// unified marks a hunk parsed from a standard unified diff, whose
+	// header carries the insertion position.
+	unified bool
+}
+
+// hunkEntry is one hunk line in file order.
+type hunkEntry struct {
+	kind DiffLineKind
+	text string
+}
+
+// ParseAny parses either the codex envelope or a standard unified diff.
+// The envelope is what the model is asked to write; accepting unified
+// diffs as well lets a patch produced by `git diff` be applied with the
+// same tool and the same safety checks.
+func ParseAny(patch string) ([]*op, error) {
+	if LooksLikeUnifiedDiff(patch) {
+		return parseUnifiedDiffOps(patch)
+	}
+	return Parse(patch)
 }
 
 // Parse parses the codex apply_patch format:
@@ -154,10 +182,21 @@ func Parse(patch string) ([]*op, error) {
 					h.added = append(h.added, content)
 				case line == "":
 					// trailing blank inside a hunk: ignore
-				default:
+				case strings.HasPrefix(trimmed, "***"):
 					return nil, errdefs.Validationf(
-						"apply_patch: update %q unexpected line: %q",
-						current.path, line)
+						"apply_patch: update %q unknown directive: %q",
+						current.path, trimmed)
+				default:
+					// A context line whose own content starts with a tab
+					// (or any character but a space): the leading space
+					// marker is optional in the apply_patch format, and
+					// models routinely write the line verbatim. Matching
+					// still happens against the real file, so a line that
+					// is not actually there fails the hunk instead of
+					// misapplying it.
+					h := &current.hunks[len(current.hunks)-1]
+					h.removed = append(h.removed, line)
+					h.added = append(h.added, line)
 				}
 				continue
 			}
@@ -262,6 +301,10 @@ func applyUpdate(ctx context.Context, ws workspace.Workspace, op *op) error {
 // insertion hunk that carries no anchor.
 func hunkProblem(h hunk) string {
 	switch {
+	case h.unified && len(h.removed) == 0 && h.atLine > 0:
+		return fmt.Sprintf(
+			"the file has fewer than %d lines, so the insertion point "+
+				"from the hunk header could not be used", h.atLine)
 	case len(h.removed) == 0 && h.anchor == "":
 		return "insertion hunk has no anchor and no context lines to " +
 			"locate it; add surrounding context lines or a non-empty " +
@@ -289,8 +332,23 @@ func applyHunk(lines []string, h hunk) ([]string, bool) {
 					break
 				}
 			}
+		} else if h.unified && h.atLine > 0 {
+			// Unified-diff insertion: "@@ -5,0 +6,2 @@" inserts after
+			// old line 5. Clamp to the file so a stale number still lands
+			// somewhere sensible instead of failing the whole patch.
+			idx = h.atLine - 1
+			if idx > len(lines)-1 {
+				idx = len(lines) - 1
+			}
 		}
 		if idx < 0 {
+			// Insert at the top when the header asked for line 0.
+			if h.unified && h.atLine == 0 && h.anchor == "" {
+				out := make([]string, 0, len(lines)+len(h.added))
+				out = append(out, h.added...)
+				out = append(out, lines...)
+				return out, true
+			}
 			return lines, false
 		}
 		out := make([]string, 0, len(lines)+len(h.added))

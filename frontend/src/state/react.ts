@@ -8,28 +8,88 @@ import {
 import type { FocusState } from './types';
 
 const subscribeRoot = (callback: () => void) => stateRoot.subscribe(callback);
-const getVersion = () => stateRoot.getVersion();
 
-/**
- * Re-renders whenever the root focus actor or any conversation actor
- * changes. StateRoot publishes one version per actor/registry update,
- * so components can read fresh projections after every XState event.
- */
-export function useRootVersion(): number {
-  return useSyncExternalStore(subscribeRoot, getVersion);
+// The signature helpers below subscribe to the same root version but
+// return a derived string. useSyncExternalStore only re-renders when the
+// returned value changes, so a panel that reads focus, one
+// conversation's turn phase, or the running set stops re-rendering on
+// every stream delta — those bump the version dozens of times a second
+// while streaming, even though nothing this panel shows moved.
+function focusSignature(): string {
+  const snapshot = stateRoot.focusSnapshot as unknown as {
+    value: string;
+    context: {
+      request: number;
+      sessionID: string;
+      error: string;
+      from?: unknown;
+      to?: { kind: string; id?: string } | null;
+    };
+  };
+  const to = snapshot.context.to;
+  return [
+    snapshot.value,
+    snapshot.context.request,
+    snapshot.context.sessionID,
+    snapshot.context.error,
+    JSON.stringify(snapshot.context.from ?? null),
+    to ? `${to.kind}:${to.id ?? ''}` : '',
+  ].join('|');
+}
+
+function conversationSignature(id: string): string {
+  const actor = stateRoot.registry.get(id);
+  if (!actor) return '';
+  const snapshot = actor.getSnapshot() as unknown as {
+    value: { lifecycle: string; transcript: string; turn: string };
+    context: {
+      emptyTranscript?: boolean;
+      transcriptError?: string;
+      currentRunID?: string;
+      turnStage?: string;
+      supersededRunID?: string;
+      failureStatus?: string;
+      turnError?: string;
+    };
+  };
+  const { value, context } = snapshot;
+  return [
+    value.lifecycle,
+    value.transcript,
+    value.turn,
+    context.emptyTranscript ? '1' : '0',
+    context.transcriptError ?? '',
+    context.currentRunID ?? '',
+    context.turnStage ?? '',
+    context.supersededRunID ?? '',
+    context.failureStatus ?? '',
+    context.turnError ?? '',
+  ].join('|');
+}
+
+function runningSignature(): string {
+  const parts: string[] = [];
+  for (const actor of stateRoot.registry.all()) {
+    const snapshot = actor.getSnapshot() as unknown as {
+      value: { turn: string };
+      context: { id: string; workspace?: string };
+    };
+    const turn = snapshot.value.turn;
+    if (turn !== 'starting' && turn !== 'running') continue;
+    parts.push(
+      `${snapshot.context.id}|${snapshot.context.workspace ?? ''}|${conversationSignature(snapshot.context.id)}`,
+    );
+  }
+  parts.sort();
+  return parts.join('\n');
 }
 
 export function useFocusState(): FocusState {
-  useRootVersion();
+  useSyncExternalStore(subscribeRoot, focusSignature);
   const snapshot = stateRoot.focusSnapshot as unknown as Parameters<
     typeof projectFocus
   >[0];
   return projectFocus(snapshot);
-}
-
-export function useActiveConversationId(): string | undefined {
-  const focus = useFocusState();
-  return focus.name === 'active' ? focus.sessionID : undefined;
 }
 
 export function conversationWorkspace(
@@ -42,7 +102,6 @@ export function conversationWorkspace(
 export function useConversationState(
   conversationID?: string,
 ): ConversationViewState | undefined {
-  useRootVersion();
   const id =
     conversationID ??
     (() => {
@@ -53,6 +112,9 @@ export function useConversationState(
       );
       return focus.name === 'active' ? focus.sessionID : undefined;
     })();
+  useSyncExternalStore(subscribeRoot, () =>
+    id ? conversationSignature(id) : '',
+  );
   if (!id) return undefined;
   const actor = stateRoot.registry.get(id);
   if (!actor) return undefined;
@@ -65,7 +127,7 @@ export function useRunningConversations(workspace?: string): Array<{
   conversationID: string;
   state: ConversationViewState;
 }> {
-  useRootVersion();
+  useSyncExternalStore(subscribeRoot, runningSignature);
   const out: Array<{
     conversationID: string;
     state: ConversationViewState;

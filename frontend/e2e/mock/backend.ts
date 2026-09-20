@@ -227,6 +227,10 @@ export function mockBackend(cfg?: MockConfig) {
     },
     Diagnostics: {
       ClearCaches: async () => ({ dirs: [], bytes: 0 }),
+      CaptureHeapProfile: async () => ({
+        path: '/user/diagnostics/heap-test.pprof',
+        bytes: 2048,
+      }),
       // The diagnostics tab renders the whole environment grid from this
       // report: a partial one leaves every cell blank and prints the raw
       // plural keys where the session counters are missing, so the mock
@@ -498,8 +502,24 @@ export function mockBackend(cfg?: MockConfig) {
         config.listSessions ??
         [],
       Rename: noop,
-      Turns: async (id: string) =>
-        config.sessionTurnsByID?.[id] ?? config.sessionTurns ?? [],
+      // Turns mirrors the paged binding: newest `limit` turns older than
+      // `beforeSeq` (limit <= 0 keeps the whole fixture). Fixtures without
+      // a seq are treated as older history so they survive paging.
+      Turns: async (id: string, limit?: number, beforeSeq?: number) => {
+        const fixture = (config.sessionTurnsByID?.[id] ??
+          config.sessionTurns ??
+          []) as Array<{ seq?: number }>;
+        let turns = fixture;
+        if (typeof beforeSeq === 'number' && beforeSeq > 0) {
+          turns = turns.filter(
+            (turn) => typeof turn.seq !== 'number' || turn.seq < beforeSeq,
+          );
+        }
+        if (typeof limit === 'number' && limit > 0 && turns.length > limit) {
+          turns = turns.slice(turns.length - limit);
+        }
+        return turns;
+      },
       TurnByRunID: async (_id: string, runID: string) => {
         const turn = config.turnByRunID?.[runID];
         if (!turn) {

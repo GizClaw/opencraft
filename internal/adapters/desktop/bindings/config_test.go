@@ -12,6 +12,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/testing/configseed"
 )
 
 func TestConfigMemoryRoundTrip(t *testing.T) {
@@ -139,7 +140,7 @@ func TestConfigSaveInstances(t *testing.T) {
 func TestConfigStatusReportsDefaultReasoning(t *testing.T) {
 	dir := t.TempDir()
 	b := NewConfig(core.NewCore(dir, dir, ""))
-	if err := config.WriteInference(dir, config.InferenceConfig{
+	if err := configseed.Write(dir, config.InferenceConfig{
 		Instances: []config.Instance{{
 			StableID:  "primary",
 			Type:      "openai",
@@ -181,7 +182,7 @@ func TestConfigStatusReportsDefaultReasoning(t *testing.T) {
 func TestModelOptionsOffersOnlyChatModels(t *testing.T) {
 	dir := t.TempDir()
 	b := NewConfig(core.NewCore(dir, dir, ""))
-	if err := config.WriteInference(dir, config.InferenceConfig{
+	if err := configseed.Write(dir, config.InferenceConfig{
 		Instances: []config.Instance{
 			{
 				StableID:  "primary",
@@ -278,7 +279,7 @@ func TestConfigStateMarksPluginManagedInstances(t *testing.T) {
 			KeySource: config.KeyEnv, Enabled: true,
 			Models: []config.Model{{Name: "gpt-5.6-sol"}}},
 	}}
-	if err := config.WriteInferenceOwned(dir, cfg, map[string]string{
+	if err := configseed.WriteOwned(dir, cfg, map[string]string{
 		"sso-haivivi-main": "sso-haivivi",
 	}); err != nil {
 		t.Fatal(err)
@@ -315,7 +316,7 @@ func TestSaveInstancesRestoresManagedRows(t *testing.T) {
 			KeySource: config.KeyLiteral, KeyValue: "user-key", Enabled: true,
 			Models: []config.Model{{Name: "gpt-5.6-sol"}}},
 	}}
-	if err := config.WriteInferenceOwned(dir, seed, map[string]string{
+	if err := configseed.WriteOwned(dir, seed, map[string]string{
 		"sso-haivivi-main": "sso-haivivi",
 	}); err != nil {
 		t.Fatal(err)
@@ -373,7 +374,7 @@ func TestSaveInstancesRestoresManagedContent(t *testing.T) {
 		StableID: "user-1", Type: "openai", KeySource: config.KeyEnv,
 		Enabled: true, Models: []config.Model{{Name: "gpt-5.6-sol"}},
 	}
-	if err := config.WriteInferenceOwned(
+	if err := configseed.WriteOwned(
 		dir,
 		config.InferenceConfig{Instances: []config.Instance{stored, user}},
 		map[string]string{"sso-haivivi-glm": "sso-haivivi"},
@@ -430,7 +431,7 @@ func TestConfigStateMarksMultiplePluginOwnedInstances(t *testing.T) {
 		"sso-haivivi-main":    "sso-haivivi",
 		"sso-haivivi-gateway": "sso-haivivi",
 	}
-	if err := config.WriteInferenceOwned(dir, cfg, owners); err != nil {
+	if err := configseed.WriteOwned(dir, cfg, owners); err != nil {
 		t.Fatal(err)
 	}
 
@@ -473,7 +474,7 @@ func TestSaveInstancesRestoresMultipleManagedRows(t *testing.T) {
 		"sso-haivivi-main":    "sso-haivivi",
 		"sso-haivivi-gateway": "sso-haivivi",
 	}
-	if err := config.WriteInferenceOwned(dir, seed, owners); err != nil {
+	if err := configseed.WriteOwned(dir, seed, owners); err != nil {
 		t.Fatal(err)
 	}
 
@@ -523,7 +524,7 @@ func TestSaveInstancesKeepsPluginDeclaredVendorRow(t *testing.T) {
 			Enabled: true,
 			Models:  []config.Model{{Name: "gpt-5.6-sol"}}},
 	}}
-	if err := config.WriteInferenceOwned(dir, seed, map[string]string{
+	if err := configseed.WriteOwned(dir, seed, map[string]string{
 		"vendorx-main": "vendorx",
 	}); err != nil {
 		t.Fatal(err)

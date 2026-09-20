@@ -107,7 +107,11 @@ func (t *Tool) execute(ctx context.Context, arguments string) (string, error) {
 		return "", errdefs.Validationf(
 			"apply_patch: missing required argument %q", "patch")
 	}
-	ops, err := patch.Parse(text)
+	// ParseAny keeps the codex envelope as the documented input while
+	// accepting a standard unified diff too: a patch copied from
+	// `git diff` applies with the same validation and the same
+	// content-matched hunks.
+	ops, err := patch.ParseAny(text)
 	if err != nil {
 		return "", err
 	}

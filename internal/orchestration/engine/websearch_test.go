@@ -14,6 +14,7 @@ import (
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/testing/configseed"
 )
 
 // webSearchCase is one driver whose deployment must accept the hosted
@@ -95,7 +96,7 @@ func buildWebSearchRuntime(
 	userDir := filepath.Join(home, ".opencraft", "config")
 	seedLocalSandboxConfig(t, userDir)
 	cfg := config.InferenceConfig{Instances: []config.Instance{inst}}
-	if err := config.WriteInference(userDir, cfg); err != nil {
+	if err := configseed.Write(userDir, cfg); err != nil {
 		t.Fatalf("write inference config: %v", err)
 	}
 

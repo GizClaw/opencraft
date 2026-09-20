@@ -461,12 +461,36 @@ func (s *Store) CommitConversationTurnWithHook(
 func (s *Store) ListArchiveTurns(
 	ctx context.Context, conversationID string,
 ) ([]ArchiveTurn, error) {
-	rows, err := s.db.SQLDB().QueryContext(ctx, `
+	return s.ListArchiveTurnsPage(ctx, conversationID, 0, 0)
+}
+
+// ListArchiveTurnsPage returns up to limit turns of one conversation,
+// oldest first. limit <= 0 returns every turn; beforeSeq > 0 keeps only
+// turns with a seq below it, which is how the UI pages backwards through
+// a long session instead of loading the whole archive at startup.
+func (s *Store) ListArchiveTurnsPage(
+	ctx context.Context, conversationID string, limit int, beforeSeq int64,
+) ([]ArchiveTurn, error) {
+	query := `
 		SELECT id, conversation_id, seq, run_id, at,
 			requested_at, started_at, finished_at,
 			status, error, interrupt_cause, error_kind,
 			request_id, response_id, artifacts_json
-		FROM archive_turns WHERE conversation_id = ? ORDER BY seq`, conversationID)
+		FROM archive_turns WHERE conversation_id = ?`
+	args := []any{conversationID}
+	if beforeSeq > 0 {
+		query += ` AND seq < ?`
+		args = append(args, beforeSeq)
+	}
+	if limit > 0 {
+		// Newest first so LIMIT keeps the turns closest to the cursor,
+		// then reversed below to the oldest-first order callers expect.
+		query += ` ORDER BY seq DESC LIMIT ?`
+		args = append(args, limit)
+	} else {
+		query += ` ORDER BY seq`
+	}
+	rows, err := s.db.SQLDB().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("state: list archive turns: %w", err)
 	}
@@ -501,7 +525,15 @@ func (s *Store) ListArchiveTurns(
 		t.ArtifactsJSON = []byte(artifacts)
 		out = append(out, t)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if limit > 0 {
+		for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+			out[i], out[j] = out[j], out[i]
+		}
+	}
+	return out, nil
 }
 
 // ListArchiveMessages returns every archived message in conversation
@@ -529,6 +561,57 @@ func (s *Store) ListArchiveMessages(
 		}
 		if err := json.Unmarshal([]byte(content), &m.Content); err != nil {
 			return nil, fmt.Errorf("state: decode archive message: %w", err)
+		}
+		m.CreatedAt = parseTime(createdAt)
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// ListArchiveMessagesForTurns loads the messages of the given turns, in
+// conversation order. Paged reads use it so a page costs one query over
+// the page's messages instead of reading every message in the session.
+func (s *Store) ListArchiveMessagesForTurns(
+	ctx context.Context, conversationID string, turnIDs []int64,
+) ([]ArchiveMessage, error) {
+	if len(turnIDs) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]byte, 0, len(turnIDs)*2)
+	for i := range turnIDs {
+		if i > 0 {
+			placeholders = append(placeholders, ',')
+		}
+		placeholders = append(placeholders, '?')
+	}
+	query := `
+		SELECT id, turn_id, seq, role, content_json, created_at
+		FROM archive_messages
+		WHERE conversation_id = ? AND turn_id IN (` +
+		string(placeholders) + `)
+		ORDER BY seq`
+	args := make([]any, 0, len(turnIDs)+1)
+	args = append(args, conversationID)
+	for _, id := range turnIDs {
+		args = append(args, id)
+	}
+	rows, err := s.db.SQLDB().QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("state: list archive messages for turns: %w", err)
+	}
+	defer func() {
+		telemetry.WarnErr(ctx, "state: close archive turn message rows failed", rows.Close())
+	}()
+	var out []ArchiveMessage
+	for rows.Next() {
+		var m ArchiveMessage
+		var content, createdAt string
+		if err := rows.Scan(&m.ID, &m.TurnID, &m.Seq, &m.Role,
+			&content, &createdAt); err != nil {
+			return nil, fmt.Errorf("state: scan archive turn message: %w", err)
+		}
+		if err := json.Unmarshal([]byte(content), &m.Content); err != nil {
+			return nil, fmt.Errorf("state: decode archive turn message: %w", err)
 		}
 		m.CreatedAt = parseTime(createdAt)
 		out = append(out, m)

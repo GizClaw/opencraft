@@ -5,6 +5,13 @@ import { reportFrontendError } from '../lib/frontendErrors';
 
 interface Props {
   children: ReactNode;
+  // scope names the failing surface in the report. Plugin surfaces pass
+  // their plugin id so a crash is attributable without a stack dive.
+  scope?: string;
+  // inline renders a compact card in place of the children instead of the
+  // full-window crash card. A plugin panel that throws on render must not
+  // blank the whole app — or, worse, keep React remounting the tree.
+  inline?: boolean;
 }
 
 interface State {
@@ -22,11 +29,33 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    reportFrontendError('react-render', error, info.componentStack ?? '');
+    reportFrontendError(
+      this.props.scope ?? 'react-render',
+      error,
+      info.componentStack ?? '',
+    );
   }
 
   render() {
     if (this.state.error) {
+      if (this.props.inline) {
+        return (
+          <div className="rounded-control border border-err/40 bg-err/5 px-3 py-2 text-xs">
+            <p className="font-medium text-err">
+              {i18n.t('app.surfaceFailed')}
+            </p>
+            <p className="mt-1 break-words text-dim">
+              {String(this.state.error?.message ?? this.state.error)}
+            </p>
+            <button
+              onClick={() => this.setState({ error: null })}
+              className="mt-2 rounded-tight border border-edge px-2 py-0.5 text-dim hover:text-fg"
+            >
+              {i18n.t('app.tryAgain')}
+            </button>
+          </div>
+        );
+      }
       return (
         <div className="h-full grid place-items-center bg-bg px-6">
           <div className="max-w-lg rounded-card border border-err/40 bg-panel p-6 shadow-modal">

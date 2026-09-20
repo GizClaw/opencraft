@@ -5,8 +5,6 @@ import { MAX_USAGE_RANGE_DAYS } from '../lib/usageWindow';
 import { Popover } from './ui/Popover';
 import { ICON } from './ui/icon';
 
-export type UsageRangePreset = 'today' | '1d' | '7d' | '14d' | '30d';
-
 interface UsageRangePickerProps {
   active: boolean;
   startMs: number;

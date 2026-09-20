@@ -19,6 +19,7 @@ import {
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { formatDate, formatDateTime } from '../lib/datetime';
 import { Window } from '@wailsio/runtime';
 import { api } from '../lib/api';
 import { formatCompact } from '../lib/compactNumber';
@@ -374,7 +375,7 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
     if (diff < 60_000) return t('sidebar.justNow');
     if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m`;
     if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h`;
-    return d.toLocaleDateString();
+    return formatDate(iso);
   };
 
   const fmtTokens = (n: number) => {
@@ -547,17 +548,8 @@ export function Sidebar({ isMac }: { isMac: boolean }) {
   };
 
   const fmtCardTime = (iso: string) => {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return '';
     const locale = i18n.language?.startsWith('zh') ? 'zh-CN' : 'en-US';
-    return d.toLocaleString(locale, {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    });
+    return formatDateTime(iso, locale);
   };
 
   const openHoverCard =

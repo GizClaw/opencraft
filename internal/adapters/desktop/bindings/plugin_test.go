@@ -7,6 +7,7 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/testing/configseed"
 )
 
 func writeSimplePlugin(t *testing.T, dataDir, id string) {
@@ -44,7 +45,7 @@ func seedPluginInference(t *testing.T, dir, pluginID string) {
 		pluginID + "-main":    pluginID,
 		pluginID + "-gateway": pluginID,
 	}
-	if err := config.WriteInferenceOwned(dir, cfg, owners); err != nil {
+	if err := configseed.WriteOwned(dir, cfg, owners); err != nil {
 		t.Fatal(err)
 	}
 }

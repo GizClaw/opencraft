@@ -10,6 +10,7 @@ import (
 
 	ocsessions "github.com/GizClaw/opencraft/internal/capabilities/sessions"
 	"github.com/GizClaw/opencraft/internal/foundation/config"
+	"github.com/GizClaw/opencraft/internal/testing/configseed"
 )
 
 // TestBuildRuntimeAcceptsDriverFacts pins the shapes the settings page
@@ -71,7 +72,7 @@ func TestBuildRuntimeAcceptsDriverFacts(t *testing.T) {
 			}},
 		}},
 	}
-	if err := config.WriteInference(userDir, cfg); err != nil {
+	if err := configseed.Write(userDir, cfg); err != nil {
 		t.Fatalf("write inference config: %v", err)
 	}
 

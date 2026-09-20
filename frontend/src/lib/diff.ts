@@ -7,6 +7,79 @@
 
 import type { PatchFileDTO, PatchLineDTO } from './types';
 
+// toUnifiedDiff renders parsed patch rows back into a standard unified
+// diff, the inverse of parseUnifiedDiff. The apply_patch card offers it
+// as a copy action so the patch can leave the app as something `git
+// apply` and every diff viewer understands; the codex envelope stays the
+// wire format the model writes.
+export function toUnifiedDiff(files: PatchFileDTO[]): string {
+  const out: string[] = [];
+  for (const file of files) {
+    const path = file.path || 'patch';
+    out.push(`diff --git a/${path} b/${path}`);
+    if (file.action === 'add') out.push('new file mode 100644');
+    if (file.action === 'delete') out.push('deleted file mode 100644');
+    out.push(file.action === 'add' ? '--- /dev/null' : `--- a/${path}`);
+    out.push(file.action === 'delete' ? '+++ /dev/null' : `+++ b/${path}`);
+    for (const hunk of groupDiffHunks(file.lines ?? [])) {
+      out.push(
+        `@@ -${hunk.oldStart},${hunk.oldCount} +${hunk.newStart},${hunk.newCount} @@`,
+      );
+      for (const line of hunk.lines) {
+        const marker =
+          line.kind === 'add' ? '+' : line.kind === 'delete' ? '-' : ' ';
+        out.push(marker + line.text);
+      }
+    }
+  }
+  return out.join('\n') + '\n';
+}
+
+interface DiffHunkSlice {
+  oldStart: number;
+  oldCount: number;
+  newStart: number;
+  newCount: number;
+  lines: PatchLineDTO[];
+}
+
+// groupDiffHunks splits rendered rows into hunks at every numbering
+// break, the same rule the renderer uses to draw "@@" headers.
+function groupDiffHunks(lines: PatchLineDTO[]): DiffHunkSlice[] {
+  const hunks: DiffHunkSlice[] = [];
+  let cur: DiffHunkSlice | null = null;
+  let prevOld = 0;
+  let prevNew = 0;
+  for (const line of lines) {
+    const oldNum = line.old_num ?? 0;
+    const newNum = line.new_num ?? 0;
+    const oldBreak = oldNum > 0 && prevOld > 0 && oldNum !== prevOld + 1;
+    const newBreak = newNum > 0 && prevNew > 0 && newNum !== prevNew + 1;
+    if (!cur || oldBreak || newBreak) {
+      cur = {
+        oldStart: oldNum,
+        oldCount: 0,
+        newStart: newNum,
+        newCount: 0,
+        lines: [],
+      };
+      hunks.push(cur);
+    }
+    if (oldNum > 0) {
+      if (!cur.oldStart) cur.oldStart = oldNum;
+      cur.oldCount += 1;
+    }
+    if (newNum > 0) {
+      if (!cur.newStart) cur.newStart = newNum;
+      cur.newCount += 1;
+    }
+    cur.lines.push(line);
+    prevOld = oldNum;
+    prevNew = newNum;
+  }
+  return hunks;
+}
+
 // looksLikeUnifiedDiff reports whether text is a git-style unified
 // diff: either explicit "diff --git" headers or the "---/+++" file-pair
 // convention followed by a hunk header.

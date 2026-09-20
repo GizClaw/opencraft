@@ -7,7 +7,7 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { MOTION, useOverlayLayer, usePresence } from '../../lib/overlay';
+import { useOverlayLayer, usePresence } from '../../lib/overlay';
 
 // Popover — the anchored floating surface: menus, listboxes, suggestion
 // cards. It owns the parts every hand-rolled menu re-implemented:
@@ -208,4 +208,3 @@ export function menuItems(panel: HTMLElement): HTMLElement[] {
 }
 
 /** Exit duration of a popover, for callers that omit it. */
-export const POPOVER_EXIT_MS = MOTION.fast;

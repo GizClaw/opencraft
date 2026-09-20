@@ -428,7 +428,7 @@ func TestManagedRowEnabledStaysUserOwned(t *testing.T) {
 // never silently claimed by a plugin that happens to pick the same id.
 func TestPluginInstanceRequiresExplicitOwnership(t *testing.T) {
 	dir := t.TempDir()
-	if err := WriteInferenceOwned(dir, InferenceConfig{
+	if err := seedInferenceOwned(dir, InferenceConfig{
 		Instances: []Instance{{
 			StableID:  "sso-haivivi-main",
 			Type:      "openai",
@@ -453,7 +453,7 @@ func TestPluginInstanceRequiresExplicitOwnership(t *testing.T) {
 // the plugin can replace and remove its stale deployment.
 func TestPluginInstancesCleanLegacyPreOwnershipInstance(t *testing.T) {
 	dir := t.TempDir()
-	if err := WriteInference(dir, InferenceConfig{
+	if err := seedInference(dir, InferenceConfig{
 		Instances: []Instance{{
 			StableID:  "sso-haivivi",
 			Type:      "openai",
