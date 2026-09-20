@@ -700,6 +700,9 @@ interface StoreState {
   fatal: string | null;
   configOpen: boolean;
   configTab: string;
+  // paletteOpen drives the ⌘K command palette, which is mounted once by
+  // the shell (not by whoever opened it).
+  paletteOpen: boolean;
   toolsView: ToolPage | null;
   // viewers keeps one file-viewer state per conversation id.
   viewers: Record<string, FileViewerState>;
@@ -755,6 +758,9 @@ interface StoreState {
   cancelRun: () => Promise<void>;
   openConfig: (tab?: string) => void;
   closeConfig: () => void;
+  openPalette: () => void;
+  closePalette: () => void;
+  togglePalette: () => void;
   openTools: (view: ToolPage) => void;
   closeTools: () => void;
   openFiles: () => void;
@@ -1400,6 +1406,7 @@ export const useStore = create<StoreState>((set, get) => {
               workspace: data.work_dir,
               toolsView: null,
               configOpen: false,
+              paletteOpen: false,
             });
             void get().loadSessions();
             const restoreFor = suppressRestoreFor;
@@ -1697,6 +1704,7 @@ export const useStore = create<StoreState>((set, get) => {
     fatal: null,
     configOpen: false,
     configTab: 'general',
+    paletteOpen: false,
     toolsView: null,
     viewers: {},
     workspace: '',
@@ -2039,6 +2047,10 @@ export const useStore = create<StoreState>((set, get) => {
 
     openConfig: (tab) => set({ configOpen: true, configTab: tab ?? 'general' }),
     closeConfig: () => set({ configOpen: false }),
+
+    openPalette: () => set({ paletteOpen: true }),
+    closePalette: () => set({ paletteOpen: false }),
+    togglePalette: () => set((state) => ({ paletteOpen: !state.paletteOpen })),
 
     openTools: (view) => set({ toolsView: view, configOpen: false }),
     closeTools: () => set({ toolsView: null }),

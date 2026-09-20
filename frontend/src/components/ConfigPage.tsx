@@ -14,6 +14,7 @@ import {
   Palette,
   Plus,
   RefreshCw,
+  Search,
   Settings,
   ShieldCheck,
   ShieldPlus,
@@ -26,7 +27,6 @@ import {
   Wrench,
   X,
 } from 'lucide-react';
-import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { api } from '../lib/api';
 import { cacheHitPercent, formatHitPercent } from '../lib/usageRate';
@@ -70,8 +70,14 @@ import { usePluginStore } from '../plugins/store';
 import { Events } from '@wailsio/runtime';
 import { SettingsGeneral } from './SettingsGeneral';
 import { SettingsDisplay } from './SettingsDisplay';
+import { useOverlayLayer } from '../lib/overlay';
 import { ICON } from './ui/icon';
 import { SaveBar } from './ui/SaveBar';
+import { Overlay } from './ui/Overlay';
+import { Popover } from './ui/Popover';
+import { IconButton } from './ui/Button';
+import { EmptyState } from './ui/EmptyState';
+import { searchSettings } from './settingsIndex';
 
 // InstanceRow is one editable inference instance in the settings page.
 interface RowModel {
@@ -302,6 +308,7 @@ function templateMatches(
 }
 
 export function ConfigPage() {
+  const configOpen = useStore((s) => s.configOpen);
   const closeConfig = useStore((s) => s.closeConfig);
   const configTab = useStore((s) => s.configTab);
   const yoloOnly = useStore((s) => s.yoloOnly);
@@ -315,20 +322,32 @@ export function ConfigPage() {
   const [tab, setTab] = useState<Tab>(
     configTab === 'mcp' ? 'tools' : (configTab as Tab),
   );
+  // Nav search: a query swaps the tab list for matching destinations, and
+  // pendingAnchor is the section the next render scrolls to (the anchor
+  // only exists once its tab has rendered).
+  const [query, setQuery] = useState('');
+  const [pendingAnchor, setPendingAnchor] = useState<string | null>(null);
+  const tabRefs = useRef(new Map<string, HTMLButtonElement>());
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  // The search field owns Escape while it holds text: the key empties the
+  // field first, and only an Escape on the empty field closes the page.
+  // It gets there by registering a layer of its own, so the shared stack
+  // hands the key to it instead of to the page underneath.
+  const searchFieldRef = useRef<HTMLDivElement | null>(null);
+  useOverlayLayer({
+    active: query !== '',
+    containerRef: searchFieldRef,
+    onDismiss: () => setQuery(''),
+    trap: false,
+    lock: false,
+    restoreFocus: false,
+  });
   const importPanelCount = usePluginStore((s) =>
     s.panels.reduce(
       (n, p) => n + ((p.tab ?? 'plugins') === 'import' ? 1 : 0),
       0,
     ),
   );
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closeConfig();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [closeConfig]);
 
   const [rows, setRows] = useState<InstanceRow[]>([]);
   // Router retry policy; the targets themselves follow the instance
@@ -348,70 +367,23 @@ export function ConfigPage() {
   const [catalogQuery, setCatalogQuery] = useState('');
   // templateQuery filters the built-in template pills.
   const [templateQuery, setTemplateQuery] = useState('');
-  // The field menus (kind / inputs / outputs / reasoning) anchor to the
-  // control that opened them; nothing else needs the rectangle.
-  const [menuRect, setMenuRect] = useState<{
-    top: number;
-    left: number;
-    right: number;
-    width: number;
+  // The field menus (kind / inputs / outputs / reasoning / API mode /
+  // model catalog) are anchored popovers. Each one keeps the trigger that
+  // opened it, so the shared Popover shell can measure and place the
+  // panel — no rectangle bookkeeping here.
+  const [fieldMenu, setFieldMenu] = useState<{
+    key: string;
+    anchor: HTMLElement;
   } | null>(null);
-  const [fieldMenu, setFieldMenu] = useState<string | null>(null);
-  const fieldMenuRef = useRef<HTMLDivElement | null>(null);
-
-  // Field menus (outputs / inputs / kind / reasoning) reuse the same
-  // anchored, portaled list the catalog dropdown uses so every model
-  // control looks and behaves alike.
-  useEffect(() => {
-    if (!fieldMenu) return;
-    const close = (e: Event) => {
-      const target = e.target;
-      if (target instanceof Node) {
-        if (fieldMenuRef.current?.contains(target)) {
-          return;
-        }
-        const trigger = (target as HTMLElement).closest?.(
-          '[data-field]',
-        ) as HTMLElement | null;
-        if (trigger?.dataset.field === fieldMenu) {
-          return;
-        }
-      }
-      setFieldMenu(null);
-    };
-    const closeOnResize = () => setFieldMenu(null);
-    document.addEventListener('mousedown', close, true);
-    document.addEventListener('scroll', close, true);
-    window.addEventListener('resize', closeOnResize);
-    return () => {
-      document.removeEventListener('mousedown', close, true);
-      document.removeEventListener('scroll', close, true);
-      window.removeEventListener('resize', closeOnResize);
-    };
-  }, [fieldMenu]);
 
   const openFieldMenu = (
     e: { currentTarget: HTMLButtonElement },
     key: string,
   ) => {
-    const r = e.currentTarget.getBoundingClientRect();
-    setMenuRect({
-      top: r.bottom + 4,
-      left: r.left,
-      right: r.right,
-      width: r.width,
-    });
-    setFieldMenu(key);
+    setFieldMenu({ key, anchor: e.currentTarget });
   };
 
-  // rightAlignedMenuLeft anchors a menu to the right edge of its trigger.
-  // A narrow trigger (the model catalog button) opens a wide list that
-  // would otherwise run past the panel's right edge.
-  const rightAlignedMenuLeft = (minWidth: number) => {
-    if (!menuRect) return 8;
-    const width = Math.max(menuRect.width, minWidth);
-    return Math.max(8, menuRect.right - width);
-  };
+  const closeFieldMenu = () => setFieldMenu(null);
   // newType is the driver the "add instance" picker will create. It is
   // filled from the loaded driver list so it can never name a provider
   // that no longer exists.
@@ -1099,1557 +1071,1627 @@ export function ConfigPage() {
     { id: 'import', label: t('config.tabImport'), icon: Import },
   ];
 
+  // A tab change clears the search so the nav flips back to the tab list,
+  // and records the anchor to scroll to once the destination has rendered.
+  const goTo = (id: Tab, anchor?: string) => {
+    setTab(id);
+    setError('');
+    setQuery('');
+    setPendingAnchor(anchor ?? null);
+  };
+
+  useEffect(() => {
+    const content = contentRef.current;
+    if (pendingAnchor === null) {
+      // A tab-level jump lands at the top: the tab body is only as tall as
+      // the destination, and keeping the previous tab's scroll offset would
+      // drop the user into the middle of it.
+      content?.scrollTo({ top: 0 });
+      return;
+    }
+    const node = document.getElementById(`settings-${pendingAnchor}`);
+    const reduce = window.matchMedia?.(
+      '(prefers-reduced-motion: reduce)',
+    ).matches;
+    node?.scrollIntoView({
+      block: 'start',
+      behavior: reduce === true ? 'auto' : 'smooth',
+    });
+    setPendingAnchor(null);
+  }, [pendingAnchor, tab]);
+
+  // Vertical tablists move with the arrow keys (WAI-ARIA tabs pattern);
+  // focus follows selection so the next arrow keeps moving.
+  const onTabKeyDown = (event: React.KeyboardEvent, index: number) => {
+    const last = tabs.length - 1;
+    let next = -1;
+    if (event.key === 'ArrowDown') next = index === last ? 0 : index + 1;
+    else if (event.key === 'ArrowUp') next = index === 0 ? last : index - 1;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = last;
+    if (next < 0) return;
+    event.preventDefault();
+    goTo(tabs[next].id);
+    tabRefs.current.get(tabs[next].id)?.focus();
+  };
+
+  const availableTabs = new Set(tabs.map((tb) => tb.id));
+  const results =
+    query.trim() === ''
+      ? []
+      : searchSettings(query, t).filter((entry) =>
+          availableTabs.has(entry.tab as Tab),
+        );
+
   return (
-    <div className="fixed bottom-0 top-11 left-0 right-0 z-50 bg-black/70 grid place-items-center">
-      <div className="w-[68.5714rem] max-w-[calc(100vw-3.4286rem)] h-[45.7143rem] max-h-[calc(100vh-6.8571rem)] flex flex-col rounded-card border border-edge bg-panel shadow-modal">
-        <div className="flex items-center gap-4 px-5 py-4 border-b border-edge">
-          <Settings size={ICON.lg} className="text-accent" />
-          <h2 className="text-base font-semibold">{t('config.title')}</h2>
-          <span className="flex-1" />
-          <button
-            onClick={closeConfig}
-            className="text-dim hover:text-fg"
-            aria-label={t('tools.close')}
-          >
-            <X size={ICON.lg} />
-          </button>
-        </div>
+    <Overlay
+      open={configOpen}
+      onClose={closeConfig}
+      variant="bare"
+      ariaLabelledBy="settings-title"
+      panelClassName="flex h-full w-full flex-col bg-bg"
+    >
+      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-edge bg-panel px-4">
+        <Settings size={ICON.lg} className="text-accent" />
+        <h2 id="settings-title" className="text-display font-semibold">
+          {t('config.title')}
+        </h2>
+        <span className="flex-1" />
+        <IconButton label={t('tools.close')} onClick={closeConfig}>
+          <X size={ICON.lg} />
+        </IconButton>
+      </header>
 
-        <div className="flex min-h-0 flex-1">
-          <nav
-            className="w-44 shrink-0 space-y-0.5 overflow-y-auto border-r border-edge p-2"
-            role="tablist"
-            aria-orientation="vertical"
-          >
-            {tabs.map((tb) => {
-              const Icon = tb.icon;
-              const active = tab === tb.id;
-              return (
-                <button
-                  key={tb.id}
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => {
-                    setTab(tb.id);
-                    setError('');
-                  }}
-                  className={`flex w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm transition-colors ${
-                    active
-                      ? 'bg-accent/10 font-medium text-accent'
-                      : 'text-dim hover:bg-panel2 hover:text-fg'
-                  }`}
-                >
-                  <Icon size={ICON.md} className="shrink-0" />
-                  <span className="truncate">{tb.label}</span>
-                </button>
-              );
-            })}
-          </nav>
-
-          <div className="min-w-0 flex-1 overflow-y-auto px-5 py-4">
-            {tab === 'general' && <SettingsGeneral />}
-            {tab === 'display' && <SettingsDisplay />}
-            {tab === 'tools' && (
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <ToolsSection />
-                  <WebSearchSection />
-                </div>
-                <MCPSection />
-              </div>
-            )}
-
-            {tab === 'inference' && (
-              <div className="space-y-3">
-                <p className="text-xs text-dim">
-                  {defaultModel
-                    ? t('config.inferenceCurrent', { model: defaultModel })
-                    : t('setup.subtitle')}
-                </p>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    data-field="add-driver"
-                    aria-label={t('config.driverPicker')}
-                    onFocus={(e) => openFieldMenu(e, 'add-driver')}
-                    onClick={(e) => {
-                      if (fieldMenu === 'add-driver') {
-                        setFieldMenu(null);
-                      } else {
-                        openFieldMenu(e, 'add-driver');
-                      }
-                    }}
-                    className="inline-flex min-w-48 max-w-64 items-center gap-1.5 rounded-control border border-edge bg-panel px-3 py-1.5 text-sm transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent"
-                  >
-                    <span className="min-w-0 flex-1 truncate text-fg">
-                      {catalog.find((p) => p.id === newType)?.name ?? ''}
-                    </span>
-                    <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
-                  </button>
-                  {menuRect &&
-                    fieldMenu === 'add-driver' &&
-                    createPortal(
-                      <div
-                        ref={fieldMenuRef}
-                        style={{
-                          top: menuRect.top,
-                          left: menuRect.left,
-                          width: Math.max(menuRect.width, 192),
-                        }}
-                        className="fixed z-[100] overflow-y-auto rounded-card border border-edge bg-panel py-1 shadow-popover"
-                      >
-                        {catalog.map((p) => (
-                          <button
-                            key={p.id}
-                            type="button"
-                            onMouseDown={(e) => e.preventDefault()}
-                            onClick={() => {
-                              setNewType(p.id);
-                              setFieldMenu(null);
-                            }}
-                            className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-panel2 ${
-                              newType === p.id ? 'text-fg' : 'text-dim'
-                            }`}
-                          >
-                            <Check
-                              size={ICON.xs}
-                              className={`shrink-0 ${
-                                newType === p.id ? 'text-accent' : 'invisible'
-                              }`}
-                            />
-                            <span className="truncate">{p.name}</span>
-                          </button>
-                        ))}
-                      </div>,
-                      document.body,
-                    )}
-                  <button
-                    onClick={() => addInstance(newType)}
-                    className="flex items-center gap-1.5 rounded-control border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
-                  >
-                    <Plus size={ICON.sm} />
-                    {t('config.addInstance')}
-                  </button>
-                </div>
-                {templates.length > 0 && (
-                  <div className="space-y-2 rounded-card border border-edge/70 bg-panel/40 p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-1.5 text-xs font-medium text-dim">
-                        <Sparkles
-                          size={ICON.xs}
-                          className="shrink-0 text-accent"
-                        />
-                        <span>{t('config.templatesGroup')}</span>
-                      </div>
-                      <input
-                        value={templateQuery}
-                        onChange={(e) => setTemplateQuery(e.target.value)}
-                        placeholder={t('config.templateSearchPlaceholder')}
-                        aria-label={t('config.templateSearch')}
-                        className="w-44 rounded-control border border-edge bg-panel px-2 py-0.5 text-xs outline-none focus:border-accent"
-                      />
-                    </div>
-                    {templates.filter((template) =>
-                      templateMatches(template, templateQuery),
-                    ).length === 0 && (
-                      <p className="text-xs text-dim">
-                        {t('config.templateSearchEmpty')}
-                      </p>
-                    )}
-                    <div className="flex flex-wrap gap-1.5">
-                      {templates
-                        .filter((template) =>
-                          templateMatches(template, templateQuery),
-                        )
-                        .map((template) => {
-                          const models = (template.models ?? [])
-                            .map((m) => m.name)
-                            .join(', ');
-                          return (
-                            <button
-                              key={template.id}
-                              type="button"
-                              aria-label={`${template.label}: ${models}`}
-                              onClick={() => addInstanceFromTemplate(template)}
-                              className="group inline-flex max-w-full items-center gap-1.5 rounded-full border border-edge bg-panel2 py-1 pl-2 pr-2.5 text-xs text-dim transition-colors hover:border-accent/60 hover:bg-accent/10 hover:text-fg focus-visible:border-accent focus-visible:outline-none"
-                            >
-                              <Plus
-                                size={ICON.xs}
-                                className="shrink-0 text-accent/70 transition-colors group-hover:text-accent"
-                              />
-                              <span className="shrink-0 font-medium text-fg/90">
-                                {template.label}
-                              </span>
-                              <span className="min-w-0 max-w-40 truncate font-mono text-micro text-dim">
-                                {models}
-                              </span>
-                            </button>
-                          );
-                        })}
-                    </div>
-                  </div>
-                )}
-                {rows.length === 0 && (
-                  <p className="text-sm text-dim">
-                    {t('config.instancesEmpty')}
-                  </p>
-                )}
-                {rows.map((row, ri) => {
-                  const prov = catalog.find((p) => p.id === row.type);
-                  // The effective driver impl: a preset's impl, or the
-                  // driver a plugin-declared row names.
-                  const driverImpl = prov?.impl || row.driver;
+      <div className="flex min-h-0 flex-1">
+        <nav
+          className="flex w-60 shrink-0 flex-col border-r border-edge bg-panel"
+          role="tablist"
+          aria-orientation="vertical"
+          aria-label={t('config.title')}
+        >
+          <div className="p-2 pb-1">
+            <div
+              ref={searchFieldRef}
+              className="flex items-center gap-1.5 rounded-control border border-edge bg-panel2 px-2 focus-within:border-accent"
+            >
+              <Search size={ICON.xs} className="shrink-0 text-dim" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && results.length > 0) {
+                    goTo(results[0].tab as Tab, results[0].section);
+                  }
+                }}
+                aria-label={t('config.searchPlaceholder')}
+                placeholder={t('config.searchPlaceholder')}
+                className="h-7 min-w-0 flex-1 bg-transparent text-xs outline-none"
+              />
+              <IconButton
+                size="sm"
+                label={t('config.searchClear')}
+                onClick={() => setQuery('')}
+              >
+                <X size={ICON.xs} />
+              </IconButton>
+            </div>
+          </div>
+          <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto p-2 pt-1">
+            {query.trim() === ''
+              ? tabs.map((tb, index) => {
+                  const Icon = tb.icon;
+                  const active = tab === tb.id;
                   return (
-                    <div
-                      key={row.id}
-                      className={`rounded-card border overflow-hidden ${
-                        row.enabled
-                          ? 'border-edge bg-panel2'
-                          : 'border-edge/50 bg-panel2/50'
+                    <button
+                      key={tb.id}
+                      ref={(node) => {
+                        if (node === null) tabRefs.current.delete(tb.id);
+                        else tabRefs.current.set(tb.id, node);
+                      }}
+                      id={`settings-tab-${tb.id}`}
+                      role="tab"
+                      aria-selected={active}
+                      aria-controls="settings-content"
+                      tabIndex={active ? 0 : -1}
+                      onClick={() => goTo(tb.id)}
+                      onKeyDown={(e) => onTabKeyDown(e, index)}
+                      className={`flex w-full items-center gap-2 rounded-control px-3 py-2 text-left text-sm transition-colors ${
+                        active
+                          ? 'bg-accent/15 font-medium text-accent'
+                          : 'text-dim hover:bg-panel2 hover:text-fg'
                       }`}
                     >
-                      <div className="flex items-center gap-2.5 px-4 py-2.5">
-                        <input
-                          type="checkbox"
-                          checked={row.enabled}
-                          onChange={(e) =>
-                            update(row.id, { enabled: e.target.checked })
-                          }
-                          className="accent-[var(--color-accent)]"
-                          title={t('config.instanceEnabled')}
-                        />
-                        <span className="font-medium text-sm shrink-0">
-                          {prov?.name ?? row.type}
+                      <Icon size={ICON.md} className="shrink-0" />
+                      <span className="truncate">{tb.label}</span>
+                    </button>
+                  );
+                })
+              : results.map((entry) => {
+                  const tabMeta = tabs.find((tb) => tb.id === entry.tab);
+                  const Icon = tabMeta?.icon ?? Settings;
+                  return (
+                    <button
+                      key={`${entry.tab}-${entry.section ?? 'tab'}`}
+                      onClick={() => goTo(entry.tab as Tab, entry.section)}
+                      className="flex w-full items-start gap-2 rounded-control px-3 py-2 text-left transition-colors hover:bg-panel2"
+                    >
+                      <Icon
+                        size={ICON.md}
+                        className="mt-0.5 shrink-0 text-faint"
+                      />
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm text-fg">
+                          {t(entry.labelKey)}
                         </span>
-                        {row.driver !== '' && (
-                          <span
-                            className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 text-micro text-dim"
-                            title={t('config.instanceDriver')}
-                          >
-                            {row.driver}
+                        {entry.section !== undefined && (
+                          <span className="block truncate text-label text-faint">
+                            {tabMeta?.label ?? ''}
                           </span>
                         )}
-                        {row.managed && (
-                          <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 text-micro text-dim">
-                            {t('config.managedBadge')}
-                          </span>
-                        )}
-                        <input
-                          value={row.name}
-                          disabled={row.managed}
-                          onChange={(e) =>
-                            update(row.id, { name: e.target.value })
-                          }
-                          placeholder={t('config.instanceName')}
-                          className="flex-1 min-w-0 rounded-control border border-edge bg-panel px-2 py-1 text-sm outline-none focus:border-accent"
+                      </span>
+                    </button>
+                  );
+                })}
+            {query.trim() !== '' && results.length === 0 && (
+              <EmptyState
+                size="sm"
+                icon={Search}
+                title={t('config.searchEmpty')}
+                hint={t('config.searchHint')}
+              />
+            )}
+          </div>
+        </nav>
+
+        <div
+          ref={contentRef}
+          id="settings-content"
+          role="tabpanel"
+          aria-labelledby={`settings-tab-${tab}`}
+          className="min-w-0 flex-1 overflow-y-auto px-6 py-5"
+        >
+          {tab === 'general' && <SettingsGeneral />}
+          {tab === 'display' && <SettingsDisplay />}
+          {tab === 'tools' && (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <div id="settings-tools-providers" className="scroll-mt-4">
+                  <ToolsSection />
+                </div>
+                <div id="settings-tools-websearch" className="scroll-mt-4">
+                  <WebSearchSection />
+                </div>
+              </div>
+              <div id="settings-tools-mcp" className="scroll-mt-4">
+                <MCPSection />
+              </div>
+            </div>
+          )}
+
+          {tab === 'inference' && (
+            <div
+              id="settings-inference-instances"
+              className="scroll-mt-4 space-y-3"
+            >
+              <p className="text-xs text-dim">
+                {defaultModel
+                  ? t('config.inferenceCurrent', { model: defaultModel })
+                  : t('setup.subtitle')}
+              </p>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  data-field="add-driver"
+                  aria-label={t('config.driverPicker')}
+                  onFocus={(e) => openFieldMenu(e, 'add-driver')}
+                  onClick={(e) => {
+                    if (fieldMenu?.key === 'add-driver') {
+                      setFieldMenu(null);
+                    } else {
+                      openFieldMenu(e, 'add-driver');
+                    }
+                  }}
+                  className="inline-flex min-w-48 max-w-64 items-center gap-1.5 rounded-control border border-edge bg-panel px-3 py-1.5 text-sm transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent"
+                >
+                  <span className="min-w-0 flex-1 truncate text-fg">
+                    {catalog.find((p) => p.id === newType)?.name ?? ''}
+                  </span>
+                  <ChevronDown size={ICON.sm} className="shrink-0 text-dim" />
+                </button>
+                {
+                  <Popover
+                    open={fieldMenu?.key === 'add-driver'}
+                    onClose={closeFieldMenu}
+                    anchor={fieldMenu?.anchor ?? null}
+                    role="none"
+                    align="start"
+                    matchWidth
+                    panelClassName="min-w-48 rounded-card border border-edge bg-panel py-1 shadow-popover"
+                  >
+                    {catalog.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => {
+                          setNewType(p.id);
+                          setFieldMenu(null);
+                        }}
+                        className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-panel2 ${
+                          newType === p.id ? 'text-fg' : 'text-dim'
+                        }`}
+                      >
+                        <Check
+                          size={ICON.xs}
+                          className={`shrink-0 ${
+                            newType === p.id ? 'text-accent' : 'invisible'
+                          }`}
                         />
-                        <button
-                          onClick={() => moveInstance(row.id, -1)}
-                          disabled={ri === 0}
-                          className="text-dim hover:text-fg disabled:opacity-30 shrink-0"
-                          title={t('config.moveUp')}
-                          aria-label={t('config.moveUp')}
-                        >
-                          <ArrowUp size={ICON.sm} />
-                        </button>
-                        <button
-                          onClick={() => moveInstance(row.id, 1)}
-                          disabled={ri === rows.length - 1}
-                          className="text-dim hover:text-fg disabled:opacity-30 shrink-0"
-                          title={t('config.moveDown')}
-                          aria-label={t('config.moveDown')}
-                        >
-                          <ArrowDown size={ICON.sm} />
-                        </button>
-                        {!row.managed && (
+                        <span className="truncate">{p.name}</span>
+                      </button>
+                    ))}
+                  </Popover>
+                }
+                <button
+                  onClick={() => addInstance(newType)}
+                  className="flex items-center gap-1.5 rounded-control border border-edge px-3 py-1.5 text-sm text-dim hover:text-fg"
+                >
+                  <Plus size={ICON.sm} />
+                  {t('config.addInstance')}
+                </button>
+              </div>
+              {templates.length > 0 && (
+                <div className="space-y-2 rounded-card border border-edge/70 bg-panel p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1.5 text-xs font-medium text-dim">
+                      <Sparkles
+                        size={ICON.xs}
+                        className="shrink-0 text-accent"
+                      />
+                      <span>{t('config.templatesGroup')}</span>
+                    </div>
+                    <input
+                      value={templateQuery}
+                      onChange={(e) => setTemplateQuery(e.target.value)}
+                      placeholder={t('config.templateSearchPlaceholder')}
+                      aria-label={t('config.templateSearch')}
+                      className="w-44 rounded-control border border-edge bg-panel px-2 py-0.5 text-xs outline-none focus:border-accent"
+                    />
+                  </div>
+                  {templates.filter((template) =>
+                    templateMatches(template, templateQuery),
+                  ).length === 0 && (
+                    <p className="text-xs text-dim">
+                      {t('config.templateSearchEmpty')}
+                    </p>
+                  )}
+                  <div className="flex flex-wrap gap-1.5">
+                    {templates
+                      .filter((template) =>
+                        templateMatches(template, templateQuery),
+                      )
+                      .map((template) => {
+                        const models = (template.models ?? [])
+                          .map((m) => m.name)
+                          .join(', ');
+                        return (
                           <button
-                            onClick={() =>
-                              setRows((prev) =>
-                                prev.filter((r) => r.id !== row.id),
-                              )
-                            }
-                            className="text-dim hover:text-err shrink-0"
-                            title={t('config.removeInstance')}
+                            key={template.id}
+                            type="button"
+                            aria-label={`${template.label}: ${models}`}
+                            onClick={() => addInstanceFromTemplate(template)}
+                            className="group inline-flex max-w-full items-center gap-1.5 rounded-full border border-edge bg-panel2 py-1 pl-2 pr-2.5 text-xs text-dim transition-colors hover:border-accent/60 hover:bg-accent/10 hover:text-fg focus-visible:border-accent focus-visible:outline-none"
                           >
-                            <Trash2 size={ICON.sm} />
-                          </button>
-                        )}
-                      </div>
-                      {row.enabled && (
-                        <div className="px-4 pb-3 pt-1 space-y-2">
-                          <div className="space-y-2">
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-medium text-dim">
-                                {t('config.inferenceBase')}
-                              </span>
-                            </div>
-                            <input
-                              value={row.endpoint}
-                              disabled={row.managed}
-                              onChange={(e) =>
-                                update(row.id, { endpoint: e.target.value })
-                              }
-                              placeholder={t('setup.endpointPlaceholder')}
-                              className="w-full rounded-control border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
+                            <Plus
+                              size={ICON.xs}
+                              className="shrink-0 text-accent transition-colors group-hover:text-accent"
                             />
-                            {/* responses | chat is an OpenAI-wire surface;
+                            <span className="shrink-0 font-medium text-fg">
+                              {template.label}
+                            </span>
+                            <span className="min-w-0 max-w-40 truncate font-mono text-micro text-dim">
+                              {models}
+                            </span>
+                          </button>
+                        );
+                      })}
+                  </div>
+                </div>
+              )}
+              {rows.length === 0 && (
+                <p className="text-sm text-dim">{t('config.instancesEmpty')}</p>
+              )}
+              {rows.map((row, ri) => {
+                const prov = catalog.find((p) => p.id === row.type);
+                // The effective driver impl: a preset's impl, or the
+                // driver a plugin-declared row names.
+                const driverImpl = prov?.impl || row.driver;
+                return (
+                  <div
+                    key={row.id}
+                    className={`rounded-card border overflow-hidden ${
+                      row.enabled
+                        ? 'border-edge bg-panel2'
+                        : 'border-edge/50 bg-panel2'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 px-4 py-2.5">
+                      <input
+                        type="checkbox"
+                        checked={row.enabled}
+                        onChange={(e) =>
+                          update(row.id, { enabled: e.target.checked })
+                        }
+                        className="accent-[var(--color-accent)]"
+                        data-tip={t('config.instanceEnabled')}
+                      />
+                      <span className="font-medium text-sm shrink-0">
+                        {prov?.name ?? row.type}
+                      </span>
+                      {row.driver !== '' && (
+                        <span
+                          className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 text-micro text-dim"
+                          data-tip={t('config.instanceDriver')}
+                        >
+                          {row.driver}
+                        </span>
+                      )}
+                      {row.managed && (
+                        <span className="shrink-0 rounded-tight bg-panel px-1.5 py-0.5 text-micro text-dim">
+                          {t('config.managedBadge')}
+                        </span>
+                      )}
+                      <input
+                        value={row.name}
+                        disabled={row.managed}
+                        onChange={(e) =>
+                          update(row.id, { name: e.target.value })
+                        }
+                        placeholder={t('config.instanceName')}
+                        className="flex-1 min-w-0 rounded-control border border-edge bg-panel px-2 py-1 text-sm outline-none focus:border-accent"
+                      />
+                      <button
+                        onClick={() => moveInstance(row.id, -1)}
+                        disabled={ri === 0}
+                        className="text-dim hover:text-fg disabled:opacity-30 shrink-0"
+                        data-tip={t('config.moveUp')}
+                        aria-label={t('config.moveUp')}
+                      >
+                        <ArrowUp size={ICON.sm} />
+                      </button>
+                      <button
+                        onClick={() => moveInstance(row.id, 1)}
+                        disabled={ri === rows.length - 1}
+                        className="text-dim hover:text-fg disabled:opacity-30 shrink-0"
+                        data-tip={t('config.moveDown')}
+                        aria-label={t('config.moveDown')}
+                      >
+                        <ArrowDown size={ICON.sm} />
+                      </button>
+                      {!row.managed && (
+                        <button
+                          onClick={() =>
+                            setRows((prev) =>
+                              prev.filter((r) => r.id !== row.id),
+                            )
+                          }
+                          className="text-dim hover:text-err shrink-0"
+                          data-tip={t('config.removeInstance')}
+                        >
+                          <Trash2 size={ICON.sm} />
+                        </button>
+                      )}
+                    </div>
+                    {row.enabled && (
+                      <div className="px-4 pb-3 pt-1 space-y-2">
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-medium text-dim">
+                              {t('config.inferenceBase')}
+                            </span>
+                          </div>
+                          <input
+                            value={row.endpoint}
+                            disabled={row.managed}
+                            onChange={(e) =>
+                              update(row.id, { endpoint: e.target.value })
+                            }
+                            placeholder={t('setup.endpointPlaceholder')}
+                            className="w-full rounded-control border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
+                          />
+                          {/* responses | chat is an OpenAI-wire surface;
                                 other drivers have no such choice. */}
-                            {driverImpl === 'openai' && (
-                              <>
-                                <div className="flex items-center gap-2 text-xs text-dim">
-                                  <span className="shrink-0 font-medium">
-                                    {t('setup.apiMode')}
-                                  </span>
-                                  <button
-                                    type="button"
-                                    data-field={`${row.id}:api`}
-                                    disabled={row.managed}
-                                    onFocus={(e) =>
-                                      openFieldMenu(e, `${row.id}:api`)
+                          {driverImpl === 'openai' && (
+                            <>
+                              <div className="flex items-center gap-2 text-xs text-dim">
+                                <span className="shrink-0 font-medium">
+                                  {t('setup.apiMode')}
+                                </span>
+                                <button
+                                  type="button"
+                                  data-field={`${row.id}:api`}
+                                  disabled={row.managed}
+                                  onFocus={(e) =>
+                                    openFieldMenu(e, `${row.id}:api`)
+                                  }
+                                  onClick={(e) => {
+                                    const key = `${row.id}:api`;
+                                    if (fieldMenu?.key === key) {
+                                      setFieldMenu(null);
+                                    } else {
+                                      openFieldMenu(e, key);
                                     }
-                                    onClick={(e) => {
-                                      const key = `${row.id}:api`;
-                                      if (fieldMenu === key) {
+                                  }}
+                                  className="inline-flex max-w-56 min-w-0 flex-1 items-center gap-1.5 rounded-control border border-edge bg-panel px-2 py-1 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
+                                >
+                                  <span className="min-w-0 flex-1 truncate font-mono text-fg">
+                                    {row.api === '' ? 'auto' : row.api}
+                                  </span>
+                                  <ChevronDown
+                                    size={ICON.xs}
+                                    className="shrink-0 text-dim"
+                                  />
+                                </button>
+                              </div>
+                              {!row.managed && (
+                                <Popover
+                                  open={fieldMenu?.key === `${row.id}:api`}
+                                  onClose={closeFieldMenu}
+                                  anchor={fieldMenu?.anchor ?? null}
+                                  role="none"
+                                  align="start"
+                                  matchWidth
+                                  panelClassName="rounded-card border border-edge bg-panel py-1 shadow-popover"
+                                >
+                                  {[
+                                    ['responses', 'responses'],
+                                    ['chat', 'chat'],
+                                  ].map(([value, label]) => (
+                                    <button
+                                      key={value}
+                                      type="button"
+                                      onMouseDown={(e) => e.preventDefault()}
+                                      onClick={() => {
+                                        update(row.id, { api: value });
                                         setFieldMenu(null);
-                                      } else {
-                                        openFieldMenu(e, key);
-                                      }
-                                    }}
-                                    className="inline-flex max-w-56 min-w-0 flex-1 items-center gap-1.5 rounded-control border border-edge bg-panel px-2 py-1 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
-                                  >
-                                    <span className="min-w-0 flex-1 truncate font-mono text-fg">
-                                      {row.api === '' ? 'auto' : row.api}
-                                    </span>
-                                    <ChevronDown
-                                      size={ICON.xs}
-                                      className="shrink-0 text-dim"
-                                    />
-                                  </button>
-                                </div>
-                                {!row.managed &&
-                                  menuRect &&
-                                  fieldMenu === `${row.id}:api` &&
-                                  createPortal(
-                                    <div
-                                      ref={fieldMenuRef}
-                                      style={{
-                                        top: menuRect.top,
-                                        left: menuRect.left,
-                                        width: menuRect.width,
                                       }}
-                                      className="fixed z-[100] overflow-y-auto rounded-card border border-edge bg-panel py-1 shadow-popover"
+                                      className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-panel2 ${
+                                        row.api === value
+                                          ? 'text-fg'
+                                          : 'text-dim'
+                                      }`}
                                     >
-                                      {[
-                                        ['responses', 'responses'],
-                                        ['chat', 'chat'],
-                                      ].map(([value, label]) => (
-                                        <button
-                                          key={value}
-                                          type="button"
-                                          onMouseDown={(e) =>
-                                            e.preventDefault()
-                                          }
-                                          onClick={() => {
-                                            update(row.id, { api: value });
-                                            setFieldMenu(null);
-                                          }}
-                                          className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-panel2 ${
-                                            row.api === value
-                                              ? 'text-fg'
-                                              : 'text-dim'
-                                          }`}
-                                        >
-                                          <Check
-                                            size={ICON.xs}
-                                            className={`shrink-0 ${
-                                              row.api === value
-                                                ? 'text-accent'
-                                                : 'invisible'
-                                            }`}
-                                          />
-                                          <span className="font-mono">
-                                            {label}
-                                          </span>
-                                        </button>
-                                      ))}
-                                    </div>,
-                                    document.body,
-                                  )}
-                              </>
+                                      <Check
+                                        size={ICON.xs}
+                                        className={`shrink-0 ${
+                                          row.api === value
+                                            ? 'text-accent'
+                                            : 'invisible'
+                                        }`}
+                                      />
+                                      <span className="font-mono">{label}</span>
+                                    </button>
+                                  ))}
+                                </Popover>
+                              )}
+                            </>
+                          )}
+                        </div>
+                        <AdvancedSection
+                          row={row}
+                          disabled={row.managed}
+                          driver={driverImpl}
+                          onUpdate={(key, value) =>
+                            updateAdvanced(row.id, key, value)
+                          }
+                        />
+                        <div className="space-y-2 pt-1">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-medium text-dim">
+                              {t('setup.models')}
+                            </span>
+                            {!row.managed && (
+                              <button
+                                onClick={() => addModel(row.id)}
+                                className="flex items-center gap-1 text-xs text-dim hover:text-fg"
+                              >
+                                <Plus size={ICON.xs} />
+                                {t('config.addModel')}
+                              </button>
                             )}
                           </div>
-                          <AdvancedSection
-                            row={row}
-                            disabled={row.managed}
-                            driver={driverImpl}
-                            onUpdate={(key, value) =>
-                              updateAdvanced(row.id, key, value)
-                            }
-                          />
-                          <div className="space-y-2 pt-1">
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-medium text-dim">
-                                {t('setup.models')}
-                              </span>
-                              {!row.managed && (
-                                <button
-                                  onClick={() => addModel(row.id)}
-                                  className="flex items-center gap-1 text-xs text-dim hover:text-fg"
-                                >
-                                  <Plus size={ICON.xs} />
-                                  {t('config.addModel')}
-                                </button>
-                              )}
-                            </div>
-                            {row.models.map((m, mi) => (
-                              <div
-                                key={mi}
-                                className="space-y-3 rounded-card border border-edge bg-panel p-3"
-                              >
-                                <div className="flex items-center gap-2">
-                                  <div className="relative flex-1 min-w-36">
-                                    <input
-                                      value={m.name}
-                                      disabled={row.managed}
-                                      onChange={(e) =>
-                                        updateModel(row.id, mi, {
-                                          name: e.target.value,
-                                        })
-                                      }
-                                      placeholder={t('setup.model')}
-                                      className="w-full rounded-control border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
-                                    />
-                                  </div>
-                                  {!row.managed &&
-                                    catalogModelsFor(row.type).length > 0 && (
-                                      <button
-                                        type="button"
-                                        data-field={`${row.id}:${mi}:model`}
-                                        aria-label={t(
-                                          'config.modelFromCatalog',
-                                        )}
-                                        title={t('config.modelFromCatalog')}
-                                        onFocus={(e) => {
-                                          setCatalogQuery('');
-                                          openFieldMenu(
-                                            e,
-                                            `${row.id}:${mi}:model`,
-                                          );
-                                        }}
-                                        onClick={(e) => {
-                                          const key = `${row.id}:${mi}:model`;
-                                          if (fieldMenu === key) {
-                                            setFieldMenu(null);
-                                          } else {
-                                            setCatalogQuery('');
-                                            openFieldMenu(e, key);
-                                          }
-                                        }}
-                                        className="shrink-0 rounded-control border border-edge px-1.5 py-1.5 text-dim transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent"
-                                      >
-                                        <ListPlus size={ICON.sm} />
-                                      </button>
-                                    )}
-                                  {!row.managed &&
-                                    menuRect &&
-                                    fieldMenu === `${row.id}:${mi}:model` &&
-                                    createPortal(
-                                      <div
-                                        ref={fieldMenuRef}
-                                        style={{
-                                          top: menuRect.top,
-                                          left: rightAlignedMenuLeft(256),
-                                          width: Math.max(menuRect.width, 256),
-                                        }}
-                                        className="fixed z-[100] max-h-72 overflow-y-auto rounded-card border border-edge bg-panel py-1 shadow-popover"
-                                      >
-                                        <div className="sticky top-0 z-10 bg-panel px-2 pb-1 pt-1">
-                                          <input
-                                            autoFocus
-                                            value={catalogQuery}
-                                            onChange={(e) =>
-                                              setCatalogQuery(e.target.value)
-                                            }
-                                            placeholder={t(
-                                              'config.modelSearchPlaceholder',
-                                            )}
-                                            aria-label={t('config.modelSearch')}
-                                            className="w-full rounded-control border border-edge bg-panel px-2 py-1 text-xs outline-none focus:border-accent"
-                                          />
-                                        </div>
-                                        {catalogModelsFor(
-                                          row.type,
-                                          catalogQuery,
-                                        ).map((entry) => (
-                                          <button
-                                            key={entry.id}
-                                            type="button"
-                                            onMouseDown={(e) =>
-                                              e.preventDefault()
-                                            }
-                                            onClick={() => {
-                                              applyCatalogModel(
-                                                row.id,
-                                                mi,
-                                                entry,
-                                              );
-                                              setFieldMenu(null);
-                                            }}
-                                            className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
-                                          >
-                                            <span className="min-w-0 flex-1 truncate font-mono">
-                                              {entry.model.name}
-                                            </span>
-                                            <span className="shrink-0 truncate text-micro text-dim">
-                                              {entry.label ??
-                                                entry.vendor ??
-                                                ''}
-                                            </span>
-                                          </button>
-                                        ))}
-                                        {catalogModelsFor(
-                                          row.type,
-                                          catalogQuery,
-                                        ).length === 0 && (
-                                          <p className="px-2.5 py-1.5 text-xs text-dim">
-                                            {t('config.modelSearchEmpty')}
-                                          </p>
-                                        )}
-                                      </div>,
-                                      document.body,
-                                    )}
-                                  <button
-                                    onClick={() => moveModel(row.id, mi, -1)}
-                                    disabled={mi === 0}
-                                    className="shrink-0 text-dim hover:text-fg disabled:opacity-30"
-                                    title={t('config.moveUp')}
-                                    aria-label={t('config.moveUp')}
-                                  >
-                                    <ArrowUp size={ICON.sm} />
-                                  </button>
-                                  <button
-                                    onClick={() => moveModel(row.id, mi, 1)}
-                                    disabled={mi === row.models.length - 1}
-                                    className="shrink-0 text-dim hover:text-fg disabled:opacity-30"
-                                    title={t('config.moveDown')}
-                                    aria-label={t('config.moveDown')}
-                                  >
-                                    <ArrowDown size={ICON.sm} />
-                                  </button>
-                                  {!row.managed && (
-                                    <button
-                                      onClick={() => removeModel(row.id, mi)}
-                                      className="shrink-0 text-dim hover:text-err"
-                                      title={t('config.removeModel')}
-                                      aria-label={t('config.removeModel')}
-                                    >
-                                      <X size={ICON.sm} />
-                                    </button>
-                                  )}
-                                </div>
-                                <div className="space-y-3 text-xs">
-                                  <div className="grid grid-cols-1 gap-x-4 gap-y-2.5 sm:grid-cols-2 xl:grid-cols-4">
-                                    <div className="min-w-0 space-y-1">
-                                      <span className="block text-xs font-medium text-dim">
-                                        {t('setup.outputs')}
-                                      </span>
-                                      <button
-                                        type="button"
-                                        data-field={`${row.id}:${mi}:outputs`}
-                                        disabled={row.managed}
-                                        onFocus={(e) =>
-                                          openFieldMenu(
-                                            e,
-                                            `${row.id}:${mi}:outputs`,
-                                          )
-                                        }
-                                        onClick={(e) => {
-                                          const key = `${row.id}:${mi}:outputs`;
-                                          if (fieldMenu === key) {
-                                            setFieldMenu(null);
-                                          } else {
-                                            openFieldMenu(e, key);
-                                          }
-                                        }}
-                                        className="flex min-w-0 w-full items-center gap-1.5 rounded-control border border-edge bg-panel px-2 py-1.5 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
-                                      >
-                                        <span className="min-w-0 flex-1 truncate font-mono text-fg">
-                                          {m.outputs.length > 0
-                                            ? m.outputs.join(', ')
-                                            : '—'}
-                                        </span>
-                                        <ChevronDown
-                                          size={ICON.xs}
-                                          className="shrink-0 text-dim"
-                                        />
-                                      </button>
-                                    </div>
-                                    <div className="min-w-0 space-y-1">
-                                      <span className="block text-xs font-medium text-dim">
-                                        {t('setup.inputs')}
-                                      </span>
-                                      <button
-                                        type="button"
-                                        data-field={`${row.id}:${mi}:inputs`}
-                                        disabled={row.managed}
-                                        onFocus={(e) =>
-                                          openFieldMenu(
-                                            e,
-                                            `${row.id}:${mi}:inputs`,
-                                          )
-                                        }
-                                        onClick={(e) => {
-                                          const key = `${row.id}:${mi}:inputs`;
-                                          if (fieldMenu === key) {
-                                            setFieldMenu(null);
-                                          } else {
-                                            openFieldMenu(e, key);
-                                          }
-                                        }}
-                                        className="flex min-w-0 w-full items-center gap-1.5 rounded-control border border-edge bg-panel px-2 py-1.5 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
-                                      >
-                                        <span className="min-w-0 flex-1 truncate font-mono text-fg">
-                                          {m.inputs.length > 0
-                                            ? m.inputs.join(', ')
-                                            : '—'}
-                                        </span>
-                                        <ChevronDown
-                                          size={ICON.xs}
-                                          className="shrink-0 text-dim"
-                                        />
-                                      </button>
-                                    </div>
-                                    <div className="min-w-0 space-y-1">
-                                      <span className="block text-xs font-medium text-dim">
-                                        {t('setup.kind')}
-                                      </span>
-                                      <button
-                                        type="button"
-                                        data-field={`${row.id}:${mi}:kind`}
-                                        disabled={row.managed}
-                                        onFocus={(e) =>
-                                          openFieldMenu(
-                                            e,
-                                            `${row.id}:${mi}:kind`,
-                                          )
-                                        }
-                                        onClick={(e) => {
-                                          const key = `${row.id}:${mi}:kind`;
-                                          if (fieldMenu === key) {
-                                            setFieldMenu(null);
-                                          } else {
-                                            openFieldMenu(e, key);
-                                          }
-                                        }}
-                                        className="flex min-w-0 w-full items-center gap-1.5 rounded-control border border-edge bg-panel px-2 py-1.5 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
-                                      >
-                                        <span className="min-w-0 flex-1 truncate text-fg">
-                                          {m.kind === '' ? 'auto' : m.kind}
-                                        </span>
-                                        <ChevronDown
-                                          size={ICON.xs}
-                                          className="shrink-0 text-dim"
-                                        />
-                                      </button>
-                                    </div>
-                                    <div className="min-w-0 space-y-1">
-                                      <span className="block text-xs font-medium text-dim">
-                                        {t('setup.reasoning')}
-                                      </span>
-                                      <button
-                                        type="button"
-                                        data-field={`${row.id}:${mi}:reasoning`}
-                                        disabled={row.managed}
-                                        onFocus={(e) =>
-                                          openFieldMenu(
-                                            e,
-                                            `${row.id}:${mi}:reasoning`,
-                                          )
-                                        }
-                                        onClick={(e) => {
-                                          const key = `${row.id}:${mi}:reasoning`;
-                                          if (fieldMenu === key) {
-                                            setFieldMenu(null);
-                                          } else {
-                                            openFieldMenu(e, key);
-                                          }
-                                        }}
-                                        className="flex min-w-0 w-full items-center gap-1.5 rounded-control border border-edge bg-panel px-2 py-1.5 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
-                                      >
-                                        <span className="min-w-0 flex-1 truncate text-fg">
-                                          {m.reasoning === ''
-                                            ? t('setup.reasoningOff')
-                                            : m.reasoning}
-                                        </span>
-                                        <ChevronDown
-                                          size={ICON.xs}
-                                          className="shrink-0 text-dim"
-                                        />
-                                      </button>
-                                    </div>
-                                  </div>
-                                  {m.reasoning !== '' && (
-                                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2.5">
-                                      <div className="mb-2 flex items-center justify-between gap-2">
-                                        <span className="text-label font-semibold tracking-wider text-dim uppercase">
-                                          {t('setup.effortMap')}
-                                        </span>
-                                        <button
-                                          type="button"
-                                          disabled={row.managed}
-                                          onClick={() =>
-                                            updateModel(row.id, mi, {
-                                              reasoningEffortMap: {},
-                                            })
-                                          }
-                                          className="rounded-control border border-edge px-2 py-0.5 text-xs text-dim transition-colors hover:text-fg disabled:opacity-50"
-                                        >
-                                          {t('setup.effortMapClear')}
-                                        </button>
-                                      </div>
-                                      <div className="grid grid-cols-1 gap-x-8 gap-y-1.5 sm:grid-cols-2 lg:grid-cols-3">
-                                        {EFFORT_LEVELS.map((level) => (
-                                          <label
-                                            key={level}
-                                            className="flex items-center gap-1.5"
-                                          >
-                                            <span className="w-12 shrink-0 text-right font-mono text-dim">
-                                              {level}
-                                            </span>
-                                            <span className="shrink-0 text-dim">
-                                              →
-                                            </span>
-                                            <input
-                                              value={
-                                                m.reasoningEffortMap[level] ??
-                                                ''
-                                              }
-                                              disabled={row.managed}
-                                              placeholder={t(
-                                                'setup.effortMapPlaceholder',
-                                              )}
-                                              onChange={(e) => {
-                                                const next = {
-                                                  ...m.reasoningEffortMap,
-                                                };
-                                                const value = e.target.value;
-                                                if (value.trim() === '') {
-                                                  delete next[level];
-                                                } else {
-                                                  next[level] = value;
-                                                }
-                                                updateModel(row.id, mi, {
-                                                  reasoningEffortMap: next,
-                                                });
-                                              }}
-                                              className="min-w-0 flex-1 rounded-control border border-edge bg-panel px-1.5 py-1 text-xs outline-none focus:border-accent"
-                                            />
-                                          </label>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  )}
-                                  <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-edge pt-2.5">
-                                    <label
-                                      className="flex items-center gap-1.5 whitespace-nowrap text-dim hover:text-fg"
-                                      title={t('setup.webSearchHint')}
-                                    >
-                                      <input
-                                        type="checkbox"
-                                        checked={m.webSearch}
-                                        disabled={row.managed}
-                                        onChange={(e) =>
-                                          updateModel(row.id, mi, {
-                                            webSearch: e.target.checked,
-                                          })
-                                        }
-                                        className="accent-[var(--color-accent)]"
-                                      />
-                                      {t('setup.webSearch')}
-                                    </label>
-                                    {m.webSearch && (
-                                      <span className="max-w-96 text-micro text-dim">
-                                        {t('setup.webSearchHint')}
-                                      </span>
-                                    )}
-                                    <label className="flex items-center gap-2 whitespace-nowrap">
-                                      <span className="font-medium text-dim">
-                                        {t('setup.maxInputTokens')}
-                                      </span>
-                                      <input
-                                        type="number"
-                                        min={1}
-                                        step={1000}
-                                        value={m.maxInputTokens}
-                                        disabled={row.managed}
-                                        placeholder={t('setup.maxInputAuto')}
-                                        title={t('setup.maxInputHint')}
-                                        onChange={(e) => {
-                                          const next: number | '' =
-                                            e.target.value === ''
-                                              ? ''
-                                              : Number(e.target.value);
-                                          updateModel(row.id, mi, {
-                                            maxInputTokens:
-                                              next === '' ||
-                                              !Number.isFinite(next)
-                                                ? ''
-                                                : next,
-                                          });
-                                        }}
-                                        className="h-[1.875rem] w-40 rounded-control border border-edge bg-panel px-2 text-xs text-fg outline-none transition-colors focus:border-accent disabled:opacity-40"
-                                      />
-                                    </label>
-                                  </div>
-                                </div>
-                                {!row.managed &&
-                                  menuRect &&
-                                  (fieldMenu === `${row.id}:${mi}:outputs` ||
-                                    fieldMenu === `${row.id}:${mi}:inputs`) &&
-                                  createPortal(
-                                    <div
-                                      ref={fieldMenuRef}
-                                      style={{
-                                        top: menuRect.top,
-                                        left: menuRect.left,
-                                        width: menuRect.width,
-                                      }}
-                                      className="fixed z-[100] max-h-56 overflow-y-auto rounded-card border border-edge bg-panel py-1 shadow-popover"
-                                    >
-                                      {(fieldMenu === `${row.id}:${mi}:outputs`
-                                        ? ['text', 'image', 'audio', 'video']
-                                        : [
-                                            'text',
-                                            'image',
-                                            'audio',
-                                            'video',
-                                            'file',
-                                            'data',
-                                            'tool_call',
-                                            'tool_result',
-                                          ]
-                                      ).map((opt) => {
-                                        const active =
-                                          fieldMenu ===
-                                          `${row.id}:${mi}:outputs`
-                                            ? m.outputs.includes(opt)
-                                            : m.inputs.includes(opt);
-                                        return (
-                                          <button
-                                            key={opt}
-                                            type="button"
-                                            onMouseDown={(e) =>
-                                              e.preventDefault()
-                                            }
-                                            onClick={() => {
-                                              if (
-                                                fieldMenu ===
-                                                `${row.id}:${mi}:outputs`
-                                              ) {
-                                                updateModel(row.id, mi, {
-                                                  outputs: active
-                                                    ? m.outputs.filter(
-                                                        (k) => k !== opt,
-                                                      )
-                                                    : [...m.outputs, opt],
-                                                });
-                                              } else {
-                                                updateModel(row.id, mi, {
-                                                  inputs: active
-                                                    ? m.inputs.filter(
-                                                        (k) => k !== opt,
-                                                      )
-                                                    : [...m.inputs, opt],
-                                                });
-                                              }
-                                            }}
-                                            className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-panel2 ${
-                                              active ? 'text-fg' : 'text-dim'
-                                            }`}
-                                          >
-                                            <Check
-                                              size={ICON.xs}
-                                              className={`shrink-0 ${
-                                                active
-                                                  ? 'text-accent'
-                                                  : 'invisible'
-                                              }`}
-                                            />
-                                            <span className="font-mono">
-                                              {opt}
-                                            </span>
-                                          </button>
-                                        );
-                                      })}
-                                    </div>,
-                                    document.body,
-                                  )}
-                                {!row.managed &&
-                                  menuRect &&
-                                  fieldMenu === `${row.id}:${mi}:kind` &&
-                                  createPortal(
-                                    <div
-                                      ref={fieldMenuRef}
-                                      style={{
-                                        top: menuRect.top,
-                                        left: menuRect.left,
-                                        width: menuRect.width,
-                                      }}
-                                      className="fixed z-[100] overflow-y-auto rounded-card border border-edge bg-panel py-1 shadow-popover"
-                                    >
-                                      {[
-                                        ['', 'auto'],
-                                        ['generate', 'generate'],
-                                        ['image', 'image'],
-                                        ['video', 'video'],
-                                        ['tts', 'tts'],
-                                      ].map(([value, label]) => (
-                                        <button
-                                          key={value}
-                                          type="button"
-                                          onMouseDown={(e) =>
-                                            e.preventDefault()
-                                          }
-                                          onClick={() => {
-                                            updateModel(row.id, mi, {
-                                              kind: value,
-                                            });
-                                            setFieldMenu(null);
-                                          }}
-                                          className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-panel2 ${
-                                            m.kind === value
-                                              ? 'text-fg'
-                                              : 'text-dim'
-                                          }`}
-                                        >
-                                          <Check
-                                            size={ICON.xs}
-                                            className={`shrink-0 ${
-                                              m.kind === value
-                                                ? 'text-accent'
-                                                : 'invisible'
-                                            }`}
-                                          />
-                                          <span className="font-mono">
-                                            {label}
-                                          </span>
-                                        </button>
-                                      ))}
-                                    </div>,
-                                    document.body,
-                                  )}
-                                {!row.managed &&
-                                  menuRect &&
-                                  fieldMenu === `${row.id}:${mi}:reasoning` &&
-                                  createPortal(
-                                    <div
-                                      ref={fieldMenuRef}
-                                      style={{
-                                        top: menuRect.top,
-                                        left: menuRect.left,
-                                        width: menuRect.width,
-                                      }}
-                                      className="fixed z-[100] overflow-y-auto rounded-card border border-edge bg-panel py-1 shadow-popover"
-                                    >
-                                      {[
-                                        ['', t('setup.reasoningOff')],
-                                        ['always', 'always'],
-                                        ['toggle', 'toggle'],
-                                      ].map(([value, label]) => (
-                                        <button
-                                          key={value}
-                                          type="button"
-                                          onMouseDown={(e) =>
-                                            e.preventDefault()
-                                          }
-                                          onClick={() => {
-                                            updateModel(row.id, mi, {
-                                              reasoning: value,
-                                              ...(value === ''
-                                                ? { reasoningEffortMap: {} }
-                                                : {}),
-                                            });
-                                            setFieldMenu(null);
-                                          }}
-                                          className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-panel2 ${
-                                            m.reasoning === value
-                                              ? 'text-fg'
-                                              : 'text-dim'
-                                          }`}
-                                        >
-                                          <Check
-                                            size={ICON.xs}
-                                            className={`shrink-0 ${
-                                              m.reasoning === value
-                                                ? 'text-accent'
-                                                : 'invisible'
-                                            }`}
-                                          />
-                                          <span
-                                            className={
-                                              value === ''
-                                                ? undefined
-                                                : 'font-mono'
-                                            }
-                                          >
-                                            {label}
-                                          </span>
-                                        </button>
-                                      ))}
-                                    </div>,
-                                    document.body,
-                                  )}
-                                {prov?.model_endpoint && (
+                          {row.models.map((m, mi) => (
+                            <div
+                              key={mi}
+                              className="space-y-3 rounded-card border border-edge bg-panel p-3"
+                            >
+                              <div className="flex items-center gap-2">
+                                <div className="relative flex-1 min-w-36">
                                   <input
-                                    value={m.endpoint}
+                                    value={m.name}
                                     disabled={row.managed}
                                     onChange={(e) =>
                                       updateModel(row.id, mi, {
-                                        endpoint: e.target.value,
+                                        name: e.target.value,
                                       })
                                     }
-                                    placeholder={t('setup.endpoint')}
+                                    placeholder={t('setup.model')}
                                     className="w-full rounded-control border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
                                   />
+                                </div>
+                                {!row.managed &&
+                                  catalogModelsFor(row.type).length > 0 && (
+                                    <button
+                                      type="button"
+                                      data-field={`${row.id}:${mi}:model`}
+                                      aria-label={t('config.modelFromCatalog')}
+                                      data-tip={t('config.modelFromCatalog')}
+                                      onFocus={(e) => {
+                                        setCatalogQuery('');
+                                        openFieldMenu(
+                                          e,
+                                          `${row.id}:${mi}:model`,
+                                        );
+                                      }}
+                                      onClick={(e) => {
+                                        const key = `${row.id}:${mi}:model`;
+                                        if (fieldMenu?.key === key) {
+                                          setFieldMenu(null);
+                                        } else {
+                                          setCatalogQuery('');
+                                          openFieldMenu(e, key);
+                                        }
+                                      }}
+                                      className="shrink-0 rounded-control border border-edge px-1.5 py-1.5 text-dim transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent"
+                                    >
+                                      <ListPlus size={ICON.sm} />
+                                    </button>
+                                  )}
+                                {!row.managed && (
+                                  <Popover
+                                    open={
+                                      fieldMenu?.key === `${row.id}:${mi}:model`
+                                    }
+                                    onClose={closeFieldMenu}
+                                    anchor={fieldMenu?.anchor ?? null}
+                                    role="none"
+                                    align="end"
+                                    maxHeight={288}
+                                    panelClassName="min-w-[16rem] rounded-card border border-edge bg-panel py-1 shadow-popover"
+                                  >
+                                    <div className="sticky top-0 z-[var(--oc-z-raised)] bg-panel px-2 pb-1 pt-1">
+                                      <input
+                                        autoFocus
+                                        value={catalogQuery}
+                                        onChange={(e) =>
+                                          setCatalogQuery(e.target.value)
+                                        }
+                                        placeholder={t(
+                                          'config.modelSearchPlaceholder',
+                                        )}
+                                        aria-label={t('config.modelSearch')}
+                                        className="w-full rounded-control border border-edge bg-panel px-2 py-1 text-xs outline-none focus:border-accent"
+                                      />
+                                    </div>
+                                    {catalogModelsFor(
+                                      row.type,
+                                      catalogQuery,
+                                    ).map((entry) => (
+                                      <button
+                                        key={entry.id}
+                                        type="button"
+                                        onMouseDown={(e) => e.preventDefault()}
+                                        onClick={() => {
+                                          applyCatalogModel(row.id, mi, entry);
+                                          setFieldMenu(null);
+                                        }}
+                                        className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs text-dim hover:bg-panel2 hover:text-fg"
+                                      >
+                                        <span className="min-w-0 flex-1 truncate font-mono">
+                                          {entry.model.name}
+                                        </span>
+                                        <span className="shrink-0 truncate text-micro text-dim">
+                                          {entry.label ?? entry.vendor ?? ''}
+                                        </span>
+                                      </button>
+                                    ))}
+                                    {catalogModelsFor(row.type, catalogQuery)
+                                      .length === 0 && (
+                                      <p className="px-2.5 py-1.5 text-xs text-dim">
+                                        {t('config.modelSearchEmpty')}
+                                      </p>
+                                    )}
+                                  </Popover>
                                 )}
-                                <ModelAdvanced
-                                  value={m}
-                                  disabled={row.managed}
-                                  onUpdate={(patch) =>
-                                    updateModel(row.id, mi, patch)
-                                  }
-                                />
+                                <button
+                                  onClick={() => moveModel(row.id, mi, -1)}
+                                  disabled={mi === 0}
+                                  className="shrink-0 text-dim hover:text-fg disabled:opacity-30"
+                                  data-tip={t('config.moveUp')}
+                                  aria-label={t('config.moveUp')}
+                                >
+                                  <ArrowUp size={ICON.sm} />
+                                </button>
+                                <button
+                                  onClick={() => moveModel(row.id, mi, 1)}
+                                  disabled={mi === row.models.length - 1}
+                                  className="shrink-0 text-dim hover:text-fg disabled:opacity-30"
+                                  data-tip={t('config.moveDown')}
+                                  aria-label={t('config.moveDown')}
+                                >
+                                  <ArrowDown size={ICON.sm} />
+                                </button>
+                                {!row.managed && (
+                                  <button
+                                    onClick={() => removeModel(row.id, mi)}
+                                    className="shrink-0 text-dim hover:text-err"
+                                    data-tip={t('config.removeModel')}
+                                    aria-label={t('config.removeModel')}
+                                  >
+                                    <X size={ICON.sm} />
+                                  </button>
+                                )}
                               </div>
-                            ))}
-                          </div>
-                          <div className="space-y-2 pt-1">
-                            <span className="text-xs font-medium text-dim">
-                              {t('config.inferenceKey')}
-                            </span>
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="password"
-                                value={row.key}
-                                disabled={row.keyEnv || row.managed}
-                                onChange={(e) =>
-                                  update(row.id, { key: e.target.value })
-                                }
-                                placeholder={
-                                  row.keyKeychain && row.key === ''
-                                    ? t('config.keychainStored')
-                                    : row.keySet && row.key === ''
-                                      ? t('setup.apiKeySet')
-                                      : t('setup.apiKeyPlaceholder', {
-                                          var: prov?.env_var ?? '',
+                              <div className="space-y-3 text-xs">
+                                <div className="grid grid-cols-1 gap-x-4 gap-y-2.5 sm:grid-cols-2 xl:grid-cols-4">
+                                  <div className="min-w-0 space-y-1">
+                                    <span className="block text-xs font-medium text-dim">
+                                      {t('setup.outputs')}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      data-field={`${row.id}:${mi}:outputs`}
+                                      disabled={row.managed}
+                                      onFocus={(e) =>
+                                        openFieldMenu(
+                                          e,
+                                          `${row.id}:${mi}:outputs`,
+                                        )
+                                      }
+                                      onClick={(e) => {
+                                        const key = `${row.id}:${mi}:outputs`;
+                                        if (fieldMenu?.key === key) {
+                                          setFieldMenu(null);
+                                        } else {
+                                          openFieldMenu(e, key);
+                                        }
+                                      }}
+                                      className="flex min-w-0 w-full items-center gap-1.5 rounded-control border border-edge bg-panel px-2 py-1.5 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
+                                    >
+                                      <span className="min-w-0 flex-1 truncate font-mono text-fg">
+                                        {m.outputs.length > 0
+                                          ? m.outputs.join(', ')
+                                          : '—'}
+                                      </span>
+                                      <ChevronDown
+                                        size={ICON.xs}
+                                        className="shrink-0 text-dim"
+                                      />
+                                    </button>
+                                  </div>
+                                  <div className="min-w-0 space-y-1">
+                                    <span className="block text-xs font-medium text-dim">
+                                      {t('setup.inputs')}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      data-field={`${row.id}:${mi}:inputs`}
+                                      disabled={row.managed}
+                                      onFocus={(e) =>
+                                        openFieldMenu(
+                                          e,
+                                          `${row.id}:${mi}:inputs`,
+                                        )
+                                      }
+                                      onClick={(e) => {
+                                        const key = `${row.id}:${mi}:inputs`;
+                                        if (fieldMenu?.key === key) {
+                                          setFieldMenu(null);
+                                        } else {
+                                          openFieldMenu(e, key);
+                                        }
+                                      }}
+                                      className="flex min-w-0 w-full items-center gap-1.5 rounded-control border border-edge bg-panel px-2 py-1.5 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
+                                    >
+                                      <span className="min-w-0 flex-1 truncate font-mono text-fg">
+                                        {m.inputs.length > 0
+                                          ? m.inputs.join(', ')
+                                          : '—'}
+                                      </span>
+                                      <ChevronDown
+                                        size={ICON.xs}
+                                        className="shrink-0 text-dim"
+                                      />
+                                    </button>
+                                  </div>
+                                  <div className="min-w-0 space-y-1">
+                                    <span className="block text-xs font-medium text-dim">
+                                      {t('setup.kind')}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      data-field={`${row.id}:${mi}:kind`}
+                                      disabled={row.managed}
+                                      onFocus={(e) =>
+                                        openFieldMenu(e, `${row.id}:${mi}:kind`)
+                                      }
+                                      onClick={(e) => {
+                                        const key = `${row.id}:${mi}:kind`;
+                                        if (fieldMenu?.key === key) {
+                                          setFieldMenu(null);
+                                        } else {
+                                          openFieldMenu(e, key);
+                                        }
+                                      }}
+                                      className="flex min-w-0 w-full items-center gap-1.5 rounded-control border border-edge bg-panel px-2 py-1.5 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
+                                    >
+                                      <span className="min-w-0 flex-1 truncate text-fg">
+                                        {m.kind === '' ? 'auto' : m.kind}
+                                      </span>
+                                      <ChevronDown
+                                        size={ICON.xs}
+                                        className="shrink-0 text-dim"
+                                      />
+                                    </button>
+                                  </div>
+                                  <div className="min-w-0 space-y-1">
+                                    <span className="block text-xs font-medium text-dim">
+                                      {t('setup.reasoning')}
+                                    </span>
+                                    <button
+                                      type="button"
+                                      data-field={`${row.id}:${mi}:reasoning`}
+                                      disabled={row.managed}
+                                      onFocus={(e) =>
+                                        openFieldMenu(
+                                          e,
+                                          `${row.id}:${mi}:reasoning`,
+                                        )
+                                      }
+                                      onClick={(e) => {
+                                        const key = `${row.id}:${mi}:reasoning`;
+                                        if (fieldMenu?.key === key) {
+                                          setFieldMenu(null);
+                                        } else {
+                                          openFieldMenu(e, key);
+                                        }
+                                      }}
+                                      className="flex min-w-0 w-full items-center gap-1.5 rounded-control border border-edge bg-panel px-2 py-1.5 text-xs transition-colors outline-none hover:border-accent/60 hover:text-fg focus:border-accent disabled:opacity-40"
+                                    >
+                                      <span className="min-w-0 flex-1 truncate text-fg">
+                                        {m.reasoning === ''
+                                          ? t('setup.reasoningOff')
+                                          : m.reasoning}
+                                      </span>
+                                      <ChevronDown
+                                        size={ICON.xs}
+                                        className="shrink-0 text-dim"
+                                      />
+                                    </button>
+                                  </div>
+                                </div>
+                                {m.reasoning !== '' && (
+                                  <div className="rounded-card border border-edge bg-panel2 px-3 py-2.5">
+                                    <div className="mb-2 flex items-center justify-between gap-2">
+                                      <span className="text-label font-semibold tracking-wider text-dim uppercase">
+                                        {t('setup.effortMap')}
+                                      </span>
+                                      <button
+                                        type="button"
+                                        disabled={row.managed}
+                                        onClick={() =>
+                                          updateModel(row.id, mi, {
+                                            reasoningEffortMap: {},
+                                          })
+                                        }
+                                        className="rounded-control border border-edge px-2 py-0.5 text-xs text-dim transition-colors hover:text-fg disabled:opacity-50"
+                                      >
+                                        {t('setup.effortMapClear')}
+                                      </button>
+                                    </div>
+                                    <div className="grid grid-cols-1 gap-x-8 gap-y-1.5 sm:grid-cols-2 lg:grid-cols-3">
+                                      {EFFORT_LEVELS.map((level) => (
+                                        <label
+                                          key={level}
+                                          className="flex items-center gap-1.5"
+                                        >
+                                          <span className="w-12 shrink-0 text-right font-mono text-dim">
+                                            {level}
+                                          </span>
+                                          <span className="shrink-0 text-dim">
+                                            →
+                                          </span>
+                                          <input
+                                            value={
+                                              m.reasoningEffortMap[level] ?? ''
+                                            }
+                                            disabled={row.managed}
+                                            placeholder={t(
+                                              'setup.effortMapPlaceholder',
+                                            )}
+                                            onChange={(e) => {
+                                              const next = {
+                                                ...m.reasoningEffortMap,
+                                              };
+                                              const value = e.target.value;
+                                              if (value.trim() === '') {
+                                                delete next[level];
+                                              } else {
+                                                next[level] = value;
+                                              }
+                                              updateModel(row.id, mi, {
+                                                reasoningEffortMap: next,
+                                              });
+                                            }}
+                                            className="min-w-0 flex-1 rounded-control border border-edge bg-panel px-1.5 py-1 text-xs outline-none focus:border-accent"
+                                          />
+                                        </label>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                                <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-edge pt-2.5">
+                                  <label
+                                    className="flex items-center gap-1.5 whitespace-nowrap text-dim hover:text-fg"
+                                    data-tip={t('setup.webSearchHint')}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={m.webSearch}
+                                      disabled={row.managed}
+                                      onChange={(e) =>
+                                        updateModel(row.id, mi, {
+                                          webSearch: e.target.checked,
                                         })
-                                }
-                                className="flex-1 rounded-control border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent disabled:opacity-40"
-                              />
-                              <label className="flex items-center gap-1.5 text-xs text-dim whitespace-nowrap">
+                                      }
+                                      className="accent-[var(--color-accent)]"
+                                    />
+                                    {t('setup.webSearch')}
+                                  </label>
+                                  {m.webSearch && (
+                                    <span className="max-w-96 text-micro text-dim">
+                                      {t('setup.webSearchHint')}
+                                    </span>
+                                  )}
+                                  <label className="flex items-center gap-2 whitespace-nowrap">
+                                    <span className="font-medium text-dim">
+                                      {t('setup.maxInputTokens')}
+                                    </span>
+                                    <input
+                                      type="number"
+                                      min={1}
+                                      step={1000}
+                                      value={m.maxInputTokens}
+                                      disabled={row.managed}
+                                      placeholder={t('setup.maxInputAuto')}
+                                      data-tip={t('setup.maxInputHint')}
+                                      onChange={(e) => {
+                                        const next: number | '' =
+                                          e.target.value === ''
+                                            ? ''
+                                            : Number(e.target.value);
+                                        updateModel(row.id, mi, {
+                                          maxInputTokens:
+                                            next === '' ||
+                                            !Number.isFinite(next)
+                                              ? ''
+                                              : next,
+                                        });
+                                      }}
+                                      className="h-[1.875rem] w-40 rounded-control border border-edge bg-panel px-2 text-xs text-fg outline-none transition-colors focus:border-accent disabled:opacity-40"
+                                    />
+                                  </label>
+                                </div>
+                              </div>
+                              {!row.managed && (
+                                <Popover
+                                  open={
+                                    fieldMenu !== null &&
+                                    (fieldMenu.key ===
+                                      `${row.id}:${mi}:outputs` ||
+                                      fieldMenu.key ===
+                                        `${row.id}:${mi}:inputs`)
+                                  }
+                                  onClose={closeFieldMenu}
+                                  anchor={fieldMenu?.anchor ?? null}
+                                  role="none"
+                                  align="start"
+                                  matchWidth
+                                  maxHeight={224}
+                                  panelClassName="rounded-card border border-edge bg-panel py-1 shadow-popover"
+                                >
+                                  {(fieldMenu?.key === `${row.id}:${mi}:outputs`
+                                    ? ['text', 'image', 'audio', 'video']
+                                    : [
+                                        'text',
+                                        'image',
+                                        'audio',
+                                        'video',
+                                        'file',
+                                        'data',
+                                        'tool_call',
+                                        'tool_result',
+                                      ]
+                                  ).map((opt) => {
+                                    const active =
+                                      fieldMenu?.key ===
+                                      `${row.id}:${mi}:outputs`
+                                        ? m.outputs.includes(opt)
+                                        : m.inputs.includes(opt);
+                                    return (
+                                      <button
+                                        key={opt}
+                                        type="button"
+                                        onMouseDown={(e) => e.preventDefault()}
+                                        onClick={() => {
+                                          if (
+                                            fieldMenu?.key ===
+                                            `${row.id}:${mi}:outputs`
+                                          ) {
+                                            updateModel(row.id, mi, {
+                                              outputs: active
+                                                ? m.outputs.filter(
+                                                    (k) => k !== opt,
+                                                  )
+                                                : [...m.outputs, opt],
+                                            });
+                                          } else {
+                                            updateModel(row.id, mi, {
+                                              inputs: active
+                                                ? m.inputs.filter(
+                                                    (k) => k !== opt,
+                                                  )
+                                                : [...m.inputs, opt],
+                                            });
+                                          }
+                                        }}
+                                        className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-panel2 ${
+                                          active ? 'text-fg' : 'text-dim'
+                                        }`}
+                                      >
+                                        <Check
+                                          size={ICON.xs}
+                                          className={`shrink-0 ${
+                                            active ? 'text-accent' : 'invisible'
+                                          }`}
+                                        />
+                                        <span className="font-mono">{opt}</span>
+                                      </button>
+                                    );
+                                  })}
+                                </Popover>
+                              )}
+                              {!row.managed && (
+                                <Popover
+                                  open={
+                                    fieldMenu?.key === `${row.id}:${mi}:kind`
+                                  }
+                                  onClose={closeFieldMenu}
+                                  anchor={fieldMenu?.anchor ?? null}
+                                  role="none"
+                                  align="start"
+                                  matchWidth
+                                  panelClassName="rounded-card border border-edge bg-panel py-1 shadow-popover"
+                                >
+                                  {[
+                                    ['', 'auto'],
+                                    ['generate', 'generate'],
+                                    ['image', 'image'],
+                                    ['video', 'video'],
+                                    ['tts', 'tts'],
+                                  ].map(([value, label]) => (
+                                    <button
+                                      key={value}
+                                      type="button"
+                                      onMouseDown={(e) => e.preventDefault()}
+                                      onClick={() => {
+                                        updateModel(row.id, mi, {
+                                          kind: value,
+                                        });
+                                        setFieldMenu(null);
+                                      }}
+                                      className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-panel2 ${
+                                        m.kind === value
+                                          ? 'text-fg'
+                                          : 'text-dim'
+                                      }`}
+                                    >
+                                      <Check
+                                        size={ICON.xs}
+                                        className={`shrink-0 ${
+                                          m.kind === value
+                                            ? 'text-accent'
+                                            : 'invisible'
+                                        }`}
+                                      />
+                                      <span className="font-mono">{label}</span>
+                                    </button>
+                                  ))}
+                                </Popover>
+                              )}
+                              {!row.managed && (
+                                <Popover
+                                  open={
+                                    fieldMenu?.key ===
+                                    `${row.id}:${mi}:reasoning`
+                                  }
+                                  onClose={closeFieldMenu}
+                                  anchor={fieldMenu?.anchor ?? null}
+                                  role="none"
+                                  align="start"
+                                  matchWidth
+                                  panelClassName="rounded-card border border-edge bg-panel py-1 shadow-popover"
+                                >
+                                  {[
+                                    ['', t('setup.reasoningOff')],
+                                    ['always', 'always'],
+                                    ['toggle', 'toggle'],
+                                  ].map(([value, label]) => (
+                                    <button
+                                      key={value}
+                                      type="button"
+                                      onMouseDown={(e) => e.preventDefault()}
+                                      onClick={() => {
+                                        updateModel(row.id, mi, {
+                                          reasoning: value,
+                                          ...(value === ''
+                                            ? { reasoningEffortMap: {} }
+                                            : {}),
+                                        });
+                                        setFieldMenu(null);
+                                      }}
+                                      className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs hover:bg-panel2 ${
+                                        m.reasoning === value
+                                          ? 'text-fg'
+                                          : 'text-dim'
+                                      }`}
+                                    >
+                                      <Check
+                                        size={ICON.xs}
+                                        className={`shrink-0 ${
+                                          m.reasoning === value
+                                            ? 'text-accent'
+                                            : 'invisible'
+                                        }`}
+                                      />
+                                      <span
+                                        className={
+                                          value === '' ? undefined : 'font-mono'
+                                        }
+                                      >
+                                        {label}
+                                      </span>
+                                    </button>
+                                  ))}
+                                </Popover>
+                              )}
+                              {prov?.model_endpoint && (
                                 <input
-                                  type="checkbox"
-                                  checked={row.keyEnv}
+                                  value={m.endpoint}
                                   disabled={row.managed}
                                   onChange={(e) =>
-                                    update(row.id, { keyEnv: e.target.checked })
+                                    updateModel(row.id, mi, {
+                                      endpoint: e.target.value,
+                                    })
                                   }
-                                  className="accent-[var(--color-accent)]"
+                                  placeholder={t('setup.endpoint')}
+                                  className="w-full rounded-control border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent"
                                 />
-                                {t('setup.envVar', {
-                                  var: prov?.env_var ?? '',
-                                })}
-                              </label>
+                              )}
+                              <ModelAdvanced
+                                value={m}
+                                disabled={row.managed}
+                                onUpdate={(patch) =>
+                                  updateModel(row.id, mi, patch)
+                                }
+                              />
                             </div>
-                            {/* Changing a key (or moving to the env var)
+                          ))}
+                        </div>
+                        <div className="space-y-2 pt-1">
+                          <span className="text-xs font-medium text-dim">
+                            {t('config.inferenceKey')}
+                          </span>
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="password"
+                              value={row.key}
+                              disabled={row.keyEnv || row.managed}
+                              onChange={(e) =>
+                                update(row.id, { key: e.target.value })
+                              }
+                              placeholder={
+                                row.keyKeychain && row.key === ''
+                                  ? t('config.keychainStored')
+                                  : row.keySet && row.key === ''
+                                    ? t('setup.apiKeySet')
+                                    : t('setup.apiKeyPlaceholder', {
+                                        var: prov?.env_var ?? '',
+                                      })
+                              }
+                              className="flex-1 rounded-control border border-edge bg-panel px-3 py-1.5 text-sm outline-none focus:border-accent disabled:opacity-40"
+                            />
+                            <label className="flex items-center gap-1.5 text-xs text-dim whitespace-nowrap">
+                              <input
+                                type="checkbox"
+                                checked={row.keyEnv}
+                                disabled={row.managed}
+                                onChange={(e) =>
+                                  update(row.id, { keyEnv: e.target.checked })
+                                }
+                                className="accent-[var(--color-accent)]"
+                              />
+                              {t('setup.envVar', {
+                                var: prov?.env_var ?? '',
+                              })}
+                            </label>
+                          </div>
+                          {/* Changing a key (or moving to the env var)
                                 puts this instance on a different
                                 credential, and provider prompt caches are
                                 scoped to it: the next request re-reads the
                                 whole conversation at undiscounted input
                                 price. Saying so here costs one line; the
                                 user would otherwise read it as a bug. */}
-                            <p className="text-micro leading-relaxed text-dim/80">
-                              {t('config.inferenceKeyCacheHint')}
-                            </p>
-                          </div>
+                          <p className="text-micro leading-relaxed text-faint">
+                            {t('config.inferenceKeyCacheHint')}
+                          </p>
                         </div>
-                      )}
-                    </div>
-                  );
-                })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
 
+              <div
+                id="settings-inference-router"
+                className="scroll-mt-4 rounded-card border border-edge bg-panel2 p-3"
+              >
+                <div className="text-xs text-dim mb-2">
+                  {t('config.router.title')}
+                </div>
+                <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs text-dim">
+                      {t('config.router.maxAttempts')}
+                    </span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={router.max_attempts}
+                      onChange={(e) =>
+                        setRouter({
+                          ...router,
+                          max_attempts: Number(e.target.value) || 1,
+                        })
+                      }
+                      className="w-full rounded-control border border-edge bg-panel px-2 py-1 text-xs outline-none focus:border-accent"
+                    />
+                  </label>
+                  <label className="flex items-center gap-2 pt-4">
+                    <input
+                      type="checkbox"
+                      checked={router.fallback_on_retry_exhausted}
+                      onChange={(e) =>
+                        setRouter({
+                          ...router,
+                          fallback_on_retry_exhausted: e.target.checked,
+                        })
+                      }
+                      className="accent-accent"
+                    />
+                    <span className="text-xs text-dim">
+                      {t('config.router.fallback')}
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              {enabledRows.length > 1 && (
                 <div className="rounded-card border border-edge bg-panel2 p-3">
                   <div className="text-xs text-dim mb-2">
-                    {t('config.router.title')}
+                    {t('setup.routerPriority')}
                   </div>
-                  <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
-                    <label className="flex flex-col gap-1">
-                      <span className="text-xs text-dim">
-                        {t('config.router.maxAttempts')}
-                      </span>
-                      <input
-                        type="number"
-                        min={1}
-                        value={router.max_attempts}
-                        onChange={(e) =>
-                          setRouter({
-                            ...router,
-                            max_attempts: Number(e.target.value) || 1,
-                          })
-                        }
-                        className="w-full rounded-control border border-edge bg-panel px-2 py-1 text-xs outline-none focus:border-accent"
-                      />
-                    </label>
-                    <label className="flex items-center gap-2 pt-4">
-                      <input
-                        type="checkbox"
-                        checked={router.fallback_on_retry_exhausted}
-                        onChange={(e) =>
-                          setRouter({
-                            ...router,
-                            fallback_on_retry_exhausted: e.target.checked,
-                          })
-                        }
-                        className="accent-accent"
-                      />
-                      <span className="text-xs text-dim">
-                        {t('config.router.fallback')}
-                      </span>
-                    </label>
-                  </div>
-                </div>
-
-                {enabledRows.length > 1 && (
-                  <div className="rounded-card border border-edge bg-panel2 p-3">
-                    <div className="text-xs text-dim mb-2">
-                      {t('setup.routerPriority')}
-                    </div>
-                    <div className="space-y-1.5">
-                      {enabledRows.map((row, idx) => (
-                        <div
-                          key={row.id}
-                          className="flex items-center gap-2 rounded-control border border-edge bg-panel px-3 py-1.5 text-sm"
-                        >
-                          <span className="text-xs text-dim w-5">
-                            {idx + 1}
-                          </span>
-                          <span className="flex-1">
-                            {catalog.find((p) => p.id === row.type)?.name ??
-                              row.type}
-                            {row.name ? ` · ${row.name}` : ''}
-                          </span>
-                          <span className="text-xs text-dim truncate">
-                            {row.models
-                              .map((m) => m.name)
-                              .filter(Boolean)
-                              .join(', ')}
-                          </span>
-                          <button
-                            onClick={() => move(idx, -1)}
-                            disabled={idx === 0}
-                            className="text-dim hover:text-fg disabled:opacity-30"
-                            title={t('config.moveUp')}
-                            aria-label={t('config.moveUp')}
-                          >
-                            <ArrowUp size={ICON.sm} />
-                          </button>
-                          <button
-                            onClick={() => move(idx, 1)}
-                            disabled={idx === enabledRows.length - 1}
-                            className="text-dim hover:text-fg disabled:opacity-30"
-                            title={t('config.moveDown')}
-                            aria-label={t('config.moveDown')}
-                          >
-                            <ArrowDown size={ICON.sm} />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {tab === 'usage' && (
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs text-dim">{t('config.usageHint')}</p>
-                  <button
-                    onClick={() => {
-                      void Promise.all([
-                        api.modelUsage(),
-                        api.modelUsageSessionCount(),
-                      ])
-                        .then(([rows, sessions]) => {
-                          setUsageRows(rows);
-                          setUsageSessions(sessions);
-                        })
-                        .catch((err) => setUsageError(String(err)));
-                      setUsageReload((n) => n + 1);
-                    }}
-                    disabled={usageLoading}
-                    className="flex items-center gap-1.5 rounded-control border border-edge px-2.5 py-1.5 text-xs text-dim transition-colors hover:text-fg disabled:opacity-50"
-                    aria-label={t('config.logsRefresh')}
-                  >
-                    {usageLoading ? (
-                      <Loader2 size={ICON.sm} className="animate-spin" />
-                    ) : (
-                      <RefreshCw size={ICON.sm} />
-                    )}
-                    {t('config.logsRefresh')}
-                  </button>
-                </div>
-                {usageError && <p className="text-xs text-err">{usageError}</p>}
-                {usageLoading && usageRows.length === 0 ? (
-                  <div className="h-72 animate-pulse rounded-card border border-edge/70 bg-panel/70" />
-                ) : usageRows.length > 0 ? (
-                  <UsageHero rows={usageRows} sessions={usageSessions} />
-                ) : null}
-                {usageRows.length === 0 ? (
-                  <p className="text-sm text-dim">{t('config.usageEmpty')}</p>
-                ) : (
-                  <>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <UsageModelSelect
-                        value={usageModel}
-                        options={[
-                          {
-                            value: '',
-                            label: t('config.usageAllModels'),
-                          },
-                          ...usageRows.map((r) => ({
-                            value: r.model,
-                            label: r.model,
-                          })),
-                        ]}
-                        onChange={setUsageModel}
-                        title={t('config.usageModel')}
-                      />
-                      <div className="flex items-center rounded-control border border-edge/70 bg-panel/40 p-1 backdrop-blur-sm">
-                        {(
-                          [
-                            ['today', t('config.usageRangeToday')],
-                            ['1d', '1d'],
-                            ['7d', '7d'],
-                            ['14d', '14d'],
-                            ['30d', '30d'],
-                          ] as const
-                        ).map(([value, label]) => (
-                          <button
-                            key={value}
-                            onClick={() => setUsageRange(value)}
-                            className={`h-7 rounded-control px-2.5 text-xs transition-all ${
-                              usageRange === value
-                                ? 'bg-panel text-accent shadow-raised'
-                                : 'text-dim hover:bg-panel/60 hover:text-fg'
-                            }`}
-                          >
-                            {label}
-                          </button>
-                        ))}
-                      </div>
-                      <UsageRangePicker
-                        active={usageRange === 'custom'}
-                        startMs={customStartMs}
-                        endMs={customEndMs}
-                        liveEnd={usageLiveEnd}
-                        onApply={applyUsageCustomRange}
-                      />
-                      {usageLoading && (
-                        <Loader2
-                          size={ICON.sm}
-                          className="animate-spin text-dim"
-                        />
-                      )}
-                    </div>
-                    <UsageChart
-                      points={usageSeries}
-                      granularity={usageGranularity}
-                      startMs={usageStartMs}
-                      endMs={usageEndMs}
-                      rangeLabel={usageRangeLabel()}
-                      allModels={usageModel === ''}
-                    />
-                    <div className="overflow-x-auto rounded-card border border-edge/60 bg-panel/60 shadow-raised backdrop-blur-sm">
-                      <table className="w-full text-xs">
-                        <thead>
-                          <tr className="text-left text-dim border-b border-edge">
-                            <th className="px-3 py-2 font-medium">
-                              {t('config.usageModel')}
-                            </th>
-                            <th className="px-3 py-2 font-medium text-right">
-                              {t('config.usageInput')}
-                            </th>
-                            <th className="px-3 py-2 font-medium text-right">
-                              {t('config.usageOutput')}
-                            </th>
-                            <th className="px-3 py-2 font-medium text-right">
-                              {t('config.usageCache')}
-                            </th>
-                            <th
-                              className="px-3 py-2 font-medium text-right"
-                              title={t('config.usageCacheHitHint')}
-                            >
-                              {t('config.usageCacheHitRate')}
-                            </th>
-                            <th className="px-3 py-2 font-medium text-right">
-                              {t('config.usageCacheWrite')}
-                            </th>
-                            <th className="px-3 py-2 font-medium text-right">
-                              {t('config.usageReasoning')}
-                            </th>
-                            <th className="px-3 py-2 font-medium text-right">
-                              {t('config.usageLatency')}
-                            </th>
-                            <th className="px-3 py-2 font-medium text-right">
-                              {t('config.usageSessions')}
-                            </th>
-                            <th className="px-3 py-2 font-medium text-right">
-                              {t('config.usageUpdated')}
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {usageRows.map((r) => (
-                            <tr
-                              key={r.model}
-                              className="border-b border-edge/40 last:border-0 hover:bg-panel"
-                            >
-                              <td className="px-3 py-2 font-mono text-fg">
-                                {r.model}
-                              </td>
-                              <td className="px-3 py-2 text-right tabular-nums">
-                                {fmtUsageTokens(r.input_tokens)}
-                              </td>
-                              <td className="px-3 py-2 text-right tabular-nums">
-                                {fmtUsageTokens(r.output_tokens)}
-                              </td>
-                              <td
-                                className={`px-3 py-2 text-right tabular-nums ${
-                                  r.cache_read_tokens === 0 ? 'text-dim/60' : ''
-                                }`}
-                              >
-                                {fmtUsageTokens(r.cache_read_tokens)}
-                              </td>
-                              <td className="px-3 py-2 text-right tabular-nums">
-                                {usageHitLabel(
-                                  r.input_tokens,
-                                  r.cache_read_tokens,
-                                )}
-                              </td>
-                              <td className="px-3 py-2 text-right tabular-nums">
-                                {fmtUsageTokens(r.cache_write_tokens)}
-                              </td>
-                              <td
-                                className={`px-3 py-2 text-right tabular-nums ${
-                                  r.reasoning_tokens === 0 ? 'text-dim/60' : ''
-                                }`}
-                              >
-                                {fmtUsageTokens(r.reasoning_tokens)}
-                              </td>
-                              <td
-                                className="px-3 py-2 text-right tabular-nums"
-                                title={
-                                  r.calls === 0 && r.latency_ms > 0
-                                    ? t('config.usageLatencyLegacyHint')
-                                    : undefined
-                                }
-                              >
-                                {r.calls > 0
-                                  ? `${fmtUsageTokens(
-                                      Math.round(r.latency_ms / r.calls),
-                                    )}ms`
-                                  : r.latency_ms > 0
-                                    ? `${fmtUsageTokens(r.latency_ms)}ms`
-                                    : '—'}
-                              </td>
-                              <td className="px-3 py-2 text-right tabular-nums">
-                                {r.sessions}
-                              </td>
-                              <td className="px-3 py-2 text-right text-dim">
-                                {fmtUsageTime(r.updated_at)}
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </>
-                )}
-              </div>
-            )}
-
-            {tab === 'memory' && (
-              <div className="space-y-4">
-                <p className="text-xs text-dim">{t('config.memoryHint')}</p>
-                <div className="grid grid-cols-3 gap-3">
-                  <label className="space-y-1.5">
-                    <span className="text-xs text-dim">
-                      <span title="max_raw_messages">
-                        {t('config.memoryRawWindow')}
-                      </span>
-                    </span>
-                    <input
-                      type="number"
-                      min={0}
-                      value={memory.max_raw_messages}
-                      onChange={(e) =>
-                        editMemory({
-                          max_raw_messages: Number(e.target.value) || 0,
-                        })
-                      }
-                      className="w-full rounded-control border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
-                    />
-                  </label>
-                  <label className="space-y-1.5">
-                    <span className="text-xs text-dim">
-                      <span title="preserve_recent">
-                        {t('config.memoryPreserveRecent')}
-                      </span>
-                    </span>
-                    <input
-                      type="number"
-                      min={0}
-                      value={memory.preserve_recent}
-                      onChange={(e) =>
-                        editMemory({
-                          preserve_recent: Number(e.target.value) || 0,
-                        })
-                      }
-                      className="w-full rounded-control border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
-                    />
-                  </label>
-                  <label className="space-y-1.5">
-                    <span className="text-xs text-dim">
-                      <span title="max_summary_bytes">
-                        {t('config.memorySummaryBytes')}
-                      </span>
-                    </span>
-                    <input
-                      type="number"
-                      min={0}
-                      step={1024}
-                      value={memory.max_summary_bytes}
-                      onChange={(e) =>
-                        editMemory({
-                          max_summary_bytes: Number(e.target.value) || 0,
-                        })
-                      }
-                      className="w-full rounded-control border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
-                    />
-                  </label>
-                </div>
-                <label className="flex items-center gap-2 rounded-card border border-edge bg-panel2 px-3 py-2.5">
-                  <input
-                    type="checkbox"
-                    checked={memory.replay_full_history}
-                    onChange={(e) =>
-                      editMemory({ replay_full_history: e.target.checked })
-                    }
-                    className="accent-accent"
-                  />
-                  <div className="flex-1">
-                    <span className="text-sm">{t('config.memoryReplay')}</span>
-                    <p className="text-xs text-dim">
-                      {t('config.memoryReplayHint')}
-                    </p>
-                  </div>
-                </label>
-                <SaveBar
-                  saved={memorySaved}
-                  error={error}
-                  saving={memorySaving}
-                  onSave={() => void saveMemory()}
-                />
-              </div>
-            )}
-
-            {tab === 'permissions' && (
-              <div className="space-y-4">
-                <p className="text-xs text-dim">
-                  {t('config.permissionsHint')}
-                </p>
-                <div className="flex items-center gap-2 text-xs text-dim">
-                  <ShieldCheck size={ICON.sm} className="text-ok" />
-                  {t('config.permissionsCount', { count: rules.length })}
-                </div>
-                {rules.length === 0 ? (
-                  <div className="rounded-card border border-dashed border-edge px-6 py-10 text-center">
-                    <ShieldCheck
-                      size={ICON.hero}
-                      className="mx-auto mb-2 text-dim/60"
-                    />
-                    <p className="text-sm text-dim">
-                      {t('config.permissionsEmpty')}
-                    </p>
-                    <p className="mt-1 text-xs text-dim/70">
-                      {t('config.permissionsEmptyHint')}
-                    </p>
-                  </div>
-                ) : (
-                  <div className="overflow-hidden rounded-card border border-edge bg-panel">
-                    {rules.map((rule, i) => (
+                  <div className="space-y-1.5">
+                    {enabledRows.map((row, idx) => (
                       <div
-                        key={rule}
-                        className={`group flex items-center gap-2 px-3 py-2 hover:bg-panel2 ${
-                          i > 0 ? 'border-t border-edge/60' : ''
-                        }`}
+                        key={row.id}
+                        className="flex items-center gap-2 rounded-control border border-edge bg-panel px-3 py-1.5 text-sm"
                       >
-                        <Terminal
-                          size={ICON.sm}
-                          className="shrink-0 text-dim"
-                        />
-                        <code className="flex-1 truncate font-mono text-sm text-fg">
-                          {rule}
-                        </code>
+                        <span className="text-xs text-dim w-5">{idx + 1}</span>
+                        <span className="flex-1">
+                          {catalog.find((p) => p.id === row.type)?.name ??
+                            row.type}
+                          {row.name ? ` · ${row.name}` : ''}
+                        </span>
+                        <span className="text-xs text-dim truncate">
+                          {row.models
+                            .map((m) => m.name)
+                            .filter(Boolean)
+                            .join(', ')}
+                        </span>
                         <button
-                          onClick={() =>
-                            void api
-                              .denyPermission(rule)
-                              .then(() => api.permissions())
-                              .then(setRules)
-                              .then(() =>
-                                toast(t('config.permissionsRemoved', { rule })),
-                              )
-                              .catch((err) => setError(String(err)))
-                          }
-                          title={t('config.permissionsRemove')}
-                          aria-label={t('config.permissionsRemove')}
-                          className="shrink-0 rounded-tight p-1 text-dim opacity-0 transition-opacity hover:text-err group-hover:opacity-100"
+                          onClick={() => move(idx, -1)}
+                          disabled={idx === 0}
+                          className="text-dim hover:text-fg disabled:opacity-30"
+                          data-tip={t('config.moveUp')}
+                          aria-label={t('config.moveUp')}
                         >
-                          <Trash2 size={ICON.sm} />
+                          <ArrowUp size={ICON.sm} />
+                        </button>
+                        <button
+                          onClick={() => move(idx, 1)}
+                          disabled={idx === enabledRows.length - 1}
+                          className="text-dim hover:text-fg disabled:opacity-30"
+                          data-tip={t('config.moveDown')}
+                          aria-label={t('config.moveDown')}
+                        >
+                          <ArrowDown size={ICON.sm} />
                         </button>
                       </div>
                     ))}
                   </div>
-                )}
-                <div className="flex items-center gap-2 rounded-card border border-edge bg-panel2 p-2">
-                  <ShieldPlus
-                    size={ICON.md}
-                    className="ml-1 shrink-0 text-dim"
+                </div>
+              )}
+            </div>
+          )}
+
+          {tab === 'usage' && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs text-dim">{t('config.usageHint')}</p>
+                <button
+                  onClick={() => {
+                    void Promise.all([
+                      api.modelUsage(),
+                      api.modelUsageSessionCount(),
+                    ])
+                      .then(([rows, sessions]) => {
+                        setUsageRows(rows);
+                        setUsageSessions(sessions);
+                      })
+                      .catch((err) => setUsageError(String(err)));
+                    setUsageReload((n) => n + 1);
+                  }}
+                  disabled={usageLoading}
+                  className="flex items-center gap-1.5 rounded-control border border-edge px-2.5 py-1.5 text-xs text-dim transition-colors hover:text-fg disabled:opacity-50"
+                  aria-label={t('config.logsRefresh')}
+                >
+                  {usageLoading ? (
+                    <Loader2 size={ICON.sm} className="animate-spin" />
+                  ) : (
+                    <RefreshCw size={ICON.sm} />
+                  )}
+                  {t('config.logsRefresh')}
+                </button>
+              </div>
+              {usageError && <p className="text-xs text-err">{usageError}</p>}
+              {usageLoading && usageRows.length === 0 ? (
+                <div className="h-72 animate-pulse rounded-card border border-edge/70 bg-panel" />
+              ) : usageRows.length > 0 ? (
+                <UsageHero rows={usageRows} sessions={usageSessions} />
+              ) : null}
+              {usageRows.length === 0 ? (
+                <p className="text-sm text-dim">{t('config.usageEmpty')}</p>
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <UsageModelSelect
+                      value={usageModel}
+                      options={[
+                        {
+                          value: '',
+                          label: t('config.usageAllModels'),
+                        },
+                        ...usageRows.map((r) => ({
+                          value: r.model,
+                          label: r.model,
+                        })),
+                      ]}
+                      onChange={setUsageModel}
+                      title={t('config.usageModel')}
+                    />
+                    <div className="flex items-center rounded-control border border-edge bg-panel p-1">
+                      {(
+                        [
+                          ['today', t('config.usageRangeToday')],
+                          ['1d', '1d'],
+                          ['7d', '7d'],
+                          ['14d', '14d'],
+                          ['30d', '30d'],
+                        ] as const
+                      ).map(([value, label]) => (
+                        <button
+                          key={value}
+                          onClick={() => setUsageRange(value)}
+                          className={`h-7 rounded-control px-2.5 text-xs transition-colors ${
+                            usageRange === value
+                              ? 'bg-panel2 text-accent shadow-raised'
+                              : 'text-dim hover:text-fg'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <UsageRangePicker
+                      active={usageRange === 'custom'}
+                      startMs={customStartMs}
+                      endMs={customEndMs}
+                      liveEnd={usageLiveEnd}
+                      onApply={applyUsageCustomRange}
+                    />
+                    {usageLoading && (
+                      <Loader2
+                        size={ICON.sm}
+                        className="animate-spin text-dim"
+                      />
+                    )}
+                  </div>
+                  <UsageChart
+                    points={usageSeries}
+                    granularity={usageGranularity}
+                    startMs={usageStartMs}
+                    endMs={usageEndMs}
+                    rangeLabel={usageRangeLabel()}
+                    allModels={usageModel === ''}
                   />
+                  <div className="overflow-x-auto rounded-card border border-edge bg-panel shadow-raised">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-left text-dim border-b border-edge">
+                          <th className="px-3 py-2 font-medium">
+                            {t('config.usageModel')}
+                          </th>
+                          <th className="px-3 py-2 font-medium text-right">
+                            {t('config.usageInput')}
+                          </th>
+                          <th className="px-3 py-2 font-medium text-right">
+                            {t('config.usageOutput')}
+                          </th>
+                          <th className="px-3 py-2 font-medium text-right">
+                            {t('config.usageCache')}
+                          </th>
+                          <th
+                            className="px-3 py-2 font-medium text-right"
+                            data-tip={t('config.usageCacheHitHint')}
+                          >
+                            {t('config.usageCacheHitRate')}
+                          </th>
+                          <th className="px-3 py-2 font-medium text-right">
+                            {t('config.usageCacheWrite')}
+                          </th>
+                          <th className="px-3 py-2 font-medium text-right">
+                            {t('config.usageReasoning')}
+                          </th>
+                          <th className="px-3 py-2 font-medium text-right">
+                            {t('config.usageLatency')}
+                          </th>
+                          <th className="px-3 py-2 font-medium text-right">
+                            {t('config.usageSessions')}
+                          </th>
+                          <th className="px-3 py-2 font-medium text-right">
+                            {t('config.usageUpdated')}
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {usageRows.map((r) => (
+                          <tr
+                            key={r.model}
+                            className="border-b border-edge/40 last:border-0 hover:bg-panel"
+                          >
+                            <td className="px-3 py-2 font-mono text-fg">
+                              {r.model}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums">
+                              {fmtUsageTokens(r.input_tokens)}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums">
+                              {fmtUsageTokens(r.output_tokens)}
+                            </td>
+                            <td
+                              className={`px-3 py-2 text-right tabular-nums ${
+                                r.cache_read_tokens === 0 ? 'text-faint' : ''
+                              }`}
+                            >
+                              {fmtUsageTokens(r.cache_read_tokens)}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums">
+                              {usageHitLabel(
+                                r.input_tokens,
+                                r.cache_read_tokens,
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums">
+                              {fmtUsageTokens(r.cache_write_tokens)}
+                            </td>
+                            <td
+                              className={`px-3 py-2 text-right tabular-nums ${
+                                r.reasoning_tokens === 0 ? 'text-faint' : ''
+                              }`}
+                            >
+                              {fmtUsageTokens(r.reasoning_tokens)}
+                            </td>
+                            <td
+                              className="px-3 py-2 text-right tabular-nums"
+                              data-tip={
+                                r.calls === 0 && r.latency_ms > 0
+                                  ? t('config.usageLatencyLegacyHint')
+                                  : undefined
+                              }
+                            >
+                              {r.calls > 0
+                                ? `${fmtUsageTokens(
+                                    Math.round(r.latency_ms / r.calls),
+                                  )}ms`
+                                : r.latency_ms > 0
+                                  ? `${fmtUsageTokens(r.latency_ms)}ms`
+                                  : '—'}
+                            </td>
+                            <td className="px-3 py-2 text-right tabular-nums">
+                              {r.sessions}
+                            </td>
+                            <td className="px-3 py-2 text-right text-dim">
+                              {fmtUsageTime(r.updated_at)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {tab === 'memory' && (
+            <div className="space-y-4">
+              <p className="text-xs text-dim">{t('config.memoryHint')}</p>
+              <div className="grid grid-cols-3 gap-3">
+                <label className="space-y-1.5">
+                  <span className="text-xs text-dim">
+                    <span data-tip="max_raw_messages">
+                      {t('config.memoryRawWindow')}
+                    </span>
+                  </span>
                   <input
-                    value={ruleInput}
-                    onChange={(e) => setRuleInput(e.target.value)}
-                    placeholder={t('config.permissionsPlaceholder')}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && ruleInput.trim()) {
-                        void api
-                          .allowPermission(ruleInput.trim())
-                          .then(() => api.permissions())
-                          .then(setRules)
-                          .then(() => {
-                            const rule = ruleInput.trim();
-                            setRuleInput('');
-                            toast(t('config.permissionsAdded', { rule }));
-                          })
-                          .catch((err) => setError(String(err)));
-                      }
-                    }}
-                    className="flex-1 bg-transparent px-2 py-1 text-sm outline-none placeholder:text-dim/60"
+                    type="number"
+                    min={0}
+                    value={memory.max_raw_messages}
+                    onChange={(e) =>
+                      editMemory({
+                        max_raw_messages: Number(e.target.value) || 0,
+                      })
+                    }
+                    className="w-full rounded-control border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
                   />
-                  <button
-                    onClick={() => {
-                      if (!ruleInput.trim()) return;
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-xs text-dim">
+                    <span data-tip="preserve_recent">
+                      {t('config.memoryPreserveRecent')}
+                    </span>
+                  </span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={memory.preserve_recent}
+                    onChange={(e) =>
+                      editMemory({
+                        preserve_recent: Number(e.target.value) || 0,
+                      })
+                    }
+                    className="w-full rounded-control border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
+                  />
+                </label>
+                <label className="space-y-1.5">
+                  <span className="text-xs text-dim">
+                    <span data-tip="max_summary_bytes">
+                      {t('config.memorySummaryBytes')}
+                    </span>
+                  </span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1024}
+                    value={memory.max_summary_bytes}
+                    onChange={(e) =>
+                      editMemory({
+                        max_summary_bytes: Number(e.target.value) || 0,
+                      })
+                    }
+                    className="w-full rounded-control border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
+                  />
+                </label>
+              </div>
+              <label className="flex items-center gap-2 rounded-card border border-edge bg-panel2 px-3 py-2.5">
+                <input
+                  type="checkbox"
+                  checked={memory.replay_full_history}
+                  onChange={(e) =>
+                    editMemory({ replay_full_history: e.target.checked })
+                  }
+                  className="accent-accent"
+                />
+                <div className="flex-1">
+                  <span className="text-sm">{t('config.memoryReplay')}</span>
+                  <p className="text-xs text-dim">
+                    {t('config.memoryReplayHint')}
+                  </p>
+                </div>
+              </label>
+              <SaveBar
+                saved={memorySaved}
+                error={error}
+                saving={memorySaving}
+                onSave={() => void saveMemory()}
+              />
+            </div>
+          )}
+
+          {tab === 'permissions' && (
+            <div className="space-y-4">
+              <p className="text-xs text-dim">{t('config.permissionsHint')}</p>
+              <div className="flex items-center gap-2 text-xs text-dim">
+                <ShieldCheck size={ICON.sm} className="text-ok" />
+                {t('config.permissionsCount', { count: rules.length })}
+              </div>
+              {rules.length === 0 ? (
+                <div className="rounded-card border border-dashed border-edge px-6 py-10 text-center">
+                  <ShieldCheck
+                    size={ICON.hero}
+                    className="mx-auto mb-2 text-faint"
+                  />
+                  <p className="text-sm text-dim">
+                    {t('config.permissionsEmpty')}
+                  </p>
+                  <p className="mt-1 text-xs text-faint">
+                    {t('config.permissionsEmptyHint')}
+                  </p>
+                </div>
+              ) : (
+                <div className="overflow-hidden rounded-card border border-edge bg-panel">
+                  {rules.map((rule, i) => (
+                    <div
+                      key={rule}
+                      className={`group flex items-center gap-2 px-3 py-2 hover:bg-panel2 ${
+                        i > 0 ? 'border-t border-edge/60' : ''
+                      }`}
+                    >
+                      <Terminal size={ICON.sm} className="shrink-0 text-dim" />
+                      <code className="flex-1 truncate font-mono text-sm text-fg">
+                        {rule}
+                      </code>
+                      <button
+                        onClick={() =>
+                          void api
+                            .denyPermission(rule)
+                            .then(() => api.permissions())
+                            .then(setRules)
+                            .then(() =>
+                              toast(t('config.permissionsRemoved', { rule })),
+                            )
+                            .catch((err) => setError(String(err)))
+                        }
+                        data-tip={t('config.permissionsRemove')}
+                        aria-label={t('config.permissionsRemove')}
+                        className="shrink-0 rounded-tight p-1 text-dim opacity-0 transition-opacity hover:text-err group-hover:opacity-100"
+                      >
+                        <Trash2 size={ICON.sm} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex items-center gap-2 rounded-card border border-edge bg-panel2 p-2">
+                <ShieldPlus size={ICON.md} className="ml-1 shrink-0 text-dim" />
+                <input
+                  value={ruleInput}
+                  onChange={(e) => setRuleInput(e.target.value)}
+                  placeholder={t('config.permissionsPlaceholder')}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && ruleInput.trim()) {
                       void api
                         .allowPermission(ruleInput.trim())
                         .then(() => api.permissions())
@@ -2660,366 +2702,403 @@ export function ConfigPage() {
                           toast(t('config.permissionsAdded', { rule }));
                         })
                         .catch((err) => setError(String(err)));
+                    }
+                  }}
+                  className="flex-1 bg-transparent px-2 py-1 text-sm outline-none placeholder:text-faint"
+                />
+                <button
+                  onClick={() => {
+                    if (!ruleInput.trim()) return;
+                    void api
+                      .allowPermission(ruleInput.trim())
+                      .then(() => api.permissions())
+                      .then(setRules)
+                      .then(() => {
+                        const rule = ruleInput.trim();
+                        setRuleInput('');
+                        toast(t('config.permissionsAdded', { rule }));
+                      })
+                      .catch((err) => setError(String(err)));
+                  }}
+                  className="rounded-control bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
+                  disabled={!ruleInput.trim()}
+                >
+                  {t('config.permissionsAdd')}
+                </button>
+              </div>
+
+              {/* Escalation rules: commands allowed to leave the
+                    sandbox entirely. Strictly stronger than the
+                    allowlist above, so they get their own bordered
+                    section instead of being mixed into that list. */}
+              <div className="space-y-3 rounded-card border border-warn/40 bg-warn/5 p-3">
+                <div className="flex items-start gap-2 text-xs text-dim">
+                  <ShieldAlert
+                    size={ICON.sm}
+                    className="mt-0.5 shrink-0 text-warn"
+                  />
+                  <span>{t('config.escalatedHint')}</span>
+                </div>
+                {escalatedRules.length > 0 && (
+                  <div className="overflow-hidden rounded-control border border-edge bg-panel">
+                    {escalatedRules.map((rule, i) => (
+                      <div
+                        key={rule}
+                        className={`group flex items-center gap-2 px-3 py-2 hover:bg-panel2 ${
+                          i > 0 ? 'border-t border-edge/60' : ''
+                        }`}
+                      >
+                        <ShieldAlert
+                          size={ICON.sm}
+                          className="shrink-0 text-warn"
+                        />
+                        <code className="flex-1 truncate font-mono text-sm text-fg">
+                          {rule}
+                        </code>
+                        <button
+                          onClick={() =>
+                            void api
+                              .denyEscalatedPermission(rule)
+                              .then(() => api.escalatedPermissions())
+                              .then(setEscalatedRules)
+                              .then(() =>
+                                toast(t('config.escalatedRemoved', { rule })),
+                              )
+                              .catch((err) => setError(String(err)))
+                          }
+                          data-tip={t('config.permissionsRemove')}
+                          aria-label={t('config.permissionsRemove')}
+                          className="shrink-0 rounded-tight p-1 text-dim opacity-0 transition-opacity hover:text-err group-hover:opacity-100"
+                        >
+                          <Trash2 size={ICON.sm} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="flex items-center gap-2 rounded-card border border-edge bg-panel2 p-2">
+                  <ShieldAlert
+                    size={ICON.md}
+                    className="ml-1 shrink-0 text-dim"
+                  />
+                  <input
+                    value={escalatedInput}
+                    onChange={(e) => setEscalatedInput(e.target.value)}
+                    placeholder={t('config.permissionsPlaceholder')}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter' || !escalatedInput.trim()) return;
+                      const rule = escalatedInput.trim();
+                      void api
+                        .allowEscalatedPermission(rule)
+                        .then(() => api.escalatedPermissions())
+                        .then(setEscalatedRules)
+                        .then(() => {
+                          setEscalatedInput('');
+                          toast(t('config.escalatedAdded', { rule }));
+                        })
+                        .catch((err) => setError(String(err)));
+                    }}
+                    className="flex-1 bg-transparent px-2 py-1 text-sm outline-none placeholder:text-faint"
+                  />
+                  <button
+                    onClick={() => {
+                      if (!escalatedInput.trim()) return;
+                      const rule = escalatedInput.trim();
+                      void api
+                        .allowEscalatedPermission(rule)
+                        .then(() => api.escalatedPermissions())
+                        .then(setEscalatedRules)
+                        .then(() => {
+                          setEscalatedInput('');
+                          toast(t('config.escalatedAdded', { rule }));
+                        })
+                        .catch((err) => setError(String(err)));
                     }}
                     className="rounded-control bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
-                    disabled={!ruleInput.trim()}
+                    disabled={!escalatedInput.trim()}
                   >
                     {t('config.permissionsAdd')}
                   </button>
                 </div>
+              </div>
+            </div>
+          )}
 
-                {/* Escalation rules: commands allowed to leave the
-                    sandbox entirely. Strictly stronger than the
-                    allowlist above, so they get their own bordered
-                    section instead of being mixed into that list. */}
-                <div className="space-y-3 rounded-card border border-warn/40 bg-warn/5 p-3">
-                  <div className="flex items-start gap-2 text-xs text-dim">
-                    <ShieldAlert
-                      size={ICON.sm}
-                      className="mt-0.5 shrink-0 text-warn"
-                    />
-                    <span>{t('config.escalatedHint')}</span>
+          {tab === 'diagnostics' && (
+            <div className="space-y-4">
+              <p className="text-xs text-dim">{t('config.diagHint')}</p>
+              <div id="settings-diag-pet" className="scroll-mt-4">
+                <PetBehaviorPanel />
+              </div>
+              {diag && (
+                <div
+                  id="settings-diag-runtime"
+                  className="scroll-mt-4 grid grid-cols-2 gap-3 text-sm"
+                >
+                  <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
+                    <span className="text-xs text-dim">
+                      {t('config.diagVersion')}
+                    </span>
+                    <p className="font-mono">{diag.version}</p>
                   </div>
-                  {escalatedRules.length > 0 && (
-                    <div className="overflow-hidden rounded-control border border-edge bg-panel">
-                      {escalatedRules.map((rule, i) => (
-                        <div
-                          key={rule}
-                          className={`group flex items-center gap-2 px-3 py-2 hover:bg-panel2 ${
-                            i > 0 ? 'border-t border-edge/60' : ''
-                          }`}
-                        >
-                          <ShieldAlert
-                            size={ICON.sm}
-                            className="shrink-0 text-warn"
-                          />
-                          <code className="flex-1 truncate font-mono text-sm text-fg">
-                            {rule}
-                          </code>
-                          <button
-                            onClick={() =>
-                              void api
-                                .denyEscalatedPermission(rule)
-                                .then(() => api.escalatedPermissions())
-                                .then(setEscalatedRules)
-                                .then(() =>
-                                  toast(t('config.escalatedRemoved', { rule })),
-                                )
-                                .catch((err) => setError(String(err)))
-                            }
-                            title={t('config.permissionsRemove')}
-                            aria-label={t('config.permissionsRemove')}
-                            className="shrink-0 rounded-tight p-1 text-dim opacity-0 transition-opacity hover:text-err group-hover:opacity-100"
-                          >
-                            <Trash2 size={ICON.sm} />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <div className="flex items-center gap-2 rounded-card border border-edge bg-panel2 p-2">
-                    <ShieldAlert
-                      size={ICON.md}
-                      className="ml-1 shrink-0 text-dim"
-                    />
-                    <input
-                      value={escalatedInput}
-                      onChange={(e) => setEscalatedInput(e.target.value)}
-                      placeholder={t('config.permissionsPlaceholder')}
-                      onKeyDown={(e) => {
-                        if (e.key !== 'Enter' || !escalatedInput.trim()) return;
-                        const rule = escalatedInput.trim();
-                        void api
-                          .allowEscalatedPermission(rule)
-                          .then(() => api.escalatedPermissions())
-                          .then(setEscalatedRules)
-                          .then(() => {
-                            setEscalatedInput('');
-                            toast(t('config.escalatedAdded', { rule }));
-                          })
-                          .catch((err) => setError(String(err)));
-                      }}
-                      className="flex-1 bg-transparent px-2 py-1 text-sm outline-none placeholder:text-dim/60"
-                    />
-                    <button
-                      onClick={() => {
-                        if (!escalatedInput.trim()) return;
-                        const rule = escalatedInput.trim();
-                        void api
-                          .allowEscalatedPermission(rule)
-                          .then(() => api.escalatedPermissions())
-                          .then(setEscalatedRules)
-                          .then(() => {
-                            setEscalatedInput('');
-                            toast(t('config.escalatedAdded', { rule }));
-                          })
-                          .catch((err) => setError(String(err)));
-                      }}
-                      className="rounded-control bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
-                      disabled={!escalatedInput.trim()}
+                  <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
+                    <span className="text-xs text-dim">
+                      {t('config.diagPlatform')}
+                    </span>
+                    <p className="font-mono">
+                      {diag.platform}/{diag.arch}
+                    </p>
+                  </div>
+                  <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
+                    <span className="text-xs text-dim">
+                      {t('config.diagRuntime')}
+                    </span>
+                    <p className="font-mono">
+                      go {diag.go_version}
+                      {diag.node_version ? ` · node ${diag.node_version}` : ''}
+                    </p>
+                  </div>
+                  <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
+                    <span className="text-xs text-dim">
+                      {t('config.diagSandbox')}
+                    </span>
+                    <p
+                      className={`font-mono ${
+                        diag.sandbox_available ? 'text-ok' : 'text-err'
+                      }`}
                     >
-                      {t('config.permissionsAdd')}
-                    </button>
+                      {diag.sandbox_backend}
+                      {diag.sandbox_available ? ' ✓' : ' ✗'}
+                    </p>
+                  </div>
+                  <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
+                    <span className="text-xs text-dim">
+                      {t('config.diagShell')}
+                    </span>
+                    <p className="font-mono">{diag.exec_shell}</p>
+                  </div>
+                  <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
+                    <span className="text-xs text-dim">
+                      {t('config.diagConfig')}
+                    </span>
+                    <p
+                      className={`font-mono ${
+                        diag.config_valid ? 'text-ok' : 'text-err'
+                      }`}
+                    >
+                      {diag.config_valid
+                        ? t('config.diagOk')
+                        : diag.config_error || t('config.diagBroken')}
+                    </p>
+                  </div>
+                  <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
+                    <span className="text-xs text-dim">
+                      {t('config.diagInference')}
+                    </span>
+                    <p
+                      className={`font-mono ${
+                        diag.inference_configured ? 'text-ok' : 'text-warn'
+                      }`}
+                    >
+                      {diag.inference_configured
+                        ? t('config.diagConfigured')
+                        : t('config.diagMissing')}
+                    </p>
+                  </div>
+                  <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
+                    <span className="text-xs text-dim">
+                      {t('config.diagGit')}
+                    </span>
+                    <p className="font-mono">
+                      {diag.git_repo
+                        ? diag.git_branch || '(repo)'
+                        : t('config.diagNoRepo')}
+                    </p>
+                  </div>
+                  <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
+                    <span className="text-xs text-dim">
+                      {t('config.diagSessions')}
+                    </span>
+                    <p className="font-mono">
+                      {Number.isFinite(diag.session_count) &&
+                      Number.isFinite(diag.active_runs) ? (
+                        <>
+                          {t('config.diagSessionCount', {
+                            count: diag.session_count,
+                          })}{' '}
+                          ·{' '}
+                          {t('config.diagActiveRuns', {
+                            count: diag.active_runs,
+                          })}
+                        </>
+                      ) : (
+                        // A status without the counters (an older backend,
+                        // a partial probe) must not print the raw plural
+                        // keys, which is what t() returns for a missing
+                        // count.
+                        '—'
+                      )}
+                    </p>
+                  </div>
+                  <div className="rounded-card border border-edge bg-panel2 px-3 py-2 col-span-2">
+                    <span className="text-xs text-dim">
+                      {t('config.diagPaths')}
+                    </span>
+                    <p className="font-mono text-xs break-all mt-1">
+                      {diag.work_dir}
+                      <br />
+                      {diag.user_dir}
+                    </p>
                   </div>
                 </div>
+              )}
+
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  onClick={() => void runProbe()}
+                  disabled={diagBusy}
+                  className="rounded-control bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
+                >
+                  {t('config.diagProbe')}
+                </button>
+                <button
+                  onClick={() => void clearCaches()}
+                  disabled={diagBusy}
+                  className="rounded-control border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg disabled:opacity-40"
+                >
+                  {t('config.diagClearCache')}
+                </button>
+                <button
+                  onClick={() =>
+                    void api.reload().catch((err) => toast(String(err)))
+                  }
+                  className="rounded-control border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg"
+                >
+                  {t('config.diagReload')}
+                </button>
+                <button
+                  onClick={() => void repairConfigCompat()}
+                  disabled={diagBusy}
+                  className="rounded-control border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg disabled:opacity-40"
+                >
+                  {t('config.diagRepairCompat')}
+                </button>
               </div>
-            )}
+              {probe && (
+                <div
+                  className={`rounded-control border px-3 py-2 text-xs ${
+                    probe.ok ? 'border-ok/40 text-ok' : 'border-err/40 text-err'
+                  }`}
+                >
+                  {probe.ok
+                    ? t('config.diagProbeOk')
+                    : t('config.diagProbeFail')}
+                  {probe.output && (
+                    <pre className="mt-1 font-mono">{probe.output}</pre>
+                  )}
+                  {probe.error && (
+                    <pre className="mt-1 font-mono">{probe.error}</pre>
+                  )}
+                </div>
+              )}
+              {cacheResult && (
+                <p className="text-xs text-dim">
+                  {t('config.diagCacheDone', {
+                    bytes: fmtBytes(cacheResult.bytes),
+                    count: cacheResult.dirs.length,
+                  })}
+                </p>
+              )}
 
-            {tab === 'diagnostics' && (
-              <div className="space-y-4">
-                <p className="text-xs text-dim">{t('config.diagHint')}</p>
-                <PetBehaviorPanel />
-                {diag && (
-                  <div className="grid grid-cols-2 gap-3 text-sm">
-                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
-                      <span className="text-xs text-dim">
-                        {t('config.diagVersion')}
-                      </span>
-                      <p className="font-mono">{diag.version}</p>
-                    </div>
-                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
-                      <span className="text-xs text-dim">
-                        {t('config.diagPlatform')}
-                      </span>
-                      <p className="font-mono">
-                        {diag.platform}/{diag.arch}
-                      </p>
-                    </div>
-                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
-                      <span className="text-xs text-dim">
-                        {t('config.diagRuntime')}
-                      </span>
-                      <p className="font-mono">
-                        go {diag.go_version}
-                        {diag.node_version
-                          ? ` · node ${diag.node_version}`
-                          : ''}
-                      </p>
-                    </div>
-                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
-                      <span className="text-xs text-dim">
-                        {t('config.diagSandbox')}
-                      </span>
-                      <p
-                        className={`font-mono ${
-                          diag.sandbox_available ? 'text-ok' : 'text-err'
-                        }`}
-                      >
-                        {diag.sandbox_backend}
-                        {diag.sandbox_available ? ' ✓' : ' ✗'}
-                      </p>
-                    </div>
-                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
-                      <span className="text-xs text-dim">
-                        {t('config.diagShell')}
-                      </span>
-                      <p className="font-mono">{diag.exec_shell}</p>
-                    </div>
-                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
-                      <span className="text-xs text-dim">
-                        {t('config.diagConfig')}
-                      </span>
-                      <p
-                        className={`font-mono ${
-                          diag.config_valid ? 'text-ok' : 'text-err'
-                        }`}
-                      >
-                        {diag.config_valid
-                          ? t('config.diagOk')
-                          : diag.config_error || t('config.diagBroken')}
-                      </p>
-                    </div>
-                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
-                      <span className="text-xs text-dim">
-                        {t('config.diagInference')}
-                      </span>
-                      <p
-                        className={`font-mono ${
-                          diag.inference_configured ? 'text-ok' : 'text-warn'
-                        }`}
-                      >
-                        {diag.inference_configured
-                          ? t('config.diagConfigured')
-                          : t('config.diagMissing')}
-                      </p>
-                    </div>
-                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
-                      <span className="text-xs text-dim">
-                        {t('config.diagGit')}
-                      </span>
-                      <p className="font-mono">
-                        {diag.git_repo
-                          ? diag.git_branch || '(repo)'
-                          : t('config.diagNoRepo')}
-                      </p>
-                    </div>
-                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2">
-                      <span className="text-xs text-dim">
-                        {t('config.diagSessions')}
-                      </span>
-                      <p className="font-mono">
-                        {t('config.diagSessionCount', {
-                          count: diag.session_count,
-                        })}{' '}
-                        ·{' '}
-                        {t('config.diagActiveRuns', {
-                          count: diag.active_runs,
-                        })}
-                      </p>
-                    </div>
-                    <div className="rounded-card border border-edge bg-panel2 px-3 py-2 col-span-2">
-                      <span className="text-xs text-dim">
-                        {t('config.diagPaths')}
-                      </span>
-                      <p className="font-mono text-xs break-all mt-1">
-                        {diag.work_dir}
-                        <br />
-                        {diag.user_dir}
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex flex-wrap items-center gap-2 pt-1">
+              <div
+                id="settings-diag-policy"
+                className="scroll-mt-4 space-y-2 pt-1"
+              >
+                <p className="text-xs text-dim">{t('config.diagPolicy')}</p>
+                <div className="flex items-center gap-2">
+                  <input
+                    value={policyInput}
+                    onChange={(e) => setPolicyInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') void checkPolicy();
+                    }}
+                    placeholder={t('config.diagPolicyPlaceholder')}
+                    className="flex-1 rounded-control border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
+                  />
                   <button
-                    onClick={() => void runProbe()}
+                    onClick={() => void checkPolicy()}
                     disabled={diagBusy}
                     className="rounded-control bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
                   >
-                    {t('config.diagProbe')}
-                  </button>
-                  <button
-                    onClick={() => void clearCaches()}
-                    disabled={diagBusy}
-                    className="rounded-control border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg disabled:opacity-40"
-                  >
-                    {t('config.diagClearCache')}
-                  </button>
-                  <button
-                    onClick={() =>
-                      void api.reload().catch((err) => toast(String(err)))
-                    }
-                    className="rounded-control border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg"
-                  >
-                    {t('config.diagReload')}
-                  </button>
-                  <button
-                    onClick={() => void repairConfigCompat()}
-                    disabled={diagBusy}
-                    className="rounded-control border border-edge px-4 py-1.5 text-sm text-dim hover:text-fg disabled:opacity-40"
-                  >
-                    {t('config.diagRepairCompat')}
+                    {t('config.diagPolicyCheck')}
                   </button>
                 </div>
-                {probe && (
-                  <div
-                    className={`rounded-control border px-3 py-2 text-xs ${
-                      probe.ok
-                        ? 'border-ok/40 text-ok'
-                        : 'border-err/40 text-err'
+                {policy && (
+                  <p
+                    className={`text-sm ${
+                      policy.allowed ? 'text-ok' : 'text-warn'
                     }`}
                   >
-                    {probe.ok
-                      ? t('config.diagProbeOk')
-                      : t('config.diagProbeFail')}
-                    {probe.output && (
-                      <pre className="mt-1 font-mono">{probe.output}</pre>
-                    )}
-                    {probe.error && (
-                      <pre className="mt-1 font-mono">{probe.error}</pre>
-                    )}
-                  </div>
-                )}
-                {cacheResult && (
-                  <p className="text-xs text-dim">
-                    {t('config.diagCacheDone', {
-                      bytes: fmtBytes(cacheResult.bytes),
-                      count: cacheResult.dirs.length,
-                    })}
+                    {policy.allowed
+                      ? t('config.diagPolicyAllowed')
+                      : t('config.diagPolicyAsk')}
                   </p>
                 )}
+              </div>
 
-                <div className="space-y-2 pt-1">
-                  <p className="text-xs text-dim">{t('config.diagPolicy')}</p>
-                  <div className="flex items-center gap-2">
-                    <input
-                      value={policyInput}
-                      onChange={(e) => setPolicyInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') void checkPolicy();
-                      }}
-                      placeholder={t('config.diagPolicyPlaceholder')}
-                      className="flex-1 rounded-control border border-edge bg-panel2 px-3 py-1.5 text-sm outline-none focus:border-accent"
-                    />
-                    <button
-                      onClick={() => void checkPolicy()}
-                      disabled={diagBusy}
-                      className="rounded-control bg-accent px-4 py-1.5 text-sm text-white hover:opacity-90 disabled:opacity-40"
-                    >
-                      {t('config.diagPolicyCheck')}
-                    </button>
-                  </div>
-                  {policy && (
-                    <p
-                      className={`text-sm ${
-                        policy.allowed ? 'text-ok' : 'text-warn'
-                      }`}
-                    >
-                      {policy.allowed
-                        ? t('config.diagPolicyAllowed')
-                        : t('config.diagPolicyAsk')}
-                    </p>
-                  )}
-                </div>
-
-                <div className="space-y-2 border-t border-edge pt-3">
+              <div className="space-y-2 border-t border-edge pt-3">
+                <div id="settings-diag-otlp" className="scroll-mt-4">
                   <TelemetryExportCard />
-                  <PathEnvironmentCard />
-                  <ExecPoolCard />
-                  <p className="text-xs text-dim">{t('config.logsHint')}</p>
-                  <div className="h-[22rem]">
-                    <LogViewer fetchLogs={() => api.readLog(300)} />
-                  </div>
                 </div>
+                <div id="settings-diag-path" className="scroll-mt-4">
+                  <PathEnvironmentCard />
+                </div>
+                <div id="settings-diag-execpool" className="scroll-mt-4">
+                  <ExecPoolCard />
+                </div>
+                <p className="text-xs text-dim">{t('config.logsHint')}</p>
+                <div id="settings-diag-logs" className="h-[22rem] scroll-mt-4">
+                  <LogViewer fetchLogs={() => api.readLog(300)} />
+                </div>
+              </div>
+              <div id="settings-diag-metrics" className="scroll-mt-4">
                 <MetricsCharts />
               </div>
-            )}
-
-            {tab === 'import' && (
-              <div className="space-y-3">
-                <p className="text-xs text-dim">{t('config.importIntro')}</p>
-                <PluginPanels tab="import" />
-                {importPanelCount === 0 && (
-                  <div className="rounded-card border border-dashed border-edge bg-panel2/50 p-8 text-center">
-                    <Import size={ICON.lg} className="mx-auto mb-2 text-dim" />
-                    <p className="text-xs text-dim">
-                      {t('config.importEmpty')}
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {tab === 'inference' ? (
-          <div className="px-5 py-4 border-t border-edge">
-            <SaveBar
-              bare
-              error={error}
-              saving={saving}
-              onSave={() => void save()}
-            />
-          </div>
-        ) : (
-          error &&
-          tab !== 'memory' && (
-            <div className="px-5 py-4 border-t border-edge">
-              <span className="text-xs text-err">{error}</span>
             </div>
-          )
-        )}
+          )}
+
+          {tab === 'import' && (
+            <div className="space-y-3">
+              <p className="text-xs text-dim">{t('config.importIntro')}</p>
+              <PluginPanels tab="import" />
+              {importPanelCount === 0 && (
+                <div className="rounded-card border border-dashed border-edge bg-panel2 p-8 text-center">
+                  <Import size={ICON.lg} className="mx-auto mb-2 text-dim" />
+                  <p className="text-xs text-dim">{t('config.importEmpty')}</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
+
+      {tab === 'inference' ? (
+        <div className="shrink-0 border-t border-edge bg-panel px-6 py-3">
+          <SaveBar
+            bare
+            error={error}
+            saving={saving}
+            onSave={() => void save()}
+          />
+        </div>
+      ) : (
+        error &&
+        tab !== 'memory' && (
+          <div className="shrink-0 border-t border-edge bg-panel px-6 py-3">
+            <span className="text-xs text-err">{error}</span>
+          </div>
+        )
+      )}
+    </Overlay>
   );
 }
