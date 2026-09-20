@@ -50,7 +50,9 @@
     "noAgents": "No subagents yet",
     "noAgentsHint": "The assistant can create agents with create_agent",
     "inferenceConfig": "Inference setup",
-    "settings": "Settings"
+    "settings": "Settings",
+    "resize": "Resize sidebar",
+    "resizeHint": "Drag to resize · double-click to reset · ←/→ to nudge"
   },
   "welcome": {
     "title": "Choose a workspace to start",
@@ -684,6 +686,9 @@
     "running": "Running",
     "stageReasoning": "Thinking…",
     "stageTool": "Using {{tool}}…",
+    "metaTurns_one": "{{count}} turn",
+    "metaTurns_other": "{{count}} turns",
+    "metaTokens": "{{tokens}} tokens",
     "newSession": "New session",
     "loadEarlier": "Show {{hidden}} earlier messages",
     "jumpToLatest": "Jump to latest",

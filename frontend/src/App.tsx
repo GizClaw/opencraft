@@ -1,9 +1,10 @@
-import { lazy, Suspense, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from './i18n';
 import { Events, System } from '@wailsio/runtime';
 import { ChatView } from './components/ChatView';
 import { Sidebar } from './components/Sidebar';
+import { SidebarResizeHandle } from './components/SidebarResizeHandle';
 import { StatusBar } from './components/StatusBar';
 import { SubagentDock } from './components/SubagentDock';
 import { TopBar } from './components/TopBar';
@@ -12,6 +13,7 @@ import { TooltipLayer } from './components/ui/Tooltip';
 import { WelcomeView } from './components/WelcomeView';
 import { CommandPalette } from './components/CommandPalette';
 import { useStore } from './lib/store';
+import { readSidebarWidth } from './lib/sidebarWidth';
 import { usePluginStore } from './plugins/store';
 import type { UIEvent } from './lib/types';
 import { api } from './lib/api';
@@ -36,9 +38,7 @@ export default function App() {
   const openFiles = useStore((s) => s.openFiles);
   const togglePalette = useStore((s) => s.togglePalette);
   const { t } = useTranslation();
-  const [sidebarW, setSidebarW] = useState(
-    () => Number(localStorage.getItem('oc.sidebarW')) || 240,
-  );
+  const [sidebarW, setSidebarW] = useState(readSidebarWidth);
   // The settings page is a lazy chunk that outlives its own close: it stays
   // mounted once opened so its exit animation can play, and so reopening it
   // is instant. First open still loads the chunk.
@@ -52,10 +52,6 @@ export default function App() {
   const [isMac, setIsMac] = useState(() =>
     /Macintosh|Mac OS X/i.test(navigator.userAgent),
   );
-  // Cleanup for an in-flight sidebar drag when the tree changes
-  // mid-drag, so the window listeners never leak past the component.
-  const dragCleanup = useRef<(() => void) | null>(null);
-  useEffect(() => () => dragCleanup.current?.(), []);
 
   useEffect(() => {
     void init();
@@ -174,29 +170,6 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, [openDraftChat, openConfig, openFiles]);
 
-  const startDrag = () => (e: React.MouseEvent) => {
-    e.preventDefault();
-    const startX = e.clientX;
-    const startW = sidebarW;
-    const onMove = (ev: MouseEvent) => {
-      const raw = startW + (ev.clientX - startX);
-      const next = Math.min(480, Math.max(180, raw));
-      setSidebarW(next);
-      localStorage.setItem('oc.sidebarW', String(next));
-    };
-    const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-      dragCleanup.current = null;
-    };
-    dragCleanup.current = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
-    };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
-  };
-
   if (fatal) {
     return (
       <div className="h-full grid place-items-center">
@@ -227,10 +200,9 @@ export default function App() {
         <div style={{ width: sidebarW }} className="shrink-0">
           <Sidebar isMac={isMac} />
         </div>
-        <div
-          onMouseDown={startDrag()}
-          className="w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-accent/40"
-        />
+        {/* The seam between the two columns, and the only control that
+            moves it. */}
+        <SidebarResizeHandle value={sidebarW} onChange={setSidebarW} />
         {toolsView ? (
           <Suspense
             fallback={

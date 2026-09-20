@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useStore } from '../lib/store';
 import { stateRoot } from '../state/app';
 import type { MessageView, TurnArtifacts } from '../lib/store';
+import type { SessionMeta } from '../lib/types';
 import { ChatView } from './ChatView';
 
 const apiMock = vi.hoisted(() => ({
@@ -40,6 +41,7 @@ function manyMessages(n: number): MessageView[] {
 function setConversation(
   messages: MessageView[],
   turnArtifacts: TurnArtifacts[] = [],
+  mode = 'workspace',
 ) {
   stateRoot.sendFocus({ type: 'RESTORE_FOCUS', sessionID: 's-1' });
   const actor = stateRoot.registry.ensure('s-1', {
@@ -53,7 +55,7 @@ function setConversation(
       's-1': {
         messages,
         turnArtifacts,
-        mode: 'workspace',
+        mode,
         think: 'medium',
         model: '',
         pendingInteracts: [],
@@ -1092,7 +1094,9 @@ describe('ChatView projections', () => {
     expect(
       screen.getByRole('button', { name: 'Choose workspace' }),
     ).toBeInTheDocument();
-    expect(screen.getByText('Workspace mode')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Workspace mode' }),
+    ).toBeInTheDocument();
   });
 
   it('renders an opening placeholder while focus is switching', () => {
@@ -1779,7 +1783,10 @@ describe('ChatView draft session defaults', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1000);
     });
-    expect(screen.getByText('1s')).toBeInTheDocument();
+    // Scoped to the row: the header's run read-out reads the same clock,
+    // so an unscoped query would match both.
+    const group = screen.getByRole('button', { name: /Ran 2 tools/ });
+    expect(within(group).getByText('1s')).toBeInTheDocument();
     vi.useRealTimers();
   });
 
@@ -1865,5 +1872,167 @@ describe('ChatView user bubbles', () => {
         p.textContent?.includes('line one\nline two'),
       ),
     ).toBe(true);
+  });
+});
+
+// The header is the pane's title bar, read top to bottom: whose
+// conversation this is, then the policy it runs under and the weight it
+// already carries, with whatever the turn is doing pinned right.
+describe('ChatView header', () => {
+  const session: SessionMeta = {
+    id: 's-1',
+    title: 'Add the usage hero card',
+    created_at: '2026-09-01T00:00:00Z',
+    updated_at: '2026-09-01T00:00:00Z',
+    turns: 3,
+    messages: 6,
+    total_tokens: 12000,
+  };
+
+  it('names the conversation and reads out the policy it runs under', () => {
+    setConversation([]);
+    useStore.setState({ sessions: [session] });
+    render(<ChatView />);
+
+    expect(screen.getByTestId('chat-title')).toHaveTextContent(session.title);
+    expect(screen.getByTestId('chat-mode-mark')).toHaveAttribute(
+      'data-mode',
+      'workspace',
+    );
+    expect(screen.getByTestId('chat-mode-label')).toHaveTextContent(
+      'Workspace mode',
+    );
+  });
+
+  it('summarizes the turns and tokens the session already carries', () => {
+    setConversation([]);
+    useStore.setState({ sessions: [session] });
+    render(<ChatView />);
+
+    const meta = screen.getByTestId('chat-meta');
+    expect(meta).toHaveTextContent('3 turns');
+    expect(meta).toHaveTextContent('12k tokens');
+  });
+
+  it('keeps the counts off a session with no archive row yet', () => {
+    setConversation([]);
+    useStore.setState({ sessions: [] });
+    render(<ChatView />);
+
+    const meta = screen.getByTestId('chat-meta');
+    expect(meta).toHaveTextContent('Workspace mode');
+    expect(meta).not.toHaveTextContent('turns');
+  });
+
+  it('tints the policy once it leaves the default', () => {
+    setConversation([], [], 'yolo');
+    useStore.setState({ sessions: [session] });
+    render(<ChatView />);
+
+    const mark = screen.getByTestId('chat-mode-mark');
+    expect(mark).toHaveAttribute('data-mode', 'yolo');
+    expect(mark.className).toContain('bg-yolo');
+    expect(screen.getByTestId('chat-mode-label')).toHaveTextContent('YOLO');
+  });
+
+  it('reports a live run and clears it when the turn ends', () => {
+    setConversation([], []);
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    actor?.send({ type: 'STREAM', runID: 'r-1', stage: 'tool:exec_command' });
+    render(<ChatView />);
+
+    expect(screen.getByTestId('chat-run-state')).toHaveTextContent(
+      'Using exec_command…',
+    );
+    expect(screen.getByTestId('chat-run-sweep')).toBeInTheDocument();
+
+    act(() => {
+      actor?.send({ type: 'TURN_ENDED', runID: 'r-1', status: 'completed' });
+    });
+
+    expect(screen.queryByTestId('chat-run-state')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('chat-run-sweep')).not.toBeInTheDocument();
+  });
+
+  it('ticks the elapsed time of the call in flight', () => {
+    setConversation([
+      {
+        id: 'm-1',
+        role: 'assistant',
+        text: '',
+        items: [
+          {
+            kind: 'tool_call',
+            id: 'p-1',
+            tool: {
+              id: 'call-1',
+              name: 'exec_command',
+              args: '{"command":"go build ./..."}',
+              status: 'running',
+              seenAt: Date.now() - 3000,
+            },
+          },
+        ],
+        attachments: [],
+      },
+    ]);
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    actor?.send({ type: 'STREAM', runID: 'r-1', stage: 'tool:exec_command' });
+    render(<ChatView />);
+
+    // The same clock the tool group reads, so the bar and the row agree.
+    expect(screen.getByTestId('chat-run-elapsed')).toHaveTextContent('3s');
+  });
+
+  it('reports a turn that did not finish in the transcript\u2019s own words', () => {
+    setConversation([], []);
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    render(<ChatView />);
+
+    act(() => {
+      actor?.send({
+        type: 'TURN_ENDED',
+        runID: 'r-1',
+        status: 'failed',
+        error: 'inference: request failed: 502 bad gateway',
+      });
+    });
+
+    const stop = screen.getByTestId('chat-turn-stop');
+    expect(stop).toHaveAttribute('data-status', 'failed');
+    expect(stop).toHaveTextContent('Last reply failed');
+    // The reason itself is a tooltip: the transcript's notice carries it.
+    expect(stop).toHaveAttribute(
+      'data-tip',
+      'inference: request failed: 502 bad gateway',
+    );
+    expect(screen.queryByTestId('chat-run-sweep')).not.toBeInTheDocument();
+
+    // The next turn takes the line over: a send clears the last one's
+    // ending rather than leaving two states stacked in one row.
+    act(() => {
+      actor?.send({ type: 'SEND_STARTED' });
+    });
+    expect(screen.queryByTestId('chat-turn-stop')).not.toBeInTheDocument();
+    expect(screen.getByTestId('chat-run-state')).toHaveTextContent('Running');
+  });
+
+  it('keeps a stop the user asked for quiet', () => {
+    setConversation([], []);
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-1' });
+    render(<ChatView />);
+
+    act(() => {
+      actor?.send({ type: 'TURN_ENDED', runID: 'r-1', status: 'canceled' });
+    });
+
+    const stop = screen.getByTestId('chat-turn-stop');
+    expect(stop).toHaveAttribute('data-status', 'canceled');
+    expect(stop).toHaveTextContent('Reply cancelled');
+    expect(stop.className).toContain('text-dim');
   });
 });

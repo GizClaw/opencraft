@@ -94,9 +94,11 @@
     0 6px 14px -8px var(--oc-shadow-key);
 
   /* Motion ladder. Overlay chrome moves on two durations and one
-     easing; nothing else in the app animates on purpose. The numbers
-     are mirrored by MOTION in lib/overlay.ts, which uses them to time
-     the unmount that follows an exit animation. */
+     easing; the only other thing in the app that animates on purpose is
+     the chat header's run state (see the `rise-in` / `swap-in` /
+     `run-sweep` rungs below). The numbers are mirrored by MOTION in
+     lib/overlay.ts, which uses them to time the unmount that follows an
+     exit animation. */
   --ease-out-soft: cubic-bezier(0.2, 0.8, 0.2, 1);
   --animate-scrim-in: oc-scrim-in 160ms var(--ease-out-soft) both;
   --animate-scrim-out: oc-scrim-out 120ms ease-in both;
@@ -108,6 +110,17 @@
   --animate-popover-out: oc-popover-out 100ms ease-in both;
   --animate-toast-in: oc-toast-in 180ms var(--ease-out-soft) both;
   --animate-toast-out: oc-toast-out 140ms ease-in both;
+  /* Chat header state motion. The title bar is the one strip in the
+     content column that moves, and only ever to report the run: it
+     rises in when a conversation opens (rise-in), a new title or stage
+     name replaces the old one in place (swap-in), and a live run drags
+     a strip of accent light across the header's bottom edge
+     (run-sweep). All three are entry animations with `both` fill, so a
+     reduced-motion user still lands on the settled state; the sweep,
+     which has no settled state, simply ends off-screen. */
+  --animate-rise-in: oc-rise-in 180ms var(--ease-out-soft) both;
+  --animate-swap-in: oc-swap-in 140ms var(--ease-out-soft) both;
+  --animate-run-sweep: oc-run-sweep 1.6s ease-in-out infinite;
 
   @keyframes oc-scrim-in {
     from {
@@ -165,6 +178,26 @@
     to {
       opacity: 0;
       transform: translateX(0.5rem) scale(0.99);
+    }
+  }
+  @keyframes oc-rise-in {
+    from {
+      opacity: 0;
+      transform: translateY(0.2857rem);
+    }
+  }
+  @keyframes oc-swap-in {
+    from {
+      opacity: 0;
+      transform: translateY(0.2143rem);
+    }
+  }
+  @keyframes oc-run-sweep {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(300%);
     }
   }
 }
@@ -299,6 +332,122 @@ textarea:focus-visible {
 
 *::-webkit-scrollbar-track {
   background: transparent;
+}
+
+/* The chat header is the one strip that is both chrome and content: it
+   sits above the transcript like a toolbar, but it belongs to the
+   conversation rather than to the window. It wears the panel rung flat —
+   the surface the sidebar beside it and the TopBar above it already
+   wear, so the window's chrome is one band and the canvas below is the
+   document. A gradient here only ever read as a rendering artefact; what
+   separates the strip from the transcript is its content, not its fill:
+   the two-tier block inside it (name over policy and state) is what makes
+   it a header instead of one more divider. */
+.oc-chat-header {
+  background-color: var(--color-panel);
+}
+
+/* The run sweep: the light that crosses the header's bottom edge while a
+   turn is live. Soft at both ends so it enters and leaves the strip
+   instead of appearing at its edge, and dim enough to sit under the
+   hairline it rides on rather than replace it. */
+.oc-run-sweep {
+  background-image: linear-gradient(
+    to right,
+    transparent,
+    color-mix(in srgb, var(--color-accent) 80%, transparent),
+    transparent
+  );
+}
+
+/* The seam between the sidebar and the work column, and the handle that
+   drags it. The sidebar used to end on its own border with a 4px strip
+   beside it, which left a band of canvas between the two panels: down the
+   transcript the seam read as a groove, and across the 44px header row
+   (panel on both sides) as a notch cut out of the chrome band. The handle
+   now owns the line, so the panels meet on it and it runs unbroken from
+   the top bar to the status bar.
+
+   It is deliberately not an accent-tinted strip: a resize target is
+   chrome, and the cursor over it already says what it does. The drag
+   target is a wider invisible sash on the work column's side (the
+   sidebar's right edge belongs to its scrollbar), and the knob in the
+   middle is the affordance — at rest the line's own `edge`, only thicker,
+   so the seam looks like it has a grip rather than a decoration. */
+.oc-sidebar-handle {
+  position: relative;
+  flex: none;
+  width: 1px;
+  touch-action: none;
+  cursor: col-resize;
+  background-color: var(--color-edge);
+  transition: background-color 120ms ease;
+  /* The sash reaches 6px over the work column, whose own `main` is a
+     positioned element further down the tree — without a lift it would
+     win the hit test and the drag target would only be the 1px line. */
+  z-index: var(--oc-z-raised);
+}
+
+.oc-sidebar-handle::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 7px;
+}
+
+/* Focus lights the same two things a hover does, plus a halo on the knob:
+   the handle is 1px wide, so the shared focus ring would draw a sliver. */
+.oc-sidebar-handle:hover,
+.oc-sidebar-handle:focus-visible {
+  background-color: color-mix(
+    in srgb,
+    var(--color-accent) 60%,
+    var(--color-edge)
+  );
+  outline: none;
+}
+
+.oc-sidebar-handle[data-dragging] {
+  background-color: var(--color-accent);
+}
+
+/* 3px wide so the capsule lands on whole pixels around a 1px line (a 2px
+   one would sit half a pixel off it), 24px tall. At rest it is a rung
+   above the line — a mix of the meta tone, still far from an accent — so
+   the grip reads as a grip at 1x instead of as a thicker stretch of the
+   hairline. */
+.oc-sidebar-knob {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 3px;
+  height: 24px;
+  transform: translate(-50%, -50%);
+  border-radius: 9999px;
+  background-color: color-mix(in srgb, var(--color-dim) 30%, var(--color-edge));
+  transition: background-color 120ms ease;
+}
+
+.oc-sidebar-handle:hover .oc-sidebar-knob,
+.oc-sidebar-handle[data-dragging] .oc-sidebar-knob {
+  background-color: var(--color-accent);
+}
+
+.oc-sidebar-handle:focus-visible .oc-sidebar-knob {
+  background-color: var(--color-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 45%, transparent);
+}
+
+/* A resize owns the pointer for its whole gesture: the cursor is the
+   handle's wherever the pointer goes, and a drag cannot select the text
+   it passes over. Scoped to the body while the drag lasts, because the
+   seam is not where the pointer is. */
+body.oc-resizing,
+body.oc-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
 }
 
 /* The composer textarea scrolls invisibly so its content box always

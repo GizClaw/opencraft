@@ -7,7 +7,7 @@
 // Playwright config (playwright.visual.config.ts), so the CI e2e job
 // (testDir: e2e) never picks it up. Screenshots land in
 // e2e-visual/shots/ and are gitignored.
-import { test, type Page } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { mockBackend } from '../e2e/mock/backend';
 import { typeComposerMessage } from '../e2e/helpers';
 
@@ -28,6 +28,17 @@ const emitter =
         ).__emit(n as string, d),
       [name, data] as const,
     );
+
+// The chat header strip: the sidebar's macOS traffic-light row plus the
+// chat pane's own title bar, both 44px, plus the first rows underneath so
+// the two hairline seams are in frame. Clipped from the window top at 2x,
+// because the strip is where hairlines and micro type have to hold up.
+async function headerShot(page: Page, name: string) {
+  await page.screenshot({
+    path: `${SHOTS}/${name}.png`,
+    clip: { x: 0, y: 0, width: 1568, height: 104 },
+  });
+}
 
 const USAGE_SUMMARY = [
   {
@@ -944,4 +955,166 @@ test('collapsed tool group header', async ({ page }) => {
   });
   await page.waitForTimeout(200);
   await shot(page, '46b-tool-group-header-light');
+});
+
+// The chat header is the pane's title bar: the conversation's identity on
+// the left, its run state next to it, the viewer toggle on the right. It
+// is also the one strip that animates outside overlay chrome, so the
+// states are shot separately: parked, running, ended on a failure, and
+// the light theme (where every tint has to survive the flipped palette).
+const HEADER_SESSION = {
+  id: 's-1',
+  workspace: WS,
+  title: 'Rework the usage hero card',
+  created_at: '2026-09-14T03:47:36Z',
+  updated_at: '2026-09-15T03:47:36Z',
+  status: 'idle',
+  turns: 4,
+  messages: 9,
+  total_tokens: 128394,
+};
+
+async function openHeaderSession(page: Page) {
+  await page.addInitScript(mockBackend as never, {
+    workspace: WS,
+    listSessions: [HEADER_SESSION],
+    startTurn: { run_id: 'r-1', context_id: 's-1' },
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: HEADER_SESSION.title }).click();
+  await page.waitForTimeout(400);
+}
+
+test.describe('chat header', () => {
+  test.use({ deviceScaleFactor: 2 });
+
+  test('parked', async ({ page }) => {
+    await openHeaderSession(page);
+    await headerShot(page, '70-chat-header');
+  });
+
+  test('running', async ({ page }) => {
+    await openHeaderSession(page);
+    await typeComposerMessage(page, 'Split the hero into two rows');
+    await page.getByRole('button', { name: 'Send' }).click();
+    const emit = emitter(page);
+    // A tool part is what moves the run's stage, and the stage text is
+    // the header's live half.
+    await emit('opencraft:ui', {
+      type: 'stream',
+      data: {
+        run_id: 'r-1',
+        conversation_id: 's-1',
+        delta: {
+          type: 'part',
+          part: {
+            type: 'tool_call',
+            call: {
+              id: 'call-1',
+              name: 'exec_command',
+              arguments: { command: 'npm test --prefix frontend' },
+            },
+          },
+        },
+      },
+    });
+    // Long enough for the call's clock to pass the second that makes the
+    // elapsed tick appear, and for the run sweep to sit mid-strip rather
+    // than off its left end.
+    await page.waitForTimeout(2200);
+    await headerShot(page, '71-chat-header-running');
+    await page.evaluate(() => {
+      document.documentElement.classList.add('theme-light');
+    });
+    await page.waitForTimeout(300);
+    await headerShot(page, '72-chat-header-running-light');
+  });
+
+  test('failed', async ({ page }) => {
+    await openHeaderSession(page);
+    await typeComposerMessage(page, 'Split the hero into two rows');
+    await page.getByRole('button', { name: 'Send' }).click();
+    const emit = emitter(page);
+    await emit('opencraft:ui', {
+      type: 'turn_end',
+      data: {
+        run_id: 'r-1',
+        conversation_id: 's-1',
+        status: 'failed',
+        error: 'inference: request failed: 502 bad gateway',
+      },
+    });
+    await page.waitForTimeout(400);
+    await headerShot(page, '73-chat-header-failed');
+  });
+});
+
+// The seam between the sidebar and the work column is a 1px hairline the
+// resize handle owns, with a knob at its middle. Shot at 2x around the
+// knob — the header shots already carry the top of the same line, and
+// what needs reviewing here is a hairline between two panel surfaces
+// plus the handle's three states: at rest, hovered, and dragging.
+const SEAM = 'Resize sidebar';
+
+async function seamBox(page: Page) {
+  const box = await page.getByRole('separator', { name: SEAM }).boundingBox();
+  if (box === null) throw new Error('the sidebar seam has no box');
+  return box;
+}
+
+async function columnWidth(page: Page) {
+  const box = await page.locator('aside').first().boundingBox();
+  if (box === null) throw new Error('the sidebar has no box');
+  return Math.round(box.width);
+}
+
+function seamClip(box: { x: number; y: number; height: number }) {
+  return {
+    x: Math.round(box.x - 88),
+    y: Math.round(box.y + box.height / 2 - 60),
+    width: 176,
+    height: 120,
+  };
+}
+
+test.describe('sidebar seam', () => {
+  test.use({ deviceScaleFactor: 2 });
+
+  test('rest, hover and dragging', async ({ page }) => {
+    await openHeaderSession(page);
+    const box = await seamBox(page);
+    const midY = box.y + box.height / 2;
+    // The click that opened the session left the pointer on its row, and
+    // the row's hover card covers the seam at this height.
+    await page.mouse.move(1200, 880);
+    await page.waitForTimeout(400);
+    await page.screenshot({
+      path: `${SHOTS}/74-sidebar-seam.png`,
+      clip: seamClip(box),
+    });
+
+    // Hovering the knob is the handle's lit state; the shot is taken
+    // before the hint's 320ms hover intent, so the seam stays in view.
+    await page.mouse.move(box.x + 3, midY);
+    await page.waitForTimeout(200);
+    await page.screenshot({
+      path: `${SHOTS}/75-sidebar-seam-hover.png`,
+      clip: seamClip(box),
+    });
+
+    // And a live drag: the accent state, with the column narrowed far
+    // enough that the pointer sits outside the seam it is dragging.
+    const before = await columnWidth(page);
+    await page.mouse.down();
+    await page.mouse.move(box.x - 40, midY);
+    await page.waitForTimeout(200);
+    await page.screenshot({
+      path: `${SHOTS}/76-sidebar-seam-dragging.png`,
+      clip: seamClip(await seamBox(page)),
+    });
+    await page.mouse.up();
+    // A screenshot suite cannot tell a dead handle from a live one, and
+    // the shot above would look the same either way.
+    expect(await columnWidth(page)).toBe(before - 40);
+  });
 });
