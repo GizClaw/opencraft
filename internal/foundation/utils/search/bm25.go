@@ -44,11 +44,43 @@ const (
 )
 
 // fieldIndex holds the per-field statistics a BM25 score needs: each
-// document's field length and the term -> doc -> frequency postings.
+// document's field length and the postings of every term.
+//
+// The postings are a flat, term-major slice instead of a
+// map[term]map[doc]tf: a Go map costs ~200 bytes before it holds
+// anything, so one map per distinct term dominated the heap for a
+// corpus of a few hundred documents (476 skills, ~2.7k distinct
+// terms, ~0.9MB). Terms are kept sorted, so a query term resolves with
+// one binary search and its prefix matches with a scan from there.
 type fieldIndex struct {
 	lens     []int
 	totalLen int
-	postings map[string]map[int]int
+	terms    []termEntry
+	postings []posting
+	// pending collects postings while documents are added; finalize
+	// folds them into terms/postings and drops the slice.
+	pending []pendingPosting
+}
+
+// termEntry is one distinct term and the slice of postings it owns.
+type termEntry struct {
+	term string
+	off  int32
+	df   int32
+}
+
+// posting is one document's term frequency for the owning term.
+type posting struct {
+	doc int32
+	tf  int32
+}
+
+// pendingPosting is a collected posting before finalize groups it under
+// its term.
+type pendingPosting struct {
+	term string
+	doc  int32
+	tf   int32
 }
 
 // Index is a read-only BM25 index over a fixed document set.
@@ -61,41 +93,112 @@ type Index struct {
 // NewIndex builds an index over docs. Field statistics are computed
 // once; the index is immutable afterwards.
 func NewIndex(docs []Doc) *Index {
-	ix := &Index{
-		docs: docs,
-		fields: [2]fieldIndex{
-			{postings: make(map[string]map[int]int)},
-			{postings: make(map[string]map[int]int)},
-		},
-		nDocs: len(docs),
-	}
+	ix := &Index{docs: docs, nDocs: len(docs)}
 	for d, doc := range docs {
-		ix.add(d, 0, doc.Name)
-		ix.add(d, 1, doc.Text)
+		ix.fields[0].collect(int32(d), doc.Name)
+		ix.fields[1].collect(int32(d), doc.Text)
+	}
+	for i := range ix.fields {
+		ix.fields[i].finalize()
 	}
 	return ix
 }
 
-func (ix *Index) add(doc int, field int, text string) {
-	f := &ix.fields[field]
-	tfs := make(map[string]int)
-	for _, term := range Tokenize(text) {
-		tfs[term]++
-	}
-	// Field length is the distinct-token count, not the total token
-	// count, and each term is posted at most once per field. tf is
-	// therefore almost always 1 and the k1 saturation term in Search
-	// stays inert. That is deliberate: with a handful of short
-	// commands, ranking is dominated by the name/text field boost and
-	// IDF, and full BM25 term-frequency or length normalisation would
-	// only add noise.
-	f.lens = append(f.lens, len(tfs))
-	f.totalLen += len(tfs)
-	for term, tf := range tfs {
-		if f.postings[term] == nil {
-			f.postings[term] = make(map[int]int)
+// collect appends one document's postings for a field. Terms are
+// deduplicated by sorting the token slice in place, so adding a
+// document allocates no per-document map.
+//
+// Field length is the distinct-token count, not the total token count,
+// and each term is posted at most once per field. tf is therefore
+// almost always 1 and the k1 saturation term in Search stays inert.
+// That is deliberate: with a handful of short documents, ranking is
+// dominated by the name/text field boost and IDF, and full BM25
+// term-frequency or length normalisation would only add noise.
+func (f *fieldIndex) collect(doc int32, text string) {
+	tokens := Tokenize(text)
+	sort.Strings(tokens)
+	distinct := 0
+	for i := 0; i < len(tokens); {
+		j := i + 1
+		for j < len(tokens) && tokens[j] == tokens[i] {
+			j++
 		}
-		f.postings[term][doc] = tf
+		f.pending = append(f.pending, pendingPosting{
+			term: tokens[i], doc: doc, tf: int32(j - i),
+		})
+		distinct++
+		i = j
+	}
+	f.lens = append(f.lens, distinct)
+	f.totalLen += distinct
+}
+
+// finalize sorts the collected postings by term and folds them into the
+// flat term table. A term's postings stay in document order, which is
+// what lets docFreq merge two fields without a set.
+func (f *fieldIndex) finalize() {
+	pending := f.pending
+	f.pending = nil
+	sort.Slice(pending, func(i, j int) bool {
+		if pending[i].term != pending[j].term {
+			return pending[i].term < pending[j].term
+		}
+		return pending[i].doc < pending[j].doc
+	})
+	f.postings = make([]posting, 0, len(pending))
+	f.terms = make([]termEntry, 0, len(pending))
+	for i, p := range pending {
+		if i == 0 || pending[i-1].term != p.term {
+			f.terms = append(f.terms, termEntry{
+				term: p.term,
+				off:  int32(len(f.postings)),
+			})
+		}
+		f.postings = append(f.postings, posting{doc: p.doc, tf: p.tf})
+		f.terms[len(f.terms)-1].df++
+	}
+}
+
+// lookup returns the entry of an exact term.
+func (f *fieldIndex) lookup(term string) (termEntry, bool) {
+	i, ok := f.search(term)
+	if !ok {
+		return termEntry{}, false
+	}
+	return f.terms[i], true
+}
+
+// search returns the position of the first term >= target and whether
+// that term is an exact match.
+func (f *fieldIndex) search(target string) (int, bool) {
+	i := sort.Search(len(f.terms), func(i int) bool {
+		return f.terms[i].term >= target
+	})
+	return i, i < len(f.terms) && f.terms[i].term == target
+}
+
+// postingsOf returns the postings of one term, in document order.
+func (f *fieldIndex) postingsOf(term string) []posting {
+	e, ok := f.lookup(term)
+	if !ok {
+		return nil
+	}
+	return f.postings[e.off : e.off+e.df]
+}
+
+// eachPrefix calls fn for every indexed term that has prefix as a
+// proper prefix. Terms are sorted, so the scan starts at the first term
+// >= prefix and stops at the first term that no longer matches.
+func (f *fieldIndex) eachPrefix(prefix string, fn func(termEntry)) {
+	i, _ := f.search(prefix)
+	for ; i < len(f.terms); i++ {
+		term := f.terms[i].term
+		if !strings.HasPrefix(term, prefix) {
+			return
+		}
+		if len(term) > len(prefix) {
+			fn(f.terms[i])
+		}
 	}
 }
 
@@ -118,57 +221,59 @@ func (ix *Index) Search(query string, limit int) []Result {
 	// term plus every term it prefixes. Prefix hits score lower.
 	type termMatch struct {
 		term   string
+		df     int
 		prefix bool
 	}
 	matches := make([]termMatch, 0, len(terms)*2)
 	seen := make(map[string]bool, len(terms))
-	for _, qt := range terms {
-		if !seen[qt] {
-			seen[qt] = true
-			matches = append(matches, termMatch{term: qt})
+	// Document frequency is resolved once per matched term; df counts
+	// documents, so a document that contains the term in both its name
+	// and its text counts once.
+	add := func(term string, prefix bool) {
+		if seen[term] {
+			return
 		}
+		seen[term] = true
+		matches = append(matches, termMatch{
+			term: term, df: ix.docFreq(term), prefix: prefix,
+		})
+	}
+	for _, qt := range terms {
+		add(qt, false)
 		for field := range ix.fields {
-			for it := range ix.fields[field].postings {
-				if len(it) > len(qt) && strings.HasPrefix(it, qt) &&
-					!seen[it] {
-					seen[it] = true
-					matches = append(matches, termMatch{term: it, prefix: true})
-				}
-			}
+			ix.fields[field].eachPrefix(qt, func(entry termEntry) {
+				add(entry.term, true)
+			})
 		}
 	}
 
-	// Document frequency per matched term across both fields, then
-	// IDF. df counts documents, so a document that contains the term
-	// in both its name and its text is counted once — a per-field
-	// length sum would over-count it and depress the IDF.
-	idf := make(map[string]float64, len(matches))
+	// One score per document, accumulated term by term, so the work is
+	// proportional to the postings a term actually has rather than to
+	// documents × matched terms.
+	scores := make([]float64, ix.nDocs)
 	for _, tm := range matches {
-		df := ix.docFreq(tm.term)
-		idf[tm.term] = math.Log(1 +
-			(float64(ix.nDocs)-float64(df)+0.5)/(float64(df)+0.5))
+		idf := math.Log(1 +
+			(float64(ix.nDocs)-float64(tm.df)+0.5)/(float64(tm.df)+0.5))
+		for field, base := range [2]float64{nameBoost, textBoost} {
+			f := &ix.fields[field]
+			if f.totalLen == 0 {
+				continue
+			}
+			boost := base
+			if tm.prefix {
+				boost *= prefixWeight
+			}
+			avg := float64(f.totalLen) / float64(ix.nDocs)
+			for _, p := range f.postingsOf(tm.term) {
+				tf := float64(p.tf)
+				denom := tf + k1*(1-b+b*float64(f.lens[p.doc])/avg)
+				scores[p.doc] += boost * idf * tf * (k1 + 1) / denom
+			}
+		}
 	}
 
 	scored := make([]Result, 0, len(ix.docs))
-	for d := range ix.docs {
-		var score float64
-		for _, tm := range matches {
-			for field, boost := range []float64{nameBoost, textBoost} {
-				f := &ix.fields[field]
-				tf, ok := f.postings[tm.term][d]
-				if !ok || f.totalLen == 0 {
-					continue
-				}
-				if tm.prefix {
-					boost *= prefixWeight
-				}
-				avg := float64(f.totalLen) / float64(ix.nDocs)
-				denom := float64(tf) +
-					k1*(1-b+b*float64(f.lens[d])/avg)
-				score += boost * idf[tm.term] *
-					float64(tf) * (k1 + 1) / denom
-			}
-		}
+	for d, score := range scores {
 		if score > 0 {
 			scored = append(scored, Result{ID: ix.docs[d].ID, Score: score})
 		}
@@ -187,15 +292,28 @@ func (ix *Index) Search(query string, limit int) []Result {
 // document that hits in both its name and its text counts once, so
 // this is the union across fields rather than the sum.
 func (ix *Index) docFreq(term string) int {
-	df := 0
-	for d := range ix.docs {
-		if _, ok := ix.fields[0].postings[term][d]; ok {
-			df++
-		} else if _, ok := ix.fields[1].postings[term][d]; ok {
-			df++
-		}
+	name := ix.fields[0].postingsOf(term)
+	text := ix.fields[1].postingsOf(term)
+	switch {
+	case len(name) == 0:
+		return len(text)
+	case len(text) == 0:
+		return len(name)
 	}
-	return df
+	// Both lists are in document order: merge and count distinct docs.
+	df, i, j := 0, 0, 0
+	for i < len(name) && j < len(text) {
+		switch {
+		case name[i].doc == text[j].doc:
+			i, j = i+1, j+1
+		case name[i].doc < text[j].doc:
+			i++
+		default:
+			j++
+		}
+		df++
+	}
+	return df + (len(name) - i) + (len(text) - j)
 }
 
 // uniqueTokens tokenizes the query and keeps each term once, so a

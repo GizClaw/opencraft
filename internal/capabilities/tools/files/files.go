@@ -39,10 +39,14 @@ const (
 )
 
 const (
-	defaultReadLimit   = 1000
-	maxReadLimit       = 100_000
-	maxReadFileBytes   = 2 << 20 // 2 MiB: refuse pathological reads
-	maxGrepFileBytes   = 1 << 20 // 1 MiB: skip larger files in grep
+	defaultReadLimit = 1000
+	maxReadLimit     = 100_000
+	maxReadFileBytes = 2 << 20 // 2 MiB: refuse pathological reads
+	maxGrepFileBytes = 1 << 20 // 1 MiB: skip larger files in grep
+	// binarySniffBytes is how far into a file grep looks for a NUL byte
+	// before treating the file as binary — the rule GNU grep uses for
+	// "binary file matches".
+	binarySniffBytes   = 8 << 10
 	defaultGrepMatches = 100
 	maxGrepMatches     = 1000
 	defaultListDepth   = 4
@@ -452,8 +456,11 @@ func (t *grepTool) Definition() message.ToolDefinition {
 		GrepName,
 		"Search workspace files for lines matching a pattern. "+
 			"Returns JSON: {matches:[{path, line_number, line}], "+
-			"truncated, skipped_large}. Hidden entries and .git are "+
-			"skipped unless include_hidden is true.",
+			"truncated, skipped_large, binary_matches}. Hidden "+
+			"entries and .git are skipped unless include_hidden is "+
+			"true; files larger than 1 MiB are skipped, and a binary "+
+			"file that matches is reported by path in binary_matches "+
+			"instead of by line.",
 		message.ToolProperty("pattern", "string",
 			"The search pattern: a regular expression unless "+
 				"fixed_strings is true (required)."),
@@ -541,6 +548,7 @@ func (t *grepTool) execute(ctx context.Context, arguments string) (string, error
 	}
 
 	var matches []grepMatch
+	var binaryMatches []string
 	var skippedLarge int
 	scannedFiles := 0
 	truncated := false
@@ -564,6 +572,14 @@ func (t *grepTool) execute(ctx context.Context, arguments string) (string, error
 			truncated = true
 			return errStopWalk
 		}
+		// Skip oversized files from the walk's own stat when it has one:
+		// reading a MiB of a binary or a bundle only to discard it was
+		// the bulk of what a grep allocated.
+		if info, err := entry.Info(); err == nil &&
+			info.Size() > maxGrepFileBytes {
+			skippedLarge++
+			return nil
+		}
 		data, oversized, err := readFileBounded(
 			ctx, t.ws, p, maxGrepFileBytes)
 		if err != nil {
@@ -573,17 +589,32 @@ func (t *grepTool) execute(ctx context.Context, arguments string) (string, error
 			skippedLarge++
 			return nil
 		}
-		for i, line := range strings.Split(string(data), "\n") {
-			if re.MatchString(line) {
-				matches = append(matches, grepMatch{
-					Path:       p,
-					LineNumber: i + 1,
-					Line:       line,
-				})
-				if len(matches) >= maxMatches {
-					return errStopWalk
-				}
+		// A NUL byte in the head of the file means binary content: a
+		// matched line would be an unreadable slice of a bundle or an
+		// asset. The fact that it matches is still signal — grep -l
+		// reports exactly this — so search it whole and report the path
+		// without scanning lines or building strings.
+		if bytes.IndexByte(data[:min(len(data), binarySniffBytes)], 0) >= 0 {
+			if re.Match(data) {
+				binaryMatches = append(binaryMatches, p)
 			}
+			return nil
+		}
+		capped := false
+		scanLines(data, func(lineNumber int, line []byte) bool {
+			if !re.Match(line) {
+				return true
+			}
+			matches = append(matches, grepMatch{
+				Path:       p,
+				LineNumber: lineNumber,
+				Line:       string(line),
+			})
+			capped = len(matches) >= maxMatches
+			return !capped
+		})
+		if capped {
+			return errStopWalk
 		}
 		return nil
 	})
@@ -595,11 +626,40 @@ func (t *grepTool) execute(ctx context.Context, arguments string) (string, error
 		"matches":       matches,
 		"truncated":     truncated,
 		"skipped_large": skippedLarge,
+		// Paths of binary files (bundles, wasm, media) whose bytes
+		// matched. Their lines are not returned: they are not text.
+		"binary_matches": binaryMatches,
 	})
 	if err != nil {
 		return "", errdefs.Internalf("%s: encode result: %v", GrepName, err)
 	}
 	return string(payload), nil
+}
+
+// scanLines calls emit once per line of data with the line's 1-based
+// number, splitting on "\n" with the same trailing-empty-line
+// semantics as strings.Split(string(data), "\n"). Lines are sliced out
+// of data rather than copied, so scanning a file that does not match
+// allocates nothing.
+func scanLines(data []byte, emit func(lineNumber int, line []byte) bool) {
+	lineNumber := 0
+	rest := data
+	for {
+		lineNumber++
+		i := bytes.IndexByte(rest, '\n')
+		line := rest
+		if i < 0 {
+			rest = nil
+		} else {
+			line, rest = rest[:i], rest[i+1:]
+		}
+		if !emit(lineNumber, line) {
+			return
+		}
+		if i < 0 {
+			return
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
