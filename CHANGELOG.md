@@ -27,14 +27,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enter in the composer now steers the running turn instead of
   interrupting it; Tab keeps the after-turn queue, a draft carrying
   attachments is refused with a hint rather than changed silently, and
-  barge-in stays on the stop button. (#181)
-- Automations that never set a run limit are now bounded by the
-  15-minute default where previously only the assistant graph's
-  one-hour run timeout applied, so a long-running task can end as
-  `timeout` where it used to run to completion. (#181)
+  barge-in moves to Cmd/Ctrl+Enter and to a stop button that stays
+  reachable while a draft is being written. (#181)
+- Automations saved without a run limit are bounded by the 15-minute
+  default. Tasks stored before the limit existed are not: the migration
+  seeds them with the one-hour bound they used to run under (the
+  assistant graph's run timeout), so an upgrade shortens no run nobody
+  asked to shorten — the 15-minute default is what a task saved without
+  a limit gets, not what existing tasks are given. (#181)
+- Users overriding the assistant graph from disk (a `{file: …}`
+  `assistant.yaml`) need the graph's new `steer` node too: copy
+  `graphs/nodes/steer.js` alongside it, or the graph references an
+  asset the deployment does not have and turns stop starting. Graphs
+  left at the shipped defaults pick it up on their own. (#181)
 
 ### Fixed
 
+- The `automation` tool's nested `task`/`schedule` schema now reaches the
+  model intact. Nested properties were built as `ToolPropertyDef`
+  values, whose schema fields are unexported, so each one marshalled as
+  an empty object: the model saw property names with no type and no
+  description — including the run-limit field — and no allowed values
+  for the schedule kind. Nested properties are raw JSON Schema maps
+  now, like every other tool in the repo.
 - A staged draft (the Tab queue, or Enter pressed while the previous
   send was still starting) runs in the workspace that owns its
   conversation instead of the one on screen. The start used to resolve
