@@ -37,6 +37,11 @@ type Shell struct {
 	userActiveAt   time.Time
 	notifySink     func(typ string, data any)
 	petSink        func(typ string, data any)
+
+	// stream buffers mergeable text/reasoning deltas between windows
+	// (see stream.go). EmitStream is the only writer, Emit flushes it
+	// before every non-stream event so wire order equals arrival order.
+	stream streamBuffer
 }
 
 // NewShell creates the shell with preferences loaded from userDir.
@@ -383,7 +388,21 @@ func (s *Shell) OpenURL(url string) {
 // Emit pushes one UI event to the frontend and hands it to the Go-side
 // observers. Delivery to the window needs attachment; the observers do
 // not.
+//
+// Every non-stream event is an ordering barrier for the stream buffer:
+// buffered deltas are flushed first, so turn_end, usage or any status
+// event can never overtake the text it follows.
 func (s *Shell) Emit(typ string, data any) {
+	if typ != "stream" {
+		s.flushStreams()
+	}
+	s.deliver(typ, data)
+}
+
+// deliver is the shared emission path: one UI event to the window plus
+// the Go-side sinks. Callers own the ordering (Emit flushes the stream
+// buffer first; EmitStream holds the buffer lock across delivery).
+func (s *Shell) deliver(typ string, data any) {
 	if app, _ := s.attached(); app != nil {
 		app.Event.Emit("opencraft:ui", map[string]any{
 			"type": typ,

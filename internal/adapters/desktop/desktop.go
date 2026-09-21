@@ -378,6 +378,8 @@ func (d *Desktop) Shutdown(ctx context.Context) {
 	// and resolving its session title against a closed store would log
 	// "database is closed" on every exit.
 	d.core.Shell.SetNotificationSink(nil)
+	// A window that is going away never receives a half-flushed stream.
+	d.core.Shell.ClearPendingStreams()
 	d.core.Runtime.Close()
 	d.core.Plugin.Close()
 	if d.execPool != nil {

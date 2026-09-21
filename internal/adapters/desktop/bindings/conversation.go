@@ -112,12 +112,12 @@ func (b *Conversation) StartTurn(
 		if !agent.IsStreamDelta(env.Subject) {
 			return nil
 		}
-		b.core.Shell.Emit("stream", map[string]any{
-			"run_id":          interact.StreamRunID(env.Subject),
-			"conversation_id": contextID,
-			"agent_id":        agentIDOrAssistant(env),
-			"parent_run_id":   env.ParentRunID(),
-			"delta":           delta,
+		b.core.Shell.EmitStream(core.StreamEvent{
+			RunID:          interact.StreamRunID(env.Subject),
+			ConversationID: contextID,
+			AgentID:        agentIDOrAssistant(env),
+			ParentRunID:    env.ParentRunID(),
+			Delta:          delta,
 		})
 		return nil
 	})
