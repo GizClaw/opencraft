@@ -134,6 +134,16 @@ func (b *Automation) RunNow(id string) error {
 	return mgr.RunNow(id)
 }
 
+// CancelRun stops one in-flight run. The record settles as canceled
+// and the panel refreshes from the automation_run event.
+func (b *Automation) CancelRun(runID string) error {
+	mgr := b.core.Runtime.AutomationManager()
+	if mgr == nil {
+		return errNotReady("automation manager")
+	}
+	return mgr.CancelRun(strings.TrimSpace(runID))
+}
+
 // AutomationSessions lists sessions under one workspace.
 func (b *Automation) AutomationSessions(
 	workspace string,

@@ -462,12 +462,22 @@ func (d *Desktop) runAutomation(
 	finishedAt, durationMs := run.FinishedTiming()
 	// One shared mapping classifies the settled pair (a completed status
 	// and no wait error = the run completed; anything else failed, for
-	// the manager to rewrite to a timeout when its deadline caused it).
+	// the manager to rewrite to a timeout or a canceled when it caused
+	// the stop itself).
 	outcome := automations.ClassifySettledRun(contextID, runID, res, waitErr)
 	result := outcome.Result
 	status, errText := outcome.Status, outcome.ErrorText
+	// A run stopped from the panel is not a failure: the record says
+	// canceled (the manager stamps the same status) and the failure
+	// notification policy stays quiet, because the user just asked for
+	// the stop.
+	if errors.Is(ctx.Err(), context.Canceled) &&
+		result.Status != automations.RunCompleted {
+		result.Status = automations.RunCanceled
+		result.Error = ""
+	}
 	output := automationOutput(res)
-	notify := !suppressAutomationNotify(task, result.Status, errText)
+	notify := !suppressAutomationNotify(task, result.Status, result.Error)
 	if current {
 		requestID, responseID := run.FinishedIDs()
 		end := core.NewTurnEnd(

@@ -52,12 +52,21 @@ type Manager struct {
 	pending    []string
 	pendingSet map[string]bool
 	running    map[string]bool
+	active     map[string]*activeRun
 	started    bool
 	stopped    bool
 	stopCh     chan struct{}
 	doneCh     chan struct{}
 	ctx        context.Context
 	cancel     context.CancelFunc
+}
+
+// activeRun is one in-flight run: the cancel func of the context its
+// run function executes under, plus whether the user asked for the
+// stop. A run leaves the map when its function returns.
+type activeRun struct {
+	cancel   context.CancelFunc
+	canceled bool
 }
 
 // NewManager builds a scheduler over store. Run is required.
@@ -90,6 +99,7 @@ func NewManager(store *Store, opts ManagerOptions) (*Manager, error) {
 		onRun:      opts.OnRun,
 		pendingSet: make(map[string]bool),
 		running:    make(map[string]bool),
+		active:     make(map[string]*activeRun),
 	}, nil
 }
 
@@ -197,6 +207,24 @@ func (m *Manager) Discard(taskID string) {
 			break
 		}
 	}
+}
+
+// CancelRun stops one in-flight run. Cancellation travels through the
+// run function's context — the desktop runner waits on the live turn
+// with that context, so the turn settles through its normal path — and
+// the record ends as RunCanceled. It reports an error when the run is
+// not active on this manager (already settled, or never started).
+func (m *Manager) CancelRun(runID string) error {
+	m.mu.Lock()
+	entry := m.active[runID]
+	if entry == nil {
+		m.mu.Unlock()
+		return fmt.Errorf("automations: run %q is not active", runID)
+	}
+	entry.canceled = true
+	m.mu.Unlock()
+	entry.cancel()
+	return nil
 }
 
 // Tick scans every enabled task once: due tasks within the window are
@@ -337,8 +365,17 @@ func (m *Manager) run(ctx context.Context, taskID string) {
 	// instead of showing whatever shape the cancellation took.
 	timeout := task.TimeoutDuration()
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
+	m.mu.Lock()
+	m.active[run.ID] = &activeRun{cancel: cancel}
+	m.mu.Unlock()
+
 	res, runErr := m.runFn(runCtx, task)
 	timedOut := errors.Is(runCtx.Err(), context.DeadlineExceeded)
+	m.mu.Lock()
+	entry := m.active[run.ID]
+	canceled := entry != nil && entry.canceled
+	delete(m.active, run.ID)
+	m.mu.Unlock()
 	cancel()
 
 	run.Status = RunFailed
@@ -348,9 +385,19 @@ func (m *Manager) run(ctx context.Context, taskID string) {
 	if runErr != nil {
 		res.Error = runErr.Error()
 	}
-	if timedOut && run.Status != RunCompleted {
+	switch {
+	case run.Status == RunCompleted:
+		// A run that reached completion keeps that record, whatever
+		// else raced with it.
+	case timedOut:
 		run.Status = RunTimeout
 		res.Error = fmt.Sprintf("run timed out after %s", FormatTimeout(timeout))
+	case canceled:
+		run.Status = RunCanceled
+		// A deliberate stop is not a failure: drop the shape the
+		// cancellation took (context canceled, an aborted stream, an
+		// interrupt) so the record reads as what the user did.
+		res.Error = ""
 	}
 	run.Error = res.Error
 	run.DurationMs = m.now().Sub(at).Milliseconds()

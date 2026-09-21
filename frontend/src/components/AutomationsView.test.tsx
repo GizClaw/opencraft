@@ -6,6 +6,7 @@ import { AutomationsView } from './AutomationsView';
 const apiMock = vi.hoisted(() => ({
   saveAutomation: vi.fn(),
   runAutomationNow: vi.fn(),
+  cancelAutomationRun: vi.fn(),
   deleteAutomation: vi.fn(),
   automationSessions: vi.fn(),
   automationRuns: vi.fn(),
@@ -107,5 +108,31 @@ describe('AutomationsView', () => {
     expect(badge.className).toContain('text-warn');
     expect(screen.getByText(/timed out after 30m/)).toBeInTheDocument();
     expect(screen.getByText(/1800\.0s/)).toBeInTheDocument();
+  });
+
+  it('cancels a live run from its history row', async () => {
+    apiMock.automationRuns.mockResolvedValue([
+      {
+        id: 'run-1',
+        task_id: 't-1',
+        at: '2026-09-21T09:00:00Z',
+        status: 'running',
+        error: '',
+        conversation_id: 's-1',
+        run_id: 'r-1',
+        duration_ms: 0,
+        summary: '',
+      },
+    ]);
+    apiMock.cancelAutomationRun.mockResolvedValue(undefined);
+    render(<AutomationsView />);
+    fireEvent.click(screen.getByText('Daily brief'));
+
+    // Only a live run offers the stop: the action is the user's answer
+    // to a run that is still going.
+    fireEvent.click(await screen.findByText('Cancel run'));
+    await waitFor(() =>
+      expect(apiMock.cancelAutomationRun).toHaveBeenCalledWith('run-1'),
+    );
   });
 });

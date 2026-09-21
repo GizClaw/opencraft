@@ -468,6 +468,135 @@ func TestManagerTickSkipsDueTaskWhileRunning(t *testing.T) {
 	}
 }
 
+// TestManagerCancelRunMarksCanceledAndFreesSlot pins the user-cancel
+// path: CancelRun stops the live run through its context, the record
+// ends as canceled instead of carrying the shape the cancellation took,
+// and the freed slot lets the task queued behind it start.
+func TestManagerCancelRunMarksCanceledAndFreesSlot(t *testing.T) {
+	ctx := context.Background()
+	_, store := newUserStore(t)
+	first := saveDailyTask(t, store, "held")
+	second := saveDailyTask(t, store, "behind")
+
+	started := make(chan struct{})
+	secondStarted := make(chan struct{})
+	m, err := NewManager(store, ManagerOptions{
+		Run: func(runCtx context.Context, task Task) (RunResult, error) {
+			if task.ID == first.ID {
+				close(started)
+				<-runCtx.Done()
+				return RunResult{
+					Status: RunFailed,
+					Error:  runCtx.Err().Error(),
+				}, nil
+			}
+			close(secondStarted)
+			return RunResult{Status: RunCompleted}, nil
+		},
+		Now:    func() time.Time { return time.Now() },
+		Limit:  1,
+		Window: time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RunNow(first.ID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the held run never started")
+	}
+	if err := m.RunNow(second.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	runID := waitForLiveRunID(ctx, t, store, first.ID)
+	if err := m.CancelRun(runID); err != nil {
+		t.Fatalf("cancel run: %v", err)
+	}
+	runs, err := waitForRuns(ctx, t, store, first.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runs[0].Status != RunCanceled {
+		t.Fatalf("run status = %q (error %q), want %q",
+			runs[0].Status, runs[0].Error, RunCanceled)
+	}
+	if runs[0].Error != "" {
+		t.Fatalf("run error = %q, want the cancellation shape dropped",
+			runs[0].Error)
+	}
+	// The slot came back: with Limit 1 the queued task can only start
+	// once the canceled run settled.
+	select {
+	case <-secondStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the queued task never started after the cancel")
+	}
+	secondRuns, err := waitForRuns(ctx, t, store, second.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if secondRuns[0].Status != RunCompleted {
+		t.Fatalf("queued task status = %q, want completed",
+			secondRuns[0].Status)
+	}
+}
+
+// TestManagerCancelRunRejectsInactiveRun: a cancel aimed at a run that
+// is not live on this manager reports an error instead of silently
+// doing nothing (the run may have settled a moment earlier).
+func TestManagerCancelRunRejectsInactiveRun(t *testing.T) {
+	ctx := context.Background()
+	m, store, _ := newTestManager(t,
+		func(context.Context, Task) (RunResult, error) {
+			return RunResult{Status: RunCompleted}, nil
+		})
+	if err := m.CancelRun("run_missing"); err == nil {
+		t.Fatal("canceling an unknown run succeeded")
+	}
+	task := saveDailyTask(t, store, "quick")
+	if err := m.RunNow(task.ID); err != nil {
+		t.Fatal(err)
+	}
+	runs, err := waitForRuns(ctx, t, store, task.ID, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runs[0].Status != RunCompleted {
+		t.Fatalf("run status = %q, want completed", runs[0].Status)
+	}
+	if err := m.CancelRun(runs[0].ID); err == nil {
+		t.Fatal("canceling a finished run succeeded")
+	}
+}
+
+// waitForLiveRunID polls one task's history until a run is recorded as
+// running and returns that run's id.
+func waitForLiveRunID(
+	ctx context.Context, t *testing.T, store *Store, taskID string,
+) string {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		runs, err := store.ListRuns(ctx, taskID)
+		if err != nil {
+			t.Fatalf("list runs for %s: %v", taskID, err)
+		}
+		for _, run := range runs {
+			if run.Status == RunRunning {
+				return run.ID
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("task %s has no live run (%+v)", taskID, runs)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 // waitForRuns polls one task's run history until it holds count settled
 // records (nothing left "running").
 func waitForRuns(

@@ -1187,6 +1187,7 @@
     "enabled": "启用",
     "next": "下次",
     "runNow": "立即运行",
+    "cancelRun": "取消本次运行",
     "more": "更多操作",
     "pause": "暂停",
     "resume": "启用",
