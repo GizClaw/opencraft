@@ -383,6 +383,12 @@ export const api = {
       path: string;
       bytes: number;
     }>,
+  // perfProbe is the diagnostics-tab switch for the renderer-side
+  // sampler: dom_nodes, frame gaps, stream-flush timings and the loaded
+  // transcript size, reported every 30s as `frontend rum:` log lines and
+  // frontend.* metrics.
+  perfProbe: () => Diagnostics.PerfProbe() as unknown as Promise<boolean>,
+  setPerfProbe: (enabled: boolean) => Diagnostics.SetPerfProbe(enabled),
   clearCaches: () =>
     Diagnostics.ClearCaches() as unknown as Promise<CacheClearResult>,
   repairConfigCompat: () =>

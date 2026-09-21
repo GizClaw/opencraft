@@ -1,4 +1,5 @@
 import { useRef, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { MOTION, useOverlayLayer, usePresence } from '../../lib/overlay';
 
 // Overlay is the shell every window-level surface shares: the scrim, the
@@ -50,6 +51,20 @@ export function Overlay({
   lock = true,
   restoreFocus = true,
   exitMs = MOTION.fast,
+  /**
+   * Render into document.body instead of where the caller sits. A
+   * dialog opened from inside another surface (a tool dialog inside the
+   * settings dialog) is otherwise clipped by that surface's overflow and
+   * inherits its transforms.
+   */
+  portal = false,
+  /**
+   * Play the enter/exit animation. Turn it off for content that measures
+   * itself: recharts reads its container's on-screen rectangle every
+   * frame, so an animated (transformed) panel looks like a scale change
+   * on every frame and dispatches on each one.
+   */
+  motion = true,
   role = 'dialog',
   ariaLabel,
   ariaLabelledBy,
@@ -65,6 +80,8 @@ export function Overlay({
   lock?: boolean;
   restoreFocus?: boolean;
   exitMs?: number;
+  portal?: boolean;
+  motion?: boolean;
   role?: 'dialog' | 'alertdialog' | 'none';
   ariaLabel?: string;
   ariaLabelledBy?: string;
@@ -74,7 +91,7 @@ export function Overlay({
 }) {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const pressRef = useRef(false);
-  const { mounted, closing } = usePresence(open, exitMs);
+  const { mounted, closing } = usePresence(open, motion ? exitMs : 0);
   useOverlayLayer({
     active: open,
     containerRef: panelRef,
@@ -93,7 +110,7 @@ export function Overlay({
   // click on the scrim.
   const pressedInside = pressRef.current;
 
-  return (
+  const surface = (
     <div
       className={`fixed inset-0 z-[var(--oc-z-overlay)] ${PLACEMENT[variant]} ${
         scrim
@@ -115,10 +132,11 @@ export function Overlay({
         aria-modal={role === 'none' ? undefined : true}
         aria-label={ariaLabel}
         aria-labelledby={ariaLabelledBy}
-        className={`${closing ? leave : enter} ${panelClassName}`}
+        className={`${motion ? (closing ? leave : enter) : ''} ${panelClassName}`}
       >
         {children}
       </div>
     </div>
   );
+  return portal ? createPortal(surface, document.body) : surface;
 }

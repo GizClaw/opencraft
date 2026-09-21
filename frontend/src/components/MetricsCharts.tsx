@@ -13,7 +13,12 @@ import {
 import * as Diagnostics from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/diagnostics';
 import { RefreshControl } from './RefreshControl';
 import { CHART_AXIS, CHART_GRID, SERIES } from '../lib/chartPalette';
-import { formatCompact } from '../lib/compactNumber';
+import { formatMetricSample } from '../lib/metricFormat';
+import {
+  downsample,
+  type MetricAggregate,
+  type MetricRow,
+} from '../lib/metricSeries';
 
 interface MetricPoint {
   ts: number;
@@ -23,8 +28,12 @@ interface MetricPoint {
 
 interface MetricDef {
   name: string;
-  section: 'turn' | 'frontend' | 'memory' | 'gc';
+  section: 'turn' | 'frontend' | 'probe' | 'memory' | 'gc';
   unit: string;
+  // How samples fold when a range has more points than the chart draws.
+  // A running value must stay a value the page actually had ('last'), a
+  // per-event measurement averages, a worst-of-window takes the max.
+  aggregate: MetricAggregate;
   split?: string;
 }
 
@@ -38,75 +47,163 @@ const RANGES: { key: RangeKey; ms: number | null; labelKey: string }[] = [
 ];
 
 const METRICS: MetricDef[] = [
-  { name: 'turn.duration_ms', section: 'turn', unit: 'ms', split: 'status' },
-  { name: 'desktop.startup_ms', section: 'turn', unit: 'ms' },
-  { name: 'frontend.lcp', section: 'frontend', unit: 'ms' },
-  { name: 'frontend.inp', section: 'frontend', unit: 'ms' },
-  { name: 'frontend.fid', section: 'frontend', unit: 'ms' },
-  { name: 'frontend.ttfb', section: 'frontend', unit: 'ms' },
-  { name: 'frontend.dom_content_loaded', section: 'frontend', unit: 'ms' },
-  { name: 'frontend.load', section: 'frontend', unit: 'ms' },
-  { name: 'frontend.cls', section: 'frontend', unit: '' },
-  { name: 'go.mem.heap_alloc', section: 'memory', unit: 'B' },
-  { name: 'go.mem.heap_sys', section: 'memory', unit: 'B' },
-  { name: 'go.mem.heap_objects', section: 'memory', unit: '' },
-  { name: 'go.mem.alloc_bytes', section: 'memory', unit: 'B' },
-  { name: 'go.mem.alloc_ops', section: 'memory', unit: '' },
-  { name: 'go.gc.count', section: 'gc', unit: '' },
-  { name: 'go.gc.pause_total_ms', section: 'gc', unit: 'ms' },
-  { name: 'go.runtime.goroutines', section: 'gc', unit: '' },
+  {
+    name: 'turn.duration_ms',
+    section: 'turn',
+    unit: 'ms',
+    aggregate: 'mean',
+    split: 'status',
+  },
+  {
+    name: 'desktop.startup_ms',
+    section: 'turn',
+    unit: 'ms',
+    aggregate: 'mean',
+  },
+  // Web-vitals series are running values: LCP is the largest paint so far
+  // (in an SPA a later, bigger element keeps raising it), INP the worst
+  // interaction so far, CLS the shift accumulated since load, FID the one
+  // first input of the session. Their samples are states, not events.
+  { name: 'frontend.lcp', section: 'frontend', unit: 'ms', aggregate: 'last' },
+  { name: 'frontend.inp', section: 'frontend', unit: 'ms', aggregate: 'last' },
+  { name: 'frontend.fid', section: 'frontend', unit: 'ms', aggregate: 'last' },
+  { name: 'frontend.cls', section: 'frontend', unit: '', aggregate: 'last' },
+  // One sample per page load, so a bucket holds a handful of real
+  // measurements rather than a running state.
+  {
+    name: 'frontend.dom_content_loaded',
+    section: 'frontend',
+    unit: 'ms',
+    aggregate: 'mean',
+  },
+  {
+    name: 'frontend.load',
+    section: 'frontend',
+    unit: 'ms',
+    aggregate: 'mean',
+  },
+  // The renderer probe (Diagnostics > DEV tools) reports once per 30s
+  // window: two gauges taken at the moment of the report, a frame count for
+  // the window, and the worst values inside it.
+  {
+    name: 'frontend.dom_nodes',
+    section: 'probe',
+    unit: '',
+    aggregate: 'last',
+  },
+  {
+    name: 'frontend.conv_messages',
+    section: 'probe',
+    unit: '',
+    aggregate: 'last',
+  },
+  { name: 'frontend.frames', section: 'probe', unit: '', aggregate: 'mean' },
+  {
+    name: 'frontend.frame_max',
+    section: 'probe',
+    unit: 'ms',
+    aggregate: 'max',
+  },
+  {
+    name: 'frontend.flush_p50',
+    section: 'probe',
+    unit: 'ms',
+    aggregate: 'mean',
+  },
+  {
+    name: 'frontend.flush_p95',
+    section: 'probe',
+    unit: 'ms',
+    aggregate: 'mean',
+  },
+  {
+    name: 'frontend.flush_max',
+    section: 'probe',
+    unit: 'ms',
+    aggregate: 'max',
+  },
+  {
+    name: 'frontend.flush_count',
+    section: 'probe',
+    unit: '',
+    aggregate: 'sum',
+  },
+  {
+    name: 'frontend.long_task_max',
+    section: 'probe',
+    unit: 'ms',
+    aggregate: 'max',
+  },
+  {
+    name: 'frontend.long_tasks',
+    section: 'probe',
+    unit: '',
+    aggregate: 'sum',
+  },
+  {
+    name: 'go.mem.heap_alloc',
+    section: 'memory',
+    unit: 'B',
+    aggregate: 'last',
+  },
+  { name: 'go.mem.heap_sys', section: 'memory', unit: 'B', aggregate: 'last' },
+  {
+    name: 'go.mem.heap_objects',
+    section: 'memory',
+    unit: '',
+    aggregate: 'last',
+  },
+  {
+    name: 'go.mem.alloc_bytes',
+    section: 'memory',
+    unit: 'B',
+    aggregate: 'last',
+  },
+  { name: 'go.mem.alloc_ops', section: 'memory', unit: '', aggregate: 'last' },
+  { name: 'go.gc.count', section: 'gc', unit: '', aggregate: 'last' },
+  {
+    name: 'go.gc.pause_total_ms',
+    section: 'gc',
+    unit: 'ms',
+    aggregate: 'last',
+  },
+  {
+    name: 'go.runtime.goroutines',
+    section: 'gc',
+    unit: '',
+    aggregate: 'last',
+  },
 ];
 
 const SECTIONS: {
   key: MetricDef['section'];
   labelKey: string;
+  hintKey?: string;
 }[] = [
   { key: 'turn', labelKey: 'config.metricsSectionTurn' },
-  { key: 'frontend', labelKey: 'config.metricsSectionFrontend' },
+  {
+    key: 'frontend',
+    labelKey: 'config.metricsSectionFrontend',
+    hintKey: 'config.metricsSectionFrontendHint',
+  },
+  {
+    key: 'probe',
+    labelKey: 'config.metricsSectionProbe',
+    hintKey: 'config.metricsSectionProbeHint',
+  },
   { key: 'memory', labelKey: 'config.metricsSectionMemory' },
   { key: 'gc', labelKey: 'config.metricsSectionGC' },
 ];
 
 const COLORS = SERIES;
 
-function compactNumber(value: number): string {
-  return formatCompact(value);
-}
-
-function fmtBytes(value: number): string {
-  if (value >= 1024 ** 3) return `${(value / 1024 ** 3).toFixed(1)} GB`;
-  if (value >= 1024 ** 2) return `${(value / 1024 ** 2).toFixed(1)} MB`;
-  if (value >= 1024) return `${(value / 1024).toFixed(1)} KB`;
-  return `${value} B`;
-}
-
-function fmtAxisValue(value: number, unit: string): string {
-  return unit === 'B' ? fmtBytes(value) : compactNumber(value);
-}
-
-interface Row {
-  ts: number;
-  [series: string]: number;
-}
-
-function downsample(rows: Row[], maxPoints: number): Row[] {
-  if (rows.length <= maxPoints) return rows;
-  const chunk = Math.ceil(rows.length / maxPoints);
-  const out: Row[] = [];
-  for (let i = 0; i < rows.length; i += chunk) {
-    const part = rows.slice(i, i + chunk);
-    const merged: Row = { ts: part[0].ts };
-    for (const series of Object.keys(part[0])) {
-      if (series === 'ts') continue;
-      merged[series] =
-        part.reduce((sum, row) => sum + (row[series] ?? 0), 0) / part.length;
-    }
-    out.push(merged);
-  }
-  return out;
-}
-
-export function MetricsCharts() {
+// showHeading is off when the charts are rendered inside a dialog that
+// already carries the title.
+export function MetricsCharts({
+  showHeading = true,
+}: {
+  showHeading?: boolean;
+}) {
   const { t } = useTranslation();
   const [range, setRange] = useState<RangeKey>('24h');
   const [pointsByMetric, setPointsByMetric] = useState<
@@ -193,16 +290,16 @@ export function MetricsCharts() {
           ),
         )
       : [];
-    const rows: Row[] = points.map((p) => {
+    const rows: MetricRow[] = points.map((p) => {
       const key = def.split ? (p.attrs?.[def.split!] ?? 'unknown') : 'value';
-      return { ts: p.ts, [key]: p.value } as Row;
+      return { ts: p.ts, [key]: p.value } as MetricRow;
     });
     const seriesKeys = def.split
       ? splitValues.length > 0
         ? splitValues
         : ['value']
       : ['value'];
-    const chartRows = downsample(rows, 400);
+    const chartRows = downsample(rows, 400, def.aggregate);
 
     return (
       <div
@@ -234,7 +331,7 @@ export function MetricsCharts() {
                   minTickGap={24}
                 />
                 <YAxis
-                  tickFormatter={(v: number) => fmtAxisValue(v, def.unit)}
+                  tickFormatter={(v: number) => formatMetricSample(v, def.unit)}
                   tick={{ fontSize: '0.7143rem', fill: CHART_AXIS }}
                   width={52}
                 />
@@ -244,9 +341,7 @@ export function MetricsCharts() {
                     const num =
                       typeof value === 'number' ? value : Number(value ?? 0);
                     return [
-                      def.unit === 'B'
-                        ? fmtBytes(num)
-                        : `${fmtAxisValue(num, def.unit)} ${def.unit}`.trim(),
+                      formatMetricSample(num, def.unit),
                       String(name ?? ''),
                     ];
                   }}
@@ -279,10 +374,14 @@ export function MetricsCharts() {
   return (
     <div className="space-y-3 border-t border-edge pt-3">
       <div className="flex items-center justify-between gap-2">
-        <div>
-          <p className="text-sm text-fg">{t('config.metricsTitle')}</p>
+        {showHeading ? (
+          <div>
+            <p className="text-sm text-fg">{t('config.metricsTitle')}</p>
+            <p className="text-xs text-dim">{t('config.metricsHint')}</p>
+          </div>
+        ) : (
           <p className="text-xs text-dim">{t('config.metricsHint')}</p>
-        </div>
+        )}
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1">
             {RANGES.map((r) => (
@@ -324,6 +423,9 @@ export function MetricsCharts() {
                 <p className="text-xs font-medium text-dim">
                   {t(section.labelKey)}
                 </p>
+                {section.hintKey && (
+                  <p className="text-micro text-faint">{t(section.hintKey)}</p>
+                )}
                 <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
                   {defs.map(renderMetric)}
                 </div>
