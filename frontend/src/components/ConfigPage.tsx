@@ -36,6 +36,7 @@ import { LogViewer } from './LogViewer';
 import { MetricsCharts } from './MetricsCharts';
 import { PathEnvironmentCard } from './PathEnvironmentCard';
 import { ExecPoolCard } from './ExecPoolCard';
+import { RecoveryCard } from './RecoveryCard';
 import { HeapProfileCard } from './HeapProfileCard';
 import { PerfProbeCard } from './PerfProbeCard';
 import { PetBehaviorPanel } from './PetBehaviorPanel';
@@ -3109,6 +3110,14 @@ export function ConfigPage() {
                     })}
                   </p>
                 )}
+              </DiagSection>
+
+              <DiagSection
+                id="settings-diag-recovery"
+                title={t('config.diagRecoveryTitle')}
+                hint={t('config.diagRecoveryHint')}
+              >
+                <RecoveryCard />
               </DiagSection>
 
               <DiagSection

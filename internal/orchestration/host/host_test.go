@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestStorePoolSharesPerRoot(t *testing.T) {
@@ -91,5 +92,43 @@ func TestAcquireStoreAdoptsLegacyProjectSessions(t *testing.T) {
 	}
 	if _, err := os.Stat(legacyRoot); !os.IsNotExist(err) {
 		t.Fatalf("legacy sessions root still present: %v", err)
+	}
+}
+
+// TestManagerRecoveryClaimSharesOnePassPerRoot pins the contract the
+// recovery pass runs under: one scan per session root per process, and
+// the Host a runtime reload assembles afterwards reports the pass its
+// predecessor ran instead of claiming none happened.
+func TestManagerRecoveryClaimSharesOnePassPerRoot(t *testing.T) {
+	m := NewManager(t.TempDir())
+
+	report, owed := m.claimRecovery("/sessions")
+	if !owed {
+		t.Fatalf("first claim declined the pass: %+v", report)
+	}
+	if !report.At.IsZero() {
+		t.Fatalf("first claim carried a finished report: %+v", report)
+	}
+	if report, owed := m.claimRecovery("/sessions"); owed {
+		t.Fatalf("second claim owed a pass: %+v", report)
+	}
+	if _, owed := m.claimRecovery("/other"); !owed {
+		t.Fatal("a different session root was not claimed")
+	}
+
+	want := RecoveryReport{
+		At:        time.Now().UTC(),
+		Recovered: 2,
+		Archived:  1,
+		Failed:    1,
+	}
+	m.recordRecovery("/sessions", want)
+	got, owed := m.claimRecovery("/sessions")
+	if owed {
+		t.Fatal("a recorded root still owed a pass")
+	}
+	if !got.At.Equal(want.At) || got.Recovered != want.Recovered ||
+		got.Archived != want.Archived || got.Failed != want.Failed {
+		t.Fatalf("claim after record = %+v, want %+v", got, want)
 	}
 }

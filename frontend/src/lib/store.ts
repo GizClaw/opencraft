@@ -826,6 +826,11 @@ export function friendlyInterruption(cause?: string): string | null {
       return i18n.t('chat.cancelled');
     case 'user_input':
       return i18n.t('chat.interruptedUserInput');
+    case 'app_restart':
+      // The only cause the engine cannot classify itself: the process
+      // was gone before it could, so the turn came back as an archived
+      // interrupted one on the next assembly (host/recover.go).
+      return i18n.t('chat.interruptedAppRestart');
     case undefined:
     case '':
       // The engine's zero cause ("unknown") renders as empty.

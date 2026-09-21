@@ -864,6 +864,34 @@ export interface PathEnvironment {
   reloaded: boolean;
 }
 
+/**
+ * Recovery is the diagnostics view of crash recovery: what the last pass
+ * did for the active workspace (see internal/orchestration/host/recover.go)
+ * and how many run checkpoints its store is holding now. A turn drops its
+ * checkpoint once it is archived, so rows left behind are a live run or a
+ * turn the next assembly has to reconstruct.
+ */
+export interface Recovery {
+  /** The workspace whose store these numbers came from. */
+  workspace?: string;
+  /** Whether an assembly ran a pass in this process. */
+  ran: boolean;
+  /** When that pass ran (RFC3339). */
+  at?: string;
+  recovered: number;
+  archived: number;
+  discarded: number;
+  skipped_live: number;
+  failed: number;
+  pending: number;
+  /** Every row of the checkpoint table. */
+  checkpoint_rows: number;
+  /** The assistant-run subset the pass examines. */
+  checkpoint_runs: number;
+  /** Encoded size of those rows. */
+  checkpoint_bytes: number;
+}
+
 export interface DiagnosticsReport {
   version: string;
   go_version: string;

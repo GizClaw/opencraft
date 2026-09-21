@@ -214,7 +214,13 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 	if err != nil {
 		return nil, fmt.Errorf("host: open session: %w", err)
 	}
-	optsList := []coresession.StartOption{coresession.WithEphemeral()}
+	// Sessions are persistent so the engine writes one checkpoint per
+	// completed wave: that is the crash-recovery log the next assembly
+	// replays when a turn was never archived (see recover.go). With
+	// runtime.sessions.resume=false the only difference to an ephemeral
+	// session is exactly those writes — board seeding, parking and
+	// Resume all stay off.
+	var optsList []coresession.StartOption
 	if opts.Sink != nil {
 		sink := h.observeSink(opts.Sink)
 		queue := opts.QueueSize
@@ -247,11 +253,13 @@ func (h *Host) StartRun(ctx context.Context, opts RunOptions) (*Run, error) {
 	if exts := h.hostedWebSearchExtensions(ctx, ctrl.Runtime()); len(exts) > 0 {
 		inputs["llm_extensions"] = exts
 	}
-	turn, err := lease.Session().StartWithOptions(ctx, agent.Request{
+	request := agent.Request{
 		ContextID: contextID,
 		Message:   opts.Message,
 		Inputs:    inputs,
-	}, optsList...)
+	}
+	request.Attributes = recoveryRequestAttributes(request)
+	turn, err := lease.Session().StartWithOptions(ctx, request, optsList...)
 	if err != nil {
 		telemetry.WarnErr(ctx, "host: close session lease after start failure",
 			lease.Close())
@@ -545,6 +553,12 @@ func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {
 					class.InterruptCause, class.ErrorKind,
 					requestID, responseID))
 		}
+		// The archive row written above (or by the turn's own
+		// committer/observer) is the durable record of this turn; the
+		// per-wave checkpoints were only the crash log. A turn whose
+		// archive write did not land keeps them, so the next assembly
+		// can reconstruct it as an interrupted turn.
+		host.dropRunCheckpoint(persistCtx, detail.contextID, r.RunID())
 		host.persistTurnUsage(
 			persistCtx, detail.contextID, usageDeltas, turnUsage)
 		host.recordTurnEnd(
@@ -726,6 +740,7 @@ func (h *Host) DeleteConversation(ctx context.Context, id string) error {
 		h.clearDeleting(conv)
 		return fmt.Errorf("host: remove session %q: %w", id, err)
 	}
+	h.deleteConversationCheckpoints(ctx, id)
 	h.mu.Lock()
 	h.deleted[conv] = true
 	delete(h.deleting, conv)
