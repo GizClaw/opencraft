@@ -180,6 +180,7 @@ describe('store: send and stream', () => {
     expect(apiMock.startTurn).toHaveBeenCalledWith(
       's-1',
       expect.objectContaining({ role: 'user' }),
+      '/tmp/w',
     );
   });
 
@@ -260,6 +261,34 @@ describe('store: send and stream', () => {
     ).toMatchObject({ role: 'user', text: 'staged' });
     expect(useStore.getState().runConvs['r-new']).toBe('s-1');
     expect(actorValue('s-1')?.turn).toBe('running');
+  });
+
+  it('drains a staged draft into the workspace that owns the conversation', async () => {
+    const actor = stateRoot.registry.get('s-1');
+    actor?.send({ type: 'SEND_STARTED' });
+    actor?.send({ type: 'RUN_STARTED', runID: 'r-old' });
+    expect(useStore.getState().queueInput('staged elsewhere')).toBe(true);
+
+    // The user switched to another workspace while the queued turn was
+    // still running: the drain must keep targeting the conversation's
+    // own workspace instead of the one now on screen, otherwise the
+    // start lands in the wrong workspace's session store.
+    useStore.setState({ workspace: '/tmp/other' });
+    useStore.getState().handleEvent({
+      type: 'turn_end',
+      data: {
+        run_id: 'r-old',
+        conversation_id: 's-1',
+        status: 'completed',
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(apiMock.startTurn).toHaveBeenCalledWith(
+      's-1',
+      expect.objectContaining({ role: 'user' }),
+      '/tmp/w',
+    );
   });
 
   it('an Enter during starting fires the draft when the run starts', async () => {
@@ -1737,6 +1766,7 @@ describe('store: first-message workspace attribution', () => {
     expect(apiMock.startTurn).toHaveBeenCalledWith(
       's-new',
       expect.objectContaining({ role: 'user' }),
+      '/tmp/w',
     );
     expect(stateRoot.focusSnapshot.value).toBe('active');
     expect(stateRoot.focusSnapshot.context.sessionID).toBe('s-new');
@@ -1811,6 +1841,7 @@ describe('store: first-message workspace attribution', () => {
     expect(apiMock.startTurn).toHaveBeenCalledWith(
       's-new',
       expect.objectContaining({ role: 'user' }),
+      '/tmp/b',
     );
     expect(stateRoot.focusSnapshot.value).toBe('active');
     const conv = useStore.getState().conversations['s-new'];

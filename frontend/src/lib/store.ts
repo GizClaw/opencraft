@@ -1375,6 +1375,13 @@ export const useStore = create<StoreState>((set, get) => {
     attachments: AttachmentView[] = [],
   ) => {
     const conv = get().conversations[convID];
+    // The turn belongs to the workspace that owns the conversation,
+    // not to the one on screen: a Tab/Enter draft drains on the
+    // terminal event of the turn it waited for, which can land long
+    // after the user switched workspaces. The actor records the
+    // workspace the conversation was opened in; a conversation without
+    // one is being minted right here, so the active workspace owns it.
+    const workspace = stateRoot.workspaceOf(convID) || get().workspace;
     const requestedAt = new Date().toISOString();
     // Keep existing turn strips that still own messages in the new
     // transcript, then open a new live turn entry at the user message
@@ -1394,7 +1401,7 @@ export const useStore = create<StoreState>((set, get) => {
     });
     const startingActor = stateRoot.registry.ensure(convID, {
       workspaceGeneration: stateRoot.generation(),
-      workspace: get().workspace,
+      workspace,
     });
     startingActor?.send({ type: 'SEND_STARTED' });
     try {
@@ -1404,7 +1411,7 @@ export const useStore = create<StoreState>((set, get) => {
         parts.push(attachmentPart(att));
       }
       const wire: TurnMessage = { role: 'user', content: { parts } };
-      const start = await api.startTurn(convID, wire);
+      const start = await api.startTurn(convID, wire, workspace);
       const list = get().conversations[convID].turnArtifacts;
       const liveIdx = list.length - 1;
       const turnArtifacts =

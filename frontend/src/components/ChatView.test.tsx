@@ -294,6 +294,7 @@ describe('ChatView transcript windowing', () => {
           ],
         },
       }),
+      '/tmp/w',
     );
   });
 

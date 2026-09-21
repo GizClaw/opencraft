@@ -512,9 +512,14 @@ export const api = {
     Session.ImportBundle(path) as unknown as Promise<SessionImportDTO>,
   sessionMode: () => Conversation.SessionMode(),
   setSessionMode: (mode: string) => Conversation.SetSessionMode(mode),
-  startTurn: (contextID: string, msg: TurnMessage) =>
+  // workspace states which workspace owns the conversation. It is
+  // empty for the common case (the active workspace) and carries the
+  // owning path when a staged draft fires after a workspace switch,
+  // so the turn runs where its conversation lives.
+  startTurn: (contextID: string, msg: TurnMessage, workspace = '') =>
     Conversation.StartTurn({
       context_id: contextID,
+      workspace,
       message: msg,
     } as unknown as gen.StartTurnRequest) as unknown as Promise<TurnStart>,
   readAttachment: (path: string) =>

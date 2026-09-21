@@ -95,8 +95,7 @@ export function useFocusState(): FocusState {
 export function conversationWorkspace(
   conversationID: string,
 ): string | undefined {
-  const actor = stateRoot.registry.get(conversationID);
-  return actor?.getSnapshot().context.workspace as string | undefined;
+  return stateRoot.workspaceOf(conversationID);
 }
 
 export function useConversationState(

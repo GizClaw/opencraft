@@ -40,6 +40,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one-hour run timeout applied, so a long-running task can end as
   `timeout` where it used to run to completion. (#181)
 
+### Fixed
+
+- A staged draft (the Tab queue, or Enter pressed while the previous
+  send was still starting) runs in the workspace that owns its
+  conversation instead of the one on screen. The start used to resolve
+  its workspace from the active window, so a draft queued behind a
+  turn in another workspace was attached there as a brand-new session —
+  with that workspace's working directory and sandbox mode — and the
+  message never reached the conversation it was meant for. The start
+  request now carries the owning workspace, a workspace the window has
+  left is served by its own background Host (the UI's current Host is
+  never taken over), and a start for a conversation no store owns is
+  refused rather than minted somewhere.
+
 ## [0.5.3] - 2026-09-17
 
 ### Added

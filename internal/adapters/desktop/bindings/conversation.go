@@ -10,6 +10,8 @@ import (
 	"github.com/GizClaw/flowcraft/core/event"
 	"github.com/GizClaw/flowcraft/core/inference"
 	"github.com/GizClaw/flowcraft/core/message"
+	flowtelemetry "github.com/GizClaw/flowcraft/core/telemetry"
+	otellog "go.opentelemetry.io/otel/log"
 
 	"github.com/GizClaw/opencraft/internal/adapters/desktop/core"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
@@ -40,7 +42,14 @@ func NewConversationBinding(c *core.Core) *Conversation {
 
 // StartTurnRequest starts a user turn in an explicit conversation.
 type StartTurnRequest struct {
-	ContextID string          `json:"context_id"`
+	ContextID string `json:"context_id"`
+	// Workspace names the workspace that owns the conversation. The
+	// UI states it explicitly because a staged draft keeps firing
+	// after the window moved to another workspace (the Tab queue
+	// drains on the terminal event of the turn it waited for), and
+	// the turn has to run where its conversation lives. An empty value
+	// targets the active workspace, which is what a plain send does.
+	Workspace string          `json:"workspace,omitempty"`
 	Message   message.Message `json:"message"`
 }
 
@@ -57,15 +66,43 @@ type TurnStart struct {
 // call waits for the replacement Host and retries internally, so the
 // frontend never sees the transient lifecycle failure and never
 // re-sends the user message.
+//
+// The turn always runs in the workspace that owns the conversation:
+// a conversation the window has left is served by that workspace's
+// own (background) Host instead of whatever workspace happens to be
+// active. A start whose context id belongs to no workspace the target
+// store knows is refused instead of being attached there as a fresh
+// session.
 func (b *Conversation) StartTurn(
 	req StartTurnRequest,
 ) (TurnStart, error) {
 	ctx := b.core.Shell.Context()
-	workDir := b.core.ActiveWorkDir()
+	active := b.core.ActiveWorkDir()
+	workDir := strings.TrimSpace(req.Workspace)
+	if workDir == "" {
+		workDir = active
+	}
 	contextID := req.ContextID
 	if contextID == "" {
 		contextID = b.core.Conversation.New(workDir)
+	} else {
+		owner, err := b.resolveConversationWorkspace(
+			ctx, workDir, contextID,
+		)
+		if err != nil {
+			return TurnStart{}, err
+		}
+		if !core.SameWorkspace(owner, workDir) {
+			flowtelemetry.Warn(ctx, "conversation: start workspace corrected",
+				otellog.String("conversation.id", contextID),
+				otellog.String("workspace.stated", workDir),
+				otellog.String("workspace.owner", owner))
+			workDir = owner
+		}
 	}
+	// A background turn is one whose workspace is not the active one:
+	// it is routed to that workspace's Host without becoming current.
+	background := workDir != "" && !core.SameWorkspace(workDir, active)
 	requestedAt := time.Now().UTC()
 	sink := agent.StreamSinkFunc(func(
 		ctx context.Context,
@@ -100,20 +137,25 @@ func (b *Conversation) StartTurn(
 	// A Host rebuild can retire the current Host between the frontend
 	// send and StartRun. Those lifecycle guards run before any turn
 	// side effect, so wait for the replacement Host and retry inside
-	// this one RPC instead of surfacing the transient failure. A
-	// workspace switch during the wait aborts the retry: the
-	// conversation belongs to the original workspace.
+	// this one RPC instead of surfacing the transient failure. For an
+	// active-workspace turn a switch during the wait aborts the retry
+	// (the replacement Host would serve the new workspace); a
+	// background turn keeps its owner across switches, so it retries
+	// against that workspace's Host either way.
 	notReadyErr := fmt.Errorf("conversation: runtime is not ready")
 	deadline := time.Now().Add(startRetryWindow)
 	var lastErr error
 	for attempt := 0; attempt < maxStartAttempts; attempt++ {
-		h := b.core.Runtime.Current()
-		if h == nil {
+		h, hostErr := b.turnHost(ctx, workDir, background)
+		switch {
+		case hostErr != nil:
+			lastErr = hostErr
+		case h == nil:
 			lastErr = notReadyErr
 			if strings.TrimSpace(workDir) == "" {
 				return TurnStart{}, lastErr
 			}
-		} else {
+		default:
 			run, err := h.StartRun(ctx, opts)
 			if err == nil {
 				startedAt := time.Now().UTC()
@@ -134,16 +176,131 @@ func (b *Conversation) StartTurn(
 		}
 		if time.Now().After(deadline) ||
 			ctx.Err() != nil ||
-			b.core.ActiveWorkDir() != workDir {
+			(!background && !core.SameWorkspace(b.core.ActiveWorkDir(), active)) {
 			return TurnStart{}, lastErr
 		}
-		if err := b.core.Runtime.EnsureUsableHostWithin(
-			ctx, deadline, workDir, lastErr,
+		if err := b.ensureHostWithin(
+			ctx, deadline, workDir, background, lastErr,
 		); err != nil {
 			return TurnStart{}, err
 		}
 	}
 	return TurnStart{}, lastErr
+}
+
+// turnHost resolves the Host that serves one turn. Active workspaces
+// track the UI (the current Host, replaced when it retires); a
+// workspace the window has left is served by its own pooled Host.
+func (b *Conversation) turnHost(
+	ctx context.Context,
+	workDir string,
+	background bool,
+) (*host.Host, error) {
+	if !background {
+		return b.core.Runtime.Current(), nil
+	}
+	return b.core.Runtime.HostInWorkspace(ctx, workDir)
+}
+
+// ensureHostWithin waits for a usable Host inside the retry window,
+// using the active-workspace path for the window's workspace and the
+// background path for a workspace the UI has left.
+func (b *Conversation) ensureHostWithin(
+	ctx context.Context,
+	deadline time.Time,
+	workDir string,
+	background bool,
+	lastErr error,
+) error {
+	if background {
+		return b.core.Runtime.EnsureHostInWorkspaceWithin(
+			ctx, deadline, workDir, lastErr,
+		)
+	}
+	return b.core.Runtime.EnsureUsableHostWithin(ctx, deadline, workDir, lastErr)
+}
+
+// resolveConversationWorkspace returns the workspace that owns one
+// conversation. The stores are the only place ownership lives, and a
+// start that skipped this check would be attached as a brand-new
+// session in the stated workspace — which is how a queued draft aimed
+// at another workspace used to resurface as a stray session.
+//
+// A stale owner hint (the frontend's registry label can lag a
+// workspace switch) falls back to the active workspace when that
+// store does hold the conversation; a conversation neither store
+// knows is refused instead of being minted somewhere.
+func (b *Conversation) resolveConversationWorkspace(
+	ctx context.Context,
+	stated string,
+	contextID string,
+) (string, error) {
+	owned, err := b.workspaceHasConversation(ctx, stated, contextID)
+	if err != nil {
+		return "", err
+	}
+	if owned {
+		return stated, nil
+	}
+	if active := b.core.ActiveWorkDir(); !core.SameWorkspace(active, stated) {
+		if owned, err := b.workspaceHasConversation(
+			ctx, active, contextID,
+		); err == nil && owned {
+			return active, nil
+		}
+	}
+	return "", fmt.Errorf(
+		"conversation: session %q is not in workspace %q",
+		contextID, stated)
+}
+
+// workspaceHasConversation reports whether one workspace owns a
+// conversation, either as its just-minted current conversation (whose
+// first turn has nothing persisted yet) or as a stored session.
+func (b *Conversation) workspaceHasConversation(
+	ctx context.Context,
+	workDir string,
+	contextID string,
+) (bool, error) {
+	if strings.TrimSpace(workDir) == "" {
+		return false, nil
+	}
+	if b.core.Conversation.Current(workDir) == contextID {
+		return true, nil
+	}
+	store, release, err := b.workspaceSessions(ctx, workDir)
+	if err != nil {
+		return false, err
+	}
+	defer release()
+	return store.Exists(contextID), nil
+}
+
+// workspaceSessions returns a shared handle on one workspace's
+// session store: the live Host's own store when it serves that
+// workspace, the manager's pooled store otherwise. The handle is
+// released by the returned function.
+func (b *Conversation) workspaceSessions(
+	ctx context.Context,
+	workDir string,
+) (*sessions.Store, func(), error) {
+	if h := b.core.Runtime.Current(); h != nil && h.Sessions() != nil &&
+		core.SameWorkspace(h.WorkDir(), workDir) {
+		return h.Sessions(), func() {}, nil
+	}
+	mgr := b.core.Runtime.Manager()
+	if mgr == nil {
+		return nil, nil, errNotReady("conversation")
+	}
+	layout, err := b.core.ResolveLayout(workDir)
+	if err != nil {
+		return nil, nil, err
+	}
+	store, err := mgr.OpenSessions(ctx, workDir, layout, 40)
+	if err != nil {
+		return nil, nil, err
+	}
+	return store, func() { mgr.ReleaseSessions(store) }, nil
 }
 
 // waitTurn blocks until the run finishes and emits the terminal
