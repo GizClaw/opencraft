@@ -74,6 +74,8 @@ func TestHeadlessRunWritesFileViaToolCall(t *testing.T) {
 		ConfigDir: configDir,
 		Prompt:    "write out.txt",
 		Out:       &out,
+		// The state-root note is for the CLI, not for a test log.
+		Quiet: true,
 	})
 	if err != nil {
 		t.Fatalf("headless.Run: %v", err)
@@ -138,6 +140,7 @@ func TestHeadlessRunProviderFailureFailsClosed(t *testing.T) {
 		WorkDir:   workDir,
 		ConfigDir: configDir,
 		Prompt:    "hello",
+		Quiet:     true,
 	})
 	if err != nil {
 		t.Fatalf("headless.Run returned error, want a failed result: %v", err)

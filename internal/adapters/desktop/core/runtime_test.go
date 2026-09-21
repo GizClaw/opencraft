@@ -10,7 +10,7 @@ import (
 
 func TestRuntimeOpenUserDB(t *testing.T) {
 	dir := t.TempDir()
-	rt := NewRuntime(dir, dir)
+	rt := NewRuntime(dir, dir, "")
 	t.Cleanup(rt.Close)
 
 	if err := rt.OpenUserDB(context.Background()); err != nil {
@@ -29,7 +29,7 @@ func TestRuntimeOpenUserDB(t *testing.T) {
 
 func TestRuntimeRecordTurnUsagePersistsModelRows(t *testing.T) {
 	dir := t.TempDir()
-	rt := NewRuntime(dir, dir)
+	rt := NewRuntime(dir, dir, "")
 	t.Cleanup(rt.Close)
 
 	if err := rt.OpenUserDB(context.Background()); err != nil {

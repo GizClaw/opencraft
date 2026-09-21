@@ -46,7 +46,7 @@ agents:
           skills: skills
         settings:
           work_dir: ${ocraft:WORKDIR}
-          user_dir: ${ocraft:DATA_DIR}
+          user_dir: ${ocraft:APP_HOME}
           collaboration_mode: default
           # Optional personality overlay for the worldstate instruction
           # layer: "friendly" or "pragmatic". Empty keeps the neutral

@@ -160,12 +160,12 @@ resources:
     kind: opencraft.agentlifecycle
     impl: local
     settings:
-      dir: ${ocraft:DATA_DIR}/agents
+      dir: ${ocraft:APP_HOME}/agents
       # Assembly paths embedded into subagent prepare hooks: dynamic
       # registration expands agent settings without the builder's
       # resolver, so definitions carry the expanded values.
       work_dir: ${ocraft:WORKDIR}
-      user_dir: ${ocraft:DATA_DIR}
+      user_dir: ${ocraft:APP_HOME}
   tool.agentlifecycle:
     kind: tool.Source
     impl: opencraft/agentlifecycle

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	goruntime "runtime"
+	"strings"
 
 	coresandbox "github.com/GizClaw/flowcraft/core/sandbox"
 	"github.com/GizClaw/flowcraft/core/sandbox/bwrap"
@@ -74,20 +75,38 @@ func (s HostSandboxSettings) SandboxPolicy() SandboxPolicy {
 	return pol
 }
 
-// SandboxRunner builds the platform sandbox runner for the execd
-// child (seatbelt on macOS, bwrap on Linux, local elsewhere) against
-// the user-level cache directory.
+// SandboxRunner builds the platform sandbox runner for the execd child
+// (seatbelt on macOS, bwrap on Linux, local elsewhere) against the
+// global user-level cache directory. It is the fallback for a child
+// bound without a resolved cache root; the desktop and headless parents
+// always send one (SandboxPolicy.cache_dir).
 func SandboxRunner(
 	ctx context.Context,
 	workDir string,
 	pol SandboxPolicy,
 ) (coresandbox.Runner, coresandbox.EnvPolicy, error) {
-	dataDir, err := config.UserDataDir()
-	if err != nil {
-		return nil, coresandbox.EnvPolicy{}, err
+	return SandboxRunnerForCache(ctx, workDir, "", pol)
+}
+
+// SandboxRunnerForCache builds the platform sandbox runner against an
+// explicitly injected cache root: the parent resolves ${ocraft:CACHE}
+// from the state root it was launched with, so a dev-profile parent
+// cannot push the child into the installed app's cache. An empty
+// cacheDir falls back to the global user data root (SandboxRunner's
+// historical behaviour).
+func SandboxRunnerForCache(
+	ctx context.Context,
+	workDir, cacheDir string,
+	pol SandboxPolicy,
+) (coresandbox.Runner, coresandbox.EnvPolicy, error) {
+	if strings.TrimSpace(cacheDir) == "" {
+		dataDir, err := config.UserDataDir()
+		if err != nil {
+			return nil, coresandbox.EnvPolicy{}, err
+		}
+		cacheDir = filepath.Join(dataDir, "cache")
 	}
-	return SandboxRunnerWithCache(ctx, workDir,
-		filepath.Join(dataDir, "cache"), pol)
+	return SandboxRunnerWithCache(ctx, workDir, cacheDir, pol)
 }
 
 // SandboxRunnerWithCache builds the platform sandbox runner with an

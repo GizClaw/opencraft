@@ -25,7 +25,7 @@ resources:
     settings:
       id: keychain
       default: true
-      dir: ${ocraft:DATA_DIR}/keyring
+      dir: ${ocraft:APP_HOME}/keyring
 
   # ------------------------------------------------------------------
   # Runtime foundations: event bus, memory, session store
@@ -143,7 +143,7 @@ resources:
       plugin.host: plugin.host
     settings:
       enabled: true
-      user_dir: ${ocraft:DATA_DIR}
+      user_dir: ${ocraft:APP_HOME}
       top_n: 5
       min_score: 0
   # Mode-aware workspace for the file tools: in workspace mode it
@@ -169,7 +169,7 @@ resources:
     settings:
       # Staged skill copies live under the cache dir, which the exec
       # sandbox may write; file tools only need read access to it.
-      readonly_roots: ["${ocraft:DATA_DIR}/cache"]
+      readonly_roots: ["${ocraft:CACHE}"]
   # Network posture: exec sandbox mode (default = host networking) and
   # the web_fetch domain gate. exec.mode accepts default | deny-all |
   # allow-list | proxy; web_fetch.allow_private=false keeps the SSRF
@@ -196,7 +196,7 @@ resources:
     deps:
       plugin.host: plugin.host
     settings:
-      path: ${ocraft:DATA_DIR}/config/hooks.json
+      path: ${ocraft:APP_HOME}/config/hooks.json
   # Subagent hook observer: subscribes to delegation kanban events and
   # fires SubagentStart / SubagentStop hooks.
   hooks.observer:
@@ -215,6 +215,10 @@ resources:
     settings:
       root: ${ocraft:WORKDIR}
       writable_paths: ["${ocraft:CACHE}"]
+      # Sandbox scratch root the execd child creates and writes
+      # (Go build cache, tmp); it belongs to the state root, which the
+      # parent knows and the child must not resolve.
+      cache_dir: ${ocraft:CACHE}
       remote: true
       # Sandbox environment defaults to a curated allowlist (PATH,
       # HOME, locale, toolchain, opencraft path vars, ...), NOT the

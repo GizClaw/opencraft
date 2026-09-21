@@ -44,19 +44,29 @@ type Runtime struct {
 	ensureBackgroundHost func(context.Context, string) (*host.Host, error)
 }
 
-// NewRuntime creates the runtime service rooted at dataDir/userDir.
-func NewRuntime(dataDir, userDir string) *Runtime {
+// NewRuntime creates the runtime service rooted at the three launch
+// paths: dataDir (state root), userDir (config directory) and appHome
+// (shared content/credential root; empty follows the state root).
+func NewRuntime(dataDir, userDir, appHome string) *Runtime {
 	// The desktop app is the single composition root of this process
 	// (one Desktop -> one Core -> one Runtime), so one Manager per
 	// process is guaranteed structurally: main.go creates exactly one
-	// Desktop and Wails' SingleInstanceLock prevents a second process.
-	// If multi-window support is ever added, share this Runtime (and
-	// therefore this Manager) across windows instead of constructing
-	// a second one.
+	// Desktop and the single-instance lock (whose id derives from the
+	// state root, see config.ResolveLaunch) prevents a second process
+	// on the same root. If multi-window support is ever added, share
+	// this Runtime (and therefore this Manager) across windows instead
+	// of constructing a second one.
+	manager := host.NewManagerAt(dataDir, userDir)
+	if appHome != "" {
+		manager.SetAppHome(appHome)
+	}
+	// Name this process in the per-workspace lock files: the desktop is
+	// the GUI half of a workspace that headless runs may share.
+	manager.SetLeaseKind("gui")
 	r := &Runtime{
 		dataDir:        dataDir,
 		userDir:        userDir,
-		manager:        host.NewManagerAt(dataDir, userDir),
+		manager:        manager,
 		hostConfigured: make(map[*host.Host]bool),
 	}
 	r.ensureHost = r.EnsureUsableHost

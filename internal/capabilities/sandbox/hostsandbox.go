@@ -34,6 +34,7 @@ func (s HostSandboxSettings) execdPolicy() *execd.SandboxPolicy {
 		EnvAllow:      env.Allow,
 		EnvInject:     env.Inject,
 		EnvAllowSet:   env.Allow != nil,
+		CacheDir:      s.CacheDir,
 	}
 }
 
@@ -213,10 +214,15 @@ func (noopCloseRunner) Close() error { return nil }
 // resource (impl opencraft): the workspace root, sandbox backends, and
 // the environment policy applied in workspace mode.
 type HostSandboxSettings struct {
-	Root          string           `json:"root"`
-	WritablePaths []string         `json:"writable_paths,omitempty"`
-	Remote        bool             `json:"remote,omitempty"`
-	EnvPolicy     *EnvPolicyConfig `json:"env_policy,omitempty"`
+	Root          string   `json:"root"`
+	WritablePaths []string `json:"writable_paths,omitempty"`
+	// CacheDir is the sandbox scratch root handed to the execd child
+	// (Go/tmp build caches). The parent resolves it from the state root
+	// (${ocraft:CACHE}); the child never resolves a user directory of
+	// its own.
+	CacheDir  string           `json:"cache_dir,omitempty"`
+	Remote    bool             `json:"remote,omitempty"`
+	EnvPolicy *EnvPolicyConfig `json:"env_policy,omitempty"`
 }
 
 // Env converts the configured environment policy into the sandbox

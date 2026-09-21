@@ -12,7 +12,7 @@ import (
 func TestEnsureUsableHostWithinWindow(t *testing.T) {
 	ctx := context.Background()
 	sentinel := errors.New("sentinel last error")
-	r := NewRuntime(t.TempDir(), t.TempDir())
+	r := NewRuntime(t.TempDir(), t.TempDir(), "")
 
 	// A fast ensure inside the window returns nil.
 	var calls int
@@ -74,7 +74,7 @@ func TestEnsureUsableHostWithinWindow(t *testing.T) {
 func TestEnsureHostInWorkspaceWithinWindow(t *testing.T) {
 	ctx := context.Background()
 	sentinel := errors.New("sentinel last error")
-	r := NewRuntime(t.TempDir(), t.TempDir())
+	r := NewRuntime(t.TempDir(), t.TempDir(), "")
 
 	var asked []string
 	r.ensureBackgroundHost = func(

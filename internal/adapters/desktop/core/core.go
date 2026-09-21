@@ -54,18 +54,61 @@ type Core struct {
 
 	UserDir string
 	DataDir string
+	// AppHome is the shared content and credential root: keyring/,
+	// plugins/, and everything the deploy document points at through
+	// ${ocraft:APP_HOME}. It defaults to DataDir, so a process that
+	// only knows one root keeps the single-root layout.
+	AppHome string
+	// Profile names the state-root profile this process runs as; empty
+	// for the default one. It is display-only (see the diagnostics
+	// report), the roots above are already resolved.
+	Profile string
 	WorkDir string
 }
 
-// NewCore builds the service composition root. userDir/dataDir are
-// required; workDir may be empty until a workspace is selected.
+// Paths are the roots one desktop process works against. They come from
+// config.ResolveLaunch, which is the only place that decides between a
+// flag, an environment variable, a profile and a default.
+type Paths struct {
+	// UserDir is the configuration directory: opencraft.yaml,
+	// desktop.json, hooks.json (<app home>/config by default).
+	UserDir string
+	// DataDir is the state root: workspaces, user.db, logs, audit,
+	// cache. One GUI process per state root.
+	DataDir string
+	// AppHome is the content and credential root (keyring/, plugins/,
+	// agents/, skills/). Empty follows DataDir.
+	AppHome string
+	// Profile is the profile name the state root belongs to, if any.
+	Profile string
+	// WorkDir is the startup workspace; empty until one is selected.
+	WorkDir string
+}
+
+// NewCore builds the service composition root for a two-root launch:
+// the configuration directory and the state root, with the app home
+// following the state root.
 func NewCore(userDir, dataDir, workDir string) *Core {
-	runtime := NewRuntime(dataDir, userDir)
-	plugin := NewPluginService(dataDir, version.ServiceVersion)
+	return NewCoreWithPaths(Paths{
+		UserDir: userDir,
+		DataDir: dataDir,
+		WorkDir: workDir,
+	})
+}
+
+// NewCoreWithPaths builds the service composition root from resolved
+// launch paths. userDir and dataDir are required; the app home follows
+// dataDir when it is empty.
+func NewCoreWithPaths(p Paths) *Core {
+	if p.AppHome == "" {
+		p.AppHome = p.DataDir
+	}
+	runtime := NewRuntime(p.DataDir, p.UserDir, p.AppHome)
+	plugin := NewPluginService(p.AppHome, version.ServiceVersion)
 	pet := petfeed.NewPetActivityFeed(AssistantAgentID)
 	packs := petfeed.NewPackStore(petfeed.BuiltinAssistantPack())
 	c := &Core{
-		Shell:        NewShell(userDir),
+		Shell:        NewShell(p.UserDir),
 		Runtime:      runtime,
 		Conversation: NewConversation(),
 		Plugin:       plugin,
@@ -73,9 +116,11 @@ func NewCore(userDir, dataDir, workDir string) *Core {
 		Git:          NewGitService(),
 		Pet:          pet,
 		Packs:        packs,
-		UserDir:      userDir,
-		DataDir:      dataDir,
-		WorkDir:      workDir,
+		UserDir:      p.UserDir,
+		DataDir:      p.DataDir,
+		AppHome:      p.AppHome,
+		Profile:      p.Profile,
+		WorkDir:      p.WorkDir,
 	}
 	c.Shell.SetPetSink(func(typ string, data any) {
 		pet.OnEvent(typ, data)

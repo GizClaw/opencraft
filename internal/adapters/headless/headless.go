@@ -31,9 +31,20 @@ import (
 
 // Options configures one headless run.
 type Options struct {
-	WorkDir   string
+	WorkDir string
+	// ConfigDir is the configuration directory; empty falls back to
+	// the global ~/.opencraft/config.
 	ConfigDir string
-	Prompt    string
+	// DataDir is the state root; empty falls back to the config
+	// directory's parent, which is the historical single-root layout.
+	DataDir string
+	// AppHome is the shared content/credential root; empty follows the
+	// state root.
+	AppHome string
+	Prompt  string
+	// Quiet suppresses the one-line stderr note that names the state
+	// root this run shares (tests and JSONL consumers pass true).
+	Quiet bool
 	// Out receives JSONL rollout events (nil disables event output).
 	Out io.Writer
 }
@@ -72,8 +83,28 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		}
 	}
 
-	dataDir := filepath.Dir(configDir)
+	dataDir := opts.DataDir
+	if dataDir == "" {
+		dataDir = filepath.Dir(configDir)
+	}
+	appHome := opts.AppHome
+	if appHome == "" {
+		appHome = dataDir
+	}
+	// A headless run shares the state root of whatever else is running
+	// (that is the point: it sees the same sessions and user.db) and
+	// takes no part in the GUI single-instance lock. Say so out loud —
+	// the line is the cheap way to answer "which root did this write
+	// to" after the fact.
+	if !opts.Quiet {
+		_, _ = fmt.Fprintf(os.Stderr,
+			"opencraft run: state root %s (app home %s, config %s); "+
+				"no GUI single-instance lock\n",
+			dataDir, appHome, configDir)
+	}
 	hostMgr := host.NewManagerAt(dataDir, configDir)
+	hostMgr.SetAppHome(appHome)
+	hostMgr.SetLeaseKind("headless")
 	// Usage accounting is best-effort: the headless run itself must
 	// not fail because the user database is unavailable.
 	if usageErr := hostMgr.OpenUserDB(ctx); usageErr != nil {

@@ -20,7 +20,10 @@ func TestUserConfigAndGraphNotSeeded(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
 
-	cfgDir, err := EnsureUserConfig()
+	// The hermetic-home layout: one root, so the app home and the state
+	// root coincide exactly like the historical single-root callers.
+	appHome := filepath.Join(dir, ".opencraft")
+	cfgDir, err := EnsureUserConfig(appHome, appHome)
 	if err != nil {
 		t.Fatal(err)
 	}

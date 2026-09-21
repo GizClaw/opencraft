@@ -442,14 +442,22 @@ func (b *Diagnostics) MetricRange(
 
 // Report is the environment summary.
 type Report struct {
-	Version             string `json:"version"`
-	GoVersion           string `json:"go_version"`
-	NodeVersion         string `json:"node_version"`
-	GitVersion          string `json:"git_version"`
-	Platform            string `json:"platform"`
-	Arch                string `json:"arch"`
-	WorkDir             string `json:"work_dir"`
-	UserDir             string `json:"user_dir"`
+	Version     string `json:"version"`
+	GoVersion   string `json:"go_version"`
+	NodeVersion string `json:"node_version"`
+	GitVersion  string `json:"git_version"`
+	Platform    string `json:"platform"`
+	Arch        string `json:"arch"`
+	WorkDir     string `json:"work_dir"`
+	UserDir     string `json:"user_dir"`
+	// DataDir and AppHome are the two roots this instance runs against
+	// (see config.ResolveLaunch): the state root owns sessions, user.db
+	// and logs, the app home carries content and credentials and is
+	// shared by every instance of the same user. Profile names the
+	// state-root profile; empty is the default one.
+	DataDir             string `json:"data_dir,omitempty"`
+	AppHome             string `json:"app_home,omitempty"`
+	Profile             string `json:"profile,omitempty"`
 	ConfigValid         bool   `json:"config_valid"`
 	ConfigError         string `json:"config_error,omitempty"`
 	InferenceConfigured bool   `json:"inference_configured"`
@@ -478,7 +486,8 @@ type RecoveryDTO struct {
 	Workspace string `json:"workspace,omitempty"`
 	// Ran reports whether an assembly ran a pass in this process.
 	Ran bool `json:"ran"`
-	// At is when that pass ran.
+	// At is when that pass ran, or when another live process was found
+	// holding the workspace (Ran is false in that case).
 	At string `json:"at,omitempty"`
 	// Recovered counts turns materialized as interrupted.
 	Recovered int `json:"recovered"`
@@ -491,6 +500,10 @@ type RecoveryDTO struct {
 	Discarded int `json:"discarded"`
 	// SkippedLive counts checkpoints a sibling process may still own.
 	SkippedLive int `json:"skipped_live"`
+	// WorkspaceHolder names the live process that owns this workspace's
+	// advisory lock when another one held it, so no pass ran here at
+	// all. Empty means this process owns the workspace.
+	WorkspaceHolder string `json:"workspace_holder,omitempty"`
 	// Failed counts recovery writes that failed; the next pass retries
 	// them.
 	Failed int `json:"failed"`
@@ -517,8 +530,14 @@ func (b *Diagnostics) Recovery() RecoveryDTO {
 	}
 	dto.Workspace = h.WorkDir()
 	if report, ok := h.RecoveryReport(); ok {
-		dto.Ran = true
-		dto.At = report.At.UTC().Format(time.RFC3339)
+		// A report can exist without a pass: another live process owns
+		// the workspace, and the card should say that instead of "this
+		// process has not run a pass yet".
+		dto.Ran = report.WorkspaceHolder == ""
+		dto.WorkspaceHolder = report.WorkspaceHolder
+		if !report.At.IsZero() {
+			dto.At = report.At.UTC().Format(time.RFC3339)
+		}
 		dto.Recovered = report.Recovered
 		dto.Archived = report.Archived
 		dto.Discarded = report.Discarded
@@ -552,6 +571,9 @@ func (b *Diagnostics) Diagnostics() Report {
 		Arch:        goruntime.GOARCH,
 		WorkDir:     b.core.ActiveWorkDir(),
 		UserDir:     b.core.UserDir,
+		DataDir:     b.core.DataDir,
+		AppHome:     b.core.AppHome,
+		Profile:     b.core.Profile,
 	}
 	if mgr, err := config.Open(config.Options{UserDir: b.core.UserDir}); err == nil {
 		if view, err := mgr.Load(ctx); err != nil {

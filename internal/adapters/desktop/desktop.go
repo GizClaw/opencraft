@@ -36,17 +36,40 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/services/notifications"
 )
 
-// Options configures the desktop application.
+// Options configures the desktop application. The roots normally come
+// from config.ResolveLaunch; an empty one falls back to the historical
+// ~/.opencraft layout so tests and embedded hosts keep working.
 type Options struct {
+	// WorkDir is the startup workspace; empty lets the workspace
+	// registry decide.
 	WorkDir string
+	// UserDir is the configuration directory (opencraft.yaml,
+	// desktop.json, hooks.json).
 	UserDir string
+	// DataDir is the state root (workspaces/, user.db, logs/, cache/).
 	DataDir string
+	// AppHome is the shared content and credential root (keyring/,
+	// plugins/). Empty follows DataDir.
+	AppHome string
+	// AppName is the product name for native surfaces (window title,
+	// tray). Empty keeps the base name.
+	AppName string
+	// Profile names the state-root profile this process runs as, for
+	// logging and the diagnostics report; empty for the default one.
+	Profile string
+	// InstanceID is the single-instance identity of the state root
+	// (config.ResolveLaunch). It is only logged here: main.go hands it
+	// to Wails before this constructor runs.
+	InstanceID string
 }
 
 // Desktop is the desktop composition root. It is not a Wails binding object;
 // RegisterServices exposes the per-domain API objects as Wails v3 services.
 type Desktop struct {
-	core               *core.Core
+	core *core.Core
+	// appName is the product name native surfaces use; empty means the
+	// localized base name from core.DesktopTexts.
+	appName            string
 	notifications      *notifications.NotificationService
 	telemetryPipeline  *octelemetry.Pipeline
 	execPool           *execd.Pool
@@ -80,15 +103,23 @@ type Desktop struct {
 	petDebug    petfeed.MindDebug
 }
 
-// New resolves the user data/config directories and builds the core
-// service composition.
+// New resolves the launch roots and builds the core service
+// composition. main.go calls it only after application.New, so the
+// second instance of one state root exits before anything here can
+// touch the state root.
 func New(opts Options) (*Desktop, error) {
+	var defaults []string
 	if opts.DataDir == "" {
 		dir, err := config.UserDataDir()
 		if err != nil {
 			return nil, err
 		}
 		opts.DataDir = dir
+		defaults = append(defaults, "state_root")
+	}
+	stateRoot := opts.DataDir
+	if opts.AppHome == "" {
+		opts.AppHome = opts.DataDir
 	}
 	if opts.UserDir == "" {
 		dir, err := config.UserConfigDir()
@@ -96,11 +127,18 @@ func New(opts Options) (*Desktop, error) {
 			return nil, err
 		}
 		opts.UserDir = dir
+		defaults = append(defaults, "config_dir")
 	}
-	if _, err := config.EnsureUserConfig(); err != nil {
+	if _, err := config.EnsureUserConfig(opts.AppHome, stateRoot); err != nil {
 		return nil, err
 	}
-	c := core.NewCore(opts.UserDir, opts.DataDir, opts.WorkDir)
+	c := core.NewCoreWithPaths(core.Paths{
+		UserDir: opts.UserDir,
+		DataDir: stateRoot,
+		AppHome: opts.AppHome,
+		Profile: opts.Profile,
+		WorkDir: opts.WorkDir,
+	})
 	c.Prompt.SetNotifier(c.Shell.Emit)
 	c.Prompt.SetRunConvResolver(c.Conversation.ConversationForRun)
 	c.Runtime.Manager().SetUsageObserver(func(_ context.Context, usage inference.Usage) {
@@ -138,6 +176,13 @@ func New(opts Options) (*Desktop, error) {
 	// The plugin telemetry handler is wired by the composition root and
 	// resolves this pipeline per call, so it can be attached here.
 	c.Telemetry = pipeline
+	telemetry.Info(c.Shell.Context(), "desktop: instance resolved",
+		otellog.String("profile", opts.Profile),
+		otellog.String("state_root", stateRoot),
+		otellog.String("app_home", opts.AppHome),
+		otellog.String("config_dir", opts.UserDir),
+		otellog.String("instance_id", opts.InstanceID),
+		otellog.String("defaulted", strings.Join(defaults, ", ")))
 	// Resolve PATH once the log sink exists (the line below is the record
 	// of what the app runs with) but before anything can spawn: a
 	// Finder/Dock launch inherits launchd's minimal PATH, so without this
@@ -146,7 +191,8 @@ func New(opts Options) (*Desktop, error) {
 	// rules live in foundation/utils/envpath.
 	resolveProcessPath(c)
 	d := &Desktop{
-		core: c,
+		core:    c,
+		appName: opts.AppName,
 		// Windows toast attribution keys off application.Options.Name
 		// ("OpenCraft"); the NSIS installer stamps the same AppUserModelID
 		// onto the shortcuts it creates. Keep main.go's Options.Name and

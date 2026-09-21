@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
+	otellog "go.opentelemetry.io/otel/log"
 
 	"github.com/GizClaw/opencraft/internal/capabilities/execd"
 	"github.com/GizClaw/opencraft/internal/capabilities/sessions"
@@ -131,6 +132,14 @@ func LoadPrefs(userDir string) DesktopPrefs {
 	if userDir == "" {
 		if dir, err := config.UserConfigDir(); err == nil {
 			userDir = dir
+			// A silent fallback is how a dev instance ends up reading
+			// the installed app's settings; say it out loud. (At
+			// startup the log pipeline is not installed yet, so the
+			// diagnostics report — which always lists config dir, state
+			// root and app home — is the reliable witness.)
+			telemetry.Info(context.Background(),
+				"desktop prefs: config dir defaulted",
+				otellog.String("config_dir", userDir))
 		} else {
 			telemetry.WarnErr(context.Background(),
 				"desktop prefs: resolve config dir failed", err)
@@ -211,6 +220,9 @@ func SavePrefs(userDir string, prefs DesktopPrefs) error {
 		if err != nil {
 			return err
 		}
+		telemetry.Info(context.Background(),
+			"desktop prefs: config dir defaulted",
+			otellog.String("config_dir", userDir))
 	}
 	data, err := json.MarshalIndent(prefs, "", "  ")
 	if err != nil {

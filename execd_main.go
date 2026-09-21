@@ -20,7 +20,6 @@ import (
 
 	"github.com/GizClaw/opencraft/internal/capabilities/execd"
 	"github.com/GizClaw/opencraft/internal/capabilities/sandbox"
-	"github.com/GizClaw/opencraft/internal/foundation/config"
 )
 
 // initChildLogging sends this process's warnings to stderr. The child
@@ -66,9 +65,10 @@ func runExecServer() {
 			}
 		}()
 	}
-	if _, err := config.EnsureUserConfig(); err != nil {
-		execdFatal(1, "opencraft execd: seed config: %v", err)
-	}
+	// The child resolves no user directories of its own: every path it
+	// needs (the bound workspace, the sandbox policy's writable set and
+	// its cache root) arrives with the Bind request, so a dev-profile
+	// parent never has the child seed or touch the installed app's root.
 
 	conn, err := execd.ChildChannel(*execdFD, *execdPipe)
 	if err != nil {
@@ -92,7 +92,10 @@ func runExecServer() {
 				sandboxPolicy.EnvPolicy.Allow = []string{}
 			}
 		}
-		confined, env, err := sandbox.SandboxRunner(ctx, workdir, sandboxPolicy)
+		// The cache root travels with the binding: the parent resolved
+		// it from its own state root, and the child must not guess one.
+		confined, env, err := sandbox.SandboxRunnerForCache(
+			ctx, workdir, policy.GetCacheDir(), sandboxPolicy)
 		if err != nil {
 			return execd.RunnerSet{}, err
 		}
