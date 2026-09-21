@@ -122,26 +122,14 @@ func TestAutomationDeadlineMarksTimeoutAndFreesSlot(t *testing.T) {
 			if err != nil {
 				return automations.RunResult{Status: automations.RunFailed}, err
 			}
-			// Same shape as the desktop runner: the manager's deadline
-			// cancels the turn, and the wait continues to the settle.
+			// The desktop runner's own mapping, not a copy of it: the
+			// manager's deadline cancels the turn, the wait continues to
+			// the settle, and the settled pair is classified exactly as
+			// runAutomation classifies it (see runner_test.go).
 			res, waitErr := run.WaitBounded(runCtx)
-			result := automations.RunResult{
-				Status:         automations.RunFailed,
-				ConversationID: run.ContextID(),
-				RunID:          run.RunID(),
-			}
-			if waitErr != nil {
-				result.Error = waitErr.Error()
-			}
-			if res != nil {
-				switch {
-				case res.Status == agent.StatusCompleted:
-					result.Status = automations.RunCompleted
-				case res.Err != nil && result.Error == "":
-					result.Error = res.Err.Error()
-				}
-			}
-			return result, nil
+			return automations.ClassifySettledRun(
+				run.ContextID(), run.RunID(), res, waitErr,
+			).Result, nil
 		},
 	})
 	if err != nil {
