@@ -256,27 +256,28 @@ func (b *Settings) DeleteSkill(skillPath string) error {
 	return svc.Delete(skillPath)
 }
 
-// InstallSkill clones a git skill into scope.
+// InstallSkill clones a git skill into the user skill root.
 func (b *Settings) InstallSkill(
-	repo, scope, subpath string,
+	repo, subpath string,
 ) (string, error) {
 	ctx := b.core.Shell.Context()
 	svc, err := b.skillsService()
 	if err != nil {
 		return "", err
 	}
-	return svc.Install(ctx, repo, scope, subpath)
+	return svc.Install(ctx, repo, subpath)
 }
 
-// RenderSkillPatch renders a codex patch against one skill directory.
+// RenderSkillPatch renders a codex patch against one user skill
+// directory.
 func (b *Settings) RenderSkillPatch(
-	name, scope, patch string,
+	name, patch string,
 ) ([]PatchFile, error) {
 	svc, err := b.skillsService()
 	if err != nil {
 		return nil, err
 	}
-	dir, err := svc.SkillDir(name, scope)
+	dir, err := svc.SkillDir(name)
 	if err != nil {
 		return nil, err
 	}

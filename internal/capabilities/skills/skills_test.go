@@ -25,53 +25,62 @@ func writeSkill(t *testing.T, scanRoot, name, frontmatter string) string {
 	return path
 }
 
-func TestDiscoverRepoLevelsAndUserDirs(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	workBase := filepath.Join(root, "sub", "dir")
-	if err := os.MkdirAll(workBase, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	userDir := t.TempDir()
-	home := t.TempDir()
+// userRoot isolates HOME and returns the user skill root that
+// discovery scans first (<home>/.agents/skills).
+func userRoot(t *testing.T) (home, root string) {
+	t.Helper()
+	home = t.TempDir()
 	t.Setenv("HOME", home)
+	return home, filepath.Join(home, ".agents", "skills")
+}
 
-	writeSkill(t, filepath.Join(root, ".agents", "skills"), "alpha",
-		"name: alpha\ndescription: alpha skill at repo root\n")
-	writeSkill(t, filepath.Join(workBase, ".agents", "skills"), "alpha",
-		"name: alpha\ndescription: alpha skill at cwd\n")
+func TestDiscoverUserRootsAndPriority(t *testing.T) {
+	userDir := t.TempDir()
+	_, homeRoot := userRoot(t)
+
+	writeSkill(t, homeRoot, "alpha",
+		"name: alpha\ndescription: alpha skill in the home root\n")
 	writeSkill(t, filepath.Join(userDir, "skills"), "beta",
-		"name: beta\ndescription: user-level beta\n")
-	writeSkill(t, filepath.Join(home, ".agents", "skills"), "gamma",
-		"name: gamma\ndescription: home-level gamma\n")
-	// Duplicate name across repo and user scopes: cwd must win (D3).
-	writeSkill(t, filepath.Join(workBase, ".agents", "skills"), "dup",
-		"name: dup\ndescription: cwd-level dup\n")
+		"name: beta\ndescription: user-dir beta\n")
+	// Duplicate name across the user roots: the first root scanned
+	// (the home root) wins.
+	writeSkill(t, homeRoot, "dup",
+		"name: dup\ndescription: home-level dup\n")
 	writeSkill(t, filepath.Join(userDir, "skills"), "dup",
-		"name: dup\ndescription: user-level dup\n")
+		"name: dup\ndescription: user-dir dup\n")
 
-	out := Discover(context.Background(), workBase, userDir, nil, nil)
-	if len(out.Skills) != 6 {
-		t.Fatalf("Discover() = %d skills, want 6: %+v", len(out.Skills), out.Skills)
+	out := Discover(context.Background(), userDir, nil)
+	if len(out.Skills) != 4 {
+		t.Fatalf("Discover() = %d skills, want 4: %+v", len(out.Skills), out.Skills)
 	}
 
-	svc := NewService(context.Background(), Options{WorkBase: workBase, UserDir: userDir, Enabled: true})
+	svc := NewService(context.Background(),
+		Options{UserDir: userDir, Enabled: true})
 	got, ok := svc.ByName("alpha")
 	if !ok {
 		t.Fatal("ByName(alpha) not found")
 	}
-	// Nearest scope wins: cwd layer beats repo root.
-	if !strings.Contains(got.Path, filepath.Join("sub", "dir")) {
-		t.Fatalf("ByName(alpha) = %q, want cwd-level path", got.Path)
+	if !strings.HasPrefix(got.Path, homeRoot) {
+		t.Fatalf("ByName(alpha) = %q, want the home root path", got.Path)
 	}
 	dup, ok := svc.ByName("dup")
-	if !ok || !strings.Contains(dup.Path, filepath.Join("sub", "dir")) {
-		t.Fatalf("ByName(dup) = %q, want cwd-level dup to beat user-level", dup.Path)
+	if !ok {
+		t.Fatal("ByName(dup) not found")
 	}
-	if len(svc.List()) != 11 { // 6 discovered + 5 built-ins
-		t.Fatalf("List() = %d, want 11", len(svc.List()))
+	// Both copies are scanned at depth 0, so the tie keeps the first
+	// path in the sorted skill list. Pin that deterministic result
+	// instead of a root-priority rule.
+	homeDup := filepath.Join(homeRoot, "dup", "SKILL.md")
+	dirDup := filepath.Join(userDir, "skills", "dup", "SKILL.md")
+	wantDup := homeDup
+	if dirDup < wantDup {
+		wantDup = dirDup
+	}
+	if dup.Path != wantDup {
+		t.Fatalf("ByName(dup) = %q, want %q", dup.Path, wantDup)
+	}
+	if len(svc.List()) != 9 { // 4 discovered + 5 built-ins
+		t.Fatalf("List() = %d, want 9", len(svc.List()))
 	}
 }
 
@@ -80,15 +89,15 @@ func TestDiscoverRepoLevelsAndUserDirs(t *testing.T) {
 // that differs from its directory) is a warning the resource registers
 // at INFO, while a file that cannot load stays an error.
 func TestDiscoveryDiagnosticsMarkAcceptedWarnings(t *testing.T) {
-	workBase := t.TempDir()
 	userDir := t.TempDir()
-	writeSkill(t, filepath.Join(workBase, ".agents", "skills"), "mismatch",
+	_, root := userRoot(t)
+	writeSkill(t, root, "mismatch",
 		"name: something-else\ndescription: tolerated name mismatch\n")
-	writeSkill(t, filepath.Join(workBase, ".agents", "skills"), "broken",
+	writeSkill(t, root, "broken",
 		"name: broken\n")
 
 	svc := NewService(context.Background(),
-		Options{WorkBase: workBase, UserDir: userDir, Enabled: true})
+		Options{UserDir: userDir, Enabled: true})
 
 	var sawWarning, sawError bool
 	for _, e := range svc.Errors() {
@@ -156,15 +165,14 @@ func TestParseFileFallbackAndWarnings(t *testing.T) {
 }
 
 func TestRankAndMention(t *testing.T) {
-	root := t.TempDir()
-	scanRoot := filepath.Join(root, ".agents", "skills")
+	_, scanRoot := userRoot(t)
 	writeSkill(t, scanRoot, "review",
 		"name: review\ndescription: review code and docs for quality\n")
 	writeSkill(t, scanRoot, "plan",
 		"name: plan\ndescription: build execution plans\n")
 	writeSkill(t, scanRoot, "search",
 		"name: search\ndescription: search the workspace\n")
-	svc := NewService(context.Background(), Options{WorkBase: root, Enabled: true, TopN: 2})
+	svc := NewService(context.Background(), Options{Enabled: true, TopN: 2})
 
 	ranked := svc.Rank("review the docs", 2, 0)
 	if len(ranked) == 0 || ranked[0].Name != "review" {
@@ -198,13 +206,11 @@ func TestRankAndMention(t *testing.T) {
 // ranking surface the user copy once instead of showing two "review"
 // entries, and $mention still resolves to the user skill.
 func TestUserSkillShadowsBuiltinReviewAcrossListRankAndMention(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	root := t.TempDir()
-	scanRoot := filepath.Join(root, ".agents", "skills")
+	_, scanRoot := userRoot(t)
 	userPath := writeSkill(t, scanRoot, "review",
 		"name: review\ndescription: user review skill for my team\n")
 	svc := NewService(context.Background(), Options{
-		WorkBase: root, Enabled: true, TopN: 5,
+		Enabled: true, TopN: 5,
 	})
 
 	var named []SkillMetadata
@@ -238,10 +244,9 @@ func TestUserSkillShadowsBuiltinReviewAcrossListRankAndMention(t *testing.T) {
 }
 
 func TestRankMinScoreThreshold(t *testing.T) {
-	root := t.TempDir()
-	scan := filepath.Join(root, ".agents", "skills")
+	_, scan := userRoot(t)
 	writeSkill(t, scan, "review", "name: review\ndescription: review code and docs\n")
-	svc := NewService(context.Background(), Options{WorkBase: root, Enabled: true})
+	svc := NewService(context.Background(), Options{Enabled: true})
 
 	scored := svc.RankScored("review the code", 5, 0)
 	if len(scored) == 0 {
@@ -257,10 +262,10 @@ func TestRankMinScoreThreshold(t *testing.T) {
 }
 
 func TestReadFullAndRender(t *testing.T) {
-	root := t.TempDir()
-	path := writeSkill(t, filepath.Join(root, ".agents", "skills"), "review",
+	_, scan := userRoot(t)
+	path := writeSkill(t, scan, "review",
 		"name: review\ndescription: review code\n")
-	svc := NewService(context.Background(), Options{WorkBase: root, Enabled: true})
+	svc := NewService(context.Background(), Options{Enabled: true})
 	sk, body, err := svc.ReadFull("review")
 	if err != nil {
 		t.Fatal(err)
@@ -299,10 +304,10 @@ func TestReadFullAndRender(t *testing.T) {
 }
 
 func TestDisabledAndHiddenSkip(t *testing.T) {
-	root := t.TempDir()
-	writeSkill(t, filepath.Join(root, ".agents", "skills"), "visible",
+	_, root := userRoot(t)
+	writeSkill(t, root, "visible",
 		"name: visible\ndescription: visible skill\n")
-	hidden := filepath.Join(root, ".agents", "skills", ".hidden")
+	hidden := filepath.Join(root, ".hidden")
 	if err := os.MkdirAll(hidden, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +316,7 @@ func TestDisabledAndHiddenSkip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	svc := NewService(context.Background(), Options{WorkBase: root, Enabled: true})
+	svc := NewService(context.Background(), Options{Enabled: true})
 	for _, sk := range svc.List() {
 		if sk.Name == "visible" {
 			return
@@ -322,20 +327,18 @@ func TestDisabledAndHiddenSkip(t *testing.T) {
 	}
 	t.Fatalf("visible skill missing: %+v", svc.List())
 
-	disabled := NewService(context.Background(), Options{WorkBase: root, Enabled: false})
+	disabled := NewService(context.Background(), Options{Enabled: false})
 	if len(disabled.List()) != 0 || disabled.Enabled() {
 		t.Fatal("disabled service must be empty")
 	}
 }
 
 func TestDisabledList(t *testing.T) {
-	root := t.TempDir()
-	scan := filepath.Join(root, ".agents", "skills")
+	_, scan := userRoot(t)
 	writeSkill(t, scan, "keep", "name: keep\ndescription: keep me\n")
 	path := writeSkill(t, scan, "drop", "name: drop\ndescription: drop me\n")
 
 	svc := NewService(context.Background(), Options{
-		WorkBase: root,
 		Enabled:  true,
 		Disabled: []string{"drop", path},
 	})
@@ -351,7 +354,6 @@ func TestDisabledList(t *testing.T) {
 }
 
 func TestFollowSymlinks(t *testing.T) {
-	root := t.TempDir()
 	userDir := t.TempDir()
 	// The symlink target lives inside another configured scan root
 	// (the user skill dir), so following it stays in-bounds.
@@ -361,14 +363,14 @@ func TestFollowSymlinks(t *testing.T) {
 	}
 	writeSkill(t, real, "linked-skill",
 		"name: linked-skill\ndescription: reached via symlink\n")
-	scan := filepath.Join(root, ".agents", "skills")
+	_, scan := userRoot(t)
 	if err := os.MkdirAll(scan, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(real, filepath.Join(scan, "linked")); err != nil {
 		t.Skipf("symlink unsupported: %v", err)
 	}
-	svc := NewService(context.Background(), Options{WorkBase: root, UserDir: userDir, Enabled: true})
+	svc := NewService(context.Background(), Options{UserDir: userDir, Enabled: true})
 	found := false
 	for _, sk := range svc.List() {
 		if sk.Name == "linked-skill" {
@@ -385,14 +387,13 @@ func TestFollowSymlinks(t *testing.T) {
 }
 
 func TestSymlinkEscapeRejected(t *testing.T) {
-	root := t.TempDir()
 	outside := filepath.Join(t.TempDir(), "outside")
 	if err := os.MkdirAll(outside, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeSkill(t, outside, "leak",
 		"name: leak\ndescription: must not be reachable\n")
-	scan := filepath.Join(root, ".agents", "skills")
+	_, scan := userRoot(t)
 	if err := os.MkdirAll(scan, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +408,7 @@ func TestSymlinkEscapeRejected(t *testing.T) {
 		t.Skipf("symlink unsupported: %v", err)
 	}
 
-	out := Discover(context.Background(), root, "", nil, nil)
+	out := Discover(context.Background(), "", nil)
 	for _, sk := range out.Skills {
 		if sk.Name == "leak" {
 			t.Fatalf("escaping symlink skill discovered: %+v", out.Skills)
@@ -416,7 +417,7 @@ func TestSymlinkEscapeRejected(t *testing.T) {
 	if len(out.Errors) == 0 {
 		t.Fatal("escaping symlinks must be recorded as errors")
 	}
-	svc := NewService(context.Background(), Options{WorkBase: root, Enabled: true})
+	svc := NewService(context.Background(), Options{Enabled: true})
 	if _, _, err := svc.ReadFull("leak"); err == nil {
 		t.Fatal("ReadFull must not resolve an escaping skill")
 	}
@@ -424,7 +425,7 @@ func TestSymlinkEscapeRejected(t *testing.T) {
 
 func TestBuiltinEmbedded(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	svc := NewService(context.Background(), Options{WorkBase: t.TempDir(), Enabled: true})
+	svc := NewService(context.Background(), Options{Enabled: true})
 	for _, name := range []string{
 		"plan", "review", "skill-creator", "skill-installer",
 		"plugin-creator",
@@ -444,9 +445,9 @@ func TestBuiltinEmbedded(t *testing.T) {
 }
 
 func TestStageCopiesSkill(t *testing.T) {
-	root := t.TempDir()
-	scan := filepath.Join(root, ".agents", "skills", "tool")
-	writeSkill(t, filepath.Join(root, ".agents", "skills"), "tool",
+	_, root := userRoot(t)
+	scan := filepath.Join(root, "tool")
+	writeSkill(t, root, "tool",
 		"name: tool\ndescription: packaged tool skill\n")
 	scripts := filepath.Join(scan, "scripts")
 	if err := os.MkdirAll(scripts, 0o755); err != nil {
@@ -464,7 +465,7 @@ func TestStageCopiesSkill(t *testing.T) {
 		defer func() { _ = os.Remove(filepath.Join(scan, "leak")) }()
 	}
 
-	svc := NewService(context.Background(), Options{WorkBase: root, Enabled: true})
+	svc := NewService(context.Background(), Options{Enabled: true})
 	sk, ok := svc.ByName("tool")
 	if !ok {
 		t.Fatal("tool skill not discovered")
@@ -521,11 +522,14 @@ func TestInstallFromLocalRepo(t *testing.T) {
 	git("add", ".")
 	git("commit", "-m", "init")
 
-	workBase := t.TempDir()
-	svc := NewService(context.Background(), Options{WorkBase: workBase, Enabled: true})
-	dst, err := svc.Install(context.Background(), src, ScopeRepo, "")
+	_, root := userRoot(t)
+	svc := NewService(context.Background(), Options{Enabled: true})
+	dst, err := svc.Install(context.Background(), src, "")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.HasPrefix(dst, root) {
+		t.Fatalf("install dir = %q, want under the user root %q", dst, root)
 	}
 	if _, err := os.Stat(filepath.Join(dst, "SKILL.md")); err != nil {
 		t.Fatalf("installed SKILL.md missing: %v", err)
@@ -556,7 +560,7 @@ func TestInstallFromLocalRepo(t *testing.T) {
 	git2("add", ".")
 	git2("commit", "-m", "init")
 	before := len(svc.List())
-	if _, err := svc.Install(context.Background(), bad, ScopeRepo, ""); err == nil {
+	if _, err := svc.Install(context.Background(), bad, ""); err == nil {
 		t.Fatal("repo without SKILL.md must fail to install")
 	}
 	if len(svc.List()) != before {
@@ -597,11 +601,14 @@ func TestInstallSubpathFromRepo(t *testing.T) {
 	git("add", ".")
 	git("commit", "-m", "init")
 
-	workBase := t.TempDir()
-	svc := NewService(context.Background(), Options{WorkBase: workBase, Enabled: true})
-	dst, err := svc.Install(context.Background(), src, ScopeRepo, "skills/flowcraft-config")
+	_, root := userRoot(t)
+	svc := NewService(context.Background(), Options{Enabled: true})
+	dst, err := svc.Install(context.Background(), src, "skills/flowcraft-config")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.HasPrefix(dst, root) {
+		t.Fatalf("install dir = %q, want under the user root %q", dst, root)
 	}
 	if filepath.Base(dst) != "flowcraft-config" {
 		t.Fatalf("subpath install dir = %q, want flowcraft-config", dst)
@@ -642,44 +649,44 @@ func TestInstallSubpathTraversalRejected(t *testing.T) {
 	git("add", ".")
 	git("commit", "-m", "init")
 
-	workBase := t.TempDir()
-	svc := NewService(context.Background(), Options{WorkBase: workBase, Enabled: true})
+	_, root := userRoot(t)
+	svc := NewService(context.Background(), Options{Enabled: true})
 	for _, subpath := range []string{
 		"..",
 		"../escape",
 		"../../escape",
 		"/etc",
 	} {
-		if _, err := svc.Install(context.Background(), src, ScopeRepo, subpath); err == nil {
+		if _, err := svc.Install(context.Background(), src, subpath); err == nil {
 			t.Fatalf("Install(subpath=%q) accepted a traversal", subpath)
 		}
 	}
 	// A repo symlink pointing outside the clone must also be rejected.
-	if err := os.Symlink(workBase, filepath.Join(src, "evil")); err != nil {
+	if err := os.Symlink(root, filepath.Join(src, "evil")); err != nil {
 		t.Fatal(err)
 	}
 	git("add", "evil")
 	git("commit", "-m", "add symlink")
-	if _, err := svc.Install(context.Background(), src, ScopeRepo, "evil"); err == nil {
+	if _, err := svc.Install(context.Background(), src, "evil"); err == nil {
 		t.Fatal("Install(subpath=symlink-outside) accepted")
 	}
 }
 
 func TestInstallRepoFlagRejected(t *testing.T) {
-	workBase := t.TempDir()
-	svc := NewService(context.Background(), Options{WorkBase: workBase, Enabled: true})
+	userRoot(t)
+	svc := NewService(context.Background(), Options{Enabled: true})
 	for _, repo := range []string{
 		"-c",
 		"--template=/tmp",
 		"--bare",
 		"-c core.sshCommand=echo pwn",
 	} {
-		if _, err := svc.Install(context.Background(), repo, ScopeRepo, ""); err == nil {
+		if _, err := svc.Install(context.Background(), repo, ""); err == nil {
 			t.Fatalf("Install(repo=%q) accepted a flag-like repo", repo)
 		}
 	}
 	// The flag guard must not break normal path/URL installs.
-	if _, err := svc.Install(context.Background(), "/definitely/not/a/repo", ScopeRepo, ""); err == nil {
+	if _, err := svc.Install(context.Background(), "/definitely/not/a/repo", ""); err == nil {
 		t.Fatal("non-existent repo path should fail later, not on the flag guard")
 	}
 }

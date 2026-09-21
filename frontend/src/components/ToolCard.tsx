@@ -3443,7 +3443,6 @@ function usePatchFiles(tool: ToolView): {
       : null;
   const patch = patchArg ?? tool.args;
   const name = args && typeof args.name === 'string' ? args.name : '';
-  const scope = args && typeof args.scope === 'string' ? args.scope : '';
   const [files, setFiles] = useState<PatchFileDTO[] | null>(null);
   const [failed, setFailed] = useState(false);
 
@@ -3460,7 +3459,7 @@ function usePatchFiles(tool: ToolView): {
     const req =
       tool.name === 'apply_patch'
         ? api.renderPatch(patchArg)
-        : api.renderSkillPatch(name, scope, patchArg);
+        : api.renderSkillPatch(name, patchArg);
     void req
       .then((f) => {
         if (!cancelled) setFiles(f);
@@ -3471,7 +3470,7 @@ function usePatchFiles(tool: ToolView): {
     return () => {
       cancelled = true;
     };
-  }, [tool.name, patchArg, name, scope]);
+  }, [tool.name, patchArg, name]);
 
   return { files, failed, patch };
 }

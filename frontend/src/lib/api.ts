@@ -341,12 +341,12 @@ export const api = {
   skills: () => Settings.Skills() as unknown as Promise<SkillDTO[]>,
   skillContent: (path: string) => Settings.SkillContent(path),
   deleteSkill: (path: string) => Settings.DeleteSkill(path),
-  installSkill: (repo: string, scope: string, subpath: string) =>
-    Settings.InstallSkill(repo, scope, subpath),
+  installSkill: (repo: string, subpath: string) =>
+    Settings.InstallSkill(repo, subpath),
   renderPatch: (patch: string) =>
     File.RenderPatch(patch) as unknown as Promise<PatchFileDTO[]>,
-  renderSkillPatch: (name: string, scope: string, patch: string) =>
-    Settings.RenderSkillPatch(name, scope, patch) as unknown as Promise<
+  renderSkillPatch: (name: string, patch: string) =>
+    Settings.RenderSkillPatch(name, patch) as unknown as Promise<
       PatchFileDTO[]
     >,
   memoryConfig: () => Config.MemoryConfig() as Promise<MemorySettings>,

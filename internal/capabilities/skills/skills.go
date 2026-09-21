@@ -1,7 +1,7 @@
 // Package skills discovers, indexes and serves Agent Skills
 // (SKILL.md directories, agentskills.io). The package owns the
-// shared opencraft.skills resource: discovery happens once per
-// service lifetime, the result is cached, and both the worldstate
+// shared opencraft.skills resource: discovery runs when the service
+// is constructed and again on every Reload, and both the worldstate
 // prepare hook (per-turn dynamic injection) and the skill_search /
 // skill_read tools consume the same instance.
 package skills
@@ -21,7 +21,6 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 	"github.com/GizClaw/opencraft/internal/foundation/utils/search"
 
-	"github.com/GizClaw/flowcraft/core/workspace"
 	"sigs.k8s.io/yaml"
 )
 
@@ -44,11 +43,12 @@ type SkillMetadata struct {
 	ShortDescription string `json:"short_description,omitempty"` // metadata.short-description (non-standard extension)
 	Path             string `json:"path"`                        // absolute path of SKILL.md
 	// Scope classifies the source root for trust display:
-	// "repo" | "user" | "builtin".
+	// "user" (personal and plugin roots) | "builtin".
 	Scope string `json:"scope,omitempty"`
-	// Depth orders scope priority for duplicate names: repo levels run
-	// root -> cwd (cwd highest), then user dirs, then extra roots. A
-	// higher Depth is closer to the user and wins on $mention.
+	// Depth orders duplicate-name priority: every scanned root shares
+	// depth 0 (a duplicate across scanned roots keeps the first path
+	// in the sorted skill list) and builtins run at -1, so any user
+	// skill beats its same-named builtin twin on $mention.
 	Depth int `json:"-"`
 }
 
@@ -77,13 +77,13 @@ type SkillLoadOutcome struct {
 
 // Options configures a Service.
 type Options struct {
-	WorkBase   string
-	UserDir    string
-	Workspace  workspace.Workspace // optional; in-root reads go through it
-	Enabled    bool
-	TopN       int
-	MinScore   float64
-	ExtraRoots []string // additional absolute skill roots
+	UserDir  string
+	Enabled  bool
+	TopN     int
+	MinScore float64
+	// ExtraRoots are additional absolute skill roots (plugin-provided
+	// skills land here).
+	ExtraRoots []string
 	// Disabled lists skill names or absolute SKILL.md paths excluded
 	// from discovery ([[skills.config]] enabled=false semantics).
 	Disabled []string
@@ -131,19 +131,17 @@ func (s *Service) reload() {
 	}
 	outcome := Discover(
 		s.ctx,
-		s.opts.WorkBase,
 		s.opts.UserDir,
-		s.opts.Workspace,
 		s.opts.ExtraRoots,
 	)
 	outcome.Skills = filterDisabled(outcome.Skills, s.opts.Disabled)
 	outcome.Skills = append(outcome.Skills,
 		filterDisabled(builtinSkills(), s.opts.Disabled)...)
-	// A builtin skill loses to any same-named user/repo skill (higher
+	// A builtin skill loses to any same-named user skill (higher
 	// Depth), matching ByName's $mention resolution. Without this a
 	// same-named user skill and its builtin twin both show up in List
-	// and can both rank into top-N. Same-name entries across repo/user
-	// layers are intentionally kept: ByName resolves by layer while
+	// and can both rank into top-N. Same-name entries across user
+	// roots are intentionally kept: ByName resolves by depth while
 	// List and ranking may show each path.
 	outcome.Skills = dropShadowedBuiltins(outcome.Skills)
 	byPath := make(map[string]SkillMetadata, len(outcome.Skills))
@@ -199,8 +197,8 @@ func filterDisabled(skills []SkillMetadata, disabled []string) []SkillMetadata {
 
 // dropShadowedBuiltins removes a builtin entry whenever a non-builtin
 // skill with the same name is discovered, so the builtin cannot crowd
-// a user/repo skill out of List or top-N ranking. Non-builtin
-// duplicates across layers are left untouched.
+// a user skill out of List or top-N ranking. Non-builtin duplicates
+// across roots are left untouched.
 func dropShadowedBuiltins(skills []SkillMetadata) []SkillMetadata {
 	hasUserCopy := make(map[string]bool, len(skills))
 	for _, sk := range skills {
@@ -252,9 +250,9 @@ func (s *Service) Roots() []string {
 	return append([]string(nil), snap.roots...)
 }
 
-// ByName resolves a skill by name. Duplicate names are resolved to the
-// nearest scope (cwd layer > ancestors > repo root > user dirs >
-// extra roots), matching D3.
+// ByName resolves a skill by name. Duplicate names are resolved by
+// Depth: scanned roots share depth 0 (ties keep the first path in the
+// sorted skill list), builtins run at -1 and always lose.
 func (s *Service) ByName(name string) (SkillMetadata, bool) {
 	snap := s.snapshot.Load()
 	var best SkillMetadata
@@ -277,7 +275,7 @@ func (s *Service) ByName(name string) (SkillMetadata, bool) {
 var mentionRe = regexp.MustCompile(`(?:^|[^a-z0-9_])[$]([a-z0-9]+(?:-[a-z0-9]+)*)`)
 
 // Mentioned extracts explicit $name mentions from text and resolves
-// them to skills (nearest scope wins per name, in mention order).
+// them to skills by Depth (in mention order).
 func (s *Service) Mentioned(text string) []SkillMetadata {
 	var out []SkillMetadata
 	seen := map[string]bool{}
@@ -413,27 +411,23 @@ func RenderSection(skills []SkillMetadata) string {
 	return renderSkillsSection(skills)
 }
 
-// Discover scans repo-level .agents/skills from cwd up to the repo
-// root (each level), then ~/.agents/skills, <userDir>/skills and any
-// extra roots, collecting every SKILL.md. Parse failures are recorded
-// in Errors, never fatal. Duplicate paths are de-duplicated.
+// Discover scans ~/.agents/skills, <userDir>/skills and any extra
+// roots, collecting every SKILL.md. Parse failures are recorded in
+// Errors, never fatal. Duplicate paths are de-duplicated.
 func Discover(
 	ctx context.Context,
-	workBase, userDir string,
-	ws workspace.Workspace,
+	userDir string,
 	extraRoots []string,
 ) SkillLoadOutcome {
-	scans := buildScanRoots(workBase, userDir, extraRoots)
+	scans := buildScanRoots(userDir, extraRoots)
 	c := collector{
 		ctx:       ctx,
-		workBase:  workBase,
-		ws:        ws,
 		seen:      map[string]bool{},
 		foundRoot: map[string]bool{},
 		roots:     cleanedRoots(scanRootPaths(scans)),
 	}
 	for _, scan := range scans {
-		c.scanRoot(scan.path, scan.depth, scan.scope)
+		c.scanRoot(scan.path, scan.scope)
 	}
 	out := SkillLoadOutcome{
 		Skills:    c.skills,
@@ -455,25 +449,17 @@ func Discover(
 	return out
 }
 
-// scanRoot is one configured skill scan root with its scope priority.
+// scanRoot is one configured skill scan root.
 type scanRoot struct {
 	path  string
-	depth int
 	scope string
 }
 
-func buildScanRoots(workBase, userDir string, extraRoots []string) []scanRoot {
-	// Scope priority for duplicate names (D3): repo levels rank
-	// root -> cwd (cwd highest), then user dirs, then extra roots.
-	// Depth is that priority; ByName picks the highest.
+func buildScanRoots(userDir string, extraRoots []string) []scanRoot {
+	// Every scanned root shares depth 0: a duplicate name across roots
+	// keeps the first path in the sorted skill list, and builtins
+	// (depth -1) always lose.
 	var scans []scanRoot
-	for i, dir := range repoLevels(workBase) {
-		scans = append(scans, scanRoot{
-			path:  filepath.Join(dir, ".agents", "skills"),
-			depth: i + 1,
-			scope: "repo",
-		})
-	}
 	if home, err := os.UserHomeDir(); err == nil {
 		scans = append(scans, scanRoot{
 			path:  filepath.Join(home, ".agents", "skills"),
@@ -530,44 +516,8 @@ func insideAnyRoot(resolved string, roots []string) bool {
 	return false
 }
 
-// repoLevels returns the directories from the repo root down to
-// workBase (root first). Falls back to workBase when no .git marker
-// is found above it.
-func repoLevels(workBase string) []string {
-	root := workBase
-	for {
-		if _, err := os.Stat(filepath.Join(root, ".git")); err == nil {
-			break
-		}
-		parent := filepath.Dir(root)
-		if parent == root {
-			root = workBase
-			break
-		}
-		root = parent
-	}
-	var levels []string
-	for dir := workBase; ; {
-		levels = append(levels, dir)
-		if dir == root {
-			break
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
-		}
-		dir = parent
-	}
-	for i, j := 0, len(levels)-1; i < j; i, j = i+1, j-1 {
-		levels[i], levels[j] = levels[j], levels[i]
-	}
-	return levels
-}
-
 type collector struct {
 	ctx       context.Context
-	workBase  string
-	ws        workspace.Workspace
 	seen      map[string]bool
 	foundRoot map[string]bool
 	roots     []string // cleaned scan roots for symlink containment
@@ -577,12 +527,12 @@ type collector struct {
 
 // scanRoot BFS-walks one skill root, following symlinks (D2) and
 // skipping hidden entries, collecting every SKILL.md.
-func (c *collector) scanRoot(root string, depth int, scope string) {
+func (c *collector) scanRoot(root string, scope string) {
 	queue := []string{root}
 	for len(queue) > 0 {
 		dir := queue[0]
 		queue = queue[1:]
-		entries, err := c.listDir(dir)
+		entries, err := os.ReadDir(dir)
 		if err != nil {
 			if !os.IsNotExist(err) {
 				c.errors = append(c.errors, SkillError{Path: dir, Message: err.Error()})
@@ -645,7 +595,6 @@ func (c *collector) scanRoot(root string, depth int, scope string) {
 				})
 			}
 			sk := res.Metadata
-			sk.Depth = depth
 			sk.Scope = scope
 			c.seen[clean] = true
 			c.skills = append(c.skills, sk)
@@ -812,20 +761,4 @@ func truncateUTF8(s string, max int) string {
 		end--
 	}
 	return s[:end]
-}
-
-func (c *collector) listDir(dir string) ([]fs.DirEntry, error) {
-	if c.ws != nil {
-		if rel, ok := pathsafe.Rel(c.workBase, dir); ok {
-			entries, err := c.ws.List(c.ctx, rel)
-			if err == nil {
-				return entries, nil
-			}
-			if err == workspace.ErrNotFound || os.IsNotExist(err) {
-				return nil, os.ErrNotExist
-			}
-			return nil, err
-		}
-	}
-	return os.ReadDir(dir)
 }

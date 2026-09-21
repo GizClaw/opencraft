@@ -140,7 +140,7 @@ func worldNodeFixtureCases(t *testing.T, workBase string) []worldNodeCase {
 		CollaborationMode: "workspace",
 	})
 	tail.SetSkills(skills.NewService(context.Background(), skills.Options{
-		WorkBase: workBase, UserDir: userDir, Enabled: true, TopN: 5,
+		UserDir: userDir, Enabled: true, TopN: 5,
 	}))
 	sess := newSessionStore(t)
 	if _, err := plan.NewStore(sess).Update("assistant", "s-c1",

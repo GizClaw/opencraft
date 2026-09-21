@@ -18,11 +18,11 @@ import (
 
 // Skill authoring: skill_create / skill_modify tools write validated
 // skill trees (SKILL.md plus supporting files: scripts, references,
-// assets — including Python or Go sources) into the repo or user
-// skill roots, and the desktop settings page deletes non-builtin
-// skills through Delete. Every write goes through tmp+rename so a
-// crash never leaves a truncated file, and the registry reloads so
-// changes are immediately discoverable.
+// assets — including Python or Go sources) into the user skill root
+// (~/.agents/skills), and the desktop settings page deletes
+// non-builtin skills through Delete. Every write goes through
+// tmp+rename so a crash never leaves a truncated file, and the
+// registry reloads so changes are immediately discoverable.
 
 // SkillDocument is one authored skill payload: the SKILL.md body plus
 // optional supporting files.
@@ -123,9 +123,9 @@ func buildSkillDoc(name, description, body string) ([]byte, error) {
 }
 
 // validateAuthoringArgs checks the shared create/modify arguments and
-// resolves the target scope root. Description is validated by Create
+// resolves the user skill root. Description is validated by Create
 // only: Modify allows an empty description to keep the stored one.
-func (s *Service) validateAuthoringArgs(name string, doc SkillDocument, scope string) (string, error) {
+func (s *Service) validateAuthoringArgs(name string, doc SkillDocument) (string, error) {
 	name = strings.TrimSpace(name)
 	if !validName(name) {
 		return "", fmt.Errorf(
@@ -134,14 +134,7 @@ func (s *Service) validateAuthoringArgs(name string, doc SkillDocument, scope st
 	if strings.TrimSpace(doc.Body) == "" {
 		return "", fmt.Errorf("skills: body is required")
 	}
-	if scope == "" {
-		scope = ScopeRepo
-	}
-	root, err := s.installDir(scope)
-	if err != nil {
-		return "", err
-	}
-	return root, nil
+	return userSkillsDir()
 }
 
 // writeSupportFiles writes the supporting files of doc into dir and
@@ -174,10 +167,10 @@ func writeSupportFiles(dir string, doc SkillDocument) error {
 }
 
 // Create writes a new skill tree (SKILL.md + supporting files) into
-// the target scope and reloads the registry so it is usable
-// immediately. The skill must not already exist in that scope.
-func (s *Service) Create(name string, doc SkillDocument, scope string) (string, error) {
-	root, err := s.validateAuthoringArgs(name, doc, scope)
+// the user skill root and reloads the registry so it is usable
+// immediately. The skill must not already exist.
+func (s *Service) Create(name string, doc SkillDocument) (string, error) {
+	root, err := s.validateAuthoringArgs(name, doc)
 	if err != nil {
 		return "", err
 	}
@@ -226,21 +219,18 @@ func (s *Service) Create(name string, doc SkillDocument, scope string) (string, 
 // Modify rewrites an existing skill's SKILL.md and upserts any
 // supporting files, keeping the stored description when none is
 // provided, and reloads the registry. The skill must already exist in
-// the target scope.
-func (s *Service) Modify(name string, doc SkillDocument, scope string) (string, error) {
-	root, err := s.validateAuthoringArgs(name, doc, scope)
+// the user skill root.
+func (s *Service) Modify(name string, doc SkillDocument) (string, error) {
+	root, err := s.validateAuthoringArgs(name, doc)
 	if err != nil {
 		return "", err
-	}
-	if scope == "" {
-		scope = ScopeRepo
 	}
 	name = strings.TrimSpace(name)
 	dir := filepath.Join(root, name)
 	path := filepath.Join(dir, "SKILL.md")
 	existing, err := os.ReadFile(path)
 	if err != nil {
-		return "", fmt.Errorf("skills: %q not found in %s scope", name, scope)
+		return "", fmt.Errorf("skills: %q not found in the user skill root", name)
 	}
 	if strings.TrimSpace(doc.Description) == "" {
 		parsed, err := parseBytes(path, existing)
@@ -273,11 +263,11 @@ func (s *Service) Modify(name string, doc SkillDocument, scope string) (string, 
 // against a staged copy of the skill, the result is re-validated, and
 // the copy replaces the original only when everything succeeded.
 // Returns the changed relative paths.
-func (s *Service) Patch(name, patch, scope string) ([]string, error) {
+func (s *Service) Patch(name, patch string) ([]string, error) {
 	if strings.TrimSpace(patch) == "" {
 		return nil, fmt.Errorf("skills: patch is required")
 	}
-	dir, err := s.SkillDir(name, scope)
+	dir, err := s.SkillDir(name)
 	if err != nil {
 		return nil, err
 	}
@@ -344,23 +334,20 @@ func (s *Service) Patch(name, patch, scope string) ([]string, error) {
 	return paths, nil
 }
 
-// SkillDir resolves the directory of one existing skill in scope.
-func (s *Service) SkillDir(name, scope string) (string, error) {
+// SkillDir resolves the directory of one existing user skill.
+func (s *Service) SkillDir(name string) (string, error) {
 	name = strings.TrimSpace(name)
 	if !validName(name) {
 		return "", fmt.Errorf(
 			"skills: invalid name %q (lowercase letters, digits and hyphens only)", name)
 	}
-	if scope == "" {
-		scope = ScopeRepo
-	}
-	root, err := s.installDir(scope)
+	root, err := userSkillsDir()
 	if err != nil {
 		return "", err
 	}
 	dir := filepath.Join(root, name)
 	if _, err := os.Stat(filepath.Join(dir, "SKILL.md")); err != nil {
-		return "", fmt.Errorf("skills: %q not found in %s scope", name, scope)
+		return "", fmt.Errorf("skills: %q not found in the user skill root", name)
 	}
 	return dir, nil
 }
@@ -452,13 +439,10 @@ func (s *Service) Delete(skillPath string) error {
 }
 
 // writableRoots returns every skill root the app itself scans and may
-// write: repo levels (root -> workBase), the user root, the user-dir
-// skills root, and any configured extra roots.
+// write: the user root, the user-dir skills root, and any configured
+// extra roots.
 func (s *Service) writableRoots() []string {
 	var roots []string
-	for _, dir := range repoLevels(s.opts.WorkBase) {
-		roots = append(roots, filepath.Join(dir, ".agents", "skills"))
-	}
 	if home, err := os.UserHomeDir(); err == nil {
 		roots = append(roots, filepath.Join(home, ".agents", "skills"))
 	}

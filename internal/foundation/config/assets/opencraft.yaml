@@ -131,18 +131,18 @@ resources:
       observer: artifacts
     settings:
       root: ${ocraft:WORKDIR}
-  # Shared skills registry: one discovery pass per process lifetime.
-  # The worldstate prepare hook (per-turn top-5 injection + $mention
-  # full-text activation) and tool.skills both consume it.
+  # Shared skills registry: scans the user skill roots
+  # (~/.agents/skills, <user_dir>/skills and enabled plugins' roots);
+  # Reload re-runs the scan. The worldstate prepare hook (per-turn
+  # top-5 injection + $mention full-text activation) and tool.skills
+  # both consume it.
   skills:
     kind: opencraft.skills
     impl: local
     deps:
-      workspace: ws
       plugin.host: plugin.host
     settings:
       enabled: true
-      work_dir: ${ocraft:WORKDIR}
       user_dir: ${ocraft:DATA_DIR}
       top_n: 5
       min_score: 0

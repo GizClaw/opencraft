@@ -1117,7 +1117,6 @@ export function SkillsSection() {
   const [error, setError] = useState('');
   const [importOpen, setImportOpen] = useState(false);
   const [repo, setRepo] = useState('');
-  const [scope, setScope] = useState('user');
   const [subpath, setSubpath] = useState('');
   const [installing, setInstalling] = useState(false);
   const [discoverOpen, setDiscoverOpen] = useState(false);
@@ -1189,7 +1188,7 @@ export function SkillsSection() {
     setInstalling(true);
     setError('');
     try {
-      const path = await api.installSkill(repo.trim(), scope, subpath.trim());
+      const path = await api.installSkill(repo.trim(), subpath.trim());
       setRepo('');
       setSubpath('');
       setImportOpen(false);
@@ -1206,11 +1205,7 @@ export function SkillsSection() {
     setInstalling(true);
     setError('');
     try {
-      const path = await api.installSkill(
-        entry.repo,
-        entry.scope,
-        entry.subpath,
-      );
+      const path = await api.installSkill(entry.repo, entry.subpath);
       await reloadSkills();
       flash(t('config.skillsImported', { path }));
     } catch (err) {
@@ -1224,7 +1219,7 @@ export function SkillsSection() {
     setInstalling(true);
     setError('');
     try {
-      const path = await api.installSkill(repo.clone_url, 'user', '');
+      const path = await api.installSkill(repo.clone_url, '');
       await reloadSkills();
       flash(t('config.skillsImported', { path }));
     } catch (err) {
@@ -1352,11 +1347,7 @@ export function SkillsSection() {
             const scopeLabel =
               s.scope === 'builtin'
                 ? t('config.skillsScopeBuiltin')
-                : s.scope === 'user'
-                  ? t('config.skillsScopeUser')
-                  : s.scope === 'repo'
-                    ? t('config.skillsScopeRepo')
-                    : s.scope;
+                : t('config.skillsScopeUser');
             return (
               <li
                 key={s.path}
@@ -1494,15 +1485,6 @@ export function SkillsSection() {
             data-autofocus
           />
           <div className="flex gap-2">
-            <select
-              value={scope}
-              onChange={(e) => setScope(e.target.value)}
-              data-tip={t('config.skillsImportScope')}
-              className="shrink-0 rounded-control border border-edge bg-panel2 px-2 py-1.5 text-xs outline-none"
-            >
-              <option value="user">{t('config.skillsImportScopeUser')}</option>
-              <option value="repo">{t('config.skillsImportScopeRepo')}</option>
-            </select>
             <input
               value={subpath}
               onChange={(e) => setSubpath(e.target.value)}

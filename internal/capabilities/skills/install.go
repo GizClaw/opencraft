@@ -16,21 +16,16 @@ import (
 	"github.com/GizClaw/opencraft/internal/foundation/utils/pathsafe"
 )
 
-// Install scopes for the skill_install tool.
-const (
-	ScopeUser = "user" // ~/.agents/skills
-	ScopeRepo = "repo" // <workBase>/.agents/skills
-)
-
 // Install clones a skill (git URL or local path) into the target
-// scope, validates the resulting SKILL.md tree, and reloads the
-// registry so the skill is usable immediately. subpath selects one
-// skill directory inside the repo (e.g. "skills/flowcraft-config"),
-// installing just that directory; empty installs the whole repo.
-// Runs on the host: the sandbox cannot write user-level skill roots.
+// user skill root (~/.agents/skills), validates the resulting
+// SKILL.md tree, and reloads the registry so the skill is usable
+// immediately. subpath selects one skill directory inside the repo
+// (e.g. "skills/flowcraft-config"), installing just that directory;
+// empty installs the whole repo. Runs on the host: the sandbox
+// cannot write the user-level skill root.
 func (s *Service) Install(
 	ctx context.Context,
-	repo, scope, subpath string,
+	repo, subpath string,
 ) (string, error) {
 	if strings.TrimSpace(repo) == "" {
 		return "", fmt.Errorf("skills: install repo is required")
@@ -39,10 +34,7 @@ func (s *Service) Install(
 		return "", errdefs.Validationf(
 			"skills: install repo must not start with '-'")
 	}
-	if scope == "" {
-		scope = ScopeUser
-	}
-	target, err := s.installDir(scope)
+	target, err := userSkillsDir()
 	if err != nil {
 		return "", err
 	}
@@ -122,23 +114,14 @@ func ensureInside(parent, child string) error {
 	return nil
 }
 
-// installDir resolves the target scope to an absolute skill root.
-func (s *Service) installDir(scope string) (string, error) {
-	switch scope {
-	case ScopeRepo:
-		if s.opts.WorkBase == "" {
-			return "", fmt.Errorf("skills: install scope repo needs a work dir")
-		}
-		return filepath.Join(s.opts.WorkBase, ".agents", "skills"), nil
-	case ScopeUser:
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return "", fmt.Errorf("skills: resolve home for user scope: %w", err)
-		}
-		return filepath.Join(home, ".agents", "skills"), nil
-	default:
-		return "", fmt.Errorf("skills: unknown install scope %q (user | repo)", scope)
+// userSkillsDir resolves the user-level skill root (~/.agents/skills),
+// the only root the skill tools write to.
+func userSkillsDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("skills: resolve home for user root: %w", err)
 	}
+	return filepath.Join(home, ".agents", "skills"), nil
 }
 
 // validateTree requires a valid skill in the clone: either a valid

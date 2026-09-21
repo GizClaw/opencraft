@@ -1,6 +1,6 @@
 ---
 name: skill-creator
-description: Create a new skill (SKILL.md plus supporting files) when the user asks to create, scaffold, build, or add files to a skill; covers scope choice, structure, and verification.
+description: Create a new skill (SKILL.md plus supporting files) when the user asks to create, scaffold, build, or add files to a skill; covers structure and verification.
 ---
 
 # Skill Creator
@@ -9,14 +9,12 @@ Skills are directories with a `SKILL.md` frontmatter, discovered from
 named roots. The built-in skills are embedded in the binary and
 read-only.
 
-## Choose the scope
+## Where skills live
 
-- **repo** — `<workspace>/.agents/skills/<name>/`: inside the workspace,
-  create/edit directly with write_file / apply_patch / exec.
-- **user** — `~/.agents/skills/<name>/`: outside the workspace; writing
-  it requires the session to be in YOLO mode (the user switches with
-  `/permissions` and confirms). Ask the user to switch if the session is
-  not already in YOLO mode.
+The user skill root is `~/.agents/skills/<name>/`. The `skill_create` /
+`skill_modify` tools write there directly (host-side). Editing the
+files by hand through the sandbox only works in YOLO mode (the user
+switches with `/permissions` and confirms); prefer the tools.
 
 ## Structure
 
@@ -46,9 +44,10 @@ Add supporting files as needed:
 
 ## After creating
 
-- The registry is scanned at process start: a newly created skill is
-  discoverable via skill_search and the per-turn skills section after the
-  next restart (skill_install is the only tool that reloads immediately,
-  and it installs from git).
+- Creating or editing a skill through the skill tools reloads the
+  registry: the change is discoverable via skill_search and the
+  per-turn skills section immediately.
+- A SKILL.md edited directly on disk is picked up on the next registry
+  reload (a runtime rebuild), not instantly.
 - Verify by reading back SKILL.md and checking the frontmatter
   (name + description).

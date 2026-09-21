@@ -196,7 +196,7 @@ func TestRenderToBoardFullSectionOrder(t *testing.T) {
 	write(t, filepath.Join(root, "AGENTS.md"), "project rules")
 	writeSkillFile(t, root, "review", "review code and docs")
 	svc := skills.NewService(context.Background(), skills.Options{
-		WorkBase: root, Enabled: true, TopN: 5,
+		Enabled: true, TopN: 5,
 	})
 	ws := New(Options{WorkBase: root})
 	ws.SetSkills(svc)
@@ -289,7 +289,7 @@ func TestRenderToBoardPrefixIsStableAcrossTurns(t *testing.T) {
 	writeSkillFile(t, root, "review", "review code and docs")
 	writeSkillFile(t, root, "plan", "build execution plans")
 	svc := skills.NewService(context.Background(), skills.Options{
-		WorkBase: root, Enabled: true, TopN: 5,
+		Enabled: true, TopN: 5,
 	})
 	ws := New(Options{WorkBase: root})
 	ws.SetSkills(svc)
@@ -359,7 +359,7 @@ func TestRenderToBoardClearsAStaleTailBlock(t *testing.T) {
 	writeSkillFile(t, workBase, "review", "review code and docs")
 	ws := New(Options{WorkBase: workBase})
 	ws.SetSkills(skills.NewService(context.Background(), skills.Options{
-		WorkBase: workBase, Enabled: true,
+		Enabled: true,
 	}))
 	board := agent.NewBoard()
 	board.SetVar("world.tail_block",
@@ -826,9 +826,12 @@ func TestRenderToBoardInjectsLatestPlan(t *testing.T) {
 }
 
 // writeSkillFile creates a discoverable skill under workBase.
-func writeSkillFile(t *testing.T, workBase, name, description string) {
+// writeSkillFile writes one user-level skill into <home>/.agents/skills
+// and makes `home` the process HOME so discovery scans it.
+func writeSkillFile(t *testing.T, home, name, description string) {
 	t.Helper()
-	dir := filepath.Join(workBase, ".agents", "skills", name)
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, ".agents", "skills", name)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -845,7 +848,7 @@ func TestRenderToBoardInjectsRankedSkills(t *testing.T) {
 	writeSkillFile(t, workBase, "review", "review code and docs")
 	writeSkillFile(t, workBase, "plan", "build execution plans")
 	svc := skills.NewService(context.Background(), skills.Options{
-		WorkBase: workBase, Enabled: true, TopN: 5,
+		Enabled: true, TopN: 5,
 	})
 	ws := New(Options{WorkBase: workBase})
 	ws.SetSkills(svc)
@@ -875,7 +878,7 @@ func TestRenderToBoardInjectsRankedSkills(t *testing.T) {
 func TestRenderToBoardSkipsSkillsWhenNoMatch(t *testing.T) {
 	workBase := t.TempDir()
 	writeSkillFile(t, workBase, "review", "review code and docs")
-	svc := skills.NewService(context.Background(), skills.Options{WorkBase: workBase, Enabled: true})
+	svc := skills.NewService(context.Background(), skills.Options{Enabled: true})
 	ws := New(Options{WorkBase: workBase})
 	ws.SetSkills(svc)
 
@@ -895,7 +898,7 @@ func TestRenderToBoardSkipsSkillsWhenNoMatch(t *testing.T) {
 func TestRenderToBoardMentionInjectsFullText(t *testing.T) {
 	workBase := t.TempDir()
 	writeSkillFile(t, workBase, "review", "review code and docs")
-	svc := skills.NewService(context.Background(), skills.Options{WorkBase: workBase, Enabled: true})
+	svc := skills.NewService(context.Background(), skills.Options{Enabled: true})
 	ws := New(Options{WorkBase: workBase})
 	ws.SetSkills(svc)
 
@@ -928,7 +931,7 @@ func TestMentionStagesSkillToCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	userDir := t.TempDir()
-	svc := skills.NewService(context.Background(), skills.Options{WorkBase: workBase, Enabled: true})
+	svc := skills.NewService(context.Background(), skills.Options{Enabled: true})
 	ws := New(Options{WorkBase: workBase, UserDir: userDir})
 	ws.SetSkills(svc)
 
@@ -952,7 +955,7 @@ func TestModelRequestedActivation(t *testing.T) {
 	workBase := t.TempDir()
 	writeSkillFile(t, workBase, "review", "review code and docs")
 	sess := newSessionStore(t)
-	svc := skills.NewService(context.Background(), skills.Options{WorkBase: workBase, Enabled: true})
+	svc := skills.NewService(context.Background(), skills.Options{Enabled: true})
 
 	// The model asks for $review at the end of a turn; the observe
 	// hook persists the request.
@@ -1004,7 +1007,7 @@ func TestSubagentContextSkipsActivationStore(t *testing.T) {
 	writeSkillFile(t, workBase, "review", "review code and docs")
 	sess := newSessionStore(t)
 	svc := skills.NewService(context.Background(),
-		skills.Options{WorkBase: workBase, Enabled: true})
+		skills.Options{Enabled: true})
 	capture := logcapture.Install(t)
 
 	const contextID = "ctx-0f1e2d3c4b5a6978"
