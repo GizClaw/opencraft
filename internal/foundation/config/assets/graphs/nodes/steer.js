@@ -14,6 +14,14 @@
 // arrived since the last boundary (an empty array when nothing did), so a
 // message is never delivered twice, and the queue keeps whatever a closed
 // boundary could not take.
+//
+// Everything a boundary takes lands as ONE user message. Two user
+// messages in a row are the shape the placement above avoids, so a batch
+// of corrections must not recreate it; and one message keeps what a
+// single round injects bounded by what the host allowed into the queue
+// (maxSteerQueuedBytes in the host's steer surface). The host, not this
+// node, is where a batch that would be too big is refused: draining is
+// destructive, so a boundary that took messages has to deliver them.
 
 // A fold in flight owns the channel tail: the compact node reads the
 // fold's tool result as the last message and rebuilds the channel around
@@ -33,6 +41,29 @@ var last = channel[channel.length - 1];
 if (!last || last.role !== "tool") return;
 
 var pending = host.drainSteer();
-for (var i = 0; i < pending.length; i++) {
-  board.appendChannel(board.MAIN_CHANNEL, pending[i]);
+if (!pending.length) return;
+
+// A single message is appended as it arrived: there is nothing to merge
+// and no rebuild that could lose a field this node does not know about.
+if (pending.length === 1) {
+  board.appendChannel(board.MAIN_CHANNEL, pending[0]);
+  return;
 }
+
+// A batch becomes one user message carrying every drained message's
+// parts in order. The parts keep their identity, so a message that
+// carried something other than text (a steer is text today) is not
+// dropped, and two corrections stay two blocks the model reads apart.
+var parts = [];
+for (var i = 0; i < pending.length; i++) {
+  var message = pending[i];
+  if (!message || !message.content || !message.content.parts) continue;
+  for (var j = 0; j < message.content.parts.length; j++) {
+    parts.push(message.content.parts[j]);
+  }
+}
+if (!parts.length) return;
+board.appendChannel(board.MAIN_CHANNEL, {
+  role: "user",
+  content: { parts: parts },
+});

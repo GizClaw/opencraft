@@ -100,9 +100,9 @@ nodes:
     config:
       results_key: tool_results
   # Delivers mid-turn steering: the node drains the turn's steer queue
-  # right after a round's tool results and appends each message as a
-  # standalone user message, so the next inference round reads it (see
-  # nodes/steer.js for the boundary rules).
+  # right after a round's tool results and appends what it took as one
+  # user message, so the next inference round reads it (see
+  # nodes/steer.js for the boundary rules and the merge).
   - id: steer
     type: script
     config:

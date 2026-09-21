@@ -66,9 +66,10 @@ function textMessage(role: string, text: string): WireMessage {
   return { role, content: { parts: [{ type: 'text', text }] } };
 }
 
-function textOf(message: WireMessage): string {
-  const part = message.content.parts[0] as { text?: string };
-  return part?.text ?? '';
+function textsOf(message: WireMessage): string[] {
+  return message.content.parts.map((part) => {
+    return (part as { text?: string }).text ?? '';
+  });
 }
 
 /** Board + host stub running the real node, like the runtime's bridges. */
@@ -106,7 +107,27 @@ describe('steer node delivers at the round boundary', () => {
     expect(steerGate).toBe(compactGate);
   });
 
-  it('appends every drained message in order after the tool result', () => {
+  it('appends a single drained message as it arrived', () => {
+    const { channel, drains } = runSteerNode({
+      channel: [
+        textMessage('user', 'ask'),
+        { role: 'assistant', content: { parts: [{ type: 'tool_call' }] } },
+        { role: 'tool', content: { parts: [{ type: 'tool_result' }] } },
+      ],
+      steered: [textMessage('user', 'only correction')],
+    });
+
+    expect(channel.map((m) => m.role)).toEqual([
+      'user',
+      'assistant',
+      'tool',
+      'user',
+    ]);
+    expect(textsOf(channel[3])).toEqual(['only correction']);
+    expect(drains()).toBe(1);
+  });
+
+  it('merges every drained message into one user message after the tool result', () => {
     const { channel, drains } = runSteerNode({
       channel: [
         textMessage('user', 'ask'),
@@ -119,15 +140,18 @@ describe('steer node delivers at the round boundary', () => {
       ],
     });
 
+    // One user message, not two: a batch must not recreate the
+    // user-after-user shape the boundary placement exists to avoid.
     expect(channel.map((m) => m.role)).toEqual([
       'user',
       'assistant',
       'tool',
       'user',
-      'user',
     ]);
-    expect(textOf(channel[3])).toBe('first correction');
-    expect(textOf(channel[4])).toBe('second correction');
+    expect(textsOf(channel[3])).toEqual([
+      'first correction',
+      'second correction',
+    ]);
     expect(drains()).toBe(1);
   });
 
