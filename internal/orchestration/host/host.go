@@ -17,7 +17,6 @@ import (
 
 	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/inference"
-	"github.com/GizClaw/flowcraft/core/message"
 	"github.com/GizClaw/flowcraft/core/telemetry"
 
 	ocsagents "github.com/GizClaw/opencraft/internal/capabilities/agents"
@@ -945,6 +944,11 @@ type runDetail struct {
 	// stream finish delta. Guarded by Host.mu.
 	requestID  string
 	responseID string
+	// steerSizes holds the text size of each steer message accepted
+	// for this run and not yet observed as drained, oldest first. It
+	// is what bounds the payload one round boundary can inject (see
+	// maxSteerQueuedBytes and steerQueuedBytes). Guarded by Host.mu.
+	steerSizes []int
 }
 
 // dropRun removes an ended run from the active set. Usage for the run
@@ -1126,32 +1130,6 @@ func (h *Host) CancelRun(runID string) error {
 		return errors.New("host: turn not found")
 	}
 	d.run.turn.Cancel()
-	return nil
-}
-
-// SteerRun hands one mid-turn message to a live engine turn. The
-// message is text-only and is delivered at the next round boundary the
-// running document drains steer at (the assistant graph does so between
-// a tool round and the next inference round), never in the middle of a
-// streamed response. A rejected message leaves the turn running: the
-// caller keeps the text and decides whether to interrupt, queue it for
-// the next turn, or surface the rejection.
-func (h *Host) SteerRun(runID, text string) error {
-	h.mu.Lock()
-	d := h.runs[RunID(runID)]
-	h.mu.Unlock()
-	if d == nil || d.run == nil || d.run.turn == nil {
-		return errors.New("host: turn not found")
-	}
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return errors.New("host: steer message is empty")
-	}
-	if err := d.run.turn.Steer(
-		message.NewTextMessage(message.RoleUser, text),
-	); err != nil {
-		return fmt.Errorf("host: steer turn %s: %w", runID, err)
-	}
 	return nil
 }
 

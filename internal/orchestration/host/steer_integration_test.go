@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GizClaw/flowcraft/core/agent"
 	"github.com/GizClaw/flowcraft/core/message"
 	coresession "github.com/GizClaw/flowcraft/core/runtime/session"
 
@@ -335,5 +336,175 @@ func TestSteerRunAfterTheSettleIsRefused(t *testing.T) {
 	}
 	if got := provider.Calls(); got != calls {
 		t.Fatalf("provider calls = %d after the late steer, want %d", got, calls)
+	}
+}
+
+// TestPendingSteerReadsTheRealTurnResult pins the contract the
+// undelivered-steer count is read through, in both directions, against
+// a real turn rather than a hand-built result state: a turn that
+// delivered what it was handed reports a known zero, and a turn that
+// ended with the message still queued reports the count. The key itself
+// (session.pending_steer) is a flowcraft session internal, so a core
+// release that renames it or moves it off the result state fails here —
+// in CI — instead of turning every undelivered steer into "everything
+// made it" in the field, where the UI would let archive reconciliation
+// drop the only copy of the user's text.
+func TestPendingSteerReadsTheRealTurnResult(t *testing.T) {
+	t.Run("delivered at the boundary", func(t *testing.T) {
+		provider := fakeprovider.New(t,
+			fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{{
+				Name:      "write_file",
+				Arguments: `{"file_path":"steer.txt","content":"x\n"}`,
+			}}},
+			fakeprovider.Reply{Text: "done"},
+		)
+		hold := provider.HoldNext()
+		defer hold.Release()
+
+		h, ctx := steerHost(t, provider)
+		run, err := h.StartRun(ctx, host.RunOptions{
+			Message:       message.NewTextMessage(message.RoleUser, "write steer.txt"),
+			SkipAutoTitle: true,
+		})
+		if err != nil {
+			t.Fatalf("start run: %v", err)
+		}
+		waitSteerGate(t, hold)
+		if err := h.SteerRun(run.RunID(), "delivered correction"); err != nil {
+			t.Fatalf("steer run: %v", err)
+		}
+		hold.Release()
+
+		res, err := run.Wait(ctx)
+		if err != nil || res == nil || res.Status != agent.StatusCompleted {
+			t.Fatalf("run = %+v, %v; want completed", res, err)
+		}
+		if got, known := host.PendingSteer(res); !known || got != 0 {
+			t.Fatalf("PendingSteer = %d/%v, want 0/true (state %v)",
+				got, known, res.State)
+		}
+	})
+
+	t.Run("still queued at the settle", func(t *testing.T) {
+		// The turn ends on a plain reply: no tool ever ran, so no
+		// boundary drained the queue the steer went into.
+		provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+		hold := provider.HoldNext()
+		defer hold.Release()
+
+		h, ctx := steerHost(t, provider)
+		run, err := h.StartRun(ctx, host.RunOptions{
+			Message:       message.NewTextMessage(message.RoleUser, "just answer"),
+			SkipAutoTitle: true,
+		})
+		if err != nil {
+			t.Fatalf("start run: %v", err)
+		}
+		waitSteerGate(t, hold)
+		if err := h.SteerRun(run.RunID(), "lost correction"); err != nil {
+			t.Fatalf("steer run: %v", err)
+		}
+		hold.Release()
+
+		res, err := run.Wait(ctx)
+		if err != nil || res == nil || res.Status != agent.StatusCompleted {
+			t.Fatalf("run = %+v, %v; want completed", res, err)
+		}
+		if got, known := host.PendingSteer(res); !known || got != 1 {
+			t.Fatalf("PendingSteer = %d/%v, want 1/true (state %v): core's "+
+				"undelivered-steer result state no longer has the shape "+
+				"this build reads", got, known, res.State)
+		}
+	})
+}
+
+// TestSteerRunBoundsThePayloadOneBoundaryInjects pins the host-side
+// payload budget: while a core-sized steer waits for the boundary, more
+// text is refused with ErrSteerQueueTooLarge instead of letting one
+// drain merge both into a single message twice that size. The refusal
+// leaves the turn running and consumes no budget, the boundary's drain
+// frees the budget again, and what the queue accepted still reaches the
+// model exactly once.
+func TestSteerRunBoundsThePayloadOneBoundaryInjects(t *testing.T) {
+	provider := fakeprovider.New(t,
+		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{{
+			Name:      "write_file",
+			Arguments: `{"file_path":"steer.txt","content":"x\n"}`,
+		}}},
+		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{{
+			Name:      "write_file",
+			Arguments: `{"file_path":"steer.txt","content":"y\n"}`,
+		}}},
+		fakeprovider.Reply{Text: "done"},
+	)
+	hold := provider.HoldNext()
+	defer hold.Release()
+
+	h, ctx := steerHost(t, provider)
+	run, err := h.StartRun(ctx, host.RunOptions{
+		Message:       message.NewTextMessage(message.RoleUser, "write steer.txt"),
+		SkipAutoTitle: true,
+	})
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	waitSteerGate(t, hold)
+
+	// The first message is under the budget on its own; adding the
+	// second would cross it.
+	first := strings.Repeat("first-marker ", 2<<10)
+	if err := h.SteerRun(run.RunID(), first); err != nil {
+		t.Fatalf("first steer: %v", err)
+	}
+	second := strings.Repeat("second-marker ", 1<<10)
+	if err := h.SteerRun(run.RunID(), second); err == nil {
+		t.Fatal("a steer over the queue payload budget was accepted")
+	} else if !errors.Is(err, host.ErrSteerQueueTooLarge) {
+		t.Fatalf("over-budget steer = %v, want ErrSteerQueueTooLarge", err)
+	}
+
+	// Hold the next round: the only thing between the two requests is
+	// the boundary that drained the queue, so a steer accepted there
+	// proves the drain reconciled the budget. The message is large
+	// enough that the stale ledger would still refuse it.
+	next := provider.HoldNext()
+	// A failure below must not leave the provider holding a request:
+	// the host close in the test cleanup waits for the run to finish.
+	defer next.Release()
+	hold.Release()
+	waitSteerGate(t, next)
+	third := strings.Repeat("third-marker ", 1<<10)
+	if err := h.SteerRun(run.RunID(), third); err != nil {
+		t.Fatalf("steer after the boundary drain: %v", err)
+	}
+	next.Release()
+
+	res, err := run.Wait(ctx)
+	if err != nil || res == nil || res.Status != agent.StatusCompleted {
+		t.Fatalf("run = %+v, %v; want completed", res, err)
+	}
+	if calls := provider.Calls(); calls != 3 {
+		t.Fatalf("provider calls = %d, want 3", calls)
+	}
+	msgs, err := provider.LastMessages()
+	if err != nil {
+		t.Fatalf("last messages: %v", err)
+	}
+	raw, err := json.Marshal(msgs)
+	if err != nil {
+		t.Fatalf("marshal messages: %v", err)
+	}
+	if !strings.Contains(string(raw), "first-marker") {
+		t.Fatal("the accepted steer never reached the model")
+	}
+	if strings.Contains(string(raw), "second-marker") {
+		t.Fatal("the refused steer text still reached the model")
+	}
+	if !strings.Contains(string(raw), "third-marker") {
+		t.Fatal("the steer accepted after the boundary never reached the model")
+	}
+	if got, known := host.PendingSteer(res); !known || got != 0 {
+		t.Fatalf("PendingSteer = %d/%v, want 0/true (state %v)",
+			got, known, res.State)
 	}
 }
