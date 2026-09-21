@@ -6,6 +6,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Mid-turn steering: a message submitted while a turn is running now
+  reaches the model at the next tool-round boundary instead of waiting
+  for the turn to end. Enter in the composer sends it
+  (`Conversation.Steer`); the model reads it as a standalone user
+  message right after the round's tool results. Whatever a turn cannot
+  deliver comes back as a card with resend/dismiss instead of
+  disappearing with the conversation archive. (#181)
+- Unattended automations get a per-task run limit: `timeout` bounds one
+  run (whole minutes, empty = the 15-minute default, at most 24h). A run
+  that outlives it is cancelled, its record says `timeout` with the
+  bound, and the concurrency slot comes back once the turn settles. The
+  editor gains a run-limit field and the run list a timeout badge.
+  (#181)
+
+### Changed
+
+- Enter in the composer now steers the running turn instead of
+  interrupting it; Tab keeps the after-turn queue, a draft carrying
+  attachments is refused with a hint rather than changed silently, and
+  barge-in stays on the stop button. (#181)
+- Tools now ship a no-progress guard (`repeat`): the same call (tool
+  name plus canonicalized arguments) repeated back to back is refused on
+  its third consecutive occurrence with an actionable error, so an agent
+  that is spinning ends the turn by decision instead of burning
+  `policy.run_timeout` on the same no-op. Any different call resets the
+  streak, so read → edit → read → test workflows are untouched; polling
+  calls belong in the middleware's `exempt` list. (#181)
+- Automations that never set a run limit are now bounded by the
+  15-minute default where previously only the assistant graph's
+  one-hour run timeout applied, so a long-running task can end as
+  `timeout` where it used to run to completion. (#181)
+
 ## [0.5.3] - 2026-09-17
 
 ### Added

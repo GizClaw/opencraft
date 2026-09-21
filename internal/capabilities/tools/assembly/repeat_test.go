@@ -39,7 +39,7 @@ func probeCall(args string) message.ToolCall {
 // actionable error, and a retry of the refused call stays refused.
 func TestRepeatGuardBlocksTheThirdIdenticalCall(t *testing.T) {
 	asm, rec := repeatAssembly(t,
-		`{"enabled":true,"window":6,"threshold":3}`)
+		`{"enabled":true,"threshold":3}`)
 	ctx := repeatCtx(asm)
 	call := probeCall(`{"path":"a.txt"}`)
 	for i := 1; i <= 2; i++ {
@@ -53,7 +53,7 @@ func TestRepeatGuardBlocksTheThirdIdenticalCall(t *testing.T) {
 		t.Fatal("third identical call was executed")
 	}
 	text := res.Content.Text()
-	for _, want := range []string{"probe", "3 times", "6 tool calls"} {
+	for _, want := range []string{"probe", "3 times", "in a row"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("blocked result %q missing %q", text, want)
 		}
@@ -62,8 +62,8 @@ func TestRepeatGuardBlocksTheThirdIdenticalCall(t *testing.T) {
 		t.Fatalf("tool executed %d times, want 2", got)
 	}
 
-	// Refused attempts count in the window: retrying unchanged keeps
-	// hitting the guard instead of pushing it out of its own window.
+	// Refused attempts count as the tail: retrying unchanged keeps
+	// hitting the guard instead of resetting its own streak.
 	if res := asm.Execute(ctx, call); !res.IsError {
 		t.Fatal("retry of a refused call was executed")
 	}
@@ -72,8 +72,8 @@ func TestRepeatGuardBlocksTheThirdIdenticalCall(t *testing.T) {
 	}
 }
 
-// TestRepeatGuardDefaults pins the built-in numbers (window 6,
-// threshold 3) for a deployment that enables the guard bare.
+// TestRepeatGuardDefaults pins the built-in number (threshold 3) for a
+// deployment that enables the guard bare.
 func TestRepeatGuardDefaults(t *testing.T) {
 	asm, rec := repeatAssembly(t, `{"enabled":true}`)
 	ctx := repeatCtx(asm)
@@ -88,24 +88,26 @@ func TestRepeatGuardDefaults(t *testing.T) {
 	}
 }
 
-// TestRepeatGuardIgnoresDifferentArguments makes sure only the same
-// call counts: interleaving different arguments cannot accumulate.
-func TestRepeatGuardIgnoresDifferentArguments(t *testing.T) {
+// TestRepeatGuardIgnoresInterleavedWork pins that only back-to-back
+// repeats count: a read → edit → read → edit workflow issues each call
+// again and again, but never twice in a row, so nothing may be refused.
+// This is the shape the guard must leave alone — the trade-off is that
+// an agent alternating two identical calls in a loop is not caught.
+func TestRepeatGuardIgnoresInterleavedWork(t *testing.T) {
 	asm, rec := repeatAssembly(t,
-		`{"enabled":true,"window":6,"threshold":2}`)
+		`{"enabled":true,"threshold":2}`)
 	ctx := repeatCtx(asm)
-	if res := asm.Execute(ctx, probeCall(`{"path":"a.txt"}`)); res.IsError {
-		t.Fatalf("first call blocked: %s", res.Content.Text())
+	for i := 0; i < 5; i++ {
+		if res := asm.Execute(ctx, probeCall(`{"path":"a.txt"}`)); res.IsError {
+			t.Fatalf("read %d blocked: %s", i+1, res.Content.Text())
+		}
+		if res := asm.Execute(ctx, probeCall(
+			`{"path":"a.txt","content":"fix"}`)); res.IsError {
+			t.Fatalf("edit %d blocked: %s", i+1, res.Content.Text())
+		}
 	}
-	if res := asm.Execute(ctx, probeCall(`{"path":"b.txt"}`)); res.IsError {
-		t.Fatalf("different arguments blocked: %s", res.Content.Text())
-	}
-	if res := asm.Execute(ctx, probeCall(`{"path":"a.txt"}`)); !res.IsError {
-		t.Fatal("second call of a.txt was executed despite threshold 2")
-	}
-	// Only one of the two identical calls reached the tool.
-	if got := len(rec.Calls()); got != 2 {
-		t.Fatalf("tool executed %d times, want 2", got)
+	if got := len(rec.Calls()); got != 10 {
+		t.Fatalf("tool executed %d times, want 10", got)
 	}
 }
 
@@ -113,7 +115,7 @@ func TestRepeatGuardIgnoresDifferentArguments(t *testing.T) {
 // the same object (key order, whitespace) is the same call.
 func TestRepeatGuardNormalizesArguments(t *testing.T) {
 	asm, rec := repeatAssembly(t,
-		`{"enabled":true,"window":6,"threshold":3}`)
+		`{"enabled":true,"threshold":3}`)
 	ctx := repeatCtx(asm)
 	asm.Execute(ctx, probeCall(`{"a":1,"b":2}`))
 	asm.Execute(ctx, probeCall(`{"b":2,"a":1}`))
@@ -130,7 +132,7 @@ func TestRepeatGuardNormalizesArguments(t *testing.T) {
 // repeats never block another run's first call.
 func TestRepeatGuardIsolatesRuns(t *testing.T) {
 	asm, rec := repeatAssembly(t,
-		`{"enabled":true,"window":6,"threshold":2}`)
+		`{"enabled":true,"threshold":2}`)
 	first := repeatCtx(asm)
 	second := repeatCtx(asm)
 	call := probeCall(`{"path":"a.txt"}`)
@@ -146,33 +148,34 @@ func TestRepeatGuardIsolatesRuns(t *testing.T) {
 	}
 }
 
-// TestRepeatGuardWindowSlides pins that work between attempts restores
-// the allowance: once the old attempts fall out of the window the same
-// call runs again.
-func TestRepeatGuardWindowSlides(t *testing.T) {
+// TestRepeatGuardStreakResetsOnADifferentCall pins the escape: a call
+// that is not the repeat resets the streak, so the identical call runs
+// again afterwards.
+func TestRepeatGuardStreakResetsOnADifferentCall(t *testing.T) {
 	asm, rec := repeatAssembly(t,
-		`{"enabled":true,"window":2,"threshold":2}`)
+		`{"enabled":true,"threshold":2}`)
 	ctx := repeatCtx(asm)
 	call := probeCall(`{"path":"a.txt"}`)
 	asm.Execute(ctx, call)
 	if res := asm.Execute(ctx, call); !res.IsError {
 		t.Fatal("second identical call was not blocked")
 	}
-	// Two different calls push both attempts out of the two-call window.
-	asm.Execute(ctx, probeCall(`{"path":"b.txt"}`))
-	asm.Execute(ctx, probeCall(`{"path":"c.txt"}`))
-	if res := asm.Execute(ctx, call); res.IsError {
-		t.Fatalf("call stayed blocked after the window slid: %s", res.Content.Text())
+	// One different call in between makes the retry a new attempt.
+	if res := asm.Execute(ctx, probeCall(`{"path":"b.txt"}`)); res.IsError {
+		t.Fatalf("different call blocked: %s", res.Content.Text())
 	}
-	if got := len(rec.Calls()); got != 4 {
-		t.Fatalf("tool executed %d times, want 4", got)
+	if res := asm.Execute(ctx, call); res.IsError {
+		t.Fatalf("call stayed blocked after a different call: %s", res.Content.Text())
+	}
+	if got := len(rec.Calls()); got != 3 {
+		t.Fatalf("tool executed %d times, want 3", got)
 	}
 }
 
 // TestRepeatGuardExemptsNamedTools pins the polling escape hatch.
 func TestRepeatGuardExemptsNamedTools(t *testing.T) {
 	asm, rec := repeatAssembly(t,
-		`{"enabled":true,"window":6,"threshold":2,"exempt":["probe"]}`)
+		`{"enabled":true,"threshold":2,"exempt":["probe"]}`)
 	ctx := repeatCtx(asm)
 	call := probeCall(`{"path":"a.txt"}`)
 	for i := 0; i < 4; i++ {
@@ -206,7 +209,7 @@ func TestRepeatGuardDisabled(t *testing.T) {
 // counter would block unrelated conversations against each other.
 func TestRepeatGuardWithoutSessionIsInert(t *testing.T) {
 	asm, rec := repeatAssembly(t,
-		`{"enabled":true,"window":6,"threshold":2}`)
+		`{"enabled":true,"threshold":2}`)
 	ctx := context.Background()
 	call := probeCall(`{"path":"a.txt"}`)
 	for i := 0; i < 3; i++ {
@@ -226,7 +229,7 @@ func TestRepeatSettingsValidation(t *testing.T) {
 		name   string
 		repeat string
 	}{
-		{name: "negative window", repeat: `{"enabled":true,"window":-1}`},
+		{name: "negative threshold", repeat: `{"enabled":true,"threshold":-1}`},
 		{name: "threshold below two", repeat: `{"enabled":true,"threshold":1}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

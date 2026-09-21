@@ -200,19 +200,21 @@ resources:
           enabled: true
         timeout:
           default: 5m
-        # No-progress guard: the same call (tool name + canonicalized
-        # arguments) may appear `threshold` times inside a sliding
-        # window of `window` tool calls of one run. The call that would
-        # exceed it is refused with an actionable error result — the
-        # model is told which loop it is in and what to do instead —
-        # so an agent that is spinning ends the turn by decision
-        # instead of burning `policy.run_timeout` on the same no-op.
-        # A refused call still counts in the window, so retrying it
-        # unchanged stays refused. Polling calls (waiting on a build,
-        # tailing a log) belong in `exempt`.
+        # No-progress guard: a call (tool name + canonicalized
+        # arguments) that repeats the run's immediately preceding call
+        # is refused on its `threshold`-th consecutive occurrence, so
+        # it executes at most `threshold - 1` times. The refusal is an
+        # actionable error result — the model is told which loop it is
+        # in and what to do instead — so an agent that is spinning ends
+        # the turn by decision instead of burning `policy.run_timeout`
+        # on the same no-op. Only the tail counts: read → edit → read
+        # → test interleavings are progress and never trip the guard,
+        # and any different call resets the streak. A refused call
+        # still counts as the run's last call, so retrying it unchanged
+        # stays refused. Polling calls (waiting on a build, tailing a
+        # log) belong in `exempt`.
         repeat:
           enabled: true
-          window: 6
           threshold: 3
         # Backstop hard ceiling. The text policy below runs first on
         # the way out, so with truncate enabled this normally only
