@@ -239,6 +239,21 @@ func (b *Diagnostics) SetTelemetryExport(enabled bool) error {
 	return b.core.SetPluginTelemetryExport(enabled)
 }
 
+// PerfProbe reports whether the renderer-side performance sampler is
+// switched on. It is the Diagnostics-tab switch for the frontend
+// sampler: dom_nodes, frame gaps, stream-flush timings and the number of
+// loaded transcript rows, every 30s.
+func (b *Diagnostics) PerfProbe() bool {
+	return b.core.Shell.PerfProbe()
+}
+
+// SetPerfProbe persists the renderer-side sampler switch. The page
+// starts or stops the sampler and the host remembers the choice, so a
+// support session survives a restart.
+func (b *Diagnostics) SetPerfProbe(enabled bool) error {
+	return b.core.Shell.SetPerfProbe(enabled)
+}
+
 var (
 	frontendVitalsDuration = octelemetry.MustFloat64Histogram(
 		"frontend.vitals.duration_ms",

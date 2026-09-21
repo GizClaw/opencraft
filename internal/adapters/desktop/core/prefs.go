@@ -50,6 +50,21 @@ type DesktopPrefs struct {
 	// Diagnostics). Saving applies to future leases; existing children
 	// are not restarted.
 	Exec ExecPrefs `json:"exec,omitempty"`
+	// Diagnostics carries the switches owned by the diagnostics tab
+	// itself, so a support session can be set up once and survive a
+	// restart.
+	Diagnostics DiagnosticsPrefs `json:"diagnostics,omitempty"`
+}
+
+// DiagnosticsPrefs is the desktop preference section behind the
+// diagnostics tab's own switches.
+type DiagnosticsPrefs struct {
+	// PerfProbe keeps the renderer-side sampler running: every 30s the
+	// page reports dom_nodes, frame gaps, stream-flush timings and the
+	// number of loaded transcript rows through Diagnostics, which logs
+	// each sample and records it as a frontend.* metric. Off by default
+	// — it walks the DOM on every report.
+	PerfProbe bool `json:"perfProbe,omitempty"`
 }
 
 // ExecPrefs is the desktop preference section that configures the exec

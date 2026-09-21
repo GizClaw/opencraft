@@ -37,6 +37,7 @@ import { MetricsCharts } from './MetricsCharts';
 import { PathEnvironmentCard } from './PathEnvironmentCard';
 import { ExecPoolCard } from './ExecPoolCard';
 import { HeapProfileCard } from './HeapProfileCard';
+import { PerfProbeCard } from './PerfProbeCard';
 import { PetBehaviorPanel } from './PetBehaviorPanel';
 import { TelemetryExportCard } from './TelemetryExportCard';
 import { ToolsSection } from './ToolsSection';
@@ -76,6 +77,8 @@ import { useOverlayLayer } from '../lib/overlay';
 import { ICON } from './ui/icon';
 import { SaveBar } from './ui/SaveBar';
 import { Overlay } from './ui/Overlay';
+import { Modal } from './ui/Modal';
+import { Badge } from './ui/Badge';
 import { Popover } from './ui/Popover';
 import { Button, IconButton } from './ui/Button';
 import { EmptyState } from './ui/EmptyState';
@@ -318,11 +321,13 @@ function DiagSection({
   id,
   title,
   hint,
+  badge,
   children,
 }: {
   id?: string;
   title: string;
   hint?: string;
+  badge?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -331,13 +336,49 @@ function DiagSection({
       className="scroll-mt-4 space-y-2 border-t border-edge pt-4 first:border-t-0 first:pt-0"
     >
       <div className="space-y-0.5">
-        <h3 className="text-label font-semibold uppercase tracking-wide text-dim">
-          {title}
-        </h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-label font-semibold uppercase tracking-wide text-dim">
+            {title}
+          </h3>
+          {badge && <Badge tone="neutral">{badge}</Badge>}
+        </div>
         {hint && <p className="text-xs text-dim">{hint}</p>}
       </div>
       {children}
     </section>
+  );
+}
+
+// DEV_ANCHORS are the diagnostics rows that only render with the DEV
+// switch on. The settings search may still target one, so the jump turns
+// the switch on rather than scrolling to a row that is not there.
+const DEV_ANCHORS = new Set([
+  'diag-perfprobe',
+  'diag-heap',
+  'diag-otlp',
+  'diag-execpool',
+]);
+
+// DiagToolRow is the visible face of a diagnostics tool that opens in a
+// dialog: one line of what it is, and the action that opens it. The tab
+// used to inline a 22rem log pane, a chart grid and two editors, which
+// buried the facts above them.
+function DiagToolRow({
+  hint,
+  action,
+  onAction,
+}: {
+  hint: string;
+  action: string;
+  onAction: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-3 rounded-card border border-edge bg-panel2 p-3">
+      <p className="min-w-0 flex-1 text-xs text-dim">{hint}</p>
+      <Button variant="quiet" size="md" onClick={onAction}>
+        {action}
+      </Button>
+    </div>
   );
 }
 
@@ -446,6 +487,14 @@ export function ConfigPage() {
   const [policy, setPolicy] = useState<PolicyDecision | null>(null);
   const [cacheResult, setCacheResult] = useState<CacheClearResult | null>(null);
   const [diagBusy, setDiagBusy] = useState(false);
+  // devMode reveals the capture and tuning tools a normal support pass
+  // does not need. The dialogs below are the tools whose editors are too
+  // big to sit in the column at full size.
+  const [devMode, setDevMode] = useState(false);
+  const [logOpen, setLogOpen] = useState(false);
+  const [metricsOpen, setMetricsOpen] = useState(false);
+  const [pathOpen, setPathOpen] = useState(false);
+  const [execPoolOpen, setExecPoolOpen] = useState(false);
   const [usageRows, setUsageRows] = useState<ModelUsageStat[]>([]);
   const [usageSessions, setUsageSessions] = useState(0);
   const [usageError, setUsageError] = useState('');
@@ -1119,6 +1168,12 @@ export function ConfigPage() {
       content?.scrollTo({ top: 0 });
       return;
     }
+    // A dev-only row is not rendered until the switch is on; a search jump
+    // has to reveal it instead of scrolling to nothing.
+    if (DEV_ANCHORS.has(pendingAnchor) && !devMode) {
+      setDevMode(true);
+      return;
+    }
     const node = document.getElementById(`settings-${pendingAnchor}`);
     const reduce = window.matchMedia?.(
       '(prefers-reduced-motion: reduce)',
@@ -1128,7 +1183,7 @@ export function ConfigPage() {
       behavior: reduce === true ? 'auto' : 'smooth',
     });
     setPendingAnchor(null);
-  }, [pendingAnchor, tab]);
+  }, [pendingAnchor, tab, devMode]);
 
   // Vertical tablists move with the arrow keys (WAI-ARIA tabs pattern);
   // focus follows selection so the next arrow keeps moving.
@@ -2855,7 +2910,18 @@ export function ConfigPage() {
 
           {tab === 'diagnostics' && (
             <div className="space-y-5">
-              <p className="text-xs text-dim">{t('config.diagHint')}</p>
+              <div className="flex items-start justify-between gap-4">
+                <p className="text-xs text-dim">{t('config.diagHint')}</p>
+                <label className="flex shrink-0 cursor-pointer items-center gap-1.5 text-xs text-dim">
+                  <input
+                    type="checkbox"
+                    checked={devMode}
+                    onChange={(e) => setDevMode(e.target.checked)}
+                    className="accent-accent"
+                  />
+                  {t('config.diagDevMode')}
+                </label>
+              </div>
               <DiagSection
                 id="settings-diag-runtime"
                 title={t('config.diagSecOverview')}
@@ -3085,45 +3151,36 @@ export function ConfigPage() {
               </DiagSection>
 
               <DiagSection
-                title={t('config.diagSecRuntime')}
-                hint={t('config.diagSecRuntimeHint')}
+                id="settings-diag-logs"
+                title={t('config.secDiagLogs')}
               >
-                <div className="space-y-3">
-                  <div id="settings-diag-execpool" className="scroll-mt-4">
-                    <ExecPoolCard />
-                  </div>
-                  <div id="settings-diag-path" className="scroll-mt-4">
-                    <PathEnvironmentCard />
-                  </div>
-                  <div id="settings-diag-otlp" className="scroll-mt-4">
-                    <TelemetryExportCard />
-                  </div>
-                  <div id="settings-diag-heap" className="scroll-mt-4">
-                    <HeapProfileCard />
-                  </div>
-                </div>
+                <DiagToolRow
+                  hint={t('config.logsHint')}
+                  action={t('config.diagOpenLogs')}
+                  onAction={() => setLogOpen(true)}
+                />
               </DiagSection>
 
-              <DiagSection title={t('config.diagSecObservability')}>
-                <div className="space-y-3">
-                  <div
-                    id="settings-diag-logs"
-                    className="scroll-mt-4 space-y-2 rounded-card border border-edge bg-panel2 p-3"
-                  >
-                    <div className="space-y-0.5">
-                      <h4 className="text-xs font-semibold text-fg">
-                        {t('config.secDiagLogs')}
-                      </h4>
-                      <p className="text-xs text-dim">{t('config.logsHint')}</p>
-                    </div>
-                    <div className="h-[22rem]">
-                      <LogViewer fetchLogs={() => api.readLog(300)} />
-                    </div>
-                  </div>
-                  <div id="settings-diag-metrics" className="scroll-mt-4">
-                    <MetricsCharts />
-                  </div>
-                </div>
+              <DiagSection
+                id="settings-diag-metrics"
+                title={t('config.metricsTitle')}
+              >
+                <DiagToolRow
+                  hint={t('config.metricsHint')}
+                  action={t('config.diagOpenMetrics')}
+                  onAction={() => setMetricsOpen(true)}
+                />
+              </DiagSection>
+
+              <DiagSection
+                id="settings-diag-path"
+                title={t('config.diagPathTitle')}
+              >
+                <DiagToolRow
+                  hint={t('config.diagPathHint')}
+                  action={t('config.diagEditPath')}
+                  onAction={() => setPathOpen(true)}
+                />
               </DiagSection>
 
               <DiagSection
@@ -3133,6 +3190,47 @@ export function ConfigPage() {
               >
                 <PetBehaviorPanel />
               </DiagSection>
+
+              {devMode ? (
+                <>
+                  <DiagSection
+                    id="settings-diag-perfprobe"
+                    title={t('config.diagPerfProbeTitle')}
+                    badge={t('config.diagDevMode')}
+                  >
+                    <PerfProbeCard showTitle={false} />
+                  </DiagSection>
+                  <DiagSection
+                    id="settings-diag-heap"
+                    title={t('config.heapProfileTitle')}
+                    badge={t('config.diagDevMode')}
+                  >
+                    <HeapProfileCard showTitle={false} />
+                  </DiagSection>
+                  <DiagSection
+                    id="settings-diag-otlp"
+                    title={t('config.diagTelemetryTitle')}
+                    badge={t('config.diagDevMode')}
+                  >
+                    <TelemetryExportCard showTitle={false} />
+                  </DiagSection>
+                  <DiagSection
+                    id="settings-diag-execpool"
+                    title={t('config.diagExecPoolTitle')}
+                    badge={t('config.diagDevMode')}
+                  >
+                    <DiagToolRow
+                      hint={t('config.diagExecPoolHint')}
+                      action={t('config.diagEditExecPool')}
+                      onAction={() => setExecPoolOpen(true)}
+                    />
+                  </DiagSection>
+                </>
+              ) : (
+                <p className="border-t border-edge pt-4 text-xs text-dim">
+                  {t('config.diagDevHidden')}
+                </p>
+              )}
             </div>
           )}
 
@@ -3168,6 +3266,53 @@ export function ConfigPage() {
           </div>
         )
       )}
+
+      {/* The diagnostics tools whose editors or panes are too large for the
+          column. Each one keeps the card it always had; the dialog is the
+          only thing that changed. They portal out of the settings panel —
+          it clips its own overflow — and the charts dialog does not
+          animate: recharts measures its container every frame, so a
+          transformed panel reads as a scale change and dispatches one per
+          frame (React's maximum-update-depth error with a full grid). */}
+      <Modal
+        open={logOpen}
+        onClose={() => setLogOpen(false)}
+        title={t('config.secDiagLogs')}
+        width="56rem"
+        portal
+      >
+        <div className="h-[26rem]">
+          <LogViewer fetchLogs={() => api.readLog(300)} />
+        </div>
+      </Modal>
+      <Modal
+        open={metricsOpen}
+        onClose={() => setMetricsOpen(false)}
+        title={t('config.metricsTitle')}
+        width="52rem"
+        portal
+        motion={false}
+      >
+        <MetricsCharts showHeading={false} />
+      </Modal>
+      <Modal
+        open={pathOpen}
+        onClose={() => setPathOpen(false)}
+        title={t('config.diagPathTitle')}
+        width="44rem"
+        portal
+      >
+        <PathEnvironmentCard />
+      </Modal>
+      <Modal
+        open={execPoolOpen}
+        onClose={() => setExecPoolOpen(false)}
+        title={t('config.diagExecPoolTitle')}
+        width="44rem"
+        portal
+      >
+        <ExecPoolCard />
+      </Modal>
     </Overlay>
   );
 }

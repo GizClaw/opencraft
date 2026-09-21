@@ -12,7 +12,13 @@ import { Segmented } from './ui/Segmented';
 // capability plugins that declare telemetry:export may point that export
 // at their own collector. The local rotating log file is unaffected by
 // either, which the hint spells out.
-export function TelemetryExportCard() {
+// showTitle is off when the card sits under a section heading that
+// already carries the same name.
+export function TelemetryExportCard({
+  showTitle = true,
+}: {
+  showTitle?: boolean;
+}) {
   const { t } = useTranslation();
   const [status, setStatus] = useState<TelemetryExportStatus | null>(null);
   const [error, setError] = useState('');
@@ -62,10 +68,12 @@ export function TelemetryExportCard() {
     <div className="rounded-card border border-edge bg-panel2 p-3">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <div className="flex items-center gap-2 text-sm font-medium">
-            <Radio size={ICON.sm} className="text-accent" />
-            {t('config.diagTelemetryTitle')}
-          </div>
+          {showTitle && (
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <Radio size={ICON.sm} className="text-accent" />
+              {t('config.diagTelemetryTitle')}
+            </div>
+          )}
           <p className="mt-1 text-xs text-dim">
             {t('config.diagTelemetryHint')}
           </p>

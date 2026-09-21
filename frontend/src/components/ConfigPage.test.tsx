@@ -171,6 +171,8 @@ const apiMock = vi.hoisted(() => {
       headerNames: ['Authorization'],
       owner: 'sso-plugin',
     })),
+    perfProbe: vi.fn(async () => false),
+    setPerfProbe: vi.fn(async () => undefined),
     readLog: vi.fn(async () => ''),
   };
   return new Proxy(known, {
@@ -629,12 +631,59 @@ describe('ConfigPage usage', () => {
 });
 
 describe('ConfigPage diagnostics', () => {
+  it('keeps the capture and tuning tools behind the DEV switch', async () => {
+    useStore.setState({ configTab: 'diagnostics' });
+    render(<ConfigPage />);
+
+    // A normal support pass gets the facts, the command check, the two
+    // panes and the pet panel; capture and tuning tools stay hidden.
+    expect(await screen.findByText('Environment')).toBeInTheDocument();
+    expect(screen.queryByText('Renderer performance sampler')).toBeNull();
+    expect(screen.queryByText('OTLP export')).toBeNull();
+    expect(screen.queryByText('Command pool')).toBeNull();
+
+    fireEvent.click(screen.getByLabelText('DEV tools'));
+
+    expect(
+      await screen.findByText('Renderer performance sampler'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('OTLP export')).toBeInTheDocument();
+    expect(screen.getByText('Command pool')).toBeInTheDocument();
+  });
+
+  it('opens the log pane in a dialog instead of inlining it', async () => {
+    useStore.setState({ configTab: 'diagnostics' });
+    render(<ConfigPage />);
+
+    // The pane used to sit in the column at full height, pushing the rest
+    // of the tab out of view.
+    expect(screen.queryByRole('button', { name: 'Copy' })).toBeNull();
+    fireEvent.click(await screen.findByRole('button', { name: 'Open log' }));
+    expect(
+      await screen.findByRole('button', { name: 'Copy' }),
+    ).toBeInTheDocument();
+  });
+
+  it('opens the charts dialog without re-rendering itself to death', async () => {
+    useStore.setState({ configTab: 'diagnostics' });
+    render(<ConfigPage />);
+
+    // The charts poll their own range and re-arm a timer; inside a second
+    // overlay layer an unstable effect turned that into an endless render
+    // loop (React error #185), which is what this pins.
+    fireEvent.click(await screen.findByRole('button', { name: 'Open charts' }));
+    expect(
+      await screen.findByRole('dialog', { name: 'Performance' }),
+    ).toBeInTheDocument();
+  });
+
   it('shows the OTLP export sink in the diagnostics tab', async () => {
     useStore.setState({ configTab: 'diagnostics' });
     render(<ConfigPage />);
 
-    // Telemetry egress lives with the log viewer it feeds, not with the
-    // plugin list that may point it somewhere else.
+    // Telemetry egress is a capture tool: it lives with the DEV switch,
+    // not with the plugin list that may point it somewhere else.
+    fireEvent.click(await screen.findByLabelText('DEV tools'));
     const status = await screen.findByText(/configured by sso-plugin/);
     expect(status.textContent).toContain('collector.example:4318');
   });

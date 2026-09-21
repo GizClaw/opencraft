@@ -9,7 +9,9 @@ import { ICON } from './ui/icon';
 // is only useful when taken while the process is big — so the card hands
 // back the file path and the pprof command instead of pretending the
 // number in the app is enough.
-export function HeapProfileCard() {
+// showTitle is off when the card sits under a section heading that
+// already carries the same name.
+export function HeapProfileCard({ showTitle = true }: { showTitle?: boolean }) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ path: string; bytes: number } | null>(
@@ -34,9 +36,11 @@ export function HeapProfileCard() {
     <div className="rounded-card border border-edge bg-panel2 p-3">
       <div className="flex items-center gap-2">
         <HardDriveDownload size={ICON.sm} className="shrink-0 text-accent" />
-        <span className="text-sm font-medium text-fg">
-          {t('config.heapProfileTitle')}
-        </span>
+        {showTitle && (
+          <span className="text-sm font-medium text-fg">
+            {t('config.heapProfileTitle')}
+          </span>
+        )}
         <span className="flex-1" />
         <button
           type="button"

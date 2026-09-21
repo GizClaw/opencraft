@@ -23,6 +23,9 @@ export interface MockConfig {
   turnByRunID?: Record<string, unknown>;
   listSessions?: unknown[];
   listSessionsInWorkspace?: Record<string, unknown[]>;
+  // metricPoints overrides the Diagnostics.MetricRange answer; leave it
+  // unset for the default of "no samples".
+  metricPoints?: Array<{ ts: number; value: number; attrs?: unknown }>;
   workspaces?: unknown[];
   sessionTurns?: unknown[];
   automations?: unknown[];
@@ -239,6 +242,8 @@ export function mockBackend(cfg?: MockConfig) {
     },
     Diagnostics: {
       ClearCaches: async () => ({ dirs: [], bytes: 0 }),
+      PerfProbe: async () => false,
+      SetPerfProbe: noop,
       CaptureHeapProfile: async () => ({
         path: '/user/diagnostics/heap-test.pprof',
         bytes: 2048,
@@ -268,7 +273,15 @@ export function mockBackend(cfg?: MockConfig) {
         usage_total_tokens: 128400,
       }),
       EvaluateCommandPolicy: async () => ({ command: '', allowed: true }),
-      MetricRange: async () => [],
+      // The charts only exercise their drawing path with points to plot;
+      // the default empty answer keeps every card in its empty state.
+      MetricRange: async () =>
+        config.metricPoints ??
+        Array.from({ length: 900 }, (_, i) => ({
+          ts: Date.now() - (900 - i) * 60_000,
+          value: 100_000 + ((i * 7919) % 40_000),
+          attrs: {},
+        })),
       // Mirrors the wire shape of a Go nil slice: the repair reports no
       // list when the layer has nothing to remove.
       RepairConfigCompat: async () => ({

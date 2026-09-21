@@ -184,6 +184,14 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   },
   {
     tab: 'diagnostics',
+    section: 'diag-perfprobe',
+    labelKey: 'config.diagPerfProbeTitle',
+    keywords:
+      'renderer perf sampler dom nodes frame flush transcript ' +
+      '渲染 性能 采样 dom 节点 卡顿 帧 刷新',
+  },
+  {
+    tab: 'diagnostics',
     section: 'diag-pet',
     labelKey: 'config.petDiagTitle',
     keywords: 'pet behavior mood phase energy 宠物 行为 心情 阶段 精力',

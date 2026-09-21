@@ -1,4 +1,3 @@
-import { System } from '@wailsio/runtime';
 import { api } from './api';
 import { streamFlushStats, useStore } from './store';
 
@@ -9,12 +8,15 @@ import { streamFlushStats, useStore } from './store';
 // frontend.* series, so the diagnostics charts and SQLite queries can
 // show them growing (or not) across a session.
 //
-// It is enabled when the host reports a debug build, or explicitly with
+// The Diagnostics tab owns the persisted switch; a support session can
+// also force it on without touching that setting, with
 // localStorage['oc.perfProbe'] = '1' / window.__ocPerfProbe = true. The
 // frame sampler is a single subtraction per animation frame.
 const REPORT_INTERVAL_MS = 30_000;
 
 let started = false;
+let timer = 0;
+let frameHandle = 0;
 let frames = 0;
 let frameMaxMs = 0;
 let lastFrameAt = 0;
@@ -22,13 +24,14 @@ let longTasks = 0;
 let longTaskMaxMs = 0;
 
 function sampleFrames(now: number) {
+  if (!started) return;
   if (lastFrameAt !== 0) {
     const gap = now - lastFrameAt;
     frames += 1;
     if (gap > frameMaxMs) frameMaxMs = gap;
   }
   lastFrameAt = now;
-  requestAnimationFrame(sampleFrames);
+  frameHandle = requestAnimationFrame(sampleFrames);
 }
 
 // countMessages sums the loaded transcript rows across conversations;
@@ -91,8 +94,36 @@ export function startPerfProbe(): void {
   } catch {
     // longtask is Chromium-only; frame gaps cover the other engines.
   }
-  requestAnimationFrame(sampleFrames);
-  window.setInterval(() => void report(), REPORT_INTERVAL_MS);
+  lastFrameAt = 0;
+  frameHandle = requestAnimationFrame(sampleFrames);
+  timer = window.setInterval(() => void report(), REPORT_INTERVAL_MS);
+}
+
+// stopPerfProbe ends the sampler. The diagnostics switch turns it off
+// without a reload, so the page goes back to paying nothing per frame
+// and nothing every 30s.
+export function stopPerfProbe(): void {
+  if (!started) return;
+  started = false;
+  window.clearInterval(timer);
+  timer = 0;
+  cancelAnimationFrame(frameHandle);
+  frameHandle = 0;
+  frames = 0;
+  frameMaxMs = 0;
+  lastFrameAt = 0;
+  longTasks = 0;
+  longTaskMaxMs = 0;
+}
+
+// setPerfProbeEnabled applies a switch flip in the page. The host owns
+// the persisted value; this only makes the change immediate.
+export function setPerfProbeEnabled(enabled: boolean): void {
+  if (enabled) {
+    startPerfProbe();
+    return;
+  }
+  stopPerfProbe();
 }
 
 export function perfProbeEnabled(): boolean {
@@ -107,9 +138,10 @@ export function perfProbeEnabled(): boolean {
 }
 
 // installPerfProbe decides from the host environment whether the probe
-// should run. Debug builds (the local packaged app) get it by default so
-// a long-turn report is available without rebuilding; release builds stay
-// quiet unless the user opts in.
+// should run. The Diagnostics tab owns the persisted switch, so a support
+// session survives a restart, and localStorage['oc.perfProbe'] /
+// window.__ocPerfProbe force it on without touching the setting (a dev
+// build, or a session that has to be sampled before the switch exists).
 export function installPerfProbe(): void {
   (
     window as unknown as { __ocPerfProbeReport?: () => Promise<void> }
@@ -118,11 +150,19 @@ export function installPerfProbe(): void {
     startPerfProbe();
     return;
   }
-  void System.Environment()
-    .then((env) => {
-      if (env.Debug) startPerfProbe();
+  void api
+    .perfProbe()
+    .then((enabled) => {
+      if (enabled) startPerfProbe();
     })
     .catch(() => {
-      // No environment binding (tests, headless): leave the probe off.
+      // No diagnostics binding (tests, headless): leave the probe off.
     });
+}
+
+// perfProbeRunning reports whether the sampler is live in this page. The
+// diagnostics card reads it so the switch shows what the renderer is
+// actually doing, not just what the host remembered.
+export function perfProbeRunning(): boolean {
+  return started;
 }

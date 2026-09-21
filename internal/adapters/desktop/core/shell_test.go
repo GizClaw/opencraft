@@ -80,6 +80,33 @@ func TestShellPrefsRoundTrip(t *testing.T) {
 	}
 }
 
+// TestShellPerfProbePrefRoundTrip pins the Diagnostics-tab switch for
+// the renderer-side sampler: it is off on a fresh profile (a release
+// build must not walk the DOM every 30s unasked), and once flipped it
+// survives a restart so a support session keeps its series.
+func TestShellPerfProbePrefRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	s := NewShell(dir)
+	if s.PerfProbe() {
+		t.Fatal("fresh profile must leave the renderer sampler off")
+	}
+	if err := s.SetPerfProbe(true); err != nil {
+		t.Fatal(err)
+	}
+	if !s.PerfProbe() {
+		t.Fatal("PerfProbe = false after enabling it")
+	}
+	if !NewShell(dir).PerfProbe() {
+		t.Fatal("the renderer sampler switch did not persist")
+	}
+	if err := s.SetPerfProbe(false); err != nil {
+		t.Fatal(err)
+	}
+	if NewShell(dir).PerfProbe() {
+		t.Fatal("disabling the sampler did not persist")
+	}
+}
+
 func TestShellQuitState(t *testing.T) {
 	s := NewShell(t.TempDir())
 	if s.QuitRequested() {

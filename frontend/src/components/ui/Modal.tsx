@@ -28,6 +28,8 @@ export function Modal({
   panelClassName = '',
   bodyClassName = 'overflow-y-auto px-4 py-3 space-y-3',
   initialFocus = false,
+  portal = false,
+  motion = true,
   children,
 }: {
   open: boolean;
@@ -41,6 +43,10 @@ export function Modal({
   panelClassName?: string;
   bodyClassName?: string;
   initialFocus?: string | false;
+  // See Overlay: a dialog opened from inside another surface portals out
+  // of it, and content that measures itself turns the motion off.
+  portal?: boolean;
+  motion?: boolean;
   children: ReactNode;
 }) {
   const { t } = useTranslation();
@@ -49,6 +55,8 @@ export function Modal({
       open={open}
       onClose={onClose}
       initialFocus={initialFocus}
+      portal={portal}
+      motion={motion}
       ariaLabel={ariaLabel ?? (ariaLabelledBy ? undefined : title)}
       ariaLabelledBy={ariaLabelledBy}
       panelClassName={`flex max-h-[calc(100vh-2rem)] max-w-full flex-col overflow-hidden rounded-card border border-edge bg-panel shadow-modal ${panelClassName}`}

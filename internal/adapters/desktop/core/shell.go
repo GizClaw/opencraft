@@ -805,6 +805,23 @@ func (s *Shell) ExecPool() execd.PoolSettings {
 	return s.prefs.Exec.PoolSettings()
 }
 
+// PerfProbe reports whether the renderer-side performance sampler is
+// switched on for this profile.
+func (s *Shell) PerfProbe() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.prefs.Diagnostics.PerfProbe
+}
+
+// SetPerfProbe persists the renderer-side performance sampler switch.
+// The page starts or stops its own sampler when the switch is flipped;
+// the host only remembers the choice for the next launch.
+func (s *Shell) SetPerfProbe(enabled bool) error {
+	return s.commit(func(p *DesktopPrefs) {
+		p.Diagnostics.PerfProbe = enabled
+	})
+}
+
 // SetExecPool persists new pool settings and applies them to the live
 // pool. Existing children keep serving; only future leases and reaping
 // use the new values.
