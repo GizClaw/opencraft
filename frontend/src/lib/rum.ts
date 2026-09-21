@@ -1,4 +1,4 @@
-import { onCLS, onFID, onINP, onLCP } from 'web-vitals';
+import { onFID, onINP, onLCP } from 'web-vitals';
 import type { Metric } from 'web-vitals';
 
 import * as Diagnostics from '../../bindings/github.com/GizClaw/opencraft/internal/adapters/desktop/bindings/diagnostics';
@@ -78,22 +78,6 @@ function reportNavigationTiming() {
   }
 }
 
-// reportCLS keeps CLS a series instead of a single end-of-session number:
-// web-vitals only reports it once the document is hidden, which a desktop
-// window may never do. Steps smaller than the threshold are folded together
-// so a chatty page does not write one row per layout shift.
-function reportCLS(metric: Metric) {
-  const previous = lastValue.get('cls-reported');
-  const hidden = document.visibilityState === 'hidden';
-  // The first observation is sent even when it is 0: a cumulative shift of
-  // zero is the answer for a page that did not move, and dropping it left
-  // the chart empty for the sessions that behaved best.
-  const grew = previous === undefined || metric.value - previous >= 0.005;
-  if (!grew && !hidden) return;
-  lastValue.set('cls-reported', metric.value);
-  report(metric, '');
-}
-
 // startRUM wires web-vitals and navigation timing once per page load. It is
 // safe to call before the app shell mounts; unsupported metrics silently
 // produce no observations.
@@ -129,8 +113,12 @@ export function startRUM(): void {
   // the custom wails:// scheme, whose navigation entry carries no response
   // timing (responseStart stays 0), so web-vitals never reports it. The
   // chart was removed with it rather than left permanently empty.
+  //
+  // CLS is deliberately not collected either: web-vitals only arms it on
+  // engines whose PerformanceObserver lists the layout-shift entry type, and
+  // WebKit (the shell's engine on macOS and Linux) does not, so the callback
+  // could never fire and the chart would sit empty.
   onLCP((metric) => report(metric, 'ms'));
   onFID((metric) => report(metric, 'ms'));
   onINP((metric) => report(metric, 'ms'));
-  onCLS(reportCLS, { reportAllChanges: true });
 }
