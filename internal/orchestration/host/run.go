@@ -424,6 +424,29 @@ func validateUserMessage(msg message.Message) error {
 	return nil
 }
 
+// WaitBounded waits for the run under a caller deadline: ctx fires the
+// cancel, never the return. A deadline must not cut the wait short —
+// the archive write, the memory commit, the artifact sweep and the
+// slot release all hang off the settle path, so a wait that returned
+// at the deadline would leave a live turn behind a caller that
+// believes the run is over. An unattended run is bounded this way: the
+// deadline stops the work, and the caller still learns when it really
+// stopped. A cancel that fails (the run is already settling, or the
+// host refused it) leaves the wait running until the turn settles on
+// its own, bounded then only by the graph's run timeout — the caller
+// waits longer instead of returning into a live turn.
+func (r *Run) WaitBounded(ctx context.Context) (*agent.Result, error) {
+	stopWatch := context.AfterFunc(ctx, func() {
+		if err := r.host.CancelRun(r.RunID()); err != nil {
+			telemetry.WarnErr(context.WithoutCancel(ctx),
+				"host: cancel run at its deadline failed", err,
+				otellog.String("run.id", r.RunID()))
+		}
+	})
+	defer stopWatch()
+	return r.Wait(context.WithoutCancel(ctx))
+}
+
 // Wait blocks until the turn finishes, unbinds the prompt broker and
 // releases the session lease.
 func (r *Run) Wait(ctx context.Context) (*agent.Result, error) {

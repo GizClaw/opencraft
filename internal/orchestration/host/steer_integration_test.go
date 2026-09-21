@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -31,6 +32,9 @@ func steerHost(t *testing.T, provider *fakeprovider.Server) (*host.Host, context
 	t.Helper()
 	workDir := t.TempDir()
 	dataDir := t.TempDir()
+	// The skills scan reads $HOME during assembly; keep the developer's
+	// own ~/.agents/skills out of the world state.
+	t.Setenv("HOME", filepath.Join(dataDir, "home"))
 	configDir := t.TempDir()
 	if err := os.MkdirAll(configDir, 0o700); err != nil {
 		t.Fatal(err)
@@ -243,5 +247,93 @@ func TestSteerRunRejections(t *testing.T) {
 	if delivered != accepted {
 		t.Fatalf("steer messages delivered = %d, want the %d accepted ones",
 			delivered, accepted)
+	}
+}
+
+// TestSteerRunTooLargeKeepsTheTurnAlive pins the payload refusal: a
+// steer over core's 32 KiB budget is reported as ErrSteerTooLarge
+// without touching the turn, and the next steer still lands. It also
+// stands for the refusals the host surface cannot produce itself (a
+// terminal turn's ErrSteerClosed, the barge-in window's
+// agent.Interrupted): a rejected steer is refused, never half-queued.
+func TestSteerRunTooLargeKeepsTheTurnAlive(t *testing.T) {
+	provider := fakeprovider.New(t,
+		fakeprovider.Reply{ToolCalls: []fakeprovider.ToolCall{{
+			Name:      "write_file",
+			Arguments: `{"file_path":"steer.txt","content":"x\n"}`,
+		}}},
+		fakeprovider.Reply{Text: "done"},
+	)
+	hold := provider.HoldNext()
+	defer hold.Release()
+
+	h, ctx := steerHost(t, provider)
+	run, err := h.StartRun(ctx, host.RunOptions{
+		Message:       message.NewTextMessage(message.RoleUser, "write steer.txt"),
+		SkipAutoTitle: true,
+	})
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	waitSteerGate(t, hold)
+
+	oversized := strings.Repeat("oversized ", 4*1024)
+	if err := h.SteerRun(run.RunID(), oversized); err == nil {
+		t.Fatal("an oversized steer was accepted")
+	} else if !errors.Is(err, coresession.ErrSteerTooLarge) {
+		t.Fatalf("oversized steer = %v, want ErrSteerTooLarge", err)
+	}
+	// The refusal must not have poisoned the turn: the next message is
+	// accepted and delivered like any other steer.
+	if err := h.SteerRun(run.RunID(), "small correction"); err != nil {
+		t.Fatalf("steer after the oversized refusal: %v", err)
+	}
+	hold.Release()
+
+	res, err := run.Wait(ctx)
+	if err != nil || res == nil || res.Status != "completed" {
+		t.Fatalf("run = %+v, %v; want completed", res, err)
+	}
+	msgs, err := provider.LastMessages()
+	if err != nil {
+		t.Fatalf("last messages: %v", err)
+	}
+	raw, err := json.Marshal(msgs)
+	if err != nil {
+		t.Fatalf("marshal messages: %v", err)
+	}
+	if strings.Contains(string(raw), "oversized") {
+		t.Fatal("the refused steer text still reached the model")
+	}
+	if !strings.Contains(string(raw), "small correction") {
+		t.Fatal("the steer submitted after the refusal never reached the model")
+	}
+}
+
+// TestSteerRunAfterTheSettleIsRefused pins the other end: once the run
+// settled and the host dropped it, a late steer is refused rather than
+// queued behind a turn nobody drains. (Inside the live window the same
+// refusal is core's ErrSteerClosed; the frontend classifies both as
+// "the turn stopped accepting the message".)
+func TestSteerRunAfterTheSettleIsRefused(t *testing.T) {
+	provider := fakeprovider.New(t, fakeprovider.Reply{Text: "done"})
+	h, ctx := steerHost(t, provider)
+	run, err := h.StartRun(ctx, host.RunOptions{
+		Message:       message.NewTextMessage(message.RoleUser, "hello"),
+		SkipAutoTitle: true,
+	})
+	if err != nil {
+		t.Fatalf("start run: %v", err)
+	}
+	if _, err := run.Wait(ctx); err != nil {
+		t.Fatalf("wait run: %v", err)
+	}
+	calls := provider.Calls()
+
+	if err := h.SteerRun(run.RunID(), "too late"); err == nil {
+		t.Fatal("a steer for a settled run was accepted")
+	}
+	if got := provider.Calls(); got != calls {
+		t.Fatalf("provider calls = %d after the late steer, want %d", got, calls)
 	}
 }
