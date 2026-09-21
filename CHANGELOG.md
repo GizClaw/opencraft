@@ -33,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   turn settles (archive, memory commit, usage and the concurrency slot
   all still run). The run list offers the action on a running row and
   the task menu on a task whose run is live; the failure notification
-  policy stays quiet for a stop the user asked for.
+  policy stays quiet for a stop the user asked for. (#186)
 
 ### Changed
 
