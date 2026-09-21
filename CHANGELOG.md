@@ -87,7 +87,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `application.New` so the loser of that race never seeds a directory or
   a log line on its way out. The profile shows up where a user sees it:
   the window title, the tray tooltip and a Settings ▸ Diagnostics card
-  naming the profile, the state root and the app home.
+  naming the profile, the state root and the app home. (#190)
 
 ### Changed
 
@@ -190,11 +190,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   could not answer, and it matters because `opencraft run` shares the
   state root of a running desktop app by design. A filesystem where the
   lock cannot be taken at all fails open with a warning: a broken lock
-  must not silently disable recovery.
+  must not silently disable recovery. (#190)
 - `engine.BuildRuntime` refuses to assemble without a workspace layout.
   The fallback it used to take resolved the global user data directory,
   which silently assembled a workspace against whatever state root the
   process happened to have instead of the one it was launched with.
+  (#190)
 
 ### Fixed
 
