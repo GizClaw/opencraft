@@ -247,12 +247,22 @@ func readUntilEOF(t *testing.T, client *Client, id string) string {
 
 // TestSessionSignalInterrupts pins the signal primitive the exec tools
 // rely on: interrupt is delivered and the process ends on its own.
+//
+// The command runs without a shell on purpose. "/bin/sh -c ..." installs
+// its SIGINT handler before it forks the command, so an interrupt that
+// lands in that window — microseconds idle, milliseconds under load — is
+// caught by the shell and never reaches the forked command. The shell
+// then waits out a child that is still asleep and the interrupt looks
+// lost, which is what made this test flake on loaded CI. A process that
+// exists before Signal cannot miss it: the group has exactly one member,
+// and a signal that arrives while the child is still pre-exec stays
+// pending until it execs and then kills it.
 func TestSessionSignalInterrupts(t *testing.T) {
 	runner := testRunner(t)
 	ctx := context.Background()
 	session, err := runner.Start(ctx, sandbox.SessionSpec{
 		ID:   "signal",
-		Argv: []string{"/bin/sh", "-c", "sleep 30"},
+		Argv: []string{"/bin/sleep", "30"},
 	})
 	if err != nil {
 		t.Fatal(err)
