@@ -8,6 +8,7 @@ const apiMock = vi.hoisted(() => ({
   runAutomationNow: vi.fn(),
   deleteAutomation: vi.fn(),
   automationSessions: vi.fn(),
+  automationRuns: vi.fn(),
 }));
 
 vi.mock('../lib/api', () => ({ api: apiMock }));
@@ -16,6 +17,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   // Opening the editor asks for the workspace's sessions.
   apiMock.automationSessions.mockResolvedValue([]);
+  apiMock.automationRuns.mockResolvedValue([]);
   useStore.setState({
     workspace: '/tmp/w',
     automations: [
@@ -79,5 +81,31 @@ describe('AutomationsView', () => {
       screen.getByText(/Run limit must be a whole number/),
     ).toBeInTheDocument();
     expect(apiMock.saveAutomation).not.toHaveBeenCalled();
+  });
+
+  it('renders a cut-short run as a timeout badge with its bound', async () => {
+    apiMock.automationRuns.mockResolvedValue([
+      {
+        id: 'run-1',
+        task_id: 't-1',
+        at: '2026-09-21T09:00:00Z',
+        status: 'timeout',
+        error: 'timed out after 30m',
+        conversation_id: 's-1',
+        run_id: 'r-1',
+        duration_ms: 1_800_000,
+        summary: '',
+      },
+    ]);
+    render(<AutomationsView />);
+    fireEvent.click(screen.getByText('Daily brief'));
+
+    // The badge carries the status verbatim, painted as a warning: a
+    // run the limit cut short is the one outcome the user can act on
+    // (raise the limit), so it must not read like a crash.
+    const badge = await screen.findByText('timeout');
+    expect(badge.className).toContain('text-warn');
+    expect(screen.getByText(/timed out after 30m/)).toBeInTheDocument();
+    expect(screen.getByText(/1800\.0s/)).toBeInTheDocument();
   });
 });

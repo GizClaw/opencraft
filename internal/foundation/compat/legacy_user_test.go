@@ -131,9 +131,34 @@ func TestUserLegacyUpgradesOldAutomationTable(t *testing.T) {
 	).Scan(&notify, &conversationID, &timeout); err != nil {
 		t.Fatalf("read legacy row after migration: %v", err)
 	}
-	if notify != "always" || conversationID != "" || timeout != "" {
+	// The timeout column is seeded rather than left empty: a row saved
+	// before the column existed ran under the assistant graph's
+	// one-hour run timeout, and the upgrade must not quietly shorten it
+	// to the new 15-minute default.
+	if notify != "always" || conversationID != "" || timeout != "60m" {
 		t.Fatalf("legacy columns = notify %q conversation %q timeout %q",
 			notify, conversationID, timeout)
+	}
+	// A task saved after the migration keeps the empty default: the
+	// seed is for rows the old build wrote, not for new ones.
+	if _, err := handle.SQLDB().ExecContext(ctx, `
+		INSERT INTO automations (
+			id, name, prompt, schedule, workspace, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		"t-new", "fresh", "run", `{"type":"daily","time":"09:00"}`,
+		"/tmp/ws", "2026-01-02T00:00:00Z", "2026-01-02T00:00:00Z",
+	); err != nil {
+		t.Fatal(err)
+	}
+	var freshTimeout string
+	if err := handle.SQLDB().QueryRowContext(ctx,
+		`SELECT timeout FROM automations WHERE id = ?`, "t-new",
+	).Scan(&freshTimeout); err != nil {
+		t.Fatalf("read fresh row: %v", err)
+	}
+	if freshTimeout != "" {
+		t.Fatalf("fresh row timeout = %q, want the empty default",
+			freshTimeout)
 	}
 
 	var raw string
