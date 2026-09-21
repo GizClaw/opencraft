@@ -476,6 +476,20 @@ function UndeliveredSteerCard({
   onDismiss: () => void;
 }) {
   const { t } = useTranslation();
+  const [copied, setCopied] = useState(false);
+  // The card is the only copy of this text — it never entered the
+  // conversation, and the transcript row it came from is gone — so
+  // there is always a way to take the text elsewhere (send it from a
+  // different client, keep it in a note) before dismissing the card.
+  const copyText = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard unavailable
+    }
+  };
   return (
     <div
       data-testid="steer-undelivered"
@@ -497,6 +511,14 @@ function UndeliveredSteerCard({
             className="rounded-control border border-edge bg-panel px-2.5 py-1 text-xs text-fg transition-colors hover:bg-panel2"
           >
             {t('chat.steerResend')}
+          </button>
+          <button
+            type="button"
+            onClick={() => void copyText()}
+            aria-label={copied ? t('chat.copied') : t('chat.copyText')}
+            className="flex items-center rounded-control border border-edge bg-panel px-2 py-1 text-xs text-dim transition-colors hover:bg-panel2 hover:text-fg"
+          >
+            {copied ? <Check size={ICON.xs} /> : <Copy size={ICON.xs} />}
           </button>
           <button
             type="button"
@@ -1739,6 +1761,7 @@ export function ChatView() {
   const retryTranscript = useStore((s) => s.retryTranscript);
   const backFromFailure = useStore((s) => s.backFromFailure);
   const cancelRun = useStore((s) => s.cancelRun);
+  const sendInterrupt = useStore((s) => s.sendInterrupt);
   const clearLastFailed = useStore((s) => s.clearLastFailed);
   const sessionDefaults = useStore((s) => s.sessionDefaults);
   const yoloOnly = useStore((s) => s.yoloOnly);
@@ -2446,7 +2469,7 @@ export function ChatView() {
   // Enter submits. While a turn is running it steers instead: the text
   // is handed to the live run and lands at its next round boundary.
   // Steer is text-only, so a draft carrying attachments stays put with
-  // a hint — interrupting is the Stop button's job, not a key combo.
+  // a hint; Cmd/Ctrl+Enter and the Stop button are the interrupt paths.
   const submitDraft = async () => {
     const text = composerRef.current?.getMarkdown() ?? input;
     const emptyComposer = !text.trim() && attachments.length === 0;
@@ -2496,9 +2519,24 @@ export function ChatView() {
     return true;
   };
 
-  // While a turn is running, Enter and Tab switch from their usual
-  // meaning to interrupt/queue; show the hint once the user starts
-  // typing so the shortcut is discoverable.
+  // Cmd/Ctrl+Enter sends the draft now and interrupts the live reply —
+  // the pre-steer Enter meaning, kept reachable so "stop this and do
+  // what I just typed" stays one gesture. The draft is cleared once the
+  // store took it; a refused barge-in keeps it in the composer.
+  const interruptDraft = () => {
+    const text = composerRef.current?.getMarkdown() ?? input;
+    if ((!text.trim() && attachments.length === 0) || !busy || switchingWs) {
+      return false;
+    }
+    const staged = attachments;
+    void sendInterrupt(text, staged).then((taken) => {
+      if (taken) clearDraft();
+    });
+    return true;
+  };
+
+  // While a turn is running, Enter steers and Tab queues; show the hint
+  // once the user starts typing so the shortcuts are discoverable.
   const composerEmpty = !input.trim() && attachments.length === 0;
   const showBusyKeyHint = busy && input.trim().length > 0;
   // A barge-in send is waiting for the superseded run to interrupt at
@@ -3167,6 +3205,7 @@ export function ChatView() {
                   onValueChange={setInput}
                   onSubmit={() => void submitDraft()}
                   onQueue={queueDraft}
+                  onInterrupt={interruptDraft}
                   onPasteImages={(files) => void handlePastedImages(files)}
                 />
               </div>
@@ -3381,19 +3420,32 @@ export function ChatView() {
                       <Square size={ICON.sm} fill="currentColor" />
                     </IconButton>
                   ) : (
-                    // While a turn runs with a draft, the button steers
-                    // the active reply, matching Enter; Stop is only
-                    // shown when the composer is empty (it is the only
-                    // way to interrupt).
-                    <IconButton
-                      label={t('chat.send')}
-                      tone="primary"
-                      size="lg"
-                      onClick={() => void submitDraft()}
-                      disabled={composerEmpty && (!busy || bargeWaiting)}
-                    >
-                      <ArrowUp size={ICON.md} />
-                    </IconButton>
+                    <div className="flex items-center gap-1.5">
+                      {busy && !bargeWaiting && (
+                        // A draft keeps the primary action on send/steer
+                        // (matching Enter), so Stop sits next to it:
+                        // interrupting a reply must not require emptying
+                        // the composer first. bargeWaiting owns its Stop
+                        // in the staged banner.
+                        <IconButton
+                          label={t('chat.stop')}
+                          tone="danger"
+                          size="md"
+                          onClick={() => void cancelRun()}
+                        >
+                          <Square size={ICON.xs} fill="currentColor" />
+                        </IconButton>
+                      )}
+                      <IconButton
+                        label={t('chat.send')}
+                        tone="primary"
+                        size="lg"
+                        onClick={() => void submitDraft()}
+                        disabled={composerEmpty && (!busy || bargeWaiting)}
+                      >
+                        <ArrowUp size={ICON.md} />
+                      </IconButton>
+                    </div>
                   )}
                 </div>
               </div>
