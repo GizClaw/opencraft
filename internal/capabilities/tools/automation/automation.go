@@ -173,48 +173,71 @@ func (t *Tool) Definition() message.ToolDefinition {
 		message.ToolObjectProperty("task",
 			"Task fields (required for create/update/delete).",
 			map[string]any{
-				"id": message.ToolProperty("id", "string",
+				"id": schemaProp("string",
 					"Task id (required for update/delete)."),
-				"name": message.ToolProperty("name", "string",
+				"name": schemaProp("string",
 					"Task name (1-200 chars)."),
-				"prompt": message.ToolProperty("prompt", "string",
+				"prompt": schemaProp("string",
 					"Prompt each run executes."),
-				"workspace": message.ToolProperty("workspace", "string",
+				"workspace": schemaProp("string",
 					"Absolute workspace path the task runs in."),
-				"mode": message.ToolProperty("mode", "string",
+				"mode": schemaProp("string",
 					"Sandbox mode: workspace, read-only or yolo (default workspace)."),
-				"model": message.ToolProperty("model", "string",
+				"model": schemaProp("string",
 					"Model hint (provider/name), empty = default routing."),
-				"think": message.ToolProperty("think", "string",
+				"think": schemaProp("string",
 					"Reasoning effort: low, medium or high."),
-				"conversation_id": message.ToolProperty("conversation_id",
-					"string", "Optional existing session id to reuse; empty = new session per run."),
-				"notify": message.ToolProperty("notify", "string",
+				"conversation_id": schemaProp("string",
+					"Optional existing session id to reuse; empty = new session per run."),
+				"notify": schemaProp("string",
 					"Notification policy: always, failed or never."),
-				"timeout": message.ToolProperty("timeout", "string",
+				"timeout": schemaProp("string",
 					"Per-run limit as a duration (e.g. 15m, 2h); empty = the 15-minute default."),
-				"enabled": message.ToolProperty("enabled", "boolean",
+				"enabled": schemaProp("boolean",
 					"Whether the task is scheduled (default true)."),
-				"schedule": message.ToolObjectProperty("schedule",
-					"Schedule rule.",
+				"schedule": schemaObject("Schedule rule.",
 					map[string]any{
-						"type": message.ToolEnumProperty("type", "string",
-							"Schedule type.",
-							"hourly", "daily", "weekdays", "weekly"),
-						"interval_hours": message.ToolProperty(
-							"interval_hours", "integer",
+						"type": map[string]any{
+							"type":        "string",
+							"description": "Schedule type.",
+							"enum": []any{
+								"hourly", "daily", "weekdays", "weekly",
+							},
+						},
+						"interval_hours": schemaProp("integer",
 							"hourly: run every N hours."),
-						"interval_weeks": message.ToolProperty(
-							"interval_weeks", "integer",
+						"interval_weeks": schemaProp("integer",
 							"weekly: run every N weeks (default 1)."),
-						"days": message.ToolArrayProperty("days",
-							"Weekday abbreviations (MO..SU).",
-							message.Items("string")),
-						"time": message.ToolProperty("time", "string",
+						"days": map[string]any{
+							"type":        "array",
+							"description": "Weekday abbreviations (MO..SU).",
+							"items":       message.Items("string"),
+						},
+						"time": schemaProp("string",
 							"daily/weekdays/weekly: HH:MM wall clock."),
 					}),
 			}),
 	).Required("action").DisallowAdditionalProperties().Build()
+}
+
+// schemaObject builds one nested object property, with the same
+// raw-map rule as schemaProp.
+func schemaObject(description string, properties map[string]any) map[string]any {
+	return map[string]any{
+		"type":        "object",
+		"description": description,
+		"properties":  properties,
+	}
+}
+
+// schemaProp builds one property of the nested task/schedule objects.
+// Nested values have to be raw JSON Schema maps: a ToolPropertyDef keeps
+// its schema in unexported fields, so one placed below the top level
+// marshals as an empty object — the model would be handed a property
+// named `timeout` with no type and no description, which is how a field
+// the tool documents becomes a field the model cannot fill in.
+func schemaProp(typ, description string) map[string]any {
+	return map[string]any{"type": typ, "description": description}
 }
 
 // Metadata implements tool.ToolMetadata.
