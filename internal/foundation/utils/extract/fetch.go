@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/GizClaw/flowcraft/core/telemetry"
-	"github.com/GizClaw/flowcraft/core/utils"
 
 	"golang.org/x/net/html/atom"
 )
@@ -27,7 +26,13 @@ type FetchResult struct {
 // in-memory reader.
 func Fetch(ctx context.Context, httpClient *http.Client, timeout time.Duration, userAgent, urlStr string) (*FetchResult, error) {
 	if httpClient == nil {
-		httpClient = utils.NewHttpClient(utils.WithTimeout(timeout))
+		// A plain client: it leaves Transport nil, so the request travels
+		// over the process transport (http.DefaultTransport) and stays
+		// visible to the round-trip probe. flowcraft's
+		// core/utils.NewHttpClient would clone that transport through an
+		// unchecked *http.Transport assertion, which a wrapped process
+		// transport breaks (see foundation/utils/httpprobe).
+		httpClient = &http.Client{Timeout: timeout}
 	}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", urlStr, nil)

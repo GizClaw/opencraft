@@ -38,6 +38,7 @@ import { PathEnvironmentCard } from './PathEnvironmentCard';
 import { ExecPoolCard } from './ExecPoolCard';
 import { RecoveryCard } from './RecoveryCard';
 import { HeapProfileCard } from './HeapProfileCard';
+import { HTTPProbeCard } from './HTTPProbeCard';
 import { PerfProbeCard } from './PerfProbeCard';
 import { PetBehaviorPanel } from './PetBehaviorPanel';
 import { TelemetryExportCard } from './TelemetryExportCard';
@@ -357,6 +358,7 @@ const DEV_ANCHORS = new Set([
   'diag-perfprobe',
   'diag-heap',
   'diag-otlp',
+  'diag-httpprobe',
   'diag-execpool',
 ]);
 
@@ -3222,6 +3224,13 @@ export function ConfigPage() {
                     badge={t('config.diagDevMode')}
                   >
                     <TelemetryExportCard showTitle={false} />
+                  </DiagSection>
+                  <DiagSection
+                    id="settings-diag-httpprobe"
+                    title={t('config.diagHttpProbeTitle')}
+                    badge={t('config.diagDevMode')}
+                  >
+                    <HTTPProbeCard showTitle={false} />
                   </DiagSection>
                   <DiagSection
                     id="settings-diag-execpool"

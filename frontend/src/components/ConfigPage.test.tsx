@@ -173,6 +173,18 @@ const apiMock = vi.hoisted(() => {
     })),
     perfProbe: vi.fn(async () => false),
     setPerfProbe: vi.fn(async () => undefined),
+    httpProbe: vi.fn(async () => ({
+      enabled: false,
+      env: false,
+      active: false,
+      blocker: '',
+    })),
+    setHTTPProbe: vi.fn(async (enabled: boolean) => ({
+      enabled,
+      env: false,
+      active: enabled,
+      blocker: '',
+    })),
     readLog: vi.fn(async () => ''),
   };
   return new Proxy(known, {
@@ -640,6 +652,7 @@ describe('ConfigPage diagnostics', () => {
     expect(await screen.findByText('Environment')).toBeInTheDocument();
     expect(screen.queryByText('Renderer performance sampler')).toBeNull();
     expect(screen.queryByText('OTLP export')).toBeNull();
+    expect(screen.queryByText('Provider round-trip probe')).toBeNull();
     expect(screen.queryByText('Command pool')).toBeNull();
 
     fireEvent.click(screen.getByLabelText('DEV tools'));
@@ -648,6 +661,7 @@ describe('ConfigPage diagnostics', () => {
       await screen.findByText('Renderer performance sampler'),
     ).toBeInTheDocument();
     expect(screen.getByText('OTLP export')).toBeInTheDocument();
+    expect(screen.getByText('Provider round-trip probe')).toBeInTheDocument();
     expect(screen.getByText('Command pool')).toBeInTheDocument();
   });
 

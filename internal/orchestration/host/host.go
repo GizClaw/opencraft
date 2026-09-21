@@ -91,9 +91,22 @@ type Manager struct {
 	// the same workspace, which would let two runtimes serve one
 	// conversation concurrently.
 	retiring map[string]*Host
+	// assembling holds the in-flight assembly per workspace so
+	// concurrent Acquire calls share one build instead of racing
+	// (see assemblyCall). Entries live only while assembleHost runs.
+	assembling map[string]*assemblyCall
 	// closeHost is the teardown entry point. It is a field so tests
 	// can substitute a fake close without spinning up a runtime.
 	closeHost func(*Host)
+	// assembleHost is the assembly entry point behind Acquire. It is a
+	// field so tests can substitute a fake build without spinning up a
+	// runtime; production always uses (*Manager).assemble.
+	assembleHost func(
+		context.Context,
+		string,
+		interact.Backend,
+		func(string) interact.Backend,
+	) (*Host, error)
 	// assemblies counts one workspace's runtime assemblies in this
 	// process. A rebuild storm is visible as this number climbing: a
 	// single workspace is supposed to assemble once per engine-input
@@ -119,6 +132,18 @@ type hostRef struct {
 	stale bool
 }
 
+// assemblyCall is one in-flight assembly shared by every Acquire caller
+// that asked for the same workspace while it ran. A rebuild storm
+// (several invalidations arming replacements for one workspace, all
+// waking when the old Host drains) used to assemble one runtime per
+// waker and close all but the first; followers now wait for the leader
+// and reuse its result, error included, so a failed assembly is not
+// retried once per waiter.
+type assemblyCall struct {
+	done chan struct{}
+	err  error
+}
+
 type storeRef struct {
 	store *sessions.Store
 	refs  int
@@ -133,6 +158,7 @@ func NewManager(userDir string) *Manager {
 		stores:  make(map[string]*storeRef),
 	}
 	m.closeHost = func(h *Host) { h.beginClose() }
+	m.assembleHost = m.assemble
 	m.usageRecorder = m.recordUserUsage
 	return m
 }
@@ -430,7 +456,9 @@ func (m *Manager) InvalidateAll(ctx context.Context) {
 }
 
 // Acquire returns (creating if needed) the shared Host for workDir.
-// fallback is used for runs without a resolver hit.
+// fallback is used for runs without a resolver hit. Concurrent callers
+// for one workspace share a single assembly: whoever gets there first
+// builds, the rest wait and reuse the result.
 func (m *Manager) Acquire(
 	ctx context.Context,
 	workDir string,
@@ -453,11 +481,62 @@ func (m *Manager) Acquire(
 			}
 			continue
 		}
+		call := m.assembling[workDir]
+		if call == nil {
+			call = &assemblyCall{done: make(chan struct{})}
+			if m.assembling == nil {
+				m.assembling = make(map[string]*assemblyCall)
+			}
+			m.assembling[workDir] = call
+			m.mu.Unlock()
+			return m.assembleShared(
+				ctx, workDir, fallback, resolver, call)
+		}
 		m.mu.Unlock()
-		break
+		select {
+		case <-call.done:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		if call.err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			// A leader cancelled by its own caller is not this caller's
+			// failure, and ours is still live: the next pass assembles.
+			// Any other error is shared rather than retried once per
+			// waiter.
+			if !errors.Is(call.err, context.Canceled) &&
+				!errors.Is(call.err, context.DeadlineExceeded) {
+				return nil, call.err
+			}
+		}
 	}
+}
 
-	h, err := m.assemble(ctx, workDir, fallback, resolver)
+// assembleShared runs the one assembly for a workspace and publishes
+// its result: the Host enters the pool (or is closed when another
+// caller installed one meanwhile), and every waiting Acquire is woken.
+// The pool is updated before the wake-up, so a follower either finds
+// the pooled Host on its next pass or replays the shared error.
+func (m *Manager) assembleShared(
+	ctx context.Context,
+	workDir string,
+	fallback interact.Backend,
+	resolver func(runID string) interact.Backend,
+	call *assemblyCall,
+) (h *Host, err error) {
+	// One exit point publishes the result: the in-flight entry goes away,
+	// the error is recorded, and the waiters are released, whatever the
+	// assembly did.
+	defer func() {
+		m.mu.Lock()
+		delete(m.assembling, workDir)
+		call.err = err
+		m.mu.Unlock()
+		close(call.done)
+	}()
+	h, err = m.assembleHost(ctx, workDir, fallback, resolver)
 	if err != nil {
 		return nil, err
 	}

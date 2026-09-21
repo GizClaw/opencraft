@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"unicode/utf8"
 
@@ -46,19 +47,25 @@ func TestExecuteShardsOversizedFolds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The fold's shards are condensed concurrently, so the probe is
+	// deliberately shared across goroutines.
 	var (
-		calls     int
-		maxPrompt int
+		calls     atomic.Int64
+		maxPrompt atomic.Int64
 	)
 	tool := &Tool{
 		store: store,
 		generate: func(
 			_ context.Context, req inference.GenerateRequest,
 		) (inference.GenerateResponse, error) {
-			calls++
 			prompt := req.Input.Content.Text()
-			if len(prompt) > maxPrompt {
-				maxPrompt = len(prompt)
+			calls.Add(1)
+			for {
+				prev := maxPrompt.Load()
+				if int64(len(prompt)) <= prev ||
+					maxPrompt.CompareAndSwap(prev, int64(len(prompt))) {
+					break
+				}
 			}
 			return inference.GenerateResponse{
 				Message: message.NewTextMessage(message.RoleAssistant,
@@ -82,14 +89,79 @@ func TestExecuteShardsOversizedFolds(t *testing.T) {
 	if summary := patchSummary(t, out.Text()); summary == "" {
 		t.Fatal("fold produced an empty summary")
 	}
-	if calls < 2 {
-		t.Fatalf("condense calls = %d, want sharded passes", calls)
+	if calls.Load() < 2 {
+		t.Fatalf("condense calls = %d, want sharded passes", calls.Load())
 	}
 	// Each request carries one shard; the merge pass carries the partial
 	// summaries and stays small. Allow a little headroom for the system
 	// instruction and the truncation marker.
-	if maxPrompt > maxCondenseChars+(64<<10) {
-		t.Fatalf("largest prompt = %d chars, want <= %d", maxPrompt,
+	if int(maxPrompt.Load()) > maxCondenseChars+(64<<10) {
+		t.Fatalf("largest prompt = %d chars, want <= %d", maxPrompt.Load(),
+			maxCondenseChars+(64<<10))
+	}
+}
+
+// TestExecuteSplitsOversizedMessagesInsteadOfTruncating pins the second
+// half of the sharding bound: one message larger than a whole request (a
+// tool result carrying a log, a diff, a page of text) used to be cut to the
+// cap and sent as one long call. It travels as pieces instead — in
+// parallel with the fold's other shards — so no single provider call
+// carries more than the cap and the fold keeps the text.
+func TestExecuteSplitsOversizedMessagesInsteadOfTruncating(t *testing.T) {
+	store, err := sessionstore.Open(t, filepath.Join(t.TempDir(), "sessions"), 40)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var (
+		calls     atomic.Int64
+		promptSum atomic.Int64
+		maxPrompt atomic.Int64
+	)
+	tool := &Tool{
+		store: store,
+		generate: func(
+			_ context.Context, req inference.GenerateRequest,
+		) (inference.GenerateResponse, error) {
+			prompt := req.Input.Content.Text()
+			calls.Add(1)
+			promptSum.Add(int64(len(prompt)))
+			for {
+				prev := maxPrompt.Load()
+				if int64(len(prompt)) <= prev ||
+					maxPrompt.CompareAndSwap(prev, int64(len(prompt))) {
+					break
+				}
+			}
+			return inference.GenerateResponse{
+				Message: message.NewTextMessage(message.RoleAssistant,
+					"summary of a piece"),
+			}, nil
+		},
+	}
+
+	// One message three times the per-request cap: nothing else can be
+	// split, so every request has to come from this message.
+	body := strings.Repeat("x", 1200<<10)
+	args := `{"budget_chars":4096,"conversation":[` +
+		convMsg("user", body) + `]}`
+	out, err := tool.Execute(context.Background(), args)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	if summary := patchSummary(t, out.Text()); summary == "" {
+		t.Fatal("fold produced an empty summary")
+	}
+	if got := calls.Load(); got < 2 {
+		t.Fatalf("condense calls = %d, want the message split across requests",
+			got)
+	}
+	if got := promptSum.Load(); got < 1<<20 {
+		t.Fatalf(
+			"requests carried %d chars of a %d-char message, want the text kept",
+			got, len(body))
+	}
+	if got := int(maxPrompt.Load()); got > maxCondenseChars+(64<<10) {
+		t.Fatalf("largest prompt = %d chars, want <= %d", got,
 			maxCondenseChars+(64<<10))
 	}
 }

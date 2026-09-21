@@ -107,6 +107,33 @@ func TestShellPerfProbePrefRoundTrip(t *testing.T) {
 	}
 }
 
+// TestShellHTTPProbePrefRoundTrip pins the DEV switch for the provider
+// round-trip probe: a fresh profile ships it off (the probe doubles the
+// log lines of every model call), and once flipped it survives a restart
+// so a support session keeps its records.
+func TestShellHTTPProbePrefRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	s := NewShell(dir)
+	if s.HTTPProbe() {
+		t.Fatal("fresh profile must leave the round-trip probe off")
+	}
+	if err := s.SetHTTPProbe(true); err != nil {
+		t.Fatal(err)
+	}
+	if !s.HTTPProbe() {
+		t.Fatal("HTTPProbe = false after enabling it")
+	}
+	if !NewShell(dir).HTTPProbe() {
+		t.Fatal("the round-trip probe switch did not persist")
+	}
+	if err := s.SetHTTPProbe(false); err != nil {
+		t.Fatal(err)
+	}
+	if NewShell(dir).HTTPProbe() {
+		t.Fatal("disabling the probe did not persist")
+	}
+}
+
 func TestShellQuitState(t *testing.T) {
 	s := NewShell(t.TempDir())
 	if s.QuitRequested() {

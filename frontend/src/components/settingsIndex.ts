@@ -170,6 +170,14 @@ export const SETTINGS_SECTIONS: SettingsSection[] = [
   },
   {
     tab: 'diagnostics',
+    section: 'diag-httpprobe',
+    labelKey: 'config.diagHttpProbeTitle',
+    keywords:
+      'http probe round trip transport provider latency request headers ' +
+      '请求 往返 探针 传输 延迟 首包',
+  },
+  {
+    tab: 'diagnostics',
     section: 'diag-path',
     labelKey: 'config.diagPathTitle',
     keywords:

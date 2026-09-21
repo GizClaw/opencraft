@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/GizClaw/flowcraft/core/errdefs"
@@ -44,15 +45,24 @@ const compactStateName = "compact"
 // maxCondenseChars bounds one condensation request. A fold can carry
 // megabytes of rendered messages — a single compaction call was observed
 // at 15 MiB — and a prompt that size is rejected or billed whole by the
-// provider, so larger folds are condensed in sequential shards and the
-// partial summaries are merged by a final pass. Folds under the cap keep
-// the single-call path, so ordinary compaction is unchanged.
+// provider, so larger folds are condensed in shards — in parallel, with
+// the bound below — and the partial summaries are merged by a final pass.
+// Folds under the cap keep the single-call path, so ordinary compaction is
+// unchanged.
 const maxCondenseChars = 400 << 10
 
 // maxCondenseRounds bounds the merge passes for a fold with many shards:
 // every pass replaces its input with summaries, so the size collapses
 // after the first round and the loop is a safety net, not the norm.
 const maxCondenseRounds = 3
+
+// maxCondenseParallel bounds how many condensation requests one fold
+// keeps in flight. Shards are independent summaries of one fold, so they
+// are condensed together: the fold runs inside the turn (the next request
+// has to carry its summary), and a multi-shard fold used to pay every
+// shard's latency one after another. The bound keeps a 15 MiB fold from
+// opening dozens of provider streams at once.
+const maxCondenseParallel = 4
 
 // Args is the compact tool input.
 type Args struct {
@@ -533,10 +543,12 @@ type condenseInput struct {
 }
 
 // condenseFold renders a fold and condenses it, sharding the transcript
-// when it exceeds one request. Shards follow message boundaries; a single
-// message larger than the cap is condensed on its own with its rendering
-// truncated, because no provider window can take it whole.
+// when it exceeds one request. Shards follow message boundaries, and a
+// single message larger than the cap is sent as pieces of it: one provider
+// window cannot take the message whole, but the pieces travel together and
+// the fold keeps the text instead of cutting it.
 func (t *Tool) condenseFold(ctx context.Context, in condenseInput) string {
+	started := time.Now()
 	raw := renderMessages(in.fresh)
 	if in.prevSummary != "" {
 		raw = in.prevSummary + "\n\n" + raw
@@ -549,38 +561,52 @@ func (t *Tool) condenseFold(ctx context.Context, in condenseInput) string {
 	telemetry.Info(ctx, "compact: condensing a large fold in shards",
 		otellog.String("conversation.id", in.conversationID),
 		otellog.Int("fold.chars", len(raw)),
-		otellog.Int("fold.shards", len(shards)))
-	partials := make([]string, 0, len(shards))
+		otellog.Int("fold.shards", len(shards)),
+		otellog.Int("fold.parallel", maxCondenseParallel))
+	inputs := make([]condenseInput, 0, len(shards))
 	for i, shard := range shards {
-		shardRaw := renderMessages(shard)
-		if len(shardRaw) > maxCondenseChars {
-			shardRaw = truncateRunes(shardRaw, maxCondenseChars) + "\n…[truncated]"
+		// A shard that does not fit is one message larger than the cap: a
+		// tool result carrying a log, a diff, a page of text. It is cut
+		// into pieces rather than truncated — the pieces run in parallel
+		// with every other shard, none of them exceeds one provider
+		// window, and the fold keeps the text.
+		for j, piece := range splitText(renderMessages(shard), maxCondenseChars) {
+			if i == 0 && j == 0 && in.prevSummary != "" {
+				piece = in.prevSummary + "\n\n" + piece
+			}
+			inputs = append(inputs, condenseInput{
+				conversationID: in.conversationID,
+				raw:            piece,
+				fresh:          shard,
+				prevSummary:    in.prevSummary,
+				budget:         in.budget,
+			})
 		}
-		if i == 0 && in.prevSummary != "" {
-			shardRaw = in.prevSummary + "\n\n" + shardRaw
-		}
-		partials = append(partials, t.condenseText(ctx, condenseInput{
-			conversationID: in.conversationID,
-			raw:            shardRaw,
-			fresh:          shard,
-			prevSummary:    in.prevSummary,
-			budget:         in.budget,
-		}))
 	}
+	partials := t.condenseAll(ctx, inputs)
+	// The fold's cost lands squarely in the turn (the next request has to
+	// carry the summary), so its duration is the number that says whether
+	// sharding is paying for itself.
+	telemetry.Info(ctx, "compact: fold condensed",
+		otellog.String("conversation.id", in.conversationID),
+		otellog.Int("fold.chars", len(raw)),
+		otellog.Int("fold.shards", len(shards)),
+		otellog.Int("fold.requests", len(inputs)),
+		otellog.Int64("fold.ms", time.Since(started).Milliseconds()))
 	merged := strings.Join(partials, "\n\n")
 	for round := 0; round < maxCondenseRounds && len(merged) > maxCondenseChars; round++ {
 		chunks := splitText(merged, maxCondenseChars)
-		parts := make([]string, 0, len(chunks))
+		inputs = make([]condenseInput, 0, len(chunks))
 		for _, chunk := range chunks {
-			parts = append(parts, t.condenseText(ctx, condenseInput{
+			inputs = append(inputs, condenseInput{
 				conversationID: in.conversationID,
 				raw:            chunk,
 				fresh:          in.fresh,
 				prevSummary:    in.prevSummary,
 				budget:         in.budget,
-			}))
+			})
 		}
-		merged = strings.Join(parts, "\n\n")
+		merged = strings.Join(t.condenseAll(ctx, inputs), "\n\n")
 	}
 	if len(merged) > maxCondenseChars {
 		// Every model pass returned something too long to merge: fall back
@@ -590,9 +616,46 @@ func (t *Tool) condenseFold(ctx context.Context, in condenseInput) string {
 	return merged
 }
 
+// condenseAll condenses independent inputs with bounded parallelism and
+// returns the summaries in input order. The mechanical digest stands in
+// for an input the caller's context canceled before it started, so a
+// cancel never leaves a hole in the merged summary.
+func (t *Tool) condenseAll(
+	ctx context.Context,
+	inputs []condenseInput,
+) []string {
+	out := make([]string, len(inputs))
+	if len(inputs) == 0 {
+		return out
+	}
+	if len(inputs) == 1 {
+		out[0] = t.condenseText(ctx, inputs[0])
+		return out
+	}
+	sem := make(chan struct{}, maxCondenseParallel)
+	var wg sync.WaitGroup
+	for i, input := range inputs {
+		wg.Add(1)
+		go func(i int, input condenseInput) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				out[i] = summarytext.MechanicalSummary(
+					input.fresh, input.prevSummary, input.budget)
+				return
+			}
+			defer func() { <-sem }()
+			out[i] = t.condenseText(ctx, input)
+		}(i, input)
+	}
+	wg.Wait()
+	return out
+}
+
 // shardMessages packs whole messages into shards of at most limit
 // characters of rendered text. A message that exceeds the limit on its
-// own becomes a shard of its own; the caller truncates its rendering.
+// own becomes a shard of its own; the caller splits its rendering.
 func shardMessages(msgs []message.Message, limit int) [][]message.Message {
 	if len(msgs) == 0 {
 		return nil
@@ -617,7 +680,10 @@ func shardMessages(msgs []message.Message, limit int) [][]message.Message {
 }
 
 // splitText cuts text into chunks of at most limit characters, preferring
-// line boundaries so a shard never starts mid-line when it can avoid it.
+// line boundaries so a shard never starts mid-line when it can avoid it,
+// and backing off to a rune boundary when the text has no line to cut on:
+// a chunk boundary inside a multi-byte character would reach the provider
+// as invalid UTF-8.
 func splitText(text string, limit int) []string {
 	if len(text) <= limit {
 		return []string{text}
@@ -625,6 +691,12 @@ func splitText(text string, limit int) []string {
 	var out []string
 	for len(text) > limit {
 		cut := strings.LastIndexByte(text[:limit], '\n')
+		if cut <= 0 {
+			cut = limit
+		}
+		for cut > 0 && !utf8.RuneStart(text[cut]) {
+			cut--
+		}
 		if cut <= 0 {
 			cut = limit
 		}

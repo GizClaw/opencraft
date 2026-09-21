@@ -30,6 +30,10 @@ const (
 	ReasonInferenceChange AssemblyReason = "inference_change"
 	// ReasonPathSave is a process PATH override write.
 	ReasonPathSave AssemblyReason = "path_save"
+	// ReasonProbeSave is a provider round-trip probe switch that reloads
+	// so provider clients rebuild against (or away from) the wrapped
+	// transport.
+	ReasonProbeSave AssemblyReason = "probe_save"
 	// ReasonRetryAfterDrain is the deferred rebuild armed when a stale
 	// Host was acquired while it was still draining runs.
 	ReasonRetryAfterDrain AssemblyReason = "retry_after_drain"

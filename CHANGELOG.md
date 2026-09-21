@@ -52,6 +52,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   table holds right now. A checkpoint is dropped as soon as its turn is
   archived, so rows left behind are a live run or a turn the next pass
   has to reconstruct. (#188)
+- Settings ▸ Diagnostics grew a Provider round-trip probe card (behind
+  DEV tools). It wraps the process HTTP transport, so every provider
+  call leaves two records — when the request left the process and when
+  the response headers arrived — which is the split a per-turn latency
+  number cannot show: the gap between the two is network plus provider
+  time to first byte, the gap after the previous step is local assembly.
+  The switch is `desktop.json`'s `diagnostics.httpProbe`; turning it on
+  reloads the runtime, because the provider drivers read the transport
+  when they build their clients, while turning it off takes effect in
+  place. It parks itself while an HTTP MCP server is configured (that
+  client cannot run under a wrapped transport) and says so on the card,
+  and `OPENCRAFT_HTTP_PROBE` still forces it on over the switch.
 
 ### Changed
 
@@ -114,6 +126,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `graphs/nodes/steer.js` alongside it, or the graph references an
   asset the deployment does not have and turns stop starting. Graphs
   left at the shipped defaults pick it up on their own. (#181)
+- Runtime assembly is no longer repeated back to back. At most one
+  replacement is armed per workspace — a second invalidation while one
+  is already armed needs no watcher of its own, since that replacement
+  assembles from the document on disk when it runs — and concurrent
+  acquires of the same workspace share a single assembly instead of
+  racing, reusing its error as well as its result. A storm used to build
+  one runtime per waker and close all but the first; the `host: runtime
+  assembled` count for one workspace is the number that shows it.
+- Folding an oversized transcript into memory condenses its shards in
+  parallel (at most four requests in flight) rather than one after
+  another, and a single message larger than one request is sent as
+  pieces instead of being truncated at the cap — the text that used to
+  be dropped on the way into the summary now reaches it. The fold logs
+  its duration and request count (`compact: fold condensed`), because it
+  runs inside the turn and the next request has to carry its summary.
+- The graph analyzer's build findings are logged once per process: the
+  findings are static and the assistant graph reports the same five
+  host-seeded board references on every assembly, so a session with a
+  few dozen assemblies wrote hundreds of identical WARN lines into the
+  log file and buried everything else. The first occurrence of each
+  finding is kept, so a finding that is genuinely new still logs.
+- The renderer performance sampler pauses while the window is hidden. A
+  background window has its animation frames throttled or stopped by the
+  engine, so the gap between two samples measured the throttle rather
+  than the renderer — the multi-second `frame_max` samples in the log
+  were all background windows. Hiding drops the baseline and resuming
+  starts a new one, so `frame_max` only describes visible rendering.
 
 ### Fixed
 
@@ -149,6 +188,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pre-check and its title read falls back to the app name like the
   pre-check already intended, and only a store that was still open
   reports the read as an error.
+- A settings write that changes nothing no longer invalidates the
+  runtime: a Host that is stale but already superseded counts as serving
+  its workspace, because its replacement reads the same document. A
+  plugin that re-submits its unchanged inference rows on every catalog
+  sync used to rebuild once per row while the workspace drained, each
+  rebuild arming another replacement for the same document.
+- The web-search tool and the page fetcher work under a wrapped process
+  transport (the round-trip probe above, or an SDK's tracing hook): both
+  cloned `http.DefaultTransport` through an unchecked
+  `*http.Transport` assertion, which panics on a wrapper. They apply the
+  same guard the official provider SDKs use, and the fetcher's default
+  client leaves `Transport` nil so its requests stay visible to the
+  probe.
 
 ## [0.5.3] - 2026-09-17
 

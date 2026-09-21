@@ -256,6 +256,44 @@ func (b *Diagnostics) SetPerfProbe(enabled bool) error {
 	return b.core.Shell.SetPerfProbe(enabled)
 }
 
+// HTTPProbeDTO is the diagnostics view of the provider round-trip
+// probe: the persisted switch, the environment override, whether the
+// transport is wrapped right now and, when it is not, the MCP
+// configuration that keeps it out.
+type HTTPProbeDTO struct {
+	Enabled bool   `json:"enabled"`
+	Env     bool   `json:"env"`
+	Active  bool   `json:"active"`
+	Blocker string `json:"blocker"`
+}
+
+// HTTPProbe reports how the provider round-trip probe is wired. The
+// probe records "request dispatched" and "response headers received"
+// for every provider call — the split between local assembly and
+// provider time that a per-turn latency number cannot show. The MCP
+// client cannot run under a wrapped transport, so an HTTP MCP server
+// parks the probe; Blocker names it when that is the case.
+func (b *Diagnostics) HTTPProbe() HTTPProbeDTO {
+	state := b.core.HTTPProbeState()
+	return HTTPProbeDTO{
+		Enabled: state.Enabled,
+		Env:     state.Env,
+		Active:  state.Active,
+		Blocker: state.Blocker,
+	}
+}
+
+// SetHTTPProbe persists the switch and applies it: turning it on wraps
+// the process transport and reloads the runtime so provider clients
+// rebuild against it; turning it off restores the transport
+// immediately.
+func (b *Diagnostics) SetHTTPProbe(enabled bool) (HTTPProbeDTO, error) {
+	if err := b.core.SetHTTPProbe(b.core.Shell.Context(), enabled); err != nil {
+		return HTTPProbeDTO{}, err
+	}
+	return b.HTTPProbe(), nil
+}
+
 var (
 	frontendVitalsDuration = octelemetry.MustFloat64Histogram(
 		"frontend.vitals.duration_ms",

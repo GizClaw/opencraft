@@ -34,6 +34,30 @@ function sampleFrames(now: number) {
   frameHandle = requestAnimationFrame(sampleFrames);
 }
 
+// Frame sampling pauses while the page is hidden. A background window
+// has its animation frames throttled or stopped by the engine, so the
+// gap between two samples measures the throttle rather than the
+// renderer: the multi-second and even multi-minute frame_max samples in
+// the log are all background windows, and they made the metric useless
+// for judging whether streaming got cheaper. Hiding drops the baseline
+// (the time spent hidden never lands in a sample) and shows it again on
+// resume, so frame_max only ever describes visible rendering.
+function onVisibilityChange() {
+  if (!started) return;
+  if (document.visibilityState === 'visible') {
+    if (frameHandle === 0) {
+      lastFrameAt = 0;
+      frameHandle = requestAnimationFrame(sampleFrames);
+    }
+    return;
+  }
+  if (frameHandle !== 0) {
+    cancelAnimationFrame(frameHandle);
+    frameHandle = 0;
+  }
+  lastFrameAt = 0;
+}
+
 // countMessages sums the loaded transcript rows across conversations;
 // it is the cheap proxy for "how much does the renderer hold".
 function countMessages(): number {
@@ -97,6 +121,8 @@ export function startPerfProbe(): void {
   lastFrameAt = 0;
   frameHandle = requestAnimationFrame(sampleFrames);
   timer = window.setInterval(() => void report(), REPORT_INTERVAL_MS);
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  onVisibilityChange();
 }
 
 // stopPerfProbe ends the sampler. The diagnostics switch turns it off
@@ -105,6 +131,7 @@ export function startPerfProbe(): void {
 export function stopPerfProbe(): void {
   if (!started) return;
   started = false;
+  document.removeEventListener('visibilitychange', onVisibilityChange);
   window.clearInterval(timer);
   timer = 0;
   cancelAnimationFrame(frameHandle);
